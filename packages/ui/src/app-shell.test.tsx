@@ -12,23 +12,23 @@ describe("AppShell", () => {
 
     const navigation = screen.getByRole("navigation", { name: "主导航" });
     const expectedLinks = [
-      "产品",
-      "文档",
-      "版本",
-      "兼容矩阵",
-      "Marketplace",
-      "支持",
-    ];
+      ["平台能力", "/product"],
+      ["行业方案", "/cases"],
+      ["文档", "/docs"],
+      ["版本与兼容", "/compatibility"],
+      ["支持", "/support"],
+    ] as const;
 
-    for (const linkName of expectedLinks) {
-      expect(
-        within(navigation).getByRole("link", { name: linkName }),
-      ).toBeVisible();
+    for (const [linkName, href] of expectedLinks) {
+      const link = within(navigation).getByRole("link", { name: linkName });
+      expect(link).toBeVisible();
+      expect(link).toHaveAttribute("href", href);
     }
 
-    expect(
-      screen.getByRole("link", { name: "AI Agent Platform 首页" }),
-    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "华鲲元启首页" })).toBeVisible();
+    expect(screen.getByText("TGDataXAI")).toBeVisible();
+    expect(screen.getByText("打开导航")).toBeVisible();
+    expect(screen.queryByText("AI Agent Platform")).not.toBeInTheDocument();
     expect(screen.getByText("页面内容")).toBeVisible();
   });
 });

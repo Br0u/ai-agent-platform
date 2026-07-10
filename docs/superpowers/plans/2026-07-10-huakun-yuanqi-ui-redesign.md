@@ -100,7 +100,7 @@ git commit -m "docs(design): 添加华鲲元启门户高保真方向稿"
 - Modify: `packages/ui/src/app-shell.css`
 - Modify: `packages/ui/src/tokens.css`
 
-- [ ] **Step 1: Write the failing AppShell test**
+- [x] **Step 1: Write the failing AppShell test**
 
 Test the desired public contract:
 
@@ -119,7 +119,7 @@ expect(screen.getByText("打开导航")).toBeVisible();
 expect(screen.queryByText("AI Agent Platform")).not.toBeInTheDocument();
 ```
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run:
 
@@ -129,15 +129,15 @@ pnpm --filter @ai-agent-platform/ui test src/app-shell.test.tsx
 
 Expected: FAIL because the old brand and old navigation are still rendered.
 
-- [ ] **Step 3: Implement the shell and tokens**
+- [x] **Step 3: Implement the shell and tokens**
 
 Use the source-backed colors in `tokens.css`. Render a desktop navigation and a native`details/summary`mobile navigation; maintain44px targets and visible focus.
 
-- [ ] **Step 4: Run the test and verify GREEN**
+- [x] **Step 4: Run the test and verify GREEN**
 
 Run the targeted test and then all UI package tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/ui/src
