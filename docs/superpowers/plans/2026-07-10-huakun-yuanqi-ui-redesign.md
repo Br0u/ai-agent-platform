@@ -24,21 +24,21 @@
 - Read: `tmp/pdfs/platform/page-2.png`
 - Read: `tmp/pdfs/visual-search/page-1.png`
 
-- [ ] **Step 1: Extract the wordmark and platform screenshot**
+- [x] **Step 1: Extract the wordmark and platform screenshot**
 
 Use the user-provided PDFs rendered at high resolution. Crop only the real logo and real platform UI; do not redraw, recolor or invent missing details.
 
-- [ ] **Step 2: Record provenance and limitations**
+- [x] **Step 2: Record provenance and limitations**
 
 `README.md` must name both source PDFs, identify assets as brochure-derived temporary prototype assets, and require replacement with independent originals before production launch.
 
-- [ ] **Step 3: Verify dimensions and legibility**
+- [x] **Step 3: Verify dimensions and legibility**
 
 Run a Pillow read check and inspect both images with `view_image`.
 
 Expected: wordmark is legible at 176px display width; platform screenshot remains legible at a maximum rendered width of 680px.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/design/assets/huakun-yuanqi
