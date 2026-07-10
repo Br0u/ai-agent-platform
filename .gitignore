@@ -9,6 +9,8 @@ dist/
 coverage/
 *.log
 *.local
+*.tsbuildinfo
+**/next-env.d.ts
 data/
 backups/
 uploads/

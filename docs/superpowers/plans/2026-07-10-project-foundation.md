@@ -23,23 +23,23 @@
 - Create: `.npmrc`
 - Modify: `.gitignore`
 
-- [ ] **Step 1: Check local Git and remote repository state**
+- [x] **Step 1: Check local Git and remote repository state**
 
 Run: `git --version`, `git ls-remote https://github.com/Br0u/ai-agent-platform.git`
 
 Expected: Git可用；记录远端是否为空以及默认分支。
 
-- [ ] **Step 2: Initialize repository and branch**
+- [x] **Step 2: Initialize repository and branch**
 
 Run: `git init -b main`, `git remote add origin https://github.com/Br0u/ai-agent-platform.git`
 
 Expected: 本地分支为`main`，远端名为`origin`。
 
-- [ ] **Step 3: Create workspace metadata**
+- [x] **Step 3: Create workspace metadata**
 
 根脚本至少包含：`dev`、`build`、`test`、`typecheck`、`lint`、`format:check`。
 
-- [ ] **Step 4: Validate metadata**
+- [x] **Step 4: Validate metadata**
 
 Run: `pnpm --version`, `pnpm install --lockfile-only`
 
@@ -64,13 +64,13 @@ Run: `git add ...`, `git commit -m "chore: 初始化项目文档与工作区"`
 - Create: `apps/web/src/app/globals.css`
 - Create: `apps/web/src/app/page.test.tsx`
 
-- [ ] **Step 1: Install pinned framework and test dependencies**
+- [x] **Step 1: Install pinned framework and test dependencies**
 
 Run: `pnpm install`
 
 Expected: 安装完成并生成锁文件；版本根据当前官方兼容性确认后固定。
 
-- [ ] **Step 2: Write failing home-page test**
+- [x] **Step 2: Write failing home-page test**
 
 ```tsx
 import { render, screen } from '@testing-library/react'
@@ -83,17 +83,17 @@ it('presents the product and primary documentation action', () => {
 })
 ```
 
-- [ ] **Step 3: Run test and verify RED**
+- [x] **Step 3: Run test and verify RED**
 
 Run: `pnpm --filter web test src/app/page.test.tsx`
 
 Expected: FAIL，因为`page.tsx`尚未实现产品标题和文档操作。
 
-- [ ] **Step 4: Implement minimal page and layout**
+- [x] **Step 4: Implement minimal page and layout**
 
 实现可访问的标题、正文和文档链接，不提前加入额外营销区块。
 
-- [ ] **Step 5: Run test and verify GREEN**
+- [x] **Step 5: Run test and verify GREEN**
 
 Run: `pnpm --filter web test src/app/page.test.tsx`
 

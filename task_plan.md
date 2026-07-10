@@ -4,7 +4,7 @@
 建立可测试、可运行、可Docker部署并可持续扩展的全栈项目基础，连接本地Git与 `Br0u/ai-agent-platform`，为后续页面和业务模块提供稳定底座。
 
 ## 当前阶段
-阶段 2
+阶段 3
 
 ## 各阶段
 
@@ -19,15 +19,15 @@
 - [x] 拆分基础骨架独立实施计划
 - [x] 核对本机Node、pnpm、Git、Docker环境
 - [x] 核对当前官方技术栈兼容性
-- [ ] 完成Git初始化与远端配置
-- **状态：** in_progress
+- [x] 完成Git初始化与远端配置
+- **状态：** complete
 
 ### 阶段 3：工程初始化
-- [ ] 初始化pnpm workspace和Next.js应用
-- [ ] 配置TypeScript、Lint、格式化与测试
+- [x] 初始化pnpm workspace和Next.js应用
+- [x] 配置TypeScript、Lint、格式化与测试
 - [ ] 建立共享UI、数据库和集成包
 - [ ] 建立Docker开发环境
-- **状态：** pending
+- **状态：** in_progress
 
 ### 阶段 4：基础功能实现
 - [ ] 先写失败测试
@@ -70,6 +70,14 @@
 | 本地4173端口在沙箱内无权限 | 1 | 获得许可后仅绑定127.0.0.1 |
 | npm请求错误指向失效代理127.0.0.1:1082 | 1 | 经许可临时取消代理环境变量 |
 | 沙箱内Git无法解析github.com | 1 | 使用获批网络权限检查远端 |
+| 规划文件合并补丁上下文未匹配 | 1 | 拆成精确局部补丁后更新 |
+| 补丁错误地更新不存在的package.json | 1 | 改用Add File创建 |
+| pnpm拒绝sharp构建脚本 | 1 | 只通过allowBuilds放行sharp |
+| TypeScript 7不满足ESLint peer依赖 | 1 | 降至稳定5.9.3 |
+| pnpm-workspace出现重复allowBuilds键 | 1 | 删除工具写入的待填写示例 |
+| ESLint拒绝PostCSS匿名默认导出 | 1 | 使用命名常量后导出 |
+| Prettier检查发现10个未格式化文件 | 1 | 运行项目Prettier机械格式化 |
+| Turbopack构建在沙箱内无法绑定端口 | 1 | 按权限规则在沙箱外重跑并成功 |
 
 ## 备注
 - 当前只执行“项目基础骨架”计划，不一次实现全部业务页面。

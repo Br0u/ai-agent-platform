@@ -19,6 +19,8 @@
 - Next.js 16最低Node.js为20.9，Turbopack为默认构建器，Docker支持完整功能。
 - Drizzle官方支持通过`node-postgres`或`postgres.js`连接PostgreSQL；一期采用`node-postgres`便于连接池和自建PostgreSQL。
 - GitHub远端已有一个`Initial commit`，内容只有标题为`ai-agent-platform`的`README.md`；可安全沿用远端历史并把本地文档作为后续提交加入。
+- 2026-07-10包标签确认：Next.js 16.2.10、React 19.2.7、Tailwind CSS 4.3.2、Vitest 4.1.10、Drizzle ORM 0.45.2、Drizzle Kit 0.31.10、pg 8.22.0。
+- Next.js 16.3仍为Preview/Canary，一期不使用。
 
 ## 技术决策
 | 决策 | 理由 |
@@ -37,6 +39,11 @@
 | 生产服务器信息缺失 | 本地按Linux x86_64 Docker基线开发，部署前补充 |
 | 本机代理可能失效 | 安装依赖时先检测，失败则用已批准的无代理方式或镜像源 |
 | 沙箱内无法解析github.com | 使用获批的只读Git网络检查；不重复在沙箱内请求 |
+| 一次补丁混用了新增与不存在文件更新 | 分开使用`Add File`和精确更新补丁 |
+| pnpm 11忽略sharp构建脚本 | 使用`pnpm-workspace.yaml`的`allowBuilds: { sharp: true }`精确放行 |
+| TypeScript 7超出typescript-eslint兼容范围 | 固定TypeScript 5.9.3，满足Next.js且符合`<6.1`peer约束 |
+| `pnpm ignored-builds`写入了待填写的allowBuilds示例 | 删除占位映射，只保留`sharp: true` |
+| Turbopack构建需要创建子进程并绑定本地端口 | 沙箱内会报Operation not permitted；获批后在沙箱外构建成功 |
 
 ## 资源
 - `docs/product/PRD.md`
