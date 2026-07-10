@@ -19,7 +19,7 @@ export function HeroEvidence() {
           <Image
             className="home-hero__wordmark"
             src={wordmark}
-            alt=""
+            alt="华鲲元启"
             width={817}
             height={219}
             priority
@@ -54,7 +54,6 @@ export function HeroEvidence() {
             alt="华鲲元启平台界面"
             width={1049}
             height={902}
-            priority
             sizes="(max-width: 900px) 100vw, 48vw"
           />
           <figcaption>界面示意 · 来源于华鲲元启产品彩页</figcaption>

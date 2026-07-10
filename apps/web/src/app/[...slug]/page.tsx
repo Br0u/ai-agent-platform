@@ -18,7 +18,7 @@ export async function generateMetadata({
   const route = matchRoute(pathnameFromSegments(slug));
 
   return {
-    title: route ? `${route.title} · AI Agent Platform` : "页面未找到",
+    title: route ? `${route.title} · 华鲲元启` : "页面未找到 · 华鲲元启",
   };
 }
 

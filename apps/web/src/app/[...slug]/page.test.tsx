@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import PortalPage from "./page";
+import PortalPage, { generateMetadata } from "./page";
 
 describe("PortalPage", () => {
   it("renders a scaffold route from URL segments", async () => {
@@ -23,5 +23,13 @@ describe("PortalPage", () => {
 
     expect(screen.getByRole("heading", { name: "下载中心" })).toBeVisible();
     expect(screen.getByText("功能尚未开放")).toBeVisible();
+  });
+
+  it("uses the Huakun Yuanqi brand in route metadata", async () => {
+    const metadata = await generateMetadata({
+      params: Promise.resolve({ slug: ["downloads"] }),
+    });
+
+    expect(metadata.title).toBe("下载中心 · 华鲲元启");
   });
 });
