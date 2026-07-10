@@ -25,11 +25,11 @@ describe("PortalPage", () => {
     expect(screen.getByText("功能尚未开放")).toBeVisible();
   });
 
-  it("uses the Huakun Yuanqi brand in route metadata", async () => {
+  it("uses the PRD product brand in route metadata", async () => {
     const metadata = await generateMetadata({
       params: Promise.resolve({ slug: ["downloads"] }),
     });
 
-    expect(metadata.title).toBe("下载中心 · 华鲲元启");
+    expect(metadata.title).toBe("下载中心 · AI Agent Platform");
   });
 });

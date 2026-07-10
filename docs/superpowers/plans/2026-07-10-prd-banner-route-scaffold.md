@@ -130,11 +130,11 @@ git commit -m "feat(ui): 对齐PRD页头品牌与导航"
 - Create: `apps/web/src/components/route-scaffold/README.md`
 - Modify: `apps/web/src/app/[...slug]/page.tsx`
 
-- [ ] **Step 1: Write a failing scaffold test**
+- [x] **Step 1: Write a failing scaffold test**
 
 Test a scaffold route (`/product`) and a disabled route (`/downloads`), including metadata and `FEATURE_DISABLED` behavior.
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run:
 
@@ -144,7 +144,7 @@ pnpm --filter @ai-agent-platform/web test src/components/route-scaffold/register
 
 Expected: FAIL because the shared registered-route component does not exist.
 
-- [ ] **Step 3: Implement the shared route component**
+- [x] **Step 3: Implement the shared route component**
 
 Export:
 
@@ -155,7 +155,7 @@ export function metadataForRegisteredRoute(pathname: string): Metadata;
 
 Use `matchRoute`, `FeaturePlaceholderPage`, and `notFound`. Refactor the catch-all to consume the same functions.
 
-- [ ] **Step 4: Run targeted and catch-all tests**
+- [x] **Step 4: Run targeted and catch-all tests**
 
 Run:
 
@@ -165,7 +165,7 @@ pnpm --filter @ai-agent-platform/web test src/components/route-scaffold/register
 
 Expected: both suites pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/web/src/components/route-scaffold apps/web/src/app/'[...slug]'

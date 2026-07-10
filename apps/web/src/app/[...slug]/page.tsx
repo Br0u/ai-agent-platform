@@ -1,7 +1,8 @@
-import { FeaturePlaceholderPage } from "@/components/feature-placeholder-page";
-import { matchRoute } from "@/config/routes";
+import {
+  metadataForRegisteredRoute,
+  RegisteredRoutePage,
+} from "@/components/route-scaffold/registered-route-page";
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
 
 type PortalPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -15,22 +16,10 @@ export async function generateMetadata({
   params,
 }: PortalPageProps): Promise<Metadata> {
   const { slug } = await params;
-  const route = matchRoute(pathnameFromSegments(slug));
-
-  return {
-    title: route ? `${route.title} · 华鲲元启` : "页面未找到 · 华鲲元启",
-  };
+  return metadataForRegisteredRoute(pathnameFromSegments(slug));
 }
 
 export default async function PortalPage({ params }: PortalPageProps) {
   const { slug } = await params;
-  const route = matchRoute(pathnameFromSegments(slug));
-
-  if (!route) notFound();
-
-  return (
-    <main>
-      <FeaturePlaceholderPage route={route} />
-    </main>
-  );
+  return <RegisteredRoutePage pathname={pathnameFromSegments(slug)} />;
 }
