@@ -1,0 +1,989 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>华鲲元启门户重设计</title>
+    <link rel="icon" href="assets/huakun-yuanqi/wordmark.png" />
+    <!--
+      System: Industrial editorial + product evidence
+      Type: 80 / 56 / 40 / 28 / 18 / 15 / 13
+      Color: #f7f8fb canvas, #ffffff surface, #101838 ink, #3a67b1 action,
+             #9277dc intelligent state, #d91f26 corporate seal only
+      Grid: 12 columns, 1440px max-width, 80px desktop gutter, 20px mobile gutter
+      Rhythm: horizontal rules, numbered sections, full-width statements, no card grid
+      Motion: 160ms interaction feedback, 280ms content reveal, no continuous floating
+    -->
+    <style>
+      :root {
+        color-scheme: light;
+        --primary: #3a67b1;
+        --cyan: #56c0f8;
+        --structural: #4c91eb;
+        --intelligent: #9277dc;
+        --brand-red: #d91f26;
+        --ink: #101838;
+        --muted: #566078;
+        --canvas: #f7f8fb;
+        --surface: #ffffff;
+        --line: #d8deea;
+        --line-strong: #aab5c9;
+        --display:
+          "Source Han Sans SC", "Noto Sans CJK SC", "PingFang SC", sans-serif;
+        --body:
+          "Source Han Sans SC", "Noto Sans CJK SC", "PingFang SC", sans-serif;
+        --mono: "IBM Plex Mono", "SFMono-Regular", monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background: var(--canvas);
+        font-family: var(--body);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      button,
+      summary,
+      a {
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      a:focus-visible,
+      summary:focus-visible {
+        outline: 3px solid var(--intelligent);
+        outline-offset: 4px;
+      }
+
+      .frame {
+        width: min(100% - 160px, 1440px);
+        margin-inline: auto;
+      }
+
+      .spectrum {
+        height: 3px;
+        background: linear-gradient(
+          90deg,
+          var(--cyan),
+          var(--structural) 54%,
+          var(--intelligent)
+        );
+      }
+
+      .site-header {
+        position: sticky;
+        z-index: 20;
+        top: 0;
+        background: color-mix(in srgb, var(--surface) 96%, transparent);
+        backdrop-filter: blur(14px);
+      }
+
+      .header-row {
+        display: grid;
+        grid-template-columns: minmax(210px, 1fr) auto minmax(110px, 1fr);
+        align-items: center;
+        min-height: 78px;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        width: fit-content;
+        min-height: 44px;
+        text-decoration: none;
+      }
+
+      .brand img {
+        display: block;
+        width: 176px;
+        height: auto;
+      }
+
+      .desktop-nav {
+        display: flex;
+        align-items: center;
+        gap: 30px;
+      }
+
+      .desktop-nav a,
+      .login-link {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+        font-size: 14px;
+        font-weight: 600;
+        text-decoration: none;
+      }
+
+      .desktop-nav a:hover {
+        color: var(--primary);
+      }
+
+      .login-link {
+        justify-self: end;
+        padding-inline: 18px;
+        color: var(--surface);
+        background: var(--ink);
+      }
+
+      .mobile-nav {
+        display: none;
+      }
+
+      .section {
+        border-top: 1px solid var(--line);
+      }
+
+      .hero {
+        border-top: 0;
+        background: var(--surface);
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.08fr) minmax(420px, 0.92fr);
+        gap: clamp(56px, 7vw, 112px);
+        align-items: center;
+        min-height: 760px;
+        padding-block: 112px;
+      }
+
+      .technical-line {
+        margin: 0 0 32px;
+        color: var(--primary);
+        font-family: var(--mono);
+        font-size: 13px;
+        font-weight: 650;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .hero h1 {
+        max-width: 800px;
+        margin: 0;
+        font-family: var(--display);
+        font-size: clamp(62px, 6.5vw, 104px);
+        font-weight: 730;
+        letter-spacing: -0.065em;
+        line-height: 0.98;
+        text-wrap: balance;
+      }
+
+      .product-name {
+        margin: 36px 0 0;
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .hero-copy {
+        max-width: 660px;
+        margin: 20px 0 0;
+        color: var(--muted);
+        font-size: 17px;
+        line-height: 1.85;
+        text-wrap: pretty;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 36px;
+      }
+
+      .action {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 48px;
+        padding-inline: 22px;
+        border: 1px solid var(--ink);
+        font-size: 14px;
+        font-weight: 700;
+        text-decoration: none;
+        transition:
+          color 160ms ease,
+          background-color 160ms ease,
+          transform 160ms ease;
+      }
+
+      .action--primary {
+        color: var(--surface);
+        background: var(--ink);
+      }
+
+      .action:hover {
+        transform: translateY(-2px);
+      }
+
+      .action--primary:hover {
+        background: var(--primary);
+        border-color: var(--primary);
+      }
+
+      .evidence {
+        margin: 0;
+        border: 1px solid var(--line-strong);
+        background: var(--canvas);
+      }
+
+      .evidence-bar {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line-strong);
+        font-family: var(--mono);
+        font-size: 12px;
+        letter-spacing: 0.04em;
+      }
+
+      .evidence img {
+        display: block;
+        width: 100%;
+        max-width: 680px;
+        height: auto;
+        background: var(--surface);
+      }
+
+      .evidence figcaption {
+        padding: 14px 16px 16px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .capability-rail {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        border-inline: 1px solid var(--line);
+      }
+
+      .capability {
+        min-height: 156px;
+        padding: 28px;
+        border-right: 1px solid var(--line);
+        background: var(--surface);
+      }
+
+      .capability:last-child {
+        border-right: 0;
+      }
+
+      .capability span {
+        color: var(--primary);
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+
+      .capability strong {
+        display: block;
+        margin-top: 42px;
+        font-size: 17px;
+        line-height: 1.4;
+      }
+
+      .section-grid {
+        display: grid;
+        grid-template-columns: 4fr 8fr;
+        gap: 64px;
+        padding-block: 128px;
+      }
+
+      .section-kicker {
+        margin: 0 0 18px;
+        color: var(--primary);
+        font-family: var(--mono);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .section-title {
+        max-width: 520px;
+        margin: 0;
+        font-family: var(--display);
+        font-size: clamp(44px, 4vw, 64px);
+        font-weight: 720;
+        letter-spacing: -0.045em;
+        line-height: 1.08;
+        text-wrap: balance;
+      }
+
+      .section-intro {
+        max-width: 480px;
+        margin: 28px 0 0;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.8;
+      }
+
+      .flow {
+        border-bottom: 1px solid var(--line-strong);
+      }
+
+      .flow-row {
+        display: grid;
+        grid-template-columns: 80px 180px minmax(0, 1fr);
+        gap: 24px;
+        padding: 28px 0;
+        border-top: 1px solid var(--line-strong);
+      }
+
+      .flow-index {
+        color: var(--primary);
+        font-family: var(--mono);
+        font-size: 13px;
+      }
+
+      .flow-row h3 {
+        margin: 0;
+        font-size: 18px;
+      }
+
+      .flow-row p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.75;
+      }
+
+      .proof-section {
+        background: var(--surface);
+      }
+
+      .proof-heading {
+        padding-block: 112px 64px;
+      }
+
+      .proof-list {
+        border-bottom: 1px solid var(--line-strong);
+      }
+
+      .proof-item {
+        display: grid;
+        grid-template-columns: 100px minmax(260px, 0.8fr) minmax(0, 1.2fr);
+        gap: 32px;
+        align-items: start;
+        padding: 34px 0 42px;
+        border-top: 1px solid var(--line-strong);
+      }
+
+      .proof-number {
+        color: var(--primary);
+        font-family: var(--mono);
+        font-size: 14px;
+      }
+
+      .proof-item h3 {
+        margin: 0;
+        font-size: 24px;
+        letter-spacing: -0.02em;
+      }
+
+      .proof-item p {
+        max-width: 680px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.8;
+      }
+
+      .solution-list,
+      .resource-list {
+        border-bottom: 1px solid var(--line-strong);
+      }
+
+      .solution-row,
+      .resource-row {
+        display: grid;
+        align-items: center;
+        min-height: 88px;
+        border-top: 1px solid var(--line-strong);
+      }
+
+      .solution-row {
+        grid-template-columns: 64px minmax(240px, 0.85fr) minmax(0, 1.15fr) 32px;
+        gap: 24px;
+      }
+
+      .solution-row--subset {
+        background: color-mix(in srgb, var(--intelligent) 8%, var(--canvas));
+      }
+
+      .solution-code,
+      .solution-arrow,
+      .resource-arrow {
+        color: var(--primary);
+        font-family: var(--mono);
+        font-size: 13px;
+      }
+
+      .solution-row h3 {
+        margin: 0;
+        font-size: 18px;
+      }
+
+      .solution-row p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+
+      .subset-label {
+        color: var(--intelligent) !important;
+        font-family: var(--mono);
+        font-weight: 700;
+      }
+
+      .resources {
+        background: var(--surface);
+      }
+
+      .resource-row {
+        grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr) 32px;
+        gap: 24px;
+        text-decoration: none;
+      }
+
+      .resource-row:hover {
+        color: var(--primary);
+      }
+
+      .resource-row strong {
+        font-size: 17px;
+      }
+
+      .resource-row span:not(.resource-arrow) {
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .closing {
+        color: var(--surface);
+        background: var(--ink);
+      }
+
+      .closing-grid {
+        display: grid;
+        grid-template-columns: 8fr 4fr;
+        gap: 64px;
+        align-items: end;
+        min-height: 440px;
+        padding-block: 96px;
+      }
+
+      .closing h2 {
+        max-width: 900px;
+        margin: 0;
+        font-size: clamp(48px, 5vw, 76px);
+        letter-spacing: -0.05em;
+        line-height: 1.04;
+      }
+
+      .closing p {
+        max-width: 500px;
+        margin: 26px 0 0;
+        color: #c5cddd;
+        line-height: 1.75;
+      }
+
+      .closing .actions {
+        justify-content: flex-end;
+      }
+
+      .closing .action {
+        border-color: #8792a8;
+      }
+
+      .closing .action--primary {
+        color: var(--ink);
+        background: var(--surface);
+        border-color: var(--surface);
+      }
+
+      .site-footer {
+        border-top: 1px solid #34405a;
+        color: #c5cddd;
+        background: var(--ink);
+      }
+
+      .footer-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 32px;
+        padding-block: 30px;
+        font-size: 12px;
+      }
+
+      @media (max-width: 1040px) {
+        .frame {
+          width: min(100% - 64px, 1440px);
+        }
+
+        .desktop-nav {
+          gap: 18px;
+        }
+
+        .hero-grid,
+        .section-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-grid {
+          padding-block: 88px;
+        }
+
+        .evidence {
+          width: min(100%, 680px);
+        }
+
+        .section-grid {
+          gap: 56px;
+        }
+
+        .closing-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .closing .actions {
+          justify-content: flex-start;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .frame {
+          width: calc(100% - 40px);
+        }
+
+        .header-row {
+          grid-template-columns: 1fr auto;
+          min-height: 68px;
+        }
+
+        .brand img {
+          width: 150px;
+        }
+
+        .desktop-nav,
+        .login-link {
+          display: none;
+        }
+
+        .mobile-nav {
+          position: relative;
+          display: block;
+          justify-self: end;
+        }
+
+        .mobile-nav summary {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 88px;
+          min-height: 44px;
+          border: 1px solid var(--line-strong);
+          font-size: 14px;
+          font-weight: 700;
+          list-style: none;
+          cursor: pointer;
+        }
+
+        .mobile-nav summary::-webkit-details-marker {
+          display: none;
+        }
+
+        .mobile-menu {
+          position: fixed;
+          inset: 71px 0 auto;
+          display: grid;
+          padding: 20px;
+          border-bottom: 1px solid var(--line-strong);
+          background: var(--surface);
+        }
+
+        .mobile-menu a {
+          display: flex;
+          align-items: center;
+          min-height: 52px;
+          border-bottom: 1px solid var(--line);
+          font-weight: 650;
+          text-decoration: none;
+        }
+
+        .hero-grid {
+          min-height: auto;
+          gap: 64px;
+          padding-block: 72px;
+        }
+
+        .hero h1 {
+          font-size: clamp(48px, 15vw, 66px);
+        }
+
+        .capability-rail {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .capability:nth-child(2) {
+          border-right: 0;
+        }
+
+        .capability:nth-child(-n + 2) {
+          border-bottom: 1px solid var(--line);
+        }
+
+        .section-grid {
+          padding-block: 88px;
+        }
+
+        .section-title {
+          font-size: 44px;
+        }
+
+        .flow-row {
+          grid-template-columns: 54px 1fr;
+        }
+
+        .flow-row p {
+          grid-column: 2;
+        }
+
+        .proof-heading {
+          padding-block: 88px 48px;
+        }
+
+        .proof-item {
+          grid-template-columns: 52px 1fr;
+        }
+
+        .proof-item p {
+          grid-column: 2;
+        }
+
+        .solution-row {
+          grid-template-columns: 42px 1fr 24px;
+          gap: 14px;
+          padding-block: 20px;
+        }
+
+        .solution-row p {
+          grid-column: 2;
+        }
+
+        .solution-arrow {
+          grid-column: 3;
+          grid-row: 1 / span 2;
+        }
+
+        .resource-row {
+          grid-template-columns: 1fr 24px;
+          gap: 12px;
+          padding-block: 20px;
+        }
+
+        .resource-row span:not(.resource-arrow) {
+          grid-column: 1;
+        }
+
+        .resource-arrow {
+          grid-column: 2;
+          grid-row: 1 / span 2;
+        }
+
+        .closing-grid {
+          min-height: 520px;
+          padding-block: 80px;
+        }
+
+        .footer-row {
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="frame header-row">
+        <a class="brand" href="#top" aria-label="华鲲元启首页">
+          <img
+            src="assets/huakun-yuanqi/wordmark.png"
+            alt="华鲲元启"
+            width="817"
+            height="219"
+          />
+        </a>
+        <nav class="desktop-nav" aria-label="主导航">
+          <a href="#platform-flow">平台能力</a>
+          <a href="#solutions">行业方案</a>
+          <a href="#resources">文档</a>
+          <a href="#resources">版本与兼容</a>
+          <a href="#contact">支持</a>
+        </nav>
+        <a class="login-link" href="../../apps/web/src/app/page.tsx">登录</a>
+        <details class="mobile-nav">
+          <summary>打开导航</summary>
+          <nav class="mobile-menu" aria-label="移动导航">
+            <a href="#platform-flow">平台能力</a>
+            <a href="#solutions">行业方案</a>
+            <a href="#resources">文档</a>
+            <a href="#resources">版本与兼容</a>
+            <a href="#contact">支持</a>
+          </nav>
+        </details>
+      </div>
+      <div class="spectrum" aria-hidden="true"></div>
+    </header>
+
+    <main id="top">
+      <section class="section hero" aria-labelledby="hero-title">
+        <div class="frame hero-grid">
+          <div>
+            <p class="technical-line">国产算力 · 私有化部署 · 企业级AI开发</p>
+            <h1 id="hero-title">让企业 AI<br />从模型走向业务</h1>
+            <p class="product-name">华鲲元启 AI开发赋能平台 · TGDataXAI</p>
+            <p class="hero-copy">
+              以异构算力智能调度为底座，把模型仓库、知识工程、流程编排、训练、推理与评估连接为一套企业级开发体系，让智能体开发像搭积木一样简单。
+            </p>
+            <div class="actions">
+              <a class="action action--primary" href="#platform-flow"
+                >了解平台</a
+              >
+              <a class="action" href="#resources">阅读文档</a>
+            </div>
+          </div>
+          <figure class="evidence">
+            <div class="evidence-bar">
+              <span>PLATFORM / UI-01</span>
+              <span>TGDataXAI</span>
+            </div>
+            <img
+              src="assets/huakun-yuanqi/platform-overview.png"
+              alt="华鲲元启平台界面"
+              width="1049"
+              height="902"
+            />
+            <figcaption>界面示意 · 来源于华鲲元启产品彩页</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section" aria-label="平台关键能力">
+        <div class="frame capability-rail">
+          <div class="capability">
+            <span>01</span><strong>私有化部署</strong>
+          </div>
+          <div class="capability">
+            <span>02</span><strong>异构算力调度</strong>
+          </div>
+          <div class="capability">
+            <span>03</span><strong>低代码智能体开发</strong>
+          </div>
+          <div class="capability">
+            <span>04</span><strong>模型全生命周期管理</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="platform-flow" aria-labelledby="flow-title">
+        <div class="frame section-grid">
+          <header>
+            <p class="section-kicker">Platform / 01</p>
+            <h2 class="section-title" id="flow-title">
+              一套平台，贯通企业 AI 开发全流程
+            </h2>
+            <p class="section-intro">
+              从企业数据进入知识工程，到智能体发布与模型运行，能力被组织为可理解、可管理的开发路径。
+            </p>
+          </header>
+          <div class="flow">
+            <article class="flow-row">
+              <span class="flow-index">L1</span>
+              <h3>数据与知识</h3>
+              <p>知识库、多模态文档、知识图谱、数据源接入与数据预览。</p>
+            </article>
+            <article class="flow-row">
+              <span class="flow-index">L2</span>
+              <h3>开发与编排</h3>
+              <p>流程编排、Prompt、MCP接入与智能体应用发布。</p>
+            </article>
+            <article class="flow-row">
+              <span class="flow-index">L3</span>
+              <h3>模型与运行</h3>
+              <p>模型仓库、训练中心、推理中心、评估中心与多种部署方式。</p>
+            </article>
+            <article class="flow-row">
+              <span class="flow-index">L4</span>
+              <h3>企业底座</h3>
+              <p>权限管理、用户管理、数据权限与算力分配。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section proof-section" aria-labelledby="proof-title">
+        <div class="frame">
+          <header class="proof-heading">
+            <p class="section-kicker">Enterprise / 02</p>
+            <h2 class="section-title" id="proof-title">为企业边界而设计</h2>
+          </header>
+          <div class="proof-list">
+            <article class="proof-item">
+              <span class="proof-number">01</span>
+              <h3>数据留在企业边界内</h3>
+              <p>
+                围绕企业私有化部署与数据本地化要求组织模型、知识与应用能力。
+              </p>
+            </article>
+            <article class="proof-item">
+              <span class="proof-number">02</span>
+              <h3>非结构化数据进入知识工程</h3>
+              <p>
+                支持文档上传、自动分片、语料处理和知识图谱，让企业资料成为可用知识。
+              </p>
+            </article>
+            <article class="proof-item">
+              <span class="proof-number">03</span>
+              <h3>低代码缩短落地路径</h3>
+              <p>
+                通过可视化流程编排和预置智能体，把模型能力连接到具体业务过程。
+              </p>
+            </article>
+            <article class="proof-item">
+              <span class="proof-number">04</span>
+              <h3>权限、数据和算力统一管控</h3>
+              <p>
+                将用户、操作、数据权限与异构资源管理纳入同一企业级控制边界。
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="solutions" aria-labelledby="solutions-title">
+        <div class="frame section-grid">
+          <header>
+            <p class="section-kicker">Solutions / 03</p>
+            <h2 class="section-title" id="solutions-title">
+              从平台能力，走向行业场景
+            </h2>
+            <p class="section-intro">
+              行业方案建立在统一平台之上。视觉检索是其中的多模态子能力，不是独立上位平台。
+            </p>
+          </header>
+          <div class="solution-list">
+            <article class="solution-row">
+              <span class="solution-code">S1</span>
+              <h3>知识问答与知识加工</h3>
+              <p>企业资料进入知识库后，用于检索、问答与内容加工。</p>
+              <span class="solution-arrow">→</span>
+            </article>
+            <article class="solution-row">
+              <span class="solution-code">S2</span>
+              <h3>数据问答与报告生成</h3>
+              <p>连接结构化数据，形成面向业务人员的数据理解入口。</p>
+              <span class="solution-arrow">→</span>
+            </article>
+            <article class="solution-row">
+              <span class="solution-code">S3</span>
+              <h3>知识图谱</h3>
+              <p>构建实体与关系网络，支撑更明确的知识连接。</p>
+              <span class="solution-arrow">→</span>
+            </article>
+            <article class="solution-row">
+              <span class="solution-code">S4</span>
+              <h3>图像与多模态处理</h3>
+              <p>承载图像、语音和视频等多模态模型接入与业务处理。</p>
+              <span class="solution-arrow">→</span>
+            </article>
+            <article class="solution-row solution-row--subset">
+              <span class="solution-code">S5</span>
+              <h3>视觉检索解决方案</h3>
+              <p>
+                <span class="subset-label">基于华鲲元启的行业子能力</span
+                ><br />即时检索、持续布控、自然语言配置与预警管理。
+              </p>
+              <span class="solution-arrow">→</span>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section
+        class="section resources"
+        id="resources"
+        aria-labelledby="resources-title"
+      >
+        <div class="frame section-grid">
+          <header>
+            <p class="section-kicker">Resources / 04</p>
+            <h2 class="section-title" id="resources-title">
+              下一步，从这里开始
+            </h2>
+          </header>
+          <div class="resource-list">
+            <a class="resource-row" href="../../README.md"
+              ><strong>产品文档</strong><span>了解平台结构、部署与使用方式</span
+              ><span class="resource-arrow">→</span></a
+            >
+            <a class="resource-row" href="../../README.md"
+              ><strong>版本更新</strong><span>查看版本说明与能力变化</span
+              ><span class="resource-arrow">→</span></a
+            >
+            <a class="resource-row" href="../../README.md"
+              ><strong>兼容矩阵</strong><span>查询算力、系统与软件适配范围</span
+              ><span class="resource-arrow">→</span></a
+            >
+            <a class="resource-row" href="#contact"
+              ><strong>客户支持</strong><span>获取部署、使用与问题处理入口</span
+              ><span class="resource-arrow">→</span></a
+            >
+          </div>
+        </div>
+      </section>
+
+      <section class="closing" id="contact" aria-labelledby="closing-title">
+        <div class="frame closing-grid">
+          <div>
+            <p class="section-kicker">Private Deployment</p>
+            <h2 id="closing-title">
+              把企业数据、算力与 AI 应用，留在可控边界内。
+            </h2>
+            <p>
+              面向企业私有化场景，了解华鲲元启的部署路径、平台能力与支持方式。
+            </p>
+          </div>
+          <div class="actions">
+            <a class="action action--primary" href="https://www.schkzy.com"
+              >联系商务</a
+            >
+            <a class="action" href="../../docs/deployment/server-readiness.md"
+              >查看部署文档</a
+            >
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="frame footer-row">
+        <span>华鲲元启 · AI开发赋能平台 TGDataXAI</span>
+        <span>内部设计方向稿 · 正式素材上线前复核</span>
+      </div>
+    </footer>
+  </body>
+</html>

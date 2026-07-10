@@ -51,11 +51,11 @@ git commit -m "chore(assets): 添加华鲲元启彩页参考素材"
 
 - Create: `docs/design/华鲲元启门户重设计.html`
 
-- [ ] **Step 1: Declare the visual system in the HTML**
+- [x] **Step 1: Declare the visual system in the HTML**
 
 At the top of the file include a design-system comment containing the approved type scale, palette, grid, spacing and motion rules.
 
-- [ ] **Step 2: Implement the approved A+B direction**
+- [x] **Step 2: Implement the approved A+B direction**
 
 The artifact must include:
 
@@ -76,13 +76,13 @@ The artifact must include:
 
 Do not add gradient orbs, fake metrics, customer logos, testimonials or a three-column feature grid.
 
-- [ ] **Step 3: Verify the HTML in a real browser**
+- [x] **Step 3: Verify the HTML in a real browser**
 
 Check 1440×1000 and 390×844, console output, mobile navigation and primary links.
 
 Expected: no overflow, 0 console errors, all interactive targets at least 44px.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/design/华鲲元启门户重设计.html
