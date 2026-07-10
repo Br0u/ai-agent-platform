@@ -1,0 +1,71 @@
+import { describe, expect, it } from "vitest";
+import { matchRoute, routeRegistry } from "./routes";
+
+const requiredRoutes = [
+  "/",
+  "/product",
+  "/product/[slug]",
+  "/releases",
+  "/releases/[version]",
+  "/roadmap",
+  "/downloads",
+  "/openlab",
+  "/docs",
+  "/compatibility",
+  "/marketplace",
+  "/marketplace/[slug]",
+  "/support",
+  "/help",
+  "/blog",
+  "/blog/[slug]",
+  "/cases",
+  "/contact",
+  "/login",
+  "/console",
+  "/console/profile",
+  "/console/licenses",
+  "/console/downloads",
+  "/console/openlab",
+  "/console/tickets",
+  "/console/resources",
+  "/console/api-keys",
+  "/console/team",
+  "/console/billing",
+  "/admin",
+  "/admin/site",
+  "/admin/navigation",
+  "/admin/products",
+  "/admin/releases",
+  "/admin/blog",
+  "/admin/cases",
+  "/admin/faq",
+  "/admin/compatibility",
+  "/admin/marketplace",
+  "/admin/users",
+  "/admin/roles",
+  "/admin/audit-logs",
+] as const;
+
+describe("routeRegistry", () => {
+  it("covers every route committed in PRD V2.1 without duplicates", () => {
+    const paths = routeRegistry.map((route) => route.path);
+
+    expect(paths).toEqual(requiredRoutes);
+    expect(new Set(paths).size).toBe(paths.length);
+  });
+
+  it("keeps each route descriptive and assigned to a delivery state", () => {
+    for (const route of routeRegistry) {
+      expect(route.title.trim()).not.toBe("");
+      expect(["public", "console", "admin"]).toContain(route.group);
+      expect(["live", "scaffold", "placeholder"]).toContain(route.status);
+    }
+  });
+
+  it("matches exact and dynamic routes but rejects unknown paths", () => {
+    expect(matchRoute("/docs")?.path).toBe("/docs");
+    expect(matchRoute("/product/agent-studio")?.path).toBe("/product/[slug]");
+    expect(matchRoute("/blog/platform-release")?.path).toBe("/blog/[slug]");
+    expect(matchRoute("/unknown")).toBeUndefined();
+  });
+});
