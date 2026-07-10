@@ -30,8 +30,8 @@
 - **状态：** in_progress
 
 ### 阶段 4：基础功能实现
-- [ ] 先写失败测试
-- [ ] 实现设计令牌、全局框架和导航
+- [x] 先写失败测试
+- [x] 实现设计令牌、全局框架和导航
 - [ ] 实现统一占位组件与路由注册表
 - [ ] 实现数据库连接、迁移和健康检查
 - **状态：** pending
@@ -78,7 +78,18 @@
 | ESLint拒绝PostCSS匿名默认导出 | 1 | 使用命名常量后导出 |
 | Prettier检查发现10个未格式化文件 | 1 | 运行项目Prettier机械格式化 |
 | Turbopack构建在沙箱内无法绑定端口 | 1 | 按权限规则在沙箱外重跑并成功 |
+| pnpm无TTY时拒绝重建modules目录 | 1 | 使用`CI=true`执行确定性离线安装 |
+| CI模式因新增workspace依赖冻结锁文件 | 1 | 离线安装时显式使用`--no-frozen-lockfile`更新锁文件 |
+| 本地pnpm store缺少Tailwind tarball | 2 | 本项目新增workspace后直接使用获批在线安装，不再使用offline |
+| AppShell测试用文本查询匹配页头和页脚 | 1 | 改为按可访问名称查询首页链接 |
+| 集成AppShell补丁未匹配格式化后的文件 | 1 | 读取实际格式后使用精确上下文补丁 |
+| 共享包缺少ESLint Flat Config | 1 | 为UI和Integrations配置typescript-eslint推荐规则 |
+| 共享包新增文件未格式化 | 1 | 使用Prettier机械格式化后复查 |
+| pnpm start参数分隔符被Next识别为项目目录 | 1 | 改用`pnpm exec next start`传递主机和端口 |
+| Next standalone配置警告不能使用next start | 1 | 浏览器验证改用next dev；Docker阶段直接运行standalone server.js |
+| 实际首页缺少favicon导致404 | 1 | 添加纯色占位favicon，生产前替换正式品牌资产 |
 
 ## 备注
 - 当前只执行“项目基础骨架”计划，不一次实现全部业务页面。
 - 重大技术决策前重新读取本文件与 findings.md。
+- UI与外部集成包已建立；数据库包和Docker仍在阶段3待完成。

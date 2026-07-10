@@ -9,10 +9,10 @@
 - GitHub仓库为 `https://github.com/Br0u/ai-agent-platform`。
 
 ## 研究发现
-- 当前目录尚未初始化Git。
+- 当前目录已沿用GitHub远端历史初始化Git；实现位于`feat/project-foundation`隔离工作区。
 - 当前仅有文档、设计稿和预留目录，没有应用代码。
 - PRD、系统架构、占位接口、部署准备和UI方向均已落地本地。
-- GitHub远端实时状态尚未检查。
+- GitHub远端已检查，当前只有初始README提交。
 - 本机环境：Git 2.50.1、Node.js 26.0.0、pnpm 11.5.2、Docker 29.5.3、Docker Compose 5.1.4。
 - 本机CPU为Apple Silicon `arm64`；开发镜像必须避免只支持x86_64的依赖，生产目标架构待后续确认。
 - Next.js官方当前稳定线为16.2，16.3仍是Preview；一期固定稳定线，不追Preview。
@@ -44,6 +44,7 @@
 | TypeScript 7超出typescript-eslint兼容范围 | 固定TypeScript 5.9.3，满足Next.js且符合`<6.1`peer约束 |
 | `pnpm ignored-builds`写入了待填写的allowBuilds示例 | 删除占位映射，只保留`sharp: true` |
 | Turbopack构建需要创建子进程并绑定本地端口 | 沙箱内会报Operation not permitted；获批后在沙箱外构建成功 |
+| 包内直接执行Prettier会扫描`.next`生成目录 | 各包显式复用根`.gitignore`，避免格式化生成物 |
 
 ## 资源
 - `docs/product/PRD.md`
@@ -58,6 +59,9 @@
 - 390×844移动视口使用横向设计方向画布，页面本身无横向溢出。
 - 设计稿包含3个方向，按钮最小高度44px。
 - 浏览器控制台0错误、0警告。
+- 实际Next.js首页在1440×1000桌面视口正常，A方向的结构、字号和留白符合设计稿。
+- 实际首页在390×844移动视口无整体横向溢出，6个导航链接可横向容纳。
+- 页头所有链接最小高度为44px；实际页面控制台0错误、0警告。
 
 ---
 *每执行2次查看/浏览器/搜索操作后更新此文件*

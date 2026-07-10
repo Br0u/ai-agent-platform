@@ -2,16 +2,6 @@
 
 :root {
   color-scheme: light;
-  --color-primary: #3157d5;
-  --color-structural: #4f46e5;
-  --color-accent: #7c3aed;
-  --color-ink: #111827;
-  --color-muted: #5b6475;
-  --color-canvas: #f5f7fc;
-  --color-surface: #ffffff;
-  --color-line: #dce2ef;
-  --font-display: "Avenir Next", "PingFang SC", sans-serif;
-  --font-body: "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 * {

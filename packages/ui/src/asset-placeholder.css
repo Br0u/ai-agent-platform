@@ -1,0 +1,32 @@
+.asset-placeholder {
+  display: grid;
+  place-items: center;
+  min-height: 180px;
+  margin: 0;
+  border: 1px dashed var(--color-structural);
+  color: var(--color-structural);
+  background: color-mix(
+    in oklch,
+    var(--color-structural) 4%,
+    var(--color-surface)
+  );
+  font-family: var(--font-display);
+  text-align: center;
+}
+
+.asset-placeholder span {
+  padding: var(--space-6);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.asset-placeholder figcaption {
+  align-self: end;
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-line);
+  color: var(--color-muted);
+  font-family: var(--font-body);
+  font-size: 11px;
+}

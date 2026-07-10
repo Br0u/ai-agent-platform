@@ -116,19 +116,19 @@ Run: `git commit -m "feat(web): 建立可测试的Next.js应用"`
 - Modify: `apps/web/src/app/layout.tsx`
 - Modify: `apps/web/src/app/globals.css`
 
-- [ ] **Step 1: Write failing shell test**
+- [x] **Step 1: Write failing shell test**
 
 验证公开导航包含产品、文档、版本、兼容矩阵、Marketplace和支持，Logo位置使用产品文字而不是假Logo。
 
-- [ ] **Step 2: Run test and verify RED**
+- [x] **Step 2: Run test and verify RED**
 
 Expected: FAIL，因为共享Shell不存在。
 
-- [ ] **Step 3: Implement tokens and shell**
+- [x] **Step 3: Implement tokens and shell**
 
 令牌基线：Blue `#3157D5`、Indigo `#4F46E5`、Violet `#7C3AED`、Ink `#111827`、Canvas `#F5F7FC`。保持44px最小交互高度和可见焦点。
 
-- [ ] **Step 4: Run test and verify GREEN**
+- [x] **Step 4: Run test and verify GREEN**
 
 - [ ] **Step 5: Commit**
 
@@ -144,17 +144,17 @@ Run: `git commit -m "feat(ui): 建立蓝靛紫设计系统与全局框架"`
 - Create: `packages/integrations/src/feature-status.test.ts`
 - Create: `packages/integrations/src/index.ts`
 
-- [ ] **Step 1: Write failing asset placeholder test**
+- [x] **Step 1: Write failing asset placeholder test**
 
 验证占位组件具有明确标签、固定宽高比和可访问描述。
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
-- [ ] **Step 3: Implement minimal asset placeholder**
+- [x] **Step 3: Implement minimal asset placeholder**
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
-- [ ] **Step 5: Write failing feature status test**
+- [x] **Step 5: Write failing feature status test**
 
 ```ts
 it('returns FEATURE_DISABLED for disabled modules', () => {
@@ -164,7 +164,7 @@ it('returns FEATURE_DISABLED for disabled modules', () => {
 })
 ```
 
-- [ ] **Step 6: Verify RED, implement, then verify GREEN**
+- [x] **Step 6: Verify RED, implement, then verify GREEN**
 
 - [ ] **Step 7: Commit**
 

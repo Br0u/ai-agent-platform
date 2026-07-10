@@ -40,6 +40,9 @@
   - 先运行首页测试并确认因缺少标题/文档入口而失败。
   - 实现A方向最小首屏后测试通过。
   - 完成类型检查、ESLint、Prettier和生产构建。
+  - 建立共享UI包与Integrations包。
+  - 通过TDD实现全局导航、设计令牌、资产占位和功能状态契约。
+  - 用真实浏览器验证实际Next.js首页桌面/移动布局。
 - 创建/修改的文件：
   - `package.json`
   - `pnpm-workspace.yaml`
@@ -47,6 +50,8 @@
   - `.npmrc`
   - `.nvmrc`
   - `apps/web/*`
+  - `packages/ui/*`
+  - `packages/integrations/*`
 
 ## 测试结果
 | 测试 | 输入 | 预期结果 | 实际结果 | 状态 |
@@ -60,6 +65,12 @@
 | ESLint | 全工作区 | 0警告 | 0警告 | PASS |
 | Prettier | apps/web | 格式一致 | 全部匹配 | PASS |
 | Next.js生产构建 | Next 16.2.10 | 构建成功 | 沙箱外构建成功 | PASS |
+| AppShell RED/GREEN | 缺失导航→实现导航 | 先失败后通过 | 通过 | PASS |
+| 资产占位 RED/GREEN | 缺失figure→固定比例占位 | 先失败后通过 | 通过 | PASS |
+| 功能状态 RED/GREEN | 禁用模块缺错误码→稳定契约 | 先失败后通过 | 通过 | PASS |
+| 实际首页桌面 | 1440×1000 | 布局无异常 | 通过 | PASS |
+| 实际首页移动 | 390×844 | 无横向溢出，点击≥44px | 390px宽，最小44px | PASS |
+| 实际首页控制台 | Next.js开发模式 | 0错误/0警告 | 0错误/0警告 | PASS |
 
 ## 错误日志
 | 时间戳 | 错误 | 尝试次数 | 解决方案 |
@@ -76,6 +87,16 @@
 | 2026-07-10 | ESLint拒绝PostCSS匿名默认导出 | 1 | 改成命名常量导出 |
 | 2026-07-10 | Prettier检查发现10个未格式化文件 | 1 | 执行机械格式化后复查 |
 | 2026-07-10 | Turbopack在沙箱内无法绑定端口 | 1 | 沙箱外构建成功 |
+| 2026-07-10 | pnpm无TTY时拒绝重建modules目录 | 1 | 改用CI模式离线安装 |
+| 2026-07-10 | CI模式拒绝过期锁文件 | 1 | 使用no-frozen-lockfile更新工作区锁文件 |
+| 2026-07-10 | 离线store缺少Tailwind tarball | 2 | 后续依赖变更直接使用获批在线安装 |
+| 2026-07-10 | AppShell测试文本查询有多个匹配项 | 1 | 改用首页链接的可访问名称 |
+| 2026-07-10 | 集成AppShell补丁上下文未匹配 | 1 | 按实际格式应用精确补丁 |
+| 2026-07-10 | 共享包缺少ESLint Flat Config | 1 | 增加typescript-eslint配置 |
+| 2026-07-10 | 共享包新增文件未格式化 | 1 | 执行Prettier机械格式化 |
+| 2026-07-10 | next start参数分隔错误 | 1 | 改用pnpm exec next start |
+| 2026-07-10 | standalone配置不支持next start | 1 | 本地验证使用next dev，生产镜像运行server.js |
+| 2026-07-10 | 首页favicon请求404 | 1 | 添加纯色占位favicon |
 
 ## 五问重启检查
 | 问题 | 答案 |

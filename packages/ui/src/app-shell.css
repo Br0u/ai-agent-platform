@@ -1,0 +1,128 @@
+.app-shell {
+  min-height: 100vh;
+  color: var(--color-ink);
+  background: var(--color-canvas);
+}
+
+.site-header {
+  position: sticky;
+  z-index: 20;
+  top: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(80px, 1fr);
+  align-items: center;
+  min-height: 72px;
+  padding: 0 clamp(24px, 5vw, 80px);
+  border-bottom: 1px solid var(--color-line);
+  background: color-mix(in oklch, var(--color-canvas) 94%, transparent);
+  backdrop-filter: blur(16px);
+}
+
+.site-wordmark,
+.site-login,
+.site-navigation a {
+  min-height: 44px;
+  color: inherit;
+  font-family: var(--font-display);
+  text-decoration: none;
+}
+
+.site-wordmark {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.site-navigation {
+  display: flex;
+  align-items: center;
+  gap: clamp(16px, 2vw, 30px);
+}
+
+.site-navigation a {
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.site-navigation a:hover,
+.site-wordmark:hover {
+  color: var(--color-primary);
+}
+
+.site-login {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+  min-width: 72px;
+  padding: 0 16px;
+  color: var(--color-surface);
+  background: var(--color-primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.site-header a:focus-visible,
+.site-footer a:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+.site-content {
+  min-height: calc(100vh - 144px);
+}
+
+.site-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 72px;
+  padding: 24px clamp(24px, 5vw, 80px);
+  border-top: 1px solid var(--color-line);
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+@media (max-width: 920px) {
+  .site-header {
+    grid-template-columns: 1fr auto;
+  }
+
+  .site-navigation {
+    grid-column: 1 / -1;
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    border-top: 1px solid var(--color-line);
+  }
+
+  .site-navigation a {
+    flex: 0 0 auto;
+  }
+
+  .site-content {
+    min-height: calc(100vh - 188px);
+  }
+}
+
+@media (max-width: 560px) {
+  .site-header {
+    min-height: 64px;
+    padding-inline: 20px;
+  }
+
+  .site-navigation {
+    margin-inline: -20px;
+    padding-inline: 20px;
+  }
+
+  .site-footer {
+    flex-direction: column;
+    padding-inline: 20px;
+  }
+}
