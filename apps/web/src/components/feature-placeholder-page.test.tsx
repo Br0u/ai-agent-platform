@@ -23,6 +23,7 @@ describe("FeaturePlaceholderPage", () => {
 
     expect(screen.getByRole("heading", { name: "文档中心" })).toBeVisible();
     expect(screen.getByText("页面结构已建立")).toBeVisible();
+    expect(screen.queryByText("FEATURE_DISABLED")).not.toBeInTheDocument();
   });
 
   it("clearly disables external features that are not connected", () => {
@@ -30,6 +31,7 @@ describe("FeaturePlaceholderPage", () => {
 
     expect(screen.getByRole("heading", { name: "下载中心" })).toBeVisible();
     expect(screen.getByText("功能尚未开放")).toBeVisible();
+    expect(screen.getByText("FEATURE_DISABLED")).toBeVisible();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });

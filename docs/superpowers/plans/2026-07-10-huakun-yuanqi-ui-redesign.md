@@ -223,23 +223,23 @@ git commit -m "feat(web): 重设计华鲲元启企业门户首页"
 - Modify: `apps/web/src/components/feature-placeholder-page.tsx`
 - Modify: `apps/web/src/components/feature-placeholder-page.css`
 
-- [ ] **Step 1: Write the failing placeholder test**
+- [x] **Step 1: Write the failing placeholder test**
 
 For a disabled route, require visible`FEATURE_DISABLED`; for a scaffold route, require that the code is absent.
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Expected: FAIL because the stable error code is not rendered.
 
-- [ ] **Step 3: Implement the minimal semantic change and editorial styling**
+- [x] **Step 3: Implement the minimal semantic change and editorial styling**
 
 Render the code only for placeholder routes. Replace the centered generic empty state with a numbered, left-aligned page dossier using the new tokens.
 
-- [ ] **Step 4: Run the test and verify GREEN**
+- [x] **Step 4: Run the test and verify GREEN**
 
 Run the targeted test and all web tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/web/src/components/feature-placeholder-page*
