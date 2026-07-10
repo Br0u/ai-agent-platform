@@ -49,11 +49,12 @@
 
 ## 字体系统
 
+- Header brand：`Kaushan Script`，仅用于顶部`AI Agent Platform`主标题；来自Google Fonts官方仓库，通过`next/font/local`自托管。
 - Display：正式字体未提供；方向稿需选择具有工业感的中文黑体，不继续使用通用SaaS式大圆体。
 - Body：正式字体未提供；中文正文优先保证清晰、紧凑和企业文档感。
 - Mono：用于模型名、接口、版本与技术标签。
 
-正式品牌字体尚未提供。当前字体只用于方向稿，进入开发前需确认服务器和客户端的字体授权及回退方案。
+`Kaushan Script`使用SIL Open Font License 1.1，字体与许可文件位于`apps/web/src/assets/fonts/kaushan-script/`。正式中文品牌字体仍未提供。
 
 ## 气质关键词
 
@@ -68,7 +69,7 @@
 - 独立Logo源文件与反白版
 - 原始分辨率产品UI截图
 - 可直接用于Web的设备透明图
-- 正式字体与字体授权说明
+- 正式中文字体与字体授权说明
 - 完整品牌规范或Figma设计系统
 
 缺失项继续使用明确占位；彩页截图不能被当作长期生产素材来源。

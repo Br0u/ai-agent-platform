@@ -24,11 +24,11 @@
 - Modify: `apps/web/src/app/layout.tsx`
 - Modify: `docs/design/brand-spec.md`
 
-- [ ] **Step 1: Download the official font and license**
+- [x] **Step 1: Download the official font and license**
 
 Use the official `google/fonts` repository. Record exact source URLs and the SIL OFL 1.1 license in the asset README.
 
-- [ ] **Step 2: Configure local font loading**
+- [x] **Step 2: Configure local font loading**
 
 Use `next/font/local` in `layout.tsx`:
 
@@ -42,11 +42,11 @@ const brandScript = localFont({
 
 Apply the variable class to `<html>` so `packages/ui` can consume it without depending on Next.js.
 
-- [ ] **Step 3: Record the font in the brand spec**
+- [x] **Step 3: Record the font in the brand spec**
 
 Document the local file, official source, license, usage boundary, and fallback.
 
-- [ ] **Step 4: Run typecheck and build**
+- [x] **Step 4: Run typecheck and build**
 
 Run:
 
@@ -57,7 +57,7 @@ pnpm build
 
 Expected: both exit 0 and the build does not require a Google Fonts runtime request.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/web/src/assets/fonts apps/web/src/app/layout.tsx docs/design/brand-spec.md
