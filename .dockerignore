@@ -1,0 +1,16 @@
+.git
+.worktrees
+.next
+**/.next
+node_modules
+**/node_modules
+.playwright-cli
+coverage
+backups
+data
+uploads
+.env
+.env.*
+!.env.example
+*.log
+*.tsbuildinfo

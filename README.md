@@ -9,14 +9,14 @@ apps/web/                 Next.js 全站应用
 packages/ui/              共享设计系统与组件
 packages/database/        PostgreSQL Schema、迁移与种子数据
 packages/integrations/    外部能力适配器与 Mock
-infra/docker/             Docker Compose 与镜像构建
-infra/nginx/              反向代理和 HTTPS 配置
+infra/docker/             数据库备份脚本
+infra/nginx/              反向代理配置
 docs/product/             PRD 与原始需求归档
 docs/architecture/        系统架构说明
 docs/api/                 接口契约
 docs/design/              品牌规范与 UI 方向稿
 docs/deployment/          服务器准备和上线检查
-public/assets/            Logo、产品截图等正式素材
+apps/web/public/          Logo、产品截图等正式素材（当前为空）
 ```
 
 ## 当前文档
@@ -27,6 +27,23 @@ public/assets/            Logo、产品截图等正式素材
 - UI 方向：`docs/design/AI Agent Platform - UI Directions.html`
 - 服务器准备：`docs/deployment/server-readiness.md`
 
+## 本地运行
+
+```bash
+pnpm install
+pnpm dev
+```
+
+## Docker运行
+
+```bash
+cp .env.example .env
+# 编辑.env并替换测试密码
+docker compose up -d --build
+```
+
+访问`http://localhost:8080`；健康检查为`/api/health/live`和`/api/health/ready`。
+
 ## 当前状态
 
-项目尚未初始化代码和 Git 仓库。应先确认 PRD、UI 方向和公司服务器环境，再进入实现计划。
+已建立全站路由骨架、蓝靛紫设计系统、外部功能占位边界、PostgreSQL基础模型和Docker Compose部署基线。真实品牌资产及License、下载、OpenLab等外部能力仍为占位。
