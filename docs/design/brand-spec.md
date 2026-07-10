@@ -24,7 +24,8 @@
 - 视觉检索彩页提供：任务中心、即时检索、持续布控、算法配置与预警管理界面。
 - 首页主叙事优先使用华鲲元启平台UI；视觉检索截图只用于行业方案或多模态能力章节。
 - 当前平台界面占位：`docs/design/assets/huakun-yuanqi/platform-overview.png`。
-- 页面使用副本：`apps/web/src/assets/huakun-yuanqi/platform-overview.png`，已标注彩页来源并提供“华鲲元启平台界面”替代文本。
+- 首页使用截图：`apps/web/src/assets/huakun-yuanqi/platform-overview.png`，由用户单独提供，展示应用广场，并提供“华鲲元启应用广场界面”替代文本。
+- 该截图可见账号名`wuboru`及界面时间；公开发布前需确认是否保留。
 
 ### 产品设备图
 

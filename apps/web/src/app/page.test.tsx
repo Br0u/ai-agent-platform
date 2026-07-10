@@ -18,7 +18,9 @@ describe("HomePage", () => {
       "href",
       "/docs",
     );
-    expect(screen.getByRole("img", { name: "华鲲元启平台界面" })).toBeVisible();
+    expect(
+      screen.getByRole("img", { name: "华鲲元启应用广场界面" }),
+    ).toBeVisible();
     expect(screen.getByText("基于华鲲元启的行业子能力")).toBeVisible();
     expect(screen.queryByText("AI Agent Platform")).not.toBeInTheDocument();
   });

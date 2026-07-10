@@ -11,6 +11,11 @@ import {
 } from "./home-content";
 import "./home.css";
 
+const platformOverviewSrc =
+  typeof platformOverview === "string"
+    ? platformOverview
+    : platformOverview.src;
+
 export function HeroEvidence() {
   return (
     <section className="home-section home-hero" aria-labelledby="hero-title">
@@ -49,14 +54,16 @@ export function HeroEvidence() {
             <span>PLATFORM / UI-01</span>
             <span>TGDataXAI</span>
           </div>
-          <Image
-            src={platformOverview}
-            alt="华鲲元启平台界面"
-            width={1049}
-            height={902}
-            sizes="(max-width: 900px) 100vw, 48vw"
+          {/* eslint-disable-next-line @next/next/no-img-element -- Native loading avoids conflicting desktop LCP and mobile preload behavior for this responsive screenshot. */}
+          <img
+            src={platformOverviewSrc}
+            alt="华鲲元启应用广场界面"
+            width={3178}
+            height={1730}
+            loading="eager"
+            decoding="async"
           />
-          <figcaption>界面示意 · 来源于华鲲元启产品彩页</figcaption>
+          <figcaption>应用广场界面 · 用户提供的华鲲元启平台截图</figcaption>
         </figure>
       </div>
     </section>
