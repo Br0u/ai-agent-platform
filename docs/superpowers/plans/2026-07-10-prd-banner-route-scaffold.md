@@ -181,7 +181,7 @@ git commit -m "refactor(web): 统一登记路由页面壳"
 - Create: `apps/web/src/app/console/layout.tsx`
 - Create: `apps/web/src/app/admin/layout.tsx`
 
-- [ ] **Step 1: Write the failing filesystem coverage test**
+- [x] **Step 1: Write the failing filesystem coverage test**
 
 For each registered path except `/`, translate the route pattern into its expected App Router file and assert that it exists:
 
@@ -189,7 +189,7 @@ For each registered path except `/`, translate the route pattern into its expect
 expect(existsSync(pageFileForRoute(route.path))).toBe(true);
 ```
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run:
 
@@ -199,21 +199,21 @@ pnpm --filter @ai-agent-platform/web test src/config/route-files.test.ts
 
 Expected: FAIL with missing `app/product/page.tsx` and other explicit files.
 
-- [ ] **Step 3: Create public portal page files**
+- [x] **Step 3: Create public portal page files**
 
 Create explicit files for product, product detail, releases, release detail, roadmap, downloads, OpenLab, docs, compatibility, Marketplace, Marketplace detail, support, help, blog, blog detail, cases, contact, and login.
 
 Each static page exports route metadata and renders `RegisteredRoutePage`. Dynamic pages derive their concrete pathname from `params`.
 
-- [ ] **Step 4: Create console page files**
+- [x] **Step 4: Create console page files**
 
 Create `console/layout.tsx` plus all registered console page directories. The layout is a semantic boundary only; authentication remains out of scope.
 
-- [ ] **Step 5: Create admin page files**
+- [x] **Step 5: Create admin page files**
 
 Create `admin/layout.tsx` plus all registered admin page directories. The layout is a semantic boundary only; authorization remains out of scope.
 
-- [ ] **Step 6: Run route coverage and full web tests**
+- [x] **Step 6: Run route coverage and full web tests**
 
 Run:
 
@@ -224,7 +224,7 @@ pnpm --filter @ai-agent-platform/web test
 
 Expected: all explicit route files exist and all web tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/web/src/app apps/web/src/config/route-files.test.ts
