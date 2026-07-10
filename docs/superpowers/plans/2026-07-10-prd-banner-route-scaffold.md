@@ -72,7 +72,7 @@ git commit -m "feat(brand): 自托管Kaushan Script品牌字体"
 - Modify: `packages/ui/src/app-shell.tsx`
 - Modify: `packages/ui/src/app-shell.css`
 
-- [ ] **Step 1: Write the failing header contract test**
+- [x] **Step 1: Write the failing header contract test**
 
 Require:
 
@@ -87,7 +87,7 @@ expect(screen.queryByText("华鲲元启")).not.toBeInTheDocument();
 
 The desktop navigation must map `产品 / 文档 / 版本 / 兼容矩阵 / Marketplace / 支持` to the PRD paths.
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run:
 
@@ -97,11 +97,11 @@ pnpm --filter @ai-agent-platform/ui test src/app-shell.test.tsx
 
 Expected: FAIL because the old brand and navigation are present.
 
-- [ ] **Step 3: Implement the identity and navigation**
+- [x] **Step 3: Implement the identity and navigation**
 
 Use `var(--font-brand-script)` only for `.site-brand-name`. Keep the subtitle mono, the spectrum rail narrow, focus visible, and all targets at least44px.
 
-- [ ] **Step 4: Run targeted and full UI tests**
+- [x] **Step 4: Run targeted and full UI tests**
 
 Run:
 
@@ -112,7 +112,7 @@ pnpm --filter @ai-agent-platform/ui test
 
 Expected: all UI tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/ui/src/app-shell.*

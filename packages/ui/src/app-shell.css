@@ -33,7 +33,7 @@
 
 .site-header-inner {
   display: grid;
-  grid-template-columns: minmax(210px, 1fr) auto minmax(110px, 1fr);
+  grid-template-columns: minmax(270px, 1fr) auto minmax(110px, 1fr);
   align-items: center;
   width: min(100% - 48px, 1320px);
   min-height: 76px;
@@ -52,25 +52,27 @@
 }
 
 .site-wordmark {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
+  display: inline-grid;
+  align-content: center;
+  gap: 1px;
   width: fit-content;
 }
 
 .site-brand-name {
-  font-size: 20px;
-  font-weight: 760;
-  letter-spacing: 0.08em;
+  font-family: var(--font-brand-script), cursive;
+  font-size: 24px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  line-height: 1;
 }
 
 .site-product-name {
-  padding-left: 12px;
-  border-left: 1px solid var(--color-line);
   color: var(--color-muted);
   font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
 }
 
 .site-navigation {
@@ -208,7 +210,7 @@
   }
 
   .site-brand-name {
-    font-size: 17px;
+    font-size: 20px;
   }
 
   .site-product-name {
