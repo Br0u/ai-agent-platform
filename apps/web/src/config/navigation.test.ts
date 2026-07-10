@@ -5,6 +5,7 @@ import {
   footerNavigation,
   portalNavigation,
 } from "./navigation";
+import { matchRoute } from "./routes";
 
 const expectedPortal = [
   {
@@ -479,6 +480,22 @@ describe("navigation targets", () => {
     for (const menu of completeMenus) {
       expectInternalTargets(menu);
       expectUniqueTargets(menu);
+    }
+  });
+
+  it("registers every linked navigation pathname", () => {
+    const completeMenus = [
+      flattenPortal(),
+      flattenSidebar(consoleNavigation),
+      flattenSidebar(adminNavigation),
+      flattenFooter(),
+    ];
+
+    for (const item of completeMenus.flat()) {
+      if (!item.href) continue;
+
+      const pathname = new URL(item.href, "https://local.invalid").pathname;
+      expect(matchRoute(pathname), `${item.label}: ${pathname}`).toBeDefined();
     }
   });
 });

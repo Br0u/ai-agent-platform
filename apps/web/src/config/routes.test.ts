@@ -36,11 +36,16 @@ const requiredRoutes = [
   "/admin/navigation",
   "/admin/products",
   "/admin/releases",
+  "/admin/docs",
   "/admin/blog",
   "/admin/cases",
   "/admin/faq",
   "/admin/compatibility",
   "/admin/marketplace",
+  "/admin/openlab",
+  "/admin/licenses",
+  "/admin/tickets",
+  "/admin/analytics",
   "/admin/users",
   "/admin/roles",
   "/admin/audit-logs",
@@ -59,6 +64,20 @@ describe("routeRegistry", () => {
       expect(route.title.trim()).not.toBe("");
       expect(["public", "console", "admin"]).toContain(route.group);
       expect(["live", "scaffold", "placeholder"]).toContain(route.status);
+    }
+  });
+
+  it("distinguishes CMS scaffolds from unavailable external capabilities", () => {
+    for (const path of ["/admin/docs", "/admin/analytics"]) {
+      expect(matchRoute(path)?.status).toBe("scaffold");
+    }
+
+    for (const path of [
+      "/admin/openlab",
+      "/admin/licenses",
+      "/admin/tickets",
+    ]) {
+      expect(matchRoute(path)?.status).toBe("placeholder");
     }
   });
 

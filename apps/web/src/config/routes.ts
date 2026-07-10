@@ -17,11 +17,15 @@ const consoleRoute = (
   status: PortalRoute["status"] = "placeholder",
 ): PortalRoute => ({ path, title, group: "console", status });
 
-const adminRoute = (path: string, title: string): PortalRoute => ({
+const adminRoute = (
+  path: string,
+  title: string,
+  status: PortalRoute["status"] = "scaffold",
+): PortalRoute => ({
   path,
   title,
   group: "admin",
-  status: "scaffold",
+  status,
 });
 
 export const routeRegistry: PortalRoute[] = [
@@ -59,11 +63,16 @@ export const routeRegistry: PortalRoute[] = [
   adminRoute("/admin/navigation", "导航管理"),
   adminRoute("/admin/products", "产品内容"),
   adminRoute("/admin/releases", "版本管理"),
+  adminRoute("/admin/docs", "文档管理"),
   adminRoute("/admin/blog", "资讯管理"),
   adminRoute("/admin/cases", "客户案例管理"),
   adminRoute("/admin/faq", "FAQ管理"),
   adminRoute("/admin/compatibility", "兼容矩阵管理"),
   adminRoute("/admin/marketplace", "Marketplace管理"),
+  adminRoute("/admin/openlab", "OpenLab申请审核", "placeholder"),
+  adminRoute("/admin/licenses", "License管理", "placeholder"),
+  adminRoute("/admin/tickets", "工单管理", "placeholder"),
+  adminRoute("/admin/analytics", "数据统计"),
   adminRoute("/admin/users", "用户管理"),
   adminRoute("/admin/roles", "角色权限"),
   adminRoute("/admin/audit-logs", "操作审计"),
