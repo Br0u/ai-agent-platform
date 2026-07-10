@@ -275,7 +275,7 @@ git commit -m "docs(web): 明确页面模块开发边界"
 - Modify: `task_plan.md`
 - Modify: this plan's checkboxes
 
-- [ ] **Step 1: Run automated checks**
+- [x] **Step 1: Run automated checks**
 
 ```bash
 pnpm test
@@ -287,7 +287,7 @@ pnpm build
 
 Expected: all commands exit 0.
 
-- [ ] **Step 2: Verify the actual application in a real browser**
+- [x] **Step 2: Verify the actual application in a real browser**
 
 Check `/` at1440×1000 and390×844, open the mobile menu, and verify `/product`, `/downloads`, `/console/profile`, and `/admin/products`.
 
@@ -300,15 +300,15 @@ Require:
 - `FEATURE_DISABLED` only on disabled routes;
 - zero console errors or asset404s.
 
-- [ ] **Step 3: Review source and Git scope**
+- [x] **Step 3: Review source and Git scope**
 
 Confirm no source PDFs, credentials, `.env`, browser caches, temp files, or unrelated changes are staged. Confirm the font license is present.
 
-- [ ] **Step 4: Update durable progress**
+- [x] **Step 4: Update durable progress**
 
 Record RED/GREEN results, font source/license, explicit directory count, browser metrics, and build result.
 
-- [ ] **Step 5: Commit verification records**
+- [x] **Step 5: Commit verification records**
 
 ```bash
 git add progress.md task_plan.md docs/superpowers/plans/2026-07-10-prd-banner-route-scaffold.md

@@ -87,6 +87,26 @@
   - `packages/ui/src/app-shell*`
   - `packages/ui/src/tokens.css`
 
+### 阶段 5：PRD页头与页面目录骨架
+
+- **状态：** complete
+- 执行的操作：
+  - 将顶部品牌区改为`AI Agent Platform / Build Enterprise AI Faster`，首页中文主标题保持不变。
+  - 从Google Fonts官方仓库引入Kaushan Script，并将字体和SIL OFL 1.1许可随项目自托管。
+  - 按PRD将主导航改为产品、文档、版本、兼容矩阵、Marketplace和支持。
+  - 为路由登记表中的41个非首页路由创建明确`page.tsx`，新增控制台和后台布局边界。
+  - 建立公开门户、客户控制台、运营后台和route-scaffold组件目录边界。
+  - 保持下载、OpenLab、License等外部能力为`FEATURE_DISABLED`占位。
+  - 使用真实浏览器验证首页、移动导航、产品、下载、控制台和后台代表页面。
+- 创建/修改的文件：
+  - `apps/web/src/assets/fonts/kaushan-script/*`
+  - `apps/web/src/app/product/*`
+  - `apps/web/src/app/console/*`
+  - `apps/web/src/app/admin/*`
+  - `apps/web/src/components/route-scaffold/*`
+  - `apps/web/src/config/route-files.test.ts`
+  - `packages/ui/src/app-shell.*`
+
 ## 测试结果
 
 | 测试                     | 输入                                           | 预期结果                        | 实际结果          | 状态 |
@@ -133,6 +153,15 @@
 | 品牌页面控制台           | 实际Next.js开发页面                            | 0错误/0警告                     | 0错误/0警告       | PASS |
 | 品牌UI全量测试           | Web、UI、数据库、集成                          | 19个测试通过                    | 19个通过          | PASS |
 | 品牌UI生产构建           | Next.js 16.2.10                                | 构建成功                        | 构建成功          | PASS |
+| PRD页头 RED/GREEN        | 旧品牌与旧导航→PRD品牌与导航                   | 先失败后通过                    | UI测试通过        | PASS |
+| 路由目录 RED/GREEN       | 缺失41个页面文件→全部存在                      | 先失败后通过                    | 缺失0个           | PASS |
+| 自托管书法字体           | Kaushan Script + SIL OFL 1.1                   | 本地加载，不依赖CDN             | 字体与许可存在    | PASS |
+| 页面文件数量             | `src/app/**/page.tsx`                          | 首页、41个登记路由及兜底        | 共43个文件        | PASS |
+| 最终全量测试             | Web、UI、数据库、集成                          | 全部通过                        | 22个通过          | PASS |
+| PRD目录生产构建          | Next.js 16.2.10                                | 43个页面生成成功                | 43/43             | PASS |
+| PRD页头桌面              | 1440×1000                                      | 字体加载、无横向溢出、目标≥44px | 通过              | PASS |
+| PRD页头移动              | 390×844                                        | 6个导航可展开、无横向溢出       | 通过              | PASS |
+| 明确路由浏览器验证       | 产品、下载、账号资料、后台产品                 | 状态与分组正确                  | 通过              | PASS |
 
 ## 错误日志
 
@@ -169,13 +198,14 @@
 | 2026-07-10 | 根工作区没有Prettier可执行文件                  | 1        | 使用Web工作区的Prettier                     |
 | 2026-07-10 | 移动端平台截图触发未使用预加载警告              | 1        | 移除非首屏大图的priority标记                |
 | 2026-07-10 | 动态占位页仍使用旧品牌页面标题                  | 1        | 增加元数据测试并改为华鲲元启                |
+| 2026-07-10 | 新路由导致开发与生产生成类型暂时不一致          | 1        | 重新生产构建生成完整43页路由类型            |
 
 ## 五问重启检查
 
 | 问题           | 答案                                       |
 | -------------- | ------------------------------------------ |
-| 我在哪里？     | 阶段7：品牌UI已完成，等待Git交付确认       |
+| 我在哪里？     | 阶段8：PRD目录骨架已完成，等待Git交付确认  |
 | 我要去哪里？   | 用户确认后推送GitHub                       |
 | 目标是什么？   | 建立可测试、可运行、可Docker部署的全栈基础 |
 | 我学到了什么？ | 见 findings.md                             |
-| 我做了什么？   | 完成全栈基线与华鲲元启品牌门户重设计       |
+| 我做了什么？   | 完成全栈基线、品牌门户和PRD页面目录骨架    |
