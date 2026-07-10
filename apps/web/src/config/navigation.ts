@@ -44,19 +44,43 @@ export const portalNavigation: PortalNavigationItem[] = [
       {
         label: "落地文档",
         items: [
-          { label: "快速开始", href: "/docs#quick-start" },
-          { label: "部署指南", href: "/docs#deployment" },
-          { label: "升级手册", href: "/docs#upgrade" },
-          { label: "运维手册", href: "/docs#operations" },
+          {
+            label: "快速开始",
+            href: "/docs#quick-start",
+            status: "scaffold",
+          },
+          {
+            label: "部署指南",
+            href: "/docs#deployment",
+            status: "scaffold",
+          },
+          {
+            label: "升级手册",
+            href: "/docs#upgrade",
+            status: "scaffold",
+          },
+          {
+            label: "运维手册",
+            href: "/docs#operations",
+            status: "scaffold",
+          },
         ],
       },
       {
         label: "开发与适配",
         items: [
-          { label: "API 文档", href: "/docs#api" },
-          { label: "功能手册", href: "/docs#features" },
-          { label: "GPU / 硬件适配", href: "/docs#hardware" },
-          { label: "常见问题 FAQ", href: "/docs#faq" },
+          { label: "API 文档", href: "/docs#api", status: "scaffold" },
+          { label: "功能手册", href: "/docs#features", status: "scaffold" },
+          {
+            label: "GPU / 硬件适配",
+            href: "/docs#hardware",
+            status: "scaffold",
+          },
+          {
+            label: "常见问题 FAQ",
+            href: "/docs#faq",
+            status: "scaffold",
+          },
         ],
       },
     ],
@@ -142,11 +166,31 @@ export const portalNavigation: PortalNavigationItem[] = [
       {
         label: "环境适配",
         items: [
-          { label: "硬件配置要求", href: "/compatibility#hardware" },
-          { label: "GPU 适配列表", href: "/compatibility#gpu" },
-          { label: "操作系统兼容", href: "/compatibility#os" },
-          { label: "浏览器兼容", href: "/compatibility#browser" },
-          { label: "依赖组件兼容", href: "/compatibility#dependencies" },
+          {
+            label: "硬件配置要求",
+            href: "/compatibility#hardware",
+            status: "scaffold",
+          },
+          {
+            label: "GPU 适配列表",
+            href: "/compatibility#gpu",
+            status: "scaffold",
+          },
+          {
+            label: "操作系统兼容",
+            href: "/compatibility#os",
+            status: "scaffold",
+          },
+          {
+            label: "浏览器兼容",
+            href: "/compatibility#browser",
+            status: "scaffold",
+          },
+          {
+            label: "依赖组件兼容",
+            href: "/compatibility#dependencies",
+            status: "scaffold",
+          },
         ],
       },
     ],
@@ -158,11 +202,31 @@ export const portalNavigation: PortalNavigationItem[] = [
       {
         label: "资源类型",
         items: [
-          { label: "Agent 应用", href: "/marketplace#agent" },
-          { label: "Workflow 工作流", href: "/marketplace#workflow" },
-          { label: "插件工具", href: "/marketplace#plugin" },
-          { label: "Prompt 模板", href: "/marketplace#prompt" },
-          { label: "知识库模板", href: "/marketplace#knowledge-base" },
+          {
+            label: "Agent 应用",
+            href: "/marketplace#agent",
+            status: "scaffold",
+          },
+          {
+            label: "Workflow 工作流",
+            href: "/marketplace#workflow",
+            status: "scaffold",
+          },
+          {
+            label: "插件工具",
+            href: "/marketplace#plugin",
+            status: "scaffold",
+          },
+          {
+            label: "Prompt 模板",
+            href: "/marketplace#prompt",
+            status: "scaffold",
+          },
+          {
+            label: "知识库模板",
+            href: "/marketplace#knowledge-base",
+            status: "scaffold",
+          },
         ],
       },
     ],
@@ -198,10 +262,22 @@ export const portalNavigation: PortalNavigationItem[] = [
       {
         label: "内容分类",
         items: [
-          { label: "版本更新", href: "/blog#releases" },
-          { label: "技术教程", href: "/blog#tutorial" },
-          { label: "行业案例", href: "/cases" },
-          { label: "产品动态", href: "/blog#product" },
+          {
+            label: "版本更新",
+            href: "/blog#releases",
+            status: "scaffold",
+          },
+          {
+            label: "技术教程",
+            href: "/blog#tutorial",
+            status: "scaffold",
+          },
+          { label: "行业案例", href: "/cases", status: "scaffold" },
+          {
+            label: "产品动态",
+            href: "/blog#product",
+            status: "scaffold",
+          },
         ],
       },
     ],
@@ -283,7 +359,7 @@ export const consoleNavigation: SidebarNavigationConfig = {
   ],
 };
 
-export const cmsNavigation: SidebarNavigationConfig = {
+export const adminNavigation: SidebarNavigationConfig = {
   groups: [
     {
       label: "运营概览",

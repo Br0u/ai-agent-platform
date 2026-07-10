@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  cmsNavigation,
+  adminNavigation,
   consoleNavigation,
   footerNavigation,
   portalNavigation,
@@ -359,6 +359,18 @@ describe("portalNavigation", () => {
       expect(item?.status).toBe("placeholder");
     }
   });
+
+  it("marks document, compatibility, Marketplace and news children as scaffold", () => {
+    for (const label of ["文档", "兼容性", "Marketplace", "资讯"]) {
+      const parent = portalNavigation.find((item) => item.label === label);
+
+      expect(parent).toBeDefined();
+      for (const child of parent?.children.flatMap((group) => group.items) ??
+        []) {
+        expect(child.status).toBe("scaffold");
+      }
+    }
+  });
 });
 
 describe("consoleNavigation", () => {
@@ -411,27 +423,27 @@ describe("consoleNavigation", () => {
   });
 });
 
-describe("cmsNavigation", () => {
+describe("adminNavigation", () => {
   it("preserves the exact five groups and all 21 items", () => {
     expect(
-      cmsNavigation.groups.map((group) => ({
+      adminNavigation.groups.map((group) => ({
         label: group.label,
         items: linkPairs(group.items),
       })),
     ).toEqual(expectedCmsGroups);
-    expect(cmsNavigation.utilities).toEqual([]);
+    expect(adminNavigation.utilities).toEqual([]);
   });
 
   it("marks external operations as placeholders and protects admin items", () => {
     for (const label of ["OpenLab 申请审核", "License 管理", "工单管理"]) {
-      const item = flattenSidebar(cmsNavigation).find(
+      const item = flattenSidebar(adminNavigation).find(
         (link) => link.label === label,
       );
       expect(item?.status).toBe("placeholder");
     }
 
     const permissions = Object.fromEntries(
-      cmsNavigation.groups
+      adminNavigation.groups
         .flatMap((group) => group.items)
         .filter((item) => item.permission)
         .map((item) => [item.label, item.permission]),
@@ -460,7 +472,7 @@ describe("navigation targets", () => {
     const completeMenus = [
       flattenPortal(),
       flattenSidebar(consoleNavigation),
-      flattenSidebar(cmsNavigation),
+      flattenSidebar(adminNavigation),
       flattenFooter(),
     ];
 
