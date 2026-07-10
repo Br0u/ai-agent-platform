@@ -240,15 +240,15 @@ git commit -m "feat(web): 建立PRD页面目录骨架"
 - Create: `apps/web/src/components/admin/README.md`
 - Modify: `apps/web/README.md`
 
-- [ ] **Step 1: Document component boundaries**
+- [x] **Step 1: Document component boundaries**
 
 Each README states what belongs in the directory, what must stay in `packages/ui`, and where data/integration code belongs.
 
-- [ ] **Step 2: Document the page-development workflow**
+- [x] **Step 2: Document the page-development workflow**
 
 Explain explicit routes, nearby tests, shared components, route status changes, database boundaries, and external-feature placeholders.
 
-- [ ] **Step 3: Run format checks**
+- [x] **Step 3: Run format checks**
 
 Run:
 
@@ -258,7 +258,7 @@ pnpm --filter @ai-agent-platform/web format:check
 
 Expected: formatting passes.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apps/web/src/components/*/README.md apps/web/README.md
