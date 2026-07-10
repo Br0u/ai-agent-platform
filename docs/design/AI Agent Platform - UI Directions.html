@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Agent Platform · UI Directions</title>
+  <link rel="icon" href="data:,">
+  <!--
+    Artifact: Design direction canvas, not production UI.
+    Type: Avenir Next + PingFang SC; 56 / 36 / 24 / 18 / 15 / 12.
+    Color: Blue #3157D5, Indigo #4F46E5, Violet #7C3AED, Ink #111827.
+    Canvas: #EEF1F8; surfaces alternate between #FFFFFF and #0C1020.
+    Grid: 12-column feeling, 8px spacing rhythm, hairline boundaries.
+    Asset rule: product screenshots and logo remain labeled placeholders until supplied.
+  -->
+  <style>
+    :root {
+      color-scheme: light;
+      --blue: #3157d5;
+      --indigo: #4f46e5;
+      --violet: #7c3aed;
+      --ink: #111827;
+      --muted: #5b6475;
+      --canvas: #eef1f8;
+      --surface: #ffffff;
+      --line: #dce2ef;
+      --dark: #0c1020;
+      --dark-line: #2b3150;
+      --font-display: "Avenir Next", "PingFang SC", sans-serif;
+      --font-body: "PingFang SC", "Microsoft YaHei", sans-serif;
+      --font-mono: "SFMono-Regular", "JetBrains Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { background: var(--canvas); }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      color: var(--ink);
+      background: var(--canvas);
+      font-family: var(--font-body);
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, a { font: inherit; }
+
+    .page-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(260px, .65fr);
+      gap: 48px;
+      padding: 56px clamp(24px, 5vw, 80px) 48px;
+      border-bottom: 1px solid #d4dae7;
+      background: #f8f9fc;
+    }
+
+    .eyebrow,
+    .variant-kicker {
+      font: 700 12px/1.2 var(--font-mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow { color: var(--blue); }
+
+    .page-head h1 {
+      max-width: 780px;
+      margin: 14px 0 18px;
+      font: 650 clamp(40px, 5vw, 72px)/.98 var(--font-display);
+      letter-spacing: -.045em;
+      text-wrap: balance;
+    }
+
+    .page-head p {
+      max-width: 740px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.75;
+      text-wrap: pretty;
+    }
+
+    .assumptions {
+      align-self: end;
+      border-top: 3px solid var(--indigo);
+      padding-top: 16px;
+    }
+
+    .assumptions strong {
+      display: block;
+      margin-bottom: 10px;
+      font: 650 15px/1.4 var(--font-display);
+    }
+
+    .assumptions ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.8;
+    }
+
+    .canvas {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(360px, 1fr));
+      gap: 24px;
+      overflow-x: auto;
+      padding: 32px clamp(24px, 4vw, 64px) 64px;
+      scroll-snap-type: x proximity;
+    }
+
+    .variant {
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid #d6dce8;
+      background: var(--surface);
+      scroll-snap-align: start;
+      box-shadow: 0 18px 44px rgba(26, 34, 59, .08);
+    }
+
+    .variant-label {
+      min-height: 136px;
+      padding: 22px 24px 20px;
+      border-bottom: 1px solid #dfe4ee;
+      background: #fff;
+    }
+
+    .variant-label h2 {
+      margin: 7px 0 7px;
+      font: 650 22px/1.2 var(--font-display);
+      letter-spacing: -.02em;
+    }
+
+    .variant-label p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+      text-wrap: pretty;
+    }
+
+    .preview {
+      position: relative;
+      min-height: 790px;
+      overflow: hidden;
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 64px;
+      padding: 0 28px;
+      border-bottom: 1px solid currentColor;
+    }
+
+    .wordmark {
+      font: 650 14px/1 var(--font-display);
+      letter-spacing: -.02em;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 18px;
+      font-size: 10px;
+      opacity: .7;
+    }
+
+    .asset-note {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 0 9px;
+      border: 1px dashed currentColor;
+      font: 600 9px/1 var(--font-mono);
+      letter-spacing: .05em;
+      opacity: .62;
+    }
+
+    .cta {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 18px;
+      border: 1px solid transparent;
+      text-decoration: none;
+      font: 650 12px/1 var(--font-display);
+      transition: transform .18s ease, background-color .18s ease, color .18s ease;
+    }
+
+    .cta:hover { transform: translateY(-2px); }
+    .cta:focus-visible { outline: 3px solid #fbbf24; outline-offset: 3px; }
+
+    .screen-placeholder {
+      position: relative;
+      display: grid;
+      place-items: center;
+      min-height: 232px;
+      border: 1px dashed currentColor;
+      overflow: hidden;
+      font: 600 10px/1.5 var(--font-mono);
+      letter-spacing: .04em;
+      text-align: center;
+      opacity: .8;
+    }
+
+    .screen-placeholder::before,
+    .screen-placeholder::after {
+      content: "";
+      position: absolute;
+      background: currentColor;
+      opacity: .12;
+    }
+
+    .screen-placeholder::before { inset: 26px 20px auto; height: 1px; }
+    .screen-placeholder::after { inset: 48px 20px 20px; border: 1px solid currentColor; background: transparent; }
+
+    /* Direction A: Swiss editorial */
+    .a .preview { background: #fbfcff; }
+    .a .nav { color: #1c2340; border-color: #dce2ed; }
+    .a .hero { padding: 54px 28px 30px; }
+    .a .index { color: var(--blue); font: 700 12px/1 var(--font-mono); }
+    .a h3 {
+      margin: 22px 0 18px;
+      font: 650 44px/.98 var(--font-display);
+      letter-spacing: -.05em;
+      text-wrap: balance;
+    }
+    .a .lead { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .a .actions { display: flex; gap: 10px; margin: 26px 0 36px; }
+    .a .primary { color: #fff; background: var(--blue); }
+    .a .secondary { color: var(--ink); border-color: #bfc8da; background: transparent; }
+    .a .screen-placeholder { color: var(--indigo); background: #f4f6fb; }
+    .a .rail {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      margin-top: 30px;
+      border-top: 1px solid #d7deeb;
+      border-bottom: 1px solid #d7deeb;
+    }
+    .a .rail div { min-height: 86px; padding: 16px 10px; border-right: 1px solid #d7deeb; }
+    .a .rail div:last-child { border-right: 0; }
+    .a .rail b { display: block; margin-bottom: 8px; color: var(--blue); font: 700 10px/1 var(--font-mono); }
+    .a .rail span { font-size: 11px; line-height: 1.45; }
+
+    /* Direction B: Dieter Rams product-forward */
+    .b .preview { background: #f1f2f5; color: #171a22; }
+    .b .nav { border-color: #ccd0d9; }
+    .b .hero { padding: 44px 26px 28px; }
+    .b .hero-top {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 24px;
+      align-items: end;
+      padding-bottom: 24px;
+      border-bottom: 1px solid #c7ccd6;
+    }
+    .b h3 { margin: 0; font: 550 36px/1.02 var(--font-display); letter-spacing: -.04em; }
+    .b .version { color: var(--violet); font: 650 10px/1 var(--font-mono); }
+    .b .product-frame {
+      position: relative;
+      margin: 34px 0;
+      padding: 18px;
+      border: 1px solid #bec4d0;
+      background: #e6e9ef;
+    }
+    .b .screen-placeholder { min-height: 304px; color: #596177; background: #f8f9fb; }
+    .b .product-frame::before {
+      content: "PRODUCT SURFACE / 01";
+      position: absolute;
+      top: -18px;
+      left: 0;
+      font: 600 9px/1 var(--font-mono);
+      color: #737b8c;
+    }
+    .b .specs { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border-top: 1px solid #c7ccd6; }
+    .b .specs div { padding: 17px 0; border-bottom: 1px solid #c7ccd6; }
+    .b .specs div:nth-child(odd) { padding-right: 12px; }
+    .b .specs div:nth-child(even) { padding-left: 12px; border-left: 1px solid #c7ccd6; }
+    .b .specs b { display: block; margin-bottom: 6px; font: 650 11px/1 var(--font-display); }
+    .b .specs span { color: #6e7584; font-size: 10px; }
+    .b .actions { display: flex; justify-content: space-between; align-items: center; margin-top: 24px; }
+    .b .primary { color: #fff; background: var(--indigo); }
+
+    /* Direction C: computational atlas */
+    .c .variant-label { border-color: #282f4c; }
+    .c .preview {
+      color: #eef1ff;
+      background-color: var(--dark);
+      background-image:
+        linear-gradient(rgba(130, 141, 190, .10) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(130, 141, 190, .10) 1px, transparent 1px);
+      background-size: 28px 28px;
+    }
+    .c .nav { border-color: var(--dark-line); }
+    .c .hero { padding: 42px 28px 28px; }
+    .c .signal { color: #9b94ff; font: 650 10px/1 var(--font-mono); letter-spacing: .12em; }
+    .c h3 {
+      max-width: 430px;
+      margin: 18px 0 16px;
+      font: 600 41px/1.02 var(--font-display);
+      letter-spacing: -.045em;
+      text-wrap: balance;
+    }
+    .c .lead { max-width: 400px; margin: 0; color: #aeb6d2; font-size: 12px; line-height: 1.7; }
+    .c .actions { display: flex; gap: 10px; margin: 24px 0 32px; }
+    .c .primary { color: #0c1020; background: #a9a4ff; }
+    .c .secondary { color: #e7e9ff; border-color: #525b83; }
+    .c .atlas {
+      position: relative;
+      min-height: 360px;
+      margin-top: 8px;
+      border: 1px solid #343d64;
+      background: rgba(11, 15, 32, .78);
+    }
+    .c .node {
+      position: absolute;
+      display: grid;
+      place-items: center;
+      width: 112px;
+      min-height: 56px;
+      padding: 8px;
+      border: 1px solid #4c5682;
+      background: #151b35;
+      font: 600 9px/1.4 var(--font-mono);
+      text-align: center;
+    }
+    .c .node.core { left: 50%; top: 50%; color: #fff; border-color: #8b83ff; transform: translate(-50%, -50%); }
+    .c .node.n1 { left: 18px; top: 34px; }
+    .c .node.n2 { right: 18px; top: 34px; }
+    .c .node.n3 { left: 18px; bottom: 34px; }
+    .c .node.n4 { right: 18px; bottom: 34px; }
+    .c .wire { position: absolute; background: #5d6391; opacity: .72; }
+    .c .wire.h1 { left: 130px; right: 50%; top: 62px; height: 1px; }
+    .c .wire.h2 { left: 50%; right: 130px; top: 62px; height: 1px; }
+    .c .wire.h3 { left: 130px; right: 50%; bottom: 62px; height: 1px; }
+    .c .wire.h4 { left: 50%; right: 130px; bottom: 62px; height: 1px; }
+    .c .wire.v { left: 50%; top: 62px; bottom: 62px; width: 1px; }
+    .c .asset-note { position: absolute; right: 12px; bottom: 12px; color: #b5b8ff; }
+
+    .recommendation {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 14px;
+      align-items: start;
+      margin: 0 clamp(24px, 4vw, 64px) 64px;
+      padding: 24px 28px;
+      border: 1px solid #cfd6e5;
+      background: #fff;
+    }
+
+    .recommendation .mark {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      color: #fff;
+      background: var(--blue);
+      font: 700 12px/1 var(--font-mono);
+    }
+
+    .recommendation h2 { margin: 0 0 7px; font: 650 18px/1.3 var(--font-display); }
+    .recommendation p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+
+    @media (max-width: 1040px) {
+      .page-head { grid-template-columns: 1fr; }
+      .canvas { grid-template-columns: repeat(3, minmax(420px, 1fr)); }
+    }
+
+    @media (max-width: 620px) {
+      .page-head { padding: 36px 20px 30px; }
+      .page-head h1 { font-size: 40px; }
+      .canvas { grid-template-columns: repeat(3, minmax(330px, 86vw)); padding: 20px 20px 40px; }
+      .variant-label { min-height: 150px; }
+      .preview { min-height: 740px; }
+      .nav-links { display: none; }
+      .a h3, .c h3 { font-size: 36px; }
+      .recommendation { margin: 0 20px 40px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="page-head">
+    <div>
+      <div class="eyebrow">Design Direction Advisor · Draft 01</div>
+      <h1>蓝—靛—紫，不等于蓝紫渐变。</h1>
+      <p>三个方向都使用同一产品内容和同一色域，但分别强调结构、产品和系统关系。方向稿用于选择视觉语言；正式 UI 会在方向确认后再进入组件和页面实现。</p>
+    </div>
+    <aside class="assumptions">
+      <strong>当前缺少的核心资产</strong>
+      <ul>
+        <li>Logo SVG 与反白版本</li>
+        <li>产品真实界面截图</li>
+        <li>产品架构图与正式字体</li>
+      </ul>
+    </aside>
+  </header>
+
+  <main class="canvas" aria-label="三种UI设计方向">
+    <article class="variant a">
+      <header class="variant-label">
+        <div class="variant-kicker" style="color:#3157d5">A · Swiss Editorial</div>
+        <h2>Enterprise Grid</h2>
+        <p>结构化 / 权威 / 安静。推荐用于全站主方向：严格网格、清晰路径、蓝色只承担关键动作。</p>
+      </header>
+      <section class="preview">
+        <nav class="nav">
+          <span class="wordmark">AI Agent Platform</span>
+          <span class="nav-links"><span>产品</span><span>文档</span><span>支持</span></span>
+          <span class="asset-note">Logo SVG 待提供</span>
+        </nav>
+        <div class="hero">
+          <div class="index">01 / ENTERPRISE AI DELIVERY</div>
+          <h3>构建、部署并运维企业级 AI 智能体。</h3>
+          <p class="lead">统一产品认知、版本信息、文档服务与客户支持入口，让企业团队从评估走向落地。</p>
+          <div class="actions">
+            <a class="cta primary" href="#recommendation">阅读文档</a>
+            <a class="cta secondary" href="#recommendation">查看产品</a>
+          </div>
+          <div class="screen-placeholder">[ 产品真实界面截图 · 1440×900 ]</div>
+          <div class="rail">
+            <div><b>01</b><span>官方文档</span></div>
+            <div><b>02</b><span>版本与兼容</span></div>
+            <div><b>03</b><span>客户支持</span></div>
+          </div>
+        </div>
+      </section>
+    </article>
+
+    <article class="variant b">
+      <header class="variant-label">
+        <div class="variant-kicker" style="color:#4f46e5">B · Dieter Rams Industrial</div>
+        <h2>Product Instrument</h2>
+        <p>功能 / 克制 / 产品优先。适合已有高质量产品截图后使用，让真实界面而不是营销装饰成为主角。</p>
+      </header>
+      <section class="preview">
+        <nav class="nav">
+          <span class="wordmark">AI Agent Platform</span>
+          <span class="nav-links"><span>Platform</span><span>Docs</span><span>Login</span></span>
+          <span class="asset-note">Logo 待提供</span>
+        </nav>
+        <div class="hero">
+          <div class="hero-top">
+            <h3>Enterprise AI,<br>made operable.</h3>
+            <span class="version">PORTAL / 01</span>
+          </div>
+          <div class="product-frame">
+            <div class="screen-placeholder">[ Agent Studio 真实截图 ]</div>
+          </div>
+          <div class="specs">
+            <div><b>Agent Studio</b><span>智能体搭建与管理</span></div>
+            <div><b>Knowledge Base</b><span>企业知识接入</span></div>
+            <div><b>Workflow</b><span>流程编排与执行</span></div>
+            <div><b>Observability</b><span>运行与审计入口</span></div>
+          </div>
+          <div class="actions">
+            <span class="asset-note">产品架构图待提供</span>
+            <a class="cta primary" href="#recommendation">查看产品</a>
+          </div>
+        </div>
+      </section>
+    </article>
+
+    <article class="variant c">
+      <header class="variant-label">
+        <div class="variant-kicker" style="color:#7c3aed">C · Computational Atlas</div>
+        <h2>System Field</h2>
+        <p>系统 / 未来 / 关系导向。适合首页首屏或发布场景，不建议把全站都做成深色。</p>
+      </header>
+      <section class="preview">
+        <nav class="nav">
+          <span class="wordmark">AI Agent Platform</span>
+          <span class="nav-links"><span>能力图谱</span><span>文档</span><span>控制台</span></span>
+          <span class="asset-note">Logo 待提供</span>
+        </nav>
+        <div class="hero">
+          <div class="signal">SYSTEM MAP / ACTIVE</div>
+          <h3>把企业 AI 能力连接成可运行的系统。</h3>
+          <p class="lead">从知识、模型、流程到运行观测，统一呈现产品模块及其关系。</p>
+          <div class="actions">
+            <a class="cta primary" href="#recommendation">探索能力</a>
+            <a class="cta secondary" href="#recommendation">打开文档</a>
+          </div>
+          <div class="atlas" aria-label="产品模块关系占位图">
+            <span class="wire h1"></span><span class="wire h2"></span>
+            <span class="wire h3"></span><span class="wire h4"></span><span class="wire v"></span>
+            <div class="node n1">KNOWLEDGE<br>BASE</div>
+            <div class="node n2">MODEL<br>GATEWAY</div>
+            <div class="node core">AGENT<br>RUNTIME</div>
+            <div class="node n3">WORKFLOW</div>
+            <div class="node n4">OBSERVABILITY</div>
+            <span class="asset-note">正式架构关系待确认</span>
+          </div>
+        </div>
+      </section>
+    </article>
+  </main>
+
+  <section class="recommendation" id="recommendation">
+    <span class="mark">A</span>
+    <div>
+      <h2>当前建议：A 为全站基线，吸收 B 的产品截图表达和 C 的模块关系图。</h2>
+      <p>A最适合企业客户门户的长期维护和信息密度；B依赖真实产品截图；C有识别度，但应限制在首页首屏、发布页或架构说明，避免后台和文档阅读疲劳。</p>
+    </div>
+  </section>
+</body>
+</html>
