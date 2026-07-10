@@ -16,3 +16,4 @@ backups/
 uploads/
 .worktrees/
 .playwright-cli/
+/tmp/
