@@ -256,7 +256,7 @@ git commit -m "feat(web): 统一品牌化占位页面状态"
 - Modify: `progress.md`
 - Modify: `task_plan.md`
 
-- [ ] **Step 1: Run automated quality checks**
+- [x] **Step 1: Run automated quality checks**
 
 ```bash
 pnpm test
@@ -268,7 +268,7 @@ pnpm build
 
 Expected: all commands exit 0 with no test failures or lint warnings.
 
-- [ ] **Step 2: Verify the actual Next.js application in a real browser**
+- [x] **Step 2: Verify the actual Next.js application in a real browser**
 
 Check:
 
@@ -278,19 +278,19 @@ Check:
 - Mobile`details/summary` navigation.
 - Console errors and horizontal overflow.
 
-- [ ] **Step 3: Verify source-backed asset usage**
+- [x] **Step 3: Verify source-backed asset usage**
 
 Confirm the wordmark and platform screenshot load locally with no 404 and each has useful alternative text/caption.
 
-- [ ] **Step 4: Update durable documentation**
+- [x] **Step 4: Update durable documentation**
 
 Record the asset paths in`brand-spec.md`, all RED/GREEN and browser results in`progress.md`, and the phase completion in`task_plan.md`.
 
-- [ ] **Step 5: Review secrets and Git diff**
+- [x] **Step 5: Review secrets and Git diff**
 
 Confirm no source PDF, `.env`, real credentials, customer data, temp render or browser cache is staged.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add docs/design/brand-spec.md progress.md task_plan.md
