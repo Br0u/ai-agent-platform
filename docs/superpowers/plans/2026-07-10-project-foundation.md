@@ -180,19 +180,19 @@ Run: `git commit -m "feat: 建立统一资产与外部功能占位边界"`
 - Create: `apps/web/src/components/feature-placeholder-page.tsx`
 - Create: `apps/web/src/components/feature-placeholder-page.test.tsx`
 
-- [ ] **Step 1: Write failing route tests**
+- [x] **Step 1: Write failing route tests**
 
 验证PRD要求的路由无重复、公开/控制台/管理分组明确、每条路由有标题和状态。
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
-- [ ] **Step 3: Implement minimal registry**
+- [x] **Step 3: Implement minimal registry**
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
-- [ ] **Step 5: Write and implement placeholder-page behavior with TDD**
+- [x] **Step 5: Write and implement placeholder-page behavior with TDD**
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Run: `git commit -m "feat(web): 建立页面路由注册表与功能占位页"`
 
@@ -213,17 +213,17 @@ Run: `git commit -m "feat(web): 建立页面路由注册表与功能占位页"`
 - Create: `apps/web/src/app/api/health/live/route.ts`
 - Create: `apps/web/src/app/api/health/ready/route.ts`
 
-- [ ] **Step 1: Write failing liveness test**
+- [x] **Step 1: Write failing liveness test**
 
 验证liveness不依赖数据库，readiness通过注入的数据库探针返回成功或503。
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
-- [ ] **Step 3: Implement minimal health functions and routes**
+- [x] **Step 3: Implement minimal health functions and routes**
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
-- [ ] **Step 5: Define minimal user, role and content schemas**
+- [x] **Step 5: Define minimal user, role and content schemas**
 
 配置文件和生成Schema属于TDD例外；通过迁移生成和类型检查验证。
 

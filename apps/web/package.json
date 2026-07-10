@@ -13,6 +13,7 @@
     "format:check": "prettier --check . --ignore-path ../../.gitignore"
   },
   "dependencies": {
+    "@ai-agent-platform/database": "workspace:*",
     "@ai-agent-platform/ui": "workspace:*",
     "next": "16.2.10",
     "react": "19.2.7",
