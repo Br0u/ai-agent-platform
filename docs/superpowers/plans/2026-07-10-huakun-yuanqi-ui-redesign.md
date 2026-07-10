@@ -160,7 +160,7 @@ git commit -m "feat(ui): 建立华鲲元启品牌化全局框架"
 - Create: `apps/web/src/assets/huakun-yuanqi/platform-overview.png`
 - Create: `apps/web/src/assets/huakun-yuanqi/README.md`
 
-- [ ] **Step 1: Write the failing homepage test**
+- [x] **Step 1: Write the failing homepage test**
 
 Test the approved content hierarchy:
 
@@ -182,7 +182,7 @@ expect(screen.getByText("基于华鲲元启的行业子能力")).toBeVisible();
 expect(screen.queryByText("AI Agent Platform")).not.toBeInTheDocument();
 ```
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run:
 
@@ -192,23 +192,23 @@ pnpm --filter @ai-agent-platform/web test src/app/page.test.tsx
 
 Expected: FAIL on the new heading and product hierarchy.
 
-- [ ] **Step 3: Create static, source-backed homepage content**
+- [x] **Step 3: Create static, source-backed homepage content**
 
 Copy the two verified design assets into the app asset directory. `home-content.ts` contains only brochure-backed platform modules, enterprise advantages, solution names and real portal links. It must not include version claims, customer counts or performance metrics.
 
-- [ ] **Step 4: Implement semantic homepage sections**
+- [x] **Step 4: Implement semantic homepage sections**
 
 `home-sections.tsx` exports `HeroEvidence`, `CapabilityRail`, `PlatformFlow`, `EnterpriseProof`, `SolutionIndex` and `ResourceTable`. Keep components server-compatible and avoid state.
 
-- [ ] **Step 5: Implement the editorial layout**
+- [x] **Step 5: Implement the editorial layout**
 
 Use12-column desktop grids, full-width rules, numbered statements and a compact resource table. The visual-search row must visually sit inside the solution index and carry the subset label.
 
-- [ ] **Step 6: Run the test and verify GREEN**
+- [x] **Step 6: Run the test and verify GREEN**
 
 Run the targeted homepage test, then all web tests.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/web/src/app apps/web/src/components apps/web/src/assets/huakun-yuanqi

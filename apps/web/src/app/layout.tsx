@@ -5,8 +5,8 @@ import "@ai-agent-platform/ui/tokens.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AI Agent Platform",
-  description: "企业级AI智能体客户门户",
+  title: "华鲲元启｜AI开发赋能平台 TGDataXAI",
+  description: "面向企业私有化场景的 AI 全栈开发与运营平台。",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
