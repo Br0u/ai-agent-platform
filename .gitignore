@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 node_modules/
+.pnpm-store/
 .next/
 out/
 dist/
@@ -16,3 +17,4 @@ uploads/
 .worktrees/
 .playwright-cli/
 /tmp/
+~$*.docx
