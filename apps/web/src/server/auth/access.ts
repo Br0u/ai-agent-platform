@@ -30,11 +30,16 @@ export type AuthoritativeUser = {
 };
 
 export type CustomerOrganization = {
-  id: string;
+  organizationId: string;
   legalName: string;
   status: OrganizationStatus;
   role: OrganizationRole;
 };
+
+export type CustomerOrganizationDto = Omit<
+  CustomerOrganization,
+  "organizationId"
+>;
 
 type ActorBase = {
   userId: string;
@@ -58,7 +63,12 @@ export type WorkforceActor = ActorBase & {
 
 export type Actor = CustomerActor | WorkforceActor;
 
-export type CustomerSessionDto = Omit<CustomerActor, "userId">;
+export type CustomerSessionDto = Omit<
+  CustomerActor,
+  "userId" | "organization"
+> & {
+  organization: CustomerOrganizationDto | null;
+};
 export type StaffSessionDto = Omit<WorkforceActor, "userId">;
 
 export type AuthenticatedSession = {
@@ -211,7 +221,12 @@ export function createDatabaseAccessRepository(): AccessRepository {
       });
       if (!organization) return null;
 
-      return { ...organization, role: membership.role };
+      return {
+        organizationId: organization.id,
+        legalName: organization.legalName,
+        status: organization.status,
+        role: membership.role,
+      };
     },
 
     async findPermissionKeys(userId, realm) {
@@ -360,7 +375,13 @@ export function toCustomerSessionDto(actor: CustomerActor): CustomerSessionDto {
     status: actor.status,
     displayName: actor.displayName,
     emailVerificationStatus: actor.emailVerificationStatus,
-    organization: actor.organization,
+    organization: actor.organization
+      ? {
+          legalName: actor.organization.legalName,
+          status: actor.organization.status,
+          role: actor.organization.role,
+        }
+      : null,
   };
 }
 

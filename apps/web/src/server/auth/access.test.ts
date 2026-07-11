@@ -52,7 +52,7 @@ function createFixture(options?: {
     findUserById: vi.fn(async () => currentUser),
     findCustomerOrganization: vi.fn(
       async (userId): Promise<CustomerOrganization | null> => ({
-        id: `org-for-${userId}`,
+        organizationId: `org-for-${userId}`,
         legalName: "Acme Corp",
         status: "active",
         role: "owner",
@@ -182,7 +182,7 @@ describe("secure auth access service", () => {
     const actor = await fixture.service.requireCustomer();
 
     expect(actor.organization).toEqual({
-      id: "org-for-user-1",
+      organizationId: "org-for-user-1",
       legalName: "Acme Corp",
       status: "active",
       role: "owner",
@@ -260,7 +260,6 @@ describe("secure auth access service", () => {
       displayName: "Alice",
       emailVerificationStatus: "verified",
       organization: {
-        id: "org-for-user-1",
         legalName: "Acme Corp",
         status: "active",
         role: "owner",
@@ -296,8 +295,9 @@ describe("secure auth access service", () => {
         collectKeys(child);
       }
     };
-    collectKeys({ customerDto, staffDto });
+    collectKeys(JSON.parse(JSON.stringify({ customerDto, staffDto })));
     for (const forbidden of [
+      "id",
       "userId",
       "sessionId",
       "sessionToken",

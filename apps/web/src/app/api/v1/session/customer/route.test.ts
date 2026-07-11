@@ -12,7 +12,6 @@ const safeDto = {
   displayName: "Alice",
   emailVerificationStatus: "verified" as const,
   organization: {
-    id: "org-1",
     legalName: "Acme Corp",
     status: "active" as const,
     role: "owner" as const,
