@@ -1,3 +1,4 @@
+export * from "./auth-models";
 export { getDatabase, probeDatabase } from "./client";
 export {
   getLiveness,

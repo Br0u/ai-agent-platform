@@ -1,0 +1,280 @@
+import { getTableName } from "drizzle-orm";
+import { getTableConfig, type AnyPgTable } from "drizzle-orm/pg-core";
+import { describe, expect, it } from "vitest";
+
+import * as schema from "./index";
+
+type SchemaExports = Record<string, unknown>;
+
+const exported = schema as SchemaExports;
+
+function table(name: string): AnyPgTable {
+  const value = exported[name];
+
+  expect(value, `schema export ${name} must exist`).toBeDefined();
+  return value as AnyPgTable;
+}
+
+function config(name: string) {
+  return getTableConfig(table(name));
+}
+
+function columnNames(name: string) {
+  return config(name).columns.map((column) => column.name);
+}
+
+function uniqueConstraintNames(name: string) {
+  return config(name).uniqueConstraints.map((constraint) => constraint.name);
+}
+
+function foreignKeys(name: string) {
+  return config(name).foreignKeys.map((foreignKey) => {
+    const reference = foreignKey.reference();
+
+    return {
+      columns: reference.columns.map((column) => column.name),
+      foreignColumns: reference.foreignColumns.map((column) => column.name),
+      foreignTable: getTableName(reference.foreignTable),
+      onDelete: foreignKey.onDelete,
+    };
+  });
+}
+
+function expectForeignKey(
+  source: string,
+  column: string,
+  target: string,
+  onDelete: string,
+) {
+  expect(foreignKeys(source)).toContainEqual({
+    columns: [column],
+    foreignColumns: ["id"],
+    foreignTable: target,
+    onDelete,
+  });
+}
+
+describe("identity schema", () => {
+  it("stores realm-aware users without temporary role or password columns", () => {
+    expect(columnNames("users")).toEqual(
+      expect.arrayContaining([
+        "identity_realm",
+        "status",
+        "email_verification_status",
+        "must_change_password",
+        "two_factor_enabled",
+      ]),
+    );
+    expect(columnNames("users")).not.toContain("role_id");
+    expect(columnNames("users")).not.toContain("password_hash");
+  });
+
+  it("implements the Better Auth 1.6.23 core and plugin tables", () => {
+    expect(columnNames("accounts")).toEqual(
+      expect.arrayContaining([
+        "account_id",
+        "provider_id",
+        "user_id",
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "access_token_expires_at",
+        "refresh_token_expires_at",
+        "scope",
+        "password",
+      ]),
+    );
+    expect(uniqueConstraintNames("accounts")).toContain(
+      "accounts_provider_id_account_id_unique",
+    );
+    expect(columnNames("sessions")).toContain("token");
+    expect(columnNames("verifications")).toEqual(
+      expect.arrayContaining([
+        "identifier",
+        "value",
+        "expires_at",
+        "created_at",
+        "updated_at",
+      ]),
+    );
+    expect(columnNames("rateLimits")).toEqual(
+      expect.arrayContaining(["key", "count", "last_request"]),
+    );
+    expect(columnNames("twoFactors")).toEqual(
+      expect.arrayContaining([
+        "secret",
+        "backup_codes",
+        "user_id",
+        "verified",
+        "failed_verification_count",
+        "locked_until",
+      ]),
+    );
+
+    expectForeignKey("accounts", "user_id", "users", "cascade");
+    expectForeignKey("sessions", "user_id", "users", "cascade");
+    expectForeignKey("twoFactors", "user_id", "users", "cascade");
+  });
+
+  it("maps every Better Auth model and field to its exported Drizzle table", async () => {
+    const { betterAuthModels } = await import("../auth-models");
+
+    for (const [modelName, mapping] of Object.entries(betterAuthModels)) {
+      expect(mapping.table, `${modelName} table must be exported`).toBe(
+        exported[mapping.exportName],
+      );
+      expect(getTableName(mapping.table)).toBe(mapping.tableName);
+      expect(Object.keys(mapping.table)).toEqual(
+        expect.arrayContaining(Object.values(mapping.fields)),
+      );
+    }
+  });
+
+  it("publishes the shared adapter mapping from the database package", async () => {
+    const databasePackage = await import("../index");
+
+    expect(databasePackage.betterAuthModels).toBeDefined();
+    expect(databasePackage.betterAuthAdapterSchema).toBeDefined();
+  });
+});
+
+describe("authorization schema", () => {
+  it("uses UUID primary keys and timezone-aware timestamps", () => {
+    for (const exportName of [
+      "permissions",
+      "roles",
+      "userRoles",
+      "rolePermissions",
+      "organizations",
+      "organizationMemberships",
+      "customerRegistrations",
+      "auditLogs",
+    ]) {
+      const tableConfig = config(exportName);
+      const id = tableConfig.columns.find((column) => column.name === "id");
+      const timestampColumns = tableConfig.columns.filter((column) =>
+        column.name.endsWith("_at"),
+      );
+
+      expect(id?.getSQLType(), `${exportName}.id must be UUID`).toBe("uuid");
+      expect(id?.primary, `${exportName}.id must be primary`).toBe(true);
+      expect(
+        timestampColumns.length,
+        `${exportName} must have timestamps`,
+      ).toBeGreaterThanOrEqual(1);
+      for (const column of timestampColumns) {
+        expect(column.getSQLType()).toBe("timestamp with time zone");
+      }
+    }
+  });
+
+  it("deduplicates role assignments and permission grants", () => {
+    expect(uniqueConstraintNames("userRoles")).toContain(
+      "user_roles_user_id_role_id_unique",
+    );
+    expect(uniqueConstraintNames("rolePermissions")).toContain(
+      "role_permissions_role_id_permission_id_unique",
+    );
+  });
+
+  it("records the actor assigning a role", () => {
+    expect(columnNames("userRoles")).toContain("assigned_by_user_id");
+    expectForeignKey("userRoles", "assigned_by_user_id", "users", "set null");
+  });
+
+  it("defines explicit authorization foreign-key deletion behavior", () => {
+    expectForeignKey("userRoles", "user_id", "users", "cascade");
+    expectForeignKey("userRoles", "role_id", "roles", "cascade");
+    expectForeignKey("rolePermissions", "role_id", "roles", "cascade");
+    expectForeignKey(
+      "rolePermissions",
+      "permission_id",
+      "permissions",
+      "cascade",
+    );
+  });
+});
+
+describe("organization and registration schema", () => {
+  it("normalizes legal names deterministically", () => {
+    const normalize = exported.normalizeOrganizationLegalNameKey as (
+      value: string,
+    ) => string;
+
+    expect(normalize("  ACME\u3000  Technology  ")).toBe("acme technology");
+    expect(normalize("ＡＣＭＥ Corp")).toBe("acme corp");
+  });
+
+  it("enforces unique legal-name and organization membership keys", () => {
+    expect(uniqueConstraintNames("organizations")).toContain(
+      "organizations_legal_name_key_unique",
+    );
+    expect(uniqueConstraintNames("organizationMemberships")).toContain(
+      "organization_memberships_organization_id_user_id_unique",
+    );
+  });
+
+  it("records organization status and assigning actor", () => {
+    expect(columnNames("organizations")).toContain("status");
+    expect(columnNames("organizationMemberships")).toContain(
+      "assigned_by_user_id",
+    );
+    expectForeignKey(
+      "organizationMemberships",
+      "assigned_by_user_id",
+      "users",
+      "set null",
+    );
+  });
+
+  it("records registration review status, reviewer, and note", () => {
+    expect(columnNames("customerRegistrations")).toEqual(
+      expect.arrayContaining(["status", "reviewer_user_id", "review_note"]),
+    );
+    expectForeignKey(
+      "customerRegistrations",
+      "reviewer_user_id",
+      "users",
+      "set null",
+    );
+  });
+
+  it("defines explicit organization and registration foreign keys", () => {
+    expectForeignKey(
+      "organizationMemberships",
+      "organization_id",
+      "organizations",
+      "cascade",
+    );
+    expectForeignKey("organizationMemberships", "user_id", "users", "cascade");
+    expectForeignKey("customerRegistrations", "user_id", "users", "cascade");
+    expectForeignKey(
+      "customerRegistrations",
+      "organization_id",
+      "organizations",
+      "set null",
+    );
+  });
+});
+
+describe("audit and content ownership", () => {
+  it("captures actor, target, request, and metadata context", () => {
+    expect(columnNames("auditLogs")).toEqual(
+      expect.arrayContaining([
+        "actor_realm",
+        "actor_user_id",
+        "action",
+        "target_type",
+        "target_id",
+        "metadata",
+        "ip_address",
+        "user_agent",
+      ]),
+    );
+    expectForeignKey("auditLogs", "actor_user_id", "users", "set null");
+  });
+
+  it("preserves content ownership through the new users table", () => {
+    expectForeignKey("content", "author_id", "users", "set null");
+  });
+});
