@@ -737,8 +737,9 @@
   list-style: none;
 }
 
-.portal-footer__group a {
+.portal-footer__link {
   display: inline-flex;
+  min-width: 44px;
   min-height: 44px;
   align-items: center;
   color: var(--color-muted);
@@ -747,11 +748,11 @@
   text-decoration: none;
 }
 
-.portal-footer__group a:hover {
+.portal-footer__link:hover {
   color: var(--color-primary);
 }
 
-.portal-footer__group a:focus-visible {
+.portal-footer__link:focus-visible {
   border-radius: 2px;
   outline: 3px solid var(--color-accent);
   outline-offset: 3px;
@@ -784,10 +785,6 @@
   .portal-footer__navigation {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-6);
-  }
-
-  .portal-footer__group a {
-    min-height: 44px;
   }
 }
 

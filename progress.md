@@ -107,7 +107,7 @@
   - `apps/web/src/config/route-files.test.ts`
   - `packages/ui/src/app-shell.*`
 
-### 阶段 6：全站企业菜单与三套布局
+### 阶段 9：全站企业菜单与三套布局
 
 - **状态：** complete
 - 执行的操作：
