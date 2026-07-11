@@ -6,7 +6,7 @@ const allowedTransitions: Readonly<Record<UserStatus, readonly UserStatus[]>> =
   {
     pending_review: ["active", "rejected"],
     active: ["disabled"],
-    disabled: [],
+    disabled: ["active"],
     rejected: [],
   };
 
@@ -22,7 +22,8 @@ export function canEnterApplication(
   application: Application,
 ): boolean {
   return (
-    (status === "pending_review" && application === "onboarding") ||
+    ((status === "pending_review" || status === "rejected") &&
+      application === "onboarding") ||
     (status === "active" && application === "console")
   );
 }

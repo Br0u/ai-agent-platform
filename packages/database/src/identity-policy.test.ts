@@ -29,11 +29,14 @@ describe("identity policy", () => {
       expect(canEnterApplication("active", "onboarding")).toBe(false);
     });
 
-    it("blocks disabled and rejected users", () => {
-      for (const status of ["disabled", "rejected"] as const) {
-        expect(canEnterApplication(status, "onboarding")).toBe(false);
-        expect(canEnterApplication(status, "console")).toBe(false);
-      }
+    it("lets rejected customers view onboarding status but blocks the console", () => {
+      expect(canEnterApplication("rejected", "onboarding")).toBe(true);
+      expect(canEnterApplication("rejected", "console")).toBe(false);
+    });
+
+    it("blocks disabled users", () => {
+      expect(canEnterApplication("disabled", "onboarding")).toBe(false);
+      expect(canEnterApplication("disabled", "console")).toBe(false);
     });
   });
 
@@ -44,9 +47,12 @@ describe("identity policy", () => {
       expect(canTransition("active", "disabled")).toBe(true);
     });
 
-    it("does not resurrect terminal states", () => {
+    it("allows managed reactivation without returning to review", () => {
+      expect(canTransition("disabled", "active")).toBe(true);
       expect(canTransition("disabled", "pending_review")).toBe(false);
-      expect(canTransition("disabled", "active")).toBe(false);
+    });
+
+    it("does not resurrect rejected users", () => {
       expect(canTransition("rejected", "pending_review")).toBe(false);
       expect(canTransition("rejected", "active")).toBe(false);
     });
