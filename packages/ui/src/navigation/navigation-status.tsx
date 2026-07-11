@@ -1,6 +1,6 @@
 import type { NavigationStatus as NavigationStatusValue } from "./navigation-types";
 
-export function NavigationStatus({
+export function NavigationStatusBadge({
   status,
 }: {
   status?: NavigationStatusValue;

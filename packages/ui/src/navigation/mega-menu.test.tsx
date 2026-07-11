@@ -7,6 +7,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NavigationStatusBadge } from "../index";
 import { MegaMenu } from "./mega-menu";
 import type { PortalNavigationItem } from "./navigation-types";
 
@@ -98,6 +99,9 @@ describe("MegaMenu", () => {
       const button = trigger(label);
       expect(button).toHaveAttribute("aria-expanded", "false");
       expect(button).toHaveAttribute("aria-controls");
+      expect(
+        document.getElementById(button.getAttribute("aria-controls")!),
+      ).toBeInstanceOf(HTMLElement);
     }
   });
 
@@ -121,6 +125,35 @@ describe("MegaMenu", () => {
 
     expect(trigger("文档")).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("link", { name: /快速开始/ })).toBeVisible();
+  });
+
+  it("promotes a hover-open panel on first click before toggling closed", () => {
+    renderMenu();
+    const productTrigger = trigger("产品");
+
+    fireEvent.pointerEnter(productTrigger);
+    fireEvent.click(productTrigger);
+    expect(productTrigger).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(productTrigger);
+    expect(productTrigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("resets hover-open promotion after a delayed close and re-entry", () => {
+    renderMenu();
+    const productTrigger = trigger("产品");
+    fireEvent.pointerEnter(productTrigger);
+    fireEvent.pointerLeave(productTrigger);
+    act(() => vi.advanceTimersByTime(180));
+
+    fireEvent.pointerEnter(productTrigger);
+    fireEvent.click(productTrigger);
+    expect(productTrigger).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.pointerLeave(productTrigger);
+    fireEvent.pointerEnter(productTrigger);
+    act(() => vi.advanceTimersByTime(180));
+    expect(productTrigger).toHaveAttribute("aria-expanded", "true");
   });
 
   it("delays pointer-leave closing for 180ms and cancels it on re-entry", () => {
@@ -294,5 +327,13 @@ describe("MegaMenu", () => {
 
     expect(screen.getByRole("region")).toHaveClass("mega-menu__panel--4");
     expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(5);
+  });
+
+  it("exports a reusable placeholder status badge", () => {
+    const { rerender } = render(<NavigationStatusBadge status="placeholder" />);
+    expect(screen.getByText("尚未开放")).toBeVisible();
+
+    rerender(<NavigationStatusBadge status="live" />);
+    expect(screen.queryByText("尚未开放")).toBeNull();
   });
 });

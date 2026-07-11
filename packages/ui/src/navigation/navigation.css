@@ -78,6 +78,10 @@
     box-shadow: 0 18px 40px rgb(16 24 56 / 12%);
   }
 
+  .mega-menu__panel[hidden] {
+    display: none;
+  }
+
   .mega-menu__overview {
     display: flex;
     min-height: 44px;
