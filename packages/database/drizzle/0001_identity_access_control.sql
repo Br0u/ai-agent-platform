@@ -127,7 +127,7 @@ CREATE TABLE "organizations" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "organizations_legal_name_key_unique" UNIQUE("legal_name_key"),
-	CONSTRAINT "organizations_legal_name_key_normalized_check" CHECK ("legal_name_key" <> '' AND "legal_name_key" = lower("legal_name_key") AND "legal_name_key" = regexp_replace("legal_name_key", '^[[:space:]]+|[[:space:]]+$', '', 'g') AND "legal_name_key" !~ '[[:space:]]{2,}')
+	CONSTRAINT "organizations_legal_name_key_normalized_check" CHECK ("legal_name_key" <> '' AND "legal_name_key" = lower(regexp_replace(regexp_replace("legal_name_key", '^[[:space:]]+|[[:space:]]+$', '', 'g'), '[[:space:]]+', ' ', 'g')))
 );
 --> statement-breakpoint
 CREATE TABLE "customer_registrations" (

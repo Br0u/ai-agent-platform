@@ -15,14 +15,21 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { assertSafeIdentityMigrationTestDatabaseUrl } from "./migration-test-safety";
+
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
-const describePostgres = testDatabaseUrl ? describe.sequential : describe.skip;
+const safeTestDatabaseUrl = testDatabaseUrl
+  ? assertSafeIdentityMigrationTestDatabaseUrl(testDatabaseUrl)
+  : undefined;
+const describePostgres = safeTestDatabaseUrl
+  ? describe.sequential
+  : describe.skip;
 const migrationsFolder = fileURLToPath(
   new URL("../../drizzle", import.meta.url),
 );
 
 describePostgres("identity migration from the legacy database", () => {
-  const pool = new Pool({ connectionString: testDatabaseUrl });
+  const pool = new Pool({ connectionString: safeTestDatabaseUrl });
   const database = drizzle(pool);
   let legacyMigrationsFolder: string;
 
@@ -142,6 +149,8 @@ describePostgres("identity migration from the legacy database", () => {
       "acme\n",
       "ACME",
       "acme  corp",
+      "acme\tcorp",
+      "acme\ncorp",
       "acme\t\tcorp",
     ]) {
       await expect(

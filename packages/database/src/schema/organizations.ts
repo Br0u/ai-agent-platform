@@ -67,7 +67,7 @@ export const organizations = pgTable(
     unique("organizations_legal_name_key_unique").on(table.legalNameKey),
     check(
       "organizations_legal_name_key_normalized_check",
-      sql`${table.legalNameKey} <> '' AND ${table.legalNameKey} = lower(${table.legalNameKey}) AND ${table.legalNameKey} = regexp_replace(${table.legalNameKey}, '^[[:space:]]+|[[:space:]]+$', '', 'g') AND ${table.legalNameKey} !~ '[[:space:]]{2,}'`,
+      sql`${table.legalNameKey} <> '' AND ${table.legalNameKey} = lower(regexp_replace(regexp_replace(${table.legalNameKey}, '^[[:space:]]+|[[:space:]]+$', '', 'g'), '[[:space:]]+', ' ', 'g'))`,
     ),
   ],
 );

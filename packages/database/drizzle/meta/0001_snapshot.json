@@ -1280,7 +1280,7 @@
       "checkConstraints": {
         "organizations_legal_name_key_normalized_check": {
           "name": "organizations_legal_name_key_normalized_check",
-          "value": "\"organizations\".\"legal_name_key\" <> '' AND \"organizations\".\"legal_name_key\" = lower(\"organizations\".\"legal_name_key\") AND \"organizations\".\"legal_name_key\" = regexp_replace(\"organizations\".\"legal_name_key\", '^[[:space:]]+|[[:space:]]+$', '', 'g') AND \"organizations\".\"legal_name_key\" !~ '[[:space:]]{2,}'"
+          "value": "\"organizations\".\"legal_name_key\" <> '' AND \"organizations\".\"legal_name_key\" = lower(regexp_replace(regexp_replace(\"organizations\".\"legal_name_key\", '^[[:space:]]+|[[:space:]]+$', '', 'g'), '[[:space:]]+', ' ', 'g'))"
         }
       },
       "isRLSEnabled": false
