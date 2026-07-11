@@ -8,6 +8,9 @@
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/migrate.ts",
+    "db:seed-access": "tsx src/seed-access-control.ts",
+    "db:prepare": "pnpm db:migrate && pnpm db:seed-access",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src drizzle.config.ts --max-warnings=0",

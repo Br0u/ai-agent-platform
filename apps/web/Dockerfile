@@ -17,6 +17,14 @@ COPY packages/ui/package.json packages/ui/package.json
 
 RUN pnpm install --frozen-lockfile
 
+FROM dependencies AS migrator
+
+COPY packages/database ./packages/database
+
+WORKDIR /app/packages/database
+
+CMD ["pnpm", "db:prepare"]
+
 FROM base AS builder
 
 COPY --from=dependencies /app/ ./
