@@ -15,13 +15,6 @@
       "when": 1783770435717,
       "tag": "0001_identity_access_control",
       "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1783788713050,
-      "tag": "0002_system_managed_access_control",
-      "breakpoints": true
     }
   ]
 }

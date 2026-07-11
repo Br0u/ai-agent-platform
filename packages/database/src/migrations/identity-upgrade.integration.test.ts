@@ -124,15 +124,10 @@ describePostgres("identity migration from the legacy database", () => {
       { author_id: "00000000-0000-4000-8000-000000000001" },
     ]);
 
-    const migratedRole = await pool.query<{ is_system: boolean }>(
-      "SELECT is_system FROM roles WHERE name = 'legacy-admin'",
-    );
-    expect(migratedRole.rows).toEqual([{ is_system: false }]);
-
     const journal = await pool.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations",
     );
-    expect(journal.rows).toEqual([{ count: "3" }]);
+    expect(journal.rows).toEqual([{ count: "2" }]);
   });
 
   it("enforces case-insensitive identities and legal-name key shape", async () => {

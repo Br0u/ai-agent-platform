@@ -1,5 +1,4 @@
 import {
-  boolean,
   index,
   pgEnum,
   pgTable,
@@ -23,7 +22,6 @@ export const permissions = pgTable("permissions", {
   key: varchar("key", { length: 160 }).notNull().unique(),
   name: varchar("name", { length: 120 }).notNull(),
   description: text("description"),
-  managedBySystem: boolean("managed_by_system").default(false).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -38,7 +36,6 @@ export const roles = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     name: varchar("name", { length: 64 }).notNull(),
     description: text("description"),
-    isSystem: boolean("is_system").default(false).notNull(),
     realmScope: roleRealmScope("realm_scope").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()

@@ -18,14 +18,12 @@ export interface PermissionSeed {
   readonly key: string;
   readonly name: string;
   readonly description?: string;
-  readonly managedBySystem: boolean;
 }
 
 export interface RoleSeed {
   readonly name: string;
   readonly realmScope: RoleRealm;
   readonly description?: string;
-  readonly isSystem: boolean;
 }
 
 export interface AccessControlSeedRepository {
@@ -40,38 +38,28 @@ export interface AccessControlSeedRepository {
     permissionKeys: readonly string[],
   ): Promise<void>;
   acquireSeedLock(): Promise<void>;
-  deleteSystemRolesExcept(
-    manifest: readonly { name: string; realmScope: RoleRealm }[],
-  ): Promise<void>;
-  deleteSystemPermissionsExcept(manifestKeys: readonly string[]): Promise<void>;
 }
 
+// Catalog retirement requires a reviewed forward migration. This seed owns only
+// the manifest entries below and never deletes unknown roles or permissions.
 const permissions: readonly PermissionSeed[] = [
-  { key: "console:access", name: "访问客户控制台", managedBySystem: true },
-  { key: "console:team", name: "管理客户团队", managedBySystem: true },
-  { key: "admin:site", name: "管理站点", managedBySystem: true },
-  { key: "admin:navigation", name: "管理导航", managedBySystem: true },
-  { key: "admin:products", name: "管理产品", managedBySystem: true },
-  { key: "admin:releases", name: "管理版本", managedBySystem: true },
-  { key: "admin:docs", name: "管理文档", managedBySystem: true },
-  { key: "admin:blog", name: "管理资讯", managedBySystem: true },
-  { key: "admin:cases", name: "管理案例", managedBySystem: true },
-  { key: "admin:faq", name: "管理常见问题", managedBySystem: true },
-  {
-    key: "admin:compatibility",
-    name: "管理兼容性",
-    managedBySystem: true,
-  },
-  { key: "admin:marketplace", name: "管理生态市场", managedBySystem: true },
-  { key: "admin:analytics", name: "查看运营分析", managedBySystem: true },
-  {
-    key: "admin:registrations",
-    name: "审核客户注册",
-    managedBySystem: true,
-  },
-  { key: "admin:users", name: "管理用户", managedBySystem: true },
-  { key: "admin:roles", name: "管理角色", managedBySystem: true },
-  { key: "admin:audit", name: "查看审计日志", managedBySystem: true },
+  { key: "console:access", name: "访问客户控制台" },
+  { key: "console:team", name: "管理客户团队" },
+  { key: "admin:site", name: "管理站点" },
+  { key: "admin:navigation", name: "管理导航" },
+  { key: "admin:products", name: "管理产品" },
+  { key: "admin:releases", name: "管理版本" },
+  { key: "admin:docs", name: "管理文档" },
+  { key: "admin:blog", name: "管理资讯" },
+  { key: "admin:cases", name: "管理案例" },
+  { key: "admin:faq", name: "管理常见问题" },
+  { key: "admin:compatibility", name: "管理兼容性" },
+  { key: "admin:marketplace", name: "管理生态市场" },
+  { key: "admin:analytics", name: "查看运营分析" },
+  { key: "admin:registrations", name: "审核客户注册" },
+  { key: "admin:users", name: "管理用户" },
+  { key: "admin:roles", name: "管理角色" },
+  { key: "admin:audit", name: "查看审计日志" },
 ];
 
 const adminPermissionKeys = permissions
@@ -97,43 +85,36 @@ const roles: readonly (RoleSeed & {
   {
     name: "customer_member",
     realmScope: "customer",
-    isSystem: true,
     permissionKeys: ["console:access"],
   },
   {
     name: "customer_admin",
     realmScope: "customer",
-    isSystem: true,
     permissionKeys: ["console:access", "console:team"],
   },
   {
     name: "employee",
     realmScope: "workforce",
-    isSystem: true,
     permissionKeys: [],
   },
   {
     name: "content_operator",
     realmScope: "workforce",
-    isSystem: true,
     permissionKeys: contentPermissionKeys,
   },
   {
     name: "support_operator",
     realmScope: "workforce",
-    isSystem: true,
     permissionKeys: ["admin:registrations"],
   },
   {
     name: "admin",
     realmScope: "workforce",
-    isSystem: true,
     permissionKeys: adminPermissionKeys,
   },
   {
     name: "super_admin",
     realmScope: "workforce",
-    isSystem: true,
     permissionKeys: adminPermissionKeys,
   },
 ];
@@ -155,13 +136,6 @@ export async function seedAccessControl(
         permissionKeys,
       );
     }
-
-    await transaction.deleteSystemRolesExcept(
-      roles.map(({ name, realmScope }) => ({ name, realmScope })),
-    );
-    await transaction.deleteSystemPermissionsExcept(
-      permissions.map(({ key }) => key),
-    );
   });
 }
 
@@ -200,7 +174,6 @@ function createRepository(
           set: {
             name: permission.name,
             description: permission.description ?? null,
-            managedBySystem: true,
             updatedAt: new Date(),
           },
         });
@@ -214,7 +187,6 @@ function createRepository(
           target: [roleTable.name, roleTable.realmScope],
           set: {
             description: role.description ?? null,
-            isSystem: true,
             updatedAt: new Date(),
           },
         });
@@ -268,46 +240,6 @@ function createRepository(
 
     async acquireSeedLock(): Promise<void> {
       await executor.execute(sql`select pg_advisory_xact_lock(72134878)`);
-    },
-
-    async deleteSystemRolesExcept(manifest): Promise<void> {
-      const retained = new Set(
-        manifest.map(({ name, realmScope }) => `${realmScope}:${name}`),
-      );
-      const systemRoles = await executor
-        .select({
-          id: roleTable.id,
-          name: roleTable.name,
-          realmScope: roleTable.realmScope,
-        })
-        .from(roleTable)
-        .where(eq(roleTable.isSystem, true));
-      const retiredIds = systemRoles
-        .filter(
-          ({ name, realmScope }) => !retained.has(`${realmScope}:${name}`),
-        )
-        .map(({ id }) => id);
-      if (retiredIds.length > 0) {
-        await executor
-          .delete(roleTable)
-          .where(inArray(roleTable.id, retiredIds));
-      }
-    },
-
-    async deleteSystemPermissionsExcept(manifestKeys): Promise<void> {
-      const systemPermissions = await executor
-        .select({ id: permissionTable.id, key: permissionTable.key })
-        .from(permissionTable)
-        .where(eq(permissionTable.managedBySystem, true));
-      const retained = new Set(manifestKeys);
-      const retiredIds = systemPermissions
-        .filter(({ key }) => !retained.has(key))
-        .map(({ id }) => id);
-      if (retiredIds.length > 0) {
-        await executor
-          .delete(permissionTable)
-          .where(inArray(permissionTable.id, retiredIds));
-      }
     },
   };
 }

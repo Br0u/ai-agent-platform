@@ -242,11 +242,6 @@ describe("authorization schema", () => {
     );
   });
 
-  it("marks system-managed roles and permissions explicitly", () => {
-    expect(columnNames("roles")).toContain("is_system");
-    expect(columnNames("permissions")).toContain("managed_by_system");
-  });
-
   it("exports realm-safe identity policy from the package root", async () => {
     const databasePackage = await import("../index");
 

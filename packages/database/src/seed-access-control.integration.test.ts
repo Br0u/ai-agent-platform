@@ -65,34 +65,48 @@ describePostgres("PostgreSQL access-control seed", () => {
     ]);
   });
 
-  it("removes stale system data, preserves custom data, and replaces grants", async () => {
+  it("preserves unknown catalog data while replacing manifest grants", async () => {
     await seedAccessControl(createDrizzleAccessControlRepository(database));
     await pool.query(
-      `INSERT INTO roles (name, realm_scope, is_system)
-       VALUES ('retired_system', 'workforce', true), ('custom_role', 'workforce', false)`,
+      `INSERT INTO roles (name, realm_scope)
+       VALUES ('legacy_role', 'workforce'), ('custom_role', 'workforce')`,
     );
     await pool.query(
-      `INSERT INTO permissions (key, name, managed_by_system)
-       VALUES ('admin:retired', 'Retired', true), ('custom:permission', 'Custom', false)`,
+      `INSERT INTO permissions (key, name)
+       VALUES ('legacy:permission', 'Legacy'), ('custom:permission', 'Custom')`,
     );
     await pool.query(
       `INSERT INTO role_permissions (role_id, permission_id)
        SELECT r.id, p.id FROM roles r, permissions p
        WHERE r.name = 'support_operator' AND p.key = 'admin:users'`,
     );
+    await pool.query(
+      `INSERT INTO role_permissions (role_id, permission_id)
+       SELECT r.id, p.id FROM roles r, permissions p
+       WHERE r.name = 'legacy_role' AND p.key = 'legacy:permission'`,
+    );
 
     await seedAccessControl(createDrizzleAccessControlRepository(database));
 
     const retained = await pool.query<{ name: string }>(
-      `SELECT name FROM roles WHERE name IN ('retired_system', 'custom_role')
+      `SELECT name FROM roles WHERE name IN ('legacy_role', 'custom_role')
        UNION ALL
-       SELECT key FROM permissions WHERE key IN ('admin:retired', 'custom:permission')
+       SELECT key FROM permissions WHERE key IN ('legacy:permission', 'custom:permission')
        ORDER BY name`,
     );
     expect(retained.rows).toEqual([
       { name: "custom:permission" },
       { name: "custom_role" },
+      { name: "legacy:permission" },
+      { name: "legacy_role" },
     ]);
+    const legacyGrants = await pool.query<{ key: string }>(
+      `SELECT p.key FROM roles r
+       JOIN role_permissions rp ON rp.role_id = r.id
+       JOIN permissions p ON p.id = rp.permission_id
+       WHERE r.name = 'legacy_role'`,
+    );
+    expect(legacyGrants.rows).toEqual([{ key: "legacy:permission" }]);
     const supportGrants = await pool.query<{ key: string }>(
       `SELECT p.key FROM roles r
        JOIN role_permissions rp ON rp.role_id = r.id

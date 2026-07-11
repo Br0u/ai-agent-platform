@@ -39,31 +39,6 @@ class InMemoryRepository implements AccessControlSeedRepository {
   }
 
   async acquireSeedLock(): Promise<void> {}
-
-  async deleteSystemRolesExcept(
-    manifest: readonly { name: string; realmScope: RoleRealm }[],
-  ): Promise<void> {
-    const retained = new Set(
-      manifest.map(({ name, realmScope }) => roleKey(name, realmScope)),
-    );
-    for (const [key, role] of this.roles) {
-      if (role.isSystem && !retained.has(key)) {
-        this.roles.delete(key);
-        this.grants.delete(key);
-      }
-    }
-  }
-
-  async deleteSystemPermissionsExcept(
-    manifestKeys: readonly string[],
-  ): Promise<void> {
-    const retained = new Set(manifestKeys);
-    for (const [key, permission] of this.permissions) {
-      if (permission.managedBySystem && !retained.has(key)) {
-        this.permissions.delete(key);
-      }
-    }
-  }
 }
 
 const permissionKeys = [
@@ -176,33 +151,36 @@ describe("seedAccessControl", () => {
     ).toEqual(["admin:registrations"]);
   });
 
-  it("removes retired system entries without deleting custom entries", async () => {
+  it("preserves unknown catalog entries and their grants", async () => {
     const repository = new InMemoryRepository();
-    repository.roles.set("workforce:retired_system", {
-      name: "retired_system",
+    repository.roles.set("workforce:legacy_role", {
+      name: "legacy_role",
       realmScope: "workforce",
-      isSystem: true,
     });
     repository.roles.set("workforce:custom_role", {
       name: "custom_role",
       realmScope: "workforce",
-      isSystem: false,
     });
-    repository.permissions.set("admin:retired", {
-      key: "admin:retired",
-      name: "Retired",
-      managedBySystem: true,
+    repository.permissions.set("legacy:permission", {
+      key: "legacy:permission",
+      name: "Legacy",
     });
     repository.permissions.set("custom:permission", {
       key: "custom:permission",
       name: "Custom",
-      managedBySystem: false,
     });
+    repository.grants.set(
+      "workforce:legacy_role",
+      new Set(["legacy:permission"]),
+    );
 
     await seedAccessControl(repository);
 
-    expect(repository.roles.has("workforce:retired_system")).toBe(false);
-    expect(repository.permissions.has("admin:retired")).toBe(false);
+    expect(repository.roles.has("workforce:legacy_role")).toBe(true);
+    expect(repository.permissions.has("legacy:permission")).toBe(true);
+    expect(repository.grants.get("workforce:legacy_role")).toEqual(
+      new Set(["legacy:permission"]),
+    );
     expect(repository.roles.has("workforce:custom_role")).toBe(true);
     expect(repository.permissions.has("custom:permission")).toBe(true);
   });
