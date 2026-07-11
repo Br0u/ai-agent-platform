@@ -24,7 +24,9 @@ export function SiteFooter({ groups }: { groups: NavigationSection[] }) {
                 {group.items.map((item) =>
                   typeof item.href === "string" ? (
                     <li key={item.href}>
-                      <a href={item.href}>{item.label}</a>
+                      <a className="portal-footer__link" href={item.href}>
+                        {item.label}
+                      </a>
                     </li>
                   ) : null,
                 )}

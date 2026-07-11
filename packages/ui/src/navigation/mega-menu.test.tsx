@@ -135,6 +135,10 @@ describe("MegaMenu", () => {
     fireEvent.click(productTrigger);
     expect(productTrigger).toHaveAttribute("aria-expanded", "true");
 
+    fireEvent.pointerLeave(productTrigger);
+    act(() => vi.advanceTimersByTime(180));
+    expect(productTrigger).toHaveAttribute("aria-expanded", "true");
+
     fireEvent.click(productTrigger);
     expect(productTrigger).toHaveAttribute("aria-expanded", "false");
   });

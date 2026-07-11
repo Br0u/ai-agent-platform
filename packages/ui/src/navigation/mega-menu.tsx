@@ -32,6 +32,7 @@ export function MegaMenu({
   const panelRefs = useRef<Array<HTMLDivElement | null>>([]);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoverOpenIndexRef = useRef<number | null>(null);
+  const pinnedIndexRef = useRef<number | null>(null);
   const focusPanelOnOpenRef = useRef(false);
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
@@ -45,12 +46,14 @@ export function MegaMenu({
   function open(index: number) {
     cancelClose();
     hoverOpenIndexRef.current = null;
+    pinnedIndexRef.current = index;
     setOpenIndex(index);
   }
 
   function close() {
     cancelClose();
     hoverOpenIndexRef.current = null;
+    pinnedIndexRef.current = null;
     setOpenIndex(null);
   }
 
@@ -58,6 +61,7 @@ export function MegaMenu({
     cancelClose();
     if (openIndex !== index) {
       hoverOpenIndexRef.current = index;
+      pinnedIndexRef.current = null;
       setOpenIndex(index);
     }
   }
@@ -66,18 +70,27 @@ export function MegaMenu({
     cancelClose();
     if (hoverOpenIndexRef.current === index) {
       hoverOpenIndexRef.current = null;
+      pinnedIndexRef.current = index;
       setOpenIndex(index);
       return;
     }
 
     hoverOpenIndexRef.current = null;
-    setOpenIndex((currentIndex) => (currentIndex === index ? null : index));
+    setOpenIndex((currentIndex) => {
+      const nextIndex = currentIndex === index ? null : index;
+      pinnedIndexRef.current = nextIndex;
+      return nextIndex;
+    });
   }
 
   function scheduleClose() {
+    if (pinnedIndexRef.current === openIndex) {
+      return;
+    }
     cancelClose();
     closeTimerRef.current = setTimeout(() => {
       hoverOpenIndexRef.current = null;
+      pinnedIndexRef.current = null;
       setOpenIndex(null);
       closeTimerRef.current = null;
     }, CLOSE_DELAY_MS);

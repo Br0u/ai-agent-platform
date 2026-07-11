@@ -74,6 +74,10 @@ describe("SiteFooter", () => {
         group.items.map((item) => [item.label, item.href]),
       ),
     );
+
+    for (const link of within(navigation).getAllByRole("link")) {
+      expect(link).toHaveClass("portal-footer__link");
+    }
   });
 
   it("shows only the explicit legal placeholders without fake details", () => {
