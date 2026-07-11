@@ -37,23 +37,11 @@ function pathIncludes(basePath: string, candidatePath: string) {
 function isChildActive(href: string, activeHref: string) {
   const configured = normalizeUrl(href);
   const active = normalizeUrl(activeHref);
-
-  if (
-    normalizePathname(configured.pathname) !==
-    normalizePathname(active.pathname)
-  ) {
-    return false;
-  }
-
-  if (configured.search && configured.search !== active.search) {
-    return false;
-  }
-
-  if (configured.hash && configured.hash !== active.hash) {
-    return false;
-  }
-
-  return true;
+  return (
+    configured.pathname === active.pathname &&
+    configured.search === active.search &&
+    configured.hash === active.hash
+  );
 }
 
 function isHrefItem(
@@ -133,6 +121,10 @@ export function MegaMenu({
 
     if (event.key === "ArrowDown") {
       event.preventDefault();
+      if (openIndex === index) {
+        panelRef.current?.querySelector<HTMLAnchorElement>("a")?.focus();
+        return;
+      }
       focusPanelOnOpenRef.current = true;
       open(index);
     }
@@ -182,6 +174,9 @@ export function MegaMenu({
   );
 
   const openItem = openIndex === null ? null : items[openIndex];
+  const sectionColumnCount = openItem
+    ? Math.min(4, Math.max(3, openItem.children.length))
+    : 3;
 
   return (
     <div className="mega-menu" ref={rootRef}>
@@ -220,7 +215,7 @@ export function MegaMenu({
       {openItem && openIndex !== null ? (
         <div
           aria-labelledby={`${baseId}-trigger-${openIndex}`}
-          className="mega-menu__panel"
+          className={`mega-menu__panel mega-menu__panel--${sectionColumnCount}`}
           id={`${baseId}-panel-${openIndex}`}
           onPointerEnter={cancelClose}
           onPointerLeave={scheduleClose}

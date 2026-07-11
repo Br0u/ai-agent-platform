@@ -197,6 +197,17 @@ describe("MegaMenu", () => {
     expect(screen.getByRole("link", { name: /产品概览/ })).toHaveFocus();
   });
 
+  it("focuses the first overview link with ArrowDown when already open", () => {
+    renderMenu();
+    const productTrigger = trigger("产品");
+    fireEvent.click(productTrigger);
+    productTrigger.focus();
+
+    fireEvent.keyDown(productTrigger, { key: "ArrowDown" });
+
+    expect(screen.getByRole("link", { name: /产品概览/ })).toHaveFocus();
+  });
+
   it("labels placeholder parents and children as 尚未开放", () => {
     renderMenu();
     expect(within(trigger("下载")).getByText("尚未开放")).toBeVisible();
@@ -249,5 +260,39 @@ describe("MegaMenu", () => {
       "aria-current",
       "page",
     );
+  });
+
+  it("requires an exact normalized full href for child activity", () => {
+    const { rerender } = renderMenu("/product/agent-studio?foo=1");
+    fireEvent.click(trigger("产品"));
+    const agentStudio = screen.getByRole("link", { name: /Agent Studio/ });
+    expect(agentStudio).not.toHaveAttribute("aria-current");
+
+    rerender(<MegaMenu items={items} activeHref="/product/agent-studio#bar" />);
+    expect(agentStudio).not.toHaveAttribute("aria-current");
+
+    rerender(<MegaMenu items={items} activeHref="/product/agent-studio" />);
+    expect(agentStudio).toHaveAttribute("aria-current", "page");
+  });
+
+  it("uses exactly three or four panel columns and caps five sections at four", () => {
+    const { rerender } = renderMenu();
+    fireEvent.click(trigger("产品"));
+    expect(screen.getByRole("region")).toHaveClass("mega-menu__panel--3");
+
+    const fiveSectionItems: PortalNavigationItem[] = [
+      {
+        ...items[0],
+        children: [
+          ...items[0].children,
+          { label: "生态", items: [] },
+          { label: "服务", items: [] },
+        ],
+      },
+    ];
+    rerender(<MegaMenu items={fiveSectionItems} activeHref="/" />);
+
+    expect(screen.getByRole("region")).toHaveClass("mega-menu__panel--4");
+    expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(5);
   });
 });

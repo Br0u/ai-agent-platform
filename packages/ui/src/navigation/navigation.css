@@ -93,9 +93,16 @@
 
   .mega-menu__sections {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
     gap: 0;
     padding-top: var(--space-6);
+  }
+
+  .mega-menu__panel--3 .mega-menu__sections {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .mega-menu__panel--4 .mega-menu__sections {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .mega-menu__section {
