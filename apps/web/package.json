@@ -14,16 +14,23 @@
   },
   "dependencies": {
     "@ai-agent-platform/database": "workspace:*",
+    "@ai-agent-platform/integrations": "workspace:*",
     "@ai-agent-platform/ui": "workspace:*",
+    "@better-auth/drizzle-adapter": "1.6.23",
+    "better-auth": "1.6.23",
     "next": "16.2.10",
+    "qrcode": "1.5.4",
     "react": "19.2.7",
-    "react-dom": "19.2.7"
+    "react-dom": "19.2.7",
+    "zod": "4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@tailwindcss/postcss": "4.3.2",
     "@testing-library/jest-dom": "6.9.1",
     "@testing-library/react": "16.3.1",
     "@types/node": "24.10.1",
+    "@types/qrcode": "1.5.6",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
     "eslint": "9.39.1",
