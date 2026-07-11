@@ -9,10 +9,10 @@
 - GitHub仓库为 `https://github.com/Br0u/ai-agent-platform`。
 
 ## 研究发现
-- 当前目录已沿用GitHub远端历史初始化Git；实现位于`feat/project-foundation`隔离工作区。
-- 当前仅有文档、设计稿和预留目录，没有应用代码。
+- 项目基线已完成并在`7766612`推送至GitHub `main`；Phase 9已完成。
+- Phase 10正在`codex/feat-identity-access-control`隔离工作区实施身份与权限控制。
 - PRD、系统架构、占位接口、部署准备和UI方向均已落地本地。
-- GitHub远端已检查，当前只有初始README提交。
+- GitHub远端已包含完成的项目基线，后续身份权限变更在功能分支中独立提交。
 - 本机环境：Git 2.50.1、Node.js 26.0.0、pnpm 11.5.2、Docker 29.5.3、Docker Compose 5.1.4。
 - 本机CPU为Apple Silicon `arm64`；开发镜像必须避免只支持x86_64的依赖，生产目标架构待后续确认。
 - Next.js官方当前稳定线为16.2，16.3仍是Preview；一期固定稳定线，不追Preview。
