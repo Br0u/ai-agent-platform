@@ -6,6 +6,10 @@
   font-family: var(--font-body);
 }
 
+.workspace-shell {
+  display: flex;
+}
+
 .site-header {
   position: sticky;
   z-index: 20;
@@ -109,6 +113,8 @@
 
 .workspace-shell__content {
   min-height: 100vh;
+  min-width: 0;
+  flex: 1;
 }
 
 @media (max-width: 1180px) {
