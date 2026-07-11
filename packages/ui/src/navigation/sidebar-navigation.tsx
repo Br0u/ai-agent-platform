@@ -160,6 +160,7 @@ function NavigationItem({
         className="sidebar-navigation__item"
         href={item.href}
         onClick={onActivate}
+        title={item.label}
       >
         {content}
       </a>
@@ -170,6 +171,7 @@ function NavigationItem({
     <button
       className="sidebar-navigation__item sidebar-navigation__item--action"
       disabled={item.disabled}
+      title={item.label}
       type="button"
     >
       {content}
@@ -258,8 +260,10 @@ export function SidebarNavigation({
   const drawerId = `${useId()}-sidebar-drawer`;
   const openerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const collapseRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const allowFocusReturnRef = useRef(false);
+  const focusAfterCloseRef = useRef<"mobile" | "desktop" | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const visible = useMemo(
@@ -274,8 +278,14 @@ export function SidebarNavigation({
 
   function closeDrawer() {
     allowFocusReturnRef.current = true;
+    focusAfterCloseRef.current = "mobile";
     setIsDrawerOpen(false);
-    openerRef.current?.focus();
+  }
+
+  function closeDrawerForDesktop() {
+    allowFocusReturnRef.current = true;
+    focusAfterCloseRef.current = "desktop";
+    setIsDrawerOpen(false);
   }
 
   function handleDrawerKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
@@ -301,7 +311,15 @@ export function SidebarNavigation({
     if (isDrawerOpen) {
       allowFocusReturnRef.current = false;
       closeRef.current?.focus();
+      return;
     }
+
+    if (focusAfterCloseRef.current === "desktop") {
+      collapseRef.current?.focus();
+    } else if (focusAfterCloseRef.current === "mobile") {
+      openerRef.current?.focus();
+    }
+    focusAfterCloseRef.current = null;
   }, [isDrawerOpen]);
 
   useEffect(() => {
@@ -343,7 +361,7 @@ export function SidebarNavigation({
 
     const desktopQuery = window.matchMedia("(min-width: 1181px)");
     const handleBreakpointChange = (event: MediaQueryListEvent) => {
-      if (event.matches) closeDrawer();
+      if (event.matches) closeDrawerForDesktop();
     };
 
     if (typeof desktopQuery.addEventListener === "function") {
@@ -375,6 +393,7 @@ export function SidebarNavigation({
         aria-label={ariaLabel}
         className="sidebar-navigation__desktop"
         data-collapsed={isCollapsed}
+        inert={isDrawerOpen ? true : undefined}
       >
         <NavigationContent
           brandLabel={brandLabel}
@@ -388,6 +407,7 @@ export function SidebarNavigation({
           aria-label={isCollapsed ? "展开侧栏" : "折叠侧栏"}
           className="sidebar-navigation__collapse"
           onClick={() => setIsCollapsed((current) => !current)}
+          ref={collapseRef}
           type="button"
         >
           <span aria-hidden="true">{isCollapsed ? "展开" : "折叠"}</span>

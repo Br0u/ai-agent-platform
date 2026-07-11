@@ -16,6 +16,7 @@ const consoleGroups: NavigationSection[] = [
     items: [
       { label: "控制台首页", href: "/console" },
       { label: "账号资料", href: "/console/profile" },
+      { label: "账号安全", href: "/console/security" },
     ],
   },
   {
@@ -205,6 +206,15 @@ describe("SidebarNavigation", () => {
       within(navigation).getByRole("link", { name: "账号资料" }),
     ).toBeInTheDocument();
     expect(
+      within(navigation).getByRole("link", { name: "账号资料" }),
+    ).toHaveAttribute("title", "账号资料");
+    expect(
+      within(navigation).getByRole("link", { name: "账号安全" }),
+    ).toHaveAttribute("title", "账号安全");
+    expect(
+      within(navigation).getByRole("button", { name: /退出登录/ }),
+    ).toHaveAttribute("title", "退出登录");
+    expect(
       within(navigation).getByRole("button", { name: "展开侧栏" }),
     ).toBeInTheDocument();
   });
@@ -243,8 +253,12 @@ describe("SidebarNavigation", () => {
   it("opens a labeled drawer, closes from the overlay and returns focus", () => {
     renderConsole();
     const { dialog, opener } = openDrawer();
+    const desktopNavigation = document.querySelector(
+      ".sidebar-navigation__desktop",
+    );
 
     expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(desktopNavigation).toHaveAttribute("inert");
     expect(document.body.style.overflow).toBe("hidden");
     fireEvent.click(
       screen.getByRole("button", { name: "关闭客户控制台导航遮罩" }),
@@ -252,20 +266,23 @@ describe("SidebarNavigation", () => {
     expect(
       screen.queryByRole("dialog", { name: "客户控制台导航" }),
     ).not.toBeInTheDocument();
+    expect(desktopNavigation).not.toHaveAttribute("inert");
     expect(opener).toHaveFocus();
   });
 
   it("closes the drawer on Escape and link activation", () => {
     renderConsole();
-    openDrawer();
+    const { opener } = openDrawer();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
 
     openDrawer();
     const accountLink = screen.getByRole("link", { name: "账号资料" });
     accountLink.addEventListener("click", (event) => event.preventDefault());
     fireEvent.click(accountLink);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
   });
 
   it("moves focus into the drawer and traps Tab at both edges", () => {
@@ -327,7 +344,7 @@ describe("SidebarNavigation", () => {
     });
 
     expect(opener).toHaveAttribute("aria-expanded", "false");
-    expect(opener).toHaveFocus();
+    expect(screen.getByRole("button", { name: "折叠侧栏" })).toHaveFocus();
     view.unmount();
     expect(mediaQuery.removeEventListener).toHaveBeenCalledTimes(1);
   });
