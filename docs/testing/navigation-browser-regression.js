@@ -117,11 +117,67 @@ async function navigationBrowserRegression(page) {
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
+  const mobileScrollY = await page.evaluate(() => {
+    const maximumScroll = document.documentElement.scrollHeight - innerHeight;
+    window.scrollTo(0, Math.min(600, maximumScroll));
+    return window.scrollY;
+  });
+  assert(mobileScrollY > 0, "390 page could not be scrolled before opening");
   const mobilePreviousOverflow = await page.evaluate(
     () => document.body.style.overflow,
   );
   const mobileDialog = await openMobileNavigation();
   await mobileDialog.locator(".mobile-navigation__accordion").first().click();
+
+  const mobileBodyScroll = await mobileDialog
+    .locator(".mobile-navigation__body")
+    .evaluate(async (body) => {
+      const target = Math.min(160, body.scrollHeight - body.clientHeight);
+      body.scrollTop = target;
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      return { target, actual: body.scrollTop };
+    });
+  assert(
+    mobileBodyScroll.target > 0 && mobileBodyScroll.actual > 0,
+    `390 drawer body did not actually scroll: ${JSON.stringify(mobileBodyScroll)}`,
+  );
+
+  const dialogTargets = await mobileDialog
+    .locator("button:visible, a[href]:visible")
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          label:
+            element.getAttribute("aria-label") || element.textContent.trim(),
+          width: rect.width,
+          height: rect.height,
+        };
+      }),
+    );
+  const mobileFooterTargets = await page
+    .locator(".portal-footer__link:visible")
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          label: element.textContent.trim(),
+          width: rect.width,
+          height: rect.height,
+        };
+      }),
+    );
+  const mobileTargets = [...dialogTargets, ...mobileFooterTargets];
+  assert(
+    mobileTargets.length > 0,
+    "390 page has no measured navigation targets",
+  );
+  assert(
+    mobileTargets.every((target) => target.width >= 44 && target.height >= 44),
+    `390 navigation target below 44x44: ${JSON.stringify(
+      mobileTargets.filter((target) => target.width < 44 || target.height < 44),
+    )}`,
+  );
 
   const mobileGeometry = await mobileDialog.evaluate((dialog) => {
     const drawerRect = dialog.getBoundingClientRect();
@@ -138,6 +194,7 @@ async function navigationBrowserRegression(page) {
       },
       drawer: {
         top: drawerRect.top,
+        left: drawerRect.left,
         height: drawerRect.height,
       },
       body: {
@@ -181,14 +238,41 @@ async function navigationBrowserRegression(page) {
     mobileOverflow === 0,
     `390 page has ${mobileOverflow}px horizontal overflow`,
   );
+  const exposedBackdropX = Math.max(
+    1,
+    Math.floor(mobileGeometry.drawer.left / 2),
+  );
+  await page.mouse.move(exposedBackdropX, 400);
+  await page.mouse.wheel(0, 600);
+  await page.waitForTimeout(50);
+  const scrollYAfterBackdropWheel = await page.evaluate(() => window.scrollY);
+  assert(
+    scrollYAfterBackdropWheel === mobileScrollY,
+    `390 background scrolled behind the drawer: expected ${mobileScrollY}, received ${scrollYAfterBackdropWheel}`,
+  );
   const mobileRestoredOverflow = await closeMobileNavigation(
     mobilePreviousOverflow,
+  );
+  const mobileRestoredScrollY = await page.evaluate(() => window.scrollY);
+  assert(
+    mobileRestoredScrollY === mobileScrollY,
+    `390 scroll position changed after close: expected ${mobileScrollY}, received ${mobileRestoredScrollY}`,
   );
   results.mobile = {
     viewport: [390, 844],
     ...mobileGeometry,
+    bodyScroll: mobileBodyScroll,
+    minimumTarget: {
+      width: Math.min(...mobileTargets.map((target) => target.width)),
+      height: Math.min(...mobileTargets.map((target) => target.height)),
+    },
     footerColumns: mobileFooterColumns,
     horizontalOverflow: mobileOverflow,
+    backgroundScroll: {
+      beforeOpen: mobileScrollY,
+      afterBackdropWheel: scrollYAfterBackdropWheel,
+      afterClose: mobileRestoredScrollY,
+    },
     restoredBodyOverflow: mobileRestoredOverflow,
   };
 
