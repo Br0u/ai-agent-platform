@@ -24,7 +24,14 @@ function columnNames(name: string) {
 }
 
 function uniqueConstraintNames(name: string) {
-  return config(name).uniqueConstraints.map((constraint) => constraint.name);
+  const tableConfig = config(name);
+
+  return [
+    ...tableConfig.uniqueConstraints.map((constraint) => constraint.name),
+    ...tableConfig.columns
+      .filter((column) => column.isUnique)
+      .map((column) => column.uniqueName),
+  ];
 }
 
 function foreignKeys(name: string) {
@@ -69,6 +76,39 @@ describe("identity schema", () => {
     expect(columnNames("users")).not.toContain("password_hash");
   });
 
+  it("enforces unique identity lookup keys while keeping usernames optional", () => {
+    const username = config("users").columns.find(
+      (column) => column.name === "username",
+    );
+
+    expect(uniqueConstraintNames("users")).toEqual(
+      expect.arrayContaining(["users_email_unique", "users_username_unique"]),
+    );
+    expect(username?.notNull).toBe(false);
+    expect(uniqueConstraintNames("sessions")).toContain(
+      "sessions_token_unique",
+    );
+    expect(uniqueConstraintNames("rateLimits")).toContain(
+      "rate_limits_key_unique",
+    );
+  });
+
+  it("provides the optional display username expected by Better Auth", () => {
+    expect(columnNames("users")).toContain("display_username");
+  });
+
+  it("stores the complete realm-aware session context", () => {
+    expect(columnNames("sessions")).toEqual(
+      expect.arrayContaining([
+        "expires_at",
+        "ip_address",
+        "user_agent",
+        "realm",
+        "mfa_verified_at",
+      ]),
+    );
+  });
+
   it("implements the Better Auth 1.6.23 core and plugin tables", () => {
     expect(columnNames("accounts")).toEqual(
       expect.arrayContaining([
@@ -87,7 +127,6 @@ describe("identity schema", () => {
     expect(uniqueConstraintNames("accounts")).toContain(
       "accounts_provider_id_account_id_unique",
     );
-    expect(columnNames("sessions")).toContain("token");
     expect(columnNames("verifications")).toEqual(
       expect.arrayContaining([
         "identifier",
