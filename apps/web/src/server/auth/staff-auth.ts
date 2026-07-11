@@ -2,12 +2,10 @@ import "server-only";
 
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import {
-  APIError,
   betterAuth,
   type BetterAuthOptions,
   type DBAdapterInstance,
 } from "better-auth";
-import { createAuthMiddleware } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import { twoFactor, username } from "better-auth/plugins";
 
@@ -27,9 +25,6 @@ const DISABLED_BACKUP_CODE_ENDPOINTS = [
   "/two-factor/view-backup-codes",
   "/two-factor/verify-backup-code",
 ] as const;
-const disabledBackupCodeEndpointSet = new Set<string>(
-  DISABLED_BACKUP_CODE_ENDPOINTS,
-);
 
 function generateNoBuiltInBackupCodes(): string[] {
   return [];
@@ -75,6 +70,7 @@ export const staffRealm = {
   builtInBackupCodesDisabled: true,
   generateBuiltInBackupCodes: generateNoBuiltInBackupCodes,
   projectActionsTrustDevice: false,
+  blockedAuthPaths: DISABLED_BACKUP_CODE_ENDPOINTS,
   endpoints: {
     allowed: [
       "/sign-in/email",
@@ -115,18 +111,8 @@ export function createStaffAuthOptions(
     env: dependencies.env,
     adapter: resolveAdapter(dependencies),
   });
-  const rejectBuiltInBackupCodes = createAuthMiddleware(async (context) => {
-    if (disabledBackupCodeEndpointSet.has(context.path)) {
-      throw new APIError("NOT_FOUND", {
-        code: "AUTH_ENDPOINT_NOT_AVAILABLE",
-        message: "Authentication endpoint is not available",
-      });
-    }
-  });
-
   return {
     ...shared,
-    hooks: { before: rejectBuiltInBackupCodes },
     plugins: [
       username({
         minUsernameLength: 3,
@@ -139,7 +125,18 @@ export function createStaffAuthOptions(
 }
 
 export function createStaffAuth(dependencies: StaffAuthDependencies = {}) {
-  return betterAuth(createStaffAuthOptions(dependencies));
+  const auth = betterAuth(createStaffAuthOptions(dependencies));
+  const {
+    generateBackupCodes,
+    verifyBackupCode,
+    viewBackupCodes,
+    ...projectApi
+  } = auth.api;
+  void generateBackupCodes;
+  void verifyBackupCode;
+  void viewBackupCodes;
+
+  return { ...auth, api: projectApi };
 }
 
 let staffAuthSingleton: ReturnType<typeof createStaffAuth> | undefined;

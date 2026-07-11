@@ -31,8 +31,8 @@ function authEnvironment(
   return {
     NODE_ENV: "test",
     BETTER_AUTH_SECRET: TEST_SECRET,
-    BETTER_AUTH_URL: "http://auth.example.test",
-    BETTER_AUTH_TRUSTED_ORIGINS: "http://auth.example.test",
+    BETTER_AUTH_URL: "http://127.0.0.1:3000",
+    BETTER_AUTH_TRUSTED_ORIGINS: "http://127.0.0.1:3000",
     ...overrides,
   };
 }
@@ -155,6 +155,32 @@ describe("shared auth security options", () => {
       ),
     ).toThrow();
   });
+
+  it("derives secure cookies from HTTPS outside production", () => {
+    expect(
+      resolveAuthEnvironment(
+        authEnvironment({
+          NODE_ENV: "staging",
+          BETTER_AUTH_URL: "https://staging.example.com",
+          BETTER_AUTH_TRUSTED_ORIGINS: "https://staging.example.com",
+        }),
+      ).secureCookies,
+    ).toBe(true);
+  });
+
+  it.each(["http://portal.example.com", "ftp://portal.example.com"])(
+    "rejects an unsafe application URL: %s",
+    (url) => {
+      expect(() =>
+        resolveAuthEnvironment(
+          authEnvironment({
+            BETTER_AUTH_URL: url,
+            BETTER_AUTH_TRUSTED_ORIGINS: url,
+          }),
+        ),
+      ).toThrow("BETTER_AUTH_URL");
+    },
+  );
 
   it("trusts x-real-ip only with an explicit Nginx proxy boundary", () => {
     const direct = resolveAuthEnvironment(authEnvironment());
@@ -327,7 +353,7 @@ describe("real Better Auth handlers", () => {
     const cookie = response.headers.get("set-cookie") ?? "";
 
     expect(response.status).toBe(200);
-    expect(cookie).toContain("aap_customer_session=");
+    expect(cookie.split("=", 1)[0]).toBe("aap_customer_session");
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=Lax");
     expect(cookie).toContain("Path=/");
@@ -338,7 +364,7 @@ describe("real Better Auth handlers", () => {
 
   it("sets a non-secure staff cookie in local HTTP and never a customer cookie", async () => {
     const database = await authMemoryDatabase("workforce");
-    const baseURL = "http://auth.example.test";
+    const baseURL = "http://127.0.0.1:3000";
     const auth = createStaffAuth({
       env: authEnvironment(),
       adapter: memoryAdapter(database),
@@ -348,7 +374,7 @@ describe("real Better Auth handlers", () => {
     const cookie = response.headers.get("set-cookie") ?? "";
 
     expect(response.status).toBe(200);
-    expect(cookie).toContain("aap_staff_session=");
+    expect(cookie.split("=", 1)[0]).toBe("aap_staff_session");
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=Lax");
     expect(cookie).toContain("Path=/");
@@ -368,11 +394,11 @@ describe("real Better Auth handlers", () => {
     });
 
     const signUp = await auth.handler(
-      new Request("http://auth.example.test/api/auth/customer/sign-up/email", {
+      new Request("http://127.0.0.1:3000/api/auth/customer/sign-up/email", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          origin: "http://auth.example.test",
+          origin: "http://127.0.0.1:3000",
         },
         body: JSON.stringify({
           name: "Unreviewed user",
@@ -382,7 +408,7 @@ describe("real Better Auth handlers", () => {
       }),
     );
     const untrustedOrigin = await auth.handler(
-      new Request("http://auth.example.test/api/auth/customer/sign-in/email", {
+      new Request("http://127.0.0.1:3000/api/auth/customer/sign-in/email", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -411,17 +437,65 @@ describe("real Better Auth handlers", () => {
     });
 
     const response = await auth.handler(
-      new Request(`http://auth.example.test/api/auth/staff${path}`, {
+      new Request(`http://127.0.0.1:3000/api/auth/staff${path}`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          origin: "http://auth.example.test",
+          origin: "http://127.0.0.1:3000",
         },
         body: JSON.stringify({}),
       }),
     );
 
     expect(response.status).toBe(404);
+  });
+
+  it("removes built-in recovery APIs from direct server calls", async () => {
+    const auth = createStaffAuth({
+      env: authEnvironment(),
+      adapter: memoryAdapter(await authMemoryDatabase("workforce")),
+    });
+
+    expect(auth.api).not.toHaveProperty("generateBackupCodes");
+    expect(auth.api).not.toHaveProperty("viewBackupCodes");
+    expect(auth.api).not.toHaveProperty("verifyBackupCode");
+    expect(auth.api).toHaveProperty("enableTwoFactor");
+    expect(auth.api).toHaveProperty("verifyTOTP");
+  });
+
+  it("rejects overlong passwords identically before account lookup", async () => {
+    const auth = createCustomerAuth({
+      env: authEnvironment(),
+      adapter: memoryAdapter(await authMemoryDatabase("customer")),
+    });
+    const responses = await Promise.all(
+      ["customer@example.test", "missing@example.test"].map((email) =>
+        auth.handler(
+          new Request("http://127.0.0.1:3000/api/auth/customer/sign-in/email", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              origin: "http://127.0.0.1:3000",
+            },
+            body: JSON.stringify({ email, password: "x".repeat(4096) }),
+          }),
+        ),
+      ),
+    );
+
+    expect(responses.map((response) => response.status)).toEqual([400, 400]);
+    await expect(
+      Promise.all(responses.map((response) => response.json())),
+    ).resolves.toEqual([
+      {
+        code: "AUTH_PASSWORD_POLICY_INVALID",
+        message: "Authentication request failed",
+      },
+      {
+        code: "AUTH_PASSWORD_POLICY_INVALID",
+        message: "Authentication request failed",
+      },
+    ]);
   });
 });
 

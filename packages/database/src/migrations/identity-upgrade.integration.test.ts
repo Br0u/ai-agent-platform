@@ -127,7 +127,7 @@ describePostgres("identity migration from the legacy database", () => {
     const journal = await pool.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations",
     );
-    expect(journal.rows).toEqual([{ count: "2" }]);
+    expect(journal.rows).toEqual([{ count: "3" }]);
   });
 
   it("enforces case-insensitive identities and legal-name key shape", async () => {

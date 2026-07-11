@@ -1,9 +1,15 @@
 import { isIP } from "node:net";
 
-import type { BetterAuthOptions, DBAdapterInstance } from "better-auth";
+import {
+  APIError,
+  type BetterAuthOptions,
+  type DBAdapterInstance,
+} from "better-auth";
+import { createAuthMiddleware } from "better-auth/api";
 
 import {
   betterAuthModels,
+  assertPasswordPolicy,
   hashPassword,
   verifyPassword,
 } from "@ai-agent-platform/database";
@@ -26,6 +32,7 @@ export type RealmDescriptor = {
   basePath: string;
   cookieName: string;
   maxAgeSeconds: number;
+  blockedAuthPaths?: readonly string[];
 };
 
 export type ResolvedAuthEnvironment = {
@@ -62,11 +69,18 @@ function parseOrigin(value: string, name: string, production: boolean): string {
     throw new Error(`${name} must be a valid absolute URL`);
   }
 
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`${name} must use HTTP or HTTPS`);
+  }
   if (url.pathname !== "/" || url.search || url.hash) {
     throw new Error(`${name} must contain an origin without a path`);
   }
   if (production && url.protocol !== "https:") {
     throw new Error(`${name} must use HTTPS in production`);
+  }
+  const localHttpHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
+  if (url.protocol === "http:" && !localHttpHosts.has(url.hostname)) {
+    throw new Error(`${name} must use HTTPS unless it targets local loopback`);
   }
 
   return url.origin;
@@ -147,7 +161,7 @@ export function resolveAuthEnvironment(
     baseURL,
     secret,
     trustedOrigins: [...new Set([baseURL, ...trustedOrigins])],
-    secureCookies: production,
+    secureCookies: new URL(baseURL).protocol === "https:",
     ipAddressHeaders: trustNginxProxy ? ["x-real-ip"] : [],
     trustedProxies,
   };
@@ -201,6 +215,35 @@ export function createSharedAuthOptions(
   dependencies: AuthOptionsDependencies,
 ) {
   const resolved = resolveAuthEnvironment(dependencies.env);
+  const blockedAuthPaths = new Set<string>(descriptor.blockedAuthPaths ?? []);
+  const enforceAuthBoundary = createAuthMiddleware(async (context) => {
+    if (blockedAuthPaths.has(context.path)) {
+      throw new APIError("NOT_FOUND", {
+        code: "AUTH_ENDPOINT_NOT_AVAILABLE",
+        message: "Authentication endpoint is not available",
+      });
+    }
+
+    if (
+      context.path === "/sign-in/email" ||
+      context.path === "/sign-in/username"
+    ) {
+      const body =
+        context.body && typeof context.body === "object"
+          ? (context.body as Record<string, unknown>)
+          : undefined;
+      if (typeof body?.password === "string") {
+        try {
+          assertPasswordPolicy(body.password);
+        } catch {
+          throw new APIError("BAD_REQUEST", {
+            code: "AUTH_PASSWORD_POLICY_INVALID",
+            message: "Authentication request failed",
+          });
+        }
+      }
+    }
+  });
 
   return {
     appName: "AI Agent Platform",
@@ -209,6 +252,7 @@ export function createSharedAuthOptions(
     secret: resolved.secret,
     database: dependencies.adapter,
     trustedOrigins: resolved.trustedOrigins,
+    hooks: { before: enforceAuthBoundary },
     emailAndPassword: {
       enabled: true,
       disableSignUp: true,
@@ -331,7 +375,7 @@ export function createSharedAuthOptions(
       },
     },
     advanced: {
-      useSecureCookies: resolved.secureCookies,
+      useSecureCookies: false,
       disableCSRFCheck: false,
       disableOriginCheck: false,
       trustedProxyHeaders: false,

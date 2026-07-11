@@ -15,6 +15,13 @@
       "when": 1783770435717,
       "tag": "0001_identity_access_control",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783792312000,
+      "tag": "0002_session_realm_guard",
+      "breakpoints": true
     }
   ]
 }

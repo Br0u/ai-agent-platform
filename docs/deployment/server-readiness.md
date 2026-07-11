@@ -30,6 +30,12 @@
 - `backup`：按周期执行`pg_dump`，写入独立备份卷并清理过期文件。
 - `db`和`web`均有健康检查；后续服务按`service_healthy`顺序启动。
 
+## 反向代理信任边界
+
+仅当 Nginx 是 Web 服务的唯一入口、Web 不发布主机端口，并且 Nginx 使用连接来源覆盖 `X-Real-IP` 与 `X-Forwarded-For` 时，才可设置 `TRUST_NGINX_PROXY=true`。Compose 基线满足该条件：只有 `proxy` 发布端口，`web` 仅在内部 `frontend` 网络暴露。
+
+非 Compose 部署必须提供等价的防火墙、容器网络或安全组规则，禁止客户端直连 Web origin。应用只能解释代理写入的请求头，应用无法验证 TCP 直连来源，因此不能用应用层配置替代网络隔离。
+
 ## 首次部署
 
 ```bash

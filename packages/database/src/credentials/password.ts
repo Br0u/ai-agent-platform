@@ -36,5 +36,6 @@ export async function verifyPassword(
   passwordHash: string,
   password: string,
 ): Promise<boolean> {
+  assertPasswordPolicy(password);
   return verify(passwordHash, password, ARGON2ID_OPTIONS);
 }

@@ -22,6 +22,14 @@ describe("password credentials", () => {
     await expect(verifyPassword(hash, "WrongPass#12")).resolves.toBe(false);
   });
 
+  it("rejects an overlong password before Argon2 verification", async () => {
+    const hash = await hashPassword("ValidPass#12");
+
+    await expect(verifyPassword(hash, "x".repeat(129))).rejects.toThrow(
+      "Password must contain between 12 and 128 characters",
+    );
+  });
+
   it.each(["short", "x".repeat(129)])(
     "rejects a password outside the 12 to 128 character policy",
     async (password) => {
