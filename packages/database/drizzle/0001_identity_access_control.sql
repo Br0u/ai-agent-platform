@@ -27,6 +27,7 @@ CREATE TABLE "permissions" (
 	"key" varchar(160) NOT NULL,
 	"name" varchar(120) NOT NULL,
 	"description" text,
+	"managed_by_system" boolean DEFAULT false NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "permissions_key_unique" UNIQUE("key")
@@ -160,6 +161,7 @@ ALTER TABLE "users" ALTER COLUMN "status" SET DEFAULT 'pending_review'::"public"
 ALTER TABLE "roles" ADD COLUMN "realm_scope" "role_realm_scope" DEFAULT 'workforce' NOT NULL;--> statement-breakpoint
 ALTER TABLE "roles" ALTER COLUMN "realm_scope" DROP DEFAULT;--> statement-breakpoint
 ALTER TABLE "roles" ADD COLUMN "updated_at" timestamp with time zone DEFAULT now() NOT NULL;--> statement-breakpoint
+ALTER TABLE "roles" ADD COLUMN "is_system" boolean DEFAULT false NOT NULL;--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "email_verified" boolean DEFAULT false NOT NULL;--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "image" text;--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "two_factor_enabled" boolean DEFAULT false NOT NULL;--> statement-breakpoint

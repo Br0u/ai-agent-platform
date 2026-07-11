@@ -44,4 +44,9 @@ describe("identity upgrade migration SQL", () => {
       'CONSTRAINT "organizations_legal_name_key_normalized_check" CHECK',
     );
   });
+
+  it("adds non-system defaults for upgraded roles and permissions", () => {
+    expect(sql).toContain('"managed_by_system" boolean DEFAULT false NOT NULL');
+    expect(sql).toContain('"is_system" boolean DEFAULT false NOT NULL');
+  });
 });

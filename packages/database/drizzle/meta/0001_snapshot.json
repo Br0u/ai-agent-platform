@@ -135,6 +135,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "managed_by_system": {
+          "name": "managed_by_system",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -266,6 +273,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "is_system": {
+          "name": "is_system",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "realm_scope": {
           "name": "realm_scope",

@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 
 import * as schema from "./schema";
 
@@ -20,15 +20,37 @@ type MigrationRunner<T> = (
   config: MigrationConfig,
 ) => Promise<void>;
 
+export const migrationAdvisoryLockId = 72_134_877;
+
+export interface MigrationSession {
+  query(statement: string, values?: unknown[]): Promise<unknown>;
+  release(): void;
+}
+
 export async function runMigrations<T>(
   database: T,
+  session: MigrationSession,
   close: () => Promise<void>,
   migrationRunner: MigrationRunner<T>,
 ): Promise<void> {
+  let lockAcquired = false;
   try {
+    await session.query("SELECT pg_advisory_lock($1)", [
+      migrationAdvisoryLockId,
+    ]);
+    lockAcquired = true;
     await migrationRunner(database, { migrationsFolder });
   } finally {
-    await close();
+    try {
+      if (lockAcquired) {
+        await session.query("SELECT pg_advisory_unlock($1)", [
+          migrationAdvisoryLockId,
+        ]);
+      }
+    } finally {
+      session.release();
+      await close();
+    }
   }
 }
 
@@ -42,8 +64,15 @@ function databaseUrl(): string {
 
 async function main(): Promise<void> {
   const pool = new Pool({ connectionString: databaseUrl() });
-  const database = drizzle(pool, { schema });
-  await runMigrations(database, () => pool.end(), migrate);
+  let client: PoolClient;
+  try {
+    client = await pool.connect();
+  } catch (error: unknown) {
+    await pool.end();
+    throw error;
+  }
+  const database = drizzle(client, { schema });
+  await runMigrations(database, client, () => pool.end(), migrate);
 }
 
 const entryPoint = process.argv[1];

@@ -123,6 +123,11 @@ describePostgres("identity migration from the legacy database", () => {
     expect(content.rows).toEqual([
       { author_id: "00000000-0000-4000-8000-000000000001" },
     ]);
+
+    const migratedRole = await pool.query<{ is_system: boolean }>(
+      "SELECT is_system FROM roles WHERE name = 'legacy-admin'",
+    );
+    expect(migratedRole.rows).toEqual([{ is_system: false }]);
   });
 
   it("enforces case-insensitive identities and legal-name key shape", async () => {

@@ -18,9 +18,12 @@ export function canAssignRole(
 }
 
 export function canEnterApplication(
+  realm: IdentityRealm,
   status: UserStatus,
   application: Application,
 ): boolean {
+  if (realm !== "customer") return false;
+
   return (
     ((status === "pending_review" || status === "rejected") &&
       application === "onboarding") ||

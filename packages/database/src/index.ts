@@ -1,4 +1,5 @@
 export * from "./auth-models";
+export * from "./identity-policy";
 export { getDatabase, probeDatabase } from "./client";
 export {
   getLiveness,

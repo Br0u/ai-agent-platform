@@ -20,23 +20,51 @@ describe("identity policy", () => {
 
   describe("canEnterApplication", () => {
     it("keeps pending customers in onboarding", () => {
-      expect(canEnterApplication("pending_review", "onboarding")).toBe(true);
-      expect(canEnterApplication("pending_review", "console")).toBe(false);
+      expect(
+        canEnterApplication("customer", "pending_review", "onboarding"),
+      ).toBe(true);
+      expect(canEnterApplication("customer", "pending_review", "console")).toBe(
+        false,
+      );
     });
 
     it("allows active users into the console only", () => {
-      expect(canEnterApplication("active", "console")).toBe(true);
-      expect(canEnterApplication("active", "onboarding")).toBe(false);
+      expect(canEnterApplication("customer", "active", "console")).toBe(true);
+      expect(canEnterApplication("customer", "active", "onboarding")).toBe(
+        false,
+      );
     });
 
     it("lets rejected customers view onboarding status but blocks the console", () => {
-      expect(canEnterApplication("rejected", "onboarding")).toBe(true);
-      expect(canEnterApplication("rejected", "console")).toBe(false);
+      expect(canEnterApplication("customer", "rejected", "onboarding")).toBe(
+        true,
+      );
+      expect(canEnterApplication("customer", "rejected", "console")).toBe(
+        false,
+      );
     });
 
     it("blocks disabled users", () => {
-      expect(canEnterApplication("disabled", "onboarding")).toBe(false);
-      expect(canEnterApplication("disabled", "console")).toBe(false);
+      expect(canEnterApplication("customer", "disabled", "onboarding")).toBe(
+        false,
+      );
+      expect(canEnterApplication("customer", "disabled", "console")).toBe(
+        false,
+      );
+    });
+
+    it("does not admit workforce identities to customer applications", () => {
+      for (const status of [
+        "pending_review",
+        "active",
+        "disabled",
+        "rejected",
+      ] as const) {
+        expect(canEnterApplication("workforce", status, "onboarding")).toBe(
+          false,
+        );
+        expect(canEnterApplication("workforce", status, "console")).toBe(false);
+      }
     });
   });
 
