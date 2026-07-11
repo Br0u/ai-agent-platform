@@ -4,7 +4,7 @@ import AdminAnalyticsPage from "./page";
 
 describe("AdminAnalyticsPage", () => {
   it("shows an honest empty state without fabricated metrics", () => {
-    render(<AdminAnalyticsPage />);
+    const { container } = render(<AdminAnalyticsPage />);
 
     expect(screen.getByRole("heading", { name: "数据统计" })).toBeVisible();
     expect(screen.getByText("暂无统计数据")).toBeVisible();
@@ -15,5 +15,18 @@ describe("AdminAnalyticsPage", () => {
     for (const label of ["访问量", "下载量", "转化率"]) {
       expect(screen.queryByText(new RegExp(label))).not.toBeInTheDocument();
     }
+
+    for (const id of ["portal", "requests", "conversion"]) {
+      expect(container.querySelector(`section#${id}`)).toBeInTheDocument();
+    }
+
+    const inner = container.querySelector(".feature-shell__inner");
+    expect(inner).toContainElement(
+      screen.getByText("暂无统计数据").parentElement,
+    );
+    expect(inner).toContainElement(
+      screen.getByRole("navigation", { name: "页面目录" }),
+    );
+    expect(container.querySelectorAll("main")).toHaveLength(1);
   });
 });

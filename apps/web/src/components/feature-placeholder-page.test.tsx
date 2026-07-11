@@ -34,4 +34,19 @@ describe("FeaturePlaceholderPage", () => {
     expect(screen.getByText("FEATURE_DISABLED")).toBeVisible();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
+
+  it("renders auxiliary content inside the feature inner shell after the dossier", () => {
+    const { container } = render(
+      <FeaturePlaceholderPage route={scaffoldRoute}>
+        <aside data-testid="auxiliary-content">页面辅助内容</aside>
+      </FeaturePlaceholderPage>,
+    );
+
+    const inner = container.querySelector(".feature-shell__inner");
+    const dossier = container.querySelector(".feature-shell__dossier");
+    const auxiliary = screen.getByTestId("auxiliary-content");
+
+    expect(inner).toContainElement(auxiliary);
+    expect(dossier?.nextElementSibling).toBe(auxiliary);
+  });
 });

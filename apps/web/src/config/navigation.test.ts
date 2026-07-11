@@ -3,6 +3,7 @@ import {
   adminNavigation,
   consoleNavigation,
   footerNavigation,
+  navigationAnchorsForPath,
   portalNavigation,
 } from "./navigation";
 import { matchRoute } from "./routes";
@@ -496,6 +497,169 @@ describe("navigation targets", () => {
 
       const pathname = new URL(item.href, "https://local.invalid").pathname;
       expect(matchRoute(pathname), `${item.label}: ${pathname}`).toBeDefined();
+    }
+  });
+
+  it("derives every configured hash target from the navigation sources", () => {
+    const expectedAnchors = {
+      "/product": [
+        { id: "overview", label: "产品介绍", status: undefined },
+        { id: "modules", label: "产品矩阵", status: undefined },
+      ],
+      "/releases": [
+        { id: "release-notes", label: "Release Note", status: undefined },
+      ],
+      "/docs": [
+        { id: "quick-start", label: "快速开始", status: "scaffold" },
+        { id: "deployment", label: "部署指南", status: "scaffold" },
+        { id: "upgrade", label: "升级手册", status: "scaffold" },
+        { id: "operations", label: "运维手册", status: "scaffold" },
+        { id: "api", label: "API 文档", status: "scaffold" },
+        { id: "features", label: "功能手册", status: "scaffold" },
+        { id: "hardware", label: "GPU / 硬件适配", status: "scaffold" },
+        { id: "faq", label: "常见问题 FAQ", status: "scaffold" },
+      ],
+      "/downloads": [
+        { id: "latest", label: "最新版本", status: "placeholder" },
+        {
+          id: "desktop",
+          label: "Linux / Windows 安装包",
+          status: "placeholder",
+        },
+        {
+          id: "architecture",
+          label: "ARM / x86 安装包",
+          status: "placeholder",
+        },
+        {
+          id: "containers",
+          label: "Docker / Helm",
+          status: "placeholder",
+        },
+        { id: "offline", label: "离线安装包", status: "placeholder" },
+        { id: "sdk", label: "SDK 工具包", status: "placeholder" },
+      ],
+      "/openlab": [
+        { id: "trial", label: "试用申请", status: "placeholder" },
+        { id: "identity", label: "实名认证", status: "placeholder" },
+        {
+          id: "license-guide",
+          label: "License 获取指引",
+          status: "placeholder",
+        },
+      ],
+      "/compatibility": [
+        { id: "hardware", label: "硬件配置要求", status: "scaffold" },
+        { id: "gpu", label: "GPU 适配列表", status: "scaffold" },
+        { id: "os", label: "操作系统兼容", status: "scaffold" },
+        { id: "browser", label: "浏览器兼容", status: "scaffold" },
+        {
+          id: "dependencies",
+          label: "依赖组件兼容",
+          status: "scaffold",
+        },
+      ],
+      "/marketplace": [
+        { id: "agent", label: "Agent 应用", status: "scaffold" },
+        { id: "workflow", label: "Workflow 工作流", status: "scaffold" },
+        { id: "plugin", label: "插件工具", status: "scaffold" },
+        { id: "prompt", label: "Prompt 模板", status: "scaffold" },
+        {
+          id: "knowledge-base",
+          label: "知识库模板",
+          status: "scaffold",
+        },
+      ],
+      "/support": [
+        { id: "tickets", label: "工单提交", status: "placeholder" },
+        { id: "bug", label: "Bug 反馈", status: undefined },
+        { id: "community", label: "社群支持", status: "placeholder" },
+      ],
+      "/blog": [
+        { id: "releases", label: "版本更新", status: "scaffold" },
+        { id: "tutorial", label: "技术教程", status: "scaffold" },
+        { id: "product", label: "产品动态", status: "scaffold" },
+      ],
+      "/console/profile": [
+        { id: "account-menu", label: "当前账号", status: undefined },
+      ],
+      "/admin/site": [
+        { id: "homepage", label: "首页配置", status: undefined },
+        { id: "settings", label: "站点设置", status: undefined },
+      ],
+      "/admin/analytics": [
+        { id: "portal", label: "门户访问", status: undefined },
+        { id: "requests", label: "下载与申请统计", status: undefined },
+        { id: "conversion", label: "转化数据", status: undefined },
+      ],
+    } as const;
+
+    for (const [pathname, expected] of Object.entries(expectedAnchors)) {
+      const anchors = navigationAnchorsForPath(pathname);
+
+      expect(anchors, pathname).toEqual(expected);
+      expect(
+        new Set(anchors.map((anchor) => anchor.id)).size,
+        `${pathname} should have unique IDs`,
+      ).toBe(anchors.length);
+      for (const anchor of anchors) {
+        expect(anchor.id).not.toBe("");
+      }
+    }
+  });
+
+  it("gives every configured hash link a matching pathname and id target", () => {
+    const completeMenus = [
+      flattenPortal(),
+      flattenSidebar(consoleNavigation),
+      flattenSidebar(adminNavigation),
+      flattenFooter(),
+    ];
+
+    for (const item of completeMenus.flat()) {
+      if (!item.href) continue;
+
+      const url = new URL(item.href, "https://local.invalid");
+      if (!url.hash) continue;
+
+      const id = decodeURIComponent(url.hash.slice(1));
+      expect(
+        navigationAnchorsForPath(url.pathname).some(
+          (anchor) => anchor.id === id,
+        ),
+        `${item.label}: ${url.pathname}#${id}`,
+      ).toBe(true);
+    }
+  });
+
+  it("keeps duplicate hash sources consistent across navigation surfaces", () => {
+    const completeMenus = [
+      flattenPortal(),
+      flattenSidebar(consoleNavigation),
+      flattenSidebar(adminNavigation),
+      flattenFooter(),
+    ];
+    const sourcesByTarget = new Map<
+      string,
+      Array<{ label: string; status: LinkLike["status"] }>
+    >();
+
+    for (const item of completeMenus.flat()) {
+      if (!item.href) continue;
+
+      const url = new URL(item.href, "https://local.invalid");
+      if (!url.hash) continue;
+
+      const target = `${url.pathname}#${decodeURIComponent(url.hash.slice(1))}`;
+      const sources = sourcesByTarget.get(target) ?? [];
+      sources.push({ label: item.label, status: item.status });
+      sourcesByTarget.set(target, sources);
+    }
+
+    for (const [target, sources] of sourcesByTarget) {
+      if (sources.length < 2) continue;
+
+      expect(sources, target).toEqual(sources.map(() => sources[0]));
     }
   });
 });

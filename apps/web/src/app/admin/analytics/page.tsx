@@ -1,5 +1,10 @@
 import { FeaturePlaceholderPage } from "@/components/feature-placeholder-page";
 import { metadataForRegisteredRoute } from "@/components/route-scaffold/registered-route-page";
+import {
+  ScaffoldAnchorIndex,
+  ScaffoldEmptyState,
+} from "@/components/route-scaffold/scaffold-anchor-index";
+import { navigationAnchorsForPath } from "@/config/navigation";
 import { matchRoute } from "@/config/routes";
 import { notFound } from "next/navigation";
 
@@ -12,13 +17,18 @@ export default function AdminAnalyticsPage() {
 
   if (!route) notFound();
 
+  const anchors = navigationAnchorsForPath(pathname);
+
   return (
     <main>
-      <FeaturePlaceholderPage route={route} />
-      <section aria-labelledby="analytics-empty-title">
-        <h2 id="analytics-empty-title">暂无统计数据</h2>
-        <p>数据采集接口尚未接入，本页面不会展示示例指标。</p>
-      </section>
+      <FeaturePlaceholderPage route={route}>
+        <ScaffoldAnchorIndex anchors={anchors} />
+        <ScaffoldEmptyState
+          id="analytics-empty"
+          title="暂无统计数据"
+          description="数据采集接口尚未接入，本页面不会展示示例指标。"
+        />
+      </FeaturePlaceholderPage>
     </main>
   );
 }

@@ -1,4 +1,5 @@
 import type { PortalRoute } from "@/config/routes";
+import type { ReactNode } from "react";
 import "./feature-placeholder-page.css";
 
 const groupNames: Record<PortalRoute["group"], string> = {
@@ -7,7 +8,13 @@ const groupNames: Record<PortalRoute["group"], string> = {
   admin: "运营后台",
 };
 
-export function FeaturePlaceholderPage({ route }: { route: PortalRoute }) {
+export function FeaturePlaceholderPage({
+  route,
+  children,
+}: {
+  route: PortalRoute;
+  children?: ReactNode;
+}) {
   const isDisabled = route.status === "placeholder";
 
   return (
@@ -46,6 +53,7 @@ export function FeaturePlaceholderPage({ route }: { route: PortalRoute }) {
             <code className="feature-shell__code">FEATURE_DISABLED</code>
           ) : null}
         </div>
+        {children}
       </div>
     </section>
   );

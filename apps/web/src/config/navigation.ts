@@ -1,5 +1,6 @@
 import type {
   NavigationSection,
+  NavigationStatus,
   PortalNavigationItem,
   SidebarNavigationConfig,
 } from "@ai-agent-platform/ui";
@@ -446,7 +447,7 @@ export const footerNavigation: NavigationSection[] = [
     label: "文档与部署",
     items: [
       { label: "文档", href: "/docs" },
-      { label: "部署指南", href: "/docs#deployment" },
+      { label: "部署指南", href: "/docs#deployment", status: "scaffold" },
       { label: "兼容性", href: "/compatibility" },
     ],
   },
@@ -467,3 +468,52 @@ export const footerNavigation: NavigationSection[] = [
     ],
   },
 ];
+
+export type NavigationAnchor = {
+  id: string;
+  label: string;
+  status: NavigationStatus | undefined;
+};
+
+export function navigationAnchorsForPath(pathname: string): NavigationAnchor[] {
+  const navigationItems = [
+    ...portalNavigation.flatMap((parent) => [
+      parent,
+      ...parent.children.flatMap((section) => section.items),
+    ]),
+    ...consoleNavigation.groups.flatMap((group) => group.items),
+    ...consoleNavigation.utilities,
+    ...adminNavigation.groups.flatMap((group) => group.items),
+    ...adminNavigation.utilities,
+    ...footerNavigation.flatMap((section) => section.items),
+  ];
+  const anchorsById = new Map<string, NavigationAnchor>();
+
+  for (const item of navigationItems) {
+    if (!item.href) continue;
+
+    const url = new URL(item.href, "https://local.invalid");
+    if (url.pathname !== pathname || !url.hash) continue;
+
+    const id = decodeURIComponent(url.hash.slice(1));
+    if (!id) continue;
+
+    const anchor = { id, label: item.label, status: item.status };
+    const existing = anchorsById.get(id);
+
+    if (existing) {
+      if (
+        existing.label !== anchor.label ||
+        existing.status !== anchor.status
+      ) {
+        throw new Error(`Conflicting navigation anchor for ${pathname}#${id}`);
+      }
+
+      continue;
+    }
+
+    anchorsById.set(id, anchor);
+  }
+
+  return [...anchorsById.values()];
+}
