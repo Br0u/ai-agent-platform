@@ -31,7 +31,7 @@ export function PortalHeader({
           </a>
           <MobileNavigation
             actionHref="/login"
-            actionLabel="登录 / 进入平台"
+            actionLabel="登录 / 进入控制台"
             activeHref={activeHref}
             items={items}
           />

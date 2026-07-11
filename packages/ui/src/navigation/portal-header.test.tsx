@@ -1,4 +1,10 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { PortalHeader } from "./portal-header";
 import type { PortalNavigationItem } from "./navigation-types";
@@ -37,8 +43,18 @@ describe("PortalHeader", () => {
     });
     expect(within(brand).getByText("AI Agent Platform")).toBeVisible();
     expect(within(brand).getByText("Build Enterprise AI Faster")).toBeVisible();
+    const desktopAction = screen.getByRole("link", {
+      name: "登录 / 进入平台",
+    });
+    expect(desktopAction).toHaveClass("site-login");
+    expect(desktopAction).toHaveAttribute("href", "/login");
+
+    fireEvent.click(screen.getByRole("button", { name: "打开导航" }));
+    const mobileDialog = screen.getByRole("dialog", { name: "全站导航" });
     expect(
-      screen.getByRole("link", { name: "登录 / 进入平台" }),
+      within(mobileDialog).getByRole("link", {
+        name: "登录 / 进入控制台",
+      }),
     ).toHaveAttribute("href", "/login");
   });
 
