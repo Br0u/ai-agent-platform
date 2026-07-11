@@ -1,41 +1,86 @@
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import { AppShell } from "./app-shell";
+import type {
+  NavigationSection,
+  PortalNavigationItem,
+  SidebarNavigationConfig,
+} from "./navigation/navigation-types";
+
+const portalNavigation: PortalNavigationItem[] = [
+  {
+    label: "产品",
+    href: "/product",
+    children: [
+      {
+        label: "产品中心",
+        items: [{ label: "产品介绍", href: "/product#overview" }],
+      },
+    ],
+  },
+];
+
+const consoleNavigation: SidebarNavigationConfig = {
+  groups: [{ label: "工作台", items: [{ label: "首页", href: "/console" }] }],
+  utilities: [],
+};
+
+const adminNavigation: SidebarNavigationConfig = {
+  groups: [{ label: "运营", items: [{ label: "首页", href: "/admin" }] }],
+  utilities: [],
+};
+
+const footerNavigation: NavigationSection[] = [
+  { label: "产品与版本", items: [{ label: "产品", href: "/product" }] },
+];
+
+function renderShell(variant: "portal" | "console" | "admin") {
+  return render(
+    <AppShell
+      activeHref="/"
+      adminNavigation={adminNavigation}
+      consoleNavigation={consoleNavigation}
+      footerNavigation={footerNavigation}
+      portalNavigation={portalNavigation}
+      variant={variant}
+    >
+      <p>页面内容</p>
+    </AppShell>,
+  );
+}
+
+afterEach(cleanup);
 
 describe("AppShell", () => {
-  it("provides the public product navigation around page content", () => {
-    render(
-      <AppShell>
-        <p>页面内容</p>
-      </AppShell>,
+  it("wraps portal content with the public header and footer", () => {
+    const { container } = renderShell("portal");
+
+    expect(container.firstChild).toHaveAttribute(
+      "data-shell-variant",
+      "portal",
     );
-
-    const navigation = screen.getByRole("navigation", { name: "主导航" });
-    const expectedLinks = [
-      ["产品", "/product"],
-      ["文档", "/docs"],
-      ["版本", "/releases"],
-      ["兼容矩阵", "/compatibility"],
-      ["Marketplace", "/marketplace"],
-      ["支持", "/support"],
-    ] as const;
-
-    for (const [linkName, href] of expectedLinks) {
-      const link = within(navigation).getByRole("link", { name: linkName });
-      expect(link).toBeVisible();
-      expect(link).toHaveAttribute("href", href);
-    }
-
-    const brandLink = screen.getByRole("link", {
-      name: "AI Agent Platform 首页",
-    });
-    expect(brandLink).toBeVisible();
-    expect(within(brandLink).getByText("AI Agent Platform")).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "主导航" })).toBeVisible();
+    expect(screen.getByRole("contentinfo")).toBeVisible();
     expect(
-      within(brandLink).getByText("Build Enterprise AI Faster"),
-    ).toBeVisible();
-    expect(screen.getByText("打开导航")).toBeVisible();
-    expect(screen.queryByText("华鲲元启")).not.toBeInTheDocument();
+      within(screen.getByRole("contentinfo")).getByRole("link", {
+        name: "产品",
+      }),
+    ).toHaveAttribute("href", "/product");
     expect(screen.getByText("页面内容")).toBeVisible();
   });
+
+  it.each(["console", "admin"] as const)(
+    "keeps the %s workspace free of public navigation and footer",
+    (variant) => {
+      const { container } = renderShell(variant);
+
+      expect(container.firstChild).toHaveAttribute(
+        "data-shell-variant",
+        variant,
+      );
+      expect(screen.queryByRole("navigation", { name: "主导航" })).toBeNull();
+      expect(screen.queryByRole("contentinfo")).toBeNull();
+      expect(screen.getByText("页面内容")).toBeVisible();
+    },
+  );
 });

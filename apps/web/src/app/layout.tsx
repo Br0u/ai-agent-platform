@@ -1,8 +1,8 @@
-import { AppShell } from "@ai-agent-platform/ui";
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import type { ReactNode } from "react";
 import "@ai-agent-platform/ui/tokens.css";
+import { SiteShell } from "../components/site-shell/site-shell";
 import "./globals.css";
 
 const brandScript = localFont({
@@ -20,7 +20,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="zh-CN" className={brandScript.variable}>
       <body>
-        <AppShell>{children}</AppShell>
+        <SiteShell>{children}</SiteShell>
       </body>
     </html>
   );
