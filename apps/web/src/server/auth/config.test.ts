@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 import { memoryAdapter, type MemoryDB } from "better-auth/adapters/memory";
 import { describe, expect, it } from "vitest";
@@ -105,6 +105,15 @@ async function signIn(
 }
 
 describe("realm descriptors", () => {
+  it.each(["customer-auth.ts", "staff-auth.ts"])(
+    "marks %s as a server-only module",
+    (fileName) => {
+      const source = readFileSync(`src/server/auth/${fileName}`, "utf8");
+
+      expect(source.startsWith('import "server-only";')).toBe(true);
+    },
+  );
+
   it("defines exact customer and staff session boundaries", () => {
     expect(customerRealm.basePath).toBe("/api/auth/customer");
     expect(customerRealm.cookieName).toBe("aap_customer_session");
@@ -164,6 +173,55 @@ describe("shared auth security options", () => {
     );
     expect(proxied.ipAddressHeaders).toEqual(["x-real-ip"]);
     expect(proxied.trustedProxies).toEqual(["172.20.0.0/24", "192.0.2.10"]);
+  });
+
+  it.each([
+    "garbage",
+    "192.0.2.10/33",
+    "2001:db8::1/129",
+    "192.0.2.10:-1",
+    "https://192.0.2.10",
+    "192.0.2.10:443",
+    "192.0.2.10,,2001:db8::1",
+    "192.0.2.10, ",
+  ])("rejects an invalid trusted proxy entry: %s", (trustedProxies) => {
+    expect(() =>
+      resolveAuthEnvironment(
+        authEnvironment({
+          TRUST_NGINX_PROXY: "true",
+          NGINX_TRUSTED_PROXY_CIDRS: trustedProxies,
+        }),
+      ),
+    ).toThrow("NGINX_TRUSTED_PROXY_CIDRS");
+  });
+
+  it("accepts IPv4 and IPv6 literals and valid boundary prefixes", () => {
+    const resolved = resolveAuthEnvironment(
+      authEnvironment({
+        TRUST_NGINX_PROXY: "true",
+        NGINX_TRUSTED_PROXY_CIDRS:
+          "0.0.0.0/0,192.0.2.10/32,2001:db8::1,2001:db8::/128",
+      }),
+    );
+
+    expect(resolved.trustedProxies).toEqual([
+      "0.0.0.0/0",
+      "192.0.2.10/32",
+      "2001:db8::1",
+      "2001:db8::/128",
+    ]);
+  });
+
+  it("does not parse or trust proxy configuration while the boundary flag is false", () => {
+    const resolved = resolveAuthEnvironment(
+      authEnvironment({
+        TRUST_NGINX_PROXY: "false",
+        NGINX_TRUSTED_PROXY_CIDRS: "not-a-proxy",
+      }),
+    );
+
+    expect(resolved.ipAddressHeaders).toEqual([]);
+    expect(resolved.trustedProxies).toEqual([]);
   });
 
   it("keeps database sessions/rate limits and all origin protections enabled", () => {

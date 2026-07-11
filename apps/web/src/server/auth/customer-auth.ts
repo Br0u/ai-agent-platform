@@ -1,3 +1,5 @@
+import "server-only";
+
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import {
   betterAuth,
