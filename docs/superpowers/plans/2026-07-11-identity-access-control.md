@@ -314,10 +314,10 @@ export DATABASE_URL='postgresql://ai_agent:local-auth-test-only@db:5432/ai_agent
 docker compose -p aap-auth-test down -v
 docker compose -p aap-auth-test up --build migrate
 docker compose -p aap-auth-test run --rm migrate pnpm --filter @ai-agent-platform/database db:prepare
-docker compose -p aap-auth-test exec -T db psql -U ai_agent -d ai_agent_platform -v ON_ERROR_STOP=1 -c "do \$\$ begin if (select count(*) from roles) <> 7 then raise exception 'expected 7 roles'; end if; if (select count(*) from users) <> 0 then raise exception 'expected 0 users'; end if; if (select count(*) from drizzle.__drizzle_migrations) <> 2 then raise exception 'expected 2 migrations'; end if; end \$\$;"
+docker compose -p aap-auth-test exec -T db psql -U ai_agent -d ai_agent_platform -v ON_ERROR_STOP=1 -c "do \$\$ begin if (select count(*) from roles) <> 7 then raise exception 'expected 7 roles'; end if; if (select count(*) from users) <> 0 then raise exception 'expected 0 users'; end if; if (select count(*) from drizzle.__drizzle_migrations) <> 3 then raise exception 'expected 3 migrations'; end if; end \$\$;"
 ```
 
-Expected: both prepare runs exit 0; the query returns exactly seven roles; `select count(*) from users` returns zero; the Drizzle migration journal shows two applied migrations.
+Expected: both prepare runs exit 0; the query returns exactly seven roles; `select count(*) from users` returns zero; the Drizzle migration journal shows three applied migrations. Migration `0002_system_managed_access_control` adds explicit system-ownership flags without rewriting already-applied identity migration `0001`.
 
 - [ ] **Step 8: Commit policy and migration runtime**
 

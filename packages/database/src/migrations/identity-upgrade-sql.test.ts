@@ -6,9 +6,16 @@ import { describe, expect, it } from "vitest";
 const migrationPath = fileURLToPath(
   new URL("../../drizzle/0001_identity_access_control.sql", import.meta.url),
 );
+const systemOwnershipMigrationPath = fileURLToPath(
+  new URL(
+    "../../drizzle/0002_system_managed_access_control.sql",
+    import.meta.url,
+  ),
+);
 
 describe("identity upgrade migration SQL", () => {
   const sql = readFileSync(migrationPath, "utf8");
+  const systemOwnershipSql = readFileSync(systemOwnershipMigrationPath, "utf8");
 
   it("replaces user_status without consuming newly-added enum values", () => {
     expect(sql).not.toContain('ALTER TYPE "public"."user_status" ADD VALUE');
@@ -45,8 +52,15 @@ describe("identity upgrade migration SQL", () => {
     );
   });
 
-  it("adds non-system defaults for upgraded roles and permissions", () => {
-    expect(sql).toContain('"managed_by_system" boolean DEFAULT false NOT NULL');
-    expect(sql).toContain('"is_system" boolean DEFAULT false NOT NULL');
+  it("keeps 0001 immutable and adds ownership flags in 0002", () => {
+    expect(sql).not.toContain("managed_by_system");
+    expect(sql).not.toContain("is_system");
+    expect(systemOwnershipSql).toContain(
+      'ALTER TABLE "permissions" ADD COLUMN "managed_by_system" boolean DEFAULT false NOT NULL',
+    );
+    expect(systemOwnershipSql).toContain(
+      'ALTER TABLE "roles" ADD COLUMN "is_system" boolean DEFAULT false NOT NULL',
+    );
+    expect(systemOwnershipSql.match(/ALTER TABLE/gu)).toHaveLength(2);
   });
 });

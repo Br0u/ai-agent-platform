@@ -1,6 +1,6 @@
 {
-  "id": "f1e8eb6e-5e08-4aa2-a580-c1c3072d49ce",
-  "prevId": "2e385c20-3be4-4f26-ae45-ff27b56864ba",
+  "id": "402d149f-f549-4bec-8f47-6281d167b992",
+  "prevId": "f1e8eb6e-5e08-4aa2-a580-c1c3072d49ce",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -135,6 +135,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "managed_by_system": {
+          "name": "managed_by_system",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -266,6 +273,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "is_system": {
+          "name": "is_system",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "realm_scope": {
           "name": "realm_scope",
