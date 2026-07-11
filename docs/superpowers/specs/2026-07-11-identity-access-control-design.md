@@ -6,7 +6,7 @@
 | ------- | ------------------------------------------------------------------------------------------ |
 | Project | AI Agent Platform enterprise portal                                                        |
 | Phase   | Phase 10 / Identity and Access Control                                                     |
-| Status  | Approved in conversation; pending written-spec review                                      |
+| Status  | Approved                                                                                   |
 | Date    | 2026-07-11                                                                                 |
 | Scope   | Customer identity, workforce identity, database sessions, RBAC, registration review, audit |
 
@@ -37,14 +37,14 @@ This follows the mainstream workforce/external-identity split described by Micro
 
 ### 4.1 Authentication and session engine
 
-Use Better Auth with its Drizzle/PostgreSQL adapter for local credentials and database-backed sessions. Use two realm-specific server configurations over the same technical foundation:
+Use Better Auth with its Drizzle/PostgreSQL adapter for local credentials and database-backed sessions. Use two realm-specific, server-only configurations over the same technical foundation:
 
 - customer auth base path: `/api/auth/customer`;
 - workforce auth base path: `/api/auth/staff`;
 - customer cookie: `aap_customer_session`;
 - workforce cookie: `aap_staff_session`.
 
-Both configurations must enforce the expected `identityRealm` before completing sign-in. Only the realm-specific route handler is exposed; callers cannot select or mutate the realm in request data.
+Both configurations must enforce the expected `identityRealm` before completing sign-in. Phase 10 exposes no generic Better Auth Route Handler: project Server Actions call the correct server-only instance, and callers cannot select or mutate the realm in request data. Future OAuth or email callbacks require a separately reviewed explicit allow-list route.
 
 Session-cookie caching is disabled so disabling a user, revoking a session, or changing permissions is visible on the next protected request.
 
@@ -255,7 +255,7 @@ Cookies use `HttpOnly`, `Secure` in non-local environments, `SameSite=Lax`, and 
 
 - generic invalid-credential response prevents account enumeration;
 - login and registration are rate-limited by normalized identifier and IP;
-- Nginx supplies coarse IP throttling and the application enforces account-aware limits;
+- Nginx supplies coarse POST throttling on the actual login, registration, and TOTP page routes; the application enforces normalized identifier/IP limits;
 - return URLs are restricted to same-origin allow-listed paths;
 - mutations require same-site cookie protection and origin validation;
 - pending registration submissions cannot call normal Console APIs.
