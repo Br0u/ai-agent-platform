@@ -118,6 +118,11 @@
 }
 
 @media (max-width: 1180px) {
+  .site-header {
+    background: var(--color-canvas);
+    backdrop-filter: none;
+  }
+
   .workspace-shell {
     flex-direction: column;
   }
