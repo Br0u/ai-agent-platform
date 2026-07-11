@@ -1,4 +1,9 @@
 export * from "./auth-models";
+export {
+  assertPasswordPolicy,
+  hashPassword,
+  verifyPassword,
+} from "./credentials/password";
 export * from "./identity-policy";
 export { getDatabase, probeDatabase } from "./client";
 export {
