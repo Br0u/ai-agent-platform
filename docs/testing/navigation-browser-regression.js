@@ -1,6 +1,40 @@
 async function navigationBrowserRegression(page) {
   const origin = await page.evaluate(() => window.location.origin);
   const results = {};
+  const diagnostics = {
+    console: [],
+    pageErrors: [],
+    requestFailures: [],
+    http404: [],
+  };
+
+  const onConsole = (message) => {
+    if (message.type() === "error" || message.type() === "warning") {
+      diagnostics.console.push({
+        type: message.type(),
+        text: message.text(),
+      });
+    }
+  };
+  const onPageError = (error) => diagnostics.pageErrors.push(error.message);
+  const onRequestFailed = (request) =>
+    diagnostics.requestFailures.push({
+      url: request.url(),
+      error: request.failure()?.errorText,
+    });
+  const onResponse = (response) => {
+    if (response.status() === 404) {
+      diagnostics.http404.push({
+        url: response.url(),
+        resourceType: response.request().resourceType(),
+      });
+    }
+  };
+
+  page.on("console", onConsole);
+  page.on("pageerror", onPageError);
+  page.on("requestfailed", onRequestFailed);
+  page.on("response", onResponse);
 
   const assert = (condition, message) => {
     if (!condition) throw new Error(message);
@@ -26,6 +60,8 @@ async function navigationBrowserRegression(page) {
         document.documentElement.scrollWidth -
         document.documentElement.clientWidth,
     );
+  const visiblePanelCount = () =>
+    page.locator(".mega-menu__panel:visible").count();
   const openMobileNavigation = async () => {
     await page.getByRole("button", { name: "打开导航" }).click();
     const dialog = page.getByRole("dialog", { name: "全站导航" });
@@ -76,6 +112,118 @@ async function navigationBrowserRegression(page) {
     minimumFooterTarget: Math.min(...footerLinkHeights),
     horizontalOverflow: desktopOverflow,
   };
+
+  const mainNavigation = page.getByRole("navigation", { name: "主导航" });
+  const productTrigger = mainNavigation.getByRole("button", {
+    name: "产品",
+    exact: true,
+  });
+  const docsTrigger = mainNavigation.getByRole("button", {
+    name: "文档",
+    exact: true,
+  });
+  await productTrigger.hover();
+  assert(
+    (await productTrigger.getAttribute("aria-expanded")) === "true",
+    "product menu did not open on hover",
+  );
+  assert(
+    (await visiblePanelCount()) === 1,
+    "hover must show exactly one mega-menu panel",
+  );
+  await productTrigger.click();
+  await page.mouse.move(8, 600);
+  await page.waitForTimeout(240);
+  assert(
+    (await productTrigger.getAttribute("aria-expanded")) === "true",
+    "clicked product menu did not remain pinned after pointer leave",
+  );
+  assert(
+    (await visiblePanelCount()) === 1,
+    "pinned menu must show exactly one mega-menu panel",
+  );
+  await productTrigger.click();
+  assert(
+    (await productTrigger.getAttribute("aria-expanded")) === "false",
+    "second product click did not close the pinned panel",
+  );
+  assert(
+    (await visiblePanelCount()) === 0,
+    "closed mega-menu still has a visible panel",
+  );
+
+  await productTrigger.focus();
+  await page.keyboard.press("ArrowRight");
+  assert(
+    await docsTrigger.evaluate((element) => element === document.activeElement),
+    "ArrowRight did not move focus from product to docs",
+  );
+  await page.keyboard.press("ArrowLeft");
+  assert(
+    await productTrigger.evaluate(
+      (element) => element === document.activeElement,
+    ),
+    "ArrowLeft did not return focus to product",
+  );
+  await page.keyboard.press("ArrowDown");
+  const firstProductLink = page.locator(".mega-menu__panel:visible a").first();
+  assert(
+    await firstProductLink.evaluate(
+      (element) => element === document.activeElement,
+    ),
+    "ArrowDown did not focus the first product link",
+  );
+  assert(
+    (await visiblePanelCount()) === 1,
+    "keyboard open must show exactly one mega-menu panel",
+  );
+  await page.keyboard.press("Escape");
+  assert(
+    (await productTrigger.getAttribute("aria-expanded")) === "false",
+    "Escape did not close the product menu",
+  );
+  assert(
+    await productTrigger.evaluate(
+      (element) => element === document.activeElement,
+    ),
+    "Escape did not return focus to the product trigger",
+  );
+  assert(
+    (await visiblePanelCount()) === 0,
+    "Escape left a mega-menu panel visible",
+  );
+  results.megaMenu = {
+    hoverOpen: true,
+    clickPinnedAfterMs: 240,
+    keyboard: ["ArrowRight", "ArrowLeft", "ArrowDown", "Escape"],
+    visiblePanelsAfterClose: 0,
+  };
+
+  const breakpoints = {};
+  for (const width of [1181, 1180]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
+    const desktopVisible = await page.locator(".site-navigation").isVisible();
+    const mobileVisible = await page
+      .getByRole("button", { name: "打开导航" })
+      .isVisible();
+    const overflow = await horizontalOverflow();
+    assert(
+      desktopVisible === (width === 1181),
+      `${width} desktop navigation visibility is incorrect`,
+    );
+    assert(
+      mobileVisible === (width === 1180),
+      `${width} mobile opener visibility is incorrect`,
+    );
+    assert(overflow === 0, `${width} page has ${overflow}px overflow`);
+    breakpoints[width] = {
+      desktopVisible,
+      mobileVisible,
+      horizontalOverflow: overflow,
+    };
+  }
+  results.breakpoints = breakpoints;
 
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
@@ -275,6 +423,126 @@ async function navigationBrowserRegression(page) {
     },
     restoredBodyOverflow: mobileRestoredOverflow,
   };
+
+  const workspaceRoutes = [
+    {
+      path: "/console/profile",
+      current: "账号资料",
+    },
+    {
+      path: "/console/licenses",
+      current: "我的 License",
+      includes: ["功能尚未开放", "FEATURE_DISABLED"],
+    },
+    {
+      path: "/admin/products",
+      current: "产品内容",
+    },
+    {
+      path: "/admin/openlab",
+      includes: ["功能尚未开放", "FEATURE_DISABLED"],
+    },
+    {
+      path: "/admin/analytics",
+      includes: ["暂无统计数据", "不会展示示例指标"],
+    },
+  ];
+  const workspaceResults = {};
+
+  for (const route of workspaceRoutes) {
+    workspaceResults[route.path] = {};
+
+    for (const viewport of [
+      { width: 1440, height: 1000, name: "desktop" },
+      { width: 390, height: 844, name: "mobile" },
+    ]) {
+      await page.setViewportSize({
+        width: viewport.width,
+        height: viewport.height,
+      });
+      await page.goto(`${origin}${route.path}`, {
+        waitUntil: "domcontentloaded",
+      });
+
+      assert(
+        (await page.locator(".mega-menu").count()) === 0,
+        `${route.path} rendered the public mega menu at ${viewport.width}`,
+      );
+      assert(
+        (await page.locator(".portal-footer").count()) === 0,
+        `${route.path} rendered the public footer at ${viewport.width}`,
+      );
+      const overflow = await horizontalOverflow();
+      assert(
+        overflow === 0,
+        `${route.path} has ${overflow}px overflow at ${viewport.width}`,
+      );
+
+      const desktopSidebar = page.locator(".sidebar-navigation__desktop");
+      const mainText = await page.locator("main").innerText();
+      for (const expectedText of route.includes ?? []) {
+        assert(
+          mainText.includes(expectedText),
+          `${route.path} is missing ${JSON.stringify(expectedText)} at ${viewport.width}`,
+        );
+      }
+
+      if (viewport.name === "desktop") {
+        assert(
+          await desktopSidebar.isVisible(),
+          `${route.path} desktop sidebar is not visible`,
+        );
+        if (route.current) {
+          const currentTitle = await desktopSidebar
+            .locator('[aria-current="page"]')
+            .getAttribute("title");
+          assert(
+            currentTitle === route.current,
+            `${route.path} current item expected ${JSON.stringify(route.current)}, received ${JSON.stringify(currentTitle)}`,
+          );
+        }
+      } else {
+        assert(
+          await page.locator(".sidebar-navigation__mobile-opener").isVisible(),
+          `${route.path} mobile sidebar opener is not visible`,
+        );
+        assert(
+          !(await desktopSidebar.isVisible()),
+          `${route.path} desktop sidebar is visible at 390`,
+        );
+        const contentWidth = await page
+          .locator(".workspace-shell__content")
+          .evaluate((element) => element.getBoundingClientRect().width);
+        assertClose(contentWidth, 390, `${route.path} mobile content width`);
+      }
+
+      workspaceResults[route.path][viewport.name] = {
+        horizontalOverflow: overflow,
+        desktopSidebarVisible: await desktopSidebar.isVisible(),
+        mobileOpenerVisible: await page
+          .locator(".sidebar-navigation__mobile-opener")
+          .isVisible(),
+      };
+    }
+  }
+  results.workspaceRoutes = workspaceResults;
+
+  await page.waitForTimeout(100);
+  page.off("console", onConsole);
+  page.off("pageerror", onPageError);
+  page.off("requestfailed", onRequestFailed);
+  page.off("response", onResponse);
+  const diagnosticCounts = {
+    console: diagnostics.console.length,
+    pageErrors: diagnostics.pageErrors.length,
+    requestFailures: diagnostics.requestFailures.length,
+    http404: diagnostics.http404.length,
+  };
+  assert(
+    Object.values(diagnosticCounts).every((count) => count === 0),
+    `browser diagnostics are not clean: ${JSON.stringify(diagnostics)}`,
+  );
+  results.diagnostics = diagnosticCounts;
 
   return results;
 }
