@@ -4,8 +4,11 @@ CREATE TYPE "public"."identity_realm" AS ENUM('customer', 'workforce');--> state
 CREATE TYPE "public"."organization_member_role" AS ENUM('owner', 'admin', 'member');--> statement-breakpoint
 CREATE TYPE "public"."organization_status" AS ENUM('pending_review', 'active', 'disabled', 'rejected');--> statement-breakpoint
 CREATE TYPE "public"."registration_status" AS ENUM('pending_review', 'approved', 'rejected', 'cancelled');--> statement-breakpoint
-ALTER TYPE "public"."user_status" ADD VALUE 'pending_review' BEFORE 'active';--> statement-breakpoint
-ALTER TYPE "public"."user_status" ADD VALUE 'rejected';--> statement-breakpoint
+ALTER TABLE "users" ALTER COLUMN "status" DROP DEFAULT;--> statement-breakpoint
+CREATE TYPE "public"."user_status_new" AS ENUM('pending_review', 'active', 'disabled', 'rejected');--> statement-breakpoint
+ALTER TABLE "users" ALTER COLUMN "status" TYPE "public"."user_status_new" USING "status"::text::"public"."user_status_new";--> statement-breakpoint
+DROP TYPE "public"."user_status";--> statement-breakpoint
+ALTER TYPE "public"."user_status_new" RENAME TO "user_status";--> statement-breakpoint
 CREATE TABLE "audit_logs" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"actor_realm" "identity_realm",
@@ -123,7 +126,8 @@ CREATE TABLE "organizations" (
 	"status" "organization_status" DEFAULT 'pending_review' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "organizations_legal_name_key_unique" UNIQUE("legal_name_key")
+	CONSTRAINT "organizations_legal_name_key_unique" UNIQUE("legal_name_key"),
+	CONSTRAINT "organizations_legal_name_key_normalized_check" CHECK ("legal_name_key" <> '' AND "legal_name_key" = lower("legal_name_key") AND "legal_name_key" = regexp_replace("legal_name_key", '^[[:space:]]+|[[:space:]]+$', '', 'g') AND "legal_name_key" !~ '[[:space:]]{2,}')
 );
 --> statement-breakpoint
 CREATE TABLE "customer_registrations" (
@@ -152,7 +156,7 @@ ALTER TABLE "roles" DROP CONSTRAINT "roles_pkey";--> statement-breakpoint
 ALTER TABLE "roles" DROP COLUMN "id";--> statement-breakpoint
 ALTER TABLE "roles" RENAME COLUMN "new_id" TO "id";--> statement-breakpoint
 ALTER TABLE "roles" ADD PRIMARY KEY ("id");--> statement-breakpoint
-ALTER TABLE "users" ALTER COLUMN "status" SET DEFAULT 'pending_review';--> statement-breakpoint
+ALTER TABLE "users" ALTER COLUMN "status" SET DEFAULT 'pending_review'::"public"."user_status";--> statement-breakpoint
 ALTER TABLE "roles" ADD COLUMN "realm_scope" "role_realm_scope" DEFAULT 'workforce' NOT NULL;--> statement-breakpoint
 ALTER TABLE "roles" ALTER COLUMN "realm_scope" DROP DEFAULT;--> statement-breakpoint
 ALTER TABLE "roles" ADD COLUMN "updated_at" timestamp with time zone DEFAULT now() NOT NULL;--> statement-breakpoint
@@ -166,7 +170,7 @@ ALTER TABLE "users" ADD COLUMN "username" varchar(128);--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "display_username" varchar(128);--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "must_change_password" boolean DEFAULT false NOT NULL;--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "last_login_at" timestamp with time zone;--> statement-breakpoint
-ALTER TABLE "audit_logs" ADD CONSTRAINT "audit_logs_actor_user_id_users_id_fk" FOREIGN KEY ("actor_user_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "audit_logs" ADD CONSTRAINT "audit_logs_actor_user_id_users_id_fk" FOREIGN KEY ("actor_user_id") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "role_permissions" ADD CONSTRAINT "role_permissions_role_id_roles_id_fk" FOREIGN KEY ("role_id") REFERENCES "public"."roles"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "role_permissions" ADD CONSTRAINT "role_permissions_permission_id_permissions_id_fk" FOREIGN KEY ("permission_id") REFERENCES "public"."permissions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "user_roles" ADD CONSTRAINT "user_roles_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -185,6 +189,15 @@ CREATE INDEX "accounts_user_id_idx" ON "accounts" USING btree ("user_id");--> st
 CREATE INDEX "sessions_user_id_idx" ON "sessions" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "two_factors_secret_idx" ON "two_factors" USING btree ("secret");--> statement-breakpoint
 CREATE INDEX "verifications_identifier_idx" ON "verifications" USING btree ("identifier");--> statement-breakpoint
+CREATE INDEX "audit_logs_actor_user_id_idx" ON "audit_logs" USING btree ("actor_user_id");--> statement-breakpoint
+CREATE INDEX "user_roles_role_id_idx" ON "user_roles" USING btree ("role_id");--> statement-breakpoint
+CREATE INDEX "user_roles_assigned_by_user_id_idx" ON "user_roles" USING btree ("assigned_by_user_id");--> statement-breakpoint
+CREATE INDEX "role_permissions_permission_id_idx" ON "role_permissions" USING btree ("permission_id");--> statement-breakpoint
+CREATE INDEX "organization_memberships_user_id_idx" ON "organization_memberships" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "organization_memberships_assigned_by_user_id_idx" ON "organization_memberships" USING btree ("assigned_by_user_id");--> statement-breakpoint
+CREATE INDEX "customer_registrations_user_id_idx" ON "customer_registrations" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "customer_registrations_organization_id_idx" ON "customer_registrations" USING btree ("organization_id");--> statement-breakpoint
+CREATE INDEX "customer_registrations_reviewer_user_id_idx" ON "customer_registrations" USING btree ("reviewer_user_id");--> statement-breakpoint
 INSERT INTO "accounts" (
 	"id",
 	"account_id",
@@ -206,4 +219,6 @@ FROM "users";--> statement-breakpoint
 ALTER TABLE "users" DROP COLUMN "password_hash";--> statement-breakpoint
 ALTER TABLE "users" DROP COLUMN "role_id";--> statement-breakpoint
 ALTER TABLE "roles" ADD CONSTRAINT "roles_name_realm_scope_unique" UNIQUE("name","realm_scope");--> statement-breakpoint
-ALTER TABLE "users" ADD CONSTRAINT "users_username_unique" UNIQUE("username");
+ALTER TABLE "users" DROP CONSTRAINT "users_email_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "users_email_lower_unique" ON "users" USING btree (lower("email"));--> statement-breakpoint
+CREATE UNIQUE INDEX "users_username_lower_unique" ON "users" USING btree (lower("username"));

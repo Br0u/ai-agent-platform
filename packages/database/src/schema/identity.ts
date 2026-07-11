@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -8,6 +9,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
@@ -30,29 +32,50 @@ export const emailVerificationStatus = pgEnum("email_verification_status", [
   "verified",
 ]);
 
-export const users = pgTable("users", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  name: varchar("name", { length: 120 }).notNull(),
-  email: varchar("email", { length: 320 }).notNull().unique(),
-  emailVerified: boolean("email_verified").default(false).notNull(),
-  image: text("image"),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  twoFactorEnabled: boolean("two_factor_enabled").default(false).notNull(),
-  identityRealm: identityRealm("identity_realm").notNull(),
-  status: userStatus("status").default("pending_review").notNull(),
-  emailVerificationStatus: emailVerificationStatus("email_verification_status")
-    .default("unverified")
-    .notNull(),
-  username: varchar("username", { length: 128 }).unique(),
-  displayUsername: varchar("display_username", { length: 128 }),
-  mustChangePassword: boolean("must_change_password").default(false).notNull(),
-  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
-});
+export function normalizeIdentityEmail(value: string): string {
+  return value.normalize("NFKC").trim().toLowerCase();
+}
+
+export function normalizeWorkforceUsername(value: string): string {
+  return value.normalize("NFKC").trim().toLowerCase();
+}
+
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: varchar("name", { length: 120 }).notNull(),
+    email: varchar("email", { length: 320 }).notNull(),
+    emailVerified: boolean("email_verified").default(false).notNull(),
+    image: text("image"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    twoFactorEnabled: boolean("two_factor_enabled").default(false).notNull(),
+    identityRealm: identityRealm("identity_realm").notNull(),
+    status: userStatus("status").default("pending_review").notNull(),
+    emailVerificationStatus: emailVerificationStatus(
+      "email_verification_status",
+    )
+      .default("unverified")
+      .notNull(),
+    username: varchar("username", { length: 128 }),
+    displayUsername: varchar("display_username", { length: 128 }),
+    mustChangePassword: boolean("must_change_password")
+      .default(false)
+      .notNull(),
+    lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("users_email_lower_unique").on(sql`lower(${table.email})`),
+    uniqueIndex("users_username_lower_unique").on(
+      sql`lower(${table.username})`,
+    ),
+  ],
+);
 
 export const accounts = pgTable(
   "accounts",

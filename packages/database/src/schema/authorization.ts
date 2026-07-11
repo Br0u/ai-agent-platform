@@ -1,4 +1,5 @@
 import {
+  index,
   pgEnum,
   pgTable,
   text,
@@ -67,6 +68,8 @@ export const userRoles = pgTable(
   },
   (table) => [
     unique("user_roles_user_id_role_id_unique").on(table.userId, table.roleId),
+    index("user_roles_role_id_idx").on(table.roleId),
+    index("user_roles_assigned_by_user_id_idx").on(table.assignedByUserId),
   ],
 );
 
@@ -89,5 +92,6 @@ export const rolePermissions = pgTable(
       table.roleId,
       table.permissionId,
     ),
+    index("role_permissions_permission_id_idx").on(table.permissionId),
   ],
 );

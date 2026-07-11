@@ -34,6 +34,14 @@ function uniqueConstraintNames(name: string) {
   ];
 }
 
+function indexNames(name: string) {
+  return config(name).indexes.map((index) => index.config.name);
+}
+
+function checkConstraintNames(name: string) {
+  return config(name).checks.map((constraint) => constraint.name);
+}
+
 function foreignKeys(name: string) {
   return config(name).foreignKeys.map((foreignKey) => {
     const reference = foreignKey.reference();
@@ -76,12 +84,18 @@ describe("identity schema", () => {
     expect(columnNames("users")).not.toContain("password_hash");
   });
 
-  it("enforces unique identity lookup keys while keeping usernames optional", () => {
+  it("enforces case-insensitive identity lookup keys while keeping usernames optional", () => {
     const username = config("users").columns.find(
       (column) => column.name === "username",
     );
 
-    expect(uniqueConstraintNames("users")).toEqual(
+    expect(indexNames("users")).toEqual(
+      expect.arrayContaining([
+        "users_email_lower_unique",
+        "users_username_lower_unique",
+      ]),
+    );
+    expect(uniqueConstraintNames("users")).not.toEqual(
       expect.arrayContaining(["users_email_unique", "users_username_unique"]),
     );
     expect(username?.notNull).toBe(false);
@@ -91,6 +105,18 @@ describe("identity schema", () => {
     expect(uniqueConstraintNames("rateLimits")).toContain(
       "rate_limits_key_unique",
     );
+  });
+
+  it("normalizes email and workforce username lookup values", () => {
+    const normalizeEmail = exported.normalizeIdentityEmail as (
+      value: string,
+    ) => string;
+    const normalizeUsername = exported.normalizeWorkforceUsername as (
+      value: string,
+    ) => string;
+
+    expect(normalizeEmail("  Ａlice@Example.COM  ")).toBe("alice@example.com");
+    expect(normalizeUsername("  Ａdmin.User  ")).toBe("admin.user");
   });
 
   it("provides the optional display username expected by Better Auth", () => {
@@ -216,6 +242,32 @@ describe("authorization schema", () => {
     );
   });
 
+  it("indexes reverse foreign-key lookups", () => {
+    expect(indexNames("auditLogs")).toContain("audit_logs_actor_user_id_idx");
+    expect(indexNames("userRoles")).toEqual(
+      expect.arrayContaining([
+        "user_roles_role_id_idx",
+        "user_roles_assigned_by_user_id_idx",
+      ]),
+    );
+    expect(indexNames("rolePermissions")).toContain(
+      "role_permissions_permission_id_idx",
+    );
+    expect(indexNames("organizationMemberships")).toEqual(
+      expect.arrayContaining([
+        "organization_memberships_user_id_idx",
+        "organization_memberships_assigned_by_user_id_idx",
+      ]),
+    );
+    expect(indexNames("customerRegistrations")).toEqual(
+      expect.arrayContaining([
+        "customer_registrations_user_id_idx",
+        "customer_registrations_organization_id_idx",
+        "customer_registrations_reviewer_user_id_idx",
+      ]),
+    );
+  });
+
   it("records the actor assigning a role", () => {
     expect(columnNames("userRoles")).toContain("assigned_by_user_id");
     expectForeignKey("userRoles", "assigned_by_user_id", "users", "set null");
@@ -242,6 +294,26 @@ describe("organization and registration schema", () => {
 
     expect(normalize("  ACME\u3000  Technology  ")).toBe("acme technology");
     expect(normalize("ＡＣＭＥ Corp")).toBe("acme corp");
+  });
+
+  it("constructs organization values from the legal name and rejects empty keys", () => {
+    const valuesFromLegalName = exported.organizationValuesFromLegalName as (
+      legalName: string,
+    ) => { legalName: string; legalNameKey: string };
+
+    expect(valuesFromLegalName("  ＡＣＭＥ  Corp  ")).toEqual({
+      legalName: "ＡＣＭＥ  Corp",
+      legalNameKey: "acme corp",
+    });
+    expect(() => valuesFromLegalName("　\t ")).toThrow(
+      "Organization legal name must not be empty after normalization",
+    );
+  });
+
+  it("adds database-level legal-name key shape constraints", () => {
+    expect(checkConstraintNames("organizations")).toContain(
+      "organizations_legal_name_key_normalized_check",
+    );
   });
 
   it("enforces unique legal-name and organization membership keys", () => {
@@ -310,7 +382,7 @@ describe("audit and content ownership", () => {
         "user_agent",
       ]),
     );
-    expectForeignKey("auditLogs", "actor_user_id", "users", "set null");
+    expectForeignKey("auditLogs", "actor_user_id", "users", "restrict");
   });
 
   it("preserves content ownership through the new users table", () => {

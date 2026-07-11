@@ -1,4 +1,7 @@
+import { sql } from "drizzle-orm";
 import {
+  check,
+  index,
   pgEnum,
   pgTable,
   timestamp,
@@ -26,6 +29,26 @@ export function normalizeOrganizationLegalNameKey(value: string): string {
   return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 }
 
+/**
+ * The database can enforce the basic key shape, but not Unicode NFKC. All
+ * organization create/update writes must pass through this constructor.
+ */
+export function organizationValuesFromLegalName(legalName: string): {
+  legalName: string;
+  legalNameKey: string;
+} {
+  const trimmedLegalName = legalName.trim();
+  const legalNameKey = normalizeOrganizationLegalNameKey(legalName);
+
+  if (!legalNameKey) {
+    throw new Error(
+      "Organization legal name must not be empty after normalization",
+    );
+  }
+
+  return { legalName: trimmedLegalName, legalNameKey };
+}
+
 export const organizations = pgTable(
   "organizations",
   {
@@ -42,6 +65,10 @@ export const organizations = pgTable(
   },
   (table) => [
     unique("organizations_legal_name_key_unique").on(table.legalNameKey),
+    check(
+      "organizations_legal_name_key_normalized_check",
+      sql`${table.legalNameKey} <> '' AND ${table.legalNameKey} = lower(${table.legalNameKey}) AND ${table.legalNameKey} = regexp_replace(${table.legalNameKey}, '^[[:space:]]+|[[:space:]]+$', '', 'g') AND ${table.legalNameKey} !~ '[[:space:]]{2,}'`,
+    ),
   ],
 );
 
@@ -70,6 +97,10 @@ export const organizationMemberships = pgTable(
     unique("organization_memberships_organization_id_user_id_unique").on(
       table.organizationId,
       table.userId,
+    ),
+    index("organization_memberships_user_id_idx").on(table.userId),
+    index("organization_memberships_assigned_by_user_id_idx").on(
+      table.assignedByUserId,
     ),
   ],
 );
