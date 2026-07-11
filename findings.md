@@ -18,7 +18,7 @@
 - Next.js官方当前稳定线为16.2，16.3仍是Preview；一期固定稳定线，不追Preview。
 - Next.js 16最低Node.js为20.9，Turbopack为默认构建器，Docker支持完整功能。
 - Drizzle官方支持通过`node-postgres`或`postgres.js`连接PostgreSQL；一期采用`node-postgres`便于连接池和自建PostgreSQL。
-- GitHub远端已有一个`Initial commit`，内容只有标题为`ai-agent-platform`的`README.md`；可安全沿用远端历史并把本地文档作为后续提交加入。
+- GitHub远端`main`已包含截至`7766612`的完整项目基线；Phase 10变更继续在身份权限功能分支中提交。
 - 2026-07-10包标签确认：Next.js 16.2.10、React 19.2.7、Tailwind CSS 4.3.2、Vitest 4.1.10、Drizzle ORM 0.45.2、Drizzle Kit 0.31.10、pg 8.22.0。
 - Next.js 16.3仍为Preview/Canary，一期不使用。
 
