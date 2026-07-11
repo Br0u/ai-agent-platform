@@ -7,16 +7,16 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
 } from "react";
 import "./navigation.css";
+import {
+  isNavigationChildActive,
+  isNavigationHrefItem,
+  isNavigationParentActive,
+} from "./navigation-match";
 import { NavigationStatusBadge } from "./navigation-status";
-import type {
-  NavigationHrefItem,
-  PortalNavigationItem,
-} from "./navigation-types";
+import type { PortalNavigationItem } from "./navigation-types";
 
-const LOCAL_URL_BASE = "https://local.invalid";
 const FOCUSABLE_SELECTOR = [
   "a[href]",
   "button:not([disabled])",
@@ -26,53 +26,9 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(",");
 
-function normalizeUrl(href: string) {
-  return new URL(href, LOCAL_URL_BASE);
-}
-
-function normalizePathname(pathname: string) {
-  return pathname !== "/" && pathname.endsWith("/")
-    ? pathname.slice(0, -1)
-    : pathname;
-}
-
-function pathIncludes(basePath: string, candidatePath: string) {
-  const base = normalizePathname(basePath);
-  const candidate = normalizePathname(candidatePath);
-  return candidate === base || candidate.startsWith(`${base}/`);
-}
-
-function isChildActive(href: string, activeHref: string) {
-  const configured = normalizeUrl(href);
-  const active = normalizeUrl(activeHref);
-  return (
-    configured.pathname === active.pathname &&
-    configured.search === active.search &&
-    configured.hash === active.hash
-  );
-}
-
-function isHrefItem(
-  item: PortalNavigationItem["children"][number]["items"][number],
-): item is NavigationHrefItem {
-  return typeof item.href === "string";
-}
-
-function isParentActive(item: PortalNavigationItem, activeHref: string) {
-  const parent = normalizeUrl(item.href);
-  const active = normalizeUrl(activeHref);
-  return (
-    pathIncludes(parent.pathname, active.pathname) ||
-    item.children.some((section) =>
-      section.items.some(
-        (child) => isHrefItem(child) && isChildActive(child.href, activeHref),
-      ),
-    )
-  );
-}
-
 function isActuallyFocusable(element: HTMLElement) {
   return (
+    element.tabIndex >= 0 &&
     !element.closest("[hidden]") &&
     element.getAttribute("aria-hidden") !== "true"
   );
@@ -94,19 +50,15 @@ export function MobileNavigation({
   const openerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
+  const allowFocusReturnRef = useRef(false);
   const [isOpen, setIsOpen] = useState(false);
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
   function closeNavigation() {
+    allowFocusReturnRef.current = true;
     setIsOpen(false);
     setOpenIndex(null);
     openerRef.current?.focus();
-  }
-
-  function handleOverlayPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
-    if (event.target === event.currentTarget) {
-      closeNavigation();
-    }
   }
 
   function handleDrawerKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
@@ -132,6 +84,7 @@ export function MobileNavigation({
 
   useLayoutEffect(() => {
     if (isOpen) {
+      allowFocusReturnRef.current = false;
       closeRef.current?.focus();
     }
   }, [isOpen]);
@@ -159,8 +112,44 @@ export function MobileNavigation({
       }
     }
 
+    function handleFocusIn(event: FocusEvent) {
+      if (
+        !allowFocusReturnRef.current &&
+        event.target instanceof Node &&
+        !drawerRef.current?.contains(event.target)
+      ) {
+        closeRef.current?.focus();
+      }
+    }
+
     document.addEventListener("keydown", handleEscape);
-    return () => document.removeEventListener("keydown", handleEscape);
+    document.addEventListener("focusin", handleFocusIn);
+    return () => {
+      document.removeEventListener("keydown", handleEscape);
+      document.removeEventListener("focusin", handleFocusIn);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || typeof window.matchMedia !== "function") {
+      return;
+    }
+
+    const desktopQuery = window.matchMedia("(min-width: 1181px)");
+    const handleBreakpointChange = (event: MediaQueryListEvent) => {
+      if (event.matches) {
+        closeNavigation();
+      }
+    };
+
+    if (typeof desktopQuery.addEventListener === "function") {
+      desktopQuery.addEventListener("change", handleBreakpointChange);
+      return () =>
+        desktopQuery.removeEventListener("change", handleBreakpointChange);
+    }
+
+    desktopQuery.addListener(handleBreakpointChange);
+    return () => desktopQuery.removeListener(handleBreakpointChange);
   }, [isOpen]);
 
   return (
@@ -177,11 +166,14 @@ export function MobileNavigation({
         <span aria-hidden="true">菜单</span>
       </button>
 
-      <div
-        className="mobile-navigation__overlay"
-        hidden={!isOpen}
-        onPointerDown={handleOverlayPointerDown}
-      >
+      <div className="mobile-navigation__overlay" hidden={!isOpen}>
+        <button
+          aria-label="关闭导航遮罩"
+          className="mobile-navigation__backdrop"
+          onClick={closeNavigation}
+          tabIndex={-1}
+          type="button"
+        />
         <div
           aria-label="全站导航"
           aria-modal="true"
@@ -215,7 +207,9 @@ export function MobileNavigation({
                   <button
                     aria-controls={panelId}
                     aria-current={
-                      isParentActive(item, activeHref) ? "page" : undefined
+                      isNavigationParentActive(item, activeHref)
+                        ? "page"
+                        : undefined
                     }
                     aria-expanded={isExpanded}
                     className="mobile-navigation__accordion"
@@ -243,7 +237,7 @@ export function MobileNavigation({
                   >
                     <a
                       aria-current={
-                        isChildActive(item.href, activeHref)
+                        isNavigationChildActive(item.href, activeHref)
                           ? "page"
                           : undefined
                       }
@@ -256,29 +250,33 @@ export function MobileNavigation({
                     {item.children.map((section, sectionIndex) => (
                       <section key={`${section.label}-${sectionIndex}`}>
                         <h2>{section.label}</h2>
-                        {section.items.filter(isHrefItem).map((child) => (
-                          <a
-                            aria-current={
-                              isChildActive(child.href, activeHref)
-                                ? "page"
-                                : undefined
-                            }
-                            className="mobile-navigation__child"
-                            href={child.href}
-                            key={child.href}
-                            onClick={closeNavigation}
-                          >
-                            <span>
-                              <span className="mobile-navigation__child-label">
-                                {child.label}
-                                <NavigationStatusBadge status={child.status} />
+                        {section.items
+                          .filter(isNavigationHrefItem)
+                          .map((child) => (
+                            <a
+                              aria-current={
+                                isNavigationChildActive(child.href, activeHref)
+                                  ? "page"
+                                  : undefined
+                              }
+                              className="mobile-navigation__child"
+                              href={child.href}
+                              key={child.href}
+                              onClick={closeNavigation}
+                            >
+                              <span>
+                                <span className="mobile-navigation__child-label">
+                                  {child.label}
+                                  <NavigationStatusBadge
+                                    status={child.status}
+                                  />
+                                </span>
+                                {child.description ? (
+                                  <small>{child.description}</small>
+                                ) : null}
                               </span>
-                              {child.description ? (
-                                <small>{child.description}</small>
-                              ) : null}
-                            </span>
-                          </a>
-                        ))}
+                            </a>
+                          ))}
                       </section>
                     ))}
                   </div>

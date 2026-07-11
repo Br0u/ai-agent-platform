@@ -37,8 +37,18 @@
 .mobile-navigation__overlay {
   position: fixed;
   z-index: 100;
-  inset: var(--portal-topbar-height, 64px) 0 0;
-  background: rgb(16 24 56 / 28%);
+  display: flex;
+  inset: 0;
+  justify-content: flex-end;
+}
+
+.mobile-navigation__backdrop {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: rgb(16 24 56 / 34%);
+  cursor: pointer;
 }
 
 .mobile-navigation__overlay[hidden] {
@@ -46,8 +56,10 @@
 }
 
 .mobile-navigation__drawer {
+  position: relative;
+  z-index: 1;
   display: flex;
-  width: 100%;
+  width: min(480px, calc(100% - 24px));
   height: 100%;
   flex-direction: column;
   background: var(--color-surface);

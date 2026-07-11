@@ -9,63 +9,15 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import "./navigation.css";
+import {
+  isNavigationChildActive,
+  isNavigationHrefItem,
+  isNavigationParentActive,
+} from "./navigation-match";
 import { NavigationStatusBadge } from "./navigation-status";
-import type {
-  NavigationHrefItem,
-  PortalNavigationItem,
-} from "./navigation-types";
+import type { PortalNavigationItem } from "./navigation-types";
 
-const LOCAL_URL_BASE = "https://local.invalid";
 const CLOSE_DELAY_MS = 180;
-
-function normalizeUrl(href: string) {
-  return new URL(href, LOCAL_URL_BASE);
-}
-
-function normalizePathname(pathname: string) {
-  return pathname !== "/" && pathname.endsWith("/")
-    ? pathname.slice(0, -1)
-    : pathname;
-}
-
-function pathIncludes(basePath: string, candidatePath: string) {
-  const base = normalizePathname(basePath);
-  const candidate = normalizePathname(candidatePath);
-  return candidate === base || candidate.startsWith(`${base}/`);
-}
-
-function isChildActive(href: string, activeHref: string) {
-  const configured = normalizeUrl(href);
-  const active = normalizeUrl(activeHref);
-  return (
-    configured.pathname === active.pathname &&
-    configured.search === active.search &&
-    configured.hash === active.hash
-  );
-}
-
-function isHrefItem(
-  item: PortalNavigationItem["children"][number]["items"][number],
-): item is NavigationHrefItem {
-  return typeof item.href === "string";
-}
-
-function hasActiveChild(item: PortalNavigationItem, activeHref: string) {
-  return item.children.some((section) =>
-    section.items.some(
-      (child) => isHrefItem(child) && isChildActive(child.href, activeHref),
-    ),
-  );
-}
-
-function isParentActive(item: PortalNavigationItem, activeHref: string) {
-  const parent = normalizeUrl(item.href);
-  const active = normalizeUrl(activeHref);
-  return (
-    pathIncludes(parent.pathname, active.pathname) ||
-    hasActiveChild(item, activeHref)
-  );
-}
 
 export function MegaMenu({
   items,
@@ -214,7 +166,7 @@ export function MegaMenu({
             <button
               aria-controls={panelId}
               aria-current={
-                isParentActive(item, activeHref) ? "page" : undefined
+                isNavigationParentActive(item, activeHref) ? "page" : undefined
               }
               aria-expanded={isOpen}
               className="mega-menu__trigger"
@@ -259,7 +211,9 @@ export function MegaMenu({
           >
             <a
               aria-current={
-                isChildActive(item.href, activeHref) ? "page" : undefined
+                isNavigationChildActive(item.href, activeHref)
+                  ? "page"
+                  : undefined
               }
               className="mega-menu__overview"
               href={item.href}
@@ -276,10 +230,10 @@ export function MegaMenu({
                 >
                   <h2>{section.label}</h2>
                   <div className="mega-menu__links">
-                    {section.items.filter(isHrefItem).map((child) => (
+                    {section.items.filter(isNavigationHrefItem).map((child) => (
                       <a
                         aria-current={
-                          isChildActive(child.href, activeHref)
+                          isNavigationChildActive(child.href, activeHref)
                             ? "page"
                             : undefined
                         }

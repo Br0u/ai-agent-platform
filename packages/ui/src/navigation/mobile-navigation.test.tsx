@@ -1,11 +1,12 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
   within,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MobileNavigation } from "./mobile-navigation";
 import type { PortalNavigationItem } from "./navigation-types";
 
@@ -86,6 +87,7 @@ function accordion(label: string) {
 afterEach(() => {
   cleanup();
   document.body.style.overflow = "";
+  vi.unstubAllGlobals();
 });
 
 describe("MobileNavigation", () => {
@@ -176,17 +178,84 @@ describe("MobileNavigation", () => {
     expect(opener).toHaveFocus();
   });
 
-  it("closes only from the overlay itself, not a drawer pointer event", () => {
+  it("uses a dedicated backdrop sibling that closes without drawer pointer leakage", () => {
     renderNavigation();
     const { dialog, opener } = openNavigation();
     const overlay = dialog.parentElement!;
+    const backdrop = within(overlay).getByRole("button", {
+      name: "关闭导航遮罩",
+    });
 
+    expect(backdrop.parentElement).toBe(overlay);
+    expect(dialog.parentElement).toBe(overlay);
     fireEvent.pointerDown(dialog);
     expect(opener).toHaveAttribute("aria-expanded", "true");
 
-    fireEvent.pointerDown(overlay);
+    fireEvent.click(backdrop);
     expect(opener).toHaveAttribute("aria-expanded", "false");
     expect(opener).toHaveFocus();
+  });
+
+  it("intercepts focus moving outside while open and removes the guard on close", () => {
+    const outside = document.createElement("button");
+    outside.textContent = "页面外按钮";
+    document.body.append(outside);
+    const { unmount } = renderNavigation();
+    const { dialog, opener } = openNavigation();
+    const close = within(dialog).getByRole("button", { name: "关闭导航" });
+
+    outside.focus();
+    expect(close).toHaveFocus();
+
+    fireEvent.click(close);
+    outside.focus();
+    expect(outside).toHaveFocus();
+
+    fireEvent.click(opener);
+    expect(close).toHaveFocus();
+    unmount();
+    outside.focus();
+    expect(outside).toHaveFocus();
+    outside.remove();
+  });
+
+  it("closes and restores scroll and focus when the desktop breakpoint activates", () => {
+    const listeners = new Set<(event: MediaQueryListEvent) => void>();
+    const mediaQuery = {
+      matches: false,
+      media: "(min-width: 1181px)",
+      addEventListener: vi.fn(
+        (_type: string, listener: (event: MediaQueryListEvent) => void) => {
+          listeners.add(listener);
+        },
+      ),
+      removeEventListener: vi.fn(
+        (_type: string, listener: (event: MediaQueryListEvent) => void) => {
+          listeners.delete(listener);
+        },
+      ),
+    } as unknown as MediaQueryList;
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => mediaQuery),
+    );
+    document.body.style.overflow = "clip";
+    const { unmount } = renderNavigation();
+    const { opener } = openNavigation();
+    expect(document.body.style.overflow).toBe("hidden");
+
+    act(() => {
+      Object.defineProperty(mediaQuery, "matches", { value: true });
+      listeners.forEach((listener) =>
+        listener({ matches: true } as MediaQueryListEvent),
+      );
+    });
+
+    expect(opener).toHaveAttribute("aria-expanded", "false");
+    expect(document.body.style.overflow).toBe("clip");
+    expect(opener).toHaveFocus();
+    unmount();
+    expect(mediaQuery.removeEventListener).toHaveBeenCalledTimes(1);
   });
 
   it("closes from overview and child navigation links", () => {
