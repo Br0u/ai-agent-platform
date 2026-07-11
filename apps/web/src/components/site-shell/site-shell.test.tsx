@@ -2,26 +2,47 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ pathname: "/" }));
+type MockAppShellProps = {
+  activeHref: string;
+  adminNavigation: unknown;
+  children: ComponentProps<"div">["children"];
+  consoleNavigation: unknown;
+  footerNavigation: unknown;
+  portalNavigation: unknown;
+  variant: string;
+};
+
+const mocks = vi.hoisted(() => ({
+  appShellProps: undefined as MockAppShellProps | undefined,
+  pathname: "/",
+}));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => mocks.pathname,
 }));
 
 vi.mock("@ai-agent-platform/ui", () => ({
-  AppShell: (
-    props: ComponentProps<"div"> & { activeHref: string; variant: string },
-  ) => (
-    <div
-      data-active-href={props.activeHref}
-      data-testid="app-shell"
-      data-variant={props.variant}
-    >
-      {props.children}
-    </div>
-  ),
+  AppShell: (props: MockAppShellProps) => {
+    mocks.appShellProps = props;
+
+    return (
+      <div
+        data-active-href={props.activeHref}
+        data-testid="app-shell"
+        data-variant={props.variant}
+      >
+        {props.children}
+      </div>
+    );
+  },
 }));
 
+import {
+  adminNavigation,
+  consoleNavigation,
+  footerNavigation,
+  portalNavigation,
+} from "../../config/navigation";
 import { SiteShell } from "./site-shell";
 
 function renderAt(pathname: string) {
@@ -37,6 +58,7 @@ function renderAt(pathname: string) {
 afterEach(cleanup);
 
 beforeEach(() => {
+  mocks.appShellProps = undefined;
   mocks.pathname = "/";
   window.history.replaceState(null, "", "/");
 });
@@ -55,6 +77,21 @@ describe("SiteShell", () => {
       "data-variant",
       variant,
     );
+  });
+
+  it("passes each exported navigation config to the matching AppShell prop", () => {
+    renderAt("/");
+
+    expect(mocks.appShellProps).toMatchObject({
+      adminNavigation,
+      consoleNavigation,
+      footerNavigation,
+      portalNavigation,
+    });
+    expect(mocks.appShellProps?.adminNavigation).toBe(adminNavigation);
+    expect(mocks.appShellProps?.consoleNavigation).toBe(consoleNavigation);
+    expect(mocks.appShellProps?.footerNavigation).toBe(footerNavigation);
+    expect(mocks.appShellProps?.portalNavigation).toBe(portalNavigation);
   });
 
   it("keeps activeHref synchronized with search, hash, and browser navigation", () => {
