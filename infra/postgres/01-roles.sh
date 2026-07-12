@@ -11,4 +11,4 @@ psql --set=ON_ERROR_STOP=1 \
   --set=migrator_password="$MIGRATOR_DATABASE_PASSWORD" \
   --set=runtime_password="$RUNTIME_DATABASE_PASSWORD" \
   --set=backup_password="$BACKUP_DATABASE_PASSWORD" \
-  --file=/opt/postgres/01-roles.sql
+  --file="${ROLE_SQL_FILE:-/opt/postgres/01-roles.sql}"
