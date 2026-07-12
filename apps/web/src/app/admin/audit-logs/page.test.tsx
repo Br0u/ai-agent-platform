@@ -42,8 +42,18 @@ describe("audit logs page", () => {
         searchParams: Promise.resolve({ action: "session.revoked" }),
       }),
     );
-    for (const name of ["操作人", "事件", "目标", "开始时间", "结束时间"])
+    for (const name of [
+      "操作人",
+      "事件",
+      "目标",
+      "开始时间（北京时间）",
+      "结束时间（北京时间）",
+    ])
       expect(screen.getByLabelText(name)).toBeVisible();
+    expect(
+      screen.getByRole("columnheader", { name: "时间（北京时间）" }),
+    ).toBeVisible();
+    expect(screen.getByText("2026-07-12 08:00:00")).toBeVisible();
     expect(screen.getByText("session.revoked")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: /删除|编辑/ }),

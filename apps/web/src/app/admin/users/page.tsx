@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AdminMutationForm } from "@/components/admin/admin-mutation-form";
 import {
   createEmployeeAction,
   disableUserAction,
@@ -12,6 +13,7 @@ import {
   createDefaultWorkforceUserQueryService,
 } from "@/server/admin/users";
 import { requirePermission } from "@/server/auth/access";
+import { parsePositivePage } from "../admin-page-values";
 
 const realms = new Set(["customer", "workforce"]);
 const statuses = new Set(["pending_review", "active", "disabled", "rejected"]);
@@ -19,7 +21,7 @@ function one(value: string | string[] | undefined) {
   return typeof value === "string" ? value : undefined;
 }
 function queryFrom(raw: Record<string, string | string[] | undefined>) {
-  const page = Math.max(1, Number(one(raw.page)) || 1);
+  const page = parsePositivePage(one(raw.page));
   const pageSize = [10, 20, 50].includes(Number(one(raw.pageSize)))
     ? Number(one(raw.pageSize))
     : 20;
@@ -102,7 +104,7 @@ export default async function Page({
       </form>
       <details open>
         <summary>创建内部员工</summary>
-        <form action={createEmployeeAction}>
+        <AdminMutationForm action={createEmployeeAction}>
           <label>
             姓名
             <input required name="name" />
@@ -128,7 +130,7 @@ export default async function Page({
             </select>
           </label>
           <button>创建员工</button>
-        </form>
+        </AdminMutationForm>
       </details>
       <table>
         <thead>
@@ -172,7 +174,10 @@ export default async function Page({
               </td>
               <td>
                 {user.sessions.map((session) => (
-                  <form action={revokeAdminSessionAction} key={session.id}>
+                  <AdminMutationForm
+                    action={revokeAdminSessionAction}
+                    key={session.id}
+                  >
                     <input type="hidden" name="userId" value={user.id} />
                     <input type="hidden" name="realm" value={user.realm} />
                     <input type="hidden" name="sessionId" value={session.id} />
@@ -180,24 +185,24 @@ export default async function Page({
                       {session.createdAt.slice(0, 10)}
                     </time>{" "}
                     <button>撤销此会话</button>
-                  </form>
+                  </AdminMutationForm>
                 ))}
               </td>
               <td>
                 {user.realm === "workforce" ? (
                   <>
                     {user.status === "disabled" ? (
-                      <form action={reactivateUserAction}>
+                      <AdminMutationForm action={reactivateUserAction}>
                         <input type="hidden" name="userId" value={user.id} />
                         <button>恢复账号</button>
-                      </form>
+                      </AdminMutationForm>
                     ) : (
-                      <form action={disableUserAction}>
+                      <AdminMutationForm action={disableUserAction}>
                         <input type="hidden" name="userId" value={user.id} />
                         <button>停用账号</button>
-                      </form>
+                      </AdminMutationForm>
                     )}
-                    <form action={replacePasswordAction}>
+                    <AdminMutationForm action={replacePasswordAction}>
                       <input type="hidden" name="userId" value={user.id} />
                       <label>
                         新临时密码
@@ -208,14 +213,14 @@ export default async function Page({
                         />
                       </label>
                       <button>替换临时密码</button>
-                    </form>
+                    </AdminMutationForm>
                   </>
                 ) : null}
-                <form action={revokeAllAdminSessionsAction}>
+                <AdminMutationForm action={revokeAllAdminSessionsAction}>
                   <input type="hidden" name="userId" value={user.id} />
                   <input type="hidden" name="realm" value={user.realm} />
                   <button>撤销全部会话</button>
-                </form>
+                </AdminMutationForm>
               </td>
             </tr>
           ))}

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AdminMutationForm } from "@/components/admin/admin-mutation-form";
 import {
   addUserRoleAction,
   removeUserRoleAction,
@@ -6,6 +7,7 @@ import {
 } from "@/server/admin/actions";
 import { createDefaultRoleQueryService } from "@/server/admin/roles";
 import { requirePermission } from "@/server/auth/access";
+import { parsePositivePage } from "../admin-page-values";
 
 export default async function Page({
   searchParams,
@@ -17,7 +19,9 @@ export default async function Page({
   const query = {
     search: typeof raw.search === "string" ? raw.search : undefined,
     realm: "workforce" as const,
-    page: Math.max(1, Number(raw.page) || 1),
+    page: parsePositivePage(
+      typeof raw.page === "string" ? raw.page : undefined,
+    ),
     pageSize: 20,
   };
   const result = await createDefaultRoleQueryService().list(actor, query);
@@ -58,7 +62,7 @@ export default async function Page({
               <td>内部员工域</td>
               <td>{role.permissionKeys.join(", ") || "—"}</td>
               <td>
-                <form action={replaceRolePermissionsAction}>
+                <AdminMutationForm action={replaceRolePermissionsAction}>
                   <input type="hidden" name="roleId" value={role.id} />
                   <label>
                     权限键（逗号分隔）
@@ -67,8 +71,11 @@ export default async function Page({
                       defaultValue={role.permissionKeys.join(",")}
                     />
                   </label>
+                  {role.name === "super_admin" ? (
+                    <small>系统基线：admin:roles 不可移除</small>
+                  ) : null}
                   <button>更新权限</button>
-                </form>
+                </AdminMutationForm>
               </td>
             </tr>
           ))}
@@ -76,7 +83,7 @@ export default async function Page({
       </table>
       <section>
         <h2>管理员工角色</h2>
-        <form action={addUserRoleAction}>
+        <AdminMutationForm action={addUserRoleAction}>
           <label>
             用户 ID
             <input required name="userId" />
@@ -92,8 +99,8 @@ export default async function Page({
             </select>
           </label>
           <button>添加角色</button>
-        </form>
-        <form action={removeUserRoleAction}>
+        </AdminMutationForm>
+        <AdminMutationForm action={removeUserRoleAction}>
           <label>
             用户 ID
             <input required name="userId" />
@@ -109,7 +116,7 @@ export default async function Page({
             </select>
           </label>
           <button>移除角色</button>
-        </form>
+        </AdminMutationForm>
       </section>
       <nav aria-label="角色分页">
         {query.page > 1 ? (

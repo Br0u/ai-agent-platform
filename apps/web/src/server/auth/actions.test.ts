@@ -4,6 +4,7 @@ import {
   AUTH_ACTION_INITIAL_STATE,
   createAuthActions,
   createRecoveryCodeService,
+  createStaffTotpRemovalService,
   createStaffSecurityActions,
   safeReturnPath,
   type AuthActionDependencies,
@@ -51,6 +52,7 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
       finalizePasswordChange: vi.fn(async () => undefined),
       revokeSession: vi.fn(async () => undefined),
       readMustChangePassword: vi.fn(async () => true),
+      removeTwoFactor: vi.fn(async () => undefined),
       writeAudit: vi.fn(async () => undefined),
       writeLoginFailureAudit: vi.fn(async () => undefined),
     };
@@ -78,20 +80,13 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
   }
 
   it("removes only the current actor's TOTP after recent assurance and password confirmation", async () => {
-    const { actions, commitCookies, gateway, repository, requireAssurance } =
+    const { actions, clearCookies, gateway, repository, requireAssurance } =
       securityFixture();
     repository.current.mockResolvedValueOnce({
       userId: "staff-1",
       sessionId: "session-1",
       mustChangePassword: false,
       twoFactorEnabled: true,
-    });
-    const headers = new Headers({
-      "set-cookie": "aap_staff_session=updated; Path=/; HttpOnly",
-    });
-    gateway.disableTwoFactor.mockResolvedValueOnce({
-      response: { status: true },
-      headers,
     });
     await expect(
       actions.removeTwoFactor(
@@ -102,18 +97,15 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
       redirectTo: "/staff/two-factor?returnTo=%2Fadmin%2Fusers",
     });
     expect(requireAssurance).toHaveBeenCalledOnce();
-    expect(gateway.disableTwoFactor).toHaveBeenCalledWith({
-      password: "Permanent#1234",
-      headers: expect.any(Headers),
-    });
-    expect(repository.writeAudit).toHaveBeenCalledWith(
-      "auth.totp_disabled",
+    expect(repository.removeTwoFactor).toHaveBeenCalledWith(
       "staff-1",
+      "Permanent#1234",
     );
-    expect(commitCookies).toHaveBeenCalledWith(headers);
-    expect(repository.writeAudit.mock.invocationCallOrder[0]).toBeLessThan(
-      commitCookies.mock.invocationCallOrder[0]!,
+    expect(gateway.disableTwoFactor).not.toHaveBeenCalled();
+    expect(repository.removeTwoFactor.mock.invocationCallOrder[0]).toBeLessThan(
+      clearCookies.mock.invocationCallOrder[0]!,
     );
+    expect(clearCookies).toHaveBeenCalledOnce();
   });
 
   it("stops TOTP removal before Better Auth when recent assurance is denied or changes identity", async () => {
@@ -125,6 +117,7 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
       denied.actions.removeTwoFactor(form({ password: "Permanent#1234" })),
     ).resolves.toMatchObject({ kind: "error" });
     expect(denied.gateway.disableTwoFactor).not.toHaveBeenCalled();
+    expect(denied.repository.removeTwoFactor).not.toHaveBeenCalled();
 
     const switched = securityFixture();
     switched.requireAssurance.mockResolvedValueOnce({ userId: "other-user" });
@@ -138,9 +131,10 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
       switched.actions.removeTwoFactor(form({ password: "Permanent#1234" })),
     ).resolves.toMatchObject({ kind: "error" });
     expect(switched.gateway.disableTwoFactor).not.toHaveBeenCalled();
+    expect(switched.repository.removeTwoFactor).not.toHaveBeenCalled();
   });
 
-  it("clears staged cookies and reports infrastructure failure when TOTP disable audit fails", async () => {
+  it("keeps the current cookie when the atomic TOTP transaction fails", async () => {
     const { actions, clearCookies, commitCookies, repository } =
       securityFixture();
     repository.current.mockResolvedValueOnce({
@@ -149,7 +143,9 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
       mustChangePassword: false,
       twoFactorEnabled: true,
     });
-    repository.writeAudit.mockRejectedValueOnce(new Error("audit unavailable"));
+    repository.removeTwoFactor.mockRejectedValueOnce(
+      new Error("audit unavailable"),
+    );
     await expect(
       actions.removeTwoFactor(form({ password: "Permanent#1234" })),
     ).resolves.toEqual({
@@ -157,7 +153,7 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
       code: "AUTH_INFRASTRUCTURE_FAILURE",
     });
     expect(commitCookies).not.toHaveBeenCalled();
-    expect(clearCookies).toHaveBeenCalledOnce();
+    expect(clearCookies).not.toHaveBeenCalled();
   });
 
   it("changes the password through Better Auth headers and revokes other sessions", async () => {
@@ -484,6 +480,126 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
       expect(result).toEqual({ kind: "success", redirectTo: "/admin" });
     },
   );
+});
+
+describe("atomic workforce TOTP removal", () => {
+  function fixture(
+    options: {
+      passwordValid?: boolean;
+      factorExists?: boolean;
+      auditFails?: boolean;
+    } = {},
+  ) {
+    const state = {
+      twoFactorEnabled: true,
+      factorExists: options.factorExists ?? true,
+      sessions: ["session-1", "session-2"],
+      audit: [] as unknown[],
+    };
+    const operations: string[] = [];
+    const repository = {
+      lockCredential: vi.fn(async () => ({
+        realm: "workforce" as const,
+        status: "active" as const,
+        twoFactorEnabled: state.twoFactorEnabled,
+        passwordHash: "argon-hash",
+      })),
+      lockFactor: vi.fn(async () => state.factorExists),
+      deleteFactor: vi.fn(async () => {
+        operations.push("factor:delete");
+        state.factorExists = false;
+      }),
+      markDisabled: vi.fn(async () => {
+        operations.push("user:disable-totp");
+        state.twoFactorEnabled = false;
+      }),
+      revokeWorkforceSessions: vi.fn(async () => {
+        operations.push("sessions:revoke");
+        const count = state.sessions.length;
+        state.sessions = [];
+        return count;
+      }),
+      writeAudit: vi.fn(async (event) => {
+        operations.push("audit");
+        if (options.auditFails) throw new Error("audit unavailable");
+        state.audit.push(event);
+      }),
+    };
+    const transaction = async <T>(
+      work: (value: typeof repository) => Promise<T>,
+    ): Promise<T> => {
+      const snapshot = structuredClone(state);
+      try {
+        return await work(repository);
+      } catch (error) {
+        Object.assign(state, snapshot);
+        throw error;
+      }
+    };
+    const verifyPassword = vi.fn(async () => options.passwordValid ?? true);
+    return {
+      operations,
+      repository,
+      service: createStaffTotpRemovalService({
+        repository: { transaction },
+        verifyPassword,
+      }),
+      state,
+      verifyPassword,
+    };
+  }
+
+  it("verifies the credential then atomically removes TOTP, revokes every session, and audits", async () => {
+    const { operations, repository, service, state, verifyPassword } =
+      fixture();
+    await service.remove("staff-1", "Permanent#1234");
+    expect(verifyPassword).toHaveBeenCalledWith("argon-hash", "Permanent#1234");
+    expect(repository.revokeWorkforceSessions).toHaveBeenCalledWith("staff-1");
+    expect(operations).toEqual([
+      "factor:delete",
+      "user:disable-totp",
+      "sessions:revoke",
+      "audit",
+    ]);
+    expect(state.sessions).toEqual([]);
+    expect(state.audit).toEqual([
+      {
+        event: "auth.totp_disabled",
+        actorId: "staff-1",
+        targetId: "staff-1",
+      },
+    ]);
+    expect(JSON.stringify(state.audit)).not.toMatch(/password|hash/i);
+  });
+
+  it("rejects an invalid current password without changing factor or sessions", async () => {
+    const { repository, service, state } = fixture({ passwordValid: false });
+    await expect(service.remove("staff-1", "Wrong#1234")).rejects.toMatchObject(
+      { code: "AUTH_INVALID_CREDENTIALS" },
+    );
+    expect(repository.deleteFactor).not.toHaveBeenCalled();
+    expect(state.factorExists).toBe(true);
+    expect(state.sessions).toHaveLength(2);
+  });
+
+  it("rejects a concurrent or missing factor under lock", async () => {
+    const { repository, service } = fixture({ factorExists: false });
+    await expect(
+      service.remove("staff-1", "Permanent#1234"),
+    ).rejects.toMatchObject({ code: "AUTH_TOTP_NOT_ENABLED" });
+    expect(repository.deleteFactor).not.toHaveBeenCalled();
+  });
+
+  it("rolls back factor and sessions when the audit write fails", async () => {
+    const { service, state } = fixture({ auditFails: true });
+    await expect(service.remove("staff-1", "Permanent#1234")).rejects.toThrow(
+      "audit unavailable",
+    );
+    expect(state.factorExists).toBe(true);
+    expect(state.twoFactorEnabled).toBe(true);
+    expect(state.sessions).toEqual(["session-1", "session-2"]);
+    expect(state.audit).toEqual([]);
+  });
 });
 
 describe("project recovery codes", () => {

@@ -869,6 +869,11 @@ git add apps/web/src
 git commit -m "feat(admin): 实现用户角色会话与审计管理"
 ```
 
+### Deployment debt carried into Tasks 11–12
+
+- Task 11 must provision separate migrator and runtime PostgreSQL roles. The runtime role must be denied schema changes and `UPDATE`/`DELETE` on `audit_logs`, while retaining only the reads and append operations required by the application.
+- Task 12 must capture `EXPLAIN (ANALYZE, BUFFERS)` evidence for the production user, role-permission, session, and audit filter/pagination queries against representative data. Add indexes only from that evidence; no speculative index is part of Task 10.
+
 ### Task 11: Add secure super-admin bootstrap, proxy throttling, and CI
 
 **Files:**

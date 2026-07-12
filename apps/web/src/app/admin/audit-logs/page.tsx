@@ -1,14 +1,14 @@
 import Link from "next/link";
 import { createDefaultAuditLogQueryService } from "@/server/admin/audit-logs";
 import { requirePermission } from "@/server/auth/access";
+import {
+  formatShanghaiDateTime,
+  parsePositivePage,
+  parseShanghaiDateBoundary,
+} from "../admin-page-values";
 
 function value(raw: string | string[] | undefined) {
   return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
-}
-function date(raw: string | undefined, end = false) {
-  if (!raw) return undefined;
-  const parsed = new Date(`${raw}T${end ? "23:59:59.999" : "00:00:00.000"}Z`);
-  return Number.isNaN(parsed.valueOf()) ? undefined : parsed;
 }
 export default async function Page({
   searchParams,
@@ -23,9 +23,9 @@ export default async function Page({
     actor: value(raw.actor),
     action: value(raw.action),
     target: value(raw.target),
-    from: date(fromValue),
-    to: date(toValue, true),
-    page: Math.max(1, Number(value(raw.page)) || 1),
+    from: parseShanghaiDateBoundary(fromValue),
+    to: parseShanghaiDateBoundary(toValue, true),
+    page: parsePositivePage(value(raw.page)),
     pageSize: 20,
   };
   const result = await createDefaultAuditLogQueryService().list(actor, query);
@@ -60,11 +60,11 @@ export default async function Page({
           <input name="target" defaultValue={query.target} />
         </label>
         <label>
-          开始时间
+          开始时间（北京时间）
           <input type="date" name="from" defaultValue={fromValue} />
         </label>
         <label>
-          结束时间
+          结束时间（北京时间）
           <input type="date" name="to" defaultValue={toValue} />
         </label>
         <button>筛选</button>
@@ -72,7 +72,7 @@ export default async function Page({
       <table>
         <thead>
           <tr>
-            <th>时间</th>
+            <th>时间（北京时间）</th>
             <th>操作人</th>
             <th>事件</th>
             <th>目标</th>
@@ -84,7 +84,7 @@ export default async function Page({
             <tr key={item.id}>
               <td>
                 <time dateTime={item.createdAt}>
-                  {item.createdAt.slice(0, 19).replace("T", " ")}
+                  {formatShanghaiDateTime(item.createdAt)}
                 </time>
               </td>
               <td>{item.actorUserId ?? "系统"}</td>

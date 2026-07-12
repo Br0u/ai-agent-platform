@@ -39,7 +39,8 @@ export class AdminRoleError extends Error {
       | "AUTH_PERMISSION_DENIED"
       | "ROLE_REALM_INVALID"
       | "ROLE_NOT_FOUND"
-      | "ROLE_SUPER_ADMIN_REQUIRED",
+      | "ROLE_SUPER_ADMIN_REQUIRED"
+      | "ROLE_SUPER_ADMIN_BASELINE_REQUIRED",
   ) {
     super(code);
     this.name = "AdminRoleError";
@@ -101,6 +102,8 @@ export function createRolePermissionService(dependencies: {
         if (!role) throw new AdminRoleError("ROLE_NOT_FOUND");
         if (role.realmScope !== "workforce")
           throw new AdminRoleError("ROLE_REALM_INVALID");
+        if (role.name === "super_admin" && !normalized.includes("admin:roles"))
+          throw new AdminRoleError("ROLE_SUPER_ADMIN_BASELINE_REQUIRED");
         await repository.replacePermissions(roleId, normalized);
         await repository.writeAudit({
           actorId: actor.userId,
@@ -110,6 +113,14 @@ export function createRolePermissionService(dependencies: {
       });
     },
   };
+}
+
+export function resolvePrivilegedActorRole(
+  roleNames: readonly string[],
+): "admin" | "super_admin" | null {
+  if (roleNames.includes("super_admin")) return "super_admin";
+  if (roleNames.includes("admin")) return "admin";
+  return null;
 }
 
 function createRolePermissionRepository(
@@ -160,7 +171,7 @@ function createRolePermissionRepository(
       return row ?? null;
     },
     async findActorRole(userId) {
-      const [row] = await executor
+      const rows = await executor
         .select({ name: roles.name })
         .from(userRoles)
         .innerJoin(
@@ -178,11 +189,8 @@ function createRolePermissionRepository(
             eq(roles.realmScope, "workforce"),
           ),
         )
-        .where(eq(userRoles.userId, userId))
-        .limit(1);
-      return row?.name === "admin" || row?.name === "super_admin"
-        ? row.name
-        : null;
+        .where(eq(userRoles.userId, userId));
+      return resolvePrivilegedActorRole(rows.map(({ name }) => name));
     },
     async replacePermissions(roleId, permissionKeys) {
       const found = permissionKeys.length
@@ -214,49 +222,91 @@ function createRolePermissionRepository(
   };
 }
 
+type RoleRow = Omit<RoleDto, "permissionKeys">;
+export type RoleSearchDataSource = {
+  countRoles(query: RoleQuery): Promise<number>;
+  listRoles(query: RoleQuery): Promise<RoleRow[]>;
+  listPermissions(
+    roleIds: string[],
+  ): Promise<{ roleId: string; key: string }[]>;
+};
+
+export function createRoleSearchRepository(
+  source: RoleSearchDataSource,
+): RoleQueryRepository {
+  return {
+    async search(query) {
+      const [total, rows] = await Promise.all([
+        source.countRoles(query),
+        source.listRoles(query),
+      ]);
+      const roleIds = rows.map(({ id }) => id);
+      const permissionRows = roleIds.length
+        ? await source.listPermissions(roleIds)
+        : [];
+      const permissionsByRole = new Map<string, Set<string>>();
+      for (const { roleId, key } of permissionRows) {
+        const keys = permissionsByRole.get(roleId) ?? new Set<string>();
+        keys.add(key);
+        permissionsByRole.set(roleId, keys);
+      }
+      return {
+        items: rows.map((role) => ({
+          ...role,
+          permissionKeys: [...(permissionsByRole.get(role.id) ?? [])].sort(),
+        })),
+        total,
+      };
+    },
+  };
+}
+
 export function createDefaultRoleQueryService() {
   const database = getDatabase();
-  return createRoleQueryService({
-    async search(query) {
-      const filter = and(
-        eq(roles.realmScope, "workforce"),
-        query.search ? ilike(roles.name, `%${query.search}%`) : undefined,
-      );
-      const [totalRow] = await database
-        .select({ value: count() })
-        .from(roles)
-        .where(filter);
-      const rows = await database
-        .select({
-          id: roles.id,
-          name: roles.name,
-          description: roles.description,
-          realmScope: roles.realmScope,
-        })
-        .from(roles)
-        .where(filter)
-        .orderBy(asc(roles.name))
-        .limit(query.pageSize)
-        .offset((query.page - 1) * query.pageSize);
-      const items = await Promise.all(
-        rows.map(async (role) => ({
-          ...role,
-          permissionKeys: (
-            await database
-              .select({ key: permissions.key })
-              .from(rolePermissions)
-              .innerJoin(
-                permissions,
-                eq(permissions.id, rolePermissions.permissionId),
-              )
-              .where(eq(rolePermissions.roleId, role.id))
-              .orderBy(asc(permissions.key))
-          ).map(({ key }) => key),
-        })),
-      );
-      return { items, total: totalRow?.value ?? 0 };
-    },
-  });
+  return createRoleQueryService(
+    createRoleSearchRepository({
+      async countRoles(query) {
+        const filter = and(
+          eq(roles.realmScope, "workforce"),
+          query.search ? ilike(roles.name, `%${query.search}%`) : undefined,
+        );
+        const [totalRow] = await database
+          .select({ value: count() })
+          .from(roles)
+          .where(filter);
+        return totalRow?.value ?? 0;
+      },
+      async listRoles(query) {
+        const filter = and(
+          eq(roles.realmScope, "workforce"),
+          query.search ? ilike(roles.name, `%${query.search}%`) : undefined,
+        );
+        return database
+          .select({
+            id: roles.id,
+            name: roles.name,
+            description: roles.description,
+            realmScope: roles.realmScope,
+          })
+          .from(roles)
+          .where(filter)
+          .orderBy(asc(roles.name))
+          .limit(query.pageSize)
+          .offset((query.page - 1) * query.pageSize);
+      },
+      async listPermissions(roleIds) {
+        return database
+          .select({ roleId: rolePermissions.roleId, key: permissions.key })
+          .from(rolePermissions)
+          .innerJoin(
+            permissions,
+            eq(permissions.id, rolePermissions.permissionId),
+          )
+          .where(inArray(rolePermissions.roleId, roleIds))
+          .orderBy(asc(rolePermissions.roleId), asc(permissions.key));
+      },
+    }),
+  );
 }
 
 export function createDefaultRolePermissionService() {

@@ -4,6 +4,8 @@ import {
   AdminRoleError,
   createRolePermissionService,
   createRoleQueryService,
+  createRoleSearchRepository,
+  resolvePrivilegedActorRole,
   type RolePermissionRepository,
 } from "./roles";
 
@@ -18,6 +20,61 @@ const actor = {
 };
 
 describe("role administration", () => {
+  it("resolves the most privileged actor role independently of database row order", () => {
+    expect(resolvePrivilegedActorRole(["admin", "super_admin"])).toBe(
+      "super_admin",
+    );
+    expect(resolvePrivilegedActorRole(["super_admin", "admin"])).toBe(
+      "super_admin",
+    );
+    expect(resolvePrivilegedActorRole(["employee", "admin"])).toBe("admin");
+    expect(resolvePrivilegedActorRole(["employee"])).toBeNull();
+  });
+
+  it("loads permissions for the current role page in one deterministic batch", async () => {
+    const listPermissions = vi.fn(async () => [
+      { roleId: "role-2", key: "admin:users" },
+      { roleId: "role-1", key: "support:tickets" },
+      { roleId: "role-1", key: "admin:audit" },
+    ]);
+    const repository = createRoleSearchRepository({
+      countRoles: vi.fn(async () => 7),
+      listRoles: vi.fn(async () => [
+        {
+          id: "role-1",
+          name: "admin",
+          description: null,
+          realmScope: "workforce" as const,
+        },
+        {
+          id: "role-2",
+          name: "support",
+          description: "Support",
+          realmScope: "workforce" as const,
+        },
+      ]),
+      listPermissions,
+    });
+
+    await expect(
+      repository.search({ realm: "workforce", page: 1, pageSize: 20 }),
+    ).resolves.toEqual({
+      items: [
+        expect.objectContaining({
+          id: "role-1",
+          permissionKeys: ["admin:audit", "support:tickets"],
+        }),
+        expect.objectContaining({
+          id: "role-2",
+          permissionKeys: ["admin:users"],
+        }),
+      ],
+      total: 7,
+    });
+    expect(listPermissions).toHaveBeenCalledTimes(1);
+    expect(listPermissions).toHaveBeenCalledWith(["role-1", "role-2"]);
+  });
+
   it("searches and paginates safe role DTOs after checking permission", async () => {
     const search = vi.fn(async () => ({
       items: [
@@ -141,5 +198,29 @@ describe("role administration", () => {
       service.replacePermissions("role-1", ["admin:users"]),
     ).rejects.toMatchObject({ code: "ROLE_SUPER_ADMIN_REQUIRED" });
     expect(tx.replacePermissions).not.toHaveBeenCalled();
+  });
+
+  it("keeps admin:roles in the immutable super_admin permission baseline", async () => {
+    const tx: RolePermissionRepository = {
+      hasPermission: vi.fn(async () => true),
+      findActorRole: vi.fn(async () => "super_admin" as const),
+      findRole: vi.fn(async () => ({
+        id: "super-role",
+        name: "super_admin",
+        realmScope: "workforce" as const,
+      })),
+      replacePermissions: vi.fn(),
+      writeAudit: vi.fn(),
+    };
+    const service = createRolePermissionService({
+      requireSensitiveAction: vi.fn(async () => actor),
+      repository: { transaction: (work) => work(tx) },
+    });
+
+    await expect(
+      service.replacePermissions("super-role", ["admin:users"]),
+    ).rejects.toMatchObject({ code: "ROLE_SUPER_ADMIN_BASELINE_REQUIRED" });
+    expect(tx.replacePermissions).not.toHaveBeenCalled();
+    expect(tx.writeAudit).not.toHaveBeenCalled();
   });
 });

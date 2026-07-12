@@ -12,6 +12,7 @@ import { ResponseCookies } from "next/dist/server/web/spec-extension/cookies";
 import { z } from "zod";
 
 import {
+  accounts,
   getDatabase,
   auditLogs,
   normalizeIdentityEmail,
@@ -19,6 +20,7 @@ import {
   sessions,
   twoFactors,
   users,
+  verifyPassword,
   type IdentityRealm,
   type UserStatus,
 } from "@ai-agent-platform/database";
@@ -269,6 +271,7 @@ type StaffSecurityRepository = {
   finalizePasswordChange(userId: string, sessionToken: string): Promise<void>;
   revokeSession(sessionId: string): Promise<void>;
   readMustChangePassword(userId: string): Promise<boolean>;
+  removeTwoFactor(userId: string, password: string): Promise<void>;
   writeAudit(
     event: "auth.password_changed" | "auth.totp_enabled" | "auth.totp_disabled",
     userId: string,
@@ -276,6 +279,78 @@ type StaffSecurityRepository = {
   ): Promise<void>;
   writeLoginFailureAudit(): Promise<void>;
 };
+
+type StaffTotpRemovalRepository = {
+  lockCredential(userId: string): Promise<{
+    realm: IdentityRealm;
+    status: UserStatus;
+    twoFactorEnabled: boolean;
+    passwordHash: string;
+  } | null>;
+  lockFactor(userId: string): Promise<boolean>;
+  deleteFactor(userId: string): Promise<void>;
+  markDisabled(userId: string): Promise<void>;
+  revokeWorkforceSessions(userId: string): Promise<number>;
+  writeAudit(event: {
+    event: "auth.totp_disabled";
+    actorId: string;
+    targetId: string;
+  }): Promise<void>;
+};
+
+export class StaffTotpRemovalError extends Error {
+  constructor(
+    readonly code: "AUTH_INVALID_CREDENTIALS" | "AUTH_TOTP_NOT_ENABLED",
+  ) {
+    super(code);
+    this.name = "StaffTotpRemovalError";
+  }
+}
+
+export function createStaffTotpRemovalService(dependencies: {
+  repository: {
+    transaction<T>(
+      work: (repository: StaffTotpRemovalRepository) => Promise<T>,
+    ): Promise<T>;
+  };
+  verifyPassword(passwordHash: string, password: string): Promise<boolean>;
+}) {
+  return {
+    async remove(userId: string, password: string): Promise<void> {
+      await dependencies.repository.transaction(async (repository) => {
+        const credential = await repository.lockCredential(userId);
+        if (
+          !credential ||
+          credential.realm !== "workforce" ||
+          credential.status !== "active" ||
+          !credential.twoFactorEnabled
+        )
+          throw new StaffTotpRemovalError("AUTH_INVALID_CREDENTIALS");
+        let passwordMatches = false;
+        try {
+          passwordMatches = await dependencies.verifyPassword(
+            credential.passwordHash,
+            password,
+          );
+        } catch {
+          passwordMatches = false;
+        }
+        if (!passwordMatches)
+          throw new StaffTotpRemovalError("AUTH_INVALID_CREDENTIALS");
+        if (!(await repository.lockFactor(userId)))
+          throw new StaffTotpRemovalError("AUTH_TOTP_NOT_ENABLED");
+        await repository.deleteFactor(userId);
+        await repository.markDisabled(userId);
+        await repository.revokeWorkforceSessions(userId);
+        await repository.writeAudit({
+          event: "auth.totp_disabled",
+          actorId: userId,
+          targetId: userId,
+        });
+      });
+    },
+  };
+}
 
 export type StaffSecurityActionState =
   | { kind: "idle" }
@@ -374,10 +449,104 @@ export async function verifyAndConsumeRecoveryCode(
   return getDefaultRecoveryCodeService().verifyAndConsume(userId, code);
 }
 
+function createDefaultStaffTotpRemovalService(
+  database: ReturnType<typeof getDatabase>,
+) {
+  return createStaffTotpRemovalService({
+    verifyPassword,
+    repository: {
+      transaction: (work) =>
+        database.transaction(async (transaction) =>
+          work({
+            async lockCredential(userId) {
+              const [row] = await transaction
+                .select({
+                  realm: users.identityRealm,
+                  status: users.status,
+                  twoFactorEnabled: users.twoFactorEnabled,
+                  passwordHash: accounts.password,
+                })
+                .from(users)
+                .innerJoin(
+                  accounts,
+                  and(
+                    eq(accounts.userId, users.id),
+                    eq(accounts.providerId, "credential"),
+                  ),
+                )
+                .where(eq(users.id, userId))
+                .for("update")
+                .limit(1);
+              return row?.passwordHash
+                ? { ...row, passwordHash: row.passwordHash }
+                : null;
+            },
+            async lockFactor(userId) {
+              const rows = await transaction
+                .select({ id: twoFactors.id })
+                .from(twoFactors)
+                .where(eq(twoFactors.userId, userId))
+                .for("update")
+                .limit(1);
+              return rows.length === 1;
+            },
+            async deleteFactor(userId) {
+              const deleted = await transaction
+                .delete(twoFactors)
+                .where(eq(twoFactors.userId, userId))
+                .returning({ id: twoFactors.id });
+              if (deleted.length !== 1)
+                throw new StaffTotpRemovalError("AUTH_TOTP_NOT_ENABLED");
+            },
+            async markDisabled(userId) {
+              const updated = await transaction
+                .update(users)
+                .set({ twoFactorEnabled: false, updatedAt: new Date() })
+                .where(
+                  and(
+                    eq(users.id, userId),
+                    eq(users.identityRealm, "workforce"),
+                    eq(users.status, "active"),
+                  ),
+                )
+                .returning({ id: users.id });
+              if (updated.length !== 1)
+                throw new StaffTotpRemovalError("AUTH_INVALID_CREDENTIALS");
+            },
+            async revokeWorkforceSessions(userId) {
+              return (
+                await transaction
+                  .delete(sessions)
+                  .where(
+                    and(
+                      eq(sessions.userId, userId),
+                      eq(sessions.realm, "workforce"),
+                    ),
+                  )
+                  .returning({ id: sessions.id })
+              ).length;
+            },
+            async writeAudit(event) {
+              await transaction.insert(auditLogs).values({
+                actorRealm: "workforce",
+                actorUserId: event.actorId,
+                action: event.event,
+                targetType: "user",
+                targetId: event.targetId,
+                metadata: {},
+              });
+            },
+          }),
+        ),
+    },
+  });
+}
+
 export function createDefaultStaffSecurityActions() {
   const database = getDatabase();
   const auth = getStaffActionAuth();
   const audit = createAuditWriter();
+  const totpRemoval = createDefaultStaffTotpRemovalService(database);
   async function currentHeaders() {
     return nextHeaders();
   }
@@ -440,6 +609,7 @@ export function createDefaultStaffSecurityActions() {
       if (!row) throw new Error("Workforce identity not found");
       return row.value;
     },
+    removeTwoFactor: (userId, password) => totpRemoval.remove(userId, password),
     async writeAudit(event, userId, metadata) {
       await audit.write({
         event,
@@ -671,21 +841,19 @@ export function createStaffSecurityActions(dependencies: {
         ) {
           return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
         }
-        const staged = await dependencies.gateway.disableTwoFactor({
-          password,
-          headers: await dependencies.getHeaders(),
-        });
-        if (staged.response.status !== true)
-          return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
         try {
-          await dependencies.repository.writeAudit(
-            "auth.totp_disabled",
+          await dependencies.repository.removeTwoFactor(
             session.userId,
+            password,
           );
-          if (staged.headers.has("set-cookie"))
-            await dependencies.commitCookies(staged.headers);
+        } catch (error) {
+          if (error instanceof StaffTotpRemovalError)
+            return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+          return { kind: "error", code: "AUTH_INFRASTRUCTURE_FAILURE" };
+        }
+        try {
+          await dependencies.clearCookies();
         } catch {
-          await dependencies.clearCookies().catch(() => undefined);
           return { kind: "error", code: "AUTH_INFRASTRUCTURE_FAILURE" };
         }
         const returnTo = safeReturnPath(
