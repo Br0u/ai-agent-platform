@@ -1,14 +1,23 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import {
+  createHash,
+  randomBytes as nodeRandomBytes,
+  timingSafeEqual,
+} from "node:crypto";
+
+import { and, eq, ne } from "drizzle-orm";
 import { cookies as nextCookies, headers as nextHeaders } from "next/headers";
 import { ResponseCookies } from "next/dist/server/web/spec-extension/cookies";
 import { z } from "zod";
 
 import {
   getDatabase,
+  auditLogs,
   normalizeIdentityEmail,
   normalizeWorkforceUsername,
+  sessions,
+  twoFactors,
   users,
   type IdentityRealm,
   type UserStatus,
@@ -145,6 +154,532 @@ export function safeReturnPath(
   }
   const pattern = realm === "customer" ? SAFE_CUSTOMER_PATH : SAFE_STAFF_PATH;
   return pattern.test(candidate) ? candidate : fallback;
+}
+
+type RecoveryCodeRepository = {
+  read(userId: string): Promise<string>;
+  write(userId: string, serializedHashes: string): Promise<void>;
+  writeUsedAudit?(userId: string): Promise<void>;
+};
+
+function recoveryCodeHash(code: string): string {
+  return createHash("sha256")
+    .update(code.normalize("NFKC").trim(), "utf8")
+    .digest("hex");
+}
+
+function hashesEqual(left: string, right: string): boolean {
+  const a = Buffer.from(left, "hex");
+  const b = Buffer.from(right, "hex");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export function createRecoveryCodeService(dependencies: {
+  randomBytes?: () => Buffer;
+  transaction<T>(
+    work: (repository: RecoveryCodeRepository) => Promise<T>,
+  ): Promise<T>;
+}) {
+  const randomBytes = dependencies.randomBytes ?? (() => nodeRandomBytes(10));
+  return {
+    async generate(userId: string, count = 10): Promise<string[]> {
+      if (!Number.isSafeInteger(count) || count < 1 || count > 20)
+        throw new Error("Invalid recovery code count");
+      const codes = Array.from({ length: count }, () => {
+        const value = randomBytes()
+          .toString("hex")
+          .toUpperCase()
+          .slice(0, 20)
+          .padEnd(20, "0");
+        return `${value.slice(0, 5)}-${value.slice(5, 10)}-${value.slice(10, 15)}-${value.slice(15, 20)}`;
+      });
+      await dependencies.transaction((repository) =>
+        repository.write(userId, JSON.stringify(codes.map(recoveryCodeHash))),
+      );
+      return codes;
+    },
+    async verifyAndConsume(userId: string, code: string): Promise<boolean> {
+      const candidate = recoveryCodeHash(code);
+      return dependencies.transaction(async (repository) => {
+        let hashes: unknown;
+        try {
+          hashes = JSON.parse(await repository.read(userId));
+        } catch {
+          return false;
+        }
+        if (
+          !Array.isArray(hashes) ||
+          !hashes.every(
+            (value) =>
+              typeof value === "string" && /^[a-f0-9]{64}$/u.test(value),
+          )
+        )
+          return false;
+        const index = hashes.findIndex((hash) => hashesEqual(hash, candidate));
+        if (index < 0) return false;
+        hashes.splice(index, 1);
+        await repository.write(userId, JSON.stringify(hashes));
+        await repository.writeUsedAudit?.(userId);
+        return true;
+      });
+    },
+  };
+}
+
+type StaffSecurityGateway = {
+  changePassword(input: {
+    currentPassword: string;
+    newPassword: string;
+    revokeOtherSessions: true;
+    headers: Headers;
+  }): Promise<StagedResponse<{ token: string | null }>>;
+  enableTwoFactor(input: {
+    password: string;
+    headers: Headers;
+  }): Promise<StagedResponse<{ totpURI: string; backupCodes: string[] }>>;
+  verifyTOTP(input: {
+    code: string;
+    trustDevice: false;
+    headers: Headers;
+  }): Promise<StagedResponse<{ token: string; user: { id: string } }>>;
+  disableTwoFactor(input: {
+    password: string;
+    headers: Headers;
+  }): Promise<StagedResponse<{ status: boolean }>>;
+  signIn(input: {
+    identifier: string;
+    password: string;
+    rememberMe: false;
+    headers: Headers;
+  }): Promise<StagedResponse<SignInResult>>;
+  revokeNewSession(token: string): Promise<void>;
+};
+
+type StaffSecurityRepository = {
+  current(): Promise<{
+    userId: string;
+    sessionId: string;
+    mustChangePassword: boolean;
+  } | null>;
+  clearMustChangePasswordAndRevokeOthers(
+    userId: string,
+    sessionToken: string,
+  ): Promise<number>;
+  revokeSession(sessionId: string): Promise<void>;
+  readMustChangePassword(userId: string): Promise<boolean>;
+  writeAudit(
+    event: "auth.password_changed" | "auth.totp_enabled" | "auth.totp_disabled",
+    userId: string,
+    metadata?: { sessionsRevoked: number },
+  ): Promise<void>;
+};
+
+export type StaffSecurityActionState =
+  | { kind: "idle" }
+  | { kind: "error"; code: "AUTH_INVALID_INPUT" | "AUTH_INVALID_CREDENTIALS" }
+  | { kind: "success"; redirectTo: string }
+  | {
+      kind: "enrollment";
+      totpURI: string;
+      recoveryCodes: string[];
+      qrDataUrl?: string;
+    };
+
+export const STAFF_SECURITY_ACTION_INITIAL_STATE: StaffSecurityActionState = {
+  kind: "idle",
+};
+
+function stagedChallengeHeaders(request: Headers, response: Headers): Headers {
+  const result = new Headers(request);
+  const responseCookies = new ResponseCookies(response).getAll();
+  const cookiePairs = responseCookies.map(
+    ({ name, value }) => `${name}=${value}`,
+  );
+  if (cookiePairs.length > 0)
+    result.set(
+      "cookie",
+      [request.get("cookie"), ...cookiePairs].filter(Boolean).join("; "),
+    );
+  return result;
+}
+
+function createDefaultRecoveryCodeService() {
+  const database = getDatabase();
+  return createRecoveryCodeService({
+    transaction: (work) =>
+      database.transaction(async (transaction) =>
+        work({
+          async read(userId) {
+            const [row] = await transaction
+              .select({ backupCodes: twoFactors.backupCodes })
+              .from(twoFactors)
+              .where(eq(twoFactors.userId, userId))
+              .for("update")
+              .limit(1);
+            return row?.backupCodes ?? "[]";
+          },
+          async write(userId, serializedHashes) {
+            const updated = await transaction
+              .update(twoFactors)
+              .set({ backupCodes: serializedHashes })
+              .where(eq(twoFactors.userId, userId))
+              .returning({ id: twoFactors.id });
+            if (updated.length !== 1)
+              throw new Error("TOTP enrollment is missing");
+          },
+          async writeUsedAudit(userId) {
+            await transaction.insert(auditLogs).values({
+              actorRealm: "workforce",
+              actorUserId: userId,
+              action: "auth.recovery_code_used",
+              targetType: "user",
+              targetId: userId,
+              metadata: {},
+            });
+          },
+        }),
+      ),
+  });
+}
+
+let recoveryCodeServiceSingleton:
+  | ReturnType<typeof createRecoveryCodeService>
+  | undefined;
+
+function getDefaultRecoveryCodeService() {
+  recoveryCodeServiceSingleton ??= createDefaultRecoveryCodeService();
+  return recoveryCodeServiceSingleton;
+}
+
+export async function generateRecoveryCodes(userId: string): Promise<string[]> {
+  return getDefaultRecoveryCodeService().generate(userId);
+}
+
+export async function verifyAndConsumeRecoveryCode(
+  userId: string,
+  code: string,
+): Promise<boolean> {
+  return getDefaultRecoveryCodeService().verifyAndConsume(userId, code);
+}
+
+export function createDefaultStaffSecurityActions() {
+  const database = getDatabase();
+  const auth = getStaffActionAuth();
+  const audit = createAuditWriter();
+  async function currentHeaders() {
+    return nextHeaders();
+  }
+  const repository: StaffSecurityRepository = {
+    async current() {
+      const value = await auth.api.getSession({
+        headers: await currentHeaders(),
+      });
+      if (!value || typeof value !== "object") return null;
+      const envelope = value as Record<string, unknown>;
+      const session = envelope.session as Record<string, unknown> | undefined;
+      const user = envelope.user as Record<string, unknown> | undefined;
+      if (
+        !session ||
+        !user ||
+        typeof session.id !== "string" ||
+        typeof user.id !== "string"
+      )
+        return null;
+      return {
+        userId: user.id,
+        sessionId: session.id,
+        mustChangePassword: user.mustChangePassword === true,
+      };
+    },
+    async clearMustChangePasswordAndRevokeOthers(userId, sessionToken) {
+      return database.transaction(async (tx) => {
+        await tx
+          .update(users)
+          .set({ mustChangePassword: false, updatedAt: new Date() })
+          .where(
+            and(eq(users.id, userId), eq(users.identityRealm, "workforce")),
+          );
+        const revoked = await tx
+          .delete(sessions)
+          .where(
+            and(eq(sessions.userId, userId), ne(sessions.token, sessionToken)),
+          )
+          .returning({ id: sessions.id });
+        return revoked.length;
+      });
+    },
+    async revokeSession(sessionId) {
+      await database.delete(sessions).where(eq(sessions.id, sessionId));
+    },
+    async readMustChangePassword(userId) {
+      const [row] = await database
+        .select({ value: users.mustChangePassword })
+        .from(users)
+        .where(and(eq(users.id, userId), eq(users.identityRealm, "workforce")))
+        .limit(1);
+      if (!row) throw new Error("Workforce identity not found");
+      return row.value;
+    },
+    async writeAudit(event, userId, metadata) {
+      await audit.write({
+        event,
+        actor: { realm: "workforce", userId },
+        target: { type: "user", id: userId },
+        ...(event === "auth.password_changed"
+          ? { metadata: metadata ?? { sessionsRevoked: 0 } }
+          : {}),
+      } as AuditWriteInput);
+    },
+  };
+  const gateway: StaffSecurityGateway = {
+    async changePassword(input) {
+      const result = await auth.api.changePassword({
+        body: {
+          currentPassword: input.currentPassword,
+          newPassword: input.newPassword,
+          revokeOtherSessions: true,
+        },
+        headers: input.headers,
+        returnHeaders: true,
+      });
+      return { response: result.response, headers: result.headers };
+    },
+    async enableTwoFactor(input) {
+      const result = await auth.api.enableTwoFactor({
+        body: { password: input.password },
+        headers: input.headers,
+        returnHeaders: true,
+      });
+      return { response: result.response, headers: result.headers };
+    },
+    async verifyTOTP(input) {
+      const result = await auth.api.verifyTOTP({
+        body: { code: input.code, trustDevice: false },
+        headers: input.headers,
+        returnHeaders: true,
+      });
+      return {
+        response: result.response as { token: string; user: { id: string } },
+        headers: result.headers,
+      };
+    },
+    async disableTwoFactor(input) {
+      const result = await auth.api.disableTwoFactor({
+        body: { password: input.password },
+        headers: input.headers,
+        returnHeaders: true,
+      });
+      return { response: result.response, headers: result.headers };
+    },
+    async signIn(input) {
+      const identifier = input.identifier;
+      const result = identifier.includes("@")
+        ? await auth.api.signInEmail({
+            body: {
+              email: normalizeIdentityEmail(identifier),
+              password: input.password,
+              rememberMe: false,
+            },
+            headers: input.headers,
+            returnHeaders: true,
+          })
+        : await auth.api.signInUsername({
+            body: {
+              username: normalizeWorkforceUsername(identifier),
+              password: input.password,
+              rememberMe: false,
+            },
+            headers: input.headers,
+            returnHeaders: true,
+          });
+      return {
+        response: parseSignInResult(result.response),
+        headers: result.headers,
+      };
+    },
+    async revokeNewSession(token) {
+      const context = await auth.$context;
+      await context.internalAdapter.deleteSession(token);
+    },
+  };
+  return createStaffSecurityActions({
+    gateway,
+    repository,
+    recovery: getDefaultRecoveryCodeService(),
+    commitCookies: (headers) =>
+      commitResponseCookies("workforce", headers, nextCookies),
+    getHeaders: currentHeaders,
+  });
+}
+
+export function createStaffSecurityActions(dependencies: {
+  gateway: StaffSecurityGateway;
+  repository: StaffSecurityRepository;
+  recovery: { generate(userId: string): Promise<string[]> };
+  commitCookies(headers: Headers): Promise<void>;
+  getHeaders(): Promise<Headers>;
+}) {
+  async function current() {
+    const value = await dependencies.repository.current();
+    if (!value) throw new Error("No staff session");
+    return value;
+  }
+  return {
+    async changePassword(
+      formData: FormData,
+    ): Promise<StaffSecurityActionState> {
+      const currentPassword = stringField(formData, "currentPassword");
+      const newPassword = stringField(formData, "newPassword");
+      if (!currentPassword || !newPassword)
+        return { kind: "error", code: "AUTH_INVALID_INPUT" };
+      try {
+        const session = await current();
+        const staged = await dependencies.gateway.changePassword({
+          currentPassword,
+          newPassword,
+          revokeOtherSessions: true,
+          headers: await dependencies.getHeaders(),
+        });
+        if (typeof staged.response.token !== "string")
+          throw new Error(
+            "Password change did not create a replacement session",
+          );
+        const revoked =
+          await dependencies.repository.clearMustChangePasswordAndRevokeOthers(
+            session.userId,
+            staged.response.token,
+          );
+        await dependencies.repository.writeAudit(
+          "auth.password_changed",
+          session.userId,
+          { sessionsRevoked: revoked },
+        );
+        await dependencies.commitCookies(staged.headers);
+        return { kind: "success", redirectTo: "/staff/two-factor" };
+      } catch {
+        return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+      }
+    },
+    async enrollTwoFactor(
+      formData: FormData,
+    ): Promise<StaffSecurityActionState> {
+      const password = stringField(formData, "password");
+      if (!password) return { kind: "error", code: "AUTH_INVALID_INPUT" };
+      try {
+        const session = await current();
+        const staged = await dependencies.gateway.enableTwoFactor({
+          password,
+          headers: await dependencies.getHeaders(),
+        });
+        if (
+          staged.response.backupCodes.length !== 0 ||
+          !staged.response.totpURI.startsWith("otpauth://")
+        )
+          throw new Error("Unexpected two-factor enrollment response");
+        const recoveryCodes = await dependencies.recovery.generate(
+          session.userId,
+        );
+        return {
+          kind: "enrollment",
+          totpURI: staged.response.totpURI,
+          recoveryCodes,
+        };
+      } catch {
+        return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+      }
+    },
+    async verifyTwoFactor(
+      formData: FormData,
+    ): Promise<StaffSecurityActionState> {
+      const code = stringField(formData, "code");
+      if (!code || !/^\d{6}$/u.test(code))
+        return { kind: "error", code: "AUTH_INVALID_INPUT" };
+      let staged:
+        | StagedResponse<{ token: string; user: { id: string } }>
+        | undefined;
+      try {
+        const enrollmentSession = await dependencies.repository
+          .current()
+          .catch(() => null);
+        staged = await dependencies.gateway.verifyTOTP({
+          code,
+          trustDevice: false,
+          headers: await dependencies.getHeaders(),
+        });
+        const mustChange = await dependencies.repository.readMustChangePassword(
+          staged.response.user.id,
+        );
+        if (enrollmentSession?.userId === staged.response.user.id) {
+          await dependencies.repository.writeAudit(
+            "auth.totp_enabled",
+            staged.response.user.id,
+          );
+        }
+        await dependencies.commitCookies(staged.headers);
+        return {
+          kind: "success",
+          redirectTo: mustChange
+            ? "/staff/change-password"
+            : safeReturnPath("workforce", stringField(formData, "returnTo")),
+        };
+      } catch {
+        if (staged)
+          await dependencies.gateway
+            .revokeNewSession(staged.response.token)
+            .catch(() => undefined);
+        return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+      }
+    },
+    async reauthenticate(
+      formData: FormData,
+    ): Promise<StaffSecurityActionState> {
+      const identifier = stringField(formData, "identifier");
+      const password = stringField(formData, "password");
+      const code = stringField(formData, "code");
+      if (!identifier || !password || !code || !/^\d{6}$/u.test(code))
+        return { kind: "error", code: "AUTH_INVALID_INPUT" };
+      let newSessionToken: string | undefined;
+      try {
+        const old = await current();
+        await dependencies.repository.revokeSession(old.sessionId);
+        const requestHeaders = await dependencies.getHeaders();
+        const passwordStage = await dependencies.gateway.signIn({
+          identifier: identifier.normalize("NFKC").trim().toLowerCase(),
+          password,
+          rememberMe: false,
+          headers: requestHeaders,
+        });
+        if (isFullSession(passwordStage.response))
+          throw new Error("Re-authentication requires TOTP");
+        const totpStage = await dependencies.gateway.verifyTOTP({
+          code,
+          trustDevice: false,
+          headers: stagedChallengeHeaders(
+            requestHeaders,
+            passwordStage.headers,
+          ),
+        });
+        newSessionToken = totpStage.response.token;
+        await dependencies.repository.readMustChangePassword(
+          totpStage.response.user.id,
+        );
+        await dependencies.commitCookies(totpStage.headers);
+        return {
+          kind: "success",
+          redirectTo: safeReturnPath(
+            "workforce",
+            stringField(formData, "returnTo"),
+          ),
+        };
+      } catch {
+        if (newSessionToken)
+          await dependencies.gateway
+            .revokeNewSession(newSessionToken)
+            .catch(() => undefined);
+        return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+      }
+    },
+  };
 }
 
 function parseSignInResult(value: unknown): SignInResult {

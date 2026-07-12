@@ -6,6 +6,7 @@ import {
   type BetterAuthOptions,
   type DBAdapterInstance,
 } from "better-auth";
+import { createAuthMiddleware } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import { twoFactor, username } from "better-auth/plugins";
 
@@ -13,7 +14,9 @@ import {
   betterAuthAdapterSchema,
   betterAuthModels,
   getDatabase,
+  sessions,
 } from "@ai-agent-platform/database";
+import { eq } from "drizzle-orm";
 
 import {
   createSharedAuthOptions,
@@ -92,6 +95,19 @@ type StaffAuthDependencies = {
   forwardCookies?: boolean;
 };
 
+export async function recordMfaAssurance(input: {
+  path: string;
+  newSession: { session: { id: string; token: string } } | null;
+  now?: () => Date;
+  updateSessionById(id: string, mfaVerifiedAt: Date): Promise<void>;
+}): Promise<void> {
+  if (input.path !== "/two-factor/verify-totp" || !input.newSession) return;
+  await input.updateSessionById(
+    input.newSession.session.id,
+    (input.now ?? (() => new Date()))(),
+  );
+}
+
 function resolveAdapter(
   dependencies: StaffAuthDependencies,
 ): DBAdapterInstance {
@@ -114,6 +130,29 @@ export function createStaffAuthOptions(
   });
   return {
     ...shared,
+    hooks: {
+      ...shared.hooks,
+      after: createAuthMiddleware(async (context) => {
+        const newSession = context.context.newSession;
+        await recordMfaAssurance({
+          path: context.path,
+          newSession: newSession
+            ? {
+                session: {
+                  id: newSession.session.id,
+                  token: newSession.session.token,
+                },
+              }
+            : null,
+          updateSessionById: async (id, mfaVerifiedAt) => {
+            await (dependencies.db ?? getDatabase())
+              .update(sessions)
+              .set({ mfaVerifiedAt, updatedAt: new Date() })
+              .where(eq(sessions.id, id));
+          },
+        });
+      }),
+    },
     plugins: [
       username({
         minUsernameLength: 3,

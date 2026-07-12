@@ -20,6 +20,7 @@ import {
 import {
   createStaffAuth,
   createStaffAuthOptions,
+  recordMfaAssurance,
   staffRealm,
   staffTwoFactorPolicy,
 } from "./staff-auth";
@@ -335,6 +336,38 @@ describe("shared auth security options", () => {
     expect(staffTwoFactorPolicy.backupCodeOptions.storeBackupCodes).toBe(
       "encrypted",
     );
+  });
+
+  it("stamps MFA assurance only onto the exact new session after successful TOTP", async () => {
+    const updates: Array<{ id: string; at: Date }> = [];
+    const at = new Date("2026-07-12T05:00:00.000Z");
+    await recordMfaAssurance({
+      path: "/two-factor/verify-totp",
+      newSession: { session: { id: "new-session", token: "new-token" } },
+      now: () => at,
+      updateSessionById: async (id, mfaVerifiedAt) => {
+        updates.push({ id, at: mfaVerifiedAt });
+      },
+    });
+    await recordMfaAssurance({
+      path: "/two-factor/enable",
+      newSession: {
+        session: { id: "enrollment-session", token: "enrollment-token" },
+      },
+      now: () => at,
+      updateSessionById: async (id, mfaVerifiedAt) => {
+        updates.push({ id, at: mfaVerifiedAt });
+      },
+    });
+    await recordMfaAssurance({
+      path: "/two-factor/verify-totp",
+      newSession: null,
+      now: () => at,
+      updateSessionById: async (id, mfaVerifiedAt) => {
+        updates.push({ id, at: mfaVerifiedAt });
+      },
+    });
+    expect(updates).toEqual([{ id: "new-session", at }]);
   });
 });
 
