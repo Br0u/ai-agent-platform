@@ -19,6 +19,8 @@ volume="aap-restore-drill-$run_id"
 password="$(openssl rand -hex 32)"
 database="restore_drill"
 owner="restore_owner"
+expected_migrations="6"
+expected_latest_migration="1783854600000"
 
 cleanup() {
   docker rm -f "$container" >/dev/null 2>&1 || true
@@ -51,14 +53,26 @@ docker exec "$container" pg_restore \
 
 migration_count="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \
   "SELECT count(*) FROM drizzle.__drizzle_migrations")"
-users_table="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \
-  "SELECT to_regclass('public.users') IS NOT NULL")"
+latest_migration="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \
+  "SELECT max(created_at) FROM drizzle.__drizzle_migrations")"
+schema_contract="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \
+  "SELECT
+     to_regclass('public.users') IS NOT NULL
+     AND to_regclass('public.sessions') IS NOT NULL
+     AND to_regclass('public.audit_logs') IS NOT NULL
+     AND to_regclass('public.roles') IS NOT NULL
+     AND to_regclass('public.users_email_lower_unique') IS NOT NULL
+     AND to_regclass('public.audit_logs_created_id_desc_idx') IS NOT NULL
+     AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'rate_limits_key_unique')
+     AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'sessions_identity_boundary_guard' AND NOT tgisinternal)")"
 user_count="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \
   "SELECT count(*) FROM public.users")"
 
-if [ "$migration_count" -lt 1 ] || [ "$users_table" != "t" ]; then
+if [ "$migration_count" != "$expected_migrations" ] || \
+   [ "$latest_migration" != "$expected_latest_migration" ] || \
+   [ "$schema_contract" != "t" ]; then
   echo "restore drill failed critical table checks" >&2
   exit 1
 fi
 
-echo "restore drill passed: migrations=$migration_count users=$user_count"
+echo "restore drill passed: migrations=$migration_count latest=$latest_migration users=$user_count"

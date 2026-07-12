@@ -89,6 +89,8 @@ infra/docker/restore-drill.sh /secure/path/ai-agent-platform-YYYYMMDDTHHMMSSZ.du
 
 脚本创建临时数据库卷和容器，恢复后验证迁移历史及`users`关键表，最后删除临时资源；它不会打印临时数据库密码。生产备份还必须异机复制、加密并设置失败告警。
 
+从旧版 root 备份容器升级时，已有`backup_data`卷可能仍由 root 持有。升级前先复制现有 dump 并停止 backup 服务，检查卷内属主；仅在受控维护窗口用一次性 root 容器把该卷递归改为 PostgreSQL 镜像用户 UID/GID 70，再启动新版非 root backup。不要把`user: root`加回长期 Compose 配置；新卷会由镜像自动使用正确属主。
+
 应用回滚只使用上一次已验收的不可变镜像 digest，禁止复用或覆盖 tag。先停止入口流量，再切换`web`和`migrate`镜像 digest；只有向后兼容迁移可以直接回滚应用。破坏性数据库变更必须随发布提供经演练的前向修复或恢复脚本，不能自动运行旧迁移，也不能把生产库盲目回退到旧 schema。恢复整库前先保留故障现场 dump，并由 DBA 和发布负责人双人确认恢复点。
 
 ## 生产环境仍需补齐

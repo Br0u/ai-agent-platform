@@ -12,13 +12,15 @@ Task 12 的本地实现与验收通过，可进入最终代码评审。SMTP、SS
 
 | 门禁                                        | 结果                          |
 | ------------------------------------------- | ----------------------------- |
-| Database                                    | 113 passed（隔离 PostgreSQL） |
+| Database                                    | 114 passed（隔离 PostgreSQL） |
 | Integrations                                | 7 passed                      |
 | UI                                          | 57 passed                     |
-| Web                                         | 521 passed（隔离 PostgreSQL） |
+| Web                                         | 528 passed（隔离 PostgreSQL） |
 | TypeScript / ESLint / Prettier / Next build | PASS                          |
 
 数据库集成行为另在隔离 PostgreSQL 中执行；浏览器行为在 Docker 生产镜像后方的 Nginx 入口执行。
+
+CI 等价验证使用两个数据库：`ai_agent_platform_ci`仅供迁移、授权和 E2E seed，`ai_agent_platform_identity_test_ci`仅供会清空 schema/catalog 的集成测试。全仓测试结束后，应用库仍保留 6 条 migration journal，E2E seed 成功写入 7 个 fixture 用户。
 
 ## 干净 Docker 环境
 
@@ -29,7 +31,7 @@ Task 12 的本地实现与验收通过，可进入最终代码评审。SMTP、SS
 - Nginx Host 来源门禁：生产模式只允许 `PUBLIC_HOST`；`127.0.0.1`、`localhost`和未知 Host 返回 421。只有显式设置`ALLOW_LOCAL_VALIDATION_HOSTS=true`时才允许本机验收 Host。
 - 有效管理员会话在重启`web`与`proxy`后仍返回 200；撤销后返回 401，再次重启后仍为 401。
 - E2E 密码、替换密码和全部会话 token 均在运行时用`openssl rand`生成；seed、Playwright 和数据库断言只从环境变量读取，不提交也不打印具体值。
-- 备份镜像实际运行用户为`postgres`（UID 70）、只读根文件系统且丢弃全部 capabilities；真实 custom dump 恢复到新临时卷后，迁移历史和`users`关键表检查通过（`migrations=1 users=1`）。
+- 备份镜像实际运行用户为`postgres`（UID 70）、只读根文件系统且丢弃全部 capabilities；当前 schema 的真实 custom dump 已恢复到新临时卷，输出`migrations=6 latest=1783854600000 users=0`，并通过关键表、唯一约束、索引和 session 身份边界触发器检查。
 
 ## 浏览器与访问矩阵
 
@@ -57,6 +59,8 @@ Task 12 的本地实现与验收通过，可进入最终代码评审。SMTP、SS
 最终分段顺序结果：TOTP 1/1、恢复码 1/1、其余访问矩阵 11/11；无状态 desktop/mobile 6/6。TOTP 与恢复码共享真实 Nginx 认证限流桶，因此两段之间重启本地验收 proxy 以隔离用例，不降低生产限流。恢复码明文和浏览器 storage state 验收后已删除，均未进入 Git。
 
 生产 Cookie 属性由认证配置测试验证：客户与员工会话均为`HttpOnly`、`SameSite=Lax`；HTTPS/生产配置包含`Secure`。客户与员工使用不同 Cookie 名，不接受跨身份域复用。管理员未完成 TOTP 时的敏感操作拒绝、权限服务端复核、审计不可篡改、账号/IP 双层限流均由 Web/数据库自动化测试覆盖。
+
+认证账号/IP限流另有 7 项真实 PostgreSQL 集成测试，覆盖两个桶各自阈值、固定窗口重置、拒绝时整笔事务回滚、并发 upsert 不丢计数、数据库异常 fail-closed、每次最多 100 条的过期清理，以及长窗口内不提前清理。清理只匹配`auth:%`，不会删除 Better Auth 或注册限流命名空间。
 
 ## 查询计划与索引
 

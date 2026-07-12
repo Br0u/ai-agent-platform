@@ -294,6 +294,16 @@ describe("production deployment security contracts", () => {
   it("uses a migration-safe CI database and initializes privilege roles first", () => {
     const workflow = read(".github/workflows/ci.yml");
     expect(workflow).toContain("ai_agent_platform_identity_test_ci");
+    expect(workflow).toContain("ai_agent_platform_ci");
+    expect(workflow).toContain(
+      "TEST_DATABASE_URL: postgresql://ai_agent_owner@127.0.0.1:5432/ai_agent_platform_identity_test_ci",
+    );
+    expect(workflow).toContain(
+      "DATABASE_URL=postgresql://ai_agent_migrator@127.0.0.1:5432/ai_agent_platform_ci",
+    );
+    expect(workflow).toContain(
+      "CREATE DATABASE ai_agent_platform_identity_test_ci",
+    );
     expect(workflow).not.toContain("ai_agent_platform_test\n");
     expect(workflow).toContain("Initialize least-privilege database roles");
     expect(
@@ -303,6 +313,18 @@ describe("production deployment security contracts", () => {
     expect(read("apps/web/vitest.config.ts")).toContain(
       "fileParallelism: false",
     );
+  });
+
+  it("requires restore drills to verify the exact migration and schema contract", () => {
+    const script = read("infra/docker/restore-drill.sh");
+    expect(script).toContain('expected_migrations="6"');
+    expect(script).toContain("migration_count");
+    expect(script).toContain("latest_migration");
+    expect(script).toContain("users_email_lower_unique");
+    expect(script).toContain("sessions_identity_boundary_guard");
+    expect(script).toContain("audit_logs_created_id_desc_idx");
+    expect(script).toContain("rate_limits_key_unique");
+    expect(script).not.toContain('[ "$migration_count" -lt 1 ]');
   });
 
   it("uses host webServer only when BASE_URL is absent", () => {
