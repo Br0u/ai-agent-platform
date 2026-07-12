@@ -39,6 +39,10 @@ describe("admin users page", () => {
           realm: "workforce",
           status: "active",
           role: "employee",
+          roles: [
+            { name: "employee", scope: "workforce" },
+            { name: "support_operator", scope: "workforce" },
+          ],
           sessions: [
             {
               id: "session-1",
@@ -46,6 +50,17 @@ describe("admin users page", () => {
               expiresAt: "2026-07-13T00:00:00.000Z",
             },
           ],
+        },
+        {
+          id: "customer-1",
+          name: "客户甲",
+          email: "customer@example.test",
+          username: null,
+          realm: "customer",
+          status: "active",
+          role: "customer_member",
+          roles: [{ name: "customer_member", scope: "customer" }],
+          sessions: [],
         },
       ],
       total: 21,
@@ -71,14 +86,16 @@ describe("admin users page", () => {
     );
     expect(screen.getByRole("combobox", { name: "用户类型" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "状态" })).toBeVisible();
-    for (const name of [
-      "创建员工",
-      "停用账号",
-      "替换临时密码",
-      "撤销此会话",
-      "撤销全部会话",
-    ])
+    expect(screen.getByText("employee · 内部员工域")).toBeVisible();
+    expect(screen.getByText("support_operator · 内部员工域")).toBeVisible();
+    expect(screen.getByText("customer_member · 客户域")).toBeVisible();
+    expect(screen.getAllByText("林青")).toHaveLength(1);
+    expect(screen.getAllByRole("row")).toHaveLength(3);
+    for (const name of ["创建员工", "停用账号", "替换临时密码", "撤销此会话"])
       expect(screen.getByRole("button", { name })).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: "撤销全部会话" }),
+    ).toHaveLength(2);
     expect(screen.getByRole("link", { name: "下一页" })).toHaveAttribute(
       "href",
       expect.stringContaining("realm=workforce"),

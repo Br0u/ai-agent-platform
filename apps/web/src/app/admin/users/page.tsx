@@ -152,7 +152,24 @@ export default async function Page({
                 {user.realm === "customer" ? "客户" : "内部员工"} /{" "}
                 {user.status}
               </td>
-              <td>{user.role ?? "—"}</td>
+              <td>
+                {user.roles.length ? (
+                  <ul>
+                    {user.roles.map((role) => (
+                      <li key={`${role.scope}:${role.name}`}>
+                        {role.name} ·{" "}
+                        {role.scope === "workforce"
+                          ? "内部员工域"
+                          : role.scope === "customer"
+                            ? "客户域"
+                            : "全局域"}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  "—"
+                )}
+              </td>
               <td>
                 {user.sessions.map((session) => (
                   <form action={revokeAdminSessionAction} key={session.id}>

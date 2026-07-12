@@ -9,8 +9,8 @@ import {
 } from "./users";
 
 describe("workforce user query", () => {
-  it("supports customer/workforce/status filters and returns only safe session identifiers", async () => {
-    const search = vi.fn(async () => ({
+  it("paginates distinct users first, then batch-aggregates deterministic scoped roles and safe sessions", async () => {
+    const searchUsers = vi.fn(async () => ({
       items: [
         {
           id: "staff-1",
@@ -19,38 +19,74 @@ describe("workforce user query", () => {
           username: "staff",
           realm: "workforce" as const,
           status: "active" as const,
-          role: "employee",
-          sessions: [
-            {
-              id: "session-1",
-              createdAt: new Date("2026-07-12T00:00:00Z"),
-              expiresAt: new Date("2026-07-13T00:00:00Z"),
-              token: "raw-token",
-            },
-          ],
+        },
+        {
+          id: "staff-2",
+          name: "Other",
+          email: "other@example.test",
+          username: "other",
+          realm: "workforce" as const,
+          status: "active" as const,
         },
       ],
-      total: 1,
+      total: 3,
     }));
-    const result = await createWorkforceUserQueryService({ search }).list(
-      superActor,
+    const findRolesByUserIds = vi.fn(async () => [
       {
-        search: "staff",
-        realm: "workforce",
-        status: "active",
-        page: 1,
-        pageSize: 20,
+        userId: "staff-1",
+        name: "support_operator",
+        scope: "workforce" as const,
       },
-    );
-    expect(search).toHaveBeenCalledWith(
-      expect.objectContaining({ realm: "workforce" }),
-    );
+      { userId: "staff-1", name: "employee", scope: "workforce" as const },
+      { userId: "staff-2", name: "employee", scope: "workforce" as const },
+    ]);
+    const findSessionsByUserIds = vi.fn(async () => [
+      {
+        userId: "staff-1",
+        id: "session-1",
+        createdAt: new Date("2026-07-12T00:00:00Z"),
+        expiresAt: new Date("2026-07-13T00:00:00Z"),
+        token: "raw-token",
+      },
+    ]);
+    const result = await createWorkforceUserQueryService({
+      searchUsers,
+      findRolesByUserIds,
+      findSessionsByUserIds,
+    }).list(superActor, {
+      search: "staff",
+      realm: "workforce",
+      status: "active",
+      page: 1,
+      pageSize: 2,
+    });
+    expect(searchUsers).toHaveBeenCalledWith({
+      search: "staff",
+      realm: "workforce",
+      status: "active",
+      page: 1,
+      pageSize: 2,
+    });
+    expect(findRolesByUserIds).toHaveBeenCalledOnce();
+    expect(findRolesByUserIds).toHaveBeenCalledWith(["staff-1", "staff-2"]);
+    expect(findSessionsByUserIds).toHaveBeenCalledOnce();
+    expect(result.total).toBe(3);
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0]?.roles).toEqual([
+      { name: "employee", scope: "workforce" },
+      { name: "support_operator", scope: "workforce" },
+    ]);
+    expect(result.items[0]?.role).toBe("employee");
     expect(JSON.stringify(result)).not.toContain("raw-token");
     expect(result.items[0]?.sessions[0]?.id).toBe("session-1");
   });
 
   it("rejects queries without admin users permission", async () => {
-    const service = createWorkforceUserQueryService({ search: vi.fn() });
+    const service = createWorkforceUserQueryService({
+      searchUsers: vi.fn(),
+      findRolesByUserIds: vi.fn(),
+      findSessionsByUserIds: vi.fn(),
+    });
     await expect(
       service.list(
         { ...superActor, permissions: [] },

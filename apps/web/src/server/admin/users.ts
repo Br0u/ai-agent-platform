@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, count, eq, ilike, or, sql } from "drizzle-orm";
+import { and, asc, count, eq, ilike, inArray, or, sql } from "drizzle-orm";
 
 import {
   accounts,
@@ -33,19 +33,27 @@ type AdminUserQueryRow = {
   username: string | null;
   realm: "customer" | "workforce";
   status: "pending_review" | "active" | "disabled" | "rejected";
-  role: string | null;
-  sessions: Array<{
-    id: string;
-    createdAt: Date;
-    expiresAt: Date;
-    token?: string;
-  }>;
+};
+type AdminUserRoleRow = {
+  userId: string;
+  name: string;
+  scope: "customer" | "workforce" | "global";
+};
+const ROLE_SCOPE_ORDER = ["customer", "workforce", "global"] as const;
+type AdminUserSessionRow = {
+  userId: string;
+  id: string;
+  createdAt: Date;
+  expiresAt: Date;
+  token?: string;
 };
 export type WorkforceUserQueryRepository = {
-  search(query: AdminUserQuery): Promise<{
+  searchUsers(query: AdminUserQuery): Promise<{
     items: AdminUserQueryRow[];
     total: number;
   }>;
+  findRolesByUserIds(userIds: string[]): Promise<AdminUserRoleRow[]>;
+  findSessionsByUserIds(userIds: string[]): Promise<AdminUserSessionRow[]>;
 };
 
 export function createWorkforceUserQueryService(
@@ -55,16 +63,47 @@ export function createWorkforceUserQueryService(
     async list(actor: { permissions: string[] }, query: AdminUserQuery) {
       if (!actor.permissions.includes("admin:users"))
         throw new WorkforceMutationError("AUTH_PERMISSION_DENIED");
-      const result = await repository.search(query);
+      const result = await repository.searchUsers(query);
+      const userIds = result.items.map(({ id }) => id);
+      const [roleRows, sessionRows] = userIds.length
+        ? await Promise.all([
+            repository.findRolesByUserIds(userIds),
+            repository.findSessionsByUserIds(userIds),
+          ])
+        : [[], []];
+      const rolesByUser = new Map<string, AdminUserRoleRow[]>();
+      for (const role of roleRows) {
+        const assigned = rolesByUser.get(role.userId) ?? [];
+        assigned.push(role);
+        rolesByUser.set(role.userId, assigned);
+      }
+      const sessionsByUser = new Map<string, AdminUserSessionRow[]>();
+      for (const session of sessionRows) {
+        const assigned = sessionsByUser.get(session.userId) ?? [];
+        assigned.push(session);
+        sessionsByUser.set(session.userId, assigned);
+      }
       return {
-        items: result.items.map((item) => ({
-          ...item,
-          sessions: item.sessions.map((session) => ({
-            id: session.id,
-            createdAt: session.createdAt.toISOString(),
-            expiresAt: session.expiresAt.toISOString(),
-          })),
-        })),
+        items: result.items.map((item) => {
+          const assignedRoles = (rolesByUser.get(item.id) ?? [])
+            .map(({ name, scope }) => ({ name, scope }))
+            .sort(
+              (left, right) =>
+                ROLE_SCOPE_ORDER.indexOf(left.scope) -
+                  ROLE_SCOPE_ORDER.indexOf(right.scope) ||
+                (left.name < right.name ? -1 : left.name > right.name ? 1 : 0),
+            );
+          return {
+            ...item,
+            roles: assignedRoles,
+            role: assignedRoles[0]?.name ?? null,
+            sessions: (sessionsByUser.get(item.id) ?? []).map((session) => ({
+              id: session.id,
+              createdAt: session.createdAt.toISOString(),
+              expiresAt: session.expiresAt.toISOString(),
+            })),
+          };
+        }),
         total: result.total,
         page: query.page,
         pageSize: query.pageSize,
@@ -76,7 +115,7 @@ export function createWorkforceUserQueryService(
 export function createDefaultWorkforceUserQueryService() {
   const database = getDatabase();
   return createWorkforceUserQueryService({
-    async search(query) {
+    async searchUsers(query) {
       const filter = and(
         query.realm ? eq(users.identityRealm, query.realm) : undefined,
         query.status ? eq(users.status, query.status) : undefined,
@@ -100,32 +139,37 @@ export function createDefaultWorkforceUserQueryService() {
           username: users.username,
           realm: users.identityRealm,
           status: users.status,
-          role: roles.name,
         })
         .from(users)
-        .leftJoin(userRoles, eq(userRoles.userId, users.id))
-        .leftJoin(roles, eq(roles.id, userRoles.roleId))
         .where(filter)
         .orderBy(asc(users.name), asc(users.id))
         .limit(query.pageSize)
         .offset((query.page - 1) * query.pageSize);
-      return {
-        items: await Promise.all(
-          rows.map(async (row) => ({
-            ...row,
-            sessions: await database
-              .select({
-                id: sessions.id,
-                createdAt: sessions.createdAt,
-                expiresAt: sessions.expiresAt,
-              })
-              .from(sessions)
-              .where(eq(sessions.userId, row.id))
-              .orderBy(asc(sessions.createdAt)),
-          })),
-        ),
-        total: totalRow?.value ?? 0,
-      };
+      return { items: rows, total: totalRow?.value ?? 0 };
+    },
+    async findRolesByUserIds(userIds) {
+      return database
+        .select({
+          userId: userRoles.userId,
+          name: roles.name,
+          scope: roles.realmScope,
+        })
+        .from(userRoles)
+        .innerJoin(roles, eq(roles.id, userRoles.roleId))
+        .where(inArray(userRoles.userId, userIds))
+        .orderBy(asc(userRoles.userId), asc(roles.realmScope), asc(roles.name));
+    },
+    async findSessionsByUserIds(userIds) {
+      return database
+        .select({
+          userId: sessions.userId,
+          id: sessions.id,
+          createdAt: sessions.createdAt,
+          expiresAt: sessions.expiresAt,
+        })
+        .from(sessions)
+        .where(inArray(sessions.userId, userIds))
+        .orderBy(asc(sessions.userId), asc(sessions.createdAt));
     },
   });
 }
