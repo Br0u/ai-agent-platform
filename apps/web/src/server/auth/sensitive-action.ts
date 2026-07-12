@@ -4,6 +4,7 @@ import { headers as nextHeaders } from "next/headers";
 
 import {
   requirePermission,
+  requireWorkforce,
   type PermissionKey,
   type WorkforceActor,
 } from "./access";
@@ -65,34 +66,80 @@ export function createSensitiveActionGuard(dependencies: {
   requirePermission: (permission: PermissionKey) => Promise<WorkforceActor>;
   getSession: () => Promise<SensitiveSession | null>;
 }) {
-  const now = dependencies.now ?? (() => new Date());
   return async function requireSensitiveWorkforceAction(
     permission: PermissionKey,
     options: { recentWithinSeconds?: number; mfaRequired?: boolean } = {},
   ): Promise<WorkforceActor> {
     const actor = await dependencies.requirePermission(permission);
-    const session = await dependencies.getSession();
-    const windowMs = (options.recentWithinSeconds ?? 10 * 60) * 1000;
-    const currentTime = now().getTime();
-    if (
-      !session ||
-      session.realm !== "workforce" ||
-      session.userId !== actor.userId ||
-      currentTime - session.createdAt.getTime() > windowMs ||
-      session.createdAt.getTime() > currentTime + 5_000
-    ) {
-      throw new SensitiveActionError("AUTH_REAUTH_REQUIRED");
-    }
-    if (
-      options.mfaRequired !== false &&
-      (!session.mfaVerifiedAt ||
-        currentTime - session.mfaVerifiedAt.getTime() > windowMs ||
-        session.mfaVerifiedAt.getTime() > currentTime + 5_000)
-    ) {
-      throw new SensitiveActionError("AUTH_MFA_REQUIRED");
-    }
+    await assertWorkforceAssurance(
+      actor.userId,
+      await dependencies.getSession(),
+      options,
+      (dependencies.now ?? (() => new Date()))(),
+    );
     return actor;
   };
+}
+
+async function assertWorkforceAssurance(
+  userId: string,
+  session: SensitiveSession | null,
+  options: { recentWithinSeconds?: number; mfaRequired?: boolean },
+  now: Date,
+): Promise<void> {
+  const windowMs = (options.recentWithinSeconds ?? 10 * 60) * 1000;
+  const currentTime = now.getTime();
+  if (
+    !session ||
+    session.realm !== "workforce" ||
+    session.userId !== userId ||
+    currentTime - session.createdAt.getTime() > windowMs ||
+    session.createdAt.getTime() > currentTime + 5_000
+  ) {
+    throw new SensitiveActionError("AUTH_REAUTH_REQUIRED");
+  }
+  if (
+    options.mfaRequired !== false &&
+    (!session.mfaVerifiedAt ||
+      currentTime - session.mfaVerifiedAt.getTime() > windowMs ||
+      session.mfaVerifiedAt.getTime() > currentTime + 5_000)
+  ) {
+    throw new SensitiveActionError("AUTH_MFA_REQUIRED");
+  }
+}
+
+export function createWorkforceAssuranceGuard<
+  Actor extends { userId: string },
+>(dependencies: {
+  now?: () => Date;
+  requireActor: () => Promise<Actor>;
+  getSession: () => Promise<SensitiveSession | null>;
+}) {
+  return async function requireRecentWorkforceAssurance(
+    options: { recentWithinSeconds?: number; mfaRequired?: boolean } = {},
+  ): Promise<Actor> {
+    const actor = await dependencies.requireActor();
+    await assertWorkforceAssurance(
+      actor.userId,
+      await dependencies.getSession(),
+      options,
+      (dependencies.now ?? (() => new Date()))(),
+    );
+    return actor;
+  };
+}
+
+export async function requireRecentWorkforceAssurance(options?: {
+  recentWithinSeconds?: number;
+  mfaRequired?: boolean;
+}): Promise<WorkforceActor> {
+  return createWorkforceAssuranceGuard({
+    requireActor: () => requireWorkforce(),
+    getSession: async () =>
+      parseSensitiveSession(
+        await getStaffAuth().api.getSession({ headers: await nextHeaders() }),
+      ),
+  })(options);
 }
 
 export async function requireSensitiveWorkforceAction(

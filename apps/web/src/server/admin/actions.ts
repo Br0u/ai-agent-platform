@@ -76,6 +76,22 @@ export async function setUserRoleAction(formData: FormData) {
   );
   revalidatePath("/admin/roles");
 }
+export async function addUserRoleAction(formData: FormData) {
+  await createDefaultWorkforceUserService().addRole(
+    delegatedActor,
+    required(formData, "userId"),
+    required(formData, "role"),
+  );
+  revalidatePath("/admin/roles");
+}
+export async function removeUserRoleAction(formData: FormData) {
+  await createDefaultWorkforceUserService().removeRole(
+    delegatedActor,
+    required(formData, "userId"),
+    required(formData, "role"),
+  );
+  revalidatePath("/admin/roles");
+}
 export async function replaceRolePermissionsAction(formData: FormData) {
   await createDefaultRolePermissionService().replacePermissions(
     required(formData, "roleId"),

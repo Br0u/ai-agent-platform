@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   sensitive: vi.fn(),
   transaction: vi.fn(),
+  addRole: vi.fn(),
+  removeRole: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("../auth/sensitive-action", () => ({
@@ -16,7 +18,12 @@ vi.mock("./sessions", () => ({
   createDefaultAdminSessionService: vi.fn(),
   createDefaultCustomerSessionService: vi.fn(),
 }));
-vi.mock("./users", () => ({ createDefaultWorkforceUserService: vi.fn() }));
+vi.mock("./users", () => ({
+  createDefaultWorkforceUserService: () => ({
+    addRole: mocks.addRole,
+    removeRole: mocks.removeRole,
+  }),
+}));
 vi.mock("@ai-agent-platform/database", () => ({
   getDatabase: () => ({ transaction: mocks.transaction }),
   permissions: { id: "permission.id", key: "permission.key" },
@@ -33,7 +40,11 @@ vi.mock("@ai-agent-platform/database", () => ({
   users: { id: "user.id", identityRealm: "user.realm", status: "user.status" },
 }));
 
-import { updateSiteSettingsAction } from "./actions";
+import {
+  addUserRoleAction,
+  removeUserRoleAction,
+  updateSiteSettingsAction,
+} from "./actions";
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -48,4 +59,26 @@ describe("site settings action boundary", () => {
     expect(mocks.sensitive).toHaveBeenCalledWith("admin:site");
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
+});
+
+describe("explicit workforce role actions", () => {
+  it.each([
+    ["add", addUserRoleAction, mocks.addRole],
+    ["remove", removeUserRoleAction, mocks.removeRole],
+  ] as const)(
+    "delegates exact user and role for %s",
+    async (_name, action, call) => {
+      const form = new FormData();
+      form.set("userId", "employee-1");
+      form.set("role", "support_operator");
+
+      await action(form);
+
+      expect(call).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: "guarded-by-service" }),
+        "employee-1",
+        "support_operator",
+      );
+    },
+  );
 });

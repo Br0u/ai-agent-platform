@@ -32,6 +32,7 @@ export {
 
 import { createAuditWriter, type AuditWriteInput } from "./audit";
 import { createCustomerAuth } from "./customer-auth";
+import { requireRecentWorkforceAssurance } from "./sensitive-action";
 import { createStaffAuth } from "./staff-auth";
 
 const CUSTOMER_COOKIE = "aap_customer_session";
@@ -159,7 +160,10 @@ export function safeReturnPath(
 type RecoveryCodeRepository = {
   read(userId: string): Promise<string>;
   write(userId: string, serializedHashes: string): Promise<void>;
-  writeUsedAudit?(userId: string): Promise<void>;
+  writeUsedAudit(
+    event: "auth.recovery_code_used",
+    userId: string,
+  ): Promise<void>;
 };
 
 function recoveryCodeHash(code: string): string {
@@ -219,7 +223,7 @@ export function createRecoveryCodeService(dependencies: {
         if (index < 0) return false;
         hashes.splice(index, 1);
         await repository.write(userId, JSON.stringify(hashes));
-        await repository.writeUsedAudit?.(userId);
+        await repository.writeUsedAudit("auth.recovery_code_used", userId);
         return true;
       });
     },
@@ -281,6 +285,8 @@ export type StaffSecurityActionState =
         | "AUTH_INVALID_INPUT"
         | "AUTH_INVALID_CREDENTIALS"
         | "AUTH_TOTP_ALREADY_ENABLED"
+        | "AUTH_REAUTH_REQUIRED"
+        | "AUTH_MFA_REQUIRED"
         | "AUTH_INFRASTRUCTURE_FAILURE";
     }
   | { kind: "success"; redirectTo: string }
@@ -333,11 +339,11 @@ function createDefaultRecoveryCodeService() {
             if (updated.length !== 1)
               throw new Error("TOTP enrollment is missing");
           },
-          async writeUsedAudit(userId) {
+          async writeUsedAudit(event, userId) {
             await transaction.insert(auditLogs).values({
               actorRealm: "workforce",
               actorUserId: userId,
-              action: "auth.recovery_code_used",
+              action: event,
               targetType: "user",
               targetId: userId,
               metadata: {},
@@ -531,6 +537,7 @@ export function createDefaultStaffSecurityActions() {
       commitResponseCookies("workforce", headers, nextCookies),
     getHeaders: currentHeaders,
     clearCookies: () => clearRealmCookies(nextCookies, "workforce"),
+    requireAssurance: () => requireRecentWorkforceAssurance(),
   });
 }
 
@@ -541,6 +548,7 @@ export function createStaffSecurityActions(dependencies: {
   commitCookies(headers: Headers): Promise<void>;
   getHeaders(): Promise<Headers>;
   clearCookies(): Promise<void>;
+  requireAssurance(): Promise<{ userId: string }>;
 }) {
   async function current() {
     const value = await dependencies.repository.current();
@@ -645,6 +653,58 @@ export function createStaffSecurityActions(dependencies: {
           } catch {
             await dependencies.clearCookies().catch(() => undefined);
           }
+        }
+        return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+      }
+    },
+    async removeTwoFactor(
+      formData: FormData,
+    ): Promise<StaffSecurityActionState> {
+      const password = stringField(formData, "password");
+      if (!password) return { kind: "error", code: "AUTH_INVALID_INPUT" };
+      try {
+        const assured = await dependencies.requireAssurance();
+        const session = await current();
+        if (
+          assured.userId !== session.userId ||
+          session.twoFactorEnabled !== true
+        ) {
+          return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+        }
+        const staged = await dependencies.gateway.disableTwoFactor({
+          password,
+          headers: await dependencies.getHeaders(),
+        });
+        if (staged.response.status !== true)
+          return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+        try {
+          await dependencies.repository.writeAudit(
+            "auth.totp_disabled",
+            session.userId,
+          );
+          if (staged.headers.has("set-cookie"))
+            await dependencies.commitCookies(staged.headers);
+        } catch {
+          await dependencies.clearCookies().catch(() => undefined);
+          return { kind: "error", code: "AUTH_INFRASTRUCTURE_FAILURE" };
+        }
+        const returnTo = safeReturnPath(
+          "workforce",
+          stringField(formData, "returnTo"),
+        );
+        return {
+          kind: "success",
+          redirectTo: `/staff/two-factor?returnTo=${encodeURIComponent(returnTo)}`,
+        };
+      } catch (error) {
+        if (
+          error &&
+          typeof error === "object" &&
+          "code" in error &&
+          (error.code === "AUTH_REAUTH_REQUIRED" ||
+            error.code === "AUTH_MFA_REQUIRED")
+        ) {
+          return { kind: "error", code: error.code };
         }
         return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
       }

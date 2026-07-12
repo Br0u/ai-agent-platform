@@ -267,6 +267,38 @@ describe("audit writer", () => {
     );
   });
 
+  it.each(["role_added", "role_removed"] as const)(
+    "stores exact actor, target, and role metadata for %s",
+    async (change) => {
+      const { repository, writer } = fixture();
+      await writer.write({
+        event: "workforce.user_updated",
+        actor: { realm: "workforce", userId: "super-1" },
+        target: { type: "user", id: "staff-1" },
+        metadata: { change, role: "support_operator" },
+      });
+      expect(repository.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: "super-1",
+          targetId: "staff-1",
+          metadata: { change, role: "support_operator" },
+        }),
+      );
+    },
+  );
+
+  it("rejects role add/remove audit events without an exact role", async () => {
+    const { repository, writer } = fixture();
+    await expect(
+      writer.write({
+        event: "workforce.user_updated",
+        target: { type: "user", id: "staff-1" },
+        metadata: { change: "role_added" },
+      } as never),
+    ).rejects.toMatchObject({ code: "AUDIT_INPUT_INVALID" });
+    expect(repository.insert).not.toHaveBeenCalled();
+  });
+
   it("propagates database failures", async () => {
     const writer = createAuditWriter({
       insert: vi.fn().mockRejectedValue(new Error("database unavailable")),

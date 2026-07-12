@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SensitiveActionError,
   createSensitiveActionGuard,
+  createWorkforceAssuranceGuard,
 } from "./sensitive-action";
 
 const now = new Date("2026-07-12T05:00:00.000Z");
@@ -38,6 +39,23 @@ function fixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("sensitive workforce action guard", () => {
+  it("supports recent workforce assurance without inventing a permission", async () => {
+    const requireActor = vi.fn(async () => ({ ...actor, permissions: [] }));
+    const getSession = vi.fn(async () => ({
+      id: "session-new",
+      userId: actor.userId,
+      realm: "workforce" as const,
+      createdAt: new Date(now.getTime() - 60_000),
+      mfaVerifiedAt: new Date(now.getTime() - 30_000),
+    }));
+    const guard = createWorkforceAssuranceGuard({
+      now: () => now,
+      requireActor,
+      getSession,
+    });
+    await expect(guard()).resolves.toMatchObject({ userId: "staff-1" });
+    expect(requireActor).toHaveBeenCalledOnce();
+  });
   it("requires the exact permission and recent password plus MFA assurance by default", async () => {
     const { getSession, guard, requirePermission } = fixture();
     await expect(guard("admin:users")).resolves.toEqual(actor);

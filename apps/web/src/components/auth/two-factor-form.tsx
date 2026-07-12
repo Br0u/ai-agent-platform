@@ -5,6 +5,7 @@ import { useFormStatus } from "react-dom";
 
 import {
   enrollStaffTwoFactorAction,
+  removeStaffTwoFactorAction,
   verifyStaffTwoFactorAction,
 } from "@/server/auth/server-actions";
 import {
@@ -21,11 +22,17 @@ type Enrollment = {
 };
 type Action = (formData: FormData) => Promise<StaffSecurityActionState>;
 
-function Submit({ label }: { label: string }) {
+function Submit({
+  label,
+  pendingLabel = "正在验证…",
+}: {
+  label: string;
+  pendingLabel?: string;
+}) {
   const { pending } = useFormStatus();
   return (
     <button className="auth-form__submit" disabled={pending} type="submit">
-      {pending ? "正在验证…" : label}
+      {pending ? pendingLabel : label}
     </button>
   );
 }
@@ -35,20 +42,30 @@ export function TwoFactorForm({
   mode = "challenge",
   returnTo,
   enrollAction = enrollStaffTwoFactorAction,
+  removeAction = removeStaffTwoFactorAction,
   verifyAction = verifyStaffTwoFactorAction,
+  removalInitialState = STAFF_SECURITY_ACTION_INITIAL_STATE,
   verificationInitialState = STAFF_SECURITY_ACTION_INITIAL_STATE,
 }: {
   enrollment?: Enrollment;
-  mode?: "challenge" | "enroll";
+  mode?: "challenge" | "enroll" | "manage";
   returnTo?: string;
   enrollAction?: Action;
+  removeAction?: Action;
   verifyAction?: Action;
+  removalInitialState?: StaffSecurityActionState;
   verificationInitialState?: StaffSecurityActionState;
 }) {
   const [state, formAction] = useActionState(
     async (_previous: StaffSecurityActionState, data: FormData) =>
-      (mode === "enroll" ? enrollAction : verifyAction)(data),
-    STAFF_SECURITY_ACTION_INITIAL_STATE,
+      (mode === "enroll"
+        ? enrollAction
+        : mode === "manage"
+          ? removeAction
+          : verifyAction)(data),
+    mode === "manage"
+      ? removalInitialState
+      : STAFF_SECURITY_ACTION_INITIAL_STATE,
   );
   const [verificationState, verificationFormAction] = useActionState(
     async (_previous: StaffSecurityActionState, data: FormData) =>
@@ -113,7 +130,7 @@ export function TwoFactorForm({
       {returnTo ? (
         <input name="returnTo" type="hidden" value={returnTo} />
       ) : null}
-      {mode === "enroll" ? (
+      {mode === "enroll" || mode === "manage" ? (
         <label className="auth-form__field">
           <span>当前密码</span>
           <input
@@ -140,9 +157,26 @@ export function TwoFactorForm({
         </label>
       )}
       <p aria-live="polite" className="auth-form__error" role="status">
-        {state.kind === "error" ? "验证失败，请重试。" : ""}
+        {state.kind === "error"
+          ? mode === "manage" &&
+            (state.code === "AUTH_REAUTH_REQUIRED" ||
+              state.code === "AUTH_MFA_REQUIRED")
+            ? "请先重新验证身份后再移除。"
+            : mode === "manage"
+              ? "移除失败，请确认当前密码后重试。"
+              : "验证失败，请重试。"
+          : ""}
       </p>
-      <Submit label={mode === "enroll" ? "开始设置" : "验证并继续"} />
+      <Submit
+        label={
+          mode === "enroll"
+            ? "开始设置"
+            : mode === "manage"
+              ? "移除双因素认证"
+              : "验证并继续"
+        }
+        pendingLabel={mode === "manage" ? "正在移除…" : undefined}
+      />
     </form>
   );
 }

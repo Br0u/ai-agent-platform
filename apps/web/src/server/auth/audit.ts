@@ -55,6 +55,10 @@ type RegistrationRejectionCategory =
 type CustomerRoleName = (typeof CUSTOMER_ROLE_NAMES)[number];
 type WorkforceRoleName = (typeof WORKFORCE_ROLE_NAMES)[number];
 type UserChange = (typeof USER_CHANGES)[number];
+type SimpleUserChange = Exclude<
+  UserChange,
+  "role_added" | "role_removed" | "role_changed"
+>;
 export type AuditTargetType = (typeof TARGET_TYPES)[number];
 
 export type AuditMetadataByEvent = {
@@ -73,7 +77,11 @@ export type AuditMetadataByEvent = {
   "site.config_changed": { field: "supportMessage" };
   "workforce.user_created": { initialRole: WorkforceRoleName };
   "workforce.user_updated":
-    | { change: UserChange }
+    | { change: SimpleUserChange }
+    | {
+        change: "role_added" | "role_removed";
+        role: WorkforceRoleName;
+      }
     | {
         change: "role_changed";
         fromRole: WorkforceRoleName;
@@ -239,6 +247,13 @@ function workforceUserUpdatedMetadata(value: unknown): SanitizedMetadata {
         WORKFORCE_ROLE_NAMES,
         "metadata.toRole",
       ),
+    };
+  }
+  if (value.change === "role_added" || value.change === "role_removed") {
+    const metadata = assertExactKeys(value, ["change", "role"], "metadata");
+    return {
+      change: value.change,
+      role: enumValue(metadata.role, WORKFORCE_ROLE_NAMES, "metadata.role"),
     };
   }
   const metadata = assertExactKeys(value, ["change"], "metadata");

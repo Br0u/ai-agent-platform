@@ -21,8 +21,8 @@ export default async function Page({
         `/staff/change-password?returnTo=${encodeURIComponent(destination)}`,
       );
     }
-    if (actor.twoFactorEnabled) redirect(destination);
-    await requireWorkforce({ setupFlow: "two-factor" });
+    if (actor.twoFactorEnabled) await requireWorkforce();
+    else await requireWorkforce({ setupFlow: "two-factor" });
   }
   return (
     <main className="auth-page">
@@ -31,11 +31,19 @@ export default async function Page({
         <h1 id="two-factor-title">双因素认证</h1>
         <p className="auth-page__intro">
           {actor?.realm === "workforce"
-            ? "使用身份验证器完成管理员 TOTP 设置。"
+            ? actor.twoFactorEnabled
+              ? "管理当前身份验证器。移除后必须重新完成 TOTP 设置才能进入后台。"
+              : "使用身份验证器完成管理员 TOTP 设置。"
             : "输入身份验证器生成的六位验证码。"}
         </p>
         <TwoFactorForm
-          mode={actor?.realm === "workforce" ? "enroll" : "challenge"}
+          mode={
+            actor?.realm === "workforce"
+              ? actor.twoFactorEnabled
+                ? "manage"
+                : "enroll"
+              : "challenge"
+          }
           returnTo={returnTo}
         />
       </section>

@@ -157,6 +157,9 @@ export type WorkforceMutationErrorCode =
   | "WORKFORCE_SUPER_ADMIN_REQUIRED"
   | "WORKFORCE_SELF_MUTATION_FORBIDDEN"
   | "WORKFORCE_LAST_SUPER_ADMIN"
+  | "WORKFORCE_LAST_ROLE"
+  | "WORKFORCE_ROLE_ALREADY_ASSIGNED"
+  | "WORKFORCE_ROLE_NOT_ASSIGNED"
   | "WORKFORCE_TARGET_REALM_INVALID"
   | "WORKFORCE_TARGET_NOT_FOUND"
   | "WORKFORCE_REACTIVATION_INVALID";
@@ -198,6 +201,7 @@ type WorkforceAudit =
         | "role_changed";
       fromRole?: WorkforceRole;
       toRole?: WorkforceRole;
+      role?: WorkforceRole;
     };
 
 export type WorkforceMutationRepository = {
@@ -210,6 +214,13 @@ export type WorkforceMutationRepository = {
     role: WorkforceRole,
     assignedBy?: string,
   ): Promise<void>;
+  listRoles(userId: string): Promise<WorkforceRole[]>;
+  addRole(
+    userId: string,
+    role: WorkforceRole,
+    assignedBy?: string,
+  ): Promise<void>;
+  removeRole(userId: string, role: WorkforceRole): Promise<void>;
   setStatus(userId: string, status: "active" | "disabled"): Promise<void>;
   replacePassword(
     userId: string,
@@ -256,27 +267,30 @@ async function authoritativeActorRole(
   actorId: string,
 ): Promise<"admin" | "super_admin"> {
   const actor = await repository.findTarget(actorId);
+  const actorRoles = actor ? await repository.listRoles(actorId) : [];
   if (
     !actor ||
     actor.realm !== "workforce" ||
     actor.status !== "active" ||
-    (actor.role !== "admin" && actor.role !== "super_admin")
+    (!actorRoles.includes("admin") && !actorRoles.includes("super_admin"))
   ) {
     throw new WorkforceMutationError("AUTH_PERMISSION_DENIED");
   }
-  return actor.role;
+  return actorRoles.includes("super_admin") ? "super_admin" : "admin";
 }
 
-function protectAdministrativeTarget(
+async function protectAdministrativeTarget(
   actorId: string,
   actorRole: "admin" | "super_admin",
   target: WorkforceTarget,
+  repository: WorkforceMutationRepository,
 ) {
   if (actorId === target.id)
     throw new WorkforceMutationError("WORKFORCE_SELF_MUTATION_FORBIDDEN");
+  const targetRoles = await repository.listRoles(target.id);
   if (
     actorRole !== "super_admin" &&
-    (target.role === "admin" || target.role === "super_admin")
+    (targetRoles.includes("admin") || targetRoles.includes("super_admin"))
   ) {
     throw new WorkforceMutationError("WORKFORCE_SUPER_ADMIN_REQUIRED");
   }
@@ -364,14 +378,23 @@ export function createWorkforceUserService(dependencies: {
         const target = await requireTarget(repository, targetId);
         if (!target.role)
           throw new WorkforceMutationError("WORKFORCE_ROLE_INVALID");
-        protectAdministrativeTarget(actor.userId, actorRole, target);
+        await protectAdministrativeTarget(
+          actor.userId,
+          actorRole,
+          target,
+          repository,
+        );
+        const assignedRoles = await repository.listRoles(targetId);
         if (
-          target.role === "super_admin" &&
+          assignedRoles.includes("super_admin") &&
           role !== "super_admin" &&
           (await repository.countActiveSuperAdmins()) <= 1
         ) {
           throw new WorkforceMutationError("WORKFORCE_LAST_SUPER_ADMIN");
         }
+        if (assignedRoles.length !== 1)
+          throw new WorkforceMutationError("WORKFORCE_ROLE_INVALID");
+        const fromRole = assignedRoles[0]!;
         await repository.assignOnlyRole(targetId, role, actor.userId);
         await repository.revokeSessions(targetId);
         await repository.writeAudit({
@@ -379,8 +402,102 @@ export function createWorkforceUserService(dependencies: {
           actorId: actor.userId,
           targetId,
           change: "role_changed",
-          fromRole: target.role,
+          fromRole,
           toRole: role,
+        });
+      });
+    },
+
+    async addRole(
+      actor: WorkforceAdminActor,
+      targetId: string,
+      role: string,
+    ): Promise<void> {
+      if (!isWorkforceRole(role))
+        throw new WorkforceMutationError("WORKFORCE_ROLE_INVALID");
+      const guardedActor =
+        await dependencies.requireSensitiveAction("admin:roles");
+      actor = { ...actor, userId: guardedActor.userId };
+      await dependencies.repository.transaction(async (repository) => {
+        await requirePermission(actor, "admin:roles", repository);
+        const actorRole = await authoritativeActorRole(
+          repository,
+          actor.userId,
+        );
+        const target = await requireTarget(repository, targetId);
+        await protectAdministrativeTarget(
+          actor.userId,
+          actorRole,
+          target,
+          repository,
+        );
+        if (
+          actorRole !== "super_admin" &&
+          (role === "admin" || role === "super_admin")
+        )
+          throw new WorkforceMutationError("WORKFORCE_SUPER_ADMIN_REQUIRED");
+        const assignedRoles = await repository.listRoles(targetId);
+        if (assignedRoles.includes(role))
+          throw new WorkforceMutationError("WORKFORCE_ROLE_ALREADY_ASSIGNED");
+        await repository.addRole(targetId, role, actor.userId);
+        await repository.revokeSessions(targetId);
+        await repository.writeAudit({
+          event: "workforce.user_updated",
+          actorId: actor.userId,
+          targetId,
+          change: "role_added",
+          role,
+        });
+      });
+    },
+
+    async removeRole(
+      actor: WorkforceAdminActor,
+      targetId: string,
+      role: string,
+    ): Promise<void> {
+      if (!isWorkforceRole(role))
+        throw new WorkforceMutationError("WORKFORCE_ROLE_INVALID");
+      const guardedActor =
+        await dependencies.requireSensitiveAction("admin:roles");
+      actor = { ...actor, userId: guardedActor.userId };
+      await dependencies.repository.transaction(async (repository) => {
+        await requirePermission(actor, "admin:roles", repository);
+        const actorRole = await authoritativeActorRole(
+          repository,
+          actor.userId,
+        );
+        const target = await requireTarget(repository, targetId);
+        await protectAdministrativeTarget(
+          actor.userId,
+          actorRole,
+          target,
+          repository,
+        );
+        if (
+          actorRole !== "super_admin" &&
+          (role === "admin" || role === "super_admin")
+        )
+          throw new WorkforceMutationError("WORKFORCE_SUPER_ADMIN_REQUIRED");
+        const assignedRoles = await repository.listRoles(targetId);
+        if (!assignedRoles.includes(role))
+          throw new WorkforceMutationError("WORKFORCE_ROLE_NOT_ASSIGNED");
+        if (assignedRoles.length <= 1)
+          throw new WorkforceMutationError("WORKFORCE_LAST_ROLE");
+        if (
+          role === "super_admin" &&
+          target.status === "active" &&
+          (await repository.countActiveSuperAdmins()) <= 1
+        )
+          throw new WorkforceMutationError("WORKFORCE_LAST_SUPER_ADMIN");
+        await repository.removeRole(targetId, role);
+        await repository.revokeSessions(targetId);
+        await repository.writeAudit({
+          event: "workforce.user_updated",
+          actorId: actor.userId,
+          targetId,
+          change: "role_removed",
+          role,
         });
       });
     },
@@ -399,9 +516,15 @@ export function createWorkforceUserService(dependencies: {
           actor.userId,
         );
         const target = await requireTarget(repository, targetId);
-        protectAdministrativeTarget(actor.userId, actorRole, target);
+        await protectAdministrativeTarget(
+          actor.userId,
+          actorRole,
+          target,
+          repository,
+        );
+        const targetRoles = await repository.listRoles(targetId);
         if (
-          target.role === "super_admin" &&
+          targetRoles.includes("super_admin") &&
           (await repository.countActiveSuperAdmins()) <= 1
         )
           throw new WorkforceMutationError("WORKFORCE_LAST_SUPER_ADMIN");
@@ -432,11 +555,12 @@ export function createWorkforceUserService(dependencies: {
         const target = await requireTarget(repository, targetId);
         if (target.status !== "disabled")
           throw new WorkforceMutationError("WORKFORCE_REACTIVATION_INVALID");
-        if (
-          actorRole !== "super_admin" &&
-          (target.role === "admin" || target.role === "super_admin")
-        )
-          throw new WorkforceMutationError("WORKFORCE_SUPER_ADMIN_REQUIRED");
+        await protectAdministrativeTarget(
+          actor.userId,
+          actorRole,
+          target,
+          repository,
+        );
         await repository.setStatus(targetId, "active");
         await repository.writeAudit({
           event: "workforce.user_updated",
@@ -463,11 +587,12 @@ export function createWorkforceUserService(dependencies: {
           actor.userId,
         );
         const target = await requireTarget(repository, targetId);
-        if (
-          actorRole !== "super_admin" &&
-          (target.role === "admin" || target.role === "super_admin")
-        )
-          throw new WorkforceMutationError("WORKFORCE_SUPER_ADMIN_REQUIRED");
+        await protectAdministrativeTarget(
+          actor.userId,
+          actorRole,
+          target,
+          repository,
+        );
         await repository.replacePassword(targetId, passwordHash, true);
         await repository.revokeSessions(targetId);
         await repository.writeAudit({
@@ -578,6 +703,46 @@ function createDrizzleMutationRepository(
         .insert(userRoles)
         .values({ userId, roleId: found.id, assignedByUserId: assignedBy });
     },
+    async listRoles(userId) {
+      const rows = await executor
+        .select({ name: roles.name })
+        .from(userRoles)
+        .innerJoin(
+          roles,
+          and(
+            eq(roles.id, userRoles.roleId),
+            eq(roles.realmScope, "workforce"),
+          ),
+        )
+        .where(eq(userRoles.userId, userId));
+      return rows.flatMap((row) =>
+        isWorkforceRole(row.name) ? [row.name] : [],
+      );
+    },
+    async addRole(userId, role, assignedBy) {
+      const [found] = await executor
+        .select({ id: roles.id })
+        .from(roles)
+        .where(and(eq(roles.name, role), eq(roles.realmScope, "workforce")))
+        .limit(1);
+      if (!found) throw new Error(`Missing workforce role: ${role}`);
+      await executor
+        .insert(userRoles)
+        .values({ userId, roleId: found.id, assignedByUserId: assignedBy });
+    },
+    async removeRole(userId, role) {
+      const [found] = await executor
+        .select({ id: roles.id })
+        .from(roles)
+        .where(and(eq(roles.name, role), eq(roles.realmScope, "workforce")))
+        .limit(1);
+      if (!found) throw new Error(`Missing workforce role: ${role}`);
+      await executor
+        .delete(userRoles)
+        .where(
+          and(eq(userRoles.userId, userId), eq(userRoles.roleId, found.id)),
+        );
+    },
     async setStatus(userId, status) {
       await executor
         .update(users)
@@ -622,7 +787,9 @@ function createDrizzleMutationRepository(
                   fromRole: event.fromRole,
                   toRole: event.toRole,
                 }
-              : { change: event.change },
+              : event.change === "role_added" || event.change === "role_removed"
+                ? { change: event.change, role: event.role }
+                : { change: event.change },
       });
     },
   };

@@ -1,8 +1,15 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/server/auth/server-actions", () => ({
   enrollStaffTwoFactorAction: vi.fn(),
+  removeStaffTwoFactorAction: vi.fn(),
   verifyStaffTwoFactorAction: vi.fn(),
 }));
 
@@ -43,5 +50,47 @@ describe("TwoFactorForm", () => {
     expect(code).toHaveAttribute("inputmode", "numeric");
     expect(screen.queryByLabelText(/信任/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "验证并继续" })).toBeEnabled();
+  });
+
+  it("renders an accessible password-confirmed removal form for enrolled staff", () => {
+    render(
+      <TwoFactorForm
+        mode="manage"
+        removalInitialState={{ kind: "error", code: "AUTH_REAUTH_REQUIRED" }}
+        returnTo="/admin/users"
+      />,
+    );
+    expect(screen.getByLabelText("当前密码")).toHaveAttribute(
+      "autocomplete",
+      "current-password",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("重新验证");
+    expect(
+      screen.getByRole("button", { name: "移除双因素认证" }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "开始设置" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("announces pending TOTP removal and disables duplicate submission", async () => {
+    let resolve!: (value: { kind: "success"; redirectTo: string }) => void;
+    const removeAction = vi.fn(
+      () =>
+        new Promise<{ kind: "success"; redirectTo: string }>((done) => {
+          resolve = done;
+        }),
+    );
+    render(<TwoFactorForm mode="manage" removeAction={removeAction} />);
+    fireEvent.change(screen.getByLabelText("当前密码"), {
+      target: { value: "Permanent#1234" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "移除双因素认证" }));
+    expect(
+      await screen.findByRole("button", { name: "正在移除…" }),
+    ).toBeDisabled();
+    await act(async () =>
+      resolve({ kind: "success", redirectTo: "/staff/two-factor" }),
+    );
   });
 });

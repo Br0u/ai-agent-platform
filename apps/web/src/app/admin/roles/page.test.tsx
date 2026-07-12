@@ -9,6 +9,8 @@ vi.mock("@/server/admin/roles", () => ({
   createDefaultRoleQueryService: () => ({ list: mocks.list }),
 }));
 vi.mock("@/server/admin/actions", () => ({
+  addUserRoleAction: vi.fn(),
+  removeUserRoleAction: vi.fn(),
   replaceRolePermissionsAction: vi.fn(),
   setUserRoleAction: vi.fn(),
 }));
@@ -41,7 +43,8 @@ describe("admin roles page", () => {
     );
     expect(screen.getByText("内部员工域")).toBeVisible();
     expect(screen.getByRole("button", { name: "更新权限" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "分配角色" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "添加角色" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "移除角色" })).toBeVisible();
     expect(screen.getByRole("link", { name: "下一页" })).toHaveAttribute(
       "href",
       expect.stringContaining("search=support"),

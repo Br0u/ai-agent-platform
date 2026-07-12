@@ -1,7 +1,8 @@
 import Link from "next/link";
 import {
+  addUserRoleAction,
+  removeUserRoleAction,
   replaceRolePermissionsAction,
-  setUserRoleAction,
 } from "@/server/admin/actions";
 import { createDefaultRoleQueryService } from "@/server/admin/roles";
 import { requirePermission } from "@/server/auth/access";
@@ -74,8 +75,8 @@ export default async function Page({
         </tbody>
       </table>
       <section>
-        <h2>分配员工角色</h2>
-        <form action={setUserRoleAction}>
+        <h2>管理员工角色</h2>
+        <form action={addUserRoleAction}>
           <label>
             用户 ID
             <input required name="userId" />
@@ -90,7 +91,24 @@ export default async function Page({
               ))}
             </select>
           </label>
-          <button>分配角色</button>
+          <button>添加角色</button>
+        </form>
+        <form action={removeUserRoleAction}>
+          <label>
+            用户 ID
+            <input required name="userId" />
+          </label>
+          <label>
+            角色
+            <select name="role">
+              {result.items.map((role) => (
+                <option key={role.id} value={role.name}>
+                  {role.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button>移除角色</button>
         </form>
       </section>
       <nav aria-label="角色分页">

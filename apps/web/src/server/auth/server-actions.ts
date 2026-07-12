@@ -78,6 +78,15 @@ export async function verifyStaffTwoFactorAction(
   return result;
 }
 
+export async function removeStaffTwoFactorAction(
+  formData: FormData,
+): Promise<StaffSecurityActionState> {
+  const result =
+    await createDefaultStaffSecurityActions().removeTwoFactor(formData);
+  if (result.kind === "success") redirect(result.redirectTo);
+  return result;
+}
+
 export async function reauthenticateStaffAction(
   formData: FormData,
 ): Promise<StaffSecurityActionState> {

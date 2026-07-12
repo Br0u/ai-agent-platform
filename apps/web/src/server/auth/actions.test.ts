@@ -57,6 +57,7 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
     const recovery = { generate: vi.fn(async () => ["RC-ONE", "RC-TWO"]) };
     const commitCookies = vi.fn(async () => undefined);
     const clearCookies = vi.fn(async () => undefined);
+    const requireAssurance = vi.fn(async () => ({ userId: "staff-1" }));
     return {
       actions: createStaffSecurityActions({
         gateway,
@@ -65,14 +66,99 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
         commitCookies,
         getHeaders: async () => new Headers({ cookie: "old=1" }),
         clearCookies,
+        requireAssurance,
       }),
       clearCookies,
       commitCookies,
       gateway,
       recovery,
+      requireAssurance,
       repository,
     };
   }
+
+  it("removes only the current actor's TOTP after recent assurance and password confirmation", async () => {
+    const { actions, commitCookies, gateway, repository, requireAssurance } =
+      securityFixture();
+    repository.current.mockResolvedValueOnce({
+      userId: "staff-1",
+      sessionId: "session-1",
+      mustChangePassword: false,
+      twoFactorEnabled: true,
+    });
+    const headers = new Headers({
+      "set-cookie": "aap_staff_session=updated; Path=/; HttpOnly",
+    });
+    gateway.disableTwoFactor.mockResolvedValueOnce({
+      response: { status: true },
+      headers,
+    });
+    await expect(
+      actions.removeTwoFactor(
+        form({ password: "Permanent#1234", returnTo: "/admin/users" }),
+      ),
+    ).resolves.toEqual({
+      kind: "success",
+      redirectTo: "/staff/two-factor?returnTo=%2Fadmin%2Fusers",
+    });
+    expect(requireAssurance).toHaveBeenCalledOnce();
+    expect(gateway.disableTwoFactor).toHaveBeenCalledWith({
+      password: "Permanent#1234",
+      headers: expect.any(Headers),
+    });
+    expect(repository.writeAudit).toHaveBeenCalledWith(
+      "auth.totp_disabled",
+      "staff-1",
+    );
+    expect(commitCookies).toHaveBeenCalledWith(headers);
+    expect(repository.writeAudit.mock.invocationCallOrder[0]).toBeLessThan(
+      commitCookies.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("stops TOTP removal before Better Auth when recent assurance is denied or changes identity", async () => {
+    const denied = securityFixture();
+    denied.requireAssurance.mockRejectedValueOnce(
+      new Error("AUTH_MFA_REQUIRED"),
+    );
+    await expect(
+      denied.actions.removeTwoFactor(form({ password: "Permanent#1234" })),
+    ).resolves.toMatchObject({ kind: "error" });
+    expect(denied.gateway.disableTwoFactor).not.toHaveBeenCalled();
+
+    const switched = securityFixture();
+    switched.requireAssurance.mockResolvedValueOnce({ userId: "other-user" });
+    switched.repository.current.mockResolvedValueOnce({
+      userId: "staff-1",
+      sessionId: "session-1",
+      mustChangePassword: false,
+      twoFactorEnabled: true,
+    });
+    await expect(
+      switched.actions.removeTwoFactor(form({ password: "Permanent#1234" })),
+    ).resolves.toMatchObject({ kind: "error" });
+    expect(switched.gateway.disableTwoFactor).not.toHaveBeenCalled();
+  });
+
+  it("clears staged cookies and reports infrastructure failure when TOTP disable audit fails", async () => {
+    const { actions, clearCookies, commitCookies, repository } =
+      securityFixture();
+    repository.current.mockResolvedValueOnce({
+      userId: "staff-1",
+      sessionId: "session-1",
+      mustChangePassword: false,
+      twoFactorEnabled: true,
+    });
+    repository.writeAudit.mockRejectedValueOnce(new Error("audit unavailable"));
+    await expect(
+      actions.removeTwoFactor(form({ password: "Permanent#1234" })),
+    ).resolves.toEqual({
+      kind: "error",
+      code: "AUTH_INFRASTRUCTURE_FAILURE",
+    });
+    expect(commitCookies).not.toHaveBeenCalled();
+    expect(clearCookies).toHaveBeenCalledOnce();
+  });
 
   it("changes the password through Better Auth headers and revokes other sessions", async () => {
     const { actions, gateway, repository } = securityFixture();
@@ -411,6 +497,7 @@ describe("project recovery codes", () => {
           write: async (_userId, value) => {
             stored = value;
           },
+          writeUsedAudit: async () => undefined,
         }),
     });
     const codes = await service.generate("staff-1", 2);
@@ -429,6 +516,7 @@ describe("project recovery codes", () => {
       write: async (_userId: string, value: string) => {
         stored = value;
       },
+      writeUsedAudit: async () => undefined,
     };
     const service = createRecoveryCodeService({
       transaction: async (work) => work(repository),
@@ -439,6 +527,65 @@ describe("project recovery codes", () => {
     );
     await expect(service.verifyAndConsume("staff-1", code!)).resolves.toBe(
       false,
+    );
+  });
+
+  it("writes the exact recovery-code-used audit event when a code is consumed", async () => {
+    let stored = "";
+    const writeUsedAudit = vi.fn().mockResolvedValue(undefined);
+    const service = createRecoveryCodeService({
+      transaction: async (work) =>
+        work({
+          read: async () => stored,
+          write: async (_userId, value) => {
+            stored = value;
+          },
+          writeUsedAudit,
+        }),
+    });
+    const [code] = await service.generate("staff-1", 1);
+
+    await expect(service.verifyAndConsume("staff-1", code!)).resolves.toBe(
+      true,
+    );
+    expect(writeUsedAudit).toHaveBeenCalledOnce();
+    expect(writeUsedAudit).toHaveBeenCalledWith(
+      "auth.recovery_code_used",
+      "staff-1",
+    );
+  });
+
+  it("leaves the recovery code unconsumed when the audit write fails", async () => {
+    let stored = "";
+    let failAudit = true;
+    const repository = {
+      read: async () => stored,
+      write: async (_userId: string, value: string) => {
+        stored = value;
+      },
+      writeUsedAudit: async () => {
+        if (failAudit) throw new Error("audit unavailable");
+      },
+    };
+    const service = createRecoveryCodeService({
+      transaction: async (work) => {
+        const snapshot = stored;
+        try {
+          return await work(repository);
+        } catch (error) {
+          stored = snapshot;
+          throw error;
+        }
+      },
+    });
+    const [code] = await service.generate("staff-1", 1);
+
+    await expect(service.verifyAndConsume("staff-1", code!)).rejects.toThrow(
+      "audit unavailable",
+    );
+    failAudit = false;
+    await expect(service.verifyAndConsume("staff-1", code!)).resolves.toBe(
+      true,
     );
   });
 });

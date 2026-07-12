@@ -5,6 +5,7 @@ import {
   createWorkforceUserQueryService,
   createWorkforceUserService,
   type WorkforceMutationRepository,
+  type WorkforceRole,
 } from "./users";
 
 describe("workforce user query", () => {
@@ -128,6 +129,16 @@ function fixture() {
     assignOnlyRole: vi.fn(async (_id, role) => {
       operations.push(`role:${role}`);
     }),
+    listRoles: vi.fn(async (id) => {
+      const role = users.get(id)?.role;
+      return role ? [role] : [];
+    }),
+    addRole: vi.fn(async (_id, role) => {
+      operations.push(`role:add:${role}`);
+    }),
+    removeRole: vi.fn(async (_id, role) => {
+      operations.push(`role:remove:${role}`);
+    }),
     setStatus: vi.fn(async (_id, status) => {
       operations.push(`status:${status}`);
     }),
@@ -178,6 +189,8 @@ describe("workforce user administration", () => {
   it.each([
     ["createUser", "admin:users"],
     ["setRole", "admin:roles"],
+    ["addRole", "admin:roles"],
+    ["removeRole", "admin:roles"],
     ["disableUser", "admin:users"],
     ["reactivateUser", "admin:users"],
     ["replaceTemporaryPassword", "admin:users"],
@@ -195,6 +208,17 @@ describe("workforce user administration", () => {
         });
       if (method === "setRole")
         await service.setRole(superActor, "employee-1", "support_operator");
+      if (method === "addRole")
+        await service.addRole(superActor, "employee-1", "support_operator");
+      if (method === "removeRole") {
+        tx.listRoles = vi.fn(
+          async (id): Promise<WorkforceRole[]> =>
+            id === "employee-1"
+              ? ["employee", "support_operator"]
+              : ["super_admin"],
+        );
+        await service.removeRole(superActor, "employee-1", "employee");
+      }
       if (method === "disableUser")
         await service.disableUser(superActor, "employee-1");
       if (method === "reactivateUser") {
@@ -243,6 +267,22 @@ describe("workforce user administration", () => {
     expect(hashPassword).not.toHaveBeenCalled();
     expect(repository.transaction).not.toHaveBeenCalled();
   });
+
+  it.each(["addRole", "removeRole"] as const)(
+    "stops before opening a transaction when the sensitive guard denies %s",
+    async (method) => {
+      const { repository, requireSensitiveAction, service } = fixture();
+      requireSensitiveAction.mockRejectedValueOnce(
+        new Error("AUTH_REAUTH_REQUIRED"),
+      );
+      const operation =
+        method === "addRole"
+          ? service.addRole(superActor, "employee-1", "support_operator")
+          : service.removeRole(superActor, "employee-1", "employee");
+      await expect(operation).rejects.toThrow("AUTH_REAUTH_REQUIRED");
+      expect(repository.transaction).not.toHaveBeenCalled();
+    },
+  );
   it("creates only workforce identities with an allowed initial role and temporary-password flag inside one transaction", async () => {
     const { operations, service, tx } = fixture();
     const result = await service.createUser(superActor, {
@@ -384,9 +424,38 @@ describe("workforce user administration", () => {
       status: "active" as const,
       role: "super_admin" as const,
     }));
+    tx.listRoles = vi.fn(async (): Promise<WorkforceRole[]> => ["super_admin"]);
     await expect(
       service.disableUser(superActor, "super-2"),
     ).rejects.toMatchObject({ code: "WORKFORCE_LAST_SUPER_ADMIN" });
+  });
+
+  it("protects a last super admin even when the target's first role is non-privileged", async () => {
+    const { service, tx } = fixture();
+    tx.findTarget = vi.fn(async (id) =>
+      id === "super-1"
+        ? {
+            id,
+            realm: "workforce" as const,
+            status: "active" as const,
+            role: "super_admin" as const,
+          }
+        : {
+            id,
+            realm: "workforce" as const,
+            status: "active" as const,
+            role: "employee" as const,
+          },
+    );
+    tx.listRoles = vi.fn(
+      async (id): Promise<WorkforceRole[]> =>
+        id === "super-1" ? ["super_admin"] : ["employee", "super_admin"],
+    );
+
+    await expect(
+      service.disableUser(superActor, "super-2"),
+    ).rejects.toMatchObject({ code: "WORKFORCE_LAST_SUPER_ADMIN" });
+    expect(tx.setStatus).not.toHaveBeenCalled();
   });
 
   it("prevents an admin from modifying another admin", async () => {
@@ -410,12 +479,34 @@ describe("workforce user administration", () => {
     ).rejects.toMatchObject({ code: "WORKFORCE_TARGET_REALM_INVALID" });
   });
 
+  it.each(["addRole", "removeRole"] as const)(
+    "rejects cross-realm targets for explicit %s",
+    async (method) => {
+      const { service, tx } = fixture();
+      const operation =
+        method === "addRole"
+          ? service.addRole(superActor, "customer-1", "employee")
+          : service.removeRole(superActor, "customer-1", "employee");
+      await expect(operation).rejects.toMatchObject({
+        code: "WORKFORCE_TARGET_REALM_INVALID",
+      });
+      expect(tx.addRole).not.toHaveBeenCalled();
+      expect(tx.removeRole).not.toHaveBeenCalled();
+    },
+  );
+
   it("disables and revokes sessions atomically, then permits explicit reactivation", async () => {
-    const { operations, service } = fixture();
+    const { operations, service, tx: disabledTx } = fixture();
     await service.disableUser(superActor, "employee-1");
     expect(operations).toContain("status:disabled");
     expect(operations).toContain("revoke");
     expect(operations.at(-1)).toBe("tx:commit");
+    expect(disabledTx.writeAudit).toHaveBeenCalledWith({
+      event: "workforce.user_updated",
+      actorId: "super-1",
+      targetId: "employee-1",
+      change: "disabled",
+    });
 
     operations.length = 0;
     const { tx } = fixture();
@@ -441,7 +532,62 @@ describe("workforce user administration", () => {
     });
     await second.reactivateUser(superActor, "employee-1");
     expect(tx.setStatus).toHaveBeenCalledWith("employee-1", "active");
+    expect(tx.writeAudit).toHaveBeenCalledWith({
+      event: "workforce.user_updated",
+      actorId: "super-1",
+      targetId: "employee-1",
+      change: "reactivated",
+    });
   });
+
+  it.each(["reactivateUser", "replaceTemporaryPassword"] as const)(
+    "protects multi-role privileged targets during %s",
+    async (method) => {
+      const { requireSensitiveAction, service, tx } = fixture();
+      requireSensitiveAction.mockResolvedValueOnce({
+        ...superActor,
+        userId: "admin-2",
+      });
+      tx.findTarget = vi.fn(async (id) =>
+        id === "admin-2"
+          ? {
+              id,
+              realm: "workforce" as const,
+              status: "active" as const,
+              role: "admin" as const,
+            }
+          : {
+              id,
+              realm: "workforce" as const,
+              status:
+                method === "reactivateUser"
+                  ? ("disabled" as const)
+                  : ("active" as const),
+              role: "employee" as const,
+            },
+      );
+      tx.listRoles = vi.fn(
+        async (id): Promise<WorkforceRole[]> =>
+          id === "admin-2" ? ["admin"] : ["employee", "admin"],
+      );
+      const actor = {
+        ...superActor,
+        userId: "admin-2",
+        role: "admin" as const,
+      };
+      const operation =
+        method === "reactivateUser"
+          ? service.reactivateUser(actor, "admin-1")
+          : service.replaceTemporaryPassword(
+              actor,
+              "admin-1",
+              "Replacement#123",
+            );
+      await expect(operation).rejects.toMatchObject({
+        code: "WORKFORCE_SUPER_ADMIN_REQUIRED",
+      });
+    },
+  );
 
   it("rejects reactivation of an already-active account", async () => {
     const { service } = fixture();
@@ -490,6 +636,63 @@ describe("workforce user administration", () => {
     expect(repository.transaction).toHaveBeenCalledOnce();
   });
 
+  it.each(["addRole", "removeRole"] as const)(
+    "does not commit explicit %s when its audit write fails",
+    async (method) => {
+      const { operations, service, tx } = fixture();
+      tx.listRoles = vi.fn(
+        async (id): Promise<WorkforceRole[]> =>
+          id === "employee-1"
+            ? ["employee", "support_operator"]
+            : ["super_admin"],
+      );
+      tx.writeAudit = vi.fn(async () => {
+        operations.push("audit:failed");
+        throw new Error("audit unavailable");
+      });
+      const operation =
+        method === "addRole"
+          ? service.addRole(superActor, "employee-1", "content_operator")
+          : service.removeRole(superActor, "employee-1", "support_operator");
+      await expect(operation).rejects.toThrow("audit unavailable");
+      expect(operations).not.toContain("tx:commit");
+    },
+  );
+
+  it.each(["disableUser", "reactivateUser"] as const)(
+    "does not commit %s when its audit write fails",
+    async (method) => {
+      const { operations, service, tx } = fixture();
+      if (method === "reactivateUser") {
+        tx.findTarget = vi.fn(async (id) =>
+          id === "super-1"
+            ? {
+                id,
+                realm: "workforce" as const,
+                status: "active" as const,
+                role: "super_admin" as const,
+              }
+            : {
+                id,
+                realm: "workforce" as const,
+                status: "disabled" as const,
+                role: "employee" as const,
+              },
+        );
+      }
+      tx.writeAudit = vi.fn(async () => {
+        operations.push("audit:failed");
+        throw new Error("audit unavailable");
+      });
+      const operation =
+        method === "disableUser"
+          ? service.disableUser(superActor, "employee-1")
+          : service.reactivateUser(superActor, "employee-1");
+      await expect(operation).rejects.toThrow("audit unavailable");
+      expect(operations).not.toContain("tx:commit");
+    },
+  );
+
   it("audits role replacement as one role_changed event with before and after roles", async () => {
     const { service, tx } = fixture();
     await service.setRole(superActor, "employee-1", "support_operator");
@@ -501,6 +704,158 @@ describe("workforce user administration", () => {
       fromRole: "employee",
       toRole: "support_operator",
     });
+  });
+
+  it("adds a distinct workforce role and audits exact actor, target, and role atomically", async () => {
+    const { operations, service, tx } = fixture();
+    await service.addRole(superActor, "employee-1", "support_operator");
+    expect(tx.addRole).toHaveBeenCalledWith(
+      "employee-1",
+      "support_operator",
+      "super-1",
+    );
+    expect(tx.revokeSessions).toHaveBeenCalledWith("employee-1");
+    expect(tx.writeAudit).toHaveBeenCalledWith({
+      event: "workforce.user_updated",
+      actorId: "super-1",
+      targetId: "employee-1",
+      change: "role_added",
+      role: "support_operator",
+    });
+    expect(operations.slice(-4)).toEqual([
+      "role:add:support_operator",
+      "revoke",
+      "audit:workforce.user_updated",
+      "tx:commit",
+    ]);
+  });
+
+  it("removes an assigned role and audits exact actor, target, and role atomically", async () => {
+    const { operations, service, tx } = fixture();
+    tx.listRoles = vi.fn(
+      async (id): Promise<WorkforceRole[]> =>
+        id === "employee-1"
+          ? ["employee", "support_operator"]
+          : ["super_admin"],
+    );
+    await service.removeRole(superActor, "employee-1", "employee");
+    expect(tx.removeRole).toHaveBeenCalledWith("employee-1", "employee");
+    expect(tx.revokeSessions).toHaveBeenCalledWith("employee-1");
+    expect(tx.writeAudit).toHaveBeenCalledWith({
+      event: "workforce.user_updated",
+      actorId: "super-1",
+      targetId: "employee-1",
+      change: "role_removed",
+      role: "employee",
+    });
+    expect(operations.slice(-4)).toEqual([
+      "role:remove:employee",
+      "revoke",
+      "audit:workforce.user_updated",
+      "tx:commit",
+    ]);
+  });
+
+  it("rejects removing the user's last assigned role", async () => {
+    const { service } = fixture();
+    await expect(
+      service.removeRole(superActor, "employee-1", "employee"),
+    ).rejects.toMatchObject({ code: "WORKFORCE_LAST_ROLE" });
+  });
+
+  it("rejects adding an already assigned role and removing an unassigned role", async () => {
+    const added = fixture();
+    await expect(
+      added.service.addRole(superActor, "employee-1", "employee"),
+    ).rejects.toMatchObject({ code: "WORKFORCE_ROLE_ALREADY_ASSIGNED" });
+    const removed = fixture();
+    removed.tx.listRoles = vi.fn(
+      async (id): Promise<WorkforceRole[]> =>
+        id === "employee-1"
+          ? ["employee", "support_operator"]
+          : ["super_admin"],
+    );
+    await expect(
+      removed.service.removeRole(superActor, "employee-1", "content_operator"),
+    ).rejects.toMatchObject({ code: "WORKFORCE_ROLE_NOT_ASSIGNED" });
+  });
+
+  it.each(["addRole", "removeRole"] as const)(
+    "uses authoritative transaction state to stop an admin from %s on privileged accounts",
+    async (method) => {
+      const { requireSensitiveAction, service, tx } = fixture();
+      requireSensitiveAction.mockResolvedValueOnce({
+        ...superActor,
+        userId: "admin-2",
+      });
+      tx.listRoles = vi.fn(
+        async (id): Promise<WorkforceRole[]> =>
+          id === "admin-1"
+            ? ["admin", "employee"]
+            : id === "admin-2"
+              ? ["admin"]
+              : [],
+      );
+      const operation =
+        method === "addRole"
+          ? service.addRole(
+              { ...superActor, userId: "admin-2", role: "admin" },
+              "admin-1",
+              "support_operator",
+            )
+          : service.removeRole(
+              { ...superActor, userId: "admin-2", role: "admin" },
+              "admin-1",
+              "employee",
+            );
+      await expect(operation).rejects.toMatchObject({
+        code: "WORKFORCE_SUPER_ADMIN_REQUIRED",
+      });
+    },
+  );
+
+  it("protects the last active super-admin role during explicit removal", async () => {
+    const { service, tx } = fixture();
+    tx.findTarget = vi.fn(async (id) => ({
+      id,
+      realm: "workforce" as const,
+      status: "active" as const,
+      role: "super_admin" as const,
+    }));
+    tx.listRoles = vi.fn(
+      async (): Promise<WorkforceRole[]> => ["super_admin", "employee"],
+    );
+    await expect(
+      service.removeRole(superActor, "super-2", "super_admin"),
+    ).rejects.toMatchObject({ code: "WORKFORCE_LAST_SUPER_ADMIN" });
+    expect(tx.removeRole).not.toHaveBeenCalled();
+  });
+
+  it("protects the last super admin during legacy role replacement even when another role is selected first", async () => {
+    const { service, tx } = fixture();
+    tx.findTarget = vi.fn(async (id) =>
+      id === "super-1"
+        ? {
+            id,
+            realm: "workforce" as const,
+            status: "active" as const,
+            role: "super_admin" as const,
+          }
+        : {
+            id,
+            realm: "workforce" as const,
+            status: "active" as const,
+            role: "employee" as const,
+          },
+    );
+    tx.listRoles = vi.fn(
+      async (id): Promise<WorkforceRole[]> =>
+        id === "super-1" ? ["super_admin"] : ["employee", "super_admin"],
+    );
+    await expect(
+      service.setRole(superActor, "super-2", "support_operator"),
+    ).rejects.toMatchObject({ code: "WORKFORCE_LAST_SUPER_ADMIN" });
+    expect(tx.assignOnlyRole).not.toHaveBeenCalled();
   });
 });
 
