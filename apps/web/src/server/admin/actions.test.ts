@@ -156,6 +156,28 @@ describe("explicit workforce role actions", () => {
       );
     },
   );
+
+  it("returns stable denial for the authoritative access error shape", async () => {
+    const denial = new Error("Permission denied") as Error & {
+      code: string;
+      status: number;
+    };
+    denial.name = "AuthAccessError";
+    denial.code = "AUTH_PERMISSION_DENIED";
+    denial.status = 403;
+    mocks.revokeOne.mockRejectedValueOnce(denial);
+    const data = new FormData();
+    data.set("userId", "employee-1");
+    data.set("realm", "workforce");
+    data.set("sessionId", "employee-session");
+
+    await expect(
+      revokeAdminSessionAction({ kind: "idle" }, data),
+    ).resolves.toEqual({
+      kind: "domain_error",
+      code: "AUTH_PERMISSION_DENIED",
+    });
+  });
 });
 
 describe("admin mutation server-action errors", () => {

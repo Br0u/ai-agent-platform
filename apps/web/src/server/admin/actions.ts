@@ -45,6 +45,13 @@ async function runAdminMutation(
     await mutation();
     return { kind: "success" };
   } catch (error) {
+    const authoritativeCode =
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      typeof error.code === "string"
+        ? error.code
+        : undefined;
     if (
       error instanceof SensitiveActionError ||
       (error instanceof Error &&
@@ -61,6 +68,9 @@ async function runAdminMutation(
       error instanceof AdminSessionError
     ) {
       return { kind: "domain_error", code: error.code };
+    }
+    if (authoritativeCode === "AUTH_PERMISSION_DENIED") {
+      return { kind: "domain_error", code: authoritativeCode };
     }
     if (
       error instanceof Error &&
