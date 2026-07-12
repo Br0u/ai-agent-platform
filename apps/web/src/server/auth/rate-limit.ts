@@ -27,6 +27,26 @@ export class AuthRateLimitError extends Error {
   }
 }
 
+export const AUTH_RATE_LIMIT_CLEANUP_BATCH_SIZE = 100;
+export const AUTH_RATE_LIMIT_RETENTION_MS = 24 * 60 * 60 * 1_000;
+
+export function buildAuthRateLimitCleanupQuery(cutoff: number) {
+  return sql`
+    WITH expired_auth_rate_limits AS (
+      SELECT ${rateLimits.id}
+      FROM ${rateLimits}
+      WHERE ${rateLimits.key} LIKE ${"auth:%"}
+        AND ${rateLimits.lastRequest} < ${cutoff}
+      ORDER BY ${rateLimits.lastRequest}
+      LIMIT ${AUTH_RATE_LIMIT_CLEANUP_BATCH_SIZE}
+      FOR UPDATE SKIP LOCKED
+    )
+    DELETE FROM ${rateLimits}
+    USING expired_auth_rate_limits
+    WHERE ${rateLimits.id} = expired_auth_rate_limits.id
+  `;
+}
+
 export function authRateLimitKey(
   secret: string,
   input: Pick<AuthRateLimitInput, "realm" | "operation">,
@@ -43,6 +63,7 @@ export function createDatabaseAuthRateLimiter(
     secret?: string;
     maximumAttempts?: number;
     windowMs?: number;
+    now?: () => number;
   } = {},
 ): AuthRateLimiter {
   const secret = options.secret ?? process.env.BETTER_AUTH_SECRET;
@@ -50,10 +71,11 @@ export function createDatabaseAuthRateLimiter(
     throw new Error("BETTER_AUTH_SECRET is required");
   const maximumAttempts = options.maximumAttempts ?? 5;
   const windowMs = options.windowMs ?? 15 * 60 * 1000;
+  const currentTime = options.now ?? Date.now;
 
   return {
     async consume(input) {
-      const now = Date.now();
+      const now = currentTime();
       const windowStart = now - windowMs;
       const keys = [
         authRateLimitKey(
@@ -67,6 +89,10 @@ export function createDatabaseAuthRateLimiter(
         keys.push(authRateLimitKey(secret, input, "ip", input.ipAddress));
 
       await database.transaction(async (transaction) => {
+        const retentionMs = Math.max(AUTH_RATE_LIMIT_RETENTION_MS, windowMs);
+        await transaction.execute(
+          buildAuthRateLimitCleanupQuery(now - retentionMs),
+        );
         for (const key of keys) {
           const result = await transaction.execute(sql`
             INSERT INTO ${rateLimits} (key, count, last_request)
