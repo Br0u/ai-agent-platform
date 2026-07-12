@@ -931,15 +931,22 @@ On pull requests and pushes to `main`, use Node 24 and pnpm 11.5.2 with a Postgr
 Run:
 
 ```bash
-export POSTGRES_PASSWORD='local-auth-validation-only'
-export DATABASE_URL='postgresql://ai_agent:local-auth-validation-only@db:5432/ai_agent_platform'
-export BETTER_AUTH_SECRET='local-auth-validation-secret-32chars-minimum'
+export POSTGRES_PASSWORD='local-owner-validation-only'
+export MIGRATOR_DATABASE_PASSWORD='local-migrator-validation-only'
+export MIGRATOR_DATABASE_URL='postgresql://ai_agent_migrator:local-migrator-validation-only@db:5432/ai_agent_platform'
+export RUNTIME_DATABASE_PASSWORD='local-runtime-validation-only'
+export RUNTIME_DATABASE_URL='postgresql://ai_agent_runtime:local-runtime-validation-only@db:5432/ai_agent_platform'
+export BACKUP_DATABASE_PASSWORD='local-backup-validation-only'
+export BACKUP_DATABASE_URL='postgresql://ai_agent_backup:local-backup-validation-only@db:5432/ai_agent_platform'
+export BETTER_AUTH_SECRET='local-better-auth-validation-secret-32chars-minimum'
 export BETTER_AUTH_URL='http://127.0.0.1:8080'
+export BETTER_AUTH_TRUSTED_ORIGINS='http://127.0.0.1:8080'
+export PUBLIC_HOST='127.0.0.1'
 export FEATURE_EMAIL_VERIFICATION=false
 export E2E_CUSTOMER_PASSWORD='local-customer-validation-passphrase'
 export E2E_STAFF_PASSWORD='local-staff-validation-passphrase'
 export E2E_ADMIN_PASSWORD='local-admin-validation-passphrase'
-docker compose config
+docker compose config --quiet
 docker build --target migrator -f apps/web/Dockerfile .
 docker build --target runner -f apps/web/Dockerfile .
 docker compose up -d --build --wait --wait-timeout 120 db migrate web proxy backup
@@ -951,7 +958,7 @@ BASE_URL=http://127.0.0.1:8080 pnpm --filter @ai-agent-platform/web exec playwri
 
 Expected: Compose expands, both image targets build, `nginx -t` reports successful syntax, and both proxy-backed smoke tests pass. `playwright.config.ts` sets `webServer` only when `BASE_URL` is absent; Compose-backed local validation always supplies `BASE_URL`, while CI host mode uses `127.0.0.1` PostgreSQL and lets `webServer` start the app.
 
-Add exact `.env.example` entries for `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, trusted origins, `FEATURE_EMAIL_VERIFICATION=false`, `DATABASE_URL`, and `TEST_DATABASE_URL`, including production validation notes.
+Add exact `.env.example` entries for the owner password; independent migrator, runtime, and backup passwords/URLs; `BETTER_AUTH_SECRET`; `BETTER_AUTH_URL`; trusted origins; `PUBLIC_HOST`; `FEATURE_EMAIL_VERIFICATION=false`; and `TEST_DATABASE_URL`, including production validation notes.
 
 Ignore `artifacts/playwright/`, `playwright-report/`, and `test-results/` so browser credentials, traces, and screenshots cannot be committed.
 
@@ -995,16 +1002,24 @@ Expected: all commands exit 0 without warnings introduced by this branch.
 Run:
 
 ```bash
-export POSTGRES_PASSWORD='local-auth-acceptance-only'
-export DATABASE_URL='postgresql://ai_agent:local-auth-acceptance-only@db:5432/ai_agent_platform'
-export BETTER_AUTH_SECRET='local-auth-acceptance-secret-32chars-minimum'
+export POSTGRES_PASSWORD='local-owner-acceptance-only'
+export MIGRATOR_DATABASE_PASSWORD='local-migrator-acceptance-only'
+export MIGRATOR_DATABASE_URL='postgresql://ai_agent_migrator:local-migrator-acceptance-only@db:5432/ai_agent_platform'
+export RUNTIME_DATABASE_PASSWORD='local-runtime-acceptance-only'
+export RUNTIME_DATABASE_URL='postgresql://ai_agent_runtime:local-runtime-acceptance-only@db:5432/ai_agent_platform'
+export BACKUP_DATABASE_PASSWORD='local-backup-acceptance-only'
+export BACKUP_DATABASE_URL='postgresql://ai_agent_backup:local-backup-acceptance-only@db:5432/ai_agent_platform'
+export BETTER_AUTH_SECRET='local-better-auth-acceptance-secret-32chars-minimum'
 export BETTER_AUTH_URL='http://127.0.0.1:8080'
+export BETTER_AUTH_TRUSTED_ORIGINS='http://127.0.0.1:8080'
+export PUBLIC_HOST='127.0.0.1'
 export FEATURE_EMAIL_VERIFICATION=false
 export E2E_CUSTOMER_PASSWORD='local-customer-fixture-passphrase'
 export E2E_STAFF_PASSWORD='local-staff-fixture-passphrase'
 export E2E_ADMIN_PASSWORD='local-admin-fixture-passphrase'
+docker compose -p aap-auth-acceptance config --quiet
 docker compose -p aap-auth-acceptance down -v
-docker compose -p aap-auth-acceptance up --build -d --wait --wait-timeout 120 db migrate web proxy
+docker compose -p aap-auth-acceptance up --build -d --wait --wait-timeout 120 db migrate web proxy backup
 docker compose -p aap-auth-acceptance ps
 curl -fsS http://127.0.0.1:8080/api/health/live
 curl -fsS http://127.0.0.1:8080/api/health/ready

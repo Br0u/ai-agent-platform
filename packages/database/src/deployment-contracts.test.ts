@@ -188,6 +188,55 @@ describe("production deployment security contracts", () => {
     expect(identityPlan).toContain("Origin/baseURL");
   });
 
+  it("keeps Task 11 and Task 12 Compose validation blocks reproducible", () => {
+    const plan = read(
+      "docs/superpowers/plans/2026-07-11-identity-access-control.md",
+    );
+    const validationBlock = plan
+      .split("**Step 6: Validate Compose and workflow syntax**")[1]
+      ?.split("```bash")[1]
+      ?.split("```")[0];
+    const acceptanceBlock = plan
+      .split("**Step 2: Run a clean Docker acceptance environment**")[1]
+      ?.split("```bash")[1]
+      ?.split("```")[0];
+
+    for (const block of [validationBlock, acceptanceBlock]) {
+      expect(block).toBeDefined();
+      for (const key of [
+        "POSTGRES_PASSWORD",
+        "MIGRATOR_DATABASE_PASSWORD",
+        "MIGRATOR_DATABASE_URL",
+        "RUNTIME_DATABASE_PASSWORD",
+        "RUNTIME_DATABASE_URL",
+        "BACKUP_DATABASE_PASSWORD",
+        "BACKUP_DATABASE_URL",
+        "BETTER_AUTH_SECRET",
+        "BETTER_AUTH_URL",
+        "BETTER_AUTH_TRUSTED_ORIGINS",
+        "PUBLIC_HOST",
+        "FEATURE_EMAIL_VERIFICATION",
+        "E2E_CUSTOMER_PASSWORD",
+        "E2E_STAFF_PASSWORD",
+        "E2E_ADMIN_PASSWORD",
+      ]) {
+        expect(block).toContain(`export ${key}=`);
+      }
+      expect(block).toMatch(
+        /MIGRATOR_DATABASE_URL='postgresql:\/\/ai_agent_migrator:[^']+@db:5432\/ai_agent_platform'/u,
+      );
+      expect(block).toMatch(
+        /RUNTIME_DATABASE_URL='postgresql:\/\/ai_agent_runtime:[^']+@db:5432\/ai_agent_platform'/u,
+      );
+      expect(block).toMatch(
+        /BACKUP_DATABASE_URL='postgresql:\/\/ai_agent_backup:[^']+@db:5432\/ai_agent_platform'/u,
+      );
+      expect(block).not.toContain("export DATABASE_URL=");
+      expect(block).toContain("config --quiet");
+    }
+    expect(acceptanceBlock).toContain("db migrate web proxy backup");
+  });
+
   it("uses host webServer only when BASE_URL is absent", () => {
     const config = read("apps/web/playwright.config.ts");
     expect(config).toContain("process.env.BASE_URL");
