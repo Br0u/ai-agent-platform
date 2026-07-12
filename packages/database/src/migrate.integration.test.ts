@@ -38,6 +38,6 @@ describePostgres("concurrent production migrations", () => {
       "SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations",
     );
     await verifier.end();
-    expect(journal.rows).toEqual([{ count: "5" }]);
+    expect(journal.rows).toEqual([{ count: "6" }]);
   });
 });

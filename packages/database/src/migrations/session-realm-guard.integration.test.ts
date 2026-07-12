@@ -179,10 +179,10 @@ describePostgres("session identity boundary trigger", () => {
     }
   });
 
-  it("records all five forward migrations", async () => {
+  it("records all six forward migrations", async () => {
     const journal = await pool.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations",
     );
-    expect(journal.rows).toEqual([{ count: "5" }]);
+    expect(journal.rows).toEqual([{ count: "6" }]);
   });
 });
