@@ -121,8 +121,8 @@ describe("submitRegistrationAction", () => {
     expect(result).toEqual({
       kind: "validation_error",
       fieldErrors: expect.objectContaining({
-        password: expect.any(Array),
-        acceptedTerms: expect.any(Array),
+        password: ["密码至少需要 12 个字符"],
+        acceptedTerms: ["请同意平台服务条款与隐私规则"],
       }),
     });
     expect(service.submitRegistration).not.toHaveBeenCalled();
@@ -364,9 +364,32 @@ describe("review actions", () => {
     form.set("requestId", requestId);
     await expect(actions.rejectRegistrationAction(form)).resolves.toEqual({
       kind: "validation_error",
-      fieldErrors: { reviewNote: expect.any(Array) },
+      fieldErrors: { reviewNote: ["请输入拒绝说明"] },
     });
     expect(service.rejectRegistration).not.toHaveBeenCalled();
+  });
+
+  it("returns stable Chinese errors for approval fields", async () => {
+    const { actions, service } = harness();
+    const createForm = new FormData();
+    createForm.set("requestId", requestId);
+    createForm.set("organizationKind", "create");
+    await expect(
+      actions.approveRegistrationAction(createForm),
+    ).resolves.toEqual({
+      kind: "validation_error",
+      fieldErrors: { legalName: ["请输入组织法定名称"] },
+    });
+
+    const linkForm = new FormData();
+    linkForm.set("requestId", requestId);
+    linkForm.set("organizationKind", "link");
+    linkForm.set("organizationId", "not-a-uuid");
+    await expect(actions.approveRegistrationAction(linkForm)).resolves.toEqual({
+      kind: "validation_error",
+      fieldErrors: { organizationId: ["请输入有效的组织 ID"] },
+    });
+    expect(service.approveRegistration).not.toHaveBeenCalled();
   });
 
   it("reports an unexpected review failure without exposing it", async () => {

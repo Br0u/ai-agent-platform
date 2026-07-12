@@ -89,41 +89,68 @@ const registrationSchema = z.object({
   applicantName: z
     .string()
     .transform((input) => input.normalize("NFKC").trim())
-    .pipe(z.string().min(1).max(120)),
-  email: z.string().transform(normalizeIdentityEmail).pipe(z.email().max(320)),
-  password: z.string().min(12).max(128),
+    .pipe(z.string().min(1, "请输入姓名").max(120, "姓名不能超过 120 个字符")),
+  email: z
+    .string()
+    .transform(normalizeIdentityEmail)
+    .pipe(z.email("请输入有效的邮箱地址").max(320, "邮箱不能超过 320 个字符")),
+  password: z
+    .string()
+    .min(12, "密码至少需要 12 个字符")
+    .max(128, "密码不能超过 128 个字符"),
   companyName: z
     .string()
     .transform((input) => input.normalize("NFKC").trim())
     .pipe(
       z
         .string()
-        .min(1)
-        .max(240)
-        .refine((value) => !isReservedRegistrationCompanyName(value)),
+        .min(1, "请输入公司名称")
+        .max(240, "公司名称不能超过 240 个字符")
+        .refine(
+          (value) => !isReservedRegistrationCompanyName(value),
+          "该公司名称不可用于注册",
+        ),
     ),
-  acceptedTerms: z.literal(true),
+  acceptedTerms: z.literal(true, {
+    error: "请同意平台服务条款与隐私规则",
+  }),
 });
 
 const createReviewSchema = z.object({
-  requestId: z.uuid(),
+  requestId: z.uuid("申请 ID 无效，请刷新列表后重试"),
   organizationKind: z.literal("create"),
-  legalName: z.string().trim().min(1).max(240),
+  legalName: z
+    .string()
+    .trim()
+    .min(1, "请输入组织法定名称")
+    .max(240, "组织法定名称不能超过 240 个字符"),
   initialRole: z.enum(["customer_admin", "customer_member"]).optional(),
-  reviewNote: z.string().trim().max(2000).optional(),
+  reviewNote: z
+    .string()
+    .trim()
+    .max(2000, "审核备注不能超过 2000 个字符")
+    .optional(),
 });
 
 const linkReviewSchema = z.object({
-  requestId: z.uuid(),
+  requestId: z.uuid("申请 ID 无效，请刷新列表后重试"),
   organizationKind: z.literal("link"),
-  organizationId: z.uuid(),
+  organizationId: z.uuid("请输入有效的组织 ID"),
   initialRole: z.enum(["customer_admin", "customer_member"]).optional(),
-  reviewNote: z.string().trim().max(2000).optional(),
+  reviewNote: z
+    .string()
+    .trim()
+    .max(2000, "审核备注不能超过 2000 个字符")
+    .optional(),
 });
 
 const rejectSchema = z.object({
-  requestId: z.uuid(),
-  reviewNote: z.string().trim().min(1).max(2000),
+  requestId: z.uuid("申请 ID 无效，请刷新列表后重试"),
+  reviewNote: z
+    .string()
+    .trim()
+    .min(1, "请输入拒绝说明")
+    .max(2000, "拒绝说明不能超过 2000 个字符"),
 });
 
 function value(formData: FormData, name: string): string {

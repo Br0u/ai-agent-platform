@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { RegistrationActionState, ReviewActionState } from "./actions";
 import {
@@ -21,12 +22,16 @@ export async function approveRegistration(
   _previous: ReviewActionState,
   formData: FormData,
 ): Promise<ReviewActionState> {
-  return approveRegistrationAction(formData);
+  const result = await approveRegistrationAction(formData);
+  if (result.kind === "success") revalidatePath("/admin/registrations");
+  return result;
 }
 
 export async function rejectRegistration(
   _previous: ReviewActionState,
   formData: FormData,
 ): Promise<ReviewActionState> {
-  return rejectRegistrationAction(formData);
+  const result = await rejectRegistrationAction(formData);
+  if (result.kind === "success") revalidatePath("/admin/registrations");
+  return result;
 }

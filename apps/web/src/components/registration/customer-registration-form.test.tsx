@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createRegistrationActions } from "@/server/registration/actions";
 import { CustomerRegistrationForm } from "./customer-registration-form";
 
 describe("CustomerRegistrationForm", () => {
@@ -81,5 +82,53 @@ describe("CustomerRegistrationForm", () => {
       "href",
       "/login",
     );
+  });
+
+  it("renders the real action's Chinese validation messages", async () => {
+    const unexpected = vi.fn(() => {
+      throw new Error("validation must stop before dependencies are called");
+    });
+    const action = createRegistrationActions({
+      service: {
+        submitRegistration: unexpected,
+        approveRegistration: unexpected,
+        rejectRegistration: unexpected,
+      },
+      customerAuth: {
+        signInEmail: unexpected,
+        revokeNewSession: unexpected,
+      },
+      access: { requirePermission: unexpected },
+      provider: {
+        getStatus: unexpected,
+        requestVerification: unexpected,
+        verifyToken: unexpected,
+        resendVerification: unexpected,
+      },
+      commitCookies: unexpected,
+      clearCustomerCookies: unexpected,
+      reportInternalError: unexpected,
+      getClientIp: unexpected,
+      getHeaders: unexpected,
+    }).submitRegistrationAction;
+
+    render(<CustomerRegistrationForm action={action} />);
+    fireEvent.change(screen.getByLabelText("姓名"), {
+      target: { value: "林青" },
+    });
+    fireEvent.change(screen.getByLabelText("邮箱"), {
+      target: { value: "lin@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "short" },
+    });
+    fireEvent.change(screen.getByLabelText("公司名称"), {
+      target: { value: "青云科技" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "提交注册申请" }));
+
+    expect(await screen.findByText("密码至少需要 12 个字符")).toBeVisible();
+    expect(screen.getByText("请同意平台服务条款与隐私规则")).toBeVisible();
+    expect(unexpected).not.toHaveBeenCalled();
   });
 });
