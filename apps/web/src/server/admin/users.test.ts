@@ -2,9 +2,62 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   WorkforceMutationError,
+  createWorkforceUserQueryService,
   createWorkforceUserService,
   type WorkforceMutationRepository,
 } from "./users";
+
+describe("workforce user query", () => {
+  it("supports customer/workforce/status filters and returns only safe session identifiers", async () => {
+    const search = vi.fn(async () => ({
+      items: [
+        {
+          id: "staff-1",
+          name: "Staff",
+          email: "staff@example.test",
+          username: "staff",
+          realm: "workforce" as const,
+          status: "active" as const,
+          role: "employee",
+          sessions: [
+            {
+              id: "session-1",
+              createdAt: new Date("2026-07-12T00:00:00Z"),
+              expiresAt: new Date("2026-07-13T00:00:00Z"),
+              token: "raw-token",
+            },
+          ],
+        },
+      ],
+      total: 1,
+    }));
+    const result = await createWorkforceUserQueryService({ search }).list(
+      superActor,
+      {
+        search: "staff",
+        realm: "workforce",
+        status: "active",
+        page: 1,
+        pageSize: 20,
+      },
+    );
+    expect(search).toHaveBeenCalledWith(
+      expect.objectContaining({ realm: "workforce" }),
+    );
+    expect(JSON.stringify(result)).not.toContain("raw-token");
+    expect(result.items[0]?.sessions[0]?.id).toBe("session-1");
+  });
+
+  it("rejects queries without admin users permission", async () => {
+    const service = createWorkforceUserQueryService({ search: vi.fn() });
+    await expect(
+      service.list(
+        { ...superActor, permissions: [] },
+        { page: 1, pageSize: 20 },
+      ),
+    ).rejects.toMatchObject({ code: "AUTH_PERMISSION_DENIED" });
+  });
+});
 
 const superActor = {
   userId: "super-1",
@@ -256,6 +309,42 @@ describe("workforce user administration", () => {
       first.service.setRole(superActor, "employee-1", "super_admin"),
     ).resolves.toBeUndefined();
   });
+
+  it.each(["admin", "super_admin"])(
+    "prevents an admin from creating or promoting privileged role %s",
+    async (role) => {
+      const created = fixture();
+      created.requireSensitiveAction.mockResolvedValueOnce({
+        ...superActor,
+        userId: "admin-1",
+      });
+      await expect(
+        created.service.createUser(
+          { ...superActor, userId: "admin-1", role: "admin" },
+          {
+            name: "Privileged",
+            email: `${role}@example.test`,
+            username: role,
+            temporaryPassword: "Temporary#123",
+            initialRole: role,
+          },
+        ),
+      ).rejects.toMatchObject({ code: "WORKFORCE_SUPER_ADMIN_REQUIRED" });
+
+      const promoted = fixture();
+      promoted.requireSensitiveAction.mockResolvedValueOnce({
+        ...superActor,
+        userId: "admin-1",
+      });
+      await expect(
+        promoted.service.setRole(
+          { ...superActor, userId: "admin-1", role: "admin" },
+          "employee-1",
+          role,
+        ),
+      ).rejects.toMatchObject({ code: "WORKFORCE_SUPER_ADMIN_REQUIRED" });
+    },
+  );
 
   it("uses the transactional actor role instead of a caller-supplied role claim", async () => {
     const { requireSensitiveAction, service } = fixture();

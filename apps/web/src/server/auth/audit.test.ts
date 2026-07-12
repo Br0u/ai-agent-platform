@@ -27,6 +27,9 @@ describe("audit writer", () => {
       "registration.approved",
       "registration.rejected",
       "registration.submitted",
+      "role.permissions_changed",
+      "session.revoked",
+      "site.config_changed",
       "workforce.user_created",
       "workforce.user_updated",
     ]);
@@ -52,6 +55,26 @@ describe("audit writer", () => {
       metadata: { reason: "invalid_credentials" },
     });
   });
+
+  it.each([
+    ["session.revoked", { revokedCount: 2 }, "session"],
+    ["role.permissions_changed", { permissionCount: 3 }, "role"],
+    ["site.config_changed", { field: "supportMessage" }, "system"],
+  ] as const)(
+    "accepts required administration event %s",
+    async (event, metadata, targetType) => {
+      const { repository, writer } = fixture();
+      await writer.write({
+        event,
+        actor: { realm: "workforce", userId: "admin-1" },
+        target: { type: targetType, id: "target-1" },
+        metadata,
+      } as never);
+      expect(repository.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ action: event, metadata }),
+      );
+    },
+  );
 
   it.each([
     {

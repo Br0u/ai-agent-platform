@@ -68,6 +68,9 @@ export type AuditMetadataByEvent = {
   "auth.totp_enabled": Record<never, never>;
   "auth.totp_disabled": Record<never, never>;
   "auth.recovery_code_used": Record<never, never>;
+  "session.revoked": { revokedCount: number };
+  "role.permissions_changed": { permissionCount: number };
+  "site.config_changed": { field: "supportMessage" };
   "workforce.user_created": { initialRole: WorkforceRoleName };
   "workforce.user_updated":
     | { change: UserChange }
@@ -201,6 +204,20 @@ function sessionsRevokedMetadata(value: unknown): SanitizedMetadata {
   return { sessionsRevoked: count };
 }
 
+function countMetadata(value: unknown, key: string): SanitizedMetadata {
+  if (!isRecord(value) || !Object.hasOwn(value, key))
+    throw new AuditInputError(`metadata.${key}`);
+  const count = value[key];
+  if (
+    typeof count !== "number" ||
+    !Number.isSafeInteger(count) ||
+    count < 0 ||
+    count > 10_000
+  )
+    throw new AuditInputError(`metadata.${key}`);
+  return { [key]: count };
+}
+
 function workforceUserUpdatedMetadata(value: unknown): SanitizedMetadata {
   if (!isRecord(value) || !Object.hasOwn(value, "change"))
     throw new AuditInputError("metadata.change");
@@ -249,6 +266,11 @@ export const AUDIT_EVENT_SCHEMAS: Readonly<
   "auth.totp_enabled": emptyMetadata,
   "auth.totp_disabled": emptyMetadata,
   "auth.recovery_code_used": emptyMetadata,
+  "session.revoked": (value) => countMetadata(value, "revokedCount"),
+  "role.permissions_changed": (value) =>
+    countMetadata(value, "permissionCount"),
+  "site.config_changed": (value) =>
+    enumMetadata(value, "field", ["supportMessage"] as const),
   "workforce.user_created": (value) =>
     enumMetadata(value, "initialRole", WORKFORCE_ROLE_NAMES),
   "workforce.user_updated": workforceUserUpdatedMetadata,

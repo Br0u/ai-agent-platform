@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, count, eq, ilike, or, sql } from "drizzle-orm";
 
 import {
   accounts,
@@ -18,6 +18,117 @@ import {
 } from "@ai-agent-platform/database";
 
 import { requireSensitiveWorkforceAction } from "../auth/sensitive-action";
+
+type AdminUserQuery = {
+  search?: string;
+  realm?: "customer" | "workforce";
+  status?: "pending_review" | "active" | "disabled" | "rejected";
+  page: number;
+  pageSize: number;
+};
+type AdminUserQueryRow = {
+  id: string;
+  name: string;
+  email: string;
+  username: string | null;
+  realm: "customer" | "workforce";
+  status: "pending_review" | "active" | "disabled" | "rejected";
+  role: string | null;
+  sessions: Array<{
+    id: string;
+    createdAt: Date;
+    expiresAt: Date;
+    token?: string;
+  }>;
+};
+export type WorkforceUserQueryRepository = {
+  search(query: AdminUserQuery): Promise<{
+    items: AdminUserQueryRow[];
+    total: number;
+  }>;
+};
+
+export function createWorkforceUserQueryService(
+  repository: WorkforceUserQueryRepository,
+) {
+  return {
+    async list(actor: { permissions: string[] }, query: AdminUserQuery) {
+      if (!actor.permissions.includes("admin:users"))
+        throw new WorkforceMutationError("AUTH_PERMISSION_DENIED");
+      const result = await repository.search(query);
+      return {
+        items: result.items.map((item) => ({
+          ...item,
+          sessions: item.sessions.map((session) => ({
+            id: session.id,
+            createdAt: session.createdAt.toISOString(),
+            expiresAt: session.expiresAt.toISOString(),
+          })),
+        })),
+        total: result.total,
+        page: query.page,
+        pageSize: query.pageSize,
+      };
+    },
+  };
+}
+
+export function createDefaultWorkforceUserQueryService() {
+  const database = getDatabase();
+  return createWorkforceUserQueryService({
+    async search(query) {
+      const filter = and(
+        query.realm ? eq(users.identityRealm, query.realm) : undefined,
+        query.status ? eq(users.status, query.status) : undefined,
+        query.search
+          ? or(
+              ilike(users.name, `%${query.search}%`),
+              ilike(users.email, `%${query.search}%`),
+              ilike(users.username, `%${query.search}%`),
+            )
+          : undefined,
+      );
+      const [totalRow] = await database
+        .select({ value: count() })
+        .from(users)
+        .where(filter);
+      const rows = await database
+        .select({
+          id: users.id,
+          name: users.name,
+          email: users.email,
+          username: users.username,
+          realm: users.identityRealm,
+          status: users.status,
+          role: roles.name,
+        })
+        .from(users)
+        .leftJoin(userRoles, eq(userRoles.userId, users.id))
+        .leftJoin(roles, eq(roles.id, userRoles.roleId))
+        .where(filter)
+        .orderBy(asc(users.name), asc(users.id))
+        .limit(query.pageSize)
+        .offset((query.page - 1) * query.pageSize);
+      return {
+        items: await Promise.all(
+          rows.map(async (row) => ({
+            ...row,
+            sessions: await database
+              .select({
+                id: sessions.id,
+                createdAt: sessions.createdAt,
+                expiresAt: sessions.expiresAt,
+              })
+              .from(sessions)
+              .where(eq(sessions.userId, row.id))
+              .orderBy(asc(sessions.createdAt)),
+          })),
+        ),
+        total: totalRow?.value ?? 0,
+      };
+    },
+  });
+}
 
 export const WORKFORCE_ROLES = [
   "employee",
@@ -204,7 +315,10 @@ export function createWorkforceUserService(dependencies: {
           repository,
           actor.userId,
         );
-        if (initialRole === "super_admin" && actorRole !== "super_admin")
+        if (
+          (initialRole === "admin" || initialRole === "super_admin") &&
+          actorRole !== "super_admin"
+        )
           throw new WorkforceMutationError("WORKFORCE_SUPER_ADMIN_REQUIRED");
         const created = await repository.createWorkforceIdentity({
           name: input.name.normalize("NFKC").trim(),
@@ -242,7 +356,10 @@ export function createWorkforceUserService(dependencies: {
           repository,
           actor.userId,
         );
-        if (role === "super_admin" && actorRole !== "super_admin")
+        if (
+          (role === "admin" || role === "super_admin") &&
+          actorRole !== "super_admin"
+        )
           throw new WorkforceMutationError("WORKFORCE_SUPER_ADMIN_REQUIRED");
         const target = await requireTarget(repository, targetId);
         if (!target.role)
