@@ -255,6 +255,7 @@ export function createRecoveryChallengeActions(dependencies: {
       challengeIdentifier: string,
       recoveryCode: string,
     ): Promise<RecoveryChallengeResult | null>;
+    revokeSession(token: string): Promise<void>;
   };
   commitSession(token: string): Promise<void>;
   clearChallenge(): Promise<void>;
@@ -279,8 +280,15 @@ export function createRecoveryChallengeActions(dependencies: {
         );
         if (!consumed)
           return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
-        await dependencies.commitSession(consumed.sessionToken);
-        await dependencies.clearChallenge();
+        try {
+          await dependencies.clearChallenge();
+          await dependencies.commitSession(consumed.sessionToken);
+        } catch {
+          await dependencies.repository
+            .revokeSession(consumed.sessionToken)
+            .catch(() => undefined);
+          return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+        }
         const returnTo = safeReturnPath(
           "workforce",
           stringField(formData, "returnTo"),
@@ -414,6 +422,9 @@ export function createDefaultRecoveryChallengeActions() {
             sessionToken: token,
           };
         });
+      },
+      async revokeSession(token) {
+        await database.delete(sessions).where(eq(sessions.token, token));
       },
     },
     async commitSession(token) {

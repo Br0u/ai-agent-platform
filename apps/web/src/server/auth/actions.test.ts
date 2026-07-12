@@ -33,6 +33,7 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
         mustChangePassword: false,
         sessionToken: "replacement-token",
       })),
+      revokeSession: vi.fn(async () => undefined),
     };
     const commitSession = vi.fn(async () => undefined);
     const clearChallenge = vi.fn(async () => undefined);
@@ -65,7 +66,10 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
     const actions = createRecoveryChallengeActions({
       getChallenge: async () => "signed-challenge",
       verifyChallenge: async () => "challenge-id",
-      repository: { consume: vi.fn(async () => null) },
+      repository: {
+        consume: vi.fn(async () => null),
+        revokeSession: vi.fn(async () => undefined),
+      },
       commitSession,
       clearChallenge: vi.fn(async () => undefined),
     });
@@ -73,6 +77,30 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
       actions.verify(form({ recoveryCode: "AAAAA-BBBBB-CCCCC-DDDDD" })),
     ).resolves.toEqual({ kind: "error", code: "AUTH_INVALID_CREDENTIALS" });
     expect(commitSession).not.toHaveBeenCalled();
+  });
+
+  it("revokes the replacement session when recovery cookie delivery fails", async () => {
+    const repository = {
+      consume: vi.fn(async () => ({
+        userId: "staff-1",
+        mustChangePassword: false,
+        sessionToken: "orphan-token",
+      })),
+      revokeSession: vi.fn(async () => undefined),
+    };
+    const actions = createRecoveryChallengeActions({
+      getChallenge: async () => "signed-challenge",
+      verifyChallenge: async () => "challenge-id",
+      repository,
+      commitSession: vi.fn(async () => {
+        throw new Error("cookie failed");
+      }),
+      clearChallenge: vi.fn(async () => undefined),
+    });
+    await expect(
+      actions.verify(form({ recoveryCode: "AAAAA-BBBBB-CCCCC-DDDDD" })),
+    ).resolves.toEqual({ kind: "error", code: "AUTH_INVALID_CREDENTIALS" });
+    expect(repository.revokeSession).toHaveBeenCalledWith("orphan-token");
   });
   function securityFixture() {
     const gateway = {
