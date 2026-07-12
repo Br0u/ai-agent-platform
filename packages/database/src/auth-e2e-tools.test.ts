@@ -62,6 +62,10 @@ describe("test-only auth E2E tools", () => {
     );
     expect(source).not.toContain("DELETE FROM user_roles;");
     expect(source).not.toContain("DELETE FROM organization_memberships;");
+    expect(source).toContain(
+      "UPDATE users SET two_factor_enabled = false WHERE id = $1",
+    );
+    expect(source).toContain("e2e-revoked-session");
   });
 
   it("asserts hashed presence and consumed state without accepting plaintext", () => {

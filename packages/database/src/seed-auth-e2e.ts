@@ -36,6 +36,7 @@ export const fixtureIdentities = {
     status: "active",
     role: "admin",
     sessionToken: "e2e-admin-session",
+    revokedSessionToken: "e2e-revoked-session",
   },
 } as const;
 
@@ -146,20 +147,25 @@ export async function seedAuthE2EFixtures(
       [fixtureUserIds, fixtureIdentities.admin.sessionToken],
     );
     await client.query(
-      "UPDATE users SET two_factor_enabled = true WHERE id = $1",
+      "UPDATE users SET two_factor_enabled = false WHERE id = $1",
       [fixtureIdentities.admin.id],
     );
     await client.query(
       `INSERT INTO sessions
         (id, token, user_id, expires_at, ip_address, user_agent, realm, mfa_verified_at)
        VALUES
-        ('10000000-0000-4000-8000-000000000020', $1, $2, now() + interval '1 day', NULL, 'auth-e2e-admin-fixture', 'workforce', now())
+        ('10000000-0000-4000-8000-000000000020', $1, $3, now() + interval '1 day', NULL, 'auth-e2e-admin-fixture', 'workforce', now()),
+        ('10000000-0000-4000-8000-000000000021', $2, $3, now() + interval '1 day', NULL, 'auth-e2e-revoked-fixture', 'workforce', now())
        ON CONFLICT (token) DO UPDATE SET
          id = EXCLUDED.id, user_id = EXCLUDED.user_id, realm = EXCLUDED.realm,
          expires_at = EXCLUDED.expires_at, ip_address = EXCLUDED.ip_address,
          user_agent = EXCLUDED.user_agent,
          mfa_verified_at = EXCLUDED.mfa_verified_at, updated_at = now()`,
-      [fixtureIdentities.admin.sessionToken, fixtureIdentities.admin.id],
+      [
+        fixtureIdentities.admin.sessionToken,
+        fixtureIdentities.admin.revokedSessionToken,
+        fixtureIdentities.admin.id,
+      ],
     );
     await client.query(
       `INSERT INTO organizations (id, legal_name, legal_name_key, status)

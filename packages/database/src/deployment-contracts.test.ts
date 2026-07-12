@@ -102,6 +102,9 @@ describe("production deployment security contracts", () => {
       "ALLOW_LOCAL_VALIDATION_HOSTS: ${ALLOW_LOCAL_VALIDATION_HOSTS:-false}",
     );
     expect(compose).toContain(
+      'wget --header=\\"Host: $${PUBLIC_HOST}\\"',
+    );
+    expect(compose).toContain(
       "PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST in .env}",
     );
   });
