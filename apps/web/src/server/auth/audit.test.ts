@@ -222,6 +222,28 @@ describe("audit writer", () => {
     );
   });
 
+  it("stores an exact role_changed transition", async () => {
+    const { repository, writer } = fixture();
+    await writer.write({
+      event: "workforce.user_updated",
+      target: { type: "user", id: "staff-1" },
+      metadata: {
+        change: "role_changed",
+        fromRole: "employee",
+        toRole: "admin",
+      },
+    });
+    expect(repository.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: {
+          change: "role_changed",
+          fromRole: "employee",
+          toRole: "admin",
+        },
+      }),
+    );
+  });
+
   it("propagates database failures", async () => {
     const writer = createAuditWriter({
       insert: vi.fn().mockRejectedValue(new Error("database unavailable")),

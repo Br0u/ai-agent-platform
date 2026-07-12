@@ -270,7 +270,11 @@ describe("secure auth access service", () => {
     );
 
     const active = createFixture({
-      currentUser: user({ realm: "workforce", status: "active" }),
+      currentUser: user({
+        realm: "workforce",
+        status: "active",
+        twoFactorEnabled: true,
+      }),
       permissions: ["admin:users"],
     });
     await expect(active.service.requireWorkforce()).resolves.toMatchObject({
@@ -284,9 +288,81 @@ describe("secure auth access service", () => {
     );
   });
 
+  it.each([
+    [
+      { mustChangePassword: true, twoFactorEnabled: false },
+      "AUTH_PASSWORD_CHANGE_REQUIRED",
+    ],
+    [
+      { mustChangePassword: false, twoFactorEnabled: false },
+      "AUTH_TOTP_SETUP_REQUIRED",
+    ],
+  ] as const)(
+    "denies incomplete workforce setup at the default boundary",
+    async (state, code) => {
+      const fixture = createFixture({
+        currentUser: user({ realm: "workforce", status: "active", ...state }),
+        permissions: ["admin:users"],
+      });
+      await expectAccessError(fixture.service.requireWorkforce(), code, 403);
+      await expectAccessError(
+        fixture.service.requirePermission("admin:users"),
+        code,
+        403,
+      );
+    },
+  );
+
+  it("allows only the matching explicit setup flow and admits complete actors", async () => {
+    const password = createFixture({
+      currentUser: user({
+        realm: "workforce",
+        status: "active",
+        mustChangePassword: true,
+        twoFactorEnabled: false,
+      }),
+    });
+    await expect(
+      password.service.requireWorkforce({ setupFlow: "change-password" }),
+    ).resolves.toMatchObject({ mustChangePassword: true });
+    await expectAccessError(
+      password.service.requireWorkforce({ setupFlow: "two-factor" }),
+      "AUTH_PASSWORD_CHANGE_REQUIRED",
+      403,
+    );
+
+    const totp = createFixture({
+      currentUser: user({
+        realm: "workforce",
+        status: "active",
+        mustChangePassword: false,
+        twoFactorEnabled: false,
+      }),
+    });
+    await expect(
+      totp.service.requireWorkforce({ setupFlow: "two-factor" }),
+    ).resolves.toMatchObject({ twoFactorEnabled: false });
+
+    const complete = createFixture({
+      currentUser: user({
+        realm: "workforce",
+        status: "active",
+        mustChangePassword: false,
+        twoFactorEnabled: true,
+      }),
+    });
+    await expect(complete.service.requireWorkforce()).resolves.toMatchObject({
+      twoFactorEnabled: true,
+    });
+  });
+
   it("requires a current database permission and observes role removal next check", async () => {
     const fixture = createFixture({
-      currentUser: user({ realm: "workforce", status: "active" }),
+      currentUser: user({
+        realm: "workforce",
+        status: "active",
+        twoFactorEnabled: true,
+      }),
       permissions: ["admin:users"],
     });
 
@@ -342,7 +418,9 @@ describe("secure auth access service", () => {
       }),
       permissions: ["support:tickets", "admin:users", "admin:users"],
     });
-    const staff = await staffFixture.service.requireWorkforce();
+    const staff = await staffFixture.service.requireWorkforce({
+      setupFlow: "change-password",
+    });
     const staffDto = toStaffSessionDto(staff);
 
     expect(staffDto).toEqual({

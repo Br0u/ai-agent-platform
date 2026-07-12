@@ -10,7 +10,7 @@ export default async function Page({
 }: {
   searchParams: Promise<{ returnTo?: string }>;
 }) {
-  await requireWorkforce();
+  await requireWorkforce({ setupFlow: "change-password" });
   const { returnTo } = await searchParams;
   return (
     <main className="auth-page">

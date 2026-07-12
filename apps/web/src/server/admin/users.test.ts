@@ -400,6 +400,19 @@ describe("workforce user administration", () => {
     ).rejects.toThrow("audit unavailable");
     expect(repository.transaction).toHaveBeenCalledOnce();
   });
+
+  it("audits role replacement as one role_changed event with before and after roles", async () => {
+    const { service, tx } = fixture();
+    await service.setRole(superActor, "employee-1", "support_operator");
+    expect(tx.writeAudit).toHaveBeenCalledWith({
+      event: "workforce.user_updated",
+      actorId: "super-1",
+      targetId: "employee-1",
+      change: "role_changed",
+      fromRole: "employee",
+      toRole: "support_operator",
+    });
+  });
 });
 
 it("exposes stable typed mutation errors", () => {

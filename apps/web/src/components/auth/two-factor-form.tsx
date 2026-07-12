@@ -36,17 +36,24 @@ export function TwoFactorForm({
   returnTo,
   enrollAction = enrollStaffTwoFactorAction,
   verifyAction = verifyStaffTwoFactorAction,
+  verificationInitialState = STAFF_SECURITY_ACTION_INITIAL_STATE,
 }: {
   enrollment?: Enrollment;
   mode?: "challenge" | "enroll";
   returnTo?: string;
   enrollAction?: Action;
   verifyAction?: Action;
+  verificationInitialState?: StaffSecurityActionState;
 }) {
   const [state, formAction] = useActionState(
     async (_previous: StaffSecurityActionState, data: FormData) =>
       (mode === "enroll" ? enrollAction : verifyAction)(data),
     STAFF_SECURITY_ACTION_INITIAL_STATE,
+  );
+  const [verificationState, verificationFormAction] = useActionState(
+    async (_previous: StaffSecurityActionState, data: FormData) =>
+      verifyAction(data),
+    verificationInitialState,
   );
   const completedEnrollment =
     enrollment ??
@@ -76,12 +83,7 @@ export function TwoFactorForm({
             </li>
           ))}
         </ul>
-        <form
-          action={async (data) => {
-            await verifyAction(data);
-          }}
-          className="auth-form"
-        >
+        <form action={verificationFormAction} className="auth-form">
           {returnTo ? (
             <input name="returnTo" type="hidden" value={returnTo} />
           ) : null}
@@ -98,9 +100,10 @@ export function TwoFactorForm({
               type="text"
             />
           </label>
-          <button className="auth-form__submit" type="submit">
-            验证并启用
-          </button>
+          <p aria-live="polite" className="auth-form__error" role="status">
+            {verificationState.kind === "error" ? "验证码无效，请重试。" : ""}
+          </p>
+          <Submit label="验证并启用" />
         </form>
       </section>
     );

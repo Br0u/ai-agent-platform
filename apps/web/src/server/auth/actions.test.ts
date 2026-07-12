@@ -48,10 +48,11 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
         mustChangePassword: true,
         twoFactorEnabled: false,
       })),
-      clearMustChangePasswordAndRevokeOthers: vi.fn(async () => 2),
+      finalizePasswordChange: vi.fn(async () => undefined),
       revokeSession: vi.fn(async () => undefined),
       readMustChangePassword: vi.fn(async () => true),
       writeAudit: vi.fn(async () => undefined),
+      writeLoginFailureAudit: vi.fn(async () => undefined),
     };
     const recovery = { generate: vi.fn(async () => ["RC-ONE", "RC-TWO"]) };
     const commitCookies = vi.fn(async () => undefined);
@@ -84,9 +85,10 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
       revokeOtherSessions: true,
       headers: expect.any(Headers),
     });
-    expect(
-      repository.clearMustChangePasswordAndRevokeOthers,
-    ).toHaveBeenCalledWith("staff-1", "changed");
+    expect(repository.finalizePasswordChange).toHaveBeenCalledWith(
+      "staff-1",
+      "changed",
+    );
     expect(result).toEqual({
       kind: "success",
       redirectTo: "/staff/two-factor?returnTo=%2Fadmin",
@@ -108,6 +110,20 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
       totpURI: expect.stringMatching(/^otpauth:/),
       recoveryCodes: ["RC-ONE", "RC-TWO"],
     });
+  });
+
+  it("rejects initial TOTP enrollment for an already-enrolled actor before Better Auth", async () => {
+    const { actions, gateway, repository } = securityFixture();
+    repository.current.mockResolvedValueOnce({
+      userId: "staff-1",
+      sessionId: "session-1",
+      mustChangePassword: false,
+      twoFactorEnabled: true,
+    });
+    await expect(
+      actions.enrollTwoFactor(form({ password: "Permanent#1234" })),
+    ).resolves.toEqual({ kind: "error", code: "AUTH_TOTP_ALREADY_ENABLED" });
+    expect(gateway.enableTwoFactor).not.toHaveBeenCalled();
   });
 
   it("hard-codes trustDevice false and re-reads forced-password state after a real TOTP challenge", async () => {
@@ -207,6 +223,76 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
       "password-only-token",
     );
   });
+
+  it("rejects a re-auth identity switch before cookie commit", async () => {
+    const { actions, clearCookies, commitCookies, gateway, repository } =
+      securityFixture();
+    gateway.verifyTOTP.mockResolvedValueOnce({
+      response: { token: "other-token", user: { id: "other-user" } },
+      headers: new Headers({
+        "set-cookie": "aap_staff_session=other; Path=/; HttpOnly",
+      }),
+    });
+    await expect(
+      actions.reauthenticate(
+        form({
+          identifier: "staff",
+          password: "Permanent#1234",
+          code: "123456",
+          returnTo: "/admin/users",
+        }),
+      ),
+    ).resolves.toEqual({ kind: "error", code: "AUTH_INVALID_CREDENTIALS" });
+    expect(gateway.revokeNewSession).toHaveBeenCalledWith("other-token");
+    expect(clearCookies).toHaveBeenCalledOnce();
+    expect(repository.writeLoginFailureAudit).toHaveBeenCalledOnce();
+    expect(commitCookies).not.toHaveBeenCalled();
+  });
+
+  it("keeps forced-password precedence after successful re-auth TOTP", async () => {
+    const { actions, repository } = securityFixture();
+    repository.readMustChangePassword.mockResolvedValueOnce(true);
+    await expect(
+      actions.reauthenticate(
+        form({
+          identifier: "staff",
+          password: "Permanent#1234",
+          code: "123456",
+          returnTo: "/admin/users",
+        }),
+      ),
+    ).resolves.toEqual({
+      kind: "success",
+      redirectTo: "/staff/change-password?returnTo=%2Fadmin%2Fusers",
+    });
+  });
+
+  it.each(["finalizer", "cookie"] as const)(
+    "compensates replacement session on post-password %s failure",
+    async (boundary) => {
+      const { actions, clearCookies, commitCookies, gateway, repository } =
+        securityFixture();
+      if (boundary === "finalizer")
+        repository.finalizePasswordChange.mockRejectedValueOnce(
+          new Error("database down"),
+        );
+      else commitCookies.mockRejectedValueOnce(new Error("cookie down"));
+
+      await expect(
+        actions.changePassword(
+          form({
+            currentPassword: "Temporary#123",
+            newPassword: "Permanent#1234",
+          }),
+        ),
+      ).resolves.toEqual({
+        kind: "error",
+        code: "AUTH_INFRASTRUCTURE_FAILURE",
+      });
+      expect(gateway.revokeNewSession).toHaveBeenCalledWith("changed");
+      expect(clearCookies).toHaveBeenCalledOnce();
+    },
+  );
 
   it("sends enrolled staff to the allow-listed destination after changing the forced password", async () => {
     const { actions, repository } = securityFixture();

@@ -262,10 +262,7 @@ type StaffSecurityRepository = {
     mustChangePassword: boolean;
     twoFactorEnabled: boolean;
   } | null>;
-  clearMustChangePasswordAndRevokeOthers(
-    userId: string,
-    sessionToken: string,
-  ): Promise<number>;
+  finalizePasswordChange(userId: string, sessionToken: string): Promise<void>;
   revokeSession(sessionId: string): Promise<void>;
   readMustChangePassword(userId: string): Promise<boolean>;
   writeAudit(
@@ -273,11 +270,19 @@ type StaffSecurityRepository = {
     userId: string,
     metadata?: { sessionsRevoked: number },
   ): Promise<void>;
+  writeLoginFailureAudit(): Promise<void>;
 };
 
 export type StaffSecurityActionState =
   | { kind: "idle" }
-  | { kind: "error"; code: "AUTH_INVALID_INPUT" | "AUTH_INVALID_CREDENTIALS" }
+  | {
+      kind: "error";
+      code:
+        | "AUTH_INVALID_INPUT"
+        | "AUTH_INVALID_CREDENTIALS"
+        | "AUTH_TOTP_ALREADY_ENABLED"
+        | "AUTH_INFRASTRUCTURE_FAILURE";
+    }
   | { kind: "success"; redirectTo: string }
   | {
       kind: "enrollment";
@@ -393,8 +398,8 @@ export function createDefaultStaffSecurityActions() {
         twoFactorEnabled: user.twoFactorEnabled === true,
       };
     },
-    async clearMustChangePasswordAndRevokeOthers(userId, sessionToken) {
-      return database.transaction(async (tx) => {
+    async finalizePasswordChange(userId, sessionToken) {
+      await database.transaction(async (tx) => {
         await tx
           .update(users)
           .set({ mustChangePassword: false, updatedAt: new Date() })
@@ -407,7 +412,14 @@ export function createDefaultStaffSecurityActions() {
             and(eq(sessions.userId, userId), ne(sessions.token, sessionToken)),
           )
           .returning({ id: sessions.id });
-        return revoked.length;
+        await tx.insert(auditLogs).values({
+          actorRealm: "workforce",
+          actorUserId: userId,
+          action: "auth.password_changed",
+          targetType: "user",
+          targetId: userId,
+          metadata: { sessionsRevoked: revoked.length },
+        });
       });
     },
     async revokeSession(sessionId) {
@@ -431,6 +443,13 @@ export function createDefaultStaffSecurityActions() {
           ? { metadata: metadata ?? { sessionsRevoked: 0 } }
           : {}),
       } as AuditWriteInput);
+    },
+    async writeLoginFailureAudit() {
+      await audit.write({
+        event: "auth.login_failure",
+        target: { type: "system" },
+        metadata: { reason: "realm_mismatch" },
+      });
     },
   };
   const gateway: StaffSecurityGateway = {
@@ -536,27 +555,27 @@ export function createStaffSecurityActions(dependencies: {
       const newPassword = stringField(formData, "newPassword");
       if (!currentPassword || !newPassword)
         return { kind: "error", code: "AUTH_INVALID_INPUT" };
+      const session = await current().catch(() => null);
+      if (!session) return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+      let staged: StagedResponse<{ token: string | null }>;
       try {
-        const session = await current();
-        const staged = await dependencies.gateway.changePassword({
+        staged = await dependencies.gateway.changePassword({
           currentPassword,
           newPassword,
           revokeOtherSessions: true,
           headers: await dependencies.getHeaders(),
         });
+      } catch {
+        return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+      }
+      try {
         if (typeof staged.response.token !== "string")
           throw new Error(
             "Password change did not create a replacement session",
           );
-        const revoked =
-          await dependencies.repository.clearMustChangePasswordAndRevokeOthers(
-            session.userId,
-            staged.response.token,
-          );
-        await dependencies.repository.writeAudit(
-          "auth.password_changed",
+        await dependencies.repository.finalizePasswordChange(
           session.userId,
-          { sessionsRevoked: revoked },
+          staged.response.token,
         );
         await dependencies.commitCookies(staged.headers);
         const returnTo = safeReturnPath(
@@ -570,7 +589,13 @@ export function createStaffSecurityActions(dependencies: {
             : `/staff/two-factor?returnTo=${encodeURIComponent(returnTo)}`,
         };
       } catch {
-        return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+        if (typeof staged.response.token === "string") {
+          await dependencies.gateway
+            .revokeNewSession(staged.response.token)
+            .catch(() => undefined);
+        }
+        await dependencies.clearCookies().catch(() => undefined);
+        return { kind: "error", code: "AUTH_INFRASTRUCTURE_FAILURE" };
       }
     },
     async enrollTwoFactor(
@@ -584,6 +609,9 @@ export function createStaffSecurityActions(dependencies: {
         | undefined;
       try {
         const session = await current();
+        if (session.twoFactorEnabled) {
+          return { kind: "error", code: "AUTH_TOTP_ALREADY_ENABLED" };
+        }
         staged = await dependencies.gateway.enableTwoFactor({
           password,
           headers: requestHeaders,
@@ -697,22 +725,33 @@ export function createStaffSecurityActions(dependencies: {
           ),
         });
         newSessionToken = totpStage.response.token;
-        await dependencies.repository.readMustChangePassword(
-          totpStage.response.user.id,
-        );
+        if (totpStage.response.user.id !== old.userId) {
+          await dependencies.repository
+            .writeLoginFailureAudit()
+            .catch(() => undefined);
+          throw new Error("Re-authentication identity mismatch");
+        }
+        const mustChangePassword =
+          await dependencies.repository.readMustChangePassword(
+            totpStage.response.user.id,
+          );
         await dependencies.commitCookies(totpStage.headers);
+        const returnTo = safeReturnPath(
+          "workforce",
+          stringField(formData, "returnTo"),
+        );
         return {
           kind: "success",
-          redirectTo: safeReturnPath(
-            "workforce",
-            stringField(formData, "returnTo"),
-          ),
+          redirectTo: mustChangePassword
+            ? `/staff/change-password?returnTo=${encodeURIComponent(returnTo)}`
+            : returnTo,
         };
       } catch {
         if (newSessionToken)
           await dependencies.gateway
             .revokeNewSession(newSessionToken)
             .catch(() => undefined);
+        await dependencies.clearCookies().catch(() => undefined);
         return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
       }
     },

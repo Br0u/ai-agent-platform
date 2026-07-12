@@ -103,6 +103,8 @@ export type AuthAccessErrorCode =
   | "AUTH_ACCOUNT_DISABLED"
   | "AUTH_ACCOUNT_NOT_ACTIVE"
   | "AUTH_PERMISSION_DENIED"
+  | "AUTH_PASSWORD_CHANGE_REQUIRED"
+  | "AUTH_TOTP_SETUP_REQUIRED"
   | "AUTH_ORGANIZATION_REQUIRED"
   | "AUTH_ORGANIZATION_AMBIGUOUS"
   | "AUTH_ORGANIZATION_NOT_ACTIVE";
@@ -113,6 +115,8 @@ const ACCESS_MESSAGES: Readonly<Record<AuthAccessErrorCode, string>> = {
   AUTH_ACCOUNT_DISABLED: "This account is disabled",
   AUTH_ACCOUNT_NOT_ACTIVE: "This account is not active",
   AUTH_PERMISSION_DENIED: "Permission denied",
+  AUTH_PASSWORD_CHANGE_REQUIRED: "Password change required",
+  AUTH_TOTP_SETUP_REQUIRED: "Two-factor setup required",
   AUTH_ORGANIZATION_REQUIRED: "An active organization is required",
   AUTH_ORGANIZATION_AMBIGUOUS: "Organization membership is ambiguous",
   AUTH_ORGANIZATION_NOT_ACTIVE: "This organization is not active",
@@ -355,11 +359,23 @@ export function createAccessService(
     throw new AuthAccessError("AUTH_ACCOUNT_NOT_ACTIVE", 403);
   }
 
-  async function requireWorkforce(): Promise<WorkforceActor> {
+  async function requireWorkforce(options?: {
+    setupFlow?: "change-password" | "two-factor";
+  }): Promise<WorkforceActor> {
     const actor = await getCurrentActor("workforce");
     if (!actor) throw new AuthAccessError("AUTH_SESSION_REQUIRED", 401);
     if (actor.realm !== "workforce") {
       throw new AuthAccessError("AUTH_REALM_MISMATCH", 403);
+    }
+    if (actor.mustChangePassword && options?.setupFlow !== "change-password") {
+      throw new AuthAccessError("AUTH_PASSWORD_CHANGE_REQUIRED", 403);
+    }
+    if (
+      !actor.mustChangePassword &&
+      !actor.twoFactorEnabled &&
+      options?.setupFlow !== "two-factor"
+    ) {
+      throw new AuthAccessError("AUTH_TOTP_SETUP_REQUIRED", 403);
     }
     return actor;
   }
@@ -426,8 +442,10 @@ export async function requireCustomer(options?: {
   return createAccessService().requireCustomer(options);
 }
 
-export async function requireWorkforce(): Promise<WorkforceActor> {
-  return createAccessService().requireWorkforce();
+export async function requireWorkforce(options?: {
+  setupFlow?: "change-password" | "two-factor";
+}): Promise<WorkforceActor> {
+  return createAccessService().requireWorkforce(options);
 }
 
 export async function requirePermission(

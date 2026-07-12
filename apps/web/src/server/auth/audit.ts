@@ -34,6 +34,7 @@ const USER_CHANGES = [
   "password_replaced",
   "role_added",
   "role_removed",
+  "role_changed",
   "permissions_changed",
 ] as const;
 const TARGET_TYPES = [
@@ -68,7 +69,13 @@ export type AuditMetadataByEvent = {
   "auth.totp_disabled": Record<never, never>;
   "auth.recovery_code_used": Record<never, never>;
   "workforce.user_created": { initialRole: WorkforceRoleName };
-  "workforce.user_updated": { change: UserChange };
+  "workforce.user_updated":
+    | { change: UserChange }
+    | {
+        change: "role_changed";
+        fromRole: WorkforceRoleName;
+        toRole: WorkforceRoleName;
+      };
   "bootstrap.super_admin_created": Record<never, never>;
 };
 
@@ -194,6 +201,35 @@ function sessionsRevokedMetadata(value: unknown): SanitizedMetadata {
   return { sessionsRevoked: count };
 }
 
+function workforceUserUpdatedMetadata(value: unknown): SanitizedMetadata {
+  if (!isRecord(value) || !Object.hasOwn(value, "change"))
+    throw new AuditInputError("metadata.change");
+  if (value.change === "role_changed") {
+    const metadata = assertExactKeys(
+      value,
+      ["change", "fromRole", "toRole"],
+      "metadata",
+    );
+    return {
+      change: "role_changed",
+      fromRole: enumValue(
+        metadata.fromRole,
+        WORKFORCE_ROLE_NAMES,
+        "metadata.fromRole",
+      ),
+      toRole: enumValue(
+        metadata.toRole,
+        WORKFORCE_ROLE_NAMES,
+        "metadata.toRole",
+      ),
+    };
+  }
+  const metadata = assertExactKeys(value, ["change"], "metadata");
+  return {
+    change: enumValue(metadata.change, USER_CHANGES, "metadata.change"),
+  };
+}
+
 type AuditMetadataSchema = (value: unknown) => SanitizedMetadata;
 
 export const AUDIT_EVENT_SCHEMAS: Readonly<
@@ -215,8 +251,7 @@ export const AUDIT_EVENT_SCHEMAS: Readonly<
   "auth.recovery_code_used": emptyMetadata,
   "workforce.user_created": (value) =>
     enumMetadata(value, "initialRole", WORKFORCE_ROLE_NAMES),
-  "workforce.user_updated": (value) =>
-    enumMetadata(value, "change", USER_CHANGES),
+  "workforce.user_updated": workforceUserUpdatedMetadata,
   "bootstrap.super_admin_created": emptyMetadata,
 });
 

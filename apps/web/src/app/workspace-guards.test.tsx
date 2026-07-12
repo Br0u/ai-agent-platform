@@ -68,6 +68,25 @@ describe("workspace guards", () => {
     );
   });
 
+  it.each([
+    [
+      "AUTH_PASSWORD_CHANGE_REQUIRED",
+      "/staff/change-password?returnTo=%2Fadmin",
+    ],
+    ["AUTH_TOTP_SETUP_REQUIRED", "/staff/two-factor?returnTo=%2Fadmin"],
+  ] as const)(
+    "redirects incomplete workforce setup without a loop: %s",
+    async (code, destination) => {
+      mocks.requireWorkforce.mockRejectedValueOnce(
+        new AuthAccessError(code, 403),
+      );
+      await expect(
+        AdminLayout({ children: <p>admin shell</p> }),
+      ).rejects.toThrow("NEXT_REDIRECT");
+      expect(mocks.redirect).toHaveBeenCalledWith(destination);
+    },
+  );
+
   it("redirects an unauthenticated customer shell to the fixed login return path", async () => {
     mocks.requireCustomer.mockRejectedValueOnce(
       new AuthAccessError("AUTH_REALM_MISMATCH", 403),

@@ -83,7 +83,10 @@ type WorkforceAudit =
         | "reactivated"
         | "password_replaced"
         | "role_added"
-        | "role_removed";
+        | "role_removed"
+        | "role_changed";
+      fromRole?: WorkforceRole;
+      toRole?: WorkforceRole;
     };
 
 export type WorkforceMutationRepository = {
@@ -242,6 +245,8 @@ export function createWorkforceUserService(dependencies: {
         if (role === "super_admin" && actorRole !== "super_admin")
           throw new WorkforceMutationError("WORKFORCE_SUPER_ADMIN_REQUIRED");
         const target = await requireTarget(repository, targetId);
+        if (!target.role)
+          throw new WorkforceMutationError("WORKFORCE_ROLE_INVALID");
         protectAdministrativeTarget(actor.userId, actorRole, target);
         if (
           target.role === "super_admin" &&
@@ -256,7 +261,9 @@ export function createWorkforceUserService(dependencies: {
           event: "workforce.user_updated",
           actorId: actor.userId,
           targetId,
-          change: "role_added",
+          change: "role_changed",
+          fromRole: target.role,
+          toRole: role,
         });
       });
     },
@@ -492,7 +499,13 @@ function createDrizzleMutationRepository(
         metadata:
           event.event === "workforce.user_created"
             ? { initialRole: event.initialRole }
-            : { change: event.change },
+            : event.change === "role_changed"
+              ? {
+                  change: event.change,
+                  fromRole: event.fromRole,
+                  toRole: event.toRole,
+                }
+              : { change: event.change },
       });
     },
   };
