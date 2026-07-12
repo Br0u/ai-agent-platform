@@ -23,6 +23,8 @@ describe("append-only audit query", () => {
           action: "session.revoked",
           targetType: "session",
           targetId: "session-1",
+          ipAddress: "192.168.65.1",
+          userAgent: "audit-e2e-unique-agent",
           metadata: {
             reason: "admin",
             token: "raw-token",
@@ -45,6 +47,10 @@ describe("append-only audit query", () => {
       pageSize: 20,
     });
     expect(result.items[0]?.metadata).toEqual({ reason: "admin" });
+    expect(result.items[0]).toMatchObject({
+      ipAddress: "192.168.65.1",
+      userAgent: "audit-e2e-unique-agent",
+    });
     expect(JSON.stringify(result)).not.toContain("raw-token");
     expect(JSON.stringify(result)).not.toContain("secret");
     expect(JSON.stringify(result)).not.toContain("private@example.test");

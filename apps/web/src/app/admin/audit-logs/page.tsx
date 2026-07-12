@@ -76,12 +76,14 @@ export default async function Page({
             <th>操作人</th>
             <th>事件</th>
             <th>目标</th>
+            <th>来源 IP</th>
+            <th>客户端标识</th>
             <th>元数据</th>
           </tr>
         </thead>
         <tbody>
           {result.items.map((item) => (
-            <tr key={item.id}>
+            <tr data-testid={`audit-row-${item.id}`} key={item.id}>
               <td>
                 <time dateTime={item.createdAt}>
                   {formatShanghaiDateTime(item.createdAt)}
@@ -92,6 +94,8 @@ export default async function Page({
               <td>
                 {item.targetType} / {item.targetId ?? "—"}
               </td>
+              <td data-testid="audit-source-ip">{item.ipAddress ?? "—"}</td>
+              <td data-testid="audit-user-agent">{item.userAgent ?? "—"}</td>
               <td>
                 <code>{JSON.stringify(item.metadata)}</code>
               </td>

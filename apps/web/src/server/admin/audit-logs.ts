@@ -22,6 +22,8 @@ type AuditLogRow = {
   action: string;
   targetType: string;
   targetId: string | null;
+  ipAddress: string | null;
+  userAgent: string | null;
   metadata: Record<string, unknown> | null;
   createdAt: Date;
 };
@@ -97,6 +99,8 @@ export function createDefaultAuditLogQueryService() {
           action: auditLogs.action,
           targetType: auditLogs.targetType,
           targetId: auditLogs.targetId,
+          ipAddress: auditLogs.ipAddress,
+          userAgent: auditLogs.userAgent,
           metadata: auditLogs.metadata,
           createdAt: auditLogs.createdAt,
         })

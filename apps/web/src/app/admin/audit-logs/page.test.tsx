@@ -29,6 +29,8 @@ describe("audit logs page", () => {
           action: "session.revoked",
           targetType: "session",
           targetId: "session-1",
+          ipAddress: "192.168.65.1",
+          userAgent: "audit-e2e-unique-agent",
           metadata: { revokedCount: 1 },
           createdAt: "2026-07-12T00:00:00.000Z",
         },
@@ -55,6 +57,13 @@ describe("audit logs page", () => {
     ).toBeVisible();
     expect(screen.getByText("2026-07-12 08:00:00")).toBeVisible();
     expect(screen.getByText("session.revoked")).toBeVisible();
+    expect(screen.getByRole("columnheader", { name: "来源 IP" })).toBeVisible();
+    expect(
+      screen.getByRole("columnheader", { name: "客户端标识" }),
+    ).toBeVisible();
+    expect(screen.getByText("192.168.65.1")).toBeVisible();
+    expect(screen.getByText("audit-e2e-unique-agent")).toBeVisible();
+    expect(screen.getByTestId("audit-row-audit-1")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: /删除|编辑/ }),
     ).not.toBeInTheDocument();

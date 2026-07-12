@@ -10,8 +10,10 @@ test("proxy overwrites spoofed client IP before the failed-login audit", async (
   const secret = process.env.BETTER_AUTH_SECRET;
   if (!secret || !baseURL)
     throw new Error("BETTER_AUTH_SECRET and baseURL are required");
+  const uniqueUserAgent = `audit-e2e-${Date.now()}-${process.pid}`;
   const attacker = await browser.newContext({
     extraHTTPHeaders: { "X-Real-IP": spoofedAddress },
+    userAgent: uniqueUserAgent,
   });
   const login = await attacker.newPage();
   await login.goto("/staff/login");
@@ -45,8 +47,18 @@ test("proxy overwrites spoofed client IP before the failed-login audit", async (
   });
   const page = await audit.newPage();
   await page.goto("/admin/audit-logs?action=auth.login_failure");
-  await expect(page.getByText("auth.login_failure").first()).toBeVisible();
-  await expect(page.locator("body")).not.toContainText(spoofedAddress);
+  const eventRow = page
+    .getByTestId(/^audit-row-/u)
+    .filter({ hasText: uniqueUserAgent });
+  await expect(eventRow).toHaveCount(1);
+  await expect(eventRow).toContainText("auth.login_failure");
+  const storedIp = (
+    await eventRow.getByTestId("audit-source-ip").textContent()
+  )?.trim();
+  expect(storedIp).toBeTruthy();
+  expect(storedIp).not.toBe("—");
+  expect(storedIp).not.toBe(spoofedAddress);
+  expect(storedIp).toMatch(/^(?:(?:\d{1,3}\.){3}\d{1,3}|[a-f0-9:]+)$/iu);
   await audit.close();
 });
 

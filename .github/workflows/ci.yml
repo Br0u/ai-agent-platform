@@ -56,4 +56,19 @@ jobs:
       - run: pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-smoke.spec.ts
       - run: docker build --target migrator -f apps/web/Dockerfile .
       - run: docker build --target runner -f apps/web/Dockerfile .
-      - run: docker run --rm -v "$PWD/infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:1.28.3-alpine3.23 nginx -t
+      - name: Validate Nginx configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          network="aap-nginx-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          upstream="aap-nginx-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm -f "$upstream" >/dev/null 2>&1 || true
+            docker network rm "$network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker network create "$network"
+          docker run -d --name "$upstream" --network "$network" --network-alias web nginx:1.28.3-alpine3.23
+          docker run --rm --network "$network" \
+            -v "$PWD/infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
+            nginx:1.28.3-alpine3.23 nginx -t

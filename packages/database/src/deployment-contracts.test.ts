@@ -67,6 +67,13 @@ describe("production deployment security contracts", () => {
     expect(workflow).toContain("docker build --target migrator");
     expect(workflow).toContain("docker build --target runner");
     expect(workflow).toContain("nginx -t");
+    expect(workflow).toContain("docker network create");
+    expect(workflow).toContain("--network-alias web");
+    expect(workflow).toContain("trap cleanup EXIT");
+    expect(workflow).toContain('docker network rm "$network"');
+    expect(workflow).toMatch(
+      /docker run --rm --network[\s\S]*nginx:1\.28\.3-alpine3\.23 nginx -t/u,
+    );
     expect(workflow).toContain("::add-mask::");
     expect(workflow).not.toContain("ci-customer-fixture-passphrase");
     expect(workflow).not.toContain("ci-only-better-auth-secret");
@@ -98,6 +105,10 @@ describe("production deployment security contracts", () => {
     expect(config).toMatch(/webServer:\s*externalBaseUrl\s*\?\s*undefined/u);
     expect(read("apps/web/e2e/auth-smoke.spec.ts")).toContain("test(");
     expect(read("apps/web/e2e/proxy-auth-security.spec.ts")).toContain("429");
+    const proxySpec = read("apps/web/e2e/proxy-auth-security.spec.ts");
+    expect(proxySpec).toContain("audit-source-ip");
+    expect(proxySpec).toContain("audit-e2e-");
+    expect(proxySpec).not.toContain('locator("body")).not.toContainText');
   });
 
   it("keeps client auth components outside the server-only action module", () => {
