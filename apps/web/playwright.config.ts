@@ -23,6 +23,14 @@ export default defineConfig({
         launchOptions: executablePath ? { executablePath } : undefined,
       },
     },
+    {
+      name: "mobile",
+      use: {
+        ...devices["Pixel 5"],
+        viewport: { width: 390, height: 844 },
+        launchOptions: executablePath ? { executablePath } : undefined,
+      },
+    },
   ],
   webServer: externalBaseUrl
     ? undefined

@@ -17,6 +17,7 @@ vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 vi.mock("@/server/auth/server-actions", () => ({
   enrollStaffTwoFactorAction: vi.fn(),
   removeStaffTwoFactorAction: vi.fn(),
+  verifyStaffRecoveryCodeAction: vi.fn(),
   verifyStaffTwoFactorAction: vi.fn(),
 }));
 

@@ -66,8 +66,8 @@ docker compose run --rm -it migrate pnpm --filter @ai-agent-platform/database au
 验收：
 
 ```bash
-curl -f http://127.0.0.1:8080/api/health/live
-curl -f http://127.0.0.1:8080/api/health/ready
+curl -f -H "Host: ${PUBLIC_HOST}" http://127.0.0.1:8080/api/health/live
+curl -f -H "Host: ${PUBLIC_HOST}" http://127.0.0.1:8080/api/health/ready
 ```
 
 新数据库卷会初始化独立角色；后续 schema 由一次性 `migrate` 服务处理。已有数据库不能依赖 `docker-entrypoint-initdb.d`，切换前需由 DBA 手工建立等价角色和授权，并验证 runtime 无`CREATE`及 audit 更新/删除权限，同时验证 backup 只能读取、不能写入或建表。

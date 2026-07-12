@@ -249,8 +249,18 @@ describe("production deployment security contracts", () => {
     const config = read("apps/web/playwright.config.ts");
     expect(config).toContain("process.env.BASE_URL");
     expect(config).toContain("process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH");
+    expect(config).toContain('name: "mobile"');
+    expect(config).toContain("viewport: { width: 390, height: 844 }");
     expect(config).toMatch(/webServer:\s*externalBaseUrl\s*\?\s*undefined/u);
     expect(read("apps/web/e2e/auth-smoke.spec.ts")).toContain("test(");
+    const accessSpec = read("apps/web/e2e/auth-access.spec.ts");
+    const fixtures = read("apps/web/e2e/auth-fixtures.ts");
+    expect(accessSpec).toContain("@security-state");
+    expect(accessSpec).toContain("@totp-enroll");
+    expect(accessSpec).toContain("@recovery-consume");
+    expect(fixtures).not.toMatch(
+      /@ai-agent-platform\/database|\bpg\b|DATABASE_URL/u,
+    );
     expect(read("apps/web/e2e/proxy-auth-security.spec.ts")).toContain("429");
     const proxySpec = read("apps/web/e2e/proxy-auth-security.spec.ts");
     expect(proxySpec).toContain("audit-source-ip");

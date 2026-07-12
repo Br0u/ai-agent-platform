@@ -1,0 +1,329 @@
+import { expect, test } from "@playwright/test";
+
+import {
+  addSignedSession,
+  adminStatePath,
+  beginAdminChallenge,
+  fixturePasswords,
+  identities,
+  loginCustomer,
+  totpFromUri,
+  writeRecoveryCode,
+  writeAdminState,
+} from "./auth-fixtures";
+
+test("public auth pages are accessible and responsive", async ({ page }) => {
+  const consoleErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  for (const [url, heading] of [
+    ["/login", "登录客户控制台"],
+    ["/register", "申请客户账号"],
+    ["/staff/login", "员工安全登录"],
+  ] as const) {
+    await page.goto(url);
+    await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  }
+  expect(consoleErrors).toEqual([]);
+});
+
+test("anonymous users cannot enter customer or admin workspaces", async ({
+  page,
+}) => {
+  await page.goto("/console");
+  await expect(page).toHaveURL(/\/login/u);
+  await page.goto("/admin");
+  await expect(page).toHaveURL(/\/staff\/login/u);
+});
+
+test("health endpoints are public", async ({ request }) => {
+  await expect((await request.get("/api/health/live")).status()).toBe(200);
+  await expect((await request.get("/api/health/ready")).status()).toBe(200);
+  const resend = await request.post("/api/v1/email-verification/resend");
+  expect(resend.status()).toBe(501);
+  await expect(resend.json()).resolves.toEqual({
+    error: { code: "EMAIL_VERIFICATION_DISABLED" },
+  });
+});
+
+test.describe("shared authorization state", () => {
+  test.describe.configure({ mode: "serial" });
+
+  test("@security-state pending customer gets onboarding but not Console", async ({
+    page,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("baseURL is required");
+    await addSignedSession(
+      page.context(),
+      baseURL,
+      "customer",
+      identities.pendingCustomer.sessionToken,
+    );
+    await page.goto("/console/onboarding");
+    await expect(page.getByRole("heading", { name: /审核/u })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "重新发送验证邮件" }),
+    ).toBeDisabled();
+    await page.goto("/console");
+    await expect(page).toHaveURL(/\/console\/onboarding/u);
+  });
+
+  test("@security-state active customer enters Console and is denied Admin", async ({
+    page,
+  }) => {
+    await loginCustomer(page);
+    await expect(page).toHaveURL(/\/console(?:\/|$)/u);
+    await page.goto("/admin");
+    await expect(page).toHaveURL(/\/staff\/login/u);
+  });
+
+  test("@security-state disabled user and wrong-realm cookies are rejected on the next request", async ({
+    browser,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("baseURL is required");
+    const disabled = await browser.newContext();
+    await addSignedSession(
+      disabled,
+      baseURL,
+      "customer",
+      identities.disabledCustomer.sessionToken,
+    );
+    expect(
+      (await disabled.request.get("/api/v1/session/customer")).status(),
+    ).toBe(403);
+    await disabled.close();
+
+    const wrongRealm = await browser.newContext();
+    await addSignedSession(
+      wrongRealm,
+      baseURL,
+      "workforce",
+      identities.staff.sessionToken,
+    );
+    expect(
+      (await wrongRealm.request.get("/api/v1/session/customer")).status(),
+    ).toBe(401);
+    await wrongRealm.close();
+  });
+
+  test("@security-state employee enters shell but restricted user administration is denied", async ({
+    page,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("baseURL is required");
+    await addSignedSession(
+      page.context(),
+      baseURL,
+      "workforce",
+      identities.staff.sessionToken,
+    );
+    await page.goto("/admin");
+    await expect(page).toHaveURL(/\/admin$/u);
+    await page.goto("/admin/users");
+    await expect(
+      page.getByRole("heading", { name: "This page couldn’t load" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "用户管理" }),
+    ).not.toBeVisible();
+  });
+
+  test("@security-state @totp-enroll admin enrolls TOTP, stores one recovery code, and revokes only the selected session", async ({
+    page,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("baseURL is required");
+    await addSignedSession(
+      page.context(),
+      baseURL,
+      "workforce",
+      identities.admin.sessionToken,
+    );
+    const incomplete = await page
+      .context()
+      .request.get("/api/v1/session/staff");
+    expect(incomplete.status()).toBe(403);
+    await expect(incomplete.json()).resolves.toMatchObject({
+      error: { code: "AUTH_TOTP_SETUP_REQUIRED" },
+    });
+    const deniedPage = await page.context().request.get("/admin/users");
+    expect(await deniedPage.text()).not.toContain("替换临时密码");
+
+    await page.goto("/staff/two-factor?returnTo=%2Fadmin%2Fusers");
+    await page.getByLabel("当前密码").fill(fixturePasswords().admin);
+    await page.getByRole("button", { name: "开始设置" }).click();
+    const uri = (
+      await page.locator("code").filter({ hasText: "otpauth://" }).textContent()
+    )?.trim();
+    if (!uri) throw new Error("TOTP URI was not rendered");
+    const recoveryCodes = await page.locator("li code").allTextContents();
+    expect(recoveryCodes.length).toBeGreaterThan(0);
+    await writeRecoveryCode(recoveryCodes[0]!);
+    await page.getByLabel("六位验证码").fill(totpFromUri(uri));
+    await page.getByRole("button", { name: "验证并启用" }).click();
+    await expect(page).toHaveURL(/\/admin\/users/u);
+    await writeAdminState(page.context());
+
+    const revokedForm = page.locator(
+      `form:has(input[name="sessionId"][value="${identities.admin.revokedSessionId}"])`,
+    );
+    await revokedForm.getByRole("button", { name: "撤销此会话" }).click();
+    await expect(page.getByRole("heading", { name: "用户管理" })).toBeVisible();
+    await page.context().clearCookies();
+  });
+
+  test("@security-state @recovery-consume recovery code completes the challenge once and reuse fails", async ({
+    page,
+  }) => {
+    const { readFile } = await import("node:fs/promises");
+    const { recoveryCodePath } = await import("./auth-fixtures");
+    const recoveryCode = (await readFile(recoveryCodePath, "utf8")).trim();
+    await beginAdminChallenge(page);
+    await expect(page).toHaveURL(/\/staff\/two-factor/u);
+    await page.getByLabel("恢复码").fill(recoveryCode);
+    await page.getByRole("button", { name: "使用恢复码" }).click();
+    await expect(page).toHaveURL(/\/admin(?:\/|$)/u);
+    await page.context().clearCookies();
+
+    await beginAdminChallenge(page);
+    await page.getByLabel("恢复码").fill(recoveryCode);
+    await page.getByRole("button", { name: "使用恢复码" }).click();
+    const recoveryForm = page.locator('form:has(input[name="recoveryCode"])');
+    await expect(recoveryForm.getByRole("status")).toContainText("已使用");
+    await page.context().clearCookies();
+  });
+
+  test("@security-state role removal is effective on the next authorization check", async ({
+    browser,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("baseURL is required");
+    const admin = await browser.newContext({ storageState: adminStatePath });
+    const page = await admin.newPage();
+    await page.goto("/admin/roles");
+    const form = page.locator("form").filter({
+      has: page.getByRole("button", { name: "移除角色" }),
+    });
+    await form.getByLabel("用户 ID").fill(identities.roleTarget.id);
+    await form.getByLabel("角色").selectOption("employee");
+    await form.getByRole("button", { name: "移除角色" }).click();
+    await expect(form.getByRole("status")).toContainText("操作已完成");
+
+    const employee = await page.context().browser()!.newContext();
+    await addSignedSession(
+      employee,
+      baseURL,
+      "workforce",
+      identities.roleTarget.sessionToken,
+    );
+    expect((await employee.request.get("/api/v1/session/staff")).status()).toBe(
+      401,
+    );
+    await employee.close();
+    await admin.close();
+  });
+
+  test("@security-state repeated invalid registration is rate limited", async ({
+    request,
+  }) => {
+    const statuses: number[] = [];
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      statuses.push(
+        (
+          await request.post("/register", {
+            form: { email: "invalid", password: "invalid" },
+            maxRedirects: 0,
+          })
+        ).status(),
+      );
+    }
+    expect(statuses).toContain(429);
+  });
+
+  test("@security-state administrative password replacement revokes old staff sessions", async ({
+    browser,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("baseURL is required");
+    const admin = await browser.newContext({ storageState: adminStatePath });
+    const page = await admin.newPage();
+    await page.goto(
+      `/admin/users?search=${encodeURIComponent(identities.staff.email)}`,
+    );
+    const row = page
+      .getByRole("row")
+      .filter({ hasText: identities.staff.email });
+    const form = row.locator("form").filter({
+      has: page.getByRole("button", { name: "替换临时密码" }),
+    });
+    await form
+      .getByLabel("新临时密码")
+      .fill("E2E-Replaced-Temporary-Password-2026!");
+    await form.getByRole("button", { name: "替换临时密码" }).click();
+    await expect(form.getByRole("status")).toContainText("操作已完成");
+
+    const oldStaff = await browser.newContext();
+    await addSignedSession(
+      oldStaff,
+      baseURL,
+      "workforce",
+      identities.staff.sessionToken,
+    );
+    expect((await oldStaff.request.get("/api/v1/session/staff")).status()).toBe(
+      401,
+    );
+    await oldStaff.close();
+    await admin.close();
+  });
+
+  test("@security-state saved administrator session is still valid", async ({
+    browser,
+  }) => {
+    const admin = await browser.newContext({ storageState: adminStatePath });
+    expect((await admin.request.get("/api/v1/session/staff")).status()).toBe(
+      200,
+    );
+    await admin.close();
+  });
+
+  test("@security-state saved administrator session can be revoked", async ({
+    browser,
+  }) => {
+    const admin = await browser.newContext({ storageState: adminStatePath });
+    const page = await admin.newPage();
+    await page.goto(
+      `/admin/users?search=${encodeURIComponent(identities.admin.email)}`,
+    );
+    const row = page
+      .getByRole("row")
+      .filter({ hasText: identities.admin.email });
+    const form = row.locator("form").filter({
+      has: page.getByRole("button", { name: "撤销全部会话" }),
+    });
+    await form.getByRole("button", { name: "撤销全部会话" }).click();
+    await expect
+      .poll(async () =>
+        (await admin.request.get("/api/v1/session/staff")).status(),
+      )
+      .toBe(401);
+    await admin.close();
+  });
+
+  test("@security-state saved administrator session remains rejected", async ({
+    browser,
+  }) => {
+    const admin = await browser.newContext({ storageState: adminStatePath });
+    expect((await admin.request.get("/api/v1/session/staff")).status()).toBe(
+      401,
+    );
+    await admin.close();
+  });
+});
