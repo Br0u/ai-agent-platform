@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 
 import {
   createDefaultAuthActions,
+  createDefaultRecoveryChallengeActions,
   createDefaultStaffSecurityActions,
   type AuthActionState,
   type StaffSecurityActionState,
@@ -74,6 +75,14 @@ export async function verifyStaffTwoFactorAction(
 ): Promise<StaffSecurityActionState> {
   const result =
     await createDefaultStaffSecurityActions().verifyTwoFactor(formData);
+  if (result.kind === "success") redirect(result.redirectTo);
+  return result;
+}
+
+export async function verifyStaffRecoveryCodeAction(
+  formData: FormData,
+): Promise<StaffSecurityActionState> {
+  const result = await createDefaultRecoveryChallengeActions().verify(formData);
   if (result.kind === "success") redirect(result.redirectTo);
   return result;
 }

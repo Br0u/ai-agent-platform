@@ -1,17 +1,79 @@
 import { describe, expect, it, vi } from "vitest";
+import { makeSignature } from "better-auth/crypto";
 
 import {
   AUTH_ACTION_INITIAL_STATE,
   createAuthActions,
+  createRecoveryChallengeActions,
   createRecoveryCodeService,
   createStaffTotpRemovalService,
   createStaffSecurityActions,
   safeReturnPath,
+  verifySignedChallengeCookie,
   type AuthActionDependencies,
   type LoginUser,
 } from "./actions";
 
 describe("staff password, TOTP, recovery, and re-auth actions", () => {
+  it("accepts only an untampered Better Auth challenge signature", async () => {
+    const secret = "unit-test-secret-that-is-at-least-32-characters";
+    const identifier = "2fa-pending-challenge";
+    const signed = `${identifier}.${await makeSignature(identifier, secret)}`;
+    await expect(verifySignedChallengeCookie(signed, secret)).resolves.toBe(
+      identifier,
+    );
+    await expect(
+      verifySignedChallengeCookie(`${signed}tampered`, secret),
+    ).resolves.toBeNull();
+  });
+  it("consumes a signed pending challenge recovery code and commits only the replacement session", async () => {
+    const repository = {
+      consume: vi.fn(async () => ({
+        userId: "staff-1",
+        mustChangePassword: false,
+        sessionToken: "replacement-token",
+      })),
+    };
+    const commitSession = vi.fn(async () => undefined);
+    const clearChallenge = vi.fn(async () => undefined);
+    const actions = createRecoveryChallengeActions({
+      getChallenge: async () => "signed-challenge",
+      verifyChallenge: async () => "challenge-id",
+      repository,
+      commitSession,
+      clearChallenge,
+    });
+
+    await expect(
+      actions.verify(
+        form({
+          recoveryCode: "AAAAA-BBBBB-CCCCC-DDDDD",
+          returnTo: "/admin/users",
+        }),
+      ),
+    ).resolves.toEqual({ kind: "success", redirectTo: "/admin/users" });
+    expect(repository.consume).toHaveBeenCalledWith(
+      "challenge-id",
+      "AAAAA-BBBBB-CCCCC-DDDDD",
+    );
+    expect(commitSession).toHaveBeenCalledWith("replacement-token");
+    expect(clearChallenge).toHaveBeenCalledOnce();
+  });
+
+  it("rejects recovery-code reuse without committing a session", async () => {
+    const commitSession = vi.fn(async () => undefined);
+    const actions = createRecoveryChallengeActions({
+      getChallenge: async () => "signed-challenge",
+      verifyChallenge: async () => "challenge-id",
+      repository: { consume: vi.fn(async () => null) },
+      commitSession,
+      clearChallenge: vi.fn(async () => undefined),
+    });
+    await expect(
+      actions.verify(form({ recoveryCode: "AAAAA-BBBBB-CCCCC-DDDDD" })),
+    ).resolves.toEqual({ kind: "error", code: "AUTH_INVALID_CREDENTIALS" });
+    expect(commitSession).not.toHaveBeenCalled();
+  });
   function securityFixture() {
     const gateway = {
       changePassword: vi.fn(async () => ({

@@ -6,7 +6,8 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, gt, inArray, ne } from "drizzle-orm";
+import { makeSignature } from "better-auth/crypto";
 import { cookies as nextCookies, headers as nextHeaders } from "next/headers";
 import { ResponseCookies } from "next/dist/server/web/spec-extension/cookies";
 import { z } from "zod";
@@ -27,6 +28,7 @@ import {
   sessions,
   twoFactors,
   users,
+  verifications,
   verifyPassword,
   type IdentityRealm,
   type UserStatus,
@@ -237,6 +239,201 @@ export function createRecoveryCodeService(dependencies: {
       });
     },
   };
+}
+
+type RecoveryChallengeResult = {
+  userId: string;
+  mustChangePassword: boolean;
+  sessionToken: string;
+};
+
+export function createRecoveryChallengeActions(dependencies: {
+  getChallenge(): Promise<string | undefined>;
+  verifyChallenge(value: string): Promise<string | null>;
+  repository: {
+    consume(
+      challengeIdentifier: string,
+      recoveryCode: string,
+    ): Promise<RecoveryChallengeResult | null>;
+  };
+  commitSession(token: string): Promise<void>;
+  clearChallenge(): Promise<void>;
+}) {
+  return {
+    async verify(formData: FormData): Promise<StaffSecurityActionState> {
+      const recoveryCode = stringField(formData, "recoveryCode");
+      if (
+        !recoveryCode ||
+        !/^[A-Z0-9]{5}(?:-[A-Z0-9]{5}){3}$/u.test(recoveryCode)
+      )
+        return { kind: "error", code: "AUTH_INVALID_INPUT" };
+      try {
+        const signed = await dependencies.getChallenge();
+        if (!signed) return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+        const identifier = await dependencies.verifyChallenge(signed);
+        if (!identifier)
+          return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+        const consumed = await dependencies.repository.consume(
+          identifier,
+          recoveryCode,
+        );
+        if (!consumed)
+          return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+        await dependencies.commitSession(consumed.sessionToken);
+        await dependencies.clearChallenge();
+        const returnTo = safeReturnPath(
+          "workforce",
+          stringField(formData, "returnTo"),
+        );
+        return {
+          kind: "success",
+          redirectTo: consumed.mustChangePassword
+            ? `/staff/change-password?returnTo=${encodeURIComponent(returnTo)}`
+            : returnTo,
+        };
+      } catch {
+        return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+      }
+    },
+  };
+}
+
+export async function verifySignedChallengeCookie(
+  value: string,
+  secret: string,
+): Promise<string | null> {
+  const separator = value.lastIndexOf(".");
+  if (separator <= 0 || separator === value.length - 1) return null;
+  const identifier = value.slice(0, separator);
+  const received = Buffer.from(value.slice(separator + 1), "utf8");
+  const expected = Buffer.from(await makeSignature(identifier, secret), "utf8");
+  return received.length === expected.length &&
+    timingSafeEqual(received, expected)
+    ? identifier
+    : null;
+}
+
+export function createDefaultRecoveryChallengeActions() {
+  const database = getDatabase();
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret || secret.length < 32)
+    throw new Error("BETTER_AUTH_SECRET is required");
+  return createRecoveryChallengeActions({
+    async getChallenge() {
+      const store = await nextCookies();
+      return (
+        store.get("__Secure-better-auth.two_factor")?.value ??
+        store.get("better-auth.two_factor")?.value
+      );
+    },
+    verifyChallenge: (value) => verifySignedChallengeCookie(value, secret),
+    repository: {
+      async consume(challengeIdentifier, recoveryCode) {
+        return database.transaction(async (transaction) => {
+          const [challenge] = await transaction
+            .select({ userId: verifications.value })
+            .from(verifications)
+            .where(
+              and(
+                eq(verifications.identifier, challengeIdentifier),
+                gt(verifications.expiresAt, new Date()),
+              ),
+            )
+            .for("update")
+            .limit(1);
+          if (!challenge) return null;
+          const [factor] = await transaction
+            .select({
+              backupCodes: twoFactors.backupCodes,
+              userId: users.id,
+              mustChangePassword: users.mustChangePassword,
+              realm: users.identityRealm,
+              status: users.status,
+              enabled: users.twoFactorEnabled,
+            })
+            .from(twoFactors)
+            .innerJoin(users, eq(users.id, twoFactors.userId))
+            .where(eq(twoFactors.userId, challenge.userId))
+            .for("update")
+            .limit(1);
+          if (
+            !factor ||
+            factor.realm !== "workforce" ||
+            factor.status !== "active" ||
+            !factor.enabled
+          )
+            return null;
+          let hashes: unknown;
+          try {
+            hashes = JSON.parse(factor.backupCodes);
+          } catch {
+            return null;
+          }
+          if (!Array.isArray(hashes)) return null;
+          const candidate = recoveryCodeHash(recoveryCode);
+          const index = hashes.findIndex(
+            (hash) =>
+              typeof hash === "string" &&
+              /^[a-f0-9]{64}$/u.test(hash) &&
+              hashesEqual(hash, candidate),
+          );
+          if (index < 0) return null;
+          hashes.splice(index, 1);
+          const token = nodeRandomBytes(32).toString("base64url");
+          const now = new Date();
+          await transaction
+            .update(twoFactors)
+            .set({ backupCodes: JSON.stringify(hashes) })
+            .where(eq(twoFactors.userId, factor.userId));
+          await transaction
+            .delete(verifications)
+            .where(
+              inArray(verifications.identifier, [
+                challengeIdentifier,
+                `2fa-attempts-${challengeIdentifier}`,
+              ]),
+            );
+          await transaction.insert(sessions).values({
+            token,
+            userId: factor.userId,
+            expiresAt: new Date(now.getTime() + 8 * 60 * 60 * 1000),
+            realm: "workforce",
+            mfaVerifiedAt: now,
+          });
+          await transaction.insert(auditLogs).values({
+            actorRealm: "workforce",
+            actorUserId: factor.userId,
+            action: "auth.recovery_code_used",
+            targetType: "user",
+            targetId: factor.userId,
+            metadata: {},
+          });
+          return {
+            userId: factor.userId,
+            mustChangePassword: factor.mustChangePassword,
+            sessionToken: token,
+          };
+        });
+      },
+    },
+    async commitSession(token) {
+      const store = await nextCookies();
+      const signature = await makeSignature(token, secret);
+      store.set(STAFF_COOKIE, `${token}.${signature}`, {
+        httpOnly: true,
+        maxAge: 8 * 60 * 60,
+        path: "/",
+        sameSite: "lax",
+        secure:
+          new URL(process.env.BETTER_AUTH_URL ?? "http://localhost")
+            .protocol === "https:",
+      });
+    },
+    async clearChallenge() {
+      const store = await nextCookies();
+      for (const name of STAFF_CHALLENGE_COOKIES) store.delete(name);
+    },
+  });
 }
 
 type StaffSecurityGateway = {

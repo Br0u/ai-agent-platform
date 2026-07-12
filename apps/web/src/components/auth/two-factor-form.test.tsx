@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/server/auth/server-actions", () => ({
   enrollStaffTwoFactorAction: vi.fn(),
   removeStaffTwoFactorAction: vi.fn(),
+  verifyStaffRecoveryCodeAction: vi.fn(),
   verifyStaffTwoFactorAction: vi.fn(),
 }));
 
@@ -50,6 +51,11 @@ describe("TwoFactorForm", () => {
     expect(code).toHaveAttribute("inputmode", "numeric");
     expect(screen.queryByLabelText(/信任/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "验证并继续" })).toBeEnabled();
+    expect(screen.getByLabelText("恢复码")).toHaveAttribute(
+      "autocomplete",
+      "one-time-code",
+    );
+    expect(screen.getByRole("button", { name: "使用恢复码" })).toBeEnabled();
   });
 
   it("renders an accessible password-confirmed removal form for enrolled staff", () => {
