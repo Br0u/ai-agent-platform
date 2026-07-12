@@ -166,11 +166,14 @@ describePostgres("session identity boundary trigger", () => {
         .finally(() => {
           loginSettled = true;
         });
+      const rejectedInsert = expect(insert).rejects.toMatchObject({
+        code: "23514",
+      });
 
       await delay(50);
       expect(loginSettled).toBe(false);
       await disable.query("COMMIT");
-      await expect(insert).rejects.toMatchObject({ code: "23514" });
+      await rejectedInsert;
     } finally {
       await disable.query("ROLLBACK").catch(() => undefined);
       await login.query("ROLLBACK").catch(() => undefined);
