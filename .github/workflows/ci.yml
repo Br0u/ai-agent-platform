@@ -16,11 +16,11 @@ jobs:
         image: postgres:18
         env:
           POSTGRES_USER: ai_agent_owner
-          POSTGRES_DB: ai_agent_platform_identity_test_ci
+          POSTGRES_DB: ai_agent_platform_ci
           POSTGRES_HOST_AUTH_METHOD: trust
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U ai_agent_owner -d ai_agent_platform_identity_test_ci"
+          --health-cmd "pg_isready -U ai_agent_owner -d ai_agent_platform_ci"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       TEST_DATABASE_URL: postgresql://ai_agent_owner@127.0.0.1:5432/ai_agent_platform_identity_test_ci
@@ -49,12 +49,19 @@ jobs:
             echo "::add-mask::$value"
             echo "$name=$value" >> "$GITHUB_ENV"
           done
-          echo "DATABASE_URL=postgresql://ai_agent_migrator@127.0.0.1:5432/ai_agent_platform_identity_test_ci" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=postgresql://ai_agent_migrator@127.0.0.1:5432/ai_agent_platform_ci" >> "$GITHUB_ENV"
+      - name: Create isolated destructive-test database
+        shell: bash
+        env:
+          PGHOST: 127.0.0.1
+          PGUSER: ai_agent_owner
+          PGDATABASE: ai_agent_platform_ci
+        run: psql --set=ON_ERROR_STOP=1 --command="CREATE DATABASE ai_agent_platform_identity_test_ci"
       - name: Initialize least-privilege database roles
         shell: bash
         env:
           POSTGRES_USER: ai_agent_owner
-          POSTGRES_DB: ai_agent_platform_identity_test_ci
+          POSTGRES_DB: ai_agent_platform_ci
           PGHOST: 127.0.0.1
           ROLE_SQL_FILE: infra/postgres/01-roles.sql
         run: sh infra/postgres/01-roles.sh
