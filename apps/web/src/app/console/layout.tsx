@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { requireCustomer } from "@/server/auth/access";
+import { requireConsoleShell } from "@/server/auth/workspace-route-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +8,6 @@ export default async function ConsoleLayout({
 }: {
   children: ReactNode;
 }) {
-  await requireCustomer({ onboardingAllowed: true });
+  await requireConsoleShell();
   return <div data-route-group="console">{children}</div>;
 }

@@ -30,10 +30,10 @@ export async function staffLoginAction(
 
 export async function customerLogoutAction(): Promise<void> {
   const result = await createDefaultAuthActions().customerLogout();
-  redirect(result.kind === "success" ? result.redirectTo : "/login");
+  if (result.kind === "success") redirect(result.redirectTo);
 }
 
 export async function staffLogoutAction(): Promise<void> {
   const result = await createDefaultAuthActions().staffLogout();
-  redirect(result.kind === "success" ? result.redirectTo : "/staff/login");
+  if (result.kind === "success") redirect(result.redirectTo);
 }

@@ -1,5 +1,13 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./app-shell";
 import type {
   NavigationSection,
@@ -238,5 +246,22 @@ describe("AppShell", () => {
     expect(
       screen.getByRole("button", { name: /退出登录/ }).closest("form"),
     ).toHaveAttribute("action");
+  });
+
+  it("uses form pending state to disable duplicate logout submission", async () => {
+    let finishLogout: (() => void) | undefined;
+    const logoutAction = vi.fn(
+      () => new Promise<void>((resolve) => (finishLogout = resolve)),
+    );
+    renderShell("console", { logoutAction });
+    const button = screen.getByRole("button", { name: /退出登录/ });
+
+    fireEvent.click(button);
+
+    await waitFor(() => expect(button).toBeDisabled());
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(logoutAction).toHaveBeenCalledOnce();
+
+    await act(async () => finishLogout?.());
   });
 });

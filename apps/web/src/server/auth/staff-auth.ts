@@ -89,6 +89,7 @@ type StaffAuthDependencies = {
   env?: AuthEnvironment;
   db?: ReturnType<typeof getDatabase>;
   adapter?: DBAdapterInstance;
+  forwardCookies?: boolean;
 };
 
 function resolveAdapter(
@@ -119,7 +120,7 @@ export function createStaffAuthOptions(
         maxUsernameLength: 128,
       }),
       twoFactor(staffTwoFactorPolicy),
-      nextCookies(),
+      ...(dependencies.forwardCookies === false ? [] : [nextCookies()]),
     ],
   } satisfies BetterAuthOptions;
 }

@@ -14,7 +14,6 @@ const activeCustomer: LoginUser = {
   status: "active",
   mustChangePassword: false,
   twoFactorEnabled: false,
-  permissions: [],
 };
 
 const activeStaff: LoginUser = {
@@ -23,7 +22,6 @@ const activeStaff: LoginUser = {
   status: "active",
   mustChangePassword: false,
   twoFactorEnabled: false,
-  permissions: ["admin:products"],
 };
 
 function form(values: Record<string, string>): FormData {
@@ -32,34 +30,38 @@ function form(values: Record<string, string>): FormData {
   return data;
 }
 
+function staged<T>(response: T): { response: T; headers: Headers } {
+  return { response, headers: new Headers() };
+}
+
 function fixture(overrides: Partial<AuthActionDependencies> = {}) {
   const customer = {
-    signInEmail: vi.fn().mockResolvedValue({
-      user: { id: activeCustomer.id },
-      token: "new-customer-token",
-    }),
-    signOut: vi.fn().mockResolvedValue({ success: true }),
+    signInEmail: vi.fn().mockResolvedValue(
+      staged({
+        user: { id: activeCustomer.id },
+        token: "new-customer-token",
+      }),
+    ),
+    signOut: vi.fn().mockResolvedValue(staged({ success: true })),
     revokeNewSession: vi.fn().mockResolvedValue(undefined),
   };
   const staff = {
-    signInEmail: vi.fn().mockResolvedValue({
-      user: { id: activeStaff.id },
-      token: "new-staff-token",
-    }),
-    signInUsername: vi.fn().mockResolvedValue({
-      user: { id: activeStaff.id },
-      token: "new-staff-token",
-    }),
-    signOut: vi.fn().mockResolvedValue({ success: true }),
+    signInEmail: vi.fn().mockResolvedValue(
+      staged({
+        user: { id: activeStaff.id },
+        token: "new-staff-token",
+      }),
+    ),
+    signInUsername: vi.fn().mockResolvedValue(
+      staged({
+        user: { id: activeStaff.id },
+        token: "new-staff-token",
+      }),
+    ),
+    signOut: vi.fn().mockResolvedValue(staged({ success: true })),
     revokeNewSession: vi.fn().mockResolvedValue(undefined),
   };
   const users = {
-    findByIdentifier: vi
-      .fn()
-      .mockImplementation(
-        async (realm: LoginUser["realm"]): Promise<LoginUser | null> =>
-          realm === "customer" ? activeCustomer : activeStaff,
-      ),
     findById: vi
       .fn()
       .mockImplementation(
@@ -69,13 +71,15 @@ function fixture(overrides: Partial<AuthActionDependencies> = {}) {
   };
   const audit = { write: vi.fn().mockResolvedValue(undefined) };
   const reportInternalError = vi.fn();
-  const cookieStore = { delete: vi.fn() };
+  const commitCookies = vi.fn().mockResolvedValue(undefined);
+  const cookieStore = { delete: vi.fn(), set: vi.fn() };
   const dependencies: AuthActionDependencies = {
     customer,
     staff,
     users,
     audit,
     reportInternalError,
+    commitCookies,
     getHeaders: async () =>
       new Headers({ "user-agent": "test-agent", "x-real-ip": "127.0.0.1" }),
     getCookieStore: async () => cookieStore,
@@ -87,6 +91,7 @@ function fixture(overrides: Partial<AuthActionDependencies> = {}) {
     audit,
     cookieStore,
     customer,
+    commitCookies,
     reportInternalError,
     staff,
     users,
@@ -130,7 +135,7 @@ describe("safeReturnPath", () => {
 
 describe("customer login action", () => {
   it("normalizes email and hard-codes the seven-day remember policy", async () => {
-    const { actions, customer } = fixture();
+    const { actions, commitCookies, customer } = fixture();
 
     await actions.customerLogin(
       AUTH_ACTION_INITIAL_STATE,
@@ -148,6 +153,7 @@ describe("customer login action", () => {
       rememberMe: true,
       headers: expect.any(Headers),
     });
+    expect(commitCookies).toHaveBeenCalledWith("customer", expect.any(Headers));
   });
 
   it.each([
@@ -207,8 +213,14 @@ describe("customer login action", () => {
   });
 
   it("stays generic even when both compensation operations fail", async () => {
-    const { actions, cookieStore, customer, reportInternalError, users } =
-      fixture();
+    const {
+      actions,
+      commitCookies,
+      cookieStore,
+      customer,
+      reportInternalError,
+      users,
+    } = fixture();
     users.findById.mockRejectedValue(new Error("repository unavailable"));
     customer.revokeNewSession.mockRejectedValue(new Error("revoke failed"));
     cookieStore.delete.mockImplementation(() => {
@@ -231,6 +243,7 @@ describe("customer login action", () => {
       "new-customer-token",
     );
     expect(cookieStore.delete).toHaveBeenCalledWith("aap_customer_session");
+    expect(commitCookies).not.toHaveBeenCalled();
     expect(reportInternalError).toHaveBeenCalledWith(
       expect.any(AggregateError),
     );
@@ -238,20 +251,6 @@ describe("customer login action", () => {
 });
 
 describe("staff login action", () => {
-  it("fails closed before authentication when the workforce lookup fails", async () => {
-    const { actions, staff, users } = fixture();
-    users.findByIdentifier.mockRejectedValue(new Error("database unavailable"));
-
-    const result = await actions.staffLogin(
-      AUTH_ACTION_INITIAL_STATE,
-      form({ identifier: "operator.one", password: "ValidPass#12" }),
-    );
-
-    expect(result).toEqual({ kind: "error", code: "AUTH_INVALID_CREDENTIALS" });
-    expect(staff.signInEmail).not.toHaveBeenCalled();
-    expect(staff.signInUsername).not.toHaveBeenCalled();
-  });
-
   it.each([
     ["STAFF@EXAMPLE.TEST", "email", "staff@example.test"],
     ["  Operator.One  ", "username", "operator.one"],
@@ -286,16 +285,13 @@ describe("staff login action", () => {
   );
 
   it("never bypasses an actual TOTP challenge for a forced-password user", async () => {
-    const { actions, staff, users } = fixture();
-    users.findByIdentifier.mockResolvedValue({
-      ...activeStaff,
-      mustChangePassword: true,
-      twoFactorEnabled: true,
-    });
-    staff.signInUsername.mockResolvedValue({
-      twoFactorRedirect: true,
-      twoFactorMethods: ["totp"],
-    });
+    const { actions, commitCookies, staff } = fixture();
+    staff.signInUsername.mockResolvedValue(
+      staged({
+        twoFactorRedirect: true,
+        twoFactorMethods: ["totp"],
+      }),
+    );
 
     const result = await actions.staffLogin(
       AUTH_ACTION_INITIAL_STATE,
@@ -310,14 +306,35 @@ describe("staff login action", () => {
       kind: "success",
       redirectTo: "/staff/two-factor?returnTo=%2Fadmin%2Fproducts",
     });
+    expect(commitCookies).toHaveBeenCalledWith(
+      "workforce",
+      expect.any(Headers),
+    );
+  });
+
+  it("authenticates before applying the authoritative disabled-user policy", async () => {
+    const { actions, commitCookies, staff, users } = fixture();
+    users.findById.mockResolvedValue({ ...activeStaff, status: "disabled" });
+
+    const result = await actions.staffLogin(
+      AUTH_ACTION_INITIAL_STATE,
+      form({ identifier: "operator.one", password: "ValidPass#12" }),
+    );
+
+    expect(staff.signInUsername).toHaveBeenCalledOnce();
+    expect(staff.signOut).not.toHaveBeenCalled();
+    expect(result).toEqual({ kind: "error", code: "AUTH_INVALID_CREDENTIALS" });
+    expect(commitCookies).not.toHaveBeenCalled();
   });
 
   it("redirects an actual Better Auth challenge with a safe default return path", async () => {
     const { actions, staff } = fixture();
-    staff.signInEmail.mockResolvedValue({
-      twoFactorRedirect: true,
-      twoFactorMethods: ["totp"],
-    });
+    staff.signInEmail.mockResolvedValue(
+      staged({
+        twoFactorRedirect: true,
+        twoFactorMethods: ["totp"],
+      }),
+    );
 
     const result = await actions.staffLogin(
       AUTH_ACTION_INITIAL_STATE,
@@ -336,7 +353,6 @@ describe("staff login action", () => {
       ...activeStaff,
       mustChangePassword: true,
     };
-    users.findByIdentifier.mockResolvedValue(forcedPasswordUser);
     users.findById.mockResolvedValue(forcedPasswordUser);
 
     const result = await actions.staffLogin(
@@ -472,4 +488,40 @@ describe("logout actions", () => {
       );
     },
   );
+
+  it("still clears locally and audits when server revocation fails", async () => {
+    const { actions, audit, customer, reportInternalError } = fixture();
+    customer.signOut.mockRejectedValue(new Error("revocation failed"));
+
+    await expect(actions.customerLogout()).resolves.toEqual({
+      kind: "success",
+      redirectTo: "/login",
+    });
+    expect(audit.write).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "auth.logout" }),
+    );
+    expect(reportInternalError).toHaveBeenCalledWith(
+      expect.any(AggregateError),
+    );
+  });
+
+  it("returns a stable failure only when neither expiry commit nor local clear works", async () => {
+    const { actions, audit, cookieStore, customer, reportInternalError } =
+      fixture();
+    customer.signOut.mockRejectedValue(new Error("revocation failed"));
+    cookieStore.delete.mockImplementation(() => {
+      throw new Error("cookie clear failed");
+    });
+
+    await expect(actions.customerLogout()).resolves.toEqual({
+      kind: "error",
+      code: "AUTH_LOGOUT_FAILED",
+    });
+    expect(audit.write).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "auth.logout" }),
+    );
+    expect(reportInternalError).toHaveBeenCalledWith(
+      expect.any(AggregateError),
+    );
+  });
 });

@@ -34,6 +34,7 @@ type CustomerAuthDependencies = {
   env?: AuthEnvironment;
   db?: ReturnType<typeof getDatabase>;
   adapter?: DBAdapterInstance;
+  forwardCookies?: boolean;
 };
 
 function resolveAdapter(
@@ -59,7 +60,7 @@ export function createCustomerAuthOptions(
 
   return {
     ...shared,
-    plugins: [nextCookies()],
+    plugins: dependencies.forwardCookies === false ? [] : [nextCookies()],
   } satisfies BetterAuthOptions;
 }
 

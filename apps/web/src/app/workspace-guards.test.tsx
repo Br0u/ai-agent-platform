@@ -6,10 +6,20 @@ const mocks = vi.hoisted(() => ({
   requireCustomer: vi.fn().mockResolvedValue({ realm: "customer" }),
   requirePermission: vi.fn().mockResolvedValue({ realm: "workforce" }),
   requireWorkforce: vi.fn().mockResolvedValue({ realm: "workforce" }),
+  redirect: vi.fn(() => {
+    throw new Error("NEXT_REDIRECT");
+  }),
 }));
 
-vi.mock("@/server/auth/access", () => mocks);
+vi.mock("@/server/auth/access", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/auth/access")>()),
+  requireCustomer: mocks.requireCustomer,
+  requirePermission: mocks.requirePermission,
+  requireWorkforce: mocks.requireWorkforce,
+}));
+vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 
+import { AuthAccessError } from "@/server/auth/access";
 import AdminLayout from "./admin/layout";
 import AdminProductsPage from "./admin/products/page";
 import ConsoleLayout from "./console/layout";
@@ -43,6 +53,48 @@ describe("workspace guards", () => {
     );
     await expect(AdminProductsPage()).rejects.toThrow("permission removed");
     expect(mocks.requirePermission).toHaveBeenCalledTimes(2);
+  });
+
+  it("redirects an unauthenticated admin shell to the fixed staff login return path", async () => {
+    mocks.requireWorkforce.mockRejectedValueOnce(
+      new AuthAccessError("AUTH_SESSION_REQUIRED", 401),
+    );
+
+    await expect(AdminLayout({ children: <p>admin shell</p> })).rejects.toThrow(
+      "NEXT_REDIRECT",
+    );
+    expect(mocks.redirect).toHaveBeenCalledWith(
+      "/staff/login?returnTo=%2Fadmin",
+    );
+  });
+
+  it("redirects an unauthenticated customer shell to the fixed login return path", async () => {
+    mocks.requireCustomer.mockRejectedValueOnce(
+      new AuthAccessError("AUTH_REALM_MISMATCH", 403),
+    );
+
+    await expect(
+      ConsoleLayout({ children: <p>console shell</p> }),
+    ).rejects.toThrow("NEXT_REDIRECT");
+    expect(mocks.redirect).toHaveBeenCalledWith("/login?returnTo=%2Fconsole");
+  });
+
+  it("redirects pending customer leaf access to onboarding", async () => {
+    mocks.requireCustomer.mockRejectedValueOnce(
+      new AuthAccessError("AUTH_ACCOUNT_NOT_ACTIVE", 403),
+    );
+
+    await expect(ConsolePage()).rejects.toThrow("NEXT_REDIRECT");
+    expect(mocks.redirect).toHaveBeenCalledWith("/console/onboarding");
+  });
+
+  it("preserves unknown infrastructure errors", async () => {
+    mocks.requireWorkforce.mockRejectedValueOnce(new Error("database down"));
+
+    await expect(AdminLayout({ children: <p>admin shell</p> })).rejects.toThrow(
+      "database down",
+    );
+    expect(mocks.redirect).not.toHaveBeenCalled();
   });
 });
 
@@ -90,7 +142,7 @@ describe("leaf guard source contract", () => {
 
   it.each(consolePages)("requires an active customer in %s", (fileName) => {
     const source = readFileSync(`src/app/${fileName}`, "utf8");
-    expect(source).toContain("await requireCustomer()");
+    expect(source).toContain("await requireConsolePage()");
   });
 
   it.each(Object.entries(adminPermissions))(

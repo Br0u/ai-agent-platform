@@ -1,7 +1,8 @@
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { cookies as nextCookies, headers as nextHeaders } from "next/headers";
+import { ResponseCookies } from "next/dist/server/web/spec-extension/cookies";
 import { z } from "zod";
 
 import {
@@ -20,10 +21,9 @@ export {
   type AuthActionState,
 } from "@/contracts/auth-action-state";
 
-import { createDatabaseAccessRepository } from "./access";
 import { createAuditWriter, type AuditWriteInput } from "./audit";
-import { getCustomerAuth } from "./customer-auth";
-import { getStaffAuth } from "./staff-auth";
+import { createCustomerAuth } from "./customer-auth";
+import { createStaffAuth } from "./staff-auth";
 
 const CUSTOMER_COOKIE = "aap_customer_session";
 const STAFF_COOKIE = "aap_staff_session";
@@ -39,12 +39,13 @@ export type LoginUser = {
   status: UserStatus;
   mustChangePassword: boolean;
   twoFactorEnabled: boolean;
-  permissions: string[];
 };
 
 type SignInResult =
   | { user: { id: string }; token: string }
   | { twoFactorRedirect: true; twoFactorMethods: string[] };
+
+type StagedResponse<T> = { response: T; headers: Headers };
 
 type CustomerGateway = {
   signInEmail(input: {
@@ -52,8 +53,10 @@ type CustomerGateway = {
     password: string;
     rememberMe: true;
     headers: Headers;
-  }): Promise<SignInResult>;
-  signOut(input: { headers: Headers }): Promise<{ success: boolean }>;
+  }): Promise<StagedResponse<SignInResult>>;
+  signOut(input: {
+    headers: Headers;
+  }): Promise<StagedResponse<{ success: boolean }>>;
   revokeNewSession(token: string): Promise<void>;
 };
 
@@ -63,28 +66,28 @@ type StaffGateway = {
     password: string;
     rememberMe: false;
     headers: Headers;
-  }): Promise<SignInResult>;
+  }): Promise<StagedResponse<SignInResult>>;
   signInUsername(input: {
     username: string;
     password: string;
     rememberMe: false;
     headers: Headers;
-  }): Promise<SignInResult>;
-  signOut(input: { headers: Headers }): Promise<{ success: boolean }>;
+  }): Promise<StagedResponse<SignInResult>>;
+  signOut(input: {
+    headers: Headers;
+  }): Promise<StagedResponse<{ success: boolean }>>;
   revokeNewSession(token: string): Promise<void>;
 };
 
 type LoginUserRepository = {
-  findByIdentifier(
-    realm: IdentityRealm,
-    method: "email" | "username",
-    identifier: string,
-  ): Promise<LoginUser | null>;
   findById(id: string): Promise<LoginUser | null>;
 };
 
 type AuditWriter = { write(input: AuditWriteInput): Promise<void> };
-type CookieStore = { delete(name: string): void };
+type CookieStore = Pick<
+  Awaited<ReturnType<typeof nextCookies>>,
+  "set" | "delete"
+>;
 
 export type AuthActionDependencies = {
   customer: CustomerGateway;
@@ -92,6 +95,7 @@ export type AuthActionDependencies = {
   users: LoginUserRepository;
   audit: AuditWriter;
   reportInternalError(error: AggregateError): void;
+  commitCookies(realm: IdentityRealm, headers: Headers): Promise<void>;
   getHeaders(): Promise<Headers>;
   getCookieStore(): Promise<CookieStore>;
 };
@@ -181,18 +185,55 @@ function requestAuditContext(headers: Headers) {
   return { ipAddress, userAgent };
 }
 
-async function clearCookie(
+const STAFF_CHALLENGE_COOKIES = [
+  "better-auth.two_factor",
+  "__Secure-better-auth.two_factor",
+] as const;
+
+function realmCookieNames(realm: IdentityRealm): readonly string[] {
+  return realm === "customer"
+    ? [CUSTOMER_COOKIE]
+    : [STAFF_COOKIE, ...STAFF_CHALLENGE_COOKIES];
+}
+
+async function clearRealmCookies(
   getCookieStore: AuthActionDependencies["getCookieStore"],
-  name: string,
-) {
-  (await getCookieStore()).delete(name);
+  realm: IdentityRealm,
+): Promise<void> {
+  const store = await getCookieStore();
+  const errors: Error[] = [];
+  for (const name of realmCookieNames(realm)) {
+    try {
+      store.delete(name);
+    } catch {
+      errors.push(new Error(`Failed to clear ${realm} cookie`));
+    }
+  }
+  if (errors.length > 0)
+    throw new AggregateError(errors, "Cookie clear failed");
+}
+
+export async function commitResponseCookies(
+  realm: IdentityRealm,
+  headers: Headers,
+  getCookieStore: AuthActionDependencies["getCookieStore"],
+): Promise<void> {
+  const allowed = new Set(realmCookieNames(realm));
+  const cookies = new ResponseCookies(headers)
+    .getAll()
+    .filter((cookie) => allowed.has(cookie.name));
+  if (cookies.length === 0) {
+    throw new Error(`Authentication response is missing a ${realm} cookie`);
+  }
+  const store = await getCookieStore();
+  for (const cookie of cookies) store.set(cookie);
 }
 
 async function cleanNewSession(
   gateway: Pick<CustomerGateway, "revokeNewSession">,
   token: string,
   getCookieStore: AuthActionDependencies["getCookieStore"],
-  cookieName: string,
+  realm: IdentityRealm,
   reportInternalError: AuthActionDependencies["reportInternalError"],
 ) {
   const cleanupErrors: Error[] = [];
@@ -202,7 +243,7 @@ async function cleanNewSession(
     cleanupErrors.push(new Error("Session revocation failed"));
   }
   try {
-    await clearCookie(getCookieStore, cookieName);
+    await clearRealmCookies(getCookieStore, realm);
   } catch {
     cleanupErrors.push(new Error("Session cookie cleanup failed"));
   }
@@ -224,6 +265,14 @@ function isFullSession(
 }
 
 export function createAuthActions(dependencies: AuthActionDependencies) {
+  function reportInternal(errors: Error[], message: string) {
+    if (errors.length === 0) return;
+    try {
+      dependencies.reportInternalError(new AggregateError(errors, message));
+    } catch {
+      // Diagnostics must never change a public authentication result.
+    }
+  }
   async function auditFailure(
     headers: Headers,
     reason:
@@ -260,9 +309,9 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
       return invalidCredentials();
     }
 
-    let result: SignInResult;
+    let staged: StagedResponse<SignInResult>;
     try {
-      result = await dependencies.customer.signInEmail({
+      staged = await dependencies.customer.signInEmail({
         email: parsed.data.email,
         password: parsed.data.password,
         rememberMe: true,
@@ -277,8 +326,8 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
       return invalidCredentials();
     }
 
+    const result = staged.response;
     if (!isFullSession(result)) {
-      await clearCookie(dependencies.getCookieStore, CUSTOMER_COOKIE);
       return invalidCredentials();
     }
 
@@ -289,7 +338,7 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
           dependencies.customer,
           result.token,
           dependencies.getCookieStore,
-          CUSTOMER_COOKIE,
+          "customer",
           dependencies.reportInternalError,
         );
         try {
@@ -311,6 +360,8 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
         ...requestAuditContext(headers),
       });
 
+      await dependencies.commitCookies("customer", staged.headers);
+
       return {
         kind: "success",
         redirectTo:
@@ -323,7 +374,7 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
         dependencies.customer,
         result.token,
         dependencies.getCookieStore,
-        CUSTOMER_COOKIE,
+        "customer",
         dependencies.reportInternalError,
       );
       return invalidCredentials();
@@ -356,38 +407,9 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
       method === "email"
         ? normalizeIdentityEmail(parsed.data.identifier)
         : normalizeWorkforceUsername(parsed.data.identifier);
-    let preflightUser: LoginUser | null;
+    let staged: StagedResponse<SignInResult>;
     try {
-      preflightUser = await dependencies.users.findByIdentifier(
-        "workforce",
-        method,
-        identifier,
-      );
-    } catch {
-      try {
-        await auditFailure(headers, "unknown");
-      } catch {
-        // Keep repository and audit failures indistinguishable.
-      }
-      return invalidCredentials();
-    }
-    if (preflightUser?.status === "disabled") {
-      try {
-        await dependencies.staff.signOut({ headers });
-      } finally {
-        await clearCookie(dependencies.getCookieStore, STAFF_COOKIE);
-      }
-      try {
-        await auditFailure(headers, "account_disabled");
-      } catch {
-        // Keep disabled accounts indistinguishable from bad credentials.
-      }
-      return invalidCredentials();
-    }
-
-    let result: SignInResult;
-    try {
-      result = await (method === "email"
+      staged = await (method === "email"
         ? dependencies.staff.signInEmail({
             email: identifier,
             password: parsed.data.password,
@@ -409,12 +431,23 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
       return invalidCredentials();
     }
 
+    const result = staged.response;
     const returnTo = safeReturnPath("workforce", parsed.data.returnTo);
     if (!isFullSession(result)) {
-      return {
-        kind: "success",
-        redirectTo: `/staff/two-factor?returnTo=${encodeURIComponent(returnTo)}`,
-      };
+      try {
+        await dependencies.commitCookies("workforce", staged.headers);
+        return {
+          kind: "success",
+          redirectTo: `/staff/two-factor?returnTo=${encodeURIComponent(returnTo)}`,
+        };
+      } catch {
+        try {
+          await clearRealmCookies(dependencies.getCookieStore, "workforce");
+        } catch {
+          // No staged cookie was intentionally committed.
+        }
+        return invalidCredentials();
+      }
     }
 
     try {
@@ -424,7 +457,7 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
           dependencies.staff,
           result.token,
           dependencies.getCookieStore,
-          STAFF_COOKIE,
+          "workforce",
           dependencies.reportInternalError,
         );
         try {
@@ -450,6 +483,8 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
         ...requestAuditContext(headers),
       });
 
+      await dependencies.commitCookies("workforce", staged.headers);
+
       return {
         kind: "success",
         redirectTo: user.mustChangePassword
@@ -461,7 +496,7 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
         dependencies.staff,
         result.token,
         dependencies.getCookieStore,
-        STAFF_COOKIE,
+        "workforce",
         dependencies.reportInternalError,
       );
       return invalidCredentials();
@@ -472,11 +507,28 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
     const headers = await dependencies.getHeaders();
     const gateway =
       realm === "customer" ? dependencies.customer : dependencies.staff;
-    const cookieName = realm === "customer" ? CUSTOMER_COOKIE : STAFF_COOKIE;
+    const errors: Error[] = [];
+    let stagedHeaders: Headers | undefined;
     try {
-      await gateway.signOut({ headers });
-    } finally {
-      await clearCookie(dependencies.getCookieStore, cookieName);
+      stagedHeaders = (await gateway.signOut({ headers })).headers;
+    } catch {
+      errors.push(new Error("Server session revocation failed"));
+    }
+    let committedExpiry = false;
+    if (stagedHeaders) {
+      try {
+        await dependencies.commitCookies(realm, stagedHeaders);
+        committedExpiry = true;
+      } catch {
+        errors.push(new Error("Logout cookie commit failed"));
+      }
+    }
+    let clearedLocally = false;
+    try {
+      await clearRealmCookies(dependencies.getCookieStore, realm);
+      clearedLocally = true;
+    } catch {
+      errors.push(new Error("Local logout cookie clear failed"));
     }
     try {
       await dependencies.audit.write({
@@ -485,7 +537,11 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
         ...requestAuditContext(headers),
       });
     } catch {
-      // The session is already revoked; never keep a user trapped on logout.
+      errors.push(new Error("Logout audit failed"));
+    }
+    reportInternal(errors, "Logout completed with failures");
+    if (!committedExpiry && !clearedLocally) {
+      return { kind: "error", code: "AUTH_LOGOUT_FAILED" };
     }
     return {
       kind: "success",
@@ -503,11 +559,10 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
 
 export function createDatabaseLoginUserRepository(): LoginUserRepository {
   const database = getDatabase();
-  const accessRepository = createDatabaseAccessRepository(database);
 
-  async function toLoginUser(
+  function toLoginUser(
     found: typeof users.$inferSelect | undefined,
-  ): Promise<LoginUser | null> {
+  ): LoginUser | null {
     if (!found) return null;
     return {
       id: found.id,
@@ -515,24 +570,10 @@ export function createDatabaseLoginUserRepository(): LoginUserRepository {
       status: found.status,
       mustChangePassword: found.mustChangePassword,
       twoFactorEnabled: found.twoFactorEnabled,
-      permissions:
-        found.identityRealm === "workforce"
-          ? await accessRepository.findPermissionKeys(found.id, "workforce")
-          : [],
     };
   }
 
   return {
-    async findByIdentifier(realm, method, identifier) {
-      const condition =
-        method === "email"
-          ? sql`lower(${users.email}) = ${identifier}`
-          : sql`lower(${users.username}) = ${identifier}`;
-      const found = await database.query.users.findFirst({
-        where: and(eq(users.identityRealm, realm), condition),
-      });
-      return toLoginUser(found);
-    },
     async findById(id) {
       return toLoginUser(
         await database.query.users.findFirst({
@@ -543,22 +584,45 @@ export function createDatabaseLoginUserRepository(): LoginUserRepository {
   };
 }
 
+let customerActionAuth: ReturnType<typeof createCustomerAuth> | undefined;
+let staffActionAuth: ReturnType<typeof createStaffAuth> | undefined;
+
+function getCustomerActionAuth() {
+  customerActionAuth ??= createCustomerAuth({ forwardCookies: false });
+  return customerActionAuth;
+}
+
+function getStaffActionAuth() {
+  staffActionAuth ??= createStaffAuth({ forwardCookies: false });
+  return staffActionAuth;
+}
+
 function createDefaultCustomerGateway(): CustomerGateway {
   return {
     async signInEmail(input) {
-      const result: unknown = await getCustomerAuth().api.signInEmail({
+      const result = await getCustomerActionAuth().api.signInEmail({
         body: {
           email: input.email,
           password: input.password,
           rememberMe: true,
         },
         headers: input.headers,
+        returnHeaders: true,
       });
-      return parseSignInResult(result);
+      return {
+        response: parseSignInResult(result.response),
+        headers: result.headers,
+      };
     },
-    signOut: ({ headers }) => getCustomerAuth().api.signOut({ headers }),
+    async signOut({ headers }) {
+      const result = await getCustomerActionAuth().api.signOut({
+        headers,
+        returnHeaders: true,
+      });
+      return { response: result.response, headers: result.headers };
+    },
     async revokeNewSession(token) {
-      const context = await getCustomerAuth().$context;
+      const context = await getCustomerActionAuth().$context;
       await context.internalAdapter.deleteSession(token);
     },
   };
@@ -567,30 +631,44 @@ function createDefaultCustomerGateway(): CustomerGateway {
 function createDefaultStaffGateway(): StaffGateway {
   return {
     async signInEmail(input) {
-      const result: unknown = await getStaffAuth().api.signInEmail({
+      const result = await getStaffActionAuth().api.signInEmail({
         body: {
           email: input.email,
           password: input.password,
           rememberMe: false,
         },
         headers: input.headers,
+        returnHeaders: true,
       });
-      return parseSignInResult(result);
+      return {
+        response: parseSignInResult(result.response),
+        headers: result.headers,
+      };
     },
     async signInUsername(input) {
-      const result: unknown = await getStaffAuth().api.signInUsername({
+      const result = await getStaffActionAuth().api.signInUsername({
         body: {
           username: input.username,
           password: input.password,
           rememberMe: false,
         },
         headers: input.headers,
+        returnHeaders: true,
       });
-      return parseSignInResult(result);
+      return {
+        response: parseSignInResult(result.response),
+        headers: result.headers,
+      };
     },
-    signOut: ({ headers }) => getStaffAuth().api.signOut({ headers }),
+    async signOut({ headers }) {
+      const result = await getStaffActionAuth().api.signOut({
+        headers,
+        returnHeaders: true,
+      });
+      return { response: result.response, headers: result.headers };
+    },
     async revokeNewSession(token) {
-      const context = await getStaffAuth().$context;
+      const context = await getStaffActionAuth().$context;
       await context.internalAdapter.deleteSession(token);
     },
   };
@@ -605,6 +683,8 @@ export function createDefaultAuthActions() {
     reportInternalError(error) {
       console.error(error);
     },
+    commitCookies: (realm, headers) =>
+      commitResponseCookies(realm, headers, nextCookies),
     getHeaders: nextHeaders,
     getCookieStore: nextCookies,
   });

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { requireWorkforce } from "@/server/auth/access";
+import { requireAdminShell } from "@/server/auth/workspace-route-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +8,6 @@ export default async function AdminLayout({
 }: {
   children: ReactNode;
 }) {
-  await requireWorkforce();
+  await requireAdminShell();
   return <div data-route-group="admin">{children}</div>;
 }

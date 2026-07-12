@@ -287,6 +287,25 @@ describe("shared auth security options", () => {
     ]);
   });
 
+  it("can disable automatic cookie forwarding for staged Server Actions", () => {
+    const customerOptions = createCustomerAuthOptions({
+      env: authEnvironment(),
+      adapter: memoryAdapter({}),
+      forwardCookies: false,
+    });
+    const staffOptions = createStaffAuthOptions({
+      env: authEnvironment(),
+      adapter: memoryAdapter({}),
+      forwardCookies: false,
+    });
+
+    expect(customerOptions.plugins).toEqual([]);
+    expect(staffOptions.plugins?.map((plugin) => plugin.id)).toEqual([
+      "username",
+      "two-factor",
+    ]);
+  });
+
   it("requires verified TOTP with account lockout and no built-in backup codes", () => {
     expect(staffTwoFactorPolicy.skipVerificationOnEnable).toBe(false);
     expect(staffTwoFactorPolicy.accountLockout).toEqual({

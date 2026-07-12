@@ -2,11 +2,11 @@ import {
   metadataForRegisteredRoute,
   RegisteredRoutePage,
 } from "@/components/route-scaffold/registered-route-page";
-import { requireCustomer } from "@/server/auth/access";
+import { requireConsolePage } from "@/server/auth/workspace-route-guards";
 
 export const metadata = metadataForRegisteredRoute("/console");
 
 export default async function Page() {
-  await requireCustomer();
+  await requireConsolePage();
   return <RegisteredRoutePage pathname="/console" />;
 }

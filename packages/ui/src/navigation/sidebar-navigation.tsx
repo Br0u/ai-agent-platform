@@ -8,7 +8,9 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
+import { useFormStatus } from "react-dom";
 import "./navigation.css";
 import {
   isNavigationChildActive,
@@ -127,6 +129,29 @@ function ItemMarker({ label }: { label: string }) {
   );
 }
 
+function LogoutButton({
+  children,
+  disabled,
+  title,
+}: {
+  children: ReactNode;
+  disabled: boolean;
+  title: string;
+}) {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      aria-busy={pending ? "true" : undefined}
+      className="sidebar-navigation__item sidebar-navigation__item--action"
+      disabled={disabled || pending}
+      title={title}
+      type="submit"
+    >
+      {children}
+    </button>
+  );
+}
+
 function NavigationItem({
   item,
   currentHref,
@@ -171,14 +196,12 @@ function NavigationItem({
 
   return (
     <form action={logoutAction}>
-      <button
-        className="sidebar-navigation__item sidebar-navigation__item--action"
-        disabled={item.disabled || !logoutAction}
+      <LogoutButton
+        disabled={Boolean(item.disabled || !logoutAction)}
         title={item.label}
-        type="submit"
       >
         {content}
-      </button>
+      </LogoutButton>
     </form>
   );
 }
