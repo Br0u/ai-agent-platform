@@ -72,9 +72,12 @@ async function main(): Promise<void> {
     throw new Error("At-rest assertion is test-only");
   const mode = parseAssertionMode(process.argv.slice(2));
   const email = process.env.E2E_ADMIN_EMAIL;
+  const revokedSessionToken = process.env.E2E_REVOKED_SESSION_TOKEN;
   const databaseUrl = process.env.DATABASE_URL;
-  if (!email || !databaseUrl)
-    throw new Error("E2E_ADMIN_EMAIL and DATABASE_URL are required");
+  if (!email || !revokedSessionToken || !databaseUrl)
+    throw new Error(
+      "E2E_ADMIN_EMAIL, E2E_REVOKED_SESSION_TOKEN and DATABASE_URL are required",
+    );
   const code = await stdinText();
   if (!code) throw new Error("Recovery code is required on stdin");
   const pool = new Pool({ connectionString: databaseUrl });
@@ -84,10 +87,10 @@ async function main(): Promise<void> {
       revoked_session_exists: boolean;
     }>(
       `SELECT tf.backup_codes,
-        EXISTS(SELECT 1 FROM sessions s WHERE s.token = 'e2e-revoked-session' AND s.user_id = u.id) AS revoked_session_exists
+        EXISTS(SELECT 1 FROM sessions s WHERE s.token = $2 AND s.user_id = u.id) AS revoked_session_exists
        FROM users u LEFT JOIN two_factors tf ON tf.user_id = u.id
        WHERE lower(u.email) = lower($1)`,
-      [email],
+      [email, revokedSessionToken],
     );
     if (!result.rows[0]) throw new Error("Fixture user not found");
     verifyAtRestState(

@@ -15,7 +15,7 @@
 | Database | 100 passed，12 个需外部数据库的环境用例 skipped |
 | Integrations | 7 passed |
 | UI | 57 passed |
-| Web | 485 passed，28 个需外部数据库的环境用例 skipped |
+| Web | 486 passed，28 个需外部数据库的环境用例 skipped |
 | TypeScript / ESLint / Prettier / Next build | PASS |
 
 数据库集成行为另在隔离 PostgreSQL 中执行；浏览器行为在 Docker 生产镜像后方的 Nginx 入口执行。
@@ -28,6 +28,7 @@
 - 空库没有默认超级管理员。TTY 引导创建后，查询结果为 `1|t`：恰好一个 `super_admin`，且 `must_change_password=true`；重复创建会拒绝。
 - Nginx Host 来源门禁：生产模式只允许 `PUBLIC_HOST`；`127.0.0.1`、`localhost`和未知 Host 返回 421。只有显式设置`ALLOW_LOCAL_VALIDATION_HOSTS=true`时才允许本机验收 Host。
 - 有效管理员会话在重启`web`与`proxy`后仍返回 200；撤销后返回 401，再次重启后仍为 401。
+- E2E 密码、替换密码和全部会话 token 均在运行时用`openssl rand -hex 32`生成；seed、Playwright 和数据库断言只从环境变量读取，不提交也不打印具体值。
 
 ## 浏览器与访问矩阵
 
@@ -38,20 +39,20 @@
 | 游客进入 Console/Admin | 分别重定向到客户/员工登录页 |
 | 待审核客户 | 可见 onboarding；Console 被重定向 |
 | 正常客户 | Console 可用；Admin 被拒绝 |
-| 普通员工 | Admin 外壳可用；用户管理内容不可见 |
+| 普通员工 | Admin 外壳可用；从管理员页面截获并中止真实 Next Server Action，再以员工会话重放相同 mutation，响应稳定返回`AUTH_PERMISSION_DENIED`且目标会话仍为 200 |
 | 禁用账号 | 下一次会话检查 403 |
 | 错误身份域 Cookie | 会话检查 401 |
 | 角色移除 | 下一次授权检查 401，相关会话被撤销 |
-| 单会话撤销 | 选中会话被撤销，另一个有效会话继续可用 |
+| 单会话撤销 | 被撤销 token 的 staff session API 返回`401 AUTH_SESSION_REQUIRED`，当前管理员会话同时保持 200 |
 | 管理员替换临时密码 | 员工旧会话下一次检查 401 |
 | 管理员 TOTP | 注册前会话接口明确返回`403 AUTH_TOTP_SETUP_REQUIRED`且敏感表单不在响应中；完成真实 TOTP 后允许授权的会话撤销操作 |
-| 恢复码 | 数据库只存在哈希；首次使用成功，第二次明确失败；消费后哈希与替换前会话均不存在 |
+| 恢复码 | 数据库只存在哈希；首次使用成功，第二次真实 Server Action 返回`AUTH_INVALID_CREDENTIALS`；消费后哈希与替换前会话均不存在 |
 | 注册限流 | 重复无效提交出现 429 |
 | 邮箱重发禁用 | `501 EMAIL_VERIFICATION_DISABLED` |
 | 健康接口 | 游客访问均为 200 |
 | 响应式与控制台 | desktop/mobile 共 6 个无状态用例通过，无横向溢出或 console error |
 
-最终有状态顺序结果：TOTP 1/1、恢复码 1/1、其余访问矩阵 10/10；无状态 desktop/mobile 6/6。恢复码明文和浏览器 storage state 验收后已删除，均未进入 Git。
+最终分段顺序结果：TOTP 1/1、恢复码 1/1、其余访问矩阵 11/11；无状态 desktop/mobile 6/6。TOTP 与恢复码共享真实 Nginx 认证限流桶，因此两段之间重启本地验收 proxy 以隔离用例，不降低生产限流。恢复码明文和浏览器 storage state 验收后已删除，均未进入 Git。
 
 生产 Cookie 属性由认证配置测试验证：客户与员工会话均为`HttpOnly`、`SameSite=Lax`；HTTPS/生产配置包含`Secure`。客户与员工使用不同 Cookie 名，不接受跨身份域复用。管理员未完成 TOTP 时的敏感操作拒绝、权限服务端复核、审计不可篡改、账号/IP 双层限流均由 Web/数据库自动化测试覆盖。
 

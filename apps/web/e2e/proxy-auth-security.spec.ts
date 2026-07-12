@@ -25,7 +25,8 @@ test("proxy overwrites spoofed client IP before the failed-login audit", async (
   await expect(login.getByRole("status")).toContainText("不正确");
   await attacker.close();
 
-  const token = "e2e-admin-session";
+  const token = process.env.E2E_ADMIN_SESSION_TOKEN;
+  if (!token) throw new Error("E2E_ADMIN_SESSION_TOKEN is required");
   const signature = await makeSignature(token, secret);
   const audit = await browser.newContext({
     extraHTTPHeaders: { "X-Real-IP": spoofedAddress },

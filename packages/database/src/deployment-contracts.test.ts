@@ -227,17 +227,43 @@ describe("production deployment security contracts", () => {
         "E2E_CUSTOMER_PASSWORD",
         "E2E_STAFF_PASSWORD",
         "E2E_ADMIN_PASSWORD",
+        "E2E_PENDING_CUSTOMER_SESSION_TOKEN",
+        "E2E_DISABLED_CUSTOMER_SESSION_TOKEN",
+        "E2E_STAFF_SESSION_TOKEN",
+        "E2E_ROLE_TARGET_SESSION_TOKEN",
+        "E2E_ADMIN_SESSION_TOKEN",
+        "E2E_REVOKED_SESSION_TOKEN",
+        "E2E_REPLACEMENT_PASSWORD",
       ]) {
         expect(block).toContain(`export ${key}=`);
       }
+      for (const key of [
+        "POSTGRES_PASSWORD",
+        "MIGRATOR_DATABASE_PASSWORD",
+        "RUNTIME_DATABASE_PASSWORD",
+        "BACKUP_DATABASE_PASSWORD",
+        "BETTER_AUTH_SECRET",
+        "E2E_CUSTOMER_PASSWORD",
+        "E2E_STAFF_PASSWORD",
+        "E2E_ADMIN_PASSWORD",
+        "E2E_PENDING_CUSTOMER_SESSION_TOKEN",
+        "E2E_DISABLED_CUSTOMER_SESSION_TOKEN",
+        "E2E_STAFF_SESSION_TOKEN",
+        "E2E_ROLE_TARGET_SESSION_TOKEN",
+        "E2E_ADMIN_SESSION_TOKEN",
+        "E2E_REVOKED_SESSION_TOKEN",
+        "E2E_REPLACEMENT_PASSWORD",
+      ]) {
+        expect(block).toContain(`export ${key}="$(openssl rand -hex 32)"`);
+      }
       expect(block).toMatch(
-        /MIGRATOR_DATABASE_URL='postgresql:\/\/ai_agent_migrator:[^']+@db:5432\/ai_agent_platform'/u,
+        /MIGRATOR_DATABASE_URL="postgresql:\/\/ai_agent_migrator:\$\{MIGRATOR_DATABASE_PASSWORD\}@db:5432\/ai_agent_platform"/u,
       );
       expect(block).toMatch(
-        /RUNTIME_DATABASE_URL='postgresql:\/\/ai_agent_runtime:[^']+@db:5432\/ai_agent_platform'/u,
+        /RUNTIME_DATABASE_URL="postgresql:\/\/ai_agent_runtime:\$\{RUNTIME_DATABASE_PASSWORD\}@db:5432\/ai_agent_platform"/u,
       );
       expect(block).toMatch(
-        /BACKUP_DATABASE_URL='postgresql:\/\/ai_agent_backup:[^']+@db:5432\/ai_agent_platform'/u,
+        /BACKUP_DATABASE_URL="postgresql:\/\/ai_agent_backup:\$\{BACKUP_DATABASE_PASSWORD\}@db:5432\/ai_agent_platform"/u,
       );
       expect(block).not.toContain("export DATABASE_URL=");
       expect(block).toContain("config --quiet");
@@ -255,12 +281,31 @@ describe("production deployment security contracts", () => {
     expect(read("apps/web/e2e/auth-smoke.spec.ts")).toContain("test(");
     const accessSpec = read("apps/web/e2e/auth-access.spec.ts");
     const fixtures = read("apps/web/e2e/auth-fixtures.ts");
+    const seed = read("packages/database/src/seed-auth-e2e.ts");
+    const atRest = read("packages/database/src/assert-auth-at-rest.ts");
     expect(accessSpec).toContain("@security-state");
     expect(accessSpec).toContain("@totp-enroll");
     expect(accessSpec).toContain("@recovery-consume");
     expect(fixtures).not.toMatch(
       /@ai-agent-platform\/database|\bpg\b|DATABASE_URL/u,
     );
+    for (const source of [accessSpec, fixtures, seed, atRest]) {
+      expect(source).not.toMatch(/['"]e2e-[^'"]*session[^'"]*['"]/u);
+    }
+    expect(accessSpec).toContain("fixtureCredentials().replacementPassword");
+    const workflow = read(".github/workflows/ci.yml");
+    for (const key of [
+      "E2E_PENDING_CUSTOMER_SESSION_TOKEN",
+      "E2E_DISABLED_CUSTOMER_SESSION_TOKEN",
+      "E2E_STAFF_SESSION_TOKEN",
+      "E2E_ROLE_TARGET_SESSION_TOKEN",
+      "E2E_ADMIN_SESSION_TOKEN",
+      "E2E_REVOKED_SESSION_TOKEN",
+      "E2E_REPLACEMENT_PASSWORD",
+    ]) {
+      expect(workflow).toContain(key);
+    }
+    expect(workflow).toContain("::add-mask::$value");
     expect(read("apps/web/e2e/proxy-auth-security.spec.ts")).toContain("429");
     const proxySpec = read("apps/web/e2e/proxy-auth-security.spec.ts");
     expect(proxySpec).toContain("audit-source-ip");

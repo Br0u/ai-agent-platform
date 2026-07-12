@@ -13,40 +13,52 @@ export const identities = {
   pendingCustomer: {
     id: "10000000-0000-4000-8000-000000000004",
     email: "pending.fixture@example.invalid",
-    sessionToken: "e2e-pending-customer-session",
   },
   disabledCustomer: {
     id: "10000000-0000-4000-8000-000000000005",
     email: "disabled.fixture@example.invalid",
-    sessionToken: "e2e-disabled-customer-session",
   },
   staff: {
     id: "10000000-0000-4000-8000-000000000002",
     email: "staff.fixture@example.invalid",
     username: "staff.fixture",
-    sessionToken: "e2e-staff-session",
   },
   roleTarget: {
     id: "10000000-0000-4000-8000-000000000006",
-    sessionToken: "e2e-role-target-session",
   },
   admin: {
     id: "10000000-0000-4000-8000-000000000003",
     email: "admin.fixture@example.invalid",
     username: "admin.fixture",
-    sessionToken: "e2e-admin-session",
     revokedSessionId: "10000000-0000-4000-8000-000000000021",
-    revokedSessionToken: "e2e-revoked-session",
   },
 } as const;
 
-export function fixturePasswords() {
-  const customer = process.env.E2E_CUSTOMER_PASSWORD;
-  const staff = process.env.E2E_STAFF_PASSWORD;
-  const admin = process.env.E2E_ADMIN_PASSWORD;
-  if (!customer || !staff || !admin)
-    throw new Error("E2E fixture passwords are required");
-  return { customer, staff, admin };
+function requiredEnvironment(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+export function fixtureCredentials() {
+  return {
+    customerPassword: requiredEnvironment("E2E_CUSTOMER_PASSWORD"),
+    staffPassword: requiredEnvironment("E2E_STAFF_PASSWORD"),
+    adminPassword: requiredEnvironment("E2E_ADMIN_PASSWORD"),
+    pendingCustomerSessionToken: requiredEnvironment(
+      "E2E_PENDING_CUSTOMER_SESSION_TOKEN",
+    ),
+    disabledCustomerSessionToken: requiredEnvironment(
+      "E2E_DISABLED_CUSTOMER_SESSION_TOKEN",
+    ),
+    staffSessionToken: requiredEnvironment("E2E_STAFF_SESSION_TOKEN"),
+    roleTargetSessionToken: requiredEnvironment(
+      "E2E_ROLE_TARGET_SESSION_TOKEN",
+    ),
+    adminSessionToken: requiredEnvironment("E2E_ADMIN_SESSION_TOKEN"),
+    revokedSessionToken: requiredEnvironment("E2E_REVOKED_SESSION_TOKEN"),
+    replacementPassword: requiredEnvironment("E2E_REPLACEMENT_PASSWORD"),
+  };
 }
 
 function secret(): string {
@@ -81,14 +93,14 @@ export async function addSignedSession(
 export async function loginCustomer(page: Page) {
   await page.goto("/login");
   await page.getByLabel("邮箱").fill(identities.customer.email);
-  await page.getByLabel("密码").fill(fixturePasswords().customer);
+  await page.getByLabel("密码").fill(fixtureCredentials().customerPassword);
   await page.getByRole("button", { name: "登录客户控制台" }).click();
 }
 
 export async function beginAdminChallenge(page: Page) {
   await page.goto("/staff/login");
   await page.getByLabel("员工用户名或邮箱").fill(identities.admin.username);
-  await page.getByLabel("密码").fill(fixturePasswords().admin);
+  await page.getByLabel("密码").fill(fixtureCredentials().adminPassword);
   await page.getByRole("button", { name: "登录运营后台" }).click();
 }
 

@@ -931,28 +931,35 @@ On pull requests and pushes to `main`, use Node 24 and pnpm 11.5.2 with a Postgr
 Run:
 
 ```bash
-export POSTGRES_PASSWORD='local-owner-validation-only'
-export MIGRATOR_DATABASE_PASSWORD='local-migrator-validation-only'
-export MIGRATOR_DATABASE_URL='postgresql://ai_agent_migrator:local-migrator-validation-only@db:5432/ai_agent_platform'
-export RUNTIME_DATABASE_PASSWORD='local-runtime-validation-only'
-export RUNTIME_DATABASE_URL='postgresql://ai_agent_runtime:local-runtime-validation-only@db:5432/ai_agent_platform'
-export BACKUP_DATABASE_PASSWORD='local-backup-validation-only'
-export BACKUP_DATABASE_URL='postgresql://ai_agent_backup:local-backup-validation-only@db:5432/ai_agent_platform'
-export BETTER_AUTH_SECRET='local-better-auth-validation-secret-32chars-minimum'
+export POSTGRES_PASSWORD="$(openssl rand -hex 32)"
+export MIGRATOR_DATABASE_PASSWORD="$(openssl rand -hex 32)"
+export MIGRATOR_DATABASE_URL="postgresql://ai_agent_migrator:${MIGRATOR_DATABASE_PASSWORD}@db:5432/ai_agent_platform"
+export RUNTIME_DATABASE_PASSWORD="$(openssl rand -hex 32)"
+export RUNTIME_DATABASE_URL="postgresql://ai_agent_runtime:${RUNTIME_DATABASE_PASSWORD}@db:5432/ai_agent_platform"
+export BACKUP_DATABASE_PASSWORD="$(openssl rand -hex 32)"
+export BACKUP_DATABASE_URL="postgresql://ai_agent_backup:${BACKUP_DATABASE_PASSWORD}@db:5432/ai_agent_platform"
+export BETTER_AUTH_SECRET="$(openssl rand -hex 32)"
 export BETTER_AUTH_URL='http://127.0.0.1:8080'
 export BETTER_AUTH_TRUSTED_ORIGINS='http://127.0.0.1:8080'
 export PUBLIC_HOST='127.0.0.1'
 export ALLOW_LOCAL_VALIDATION_HOSTS=true
 export FEATURE_EMAIL_VERIFICATION=false
-export E2E_CUSTOMER_PASSWORD='local-customer-validation-passphrase'
-export E2E_STAFF_PASSWORD='local-staff-validation-passphrase'
-export E2E_ADMIN_PASSWORD='local-admin-validation-passphrase'
+export E2E_CUSTOMER_PASSWORD="$(openssl rand -hex 32)"
+export E2E_STAFF_PASSWORD="$(openssl rand -hex 32)"
+export E2E_ADMIN_PASSWORD="$(openssl rand -hex 32)"
+export E2E_PENDING_CUSTOMER_SESSION_TOKEN="$(openssl rand -hex 32)"
+export E2E_DISABLED_CUSTOMER_SESSION_TOKEN="$(openssl rand -hex 32)"
+export E2E_STAFF_SESSION_TOKEN="$(openssl rand -hex 32)"
+export E2E_ROLE_TARGET_SESSION_TOKEN="$(openssl rand -hex 32)"
+export E2E_ADMIN_SESSION_TOKEN="$(openssl rand -hex 32)"
+export E2E_REVOKED_SESSION_TOKEN="$(openssl rand -hex 32)"
+export E2E_REPLACEMENT_PASSWORD="$(openssl rand -hex 32)"
 docker compose config --quiet
 docker build --target migrator -f apps/web/Dockerfile .
 docker build --target runner -f apps/web/Dockerfile .
 docker compose up -d --build --wait --wait-timeout 120 db migrate web proxy backup
 docker compose run --rm proxy nginx -t
-docker compose run --rm -e NODE_ENV=test -e E2E_CUSTOMER_PASSWORD -e E2E_STAFF_PASSWORD -e E2E_ADMIN_PASSWORD migrate pnpm --filter @ai-agent-platform/database db:seed-auth-e2e
+docker compose run --rm -e NODE_ENV=test -e E2E_CUSTOMER_PASSWORD -e E2E_STAFF_PASSWORD -e E2E_ADMIN_PASSWORD -e E2E_PENDING_CUSTOMER_SESSION_TOKEN -e E2E_DISABLED_CUSTOMER_SESSION_TOKEN -e E2E_STAFF_SESSION_TOKEN -e E2E_ROLE_TARGET_SESSION_TOKEN -e E2E_ADMIN_SESSION_TOKEN -e E2E_REVOKED_SESSION_TOKEN -e E2E_REPLACEMENT_PASSWORD migrate pnpm --filter @ai-agent-platform/database db:seed-auth-e2e
 BASE_URL=http://127.0.0.1:8080 pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-smoke.spec.ts
 BASE_URL=http://127.0.0.1:8080 pnpm --filter @ai-agent-platform/web exec playwright test e2e/proxy-auth-security.spec.ts --project=desktop --workers=1
 ```
@@ -1003,22 +1010,29 @@ Expected: all commands exit 0 without warnings introduced by this branch.
 Run:
 
 ```bash
-export POSTGRES_PASSWORD='local-owner-acceptance-only'
-export MIGRATOR_DATABASE_PASSWORD='local-migrator-acceptance-only'
-export MIGRATOR_DATABASE_URL='postgresql://ai_agent_migrator:local-migrator-acceptance-only@db:5432/ai_agent_platform'
-export RUNTIME_DATABASE_PASSWORD='local-runtime-acceptance-only'
-export RUNTIME_DATABASE_URL='postgresql://ai_agent_runtime:local-runtime-acceptance-only@db:5432/ai_agent_platform'
-export BACKUP_DATABASE_PASSWORD='local-backup-acceptance-only'
-export BACKUP_DATABASE_URL='postgresql://ai_agent_backup:local-backup-acceptance-only@db:5432/ai_agent_platform'
-export BETTER_AUTH_SECRET='local-better-auth-acceptance-secret-32chars-minimum'
+export POSTGRES_PASSWORD="$(openssl rand -hex 32)"
+export MIGRATOR_DATABASE_PASSWORD="$(openssl rand -hex 32)"
+export MIGRATOR_DATABASE_URL="postgresql://ai_agent_migrator:${MIGRATOR_DATABASE_PASSWORD}@db:5432/ai_agent_platform"
+export RUNTIME_DATABASE_PASSWORD="$(openssl rand -hex 32)"
+export RUNTIME_DATABASE_URL="postgresql://ai_agent_runtime:${RUNTIME_DATABASE_PASSWORD}@db:5432/ai_agent_platform"
+export BACKUP_DATABASE_PASSWORD="$(openssl rand -hex 32)"
+export BACKUP_DATABASE_URL="postgresql://ai_agent_backup:${BACKUP_DATABASE_PASSWORD}@db:5432/ai_agent_platform"
+export BETTER_AUTH_SECRET="$(openssl rand -hex 32)"
 export BETTER_AUTH_URL='http://127.0.0.1:8080'
 export BETTER_AUTH_TRUSTED_ORIGINS='http://127.0.0.1:8080'
 export PUBLIC_HOST='127.0.0.1'
 export ALLOW_LOCAL_VALIDATION_HOSTS=true
 export FEATURE_EMAIL_VERIFICATION=false
-export E2E_CUSTOMER_PASSWORD='local-customer-fixture-passphrase'
-export E2E_STAFF_PASSWORD='local-staff-fixture-passphrase'
-export E2E_ADMIN_PASSWORD='local-admin-fixture-passphrase'
+export E2E_CUSTOMER_PASSWORD="$(openssl rand -hex 32)"
+export E2E_STAFF_PASSWORD="$(openssl rand -hex 32)"
+export E2E_ADMIN_PASSWORD="$(openssl rand -hex 32)"
+export E2E_PENDING_CUSTOMER_SESSION_TOKEN="$(openssl rand -hex 32)"
+export E2E_DISABLED_CUSTOMER_SESSION_TOKEN="$(openssl rand -hex 32)"
+export E2E_STAFF_SESSION_TOKEN="$(openssl rand -hex 32)"
+export E2E_ROLE_TARGET_SESSION_TOKEN="$(openssl rand -hex 32)"
+export E2E_ADMIN_SESSION_TOKEN="$(openssl rand -hex 32)"
+export E2E_REVOKED_SESSION_TOKEN="$(openssl rand -hex 32)"
+export E2E_REPLACEMENT_PASSWORD="$(openssl rand -hex 32)"
 docker compose -p aap-auth-acceptance config --quiet
 docker compose -p aap-auth-acceptance down -v
 docker compose -p aap-auth-acceptance up --build -d --wait --wait-timeout 120 db migrate web proxy backup
@@ -1032,7 +1046,7 @@ Expected: migrate exits 0, all long-running services are healthy, both health en
 
 - [ ] **Step 3: Execute the access matrix**
 
-Run `docker compose -p aap-auth-acceptance run --rm -e NODE_ENV=test -e E2E_CUSTOMER_PASSWORD -e E2E_STAFF_PASSWORD -e E2E_ADMIN_PASSWORD migrate pnpm --filter @ai-agent-platform/database db:seed-auth-e2e`; Playwright reads the same masked environment variables. `auth-fixtures.ts` contains only fixture identifiers and helpers, never database access or committed passwords. PostgreSQL remains unexposed. Record HTTP/browser assertions for:
+Run `docker compose -p aap-auth-acceptance run --rm -e NODE_ENV=test -e E2E_CUSTOMER_PASSWORD -e E2E_STAFF_PASSWORD -e E2E_ADMIN_PASSWORD -e E2E_PENDING_CUSTOMER_SESSION_TOKEN -e E2E_DISABLED_CUSTOMER_SESSION_TOKEN -e E2E_STAFF_SESSION_TOKEN -e E2E_ROLE_TARGET_SESSION_TOKEN -e E2E_ADMIN_SESSION_TOKEN -e E2E_REVOKED_SESSION_TOKEN -e E2E_REPLACEMENT_PASSWORD migrate pnpm --filter @ai-agent-platform/database db:seed-auth-e2e`; Playwright reads the same runtime-only environment variables. `auth-fixtures.ts` contains only fixture identifiers and helpers, never database access, committed passwords, or committed session tokens. PostgreSQL remains unexposed. Record HTTP/browser assertions for:
 
 - anonymous → Console/Admin denied;
 - pending customer → onboarding allowed, Console denied;
@@ -1058,15 +1072,17 @@ Run the recovery-code checks in this exact order so the database is inspected bo
 
 ```bash
 BASE_URL=http://127.0.0.1:8080 pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --grep '@totp-enroll' --project=desktop --workers=1 --trace on --output ../../artifacts/playwright/auth/test-results
-docker compose -p aap-auth-acceptance run --rm -T -e NODE_ENV=test -e E2E_ADMIN_EMAIL='admin.fixture@example.invalid' migrate pnpm --filter @ai-agent-platform/database auth:assert-at-rest -- --expect-present-hashed < artifacts/playwright/auth/recovery-code.txt
+docker compose -p aap-auth-acceptance run --rm -T -e NODE_ENV=test -e E2E_ADMIN_EMAIL='admin.fixture@example.invalid' -e E2E_REVOKED_SESSION_TOKEN migrate pnpm --filter @ai-agent-platform/database auth:assert-at-rest -- --expect-present-hashed < artifacts/playwright/auth/recovery-code.txt
+docker compose -p aap-auth-acceptance restart proxy
+docker compose -p aap-auth-acceptance ps proxy
 BASE_URL=http://127.0.0.1:8080 pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --grep '@recovery-consume' --project=desktop --workers=1 --trace on --output ../../artifacts/playwright/auth/test-results
-docker compose -p aap-auth-acceptance run --rm -T -e NODE_ENV=test -e E2E_ADMIN_EMAIL='admin.fixture@example.invalid' migrate pnpm --filter @ai-agent-platform/database auth:assert-at-rest -- --expect-consumed < artifacts/playwright/auth/recovery-code.txt
+docker compose -p aap-auth-acceptance run --rm -T -e NODE_ENV=test -e E2E_ADMIN_EMAIL='admin.fixture@example.invalid' -e E2E_REVOKED_SESSION_TOKEN migrate pnpm --filter @ai-agent-platform/database auth:assert-at-rest -- --expect-consumed < artifacts/playwright/auth/recovery-code.txt
 rm artifacts/playwright/auth/recovery-code.txt
 BASE_URL=http://127.0.0.1:8080 pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --grep '@security-state' --grep-invert '@totp-enroll|@recovery-consume' --project=desktop --workers=1 --trace on --output ../../artifacts/playwright/auth/test-results
 BASE_URL=http://127.0.0.1:8080 pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --grep-invert '@security-state' --trace on --output ../../artifacts/playwright/auth/test-results
 ```
 
-Tag every test that mutates a shared user, role, session, rate-limit bucket, TOTP secret, or recovery code with `@security-state`; these tests run only in the desktop project with one worker. Tag the recovery tests with both `@security-state` and their specific tag. The `@totp-enroll` test writes one recovery code to ignored `artifacts/playwright/auth/recovery-code.txt` with mode 0600 and logs out. The first at-rest assertion fails if plaintext is stored or the matching hash is absent. The `@recovery-consume` test completes one second-factor challenge with that code, logs out, and proves a second attempt with the same code fails. The second at-rest assertion fails if the recovery-code hash or revoked session remains. Only visual and otherwise stateless flows run in both the 1440×1000 and 390×844 projects. Expected: all projects pass; no overflow, focus loss, unlabeled control, console error, or false success message; traces/screenshots are stored under ignored `artifacts/playwright/auth` and summarized, not committed.
+Tag every test that mutates a shared user, role, session, rate-limit bucket, TOTP secret, or recovery code with `@security-state`; these tests run only in the desktop project with one worker. Tag the recovery tests with both `@security-state` and their specific tag. The `@totp-enroll` test writes one recovery code to ignored `artifacts/playwright/auth/recovery-code.txt` with mode 0600 and logs out. It directly proves the revoked token returns`401 AUTH_SESSION_REQUIRED` while the active administrator token still returns 200. The first at-rest assertion fails if plaintext is stored or the matching hash is absent. Restart only the local acceptance proxy before recovery so TOTP setup and recovery do not consume the same real Nginx auth-limit bucket; production limits remain unchanged. The `@recovery-consume` test completes one second-factor challenge with that code and proves a second real Server Action returns`AUTH_INVALID_CREDENTIALS`. The second at-rest assertion fails if the recovery-code hash or revoked session remains. The employee denial test captures and aborts a real authorized administrator Server Action, replays its exact action ID/body from an employee context, requires`AUTH_PERMISSION_DENIED`, and proves the target session remains active. Only visual and otherwise stateless flows run in both the 1440×1000 and 390×844 projects. Expected: all projects pass; no overflow, focus loss, unlabeled control, console error, or false success message; traces/screenshots are stored under ignored `artifacts/playwright/auth` and summarized, not committed.
 
 After obtaining a valid fixture session, run `docker compose -p aap-auth-acceptance restart web proxy`, wait with `docker compose -p aap-auth-acceptance ps --format json` until both are healthy, and assert the session still works. Revoke it, restart again, and assert it remains rejected.
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { assertE2EEnvironment, fixtureIdentities } from "./seed-auth-e2e";
@@ -9,6 +10,21 @@ import {
 } from "./assert-auth-at-rest";
 
 describe("test-only auth E2E tools", () => {
+  const fixtureEnvironment = () =>
+    Object.fromEntries(
+      [
+        "E2E_CUSTOMER_PASSWORD",
+        "E2E_STAFF_PASSWORD",
+        "E2E_ADMIN_PASSWORD",
+        "E2E_PENDING_CUSTOMER_SESSION_TOKEN",
+        "E2E_DISABLED_CUSTOMER_SESSION_TOKEN",
+        "E2E_STAFF_SESSION_TOKEN",
+        "E2E_ROLE_TARGET_SESSION_TOKEN",
+        "E2E_ADMIN_SESSION_TOKEN",
+        "E2E_REVOKED_SESSION_TOKEN",
+        "E2E_REPLACEMENT_PASSWORD",
+      ].map((name) => [name, randomBytes(32).toString("base64url")]),
+    );
   it("accepts the pnpm argument separator used by the documented command", () => {
     expect(parseAssertionMode(["--", "--expect-present-hashed"])).toBe(
       "--expect-present-hashed",
@@ -31,14 +47,26 @@ describe("test-only auth E2E tools", () => {
     expect(() => assertE2EEnvironment({ NODE_ENV: "test" })).toThrow(
       "E2E_CUSTOMER_PASSWORD",
     );
+    const complete = { NODE_ENV: "test", ...fixtureEnvironment() };
+    for (const name of [
+      "E2E_PENDING_CUSTOMER_SESSION_TOKEN",
+      "E2E_DISABLED_CUSTOMER_SESSION_TOKEN",
+      "E2E_STAFF_SESSION_TOKEN",
+      "E2E_ROLE_TARGET_SESSION_TOKEN",
+      "E2E_ADMIN_SESSION_TOKEN",
+      "E2E_REVOKED_SESSION_TOKEN",
+      "E2E_REPLACEMENT_PASSWORD",
+    ]) {
+      expect(() =>
+        assertE2EEnvironment({ ...complete, [name]: undefined }),
+      ).toThrow(name);
+    }
   });
 
   it("builds deterministic fixtures without exposing passwords in identities", () => {
     const env = {
       NODE_ENV: "test",
-      E2E_CUSTOMER_PASSWORD: "customer-long-passphrase",
-      E2E_STAFF_PASSWORD: "staff-long-passphrase",
-      E2E_ADMIN_PASSWORD: "admin-long-passphrase",
+      ...fixtureEnvironment(),
     };
     const credentials = assertE2EEnvironment(env);
     expect(fixtureIdentities).toMatchObject({
@@ -46,27 +74,22 @@ describe("test-only auth E2E tools", () => {
       pendingCustomer: {
         realm: "customer",
         status: "pending_review",
-        sessionToken: "e2e-pending-customer-session",
       },
       disabledCustomer: {
         realm: "customer",
         status: "disabled",
-        sessionToken: "e2e-disabled-customer-session",
       },
       staff: {
         realm: "workforce",
         status: "active",
-        sessionToken: "e2e-staff-session",
       },
       roleTarget: {
         realm: "workforce",
         status: "active",
-        sessionToken: "e2e-role-target-session",
       },
       admin: {
         realm: "workforce",
         status: "active",
-        sessionToken: "e2e-admin-session",
       },
     });
     expect(JSON.stringify(fixtureIdentities)).not.toContain(
@@ -94,11 +117,8 @@ describe("test-only auth E2E tools", () => {
     expect(source).toContain(
       "UPDATE users SET two_factor_enabled = false WHERE id = $1",
     );
-    expect(source).toContain("e2e-revoked-session");
-    expect(source).toContain("e2e-pending-customer-session");
-    expect(source).toContain("e2e-disabled-customer-session");
-    expect(source).toContain("e2e-staff-session");
-    expect(source).toContain("e2e-role-target-session");
+    expect(source).toContain("credentials.revokedSessionToken");
+    expect(source).not.toMatch(/['"]e2e-[^'"]*session[^'"]*['"]/u);
     expect(source).toContain("support_operator");
     expect(source).toContain(
       "UPDATE users SET status = 'active' WHERE id = $1",

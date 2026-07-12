@@ -9,6 +9,13 @@ export type E2EEnvironment = {
   customerPassword: string;
   staffPassword: string;
   adminPassword: string;
+  pendingCustomerSessionToken: string;
+  disabledCustomerSessionToken: string;
+  staffSessionToken: string;
+  roleTargetSessionToken: string;
+  adminSessionToken: string;
+  revokedSessionToken: string;
+  replacementPassword: string;
 };
 
 export const fixtureIdentities = {
@@ -27,7 +34,6 @@ export const fixtureIdentities = {
     realm: "customer",
     status: "pending_review",
     role: "customer_member",
-    sessionToken: "e2e-pending-customer-session",
   },
   disabledCustomer: {
     id: "10000000-0000-4000-8000-000000000005",
@@ -36,7 +42,6 @@ export const fixtureIdentities = {
     realm: "customer",
     status: "disabled",
     role: "customer_member",
-    sessionToken: "e2e-disabled-customer-session",
   },
   staff: {
     id: "10000000-0000-4000-8000-000000000002",
@@ -45,7 +50,6 @@ export const fixtureIdentities = {
     realm: "workforce",
     status: "active",
     role: "employee",
-    sessionToken: "e2e-staff-session",
   },
   roleTarget: {
     id: "10000000-0000-4000-8000-000000000006",
@@ -54,7 +58,6 @@ export const fixtureIdentities = {
     realm: "workforce",
     status: "active",
     role: "employee",
-    sessionToken: "e2e-role-target-session",
   },
   admin: {
     id: "10000000-0000-4000-8000-000000000003",
@@ -63,8 +66,6 @@ export const fixtureIdentities = {
     realm: "workforce",
     status: "active",
     role: "admin",
-    sessionToken: "e2e-admin-session",
-    revokedSessionToken: "e2e-revoked-session",
   },
 } as const;
 
@@ -76,6 +77,19 @@ export function assertE2EEnvironment(
     ["E2E_CUSTOMER_PASSWORD", env.E2E_CUSTOMER_PASSWORD],
     ["E2E_STAFF_PASSWORD", env.E2E_STAFF_PASSWORD],
     ["E2E_ADMIN_PASSWORD", env.E2E_ADMIN_PASSWORD],
+    [
+      "E2E_PENDING_CUSTOMER_SESSION_TOKEN",
+      env.E2E_PENDING_CUSTOMER_SESSION_TOKEN,
+    ],
+    [
+      "E2E_DISABLED_CUSTOMER_SESSION_TOKEN",
+      env.E2E_DISABLED_CUSTOMER_SESSION_TOKEN,
+    ],
+    ["E2E_STAFF_SESSION_TOKEN", env.E2E_STAFF_SESSION_TOKEN],
+    ["E2E_ROLE_TARGET_SESSION_TOKEN", env.E2E_ROLE_TARGET_SESSION_TOKEN],
+    ["E2E_ADMIN_SESSION_TOKEN", env.E2E_ADMIN_SESSION_TOKEN],
+    ["E2E_REVOKED_SESSION_TOKEN", env.E2E_REVOKED_SESSION_TOKEN],
+    ["E2E_REPLACEMENT_PASSWORD", env.E2E_REPLACEMENT_PASSWORD],
   ] as const;
   for (const [name, value] of values) {
     if (!value) throw new Error(`${name} is required`);
@@ -84,6 +98,13 @@ export function assertE2EEnvironment(
     customerPassword: env.E2E_CUSTOMER_PASSWORD!,
     staffPassword: env.E2E_STAFF_PASSWORD!,
     adminPassword: env.E2E_ADMIN_PASSWORD!,
+    pendingCustomerSessionToken: env.E2E_PENDING_CUSTOMER_SESSION_TOKEN!,
+    disabledCustomerSessionToken: env.E2E_DISABLED_CUSTOMER_SESSION_TOKEN!,
+    staffSessionToken: env.E2E_STAFF_SESSION_TOKEN!,
+    roleTargetSessionToken: env.E2E_ROLE_TARGET_SESSION_TOKEN!,
+    adminSessionToken: env.E2E_ADMIN_SESSION_TOKEN!,
+    revokedSessionToken: env.E2E_REVOKED_SESSION_TOKEN!,
+    replacementPassword: env.E2E_REPLACEMENT_PASSWORD!,
   };
 }
 
@@ -198,7 +219,7 @@ export async function seedAuthE2EFixtures(
       `DELETE FROM sessions
        WHERE (user_id = ANY($1::uuid[]) OR id = '10000000-0000-4000-8000-000000000020')
          AND token <> $2`,
-      [fixtureUserIds, fixtureIdentities.admin.sessionToken],
+      [fixtureUserIds, credentials.adminSessionToken],
     );
     await client.query(
       "UPDATE users SET two_factor_enabled = false WHERE id = $1",
@@ -234,16 +255,16 @@ export async function seedAuthE2EFixtures(
          user_agent = EXCLUDED.user_agent,
          mfa_verified_at = EXCLUDED.mfa_verified_at, updated_at = now()`,
       [
-        fixtureIdentities.admin.sessionToken,
-        fixtureIdentities.admin.revokedSessionToken,
+        credentials.adminSessionToken,
+        credentials.revokedSessionToken,
         fixtureIdentities.admin.id,
-        fixtureIdentities.staff.sessionToken,
+        credentials.staffSessionToken,
         fixtureIdentities.staff.id,
-        fixtureIdentities.pendingCustomer.sessionToken,
+        credentials.pendingCustomerSessionToken,
         fixtureIdentities.pendingCustomer.id,
-        fixtureIdentities.disabledCustomer.sessionToken,
+        credentials.disabledCustomerSessionToken,
         fixtureIdentities.disabledCustomer.id,
-        fixtureIdentities.roleTarget.sessionToken,
+        credentials.roleTargetSessionToken,
         fixtureIdentities.roleTarget.id,
       ],
     );
