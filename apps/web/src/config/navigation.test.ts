@@ -222,6 +222,7 @@ const expectedCmsGroups = [
   {
     label: "客户运营",
     items: [
+      ["客户注册审核", "/admin/registrations"],
       ["OpenLab 申请审核", "/admin/openlab"],
       ["License 管理", "/admin/licenses"],
       ["工单管理", "/admin/tickets"],
@@ -424,7 +425,7 @@ describe("consoleNavigation", () => {
 });
 
 describe("adminNavigation", () => {
-  it("preserves the exact five groups and all 21 items", () => {
+  it("preserves the exact five groups and all 22 items", () => {
     expect(
       adminNavigation.groups.map((group) => ({
         label: group.label,
@@ -463,6 +464,7 @@ describe("adminNavigation", () => {
       FAQ: "admin:faq",
       兼容矩阵: "admin:compatibility",
       Marketplace: "admin:marketplace",
+      客户注册审核: "admin:registrations",
       "OpenLab 申请审核": "admin:registrations",
       "License 管理": "admin:registrations",
       工单管理: "admin:registrations",

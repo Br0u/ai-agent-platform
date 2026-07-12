@@ -417,6 +417,11 @@ export const adminNavigation: SidebarNavigationConfig = {
       label: "客户运营",
       items: [
         {
+          label: "客户注册审核",
+          href: "/admin/registrations",
+          permission: "admin:registrations",
+        },
+        {
           label: "OpenLab 申请审核",
           href: "/admin/openlab",
           status: "placeholder",

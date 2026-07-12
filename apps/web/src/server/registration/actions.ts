@@ -433,12 +433,16 @@ function getActionAuth() {
   return actionAuth;
 }
 
-function createDefaultRegistrationActions() {
-  const service = createRegistrationService({
+export function createDefaultRegistrationService() {
+  return createRegistrationService({
     repository: createDatabaseRegistrationRepository(),
     limiter: createDatabaseRegistrationRateLimiter(),
     hashPassword,
   });
+}
+
+function createDefaultRegistrationActions() {
+  const service = createDefaultRegistrationService();
   return createRegistrationActions({
     service,
     access: { requirePermission },

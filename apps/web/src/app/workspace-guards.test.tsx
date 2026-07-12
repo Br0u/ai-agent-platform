@@ -113,6 +113,7 @@ describe("leaf guard source contract", () => {
   ];
   const adminPermissions = {
     "admin/page.tsx": "admin:analytics",
+    "admin/registrations/page.tsx": "admin:registrations",
     "admin/site/page.tsx": "admin:site",
     "admin/navigation/page.tsx": "admin:navigation",
     "admin/products/page.tsx": "admin:products",
