@@ -873,6 +873,7 @@ git commit -m "feat(admin): 实现用户角色会话与审计管理"
 
 - Task 11 must provision separate migrator and runtime PostgreSQL roles. The runtime role must be denied schema changes and `UPDATE`/`DELETE` on `audit_logs`, while retaining only the reads and append operations required by the application.
 - Task 12 must capture `EXPLAIN (ANALYZE, BUFFERS)` evidence for the production user, role-permission, session, and audit filter/pagination queries against representative data. Add indexes only from that evidence; no speculative index is part of Task 10.
+- Task 12 debt: source-gate the loopback Host allowlist so it is available only for local validation. Existing Origin/baseURL checks mitigate remote authentication abuse, so this remains non-blocking debt and does not change Task 11 proxy behavior.
 
 ### Task 11: Add secure super-admin bootstrap, proxy throttling, and CI
 
@@ -941,7 +942,7 @@ export E2E_ADMIN_PASSWORD='local-admin-validation-passphrase'
 docker compose config
 docker build --target migrator -f apps/web/Dockerfile .
 docker build --target runner -f apps/web/Dockerfile .
-docker compose up -d --build --wait --wait-timeout 120 db migrate web proxy
+docker compose up -d --build --wait --wait-timeout 120 db migrate web proxy backup
 docker compose run --rm proxy nginx -t
 docker compose run --rm -e NODE_ENV=test -e E2E_CUSTOMER_PASSWORD -e E2E_STAFF_PASSWORD -e E2E_ADMIN_PASSWORD migrate pnpm --filter @ai-agent-platform/database db:seed-auth-e2e
 BASE_URL=http://127.0.0.1:8080 pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-smoke.spec.ts

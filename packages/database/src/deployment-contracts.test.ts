@@ -157,6 +157,37 @@ describe("production deployment security contracts", () => {
     }
   });
 
+  it("starts every production service in documented dependency order", () => {
+    const runbook = read("docs/deployment/server-readiness.md");
+    expect(runbook).toContain(
+      "docker compose up -d --wait db migrate web proxy backup",
+    );
+    expect(runbook).toContain("`migrate`等待`db`健康后执行");
+    expect(runbook).toContain("`web`和`backup`等待`migrate`成功退出");
+    expect(runbook).toContain("`proxy`等待`web`健康");
+    expect(runbook).not.toContain("后续服务按`service_healthy`顺序启动");
+
+    for (const file of [
+      "README.md",
+      "docs/superpowers/plans/2026-07-10-project-foundation.md",
+      "docs/superpowers/plans/2026-07-11-identity-access-control.md",
+    ]) {
+      const startupCommands = read(file)
+        .split("\n")
+        .filter((line) => line.includes("docker compose up"));
+      expect(startupCommands.length).toBeGreaterThan(0);
+      expect(startupCommands.every((line) => line.includes("backup"))).toBe(
+        true,
+      );
+    }
+
+    const identityPlan = read(
+      "docs/superpowers/plans/2026-07-11-identity-access-control.md",
+    );
+    expect(identityPlan).toContain("loopback Host allowlist");
+    expect(identityPlan).toContain("Origin/baseURL");
+  });
+
   it("uses host webServer only when BASE_URL is absent", () => {
     const config = read("apps/web/playwright.config.ts");
     expect(config).toContain("process.env.BASE_URL");

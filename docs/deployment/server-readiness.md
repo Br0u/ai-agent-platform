@@ -29,7 +29,7 @@
 - `db`：PostgreSQL 18，只有内部网络可访问，数据持久化到独立卷。
 - `migrate`：只使用 `ai_agent_migrator` 连接，完成迁移、权限种子和运行时授权后退出。
 - `backup`：只使用独立的`ai_agent_backup`只读账号执行`pg_dump`，写入独立备份卷并清理过期文件。
-- `db`和`web`均有健康检查；后续服务按`service_healthy`顺序启动。
+- `db`和`web`均有健康检查；`migrate`等待`db`健康后执行，`web`和`backup`等待`migrate`成功退出，`proxy`等待`web`健康。
 
 ## 反向代理信任边界
 
@@ -49,7 +49,7 @@ cp .env.example .env
 # 生产 PUBLIC_HOST 必须改为对外域名
 docker compose config
 docker compose build migrate web
-docker compose up -d --wait db migrate web proxy
+docker compose up -d --wait db migrate web proxy backup
 docker compose ps
 ```
 
