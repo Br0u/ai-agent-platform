@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useId, useState } from "react";
 import { useFormStatus } from "react-dom";
 import type { ReviewActionState } from "@/server/registration/actions";
 import {
@@ -80,6 +80,12 @@ export function RegistrationReviewForm({
   initialApproveState?: ReviewActionState;
   initialRejectState?: ReviewActionState;
 }) {
+  const instanceId = useId();
+  const legalNameErrorId = `${instanceId}-approve-legalName-error`;
+  const organizationIdHelpId = `${instanceId}-organization-id-help`;
+  const organizationIdErrorId = `${instanceId}-approve-organizationId-error`;
+  const approveReviewNoteErrorId = `${instanceId}-approve-reviewNote-error`;
+  const rejectReviewNoteErrorId = `${instanceId}-reject-reviewNote-error`;
   const [organizationKind, setOrganizationKind] = useState<"create" | "link">(
     "create",
   );
@@ -133,9 +139,7 @@ export function RegistrationReviewForm({
           <label>
             组织法定名称
             <input
-              aria-describedby={
-                legalNameError ? "approve-legalName-error" : undefined
-              }
+              aria-describedby={legalNameError ? legalNameErrorId : undefined}
               aria-invalid={legalNameError ? true : undefined}
               defaultValue={request.companyName}
               maxLength={240}
@@ -143,7 +147,7 @@ export function RegistrationReviewForm({
               required
               type="text"
             />
-            <FieldError id="approve-legalName-error" message={legalNameError} />
+            <FieldError id={legalNameErrorId} message={legalNameError} />
           </label>
         ) : (
           <label>
@@ -151,19 +155,19 @@ export function RegistrationReviewForm({
             <input
               aria-describedby={
                 organizationIdError
-                  ? "organization-id-help approve-organizationId-error"
-                  : "organization-id-help"
+                  ? `${organizationIdHelpId} ${organizationIdErrorId}`
+                  : organizationIdHelpId
               }
               aria-invalid={organizationIdError ? true : undefined}
               name="organizationId"
               required
               type="text"
             />
-            <small id="organization-id-help">
+            <small id={organizationIdHelpId}>
               请输入已确认的组织 UUID；当前页面不提供组织检索。
             </small>
             <FieldError
-              id="approve-organizationId-error"
+              id={organizationIdErrorId}
               message={organizationIdError}
             />
           </label>
@@ -180,14 +184,14 @@ export function RegistrationReviewForm({
           审核备注（可选）
           <textarea
             aria-describedby={
-              approveReviewNoteError ? "approve-reviewNote-error" : undefined
+              approveReviewNoteError ? approveReviewNoteErrorId : undefined
             }
             aria-invalid={approveReviewNoteError ? true : undefined}
             maxLength={2000}
             name="reviewNote"
           />
           <FieldError
-            id="approve-reviewNote-error"
+            id={approveReviewNoteErrorId}
             message={approveReviewNoteError}
           />
         </label>
@@ -211,7 +215,7 @@ export function RegistrationReviewForm({
           拒绝说明
           <textarea
             aria-describedby={
-              rejectReviewNoteError ? "reject-reviewNote-error" : undefined
+              rejectReviewNoteError ? rejectReviewNoteErrorId : undefined
             }
             aria-invalid={rejectReviewNoteError ? true : undefined}
             maxLength={2000}
@@ -219,7 +223,7 @@ export function RegistrationReviewForm({
             required
           />
           <FieldError
-            id="reject-reviewNote-error"
+            id={rejectReviewNoteErrorId}
             message={rejectReviewNoteError}
           />
         </label>
