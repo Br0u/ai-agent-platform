@@ -76,6 +76,21 @@ curl -f -H "Host: ${PUBLIC_HOST}" http://127.0.0.1:8080/api/health/ready
 
 Nginx 仅对 `/login`、`/register`、`/staff/login`、`/staff/two-factor`、`/staff/re-auth` 的 POST 计数，速率为每 IP 每分钟 5 次并允许 5 次突发，超限返回 429，并附带`X-Auth-Rate-Limit: REJECTED`；GET 页面加载不计数。代理覆盖客户端提交的`X-Real-IP`和`X-Forwarded-For`，应用仍保留规范化账号/IP双层限流。
 
+应用限流按客户/员工域及登录、重新认证、恢复操作分别建立账号和 IP 两个数据库桶。键使用服务端密钥 HMAC，不落明文标识。固定窗口内成功认证也不重置计数，避免攻击者用一次成功尝试清空桶；窗口到期自动归零。
+
+## 备份恢复演练与回滚
+
+备份容器以 PostgreSQL 的非 root 用户运行，并把 custom-format dump 写入独立卷。每次发布前至少复制一份 dump 到受控主机，执行隔离恢复演练：
+
+```bash
+chmod +x infra/docker/restore-drill.sh
+infra/docker/restore-drill.sh /secure/path/ai-agent-platform-YYYYMMDDTHHMMSSZ.dump
+```
+
+脚本创建临时数据库卷和容器，恢复后验证迁移历史及`users`关键表，最后删除临时资源；它不会打印临时数据库密码。生产备份还必须异机复制、加密并设置失败告警。
+
+应用回滚只使用上一次已验收的不可变镜像 digest，禁止复用或覆盖 tag。先停止入口流量，再切换`web`和`migrate`镜像 digest；只有向后兼容迁移可以直接回滚应用。破坏性数据库变更必须随发布提供经演练的前向修复或恢复脚本，不能自动运行旧迁移，也不能把生产库盲目回退到旧 schema。恢复整库前先保留故障现场 dump，并由 DBA 和发布负责人双人确认恢复点。
+
 ## 生产环境仍需补齐
 
 - 公司域名、DNS、HTTPS证书及TLS终止位置。
