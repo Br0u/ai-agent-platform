@@ -33,7 +33,21 @@ describe("test-only auth E2E tools", () => {
     const credentials = assertE2EEnvironment(env);
     expect(fixtureIdentities).toMatchObject({
       customer: { realm: "customer", status: "active" },
-      staff: { realm: "workforce", status: "active" },
+      pendingCustomer: {
+        realm: "customer",
+        status: "pending_review",
+        sessionToken: "e2e-pending-customer-session",
+      },
+      disabledCustomer: {
+        realm: "customer",
+        status: "disabled",
+        sessionToken: "e2e-disabled-customer-session",
+      },
+      staff: {
+        realm: "workforce",
+        status: "active",
+        sessionToken: "e2e-staff-session",
+      },
       admin: {
         realm: "workforce",
         status: "active",
@@ -66,6 +80,9 @@ describe("test-only auth E2E tools", () => {
       "UPDATE users SET two_factor_enabled = false WHERE id = $1",
     );
     expect(source).toContain("e2e-revoked-session");
+    expect(source).toContain("e2e-pending-customer-session");
+    expect(source).toContain("e2e-disabled-customer-session");
+    expect(source).toContain("e2e-staff-session");
   });
 
   it("asserts hashed presence and consumed state without accepting plaintext", () => {

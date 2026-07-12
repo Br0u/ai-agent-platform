@@ -20,6 +20,24 @@ export const fixtureIdentities = {
     status: "active",
     role: "customer_admin",
   },
+  pendingCustomer: {
+    id: "10000000-0000-4000-8000-000000000004",
+    email: "pending.fixture@example.invalid",
+    username: null,
+    realm: "customer",
+    status: "pending_review",
+    role: "customer_member",
+    sessionToken: "e2e-pending-customer-session",
+  },
+  disabledCustomer: {
+    id: "10000000-0000-4000-8000-000000000005",
+    email: "disabled.fixture@example.invalid",
+    username: null,
+    realm: "customer",
+    status: "disabled",
+    role: "customer_member",
+    sessionToken: "e2e-disabled-customer-session",
+  },
   staff: {
     id: "10000000-0000-4000-8000-000000000002",
     email: "staff.fixture@example.invalid",
@@ -27,6 +45,7 @@ export const fixtureIdentities = {
     realm: "workforce",
     status: "active",
     role: "employee",
+    sessionToken: "e2e-staff-session",
   },
   admin: {
     id: "10000000-0000-4000-8000-000000000003",
@@ -128,6 +147,16 @@ export async function seedAuthE2EFixtures(
     );
     await upsertIdentity(
       client,
+      fixtureIdentities.pendingCustomer,
+      credentials.customerPassword,
+    );
+    await upsertIdentity(
+      client,
+      fixtureIdentities.disabledCustomer,
+      credentials.customerPassword,
+    );
+    await upsertIdentity(
+      client,
       fixtureIdentities.staff,
       credentials.staffPassword,
     );
@@ -151,11 +180,18 @@ export async function seedAuthE2EFixtures(
       [fixtureIdentities.admin.id],
     );
     await client.query(
+      "UPDATE users SET two_factor_enabled = true WHERE id = $1",
+      [fixtureIdentities.staff.id],
+    );
+    await client.query(
       `INSERT INTO sessions
         (id, token, user_id, expires_at, ip_address, user_agent, realm, mfa_verified_at)
-       VALUES
-        ('10000000-0000-4000-8000-000000000020', $1, $3, now() + interval '1 day', NULL, 'auth-e2e-admin-fixture', 'workforce', now()),
-        ('10000000-0000-4000-8000-000000000021', $2, $3, now() + interval '1 day', NULL, 'auth-e2e-revoked-fixture', 'workforce', now())
+        VALUES
+         ('10000000-0000-4000-8000-000000000020', $1, $3, now() + interval '1 day', NULL, 'auth-e2e-admin-fixture', 'workforce', now()),
+         ('10000000-0000-4000-8000-000000000021', $2, $3, now() + interval '1 day', NULL, 'auth-e2e-revoked-fixture', 'workforce', now()),
+         ('10000000-0000-4000-8000-000000000022', $4, $5, now() + interval '1 day', NULL, 'auth-e2e-staff-fixture', 'workforce', now()),
+         ('10000000-0000-4000-8000-000000000023', $6, $7, now() + interval '1 day', NULL, 'auth-e2e-pending-customer-fixture', 'customer', NULL),
+         ('10000000-0000-4000-8000-000000000024', $8, $9, now() + interval '1 day', NULL, 'auth-e2e-disabled-customer-fixture', 'customer', NULL)
        ON CONFLICT (token) DO UPDATE SET
          id = EXCLUDED.id, user_id = EXCLUDED.user_id, realm = EXCLUDED.realm,
          expires_at = EXCLUDED.expires_at, ip_address = EXCLUDED.ip_address,
@@ -165,6 +201,12 @@ export async function seedAuthE2EFixtures(
         fixtureIdentities.admin.sessionToken,
         fixtureIdentities.admin.revokedSessionToken,
         fixtureIdentities.admin.id,
+        fixtureIdentities.staff.sessionToken,
+        fixtureIdentities.staff.id,
+        fixtureIdentities.pendingCustomer.sessionToken,
+        fixtureIdentities.pendingCustomer.id,
+        fixtureIdentities.disabledCustomer.sessionToken,
+        fixtureIdentities.disabledCustomer.id,
       ],
     );
     await client.query(
