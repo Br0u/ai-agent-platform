@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeSignature } from "better-auth/crypto";
 
 import {
@@ -13,6 +13,9 @@ import {
   type AuthActionDependencies,
   type LoginUser,
 } from "./actions";
+import { AuthRateLimitError } from "./rate-limit";
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("staff password, TOTP, recovery, and re-auth actions", () => {
   it("accepts only an untampered Better Auth challenge signature", async () => {
@@ -77,6 +80,29 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
       actions.verify(form({ recoveryCode: "AAAAA-BBBBB-CCCCC-DDDDD" })),
     ).resolves.toEqual({ kind: "error", code: "AUTH_INVALID_CREDENTIALS" });
     expect(commitSession).not.toHaveBeenCalled();
+  });
+
+  it("rate-limits recovery before consuming a code", async () => {
+    const repository = {
+      consume: vi.fn(),
+      revokeSession: vi.fn(async () => undefined),
+    };
+    const actions = createRecoveryChallengeActions({
+      getChallenge: async () => "signed-challenge",
+      verifyChallenge: async () => "challenge-id",
+      repository,
+      commitSession: vi.fn(),
+      clearChallenge: vi.fn(),
+      rateLimiter: {
+        consume: vi.fn().mockRejectedValue(new AuthRateLimitError()),
+      },
+      getHeaders: async () => new Headers(),
+    });
+
+    await expect(
+      actions.verify(form({ recoveryCode: "AAAAA-BBBBB-CCCCC-DDDDD" })),
+    ).resolves.toEqual({ kind: "error", code: "AUTH_RATE_LIMITED" });
+    expect(repository.consume).not.toHaveBeenCalled();
   });
 
   it("revokes the replacement session when recovery cookie delivery fails", async () => {
@@ -150,6 +176,7 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
     const commitCookies = vi.fn(async () => undefined);
     const clearCookies = vi.fn(async () => undefined);
     const requireAssurance = vi.fn(async () => ({ userId: "staff-1" }));
+    const rateLimiter = { consume: vi.fn().mockResolvedValue(undefined) };
     return {
       actions: createStaffSecurityActions({
         gateway,
@@ -159,15 +186,34 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
         getHeaders: async () => new Headers({ cookie: "old=1" }),
         clearCookies,
         requireAssurance,
+        rateLimiter,
       }),
       clearCookies,
       commitCookies,
       gateway,
       recovery,
+      rateLimiter,
       requireAssurance,
       repository,
     };
   }
+
+  it("rate-limits re-authentication before revoking the current session", async () => {
+    const { actions, gateway, rateLimiter, repository } = securityFixture();
+    rateLimiter.consume.mockRejectedValueOnce(new AuthRateLimitError());
+
+    await expect(
+      actions.reauthenticate(
+        form({
+          identifier: "staff",
+          password: "Permanent#1234",
+          code: "123456",
+        }),
+      ),
+    ).resolves.toEqual({ kind: "error", code: "AUTH_RATE_LIMITED" });
+    expect(repository.revokeSession).not.toHaveBeenCalled();
+    expect(gateway.signIn).not.toHaveBeenCalled();
+  });
 
   it("removes only the current actor's TOTP after recent assurance and password confirmation", async () => {
     const { actions, clearCookies, gateway, repository, requireAssurance } =
@@ -861,6 +907,7 @@ function fixture(overrides: Partial<AuthActionDependencies> = {}) {
   const reportInternalError = vi.fn();
   const commitCookies = vi.fn().mockResolvedValue(undefined);
   const cookieStore = { delete: vi.fn(), set: vi.fn() };
+  const rateLimiter = { consume: vi.fn().mockResolvedValue(undefined) };
   const dependencies: AuthActionDependencies = {
     customer,
     staff,
@@ -871,6 +918,7 @@ function fixture(overrides: Partial<AuthActionDependencies> = {}) {
     getHeaders: async () =>
       new Headers({ "user-agent": "test-agent", "x-real-ip": "127.0.0.1" }),
     getCookieStore: async () => cookieStore,
+    rateLimiter,
     ...overrides,
   };
 
@@ -881,6 +929,7 @@ function fixture(overrides: Partial<AuthActionDependencies> = {}) {
     customer,
     commitCookies,
     reportInternalError,
+    rateLimiter,
     staff,
     users,
   };
@@ -922,6 +971,18 @@ describe("safeReturnPath", () => {
 });
 
 describe("customer login action", () => {
+  it("returns a stable rate-limit state before calling Better Auth", async () => {
+    const { actions, customer, rateLimiter } = fixture();
+    rateLimiter.consume.mockRejectedValueOnce(new AuthRateLimitError());
+
+    const result = await actions.customerLogin(
+      AUTH_ACTION_INITIAL_STATE,
+      form({ email: "alice@example.test", password: "ValidPass#12" }),
+    );
+
+    expect(result).toEqual({ kind: "error", code: "AUTH_RATE_LIMITED" });
+    expect(customer.signInEmail).not.toHaveBeenCalled();
+  });
   it("normalizes email and hard-codes the seven-day remember policy", async () => {
     const { actions, commitCookies, customer } = fixture();
 
@@ -1201,6 +1262,7 @@ describe("validation, errors, and audit", () => {
   });
 
   it("maps raw Better Auth failures to one generic error and audits an enum reason", async () => {
+    vi.stubEnv("TRUST_NGINX_PROXY", "true");
     const { actions, audit, customer } = fixture();
     customer.signInEmail.mockRejectedValue(
       new Error("invalid password for alice@example.test; token=secret"),
@@ -1222,6 +1284,45 @@ describe("validation, errors, and audit", () => {
     expect(JSON.stringify(audit.write.mock.calls)).not.toMatch(
       /alice@example|WrongPass|token=secret/i,
     );
+  });
+
+  it("ignores spoofed forwarding headers without the trusted proxy boundary", async () => {
+    vi.stubEnv("TRUST_NGINX_PROXY", "false");
+    const { actions, audit, customer } = fixture({
+      getHeaders: async () =>
+        new Headers({
+          "x-real-ip": "203.0.113.9",
+          "x-forwarded-for": "198.51.100.4",
+        }),
+    });
+    customer.signInEmail.mockRejectedValueOnce(new Error("denied"));
+    await actions.customerLogin(
+      AUTH_ACTION_INITIAL_STATE,
+      form({ email: "alice@example.test", password: "WrongPass#12" }),
+    );
+    expect(audit.write.mock.calls[0]?.[0]).toHaveProperty(
+      "ipAddress",
+      undefined,
+    );
+  });
+
+  it("uses only the Nginx-normalized client address when the boundary is trusted", async () => {
+    vi.stubEnv("TRUST_NGINX_PROXY", "true");
+    const { actions, audit, customer } = fixture({
+      getHeaders: async () =>
+        new Headers({
+          "x-real-ip": "172.20.0.21",
+          "x-forwarded-for": "198.51.100.4",
+        }),
+    });
+    customer.signInEmail.mockRejectedValueOnce(new Error("denied"));
+    await actions.customerLogin(
+      AUTH_ACTION_INITIAL_STATE,
+      form({ email: "alice@example.test", password: "WrongPass#12" }),
+    );
+    expect(audit.write.mock.calls[0]?.[0]).toMatchObject({
+      ipAddress: "172.20.0.21",
+    });
   });
 
   it("revokes the new session when success audit persistence fails", async () => {

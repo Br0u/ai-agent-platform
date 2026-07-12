@@ -124,8 +124,7 @@ export function resolveTrustedRequestIp(
   headers: Headers,
   env: AuthEnvironment = process.env,
 ): string | undefined {
-  const resolved = resolveAuthEnvironment(env);
-  if (!resolved.ipAddressHeaders.includes("x-real-ip")) return undefined;
+  if (env.TRUST_NGINX_PROXY !== "true") return undefined;
 
   const candidate = headers.get("x-real-ip")?.trim();
   if (!candidate || isIP(candidate) === 0) return undefined;

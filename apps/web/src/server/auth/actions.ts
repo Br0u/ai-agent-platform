@@ -45,6 +45,12 @@ import { createAuditWriter, type AuditWriteInput } from "./audit";
 import { createCustomerAuth } from "./customer-auth";
 import { requireRecentWorkforceAssurance } from "./sensitive-action";
 import { createStaffAuth } from "./staff-auth";
+import {
+  AuthRateLimitError,
+  createDatabaseAuthRateLimiter,
+  type AuthRateLimiter,
+} from "./rate-limit";
+import { resolveTrustedRequestIp } from "./shared-options";
 
 const CUSTOMER_COOKIE = "aap_customer_session";
 const STAFF_COOKIE = "aap_staff_session";
@@ -119,6 +125,7 @@ export type AuthActionDependencies = {
   commitCookies(realm: IdentityRealm, headers: Headers): Promise<void>;
   getHeaders(): Promise<Headers>;
   getCookieStore(): Promise<CookieStore>;
+  rateLimiter: AuthRateLimiter;
 };
 
 const customerLoginSchema = z.object({
@@ -148,6 +155,14 @@ function stringField(formData: FormData, name: string): string | undefined {
 
 function invalidCredentials(): AuthActionState {
   return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+}
+
+function rateLimited(): AuthActionState {
+  return { kind: "error", code: "AUTH_RATE_LIMITED" };
+}
+
+function isRateLimited(error: unknown): error is AuthRateLimitError {
+  return error instanceof AuthRateLimitError;
 }
 
 export function safeReturnPath(
@@ -259,6 +274,8 @@ export function createRecoveryChallengeActions(dependencies: {
   };
   commitSession(token: string): Promise<void>;
   clearChallenge(): Promise<void>;
+  rateLimiter?: AuthRateLimiter;
+  getHeaders?(): Promise<Headers>;
 }) {
   return {
     async verify(formData: FormData): Promise<StaffSecurityActionState> {
@@ -274,6 +291,15 @@ export function createRecoveryChallengeActions(dependencies: {
         const identifier = await dependencies.verifyChallenge(signed);
         if (!identifier)
           return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
+        if (dependencies.rateLimiter) {
+          const headers = await dependencies.getHeaders?.();
+          await dependencies.rateLimiter.consume({
+            realm: "workforce",
+            operation: "recovery",
+            identifier,
+            ipAddress: headers ? resolveTrustedRequestIp(headers) : undefined,
+          });
+        }
         const consumed = await dependencies.repository.consume(
           identifier,
           recoveryCode,
@@ -299,7 +325,9 @@ export function createRecoveryChallengeActions(dependencies: {
             ? `/staff/change-password?returnTo=${encodeURIComponent(returnTo)}`
             : returnTo,
         };
-      } catch {
+      } catch (error) {
+        if (isRateLimited(error))
+          return { kind: "error", code: "AUTH_RATE_LIMITED" };
         return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
       }
     },
@@ -444,6 +472,8 @@ export function createDefaultRecoveryChallengeActions() {
       const store = await nextCookies();
       for (const name of STAFF_CHALLENGE_COOKIES) store.delete(name);
     },
+    rateLimiter: createDatabaseAuthRateLimiter(),
+    getHeaders: nextHeaders,
   });
 }
 
@@ -899,6 +929,7 @@ export function createDefaultStaffSecurityActions() {
     getHeaders: currentHeaders,
     clearCookies: () => clearRealmCookies(nextCookies, "workforce"),
     requireAssurance: () => requireRecentWorkforceAssurance(),
+    rateLimiter: createDatabaseAuthRateLimiter(),
   });
 }
 
@@ -910,6 +941,7 @@ export function createStaffSecurityActions(dependencies: {
   getHeaders(): Promise<Headers>;
   clearCookies(): Promise<void>;
   requireAssurance(): Promise<{ userId: string }>;
+  rateLimiter?: AuthRateLimiter;
 }) {
   async function current() {
     const value = await dependencies.repository.current();
@@ -1122,9 +1154,17 @@ export function createStaffSecurityActions(dependencies: {
         return { kind: "error", code: "AUTH_INVALID_INPUT" };
       let newSessionToken: string | undefined;
       try {
+        const requestHeaders = await dependencies.getHeaders();
+        if (dependencies.rateLimiter) {
+          await dependencies.rateLimiter.consume({
+            realm: "workforce",
+            operation: "reauth",
+            identifier,
+            ipAddress: resolveTrustedRequestIp(requestHeaders),
+          });
+        }
         const old = await current();
         await dependencies.repository.revokeSession(old.sessionId);
-        const requestHeaders = await dependencies.getHeaders();
         const passwordStage = await dependencies.gateway.signIn({
           identifier: identifier.normalize("NFKC").trim().toLowerCase(),
           password,
@@ -1165,12 +1205,14 @@ export function createStaffSecurityActions(dependencies: {
             ? `/staff/change-password?returnTo=${encodeURIComponent(returnTo)}`
             : returnTo,
         };
-      } catch {
+      } catch (error) {
         if (newSessionToken)
           await dependencies.gateway
             .revokeNewSession(newSessionToken)
             .catch(() => undefined);
         await dependencies.clearCookies().catch(() => undefined);
+        if (isRateLimited(error))
+          return { kind: "error", code: "AUTH_RATE_LIMITED" };
         return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
       }
     },
@@ -1210,7 +1252,7 @@ function parseSignInResult(value: unknown): SignInResult {
 }
 
 function requestAuditContext(headers: Headers) {
-  const ipAddress = headers.get("x-real-ip") ?? undefined;
+  const ipAddress = resolveTrustedRequestIp(headers);
   const userAgent = headers.get("user-agent") ?? undefined;
   return { ipAddress, userAgent };
 }
@@ -1339,6 +1381,18 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
       return invalidCredentials();
     }
 
+    try {
+      await dependencies.rateLimiter.consume({
+        realm: "customer",
+        operation: "login",
+        identifier: parsed.data.email,
+        ipAddress: resolveTrustedRequestIp(headers),
+      });
+    } catch (error) {
+      if (isRateLimited(error)) return rateLimited();
+      return invalidCredentials();
+    }
+
     let staged: StagedResponse<SignInResult>;
     try {
       staged = await dependencies.customer.signInEmail({
@@ -1437,6 +1491,17 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
       method === "email"
         ? normalizeIdentityEmail(parsed.data.identifier)
         : normalizeWorkforceUsername(parsed.data.identifier);
+    try {
+      await dependencies.rateLimiter.consume({
+        realm: "workforce",
+        operation: "login",
+        identifier,
+        ipAddress: resolveTrustedRequestIp(headers),
+      });
+    } catch (error) {
+      if (isRateLimited(error)) return rateLimited();
+      return invalidCredentials();
+    }
     let staged: StagedResponse<SignInResult>;
     try {
       staged = await (method === "email"
@@ -1726,5 +1791,6 @@ export function createDefaultAuthActions() {
       commitResponseCookies(realm, headers, nextCookies),
     getHeaders: nextHeaders,
     getCookieStore: nextCookies,
+    rateLimiter: createDatabaseAuthRateLimiter(),
   });
 }

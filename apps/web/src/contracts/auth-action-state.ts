@@ -2,7 +2,10 @@ export type AuthActionState =
   | { kind: "idle" }
   | {
       kind: "error";
-      code: "AUTH_INVALID_CREDENTIALS" | "AUTH_LOGOUT_FAILED";
+      code:
+        | "AUTH_INVALID_CREDENTIALS"
+        | "AUTH_RATE_LIMITED"
+        | "AUTH_LOGOUT_FAILED";
     }
   | { kind: "success"; redirectTo: string };
 
@@ -15,6 +18,7 @@ export type StaffSecurityActionState =
       code:
         | "AUTH_INVALID_INPUT"
         | "AUTH_INVALID_CREDENTIALS"
+        | "AUTH_RATE_LIMITED"
         | "AUTH_TOTP_ALREADY_ENABLED"
         | "AUTH_REAUTH_REQUIRED"
         | "AUTH_MFA_REQUIRED"

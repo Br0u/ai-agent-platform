@@ -181,6 +181,7 @@ describe("Server Action cookie context", () => {
           if (options.failCleanup) throw new Error("cookie clear failed");
           return store.userspaceMutableCookies;
         },
+        rateLimiter: { consume: vi.fn().mockResolvedValue(undefined) },
       };
       return createAuthActions(dependencies);
     };
@@ -277,6 +278,7 @@ describe("Server Action cookie context", () => {
         getCookieStore: async () => {
           throw new Error("clear failed");
         },
+        rateLimiter: { consume: vi.fn().mockResolvedValue(undefined) },
       });
 
       return {
