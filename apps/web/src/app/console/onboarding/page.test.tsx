@@ -40,7 +40,9 @@ describe("OnboardingPage", () => {
     expect(
       screen.getByRole("heading", { name: "注册申请审核中" }),
     ).toBeVisible();
-    expect(screen.getByText("邮箱验证暂未启用")).toBeVisible();
+    expect(
+      screen.getByRole("region", { name: "邮箱验证状态：未验证" }),
+    ).toHaveAttribute("data-state", "unverified");
   });
   it("redirects active customers to console", async () => {
     mocks.requireCustomer.mockResolvedValue({
