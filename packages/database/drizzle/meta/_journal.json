@@ -8,6 +8,41 @@
       "when": 1783665872571,
       "tag": "0000_tired_cardiac",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1783770435717,
+      "tag": "0001_identity_access_control",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783792312000,
+      "tag": "0002_session_realm_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783825334967,
+      "tag": "0003_registration_company_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783828742841,
+      "tag": "0004_registration_query_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783854600000,
+      "tag": "0005_identity_pagination_indexes",
+      "breakpoints": true
     }
   ]
 }

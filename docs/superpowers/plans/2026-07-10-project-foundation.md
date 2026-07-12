@@ -274,7 +274,7 @@ Expected: Next.js standalone镜像构建成功。
 
 - [x] **Step 4: Start and smoke test**
 
-Run: `docker compose up -d db web proxy`, then request `/api/health/live` and `/`。
+Run: `docker compose up -d --wait db migrate web proxy backup`, then request `/api/health/live` and `/`。
 
 Expected: HTTP 200。
 

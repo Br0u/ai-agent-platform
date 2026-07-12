@@ -8,7 +8,9 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
+import { useFormStatus } from "react-dom";
 import "./navigation.css";
 import {
   isNavigationChildActive,
@@ -127,14 +129,39 @@ function ItemMarker({ label }: { label: string }) {
   );
 }
 
+function LogoutButton({
+  children,
+  disabled,
+  title,
+}: {
+  children: ReactNode;
+  disabled: boolean;
+  title: string;
+}) {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      aria-busy={pending ? "true" : undefined}
+      className="sidebar-navigation__item sidebar-navigation__item--action"
+      disabled={disabled || pending}
+      title={title}
+      type="submit"
+    >
+      {children}
+    </button>
+  );
+}
+
 function NavigationItem({
   item,
   currentHref,
   onActivate,
+  logoutAction,
 }: {
   item: NavigationLink;
   currentHref: string | undefined;
   onActivate?: () => void;
+  logoutAction?: () => Promise<void>;
 }) {
   const content = (
     <>
@@ -168,14 +195,14 @@ function NavigationItem({
   }
 
   return (
-    <button
-      className="sidebar-navigation__item sidebar-navigation__item--action"
-      disabled={item.disabled}
-      title={item.label}
-      type="button"
-    >
-      {content}
-    </button>
+    <form action={logoutAction}>
+      <LogoutButton
+        disabled={Boolean(item.disabled || !logoutAction)}
+        title={item.label}
+      >
+        {content}
+      </LogoutButton>
+    </form>
   );
 }
 
@@ -186,6 +213,7 @@ function NavigationContent({
   currentHref,
   onActivate,
   showUtilityTestId = false,
+  logoutAction,
 }: {
   brandLabel: string;
   groups: NavigationSection[];
@@ -193,6 +221,7 @@ function NavigationContent({
   currentHref: string | undefined;
   onActivate?: () => void;
   showUtilityTestId?: boolean;
+  logoutAction?: () => Promise<void>;
 }) {
   return (
     <>
@@ -213,6 +242,7 @@ function NavigationContent({
                   currentHref={currentHref}
                   item={item}
                   key={item.href ?? item.action}
+                  logoutAction={logoutAction}
                   onActivate={onActivate}
                 />
               ))}
@@ -231,6 +261,7 @@ function NavigationContent({
               currentHref={currentHref}
               item={item}
               key={item.href ?? item.action}
+              logoutAction={logoutAction}
               onActivate={onActivate}
             />
           ))}
@@ -247,6 +278,7 @@ export type SidebarNavigationProps = {
   groups: NavigationSection[];
   utilities: NavigationLink[];
   grantedPermissions?: readonly string[];
+  logoutAction?: () => Promise<void>;
 };
 
 export function SidebarNavigation({
@@ -256,6 +288,7 @@ export function SidebarNavigation({
   groups,
   utilities,
   grantedPermissions,
+  logoutAction,
 }: SidebarNavigationProps) {
   const drawerId = `${useId()}-sidebar-drawer`;
   const openerRef = useRef<HTMLButtonElement>(null);
@@ -399,6 +432,7 @@ export function SidebarNavigation({
           brandLabel={brandLabel}
           currentHref={currentHref}
           groups={visible.groups}
+          logoutAction={logoutAction}
           showUtilityTestId
           utilities={visible.utilities}
         />
@@ -444,6 +478,7 @@ export function SidebarNavigation({
             brandLabel={brandLabel}
             currentHref={currentHref}
             groups={visible.groups}
+            logoutAction={logoutAction}
             onActivate={closeDrawer}
             utilities={visible.utilities}
           />

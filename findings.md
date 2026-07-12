@@ -9,16 +9,16 @@
 - GitHub仓库为 `https://github.com/Br0u/ai-agent-platform`。
 
 ## 研究发现
-- 当前目录已沿用GitHub远端历史初始化Git；实现位于`feat/project-foundation`隔离工作区。
-- 当前仅有文档、设计稿和预留目录，没有应用代码。
+- 项目基线已完成并在`7766612`推送至GitHub `main`；Phase 9已完成。
+- Phase 10正在`codex/feat-identity-access-control`隔离工作区实施身份与权限控制。
 - PRD、系统架构、占位接口、部署准备和UI方向均已落地本地。
-- GitHub远端已检查，当前只有初始README提交。
+- GitHub远端已包含完成的项目基线，后续身份权限变更在功能分支中独立提交。
 - 本机环境：Git 2.50.1、Node.js 26.0.0、pnpm 11.5.2、Docker 29.5.3、Docker Compose 5.1.4。
 - 本机CPU为Apple Silicon `arm64`；开发镜像必须避免只支持x86_64的依赖，生产目标架构待后续确认。
 - Next.js官方当前稳定线为16.2，16.3仍是Preview；一期固定稳定线，不追Preview。
 - Next.js 16最低Node.js为20.9，Turbopack为默认构建器，Docker支持完整功能。
 - Drizzle官方支持通过`node-postgres`或`postgres.js`连接PostgreSQL；一期采用`node-postgres`便于连接池和自建PostgreSQL。
-- GitHub远端已有一个`Initial commit`，内容只有标题为`ai-agent-platform`的`README.md`；可安全沿用远端历史并把本地文档作为后续提交加入。
+- GitHub远端`main`已包含截至`7766612`的完整项目基线；Phase 10变更继续在身份权限功能分支中提交。
 - 2026-07-10包标签确认：Next.js 16.2.10、React 19.2.7、Tailwind CSS 4.3.2、Vitest 4.1.10、Drizzle ORM 0.45.2、Drizzle Kit 0.31.10、pg 8.22.0。
 - Next.js 16.3仍为Preview/Canary，一期不使用。
 

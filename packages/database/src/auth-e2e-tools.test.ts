@@ -1,0 +1,174 @@
+import { describe, expect, it } from "vitest";
+import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+import { assertE2EEnvironment, fixtureIdentities } from "./seed-auth-e2e";
+import {
+  parseAssertionMode,
+  recoveryCodeDigest,
+  verifyAtRestState,
+} from "./assert-auth-at-rest";
+
+describe("test-only auth E2E tools", () => {
+  const fixtureEnvironment = () =>
+    Object.fromEntries(
+      [
+        "E2E_CUSTOMER_PASSWORD",
+        "E2E_STAFF_PASSWORD",
+        "E2E_ADMIN_PASSWORD",
+        "E2E_PENDING_CUSTOMER_SESSION_TOKEN",
+        "E2E_DISABLED_CUSTOMER_SESSION_TOKEN",
+        "E2E_STAFF_SESSION_TOKEN",
+        "E2E_ROLE_TARGET_SESSION_TOKEN",
+        "E2E_ADMIN_SESSION_TOKEN",
+        "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
+        "E2E_REVOKED_SESSION_TOKEN",
+        "E2E_REPLACEMENT_PASSWORD",
+      ].map((name) => [name, randomBytes(32).toString("base64url")]),
+    );
+  it("accepts the pnpm argument separator used by the documented command", () => {
+    expect(parseAssertionMode(["--", "--expect-present-hashed"])).toBe(
+      "--expect-present-hashed",
+    );
+    expect(parseAssertionMode(["--expect-consumed"])).toBe("--expect-consumed");
+  });
+  it("binds credential account text and user UUID as distinct PostgreSQL parameters", () => {
+    const source = readFileSync(
+      new URL("./seed-auth-e2e.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain(
+      "VALUES (gen_random_uuid(), $1, 'credential', $2::uuid, $3)",
+    );
+  });
+  it("refuses production and missing fixture credentials", () => {
+    expect(() => assertE2EEnvironment({ NODE_ENV: "production" })).toThrow(
+      "test-only",
+    );
+    expect(() => assertE2EEnvironment({ NODE_ENV: "test" })).toThrow(
+      "E2E_CUSTOMER_PASSWORD",
+    );
+    const complete = { NODE_ENV: "test", ...fixtureEnvironment() };
+    for (const name of [
+      "E2E_PENDING_CUSTOMER_SESSION_TOKEN",
+      "E2E_DISABLED_CUSTOMER_SESSION_TOKEN",
+      "E2E_STAFF_SESSION_TOKEN",
+      "E2E_ROLE_TARGET_SESSION_TOKEN",
+      "E2E_ADMIN_SESSION_TOKEN",
+      "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
+      "E2E_REVOKED_SESSION_TOKEN",
+      "E2E_REPLACEMENT_PASSWORD",
+    ]) {
+      expect(() =>
+        assertE2EEnvironment({ ...complete, [name]: undefined }),
+      ).toThrow(name);
+    }
+  });
+
+  it("builds deterministic fixtures without exposing passwords in identities", () => {
+    const env = {
+      NODE_ENV: "test",
+      ...fixtureEnvironment(),
+    };
+    const credentials = assertE2EEnvironment(env);
+    expect(fixtureIdentities).toMatchObject({
+      customer: { realm: "customer", status: "active" },
+      pendingCustomer: {
+        realm: "customer",
+        status: "pending_review",
+      },
+      disabledCustomer: {
+        realm: "customer",
+        status: "disabled",
+      },
+      staff: {
+        realm: "workforce",
+        status: "active",
+      },
+      roleTarget: {
+        realm: "workforce",
+        status: "active",
+      },
+      admin: {
+        realm: "workforce",
+        status: "active",
+      },
+      noTotpAdmin: {
+        realm: "workforce",
+        status: "active",
+      },
+    });
+    expect(JSON.stringify(fixtureIdentities)).not.toContain(
+      credentials.customerPassword,
+    );
+  });
+
+  it("converges only fixture-owned security and membership state", () => {
+    const source = readFileSync(
+      new URL("./seed-auth-e2e.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain(
+      "DELETE FROM two_factors WHERE user_id = ANY($1::uuid[])",
+    );
+    expect(source).toContain("DELETE FROM user_roles WHERE user_id = $1");
+    expect(source).toContain(
+      "DELETE FROM organization_memberships WHERE user_id = ANY($1::uuid[])",
+    );
+    expect(source).toMatch(
+      /ON CONFLICT \(token\) DO UPDATE SET[\s\S]*user_id = EXCLUDED\.user_id[\s\S]*realm = EXCLUDED\.realm[\s\S]*ip_address = EXCLUDED\.ip_address[\s\S]*user_agent = EXCLUDED\.user_agent/,
+    );
+    expect(source).not.toContain("DELETE FROM user_roles;");
+    expect(source).not.toContain("DELETE FROM organization_memberships;");
+    expect(source).toContain(
+      "UPDATE users SET two_factor_enabled = false WHERE id = $1",
+    );
+    expect(source).toContain("credentials.revokedSessionToken");
+    expect(source).not.toMatch(/['"]e2e-[^'"]*session[^'"]*['"]/u);
+    expect(source).toContain("support_operator");
+    expect(source).toContain(
+      "UPDATE users SET status = 'active' WHERE id = $1",
+    );
+    expect(source).toContain(
+      "UPDATE users SET status = 'disabled' WHERE id = $1",
+    );
+    expect(source).toContain("E2E Pending Fixture Company");
+    expect(source).toContain("email_verification_status = 'pending'");
+  });
+
+  it("asserts hashed presence and consumed state without accepting plaintext", () => {
+    const code = "ABCDE-FGHIJ-KLMNO-PQRST";
+    const hash = recoveryCodeDigest(code);
+    expect(hash).toMatch(/^[a-f0-9]{64}$/u);
+    expect(
+      verifyAtRestState(
+        "--expect-present-hashed",
+        code,
+        JSON.stringify([hash]),
+        false,
+      ),
+    ).toBe(true);
+    expect(() =>
+      verifyAtRestState(
+        "--expect-present-hashed",
+        code,
+        JSON.stringify([code]),
+        false,
+      ),
+    ).toThrow("plaintext");
+    expect(verifyAtRestState("--expect-consumed", code, "[]", false)).toBe(
+      true,
+    );
+    expect(() =>
+      verifyAtRestState(
+        "--expect-consumed",
+        code,
+        JSON.stringify([hash]),
+        false,
+      ),
+    ).toThrow("still exists");
+    expect(() =>
+      verifyAtRestState("--expect-consumed", code, "[]", true),
+    ).toThrow("revoked fixture session");
+  });
+});

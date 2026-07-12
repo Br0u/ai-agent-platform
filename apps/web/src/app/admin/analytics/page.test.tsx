@@ -1,10 +1,14 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/server/auth/access", () => ({
+  requirePermission: vi.fn().mockResolvedValue({ realm: "workforce" }),
+}));
 import AdminAnalyticsPage from "./page";
 
 describe("AdminAnalyticsPage", () => {
-  it("shows an honest empty state without fabricated metrics", () => {
-    const { container } = render(<AdminAnalyticsPage />);
+  it("shows an honest empty state without fabricated metrics", async () => {
+    const { container } = render(await AdminAnalyticsPage());
 
     expect(screen.getByRole("heading", { name: "数据统计" })).toBeVisible();
     expect(screen.getByText("暂无统计数据")).toBeVisible();

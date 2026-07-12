@@ -7,7 +7,7 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
-import { users } from "./users";
+import { users } from "./identity";
 
 export const contentStatus = pgEnum("content_status", [
   "draft",

@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: ai_agent_owner
+          POSTGRES_DB: ai_agent_platform_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ai_agent_owner -d ai_agent_platform_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://ai_agent_owner@127.0.0.1:5432/ai_agent_platform_identity_test_ci
+      BETTER_AUTH_URL: http://127.0.0.1:3000
+      BETTER_AUTH_TRUSTED_ORIGINS: http://127.0.0.1:3000
+      FEATURE_EMAIL_VERIFICATION: "false"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.5.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Generate masked authentication fixtures
+        shell: bash
+        run: |
+          for name in MIGRATOR_DATABASE_PASSWORD RUNTIME_DATABASE_PASSWORD BACKUP_DATABASE_PASSWORD \
+            BETTER_AUTH_SECRET E2E_CUSTOMER_PASSWORD E2E_STAFF_PASSWORD E2E_ADMIN_PASSWORD \
+            E2E_PENDING_CUSTOMER_SESSION_TOKEN E2E_DISABLED_CUSTOMER_SESSION_TOKEN \
+            E2E_STAFF_SESSION_TOKEN E2E_ROLE_TARGET_SESSION_TOKEN \
+            E2E_ADMIN_SESSION_TOKEN E2E_NO_TOTP_ADMIN_SESSION_TOKEN \
+            E2E_REVOKED_SESSION_TOKEN E2E_REPLACEMENT_PASSWORD; do
+            value="$(openssl rand -base64 36 | tr -d '\n')"
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+          echo "DATABASE_URL=postgresql://ai_agent_migrator@127.0.0.1:5432/ai_agent_platform_ci" >> "$GITHUB_ENV"
+      - name: Create isolated destructive-test database
+        shell: bash
+        env:
+          PGHOST: 127.0.0.1
+          PGUSER: ai_agent_owner
+          PGDATABASE: ai_agent_platform_ci
+        run: psql --set=ON_ERROR_STOP=1 --command="CREATE DATABASE ai_agent_platform_identity_test_ci"
+      - name: Initialize least-privilege database roles
+        shell: bash
+        env:
+          POSTGRES_USER: ai_agent_owner
+          POSTGRES_DB: ai_agent_platform_ci
+          PGHOST: 127.0.0.1
+          ROLE_SQL_FILE: infra/postgres/01-roles.sql
+        run: sh infra/postgres/01-roles.sh
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ai-agent-platform/database db:prepare
+      - run: pnpm test
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm build
+      - run: pnpm --filter @ai-agent-platform/database db:seed-auth-e2e
+        env:
+          NODE_ENV: test
+      - run: pnpm --filter @ai-agent-platform/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-smoke.spec.ts
+      - run: docker build --target migrator -f apps/web/Dockerfile .
+      - run: docker build --target runner -f apps/web/Dockerfile .
+      - name: Validate Nginx configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          network="aap-nginx-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          upstream="aap-nginx-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm -f "$upstream" >/dev/null 2>&1 || true
+            docker network rm "$network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker network create "$network"
+          docker run -d --name "$upstream" --network "$network" --network-alias web nginx:1.28.3-alpine3.23
+          docker run --rm --network "$network" \
+            -e PUBLIC_HOST=127.0.0.1 \
+            -e ALLOW_LOCAL_VALIDATION_HOSTS=false \
+            -v "$PWD/infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
+            -v "$PWD/infra/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro" \
+            nginx:1.28.3-alpine3.23 nginx -t

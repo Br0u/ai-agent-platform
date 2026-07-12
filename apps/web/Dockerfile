@@ -1,9 +1,13 @@
 FROM node:24-alpine3.24 AS base
 
 ENV PNPM_HOME=/pnpm
+ENV COREPACK_HOME=/corepack
 ENV PATH=$PNPM_HOME:$PATH
 
-RUN corepack enable && corepack prepare pnpm@11.5.2 --activate
+RUN mkdir -p $COREPACK_HOME \
+  && corepack enable \
+  && corepack prepare pnpm@11.5.2 --activate \
+  && chmod -R a+rX $COREPACK_HOME
 
 WORKDIR /app
 
@@ -16,6 +20,17 @@ COPY packages/integrations/package.json packages/integrations/package.json
 COPY packages/ui/package.json packages/ui/package.json
 
 RUN pnpm install --frozen-lockfile
+
+FROM dependencies AS migrator
+
+COPY --chown=node:node packages/database ./packages/database
+COPY --chown=node:node infra/postgres/02-runtime-grants.sql ./infra/postgres/02-runtime-grants.sql
+
+WORKDIR /app/packages/database
+
+USER node
+
+CMD ["pnpm", "db:prepare"]
 
 FROM base AS builder
 

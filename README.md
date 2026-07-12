@@ -39,7 +39,7 @@ pnpm dev
 ```bash
 cp .env.example .env
 # 编辑.env并替换测试密码
-docker compose up -d --build
+docker compose up -d --build --wait db migrate web proxy backup
 ```
 
 访问`http://localhost:8080`；健康检查为`/api/health/live`和`/api/health/ready`。

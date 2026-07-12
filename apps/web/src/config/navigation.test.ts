@@ -222,6 +222,7 @@ const expectedCmsGroups = [
   {
     label: "客户运营",
     items: [
+      ["客户注册审核", "/admin/registrations"],
       ["OpenLab 申请审核", "/admin/openlab"],
       ["License 管理", "/admin/licenses"],
       ["工单管理", "/admin/tickets"],
@@ -397,7 +398,7 @@ describe("consoleNavigation", () => {
     ]);
   });
 
-  it("marks unavailable capabilities and the disabled logout action", () => {
+  it("marks unavailable capabilities and enables the wired logout action", () => {
     const placeholderLabels = [
       "我的 License",
       "我的下载",
@@ -418,22 +419,23 @@ describe("consoleNavigation", () => {
     expect(consoleNavigation.utilities.at(-1)).toEqual({
       label: "退出登录",
       action: "logout",
-      disabled: true,
-      status: "placeholder",
-      description: "账号会话尚未接入",
+      disabled: false,
     });
   });
 });
 
 describe("adminNavigation", () => {
-  it("preserves the exact five groups and all 21 items", () => {
+  it("preserves the exact five groups and all 22 items", () => {
     expect(
       adminNavigation.groups.map((group) => ({
         label: group.label,
         items: linkPairs(group.items),
       })),
     ).toEqual(expectedCmsGroups);
-    expect(adminNavigation.utilities).toEqual([]);
+    expect(adminNavigation.utilities).toEqual([
+      { label: "返回公开门户", href: "/" },
+      { label: "退出登录", action: "logout", disabled: false },
+    ]);
   });
 
   it("marks external operations as placeholders and protects admin items", () => {
@@ -451,9 +453,34 @@ describe("adminNavigation", () => {
         .map((item) => [item.label, item.permission]),
     );
     expect(permissions).toEqual({
+      运营后台首页: "admin:analytics",
+      首页配置: "admin:site",
+      导航管理: "admin:navigation",
+      产品内容: "admin:products",
+      "版本与 Release Note": "admin:releases",
+      文档管理: "admin:docs",
+      "Blog / 产品动态": "admin:blog",
+      客户案例: "admin:cases",
+      FAQ: "admin:faq",
+      兼容矩阵: "admin:compatibility",
+      Marketplace: "admin:marketplace",
+      客户注册审核: "admin:registrations",
+      "OpenLab 申请审核": "admin:registrations",
+      "License 管理": "admin:registrations",
+      工单管理: "admin:registrations",
+      门户访问: "admin:analytics",
+      下载与申请统计: "admin:analytics",
+      转化数据: "admin:analytics",
       用户管理: "admin:users",
       角色权限: "admin:roles",
       操作审计: "admin:audit",
+      站点设置: "admin:site",
+    });
+
+    expect(consoleNavigation.utilities.at(-1)).toEqual({
+      label: "退出登录",
+      action: "logout",
+      disabled: false,
     });
   });
 });

@@ -1,0 +1,161 @@
+.auth-page--registration {
+  background: var(--color-canvas);
+}
+
+.auth-page--registration::before {
+  display: none;
+}
+
+.registration-form__agreement,
+.review-form__confirm {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  color: var(--color-ink);
+  font-size: 14px;
+}
+
+.registration-form__agreement input,
+.review-form input[type="checkbox"],
+.review-form input[type="radio"] {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--color-primary);
+}
+
+.auth-form__field-error,
+.review-form__result {
+  color: var(--color-danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.registration-form__login-link {
+  display: grid;
+  min-height: 48px;
+  place-items: center;
+  border-radius: 8px;
+  color: white;
+  background: var(--color-primary);
+  font-weight: 700;
+}
+
+.registration-form .auth-form__submit {
+  background: var(--color-primary);
+  box-shadow: none;
+}
+
+.registration-status {
+  padding-top: 20px;
+  border-top: 3px solid var(--color-structural);
+}
+
+.registration-status h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+
+.registration-status p {
+  color: var(--color-muted);
+}
+
+.registration-status button,
+.review-form button,
+.review-form input,
+.review-form select,
+.review-form textarea {
+  min-height: 44px;
+}
+
+.registration-status button {
+  padding: 0 16px;
+}
+
+.review-form {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 24px;
+}
+
+.review-form__section {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  padding-top: 20px;
+  border-top: 3px solid var(--color-structural);
+}
+
+.review-form__section--reject {
+  border-top-color: var(--color-danger);
+}
+
+.review-form label,
+.review-form fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.review-form fieldset label,
+.review-form__confirm {
+  display: flex;
+  font-weight: 500;
+}
+
+.review-form input[type="text"],
+.review-form select,
+.review-form textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #cbd6e8;
+  border-radius: 8px;
+  background: white;
+  font: inherit;
+  font-weight: 400;
+}
+
+.review-form textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.review-form :focus-visible,
+.registration-status :focus-visible,
+.registration-form :focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.review-form button {
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  background: var(--color-primary);
+  font-weight: 700;
+}
+
+.review-form__reject {
+  background: var(--color-danger) !important;
+}
+.review-form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@media (max-width: 760px) {
+  .review-form {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .registration-form *,
+  .review-form * {
+    scroll-behavior: auto;
+    transition: none !important;
+  }
+}
