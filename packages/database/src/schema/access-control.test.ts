@@ -135,6 +135,10 @@ describe("identity schema", () => {
     );
   });
 
+  it("indexes the default append-only audit pagination order", () => {
+    expect(indexNames("auditLogs")).toContain("audit_logs_created_id_desc_idx");
+  });
+
   it("implements the Better Auth 1.6.23 core and plugin tables", () => {
     expect(columnNames("accounts")).toEqual(
       expect.arrayContaining([

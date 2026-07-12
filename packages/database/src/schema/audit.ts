@@ -28,5 +28,11 @@ export const auditLogs = pgTable(
       .defaultNow()
       .notNull(),
   },
-  (table) => [index("audit_logs_actor_user_id_idx").on(table.actorUserId)],
+  (table) => [
+    index("audit_logs_actor_user_id_idx").on(table.actorUserId),
+    index("audit_logs_created_id_desc_idx").on(
+      table.createdAt.desc().nullsFirst(),
+      table.id.desc().nullsFirst(),
+    ),
+  ],
 );
