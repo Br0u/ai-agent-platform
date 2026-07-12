@@ -21,6 +21,7 @@ const requiredRoutes = [
   "/cases",
   "/contact",
   "/login",
+  "/staff/login",
   "/console",
   "/console/profile",
   "/console/licenses",

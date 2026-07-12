@@ -18,6 +18,7 @@ export type AppShellProps = {
   adminNavigation: SidebarNavigationConfig;
   footerNavigation: NavigationSection[];
   grantedPermissions?: readonly string[];
+  logoutAction?: () => Promise<void>;
 };
 
 export function AppShell({
@@ -29,6 +30,7 @@ export function AppShell({
   adminNavigation,
   footerNavigation,
   grantedPermissions,
+  logoutAction,
 }: AppShellProps) {
   if (variant !== "portal") {
     const navigation =
@@ -55,6 +57,7 @@ export function AppShell({
           brandLabel={navigation.brandLabel}
           grantedPermissions={grantedPermissions}
           groups={navigation.config.groups}
+          logoutAction={logoutAction}
           utilities={navigation.config.utilities}
         />
         <div className="workspace-shell__content">{children}</div>

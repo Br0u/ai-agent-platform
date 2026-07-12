@@ -337,6 +337,38 @@ describe("realm session guard", () => {
 });
 
 describe("real Better Auth handlers", () => {
+  it("keeps only a two-factor challenge when a forced-password staff user has TOTP", async () => {
+    const database = await authMemoryDatabase("workforce");
+    const workforceUser = database.user[0] as Record<string, unknown>;
+    workforceUser.mustChangePassword = true;
+    workforceUser.twoFactorEnabled = true;
+    database.twoFactor.push({
+      id: "workforce-two-factor-id",
+      userId: "workforce-user-id",
+      secret: "diagnostic-secret",
+      backupCodes: "diagnostic-empty-codes",
+      verified: true,
+      failedVerificationCount: 0,
+      lockedUntil: null,
+    });
+    const auth = createStaffAuth({
+      env: authEnvironment(),
+      adapter: memoryAdapter(database),
+    });
+
+    const response = await signIn(auth, "workforce", "http://127.0.0.1:3000");
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      twoFactorRedirect: true,
+      twoFactorMethods: ["totp"],
+    });
+    expect(database.session).toEqual([]);
+    const cookie = response.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain("better-auth.two_factor=");
+    expect(cookie).toContain("aap_staff_session=;");
+  });
+
   it("sets the exact secure customer session cookie", async () => {
     const database = await authMemoryDatabase("customer");
     const baseURL = "https://portal.example.com";

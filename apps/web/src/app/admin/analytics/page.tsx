@@ -6,13 +6,15 @@ import {
 } from "@/components/route-scaffold/scaffold-anchor-index";
 import { navigationAnchorsForPath } from "@/config/navigation";
 import { matchRoute } from "@/config/routes";
+import { requirePermission } from "@/server/auth/access";
 import { notFound } from "next/navigation";
 
 const pathname = "/admin/analytics";
 
 export const metadata = metadataForRegisteredRoute(pathname);
 
-export default function AdminAnalyticsPage() {
+export default async function AdminAnalyticsPage() {
+  await requirePermission("admin:analytics");
   const route = matchRoute(pathname);
 
   if (!route) notFound();

@@ -353,9 +353,7 @@ export const consoleNavigation: SidebarNavigationConfig = {
     {
       label: "退出登录",
       action: "logout",
-      disabled: true,
-      status: "placeholder",
-      description: "账号会话尚未接入",
+      disabled: false,
     },
   ],
 };
@@ -364,21 +362,55 @@ export const adminNavigation: SidebarNavigationConfig = {
   groups: [
     {
       label: "运营概览",
-      items: [{ label: "运营后台首页", href: "/admin" }],
+      items: [
+        {
+          label: "运营后台首页",
+          href: "/admin",
+          permission: "admin:analytics",
+        },
+      ],
     },
     {
       label: "站点内容",
       items: [
-        { label: "首页配置", href: "/admin/site#homepage" },
-        { label: "导航管理", href: "/admin/navigation" },
-        { label: "产品内容", href: "/admin/products" },
-        { label: "版本与 Release Note", href: "/admin/releases" },
-        { label: "文档管理", href: "/admin/docs" },
-        { label: "Blog / 产品动态", href: "/admin/blog" },
-        { label: "客户案例", href: "/admin/cases" },
-        { label: "FAQ", href: "/admin/faq" },
-        { label: "兼容矩阵", href: "/admin/compatibility" },
-        { label: "Marketplace", href: "/admin/marketplace" },
+        {
+          label: "首页配置",
+          href: "/admin/site#homepage",
+          permission: "admin:site",
+        },
+        {
+          label: "导航管理",
+          href: "/admin/navigation",
+          permission: "admin:navigation",
+        },
+        {
+          label: "产品内容",
+          href: "/admin/products",
+          permission: "admin:products",
+        },
+        {
+          label: "版本与 Release Note",
+          href: "/admin/releases",
+          permission: "admin:releases",
+        },
+        { label: "文档管理", href: "/admin/docs", permission: "admin:docs" },
+        {
+          label: "Blog / 产品动态",
+          href: "/admin/blog",
+          permission: "admin:blog",
+        },
+        { label: "客户案例", href: "/admin/cases", permission: "admin:cases" },
+        { label: "FAQ", href: "/admin/faq", permission: "admin:faq" },
+        {
+          label: "兼容矩阵",
+          href: "/admin/compatibility",
+          permission: "admin:compatibility",
+        },
+        {
+          label: "Marketplace",
+          href: "/admin/marketplace",
+          permission: "admin:marketplace",
+        },
       ],
     },
     {
@@ -388,25 +420,40 @@ export const adminNavigation: SidebarNavigationConfig = {
           label: "OpenLab 申请审核",
           href: "/admin/openlab",
           status: "placeholder",
+          permission: "admin:registrations",
         },
         {
           label: "License 管理",
           href: "/admin/licenses",
           status: "placeholder",
+          permission: "admin:registrations",
         },
         {
           label: "工单管理",
           href: "/admin/tickets",
           status: "placeholder",
+          permission: "admin:registrations",
         },
       ],
     },
     {
       label: "数据",
       items: [
-        { label: "门户访问", href: "/admin/analytics#portal" },
-        { label: "下载与申请统计", href: "/admin/analytics#requests" },
-        { label: "转化数据", href: "/admin/analytics#conversion" },
+        {
+          label: "门户访问",
+          href: "/admin/analytics#portal",
+          permission: "admin:analytics",
+        },
+        {
+          label: "下载与申请统计",
+          href: "/admin/analytics#requests",
+          permission: "admin:analytics",
+        },
+        {
+          label: "转化数据",
+          href: "/admin/analytics#conversion",
+          permission: "admin:analytics",
+        },
       ],
     },
     {
@@ -427,11 +474,18 @@ export const adminNavigation: SidebarNavigationConfig = {
           href: "/admin/audit-logs",
           permission: "admin:audit",
         },
-        { label: "站点设置", href: "/admin/site#settings" },
+        {
+          label: "站点设置",
+          href: "/admin/site#settings",
+          permission: "admin:site",
+        },
       ],
     },
   ],
-  utilities: [],
+  utilities: [
+    { label: "返回公开门户", href: "/" },
+    { label: "退出登录", action: "logout", disabled: false },
+  ],
 };
 
 export const footerNavigation: NavigationSection[] = [

@@ -475,7 +475,7 @@ git commit -m "feat(auth): 接入会话处理与服务端权限校验"
 
 - [ ] **Step 1: Write failing action tests**
 
-Verify safe return-path allow-listing, generic invalid-credential errors, customer/staff realm selection on the server, logout revocation, and clearing only the correct realm cookie. Add cases for pending/rejected customer onboarding redirects, disabled login rejection plus session revocation, workforce `mustChangePassword` taking precedence over CMS/TOTP, forced Phase 10 remember-me values, and allow-listed audit events for login success/failure and logout.
+Verify safe return-path allow-listing, generic invalid-credential errors, customer/staff realm selection on the server, logout revocation, and clearing only the correct realm cookie. Add cases for pending/rejected customer onboarding redirects, disabled login rejection plus session revocation, forced Phase 10 remember-me values, and allow-listed audit events for login success/failure and logout. Better Auth 1.6.23 removes the temporary full session when it returns `twoFactorRedirect` and retains only its signed challenge cookie, so an actual TOTP challenge always redirects to `/staff/two-factor` with an allow-listed return path. Without a challenge, `mustChangePassword=true` redirects directly to `/staff/change-password`. Keep a real-handler regression proving a TOTP challenge has no full staff session.
 
 - [ ] **Step 2: Verify RED, implement actions, verify GREEN**
 
@@ -799,7 +799,7 @@ For `admin`/`super_admin` account, role, permission, registration-approval, and 
 
 - [ ] **Step 3: Write failing forced-password and TOTP UI tests**
 
-Test redirect precedence (`mustChangePassword` before CMS; privileged TOTP after password change), labeled current/new password fields, QR alternative text, manual TOTP URI fallback, six-digit code validation, one-time recovery-code warning, disabled recovery-code viewing endpoint, single-use project-owned hashed recovery code, and server actions hard-coding `trustDevice: false`. Verify recovery-code generation stores only hashes in `twoFactors.backupCodes`, returns plaintext only from enrollment/regeneration, consumes a matching hash atomically, and rejects reuse. Re-auth tests assert the old session is revoked first, bad password/TOTP creates no new session, successful TOTP stamps only the new session's `mfaVerifiedAt`, and off-origin/unlisted return paths fall back to `/admin`.
+Test redirect precedence under Better Auth 1.6.23 session semantics: an actual TOTP challenge completes first because no full staff session exists yet; after successful TOTP, re-read `mustChangePassword` and redirect to `/staff/change-password` before any CMS or permission-protected page. Without an active challenge, forced password change remains the direct post-password redirect. Also test labeled current/new password fields, QR alternative text, manual TOTP URI fallback, six-digit code validation, one-time recovery-code warning, disabled recovery-code viewing endpoint, single-use project-owned hashed recovery code, and server actions hard-coding `trustDevice: false`. Verify recovery-code generation stores only hashes in `twoFactors.backupCodes`, returns plaintext only from enrollment/regeneration, consumes a matching hash atomically, and rejects reuse. Re-auth tests assert the old session is revoked first, bad password/TOTP creates no new session, successful TOTP stamps only the new session's `mfaVerifiedAt`, and off-origin/unlisted return paths fall back to `/admin`.
 
 - [ ] **Step 4: Implement password-change and TOTP actions/pages**
 

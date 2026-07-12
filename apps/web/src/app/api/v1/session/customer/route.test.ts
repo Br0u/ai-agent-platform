@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { routeRegistry } from "@/config/routes";
 
-import { createCustomerSessionHandler } from "./route";
+import { createCustomerSessionHandler } from "./handler";
 
 const safeDto = {
   realm: "customer" as const,
@@ -25,6 +25,15 @@ function request(cookie?: string) {
 }
 
 describe("GET /api/v1/session/customer", () => {
+  it("keeps helper exports outside the Next route module", () => {
+    const source = readFileSync(
+      "src/app/api/v1/session/customer/route.ts",
+      "utf8",
+    );
+
+    expect(source).not.toContain("createCustomerSessionHandler");
+  });
+
   it.each([
     undefined,
     "aap_staff_session=staff-token",

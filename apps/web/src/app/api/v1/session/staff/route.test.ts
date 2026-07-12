@@ -1,6 +1,7 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
-import { createStaffSessionHandler } from "./route";
+import { createStaffSessionHandler } from "./handler";
 
 const safeDto = {
   realm: "workforce" as const,
@@ -18,6 +19,15 @@ function request(cookie?: string) {
 }
 
 describe("GET /api/v1/session/staff", () => {
+  it("keeps helper exports outside the Next route module", () => {
+    const source = readFileSync(
+      "src/app/api/v1/session/staff/route.ts",
+      "utf8",
+    );
+
+    expect(source).not.toContain("createStaffSessionHandler");
+  });
+
   it.each([
     undefined,
     "aap_customer_session=customer-token",

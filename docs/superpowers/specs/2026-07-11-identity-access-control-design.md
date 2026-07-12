@@ -156,8 +156,8 @@ The future provider contract supports `requestVerification`, `verifyToken`, and 
 2. The creator assigns allowed workforce roles and a temporary password through a server-side transaction.
 3. The temporary password is handed over through an approved out-of-band company process; the portal does not email it in Phase 10.
 4. `/staff/login` accepts username or email plus password.
-5. `mustChangePassword=true` redirects to the forced password-change flow before any CMS page.
-6. Administrators enroll TOTP before using privileged user, role, or site-configuration actions.
+5. When Better Auth 1.6.23 returns a TOTP challenge, complete that challenge first because it deletes the temporary full session and retains only a signed two-factor challenge cookie. After successful TOTP, re-read `mustChangePassword`; if it is `true`, redirect to the forced password-change flow before any CMS or permission-protected page.
+6. Without an active TOTP challenge, `mustChangePassword=true` redirects directly to forced password change. Administrators enroll TOTP before using privileged user, role, or site-configuration actions.
 
 ### 7.4 Logout, disablement, and forced sign-out
 

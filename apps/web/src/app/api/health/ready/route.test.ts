@@ -1,8 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createReadinessHandler } from "./route";
+import { readFileSync } from "node:fs";
+
+import { createReadinessHandler } from "./handler";
 
 describe("GET /api/health/ready", () => {
+  it("exports only the supported route handler surface", () => {
+    const source = readFileSync("src/app/api/health/ready/route.ts", "utf8");
+
+    expect(source).not.toMatch(/export function createReadinessHandler/u);
+  });
+
   it("returns 200 when the database probe succeeds", async () => {
     const GET = createReadinessHandler(vi.fn().mockResolvedValue(undefined));
     const response = await GET();

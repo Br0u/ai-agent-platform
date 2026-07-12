@@ -17,7 +17,7 @@ export type NavigationActionItem = {
   permission?: string;
   action: "logout";
   href?: never;
-  disabled: true;
+  disabled?: boolean;
 };
 
 export type NavigationLink = NavigationHrefItem | NavigationActionItem;

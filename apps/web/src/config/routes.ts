@@ -48,6 +48,7 @@ export const routeRegistry: PortalRoute[] = [
   publicRoute("/cases", "客户案例"),
   publicRoute("/contact", "商务联系"),
   publicRoute("/login", "登录"),
+  publicRoute("/staff/login", "员工登录", "live"),
   consoleRoute("/console", "客户控制台", "scaffold"),
   consoleRoute("/console/profile", "账号资料", "scaffold"),
   consoleRoute("/console/licenses", "我的License"),
