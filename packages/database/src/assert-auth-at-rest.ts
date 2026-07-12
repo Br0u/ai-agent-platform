@@ -6,6 +6,15 @@ import { Pool } from "pg";
 
 type AssertionMode = "--expect-present-hashed" | "--expect-consumed";
 
+export function parseAssertionMode(args: string[]): AssertionMode {
+  const mode = args.find((value) =>
+    ["--expect-present-hashed", "--expect-consumed"].includes(value),
+  ) as AssertionMode | undefined;
+  if (!mode)
+    throw new Error("Expected --expect-present-hashed or --expect-consumed");
+  return mode;
+}
+
 export function recoveryCodeDigest(code: string): string {
   return createHash("sha256")
     .update(code.normalize("NFKC").trim(), "utf8")
@@ -61,10 +70,7 @@ async function stdinText(): Promise<string> {
 async function main(): Promise<void> {
   if (process.env.NODE_ENV !== "test")
     throw new Error("At-rest assertion is test-only");
-  const mode = process.argv[2] as AssertionMode;
-  if (!["--expect-present-hashed", "--expect-consumed"].includes(mode)) {
-    throw new Error("Expected --expect-present-hashed or --expect-consumed");
-  }
+  const mode = parseAssertionMode(process.argv.slice(2));
   const email = process.env.E2E_ADMIN_EMAIL;
   const databaseUrl = process.env.DATABASE_URL;
   if (!email || !databaseUrl)

@@ -2,9 +2,19 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
 import { assertE2EEnvironment, fixtureIdentities } from "./seed-auth-e2e";
-import { recoveryCodeDigest, verifyAtRestState } from "./assert-auth-at-rest";
+import {
+  parseAssertionMode,
+  recoveryCodeDigest,
+  verifyAtRestState,
+} from "./assert-auth-at-rest";
 
 describe("test-only auth E2E tools", () => {
+  it("accepts the pnpm argument separator used by the documented command", () => {
+    expect(parseAssertionMode(["--", "--expect-present-hashed"])).toBe(
+      "--expect-present-hashed",
+    );
+    expect(parseAssertionMode(["--expect-consumed"])).toBe("--expect-consumed");
+  });
   it("binds credential account text and user UUID as distinct PostgreSQL parameters", () => {
     const source = readFileSync(
       new URL("./seed-auth-e2e.ts", import.meta.url),
@@ -48,6 +58,11 @@ describe("test-only auth E2E tools", () => {
         status: "active",
         sessionToken: "e2e-staff-session",
       },
+      roleTarget: {
+        realm: "workforce",
+        status: "active",
+        sessionToken: "e2e-role-target-session",
+      },
       admin: {
         realm: "workforce",
         status: "active",
@@ -83,6 +98,16 @@ describe("test-only auth E2E tools", () => {
     expect(source).toContain("e2e-pending-customer-session");
     expect(source).toContain("e2e-disabled-customer-session");
     expect(source).toContain("e2e-staff-session");
+    expect(source).toContain("e2e-role-target-session");
+    expect(source).toContain("support_operator");
+    expect(source).toContain(
+      "UPDATE users SET status = 'active' WHERE id = $1",
+    );
+    expect(source).toContain(
+      "UPDATE users SET status = 'disabled' WHERE id = $1",
+    );
+    expect(source).toContain("E2E Pending Fixture Company");
+    expect(source).toContain("email_verification_status = 'pending'");
   });
 
   it("asserts hashed presence and consumed state without accepting plaintext", () => {

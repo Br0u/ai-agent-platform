@@ -47,6 +47,15 @@ export const fixtureIdentities = {
     role: "employee",
     sessionToken: "e2e-staff-session",
   },
+  roleTarget: {
+    id: "10000000-0000-4000-8000-000000000006",
+    email: "role-target.fixture@example.invalid",
+    username: "role-target.fixture",
+    realm: "workforce",
+    status: "active",
+    role: "employee",
+    sessionToken: "e2e-role-target-session",
+  },
   admin: {
     id: "10000000-0000-4000-8000-000000000003",
     email: "admin.fixture@example.invalid",
@@ -150,6 +159,10 @@ export async function seedAuthE2EFixtures(
       fixtureIdentities.pendingCustomer,
       credentials.customerPassword,
     );
+    await client.query(
+      "UPDATE users SET email_verified = false, email_verification_status = 'pending' WHERE id = $1",
+      [fixtureIdentities.pendingCustomer.id],
+    );
     await upsertIdentity(
       client,
       fixtureIdentities.disabledCustomer,
@@ -159,6 +172,18 @@ export async function seedAuthE2EFixtures(
       client,
       fixtureIdentities.staff,
       credentials.staffPassword,
+    );
+    await upsertIdentity(
+      client,
+      fixtureIdentities.roleTarget,
+      credentials.staffPassword,
+    );
+    await client.query(
+      `INSERT INTO user_roles (id, user_id, role_id)
+       SELECT gen_random_uuid(), $1, id FROM roles
+       WHERE name = 'support_operator' AND realm_scope = 'workforce'
+       ON CONFLICT (user_id, role_id) DO NOTHING`,
+      [fixtureIdentities.roleTarget.id],
     );
     await upsertIdentity(
       client,
@@ -184,6 +209,16 @@ export async function seedAuthE2EFixtures(
       [fixtureIdentities.staff.id],
     );
     await client.query(
+      "UPDATE users SET two_factor_enabled = true WHERE id = $1",
+      [fixtureIdentities.roleTarget.id],
+    );
+    // Model a real revocation edge: the session exists first, then the account
+    // is disabled. The database correctly forbids creating a new disabled-user
+    // session.
+    await client.query("UPDATE users SET status = 'active' WHERE id = $1", [
+      fixtureIdentities.disabledCustomer.id,
+    ]);
+    await client.query(
       `INSERT INTO sessions
         (id, token, user_id, expires_at, ip_address, user_agent, realm, mfa_verified_at)
         VALUES
@@ -192,6 +227,7 @@ export async function seedAuthE2EFixtures(
          ('10000000-0000-4000-8000-000000000022', $4, $5, now() + interval '1 day', NULL, 'auth-e2e-staff-fixture', 'workforce', now()),
          ('10000000-0000-4000-8000-000000000023', $6, $7, now() + interval '1 day', NULL, 'auth-e2e-pending-customer-fixture', 'customer', NULL),
          ('10000000-0000-4000-8000-000000000024', $8, $9, now() + interval '1 day', NULL, 'auth-e2e-disabled-customer-fixture', 'customer', NULL)
+         ,('10000000-0000-4000-8000-000000000025', $10, $11, now() + interval '1 day', NULL, 'auth-e2e-role-target-fixture', 'workforce', now())
        ON CONFLICT (token) DO UPDATE SET
          id = EXCLUDED.id, user_id = EXCLUDED.user_id, realm = EXCLUDED.realm,
          expires_at = EXCLUDED.expires_at, ip_address = EXCLUDED.ip_address,
@@ -207,7 +243,22 @@ export async function seedAuthE2EFixtures(
         fixtureIdentities.pendingCustomer.id,
         fixtureIdentities.disabledCustomer.sessionToken,
         fixtureIdentities.disabledCustomer.id,
+        fixtureIdentities.roleTarget.sessionToken,
+        fixtureIdentities.roleTarget.id,
       ],
+    );
+    await client.query("UPDATE users SET status = 'disabled' WHERE id = $1", [
+      fixtureIdentities.disabledCustomer.id,
+    ]);
+    await client.query(
+      `INSERT INTO customer_registrations
+        (id, user_id, company_name, status)
+       VALUES ('10000000-0000-4000-8000-000000000030', $1, 'E2E Pending Fixture Company', 'pending_review')
+       ON CONFLICT (id) DO UPDATE SET
+         user_id = EXCLUDED.user_id, company_name = EXCLUDED.company_name,
+         status = EXCLUDED.status, reviewer_user_id = NULL,
+         review_note = NULL, reviewed_at = NULL, updated_at = now()`,
+      [fixtureIdentities.pendingCustomer.id],
     );
     await client.query(
       `INSERT INTO organizations (id, legal_name, legal_name_key, status)
