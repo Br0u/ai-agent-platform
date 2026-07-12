@@ -1,8 +1,12 @@
+import { memoryAdapter, type MemoryDB } from "better-auth/adapters/memory";
 import { describe, expect, it, vi } from "vitest";
+
+import { hashPassword } from "@ai-agent-platform/database";
 
 import {
   createAccessService,
-  roleIdsForRealm,
+  createSessionAuthenticator,
+  parseAuthenticatedSession,
   toCustomerSessionDto,
   toStaffSessionDto,
   type AccessRepository,
@@ -11,6 +15,7 @@ import {
   type CustomerOrganization,
   type IdentityRealm,
 } from "./access";
+import { createCustomerAuth } from "./customer-auth";
 
 const headers = new Headers({ cookie: "session=opaque" });
 
@@ -32,10 +37,22 @@ function createFixture(options?: {
   sessionRealm?: IdentityRealm;
   currentUser?: AuthoritativeUser | null;
   permissions?: string[];
+  organizations?: CustomerOrganization[];
 }) {
   let currentUser: AuthoritativeUser | null =
     options?.currentUser === undefined ? user() : options.currentUser;
   let permissions = options?.permissions ?? [];
+  const organizations =
+    options?.organizations === undefined
+      ? [
+          {
+            organizationId: "org-for-user-1",
+            legalName: "Acme Corp",
+            status: "active" as const,
+            role: "owner" as const,
+          },
+        ]
+      : options.organizations;
   const customerAuthenticate = vi.fn(
     async (): Promise<AuthenticatedSession | null> => ({
       userId: "user-1",
@@ -50,14 +67,7 @@ function createFixture(options?: {
   );
   const repository: AccessRepository = {
     findUserById: vi.fn(async () => currentUser),
-    findCustomerOrganization: vi.fn(
-      async (userId): Promise<CustomerOrganization | null> => ({
-        organizationId: `org-for-${userId}`,
-        legalName: "Acme Corp",
-        status: "active",
-        role: "owner",
-      }),
-    ),
+    findCustomerOrganizations: vi.fn(async () => organizations),
     findPermissionKeys: vi.fn(async () => permissions),
   };
   const service = createAccessService({
@@ -92,19 +102,6 @@ async function expectAccessError(
 }
 
 describe("secure auth access service", () => {
-  it("rejects global and opposite-realm roles for permission grants", () => {
-    expect(
-      roleIdsForRealm(
-        [
-          { id: "workforce-role", realmScope: "workforce" },
-          { id: "customer-role", realmScope: "customer" },
-          { id: "global-role", realmScope: "global" },
-        ],
-        "workforce",
-      ),
-    ).toEqual(["workforce-role"]);
-  });
-
   it("returns null without a current realm session", async () => {
     const fixture = createFixture();
     fixture.customerAuthenticate.mockResolvedValueOnce(null);
@@ -187,9 +184,79 @@ describe("secure auth access service", () => {
       status: "active",
       role: "owner",
     });
-    expect(fixture.repository.findCustomerOrganization).toHaveBeenCalledWith(
+    expect(fixture.repository.findCustomerOrganizations).toHaveBeenCalledWith(
       "user-1",
     );
+  });
+
+  it("requires exactly one active organization for customer console access", async () => {
+    const noMembership = createFixture({ organizations: [] });
+    await expectAccessError(
+      noMembership.service.requireCustomer(),
+      "AUTH_ORGANIZATION_REQUIRED",
+      403,
+    );
+
+    const ambiguous = createFixture({
+      organizations: [
+        {
+          organizationId: "org-1",
+          legalName: "One",
+          status: "active",
+          role: "member",
+        },
+        {
+          organizationId: "org-2",
+          legalName: "Two",
+          status: "active",
+          role: "member",
+        },
+      ],
+    });
+    await expectAccessError(
+      ambiguous.service.requireCustomer(),
+      "AUTH_ORGANIZATION_AMBIGUOUS",
+      403,
+    );
+
+    await expect(
+      createFixture().service.requireCustomer(),
+    ).resolves.toMatchObject({
+      organization: { legalName: "Acme Corp", status: "active" },
+    });
+  });
+
+  it.each(["pending_review", "disabled", "rejected"] as const)(
+    "rejects a customer organization in %s state for console access",
+    async (status) => {
+      const fixture = createFixture({
+        organizations: [
+          {
+            organizationId: "org-1",
+            legalName: "Not Active",
+            status,
+            role: "member",
+          },
+        ],
+      });
+      await expectAccessError(
+        fixture.service.requireCustomer(),
+        "AUTH_ORGANIZATION_NOT_ACTIVE",
+        403,
+      );
+    },
+  );
+
+  it("allows pending/rejected onboarding without an organization", async () => {
+    for (const status of ["pending_review", "rejected"] as const) {
+      const fixture = createFixture({
+        currentUser: user({ status }),
+        organizations: [],
+      });
+      await expect(
+        fixture.service.requireCustomer({ onboardingAllowed: true }),
+      ).resolves.toMatchObject({ status, organization: null });
+    }
   });
 
   it("allows only active workforce users", async () => {
@@ -311,5 +378,90 @@ describe("secure auth access service", () => {
     ]) {
       expect(keys).not.toContain(forbidden);
     }
+  });
+});
+
+describe("authenticated session contract", () => {
+  it.each([
+    null,
+    {},
+    { user: { id: "" }, session: { userId: "", realm: "customer" } },
+    { user: { id: "u-1" }, session: { realm: "customer" } },
+    { user: { id: "u-1" }, session: { userId: "u-2", realm: "customer" } },
+    { user: { id: "u-1" }, session: { userId: "u-1", realm: "unknown" } },
+  ])("rejects malformed or mismatched session shape", (value) => {
+    expect(parseAuthenticatedSession(value)).toBeNull();
+  });
+
+  it("accepts a real Better Auth getSession response from its session cookie", async () => {
+    const now = new Date();
+    const userId = "customer-real-session-user";
+    const database: MemoryDB = {
+      user: [
+        {
+          id: userId,
+          name: "Real Session User",
+          email: "real-session@example.test",
+          emailVerified: true,
+          image: null,
+          createdAt: now,
+          updatedAt: now,
+          twoFactorEnabled: false,
+          identityRealm: "customer",
+          status: "active",
+          emailVerificationStatus: "verified",
+          username: null,
+          displayUsername: null,
+          mustChangePassword: false,
+          lastLoginAt: null,
+        },
+      ],
+      account: [
+        {
+          id: "customer-real-session-account",
+          accountId: userId,
+          providerId: "credential",
+          userId,
+          password: await hashPassword("ValidPass#12"),
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      session: [],
+      verification: [],
+      rateLimit: [],
+      twoFactor: [],
+    };
+    const auth = createCustomerAuth({
+      env: {
+        NODE_ENV: "test",
+        BETTER_AUTH_SECRET: "test-only-better-auth-secret-32-characters",
+        BETTER_AUTH_URL: "http://127.0.0.1:3000",
+        BETTER_AUTH_TRUSTED_ORIGINS: "http://127.0.0.1:3000",
+      },
+      adapter: memoryAdapter(database),
+    });
+    const signIn = await auth.handler(
+      new Request("http://127.0.0.1:3000/api/auth/customer/sign-in/email", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "http://127.0.0.1:3000",
+        },
+        body: JSON.stringify({
+          email: "real-session@example.test",
+          password: "ValidPass#12",
+        }),
+      }),
+    );
+    const cookie = (signIn.headers.get("set-cookie") ?? "").split(";", 1)[0];
+    const authenticate = createSessionAuthenticator((headers) =>
+      auth.api.getSession({ headers }),
+    );
+
+    await expect(authenticate(new Headers({ cookie }))).resolves.toEqual({
+      userId,
+      realm: "customer",
+    });
   });
 });

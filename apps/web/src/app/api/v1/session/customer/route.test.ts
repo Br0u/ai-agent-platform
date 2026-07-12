@@ -79,16 +79,28 @@ describe("private Better Auth boundary", () => {
     ).toBe(false);
 
     const routeFiles: string[] = [];
+    const productionSourceFiles: string[] = [];
     const walk = (directory: string) => {
       for (const entry of readdirSync(directory, { withFileTypes: true })) {
         const path = resolve(directory, entry.name);
         if (entry.isDirectory()) walk(path);
-        else if (entry.name === "route.ts") routeFiles.push(path);
+        else if (/^route\.(?:ts|tsx|js|jsx|mjs|cjs)$/u.test(entry.name)) {
+          routeFiles.push(path);
+        }
+        if (
+          !entry.isDirectory() &&
+          /\.(?:ts|tsx|js|jsx|mjs|cjs)$/u.test(entry.name) &&
+          !/\.test\./u.test(entry.name)
+        ) {
+          productionSourceFiles.push(path);
+        }
       }
     };
     walk(appRoot);
 
-    for (const path of routeFiles) {
+    expect(routeFiles.every((path) => !path.includes("/api/auth/"))).toBe(true);
+    // Defense-in-depth regression scan; security review remains mandatory.
+    for (const path of productionSourceFiles) {
       const source = readFileSync(path, "utf8");
       expect(source, path).not.toMatch(/\btoNextJsHandler\b/);
       expect(source, path).not.toMatch(/\.handler\b/);

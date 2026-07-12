@@ -1,12 +1,19 @@
 import "server-only";
 
+import { and, asc, eq } from "drizzle-orm";
 import { headers as nextHeaders } from "next/headers";
 
 import {
   canEnterApplication,
   getDatabase,
+  organizationMemberships,
+  organizations,
+  permissions,
+  rolePermissions,
+  roles,
   type IdentityRealm,
   type UserStatus,
+  userRoles,
 } from "@ai-agent-platform/database";
 
 import { getCustomerAuth } from "./customer-auth";
@@ -51,6 +58,7 @@ export type CustomerActor = ActorBase & {
   realm: "customer";
   emailVerificationStatus: EmailVerificationStatus;
   organization: CustomerOrganization | null;
+  organizationMembershipCount: number;
 };
 
 export type WorkforceActor = ActorBase & {
@@ -65,7 +73,7 @@ export type Actor = CustomerActor | WorkforceActor;
 
 export type CustomerSessionDto = Omit<
   CustomerActor,
-  "userId" | "organization"
+  "userId" | "organization" | "organizationMembershipCount"
 > & {
   organization: CustomerOrganizationDto | null;
 };
@@ -82,9 +90,7 @@ export type SessionAuthenticator = (
 
 export type AccessRepository = {
   findUserById(userId: string): Promise<AuthoritativeUser | null>;
-  findCustomerOrganization(
-    userId: string,
-  ): Promise<CustomerOrganization | null>;
+  findCustomerOrganizations(userId: string): Promise<CustomerOrganization[]>;
   findPermissionKeys(
     userId: string,
     realm: IdentityRealm,
@@ -96,7 +102,10 @@ export type AuthAccessErrorCode =
   | "AUTH_REALM_MISMATCH"
   | "AUTH_ACCOUNT_DISABLED"
   | "AUTH_ACCOUNT_NOT_ACTIVE"
-  | "AUTH_PERMISSION_DENIED";
+  | "AUTH_PERMISSION_DENIED"
+  | "AUTH_ORGANIZATION_REQUIRED"
+  | "AUTH_ORGANIZATION_AMBIGUOUS"
+  | "AUTH_ORGANIZATION_NOT_ACTIVE";
 
 const ACCESS_MESSAGES: Readonly<Record<AuthAccessErrorCode, string>> = {
   AUTH_SESSION_REQUIRED: "Authentication required",
@@ -104,6 +113,9 @@ const ACCESS_MESSAGES: Readonly<Record<AuthAccessErrorCode, string>> = {
   AUTH_ACCOUNT_DISABLED: "This account is disabled",
   AUTH_ACCOUNT_NOT_ACTIVE: "This account is not active",
   AUTH_PERMISSION_DENIED: "Permission denied",
+  AUTH_ORGANIZATION_REQUIRED: "An active organization is required",
+  AUTH_ORGANIZATION_AMBIGUOUS: "Organization membership is ambiguous",
+  AUTH_ORGANIZATION_NOT_ACTIVE: "This organization is not active",
 };
 
 export class AuthAccessError extends Error {
@@ -124,23 +136,11 @@ export function authAccessErrorBody(error: AuthAccessError): {
   };
 }
 
-export function roleIdsForRealm(
-  roles: readonly {
-    id: string;
-    realmScope: IdentityRealm | "global";
-  }[],
-  realm: IdentityRealm,
-): string[] {
-  return roles
-    .filter(({ realmScope }) => realmScope === realm)
-    .map(({ id }) => id);
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function parseAuthenticatedSession(
+export function parseAuthenticatedSession(
   value: unknown,
 ): AuthenticatedSession | null {
   if (!isRecord(value) || !isRecord(value.user) || !isRecord(value.session)) {
@@ -148,9 +148,13 @@ function parseAuthenticatedSession(
   }
 
   const userId = value.user.id;
+  const sessionUserId = value.session.userId;
   const realm = value.session.realm;
   if (
     typeof userId !== "string" ||
+    userId.trim().length === 0 ||
+    typeof sessionUserId !== "string" ||
+    sessionUserId !== userId ||
     (realm !== "customer" && realm !== "workforce")
   ) {
     return null;
@@ -159,25 +163,32 @@ function parseAuthenticatedSession(
   return { userId, realm };
 }
 
+type GetSession = (headers: Headers) => Promise<unknown>;
+
+export function createSessionAuthenticator(
+  getSession: GetSession,
+): SessionAuthenticator {
+  return async (requestHeaders) =>
+    parseAuthenticatedSession(await getSession(requestHeaders));
+}
+
 function createDefaultAuthenticators(): Record<
   IdentityRealm,
   SessionAuthenticator
 > {
   return {
-    customer: async (requestHeaders) =>
-      parseAuthenticatedSession(
-        await getCustomerAuth().api.getSession({ headers: requestHeaders }),
-      ),
-    workforce: async (requestHeaders) =>
-      parseAuthenticatedSession(
-        await getStaffAuth().api.getSession({ headers: requestHeaders }),
-      ),
+    customer: createSessionAuthenticator((requestHeaders) =>
+      getCustomerAuth().api.getSession({ headers: requestHeaders }),
+    ),
+    workforce: createSessionAuthenticator((requestHeaders) =>
+      getStaffAuth().api.getSession({ headers: requestHeaders }),
+    ),
   };
 }
 
-export function createDatabaseAccessRepository(): AccessRepository {
-  const database = getDatabase();
-
+export function createDatabaseAccessRepository(
+  database: ReturnType<typeof getDatabase> = getDatabase(),
+): AccessRepository {
   return {
     async findUserById(userId) {
       const found = await database.query.users.findFirst({
@@ -206,56 +217,44 @@ export function createDatabaseAccessRepository(): AccessRepository {
         : null;
     },
 
-    async findCustomerOrganization(userId) {
-      const membership = await database.query.organizationMemberships.findFirst(
-        {
-          where: (table, { eq }) => eq(table.userId, userId),
-          columns: { organizationId: true, role: true },
-        },
-      );
-      if (!membership) return null;
-
-      const organization = await database.query.organizations.findFirst({
-        where: (table, { eq }) => eq(table.id, membership.organizationId),
-        columns: { id: true, legalName: true, status: true },
-      });
-      if (!organization) return null;
-
-      return {
-        organizationId: organization.id,
-        legalName: organization.legalName,
-        status: organization.status,
-        role: membership.role,
-      };
+    async findCustomerOrganizations(userId) {
+      return database
+        .select({
+          organizationId: organizations.id,
+          legalName: organizations.legalName,
+          status: organizations.status,
+          role: organizationMemberships.role,
+        })
+        .from(organizationMemberships)
+        .innerJoin(
+          organizations,
+          eq(organizationMemberships.organizationId, organizations.id),
+        )
+        .where(eq(organizationMemberships.userId, userId))
+        .orderBy(
+          asc(organizationMemberships.createdAt),
+          asc(organizationMemberships.id),
+        )
+        .limit(2);
     },
 
     async findPermissionKeys(userId, realm) {
-      const assignments = await database.query.userRoles.findMany({
-        where: (table, { eq }) => eq(table.userId, userId),
-        columns: { roleId: true },
-      });
-      const roleIds = assignments.map(({ roleId }) => roleId);
-      if (roleIds.length === 0) return [];
+      const rows = await database
+        .selectDistinct({ key: permissions.key })
+        .from(userRoles)
+        .innerJoin(
+          roles,
+          and(eq(userRoles.roleId, roles.id), eq(roles.realmScope, realm)),
+        )
+        .innerJoin(rolePermissions, eq(roles.id, rolePermissions.roleId))
+        .innerJoin(
+          permissions,
+          eq(rolePermissions.permissionId, permissions.id),
+        )
+        .where(eq(userRoles.userId, userId))
+        .orderBy(asc(permissions.key));
 
-      const currentRoles = await database.query.roles.findMany({
-        where: (table, { inArray }) => inArray(table.id, roleIds),
-        columns: { id: true, realmScope: true },
-      });
-      const currentRoleIds = roleIdsForRealm(currentRoles, realm);
-      if (currentRoleIds.length === 0) return [];
-
-      const grants = await database.query.rolePermissions.findMany({
-        where: (table, { inArray }) => inArray(table.roleId, currentRoleIds),
-        columns: { permissionId: true },
-      });
-      const permissionIds = grants.map(({ permissionId }) => permissionId);
-      if (permissionIds.length === 0) return [];
-
-      const currentPermissions = await database.query.permissions.findMany({
-        where: (table, { inArray }) => inArray(table.id, permissionIds),
-        columns: { key: true },
-      });
-      return currentPermissions.map(({ key }) => key);
+      return rows.map(({ key }) => key);
     },
   };
 }
@@ -294,13 +293,18 @@ export function createAccessService(
     }
 
     if (realm === "customer") {
+      const currentOrganizations = await repository.findCustomerOrganizations(
+        currentUser.id,
+      );
       return {
         userId: currentUser.id,
         realm: "customer",
         status: currentUser.status,
         displayName: currentUser.displayName,
         emailVerificationStatus: currentUser.emailVerificationStatus,
-        organization: await repository.findCustomerOrganization(currentUser.id),
+        organization:
+          currentOrganizations.length === 1 ? currentOrganizations[0] : null,
+        organizationMembershipCount: currentOrganizations.length,
       };
     }
 
@@ -330,7 +334,18 @@ export function createAccessService(
     if (actor.realm !== "customer") {
       throw new AuthAccessError("AUTH_REALM_MISMATCH", 403);
     }
-    if (actor.status === "active") return actor;
+    if (actor.status === "active") {
+      if (actor.organizationMembershipCount === 0) {
+        throw new AuthAccessError("AUTH_ORGANIZATION_REQUIRED", 403);
+      }
+      if (actor.organizationMembershipCount > 1) {
+        throw new AuthAccessError("AUTH_ORGANIZATION_AMBIGUOUS", 403);
+      }
+      if (!actor.organization || actor.organization.status !== "active") {
+        throw new AuthAccessError("AUTH_ORGANIZATION_NOT_ACTIVE", 403);
+      }
+      return actor;
+    }
     if (
       options?.onboardingAllowed &&
       canEnterApplication("customer", actor.status, "onboarding")
@@ -352,6 +367,9 @@ export function createAccessService(
   async function requirePermission(
     permission: PermissionKey,
   ): Promise<WorkforceActor> {
+    // Read/page gate only. A security-sensitive mutation must repeat an exact
+    // permission EXISTS check inside the same transaction as its writes; never
+    // authorize a mutation from this actor's permission snapshot.
     const actor = await requireWorkforce();
     if (!actor.permissions.includes(permission)) {
       throw new AuthAccessError("AUTH_PERMISSION_DENIED", 403);
