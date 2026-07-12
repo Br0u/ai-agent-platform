@@ -1,18 +1,4 @@
-"use client";
-
-import { useActionState } from "react";
-import { useFormStatus } from "react-dom";
-
-import type { EmailVerificationResult } from "@ai-agent-platform/integrations";
-
-import { resendEmailVerification } from "@/server/registration/server-actions";
-
 type VerificationStatus = "unverified" | "pending" | "verified";
-type ResendState = EmailVerificationResult | null;
-type ResendAction = (
-  previous: ResendState,
-  formData: FormData,
-) => Promise<EmailVerificationResult>;
 
 const content = {
   unverified: {
@@ -33,23 +19,11 @@ const content = {
   },
 } as const;
 
-function ResendButton() {
-  const { pending } = useFormStatus();
-  return (
-    <button disabled={pending} type="submit">
-      {pending ? "正在请求…" : "重新发送验证邮件"}
-    </button>
-  );
-}
-
 export function EmailVerificationStatus({
   status,
-  resendAction = resendEmailVerification,
 }: {
   status: VerificationStatus;
-  resendAction?: ResendAction;
 }) {
-  const [result, formAction] = useActionState(resendAction, null);
   const state = content[status];
   return (
     <section
@@ -60,15 +34,17 @@ export function EmailVerificationStatus({
       <h2>{state.heading}</h2>
       <p>{state.description}</p>
       {status === "verified" ? null : (
-        <form action={formAction}>
-          <ResendButton />
-        </form>
+        <>
+          <button
+            aria-describedby="email-verification-resend-help"
+            disabled
+            type="button"
+          >
+            重新发送验证邮件
+          </button>
+          <p id="email-verification-resend-help">验证邮件发送通道暂未启用。</p>
+        </>
       )}
-      <p aria-live="polite" role="status">
-        {result?.ok === false && result.status === 501
-          ? "验证邮件暂时无法发送，请稍后再试。"
-          : ""}
-      </p>
     </section>
   );
 }

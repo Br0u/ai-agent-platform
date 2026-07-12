@@ -5,7 +5,6 @@ import type { RegistrationActionState, ReviewActionState } from "./actions";
 import {
   approveRegistrationAction,
   rejectRegistrationAction,
-  resendVerificationAction,
   submitRegistrationAction,
 } from "./actions";
 
@@ -30,10 +29,4 @@ export async function rejectRegistration(
   formData: FormData,
 ): Promise<ReviewActionState> {
   return rejectRegistrationAction(formData);
-}
-
-export async function resendEmailVerification(): Promise<
-  Awaited<ReturnType<typeof resendVerificationAction>>
-> {
-  return resendVerificationAction();
 }

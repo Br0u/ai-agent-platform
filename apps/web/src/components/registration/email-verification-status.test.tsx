@@ -1,10 +1,4 @@
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { EmailVerificationStatus } from "./email-verification-status";
 
@@ -25,19 +19,20 @@ describe("EmailVerificationStatus", () => {
   });
 
   it.each(["unverified", "pending"] as const)(
-    "announces disabled resend for %s without claiming an email was sent",
-    async (status) => {
-      const action = async () => ({
-        ok: false as const,
-        status: 501 as const,
-        code: "EMAIL_VERIFICATION_DISABLED" as const,
+    "keeps the disabled resend placeholder inaccessible for %s",
+    (status) => {
+      render(<EmailVerificationStatus status={status} />);
+      const button = screen.getByRole("button", {
+        name: "重新发送验证邮件",
       });
-      render(<EmailVerificationStatus resendAction={action} status={status} />);
-      fireEvent.click(screen.getByRole("button", { name: "重新发送验证邮件" }));
-      await waitFor(() =>
-        expect(screen.getByRole("status")).toHaveTextContent(
-          "验证邮件暂时无法发送",
-        ),
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute(
+        "aria-describedby",
+        "email-verification-resend-help",
+      );
+      expect(screen.getByText("验证邮件发送通道暂未启用。")).toHaveAttribute(
+        "id",
+        "email-verification-resend-help",
       );
       expect(screen.queryByText(/已发送/)).not.toBeInTheDocument();
     },
