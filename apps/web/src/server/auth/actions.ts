@@ -509,8 +509,15 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
       realm === "customer" ? dependencies.customer : dependencies.staff;
     const errors: Error[] = [];
     let stagedHeaders: Headers | undefined;
+    let serverRevoked = false;
     try {
-      stagedHeaders = (await gateway.signOut({ headers })).headers;
+      const result = await gateway.signOut({ headers });
+      stagedHeaders = result.headers;
+      if (result.response.success === true) {
+        serverRevoked = true;
+      } else {
+        errors.push(new Error("Server session revocation was not confirmed"));
+      }
     } catch {
       errors.push(new Error("Server session revocation failed"));
     }
@@ -530,17 +537,19 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
     } catch {
       errors.push(new Error("Local logout cookie clear failed"));
     }
-    try {
-      await dependencies.audit.write({
-        event: "auth.logout",
-        target: { type: "session" },
-        ...requestAuditContext(headers),
-      });
-    } catch {
-      errors.push(new Error("Logout audit failed"));
+    if (serverRevoked) {
+      try {
+        await dependencies.audit.write({
+          event: "auth.logout",
+          target: { type: "session" },
+          ...requestAuditContext(headers),
+        });
+      } catch {
+        errors.push(new Error("Logout audit failed"));
+      }
     }
     reportInternal(errors, "Logout completed with failures");
-    if (!committedExpiry && !clearedLocally) {
+    if (!serverRevoked || (!committedExpiry && !clearedLocally)) {
       return { kind: "error", code: "AUTH_LOGOUT_FAILED" };
     }
     return {

@@ -489,23 +489,23 @@ describe("logout actions", () => {
     },
   );
 
-  it("still clears locally and audits when server revocation fails", async () => {
-    const { actions, audit, customer, reportInternalError } = fixture();
+  it("still clears locally but fails without a success audit when server revocation throws", async () => {
+    const { actions, audit, cookieStore, customer, reportInternalError } =
+      fixture();
     customer.signOut.mockRejectedValue(new Error("revocation failed"));
 
     await expect(actions.customerLogout()).resolves.toEqual({
-      kind: "success",
-      redirectTo: "/login",
+      kind: "error",
+      code: "AUTH_LOGOUT_FAILED",
     });
-    expect(audit.write).toHaveBeenCalledWith(
-      expect.objectContaining({ event: "auth.logout" }),
-    );
+    expect(cookieStore.delete).toHaveBeenCalledWith("aap_customer_session");
+    expect(audit.write).not.toHaveBeenCalled();
     expect(reportInternalError).toHaveBeenCalledWith(
       expect.any(AggregateError),
     );
   });
 
-  it("returns a stable failure only when neither expiry commit nor local clear works", async () => {
+  it("does not audit a logout when server revocation throws and client cleanup also fails", async () => {
     const { actions, audit, cookieStore, customer, reportInternalError } =
       fixture();
     customer.signOut.mockRejectedValue(new Error("revocation failed"));
@@ -517,9 +517,64 @@ describe("logout actions", () => {
       kind: "error",
       code: "AUTH_LOGOUT_FAILED",
     });
+    expect(audit.write).not.toHaveBeenCalled();
+    expect(reportInternalError).toHaveBeenCalledWith(
+      expect.any(AggregateError),
+    );
+  });
+
+  it("treats success false as a server revocation failure while attempting both client cleanups", async () => {
+    const {
+      actions,
+      audit,
+      commitCookies,
+      cookieStore,
+      customer,
+      reportInternalError,
+    } = fixture();
+    customer.signOut.mockResolvedValue(staged({ success: false }));
+
+    await expect(actions.customerLogout()).resolves.toEqual({
+      kind: "error",
+      code: "AUTH_LOGOUT_FAILED",
+    });
+    expect(commitCookies).toHaveBeenCalledWith("customer", expect.any(Headers));
+    expect(cookieStore.delete).toHaveBeenCalledWith("aap_customer_session");
+    expect(audit.write).not.toHaveBeenCalled();
+    expect(reportInternalError).toHaveBeenCalledWith(
+      expect.any(AggregateError),
+    );
+  });
+
+  it("audits a revoked server session but reports client cleanup failure", async () => {
+    const { actions, audit, commitCookies, cookieStore, reportInternalError } =
+      fixture();
+    commitCookies.mockRejectedValue(new Error("expiry commit failed"));
+    cookieStore.delete.mockImplementation(() => {
+      throw new Error("cookie clear failed");
+    });
+
+    await expect(actions.customerLogout()).resolves.toEqual({
+      kind: "error",
+      code: "AUTH_LOGOUT_FAILED",
+    });
     expect(audit.write).toHaveBeenCalledWith(
       expect.objectContaining({ event: "auth.logout" }),
     );
+    expect(reportInternalError).toHaveBeenCalledWith(
+      expect.any(AggregateError),
+    );
+  });
+
+  it("allows redirect after server and client cleanup even when logout audit fails", async () => {
+    const audit = { write: vi.fn().mockRejectedValue(new Error("audit down")) };
+    const { actions, reportInternalError } = fixture({ audit });
+
+    await expect(actions.customerLogout()).resolves.toEqual({
+      kind: "success",
+      redirectTo: "/login",
+    });
+    expect(audit.write).toHaveBeenCalledOnce();
     expect(reportInternalError).toHaveBeenCalledWith(
       expect.any(AggregateError),
     );
