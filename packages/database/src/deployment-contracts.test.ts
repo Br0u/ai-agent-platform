@@ -86,6 +86,15 @@ describe("production deployment security contracts", () => {
     const backupScript = read("infra/docker/backup.sh");
     expect(backupScript).toContain('"$BACKUP_DATABASE_URL"');
     expect(backupScript).not.toContain("PGDATABASE");
+    expect(backupService).toContain(
+      "dockerfile: infra/docker/backup.Dockerfile",
+    );
+    expect(backupService).toContain("read_only: true");
+    expect(backupService).toContain("cap_drop:\n      - ALL");
+    expect(backupService).not.toMatch(/user:\s*(?:root|0)/u);
+    const backupImage = read("infra/docker/backup.Dockerfile");
+    expect(backupImage).toContain("USER postgres");
+    expect(backupImage).toContain("ENTRYPOINT");
   });
 
   it("rejects unknown hosts before forwarding and preserves approved Host ports", () => {
@@ -101,7 +110,7 @@ describe("production deployment security contracts", () => {
     expect(compose).toContain(
       "ALLOW_LOCAL_VALIDATION_HOSTS: ${ALLOW_LOCAL_VALIDATION_HOSTS:-false}",
     );
-    expect(compose).toContain('wget --header=\\"Host: $${PUBLIC_HOST}\\"');
+    expect(compose).toContain('wget --header="Host: $${PUBLIC_HOST}"');
     expect(compose).toContain(
       "PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST in .env}",
     );
@@ -113,6 +122,15 @@ describe("production deployment security contracts", () => {
     expect(workflow).toContain("node-version: 24");
     expect(workflow).toContain("version: 11.5.2");
     expect(workflow).toContain("postgres:18");
+    expect(workflow).toContain("ai_agent_platform_identity_test_ci");
+    expect(workflow).toContain("Initialize least-privilege database roles");
+    expect(workflow.indexOf("01-roles.sh")).toBeLessThan(
+      workflow.indexOf("db:prepare"),
+    );
+    expect(workflow).not.toContain("ai_agent_platform_identity_test\n");
+    expect(read("apps/web/vitest.config.ts")).toContain(
+      "fileParallelism: false",
+    );
     expect(workflow).toContain("pnpm install --frozen-lockfile");
     expect(workflow).toContain("db:seed-auth-e2e");
     expect(workflow).toContain("playwright install --with-deps chromium");
@@ -232,6 +250,7 @@ describe("production deployment security contracts", () => {
         "E2E_STAFF_SESSION_TOKEN",
         "E2E_ROLE_TARGET_SESSION_TOKEN",
         "E2E_ADMIN_SESSION_TOKEN",
+        "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
         "E2E_REVOKED_SESSION_TOKEN",
         "E2E_REPLACEMENT_PASSWORD",
       ]) {
@@ -251,6 +270,7 @@ describe("production deployment security contracts", () => {
         "E2E_STAFF_SESSION_TOKEN",
         "E2E_ROLE_TARGET_SESSION_TOKEN",
         "E2E_ADMIN_SESSION_TOKEN",
+        "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
         "E2E_REVOKED_SESSION_TOKEN",
         "E2E_REPLACEMENT_PASSWORD",
       ]) {
@@ -269,6 +289,20 @@ describe("production deployment security contracts", () => {
       expect(block).toContain("config --quiet");
     }
     expect(acceptanceBlock).toContain("db migrate web proxy backup");
+  });
+
+  it("uses a migration-safe CI database and initializes privilege roles first", () => {
+    const workflow = read(".github/workflows/ci.yml");
+    expect(workflow).toContain("ai_agent_platform_identity_test_ci");
+    expect(workflow).not.toContain("ai_agent_platform_test\n");
+    expect(workflow).toContain("Initialize least-privilege database roles");
+    expect(
+      workflow.indexOf("Initialize least-privilege database roles"),
+    ).toBeLessThan(workflow.indexOf("db:prepare"));
+    expect(workflow).toContain("ROLE_SQL_FILE: infra/postgres/01-roles.sql");
+    expect(read("apps/web/vitest.config.ts")).toContain(
+      "fileParallelism: false",
+    );
   });
 
   it("uses host webServer only when BASE_URL is absent", () => {
@@ -300,6 +334,7 @@ describe("production deployment security contracts", () => {
       "E2E_STAFF_SESSION_TOKEN",
       "E2E_ROLE_TARGET_SESSION_TOKEN",
       "E2E_ADMIN_SESSION_TOKEN",
+      "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
       "E2E_REVOKED_SESSION_TOKEN",
       "E2E_REPLACEMENT_PASSWORD",
     ]) {

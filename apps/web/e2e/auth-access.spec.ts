@@ -203,7 +203,7 @@ test.describe("shared authorization state", () => {
     await page.context().clearCookies();
   });
 
-  test("@security-state employee cannot replay a real administrator mutation", async ({
+  test("@security-state employee and no-TOTP admin cannot replay a real administrator mutation", async ({
     browser,
     baseURL,
   }) => {
@@ -263,6 +263,24 @@ test.describe("shared authorization state", () => {
     expect((await employee.request.get("/api/v1/session/staff")).status()).toBe(
       200,
     );
+    const noTotpAdmin = await browser.newContext();
+    await addSignedSession(
+      noTotpAdmin,
+      baseURL,
+      "workforce",
+      fixtureCredentials().noTotpAdminSessionToken,
+    );
+    const noTotpAttempt = await noTotpAdmin.request.post(captured.url(), {
+      data: actionBody,
+      headers: actionHeaders,
+      maxRedirects: 0,
+    });
+    expect(noTotpAttempt.status()).toBe(200);
+    expect(await noTotpAttempt.text()).toContain("AUTH_TOTP_SETUP_REQUIRED");
+    expect((await employee.request.get("/api/v1/session/staff")).status()).toBe(
+      200,
+    );
+    await noTotpAdmin.close();
     await employee.close();
     await admin.close();
   });

@@ -952,6 +952,7 @@ export E2E_DISABLED_CUSTOMER_SESSION_TOKEN="$(openssl rand -hex 32)"
 export E2E_STAFF_SESSION_TOKEN="$(openssl rand -hex 32)"
 export E2E_ROLE_TARGET_SESSION_TOKEN="$(openssl rand -hex 32)"
 export E2E_ADMIN_SESSION_TOKEN="$(openssl rand -hex 32)"
+export E2E_NO_TOTP_ADMIN_SESSION_TOKEN="$(openssl rand -hex 32)"
 export E2E_REVOKED_SESSION_TOKEN="$(openssl rand -hex 32)"
 export E2E_REPLACEMENT_PASSWORD="$(openssl rand -hex 32)"
 docker compose config --quiet
@@ -959,7 +960,7 @@ docker build --target migrator -f apps/web/Dockerfile .
 docker build --target runner -f apps/web/Dockerfile .
 docker compose up -d --build --wait --wait-timeout 120 db migrate web proxy backup
 docker compose run --rm proxy nginx -t
-docker compose run --rm -e NODE_ENV=test -e E2E_CUSTOMER_PASSWORD -e E2E_STAFF_PASSWORD -e E2E_ADMIN_PASSWORD -e E2E_PENDING_CUSTOMER_SESSION_TOKEN -e E2E_DISABLED_CUSTOMER_SESSION_TOKEN -e E2E_STAFF_SESSION_TOKEN -e E2E_ROLE_TARGET_SESSION_TOKEN -e E2E_ADMIN_SESSION_TOKEN -e E2E_REVOKED_SESSION_TOKEN -e E2E_REPLACEMENT_PASSWORD migrate pnpm --filter @ai-agent-platform/database db:seed-auth-e2e
+docker compose run --rm -e NODE_ENV=test -e E2E_CUSTOMER_PASSWORD -e E2E_STAFF_PASSWORD -e E2E_ADMIN_PASSWORD -e E2E_PENDING_CUSTOMER_SESSION_TOKEN -e E2E_DISABLED_CUSTOMER_SESSION_TOKEN -e E2E_STAFF_SESSION_TOKEN -e E2E_ROLE_TARGET_SESSION_TOKEN -e E2E_ADMIN_SESSION_TOKEN -e E2E_NO_TOTP_ADMIN_SESSION_TOKEN -e E2E_REVOKED_SESSION_TOKEN -e E2E_REPLACEMENT_PASSWORD migrate pnpm --filter @ai-agent-platform/database db:seed-auth-e2e
 BASE_URL=http://127.0.0.1:8080 pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-smoke.spec.ts
 BASE_URL=http://127.0.0.1:8080 pnpm --filter @ai-agent-platform/web exec playwright test e2e/proxy-auth-security.spec.ts --project=desktop --workers=1
 ```
@@ -1031,6 +1032,7 @@ export E2E_DISABLED_CUSTOMER_SESSION_TOKEN="$(openssl rand -hex 32)"
 export E2E_STAFF_SESSION_TOKEN="$(openssl rand -hex 32)"
 export E2E_ROLE_TARGET_SESSION_TOKEN="$(openssl rand -hex 32)"
 export E2E_ADMIN_SESSION_TOKEN="$(openssl rand -hex 32)"
+export E2E_NO_TOTP_ADMIN_SESSION_TOKEN="$(openssl rand -hex 32)"
 export E2E_REVOKED_SESSION_TOKEN="$(openssl rand -hex 32)"
 export E2E_REPLACEMENT_PASSWORD="$(openssl rand -hex 32)"
 docker compose -p aap-auth-acceptance config --quiet
@@ -1046,7 +1048,7 @@ Expected: migrate exits 0, all long-running services are healthy, both health en
 
 - [ ] **Step 3: Execute the access matrix**
 
-Run `docker compose -p aap-auth-acceptance run --rm -e NODE_ENV=test -e E2E_CUSTOMER_PASSWORD -e E2E_STAFF_PASSWORD -e E2E_ADMIN_PASSWORD -e E2E_PENDING_CUSTOMER_SESSION_TOKEN -e E2E_DISABLED_CUSTOMER_SESSION_TOKEN -e E2E_STAFF_SESSION_TOKEN -e E2E_ROLE_TARGET_SESSION_TOKEN -e E2E_ADMIN_SESSION_TOKEN -e E2E_REVOKED_SESSION_TOKEN -e E2E_REPLACEMENT_PASSWORD migrate pnpm --filter @ai-agent-platform/database db:seed-auth-e2e`; Playwright reads the same runtime-only environment variables. `auth-fixtures.ts` contains only fixture identifiers and helpers, never database access, committed passwords, or committed session tokens. PostgreSQL remains unexposed. Record HTTP/browser assertions for:
+Run `docker compose -p aap-auth-acceptance run --rm -e NODE_ENV=test -e E2E_CUSTOMER_PASSWORD -e E2E_STAFF_PASSWORD -e E2E_ADMIN_PASSWORD -e E2E_PENDING_CUSTOMER_SESSION_TOKEN -e E2E_DISABLED_CUSTOMER_SESSION_TOKEN -e E2E_STAFF_SESSION_TOKEN -e E2E_ROLE_TARGET_SESSION_TOKEN -e E2E_ADMIN_SESSION_TOKEN -e E2E_NO_TOTP_ADMIN_SESSION_TOKEN -e E2E_REVOKED_SESSION_TOKEN -e E2E_REPLACEMENT_PASSWORD migrate pnpm --filter @ai-agent-platform/database db:seed-auth-e2e`; Playwright reads the same runtime-only environment variables. `auth-fixtures.ts` contains only fixture identifiers and helpers, never database access, committed passwords, or committed session tokens. PostgreSQL remains unexposed. Record HTTP/browser assertions for:
 
 - anonymous → Console/Admin denied;
 - pending customer → onboarding allowed, Console denied;

@@ -69,7 +69,10 @@ async function runAdminMutation(
     ) {
       return { kind: "domain_error", code: error.code };
     }
-    if (authoritativeCode === "AUTH_PERMISSION_DENIED") {
+    if (
+      authoritativeCode === "AUTH_PERMISSION_DENIED" ||
+      authoritativeCode === "AUTH_TOTP_SETUP_REQUIRED"
+    ) {
       return { kind: "domain_error", code: authoritativeCode };
     }
     if (

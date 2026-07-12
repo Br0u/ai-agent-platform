@@ -21,6 +21,7 @@ describe("test-only auth E2E tools", () => {
         "E2E_STAFF_SESSION_TOKEN",
         "E2E_ROLE_TARGET_SESSION_TOKEN",
         "E2E_ADMIN_SESSION_TOKEN",
+        "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
         "E2E_REVOKED_SESSION_TOKEN",
         "E2E_REPLACEMENT_PASSWORD",
       ].map((name) => [name, randomBytes(32).toString("base64url")]),
@@ -54,6 +55,7 @@ describe("test-only auth E2E tools", () => {
       "E2E_STAFF_SESSION_TOKEN",
       "E2E_ROLE_TARGET_SESSION_TOKEN",
       "E2E_ADMIN_SESSION_TOKEN",
+      "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
       "E2E_REVOKED_SESSION_TOKEN",
       "E2E_REPLACEMENT_PASSWORD",
     ]) {
@@ -88,6 +90,10 @@ describe("test-only auth E2E tools", () => {
         status: "active",
       },
       admin: {
+        realm: "workforce",
+        status: "active",
+      },
+      noTotpAdmin: {
         realm: "workforce",
         status: "active",
       },

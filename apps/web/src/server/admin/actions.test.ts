@@ -178,6 +178,26 @@ describe("explicit workforce role actions", () => {
       code: "AUTH_PERMISSION_DENIED",
     });
   });
+
+  it("returns stable denial when a real action is replayed without TOTP setup", async () => {
+    const denial = Object.assign(new Error("Two-factor setup required"), {
+      name: "AuthAccessError",
+      code: "AUTH_TOTP_SETUP_REQUIRED",
+      status: 403,
+    });
+    mocks.revokeOne.mockRejectedValueOnce(denial);
+    const data = new FormData();
+    data.set("userId", "employee-1");
+    data.set("realm", "workforce");
+    data.set("sessionId", "employee-session");
+
+    await expect(
+      revokeAdminSessionAction({ kind: "idle" }, data),
+    ).resolves.toEqual({
+      kind: "domain_error",
+      code: "AUTH_TOTP_SETUP_REQUIRED",
+    });
+  });
 });
 
 describe("admin mutation server-action errors", () => {

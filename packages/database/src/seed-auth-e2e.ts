@@ -14,6 +14,7 @@ export type E2EEnvironment = {
   staffSessionToken: string;
   roleTargetSessionToken: string;
   adminSessionToken: string;
+  noTotpAdminSessionToken: string;
   revokedSessionToken: string;
   replacementPassword: string;
 };
@@ -67,6 +68,14 @@ export const fixtureIdentities = {
     status: "active",
     role: "admin",
   },
+  noTotpAdmin: {
+    id: "10000000-0000-4000-8000-000000000007",
+    email: "no-totp-admin.fixture@example.invalid",
+    username: "no-totp-admin.fixture",
+    realm: "workforce",
+    status: "active",
+    role: "admin",
+  },
 } as const;
 
 export function assertE2EEnvironment(
@@ -88,6 +97,7 @@ export function assertE2EEnvironment(
     ["E2E_STAFF_SESSION_TOKEN", env.E2E_STAFF_SESSION_TOKEN],
     ["E2E_ROLE_TARGET_SESSION_TOKEN", env.E2E_ROLE_TARGET_SESSION_TOKEN],
     ["E2E_ADMIN_SESSION_TOKEN", env.E2E_ADMIN_SESSION_TOKEN],
+    ["E2E_NO_TOTP_ADMIN_SESSION_TOKEN", env.E2E_NO_TOTP_ADMIN_SESSION_TOKEN],
     ["E2E_REVOKED_SESSION_TOKEN", env.E2E_REVOKED_SESSION_TOKEN],
     ["E2E_REPLACEMENT_PASSWORD", env.E2E_REPLACEMENT_PASSWORD],
   ] as const;
@@ -103,6 +113,7 @@ export function assertE2EEnvironment(
     staffSessionToken: env.E2E_STAFF_SESSION_TOKEN!,
     roleTargetSessionToken: env.E2E_ROLE_TARGET_SESSION_TOKEN!,
     adminSessionToken: env.E2E_ADMIN_SESSION_TOKEN!,
+    noTotpAdminSessionToken: env.E2E_NO_TOTP_ADMIN_SESSION_TOKEN!,
     revokedSessionToken: env.E2E_REVOKED_SESSION_TOKEN!,
     replacementPassword: env.E2E_REPLACEMENT_PASSWORD!,
   };
@@ -211,6 +222,11 @@ export async function seedAuthE2EFixtures(
       fixtureIdentities.admin,
       credentials.adminPassword,
     );
+    await upsertIdentity(
+      client,
+      fixtureIdentities.noTotpAdmin,
+      credentials.adminPassword,
+    );
     await client.query(
       "DELETE FROM organization_memberships WHERE user_id = ANY($1::uuid[])",
       [fixtureUserIds],
@@ -249,6 +265,7 @@ export async function seedAuthE2EFixtures(
          ('10000000-0000-4000-8000-000000000023', $6, $7, now() + interval '1 day', NULL, 'auth-e2e-pending-customer-fixture', 'customer', NULL),
          ('10000000-0000-4000-8000-000000000024', $8, $9, now() + interval '1 day', NULL, 'auth-e2e-disabled-customer-fixture', 'customer', NULL)
          ,('10000000-0000-4000-8000-000000000025', $10, $11, now() + interval '1 day', NULL, 'auth-e2e-role-target-fixture', 'workforce', now())
+         ,('10000000-0000-4000-8000-000000000026', $12, $13, now() + interval '1 day', NULL, 'auth-e2e-no-totp-admin-fixture', 'workforce', NULL)
        ON CONFLICT (token) DO UPDATE SET
          id = EXCLUDED.id, user_id = EXCLUDED.user_id, realm = EXCLUDED.realm,
          expires_at = EXCLUDED.expires_at, ip_address = EXCLUDED.ip_address,
@@ -266,6 +283,8 @@ export async function seedAuthE2EFixtures(
         fixtureIdentities.disabledCustomer.id,
         credentials.roleTargetSessionToken,
         fixtureIdentities.roleTarget.id,
+        credentials.noTotpAdminSessionToken,
+        fixtureIdentities.noTotpAdmin.id,
       ],
     );
     await client.query("UPDATE users SET status = 'disabled' WHERE id = $1", [
