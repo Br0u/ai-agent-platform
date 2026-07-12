@@ -653,7 +653,7 @@ rejectRegistrationAction(formData): Promise<ReviewActionState>;
 resendVerificationAction(): Promise<EmailVerificationResult>;
 ```
 
-`submitRegistrationAction` calls `customerAuth.api.signInEmail` with the just-submitted email/password, `rememberMe:false`, incoming headers, and `returnHeaders:true`; `nextCookies()` forwards the customer cookie. Page modules import these actions and do not define duplicate action files.
+`submitRegistrationAction` calls a customer auth instance configured with `forwardCookies:false`, using `customerAuth.api.signInEmail` with the just-submitted email/password, `rememberMe:false`, incoming headers, and `returnHeaders:true`. It stages the returned `Set-Cookie`, confirms the new session, and only then commits the exact customer cookie to the Next cookie store. If cookie commit fails, it revokes the new session and returns `session_issue_failed`; the already committed registration data remains valid. Page modules import these actions and do not define duplicate action files.
 
 - [ ] **Step 5: Verify service tests**
 
@@ -671,10 +671,10 @@ Run:
 cleanup() { docker stop aap-auth-integration-db >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 cleanup
-docker run --rm -d --name aap-auth-integration-db -e POSTGRES_USER=ai_agent -e POSTGRES_PASSWORD=integration-only -e POSTGRES_DB=ai_agent_platform -p 55432:5432 postgres:18.3-alpine3.23
-until docker exec aap-auth-integration-db pg_isready -U ai_agent -d ai_agent_platform; do sleep 1; done
-DATABASE_URL=postgresql://ai_agent:integration-only@127.0.0.1:55432/ai_agent_platform pnpm --filter @ai-agent-platform/database db:migrate
-TEST_DATABASE_URL=postgresql://ai_agent:integration-only@127.0.0.1:55432/ai_agent_platform pnpm --filter @ai-agent-platform/web test src/server/registration/postgres.integration.test.ts
+docker run --rm -d --name aap-auth-integration-db -e POSTGRES_USER=ai_agent -e POSTGRES_PASSWORD=integration-only -e POSTGRES_DB=ai_agent_platform_identity_test_task7 -p 55432:5432 postgres:18.3-alpine3.23
+until docker exec aap-auth-integration-db pg_isready -U ai_agent -d ai_agent_platform_identity_test_task7; do sleep 1; done
+DATABASE_URL=postgresql://ai_agent:integration-only@127.0.0.1:55432/ai_agent_platform_identity_test_task7 pnpm --filter @ai-agent-platform/database db:migrate
+TEST_DATABASE_URL=postgresql://ai_agent:integration-only@127.0.0.1:55432/ai_agent_platform_identity_test_task7 pnpm --filter @ai-agent-platform/web test src/server/registration/postgres.integration.test.ts
 ```
 
 Expected: all transaction cases pass against migrated PostgreSQL.

@@ -21,6 +21,14 @@ describe("trusted proxy deployment boundary", () => {
     expect(serviceBlock("proxy", "backup")).toMatch(/^    ports:/m);
   });
 
+  it("enables trusted Nginx IP handling for the isolated web service", () => {
+    const web = serviceBlock("web", "proxy");
+    expect(web).toContain('TRUST_NGINX_PROXY: "true"');
+    expect(web).toContain(
+      "NGINX_TRUSTED_PROXY_CIDRS: ${NGINX_TRUSTED_PROXY_CIDRS:-172.16.0.0/12}",
+    );
+  });
+
   it("overwrites client-supplied forwarding headers", () => {
     expect(nginx).toContain("proxy_set_header X-Real-IP $remote_addr;");
     expect(nginx).toContain("proxy_set_header X-Forwarded-For $remote_addr;");

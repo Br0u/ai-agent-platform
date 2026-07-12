@@ -14,6 +14,7 @@ import { mapAuthError } from "./errors";
 import {
   createRealmSessionGuard,
   resolveAuthEnvironment,
+  resolveTrustedRequestIp,
   type AuthEnvironment,
 } from "./shared-options";
 import {
@@ -199,6 +200,21 @@ describe("shared auth security options", () => {
     );
     expect(proxied.ipAddressHeaders).toEqual(["x-real-ip"]);
     expect(proxied.trustedProxies).toEqual(["172.20.0.0/24", "192.0.2.10"]);
+  });
+
+  it("uses Nginx-overwritten x-real-ip only inside the configured proxy boundary", () => {
+    const headers = new Headers({ "x-real-ip": "203.0.113.8" });
+
+    expect(resolveTrustedRequestIp(headers, authEnvironment())).toBeUndefined();
+    expect(
+      resolveTrustedRequestIp(
+        headers,
+        authEnvironment({
+          TRUST_NGINX_PROXY: "true",
+          NGINX_TRUSTED_PROXY_CIDRS: "172.20.0.0/24",
+        }),
+      ),
+    ).toBe("203.0.113.8");
   });
 
   it.each([

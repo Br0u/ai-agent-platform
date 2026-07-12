@@ -273,8 +273,10 @@ describe("authorization schema", () => {
         "customer_registrations_user_id_idx",
         "customer_registrations_organization_id_idx",
         "customer_registrations_reviewer_user_id_idx",
+        "customer_registrations_status_created_id_idx",
       ]),
     );
+    expect(indexNames("rateLimits")).toContain("rate_limits_last_request_idx");
   });
 
   it("records the actor assigning a role", () => {
@@ -349,13 +351,29 @@ describe("organization and registration schema", () => {
 
   it("records registration review status, reviewer, and note", () => {
     expect(columnNames("customerRegistrations")).toEqual(
-      expect.arrayContaining(["status", "reviewer_user_id", "review_note"]),
+      expect.arrayContaining([
+        "company_name",
+        "status",
+        "reviewer_user_id",
+        "review_note",
+      ]),
     );
+    const companyName = config("customerRegistrations").columns.find(
+      (column) => column.name === "company_name",
+    );
+    expect(companyName?.notNull).toBe(true);
+    expect(companyName?.getSQLType()).toBe("varchar(240)");
     expectForeignKey(
       "customerRegistrations",
       "reviewer_user_id",
       "users",
       "set null",
+    );
+  });
+
+  it("exports a non-empty sentinel for registrations that predate company capture", () => {
+    expect(exported.LEGACY_REGISTRATION_COMPANY_NAME).toBe(
+      "__aap_legacy_missing_company_name_v1__",
     );
   });
 

@@ -1,0 +1,2 @@
+CREATE INDEX "rate_limits_last_request_idx" ON "rate_limits" USING btree ("last_request");--> statement-breakpoint
+CREATE INDEX "customer_registrations_status_created_id_idx" ON "customer_registrations" USING btree ("status","created_at" DESC NULLS LAST,"id" DESC NULLS LAST);

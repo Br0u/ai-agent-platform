@@ -167,6 +167,18 @@ export function resolveAuthEnvironment(
   };
 }
 
+export function resolveTrustedRequestIp(
+  headers: Headers,
+  env: AuthEnvironment = process.env,
+): string | undefined {
+  const resolved = resolveAuthEnvironment(env);
+  if (!resolved.ipAddressHeaders.includes("x-real-ip")) return undefined;
+
+  const candidate = headers.get("x-real-ip")?.trim();
+  if (!candidate || isIP(candidate) === 0) return undefined;
+  return candidate;
+}
+
 function asAuthoritativeUser(value: unknown): AuthoritativeUser | undefined {
   if (!value || typeof value !== "object") return undefined;
 

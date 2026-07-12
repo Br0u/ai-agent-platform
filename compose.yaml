@@ -40,6 +40,8 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      TRUST_NGINX_PROXY: "true"
+      NGINX_TRUSTED_PROXY_CIDRS: ${NGINX_TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
     depends_on:
       migrate:
         condition: service_completed_successfully

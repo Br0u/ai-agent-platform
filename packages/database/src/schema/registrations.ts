@@ -5,6 +5,7 @@ import {
   text,
   timestamp,
   uuid,
+  varchar,
 } from "drizzle-orm/pg-core";
 
 import { users } from "./identity";
@@ -17,6 +18,9 @@ export const registrationStatus = pgEnum("registration_status", [
   "cancelled",
 ]);
 
+export const LEGACY_REGISTRATION_COMPANY_NAME =
+  "__aap_legacy_missing_company_name_v1__";
+
 export const customerRegistrations = pgTable(
   "customer_registrations",
   {
@@ -27,6 +31,7 @@ export const customerRegistrations = pgTable(
     organizationId: uuid("organization_id").references(() => organizations.id, {
       onDelete: "set null",
     }),
+    companyName: varchar("company_name", { length: 240 }).notNull(),
     status: registrationStatus("status").default("pending_review").notNull(),
     reviewerUserId: uuid("reviewer_user_id").references(() => users.id, {
       onDelete: "set null",
@@ -50,6 +55,11 @@ export const customerRegistrations = pgTable(
     ),
     index("customer_registrations_reviewer_user_id_idx").on(
       table.reviewerUserId,
+    ),
+    index("customer_registrations_status_created_id_idx").on(
+      table.status,
+      table.createdAt.desc(),
+      table.id.desc(),
     ),
   ],
 );
