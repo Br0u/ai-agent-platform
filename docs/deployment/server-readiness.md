@@ -39,7 +39,7 @@
 
 该拓扑只有一跳受控代理。Nginx 已把`X-Real-IP`和`X-Forwarded-For`覆盖为 TCP 连接来源，应用直接使用这个规范化结果，不再配置 Better Auth 的代理 CIDR 过滤。否则，真实客户端使用`172.16.0.0/12`等私网地址时会被误判成代理并共享限流桶。真实安全边界仍由`web`不发布端口、内部`frontend`网络以及 Nginx 覆盖转发头共同提供。
 
-Nginx 启动必须显式提供`PUBLIC_HOST`，生产值填写外部 DNS 主机名，不含协议和端口。`localhost`、`127.0.0.1`和 IPv6 loopback 仅用于本机验收；其他 Host 在转发前返回 421。获准请求仍把原始`Host`（含端口）转发给 Web。
+Nginx 启动必须显式提供`PUBLIC_HOST`，生产值填写外部 DNS 主机名，不含协议和端口。`ALLOW_LOCAL_VALIDATION_HOSTS`默认且在生产必须为`false`；只有本机验收时可显式设为`true`，此时才额外允许`localhost`、`127.0.0.1`和 IPv6 loopback。其他 Host 在转发前返回 421。获准请求仍把原始`Host`（含端口）转发给 Web。
 
 ## 首次部署
 

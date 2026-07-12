@@ -88,6 +88,7 @@ services:
       - "${HTTP_PORT:-8080}:8080"
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST in .env}
+      ALLOW_LOCAL_VALIDATION_HOSTS: ${ALLOW_LOCAL_VALIDATION_HOSTS:-false}
     volumes:
       - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./infra/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro

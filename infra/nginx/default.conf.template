@@ -24,7 +24,12 @@ map $host $loopback_host_allowed {
   ~^\[?::1\]?$ 1;
 }
 
-map "$configured_public_host_allowed:$loopback_host_allowed" $host_allowed {
+map "${ALLOW_LOCAL_VALIDATION_HOSTS}:$loopback_host_allowed" $local_validation_host_allowed {
+  default 0;
+  ~^true:1$ 1;
+}
+
+map "$configured_public_host_allowed:$local_validation_host_allowed" $host_allowed {
   default 0;
   ~^1: 1;
   ~:1$ 1;

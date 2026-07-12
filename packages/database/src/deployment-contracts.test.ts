@@ -94,8 +94,13 @@ describe("production deployment security contracts", () => {
     expect(nginx).toContain("${PUBLIC_HOST}");
     expect(nginx).toContain("return 421;");
     expect(nginx).toContain("proxy_set_header Host $http_host;");
-    expect(nginx).toContain("127.0.0.1");
-    expect(nginx).toContain("localhost");
+    expect(nginx).toContain("${ALLOW_LOCAL_VALIDATION_HOSTS}");
+    expect(nginx).toMatch(
+      /map "\$\{ALLOW_LOCAL_VALIDATION_HOSTS\}:\$loopback_host_allowed" \$local_validation_host_allowed/u,
+    );
+    expect(compose).toContain(
+      "ALLOW_LOCAL_VALIDATION_HOSTS: ${ALLOW_LOCAL_VALIDATION_HOSTS:-false}",
+    );
     expect(compose).toContain(
       "PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST in .env}",
     );
@@ -151,6 +156,7 @@ describe("production deployment security contracts", () => {
       "BACKUP_DATABASE_URL",
       "BACKUP_DATABASE_PASSWORD",
       "PUBLIC_HOST",
+      "ALLOW_LOCAL_VALIDATION_HOSTS=false",
       "TEST_DATABASE_URL",
     ]) {
       expect(env).toContain(key);
@@ -215,6 +221,7 @@ describe("production deployment security contracts", () => {
         "BETTER_AUTH_URL",
         "BETTER_AUTH_TRUSTED_ORIGINS",
         "PUBLIC_HOST",
+        "ALLOW_LOCAL_VALIDATION_HOSTS",
         "FEATURE_EMAIL_VERIFICATION",
         "E2E_CUSTOMER_PASSWORD",
         "E2E_STAFF_PASSWORD",
