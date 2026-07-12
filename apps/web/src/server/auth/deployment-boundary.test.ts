@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 
 const workspaceRoot = resolve(process.cwd(), "../..");
 const compose = readFileSync(`${workspaceRoot}/compose.yaml`, "utf8");
-const nginx = readFileSync(`${workspaceRoot}/infra/nginx/nginx.conf`, "utf8");
+const nginx = [
+  readFileSync(`${workspaceRoot}/infra/nginx/nginx.conf`, "utf8"),
+  readFileSync(`${workspaceRoot}/infra/nginx/default.conf.template`, "utf8"),
+].join("\n");
 const deploymentGuide = readFileSync(
   `${workspaceRoot}/docs/deployment/server-readiness.md`,
   "utf8",
@@ -24,9 +27,7 @@ describe("trusted proxy deployment boundary", () => {
   it("enables trusted Nginx IP handling for the isolated web service", () => {
     const web = serviceBlock("web", "proxy");
     expect(web).toContain('TRUST_NGINX_PROXY: "true"');
-    expect(web).toContain(
-      "NGINX_TRUSTED_PROXY_CIDRS: ${NGINX_TRUSTED_PROXY_CIDRS:-172.16.0.0/12}",
-    );
+    expect(web).not.toContain("NGINX_TRUSTED_PROXY_CIDRS");
   });
 
   it("overwrites client-supplied forwarding headers", () => {
@@ -39,5 +40,6 @@ describe("trusted proxy deployment boundary", () => {
     expect(deploymentGuide).toContain("TRUST_NGINX_PROXY=true");
     expect(deploymentGuide).toContain("禁止客户端直连 Web origin");
     expect(deploymentGuide).toContain("应用无法验证 TCP 直连来源");
+    expect(deploymentGuide).not.toContain("NGINX_TRUSTED_PROXY_CIDRS");
   });
 });

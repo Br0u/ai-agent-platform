@@ -45,6 +45,25 @@ describe("test-only auth E2E tools", () => {
     );
   });
 
+  it("converges only fixture-owned security and membership state", () => {
+    const source = readFileSync(
+      new URL("./seed-auth-e2e.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain(
+      "DELETE FROM two_factors WHERE user_id = ANY($1::uuid[])",
+    );
+    expect(source).toContain("DELETE FROM user_roles WHERE user_id = $1");
+    expect(source).toContain(
+      "DELETE FROM organization_memberships WHERE user_id = ANY($1::uuid[])",
+    );
+    expect(source).toMatch(
+      /ON CONFLICT \(token\) DO UPDATE SET[\s\S]*user_id = EXCLUDED\.user_id[\s\S]*realm = EXCLUDED\.realm[\s\S]*ip_address = EXCLUDED\.ip_address[\s\S]*user_agent = EXCLUDED\.user_agent/,
+    );
+    expect(source).not.toContain("DELETE FROM user_roles;");
+    expect(source).not.toContain("DELETE FROM organization_memberships;");
+  });
+
   it("asserts hashed presence and consumed state without accepting plaintext", () => {
     const code = "ABCDE-FGHIJ-KLMNO-PQRST";
     const hash = recoveryCodeDigest(code);

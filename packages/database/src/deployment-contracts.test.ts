@@ -7,10 +7,11 @@ const root = path.resolve(import.meta.dirname, "../../..");
 const read = (file: string) => readFileSync(path.join(root, file), "utf8");
 
 describe("production deployment security contracts", () => {
-  it("keeps the runtime role away from schema and audit mutation privileges", () => {
+  it("keeps runtime and backup roles on separate least-privilege matrices", () => {
     const sql = `${read("infra/postgres/01-roles.sql")}\n${read("infra/postgres/02-runtime-grants.sql")}`;
     expect(sql).toContain("ai_agent_migrator");
     expect(sql).toContain("ai_agent_runtime");
+    expect(sql).toContain("ai_agent_backup");
     expect(sql).toMatch(/GRANT CREATE ON DATABASE .* TO ai_agent_migrator/);
     expect(sql).toMatch(
       /ALTER DEFAULT PRIVILEGES[\s\S]*GRANT SELECT, INSERT, UPDATE, DELETE/,
@@ -19,6 +20,25 @@ describe("production deployment security contracts", () => {
       /REVOKE UPDATE, DELETE ON TABLE public\.audit_logs FROM ai_agent_runtime/,
     );
     expect(sql).not.toMatch(/GRANT (CREATE|ALL).*ai_agent_runtime/);
+    expect(sql).toMatch(
+      /GRANT SELECT ON ALL TABLES IN SCHEMA public TO ai_agent_backup/,
+    );
+    expect(sql).toMatch(
+      /ALTER DEFAULT PRIVILEGES[\s\S]*GRANT SELECT ON TABLES TO ai_agent_backup/,
+    );
+    expect(sql).toContain("GRANT USAGE ON SCHEMA drizzle TO ai_agent_backup");
+    expect(sql).toContain(
+      "GRANT SELECT ON ALL TABLES IN SCHEMA drizzle TO ai_agent_backup",
+    );
+    expect(sql).toContain(
+      "GRANT SELECT ON ALL SEQUENCES IN SCHEMA drizzle TO ai_agent_backup",
+    );
+    expect(sql).toMatch(
+      /REVOKE (?:ALL|INSERT, UPDATE, DELETE)[\s\S]*FROM ai_agent_backup/,
+    );
+    expect(sql).not.toMatch(
+      /GRANT (?:CREATE|INSERT|UPDATE|DELETE|ALL)[^;]*ai_agent_backup/,
+    );
   });
 
   it("runs role bootstrap as the configured PostgreSQL owner", () => {
@@ -28,12 +48,15 @@ describe("production deployment security contracts", () => {
   });
 
   it("limits only POST requests on exact authentication routes", () => {
-    const nginx = read("infra/nginx/nginx.conf");
+    const nginx = `${read("infra/nginx/nginx.conf")}\n${read("infra/nginx/default.conf.template")}`;
     expect(nginx).toContain(
       "limit_req_zone $auth_post_key zone=auth_post_per_ip:10m rate=5r/m;",
     );
     expect(nginx).toContain("limit_req zone=auth_post_per_ip burst=5 nodelay;");
     expect(nginx).toContain("limit_req_status 429;");
+    expect(nginx).toContain(
+      "add_header X-Auth-Rate-Limit $limit_req_status always;",
+    );
     expect(nginx).toMatch(/map \$request_method \$auth_post_method/);
     expect(nginx).toMatch(/POST\s+\$binary_remote_addr/);
     expect(nginx).toContain(
@@ -50,13 +73,37 @@ describe("production deployment security contracts", () => {
     const compose = read("compose.yaml");
     expect(compose).toContain("MIGRATOR_DATABASE_URL");
     expect(compose).toContain("RUNTIME_DATABASE_URL");
+    expect(compose).toContain("BACKUP_DATABASE_URL");
     const webService = compose.split("\n  web:\n")[1]?.split("\n  proxy:\n")[0];
+    const backupService = compose.split("\n  backup:\n")[1];
     expect(webService).toBeDefined();
     expect(webService).not.toMatch(/^\s{4}ports:/m);
+    expect(backupService).toContain(
+      "BACKUP_DATABASE_URL: ${BACKUP_DATABASE_URL:?Set BACKUP_DATABASE_URL in .env}",
+    );
+    expect(backupService).not.toContain("RUNTIME_DATABASE_PASSWORD");
+    expect(backupService).not.toContain("PGUSER");
+    const backupScript = read("infra/docker/backup.sh");
+    expect(backupScript).toContain('"$BACKUP_DATABASE_URL"');
+    expect(backupScript).not.toContain("PGDATABASE");
+  });
+
+  it("rejects unknown hosts before forwarding and preserves approved Host ports", () => {
+    const nginx = read("infra/nginx/default.conf.template");
+    const compose = read("compose.yaml");
+    expect(nginx).toContain("${PUBLIC_HOST}");
+    expect(nginx).toContain("return 421;");
+    expect(nginx).toContain("proxy_set_header Host $http_host;");
+    expect(nginx).toContain("127.0.0.1");
+    expect(nginx).toContain("localhost");
+    expect(compose).toContain(
+      "PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST in .env}",
+    );
   });
 
   it("defines the pinned PostgreSQL-backed CI and browser gates", () => {
     const workflow = read(".github/workflows/ci.yml");
+    expect(workflow).toContain("permissions:\n  contents: read");
     expect(workflow).toContain("node-version: 24");
     expect(workflow).toContain("version: 11.5.2");
     expect(workflow).toContain("postgres:18");
@@ -77,6 +124,15 @@ describe("production deployment security contracts", () => {
     expect(workflow).toContain("::add-mask::");
     expect(workflow).not.toContain("ci-customer-fixture-passphrase");
     expect(workflow).not.toContain("ci-only-better-auth-secret");
+    expect(workflow).toContain(
+      "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4",
+    );
+    expect(workflow).toContain(
+      "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4",
+    );
+    expect(workflow).toContain(
+      "pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4",
+    );
   });
 
   it("keeps browser output ignored and documents every production variable", () => {
@@ -92,6 +148,9 @@ describe("production deployment security contracts", () => {
       "FEATURE_EMAIL_VERIFICATION=false",
       "MIGRATOR_DATABASE_URL",
       "RUNTIME_DATABASE_URL",
+      "BACKUP_DATABASE_URL",
+      "BACKUP_DATABASE_PASSWORD",
+      "PUBLIC_HOST",
       "TEST_DATABASE_URL",
     ]) {
       expect(env).toContain(key);

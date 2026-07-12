@@ -28,7 +28,7 @@
 - `web`：Next.js standalone，非root用户、只读文件系统，不直接发布主机端口。
 - `db`：PostgreSQL 18，只有内部网络可访问，数据持久化到独立卷。
 - `migrate`：只使用 `ai_agent_migrator` 连接，完成迁移、权限种子和运行时授权后退出。
-- `backup`：按周期执行`pg_dump`，写入独立备份卷并清理过期文件。
+- `backup`：只使用独立的`ai_agent_backup`只读账号执行`pg_dump`，写入独立备份卷并清理过期文件。
 - `db`和`web`均有健康检查；后续服务按`service_healthy`顺序启动。
 
 ## 反向代理信任边界
@@ -37,20 +37,23 @@
 
 非 Compose 部署必须提供等价的防火墙、容器网络或安全组规则，禁止客户端直连 Web origin。应用只能解释代理写入的请求头，应用无法验证 TCP 直连来源，因此不能用应用层配置替代网络隔离。
 
-`NGINX_TRUSTED_PROXY_CIDRS`用于声明受控代理链的地址范围并校验配置格式，不代表应用能够从HTTP头验证TCP对端。Compose默认值覆盖常见私有容器网段；若公司网络使用更窄网段，应收紧该值。真实安全边界仍由`web`不发布端口、内部`frontend`网络以及Nginx覆盖转发头共同提供。
+该拓扑只有一跳受控代理。Nginx 已把`X-Real-IP`和`X-Forwarded-For`覆盖为 TCP 连接来源，应用直接使用这个规范化结果，不再配置 Better Auth 的代理 CIDR 过滤。否则，真实客户端使用`172.16.0.0/12`等私网地址时会被误判成代理并共享限流桶。真实安全边界仍由`web`不发布端口、内部`frontend`网络以及 Nginx 覆盖转发头共同提供。
+
+Nginx 启动必须显式提供`PUBLIC_HOST`，生产值填写外部 DNS 主机名，不含协议和端口。`localhost`、`127.0.0.1`和 IPv6 loopback 仅用于本机验收；其他 Host 在转发前返回 421。获准请求仍把原始`Host`（含端口）转发给 Web。
 
 ## 首次部署
 
 ```bash
 cp .env.example .env
-# 分别生成 owner、migrator、runtime 和 Better Auth 密钥；不要复用
+# 分别生成 owner、migrator、runtime、backup 和 Better Auth 密钥；不要复用
+# 生产 PUBLIC_HOST 必须改为对外域名
 docker compose config
 docker compose build migrate web
 docker compose up -d --wait db migrate web proxy
 docker compose ps
 ```
 
-数据库角色分离：owner 只在新卷初始化时创建角色；migrator 只供迁移任务；runtime 只供 Web。runtime 无 schema 变更权限，并被数据库显式拒绝修改或删除 `audit_logs`。`web` 没有主机端口，唯一入口是 Nginx `proxy`。
+数据库角色分离：owner 只在新卷初始化时创建角色；migrator 只供迁移任务；runtime 只供 Web；backup 只供备份容器。backup 只有数据库 CONNECT、schema USAGE、当前和未来表/序列的 SELECT 权限，没有 CREATE 或数据写权限；`BACKUP_DATABASE_URL`不得提供给 Web。runtime 无 schema 变更权限，并被数据库显式拒绝修改或删除 `audit_logs`。`web` 没有主机端口，唯一入口是 Nginx `proxy`。
 
 创建首位超级管理员：
 
@@ -67,11 +70,11 @@ curl -f http://127.0.0.1:8080/api/health/live
 curl -f http://127.0.0.1:8080/api/health/ready
 ```
 
-新数据库卷会初始化独立角色；后续 schema 由一次性 `migrate` 服务处理。已有数据库不能依赖 `docker-entrypoint-initdb.d`，切换前需由 DBA 手工建立等价角色和授权，并验证 runtime 无 `CREATE` 及 audit 更新/删除权限。
+新数据库卷会初始化独立角色；后续 schema 由一次性 `migrate` 服务处理。已有数据库不能依赖 `docker-entrypoint-initdb.d`，切换前需由 DBA 手工建立等价角色和授权，并验证 runtime 无`CREATE`及 audit 更新/删除权限，同时验证 backup 只能读取、不能写入或建表。
 
 ## 认证入口限流
 
-Nginx 仅对 `/login`、`/register`、`/staff/login`、`/staff/two-factor`、`/staff/re-auth` 的 POST 计数，速率为每 IP 每分钟 5 次并允许 5 次突发，超限返回 429；GET 页面加载不计数。代理覆盖客户端提交的 `X-Real-IP` 和 `X-Forwarded-For`，应用仍保留规范化账号/IP 双层限流。
+Nginx 仅对 `/login`、`/register`、`/staff/login`、`/staff/two-factor`、`/staff/re-auth` 的 POST 计数，速率为每 IP 每分钟 5 次并允许 5 次突发，超限返回 429，并附带`X-Auth-Rate-Limit: REJECTED`；GET 页面加载不计数。代理覆盖客户端提交的`X-Real-IP`和`X-Forwarded-For`，应用仍保留规范化账号/IP双层限流。
 
 ## 生产环境仍需补齐
 

@@ -65,7 +65,7 @@ test("proxy overwrites spoofed client IP before the failed-login audit", async (
 test("proxy returns HTTP 429 after the auth POST burst is exhausted", async ({
   request,
 }) => {
-  const statuses: number[] = [];
+  const responses: Array<{ status: number; limiter: string | undefined }> = [];
   for (let attempt = 0; attempt < 12; attempt += 1) {
     const response = await request.post("/staff/login", {
       form: {
@@ -74,7 +74,17 @@ test("proxy returns HTTP 429 after the auth POST burst is exhausted", async ({
       },
       maxRedirects: 0,
     });
-    statuses.push(response.status());
+    responses.push({
+      status: response.status(),
+      limiter: response.headers()["x-auth-rate-limit"],
+    });
   }
-  expect(statuses).toContain(429);
+  expect(responses).toContainEqual({ status: 429, limiter: "REJECTED" });
+});
+
+test("proxy rejects an unknown Host before forwarding", async ({ request }) => {
+  const response = await request.get("/api/health/live", {
+    headers: { Host: "unknown-host.example" },
+  });
+  expect(response.status()).toBe(421);
 });

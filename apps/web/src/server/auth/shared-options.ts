@@ -22,7 +22,6 @@ export type AuthEnvironment = {
   BETTER_AUTH_URL?: string;
   BETTER_AUTH_TRUSTED_ORIGINS?: string;
   TRUST_NGINX_PROXY?: string;
-  NGINX_TRUSTED_PROXY_CIDRS?: string;
 };
 
 export type IdentityRealm = "customer" | "workforce";
@@ -41,7 +40,6 @@ export type ResolvedAuthEnvironment = {
   trustedOrigins: string[];
   secureCookies: boolean;
   ipAddressHeaders: string[];
-  trustedProxies: string[];
 };
 
 export type AuthOptionsDependencies = {
@@ -89,36 +87,6 @@ function required(value: string | undefined, name: string): string {
   return normalized;
 }
 
-function parseTrustedProxyEntry(entry: string, index: number): string {
-  const name = `NGINX_TRUSTED_PROXY_CIDRS[${index}]`;
-  const parts = entry.split("/");
-  if (parts.length > 2) throw new Error(`${name} is not a valid IP or CIDR`);
-
-  const address = parts[0];
-  const version = isIP(address);
-  if (version === 0) throw new Error(`${name} is not a valid IP or CIDR`);
-
-  const prefix = parts[1];
-  if (prefix === undefined) return entry;
-
-  const maxPrefix = version === 4 ? 32 : 128;
-  if (!/^\d+$/.test(prefix) || Number(prefix) > maxPrefix) {
-    throw new Error(`${name} has an invalid CIDR prefix`);
-  }
-
-  return entry;
-}
-
-function parseTrustedProxies(value: string): string[] {
-  return value.split(",").map((rawEntry, index) => {
-    const entry = rawEntry.trim();
-    if (!entry) {
-      throw new Error(`NGINX_TRUSTED_PROXY_CIDRS[${index}] is empty`);
-    }
-    return parseTrustedProxyEntry(entry, index);
-  });
-}
-
 export function resolveAuthEnvironment(
   env: AuthEnvironment = process.env,
 ): ResolvedAuthEnvironment {
@@ -142,11 +110,6 @@ export function resolveAuthEnvironment(
     );
 
   const trustNginxProxy = env.TRUST_NGINX_PROXY === "true";
-  const trustedProxies = trustNginxProxy
-    ? parseTrustedProxies(
-        required(env.NGINX_TRUSTED_PROXY_CIDRS, "NGINX_TRUSTED_PROXY_CIDRS"),
-      )
-    : [];
 
   return {
     baseURL,
@@ -154,7 +117,6 @@ export function resolveAuthEnvironment(
     trustedOrigins: [...new Set([baseURL, ...trustedOrigins])],
     secureCookies: new URL(baseURL).protocol === "https:",
     ipAddressHeaders: trustNginxProxy ? ["x-real-ip"] : [],
-    trustedProxies,
   };
 }
 
@@ -385,7 +347,6 @@ export function createSharedAuthOptions(
       trustedProxyHeaders: false,
       ipAddress: {
         ipAddressHeaders: resolved.ipAddressHeaders,
-        trustedProxies: resolved.trustedProxies,
       },
       cookies: {
         session_token: {

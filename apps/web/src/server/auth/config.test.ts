@@ -199,20 +199,15 @@ describe("shared auth security options", () => {
   it("trusts x-real-ip only with an explicit Nginx proxy boundary", () => {
     const direct = resolveAuthEnvironment(authEnvironment());
     expect(direct.ipAddressHeaders).toEqual([]);
-    expect(direct.trustedProxies).toEqual([]);
-
-    expect(() =>
-      resolveAuthEnvironment(authEnvironment({ TRUST_NGINX_PROXY: "true" })),
-    ).toThrow("NGINX_TRUSTED_PROXY_CIDRS");
+    expect("trustedProxies" in direct).toBe(false);
 
     const proxied = resolveAuthEnvironment(
       authEnvironment({
         TRUST_NGINX_PROXY: "true",
-        NGINX_TRUSTED_PROXY_CIDRS: "172.20.0.0/24,192.0.2.10",
       }),
     );
     expect(proxied.ipAddressHeaders).toEqual(["x-real-ip"]);
-    expect(proxied.trustedProxies).toEqual(["172.20.0.0/24", "192.0.2.10"]);
+    expect("trustedProxies" in proxied).toBe(false);
   });
 
   it("uses Nginx-overwritten x-real-ip only inside the configured proxy boundary", () => {
@@ -224,59 +219,32 @@ describe("shared auth security options", () => {
         headers,
         authEnvironment({
           TRUST_NGINX_PROXY: "true",
-          NGINX_TRUSTED_PROXY_CIDRS: "172.20.0.0/24",
         }),
       ),
     ).toBe("203.0.113.8");
   });
 
-  it.each([
-    "garbage",
-    "192.0.2.10/33",
-    "2001:db8::1/129",
-    "192.0.2.10:-1",
-    "https://192.0.2.10",
-    "192.0.2.10:443",
-    "192.0.2.10,,2001:db8::1",
-    "192.0.2.10, ",
-  ])("rejects an invalid trusted proxy entry: %s", (trustedProxies) => {
-    expect(() =>
-      resolveAuthEnvironment(
-        authEnvironment({
-          TRUST_NGINX_PROXY: "true",
-          NGINX_TRUSTED_PROXY_CIDRS: trustedProxies,
-        }),
-      ),
-    ).toThrow("NGINX_TRUSTED_PROXY_CIDRS");
-  });
-
-  it("accepts IPv4 and IPv6 literals and valid boundary prefixes", () => {
-    const resolved = resolveAuthEnvironment(
-      authEnvironment({
-        TRUST_NGINX_PROXY: "true",
-        NGINX_TRUSTED_PROXY_CIDRS:
-          "0.0.0.0/0,192.0.2.10/32,2001:db8::1,2001:db8::/128",
-      }),
+  it("keeps private client addresses distinct after Nginx normalization", () => {
+    const env = authEnvironment({ TRUST_NGINX_PROXY: "true" });
+    const first = resolveTrustedRequestIp(
+      new Headers({ "x-real-ip": "172.20.0.21" }),
+      env,
     );
-
-    expect(resolved.trustedProxies).toEqual([
-      "0.0.0.0/0",
-      "192.0.2.10/32",
-      "2001:db8::1",
-      "2001:db8::/128",
-    ]);
-  });
-
-  it("does not parse or trust proxy configuration while the boundary flag is false", () => {
-    const resolved = resolveAuthEnvironment(
-      authEnvironment({
-        TRUST_NGINX_PROXY: "false",
-        NGINX_TRUSTED_PROXY_CIDRS: "not-a-proxy",
-      }),
+    const second = resolveTrustedRequestIp(
+      new Headers({ "x-real-ip": "172.20.0.22" }),
+      env,
     );
+    const options = createCustomerAuthOptions({
+      env,
+      adapter: memoryAdapter({}),
+    });
 
-    expect(resolved.ipAddressHeaders).toEqual([]);
-    expect(resolved.trustedProxies).toEqual([]);
+    expect(first).toBe("172.20.0.21");
+    expect(second).toBe("172.20.0.22");
+    expect(first).not.toBe(second);
+    expect(options.advanced?.ipAddress).toEqual({
+      ipAddressHeaders: ["x-real-ip"],
+    });
   });
 
   it("keeps database sessions/rate limits and all origin protections enabled", () => {

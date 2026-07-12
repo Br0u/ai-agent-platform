@@ -5,7 +5,7 @@ import { Pool, type PoolClient } from "pg";
 
 import { hashPassword } from "./credentials/password";
 
-type E2EEnvironment = {
+export type E2EEnvironment = {
   customerPassword: string;
   staffPassword: string;
   adminPassword: string;
@@ -70,10 +70,11 @@ async function upsertIdentity(
        email_verification_status, username, display_username, must_change_password)
      VALUES ($1, $2, $3, true, $4, $5, 'verified', $6, $6, false)
      ON CONFLICT (id) DO UPDATE SET
-       name = EXCLUDED.name, email = EXCLUDED.email, identity_realm = EXCLUDED.identity_realm,
+       name = EXCLUDED.name, email = EXCLUDED.email, email_verified = true,
+       image = NULL, two_factor_enabled = false, identity_realm = EXCLUDED.identity_realm,
        status = EXCLUDED.status, email_verification_status = 'verified',
        username = EXCLUDED.username, display_username = EXCLUDED.display_username,
-       must_change_password = false, updated_at = now()`,
+       must_change_password = false, last_login_at = NULL, updated_at = now()`,
     [
       identity.id,
       username ?? identity.email,
@@ -87,9 +88,16 @@ async function upsertIdentity(
   await client.query(
     `INSERT INTO accounts (id, account_id, provider_id, user_id, password)
       VALUES (gen_random_uuid(), $1, 'credential', $2::uuid, $3)
-     ON CONFLICT (provider_id, account_id) DO UPDATE SET password = EXCLUDED.password, updated_at = now()`,
+     ON CONFLICT (provider_id, account_id) DO UPDATE SET
+       user_id = EXCLUDED.user_id, password = EXCLUDED.password,
+       access_token = NULL, refresh_token = NULL, id_token = NULL,
+       access_token_expires_at = NULL, refresh_token_expires_at = NULL,
+       scope = NULL, updated_at = now()`,
     [identity.id, identity.id, passwordHash],
   );
+  await client.query("DELETE FROM user_roles WHERE user_id = $1", [
+    identity.id,
+  ]);
   await client.query(
     `INSERT INTO user_roles (id, user_id, role_id)
      SELECT gen_random_uuid(), $1, id FROM roles WHERE name = $2 AND realm_scope = $3
@@ -98,14 +106,20 @@ async function upsertIdentity(
   );
 }
 
-async function main(): Promise<void> {
-  const credentials = assertE2EEnvironment(process.env);
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) throw new Error("DATABASE_URL is required");
-  const pool = new Pool({ connectionString: databaseUrl });
-  const client = await pool.connect();
+export async function seedAuthE2EFixtures(
+  client: PoolClient,
+  credentials: E2EEnvironment,
+): Promise<void> {
+  const fixtureUserIds = Object.values(fixtureIdentities).map(
+    (identity) => identity.id,
+  );
+
+  await client.query("BEGIN");
   try {
-    await client.query("BEGIN");
+    await client.query(
+      "DELETE FROM two_factors WHERE user_id = ANY($1::uuid[])",
+      [fixtureUserIds],
+    );
     await upsertIdentity(
       client,
       fixtureIdentities.customer,
@@ -122,19 +136,37 @@ async function main(): Promise<void> {
       credentials.adminPassword,
     );
     await client.query(
+      "DELETE FROM organization_memberships WHERE user_id = ANY($1::uuid[])",
+      [fixtureUserIds],
+    );
+    await client.query(
+      `DELETE FROM sessions
+       WHERE (user_id = ANY($1::uuid[]) OR id = '10000000-0000-4000-8000-000000000020')
+         AND token <> $2`,
+      [fixtureUserIds, fixtureIdentities.admin.sessionToken],
+    );
+    await client.query(
       "UPDATE users SET two_factor_enabled = true WHERE id = $1",
       [fixtureIdentities.admin.id],
     );
     await client.query(
-      `INSERT INTO sessions (id, token, user_id, expires_at, realm, mfa_verified_at)
-       VALUES ('10000000-0000-4000-8000-000000000020', $1, $2, now() + interval '1 day', 'workforce', now())
-       ON CONFLICT (token) DO UPDATE SET expires_at = EXCLUDED.expires_at, mfa_verified_at = now()`,
+      `INSERT INTO sessions
+        (id, token, user_id, expires_at, ip_address, user_agent, realm, mfa_verified_at)
+       VALUES
+        ('10000000-0000-4000-8000-000000000020', $1, $2, now() + interval '1 day', NULL, 'auth-e2e-admin-fixture', 'workforce', now())
+       ON CONFLICT (token) DO UPDATE SET
+         id = EXCLUDED.id, user_id = EXCLUDED.user_id, realm = EXCLUDED.realm,
+         expires_at = EXCLUDED.expires_at, ip_address = EXCLUDED.ip_address,
+         user_agent = EXCLUDED.user_agent,
+         mfa_verified_at = EXCLUDED.mfa_verified_at, updated_at = now()`,
       [fixtureIdentities.admin.sessionToken, fixtureIdentities.admin.id],
     );
     await client.query(
       `INSERT INTO organizations (id, legal_name, legal_name_key, status)
        VALUES ('10000000-0000-4000-8000-000000000010', 'E2E Fixture Company', 'e2e fixture company', 'active')
-       ON CONFLICT (id) DO UPDATE SET status = 'active', updated_at = now()`,
+       ON CONFLICT (id) DO UPDATE SET
+         legal_name = EXCLUDED.legal_name, legal_name_key = EXCLUDED.legal_name_key,
+         status = EXCLUDED.status, updated_at = now()`,
     );
     await client.query(
       `INSERT INTO organization_memberships (id, organization_id, user_id, role)
@@ -143,10 +175,21 @@ async function main(): Promise<void> {
       [fixtureIdentities.customer.id],
     );
     await client.query("COMMIT");
-    console.log("Auth E2E fixtures seeded.");
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
+  }
+}
+
+async function main(): Promise<void> {
+  const credentials = assertE2EEnvironment(process.env);
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) throw new Error("DATABASE_URL is required");
+  const pool = new Pool({ connectionString: databaseUrl });
+  const client = await pool.connect();
+  try {
+    await seedAuthE2EFixtures(client, credentials);
+    console.log("Auth E2E fixtures seeded.");
   } finally {
     client.release();
     await pool.end();
