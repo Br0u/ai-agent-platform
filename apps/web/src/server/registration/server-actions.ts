@@ -23,6 +23,7 @@ export async function approveRegistration(
   formData: FormData,
 ): Promise<ReviewActionState> {
   const result = await approveRegistrationAction(formData);
+  if (result.kind === "reauth_required") redirect(result.redirectTo);
   if (result.kind === "success") revalidatePath("/admin/registrations");
   return result;
 }
@@ -32,6 +33,7 @@ export async function rejectRegistration(
   formData: FormData,
 ): Promise<ReviewActionState> {
   const result = await rejectRegistrationAction(formData);
+  if (result.kind === "reauth_required") redirect(result.redirectTo);
   if (result.kind === "success") revalidatePath("/admin/registrations");
   return result;
 }

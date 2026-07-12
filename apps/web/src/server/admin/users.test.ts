@@ -104,19 +104,92 @@ function fixture() {
       work: (repository: WorkforceMutationRepository) => Promise<T>,
     ) => Promise<T>,
   };
+  const requireSensitiveAction = vi.fn(async () => superActor);
+  const hashPassword = vi.fn(async () => "argon-hash");
   return {
     operations,
     repository,
     service: createWorkforceUserService({
       repository,
-      hashPassword: vi.fn(async () => "argon-hash"),
+      hashPassword,
+      requireSensitiveAction,
     }),
+    hashPassword,
+    requireSensitiveAction,
     tx,
     users,
   };
 }
 
 describe("workforce user administration", () => {
+  it.each([
+    ["createUser", "admin:users"],
+    ["setRole", "admin:roles"],
+    ["disableUser", "admin:users"],
+    ["reactivateUser", "admin:users"],
+    ["replaceTemporaryPassword", "admin:users"],
+  ] as const)(
+    "uses the central sensitive-action guard for %s",
+    async (method, permission) => {
+      const { service, requireSensitiveAction, tx } = fixture();
+      if (method === "createUser")
+        await service.createUser(superActor, {
+          name: "Ops",
+          email: "ops2@example.test",
+          username: "ops2",
+          temporaryPassword: "Temporary#123",
+          initialRole: "employee",
+        });
+      if (method === "setRole")
+        await service.setRole(superActor, "employee-1", "support_operator");
+      if (method === "disableUser")
+        await service.disableUser(superActor, "employee-1");
+      if (method === "reactivateUser") {
+        tx.findTarget = vi.fn(async (id) =>
+          id === "super-1"
+            ? {
+                id: "super-1",
+                realm: "workforce" as const,
+                status: "active" as const,
+                role: "super_admin" as const,
+              }
+            : {
+                id: "employee-1",
+                realm: "workforce" as const,
+                status: "disabled" as const,
+                role: "employee" as const,
+              },
+        );
+        await service.reactivateUser(superActor, "employee-1");
+      }
+      if (method === "replaceTemporaryPassword")
+        await service.replaceTemporaryPassword(
+          superActor,
+          "employee-1",
+          "Replacement#123",
+        );
+      expect(requireSensitiveAction).toHaveBeenCalledWith(permission);
+    },
+  );
+
+  it("stops before hashing or opening a mutation transaction when sensitive assurance is denied", async () => {
+    const { hashPassword, repository, requireSensitiveAction, service } =
+      fixture();
+    requireSensitiveAction.mockRejectedValueOnce(
+      new Error("AUTH_REAUTH_REQUIRED"),
+    );
+    await expect(
+      service.createUser(superActor, {
+        name: "Denied",
+        email: "denied@example.test",
+        username: "denied",
+        temporaryPassword: "Temporary#123",
+        initialRole: "employee",
+      }),
+    ).rejects.toThrow("AUTH_REAUTH_REQUIRED");
+    expect(hashPassword).not.toHaveBeenCalled();
+    expect(repository.transaction).not.toHaveBeenCalled();
+  });
   it("creates only workforce identities with an allowed initial role and temporary-password flag inside one transaction", async () => {
     const { operations, service, tx } = fixture();
     const result = await service.createUser(superActor, {
@@ -167,6 +240,10 @@ describe("workforce user administration", () => {
 
   it("prevents an admin from granting super_admin while allowing a super_admin", async () => {
     const first = fixture();
+    first.requireSensitiveAction.mockResolvedValueOnce({
+      ...superActor,
+      userId: "admin-1",
+    });
     await expect(
       first.service.setRole(
         { ...superActor, userId: "admin-1", role: "admin" },
@@ -174,13 +251,18 @@ describe("workforce user administration", () => {
         "super_admin",
       ),
     ).rejects.toMatchObject({ code: "WORKFORCE_SUPER_ADMIN_REQUIRED" });
+    first.requireSensitiveAction.mockResolvedValueOnce(superActor);
     await expect(
       first.service.setRole(superActor, "employee-1", "super_admin"),
     ).resolves.toBeUndefined();
   });
 
   it("uses the transactional actor role instead of a caller-supplied role claim", async () => {
-    const { service } = fixture();
+    const { requireSensitiveAction, service } = fixture();
+    requireSensitiveAction.mockResolvedValueOnce({
+      ...superActor,
+      userId: "admin-1",
+    });
     await expect(
       service.setRole(
         { ...superActor, userId: "admin-1", role: "super_admin" },
@@ -219,7 +301,11 @@ describe("workforce user administration", () => {
   });
 
   it("prevents an admin from modifying another admin", async () => {
-    const { service } = fixture();
+    const { requireSensitiveAction, service } = fixture();
+    requireSensitiveAction.mockResolvedValueOnce({
+      ...superActor,
+      userId: "admin-2",
+    });
     await expect(
       service.disableUser(
         { ...superActor, userId: "admin-2", role: "admin" },
@@ -262,6 +348,7 @@ describe("workforce user administration", () => {
     const second = createWorkforceUserService({
       repository: { transaction: async (work) => work(tx) },
       hashPassword: async () => "hash",
+      requireSensitiveAction: async () => superActor,
     });
     await second.reactivateUser(superActor, "employee-1");
     expect(tx.setStatus).toHaveBeenCalledWith("employee-1", "active");

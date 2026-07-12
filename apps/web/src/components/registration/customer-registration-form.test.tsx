@@ -98,7 +98,7 @@ describe("CustomerRegistrationForm", () => {
         signInEmail: unexpected,
         revokeNewSession: unexpected,
       },
-      access: { requirePermission: unexpected },
+      access: { requireSensitiveAction: unexpected },
       provider: {
         getStatus: unexpected,
         requestVerification: unexpected,

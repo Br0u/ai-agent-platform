@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { commitResponseCookies } from "../auth/actions";
 import { AuthAccessError } from "../auth/access";
+import { SensitiveActionError } from "../auth/sensitive-action";
 import { RegistrationError } from "./service";
 import {
   approveRegistrationAction,
@@ -61,6 +62,12 @@ function harness() {
     revokeNewSession: vi.fn().mockResolvedValue(undefined),
   };
   const access = {
+    requireSensitiveAction: vi.fn().mockResolvedValue({
+      userId: "reviewer-1",
+      realm: "workforce",
+      status: "active",
+      permissions: ["admin:registrations"],
+    }),
     requirePermission: vi.fn().mockResolvedValue({
       userId: "reviewer-1",
       realm: "workforce",
@@ -345,9 +352,10 @@ describe("review actions", () => {
     await expect(actions.approveRegistrationAction(form)).resolves.toEqual({
       kind: "success",
     });
-    expect(access.requirePermission).toHaveBeenCalledWith(
+    expect(access.requireSensitiveAction).toHaveBeenCalledWith(
       "admin:registrations",
     );
+    expect(access.requirePermission).not.toHaveBeenCalled();
     expect(service.approveRegistration).toHaveBeenCalledWith(
       expect.objectContaining({
         requestId,
@@ -413,7 +421,7 @@ describe("review actions", () => {
 
   it("keeps a known authorization denial distinct and does not report it", async () => {
     const { actions, access, reportInternalError } = harness();
-    access.requirePermission.mockRejectedValue(
+    access.requireSensitiveAction.mockRejectedValue(
       new AuthAccessError("AUTH_PERMISSION_DENIED", 403),
     );
     const form = new FormData();
@@ -426,6 +434,39 @@ describe("review actions", () => {
       code: "REGISTRATION_PERMISSION_DENIED",
     });
     expect(reportInternalError).not.toHaveBeenCalled();
+  });
+
+  it("denies review before mutation when central sensitive assurance fails", async () => {
+    const { actions, access, service } = harness();
+    access.requireSensitiveAction.mockRejectedValueOnce(
+      new AuthAccessError("AUTH_PERMISSION_DENIED", 403),
+    );
+    const form = new FormData();
+    form.set("requestId", requestId);
+    form.set("organizationKind", "create");
+    form.set("legalName", "ACME");
+
+    await expect(actions.approveRegistrationAction(form)).resolves.toEqual({
+      kind: "domain_error",
+      code: "REGISTRATION_PERMISSION_DENIED",
+    });
+    expect(service.approveRegistration).not.toHaveBeenCalled();
+  });
+
+  it("returns the re-auth route when sensitive assurance is stale", async () => {
+    const { actions, access, service } = harness();
+    access.requireSensitiveAction.mockRejectedValueOnce(
+      new SensitiveActionError("AUTH_REAUTH_REQUIRED"),
+    );
+    const form = new FormData();
+    form.set("requestId", requestId);
+    form.set("reviewNote", "资料不完整");
+
+    await expect(actions.rejectRegistrationAction(form)).resolves.toEqual({
+      kind: "reauth_required",
+      redirectTo: "/staff/re-auth?returnTo=%2Fadmin%2Fregistrations",
+    });
+    expect(service.rejectRegistration).not.toHaveBeenCalled();
   });
 });
 

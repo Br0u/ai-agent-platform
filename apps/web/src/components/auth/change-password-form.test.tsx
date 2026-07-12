@@ -11,7 +11,9 @@ afterEach(cleanup);
 
 describe("ChangePasswordForm", () => {
   it("labels current and new password fields and applies the password contract", () => {
-    render(<ChangePasswordForm />);
+    const { container } = render(
+      <ChangePasswordForm returnTo="/admin/users" />,
+    );
     expect(screen.getByLabelText("当前密码")).toHaveAttribute(
       "autocomplete",
       "current-password",
@@ -22,5 +24,8 @@ describe("ChangePasswordForm", () => {
     );
     expect(screen.getByLabelText("新密码")).toHaveAttribute("minlength", "12");
     expect(screen.getByRole("button", { name: "更新密码" })).toBeEnabled();
+    expect(container.querySelector('input[name="returnTo"]')).toHaveValue(
+      "/admin/users",
+    );
   });
 });

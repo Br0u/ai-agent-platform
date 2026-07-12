@@ -24,8 +24,10 @@ function Submit() {
 
 export function ChangePasswordForm({
   action = changeStaffPasswordAction,
+  returnTo,
 }: {
   action?: Action;
+  returnTo?: string;
 }) {
   const [state, formAction] = useActionState(
     async (_previous: StaffSecurityActionState, data: FormData) => action(data),
@@ -33,6 +35,9 @@ export function ChangePasswordForm({
   );
   return (
     <form action={formAction} className="auth-form" noValidate>
+      {returnTo ? (
+        <input name="returnTo" type="hidden" value={returnTo} />
+      ) : null}
       <label className="auth-form__field">
         <span>当前密码</span>
         <input

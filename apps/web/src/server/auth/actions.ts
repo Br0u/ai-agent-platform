@@ -260,6 +260,7 @@ type StaffSecurityRepository = {
     userId: string;
     sessionId: string;
     mustChangePassword: boolean;
+    twoFactorEnabled: boolean;
   } | null>;
   clearMustChangePasswordAndRevokeOthers(
     userId: string,
@@ -389,6 +390,7 @@ export function createDefaultStaffSecurityActions() {
         userId: user.id,
         sessionId: session.id,
         mustChangePassword: user.mustChangePassword === true,
+        twoFactorEnabled: user.twoFactorEnabled === true,
       };
     },
     async clearMustChangePasswordAndRevokeOthers(userId, sessionToken) {
@@ -509,6 +511,7 @@ export function createDefaultStaffSecurityActions() {
     commitCookies: (headers) =>
       commitResponseCookies("workforce", headers, nextCookies),
     getHeaders: currentHeaders,
+    clearCookies: () => clearRealmCookies(nextCookies, "workforce"),
   });
 }
 
@@ -518,6 +521,7 @@ export function createStaffSecurityActions(dependencies: {
   recovery: { generate(userId: string): Promise<string[]> };
   commitCookies(headers: Headers): Promise<void>;
   getHeaders(): Promise<Headers>;
+  clearCookies(): Promise<void>;
 }) {
   async function current() {
     const value = await dependencies.repository.current();
@@ -555,7 +559,16 @@ export function createStaffSecurityActions(dependencies: {
           { sessionsRevoked: revoked },
         );
         await dependencies.commitCookies(staged.headers);
-        return { kind: "success", redirectTo: "/staff/two-factor" };
+        const returnTo = safeReturnPath(
+          "workforce",
+          stringField(formData, "returnTo"),
+        );
+        return {
+          kind: "success",
+          redirectTo: session.twoFactorEnabled
+            ? returnTo
+            : `/staff/two-factor?returnTo=${encodeURIComponent(returnTo)}`,
+        };
       } catch {
         return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
       }
@@ -565,11 +578,15 @@ export function createStaffSecurityActions(dependencies: {
     ): Promise<StaffSecurityActionState> {
       const password = stringField(formData, "password");
       if (!password) return { kind: "error", code: "AUTH_INVALID_INPUT" };
+      const requestHeaders = await dependencies.getHeaders();
+      let staged:
+        | StagedResponse<{ totpURI: string; backupCodes: string[] }>
+        | undefined;
       try {
         const session = await current();
-        const staged = await dependencies.gateway.enableTwoFactor({
+        staged = await dependencies.gateway.enableTwoFactor({
           password,
-          headers: await dependencies.getHeaders(),
+          headers: requestHeaders,
         });
         if (
           staged.response.backupCodes.length !== 0 ||
@@ -579,12 +596,28 @@ export function createStaffSecurityActions(dependencies: {
         const recoveryCodes = await dependencies.recovery.generate(
           session.userId,
         );
+        if (staged.headers.has("set-cookie")) {
+          await dependencies.commitCookies(staged.headers);
+        }
         return {
           kind: "enrollment",
           totpURI: staged.response.totpURI,
           recoveryCodes,
         };
       } catch {
+        if (staged) {
+          try {
+            const rollback = await dependencies.gateway.disableTwoFactor({
+              password,
+              headers: requestHeaders,
+            });
+            if (rollback.headers.has("set-cookie")) {
+              await dependencies.commitCookies(rollback.headers);
+            }
+          } catch {
+            await dependencies.clearCookies().catch(() => undefined);
+          }
+        }
         return { kind: "error", code: "AUTH_INVALID_CREDENTIALS" };
       }
     },
@@ -619,7 +652,9 @@ export function createStaffSecurityActions(dependencies: {
         return {
           kind: "success",
           redirectTo: mustChange
-            ? "/staff/change-password"
+            ? `/staff/change-password?returnTo=${encodeURIComponent(
+                safeReturnPath("workforce", stringField(formData, "returnTo")),
+              )}`
             : safeReturnPath("workforce", stringField(formData, "returnTo")),
         };
       } catch {
@@ -649,8 +684,10 @@ export function createStaffSecurityActions(dependencies: {
           rememberMe: false,
           headers: requestHeaders,
         });
-        if (isFullSession(passwordStage.response))
+        if (isFullSession(passwordStage.response)) {
+          newSessionToken = passwordStage.response.token;
           throw new Error("Re-authentication requires TOTP");
+        }
         const totpStage = await dependencies.gateway.verifyTOTP({
           code,
           trustDevice: false,
@@ -1023,7 +1060,7 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
       return {
         kind: "success",
         redirectTo: user.mustChangePassword
-          ? "/staff/change-password"
+          ? `/staff/change-password?returnTo=${encodeURIComponent(returnTo)}`
           : returnTo,
       };
     } catch {

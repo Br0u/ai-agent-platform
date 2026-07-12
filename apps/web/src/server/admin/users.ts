@@ -17,6 +17,8 @@ import {
   users,
 } from "@ai-agent-platform/database";
 
+import { requireSensitiveWorkforceAction } from "../auth/sensitive-action";
+
 export const WORKFORCE_ROLES = [
   "employee",
   "content_operator",
@@ -169,6 +171,9 @@ function protectAdministrativeTarget(
 export function createWorkforceUserService(dependencies: {
   repository: WorkforceMutationTransactionRepository;
   hashPassword: (password: string) => Promise<string>;
+  requireSensitiveAction: (
+    permission: "admin:users" | "admin:roles",
+  ) => Promise<{ userId: string }>;
 }) {
   return {
     async createUser(
@@ -184,6 +189,9 @@ export function createWorkforceUserService(dependencies: {
       const initialRole = input.initialRole;
       if (!isWorkforceRole(initialRole))
         throw new WorkforceMutationError("WORKFORCE_ROLE_INVALID");
+      const guardedActor =
+        await dependencies.requireSensitiveAction("admin:users");
+      actor = { ...actor, userId: guardedActor.userId };
       const passwordHash = await dependencies.hashPassword(
         input.temporaryPassword,
       );
@@ -222,6 +230,9 @@ export function createWorkforceUserService(dependencies: {
     ): Promise<void> {
       if (!isWorkforceRole(role))
         throw new WorkforceMutationError("WORKFORCE_ROLE_INVALID");
+      const guardedActor =
+        await dependencies.requireSensitiveAction("admin:roles");
+      actor = { ...actor, userId: guardedActor.userId };
       await dependencies.repository.transaction(async (repository) => {
         await requirePermission(actor, "admin:roles", repository);
         const actorRole = await authoritativeActorRole(
@@ -254,6 +265,9 @@ export function createWorkforceUserService(dependencies: {
       actor: WorkforceAdminActor,
       targetId: string,
     ): Promise<void> {
+      const guardedActor =
+        await dependencies.requireSensitiveAction("admin:users");
+      actor = { ...actor, userId: guardedActor.userId };
       await dependencies.repository.transaction(async (repository) => {
         await requirePermission(actor, "admin:users", repository);
         const actorRole = await authoritativeActorRole(
@@ -282,6 +296,9 @@ export function createWorkforceUserService(dependencies: {
       actor: WorkforceAdminActor,
       targetId: string,
     ): Promise<void> {
+      const guardedActor =
+        await dependencies.requireSensitiveAction("admin:users");
+      actor = { ...actor, userId: guardedActor.userId };
       await dependencies.repository.transaction(async (repository) => {
         await requirePermission(actor, "admin:users", repository);
         const actorRole = await authoritativeActorRole(
@@ -311,6 +328,9 @@ export function createWorkforceUserService(dependencies: {
       targetId: string,
       password: string,
     ): Promise<void> {
+      const guardedActor =
+        await dependencies.requireSensitiveAction("admin:users");
+      actor = { ...actor, userId: guardedActor.userId };
       const passwordHash = await dependencies.hashPassword(password);
       await dependencies.repository.transaction(async (repository) => {
         await requirePermission(actor, "admin:users", repository);
@@ -482,6 +502,7 @@ export function createDefaultWorkforceUserService() {
   const database = getDatabase();
   return createWorkforceUserService({
     hashPassword,
+    requireSensitiveAction: requireSensitiveWorkforceAction,
     repository: {
       transaction: (work) =>
         database.transaction(async (tx) => {

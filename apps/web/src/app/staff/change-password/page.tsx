@@ -5,8 +5,13 @@ import { requireWorkforce } from "@/server/auth/access";
 
 export const metadata: Metadata = { title: "修改初始密码 · AI Agent Platform" };
 
-export default async function Page() {
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ returnTo?: string }>;
+}) {
   await requireWorkforce();
+  const { returnTo } = await searchParams;
   return (
     <main className="auth-page">
       <section
@@ -18,7 +23,7 @@ export default async function Page() {
         <p className="auth-page__intro">
           首次登录必须更换管理员分配的临时密码。
         </p>
-        <ChangePasswordForm />
+        <ChangePasswordForm returnTo={returnTo} />
       </section>
     </main>
   );

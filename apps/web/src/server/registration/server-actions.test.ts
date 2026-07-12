@@ -4,10 +4,11 @@ const mocks = vi.hoisted(() => ({
   approve: vi.fn(),
   reject: vi.fn(),
   revalidatePath: vi.fn(),
+  redirect: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
-vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
+vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 vi.mock("./actions", () => ({
   approveRegistrationAction: mocks.approve,
   rejectRegistrationAction: mocks.reject,
@@ -46,6 +47,20 @@ describe("registration review server actions", () => {
 
     await approveRegistration(previous, new FormData());
 
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("redirects stale sensitive review sessions to re-authentication", async () => {
+    mocks.approve.mockResolvedValue({
+      kind: "reauth_required",
+      redirectTo: "/staff/re-auth?returnTo=%2Fadmin%2Fregistrations",
+    });
+
+    await approveRegistration(previous, new FormData());
+
+    expect(mocks.redirect).toHaveBeenCalledWith(
+      "/staff/re-auth?returnTo=%2Fadmin%2Fregistrations",
+    );
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 });

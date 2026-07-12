@@ -46,6 +46,7 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
         userId: "staff-1",
         sessionId: "old-session",
         mustChangePassword: true,
+        twoFactorEnabled: false,
       })),
       clearMustChangePasswordAndRevokeOthers: vi.fn(async () => 2),
       revokeSession: vi.fn(async () => undefined),
@@ -54,6 +55,7 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
     };
     const recovery = { generate: vi.fn(async () => ["RC-ONE", "RC-TWO"]) };
     const commitCookies = vi.fn(async () => undefined);
+    const clearCookies = vi.fn(async () => undefined);
     return {
       actions: createStaffSecurityActions({
         gateway,
@@ -61,7 +63,9 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
         recovery,
         commitCookies,
         getHeaders: async () => new Headers({ cookie: "old=1" }),
+        clearCookies,
       }),
+      clearCookies,
       commitCookies,
       gateway,
       recovery,
@@ -85,7 +89,7 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
     ).toHaveBeenCalledWith("staff-1", "changed");
     expect(result).toEqual({
       kind: "success",
-      redirectTo: "/staff/two-factor",
+      redirectTo: "/staff/two-factor?returnTo=%2Fadmin",
     });
   });
 
@@ -119,7 +123,7 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
     expect(repository.readMustChangePassword).toHaveBeenCalledWith("staff-1");
     expect(result).toEqual({
       kind: "success",
-      redirectTo: "/staff/change-password",
+      redirectTo: "/staff/change-password?returnTo=%2Fadmin%2Fusers",
     });
   });
 
@@ -129,6 +133,7 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
       userId: "staff-1",
       sessionId: "enrollment-session",
       mustChangePassword: false,
+      twoFactorEnabled: false,
     });
     await actions.verifyTwoFactor(form({ code: "123456" }));
     expect(repository.writeAudit).toHaveBeenCalledWith(
@@ -181,6 +186,99 @@ describe("staff password, TOTP, recovery, and re-auth actions", () => {
       ),
     ).resolves.toMatchObject({ kind: "error" });
     expect(gateway.verifyTOTP).not.toHaveBeenCalled();
+  });
+
+  it("revokes an unexpected password-only re-auth session before failing", async () => {
+    const { actions, gateway } = securityFixture();
+    gateway.signIn.mockResolvedValueOnce({
+      response: { user: { id: "staff-1" }, token: "password-only-token" },
+      headers: new Headers(),
+    } as never);
+    await expect(
+      actions.reauthenticate(
+        form({
+          identifier: "staff",
+          password: "Permanent#1234",
+          code: "123456",
+        }),
+      ),
+    ).resolves.toMatchObject({ kind: "error" });
+    expect(gateway.revokeNewSession).toHaveBeenCalledWith(
+      "password-only-token",
+    );
+  });
+
+  it("sends enrolled staff to the allow-listed destination after changing the forced password", async () => {
+    const { actions, repository } = securityFixture();
+    repository.current.mockResolvedValueOnce({
+      userId: "staff-1",
+      sessionId: "old-session",
+      mustChangePassword: true,
+      twoFactorEnabled: true,
+    });
+    await expect(
+      actions.changePassword(
+        form({
+          currentPassword: "Temporary#123",
+          newPassword: "Permanent#1234",
+          returnTo: "/admin/users",
+        }),
+      ),
+    ).resolves.toEqual({ kind: "success", redirectTo: "/admin/users" });
+  });
+
+  it("sends staff without TOTP to enrollment after changing the forced password", async () => {
+    const { actions, repository } = securityFixture();
+    repository.current.mockResolvedValueOnce({
+      userId: "staff-1",
+      sessionId: "old-session",
+      mustChangePassword: true,
+      twoFactorEnabled: false,
+    });
+    await expect(
+      actions.changePassword(
+        form({
+          currentPassword: "Temporary#123",
+          newPassword: "Permanent#1234",
+          returnTo: "/admin/users",
+        }),
+      ),
+    ).resolves.toEqual({
+      kind: "success",
+      redirectTo: "/staff/two-factor?returnTo=%2Fadmin%2Fusers",
+    });
+  });
+
+  it("forwards staged TOTP enrollment cookies only after recovery codes are stored", async () => {
+    const { actions, commitCookies, gateway, recovery } = securityFixture();
+    const stagedHeaders = new Headers({
+      "set-cookie": "aap_staff_session=enrolled; Path=/; HttpOnly",
+    });
+    gateway.enableTwoFactor.mockResolvedValueOnce({
+      response: { totpURI: "otpauth://totp/test", backupCodes: [] },
+      headers: stagedHeaders,
+    });
+    await actions.enrollTwoFactor(form({ password: "Permanent#1234" }));
+    expect(recovery.generate.mock.invocationCallOrder[0]).toBeLessThan(
+      commitCookies.mock.invocationCallOrder[0],
+    );
+    expect(commitCookies).toHaveBeenCalledWith(stagedHeaders);
+  });
+
+  it("rolls back TOTP and clears cookies when recovery-code storage fails", async () => {
+    const { actions, clearCookies, gateway, recovery } = securityFixture();
+    recovery.generate.mockRejectedValueOnce(new Error("storage failed"));
+    gateway.disableTwoFactor.mockRejectedValueOnce(
+      new Error("rollback failed"),
+    );
+    await expect(
+      actions.enrollTwoFactor(form({ password: "Permanent#1234" })),
+    ).resolves.toMatchObject({ kind: "error" });
+    expect(gateway.disableTwoFactor).toHaveBeenCalledWith({
+      password: "Permanent#1234",
+      headers: expect.any(Headers),
+    });
+    expect(clearCookies).toHaveBeenCalledOnce();
   });
 
   it("revokes a newly verified session when the authoritative post-TOTP read fails", async () => {
@@ -617,7 +715,7 @@ describe("staff login action", () => {
 
     expect(result).toEqual({
       kind: "success",
-      redirectTo: "/staff/change-password",
+      redirectTo: "/staff/change-password?returnTo=%2Fadmin%2Fproducts",
     });
   });
 

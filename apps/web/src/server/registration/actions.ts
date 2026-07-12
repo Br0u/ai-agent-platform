@@ -13,14 +13,14 @@ import type {
 } from "@ai-agent-platform/integrations";
 import { createDisabledEmailVerificationProvider } from "@ai-agent-platform/integrations";
 
-import {
-  AuthAccessError,
-  requirePermission,
-  type WorkforceActor,
-} from "../auth/access";
+import { AuthAccessError, type WorkforceActor } from "../auth/access";
 import { commitResponseCookies } from "../auth/actions";
 import { createCustomerAuth, customerRealm } from "../auth/customer-auth";
 import { resolveTrustedRequestIp } from "../auth/shared-options";
+import {
+  SensitiveActionError,
+  requireSensitiveWorkforceAction,
+} from "../auth/sensitive-action";
 import {
   createDatabaseRegistrationRateLimiter,
   createDatabaseRegistrationRepository,
@@ -49,6 +49,10 @@ export type RegistrationActionState =
 export type ReviewActionState =
   | { kind: "validation_error"; fieldErrors: Record<string, string[]> }
   | { kind: "domain_error"; code: RegistrationErrorCode }
+  | {
+      kind: "reauth_required";
+      redirectTo: "/staff/re-auth?returnTo=%2Fadmin%2Fregistrations";
+    }
   | { kind: "success" };
 
 type SessionResult = {
@@ -73,7 +77,7 @@ type RegistrationActionsDependencies = {
   >;
   customerAuth: RegistrationCustomerAuth;
   access: {
-    requirePermission(
+    requireSensitiveAction(
       permission: "admin:registrations",
     ): Promise<WorkforceActor>;
   };
@@ -325,7 +329,7 @@ export function createRegistrationActions(
       return { kind: "validation_error", fieldErrors: errors(parsed.error) };
 
     try {
-      const actor = await dependencies.access.requirePermission(
+      const actor = await dependencies.access.requireSensitiveAction(
         "admin:registrations",
       );
       const decision: ReviewDecision =
@@ -373,6 +377,11 @@ export function createRegistrationActions(
           kind: "domain_error",
           code: "REGISTRATION_PERMISSION_DENIED",
         };
+      if (error instanceof SensitiveActionError)
+        return {
+          kind: "reauth_required",
+          redirectTo: "/staff/re-auth?returnTo=%2Fadmin%2Fregistrations",
+        };
       reportSafely(dependencies.reportInternalError, error);
       return {
         kind: "domain_error",
@@ -391,7 +400,7 @@ export function createRegistrationActions(
     if (!parsed.success)
       return { kind: "validation_error", fieldErrors: errors(parsed.error) };
     try {
-      const actor = await dependencies.access.requirePermission(
+      const actor = await dependencies.access.requireSensitiveAction(
         "admin:registrations",
       );
       await dependencies.service.rejectRegistration(
@@ -411,6 +420,11 @@ export function createRegistrationActions(
         return {
           kind: "domain_error",
           code: "REGISTRATION_PERMISSION_DENIED",
+        };
+      if (error instanceof SensitiveActionError)
+        return {
+          kind: "reauth_required",
+          redirectTo: "/staff/re-auth?returnTo=%2Fadmin%2Fregistrations",
         };
       reportSafely(dependencies.reportInternalError, error);
       return {
@@ -472,7 +486,7 @@ function createDefaultRegistrationActions() {
   const service = createDefaultRegistrationService();
   return createRegistrationActions({
     service,
-    access: { requirePermission },
+    access: { requireSensitiveAction: requireSensitiveWorkforceAction },
     provider: createDisabledEmailVerificationProvider(),
     getHeaders: nextHeaders,
     commitCookies: (realm, headers) =>
