@@ -140,6 +140,7 @@ describe("production deployment security contracts", () => {
     expect(workflow).toContain("nginx -t");
     expect(workflow).toContain("docker network create");
     expect(workflow).toContain("--network-alias web");
+    expect(workflow).toContain("-e ALLOW_LOCAL_VALIDATION_HOSTS=false");
     expect(workflow).toContain("trap cleanup EXIT");
     expect(workflow).toContain('docker network rm "$network"');
     expect(workflow).toMatch(
