@@ -68,12 +68,14 @@ function fixture(overrides: Partial<AuthActionDependencies> = {}) {
       ),
   };
   const audit = { write: vi.fn().mockResolvedValue(undefined) };
+  const reportInternalError = vi.fn();
   const cookieStore = { delete: vi.fn() };
   const dependencies: AuthActionDependencies = {
     customer,
     staff,
     users,
     audit,
+    reportInternalError,
     getHeaders: async () =>
       new Headers({ "user-agent": "test-agent", "x-real-ip": "127.0.0.1" }),
     getCookieStore: async () => cookieStore,
@@ -85,6 +87,7 @@ function fixture(overrides: Partial<AuthActionDependencies> = {}) {
     audit,
     cookieStore,
     customer,
+    reportInternalError,
     staff,
     users,
   };
@@ -186,9 +189,69 @@ describe("customer login action", () => {
     expect(cookieStore.delete).toHaveBeenCalledWith("aap_customer_session");
     expect(cookieStore.delete).not.toHaveBeenCalledWith("aap_staff_session");
   });
+
+  it("compensates a post-sign-in repository failure without exposing it", async () => {
+    const { actions, cookieStore, customer, users } = fixture();
+    users.findById.mockRejectedValue(new Error("database connection secret"));
+
+    const result = await actions.customerLogin(
+      AUTH_ACTION_INITIAL_STATE,
+      form({ email: "alice@example.test", password: "ValidPass#12" }),
+    );
+
+    expect(result).toEqual({ kind: "error", code: "AUTH_INVALID_CREDENTIALS" });
+    expect(customer.revokeNewSession).toHaveBeenCalledWith(
+      "new-customer-token",
+    );
+    expect(cookieStore.delete).toHaveBeenCalledWith("aap_customer_session");
+  });
+
+  it("stays generic even when both compensation operations fail", async () => {
+    const { actions, cookieStore, customer, reportInternalError, users } =
+      fixture();
+    users.findById.mockRejectedValue(new Error("repository unavailable"));
+    customer.revokeNewSession.mockRejectedValue(new Error("revoke failed"));
+    cookieStore.delete.mockImplementation(() => {
+      throw new Error("cookie store failed");
+    });
+    reportInternalError.mockImplementation(() => {
+      throw new Error("reporter failed");
+    });
+
+    await expect(
+      actions.customerLogin(
+        AUTH_ACTION_INITIAL_STATE,
+        form({ email: "alice@example.test", password: "ValidPass#12" }),
+      ),
+    ).resolves.toEqual({
+      kind: "error",
+      code: "AUTH_INVALID_CREDENTIALS",
+    });
+    expect(customer.revokeNewSession).toHaveBeenCalledWith(
+      "new-customer-token",
+    );
+    expect(cookieStore.delete).toHaveBeenCalledWith("aap_customer_session");
+    expect(reportInternalError).toHaveBeenCalledWith(
+      expect.any(AggregateError),
+    );
+  });
 });
 
 describe("staff login action", () => {
+  it("fails closed before authentication when the workforce lookup fails", async () => {
+    const { actions, staff, users } = fixture();
+    users.findByIdentifier.mockRejectedValue(new Error("database unavailable"));
+
+    const result = await actions.staffLogin(
+      AUTH_ACTION_INITIAL_STATE,
+      form({ identifier: "operator.one", password: "ValidPass#12" }),
+    );
+
+    expect(result).toEqual({ kind: "error", code: "AUTH_INVALID_CREDENTIALS" });
+    expect(staff.signInEmail).not.toHaveBeenCalled();
+    expect(staff.signInUsername).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["STAFF@EXAMPLE.TEST", "email", "staff@example.test"],
     ["  Operator.One  ", "username", "operator.one"],
@@ -289,6 +352,21 @@ describe("staff login action", () => {
       kind: "success",
       redirectTo: "/staff/change-password",
     });
+  });
+
+  it("compensates a post-sign-in workforce repository failure", async () => {
+    const { actions, cookieStore, staff, users } = fixture();
+    users.findById.mockRejectedValue(new Error("database unavailable"));
+
+    const result = await actions.staffLogin(
+      AUTH_ACTION_INITIAL_STATE,
+      form({ identifier: "operator.one", password: "ValidPass#12" }),
+    );
+
+    expect(result).toEqual({ kind: "error", code: "AUTH_INVALID_CREDENTIALS" });
+    expect(staff.revokeNewSession).toHaveBeenCalledWith("new-staff-token");
+    expect(cookieStore.delete).toHaveBeenCalledWith("aap_staff_session");
+    expect(cookieStore.delete).not.toHaveBeenCalledWith("aap_customer_session");
   });
 });
 

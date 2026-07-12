@@ -72,11 +72,28 @@ beforeEach(() => {
   mocks.replace.mockReset();
   vi.stubGlobal(
     "fetch",
-    vi
-      .fn()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ permissions: [] }), { status: 200 }),
-      ),
+    vi.fn().mockImplementation((input: string | URL | Request) => {
+      const url = String(input);
+      const body = url.includes("/staff")
+        ? {
+            realm: "workforce",
+            status: "active",
+            displayName: "Operator",
+            mustChangePassword: false,
+            twoFactorEnabled: true,
+            permissions: [],
+          }
+        : {
+            realm: "customer",
+            status: "active",
+            displayName: "Customer",
+            emailVerificationStatus: "verified",
+            organization: null,
+          };
+      return Promise.resolve(
+        new Response(JSON.stringify(body), { status: 200 }),
+      );
+    }),
   );
   window.history.replaceState(null, "", "/");
 });
@@ -153,8 +170,11 @@ describe("SiteShell", () => {
       new Response(
         JSON.stringify({
           realm: "workforce",
+          status: "active",
           permissions: ["admin:products"],
           displayName: "Operator",
+          mustChangePassword: false,
+          twoFactorEnabled: true,
         }),
         { status: 200 },
       ),
@@ -171,6 +191,72 @@ describe("SiteShell", () => {
     });
     expect(mocks.appShellProps?.grantedPermissions).toEqual(["admin:products"]);
     expect(mocks.appShellProps?.logoutAction).toEqual(expect.any(Function));
+  });
+
+  it.each([
+    ["missing fields", {}],
+    ["null", null],
+    ["array", []],
+    [
+      "wrong realm",
+      {
+        realm: "customer",
+        status: "active",
+        displayName: "Operator",
+        mustChangePassword: false,
+        twoFactorEnabled: true,
+        permissions: [],
+      },
+    ],
+    [
+      "unknown permission",
+      {
+        realm: "workforce",
+        status: "active",
+        displayName: "Operator",
+        mustChangePassword: false,
+        twoFactorEnabled: true,
+        permissions: ["admin:unknown"],
+      },
+    ],
+  ])(
+    "fails closed for a malformed admin session payload: %s",
+    async (_label, body) => {
+      vi.mocked(fetch).mockResolvedValue(
+        new Response(JSON.stringify(body), { status: 200 }),
+      );
+
+      renderAt("/admin/products");
+
+      await waitFor(() =>
+        expect(mocks.replace).toHaveBeenCalledWith(
+          "/staff/login?returnTo=%2Fadmin%2Fproducts",
+        ),
+      );
+      expect(screen.queryByTestId("app-shell")).not.toBeInTheDocument();
+    },
+  );
+
+  it("fails closed for a wrong-realm customer session payload", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          realm: "workforce",
+          status: "active",
+          displayName: "Wrong realm",
+        }),
+        { status: 200 },
+      ),
+    );
+
+    renderAt("/console/profile");
+
+    await waitFor(() =>
+      expect(mocks.replace).toHaveBeenCalledWith(
+        "/login?returnTo=%2Fconsole%2Fprofile",
+      ),
+    );
+    expect(screen.queryByTestId("app-shell")).not.toBeInTheDocument();
   });
 
   it.each([

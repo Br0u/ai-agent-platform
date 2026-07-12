@@ -164,6 +164,7 @@ describe("Server Action cookie context", () => {
           findById: vi.fn().mockResolvedValue(activeCustomer),
         },
         audit: { write: vi.fn().mockResolvedValue(undefined) },
+        reportInternalError: vi.fn(),
         getHeaders: async () => new Headers(store.headers),
         getCookieStore: async () => store.userspaceMutableCookies,
       };

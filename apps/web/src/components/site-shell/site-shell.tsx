@@ -15,6 +15,79 @@ import {
 } from "../../server/auth/server-actions";
 import "./site-shell.css";
 
+const ADMIN_PERMISSION_KEYS = new Set(
+  adminNavigation.groups.flatMap((group) =>
+    group.items.flatMap((item) =>
+      item.permission === undefined ? [] : [item.permission],
+    ),
+  ),
+);
+const CUSTOMER_STATUSES = new Set(["pending_review", "active", "rejected"]);
+const EMAIL_VERIFICATION_STATUSES = new Set([
+  "unverified",
+  "pending",
+  "verified",
+]);
+const ORGANIZATION_STATUSES = new Set([
+  "pending_review",
+  "active",
+  "disabled",
+  "rejected",
+]);
+const ORGANIZATION_ROLES = new Set(["owner", "admin", "member"]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCustomerOrganization(value: unknown): boolean {
+  return (
+    value === null ||
+    (isRecord(value) &&
+      typeof value.legalName === "string" &&
+      typeof value.status === "string" &&
+      ORGANIZATION_STATUSES.has(value.status) &&
+      typeof value.role === "string" &&
+      ORGANIZATION_ROLES.has(value.role))
+  );
+}
+
+function parseWorkspacePermissions(
+  variant: "console" | "admin",
+  value: unknown,
+): string[] {
+  if (!isRecord(value) || typeof value.displayName !== "string") {
+    throw new Error("Invalid workspace session");
+  }
+  if (variant === "console") {
+    if (
+      value.realm !== "customer" ||
+      typeof value.status !== "string" ||
+      !CUSTOMER_STATUSES.has(value.status) ||
+      typeof value.emailVerificationStatus !== "string" ||
+      !EMAIL_VERIFICATION_STATUSES.has(value.emailVerificationStatus) ||
+      !isCustomerOrganization(value.organization)
+    ) {
+      throw new Error("Invalid customer session");
+    }
+    return [];
+  }
+  if (
+    value.realm !== "workforce" ||
+    value.status !== "active" ||
+    typeof value.mustChangePassword !== "boolean" ||
+    typeof value.twoFactorEnabled !== "boolean" ||
+    !Array.isArray(value.permissions) ||
+    !value.permissions.every(
+      (permission) =>
+        typeof permission === "string" && ADMIN_PERMISSION_KEYS.has(permission),
+    )
+  ) {
+    throw new Error("Invalid workforce session");
+  }
+  return [...new Set(value.permissions)].sort();
+}
+
 function currentBrowserHref() {
   return (
     window.location.pathname + window.location.search + window.location.hash
@@ -35,10 +108,11 @@ export function SiteShell({ children }: { children: ReactNode }) {
   const [workspace, setWorkspace] = useState<{
     variant: "console" | "admin" | "portal";
     status: "loading" | "ready" | "redirecting";
-    permissions?: string[];
+    permissions: string[];
   }>(() => ({
     variant,
     status: variant === "portal" ? "ready" : "loading",
+    permissions: [],
   }));
 
   useEffect(() => {
@@ -72,7 +146,7 @@ export function SiteShell({ children }: { children: ReactNode }) {
       .then(async (response) => {
         if (!current) return;
         if (response.status === 401 || response.status === 403) {
-          setWorkspace({ variant, status: "redirecting" });
+          setWorkspace({ variant, status: "redirecting", permissions: [] });
           replace(
             `${loginPath}?returnTo=${encodeURIComponent(currentBrowserHref())}`,
           );
@@ -82,27 +156,13 @@ export function SiteShell({ children }: { children: ReactNode }) {
 
         const body: unknown = await response.json();
         if (!current) return;
-        const permissions =
-          variant === "admin" &&
-          body &&
-          typeof body === "object" &&
-          Array.isArray((body as Record<string, unknown>).permissions) &&
-          (body as Record<string, unknown>).permissions instanceof Array &&
-          ((body as Record<string, unknown>).permissions as unknown[]).every(
-            (permission) => typeof permission === "string",
-          )
-            ? [
-                ...new Set(
-                  (body as Record<string, unknown>).permissions as string[],
-                ),
-              ].sort()
-            : undefined;
+        const permissions = parseWorkspacePermissions(variant, body);
         setWorkspace({ variant, status: "ready", permissions });
       })
       .catch((error: unknown) => {
         if (!current || controller.signal.aborted) return;
         void error;
-        setWorkspace({ variant, status: "redirecting" });
+        setWorkspace({ variant, status: "redirecting", permissions: [] });
         replace(
           `${loginPath}?returnTo=${encodeURIComponent(currentBrowserHref())}`,
         );

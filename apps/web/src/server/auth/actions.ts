@@ -91,6 +91,7 @@ export type AuthActionDependencies = {
   staff: StaffGateway;
   users: LoginUserRepository;
   audit: AuditWriter;
+  reportInternalError(error: AggregateError): void;
   getHeaders(): Promise<Headers>;
   getCookieStore(): Promise<CookieStore>;
 };
@@ -192,11 +193,27 @@ async function cleanNewSession(
   token: string,
   getCookieStore: AuthActionDependencies["getCookieStore"],
   cookieName: string,
+  reportInternalError: AuthActionDependencies["reportInternalError"],
 ) {
+  const cleanupErrors: Error[] = [];
   try {
     await gateway.revokeNewSession(token);
-  } finally {
+  } catch {
+    cleanupErrors.push(new Error("Session revocation failed"));
+  }
+  try {
     await clearCookie(getCookieStore, cookieName);
+  } catch {
+    cleanupErrors.push(new Error("Session cookie cleanup failed"));
+  }
+  if (cleanupErrors.length > 0) {
+    try {
+      reportInternalError(
+        new AggregateError(cleanupErrors, "Authentication cleanup failed"),
+      );
+    } catch {
+      // A diagnostics sink must never turn a compensated login into a leak.
+    }
   }
 }
 
@@ -265,26 +282,27 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
       return invalidCredentials();
     }
 
-    const user = await dependencies.users.findById(result.user.id);
-    if (!user || user.realm !== "customer" || user.status === "disabled") {
-      await cleanNewSession(
-        dependencies.customer,
-        result.token,
-        dependencies.getCookieStore,
-        CUSTOMER_COOKIE,
-      );
-      try {
-        await auditFailure(
-          headers,
-          user?.status === "disabled" ? "account_disabled" : "realm_mismatch",
-        );
-      } catch {
-        // The public result must remain indistinguishable.
-      }
-      return invalidCredentials();
-    }
-
     try {
+      const user = await dependencies.users.findById(result.user.id);
+      if (!user || user.realm !== "customer" || user.status === "disabled") {
+        await cleanNewSession(
+          dependencies.customer,
+          result.token,
+          dependencies.getCookieStore,
+          CUSTOMER_COOKIE,
+          dependencies.reportInternalError,
+        );
+        try {
+          await auditFailure(
+            headers,
+            user?.status === "disabled" ? "account_disabled" : "realm_mismatch",
+          );
+        } catch {
+          // The public result must remain indistinguishable.
+        }
+        return invalidCredentials();
+      }
+
       await dependencies.audit.write({
         event: "auth.login_success",
         actor: { realm: "customer", userId: user.id },
@@ -292,23 +310,24 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
         metadata: { method: "email" },
         ...requestAuditContext(headers),
       });
+
+      return {
+        kind: "success",
+        redirectTo:
+          user.status === "pending_review" || user.status === "rejected"
+            ? "/console/onboarding"
+            : safeReturnPath("customer", parsed.data.returnTo),
+      };
     } catch {
       await cleanNewSession(
         dependencies.customer,
         result.token,
         dependencies.getCookieStore,
         CUSTOMER_COOKIE,
+        dependencies.reportInternalError,
       );
       return invalidCredentials();
     }
-
-    return {
-      kind: "success",
-      redirectTo:
-        user.status === "pending_review" || user.status === "rejected"
-          ? "/console/onboarding"
-          : safeReturnPath("customer", parsed.data.returnTo),
-    };
   }
 
   async function staffLogin(
@@ -337,11 +356,21 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
       method === "email"
         ? normalizeIdentityEmail(parsed.data.identifier)
         : normalizeWorkforceUsername(parsed.data.identifier);
-    const preflightUser = await dependencies.users.findByIdentifier(
-      "workforce",
-      method,
-      identifier,
-    );
+    let preflightUser: LoginUser | null;
+    try {
+      preflightUser = await dependencies.users.findByIdentifier(
+        "workforce",
+        method,
+        identifier,
+      );
+    } catch {
+      try {
+        await auditFailure(headers, "unknown");
+      } catch {
+        // Keep repository and audit failures indistinguishable.
+      }
+      return invalidCredentials();
+    }
     if (preflightUser?.status === "disabled") {
       try {
         await dependencies.staff.signOut({ headers });
@@ -388,30 +417,31 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
       };
     }
 
-    const user = await dependencies.users.findById(result.user.id);
-    if (!user || user.realm !== "workforce" || user.status !== "active") {
-      await cleanNewSession(
-        dependencies.staff,
-        result.token,
-        dependencies.getCookieStore,
-        STAFF_COOKIE,
-      );
-      try {
-        await auditFailure(
-          headers,
-          user?.status === "disabled"
-            ? "account_disabled"
-            : user?.realm !== "workforce"
-              ? "realm_mismatch"
-              : "account_not_active",
-        );
-      } catch {
-        // The public result must remain generic.
-      }
-      return invalidCredentials();
-    }
-
     try {
+      const user = await dependencies.users.findById(result.user.id);
+      if (!user || user.realm !== "workforce" || user.status !== "active") {
+        await cleanNewSession(
+          dependencies.staff,
+          result.token,
+          dependencies.getCookieStore,
+          STAFF_COOKIE,
+          dependencies.reportInternalError,
+        );
+        try {
+          await auditFailure(
+            headers,
+            user?.status === "disabled"
+              ? "account_disabled"
+              : user?.realm !== "workforce"
+                ? "realm_mismatch"
+                : "account_not_active",
+          );
+        } catch {
+          // The public result must remain generic.
+        }
+        return invalidCredentials();
+      }
+
       await dependencies.audit.write({
         event: "auth.login_success",
         actor: { realm: "workforce", userId: user.id },
@@ -419,20 +449,23 @@ export function createAuthActions(dependencies: AuthActionDependencies) {
         metadata: { method },
         ...requestAuditContext(headers),
       });
+
+      return {
+        kind: "success",
+        redirectTo: user.mustChangePassword
+          ? "/staff/change-password"
+          : returnTo,
+      };
     } catch {
       await cleanNewSession(
         dependencies.staff,
         result.token,
         dependencies.getCookieStore,
         STAFF_COOKIE,
+        dependencies.reportInternalError,
       );
       return invalidCredentials();
     }
-
-    return {
-      kind: "success",
-      redirectTo: user.mustChangePassword ? "/staff/change-password" : returnTo,
-    };
   }
 
   async function logout(realm: IdentityRealm): Promise<AuthActionState> {
@@ -569,6 +602,9 @@ export function createDefaultAuthActions() {
     staff: createDefaultStaffGateway(),
     users: createDatabaseLoginUserRepository(),
     audit: createAuditWriter(),
+    reportInternalError(error) {
+      console.error(error);
+    },
     getHeaders: nextHeaders,
     getCookieStore: nextCookies,
   });
