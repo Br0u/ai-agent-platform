@@ -156,8 +156,8 @@ function repositoryFor(
     async createCredentialAccount(userId, passwordHash) {
       await client.query(
         `INSERT INTO accounts (id, account_id, provider_id, user_id, password)
-         VALUES ($1, $2, 'credential', $2, $3)`,
-        [randomUUID(), userId, passwordHash],
+         VALUES ($1, $2, 'credential', $3::uuid, $4)`,
+        [randomUUID(), userId, userId, passwordHash],
       );
     },
     async assignRole(userId, roleId) {

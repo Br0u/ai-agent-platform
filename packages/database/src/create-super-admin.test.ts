@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -39,6 +40,13 @@ function fixture(overrides?: { existing?: number }) {
 }
 
 describe("secure super-admin bootstrap", () => {
+  it("binds credential account text and user UUID as distinct PostgreSQL parameters", () => {
+    const source = readFileSync(
+      new URL("./create-super-admin.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain("VALUES ($1, $2, 'credential', $3::uuid, $4)");
+  });
   it.each([
     { email: "", username: "root", password: "long-enough-password" },
     {
