@@ -11,7 +11,7 @@ import {
 import {
   STAFF_SECURITY_ACTION_INITIAL_STATE,
   type StaffSecurityActionState,
-} from "@/server/auth/actions";
+} from "@/contracts/auth-action-state";
 
 import "./login-form.css";
 

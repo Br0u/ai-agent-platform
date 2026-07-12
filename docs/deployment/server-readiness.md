@@ -18,7 +18,7 @@
 - 单台 Linux 服务器
 - Docker Compose 部署
 - 至少 4 核、8 GB 内存、100 GB 可用磁盘
-- `proxy`、`web`、`db`、`backup` 四个服务
+- `proxy`、`web`、`migrate`、`db`、`backup` 五个服务
 - PostgreSQL 数据卷、上传文件卷与应用镜像分离
 - 每日数据库备份，保留 7 至 30 天，并复制到另一台机器或备份存储
 
@@ -27,6 +27,7 @@
 - `proxy`：Nginx，仅对外发布`8080`，生产环境可映射到公司负载均衡或边缘Nginx。
 - `web`：Next.js standalone，非root用户、只读文件系统，不直接发布主机端口。
 - `db`：PostgreSQL 18，只有内部网络可访问，数据持久化到独立卷。
+- `migrate`：只使用 `ai_agent_migrator` 连接，完成迁移、权限种子和运行时授权后退出。
 - `backup`：按周期执行`pg_dump`，写入独立备份卷并清理过期文件。
 - `db`和`web`均有健康检查；后续服务按`service_healthy`顺序启动。
 
@@ -42,12 +43,22 @@
 
 ```bash
 cp .env.example .env
-# 修改.env中的数据库密码和DATABASE_URL，两处密码必须一致
+# 分别生成 owner、migrator、runtime 和 Better Auth 密钥；不要复用
 docker compose config
-docker compose build web
-docker compose up -d
+docker compose build migrate web
+docker compose up -d --wait db migrate web proxy
 docker compose ps
 ```
+
+数据库角色分离：owner 只在新卷初始化时创建角色；migrator 只供迁移任务；runtime 只供 Web。runtime 无 schema 变更权限，并被数据库显式拒绝修改或删除 `audit_logs`。`web` 没有主机端口，唯一入口是 Nginx `proxy`。
+
+创建首位超级管理员：
+
+```bash
+docker compose run --rm -it migrate pnpm --filter @ai-agent-platform/database auth:create-super-admin
+```
+
+密码只通过 TTY 隐藏读取并二次确认。系统不创建默认账号；已有 `super_admin` 时命令安全失败，不能用作日常管理员创建接口。
 
 验收：
 
@@ -56,7 +67,11 @@ curl -f http://127.0.0.1:8080/api/health/live
 curl -f http://127.0.0.1:8080/api/health/ready
 ```
 
-当前首版SQL会在全新数据库卷初始化时自动执行。已有数据库的后续版本升级不能依赖`docker-entrypoint-initdb.d`，上线业务功能前必须补充独立迁移任务和回滚流程。
+新数据库卷会初始化独立角色；后续 schema 由一次性 `migrate` 服务处理。已有数据库不能依赖 `docker-entrypoint-initdb.d`，切换前需由 DBA 手工建立等价角色和授权，并验证 runtime 无 `CREATE` 及 audit 更新/删除权限。
+
+## 认证入口限流
+
+Nginx 仅对 `/login`、`/register`、`/staff/login`、`/staff/two-factor`、`/staff/re-auth` 的 POST 计数，速率为每 IP 每分钟 5 次并允许 5 次突发，超限返回 429；GET 页面加载不计数。代理覆盖客户端提交的 `X-Real-IP` 和 `X-Forwarded-For`，应用仍保留规范化账号/IP 双层限流。
 
 ## 生产环境仍需补齐
 
@@ -66,7 +81,6 @@ curl -f http://127.0.0.1:8080/api/health/ready
 - PostgreSQL备份的异机复制、加密、恢复演练与负责人。
 - 容器日志采集、监控告警、磁盘水位和健康检查告警。
 - 后续数据库迁移任务、变更审批和回滚预案。
-- 管理员初始账号的安全创建流程；不得内置默认密码。
 
 ## 离线环境
 

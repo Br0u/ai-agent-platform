@@ -16,5 +16,8 @@ backups/
 uploads/
 .worktrees/
 .playwright-cli/
+artifacts/playwright/
+playwright-report/
+test-results/
 /tmp/
 ~$*.docx

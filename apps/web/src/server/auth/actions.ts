@@ -11,6 +11,13 @@ import { cookies as nextCookies, headers as nextHeaders } from "next/headers";
 import { ResponseCookies } from "next/dist/server/web/spec-extension/cookies";
 import { z } from "zod";
 
+import type { StaffSecurityActionState } from "@/contracts/auth-action-state";
+
+export {
+  STAFF_SECURITY_ACTION_INITIAL_STATE,
+  type StaffSecurityActionState,
+} from "@/contracts/auth-action-state";
+
 import {
   accounts,
   getDatabase,
@@ -351,30 +358,6 @@ export function createStaffTotpRemovalService(dependencies: {
     },
   };
 }
-
-export type StaffSecurityActionState =
-  | { kind: "idle" }
-  | {
-      kind: "error";
-      code:
-        | "AUTH_INVALID_INPUT"
-        | "AUTH_INVALID_CREDENTIALS"
-        | "AUTH_TOTP_ALREADY_ENABLED"
-        | "AUTH_REAUTH_REQUIRED"
-        | "AUTH_MFA_REQUIRED"
-        | "AUTH_INFRASTRUCTURE_FAILURE";
-    }
-  | { kind: "success"; redirectTo: string }
-  | {
-      kind: "enrollment";
-      totpURI: string;
-      recoveryCodes: string[];
-      qrDataUrl?: string;
-    };
-
-export const STAFF_SECURITY_ACTION_INITIAL_STATE: StaffSecurityActionState = {
-  kind: "idle",
-};
 
 function stagedChallengeHeaders(request: Headers, response: Headers): Headers {
   const result = new Headers(request);

@@ -170,6 +170,18 @@ describe("shared auth security options", () => {
     ).toBe(true);
   });
 
+  it("allows loopback HTTP for production-mode local container acceptance", () => {
+    expect(
+      resolveAuthEnvironment(
+        authEnvironment({
+          NODE_ENV: "production",
+          BETTER_AUTH_URL: "http://127.0.0.1:18080",
+          BETTER_AUTH_TRUSTED_ORIGINS: "http://127.0.0.1:18080",
+        }),
+      ).secureCookies,
+    ).toBe(false);
+  });
+
   it.each(["http://portal.example.com", "ftp://portal.example.com"])(
     "rejects an unsafe application URL: %s",
     (url) => {
@@ -281,6 +293,7 @@ describe("shared auth security options", () => {
     expect(options.advanced?.disableCSRFCheck).not.toBe(true);
     expect(options.advanced?.disableOriginCheck).not.toBe(true);
     expect(options.advanced?.trustedProxyHeaders).toBe(false);
+    expect(options.advanced?.database?.generateId).toBe("uuid");
     expect(options.emailAndPassword?.disableSignUp).toBe(true);
   });
 

@@ -60,7 +60,7 @@ type AuthoritativeUser = {
   status: "pending_review" | "active" | "disabled" | "rejected";
 };
 
-function parseOrigin(value: string, name: string, production: boolean): string {
+function parseOrigin(value: string, name: string): string {
   let url: URL;
 
   try {
@@ -74,9 +74,6 @@ function parseOrigin(value: string, name: string, production: boolean): string {
   }
   if (url.pathname !== "/" || url.search || url.hash) {
     throw new Error(`${name} must contain an origin without a path`);
-  }
-  if (production && url.protocol !== "https:") {
-    throw new Error(`${name} must use HTTPS in production`);
   }
   const localHttpHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
   if (url.protocol === "http:" && !localHttpHosts.has(url.hostname)) {
@@ -125,7 +122,6 @@ function parseTrustedProxies(value: string): string[] {
 export function resolveAuthEnvironment(
   env: AuthEnvironment = process.env,
 ): ResolvedAuthEnvironment {
-  const production = env.NODE_ENV === "production";
   const secret = required(env.BETTER_AUTH_SECRET, "BETTER_AUTH_SECRET");
   if (secret.length < 32) {
     throw new Error("BETTER_AUTH_SECRET must contain at least 32 characters");
@@ -134,7 +130,6 @@ export function resolveAuthEnvironment(
   const baseURL = parseOrigin(
     required(env.BETTER_AUTH_URL, "BETTER_AUTH_URL"),
     "BETTER_AUTH_URL",
-    production,
   );
   const rawTrustedOrigins = required(
     env.BETTER_AUTH_TRUSTED_ORIGINS,
@@ -143,11 +138,7 @@ export function resolveAuthEnvironment(
   const trustedOrigins = rawTrustedOrigins
     .split(",")
     .map((origin, index) =>
-      parseOrigin(
-        origin.trim(),
-        `BETTER_AUTH_TRUSTED_ORIGINS[${index}]`,
-        production,
-      ),
+      parseOrigin(origin.trim(), `BETTER_AUTH_TRUSTED_ORIGINS[${index}]`),
     );
 
   const trustNginxProxy = env.TRUST_NGINX_PROXY === "true";
@@ -387,6 +378,7 @@ export function createSharedAuthOptions(
       },
     },
     advanced: {
+      database: { generateId: "uuid" },
       useSecureCookies: false,
       disableCSRFCheck: false,
       disableOriginCheck: false,

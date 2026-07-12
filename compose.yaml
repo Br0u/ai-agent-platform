@@ -6,10 +6,14 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-ai_agent_platform}
-      POSTGRES_USER: ${POSTGRES_USER:-ai_agent}
+      POSTGRES_USER: ${POSTGRES_USER:-ai_agent_owner}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      MIGRATOR_DATABASE_PASSWORD: ${MIGRATOR_DATABASE_PASSWORD:?Set MIGRATOR_DATABASE_PASSWORD in .env}
+      RUNTIME_DATABASE_PASSWORD: ${RUNTIME_DATABASE_PASSWORD:?Set RUNTIME_DATABASE_PASSWORD in .env}
     volumes:
       - db_data:/var/lib/postgresql
+      - ./infra/postgres/01-roles.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
+      - ./infra/postgres/01-roles.sql:/opt/postgres/01-roles.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -26,7 +30,7 @@ services:
       target: migrator
     restart: "no"
     environment:
-      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      DATABASE_URL: ${MIGRATOR_DATABASE_URL:?Set MIGRATOR_DATABASE_URL in .env}
     depends_on:
       db:
         condition: service_healthy
@@ -39,7 +43,11 @@ services:
       dockerfile: apps/web/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      DATABASE_URL: ${RUNTIME_DATABASE_URL:?Set RUNTIME_DATABASE_URL in .env}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET in .env}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:?Set BETTER_AUTH_URL in .env}
+      BETTER_AUTH_TRUSTED_ORIGINS: ${BETTER_AUTH_TRUSTED_ORIGINS:?Set BETTER_AUTH_TRUSTED_ORIGINS in .env}
+      FEATURE_EMAIL_VERIFICATION: ${FEATURE_EMAIL_VERIFICATION:-false}
       TRUST_NGINX_PROXY: "true"
       NGINX_TRUSTED_PROXY_CIDRS: ${NGINX_TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
     depends_on:
@@ -106,8 +114,8 @@ services:
     environment:
       PGHOST: db
       PGDATABASE: ${POSTGRES_DB:-ai_agent_platform}
-      PGUSER: ${POSTGRES_USER:-ai_agent}
-      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      PGUSER: ai_agent_runtime
+      PGPASSWORD: ${RUNTIME_DATABASE_PASSWORD:?Set RUNTIME_DATABASE_PASSWORD in .env}
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
     entrypoint: ["/bin/sh", "/opt/backup/backup.sh"]
