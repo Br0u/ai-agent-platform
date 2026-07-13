@@ -126,7 +126,7 @@ export function PricingCalculator() {
         </p>
         {!canContact && (
           <p id={DISABLED_EXPLANATION_ID} className="pricing-explanation">
-            请至少选择一个功能模块后联系商务。
+            请至少选择一个功能模块后获取正式报价。
           </p>
         )}
         <a
@@ -138,7 +138,7 @@ export function PricingCalculator() {
           aria-describedby={canContact ? undefined : DISABLED_EXPLANATION_ID}
           onClick={canContact ? undefined : (event) => event.preventDefault()}
         >
-          联系商务
+          获取正式报价
         </a>
       </section>
     </div>

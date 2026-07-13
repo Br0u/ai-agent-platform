@@ -1,56 +1,53 @@
 .pricing-page {
-  width: min(100% - 2rem, 74rem);
+  width: min(calc(100% - var(--space-8)), 74rem);
   margin: 0 auto;
-  padding: clamp(3rem, 8vw, 6rem) 0;
+  padding: var(--space-16) 0;
+  color: var(--color-ink);
+  font-family: var(--font-body);
 }
 
 .pricing-page__header {
   max-width: 48rem;
-  margin-bottom: clamp(2rem, 5vw, 3.5rem);
-}
-
-.pricing-page__header > p:first-child {
-  margin: 0 0 0.75rem;
-  color: #3157c8;
-  font-weight: 700;
+  margin-bottom: var(--space-12);
+  border-left: var(--space-1) solid var(--color-primary);
+  padding-left: var(--space-6);
 }
 
 .pricing-page__header h1 {
   margin: 0;
+  font-family: var(--font-display);
   font-size: clamp(2rem, 5vw, 3.5rem);
   line-height: 1.12;
 }
 
-.pricing-page__header > p:last-child {
-  margin: 1rem 0 0;
-  color: #5a6475;
-  font-size: 1.05rem;
+.pricing-page__header p {
+  margin: var(--space-4) 0 0;
+  color: var(--color-muted);
   line-height: 1.7;
 }
 
 .pricing-calculator {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(19rem, 0.75fr);
-  gap: 1.5rem;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: var(--space-6);
   align-items: start;
 }
 
 .pricing-panel {
-  border: 1px solid var(--color-border, #d9dee8);
-  border-radius: 1rem;
-  background: var(--color-surface, #fff);
-  padding: clamp(1.25rem, 3vw, 2rem);
-  box-shadow: 0 1rem 2.5rem rgb(20 35 70 / 8%);
+  border: 1px solid var(--color-line);
+  border-top: var(--space-1) solid var(--color-primary);
+  background: var(--color-surface);
+  padding: var(--space-8);
 }
 
 .pricing-config {
   display: grid;
-  gap: 1.5rem;
+  gap: var(--space-6);
 }
 
 .pricing-field {
   display: grid;
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
 
 .pricing-field label,
@@ -60,12 +57,19 @@
 
 .pricing-field select {
   width: 100%;
-  min-height: 2.75rem;
-  border: 1px solid #b8c0cf;
-  border-radius: 0.6rem;
-  background: #fff;
-  padding: 0.6rem 0.75rem;
-  color: inherit;
+  min-height: var(--space-12);
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-ink);
+  font: inherit;
+}
+
+.pricing-field select:focus-visible,
+.pricing-module-option:focus-within,
+.pricing-contact:focus-visible {
+  outline: 2px solid var(--color-signal);
+  outline-offset: 2px;
 }
 
 .pricing-modules {
@@ -77,46 +81,61 @@
 .pricing-module-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75rem;
-  margin-top: 0.75rem;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
 }
 
 .pricing-module-option {
   display: flex;
-  gap: 0.625rem;
+  gap: var(--space-3);
   align-items: center;
-  min-height: 3rem;
-  border: 1px solid #d9dee8;
-  border-radius: 0.75rem;
-  padding: 0.75rem;
+  min-height: var(--space-12);
+  border: 1px solid var(--color-line);
+  padding: var(--space-3) var(--space-4);
+}
+
+.pricing-module-option:has(input:checked) {
+  border-color: var(--color-primary);
+  background: var(--color-canvas);
+}
+
+.pricing-module-option input {
+  accent-color: var(--color-primary);
 }
 
 .pricing-summary {
   position: sticky;
-  top: 1.5rem;
+  top: var(--space-6);
+  background: var(--color-canvas);
 }
 
 .pricing-eyebrow {
-  margin: 0 0 0.35rem;
-  color: #3157c8;
+  margin: 0 0 var(--space-2);
+  color: var(--color-primary);
   font-weight: 700;
 }
 
 .pricing-summary h2 {
   margin: 0;
+  font-family: var(--font-display);
 }
 
 .pricing-summary ul {
   display: grid;
-  gap: 0.75rem;
-  margin: 1.5rem 0;
+  gap: var(--space-3);
+  margin: var(--space-6) 0;
   padding: 0;
   list-style: none;
 }
 
+.pricing-summary li {
+  border-bottom: 1px solid var(--color-line);
+  padding-bottom: var(--space-3);
+}
+
 .pricing-disclosure,
 .pricing-explanation {
-  color: #5a6475;
+  color: var(--color-muted);
   line-height: 1.6;
 }
 
@@ -124,20 +143,24 @@
   display: inline-flex;
   justify-content: center;
   width: 100%;
-  border-radius: 0.65rem;
-  background: #1746c7;
-  padding: 0.8rem 1rem;
-  color: #fff;
+  margin-top: var(--space-2);
+  background: var(--color-primary);
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-surface);
   font-weight: 700;
   text-decoration: none;
 }
 
 .pricing-contact[aria-disabled="true"] {
   cursor: not-allowed;
-  background: #8a94a6;
+  background: var(--color-muted);
 }
 
 @media (max-width: 800px) {
+  .pricing-page {
+    padding: var(--space-12) 0;
+  }
+
   .pricing-calculator {
     grid-template-columns: 1fr;
   }
@@ -148,6 +171,14 @@
 }
 
 @media (max-width: 520px) {
+  .pricing-page {
+    width: min(calc(100% - var(--space-6)), 74rem);
+  }
+
+  .pricing-panel {
+    padding: var(--space-6);
+  }
+
   .pricing-module-grid {
     grid-template-columns: 1fr;
   }

@@ -91,11 +91,13 @@ describe("PricingCalculator", () => {
     expect(summary).toHaveTextContent("服务周期：三年");
   });
 
-  it("keeps contact focusable but non-navigating until a module is selected", () => {
+  it("keeps the quote action focusable but non-navigating until a module is selected", () => {
     render(<PricingCalculator />);
 
-    const contact = screen.getByRole("link", { name: "联系商务" });
-    const explanation = screen.getByText("请至少选择一个功能模块后联系商务。");
+    const contact = screen.getByRole("link", { name: "获取正式报价" });
+    const explanation = screen.getByText(
+      "请至少选择一个功能模块后获取正式报价。",
+    );
 
     expect(contact).toHaveAttribute("aria-disabled", "true");
     expect(contact).toHaveAttribute("aria-describedby", explanation.id);
@@ -112,6 +114,18 @@ describe("PricingCalculator", () => {
     );
   });
 
+  it("builds the exact encoded contact URL for multiple modules", () => {
+    render(<PricingCalculator />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "AI Agent Studio" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Workflow" }));
+
+    expect(screen.getByRole("link", { name: "获取正式报价" })).toHaveAttribute(
+      "href",
+      "/contact?source=pricing&deployment=local-private&scale=pilot&modules=agent-studio%2Cworkflow&term=tbd",
+    );
+  });
+
   it("shows the fixed disclosure without requesting estimates or displaying prices", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const { container } = render(<PricingCalculator />);
@@ -121,5 +135,12 @@ describe("PricingCalculator", () => {
     ).toBeVisible();
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(container.textContent).not.toMatch(/￥|¥|CNY|USD|amount/iu);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Workflow" }));
+    fireEvent.change(screen.getByLabelText("部署方式"), {
+      target: { value: "dedicated-cloud" },
+    });
+    expect(container.textContent).not.toMatch(/￥|¥|CNY|USD|amount/iu);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

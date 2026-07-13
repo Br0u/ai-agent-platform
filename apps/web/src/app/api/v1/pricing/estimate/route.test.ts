@@ -121,12 +121,14 @@ describe("POST /api/v1/pricing/estimate", () => {
     expect("GET" in route).toBe(false);
     expect(Object.keys(route)).toEqual(["POST"]);
 
-    const source = readFileSync(
+    for (const path of [
       "src/app/api/v1/pricing/estimate/route.ts",
-      "utf8",
-    );
-    expect(source).not.toMatch(
-      /database|drizzle|postgres|@ai-agent-platform\/database/iu,
-    );
+      "src/app/api/v1/pricing/estimate/handler.ts",
+    ]) {
+      const source = readFileSync(path, "utf8");
+      expect(source, path).not.toMatch(
+        /database|drizzle|postgres|@ai-agent-platform\/database/iu,
+      );
+    }
   });
 });
