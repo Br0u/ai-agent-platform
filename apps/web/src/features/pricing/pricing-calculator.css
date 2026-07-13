@@ -68,7 +68,7 @@
 .pricing-field select:focus-visible,
 .pricing-module-option:focus-within,
 .pricing-contact:focus-visible {
-  outline: 2px solid var(--color-signal);
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 
@@ -104,8 +104,6 @@
 }
 
 .pricing-summary {
-  position: sticky;
-  top: var(--space-6);
   background: var(--color-canvas);
 }
 
@@ -163,10 +161,6 @@
 
   .pricing-calculator {
     grid-template-columns: 1fr;
-  }
-
-  .pricing-summary {
-    position: static;
   }
 }
 

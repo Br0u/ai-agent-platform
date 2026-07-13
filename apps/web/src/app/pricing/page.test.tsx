@@ -34,4 +34,23 @@ describe("PricingPage", () => {
     expect(css).not.toMatch(/#[\da-f]{3,8}|rgba?\(/iu);
     expect(css).not.toMatch(/border-radius|box-shadow/iu);
   });
+
+  it("keeps the summary in document flow below the sticky site header", () => {
+    const css = readFileSync(
+      "src/features/pricing/pricing-calculator.css",
+      "utf8",
+    );
+
+    expect(css).not.toContain("position: sticky");
+  });
+
+  it("uses the primary color for interactive focus outlines", () => {
+    const css = readFileSync(
+      "src/features/pricing/pricing-calculator.css",
+      "utf8",
+    );
+
+    expect(css).toContain("outline: 2px solid var(--color-primary)");
+    expect(css).not.toContain("outline: 2px solid var(--color-signal)");
+  });
 });
