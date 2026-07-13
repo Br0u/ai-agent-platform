@@ -26,6 +26,8 @@ def assert_safe_postgres_test_url(database_url: str) -> str:
     except ValueError as error:
         raise ValueError("dedicated local test database URL is invalid") from error
 
+    if parsed.query or parsed.fragment:
+        raise ValueError("dedicated local test database URL must not use parameters")
     if hostname not in {"localhost", "127.0.0.1", "::1"}:
         raise ValueError("dedicated local test database must use loopback")
 
@@ -87,6 +89,11 @@ async def test_real_agno_migration_is_idempotent_and_preserves_required_tables()
         "postgresql+psycopg_async://user:pass@127.0.0.1:5432/ai_agent_platform",
         "postgresql+psycopg_async://user:pass@127.0.0.1:5432/",
         "postgresql+psycopg_async://user:pass@127.0.0.1:5432/%2E%2E",
+        "postgresql+psycopg_async://user:pass@127.0.0.1:5432/ai_agent_platform_identity_test?host=db",
+        "postgresql+psycopg_async://user:pass@127.0.0.1:5432/ai_agent_platform_identity_test?dbname=ai_agent_platform",
+        "postgresql+psycopg_async://user:pass@127.0.0.1:5432/ai_agent_platform_identity_test?%68%6f%73%74=db",
+        "postgresql+psycopg_async://user:pass@127.0.0.1:5432/ai_agent_platform_identity_test#host=db",
+        "postgresql+psycopg_async://user:pass@127.0.0.1:5432/ai_agent_platform_identity_test#%64%62%6e%61%6d%65=ai_agent_platform",
     ],
 )
 async def test_unsafe_database_url_is_rejected_before_migration(
