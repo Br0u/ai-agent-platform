@@ -14,9 +14,9 @@ import {
   type PricingSelection,
   type ScaleId,
   type TermId,
-} from "./pricing-config";
-import { buildPricingContactHref } from "./pricing-query";
-import { buildPricingSummary } from "./pricing-summary";
+} from "@/features/pricing/pricing-config";
+import { buildPricingContactHref } from "@/features/pricing/pricing-query";
+import { buildPricingSummary } from "@/features/pricing/pricing-summary";
 
 import "./pricing-calculator.css";
 

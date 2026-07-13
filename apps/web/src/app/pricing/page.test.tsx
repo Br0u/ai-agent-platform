@@ -22,7 +22,7 @@ describe("PricingPage", () => {
 
   it("uses the approved token-based 7:5 enterprise layout", () => {
     const css = readFileSync(
-      "src/features/pricing/pricing-calculator.css",
+      "src/components/portal/pricing/pricing-calculator.css",
       "utf8",
     );
 
@@ -37,7 +37,7 @@ describe("PricingPage", () => {
 
   it("keeps the summary in document flow below the sticky site header", () => {
     const css = readFileSync(
-      "src/features/pricing/pricing-calculator.css",
+      "src/components/portal/pricing/pricing-calculator.css",
       "utf8",
     );
 
@@ -46,7 +46,7 @@ describe("PricingPage", () => {
 
   it("uses the primary color for interactive focus outlines", () => {
     const css = readFileSync(
-      "src/features/pricing/pricing-calculator.css",
+      "src/components/portal/pricing/pricing-calculator.css",
       "utf8",
     );
 

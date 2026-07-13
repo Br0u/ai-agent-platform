@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { PricingCalculator } from "@/features/pricing/pricing-calculator";
+import { PricingCalculator } from "@/components/portal/pricing/pricing-calculator";
 
 export const metadata: Metadata = {
   title: "价格计算",
