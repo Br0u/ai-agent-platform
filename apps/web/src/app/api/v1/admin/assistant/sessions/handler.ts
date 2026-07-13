@@ -1,33 +1,19 @@
+import { AuthAccessError, requirePermission } from "@/server/auth/access";
 import {
-  AuthAccessError,
-  authAccessErrorBody,
-  requirePermission,
-} from "@/server/auth/access";
-
-export type AdminAssistantSessionSummary = {
-  id: string;
-  mode: "placeholder" | "agentos";
-  status: "active" | "closed";
-  createdAt: string;
-  lastActiveAt: string;
-  messageCount: number;
-};
-
-export type AdminAssistantSessionsResponse = {
-  version: "1";
-  persisted: false;
-  items: AdminAssistantSessionSummary[];
-  message: string;
-};
+  createAdminAssistantErrorResponse,
+  type AdminAssistantSessionsResponse,
+  type AdminAssistantSessionsSnapshot,
+} from "@/features/assistant/admin-assistant-contract";
+import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
 
 type AdminAssistantSessionsDependencies = {
   authorize: () => Promise<unknown>;
-  loadSessions: () => Promise<AdminAssistantSessionsResponse>;
+  loadSessions: () => Promise<AdminAssistantSessionsSnapshot>;
+  requestIdFactory: () => string;
 };
 
-export async function loadPlaceholderAdminAssistantSessions(): Promise<AdminAssistantSessionsResponse> {
+export async function loadPlaceholderAdminAssistantSessions(): Promise<AdminAssistantSessionsSnapshot> {
   return {
-    version: "1",
     persisted: false,
     items: [],
     message: "占位模式不持久化会话；会话审计将在存储接入后开放。",
@@ -37,6 +23,7 @@ export async function loadPlaceholderAdminAssistantSessions(): Promise<AdminAssi
 const defaultDependencies: AdminAssistantSessionsDependencies = {
   authorize: () => requirePermission("admin:assistant"),
   loadSessions: loadPlaceholderAdminAssistantSessions,
+  requestIdFactory: () => crypto.randomUUID(),
 };
 
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
@@ -47,26 +34,36 @@ export function createAdminAssistantSessionsHandler(
   const dependencies = { ...defaultDependencies, ...overrides };
 
   return async function GET(request: Request): Promise<Response> {
-    void request;
+    const requestId = resolveAssistantRequestId(
+      request,
+      dependencies.requestIdFactory,
+    );
     try {
       await dependencies.authorize();
-      return Response.json(await dependencies.loadSessions(), {
+      const body: AdminAssistantSessionsResponse = {
+        version: "1",
+        requestId,
+        sessions: await dependencies.loadSessions(),
+      };
+      return Response.json(body, {
         headers: NO_STORE_HEADERS,
       });
     } catch (error) {
       if (error instanceof AuthAccessError) {
-        return Response.json(authAccessErrorBody(error), {
-          status: error.status,
-          headers: NO_STORE_HEADERS,
-        });
+        const code =
+          error.status === 401
+            ? "authentication_required"
+            : "permission_denied";
+        return Response.json(
+          createAdminAssistantErrorResponse(requestId, code),
+          {
+            status: error.status,
+            headers: NO_STORE_HEADERS,
+          },
+        );
       }
       return Response.json(
-        {
-          error: {
-            code: "ASSISTANT_ADMIN_UNAVAILABLE",
-            message: "AI assistant sessions are unavailable",
-          },
-        },
+        createAdminAssistantErrorResponse(requestId, "assistant_unavailable"),
         { status: 503, headers: NO_STORE_HEADERS },
       );
     }

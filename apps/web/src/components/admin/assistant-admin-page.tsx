@@ -1,17 +1,20 @@
 "use client";
 
-import { isAssistantSuccessResponse } from "@/features/assistant/assistant-contract";
-import type { AdminAssistantSessionsResponse } from "@/app/api/v1/admin/assistant/sessions/handler";
-import type { AdminAssistantStatusResponse } from "@/app/api/v1/admin/assistant/status/handler";
-import { useState, type FormEvent } from "react";
+import type {
+  AdminAssistantSessionsSnapshot,
+  AdminAssistantStatusSnapshot,
+} from "@/features/assistant/admin-assistant-contract";
+import { useAssistantSession } from "@/components/assistant/use-assistant-session";
+import type { FormEvent } from "react";
+import "./assistant-admin-page.css";
 
 type AssistantAdminPageProps = {
-  sessions: AdminAssistantSessionsResponse;
-  status: AdminAssistantStatusResponse;
+  sessions: AdminAssistantSessionsSnapshot;
+  status: AdminAssistantStatusSnapshot;
 };
 
 const configurationLabels: Record<
-  keyof AdminAssistantStatusResponse["configuration"],
+  keyof AdminAssistantStatusSnapshot["configuration"],
   string
 > = {
   defaultAgent: "默认 Agent",
@@ -24,43 +27,13 @@ export function AssistantAdminPage({
   sessions,
   status,
 }: AssistantAdminPageProps) {
-  const [question, setQuestion] = useState("");
-  const [reply, setReply] = useState<string | null>(null);
-  const [requestState, setRequestState] = useState<
-    "idle" | "sending" | "failed"
-  >("idle");
+  const assistant = useAssistantSession("/admin/assistant", {
+    endpoint: "/api/v1/admin/assistant/chat",
+  });
 
-  const submitTest = async (event: FormEvent<HTMLFormElement>) => {
+  const submitTest = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const message = question.trim();
-    if (
-      !message ||
-      Array.from(message).length > 500 ||
-      requestState === "sending"
-    ) {
-      return;
-    }
-
-    setRequestState("sending");
-    setReply(null);
-    try {
-      const response = await fetch("/api/v1/admin/assistant/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message,
-          context: { pathname: "/admin/assistant" },
-        }),
-      });
-      const body: unknown = response.ok ? await response.json() : null;
-      if (!response.ok || !isAssistantSuccessResponse(body)) {
-        throw new Error("Assistant test failed");
-      }
-      setReply(body.message.content);
-      setRequestState("idle");
-    } catch {
-      setRequestState("failed");
-    }
+    void assistant.submit();
   };
 
   return (
@@ -108,15 +81,18 @@ export function AssistantAdminPage({
             <textarea
               id="assistant-admin-question"
               maxLength={500}
-              onChange={(event) => setQuestion(event.target.value)}
+              onChange={(event) => assistant.setDraft(event.target.value)}
               placeholder="输入用于验证占位合同的问题"
               rows={4}
-              value={question}
+              value={assistant.draft}
             />
             <div>
               <small>仅验证当前受保护的响应合同，不调用真实模型。</small>
-              <button disabled={requestState === "sending"} type="submit">
-                {requestState === "sending" ? "发送中" : "发送测试"}
+              <button
+                disabled={assistant.requestStatus === "sending"}
+                type="submit"
+              >
+                {assistant.requestStatus === "sending" ? "发送中" : "发送测试"}
               </button>
             </div>
           </form>
@@ -125,10 +101,7 @@ export function AssistantAdminPage({
             className="assistant-admin__reply"
             role="status"
           >
-            {reply ??
-              (requestState === "failed"
-                ? "测试暂时失败，请稍后重试。"
-                : "等待管理员发起测试。")}
+            {assistant.latestAnnouncement || "等待管理员发起测试。"}
           </div>
         </section>
 
@@ -175,51 +148,6 @@ export function AssistantAdminPage({
           </button>
         </nav>
       </div>
-
-      <style>{`
-        .assistant-admin { color: var(--color-ink); }
-        .assistant-admin__heading { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; padding-bottom:24px; border-bottom:1px solid var(--color-workspace-line); }
-        .assistant-admin__heading p, .assistant-admin__console p, .assistant-admin__configuration > p, .assistant-admin__sessions p { margin:0 0 8px; color:var(--color-primary); font:700 11px/1.2 var(--font-mono); letter-spacing:.1em; }
-        .assistant-admin__heading h1 { margin:0; font:750 clamp(30px,4vw,48px)/1 var(--font-display); letter-spacing:-.035em; }
-        .assistant-admin__heading span { display:block; max-width:720px; margin-top:12px; color:var(--color-muted); font-size:14px; }
-        .assistant-admin__heading > strong { padding:8px 10px; border:1px solid color-mix(in srgb,var(--color-ai-accent) 34%,var(--color-workspace-line)); color:var(--color-ai-accent); background:color-mix(in srgb,var(--color-ai-accent) 6%,white); font:700 10px/1 var(--font-mono); letter-spacing:.08em; }
-        .assistant-admin__status-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); margin:24px 0 0; padding:0; border:1px solid var(--color-workspace-line); background:var(--color-surface); list-style:none; }
-        .assistant-admin__status-grid li { position:relative; min-height:118px; padding:20px; border-right:1px solid var(--color-workspace-line); }
-        .assistant-admin__status-grid li:last-child { border-right:0; }
-        .assistant-admin__status-grid li::before { position:absolute; top:-1px; right:-1px; left:-1px; height:3px; background:var(--color-ai-accent); content:""; }
-        .assistant-admin__status-grid li[data-state="placeholder"]::before { background:var(--color-signal); }
-        .assistant-admin__status-grid span, .assistant-admin__status-grid small { display:block; color:var(--color-muted); font:650 11px/1.4 var(--font-mono); }
-        .assistant-admin__status-grid strong { display:block; margin:14px 0 10px; font:730 17px/1.2 var(--font-display); }
-        .assistant-admin__status-grid small { font-size:9px; letter-spacing:.08em; }
-        .assistant-admin__workspace { display:grid; grid-template-columns:minmax(0,1.7fr) minmax(260px,.8fr); gap:16px; margin-top:16px; }
-        .assistant-admin__console, .assistant-admin__configuration, .assistant-admin__sessions, .assistant-admin__future-actions { border:1px solid var(--color-workspace-line); background:var(--color-surface); }
-        .assistant-admin__console { grid-row:span 2; padding:24px; }
-        .assistant-admin__console > header { display:flex; align-items:start; justify-content:space-between; gap:16px; }
-        .assistant-admin__console h2, .assistant-admin__configuration h2, .assistant-admin__sessions h2 { margin:0; font:730 20px/1.2 var(--font-display); }
-        .assistant-admin__console header > span, .assistant-admin__configuration > span { color:var(--color-muted); font:650 10px/1.2 var(--font-mono); }
-        .assistant-admin__console form { display:grid; gap:10px; margin-top:24px; }
-        .assistant-admin__console label { font-size:12px; font-weight:700; }
-        .assistant-admin__console textarea { width:100%; resize:vertical; border:1px solid var(--color-workspace-line); border-radius:4px; padding:14px; color:var(--color-ink); background:var(--color-canvas); font:14px/1.6 var(--font-body); }
-        .assistant-admin__console textarea:focus-visible { outline:3px solid color-mix(in srgb,var(--color-signal) 34%,transparent); outline-offset:2px; }
-        .assistant-admin__console form > div { display:flex; align-items:center; justify-content:space-between; gap:16px; }
-        .assistant-admin__console form small { color:var(--color-muted); }
-        .assistant-admin__console button { min-height:44px; padding:0 18px; border:0; border-radius:3px; color:white; background:var(--color-primary); font-weight:700; transition:transform 160ms cubic-bezier(.23,1,.32,1); }
-        .assistant-admin__console button:active:not(:disabled) { transform:scale(.97); }
-        .assistant-admin__console button:disabled { opacity:.6; }
-        .assistant-admin__reply { min-height:72px; margin-top:16px; padding:16px; border-left:3px solid var(--color-ai-accent); color:var(--color-muted); background:color-mix(in srgb,var(--color-ai-accent) 5%,var(--color-canvas)); font-size:13px; line-height:1.6; }
-        .assistant-admin__configuration { padding:24px; }
-        .assistant-admin__configuration dl { margin:20px 0 18px; }
-        .assistant-admin__configuration dl div { display:flex; justify-content:space-between; gap:16px; padding:12px 0; border-top:1px solid var(--color-workspace-line); }
-        .assistant-admin__configuration dt { color:var(--color-muted); font-size:12px; }
-        .assistant-admin__configuration dd { margin:0; text-align:right; font-size:12px; font-weight:700; }
-        .assistant-admin__sessions { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:24px; }
-        .assistant-admin__sessions span { display:block; max-width:520px; margin-top:8px; color:var(--color-muted); font-size:12px; line-height:1.5; }
-        .assistant-admin__sessions > strong { color:var(--color-ai-accent); font:760 42px/1 var(--font-display); }
-        .assistant-admin__future-actions { display:flex; gap:8px; padding:12px; }
-        .assistant-admin__future-actions button { min-height:44px; flex:1; border:1px solid var(--color-workspace-line); border-radius:3px; color:var(--color-muted); background:var(--color-canvas); font-weight:700; }
-        @media (max-width:960px) { .assistant-admin__status-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .assistant-admin__status-grid li:nth-child(2) { border-right:0; } .assistant-admin__status-grid li:nth-child(-n+2) { border-bottom:1px solid var(--color-workspace-line); } .assistant-admin__workspace { grid-template-columns:1fr; } .assistant-admin__console { grid-row:auto; } }
-        @media (max-width:560px) { .assistant-admin__heading { align-items:flex-start; flex-direction:column; } .assistant-admin__status-grid { grid-template-columns:1fr; } .assistant-admin__status-grid li { border-right:0; border-bottom:1px solid var(--color-workspace-line); } .assistant-admin__status-grid li:last-child { border-bottom:0; } .assistant-admin__console > header, .assistant-admin__console form > div { align-items:flex-start; flex-direction:column; } .assistant-admin__console button { width:100%; } }
-      `}</style>
     </section>
   );
 }

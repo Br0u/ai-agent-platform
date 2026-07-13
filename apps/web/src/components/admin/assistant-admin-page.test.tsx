@@ -6,12 +6,14 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AdminAssistantSessionsResponse } from "@/app/api/v1/admin/assistant/sessions/handler";
-import type { AdminAssistantStatusResponse } from "@/app/api/v1/admin/assistant/status/handler";
+import { readFileSync } from "node:fs";
+import type {
+  AdminAssistantSessionsSnapshot,
+  AdminAssistantStatusSnapshot,
+} from "@/features/assistant/admin-assistant-contract";
 import { AssistantAdminPage } from "./assistant-admin-page";
 
 const status = {
-  version: "1" as const,
   mode: "placeholder" as const,
   services: [
     {
@@ -41,14 +43,13 @@ const status = {
     sessionStorage: "未启用",
   },
   message: "当前仅提供本地占位回复。",
-} satisfies AdminAssistantStatusResponse;
+} satisfies AdminAssistantStatusSnapshot;
 
 const sessions = {
-  version: "1" as const,
   persisted: false as const,
   items: [],
   message: "占位模式不持久化会话；会话审计将在存储接入后开放。",
-} satisfies AdminAssistantSessionsResponse;
+} satisfies AdminAssistantSessionsSnapshot;
 
 afterEach(() => {
   cleanup();
@@ -74,6 +75,21 @@ describe("AssistantAdminPage", () => {
     expect(
       screen.queryByLabelText(/model.*key|api.*key/iu),
     ).not.toBeInTheDocument();
+  });
+
+  it("loads page styling from a dedicated stylesheet instead of inline CSS", () => {
+    const component = readFileSync(
+      "src/components/admin/assistant-admin-page.tsx",
+      "utf8",
+    );
+    const css = readFileSync(
+      "src/components/admin/assistant-admin-page.css",
+      "utf8",
+    );
+
+    expect(component).not.toContain("<style>");
+    expect(component).toContain('import "./assistant-admin-page.css"');
+    expect(css).toContain(".assistant-admin__status-grid");
   });
 
   it("keeps future audit and Skill capabilities visibly disabled", () => {

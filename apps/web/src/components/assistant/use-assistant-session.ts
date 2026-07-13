@@ -35,6 +35,23 @@ type AssistantRequestPayload = {
 };
 
 const FAILURE_ANNOUNCEMENT = "发送失败，请重试或使用帮助中心或商务咨询。";
+const PUBLIC_ASSISTANT_ENDPOINT = "/api/v1/assistant/chat";
+const NAVIGATION_ABORT = Symbol("assistant-navigation-abort");
+const REQUEST_TIMEOUT = Symbol("assistant-request-timeout");
+
+export const ASSISTANT_REQUEST_TIMEOUT_MS = 15_000;
+
+export type AssistantSessionOptions = {
+  endpoint?: string;
+  timeoutMs?: number;
+};
+
+type ActiveAssistantRequest = {
+  controller: AbortController;
+  rejectControl: (reason: symbol) => void;
+  timeoutId: ReturnType<typeof setTimeout>;
+  token: number;
+};
 
 export type AssistantSession = {
   open: boolean;
@@ -73,7 +90,12 @@ function validateMessage(
   return { message, error: null };
 }
 
-export function useAssistantSession(pathname: string): AssistantSession {
+export function useAssistantSession(
+  pathname: string,
+  options: AssistantSessionOptions = {},
+): AssistantSession {
+  const endpoint = options.endpoint ?? PUBLIC_ASSISTANT_ENDPOINT;
+  const timeoutMs = options.timeoutMs ?? ASSISTANT_REQUEST_TIMEOUT_MS;
   const [open, setOpen] = useState(false);
   const [draft, setDraftState] = useState("");
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
@@ -86,7 +108,7 @@ export function useAssistantSession(pathname: string): AssistantSession {
     useState<AssistantValidationError | null>(null);
   const requestStatusRef = useRef<AssistantRequestStatus>("idle");
   const requestToken = useRef(0);
-  const activeController = useRef<AbortController | null>(null);
+  const activeRequest = useRef<ActiveAssistantRequest | null>(null);
   const nextMessageId = useRef(1);
 
   const updateRequestStatus = useCallback((status: AssistantRequestStatus) => {
@@ -94,19 +116,27 @@ export function useAssistantSession(pathname: string): AssistantSession {
     setRequestStatus(status);
   }, []);
 
+  const cancelActiveRequest = useCallback((reason: symbol) => {
+    const active = activeRequest.current;
+    if (active === null) return;
+    activeRequest.current = null;
+    clearTimeout(active.timeoutId);
+    active.controller.abort();
+    active.rejectControl(reason);
+  }, []);
+
   useEffect(() => {
     requestToken.current += 1;
-    activeController.current?.abort();
-    activeController.current = null;
+    cancelActiveRequest(NAVIGATION_ABORT);
     if (requestStatusRef.current === "sending") updateRequestStatus("idle");
-  }, [pathname, updateRequestStatus]);
+  }, [cancelActiveRequest, endpoint, pathname, timeoutMs, updateRequestStatus]);
 
   useEffect(
     () => () => {
       requestToken.current += 1;
-      activeController.current?.abort();
+      cancelActiveRequest(NAVIGATION_ABORT);
     },
-    [],
+    [cancelActiveRequest],
   );
 
   const send = useCallback(
@@ -123,18 +153,40 @@ export function useAssistantSession(pathname: string): AssistantSession {
 
       const token = ++requestToken.current;
       const controller = new AbortController();
-      activeController.current = controller;
+      let rejectControl!: (reason: symbol) => void;
+      let timedOut = false;
+      const control = new Promise<never>((_resolve, reject) => {
+        rejectControl = reject;
+      });
+      const timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        rejectControl(REQUEST_TIMEOUT);
+      }, timeoutMs);
+      activeRequest.current = {
+        controller,
+        rejectControl,
+        timeoutId,
+        token,
+      };
       updateRequestStatus("sending");
       setLatestAnnouncement("");
       try {
-        const response = await fetch("/api/v1/assistant/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: controller.signal,
-        });
-        const body: unknown = response.ok ? await response.json() : null;
-        if (token !== requestToken.current || controller.signal.aborted) return;
+        const { response, body } = await Promise.race([
+          fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          }).then(async (response) => ({
+            response,
+            body: response.ok ? await response.json() : null,
+          })),
+          control,
+        ]);
+        if (token !== requestToken.current) return;
+        if (timedOut) throw REQUEST_TIMEOUT;
+        if (controller.signal.aborted) return;
         if (!response.ok || !isAssistantSuccessResponse(body)) {
           throw new Error("Assistant request failed");
         }
@@ -156,21 +208,30 @@ export function useAssistantSession(pathname: string): AssistantSession {
         setLastFailedRequest(null);
         updateRequestStatus("idle");
       } catch (error) {
-        if (
-          token !== requestToken.current ||
-          controller.signal.aborted ||
-          (error instanceof DOMException && error.name === "AbortError")
-        ) {
+        if (token !== requestToken.current || error === NAVIGATION_ABORT) {
           return;
         }
+        if (!timedOut && error !== REQUEST_TIMEOUT && controller.signal.aborted)
+          return;
+        if (
+          !timedOut &&
+          error !== REQUEST_TIMEOUT &&
+          error instanceof DOMException &&
+          error.name === "AbortError"
+        )
+          return;
         setLastFailedRequest(payload);
         setLatestAnnouncement(FAILURE_ANNOUNCEMENT);
         updateRequestStatus("failed");
       } finally {
-        if (token === requestToken.current) activeController.current = null;
+        const active = activeRequest.current;
+        if (active?.token === token) {
+          clearTimeout(active.timeoutId);
+          activeRequest.current = null;
+        }
       }
     },
-    [updateRequestStatus],
+    [endpoint, timeoutMs, updateRequestStatus],
   );
 
   const submit = useCallback(

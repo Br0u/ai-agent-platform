@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const auth = vi.hoisted(() => {
@@ -7,11 +6,7 @@ const auth = vi.hoisted(() => {
       readonly code: string,
       readonly status: 401 | 403,
     ) {
-      super(
-        code === "AUTH_SESSION_REQUIRED"
-          ? "Authentication required"
-          : "Permission denied",
-      );
+      super("private-auth-detail");
       this.name = "AuthAccessError";
     }
   }
@@ -20,25 +15,25 @@ const auth = vi.hoisted(() => {
 
 vi.mock("@/server/auth/access", () => ({
   AuthAccessError: auth.AuthAccessError,
-  authAccessErrorBody: (error: InstanceType<typeof auth.AuthAccessError>) => ({
-    error: { code: error.code, message: error.message },
-  }),
   requirePermission: auth.requirePermission,
 }));
 
 import type { AssistantProvider } from "@/server/assistant/assistant-provider";
 import { createAdminAssistantChatHandler } from "./handler";
-import * as route from "./route";
 
-const validRequest = () =>
-  new Request("http://localhost/api/v1/admin/assistant/chat", {
+function request(requestId?: string) {
+  return new Request("http://localhost/api/v1/admin/assistant/chat", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(requestId === undefined ? {} : { "x-request-id": requestId }),
+    },
     body: JSON.stringify({
       message: "检查占位合同",
       context: { pathname: "/admin/assistant" },
     }),
   });
+}
 
 const provider = (): AssistantProvider => ({
   reply: vi.fn(async () => ({ content: "占位响应", suggestedActions: [] })),
@@ -50,17 +45,11 @@ describe("POST /api/v1/admin/assistant/chat", () => {
     auth.requirePermission.mockResolvedValue({ realm: "workforce" });
   });
 
-  it("keeps helper exports outside the Next route module", () => {
-    const source = readFileSync(
-      "src/app/api/v1/admin/assistant/chat/route.ts",
-      "utf8",
-    );
-    expect(source).not.toContain("createAdminAssistantChatHandler");
-  });
+  it("exports only POST and requires exactly admin:assistant", async () => {
+    const route = await import("./route");
+    expect(Object.keys(route)).toEqual(["POST"]);
 
-  it("requires exactly admin:assistant in the exported route", async () => {
-    const response = await route.POST(validRequest());
-
+    const response = await route.POST(request("route-correlation"));
     expect(response.status).toBe(200);
     expect(auth.requirePermission).toHaveBeenCalledExactlyOnceWith(
       "admin:assistant",
@@ -68,52 +57,98 @@ describe("POST /api/v1/admin/assistant/chat", () => {
   });
 
   it.each([
-    ["AUTH_SESSION_REQUIRED", 401],
-    ["AUTH_PERMISSION_DENIED", 403],
+    ["AUTH_SESSION_REQUIRED", 401, "authentication_required"],
+    ["AUTH_PERMISSION_DENIED", 403, "permission_denied"],
   ] as const)(
-    "returns %s without invoking the provider",
-    async (code, status) => {
+    "returns a correlated %s envelope without invoking the provider",
+    async (authCode, status, errorCode) => {
       const assistantProvider = provider();
-      const authorize = vi
-        .fn()
-        .mockRejectedValue(new auth.AuthAccessError(code, status));
       const POST = createAdminAssistantChatHandler({
-        authorize,
+        authorize: vi
+          .fn()
+          .mockRejectedValue(new auth.AuthAccessError(authCode, status)),
         provider: assistantProvider,
+        requestIdFactory: () => "unused-fallback",
       });
 
-      const response = await POST(validRequest());
+      const response = await POST(request(`correlation-${status}`));
 
       expect(response.status).toBe(status);
       expect(response.headers.get("cache-control")).toBe("no-store");
+      await expect(response.json()).resolves.toEqual({
+        version: "1",
+        requestId: `correlation-${status}`,
+        error: {
+          code: errorCode,
+          message:
+            status === 401 ? "Authentication required" : "Permission denied",
+        },
+      });
       expect(assistantProvider.reply).not.toHaveBeenCalled();
     },
   );
 
-  it("reuses the versioned placeholder response boundary after authorization", async () => {
-    const assistantProvider = provider();
+  it("returns a safe correlated unavailable envelope for an unexpected error", async () => {
+    const POST = createAdminAssistantChatHandler({
+      authorize: vi.fn().mockRejectedValue(new Error("private-secret")),
+      provider: provider(),
+      requestIdFactory: () => "fallback-request",
+    });
+
+    const response = await POST(request("unexpected-correlation"));
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).toEqual({
+      version: "1",
+      requestId: "unexpected-correlation",
+      error: {
+        code: "assistant_unavailable",
+        message: "AI assistant service is unavailable",
+      },
+    });
+    expect(JSON.stringify(body)).not.toMatch(/private|secret/iu);
+  });
+
+  it("preserves a valid incoming request id through the base v1 contract", async () => {
+    const requestIdFactory = vi.fn(() => "unused-fallback");
     const POST = createAdminAssistantChatHandler({
       authorize: vi.fn().mockResolvedValue({ realm: "workforce" }),
-      provider: assistantProvider,
-      requestIdFactory: () => "admin-request",
+      provider: provider(),
+      requestIdFactory,
       messageIdFactory: () => "admin-message",
       clock: () => 0,
     });
 
-    const response = await POST(validRequest());
+    const response = await POST(request("incoming-correlation"));
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(requestIdFactory).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
       version: "1",
-      requestId: "admin-request",
+      requestId: "incoming-correlation",
       mode: "placeholder",
-      session: { temporary: true },
-      message: {
-        id: "admin-message",
-        role: "assistant",
-        content: "占位响应",
-      },
-      suggestedActions: [],
+      message: { id: "admin-message", content: "占位响应" },
+    });
+  });
+
+  it("uses one generated correlation for a 65-character incoming id", async () => {
+    const requestIdFactory = vi.fn(() => "generated-correlation");
+    const POST = createAdminAssistantChatHandler({
+      authorize: vi.fn().mockResolvedValue({ realm: "workforce" }),
+      provider: provider(),
+      requestIdFactory,
+      messageIdFactory: () => "admin-message",
+      clock: () => 0,
+    });
+
+    const response = await POST(request("a".repeat(65)));
+
+    expect(requestIdFactory).toHaveBeenCalledOnce();
+    await expect(response.json()).resolves.toMatchObject({
+      version: "1",
+      requestId: "generated-correlation",
     });
   });
 });

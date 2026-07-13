@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const auth = vi.hoisted(() => {
@@ -7,11 +6,7 @@ const auth = vi.hoisted(() => {
       readonly code: string,
       readonly status: 401 | 403,
     ) {
-      super(
-        code === "AUTH_SESSION_REQUIRED"
-          ? "Authentication required"
-          : "Permission denied",
-      );
+      super("private-auth-detail");
       this.name = "AuthAccessError";
     }
   }
@@ -20,9 +15,6 @@ const auth = vi.hoisted(() => {
 
 vi.mock("@/server/auth/access", () => ({
   AuthAccessError: auth.AuthAccessError,
-  authAccessErrorBody: (error: InstanceType<typeof auth.AuthAccessError>) => ({
-    error: { code: error.code, message: error.message },
-  }),
   requirePermission: auth.requirePermission,
 }));
 
@@ -30,10 +22,13 @@ import {
   createAdminAssistantSessionsHandler,
   loadPlaceholderAdminAssistantSessions,
 } from "./handler";
-import * as route from "./route";
 
-const request = () =>
-  new Request("http://localhost/api/v1/admin/assistant/sessions");
+function request(requestId?: string) {
+  return new Request("http://localhost/api/v1/admin/assistant/sessions", {
+    headers:
+      requestId === undefined ? undefined : { "x-request-id": requestId },
+  });
+}
 
 describe("GET /api/v1/admin/assistant/sessions", () => {
   beforeEach(() => {
@@ -41,16 +36,11 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
     auth.requirePermission.mockResolvedValue({ realm: "workforce" });
   });
 
-  it("keeps helper exports outside the Next route module", () => {
-    const source = readFileSync(
-      "src/app/api/v1/admin/assistant/sessions/route.ts",
-      "utf8",
-    );
-    expect(source).not.toContain("createAdminAssistantSessionsHandler");
-  });
+  it("exports only GET and requires exactly admin:assistant", async () => {
+    const route = await import("./route");
+    expect(Object.keys(route)).toEqual(["GET"]);
 
-  it("requires exactly admin:assistant in the exported route", async () => {
-    const response = await route.GET(request());
+    const response = await route.GET(request("route-correlation"));
     expect(response.status).toBe(200);
     expect(auth.requirePermission).toHaveBeenCalledExactlyOnceWith(
       "admin:assistant",
@@ -58,42 +48,101 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
   });
 
   it.each([
-    ["AUTH_SESSION_REQUIRED", 401],
-    ["AUTH_PERMISSION_DENIED", 403],
-  ] as const)("returns %s before reading sessions", async (code, status) => {
-    const loadSessions = vi
-      .fn()
-      .mockResolvedValue([{ content: "customer secret" }]);
+    ["AUTH_SESSION_REQUIRED", 401, "authentication_required"],
+    ["AUTH_PERMISSION_DENIED", 403, "permission_denied"],
+  ] as const)(
+    "returns a correlated %s envelope before reading sessions",
+    async (authCode, status, errorCode) => {
+      const loadSessions = vi.fn();
+      const GET = createAdminAssistantSessionsHandler({
+        authorize: vi
+          .fn()
+          .mockRejectedValue(new auth.AuthAccessError(authCode, status)),
+        loadSessions,
+        requestIdFactory: () => "unused-fallback",
+      });
+
+      const response = await GET(request(`correlation-${status}`));
+
+      expect(response.status).toBe(status);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      await expect(response.json()).resolves.toEqual({
+        version: "1",
+        requestId: `correlation-${status}`,
+        error: {
+          code: errorCode,
+          message:
+            status === 401 ? "Authentication required" : "Permission denied",
+        },
+      });
+      expect(loadSessions).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns a safe correlated unavailable envelope for source failure", async () => {
     const GET = createAdminAssistantSessionsHandler({
-      authorize: vi
-        .fn()
-        .mockRejectedValue(new auth.AuthAccessError(code, status)),
-      loadSessions,
+      authorize: vi.fn().mockResolvedValue({ realm: "workforce" }),
+      loadSessions: vi.fn().mockRejectedValue(new Error("customer-secret")),
+      requestIdFactory: () => "fallback-request",
     });
 
-    const response = await GET(request());
-    expect(response.status).toBe(status);
-    expect(loadSessions).not.toHaveBeenCalled();
+    const response = await GET(request("sessions-error"));
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).toEqual({
+      version: "1",
+      requestId: "sessions-error",
+      error: {
+        code: "assistant_unavailable",
+        message: "AI assistant service is unavailable",
+      },
+    });
+    expect(JSON.stringify(body)).not.toMatch(/customer|secret/iu);
   });
 
-  it("returns an explicit versioned non-persisted empty collection", async () => {
+  it("returns a correlated versioned non-persisted snapshot", async () => {
+    const requestIdFactory = vi.fn(() => "unused-fallback");
     const GET = createAdminAssistantSessionsHandler({
       authorize: vi.fn().mockResolvedValue({ realm: "workforce" }),
       loadSessions: loadPlaceholderAdminAssistantSessions,
+      requestIdFactory,
     });
 
-    const response = await GET(request());
+    const response = await GET(request("sessions-correlation"));
     const body = await response.json();
+
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(requestIdFactory).not.toHaveBeenCalled();
     expect(body).toEqual({
       version: "1",
-      persisted: false,
-      items: [],
-      message: "占位模式不持久化会话；会话审计将在存储接入后开放。",
+      requestId: "sessions-correlation",
+      sessions: {
+        persisted: false,
+        items: [],
+        message: "占位模式不持久化会话；会话审计将在存储接入后开放。",
+      },
     });
     expect(JSON.stringify(body)).not.toMatch(
       /customer|messageText|secret|token/iu,
     );
+  });
+
+  it("uses the factory for a 65-character incoming id", async () => {
+    const requestIdFactory = vi.fn(() => "generated-sessions-id");
+    const GET = createAdminAssistantSessionsHandler({
+      authorize: vi.fn().mockResolvedValue({ realm: "workforce" }),
+      loadSessions: loadPlaceholderAdminAssistantSessions,
+      requestIdFactory,
+    });
+
+    const response = await GET(request("a".repeat(65)));
+
+    expect(requestIdFactory).toHaveBeenCalledOnce();
+    await expect(response.json()).resolves.toMatchObject({
+      version: "1",
+      requestId: "generated-sessions-id",
+    });
   });
 });

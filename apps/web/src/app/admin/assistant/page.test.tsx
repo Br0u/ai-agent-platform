@@ -20,7 +20,6 @@ vi.mock("@/app/api/v1/admin/assistant/sessions/handler", () => ({
 import AdminAssistantPage from "./page";
 
 const status = {
-  version: "1" as const,
   mode: "placeholder" as const,
   services: [
     {
@@ -53,7 +52,6 @@ const status = {
 };
 
 const sessions = {
-  version: "1" as const,
   persisted: false as const,
   items: [],
   message: "占位模式不持久化会话；会话审计将在存储接入后开放。",

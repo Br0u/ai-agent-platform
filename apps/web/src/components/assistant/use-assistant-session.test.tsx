@@ -8,7 +8,10 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useAssistantSession } from "./use-assistant-session";
+import {
+  ASSISTANT_REQUEST_TIMEOUT_MS,
+  useAssistantSession,
+} from "./use-assistant-session";
 
 const success = (
   message: string,
@@ -30,7 +33,101 @@ describe("useAssistantSession", () => {
   beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("uses the public endpoint and named 15 second timeout by default", () => {
+    expect(ASSISTANT_REQUEST_TIMEOUT_MS).toBe(15_000);
+  });
+
+  it("supports a protected endpoint without duplicating the request controller", async () => {
+    vi.mocked(fetch).mockResolvedValue(success("管理员回答"));
+    const { result } = renderHook(() =>
+      useAssistantSession("/admin/assistant", {
+        endpoint: "/api/v1/admin/assistant/chat",
+      }),
+    );
+
+    await act(() => result.current.submit("检查合同"));
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/v1/admin/assistant/chat",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(result.current.latestAnnouncement).toBe("管理员回答");
+  });
+
+  it("turns a timeout into a retryable failure and releases the sending lock", async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetch)
+      .mockReturnValueOnce(new Promise(() => undefined))
+      .mockResolvedValueOnce(success("重试成功"));
+    const { result } = renderHook(() =>
+      useAssistantSession("/admin/assistant", {
+        endpoint: "/api/v1/admin/assistant/chat",
+        timeoutMs: 25,
+      }),
+    );
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = result.current.submit("超时问题");
+    });
+    expect(result.current.requestStatus).toBe("sending");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(25);
+      await pending;
+    });
+    expect(result.current.requestStatus).toBe("failed");
+    expect(result.current.lastFailedMessage).toBe("超时问题");
+
+    await act(() => result.current.retry());
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(result.current.requestStatus).toBe("idle");
+    expect(result.current.latestAnnouncement).toBe("重试成功");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("applies the timeout to response parsing, not only response headers", async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: () => new Promise(() => undefined),
+    } as Response);
+    const { result } = renderHook(() =>
+      useAssistantSession("/assistant", { timeoutMs: 25 }),
+    );
+
+    act(() => {
+      void result.current.submit("解析超时");
+    });
+    await act(() => vi.advanceTimersByTimeAsync(25));
+
+    expect(result.current.requestStatus).toBe("failed");
+    expect(result.current.lastFailedMessage).toBe("解析超时");
+  });
+
+  it("aborts on controller unmount, clears its timer and settles silently", async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetch).mockReturnValue(new Promise(() => undefined));
+    const { result, unmount } = renderHook(() =>
+      useAssistantSession("/assistant", { timeoutMs: 1_000 }),
+    );
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = result.current.submit("卸载中的问题");
+    });
+    const signal = vi.mocked(fetch).mock.calls[0]?.[1]?.signal;
+    expect(vi.getTimerCount()).toBe(1);
+
+    unmount();
+    await pending;
+
+    expect(signal?.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("trims a valid Unicode message and sends the current pathname", async () => {
@@ -240,10 +337,19 @@ describe("useAssistantSession", () => {
     act(() => {
       pending = result.current.submit();
     });
+    const signal = vi.mocked(fetch).mock.calls[0]?.[1]?.signal;
     rerender({ pathname: "/pricing" });
     await act(async () => {
-      resolveOld(success("过期回答"));
       await pending;
+    });
+
+    expect(signal?.aborted).toBe(true);
+    expect(result.current.requestStatus).toBe("idle");
+    expect(result.current.latestAnnouncement).toBe("");
+
+    await act(async () => {
+      resolveOld(success("过期回答"));
+      await Promise.resolve();
     });
 
     expect(result.current.messages).toEqual([]);

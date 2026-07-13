@@ -1,14 +1,12 @@
-import {
-  AuthAccessError,
-  authAccessErrorBody,
-  requirePermission,
-} from "@/server/auth/access";
+import { AuthAccessError, requirePermission } from "@/server/auth/access";
+import { createAdminAssistantErrorResponse } from "@/features/assistant/admin-assistant-contract";
 import type { AssistantProvider } from "@/server/assistant/assistant-provider";
 import {
   assistantRequestLogger,
   type AssistantRequestLogger,
 } from "@/server/assistant/assistant-request-log";
 import { placeholderAssistantProvider } from "@/server/assistant/placeholder-assistant-provider";
+import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
 import { createAssistantChatHandler } from "@/app/api/v1/assistant/chat/handler";
 
 type AdminAssistantChatDependencies = {
@@ -37,23 +35,29 @@ export function createAdminAssistantChatHandler(
   const dependencies = { ...defaultDependencies, ...overrides };
 
   return async function POST(request: Request): Promise<Response> {
+    const requestId = resolveAssistantRequestId(
+      request,
+      dependencies.requestIdFactory,
+    );
     try {
       await dependencies.authorize();
     } catch (error) {
       if (error instanceof AuthAccessError) {
-        return Response.json(authAccessErrorBody(error), {
-          status: error.status,
-          headers: NO_STORE_HEADERS,
-        });
+        const code =
+          error.status === 401
+            ? "authentication_required"
+            : "permission_denied";
+        return Response.json(
+          createAdminAssistantErrorResponse(requestId, code),
+          {
+            status: error.status,
+            headers: NO_STORE_HEADERS,
+          },
+        );
       }
       return Response.json(
-        {
-          error: {
-            code: "AUTH_UNEXPECTED_ERROR",
-            message: "Authorization request failed",
-          },
-        },
-        { status: 500, headers: NO_STORE_HEADERS },
+        createAdminAssistantErrorResponse(requestId, "assistant_unavailable"),
+        { status: 503, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -61,7 +65,7 @@ export function createAdminAssistantChatHandler(
       provider: dependencies.provider,
       logger: dependencies.logger,
       clock: dependencies.clock,
-      requestIdFactory: dependencies.requestIdFactory,
+      requestIdFactory: () => requestId,
       messageIdFactory: dependencies.messageIdFactory,
     })(request);
   };

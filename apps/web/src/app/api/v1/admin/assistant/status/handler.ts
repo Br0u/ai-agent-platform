@@ -1,37 +1,19 @@
+import { AuthAccessError, requirePermission } from "@/server/auth/access";
 import {
-  AuthAccessError,
-  authAccessErrorBody,
-  requirePermission,
-} from "@/server/auth/access";
-
-export type AdminAssistantServiceState = {
-  id: "agentos" | "database" | "model" | "public_entry";
-  label: string;
-  state: "not_connected" | "not_configured" | "placeholder";
-  detail: string;
-};
-
-export type AdminAssistantStatusResponse = {
-  version: "1";
-  mode: "placeholder";
-  services: AdminAssistantServiceState[];
-  configuration: {
-    defaultAgent: string;
-    model: string;
-    skills: string;
-    sessionStorage: string;
-  };
-  message: string;
-};
+  createAdminAssistantErrorResponse,
+  type AdminAssistantStatusSnapshot,
+  type AdminAssistantStatusResponse,
+} from "@/features/assistant/admin-assistant-contract";
+import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
 
 type AdminAssistantStatusDependencies = {
   authorize: () => Promise<unknown>;
-  loadStatus: () => Promise<AdminAssistantStatusResponse>;
+  loadStatus: () => Promise<AdminAssistantStatusSnapshot>;
+  requestIdFactory: () => string;
 };
 
-export async function loadPlaceholderAdminAssistantStatus(): Promise<AdminAssistantStatusResponse> {
+export async function loadPlaceholderAdminAssistantStatus(): Promise<AdminAssistantStatusSnapshot> {
   return {
-    version: "1",
     mode: "placeholder",
     services: [
       {
@@ -72,6 +54,7 @@ export async function loadPlaceholderAdminAssistantStatus(): Promise<AdminAssist
 const defaultDependencies: AdminAssistantStatusDependencies = {
   authorize: () => requirePermission("admin:assistant"),
   loadStatus: loadPlaceholderAdminAssistantStatus,
+  requestIdFactory: () => crypto.randomUUID(),
 };
 
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
@@ -82,26 +65,36 @@ export function createAdminAssistantStatusHandler(
   const dependencies = { ...defaultDependencies, ...overrides };
 
   return async function GET(request: Request): Promise<Response> {
-    void request;
+    const requestId = resolveAssistantRequestId(
+      request,
+      dependencies.requestIdFactory,
+    );
     try {
       await dependencies.authorize();
-      return Response.json(await dependencies.loadStatus(), {
+      const body: AdminAssistantStatusResponse = {
+        version: "1",
+        requestId,
+        status: await dependencies.loadStatus(),
+      };
+      return Response.json(body, {
         headers: NO_STORE_HEADERS,
       });
     } catch (error) {
       if (error instanceof AuthAccessError) {
-        return Response.json(authAccessErrorBody(error), {
-          status: error.status,
-          headers: NO_STORE_HEADERS,
-        });
+        const code =
+          error.status === 401
+            ? "authentication_required"
+            : "permission_denied";
+        return Response.json(
+          createAdminAssistantErrorResponse(requestId, code),
+          {
+            status: error.status,
+            headers: NO_STORE_HEADERS,
+          },
+        );
       }
       return Response.json(
-        {
-          error: {
-            code: "ASSISTANT_ADMIN_UNAVAILABLE",
-            message: "AI assistant status is unavailable",
-          },
-        },
+        createAdminAssistantErrorResponse(requestId, "assistant_unavailable"),
         { status: 503, headers: NO_STORE_HEADERS },
       );
     }
