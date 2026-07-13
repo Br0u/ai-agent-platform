@@ -3,10 +3,13 @@
 ## Verification identity
 
 - Date: 2026-07-13 CST (+0800)
-- Implementation under test: `61ca1c3766d5a7786dc45662704a641e44498e07`
+- Implementation under test: `165a96f73f987c8bfb2c1de554d77bce04c153eb`
 - Pricing fix: `81579b1fc6be1a83af7e5f4f6c4d75ef1b3ef879`
-- Assistant fix and latest browser suite source: `af44f8279f246bbe6848210c44b46caf4fe6accb`
+- Assistant safe-action fix: `af44f8279f246bbe6848210c44b46caf4fe6accb`
 - Operations fix: `f1f82bf9d82b177af124c21dc2dde8cb621f0c25`
+- Unicode request-limit fix: `2c445f68072769f66d81ef2325e15c893235ada6`
+- Pricing component boundary refactor: `6c729afea06d8475150891aa4ad47ce8e0d433cf`
+- Latest browser suite source: `165a96f73f987c8bfb2c1de554d77bce04c153eb`
 - Branch: `codex/feat-pricing-m-assistant`
 - Node.js: `v26.0.0`
 - pnpm: `11.5.2`
@@ -21,7 +24,7 @@ Verification used a production build from this worktree on non-conflicting port 
 
 | Command                                                                                      | Exit | Result                                                                                              |
 | -------------------------------------------------------------------------------------------- | ---: | --------------------------------------------------------------------------------------------------- |
-| `pnpm test`                                                                                  |    0 | 92 files passed, 8 skipped; 798 tests passed, 47 skipped across database, integrations, UI, and web |
+| `pnpm test`                                                                                  |    0 | 92 files passed, 8 skipped; 802 tests passed, 47 skipped across database, integrations, UI, and web |
 | `pnpm typecheck`                                                                             |    0 | database, integrations, UI, and web passed                                                          |
 | `pnpm lint`                                                                                  |    0 | database, integrations, UI, and web passed with `--max-warnings=0`                                  |
 | `pnpm format:check`                                                                          |    0 | database, integrations, UI, and web passed Prettier checks                                          |
@@ -47,7 +50,7 @@ Wait for `✓ Ready`, then run in Terminal 2:
 BASE_URL="http://127.0.0.1:3113" PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" pnpm --filter @ai-agent-platform/web exec playwright test e2e/pricing-assistant.spec.ts --project=desktop --project=mobile
 ```
 
-Final result: exit 0, 10/10 passed in 22.9s. Five focused scenarios ran in both desktop and mobile projects:
+Final result: exit 0, 10/10 passed in 26.3s. Five focused scenarios ran in both desktop and mobile projects:
 
 1. API method rejection
 2. Preset assistant responses and safe suggested-action links
@@ -55,7 +58,7 @@ Final result: exit 0, 10/10 passed in 22.9s. Five focused scenarios ran in both 
 4. Assistant visibility, input limits, accessibility, and failure handling
 5. Assistant session persistence through pricing, header, footer, and identity client navigation
 
-After verification, stop Terminal 1 with Ctrl-C. `lsof -nP -iTCP:3107 -sTCP:LISTEN` must return no listener.
+After verification, stop Terminal 1 with Ctrl-C. `lsof -nP -iTCP:3113 -sTCP:LISTEN` must return no listener.
 
 ## Evidence covered
 
@@ -63,14 +66,16 @@ After verification, stop Terminal 1 with Ctrl-C. `lsof -nP -iTCP:3107 -sTCP:LIST
 - `/pricing` has the exact `价格计算` heading and disclosure. Currency and monetary amounts are absent both before and after module selection.
 - Selecting `AI Agent Studio` and `Workflow` generates the exact contact query and contact-page summary.
 - Pricing query unit coverage proves module stable IDs are deduplicated and sorted lexically, invalid scalar IDs are omitted rather than replaced with defaults, and both declared and chunked bodies above 4096 bytes get the stable 400 response.
+- The pricing calculator component, stylesheet, and component test live under `src/components/portal/pricing`; pricing domain/config/query/contract logic remains under `src/features/pricing`.
 - Desktop uses the expected 7:5 pricing layout; mobile stacks it without horizontal overflow. Keyboard focus is visible.
 - The assistant is present on `/pricing` and `/product`, and absent on `/login`, `/register`, and `/staff/login`.
 - All three preset responses render their safe links for `/docs#quick-start`, `/contact`, and `/support`; unsafe protocol-relative, backslash, query-redirect, and encoded-slash actions are removed before response storage and rendering.
-- The assistant input exposes `maxlength=500`, a visible helper, and an accessible over-limit state.
+- Assistant request tests accept exactly 500 escaped emoji through both declared and chunked JSON bodies, contract-reject 501 code points, and reject declared or streamed bodies above 16 KiB.
+- The assistant input uses code-point-aware validation without native UTF-16 `maxlength`; 500 emoji submit successfully in desktop and mobile Chrome, while 501 show accessible feedback and issue no request.
 - Opening focuses the input; Escape closes the dialog and restores launcher focus. Reduced-motion mode removes launcher animation.
 - Mobile controls meet the 44px target. The drawer reaches the viewport bottom.
 - The mobile stylesheet contains the targeted `env(safe-area-inset-bottom)` contract. Chrome emulation reports an effective safe-area inset of 0; computed padding of at least 12px is base spacing only, not evidence of a nonzero effective inset.
-- The exact shipped 503 body is asserted. The draft remains, no false history is added, fallback links remain visible, and the send plus two retries issue exactly three requests.
+- The exact shipped 503 body is asserted. The draft remains, the failed message is not added to the preserved successful history, fallback links remain visible, and the send plus two retries issue exactly three requests.
 - A successful exchange survives the pricing-to-contact handoff and both header and footer client-side portal navigation.
 - A unique `window` and `document` sentinel survives identity navigation to `/login` and browser Back. This proves the navigation reused the document instead of performing a full reload. An explicit reload clears assistant history.
 
