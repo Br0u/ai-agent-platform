@@ -1,12 +1,9 @@
 import Link from "next/link";
 import { useEffect, useRef, type FormEvent } from "react";
+import { ASSISTANT_PRESET_QUESTIONS } from "@/features/assistant/assistant-contract";
 import type { AssistantSession } from "./use-assistant-session";
 
-const PRESET_QUESTIONS = [
-  "如何开始了解平台？",
-  "如何获取部署支持？",
-  "如何提交产品问题？",
-] as const;
+const INPUT_HELPER_ID = "assistant-question-help";
 
 type AssistantPanelProps = {
   session: AssistantSession;
@@ -16,6 +13,7 @@ type AssistantPanelProps = {
 export function AssistantPanel({ session, onClose }: AssistantPanelProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const sending = session.requestStatus === "sending";
+  const overLimit = Array.from(session.draft).length > 500;
 
   useEffect(() => inputRef.current?.focus(), []);
 
@@ -48,7 +46,7 @@ export function AssistantPanel({ session, onClose }: AssistantPanelProps) {
           你好，我可以帮你找到平台文档、部署支持和产品问题入口。
         </p>
         <div aria-label="常见问题" className="assistant-panel__presets">
-          {PRESET_QUESTIONS.map((question) => (
+          {ASSISTANT_PRESET_QUESTIONS.map((question) => (
             <button
               disabled={sending}
               key={question}
@@ -65,12 +63,28 @@ export function AssistantPanel({ session, onClose }: AssistantPanelProps) {
           data-testid="assistant-history"
         >
           {session.messages.map((message) => (
-            <p
+            <div
               className={`assistant-message assistant-message--${message.role}`}
               key={message.id}
             >
-              {message.content}
-            </p>
+              <p>{message.content}</p>
+              {message.role === "assistant" &&
+              message.suggestedActions.length > 0 ? (
+                <nav
+                  aria-label="建议操作"
+                  className="assistant-message__actions"
+                >
+                  {message.suggestedActions.map((action) => (
+                    <Link
+                      href={action.href}
+                      key={`${action.label}:${action.href}`}
+                    >
+                      {action.label}
+                    </Link>
+                  ))}
+                </nav>
+              ) : null}
+            </div>
           ))}
         </div>
 
@@ -101,17 +115,27 @@ export function AssistantPanel({ session, onClose }: AssistantPanelProps) {
         <label htmlFor="assistant-question">向 M 助手提问</label>
         <div>
           <input
+            aria-describedby={INPUT_HELPER_ID}
+            aria-invalid={overLimit ? "true" : undefined}
             disabled={sending}
             id="assistant-question"
+            maxLength={500}
             onChange={(event) => session.setDraft(event.target.value)}
             placeholder="输入你的问题"
             ref={inputRef}
             value={session.draft}
           />
-          <button disabled={sending} type="submit">
+          <button disabled={sending || overLimit} type="submit">
             {sending ? "发送中" : "发送"}
           </button>
         </div>
+        <p
+          aria-live="polite"
+          className={overLimit ? "assistant-panel__input-error" : undefined}
+          id={INPUT_HELPER_ID}
+        >
+          {overLimit ? "问题不能超过 500 个字符。" : "最多输入 500 个字符。"}
+        </p>
       </form>
 
       <nav aria-label="其他服务" className="assistant-panel__fallbacks">

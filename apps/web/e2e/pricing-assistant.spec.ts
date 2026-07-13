@@ -249,6 +249,36 @@ test("GET pricing and assistant APIs reject unsupported methods", async ({
   ]);
 });
 
+test("assistant preset responses expose safe suggested actions", async ({
+  page,
+}, testInfo) => {
+  await configureProject(page, testInfo);
+  const diagnostics = collectBrowserDiagnostics(page);
+  await page.goto("/pricing");
+  await page.getByRole("button", { name: "打开 M 助手" }).click();
+
+  for (const [question, label, href] of [
+    ["如何开始了解平台？", "查看快速开始", "/docs#quick-start"],
+    ["如何获取部署支持？", "联系商务", "/contact"],
+    ["如何提交产品问题？", "前往客户支持", "/support"],
+  ] as const) {
+    const response = page.waitForResponse(
+      (candidate) =>
+        candidate.url().endsWith(ASSISTANT_API) && candidate.status() === 200,
+    );
+    await page.getByRole("button", { name: question }).click();
+    await response;
+    await expect(page.getByRole("link", { name: label })).toHaveAttribute(
+      "href",
+      href,
+    );
+  }
+
+  expectOnlyDeliberateDiagnostics(diagnostics, {
+    applicationOrigin: new URL(page.url()).origin,
+  });
+});
+
 test("pricing quote flow and responsive layout remain exact", async ({
   page,
 }, testInfo) => {
@@ -364,6 +394,8 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
   const dialog = page.getByRole("dialog", { name: "M 助手" });
   const input = page.getByLabel("向 M 助手提问");
   await expect(input).toBeFocused();
+  await expect(input).toHaveAttribute("maxlength", "500");
+  await expect(page.getByText("最多输入 500 个字符。")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(launcher).toBeFocused();

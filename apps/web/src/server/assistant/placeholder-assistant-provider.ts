@@ -1,10 +1,15 @@
 import type {
+  AssistantPresetQuestion,
   AssistantRequest,
   AssistantSuccessResponse,
 } from "@/features/assistant/assistant-contract";
+import { isAssistantPresetQuestion } from "@/features/assistant/assistant-contract";
 import type { AssistantProvider } from "./assistant-provider";
 
-const REPLIES: Record<string, Omit<AssistantSuccessResponse, "mode">> = {
+const REPLIES: Record<
+  AssistantPresetQuestion,
+  Omit<AssistantSuccessResponse, "mode">
+> = {
   "如何开始了解平台？": {
     message: "你可以从快速开始文档了解平台结构和使用入口。",
     suggestedActions: [{ label: "查看快速开始", href: "/docs#quick-start" }],
@@ -29,9 +34,12 @@ const GENERIC_REPLY: Omit<AssistantSuccessResponse, "mode"> = {
 
 export class PlaceholderAssistantProvider implements AssistantProvider {
   async reply(request: AssistantRequest): Promise<AssistantSuccessResponse> {
+    const reply = isAssistantPresetQuestion(request.message)
+      ? REPLIES[request.message]
+      : GENERIC_REPLY;
     return {
       mode: "placeholder",
-      ...(REPLIES[request.message] ?? GENERIC_REPLY),
+      ...reply,
     };
   }
 }

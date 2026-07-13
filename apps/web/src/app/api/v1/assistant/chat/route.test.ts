@@ -255,6 +255,33 @@ describe("POST /api/v1/assistant/chat", () => {
     expect(deps.logger.log).toHaveBeenCalledOnce();
   });
 
+  it("removes unsafe provider actions before returning a successful response", async () => {
+    const deps = dependencies({
+      reply: async () => ({
+        mode: "placeholder",
+        message: "入口",
+        suggestedActions: [
+          { label: "快速开始", href: "/docs#quick-start" },
+          { label: "协议相对", href: "//evil.example" },
+          { label: "查询跳转", href: "/contact?next=https://evil.example" },
+        ],
+      }),
+    });
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({ message: "入口", context: { pathname: "/help" } }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      mode: "placeholder",
+      message: "入口",
+      suggestedActions: [{ label: "快速开始", href: "/docs#quick-start" }],
+    });
+  });
+
   it.each([
     ["invalid shape", { mode: "placeholder", message: 42 }],
     [

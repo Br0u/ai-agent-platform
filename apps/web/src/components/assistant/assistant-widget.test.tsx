@@ -14,9 +14,12 @@ function Harness() {
   return <AssistantWidget session={useAssistantSession("/pricing")} />;
 }
 
-const answer = (message: string) =>
+const answer = (
+  message: string,
+  suggestedActions: { label: string; href: string }[] = [],
+) =>
   new Response(
-    JSON.stringify({ mode: "placeholder", message, suggestedActions: [] }),
+    JSON.stringify({ mode: "placeholder", message, suggestedActions }),
   );
 
 describe("AssistantWidget", () => {
@@ -97,6 +100,45 @@ describe("AssistantWidget", () => {
     ).toMatchObject({
       message: "如何获取部署支持？",
     });
+  });
+
+  it("renders safe response actions as client links and keeps permanent fallbacks", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      answer("快速开始回答", [
+        { label: "查看快速开始", href: "/docs#quick-start" },
+        { label: "不安全入口", href: "//evil.example" },
+      ]),
+    );
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+    fireEvent.click(screen.getByRole("button", { name: "如何开始了解平台？" }));
+
+    const action = await screen.findByRole("link", { name: "查看快速开始" });
+    expect(action).toHaveAttribute("href", "/docs#quick-start");
+    expect(screen.queryByRole("link", { name: "不安全入口" })).toBeNull();
+    expect(screen.getByRole("link", { name: "帮助中心" })).toHaveAttribute(
+      "href",
+      "/help",
+    );
+    expect(screen.getByRole("link", { name: "商务咨询" })).toHaveAttribute(
+      "href",
+      "/contact",
+    );
+  });
+
+  it("shows the 500-character input contract and an accessible over-limit error", () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+    const input = screen.getByRole("textbox", { name: "向 M 助手提问" });
+    const helper = screen.getByText("最多输入 500 个字符。");
+
+    expect(input).toHaveAttribute("maxlength", "500");
+    expect(input).toHaveAttribute("aria-describedby", helper.id);
+    fireEvent.change(input, { target: { value: "问".repeat(501) } });
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("问题不能超过 500 个字符。")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("submits free input, disables controls while sending, and announces only the newest answer", async () => {

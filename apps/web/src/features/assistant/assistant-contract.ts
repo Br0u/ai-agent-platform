@@ -10,6 +10,15 @@ export interface AssistantSuggestedAction {
   href: string;
 }
 
+export const ASSISTANT_PRESET_QUESTIONS = [
+  "如何开始了解平台？",
+  "如何获取部署支持？",
+  "如何提交产品问题？",
+] as const;
+
+export type AssistantPresetQuestion =
+  (typeof ASSISTANT_PRESET_QUESTIONS)[number];
+
 export interface AssistantSuccessResponse {
   mode: "placeholder";
   message: string;
@@ -85,6 +94,38 @@ function isNormalizedPathname(pathname: string): boolean {
   } catch {
     return false;
   }
+}
+
+export function isAssistantPresetQuestion(
+  value: string,
+): value is AssistantPresetQuestion {
+  return (ASSISTANT_PRESET_QUESTIONS as readonly string[]).includes(value);
+}
+
+export function isSafeAssistantActionHref(href: string): boolean {
+  const hashIndex = href.indexOf("#");
+  const pathname = hashIndex === -1 ? href : href.slice(0, hashIndex);
+  const fragment = hashIndex === -1 ? "" : href.slice(hashIndex + 1);
+
+  if (!isNormalizedPathname(pathname) || href.includes("?")) return false;
+
+  try {
+    const decodedPathname = decodeURIComponent(pathname);
+    const decodedFragment = decodeURIComponent(fragment);
+    return (
+      !decodedPathname.startsWith("//") &&
+      !/[\\?#\u0000-\u001f\u007f]/u.test(decodedPathname) &&
+      !/[\\\u0000-\u001f\u007f]/u.test(decodedFragment)
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function safeAssistantSuggestedActions(
+  actions: readonly AssistantSuggestedAction[],
+): AssistantSuggestedAction[] {
+  return actions.filter((action) => isSafeAssistantActionHref(action.href));
 }
 
 export function isAssistantSuccessResponse(

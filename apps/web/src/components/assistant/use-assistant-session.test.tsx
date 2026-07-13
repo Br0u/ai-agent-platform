@@ -51,6 +51,39 @@ describe("useAssistantSession", () => {
     expect(result.current.latestAnnouncement).toBe("回答");
   });
 
+  it("stores only internal single-slash suggested actions", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          mode: "placeholder",
+          message: "可用入口",
+          suggestedActions: [
+            { label: "快速开始", href: "/docs#quick-start" },
+            { label: "商务咨询", href: "/contact" },
+            { label: "客户支持", href: "/support" },
+            { label: "协议相对", href: "//evil.example/path" },
+            { label: "反斜杠", href: "/safe\\evil" },
+            { label: "查询跳转", href: "/contact?next=https://evil.example" },
+            { label: "编码斜杠", href: "/%2Fevil.example" },
+          ],
+        }),
+      ),
+    );
+    const { result } = renderHook(() => useAssistantSession("/pricing"));
+
+    await act(() => result.current.submit("入口"));
+
+    expect(result.current.messages[1]).toMatchObject({
+      role: "assistant",
+      content: "可用入口",
+      suggestedActions: [
+        { label: "快速开始", href: "/docs#quick-start" },
+        { label: "商务咨询", href: "/contact" },
+        { label: "客户支持", href: "/support" },
+      ],
+    });
+  });
+
   it("rejects blank and more than 500 Unicode code points", async () => {
     const { result } = renderHook(() => useAssistantSession("/"));
     act(() => result.current.setDraft("   "));

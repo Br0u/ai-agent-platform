@@ -1,13 +1,26 @@
 "use client";
 
-import { isAssistantSuccessResponse } from "@/features/assistant/assistant-contract";
+import {
+  isAssistantSuccessResponse,
+  safeAssistantSuggestedActions,
+  type AssistantSuggestedAction,
+} from "@/features/assistant/assistant-contract";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export type AssistantMessage = {
+type UserAssistantMessage = {
   id: number;
-  role: "user" | "assistant";
+  role: "user";
   content: string;
 };
+
+type ResponseAssistantMessage = {
+  id: number;
+  role: "assistant";
+  content: string;
+  suggestedActions: AssistantSuggestedAction[];
+};
+
+export type AssistantMessage = UserAssistantMessage | ResponseAssistantMessage;
 
 export type AssistantRequestStatus = "idle" | "sending" | "failed";
 
@@ -107,6 +120,9 @@ export function useAssistantSession(pathname: string): AssistantSession {
             id: nextMessageId.current++,
             role: "assistant",
             content: body.message,
+            suggestedActions: safeAssistantSuggestedActions(
+              body.suggestedActions,
+            ),
           },
         ]);
         setDraft((current) => (current.trim() === message ? "" : current));

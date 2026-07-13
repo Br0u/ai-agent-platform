@@ -140,6 +140,22 @@
   overflow-wrap: anywhere;
 }
 
+.assistant-message p {
+  margin: 0;
+}
+
+.assistant-message__actions {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.assistant-message__actions a {
+  display: grid;
+  align-items: center;
+  color: var(--color-primary);
+}
+
 .assistant-message--user {
   justify-self: end;
   color: var(--color-surface);
@@ -183,6 +199,16 @@
   margin-bottom: 6px;
   color: var(--color-muted);
   font-size: 12px;
+}
+
+.assistant-panel__form > p {
+  margin: 6px 0 0;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.assistant-panel__form > .assistant-panel__input-error {
+  color: var(--color-danger);
 }
 
 .assistant-panel__form > div {

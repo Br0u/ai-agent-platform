@@ -3,6 +3,7 @@ import {
   INVALID_ASSISTANT_REQUEST_RESPONSE,
   isAssistantSuccessResponse,
   parseAssistantRequest,
+  safeAssistantSuggestedActions,
   type AssistantErrorResponse,
   type AssistantSuccessResponse,
 } from "@/features/assistant/assistant-contract";
@@ -60,7 +61,12 @@ export function createAssistantChatHandler(
         if (!isAssistantSuccessResponse(providerResponse)) {
           throw new TypeError("Invalid assistant provider response");
         }
-        body = providerResponse;
+        body = {
+          ...providerResponse,
+          suggestedActions: safeAssistantSuggestedActions(
+            providerResponse.suggestedActions,
+          ),
+        };
         statusCode = 200;
       } catch {
         body = ASSISTANT_UNAVAILABLE_RESPONSE;
