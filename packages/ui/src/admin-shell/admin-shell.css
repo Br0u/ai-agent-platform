@@ -1,6 +1,6 @@
 .admin-shell {
   display: grid;
-  grid-template-columns: 264px minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   min-height: 100vh;
   color: var(--color-ink);
   background: var(--color-canvas);
@@ -20,8 +20,18 @@
 }
 
 .admin-shell__navigation .sidebar-navigation__desktop {
-  width: 100%;
   border-right-color: rgb(255 255 255 / 10%);
+}
+
+.admin-shell__navigation .sidebar-navigation__drawer {
+  color: var(--color-surface);
+  background: var(--color-admin-rail);
+}
+
+.admin-shell__navigation
+  .sidebar-navigation__drawer
+  .sidebar-navigation__close {
+  color: var(--color-surface);
 }
 
 .admin-shell__navigation .sidebar-navigation__identity,

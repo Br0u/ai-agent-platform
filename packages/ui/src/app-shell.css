@@ -244,3 +244,14 @@
     animation: none;
   }
 }
+
+@media (forced-colors: active) {
+  .assistant-header-entry {
+    border-color: ButtonText;
+    color: ButtonText;
+  }
+
+  .assistant-header-entry__mark path {
+    stroke: currentColor;
+  }
+}

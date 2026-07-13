@@ -58,4 +58,12 @@ describe("AssistantHeaderEntry", () => {
       /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.assistant-header-entry__mark\s*\{\s*animation:\s*none;\s*\}/u,
     );
   });
+
+  it("keeps the Möbius path visible in forced-colors mode", () => {
+    const appShellCss = readFileSync("src/app-shell.css", "utf8");
+
+    expect(appShellCss).toMatch(
+      /@media\s*\(forced-colors:\s*active\)\s*\{[\s\S]*?\.assistant-header-entry__mark\s+path\s*\{[\s\S]*?stroke:\s*(?:ButtonText|currentColor);/u,
+    );
+  });
 });
