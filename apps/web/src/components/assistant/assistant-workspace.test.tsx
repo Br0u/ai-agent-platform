@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -12,6 +13,57 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantStatusResponse } from "@/features/assistant/assistant-contract";
 import { AssistantExperienceProvider } from "./assistant-experience-provider";
 import { AssistantWorkspace } from "./assistant-workspace";
+
+type MediaQueryController = {
+  setMatches: (matches: boolean) => void;
+};
+
+function installMatchMedia(initialMatches: boolean): MediaQueryController {
+  const listeners = new Set<(event: MediaQueryListEvent) => void>();
+  let matches = initialMatches;
+  const mediaQuery = {
+    get matches() {
+      return matches;
+    },
+    media: "(min-width: 721px)",
+    onchange: null,
+    addEventListener: (
+      type: string,
+      listener: (event: MediaQueryListEvent) => void,
+    ) => {
+      if (type === "change") listeners.add(listener);
+    },
+    removeEventListener: (
+      type: string,
+      listener: (event: MediaQueryListEvent) => void,
+    ) => {
+      if (type === "change") listeners.delete(listener);
+    },
+    addListener: (listener: (event: MediaQueryListEvent) => void) =>
+      listeners.add(listener),
+    removeListener: (listener: (event: MediaQueryListEvent) => void) =>
+      listeners.delete(listener),
+    dispatchEvent: () => true,
+  } as unknown as MediaQueryList;
+
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn(() => mediaQuery),
+  );
+
+  return {
+    setMatches(nextMatches) {
+      matches = nextMatches;
+      act(() => {
+        const event = {
+          matches,
+          media: mediaQuery.media,
+        } as MediaQueryListEvent;
+        listeners.forEach((listener) => listener(event));
+      });
+    },
+  };
+}
 
 const placeholderStatus: AssistantStatusResponse = {
   version: "1",
@@ -44,7 +96,12 @@ function successfulPlaceholderReply(content = "当前仅提供安全占位答复
   );
 }
 
-beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
+let mediaQuery: MediaQueryController;
+
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn());
+  mediaQuery = installMatchMedia(false);
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -72,6 +129,7 @@ describe("AssistantWorkspace", () => {
   });
 
   it("offers presets without inventing persisted messages or clickable history", () => {
+    installMatchMedia(true);
     renderWorkspace();
 
     expect(
@@ -87,6 +145,10 @@ describe("AssistantWorkspace", () => {
         name: "兼容性与 GPU 配置（历史会话不可用）",
       }),
     ).toBeDisabled();
+    const newSession = screen.getByRole("button", { name: "新建会话" });
+    const availability = screen.getByText("模型接入后开放");
+    expect(newSession).toBeDisabled();
+    expect(newSession).toHaveAttribute("aria-describedby", availability.id);
     expect(
       screen.getByRole("button", { name: "如何开始了解平台？" }),
     ).toBeEnabled();
@@ -171,17 +233,36 @@ describe("AssistantWorkspace", () => {
     expect(composer.closest("form")).toContainElement(error);
   });
 
-  it("collapses the session rail for compact layouts", () => {
+  it("starts collapsed on mobile and preserves a manual expansion across breakpoint changes", () => {
     renderWorkspace();
-    const toggle = screen.getByRole("button", { name: "收起会话栏" });
+    const toggle = screen.getByRole("button", { name: "展开会话栏" });
     const railContent = screen.getByTestId("assistant-session-rail-content");
 
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(railContent).toHaveAttribute("hidden");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(toggle).toHaveAccessibleName("收起会话栏");
+    expect(railContent).not.toHaveAttribute("hidden");
+
+    mediaQuery.setMatches(true);
+    mediaQuery.setMatches(false);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(railContent).not.toHaveAttribute("hidden");
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(toggle).toHaveAccessibleName("展开会话栏");
-    expect(railContent).toHaveAttribute("hidden");
+  });
+
+  it("expands the session rail after mounting on desktop", async () => {
+    installMatchMedia(true);
+    renderWorkspace();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "收起会话栏" }),
+      ).toHaveAttribute("aria-expanded", "true"),
+    );
+    expect(
+      screen.getByTestId("assistant-session-rail-content"),
+    ).not.toHaveAttribute("hidden");
   });
 
   it("keeps workspace CSS free of viewport-width fixed children", () => {

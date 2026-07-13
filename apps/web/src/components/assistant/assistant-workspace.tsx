@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import {
   ASSISTANT_PRESET_QUESTIONS,
   type AssistantStatusResponse,
@@ -12,6 +12,8 @@ import "./assistant-workspace.css";
 
 const COMPOSER_HELP_ID = "assistant-workspace-composer-help";
 const FAILURE_MESSAGE = "发送失败，请重试或使用帮助中心或商务咨询。";
+const DESKTOP_RAIL_QUERY = "(min-width: 721px)";
+const NEW_SESSION_HELP_ID = "assistant-new-session-help";
 
 type AssistantWorkspaceProps = {
   serviceState: AssistantStatusResponse;
@@ -19,9 +21,24 @@ type AssistantWorkspaceProps = {
 
 export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
   const { session, registerComposer } = useAssistantExperience();
-  const [railExpanded, setRailExpanded] = useState(true);
+  const [isDesktop, setIsDesktop] = useState(false);
+  const [railOverride, setRailOverride] = useState<boolean | null>(null);
+  const railExpanded = railOverride ?? isDesktop;
   const sending = session.requestStatus === "sending";
   const hasError = session.validationError !== null;
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mediaQuery = window.matchMedia(DESKTOP_RAIL_QUERY);
+    const synchronizeBreakpoint = (event?: MediaQueryListEvent) => {
+      setIsDesktop(event?.matches ?? mediaQuery.matches);
+    };
+
+    synchronizeBreakpoint();
+    mediaQuery.addEventListener("change", synchronizeBreakpoint);
+    return () =>
+      mediaQuery.removeEventListener("change", synchronizeBreakpoint);
+  }, []);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -53,7 +70,7 @@ export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
             aria-expanded={railExpanded}
             aria-label={railExpanded ? "收起会话栏" : "展开会话栏"}
             aria-controls="assistant-session-rail-content"
-            onClick={() => setRailExpanded((current) => !current)}
+            onClick={() => setRailOverride(!railExpanded)}
             type="button"
           >
             {railExpanded ? "收起" : "展开"}
@@ -64,6 +81,16 @@ export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
           hidden={!railExpanded}
           id="assistant-session-rail-content"
         >
+          <button
+            aria-describedby={NEW_SESSION_HELP_ID}
+            aria-label="新建会话"
+            className="assistant-workspace__new-session"
+            disabled
+            type="button"
+          >
+            ＋ 新建会话
+          </button>
+          <p id={NEW_SESSION_HELP_ID}>模型接入后开放</p>
           <p>当前为匿名临时会话，不保存历史记录。</p>
           <div className="assistant-workspace__session-list">
             <button
