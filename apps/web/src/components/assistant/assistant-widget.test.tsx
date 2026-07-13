@@ -7,11 +7,15 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AssistantExperienceProvider } from "./assistant-experience-provider";
 import { AssistantWidget } from "./assistant-widget";
-import { useAssistantSession } from "./use-assistant-session";
 
 function Harness() {
-  return <AssistantWidget session={useAssistantSession("/pricing")} />;
+  return (
+    <AssistantExperienceProvider pathname="/pricing">
+      <AssistantWidget showLauncher />
+    </AssistantExperienceProvider>
+  );
 }
 
 const answer = (
@@ -88,6 +92,21 @@ describe("AssistantWidget", () => {
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(launcher).toHaveFocus();
+  });
+
+  it("can render the shared drawer without adding a floating launcher", () => {
+    function DrawerOnlyHarness() {
+      return (
+        <AssistantExperienceProvider pathname="/assistant">
+          <AssistantWidget showLauncher={false} />
+        </AssistantExperienceProvider>
+      );
+    }
+
+    render(<DrawerOnlyHarness />);
+    expect(
+      screen.queryByRole("button", { name: "打开 M 助手" }),
+    ).not.toBeInTheDocument();
   });
 
   it("offers exactly the three presets and submits a preset", async () => {

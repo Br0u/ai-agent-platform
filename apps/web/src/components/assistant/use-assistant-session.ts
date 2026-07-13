@@ -24,6 +24,11 @@ export type AssistantMessage = UserAssistantMessage | ResponseAssistantMessage;
 
 export type AssistantRequestStatus = "idle" | "sending" | "failed";
 
+export type AssistantValidationError = {
+  code: "empty" | "too_long";
+  message: string;
+};
+
 type AssistantRequestPayload = {
   message: string;
   context: { pathname: string };
@@ -38,6 +43,7 @@ export type AssistantSession = {
   latestAnnouncement: string;
   requestStatus: AssistantRequestStatus;
   lastFailedMessage: string | null;
+  validationError: AssistantValidationError | null;
   setDraft: (draft: string) => void;
   openAssistant: () => void;
   closeAssistant: () => void;
@@ -45,21 +51,39 @@ export type AssistantSession = {
   retry: () => Promise<void>;
 };
 
-function validMessage(value: string): string | null {
+function validateMessage(
+  value: string,
+):
+  | { message: string; error: null }
+  | { message: null; error: AssistantValidationError } {
   const message = value.trim();
   const length = Array.from(message).length;
-  return length >= 1 && length <= 500 ? message : null;
+  if (length === 0) {
+    return {
+      message: null,
+      error: { code: "empty", message: "请输入问题。" },
+    };
+  }
+  if (length > 500) {
+    return {
+      message: null,
+      error: { code: "too_long", message: "问题不能超过 500 个字符。" },
+    };
+  }
+  return { message, error: null };
 }
 
 export function useAssistantSession(pathname: string): AssistantSession {
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraftState] = useState("");
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [latestAnnouncement, setLatestAnnouncement] = useState("");
   const [requestStatus, setRequestStatus] =
     useState<AssistantRequestStatus>("idle");
   const [lastFailedRequest, setLastFailedRequest] =
     useState<AssistantRequestPayload | null>(null);
+  const [validationError, setValidationError] =
+    useState<AssistantValidationError | null>(null);
   const requestStatusRef = useRef<AssistantRequestStatus>("idle");
   const requestToken = useRef(0);
   const activeController = useRef<AbortController | null>(null);
@@ -88,8 +112,10 @@ export function useAssistantSession(pathname: string): AssistantSession {
   const send = useCallback(
     async (rawMessage: string, requestPathname: string) => {
       if (requestStatusRef.current === "sending") return;
-      const message = validMessage(rawMessage);
-      if (message === null) return;
+      const validation = validateMessage(rawMessage);
+      setValidationError(validation.error);
+      if (validation.message === null) return;
+      const message = validation.message;
       const payload: AssistantRequestPayload = {
         message,
         context: { pathname: requestPathname },
@@ -125,7 +151,7 @@ export function useAssistantSession(pathname: string): AssistantSession {
             ),
           },
         ]);
-        setDraft((current) => (current.trim() === message ? "" : current));
+        setDraftState((current) => (current.trim() === message ? "" : current));
         setLatestAnnouncement(body.message.content);
         setLastFailedRequest(null);
         updateRequestStatus("idle");
@@ -157,6 +183,16 @@ export function useAssistantSession(pathname: string): AssistantSession {
     }
   }, [lastFailedRequest, send]);
 
+  const setDraft = useCallback((value: string) => {
+    setDraftState(value);
+    const trimmedLength = Array.from(value.trim()).length;
+    setValidationError(
+      trimmedLength > 500
+        ? { code: "too_long", message: "问题不能超过 500 个字符。" }
+        : null,
+    );
+  }, []);
+
   return {
     open,
     draft,
@@ -164,6 +200,7 @@ export function useAssistantSession(pathname: string): AssistantSession {
     latestAnnouncement,
     requestStatus,
     lastFailedMessage: lastFailedRequest?.message ?? null,
+    validationError,
     setDraft,
     openAssistant: () => setOpen(true),
     closeAssistant: () => setOpen(false),

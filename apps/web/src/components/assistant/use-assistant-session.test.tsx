@@ -88,12 +88,20 @@ describe("useAssistantSession", () => {
     });
   });
 
-  it("rejects blank and more than 500 Unicode code points", async () => {
+  it("exposes renderable validation for blank and more than 500 Unicode code points", async () => {
     const { result } = renderHook(() => useAssistantSession("/"));
     act(() => result.current.setDraft("   "));
     await act(() => result.current.submit());
+    expect(result.current.validationError).toEqual({
+      code: "empty",
+      message: "请输入问题。",
+    });
     act(() => result.current.setDraft("😀".repeat(501)));
     await act(() => result.current.submit());
+    expect(result.current.validationError).toEqual({
+      code: "too_long",
+      message: "问题不能超过 500 个字符。",
+    });
     expect(fetch).not.toHaveBeenCalled();
     expect(result.current.messages).toEqual([]);
   });
@@ -104,6 +112,7 @@ describe("useAssistantSession", () => {
 
     act(() => result.current.setDraft("😀".repeat(500)));
     await act(() => result.current.submit());
+    expect(result.current.validationError).toBeNull();
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(
       JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body)).message,
@@ -112,6 +121,7 @@ describe("useAssistantSession", () => {
     act(() => result.current.setDraft("😀".repeat(501)));
     await act(() => result.current.submit());
     expect(fetch).toHaveBeenCalledTimes(1);
+    expect(result.current.validationError?.code).toBe("too_long");
   });
 
   it("prevents duplicate submits while a request is active", async () => {

@@ -1,8 +1,8 @@
 "use client";
 
-import { AppShell } from "@ai-agent-platform/ui";
+import { AppShell, AssistantHeaderEntry } from "@ai-agent-platform/ui";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { shouldShowAssistant } from "../../config/assistant-visibility";
 import {
   adminNavigation,
@@ -10,13 +10,18 @@ import {
   footerNavigation,
   portalNavigation,
 } from "../../config/navigation";
+import { matchRoute } from "../../config/routes";
 import {
   customerLogoutAction,
   staffLogoutAction,
 } from "../../server/auth/server-actions";
 import { AssistantWidget } from "../assistant/assistant-widget";
-import { useAssistantSession } from "../assistant/use-assistant-session";
+import {
+  AssistantExperienceProvider,
+  useAssistantExperience,
+} from "../assistant/assistant-experience-provider";
 import { PortalNavigationLink } from "./portal-navigation-link";
+import { classifyShellRoute, type ShellRoute } from "./shell-route";
 import "./site-shell.css";
 
 const ADMIN_PERMISSION_KEYS = new Set(
@@ -39,6 +44,8 @@ const ORGANIZATION_STATUSES = new Set([
   "rejected",
 ]);
 const ORGANIZATION_ROLES = new Set(["owner", "admin", "member"]);
+const ENVIRONMENT_STATUS =
+  process.env.NEXT_PUBLIC_DEPLOYMENT_ENVIRONMENT?.trim() || "开发环境";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -56,11 +63,15 @@ function isCustomerOrganization(value: unknown): boolean {
   );
 }
 
-function parseWorkspacePermissions(
+function parseWorkspaceSession(
   variant: "console" | "admin",
   value: unknown,
-): string[] {
-  if (!isRecord(value) || typeof value.displayName !== "string") {
+): { displayName: string; permissions: string[] } {
+  if (
+    !isRecord(value) ||
+    typeof value.displayName !== "string" ||
+    value.displayName.trim().length === 0
+  ) {
     throw new Error("Invalid workspace session");
   }
   if (variant === "console") {
@@ -74,7 +85,7 @@ function parseWorkspacePermissions(
     ) {
       throw new Error("Invalid customer session");
     }
-    return [];
+    return { displayName: value.displayName, permissions: [] };
   }
   if (
     value.realm !== "workforce" ||
@@ -89,7 +100,10 @@ function parseWorkspacePermissions(
   ) {
     throw new Error("Invalid workforce session");
   }
-  return [...new Set(value.permissions)].sort();
+  return {
+    displayName: value.displayName,
+    permissions: [...new Set(value.permissions)].sort(),
+  };
 }
 
 function currentBrowserHref() {
@@ -100,24 +114,19 @@ function currentBrowserHref() {
 
 export function SiteShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const assistantSession = useAssistantSession(pathname);
   const { replace } = useRouter();
   const [activeHref, setActiveHref] = useState(pathname);
-  const isRouteRoot = (root: string) =>
-    pathname === root || pathname.startsWith(`${root}/`);
-  const variant = isRouteRoot("/admin")
-    ? "admin"
-    : isRouteRoot("/console")
-      ? "console"
-      : "portal";
+  const variant = classifyShellRoute(pathname);
   const [workspace, setWorkspace] = useState<{
-    variant: "console" | "admin" | "portal";
+    variant: "console" | "admin" | null;
     status: "loading" | "ready" | "redirecting";
     permissions: string[];
+    displayName: string | null;
   }>(() => ({
-    variant,
-    status: variant === "portal" ? "ready" : "loading",
+    variant: variant === "console" || variant === "admin" ? variant : null,
+    status: variant === "console" || variant === "admin" ? "loading" : "ready",
     permissions: [],
+    displayName: null,
   }));
 
   useEffect(() => {
@@ -134,7 +143,7 @@ export function SiteShell({ children }: { children: ReactNode }) {
   }, [pathname]);
 
   useEffect(() => {
-    if (variant === "portal") return;
+    if (variant !== "console" && variant !== "admin") return;
 
     const controller = new AbortController();
     let current = true;
@@ -151,7 +160,12 @@ export function SiteShell({ children }: { children: ReactNode }) {
       .then(async (response) => {
         if (!current) return;
         if (response.status === 401 || response.status === 403) {
-          setWorkspace({ variant, status: "redirecting", permissions: [] });
+          setWorkspace({
+            variant,
+            status: "redirecting",
+            permissions: [],
+            displayName: null,
+          });
           replace(
             `${loginPath}?returnTo=${encodeURIComponent(currentBrowserHref())}`,
           );
@@ -161,13 +175,18 @@ export function SiteShell({ children }: { children: ReactNode }) {
 
         const body: unknown = await response.json();
         if (!current) return;
-        const permissions = parseWorkspacePermissions(variant, body);
-        setWorkspace({ variant, status: "ready", permissions });
+        const parsed = parseWorkspaceSession(variant, body);
+        setWorkspace({ variant, status: "ready", ...parsed });
       })
       .catch((error: unknown) => {
         if (!current || controller.signal.aborted) return;
         void error;
-        setWorkspace({ variant, status: "redirecting", permissions: [] });
+        setWorkspace({
+          variant,
+          status: "redirecting",
+          permissions: [],
+          displayName: null,
+        });
         replace(
           `${loginPath}?returnTo=${encodeURIComponent(currentBrowserHref())}`,
         );
@@ -180,7 +199,7 @@ export function SiteShell({ children }: { children: ReactNode }) {
   }, [replace, variant]);
 
   if (
-    variant !== "portal" &&
+    (variant === "console" || variant === "admin") &&
     (workspace.variant !== variant || workspace.status !== "ready")
   ) {
     return (
@@ -191,11 +210,22 @@ export function SiteShell({ children }: { children: ReactNode }) {
     );
   }
 
-  return (
+  const route = matchRoute(pathname);
+  const adminBreadcrumb =
+    pathname === "/admin"
+      ? [{ label: "运营后台" }]
+      : [
+          { label: "运营后台", href: "/admin" },
+          { label: route?.title ?? "当前页面" },
+        ];
+  const shell = (
     <AppShell
       activeHref={activeHref}
+      adminBreadcrumb={adminBreadcrumb}
       adminNavigation={adminNavigation}
+      administratorDisplayName={workspace.displayName ?? undefined}
       consoleNavigation={consoleNavigation}
+      environmentStatus={ENVIRONMENT_STATUS}
       footerNavigation={footerNavigation}
       grantedPermissions={workspace.permissions}
       logoutAction={
@@ -210,9 +240,60 @@ export function SiteShell({ children }: { children: ReactNode }) {
       variant={variant}
     >
       {children}
-      {shouldShowAssistant(pathname) ? (
-        <AssistantWidget session={assistantSession} />
-      ) : null}
+    </AppShell>
+  );
+
+  if (!shouldShowAssistant(pathname)) return shell;
+
+  return (
+    <AssistantExperienceProvider pathname={pathname}>
+      <AssistantEnabledShell
+        activeHref={activeHref}
+        variant={variant === "assistant" ? "assistant" : "portal"}
+      >
+        {children}
+      </AssistantEnabledShell>
+    </AssistantExperienceProvider>
+  );
+}
+
+function AssistantEnabledShell({
+  activeHref,
+  children,
+  variant,
+}: {
+  activeHref: string;
+  children: ReactNode;
+  variant: Extract<ShellRoute, "portal" | "assistant">;
+}) {
+  const experience = useAssistantExperience();
+  const entryContainer = useRef<HTMLSpanElement>(null);
+  const activateHeaderEntry = () => {
+    if (variant === "assistant") {
+      experience.focusComposer();
+      return;
+    }
+    const trigger = entryContainer.current?.querySelector("button");
+    if (trigger instanceof HTMLElement) experience.openFrom(trigger);
+  };
+
+  return (
+    <AppShell
+      activeHref={activeHref}
+      adminNavigation={adminNavigation}
+      assistantEntry={
+        <span ref={entryContainer}>
+          <AssistantHeaderEntry onActivate={activateHeaderEntry} />
+        </span>
+      }
+      consoleNavigation={consoleNavigation}
+      footerNavigation={footerNavigation}
+      portalNavigation={portalNavigation}
+      portalLinkComponent={PortalNavigationLink}
+      variant={variant}
+    >
+      {children}
+      <AssistantWidget showLauncher={variant === "portal"} />
     </AppShell>
   );
 }

@@ -3,22 +3,35 @@
 import { useRef } from "react";
 import { AssistantLauncher } from "./assistant-launcher";
 import { AssistantPanel } from "./assistant-panel";
-import type { AssistantSession } from "./use-assistant-session";
+import { useAssistantExperience } from "./assistant-experience-provider";
 import "./assistant-widget.css";
 
-export function AssistantWidget({ session }: { session: AssistantSession }) {
+export function AssistantWidget({
+  showLauncher = true,
+}: {
+  showLauncher?: boolean;
+}) {
+  const experience = useAssistantExperience();
   const launcherRef = useRef<HTMLButtonElement>(null);
-  const close = () => {
-    session.closeAssistant();
-    launcherRef.current?.focus();
-  };
 
   return (
     <div className="assistant-widget">
-      {session.open ? (
-        <AssistantPanel onClose={close} session={session} />
+      {experience.session.open ? (
+        <AssistantPanel
+          onClose={experience.close}
+          session={experience.session}
+        />
       ) : null}
-      <AssistantLauncher onOpen={session.openAssistant} ref={launcherRef} />
+      {showLauncher ? (
+        <AssistantLauncher
+          onOpen={() => {
+            if (launcherRef.current !== null) {
+              experience.openFrom(launcherRef.current);
+            }
+          }}
+          ref={launcherRef}
+        />
+      ) : null}
     </div>
   );
 }

@@ -6,7 +6,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type MockAppShellProps = {
@@ -17,6 +17,10 @@ type MockAppShellProps = {
   footerNavigation: unknown;
   portalNavigation: unknown;
   variant: string;
+  assistantEntry?: ReactNode;
+  adminBreadcrumb?: readonly { label: string; href?: string }[];
+  administratorDisplayName?: string;
+  environmentStatus?: string;
   grantedPermissions?: readonly string[];
   logoutAction?: () => Promise<void>;
 };
@@ -37,6 +41,12 @@ vi.mock("@/server/auth/server-actions", () => ({
   staffLogoutAction: vi.fn(),
 }));
 
+vi.mock("../assistant/use-assistant-session", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../assistant/use-assistant-session")>();
+  return { ...actual, useAssistantSession: vi.fn(actual.useAssistantSession) };
+});
+
 vi.mock("@ai-agent-platform/ui", () => ({
   AppShell: (props: MockAppShellProps) => {
     mocks.appShellProps = props;
@@ -47,10 +57,16 @@ vi.mock("@ai-agent-platform/ui", () => ({
         data-testid="app-shell"
         data-variant={props.variant}
       >
+        {props.assistantEntry}
         {props.children}
       </div>
     );
   },
+  AssistantHeaderEntry: ({ onActivate }: { onActivate: () => void }) => (
+    <button onClick={onActivate} type="button">
+      打开 AI 助理
+    </button>
+  ),
 }));
 
 import {
@@ -59,6 +75,7 @@ import {
   footerNavigation,
   portalNavigation,
 } from "../../config/navigation";
+import { useAssistantSession } from "../assistant/use-assistant-session";
 import { SiteShell } from "./site-shell";
 
 function renderAt(pathname: string) {
@@ -77,6 +94,7 @@ beforeEach(() => {
   mocks.appShellProps = undefined;
   mocks.pathname = "/";
   mocks.replace.mockReset();
+  vi.mocked(useAssistantSession).mockClear();
   vi.stubGlobal(
     "fetch",
     vi.fn().mockImplementation((input: string | URL | Request) => {
@@ -108,6 +126,10 @@ beforeEach(() => {
 describe("SiteShell", () => {
   it.each([
     ["/", "portal"],
+    ["/assistant", "assistant"],
+    ["/login", "auth"],
+    ["/register", "auth"],
+    ["/staff/login", "auth"],
     ["/console/profile", "console"],
     ["/admin/products", "admin"],
     ["/administrator", "portal"],
@@ -197,6 +219,12 @@ describe("SiteShell", () => {
       signal: expect.any(AbortSignal),
     });
     expect(mocks.appShellProps?.grantedPermissions).toEqual(["admin:products"]);
+    expect(mocks.appShellProps?.administratorDisplayName).toBe("Operator");
+    expect(mocks.appShellProps?.adminBreadcrumb).toEqual([
+      { label: "运营后台", href: "/admin" },
+      { label: "产品内容" },
+    ]);
+    expect(mocks.appShellProps?.environmentStatus).toBe("开发环境");
     expect(mocks.appShellProps?.logoutAction).toEqual(expect.any(Function));
   });
 
@@ -302,26 +330,57 @@ describe("SiteShell", () => {
   });
 
   it.each([
-    ["/", true],
-    ["/pricing", true],
-    ["/product/agent-studio", true],
-    ["/login", false],
-    ["/console/profile", false],
-    ["/admin/products", false],
+    "/login",
+    "/register",
+    "/staff/login",
+    "/console/profile",
+    "/admin/products",
   ])(
-    "shows the assistant only where allowed: %s",
-    async (pathname, visible) => {
+    "does not initialize assistant state for the %s shell",
+    async (pathname) => {
       renderAt(pathname);
       if (pathname.startsWith("/console") || pathname.startsWith("/admin")) {
         await waitFor(() =>
           expect(screen.getByTestId("app-shell")).toBeVisible(),
         );
       }
-      expect(
-        screen.queryByRole("button", { name: "打开 M 助手" }) !== null,
-      ).toBe(visible);
+      expect(useAssistantSession).not.toHaveBeenCalled();
+      expect(screen.queryByRole("button", { name: "打开 M 助手" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "打开 AI 助理" })).toBeNull();
     },
   );
+
+  it("gives portal routes a shared top entry and floating launcher", () => {
+    renderAt("/pricing");
+
+    expect(useAssistantSession).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "打开 AI 助理" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "打开 M 助手" })).toBeVisible();
+  });
+
+  it("gives the assistant workspace a top focus entry without a floating launcher", () => {
+    renderAt("/assistant");
+
+    expect(useAssistantSession).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "打开 AI 助理" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "打开 M 助手" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "打开 AI 助理" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("returns focus to the exact portal launcher that opened the drawer", () => {
+    renderAt("/");
+    const top = screen.getByRole("button", { name: "打开 AI 助理" });
+    const floating = screen.getByRole("button", { name: "打开 M 助手" });
+
+    fireEvent.click(top);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(top).toHaveFocus();
+
+    fireEvent.click(floating);
+    fireEvent.click(screen.getByRole("button", { name: "关闭 M 助手" }));
+    expect(floating).toHaveFocus();
+  });
 
   it("preserves the assistant controller across pathname rerenders", async () => {
     vi.mocked(fetch).mockResolvedValue(
@@ -352,15 +411,13 @@ describe("SiteShell", () => {
       ),
     );
 
-    mocks.pathname = "/login";
+    mocks.pathname = "/assistant";
     view.rerender(
       <SiteShell>
-        <p>登录页</p>
+        <p>助理工作区</p>
       </SiteShell>,
     );
-    expect(
-      screen.queryByRole("button", { name: "打开 M 助手" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开 M 助手" })).toBeNull();
     mocks.pathname = "/pricing";
     view.rerender(
       <SiteShell>
@@ -371,6 +428,43 @@ describe("SiteShell", () => {
     expect(screen.getByTestId("assistant-history")).toHaveTextContent(
       "保留回答",
     );
+  });
+
+  it("discards assistant state after crossing into a non-assistant shell", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          version: "1",
+          requestId: "req-1",
+          mode: "placeholder",
+          session: { temporary: true },
+          message: {
+            id: "msg-1",
+            role: "assistant",
+            content: "旧回答",
+          },
+          suggestedActions: [],
+        }),
+      ),
+    );
+    const view = renderAt("/");
+    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "旧问题" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("assistant-history")).toHaveTextContent(
+        "旧回答",
+      ),
+    );
+
+    mocks.pathname = "/login";
+    view.rerender(<SiteShell>登录页</SiteShell>);
+    mocks.pathname = "/";
+    view.rerender(<SiteShell>首页</SiteShell>);
+    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+    expect(screen.queryByText("旧回答")).toBeNull();
   });
 
   it("aborts an in-flight session request when the shell unmounts", () => {

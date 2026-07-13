@@ -111,16 +111,22 @@ const footerNavigation: NavigationSection[] = [
 type RenderShellOptions = {
   activeHref?: string;
   assistantEntry?: ReactNode;
+  adminBreadcrumb?: readonly { label: string; href?: string }[];
+  administratorDisplayName?: string;
+  environmentStatus?: string;
   grantedPermissions?: readonly string[];
   logoutAction?: () => Promise<void>;
   portalLinkComponent?: NavigationLinkComponent;
 };
 
 function renderShell(
-  variant: "portal" | "console" | "admin",
+  variant: "portal" | "assistant" | "auth" | "console" | "admin",
   {
     activeHref = "/",
     assistantEntry,
+    adminBreadcrumb = [{ label: "运营后台" }],
+    administratorDisplayName = "林管理员",
+    environmentStatus = "开发环境",
     grantedPermissions,
     logoutAction,
     portalLinkComponent,
@@ -130,9 +136,12 @@ function renderShell(
     <AppShell
       activeHref={activeHref}
       assistantEntry={assistantEntry}
+      adminBreadcrumb={adminBreadcrumb}
       adminNavigation={adminNavigation}
+      administratorDisplayName={administratorDisplayName}
       consoleNavigation={consoleNavigation}
       footerNavigation={footerNavigation}
+      environmentStatus={environmentStatus}
       grantedPermissions={grantedPermissions}
       logoutAction={logoutAction}
       portalNavigation={portalNavigation}
@@ -160,7 +169,10 @@ describe("AppShell", () => {
         activeHref="/admin"
         adminNavigation={adminNavigation}
         assistantEntry={assistantEntry}
+        adminBreadcrumb={[{ label: "运营后台" }]}
+        administratorDisplayName="林管理员"
         consoleNavigation={consoleNavigation}
+        environmentStatus="开发环境"
         footerNavigation={footerNavigation}
         portalNavigation={portalNavigation}
         variant="admin"
@@ -171,6 +183,33 @@ describe("AppShell", () => {
     expect(
       screen.queryByRole("button", { name: "打开工作区助理" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("uses portal chrome without a footer for the assistant workspace", () => {
+    const assistantEntry = <button type="button">聚焦助理输入框</button>;
+    const { container } = renderShell("assistant", {
+      activeHref: "/assistant",
+      assistantEntry,
+    });
+
+    expect(container.firstChild).toHaveAttribute(
+      "data-shell-variant",
+      "assistant",
+    );
+    expect(screen.getByRole("navigation", { name: "主导航" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "聚焦助理输入框" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("contentinfo")).toBeNull();
+  });
+
+  it("renders auth content without portal, console, or admin chrome", () => {
+    const { container } = renderShell("auth", { activeHref: "/login" });
+
+    expect(container.firstChild).toHaveAttribute("data-shell-variant", "auth");
+    expect(screen.getByText("页面内容")).toBeVisible();
+    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(screen.queryByRole("contentinfo")).toBeNull();
   });
 
   it("forwards an injected routing adapter to header and footer links", () => {
@@ -253,6 +292,8 @@ describe("AppShell", () => {
     });
 
     expect(container.firstChild).toHaveAttribute("data-shell-variant", "admin");
+    expect(screen.getByLabelText("当前管理员")).toHaveTextContent("林管理员");
+    expect(screen.getByText("开发环境")).toBeVisible();
     expect(within(navigation).getByText("CMS 运营后台")).toBeInTheDocument();
     for (const group of [
       "运营概览",
