@@ -191,6 +191,26 @@ describe("AssistantWorkspace", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
   });
 
+  it("does not submit a composing Enter before the confirmed input", async () => {
+    vi.mocked(fetch).mockResolvedValue(successfulPlaceholderReply());
+    renderWorkspace();
+    const composer = screen.getByRole("textbox", { name: "输入问题" });
+    fireEvent.change(composer, { target: { value: "正在输入" } });
+
+    fireEvent(
+      composer,
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        isComposing: true,
+        key: "Enter",
+      }),
+    );
+    expect(fetch).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(composer, { key: "Enter" });
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+  });
+
   it("rejects blank and over-500-code-point input beside the composer", () => {
     renderWorkspace();
     const composer = screen.getByRole("textbox", { name: "输入问题" });
@@ -276,5 +296,11 @@ describe("AssistantWorkspace", () => {
 
     expect(css).not.toMatch(/position\s*:\s*fixed/i);
     expect(css).not.toMatch(/\b(?:width|max-width|min-width)\s*:\s*100vw\b/i);
+    expect(css).toMatch(
+      /\.assistant-workspace\s*{[^}]*--assistant-workspace-shell-offset:\s*77px;[^}]*min-height:\s*calc\(100dvh - var\(--assistant-workspace-shell-offset\)\);/s,
+    );
+    expect(css).toMatch(
+      /@media \(max-width: 560px\)\s*{[\s\S]*?\.assistant-workspace\s*{[^}]*--assistant-workspace-shell-offset:\s*65px;/,
+    );
   });
 });

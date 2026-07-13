@@ -1,7 +1,9 @@
 .assistant-workspace {
+  --assistant-workspace-shell-offset: 77px;
+
   display: grid;
   grid-template-columns: minmax(11rem, 14rem) minmax(0, 1fr);
-  min-height: calc(100dvh - 72px);
+  min-height: calc(100dvh - var(--assistant-workspace-shell-offset));
   color: var(--color-ink);
   background: var(--color-canvas);
   font-family: var(--font-body);
@@ -432,6 +434,12 @@
 
   .assistant-workspace__composer {
     padding-left: var(--space-4);
+  }
+}
+
+@media (max-width: 560px) {
+  .assistant-workspace {
+    --assistant-workspace-shell-offset: 65px;
   }
 }
 
