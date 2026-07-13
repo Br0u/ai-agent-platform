@@ -666,11 +666,27 @@ describe("production deployment security contracts", () => {
 
   it("starts every production service in documented dependency order", () => {
     const runbook = read("docs/deployment/server-readiness.md");
+    const orderedCommands = [
+      "docker compose up -d --wait db",
+      "docker compose run --rm migrate",
+      "docker compose run --rm agno-bootstrap",
+      "docker compose run --rm --no-deps agent-migrate",
+      "docker compose up -d --no-deps agent",
+      "docker compose up -d web",
+      "docker compose up -d proxy backup",
+    ];
+    for (const command of orderedCommands) {
+      expect(runbook).toContain(command);
+    }
+    for (const [previous, next] of orderedCommands
+      .slice(0, -1)
+      .map((command, index) => [command, orderedCommands[index + 1]] as const)) {
+      expect(runbook.indexOf(previous)).toBeLessThan(runbook.indexOf(next));
+    }
     expect(runbook).toContain(
-      "docker compose up -d --wait db migrate web proxy backup",
+      "db → migrate → agno-bootstrap → agent-migrate → agent → web → proxy/backup",
     );
-    expect(runbook).toContain("`migrate`等待`db`健康后执行");
-    expect(runbook).toContain("`web`和`backup`等待`migrate`成功退出");
+    expect(runbook).toContain("`backup`等待平台和 Agno 迁移都成功");
     expect(runbook).toContain("`proxy`等待`web`健康");
     expect(runbook).not.toContain("后续服务按`service_healthy`顺序启动");
 
@@ -819,7 +835,74 @@ describe("production deployment security contracts", () => {
     expect(script).toContain("sessions_identity_boundary_guard");
     expect(script).toContain("audit_logs_created_id_desc_idx");
     expect(script).toContain("rate_limits_key_unique");
+    expect(script).toContain("--clean --if-exists");
+    expect(script).toContain("to_regclass('agno.agno_sessions') IS NOT NULL");
+    expect(script).toContain(
+      "to_regclass('agno.agno_schema_versions') IS NOT NULL",
+    );
+    expect(script).toContain("agno_session_count");
+    expect(script).toContain("agno_schema_version_count");
+    expect(script).not.toMatch(/SELECT\s+(?:message|messages|content|runs?)/iu);
     expect(script).not.toContain('[ "$migration_count" -lt 1 ]');
+  });
+
+  it("backs up all platform and AgentOS schemas through one protected dump", () => {
+    const script = read("infra/docker/backup.sh");
+    for (const schema of ["public", "drizzle", "agno"]) {
+      expect(script).toContain(`--schema=${schema}`);
+    }
+    expect(script.match(/pg_dump/g)).toHaveLength(1);
+    expect(script).toContain('--format=custom');
+    expect(script).toContain('temporary_file="/backups/.ai-agent-platform-');
+    expect(script).toContain('mv "$temporary_file" "$backup_file"');
+  });
+
+  it("documents AgentOS upgrades, startup order, and rollback sequencing", () => {
+    const runbook = read("docs/deployment/server-readiness.md");
+    const dockerReadme = read("infra/docker/README.md");
+    const architecture = read("docs/architecture/system-design.md");
+    const rootReadme = read("README.md");
+    const documentation = `${runbook}\n${dockerReadme}\n${architecture}\n${rootReadme}`;
+
+    expect(runbook).toContain("docker compose run --rm agno-bootstrap");
+    expect(documentation).toContain(
+      "db → migrate → agno-bootstrap → agent-migrate → agent → web → proxy/backup",
+    );
+    expect(runbook).toMatch(
+      /停止[^\n]*agent[\s\S]*恢复[^\n]*dump[\s\S]*agent-migrate[\s\S]*ready[\s\S]*重启[^\n]*web/iu,
+    );
+    expect(rootReadme).toContain(
+      "db migrate agno-bootstrap agent-migrate agent web proxy backup",
+    );
+  });
+
+  it("defines a failure-safe isolated AgentOS backup and restore acceptance", () => {
+    const script = read("docs/testing/run-agentos-backup-restore.sh");
+
+    expect(script).toContain("docker compose -p \"$project\"");
+    expect(script).toContain("down -v --remove-orphans");
+    expect(script).toContain("trap cleanup EXIT");
+    expect(script).toContain("trap 'on_signal 130' INT");
+    expect(script).toContain("trap 'on_signal 143' TERM");
+    expect(script).toContain('chmod 600 "$env_file"');
+    expect(script).toContain('stat -f %Lp "$env_file"');
+    expect(script).toContain('stat -c %a "$env_file"');
+    expect(script).toContain('[ "$env_permissions" = "600" ]');
+    expect(script).toContain("config --quiet");
+    expect(script).toMatch(/build[^\n]*migrate[^\n]*agent[^\n]*backup/u);
+    expect(script).toContain("run --rm agno-bootstrap");
+    expect(script).toContain("run --rm --no-deps agent-migrate");
+    expect(script).toContain("up -d --no-deps agent backup");
+    expect(script).toContain("http://127.0.0.1:7777/internal/health/ready");
+    expect(script).toContain("/run/secrets/os_security_key");
+    expect(script).toContain("30");
+    expect(script).toContain('payload.get("ready") is True');
+    expect(script).toContain('payload.get("capability") == "placeholder"');
+    expect(script).not.toMatch(/ports?:[^\n]*7777/u);
+    expect(script).toContain("backup_data");
+    expect(script).toContain("postgres:18.3-alpine3.23");
+    expect(script).toContain("mktemp -d");
+    expect(script).toContain("infra/docker/restore-drill.sh");
   });
 
   it("uses host webServer only when BASE_URL is absent", () => {

@@ -48,7 +48,7 @@ until docker exec "$container" pg_isready -U "$owner" -d "$database" >/dev/null 
 done
 
 docker exec "$container" pg_restore \
-  --username="$owner" --dbname="$database" --no-owner --no-acl \
+  --username="$owner" --dbname="$database" --clean --if-exists --no-owner --no-acl \
   "/restore/$(basename "$backup_file")"
 
 migration_count="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \
@@ -61,18 +61,25 @@ schema_contract="$(docker exec "$container" psql -U "$owner" -d "$database" -Atq
      AND to_regclass('public.sessions') IS NOT NULL
      AND to_regclass('public.audit_logs') IS NOT NULL
      AND to_regclass('public.roles') IS NOT NULL
+     AND to_regclass('agno.agno_sessions') IS NOT NULL
+     AND to_regclass('agno.agno_schema_versions') IS NOT NULL
      AND to_regclass('public.users_email_lower_unique') IS NOT NULL
      AND to_regclass('public.audit_logs_created_id_desc_idx') IS NOT NULL
      AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'rate_limits_key_unique')
      AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'sessions_identity_boundary_guard' AND NOT tgisinternal)")"
 user_count="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \
   "SELECT count(*) FROM public.users")"
+agno_session_count="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \
+  "SELECT count(*) FROM agno.agno_sessions")"
+agno_schema_version_count="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \
+  "SELECT count(*) FROM agno.agno_schema_versions")"
 
 if [ "$migration_count" != "$expected_migrations" ] || \
    [ "$latest_migration" != "$expected_latest_migration" ] || \
-   [ "$schema_contract" != "t" ]; then
+   [ "$schema_contract" != "t" ] || \
+   [ "$agno_schema_version_count" -lt 1 ]; then
   echo "restore drill failed critical table checks" >&2
   exit 1
 fi
 
-echo "restore drill passed: migrations=$migration_count latest=$latest_migration users=$user_count"
+echo "restore drill passed: migrations=$migration_count latest=$latest_migration users=$user_count agno_sessions=$agno_session_count agno_schema_versions=$agno_schema_version_count"
