@@ -377,6 +377,16 @@ export const adminNavigation: SidebarNavigationConfig = {
       ],
     },
     {
+      label: "AI Operations",
+      items: [
+        {
+          label: "AI 助理",
+          href: "/admin/assistant",
+          permission: "admin:assistant",
+        },
+      ],
+    },
+    {
       label: "站点内容",
       items: [
         {

@@ -45,6 +45,7 @@ const permissionKeys = [
   "console:access",
   "console:team",
   "admin:site",
+  "admin:assistant",
   "admin:navigation",
   "admin:products",
   "admin:releases",
@@ -93,6 +94,10 @@ describe("seedAccessControl", () => {
     await seedAccessControl(repository);
 
     expect([...repository.permissions.keys()]).toEqual(permissionKeys);
+    expect(repository.permissions.get("admin:assistant")).toEqual({
+      key: "admin:assistant",
+      name: "管理 AI 助理",
+    });
     expect([...repository.roles.keys()]).toEqual([
       "customer:customer_member",
       "customer:customer_admin",
@@ -123,6 +128,18 @@ describe("seedAccessControl", () => {
     expect(
       sorted(repository.grants.get("workforce:super_admin") ?? []),
     ).toEqual(sorted(adminPermissions));
+    for (const role of ["employee", "content_operator", "support_operator"]) {
+      expect(
+        repository.grants.get(`workforce:${role}`)?.has("admin:assistant") ??
+          false,
+      ).toBe(false);
+    }
+    expect(
+      repository.grants.get("workforce:admin")?.has("admin:assistant"),
+    ).toBe(true);
+    expect(
+      repository.grants.get("workforce:super_admin")?.has("admin:assistant"),
+    ).toBe(true);
     for (const [role, grants] of repository.grants) {
       if (role.startsWith("workforce:")) {
         expect([...grants].some((key) => key.startsWith("console:"))).toBe(
@@ -143,7 +160,7 @@ describe("seedAccessControl", () => {
     await seedAccessControl(repository);
 
     expect(repository.transactions).toBe(2);
-    expect(repository.permissions.size).toBe(17);
+    expect(repository.permissions.size).toBe(18);
     expect(repository.roles.size).toBe(7);
     expect(repository.grants.size).toBe(7);
     expect(

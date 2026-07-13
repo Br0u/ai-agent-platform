@@ -61,7 +61,19 @@ describePostgres("PostgreSQL access-control seed", () => {
         (SELECT count(*)::text FROM role_permissions) AS grants`,
     );
     expect(counts.rows).toEqual([
-      { roles: "7", permissions: "17", grants: "44" },
+      { roles: "7", permissions: "18", grants: "46" },
+    ]);
+
+    const assistantGrants = await pool.query<{ name: string }>(
+      `SELECT r.name FROM roles r
+       JOIN role_permissions rp ON rp.role_id = r.id
+       JOIN permissions p ON p.id = rp.permission_id
+       WHERE p.key = 'admin:assistant'
+       ORDER BY r.name`,
+    );
+    expect(assistantGrants.rows).toEqual([
+      { name: "admin" },
+      { name: "super_admin" },
     ]);
   });
 
