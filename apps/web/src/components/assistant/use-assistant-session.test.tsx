@@ -136,6 +136,31 @@ describe("useAssistantSession", () => {
     ]);
   });
 
+  it("preserves an edited draft when retrying the previous failed message", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(success("A 的回答"));
+    const { result } = renderHook(() => useAssistantSession("/docs"));
+    act(() => result.current.setDraft("问题 A"));
+    await act(() => result.current.submit());
+    act(() => result.current.setDraft("问题 B"));
+    await act(() => result.current.retry());
+
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[1]?.[1]?.body)),
+    ).toEqual({
+      message: "问题 A",
+      context: { pathname: "/docs" },
+    });
+    expect(
+      result.current.messages.map(({ role, content }) => [role, content]),
+    ).toEqual([
+      ["user", "问题 A"],
+      ["assistant", "A 的回答"],
+    ]);
+    expect(result.current.draft).toBe("问题 B");
+  });
+
   it("does not leave an orphan user message when navigation aborts a request", async () => {
     let resolveOld!: (response: Response) => void;
     vi.mocked(fetch).mockReturnValue(

@@ -109,7 +109,7 @@ export function useAssistantSession(pathname: string): AssistantSession {
             content: body.message,
           },
         ]);
-        setDraft("");
+        setDraft((current) => (current.trim() === message ? "" : current));
         setLatestAnnouncement(body.message);
         setLastFailedRequest(null);
         updateRequestStatus("idle");
