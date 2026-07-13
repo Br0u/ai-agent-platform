@@ -2,6 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  ASSISTANT_ACTION_HREF_MAX_CODE_POINTS,
+  ASSISTANT_ACTION_LABEL_MAX_CODE_POINTS,
+  ASSISTANT_CONTENT_MAX_CODE_POINTS,
+  ASSISTANT_MAX_SUGGESTED_ACTIONS,
   createAssistantErrorResponse,
   type AssistantSuccessResponse,
 } from "@/features/assistant/assistant-contract";
@@ -111,6 +115,7 @@ describe("POST /api/v1/assistant/chat", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
     await expect(response.json()).resolves.toEqual({
       ...success,
       requestId: "incoming-request-id",
@@ -399,6 +404,92 @@ describe("POST /api/v1/assistant/chat", () => {
       { requestId: "generated-request-id", statusCode: 503, durationMs: 7 },
     ]);
     expect(JSON.stringify(deps.records)).not.toMatch(/secret|unsafe/iu);
+  });
+
+  it.each([
+    [
+      "content",
+      {
+        content: `private-${"😀".repeat(ASSISTANT_CONTENT_MAX_CODE_POINTS + 1)}`,
+        suggestedActions: [],
+      },
+    ],
+    [
+      "action count",
+      {
+        content: "private-content",
+        suggestedActions: Array.from(
+          { length: ASSISTANT_MAX_SUGGESTED_ACTIONS + 1 },
+          () => ({ label: "private-label", href: "/private-href" }),
+        ),
+      },
+    ],
+    [
+      "action label",
+      {
+        content: "private-content",
+        suggestedActions: [
+          {
+            label: `private-${"😀".repeat(ASSISTANT_ACTION_LABEL_MAX_CODE_POINTS + 1)}`,
+            href: "/private-href",
+          },
+        ],
+      },
+    ],
+    [
+      "action href",
+      {
+        content: "private-content",
+        suggestedActions: [
+          {
+            label: "private-label",
+            href: `/${"a".repeat(ASSISTANT_ACTION_HREF_MAX_CODE_POINTS)}private-href`,
+          },
+        ],
+      },
+    ],
+  ])(
+    "rejects overlong provider %s without leaking or partially rendering",
+    async (_name, reply) => {
+      const deps = dependencies({
+        reply: async () => reply,
+      });
+
+      const response = await createAssistantChatHandler(deps)(
+        request(
+          JSON.stringify({ message: "问题", context: { pathname: "/help" } }),
+        ),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(503);
+      expect(body).toEqual(
+        createAssistantErrorResponse(
+          "generated-request-id",
+          "assistant_unavailable",
+        ),
+      );
+      expect(JSON.stringify(body)).not.toContain("private");
+    },
+  );
+
+  it("rejects an overlong generated message id", async () => {
+    const deps = dependencies();
+    deps.messageIdFactory = () => "😀".repeat(129);
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({ message: "问题", context: { pathname: "/help" } }),
+      ),
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual(
+      createAssistantErrorResponse(
+        "generated-request-id",
+        "assistant_unavailable",
+      ),
+    );
   });
 
   it("rejects a declared body over 16 KiB before parsing", async () => {

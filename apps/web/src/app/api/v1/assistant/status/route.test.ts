@@ -15,6 +15,7 @@ describe("GET /api/v1/assistant/status", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
     await expect(response.json()).resolves.toEqual({
       version: "1",
       requestId: "req-2",

@@ -1,19 +1,19 @@
 import {
   createAssistantErrorResponse,
+  isAssistantMessageId,
+  isAssistantProviderReply,
   parseAssistantRequest,
   safeAssistantSuggestedActions,
   type AssistantErrorResponse,
   type AssistantSuccessResponse,
 } from "@/features/assistant/assistant-contract";
-import {
-  isAssistantProviderReply,
-  type AssistantProvider,
-} from "@/server/assistant/assistant-provider";
+import type { AssistantProvider } from "@/server/assistant/assistant-provider";
 import {
   assistantRequestLogger,
   type AssistantRequestLogger,
 } from "@/server/assistant/assistant-request-log";
 import { placeholderAssistantProvider } from "@/server/assistant/placeholder-assistant-provider";
+import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
 import { readBoundedJson } from "@/server/http/read-bounded-json";
 
 interface AssistantChatHandlerDependencies {
@@ -33,19 +33,15 @@ const defaultDependencies: AssistantChatHandlerDependencies = {
 };
 
 const MAX_REQUEST_BODY_BYTES = 16 * 1024;
-const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,64}$/u;
-
-function safeRequestId(request: Request, factory: () => string): string {
-  const header = request.headers.get("x-request-id");
-  return header !== null && SAFE_REQUEST_ID.test(header) ? header : factory();
-}
-
 export function createAssistantChatHandler(
   dependencies: AssistantChatHandlerDependencies = defaultDependencies,
 ) {
   return async function POST(request: Request): Promise<Response> {
     const startedAt = dependencies.clock();
-    const requestId = safeRequestId(request, dependencies.requestIdFactory);
+    const requestId = resolveAssistantRequestId(
+      request,
+      dependencies.requestIdFactory,
+    );
     let body: AssistantSuccessResponse | AssistantErrorResponse;
     let statusCode: 200 | 400 | 503;
 
@@ -64,13 +60,17 @@ export function createAssistantChatHandler(
         if (!isAssistantProviderReply(providerResponse)) {
           throw new TypeError("Invalid assistant provider response");
         }
+        const messageId = dependencies.messageIdFactory();
+        if (!isAssistantMessageId(messageId)) {
+          throw new TypeError("Invalid assistant message id");
+        }
         body = {
           version: "1",
           requestId,
           mode: "placeholder",
           session: { temporary: true },
           message: {
-            id: dependencies.messageIdFactory(),
+            id: messageId,
             role: "assistant",
             content: providerResponse.content,
           },
@@ -87,11 +87,17 @@ export function createAssistantChatHandler(
 
     let response: Response;
     try {
-      response = Response.json(body, { status: statusCode });
+      response = Response.json(body, {
+        status: statusCode,
+        headers: { "Cache-Control": "no-store" },
+      });
     } catch {
       body = createAssistantErrorResponse(requestId, "assistant_unavailable");
       statusCode = 503;
-      response = Response.json(body, { status: statusCode });
+      response = Response.json(body, {
+        status: statusCode,
+        headers: { "Cache-Control": "no-store" },
+      });
     }
 
     try {

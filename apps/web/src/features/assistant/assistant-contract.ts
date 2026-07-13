@@ -10,6 +10,15 @@ export interface AssistantSuggestedAction {
   href: string;
 }
 
+export const ASSISTANT_REQUEST_MESSAGE_MAX_CODE_POINTS = 500;
+export const ASSISTANT_PATHNAME_MAX_CODE_POINTS = 256;
+export const ASSISTANT_REQUEST_ID_MAX_CODE_POINTS = 128;
+export const ASSISTANT_MESSAGE_ID_MAX_CODE_POINTS = 128;
+export const ASSISTANT_CONTENT_MAX_CODE_POINTS = 32_768;
+export const ASSISTANT_MAX_SUGGESTED_ACTIONS = 8;
+export const ASSISTANT_ACTION_LABEL_MAX_CODE_POINTS = 120;
+export const ASSISTANT_ACTION_HREF_MAX_CODE_POINTS = 2_048;
+
 export const ASSISTANT_PRESET_QUESTIONS = [
   "如何开始了解平台？",
   "如何获取部署支持？",
@@ -25,10 +34,12 @@ export interface AssistantResponseMessage {
   content: string;
 }
 
+export type AssistantMode = "placeholder" | "agentos";
+
 export interface AssistantSuccessResponse {
   version: "1";
   requestId: string;
-  mode: "placeholder";
+  mode: AssistantMode;
   session: { temporary: true };
   message: AssistantResponseMessage;
   suggestedActions: AssistantSuggestedAction[];
@@ -48,13 +59,20 @@ export interface AssistantErrorResponse {
   };
 }
 
+export type AssistantCapability = "placeholder" | "available" | "degraded";
+
 export interface AssistantStatusResponse {
   version: "1";
   requestId: string;
-  live: true;
-  ready: false;
-  capability: "placeholder";
-  message: "模型尚未配置，当前为安全占位模式。";
+  live: boolean;
+  ready: boolean;
+  capability: AssistantCapability;
+  message: string;
+}
+
+export interface AssistantProviderReply {
+  content: string;
+  suggestedActions: AssistantSuggestedAction[];
 }
 
 export function createAssistantErrorResponse(
@@ -91,6 +109,25 @@ function hasAtMostCodePoints(value: string, maximum: number): boolean {
     if (count > maximum) return false;
   }
   return true;
+}
+
+function isNonBlankBoundedString(
+  value: unknown,
+  maximum: number,
+): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    hasAtMostCodePoints(value, maximum)
+  );
+}
+
+export function isAssistantRequestId(value: unknown): value is string {
+  return isNonBlankBoundedString(value, ASSISTANT_REQUEST_ID_MAX_CODE_POINTS);
+}
+
+export function isAssistantMessageId(value: unknown): value is string {
+  return isNonBlankBoundedString(value, ASSISTANT_MESSAGE_ID_MAX_CODE_POINTS);
 }
 
 function isNormalizedPathname(pathname: string): boolean {
@@ -151,6 +188,57 @@ export function safeAssistantSuggestedActions(
   return actions.filter((action) => isSafeAssistantActionHref(action.href));
 }
 
+function isAssistantSuggestedAction(
+  value: unknown,
+): value is AssistantSuggestedAction {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["href", "label"]) &&
+    isNonBlankBoundedString(
+      value.label,
+      ASSISTANT_ACTION_LABEL_MAX_CODE_POINTS,
+    ) &&
+    isNonBlankBoundedString(value.href, ASSISTANT_ACTION_HREF_MAX_CODE_POINTS)
+  );
+}
+
+export function isAssistantProviderReply(
+  value: unknown,
+): value is AssistantProviderReply {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["content", "suggestedActions"]) &&
+    isNonBlankBoundedString(value.content, ASSISTANT_CONTENT_MAX_CODE_POINTS) &&
+    Array.isArray(value.suggestedActions) &&
+    value.suggestedActions.length <= ASSISTANT_MAX_SUGGESTED_ACTIONS &&
+    value.suggestedActions.every(isAssistantSuggestedAction)
+  );
+}
+
+export function isAssistantStatusResponse(
+  input: unknown,
+): input is AssistantStatusResponse {
+  return (
+    isRecord(input) &&
+    hasExactKeys(input, [
+      "version",
+      "requestId",
+      "live",
+      "ready",
+      "capability",
+      "message",
+    ]) &&
+    input.version === "1" &&
+    isAssistantRequestId(input.requestId) &&
+    typeof input.live === "boolean" &&
+    typeof input.ready === "boolean" &&
+    (input.capability === "placeholder" ||
+      input.capability === "available" ||
+      input.capability === "degraded") &&
+    isNonBlankBoundedString(input.message, ASSISTANT_CONTENT_MAX_CODE_POINTS)
+  );
+}
+
 export function isAssistantSuccessResponse(
   input: unknown,
 ): input is AssistantSuccessResponse {
@@ -165,35 +253,36 @@ export function isAssistantSuccessResponse(
       "suggestedActions",
     ]) ||
     input.version !== "1" ||
-    typeof input.requestId !== "string" ||
-    input.mode !== "placeholder" ||
+    !isAssistantRequestId(input.requestId) ||
+    (input.mode !== "placeholder" && input.mode !== "agentos") ||
     !isRecord(input.session) ||
     !hasExactKeys(input.session, ["temporary"]) ||
     input.session.temporary !== true ||
     !isRecord(input.message) ||
     !hasExactKeys(input.message, ["id", "role", "content"]) ||
-    typeof input.message.id !== "string" ||
+    !isAssistantMessageId(input.message.id) ||
     input.message.role !== "assistant" ||
-    typeof input.message.content !== "string" ||
-    !Array.isArray(input.suggestedActions)
+    !isNonBlankBoundedString(
+      input.message.content,
+      ASSISTANT_CONTENT_MAX_CODE_POINTS,
+    ) ||
+    !Array.isArray(input.suggestedActions) ||
+    input.suggestedActions.length > ASSISTANT_MAX_SUGGESTED_ACTIONS
   ) {
     return false;
   }
 
-  return input.suggestedActions.every(
-    (action) =>
-      isRecord(action) &&
-      hasExactKeys(action, ["href", "label"]) &&
-      typeof action.label === "string" &&
-      typeof action.href === "string",
-  );
+  return input.suggestedActions.every(isAssistantSuggestedAction);
 }
 
 export function parseAssistantRequest(input: unknown): AssistantRequest | null {
   if (!isRecord(input) || typeof input.message !== "string") return null;
 
   const message = input.message.trim();
-  if (message.length < 1 || !hasAtMostCodePoints(message, 500)) {
+  if (
+    message.length < 1 ||
+    !hasAtMostCodePoints(message, ASSISTANT_REQUEST_MESSAGE_MAX_CODE_POINTS)
+  ) {
     return null;
   }
 
@@ -201,7 +290,7 @@ export function parseAssistantRequest(input: unknown): AssistantRequest | null {
   const { pathname } = input.context;
   if (
     typeof pathname !== "string" ||
-    !hasAtMostCodePoints(pathname, 256) ||
+    !hasAtMostCodePoints(pathname, ASSISTANT_PATHNAME_MAX_CODE_POINTS) ||
     !isNormalizedPathname(pathname)
   ) {
     return null;
