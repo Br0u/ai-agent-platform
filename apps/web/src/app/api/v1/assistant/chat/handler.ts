@@ -16,6 +16,7 @@ import { placeholderAssistantProvider } from "@/server/assistant/placeholder-ass
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
 import {
   getAnonymousSessionManager,
+  type AnonymousSessionManager,
   type AssistantPublicSession,
 } from "@/server/assistant/anonymous-session";
 import {
@@ -56,12 +57,26 @@ function getDefaultRateLimiter(): AssistantRateLimiter {
   return defaultRateLimiter;
 }
 
+export function createAssistantChatSessionResolver(
+  manager: AnonymousSessionManager,
+  actorResolver: (request: Request) => Promise<AssistantActor>,
+) {
+  return async function resolveSession(
+    request: Request,
+  ): Promise<AssistantChatSessionResolution> {
+    const actor = await actorResolver(request);
+    const session = manager.resolve(request.headers, actor);
+    return { ...session, actor };
+  };
+}
+
 async function resolveDefaultSession(
   request: Request,
 ): Promise<AssistantChatSessionResolution> {
-  const actor = await resolveAssistantActor(request);
-  const session = getAnonymousSessionManager().resolve(request.headers, actor);
-  return { ...session, actor };
+  return createAssistantChatSessionResolver(
+    getAnonymousSessionManager(),
+    resolveAssistantActor,
+  )(request);
 }
 
 function trustNginxProxy(): boolean {
