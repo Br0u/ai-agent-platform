@@ -92,6 +92,25 @@ E2E_REPLACEMENT_PASSWORD=$replacement_password
 EOF
 fi
 
+chmod 600 "$env_file" || {
+  echo "failed to set $env_file permissions to 600" >&2
+  exit 1
+}
+
+if env_permissions=$(stat -f %Lp "$env_file" 2>/dev/null); then
+  :
+elif env_permissions=$(stat -c %a "$env_file" 2>/dev/null); then
+  :
+else
+  echo "unable to verify $env_file permissions" >&2
+  exit 1
+fi
+
+[ "$env_permissions" = "600" ] || {
+  echo "$env_file permissions must be 600" >&2
+  exit 1
+}
+
 set -a
 . "./$env_file"
 set +a

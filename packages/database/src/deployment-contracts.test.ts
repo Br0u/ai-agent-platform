@@ -156,6 +156,55 @@ describe("production deployment security contracts", () => {
     expect(dockerIgnore).toContain("!**/.env.example");
   });
 
+  it("limits isolated assistant E2E credentials to the seed migrator", () => {
+    const base = read("compose.yaml");
+    const override = read("compose.e2e.yaml");
+    const webService = base.split("\n  web:\n")[1]?.split("\n  proxy:\n")[0];
+    const seedKeys = [
+      "E2E_CUSTOMER_PASSWORD",
+      "E2E_STAFF_PASSWORD",
+      "E2E_ADMIN_PASSWORD",
+      "E2E_PENDING_CUSTOMER_SESSION_TOKEN",
+      "E2E_DISABLED_CUSTOMER_SESSION_TOKEN",
+      "E2E_STAFF_SESSION_TOKEN",
+      "E2E_ROLE_TARGET_SESSION_TOKEN",
+      "E2E_ADMIN_SESSION_TOKEN",
+      "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
+      "E2E_REVOKED_SESSION_TOKEN",
+      "E2E_REPLACEMENT_PASSWORD",
+    ];
+
+    expect(webService).toBeDefined();
+    expect(webService).not.toContain("env_file:");
+    expect(webService).not.toContain("E2E_");
+    expect(override).not.toContain("env_file:");
+    expect(override).not.toMatch(/^\s{2}web:/mu);
+    const configuredKeys = [
+      ...override.matchAll(/^\s{6}(E2E_[A-Z_]+):/gmu),
+    ].map((match) => match[1]);
+    expect(configuredKeys).toEqual(seedKeys);
+    for (const key of seedKeys) {
+      expect(override).toContain(`${key}: \${${key}:?`);
+    }
+    expect(override).not.toMatch(
+      /(?:BACKUP_|RUNTIME_|BETTER_AUTH_|POSTGRES_|MIGRATOR_)/u,
+    );
+  });
+
+  it("enforces portable 0600 permissions for new and reused E2E env files", () => {
+    const runner = read("docs/testing/run-assistant-experience-e2e.sh");
+    const creationBoundary = runner.indexOf("\nfi\n");
+    expect(creationBoundary).toBeGreaterThan(-1);
+    const afterCreateOrReuse = runner.slice(creationBoundary + 4);
+    expect(afterCreateOrReuse).toContain('chmod 600 "$env_file"');
+    expect(afterCreateOrReuse).toContain('stat -f %Lp "$env_file"');
+    expect(afterCreateOrReuse).toContain('stat -c %a "$env_file"');
+    expect(afterCreateOrReuse).toMatch(
+      /\[ "\$env_permissions" = "600" \][\s\S]*exit 1/u,
+    );
+    expect(afterCreateOrReuse).not.toMatch(/cat\s+"?\$env_file"?/u);
+  });
+
   it("rejects unknown hosts before forwarding and preserves approved Host ports", () => {
     const nginx = read("infra/nginx/default.conf.template");
     const compose = read("compose.yaml");

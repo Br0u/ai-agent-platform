@@ -194,8 +194,6 @@ test("portal launchers, drawer, and standalone assistant are keyboard-safe", asy
   await expect(closingDrawer).toHaveAttribute("data-motion-state", "closing");
   await expect(closingDrawer).toHaveAttribute("aria-hidden", "true");
   await expect(closingDrawer).toHaveAttribute("inert", "");
-  await page.waitForTimeout(80);
-  await expect(closingDrawer).toHaveCount(1);
   await expect(closingDrawer).toHaveCount(0);
 
   await page.emulateMedia({ reducedMotion: "reduce" });

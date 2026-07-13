@@ -25,7 +25,7 @@ pnpm format:check
 pnpm build
 ```
 
-最终结果：UI 75 passed；Web 754 passed / 35 skipped；Database 104 passed / 12 skipped；typecheck、lint、format、build 均 exit 0。Database skipped 项为未提供 `TEST_DATABASE_URL` 的破坏性集成测试，Docker E2E 使用独立数据库补足浏览器链路验收。
+最终结果：UI 75 passed；Web 755 passed / 35 skipped；Database 106 passed / 12 skipped；typecheck、lint、format、build 均 exit 0。Database skipped 项为未提供 `TEST_DATABASE_URL` 的破坏性集成测试，Docker E2E 使用独立数据库补足浏览器链路验收。
 
 ## 浏览器与容器证据
 
@@ -37,25 +37,27 @@ sh docs/testing/run-assistant-experience-e2e.sh
 
 最终结果：6 passed，exit 0。
 
-| 项目 | 1440×1000 | 390×844 |
-| --- | --- | --- |
-| 门户顶栏入口、浮动入口、抽屉 | 通过 | 通过 |
-| 抽屉 220ms 进入、160ms 退出、消息 180ms 进入 | 通过 | 通过 |
-| closing 阶段保留 DOM、`aria-hidden`、`inert`，结束后卸载 | 通过 | 通过 |
-| 抽屉焦点、Escape、精确焦点返回、完整工作区链接 | 通过 | 通过 |
-| `/assistant` composer 聚焦、无重复浮动 M | 通过 | 通过 |
-| `/admin/assistant` 登录保护、管理员上下文、后台导航 | 通过 | 通过 |
-| `/login`、`/register`、`/staff/login`、`/staff/two-factor` | 通过 | 通过 |
-| `/staff/change-password`、`/staff/re-auth`、已设置 TOTP 页面 | 通过 | 通过 |
-| `scrollWidth === innerWidth` | 通过 | 通过 |
-| 控制台 error / pageerror | 0 / 0 | 0 / 0 |
-| 本地 image、font、script、stylesheet 失败 | 0 | 0 |
+| 项目                                                         | 1440×1000 | 390×844 |
+| ------------------------------------------------------------ | --------- | ------- |
+| 门户顶栏入口、浮动入口、抽屉                                 | 通过      | 通过    |
+| 抽屉 220ms 进入、160ms 退出、消息 180ms 进入                 | 通过      | 通过    |
+| closing 阶段保留 DOM、`aria-hidden`、`inert`，结束后卸载     | 通过      | 通过    |
+| 抽屉焦点、Escape、精确焦点返回、完整工作区链接               | 通过      | 通过    |
+| `/assistant` composer 聚焦、无重复浮动 M                     | 通过      | 通过    |
+| `/admin/assistant` 登录保护、管理员上下文、后台导航          | 通过      | 通过    |
+| `/login`、`/register`、`/staff/login`、`/staff/two-factor`   | 通过      | 通过    |
+| `/staff/change-password`、`/staff/re-auth`、已设置 TOTP 页面 | 通过      | 通过    |
+| `scrollWidth === innerWidth`                                 | 通过      | 通过    |
+| 控制台 error / pageerror                                     | 0 / 0     | 0 / 0   |
+| 本地 image、font、script、stylesheet 失败                    | 0         | 0       |
 
-正常动态偏好下，抽屉只过渡 transform 与 opacity：进入 220ms、最大位移 12px，退出 160ms；新消息以 180ms opacity 与 6px 位移进入。快速重开会取消旧退出定时器，组件卸载会清理 timer 与 animation frame。reduced-motion 下莫比乌斯动画为静态，抽屉 transition、transform 与消息 animation 均被移除，关闭后立即卸载。纯键盘检查覆盖顶栏入口、浮动入口、抽屉输入、完整工作区链接、完整页 composer、后台导航和认证表单；所有目标均显示非零 focus outline。
+正常动态偏好下，抽屉只过渡 transform 与 opacity：进入 220ms、最大位移 12px，退出 160ms；新消息以 180ms opacity 与 6px 位移进入。快速重开会取消旧退出定时器，组件卸载会清理 timer 与 animation frame。输入框只在 `entering` 阶段获得焦点，`entering → open` 不会从用户已 Tab 到的控件抢回焦点；reduced-motion 也先完成一次无动画焦点移交，再立即进入 open，关闭后立即卸载。reduced-motion 下莫比乌斯动画为静态，抽屉 transition、transform 与消息 animation 均被移除。纯键盘检查覆盖顶栏入口、浮动入口、抽屉输入、完整工作区链接、完整页 composer、后台导航和认证表单；所有目标均显示非零 focus outline。
 
 Playwright 报告与桌面/移动截图保存在被忽略的 `artifacts/playwright/`。人工对照 `agent-experience-brand-spec.md` 检查门户抽屉、独立助理、深靛后台和认证壳层，未发现新的阻塞性视觉偏差。
 
 凭据只存在于被忽略、权限为 0600 的 `.env.e2e`，本文不记录任何明文凭据。每类密码、密钥和 session token 均独立随机生成；Better Auth URL 和 origins 只指向 `http://127.0.0.1:8080` 代理。
+
+E2E runner 无论创建还是复用 `.env.e2e`，都会执行 `chmod 600`，再使用 BSD `stat -f %Lp` 或 GNU `stat -c %a` 验证权限，不满足 600 即退出且不打印文件内容。宿主进程仅 source 该文件用于 Compose 变量替换与 Playwright fixture；Compose override 不再使用 `env_file`。Web 容器只接收 base Compose 显式声明的运行时变量，migrate override 只显式接收 seed 所需的 11 个 `E2E_*` 键，不接收 backup、runtime、Better Auth 或其他宿主凭据。
 
 ## 发现并修复的缺陷
 
@@ -67,6 +69,8 @@ Playwright 报告与桌面/移动截图保存在被忽略的 `artifacts/playwrig
 - 旧 reduced-motion E2E 将全部测试强制设为 reduce，只能证明“没有动画”，无法证明正常模式真的实现了动画。改为默认 no-preference，明确检查抽屉 220ms、消息 180ms 和 closing 160ms 生命周期，再在同一真实浏览器流程中独立切换 reduce 检查静态状态。
 - 抽屉原本在关闭时立即卸载，缺少退出态，也无法安全处理快速重开。增加 `entering → open → closing → unmounted` presence 生命周期；closing 立即不可交互并回焦精确触发器，160ms 后才卸载，快速重开与组件卸载都会取消旧任务。
 - reduced-motion 的初版规则选择器权重低于 `[data-motion-state="open"]`，真实 Chromium 仍计算出 identity transform。增加 CSS 契约 RED 后提高 reduced 选择器权重，最终桌面和移动均得到 `transform: none` 与零 transition。
+- E2E Compose 初版通过 `env_file` 把整份 `.env.e2e` 注入 migrate 和 Web，超出 seed 与运行时最小权限。改为只给 migrate 显式映射 11 个 seed 键，Web 完全依赖 base Compose 的显式运行时映射；部署合同锁定无 `env_file`、无 Web E2E secret 和精确键集合。
+- `.env.e2e` 初版只在新建时依靠 umask，复用文件没有权限收敛与校验。runner 现对两条路径都强制 0600，并以 BSD/GNU portable stat 失败即停。
 
 上述 Docker 边界均增加静态 deployment contract 回归。首次拉取官方固定 Node 基础镜像和安装项目锁定的 Playwright Chromium 时遇到网络中断；缓存官方镜像 digest `sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd`、完成 Chromium 安装后，仍从完整脚本重新开始验收。
 

@@ -22,7 +22,7 @@ export function AssistantPanel({
   const overLimit = Array.from(session.draft.trim()).length > 500;
 
   useEffect(() => {
-    if (motionState === "entering" || motionState === "open") {
+    if (motionState === "entering") {
       inputRef.current?.focus();
     }
   }, [motionState]);

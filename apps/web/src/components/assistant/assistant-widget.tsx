@@ -31,6 +31,7 @@ export function AssistantWidget({
   const launcherRef = useRef<HTMLButtonElement>(null);
   const animationFrameRef = useRef<number | null>(null);
   const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transitionVersionRef = useRef(0);
   const [motionState, setMotionState] =
     useState<AssistantMotionState>("unmounted");
   const [previouslyOpen, setPreviouslyOpen] = useState(experience.session.open);
@@ -40,9 +41,7 @@ export function AssistantWidget({
     setPreviouslyOpen(experience.session.open);
     setMotionState(
       experience.session.open
-        ? reduceMotion
-          ? "open"
-          : "entering"
+        ? "entering"
         : reduceMotion
           ? "unmounted"
           : "closing",
@@ -50,6 +49,8 @@ export function AssistantWidget({
   }
 
   useEffect(() => {
+    const transitionVersion = transitionVersionRef.current + 1;
+    transitionVersionRef.current = transitionVersion;
     const clearScheduledWork = () => {
       if (animationFrameRef.current !== null) {
         cancelAnimationFrame(animationFrameRef.current);
@@ -63,11 +64,21 @@ export function AssistantWidget({
 
     clearScheduledWork();
     if (experience.session.open) {
-      if (!reduceMotion && motionState === "entering") {
-        animationFrameRef.current = requestAnimationFrame(() => {
-          animationFrameRef.current = null;
-          setMotionState("open");
-        });
+      if (motionState === "entering") {
+        if (reduceMotion) {
+          queueMicrotask(() => {
+            if (transitionVersionRef.current === transitionVersion) {
+              setMotionState("open");
+            }
+          });
+        } else {
+          animationFrameRef.current = requestAnimationFrame(() => {
+            animationFrameRef.current = null;
+            if (transitionVersionRef.current === transitionVersion) {
+              setMotionState("open");
+            }
+          });
+        }
       }
     } else if (!reduceMotion && motionState === "closing") {
       exitTimerRef.current = setTimeout(() => {
@@ -76,7 +87,12 @@ export function AssistantWidget({
       }, ASSISTANT_EXIT_DURATION_MS);
     }
 
-    return clearScheduledWork;
+    return () => {
+      if (transitionVersionRef.current === transitionVersion) {
+        transitionVersionRef.current += 1;
+      }
+      clearScheduledWork();
+    };
   }, [experience.session.open, motionState, reduceMotion]);
 
   const showPanel = motionState !== "unmounted";
