@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+import math
 
 import pytest
 from pydantic import SecretStr, ValidationError
@@ -28,6 +29,7 @@ def isolated_agent_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
     }
     for name in controlled_names:
         monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name.lower(), raising=False)
     yield
 
 
@@ -44,6 +46,28 @@ def test_runtime_requires_internal_security_key(
 
     with pytest.raises(ValidationError):
         RuntimeSettings(_env_file=None)
+
+
+@pytest.mark.parametrize("invalid_key", ["", "   "])
+def test_runtime_rejects_blank_internal_security_key_without_leaking_it(
+    invalid_key: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OS_SECURITY_KEY", invalid_key)
+    monkeypatch.setenv("AGNO_DATABASE_URL", RUNTIME_URL)
+
+    with pytest.raises(ValidationError) as error:
+        RuntimeSettings(_env_file=None)
+
+    assert "input_value" not in repr(error.value)
+
+
+def test_runtime_accepts_non_blank_internal_security_key(
+    valid_runtime_env: None,
+) -> None:
+    settings = RuntimeSettings(_env_file=None)
+
+    assert settings.os_security_key.get_secret_value() == "internal-security-key"
 
 
 def test_runtime_requires_runtime_database_url(
@@ -79,6 +103,83 @@ def test_migration_requires_only_migrator_database_url(
 def test_migration_requires_migrator_database_url() -> None:
     with pytest.raises(ValidationError):
         MigrationSettings(_env_file=None)
+
+
+def test_lowercase_variables_do_not_satisfy_required_runtime_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("os_security_key", "lowercase-security-key")
+    monkeypatch.setenv("agno_database_url", RUNTIME_URL)
+
+    with pytest.raises(ValidationError):
+        RuntimeSettings(_env_file=None)
+
+
+def test_lowercase_variable_does_not_satisfy_migration_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("agno_migrator_database_url", MIGRATOR_URL)
+
+    with pytest.raises(ValidationError):
+        MigrationSettings(_env_file=None)
+
+
+def test_uppercase_variables_win_when_both_cases_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lowercase_values = {
+        "os_security_key": " ",
+        "agno_database_url": "postgresql://unsafe:unsafe@db/platform",
+        "agno_schema": "public",
+        "agent_enabled": "true",
+        "health_ready_cache_ttl_seconds": "-1",
+        "health_db_probe_timeout_seconds": "nan",
+    }
+    uppercase_values = {
+        "OS_SECURITY_KEY": "uppercase-security-key",
+        "AGNO_DATABASE_URL": RUNTIME_URL,
+        "AGNO_SCHEMA": "agno",
+        "AGENT_ENABLED": "false",
+        "HEALTH_READY_CACHE_TTL_SECONDS": "4",
+        "HEALTH_DB_PROBE_TIMEOUT_SECONDS": "2",
+    }
+    for name, value in lowercase_values.items():
+        monkeypatch.setenv(name, value)
+    for name, value in uppercase_values.items():
+        monkeypatch.setenv(name, value)
+
+    settings = RuntimeSettings(_env_file=None)
+
+    assert settings.os_security_key.get_secret_value() == "uppercase-security-key"
+    assert settings.agno_database_url.get_secret_value() == RUNTIME_URL
+    assert settings.agno_schema == "agno"
+    assert settings.agent_enabled is False
+    assert settings.health_ready_cache_ttl_seconds == 4
+    assert settings.health_db_probe_timeout_seconds == 2
+
+
+def test_all_fields_use_explicit_uppercase_environment_aliases() -> None:
+    runtime_aliases = {
+        name: field.validation_alias
+        for name, field in RuntimeSettings.model_fields.items()
+    }
+    migration_aliases = {
+        name: field.validation_alias
+        for name, field in MigrationSettings.model_fields.items()
+    }
+
+    assert runtime_aliases == {
+        "agno_schema": "AGNO_SCHEMA",
+        "os_security_key": "OS_SECURITY_KEY",
+        "agno_database_url": "AGNO_DATABASE_URL",
+        "agent_enabled": "AGENT_ENABLED",
+        "health_ready_cache_ttl_seconds": "HEALTH_READY_CACHE_TTL_SECONDS",
+        "health_db_probe_timeout_seconds": "HEALTH_DB_PROBE_TIMEOUT_SECONDS",
+    }
+    assert migration_aliases == {
+        "agno_schema": "AGNO_SCHEMA",
+        "agno_migrator_database_url": "AGNO_MIGRATOR_DATABASE_URL",
+    }
 
 
 @pytest.mark.parametrize(
@@ -192,7 +293,7 @@ def test_schema_rejects_environment_override(
     "name",
     ["HEALTH_READY_CACHE_TTL_SECONDS", "HEALTH_DB_PROBE_TIMEOUT_SECONDS"],
 )
-@pytest.mark.parametrize("value", ["0", "-1"])
+@pytest.mark.parametrize("value", ["0", "-1", "inf", "-inf", "nan"])
 def test_health_settings_must_be_positive(
     name: str,
     value: str,
@@ -210,6 +311,8 @@ def test_health_settings_have_positive_defaults(valid_runtime_env: None) -> None
 
     assert settings.health_ready_cache_ttl_seconds > 0
     assert settings.health_db_probe_timeout_seconds > 0
+    assert math.isfinite(settings.health_ready_cache_ttl_seconds)
+    assert math.isfinite(settings.health_db_probe_timeout_seconds)
 
 
 def test_secrets_are_wrapped_and_hidden_from_repr(valid_runtime_env: None) -> None:
