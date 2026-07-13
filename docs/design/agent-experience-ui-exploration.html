@@ -1,0 +1,1727 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Agent Platform · Agent Experience UI Directions</title>
+    <link rel="icon" href="data:," />
+    <!--
+      Artifact: high-fidelity interactive design exploration, not production UI.
+      System: existing AI Agent Platform blue/indigo/violet tokens.
+      Type: brand script + industrial display + Chinese body + mono metadata.
+      Scale: 40 / 28 / 20 / 16 / 14 / 12.
+      Grid: 8px rhythm, hairline boundaries, 44px minimum controls.
+      Motion: 160ms press, 220ms panels, 6s Mobius loop, reduced-motion safe.
+      Asset rule: local Huakun and M assets only; no invented product imagery.
+    -->
+    <style>
+      @font-face {
+        font-family: "Kaushan Local";
+        src: url("../../apps/web/src/assets/fonts/kaushan-script/KaushanScript-Regular.ttf")
+          format("truetype");
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+      }
+
+      :root {
+        --blue: #3a67b1;
+        --cyan: #56c0f8;
+        --structural: #4c91eb;
+        --violet: #9277dc;
+        --ink: #101838;
+        --muted: #566078;
+        --canvas: #eef1f6;
+        --surface: #ffffff;
+        --line: #dce3ef;
+        --dark: #101838;
+        --danger: #d91f26;
+        --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+        --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+        --font-display: "DIN Alternate", "Arial Narrow", "PingFang SC", sans-serif;
+        --font-body: "PingFang SC", "Microsoft YaHei", sans-serif;
+        --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        min-width: 320px;
+        background: var(--canvas);
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        color: var(--ink);
+        background: var(--canvas);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+
+      button,
+      a {
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      button {
+        min-height: 44px;
+      }
+
+      button:focus-visible,
+      a:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible {
+        outline: 3px solid color-mix(in srgb, var(--violet) 74%, white);
+        outline-offset: 3px;
+      }
+
+      .design-toolbar {
+        position: sticky;
+        z-index: 100;
+        top: 0;
+        display: grid;
+        grid-template-columns: minmax(280px, 1fr) auto auto;
+        gap: 24px;
+        align-items: center;
+        min-height: 76px;
+        padding: 12px clamp(20px, 4vw, 56px);
+        border-bottom: 1px solid #cdd5e2;
+        background: color-mix(in srgb, #f4f6f9 96%, transparent);
+        backdrop-filter: blur(12px);
+      }
+
+      .design-title {
+        min-width: 0;
+      }
+
+      .design-title strong,
+      .design-title span {
+        display: block;
+      }
+
+      .design-title strong {
+        font: 700 14px/1.3 var(--font-display);
+        letter-spacing: -0.01em;
+      }
+
+      .design-title span {
+        overflow: hidden;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .segmented {
+        display: inline-flex;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid #cfd7e5;
+        background: #fff;
+      }
+
+      .segmented button {
+        min-width: 44px;
+        border: 0;
+        color: var(--muted);
+        background: transparent;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 700;
+        transition:
+          color 160ms ease,
+          background-color 160ms ease,
+          transform 160ms var(--ease-out);
+      }
+
+      .segmented button[aria-pressed="true"] {
+        color: white;
+        background: var(--dark);
+      }
+
+      .segmented button:active {
+        transform: scale(0.97);
+      }
+
+      .prototype-stage {
+        padding: clamp(18px, 3vw, 44px);
+      }
+
+      .direction-note {
+        display: grid;
+        grid-template-columns: 160px minmax(0, 1fr) auto;
+        gap: 24px;
+        align-items: end;
+        width: min(100%, 1480px);
+        margin: 0 auto 16px;
+        color: var(--muted);
+      }
+
+      .direction-note__index {
+        color: var(--blue);
+        font: 800 12px/1 var(--font-mono);
+        letter-spacing: 0.12em;
+      }
+
+      .direction-note h1 {
+        margin: 5px 0 0;
+        color: var(--ink);
+        font: 700 clamp(24px, 3vw, 38px)/1 var(--font-display);
+        letter-spacing: -0.035em;
+      }
+
+      .direction-note p {
+        max-width: 520px;
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.65;
+        text-wrap: pretty;
+      }
+
+      .prototype-frame {
+        position: relative;
+        width: min(100%, 1480px);
+        min-height: 810px;
+        margin: 0 auto;
+        overflow: hidden;
+        border: 1px solid #cfd8e6;
+        background: var(--surface);
+        box-shadow: 0 28px 72px rgb(16 24 56 / 12%);
+      }
+
+      .product-shell {
+        min-height: 810px;
+        background: var(--product-canvas, #f7f8fb);
+      }
+
+      .product-header {
+        position: relative;
+        z-index: 20;
+        display: grid;
+        grid-template-columns: minmax(240px, 1fr) auto minmax(250px, 1fr);
+        align-items: center;
+        min-height: 70px;
+        padding: 0 30px;
+        border-bottom: 1px solid var(--product-line, var(--line));
+        background: var(--header-bg, white);
+      }
+
+      .product-header::after {
+        position: absolute;
+        right: 0;
+        bottom: -1px;
+        left: 0;
+        height: 2px;
+        background: linear-gradient(
+          90deg,
+          var(--blue) 0 40%,
+          var(--cyan) 40% 62%,
+          var(--violet) 62% 78%,
+          transparent 78%
+        );
+        content: "";
+      }
+
+      .brand-lockup {
+        display: inline-grid;
+        justify-self: start;
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .brand-lockup strong {
+        font: 400 22px/1 "Kaushan Local", cursive;
+      }
+
+      .brand-lockup small {
+        margin-top: 2px;
+        color: var(--muted);
+        font: 700 8px/1.2 var(--font-mono);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .product-nav {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .product-nav a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .product-actions {
+        display: flex;
+        gap: 10px;
+        justify-self: end;
+      }
+
+      .assistant-entry,
+      .login-entry,
+      .primary-button,
+      .ghost-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 9px;
+        min-height: 44px;
+        border: 1px solid transparent;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 750;
+        text-decoration: none;
+        transition:
+          transform 160ms var(--ease-out),
+          color 160ms ease,
+          background-color 160ms ease,
+          border-color 160ms ease;
+      }
+
+      .assistant-entry {
+        padding: 0 15px;
+        border-color: color-mix(in srgb, var(--violet) 30%, var(--line));
+        color: var(--ink);
+        background: white;
+      }
+
+      .login-entry,
+      .primary-button {
+        padding: 0 18px;
+        color: white;
+        background: var(--blue);
+      }
+
+      .ghost-button {
+        padding: 0 16px;
+        border-color: var(--line);
+        color: var(--ink);
+        background: white;
+      }
+
+      .assistant-entry:active,
+      .login-entry:active,
+      .primary-button:active,
+      .ghost-button:active,
+      .composer button:active,
+      .floating-m:active {
+        transform: scale(0.97);
+      }
+
+      .mobius {
+        width: 24px;
+        height: 24px;
+        flex: 0 0 24px;
+        animation: mobius-loop 6s linear infinite;
+      }
+
+      @keyframes mobius-loop {
+        to {
+          transform: rotate(1turn);
+        }
+      }
+
+      .screen {
+        display: none;
+        min-height: 740px;
+      }
+
+      body[data-screen="chat"] .screen--chat,
+      body[data-screen="admin"] .screen--admin,
+      body[data-screen="auth"] .screen--auth {
+        display: block;
+      }
+
+      body[data-screen="admin"] .product-header,
+      body[data-screen="auth"] .product-header,
+      body[data-screen="chat"] .floating-m,
+      body[data-screen="admin"] .floating-m,
+      body[data-screen="auth"] .floating-m {
+        display: none;
+      }
+
+      body[data-screen="admin"] .admin-layout,
+      body[data-screen="auth"] .auth-shell {
+        min-height: 810px;
+      }
+
+      .chat-layout {
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr);
+        min-height: 740px;
+      }
+
+      .session-rail {
+        padding: 24px 18px;
+        border-right: 1px solid var(--product-line, var(--line));
+        background: var(--rail-bg, #f2f5fa);
+      }
+
+      .rail-label,
+      .section-kicker,
+      .metadata {
+        color: var(--muted);
+        font: 750 10px/1.3 var(--font-mono);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .new-chat {
+        width: 100%;
+        margin: 14px 0 26px;
+      }
+
+      .session-list {
+        display: grid;
+        gap: 6px;
+      }
+
+      .session-item {
+        display: grid;
+        gap: 5px;
+        min-height: 64px;
+        padding: 12px;
+        border: 1px solid transparent;
+        color: var(--muted);
+        background: transparent;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .session-item strong {
+        overflow: hidden;
+        color: var(--ink);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .session-item small {
+        font: 700 9px/1 var(--font-mono);
+      }
+
+      .session-item[aria-current="true"] {
+        border-color: var(--line);
+        background: white;
+      }
+
+      .chat-workspace {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        min-width: 0;
+        min-height: 740px;
+      }
+
+      .workspace-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 66px;
+        padding: 0 clamp(22px, 4vw, 52px);
+        border-bottom: 1px solid var(--product-line, var(--line));
+      }
+
+      .agent-identity {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .agent-identity img,
+      .message-avatar {
+        object-fit: contain;
+        background: #edf3ff;
+      }
+
+      .agent-identity img {
+        width: 36px;
+        height: 36px;
+        padding: 5px;
+      }
+
+      .agent-identity strong,
+      .agent-identity small {
+        display: block;
+      }
+
+      .agent-identity strong {
+        font: 750 14px/1.3 var(--font-display);
+      }
+
+      .agent-identity small {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .service-state {
+        display: inline-flex;
+        gap: 7px;
+        align-items: center;
+        min-height: 30px;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        font: 700 9px/1 var(--font-mono);
+      }
+
+      .service-state::before {
+        width: 7px;
+        height: 7px;
+        background: #d6a83f;
+        border-radius: 50%;
+        content: "";
+      }
+
+      .conversation {
+        width: min(100%, 820px);
+        margin: 0 auto;
+        padding: 56px clamp(22px, 4vw, 52px) 28px;
+      }
+
+      .welcome {
+        margin-bottom: 34px;
+      }
+
+      .welcome h2 {
+        max-width: 600px;
+        margin: 10px 0 14px;
+        font: 750 clamp(30px, 4vw, 46px)/1.05 var(--font-display);
+        letter-spacing: -0.035em;
+        text-wrap: balance;
+      }
+
+      .welcome p {
+        max-width: 620px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.75;
+        text-wrap: pretty;
+      }
+
+      .suggestions {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 24px;
+      }
+
+      .suggestion {
+        min-height: 78px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        color: var(--ink);
+        background: transparent;
+        text-align: left;
+        cursor: pointer;
+        font-size: 12px;
+        line-height: 1.5;
+        transition:
+          transform 160ms var(--ease-out),
+          border-color 160ms ease,
+          background-color 160ms ease;
+      }
+
+      .suggestion:active {
+        transform: scale(0.98);
+      }
+
+      .message {
+        display: grid;
+        grid-template-columns: 36px minmax(0, 1fr);
+        gap: 13px;
+        align-items: start;
+        padding: 20px 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .message-avatar {
+        width: 36px;
+        height: 36px;
+        padding: 5px;
+      }
+
+      .message p {
+        margin: 2px 0 0;
+        color: var(--ink);
+        font-size: 13px;
+        line-height: 1.75;
+      }
+
+      .composer-wrap {
+        padding: 0 clamp(22px, 4vw, 52px) 30px;
+      }
+
+      .composer {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: end;
+        width: min(100%, 820px);
+        min-height: 82px;
+        margin: 0 auto;
+        padding: 12px 12px 12px 18px;
+        border: 1px solid #bdc9dc;
+        background: white;
+        box-shadow: 0 12px 30px rgb(16 24 56 / 8%);
+      }
+
+      .composer textarea {
+        min-height: 52px;
+        resize: none;
+        border: 0;
+        outline: 0;
+        color: var(--ink);
+        background: transparent;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      .composer button {
+        width: 52px;
+        border: 0;
+        color: white;
+        background: var(--blue);
+        cursor: pointer;
+        font-weight: 800;
+        transition: transform 160ms var(--ease-out);
+      }
+
+      .admin-layout {
+        display: grid;
+        grid-template-columns: 226px minmax(0, 1fr);
+        min-height: 740px;
+      }
+
+      .admin-rail {
+        padding: 25px 16px;
+        border-right: 1px solid var(--product-line, var(--line));
+        background: var(--admin-rail-bg, #edf2f8);
+      }
+
+      .admin-rail__brand {
+        margin: 0 10px 24px;
+        font: 750 15px/1.2 var(--font-display);
+      }
+
+      .admin-group {
+        margin-top: 24px;
+      }
+
+      .admin-group > span {
+        display: block;
+        margin: 0 10px 7px;
+        color: var(--muted);
+        font: 750 9px/1 var(--font-mono);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .admin-link {
+        display: flex;
+        align-items: center;
+        min-height: 42px;
+        padding: 0 11px;
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .admin-link[aria-current="page"] {
+        color: var(--ink);
+        background: white;
+        box-shadow: inset 3px 0 0 var(--violet);
+      }
+
+      .admin-link[aria-disabled="true"] {
+        cursor: not-allowed;
+        opacity: 0.48;
+      }
+
+      .admin-main {
+        min-width: 0;
+        padding: 34px clamp(24px, 4vw, 54px) 52px;
+      }
+
+      .admin-head {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 24px;
+        padding-bottom: 24px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .admin-head h2 {
+        margin: 7px 0 0;
+        font: 750 32px/1 var(--font-display);
+        letter-spacing: -0.03em;
+      }
+
+      .status-strip {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        margin: 24px 0;
+        border: 1px solid var(--line);
+        background: white;
+      }
+
+      .status-cell {
+        min-height: 100px;
+        padding: 18px;
+        border-right: 1px solid var(--line);
+      }
+
+      .status-cell:last-child {
+        border-right: 0;
+      }
+
+      .status-cell strong,
+      .status-cell small {
+        display: block;
+      }
+
+      .status-cell strong {
+        margin-top: 14px;
+        font: 750 15px/1.2 var(--font-display);
+      }
+
+      .status-cell small {
+        margin-top: 5px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .admin-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(320px, 0.8fr);
+        gap: 18px;
+      }
+
+      .admin-panel {
+        min-height: 330px;
+        padding: 22px;
+        border: 1px solid var(--line);
+        background: white;
+      }
+
+      .admin-panel h3 {
+        margin: 7px 0 22px;
+        font: 750 18px/1.2 var(--font-display);
+      }
+
+      .config-row {
+        display: grid;
+        grid-template-columns: 130px minmax(0, 1fr) auto;
+        gap: 18px;
+        align-items: center;
+        min-height: 58px;
+        border-top: 1px solid var(--line);
+        font-size: 12px;
+      }
+
+      .config-row strong {
+        font-size: 12px;
+      }
+
+      .config-row span {
+        color: var(--muted);
+      }
+
+      .config-row code {
+        color: var(--blue);
+        font: 700 10px/1 var(--font-mono);
+      }
+
+      .test-console {
+        display: grid;
+        grid-template-rows: 1fr auto;
+        min-height: 245px;
+        border: 1px solid var(--line);
+        background: #f7f9fc;
+      }
+
+      .test-console__message {
+        padding: 20px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.7;
+      }
+
+      .test-console__input {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        border-top: 1px solid var(--line);
+        background: white;
+      }
+
+      .test-console__input input {
+        min-width: 0;
+        min-height: 50px;
+        padding: 0 14px;
+        border: 0;
+        outline: 0;
+      }
+
+      .test-console__input button {
+        width: 52px;
+        border: 0;
+        color: white;
+        background: var(--blue);
+      }
+
+      .auth-shell {
+        display: grid;
+        grid-template-columns: minmax(380px, 0.92fr) minmax(420px, 1.08fr);
+        min-height: 740px;
+        background: var(--auth-bg, #f7f8fb);
+      }
+
+      .auth-story {
+        position: relative;
+        display: grid;
+        align-content: space-between;
+        overflow: hidden;
+        padding: 54px;
+        color: white;
+        background: var(--dark);
+      }
+
+      .auth-story::before {
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(rgb(255 255 255 / 8%) 1px, transparent 1px),
+          linear-gradient(90deg, rgb(255 255 255 / 8%) 1px, transparent 1px);
+        background-size: 64px 64px;
+        content: "";
+        mask-image: linear-gradient(to bottom, black, transparent 80%);
+      }
+
+      .auth-story > * {
+        position: relative;
+      }
+
+      .auth-story img {
+        width: 180px;
+        height: auto;
+        padding: 7px 10px;
+        background: white;
+      }
+
+      .auth-story h2 {
+        max-width: 440px;
+        margin: auto 0 18px;
+        font: 750 clamp(34px, 4vw, 54px)/1.05 var(--font-display);
+        letter-spacing: -0.035em;
+        text-wrap: balance;
+      }
+
+      .auth-story p {
+        max-width: 430px;
+        margin: 0;
+        color: rgb(255 255 255 / 70%);
+        font-size: 13px;
+        line-height: 1.75;
+      }
+
+      .auth-form-wrap {
+        display: grid;
+        place-items: center;
+        padding: 54px;
+      }
+
+      .auth-form {
+        width: min(100%, 420px);
+      }
+
+      .auth-form h1 {
+        margin: 8px 0 12px;
+        font: 750 36px/1 var(--font-display);
+        letter-spacing: -0.035em;
+      }
+
+      .auth-form > p {
+        margin: 0 0 28px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.7;
+      }
+
+      .field {
+        display: grid;
+        gap: 8px;
+        margin-top: 18px;
+      }
+
+      .field label {
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .field input {
+        min-height: 48px;
+        padding: 0 14px;
+        border: 1px solid #bdc9dc;
+        color: var(--ink);
+        background: white;
+      }
+
+      .auth-submit {
+        width: 100%;
+        margin-top: 24px;
+      }
+
+      .auth-links {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 18px;
+        font-size: 11px;
+      }
+
+      .auth-links a {
+        color: var(--blue);
+      }
+
+      .floating-m {
+        position: absolute;
+        z-index: 32;
+        right: 22px;
+        bottom: 22px;
+        display: grid;
+        place-items: center;
+        width: 62px;
+        min-height: 62px;
+        padding: 5px;
+        border: 1px solid color-mix(in srgb, var(--blue) 38%, white);
+        border-radius: 50%;
+        background: white;
+        box-shadow: 0 14px 34px rgb(16 24 56 / 20%);
+        cursor: pointer;
+        transition:
+          transform 160ms var(--ease-out),
+          box-shadow 160ms ease;
+      }
+
+      .floating-m img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+
+      .assistant-drawer {
+        position: absolute;
+        z-index: 40;
+        top: 0;
+        right: 0;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        width: min(420px, 100%);
+        height: 100%;
+        border-left: 1px solid var(--line);
+        background: white;
+        box-shadow: -24px 0 60px rgb(16 24 56 / 18%);
+        transform: translateX(0);
+        transition:
+          transform 220ms var(--ease-out),
+          opacity 180ms ease;
+      }
+
+      .assistant-drawer[aria-hidden="true"] {
+        pointer-events: none;
+        opacity: 0;
+        transform: translateX(100%);
+      }
+
+      .drawer-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 70px;
+        padding: 0 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .drawer-head strong {
+        font: 750 15px/1.2 var(--font-display);
+      }
+
+      .icon-button {
+        width: 44px;
+        border: 0;
+        color: var(--ink);
+        background: transparent;
+        cursor: pointer;
+        font-size: 24px;
+      }
+
+      .drawer-body {
+        display: grid;
+        align-content: center;
+        justify-items: center;
+        padding: 34px;
+        text-align: center;
+      }
+
+      .drawer-body img {
+        width: 94px;
+        height: 94px;
+        object-fit: contain;
+      }
+
+      .drawer-body h3 {
+        margin: 18px 0 10px;
+        font: 750 26px/1.1 var(--font-display);
+      }
+
+      .drawer-body p {
+        max-width: 310px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.7;
+      }
+
+      .drawer-actions {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        padding: 18px;
+        border-top: 1px solid var(--line);
+      }
+
+      .drawer-actions input {
+        min-width: 0;
+        padding: 0 13px;
+        border: 1px solid #bdc9dc;
+      }
+
+      /* A · Precision Grid */
+      body[data-variant="a"] {
+        --product-canvas: #f7f8fb;
+        --product-line: #dce3ef;
+        --header-bg: #ffffff;
+        --rail-bg: #f1f4f8;
+        --admin-rail-bg: #edf2f8;
+        --auth-bg: #f7f8fb;
+      }
+
+      body[data-variant="a"] .prototype-frame,
+      body[data-variant="a"] .segmented,
+      body[data-variant="a"] .assistant-entry,
+      body[data-variant="a"] .login-entry,
+      body[data-variant="a"] .primary-button,
+      body[data-variant="a"] .ghost-button,
+      body[data-variant="a"] .session-item,
+      body[data-variant="a"] .suggestion,
+      body[data-variant="a"] .composer,
+      body[data-variant="a"] .admin-panel,
+      body[data-variant="a"] .field input,
+      body[data-variant="a"] .service-state {
+        border-radius: 4px;
+      }
+
+      /* B · Control Plane */
+      body[data-variant="b"] {
+        --product-canvas: #f2f5fa;
+        --product-line: #d7deea;
+        --header-bg: #101838;
+        --rail-bg: #172141;
+        --admin-rail-bg: #172141;
+        --auth-bg: #eef2f8;
+      }
+
+      body[data-variant="b"] .product-header,
+      body[data-variant="b"] .product-header .brand-lockup small,
+      body[data-variant="b"] .product-header .product-nav a {
+        color: white;
+      }
+
+      body[data-variant="b"] .assistant-entry {
+        border-color: #465277;
+        color: white;
+        background: #192446;
+      }
+
+      body[data-variant="b"] .session-rail,
+      body[data-variant="b"] .admin-rail,
+      body[data-variant="b"] .admin-rail__brand,
+      body[data-variant="b"] .admin-link[aria-current="page"],
+      body[data-variant="b"] .session-item strong,
+      body[data-variant="b"] .rail-label {
+        color: white;
+      }
+
+      body[data-variant="b"] .session-item[aria-current="true"],
+      body[data-variant="b"] .admin-link[aria-current="page"] {
+        border-color: #455276;
+        background: #243155;
+        box-shadow: inset 3px 0 0 var(--cyan);
+      }
+
+      body[data-variant="b"] .session-item,
+      body[data-variant="b"] .admin-link,
+      body[data-variant="b"] .admin-group > span {
+        color: #aeb9d3;
+      }
+
+      body[data-variant="b"] .prototype-frame,
+      body[data-variant="b"] .assistant-entry,
+      body[data-variant="b"] .login-entry,
+      body[data-variant="b"] .primary-button,
+      body[data-variant="b"] .ghost-button,
+      body[data-variant="b"] .composer,
+      body[data-variant="b"] .admin-panel,
+      body[data-variant="b"] .status-strip,
+      body[data-variant="b"] .field input,
+      body[data-variant="b"] .service-state {
+        border-radius: 10px;
+      }
+
+      body[data-variant="b"] .status-strip {
+        gap: 8px;
+        border: 0;
+        background: transparent;
+      }
+
+      body[data-variant="b"] .status-cell {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: white;
+      }
+
+      /* C · Spatial Agent */
+      body[data-variant="c"] {
+        --product-canvas: #f6f5fa;
+        --product-line: #d8d7e2;
+        --header-bg: #fdfdff;
+        --rail-bg: #eceaf3;
+        --admin-rail-bg: #ebe9f2;
+        --auth-bg: #f5f4f9;
+      }
+
+      body[data-variant="c"] .product-shell {
+        background:
+          linear-gradient(90deg, rgb(76 145 235 / 6%) 1px, transparent 1px),
+          linear-gradient(rgb(76 145 235 / 6%) 1px, transparent 1px),
+          var(--product-canvas);
+        background-size: 72px 72px;
+      }
+
+      body[data-variant="c"] .chat-layout {
+        grid-template-columns: 210px minmax(0, 1fr);
+      }
+
+      body[data-variant="c"] .conversation {
+        width: min(100%, 940px);
+      }
+
+      body[data-variant="c"] .welcome h2 {
+        max-width: 760px;
+        font-size: clamp(40px, 5vw, 64px);
+      }
+
+      body[data-variant="c"] .suggestions {
+        grid-template-columns: 1fr;
+        width: min(100%, 560px);
+      }
+
+      body[data-variant="c"] .suggestion {
+        min-height: 58px;
+      }
+
+      body[data-variant="c"] .assistant-entry,
+      body[data-variant="c"] .login-entry,
+      body[data-variant="c"] .primary-button,
+      body[data-variant="c"] .ghost-button,
+      body[data-variant="c"] .composer,
+      body[data-variant="c"] .field input,
+      body[data-variant="c"] .service-state {
+        border-radius: 999px;
+      }
+
+      body[data-variant="c"] .composer {
+        padding-left: 24px;
+      }
+
+      body[data-variant="c"] .admin-panel,
+      body[data-variant="c"] .status-strip {
+        border-width: 0 0 1px;
+        background: transparent;
+      }
+
+      body[data-variant="c"] .admin-rail {
+        border-right: 0;
+      }
+
+      body[data-variant="c"] .auth-story {
+        margin: 28px;
+        border-radius: 24px;
+      }
+
+      /* D · Selected Hybrid: B admin + C assistant + structured auth */
+      body[data-variant="d"] {
+        --product-canvas: #f6f7fb;
+        --product-line: #d8deea;
+        --header-bg: #ffffff;
+        --rail-bg: #eceaf3;
+        --admin-rail-bg: #172141;
+        --auth-bg: #f3f5f9;
+      }
+
+      body[data-variant="d"] .screen--chat .chat-layout {
+        grid-template-columns: 220px minmax(0, 1fr);
+      }
+
+      body[data-variant="d"] .screen--chat .chat-workspace {
+        background:
+          linear-gradient(90deg, rgb(76 145 235 / 5%) 1px, transparent 1px),
+          linear-gradient(rgb(76 145 235 / 5%) 1px, transparent 1px),
+          #f8f8fc;
+        background-size: 72px 72px;
+      }
+
+      body[data-variant="d"] .screen--chat .conversation {
+        width: min(100%, 940px);
+      }
+
+      body[data-variant="d"] .screen--chat .welcome h2 {
+        max-width: 760px;
+        font-size: clamp(40px, 5vw, 62px);
+      }
+
+      body[data-variant="d"] .screen--chat .suggestions {
+        grid-template-columns: 1fr;
+        width: min(100%, 560px);
+      }
+
+      body[data-variant="d"] .screen--chat .suggestion {
+        min-height: 58px;
+      }
+
+      body[data-variant="d"] .assistant-entry,
+      body[data-variant="d"] .screen--chat .primary-button,
+      body[data-variant="d"] .screen--chat .composer,
+      body[data-variant="d"] .screen--chat .service-state {
+        border-radius: 999px;
+      }
+
+      body[data-variant="d"] .screen--chat .composer {
+        padding-left: 24px;
+      }
+
+      body[data-variant="d"] .admin-rail,
+      body[data-variant="d"] .admin-rail__brand,
+      body[data-variant="d"] .admin-link[aria-current="page"] {
+        color: white;
+      }
+
+      body[data-variant="d"] .admin-link,
+      body[data-variant="d"] .admin-group > span {
+        color: #aeb9d3;
+      }
+
+      body[data-variant="d"] .admin-link[aria-current="page"] {
+        background: #243155;
+        box-shadow: inset 3px 0 0 var(--cyan);
+      }
+
+      body[data-variant="d"] .screen--admin .ghost-button,
+      body[data-variant="d"] .screen--admin .admin-panel,
+      body[data-variant="d"] .screen--admin .status-cell,
+      body[data-variant="d"] .screen--admin .test-console {
+        border-radius: 10px;
+      }
+
+      body[data-variant="d"] .screen--admin .status-strip {
+        gap: 8px;
+        border: 0;
+        background: transparent;
+      }
+
+      body[data-variant="d"] .screen--admin .status-cell {
+        border: 1px solid var(--line);
+        background: white;
+      }
+
+      body[data-variant="d"] .screen--auth .auth-story {
+        background: #101838;
+      }
+
+      body[data-variant="d"] .screen--auth .field input,
+      body[data-variant="d"] .screen--auth .primary-button {
+        border-radius: 4px;
+      }
+
+      @media (hover: hover) and (pointer: fine) {
+        .assistant-entry:hover,
+        .ghost-button:hover,
+        .suggestion:hover {
+          border-color: var(--violet);
+          background: color-mix(in srgb, var(--violet) 6%, white);
+        }
+
+        .login-entry:hover,
+        .primary-button:hover,
+        .composer button:hover,
+        .test-console__input button:hover {
+          background: #315ca2;
+        }
+
+        .floating-m:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 18px 38px rgb(16 24 56 / 24%);
+        }
+      }
+
+      @media (max-width: 980px) {
+        .design-toolbar {
+          grid-template-columns: 1fr;
+          gap: 8px;
+          padding-block: 10px;
+        }
+
+        .direction-note {
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+
+        .product-header {
+          grid-template-columns: 1fr auto;
+          padding-inline: 18px;
+        }
+
+        .product-nav,
+        .login-entry {
+          display: none;
+        }
+
+        .chat-layout,
+        body[data-variant="c"] .chat-layout,
+        .admin-layout,
+        .auth-shell {
+          grid-template-columns: 1fr;
+        }
+
+        .session-rail,
+        .admin-rail,
+        .auth-story {
+          display: none;
+        }
+
+        .admin-grid,
+        .status-strip {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .status-cell:nth-child(2) {
+          border-right: 0;
+        }
+
+        .suggestions {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 620px) {
+        .prototype-stage {
+          padding: 12px;
+        }
+
+        .assistant-entry span,
+        .direction-note p {
+          display: none;
+        }
+
+        .assistant-entry {
+          width: 48px;
+          padding: 0;
+        }
+
+        .floating-m {
+          right: 18px;
+          bottom: 112px;
+          width: 56px;
+          min-height: 56px;
+        }
+
+        .conversation {
+          padding-top: 34px;
+        }
+
+        .welcome h2,
+        body[data-variant="c"] .welcome h2 {
+          font-size: 34px;
+        }
+
+        .admin-grid,
+        .status-strip {
+          grid-template-columns: 1fr;
+        }
+
+        .status-cell {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .auth-form-wrap {
+          padding: 40px 24px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+
+        .mobius {
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+  <body data-screen="chat" data-variant="d">
+    <header class="design-toolbar">
+      <div class="design-title">
+        <strong>Agent Experience · 全局 UI 方向</strong>
+        <span>切换视觉方向与核心页面；所有内容均为设计占位，不代表真实模型已接入。</span>
+      </div>
+      <div aria-label="视觉方向" class="segmented">
+        <button aria-pressed="false" data-variant-button="a" type="button">A</button>
+        <button aria-pressed="false" data-variant-button="b" type="button">B</button>
+        <button aria-pressed="false" data-variant-button="c" type="button">C</button>
+        <button aria-pressed="true" data-variant-button="d" type="button">D</button>
+      </div>
+      <div aria-label="页面预览" class="segmented">
+        <button aria-pressed="true" data-screen-button="chat" type="button">聊天</button>
+        <button aria-pressed="false" data-screen-button="admin" type="button">后台</button>
+        <button aria-pressed="false" data-screen-button="auth" type="button">登录</button>
+      </div>
+    </header>
+
+    <main class="prototype-stage">
+      <section class="direction-note">
+        <div>
+          <span class="direction-note__index" id="direction-index">SELECTED DIRECTION D</span>
+          <h1 id="direction-title">企业智能工作台</h1>
+        </div>
+        <p id="direction-copy">
+          采用控制平面的后台结构、空间智能的聊天体验，以及精密栅格的认证秩序，统一在同一套品牌令牌下。
+        </p>
+        <span class="metadata" id="direction-tags">ENTERPRISE · INTELLIGENT · COHESIVE</span>
+      </section>
+
+      <section class="prototype-frame" aria-label="AI Agent Platform 高保真界面预览">
+        <div class="product-shell">
+          <header class="product-header">
+            <a class="brand-lockup" href="#" aria-label="AI Agent Platform 首页">
+              <strong>AI Agent Platform</strong>
+              <small>Build Enterprise AI Faster</small>
+            </a>
+            <nav class="product-nav" aria-label="门户导航">
+              <a href="#">产品</a>
+              <a href="#">文档</a>
+              <a href="#">兼容性</a>
+              <a href="#">Marketplace</a>
+              <a href="#">支持</a>
+            </nav>
+            <div class="product-actions">
+              <button class="assistant-entry" data-open-assistant aria-label="打开 AI 助理" type="button">
+                <svg class="mobius" viewBox="0 0 48 48" aria-hidden="true">
+                  <defs>
+                    <linearGradient id="mobius-gradient" x1="4" y1="8" x2="44" y2="40">
+                      <stop offset="0" stop-color="#56c0f8" />
+                      <stop offset="0.5" stop-color="#4c91eb" />
+                      <stop offset="1" stop-color="#9277dc" />
+                    </linearGradient>
+                  </defs>
+                  <path d="M9 25c0-7.5 5.2-13 12-13 8.9 0 10.1 13 17 13 3.2 0 5-2.4 5-5.4" fill="none" stroke="url(#mobius-gradient)" stroke-linecap="round" stroke-width="6" />
+                  <path d="M39 23c0 7.5-5.2 13-12 13-8.9 0-10.1-13-17-13-3.2 0-5 2.4-5 5.4" fill="none" stroke="url(#mobius-gradient)" stroke-linecap="round" stroke-width="6" />
+                </svg>
+                <span>AI 助理</span>
+              </button>
+              <a class="login-entry" href="#">登录 / 进入平台</a>
+            </div>
+          </header>
+
+          <section class="screen screen--chat">
+            <div class="chat-layout">
+              <aside class="session-rail">
+                <span class="rail-label">Conversations</span>
+                <button class="primary-button new-chat" type="button">＋ 新建会话</button>
+                <div class="session-list">
+                  <button class="session-item" aria-current="true" type="button">
+                    <strong>私有化部署咨询</strong>
+                    <small>今天 · 临时会话</small>
+                  </button>
+                  <button class="session-item" type="button">
+                    <strong>兼容性与 GPU 配置</strong>
+                    <small>历史会话占位</small>
+                  </button>
+                </div>
+              </aside>
+              <section class="chat-workspace">
+                <header class="workspace-head">
+                  <div class="agent-identity">
+                    <img alt="M 助理" src="assets/m-assistant/source.png" />
+                    <span>
+                      <strong>M 企业助理</strong>
+                      <small>公开咨询 · 匿名临时会话</small>
+                    </span>
+                  </div>
+                  <span class="service-state">模型未配置</span>
+                </header>
+                <div class="conversation">
+                  <section class="welcome">
+                    <span class="section-kicker">Enterprise Assistant / 01</span>
+                    <h2>从一个问题开始，找到适合企业的 AI 路径。</h2>
+                    <p>当前为安全占位模式。后续将通过 Agno AgentOS 接入 Agent、Skill、知识与会话能力。</p>
+                    <div class="suggestions">
+                      <button class="suggestion" type="button">了解私有化部署需要准备什么</button>
+                      <button class="suggestion" type="button">查看平台功能与兼容范围</button>
+                      <button class="suggestion" type="button">如何联系商务获取方案</button>
+                    </div>
+                  </section>
+                  <article class="message">
+                    <img class="message-avatar" alt="M 助理" src="assets/m-assistant/source.png" />
+                    <p>我可以先帮助你定位产品、部署、兼容性和商务入口。真实模型与 Skill 尚未开放时，我会明确说明能力边界。</p>
+                  </article>
+                </div>
+                <footer class="composer-wrap">
+                  <div class="composer">
+                    <textarea aria-label="输入问题" placeholder="输入你的问题，Shift + Enter 换行"></textarea>
+                    <button aria-label="发送消息" type="button">↑</button>
+                  </div>
+                </footer>
+              </section>
+            </div>
+          </section>
+
+          <section class="screen screen--admin">
+            <div class="admin-layout">
+              <aside class="admin-rail">
+                <p class="admin-rail__brand">CMS 运营后台</p>
+                <div class="admin-group">
+                  <span>Overview</span>
+                  <a class="admin-link" href="#">运营概览</a>
+                </div>
+                <div class="admin-group">
+                  <span>AI Operations</span>
+                  <a class="admin-link" aria-current="page" href="#">AI 助理</a>
+                  <span class="admin-link" aria-disabled="true">会话审计 · 待接入</span>
+                  <span class="admin-link" aria-disabled="true">Skill 管理 · 待接入</span>
+                </div>
+                <div class="admin-group">
+                  <span>Identity</span>
+                  <a class="admin-link" href="#">用户管理</a>
+                  <a class="admin-link" href="#">角色权限</a>
+                </div>
+              </aside>
+              <main class="admin-main">
+                <header class="admin-head">
+                  <div>
+                    <span class="section-kicker">AI Operations / Assistant</span>
+                    <h2>AI 助理</h2>
+                  </div>
+                  <button class="ghost-button" type="button">刷新状态</button>
+                </header>
+                <section class="status-strip" aria-label="AI 助理服务状态">
+                  <div class="status-cell"><span class="metadata">AgentOS</span><strong>服务已就绪</strong><small>内部网络 · 健康</small></div>
+                  <div class="status-cell"><span class="metadata">Database</span><strong>PostgreSQL</strong><small>独立 schema</small></div>
+                  <div class="status-cell"><span class="metadata">Model</span><strong>未配置</strong><small>占位模式</small></div>
+                  <div class="status-cell"><span class="metadata">Public Access</span><strong>入口已开启</strong><small>匿名限流</small></div>
+                </section>
+                <div class="admin-grid">
+                  <section class="admin-panel">
+                    <span class="section-kicker">Configuration</span>
+                    <h3>运行配置</h3>
+                    <div class="config-row"><strong>默认 Agent</strong><span>待创建</span><code>PLACEHOLDER</code></div>
+                    <div class="config-row"><strong>模型提供方</strong><span>尚未配置</span><code>REQUIRED</code></div>
+                    <div class="config-row"><strong>Skill 目录</strong><span>接口已预留</span><code>0 ACTIVE</code></div>
+                    <div class="config-row"><strong>会话存储</strong><span>PostgreSQL / agno</span><code>READY</code></div>
+                  </section>
+                  <section class="admin-panel">
+                    <span class="section-kicker">Test Console</span>
+                    <h3>管理员测试台</h3>
+                    <div class="test-console">
+                      <p class="test-console__message">服务已启动，但模型尚未配置。当前测试只验证权限、连接和降级提示。</p>
+                      <div class="test-console__input"><input aria-label="测试问题" placeholder="输入测试问题" /><button aria-label="发送测试问题" type="button">↑</button></div>
+                    </div>
+                  </section>
+                </div>
+              </main>
+            </div>
+          </section>
+
+          <section class="screen screen--auth">
+            <div class="auth-shell">
+              <section class="auth-story">
+                <img alt="华鲲元启" src="assets/huakun-yuanqi/wordmark.png" />
+                <div>
+                  <span class="section-kicker">Enterprise Access</span>
+                  <h2>进入企业 AI 工作空间。</h2>
+                  <p>客户、员工、首次改密与双因素认证共享同一套安全上下文，减少跨页面割裂。</p>
+                </div>
+              </section>
+              <main class="auth-form-wrap">
+                <form class="auth-form">
+                  <span class="section-kicker">Customer Workspace</span>
+                  <h1>登录客户控制台</h1>
+                  <p>管理企业授权、资源、团队与服务记录。</p>
+                  <div class="field"><label for="email">邮箱</label><input id="email" autocomplete="email" placeholder="name@company.com" type="email" /></div>
+                  <div class="field"><label for="password">密码</label><input id="password" autocomplete="current-password" placeholder="输入密码" type="password" /></div>
+                  <button class="primary-button auth-submit" type="button">安全登录</button>
+                  <div class="auth-links"><a href="#">申请客户账号</a><a href="#">员工入口</a></div>
+                </form>
+              </main>
+            </div>
+          </section>
+        </div>
+
+        <button class="floating-m" data-open-assistant aria-label="打开 M 企业助理" type="button">
+          <img alt="" src="assets/m-assistant/source.png" />
+        </button>
+
+        <aside class="assistant-drawer" aria-hidden="true" inert aria-label="AI 助理快速咨询">
+          <header class="drawer-head">
+            <strong>M 企业助理</strong>
+            <button class="icon-button" data-close-assistant aria-label="关闭 AI 助理" type="button">×</button>
+          </header>
+          <div class="drawer-body">
+            <img alt="M 助理" src="assets/m-assistant/source.png" />
+            <h3>你好，我是 M。</h3>
+            <p>我可以先处理产品、部署、兼容性和商务入口问题。真实 AI 能力接入后将在这里明确标识。</p>
+            <button class="ghost-button" data-enter-full-chat type="button">进入完整聊天界面</button>
+          </div>
+          <footer class="drawer-actions">
+            <input aria-label="快速提问" placeholder="输入一个问题" />
+            <button class="primary-button" type="button">发送</button>
+          </footer>
+        </aside>
+      </section>
+    </main>
+
+    <script>
+      const DIRECTIONS = {
+        a: {
+          index: "DIRECTION A",
+          title: "精密栅格",
+          copy: "延续现有工业精确感，以清晰分隔线、紧凑结构和稳定白色表面构建可信企业入口。",
+          tags: "STRUCTURAL · QUIET · PRECISE"
+        },
+        b: {
+          index: "DIRECTION B",
+          title: "控制平面",
+          copy: "用深靛导航承载复杂后台结构，亮色工作区承担信息处理，更像长期使用的企业控制面。",
+          tags: "OPERATIONAL · DENSE · CONTROLLED"
+        },
+        c: {
+          index: "DIRECTION C",
+          title: "空间智能",
+          copy: "把 AI 助理作为空间主角，降低传统卡片感，以大字号、宽内容轨和少量计算网格建立记忆点。",
+          tags: "SPATIAL · DISTINCTIVE · CALM"
+        },
+        d: {
+          index: "SELECTED DIRECTION D",
+          title: "企业智能工作台",
+          copy: "采用控制平面的后台结构、空间智能的聊天体验，以及精密栅格的认证秩序，统一在同一套品牌令牌下。",
+          tags: "ENTERPRISE · INTELLIGENT · COHESIVE"
+        }
+      };
+
+      const body = document.body;
+      const drawer = document.querySelector(".assistant-drawer");
+      const closeButton = document.querySelector("[data-close-assistant]");
+      let lastLauncher = null;
+
+      function setVariant(variant) {
+        body.dataset.variant = variant;
+        localStorage.setItem("agent-ui-variant", variant);
+        document.querySelectorAll("[data-variant-button]").forEach((button) => {
+          button.setAttribute("aria-pressed", String(button.dataset.variantButton === variant));
+        });
+        const direction = DIRECTIONS[variant];
+        document.querySelector("#direction-index").textContent = direction.index;
+        document.querySelector("#direction-title").textContent = direction.title;
+        document.querySelector("#direction-copy").textContent = direction.copy;
+        document.querySelector("#direction-tags").textContent = direction.tags;
+      }
+
+      function setScreen(screen) {
+        if (drawer.getAttribute("aria-hidden") === "false") closeAssistant();
+        body.dataset.screen = screen;
+        localStorage.setItem("agent-ui-screen", screen);
+        document.querySelectorAll("[data-screen-button]").forEach((button) => {
+          button.setAttribute("aria-pressed", String(button.dataset.screenButton === screen));
+        });
+      }
+
+      function openAssistant(event) {
+        lastLauncher = event.currentTarget;
+        drawer.removeAttribute("inert");
+        drawer.setAttribute("aria-hidden", "false");
+        closeButton.focus();
+      }
+
+      function handleAssistantEntry(event) {
+        if (body.dataset.screen === "chat") {
+          document.querySelector(".screen--chat textarea").focus();
+          return;
+        }
+        openAssistant(event);
+      }
+
+      function closeAssistant() {
+        drawer.setAttribute("aria-hidden", "true");
+        drawer.setAttribute("inert", "");
+        if (lastLauncher) lastLauncher.focus();
+      }
+
+      document.querySelectorAll("[data-variant-button]").forEach((button) => {
+        button.addEventListener("click", () => setVariant(button.dataset.variantButton));
+      });
+
+      document.querySelectorAll("[data-screen-button]").forEach((button) => {
+        button.addEventListener("click", () => setScreen(button.dataset.screenButton));
+      });
+
+      document.querySelectorAll("[data-open-assistant]").forEach((button) => {
+        button.addEventListener("click", handleAssistantEntry);
+      });
+
+      closeButton.addEventListener("click", closeAssistant);
+      document.querySelector("[data-enter-full-chat]").addEventListener("click", () => {
+        closeAssistant();
+        setScreen("chat");
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && drawer.getAttribute("aria-hidden") === "false") closeAssistant();
+      });
+
+      setVariant(localStorage.getItem("agent-ui-variant") || "d");
+      setScreen(localStorage.getItem("agent-ui-screen") || "chat");
+    </script>
+  </body>
+</html>
