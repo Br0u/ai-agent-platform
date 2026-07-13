@@ -189,7 +189,7 @@ Run the targeted command from Step 2. Expected: all pricing page and route tests
 - [ ] **Step 6: Commit the pricing page**
 
 ```bash
-git add apps/web/src/features/pricing apps/web/src/app/pricing apps/web/src/app/api/v1/pricing
+git add apps/web/src/components/portal/pricing apps/web/src/features/pricing apps/web/src/app/pricing apps/web/src/app/api/v1/pricing
 git commit -m "feat(pricing): add estimate-ready pricing page"
 ```
 
