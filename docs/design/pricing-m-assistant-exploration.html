@@ -80,6 +80,10 @@
     .primary-action { width: 100%; min-height: 38px; border: 0; color: var(--surface); background: var(--primary); font-size: 11px; font-weight: 700; }
 
     .assistant-stack { position: absolute; right: 18px; bottom: 18px; display: flex; align-items: flex-end; gap: 10px; z-index: 2; }
+    .state-label { padding: 4px 7px; color: var(--surface); background: var(--ink); font: 700 8px/1.2 var(--mono); letter-spacing: .06em; white-space: nowrap; }
+    .assistant-stack > .state-label { position: absolute; top: -20px; }
+    .assistant-stack > .open-state-label { left: 0; }
+    .assistant-stack > .collapsed-state-label { right: 0; }
     .assistant-panel { width: 300px; border: 1px solid var(--line); background: var(--surface); box-shadow: 0 14px 34px rgba(16, 24, 56, .14); }
     .assistant-head { display: flex; justify-content: space-between; align-items: start; padding: 14px 15px; border-bottom: 1px solid var(--line); }
     .assistant-head h4 { margin: 0; font: 700 16px/1.2 var(--display); }
@@ -112,7 +116,9 @@
     .mobile-drawer { position: absolute; left: 0; right: 0; bottom: 0; max-height: 75%; border-top: 2px solid var(--primary); background: var(--surface); box-shadow: 0 -12px 30px rgba(16,24,56,.12); }
     .drawer-handle { width: 34px; height: 3px; margin: 7px auto 3px; background: var(--line); }
     .mobile-drawer .assistant-head, .mobile-drawer .assistant-body { padding-left: 14px; padding-right: 14px; }
-    .mobile-launcher { position: absolute; right: 12px; bottom: 12px; }
+    .mobile-launcher { position: absolute; right: 12px; bottom: 286px; z-index: 4; display: grid; justify-items: end; gap: 4px; }
+    .mobile-launcher .launcher { width: 64px; height: 64px; }
+    .drawer-state-label { display: table; margin: 8px 14px 0; color: var(--primary); background: var(--canvas); }
 
     /* B: a denser tool-like assistant dock with a top rail and fixed side summary. */
     .variant-b .desktop-screen { background: var(--dark); }
@@ -217,5 +223,27 @@
       </div>
     </section>
   </main>
+  <script>
+    // The comparison canvas shows both interaction states at once so reviewers
+    // can assess the closed entrance and the open panel/drawer independently.
+    document.querySelectorAll(".assistant-stack").forEach((stack) => {
+      stack.insertAdjacentHTML(
+        "afterbegin",
+        '<span class="state-label open-state-label">展开状态</span><span class="state-label collapsed-state-label">折叠状态</span>',
+      );
+    });
+
+    document.querySelectorAll(".mobile-screen").forEach((screen) => {
+      const drawer = screen.querySelector(".mobile-drawer");
+      drawer.insertAdjacentHTML(
+        "beforebegin",
+        '<div class="mobile-launcher"><span class="state-label">折叠状态</span><div class="launcher"><img class="assistant-asset" src="/apps/web/public/assets/assistant/m-assistant.webp" alt="机械折线 M 助手"></div></div>',
+      );
+      drawer.insertAdjacentHTML(
+        "afterbegin",
+        '<span class="state-label drawer-state-label">展开状态 · 底部抽屉</span>',
+      );
+    });
+  </script>
 </body>
 </html>
