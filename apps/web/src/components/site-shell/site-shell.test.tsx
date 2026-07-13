@@ -327,8 +327,15 @@ describe("SiteShell", () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(
         JSON.stringify({
+          version: "1",
+          requestId: "req-1",
           mode: "placeholder",
-          message: "保留回答",
+          session: { temporary: true },
+          message: {
+            id: "msg-1",
+            role: "assistant",
+            content: "保留回答",
+          },
           suggestedActions: [],
         }),
       ),

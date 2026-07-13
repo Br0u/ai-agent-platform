@@ -119,14 +119,14 @@ export function useAssistantSession(pathname: string): AssistantSession {
           {
             id: nextMessageId.current++,
             role: "assistant",
-            content: body.message,
+            content: body.message.content,
             suggestedActions: safeAssistantSuggestedActions(
               body.suggestedActions,
             ),
           },
         ]);
         setDraft((current) => (current.trim() === message ? "" : current));
-        setLatestAnnouncement(body.message);
+        setLatestAnnouncement(body.message.content);
         setLastFailedRequest(null);
         updateRequestStatus("idle");
       } catch (error) {

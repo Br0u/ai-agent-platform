@@ -2,11 +2,13 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  ASSISTANT_UNAVAILABLE_RESPONSE,
-  INVALID_ASSISTANT_REQUEST_RESPONSE,
+  createAssistantErrorResponse,
   type AssistantSuccessResponse,
 } from "@/features/assistant/assistant-contract";
-import type { AssistantProvider } from "@/server/assistant/assistant-provider";
+import type {
+  AssistantProvider,
+  AssistantProviderReply,
+} from "@/server/assistant/assistant-provider";
 import type {
   AssistantRequestLog,
   AssistantRequestLogger,
@@ -15,8 +17,16 @@ import { createAssistantChatHandler } from "./handler";
 import * as route from "./route";
 
 const success: AssistantSuccessResponse = {
+  version: "1",
+  requestId: "generated-request-id",
   mode: "placeholder",
-  message: "ok",
+  session: { temporary: true },
+  message: { id: "generated-message-id", role: "assistant", content: "ok" },
+  suggestedActions: [{ label: "帮助中心", href: "/help" }],
+};
+
+const providerSuccess = {
+  content: "ok",
   suggestedActions: [{ label: "帮助中心", href: "/help" }],
 };
 
@@ -66,7 +76,7 @@ function dependencies(options?: {
   times?: number[];
 }) {
   const provider: AssistantProvider = {
-    reply: vi.fn(options?.reply ?? (async () => success)),
+    reply: vi.fn(options?.reply ?? (async () => providerSuccess)),
   };
   const records: AssistantRequestLog[] = [];
   const logger: AssistantRequestLogger = {
@@ -81,6 +91,7 @@ function dependencies(options?: {
     records,
     clock: () => times[timeIndex++] ?? times.at(-1) ?? 0,
     requestIdFactory: () => "generated-request-id",
+    messageIdFactory: () => "generated-message-id",
   };
 }
 
@@ -100,7 +111,10 @@ describe("POST /api/v1/assistant/chat", () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual(success);
+    await expect(response.json()).resolves.toEqual({
+      ...success,
+      requestId: "incoming-request-id",
+    });
     expect(deps.provider.reply).toHaveBeenCalledExactlyOnceWith({
       message: "如何开始了解平台？",
       context: { pathname: "/pricing" },
@@ -168,7 +182,7 @@ describe("POST /api/v1/assistant/chat", () => {
     expect(new TextEncoder().encode(body).byteLength).toBeLessThan(16 * 1024);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual(
-      INVALID_ASSISTANT_REQUEST_RESPONSE,
+      createAssistantErrorResponse("generated-request-id", "validation_error"),
     );
     expect(deps.provider.reply).not.toHaveBeenCalled();
   });
@@ -226,11 +240,14 @@ describe("POST /api/v1/assistant/chat", () => {
 
     expect(response.status).toBe(400);
     const responseBody = await response.json();
-    expect(responseBody).toEqual(INVALID_ASSISTANT_REQUEST_RESPONSE);
+    expect(responseBody).toEqual(
+      createAssistantErrorResponse("generated-request-id", "validation_error"),
+    );
     expect(responseBody).toEqual({
-      mode: "placeholder",
+      version: "1",
+      requestId: "generated-request-id",
       error: {
-        code: "invalid_message",
+        code: "validation_error",
         message: "请输入 1 至 500 个字符的问题。",
       },
     });
@@ -251,7 +268,7 @@ describe("POST /api/v1/assistant/chat", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual(
-      INVALID_ASSISTANT_REQUEST_RESPONSE,
+      createAssistantErrorResponse("generated-request-id", "validation_error"),
     );
     expect(deps.provider.reply).not.toHaveBeenCalled();
     expect(deps.records).toEqual([
@@ -319,8 +336,7 @@ describe("POST /api/v1/assistant/chat", () => {
   it("removes unsafe provider actions before returning a successful response", async () => {
     const deps = dependencies({
       reply: async () => ({
-        mode: "placeholder",
-        message: "入口",
+        content: "入口",
         suggestedActions: [
           { label: "快速开始", href: "/docs#quick-start" },
           { label: "协议相对", href: "//evil.example" },
@@ -337,26 +353,32 @@ describe("POST /api/v1/assistant/chat", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
+      version: "1",
+      requestId: "generated-request-id",
       mode: "placeholder",
-      message: "入口",
+      session: { temporary: true },
+      message: {
+        id: "generated-message-id",
+        role: "assistant",
+        content: "入口",
+      },
       suggestedActions: [{ label: "快速开始", href: "/docs#quick-start" }],
     });
   });
 
   it.each([
-    ["invalid shape", { mode: "placeholder", message: 42 }],
+    ["invalid shape", { content: 42 }],
     [
       "unserializable value",
       {
-        mode: "placeholder",
-        message: "unsafe",
+        content: "unsafe",
         suggestedActions: [],
         extra: 1n,
       },
     ],
   ])("returns stable 503 for a provider %s", async (_name, value) => {
     const deps = dependencies({
-      reply: async () => value as unknown as AssistantSuccessResponse,
+      reply: async () => value as unknown as AssistantProviderReply,
     });
 
     const response = await createAssistantChatHandler(deps)(
@@ -367,7 +389,10 @@ describe("POST /api/v1/assistant/chat", () => {
 
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual(
-      ASSISTANT_UNAVAILABLE_RESPONSE,
+      createAssistantErrorResponse(
+        "generated-request-id",
+        "assistant_unavailable",
+      ),
     );
     expect(deps.logger.log).toHaveBeenCalledOnce();
     expect(deps.records).toEqual([
@@ -387,7 +412,7 @@ describe("POST /api/v1/assistant/chat", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual(
-      INVALID_ASSISTANT_REQUEST_RESPONSE,
+      createAssistantErrorResponse("generated-request-id", "validation_error"),
     );
     expect(deps.provider.reply).not.toHaveBeenCalled();
     expect(deps.logger.log).toHaveBeenCalledOnce();
@@ -410,7 +435,7 @@ describe("POST /api/v1/assistant/chat", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual(
-      INVALID_ASSISTANT_REQUEST_RESPONSE,
+      createAssistantErrorResponse("generated-request-id", "validation_error"),
     );
     expect(deps.provider.reply).not.toHaveBeenCalled();
     expect(deps.logger.log).toHaveBeenCalledOnce();
@@ -435,9 +460,15 @@ describe("POST /api/v1/assistant/chat", () => {
 
     expect(response.status).toBe(503);
     const body = await response.json();
-    expect(body).toEqual(ASSISTANT_UNAVAILABLE_RESPONSE);
+    expect(body).toEqual(
+      createAssistantErrorResponse(
+        "generated-request-id",
+        "assistant_unavailable",
+      ),
+    );
     expect(body).toEqual({
-      mode: "placeholder",
+      version: "1",
+      requestId: "generated-request-id",
       error: {
         code: "assistant_unavailable",
         message: "助手服务暂不可用，请使用帮助中心或商务咨询。",
@@ -450,6 +481,34 @@ describe("POST /api/v1/assistant/chat", () => {
     const serializedLog = JSON.stringify(deps.records);
     expect(serializedLog).not.toContain(secretMessage);
     expect(serializedLog).not.toContain(secretPath);
+  });
+
+  it("returns the exact versioned envelope without session credentials", async () => {
+    const deps = dependencies();
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({ message: "问题", context: { pathname: "/help" } }),
+        "req-1",
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({
+      version: "1",
+      requestId: "req-1",
+      mode: "placeholder",
+      session: { temporary: true },
+      message: {
+        id: "generated-message-id",
+        role: "assistant",
+        content: "ok",
+      },
+      suggestedActions: [{ label: "帮助中心", href: "/help" }],
+    });
+    expect(JSON.stringify(body)).not.toMatch(
+      /cookie|credential|token|secret/iu,
+    );
   });
 
   it("logs exactly the three permitted fields exactly once", async () => {

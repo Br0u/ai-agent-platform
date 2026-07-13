@@ -10,9 +10,19 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAssistantSession } from "./use-assistant-session";
 
-const success = (message: string) =>
+const success = (
+  message: string,
+  suggestedActions: { label: string; href: string }[] = [],
+) =>
   new Response(
-    JSON.stringify({ mode: "placeholder", message, suggestedActions: [] }),
+    JSON.stringify({
+      version: "1",
+      requestId: "req-1",
+      mode: "placeholder",
+      session: { temporary: true },
+      message: { id: "msg-1", role: "assistant", content: message },
+      suggestedActions,
+    }),
     { status: 200 },
   );
 
@@ -53,21 +63,15 @@ describe("useAssistantSession", () => {
 
   it("stores only internal single-slash suggested actions", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          mode: "placeholder",
-          message: "可用入口",
-          suggestedActions: [
-            { label: "快速开始", href: "/docs#quick-start" },
-            { label: "商务咨询", href: "/contact" },
-            { label: "客户支持", href: "/support" },
-            { label: "协议相对", href: "//evil.example/path" },
-            { label: "反斜杠", href: "/safe\\evil" },
-            { label: "查询跳转", href: "/contact?next=https://evil.example" },
-            { label: "编码斜杠", href: "/%2Fevil.example" },
-          ],
-        }),
-      ),
+      success("可用入口", [
+        { label: "快速开始", href: "/docs#quick-start" },
+        { label: "商务咨询", href: "/contact" },
+        { label: "客户支持", href: "/support" },
+        { label: "协议相对", href: "//evil.example/path" },
+        { label: "反斜杠", href: "/safe\\evil" },
+        { label: "查询跳转", href: "/contact?next=https://evil.example" },
+        { label: "编码斜杠", href: "/%2Fevil.example" },
+      ]),
     );
     const { result } = renderHook(() => useAssistantSession("/pricing"));
 

@@ -1,13 +1,14 @@
 import {
-  ASSISTANT_UNAVAILABLE_RESPONSE,
-  INVALID_ASSISTANT_REQUEST_RESPONSE,
-  isAssistantSuccessResponse,
+  createAssistantErrorResponse,
   parseAssistantRequest,
   safeAssistantSuggestedActions,
   type AssistantErrorResponse,
   type AssistantSuccessResponse,
 } from "@/features/assistant/assistant-contract";
-import type { AssistantProvider } from "@/server/assistant/assistant-provider";
+import {
+  isAssistantProviderReply,
+  type AssistantProvider,
+} from "@/server/assistant/assistant-provider";
 import {
   assistantRequestLogger,
   type AssistantRequestLogger,
@@ -20,6 +21,7 @@ interface AssistantChatHandlerDependencies {
   logger: AssistantRequestLogger;
   clock: () => number;
   requestIdFactory: () => string;
+  messageIdFactory: () => string;
 }
 
 const defaultDependencies: AssistantChatHandlerDependencies = {
@@ -27,6 +29,7 @@ const defaultDependencies: AssistantChatHandlerDependencies = {
   logger: assistantRequestLogger,
   clock: () => performance.now(),
   requestIdFactory: () => crypto.randomUUID(),
+  messageIdFactory: () => crypto.randomUUID(),
 };
 
 const MAX_REQUEST_BODY_BYTES = 16 * 1024;
@@ -52,24 +55,32 @@ export function createAssistantChatHandler(
       : null;
 
     if (!assistantRequest) {
-      body = INVALID_ASSISTANT_REQUEST_RESPONSE;
+      body = createAssistantErrorResponse(requestId, "validation_error");
       statusCode = 400;
     } else {
       try {
         const providerResponse =
           await dependencies.provider.reply(assistantRequest);
-        if (!isAssistantSuccessResponse(providerResponse)) {
+        if (!isAssistantProviderReply(providerResponse)) {
           throw new TypeError("Invalid assistant provider response");
         }
         body = {
-          ...providerResponse,
+          version: "1",
+          requestId,
+          mode: "placeholder",
+          session: { temporary: true },
+          message: {
+            id: dependencies.messageIdFactory(),
+            role: "assistant",
+            content: providerResponse.content,
+          },
           suggestedActions: safeAssistantSuggestedActions(
             providerResponse.suggestedActions,
           ),
         };
         statusCode = 200;
       } catch {
-        body = ASSISTANT_UNAVAILABLE_RESPONSE;
+        body = createAssistantErrorResponse(requestId, "assistant_unavailable");
         statusCode = 503;
       }
     }
@@ -78,7 +89,7 @@ export function createAssistantChatHandler(
     try {
       response = Response.json(body, { status: statusCode });
     } catch {
-      body = ASSISTANT_UNAVAILABLE_RESPONSE;
+      body = createAssistantErrorResponse(requestId, "assistant_unavailable");
       statusCode = 503;
       response = Response.json(body, { status: statusCode });
     }

@@ -19,7 +19,14 @@ const answer = (
   suggestedActions: { label: string; href: string }[] = [],
 ) =>
   new Response(
-    JSON.stringify({ mode: "placeholder", message, suggestedActions }),
+    JSON.stringify({
+      version: "1",
+      requestId: "req-1",
+      mode: "placeholder",
+      session: { temporary: true },
+      message: { id: "msg-1", role: "assistant", content: message },
+      suggestedActions,
+    }),
   );
 
 describe("AssistantWidget", () => {

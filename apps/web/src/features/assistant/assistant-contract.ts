@@ -19,35 +19,56 @@ export const ASSISTANT_PRESET_QUESTIONS = [
 export type AssistantPresetQuestion =
   (typeof ASSISTANT_PRESET_QUESTIONS)[number];
 
+export interface AssistantResponseMessage {
+  id: string;
+  role: "assistant";
+  content: string;
+}
+
 export interface AssistantSuccessResponse {
+  version: "1";
+  requestId: string;
   mode: "placeholder";
-  message: string;
+  session: { temporary: true };
+  message: AssistantResponseMessage;
   suggestedActions: AssistantSuggestedAction[];
 }
 
+export type AssistantErrorCode =
+  | "validation_error"
+  | "rate_limited"
+  | "assistant_unavailable";
+
 export interface AssistantErrorResponse {
-  mode: "placeholder";
+  version: "1";
+  requestId: string;
   error: {
-    code: "invalid_message" | "assistant_unavailable";
+    code: AssistantErrorCode;
     message: string;
   };
 }
 
-export const INVALID_ASSISTANT_REQUEST_RESPONSE: AssistantErrorResponse = {
-  mode: "placeholder",
-  error: {
-    code: "invalid_message",
-    message: "请输入 1 至 500 个字符的问题。",
-  },
-};
+export interface AssistantStatusResponse {
+  version: "1";
+  requestId: string;
+  live: true;
+  ready: false;
+  capability: "placeholder";
+  message: "模型尚未配置，当前为安全占位模式。";
+}
 
-export const ASSISTANT_UNAVAILABLE_RESPONSE: AssistantErrorResponse = {
-  mode: "placeholder",
-  error: {
-    code: "assistant_unavailable",
-    message: "助手服务暂不可用，请使用帮助中心或商务咨询。",
-  },
-};
+export function createAssistantErrorResponse(
+  requestId: string,
+  code: AssistantErrorCode,
+): AssistantErrorResponse {
+  const messages: Record<AssistantErrorCode, string> = {
+    validation_error: "请输入 1 至 500 个字符的问题。",
+    rate_limited: "请求过于频繁，请稍后再试。",
+    assistant_unavailable: "助手服务暂不可用，请使用帮助中心或商务咨询。",
+  };
+
+  return { version: "1", requestId, error: { code, message: messages[code] } };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -55,8 +76,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
   const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
   return (
-    actual.length === keys.length && actual.every((key, i) => key === keys[i])
+    actual.length === expected.length &&
+    actual.every((key, i) => key === expected[i])
   );
 }
 
@@ -133,9 +156,25 @@ export function isAssistantSuccessResponse(
 ): input is AssistantSuccessResponse {
   if (
     !isRecord(input) ||
-    !hasExactKeys(input, ["message", "mode", "suggestedActions"]) ||
+    !hasExactKeys(input, [
+      "version",
+      "requestId",
+      "mode",
+      "session",
+      "message",
+      "suggestedActions",
+    ]) ||
+    input.version !== "1" ||
+    typeof input.requestId !== "string" ||
     input.mode !== "placeholder" ||
-    typeof input.message !== "string" ||
+    !isRecord(input.session) ||
+    !hasExactKeys(input.session, ["temporary"]) ||
+    input.session.temporary !== true ||
+    !isRecord(input.message) ||
+    !hasExactKeys(input.message, ["id", "role", "content"]) ||
+    typeof input.message.id !== "string" ||
+    input.message.role !== "assistant" ||
+    typeof input.message.content !== "string" ||
     !Array.isArray(input.suggestedActions)
   ) {
     return false;

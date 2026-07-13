@@ -27,8 +27,7 @@ describe("PlaceholderAssistantProvider", () => {
       await expect(
         provider.reply({ message, context: { pathname: "/pricing" } }),
       ).resolves.toEqual({
-        mode: "placeholder",
-        message: reply,
+        content: reply,
         suggestedActions: actions,
       });
     },
@@ -41,8 +40,7 @@ describe("PlaceholderAssistantProvider", () => {
         context: { pathname: "/product" },
       }),
     ).resolves.toEqual({
-      mode: "placeholder",
-      message: "AI 服务尚未接入。你可以先查看帮助中心或联系商务顾问。",
+      content: "AI 服务尚未接入。你可以先查看帮助中心或联系商务顾问。",
       suggestedActions: [
         { label: "帮助中心", href: "/help" },
         { label: "商务咨询", href: "/contact" },
