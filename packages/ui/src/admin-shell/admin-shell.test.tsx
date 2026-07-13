@@ -69,12 +69,40 @@ describe("AdminShell", () => {
       }),
     ).toBeVisible();
 
-    const main = screen.getByRole("main");
-    expect(main).toHaveClass("admin-shell__main");
-    expect(main).toHaveAttribute("data-surface", "bright");
+    const contentSurface = document.querySelector(".admin-shell__main");
+    expect(contentSurface).toBeInstanceOf(HTMLDivElement);
+    expect(contentSurface).toHaveAttribute("data-surface", "bright");
     expect(
-      within(main).getByRole("heading", { name: "AI 助理" }),
+      within(contentSurface as HTMLElement).getByRole("heading", {
+        name: "AI 助理",
+      }),
     ).toBeVisible();
+  });
+
+  it("keeps a route-provided main as the only main landmark", () => {
+    const { container } = render(
+      <AdminShell
+        administratorDisplayName="周启明"
+        breadcrumb={[
+          { label: "运营后台", href: "/admin" },
+          { label: "AI 助理" },
+        ]}
+        environmentStatus="私有化测试环境"
+        navigation={<nav aria-label="后台功能导航">后台菜单</nav>}
+      >
+        <main>
+          <h1>AI 助理</h1>
+        </main>
+      </AdminShell>,
+    );
+
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(container.querySelector(".admin-shell__main")).toContainElement(
+      screen.getByRole("main"),
+    );
+    expect(screen.getByRole("navigation", { name: "面包屑" })).toBeVisible();
+    expect(screen.getByText("私有化测试环境")).toBeVisible();
+    expect(screen.getByLabelText("当前管理员")).toHaveTextContent("周启明");
   });
 
   it("renders supplied breadcrumb, environment, and administrator identity", () => {

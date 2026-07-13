@@ -228,6 +228,97 @@ describe("SiteShell", () => {
     expect(mocks.appShellProps?.logoutAction).toEqual(expect.any(Function));
   });
 
+  it("fails closed while a new admin access cycle validates a different actor", async () => {
+    const workforceResponse = (displayName: string, permission: string) =>
+      new Response(
+        JSON.stringify({
+          realm: "workforce",
+          status: "active",
+          permissions: [permission],
+          displayName,
+          mustChangePassword: false,
+          twoFactorEnabled: true,
+        }),
+        { status: 200 },
+      );
+    vi.mocked(fetch).mockResolvedValueOnce(
+      workforceResponse("管理员 A", "admin:products"),
+    );
+    const view = renderAt("/admin/products");
+    await waitFor(() =>
+      expect(mocks.appShellProps?.administratorDisplayName).toBe("管理员 A"),
+    );
+
+    mocks.pathname = "/staff/login";
+    view.rerender(<SiteShell>员工登录</SiteShell>);
+    expect(screen.getByTestId("app-shell")).toHaveAttribute(
+      "data-variant",
+      "auth",
+    );
+
+    let resolveB!: (response: Response) => void;
+    vi.mocked(fetch).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveB = resolve;
+      }),
+    );
+    mocks.pathname = "/admin/products";
+    view.rerender(<SiteShell>后台 B</SiteShell>);
+
+    expect(screen.getByRole("status")).toHaveTextContent("正在验证工作区会话");
+    expect(screen.queryByTestId("app-shell")).toBeNull();
+    expect(screen.queryByText("管理员 A")).toBeNull();
+
+    await act(async () =>
+      resolveB(workforceResponse("管理员 B", "admin:users")),
+    );
+    await waitFor(() =>
+      expect(mocks.appShellProps?.administratorDisplayName).toBe("管理员 B"),
+    );
+    expect(mocks.appShellProps?.grantedPermissions).toEqual(["admin:users"]);
+    expect(mocks.appShellProps?.grantedPermissions).not.toContain(
+      "admin:products",
+    );
+  });
+
+  it("aborts a departed access cycle and ignores its late response", async () => {
+    const workforceResponse = (displayName: string) =>
+      new Response(
+        JSON.stringify({
+          realm: "workforce",
+          status: "active",
+          permissions: [],
+          displayName,
+          mustChangePassword: false,
+          twoFactorEnabled: true,
+        }),
+        { status: 200 },
+      );
+    let resolveA!: (response: Response) => void;
+    vi.mocked(fetch).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveA = resolve;
+      }),
+    );
+    const view = renderAt("/admin/products");
+    const departedSignal = vi.mocked(fetch).mock.calls[0]?.[1]?.signal;
+
+    mocks.pathname = "/staff/login";
+    view.rerender(<SiteShell>员工登录</SiteShell>);
+    expect(departedSignal?.aborted).toBe(true);
+
+    vi.mocked(fetch).mockResolvedValueOnce(workforceResponse("管理员 B"));
+    mocks.pathname = "/admin/products";
+    view.rerender(<SiteShell>后台 B</SiteShell>);
+    await waitFor(() =>
+      expect(mocks.appShellProps?.administratorDisplayName).toBe("管理员 B"),
+    );
+
+    await act(async () => resolveA(workforceResponse("过期管理员 A")));
+    expect(mocks.appShellProps?.administratorDisplayName).toBe("管理员 B");
+    expect(screen.queryByText("过期管理员 A")).toBeNull();
+  });
+
   it.each([
     ["missing fields", {}],
     ["null", null],

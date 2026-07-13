@@ -114,20 +114,8 @@ function currentBrowserHref() {
 
 export function SiteShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { replace } = useRouter();
   const [activeHref, setActiveHref] = useState(pathname);
   const variant = classifyShellRoute(pathname);
-  const [workspace, setWorkspace] = useState<{
-    variant: "console" | "admin" | null;
-    status: "loading" | "ready" | "redirecting";
-    permissions: string[];
-    displayName: string | null;
-  }>(() => ({
-    variant: variant === "console" || variant === "admin" ? variant : null,
-    status: variant === "console" || variant === "admin" ? "loading" : "ready",
-    permissions: [],
-    displayName: null,
-  }));
 
   useEffect(() => {
     const synchronizeActiveHref = () => setActiveHref(currentBrowserHref());
@@ -142,9 +130,71 @@ export function SiteShell({ children }: { children: ReactNode }) {
     };
   }, [pathname]);
 
-  useEffect(() => {
-    if (variant !== "console" && variant !== "admin") return;
+  if (variant === "console" || variant === "admin") {
+    return (
+      <ProtectedSiteShell
+        activeHref={activeHref}
+        pathname={pathname}
+        variant={variant}
+      >
+        {children}
+      </ProtectedSiteShell>
+    );
+  }
 
+  const shell = (
+    <AppShell
+      activeHref={activeHref}
+      adminNavigation={adminNavigation}
+      consoleNavigation={consoleNavigation}
+      footerNavigation={footerNavigation}
+      portalNavigation={portalNavigation}
+      portalLinkComponent={PortalNavigationLink}
+      variant={variant}
+    >
+      {children}
+    </AppShell>
+  );
+
+  if (!shouldShowAssistant(pathname)) return shell;
+
+  return (
+    <AssistantExperienceProvider pathname={pathname}>
+      <AssistantEnabledShell
+        activeHref={activeHref}
+        variant={variant === "assistant" ? "assistant" : "portal"}
+      >
+        {children}
+      </AssistantEnabledShell>
+    </AssistantExperienceProvider>
+  );
+}
+
+function ProtectedSiteShell({
+  activeHref,
+  children,
+  pathname,
+  variant,
+}: {
+  activeHref: string;
+  children: ReactNode;
+  pathname: string;
+  variant: Extract<ShellRoute, "console" | "admin">;
+}) {
+  const { replace } = useRouter();
+  const [workspace, setWorkspace] = useState<{
+    variant: "console" | "admin";
+    status: "loading" | "ready" | "redirecting";
+    permissions: string[];
+    displayName: string | null;
+  }>(() => ({
+    variant,
+    status: "loading",
+    permissions: [],
+    displayName: null,
+  }));
+
+  useEffect(() => {
     const controller = new AbortController();
     let current = true;
     const endpoint =
@@ -198,10 +248,7 @@ export function SiteShell({ children }: { children: ReactNode }) {
     };
   }, [replace, variant]);
 
-  if (
-    (variant === "console" || variant === "admin") &&
-    (workspace.variant !== variant || workspace.status !== "ready")
-  ) {
+  if (workspace.variant !== variant || workspace.status !== "ready") {
     return (
       <main className="workspace-session-loading" role="status">
         <span aria-hidden="true" className="workspace-session-loading__mark" />
@@ -218,7 +265,7 @@ export function SiteShell({ children }: { children: ReactNode }) {
           { label: "运营后台", href: "/admin" },
           { label: route?.title ?? "当前页面" },
         ];
-  const shell = (
+  return (
     <AppShell
       activeHref={activeHref}
       adminBreadcrumb={adminBreadcrumb}
@@ -241,19 +288,6 @@ export function SiteShell({ children }: { children: ReactNode }) {
     >
       {children}
     </AppShell>
-  );
-
-  if (!shouldShowAssistant(pathname)) return shell;
-
-  return (
-    <AssistantExperienceProvider pathname={pathname}>
-      <AssistantEnabledShell
-        activeHref={activeHref}
-        variant={variant === "assistant" ? "assistant" : "portal"}
-      >
-        {children}
-      </AssistantEnabledShell>
-    </AssistantExperienceProvider>
   );
 }
 

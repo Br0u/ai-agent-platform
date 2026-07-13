@@ -71,9 +71,9 @@ export function AdminShell({
           </div>
         </header>
 
-        <main className="admin-shell__main" data-surface="bright">
+        <div className="admin-shell__main" data-surface="bright">
           {children}
-        </main>
+        </div>
       </div>
     </div>
   );
