@@ -3,7 +3,8 @@
 ## Verification identity
 
 - Date: 2026-07-13 CST (+0800)
-- Final verified implementation HEAD: `5b23a1590ca4b73cce3dac4ec9d2f23343e77c09`
+- Implementation under test: `5b23a1590ca4b73cce3dac4ec9d2f23343e77c09`
+- Verification suite and report source commit: `d69992f42db78e470488d3c7e165d969882d6748`
 - Branch: `codex/feat-pricing-m-assistant`
 - Node.js: `v26.0.0`
 - pnpm: `11.5.2`
@@ -18,16 +19,12 @@ Port 3000 was already owned by the main worktree. Verification therefore used a 
 
 | Command | Exit | Result |
 | --- | ---: | --- |
-| `pnpm --filter @ai-agent-platform/ui test` | 0 | 7 files, 60 tests passed |
-| `pnpm --filter @ai-agent-platform/ui typecheck` | 0 | passed |
-| `pnpm --filter @ai-agent-platform/web test` | 0 | 68 files passed, 3 skipped; 620 tests passed, 35 skipped |
-| `pnpm --filter @ai-agent-platform/web typecheck` | 0 | passed in a fresh sequential run after build |
-| `pnpm --filter @ai-agent-platform/web lint` | 0 | passed with zero warnings |
-| `pnpm --filter @ai-agent-platform/web format:check` | 0 | passed |
-| `pnpm --filter @ai-agent-platform/web build` | 0 | Next.js production build compiled, typechecked, and generated 26 static pages |
+| `pnpm test` | 0 | 92 files passed, 8 skipped; 789 tests passed, 47 skipped across database, integrations, UI, and web |
+| `pnpm typecheck` | 0 | database, integrations, UI, and web passed |
+| `pnpm lint` | 0 | database, integrations, UI, and web passed with `--max-warnings=0` |
+| `pnpm format:check` | 0 | database, integrations, UI, and web passed Prettier checks |
+| `pnpm build` | 0 | Next.js 16.2.10 production build compiled, typechecked, and generated 26 static pages |
 | `git diff --check` | 0 | no whitespace errors |
-
-Build and web typecheck were finally run sequentially because both use generated `.next/types` files.
 
 ## Playwright result
 
