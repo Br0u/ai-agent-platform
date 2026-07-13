@@ -13,23 +13,18 @@ import {
   type AssistantRequestLogger,
 } from "@/server/assistant/assistant-request-log";
 import { placeholderAssistantProvider } from "@/server/assistant/placeholder-assistant-provider";
+import { getAssistantRuntime } from "@/server/assistant/assistant-runtime";
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
 import {
-  getAnonymousSessionManager,
   type AnonymousSessionManager,
   type AssistantPublicSession,
 } from "@/server/assistant/anonymous-session";
-import {
-  resolveAssistantActor,
-  type AssistantActor,
-} from "@/server/assistant/assistant-actor";
+import { type AssistantActor } from "@/server/assistant/assistant-actor";
 import {
   AssistantRateLimitExceededError,
-  createDatabaseAssistantRateLimiter,
   type AssistantRateLimitInput,
   type AssistantRateLimiter,
 } from "@/server/assistant/assistant-rate-limit";
-import { resolveTrustedClientIp } from "@/server/assistant/trusted-client-ip";
 import { readBoundedJson } from "@/server/http/read-bounded-json";
 
 export type AssistantChatSessionResolution = {
@@ -40,7 +35,11 @@ export type AssistantChatSessionResolution = {
 };
 
 interface AssistantChatHandlerDependencies {
-  provider: AssistantProvider;
+  provider?: AssistantProvider;
+  resolveProvider?: () => Promise<{
+    provider: AssistantProvider;
+    mode: "placeholder" | "agentos";
+  }>;
   logger: AssistantRequestLogger;
   clock: () => number;
   requestIdFactory: () => string;
@@ -48,13 +47,6 @@ interface AssistantChatHandlerDependencies {
   resolveSession: (request: Request) => Promise<AssistantChatSessionResolution>;
   rateLimiter: AssistantRateLimiter;
   resolveTrustedClientIp: (request: Request) => string | undefined;
-}
-
-let defaultRateLimiter: AssistantRateLimiter | undefined;
-
-function getDefaultRateLimiter(): AssistantRateLimiter {
-  defaultRateLimiter ??= createDatabaseAssistantRateLimiter();
-  return defaultRateLimiter;
 }
 
 export function createAssistantChatSessionResolver(
@@ -70,34 +62,18 @@ export function createAssistantChatSessionResolver(
   };
 }
 
-async function resolveDefaultSession(
-  request: Request,
-): Promise<AssistantChatSessionResolution> {
-  return createAssistantChatSessionResolver(
-    getAnonymousSessionManager(),
-    resolveAssistantActor,
-  )(request);
-}
-
-function trustNginxProxy(): boolean {
-  const value = process.env.TRUST_NGINX_PROXY;
-  if (value === undefined || value === "false") return false;
-  if (value === "true") return true;
-  throw new Error("TRUST_NGINX_PROXY must be true or false");
-}
-
 const defaultDependencies: AssistantChatHandlerDependencies = {
-  provider: placeholderAssistantProvider,
+  resolveProvider: () => getAssistantRuntime().resolveProvider(),
   logger: assistantRequestLogger,
   clock: () => performance.now(),
   requestIdFactory: () => crypto.randomUUID(),
   messageIdFactory: () => crypto.randomUUID(),
-  resolveSession: resolveDefaultSession,
+  resolveSession: (request) => getAssistantRuntime().resolveSession(request),
   rateLimiter: {
-    consume: (input) => getDefaultRateLimiter().consume(input),
+    consume: (input) => getAssistantRuntime().rateLimiter.consume(input),
   },
   resolveTrustedClientIp: (request) =>
-    resolveTrustedClientIp(request.headers, trustNginxProxy()),
+    getAssistantRuntime().resolveTrustedClientIp(request),
 };
 
 function rateLimitInput(
@@ -143,8 +119,14 @@ export function createAssistantChatHandler(
         await dependencies.rateLimiter.consume(
           rateLimitInput(session, ipAddress),
         );
+        const selected = dependencies.resolveProvider
+          ? await dependencies.resolveProvider()
+          : {
+              provider: dependencies.provider ?? placeholderAssistantProvider,
+              mode: "placeholder" as const,
+            };
         const providerResponse =
-          await dependencies.provider.reply(assistantRequest);
+          await selected.provider.reply(assistantRequest);
         if (!isAssistantProviderReply(providerResponse)) {
           throw new TypeError("Invalid assistant provider response");
         }
@@ -155,7 +137,7 @@ export function createAssistantChatHandler(
         body = {
           version: "1",
           requestId,
-          mode: "placeholder",
+          mode: selected.mode,
           session: session.publicSession,
           message: {
             id: messageId,

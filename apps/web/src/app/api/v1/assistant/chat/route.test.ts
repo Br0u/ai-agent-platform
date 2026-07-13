@@ -133,6 +133,10 @@ function dependencies(options?: {
 
   return {
     provider,
+    resolveProvider: vi.fn(async () => ({
+      provider,
+      mode: "placeholder" as const,
+    })),
     logger,
     records,
     clock: () => times[timeIndex++] ?? times.at(-1) ?? 0,
@@ -207,13 +211,17 @@ describe("POST /api/v1/assistant/chat", () => {
     deps.rateLimiter.consume.mockImplementation(async () => {
       order.push("limit");
     });
+    deps.resolveProvider.mockImplementation(async () => {
+      order.push("selector");
+      return { provider: deps.provider, mode: "placeholder" };
+    });
 
     const response = await createAssistantChatHandler(deps)(
       request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
     );
 
     expect(response.status).toBe(200);
-    expect(order).toEqual(["session", "limit", "provider"]);
+    expect(order).toEqual(["session", "limit", "selector", "provider"]);
   });
 
   it("uses only the server-resolved customer actor for customer limits", async () => {
@@ -305,6 +313,32 @@ describe("POST /api/v1/assistant/chat", () => {
         "assistant_unavailable",
       ),
     );
+    expect(deps.provider.reply).not.toHaveBeenCalled();
+  });
+
+  it("returns a rotated Cookie and safe versioned 503 when explicit Provider selection is unavailable", async () => {
+    const deps = dependencies();
+    deps.resolveProvider.mockRejectedValue(
+      new Error("http://agent:7777 private readiness failure"),
+    );
+
+    const response = await createAssistantChatHandler(deps)(
+      request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("set-cookie")).toContain(
+      "__Host-aap_assistant_sid=raw-cookie-value",
+    );
+    expect(body).toEqual(
+      createAssistantErrorResponse(
+        "generated-request-id",
+        "assistant_unavailable",
+      ),
+    );
+    expect(JSON.stringify(body)).not.toMatch(/agent:7777|private|readiness/iu);
+    expect(deps.rateLimiter.consume).toHaveBeenCalledOnce();
     expect(deps.provider.reply).not.toHaveBeenCalled();
   });
 

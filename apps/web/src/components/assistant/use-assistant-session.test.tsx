@@ -260,6 +260,89 @@ describe("useAssistantSession", () => {
     );
   });
 
+  it("parses the canonical session expiry from a successful response", async () => {
+    vi.mocked(fetch).mockResolvedValue(success("回答"));
+    const { result } = renderHook(() => useAssistantSession("/assistant"));
+
+    await act(() => result.current.submit("会话何时过期"));
+
+    expect(result.current.sessionExpiresAt).toBe("2026-07-13T12:00:00.000Z");
+  });
+
+  it("shows a rate-limit message and never automatically retries POST", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      Response.json(
+        {
+          version: "1",
+          requestId: "req-429",
+          error: {
+            code: "rate_limited",
+            message: "请求过于频繁，请稍后再试。",
+          },
+        },
+        { status: 429, headers: { "Retry-After": "37" } },
+      ),
+    );
+    const { result } = renderHook(() => useAssistantSession("/assistant"));
+
+    await act(() => result.current.submit("频率测试"));
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(result.current.requestStatus).toBe("failed");
+    expect(result.current.latestAnnouncement).toBe(
+      "请求过于频繁，请稍后再试。",
+    );
+  });
+
+  it("never renders an untrusted error message from a malformed 429 body", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      Response.json(
+        {
+          version: "1",
+          requestId: "req-malformed",
+          error: {
+            code: "rate_limited",
+            message: "internal URL http://agent:7777 and secret key",
+          },
+          extra: "unsafe",
+        },
+        { status: 429 },
+      ),
+    );
+    const { result } = renderHook(() => useAssistantSession("/assistant"));
+
+    await act(() => result.current.submit("异常响应"));
+
+    expect(result.current.latestAnnouncement).toBe(
+      "发送失败，请重试或使用帮助中心或商务咨询。",
+    );
+    expect(result.current.latestAnnouncement).not.toMatch(/agent:7777|secret/u);
+  });
+
+  it("uses the safe unavailable envelope for a degraded 503 without retrying", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      Response.json(
+        {
+          version: "1",
+          requestId: "req-503",
+          error: {
+            code: "assistant_unavailable",
+            message: "助手服务暂不可用，请使用帮助中心或商务咨询。",
+          },
+        },
+        { status: 503 },
+      ),
+    );
+    const { result } = renderHook(() => useAssistantSession("/assistant"));
+
+    await act(() => result.current.submit("状态测试"));
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(result.current.latestAnnouncement).toBe(
+      "助手服务暂不可用，请使用帮助中心或商务咨询。",
+    );
+  });
+
   it("uses a configured failure announcement for an HTTP failure", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 503 }));
     const { result } = renderHook(() =>

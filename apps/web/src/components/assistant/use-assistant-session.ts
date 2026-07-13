@@ -35,10 +35,18 @@ type AssistantRequestPayload = {
   context: { pathname: string };
 };
 
+type AssistantSuccessfulBody = Pick<
+  AssistantSuccessResponse,
+  "message" | "suggestedActions"
+> &
+  Partial<Pick<AssistantSuccessResponse, "session">>;
+
 const FAILURE_ANNOUNCEMENT = "发送失败，请重试或使用帮助中心或商务咨询。";
 const PUBLIC_ASSISTANT_ENDPOINT = "/api/v1/assistant/chat";
 const NAVIGATION_ABORT = Symbol("assistant-navigation-abort");
 const REQUEST_TIMEOUT = Symbol("assistant-request-timeout");
+
+class SafeAssistantRequestFailure extends Error {}
 
 export const ASSISTANT_REQUEST_TIMEOUT_MS = 15_000;
 
@@ -46,9 +54,7 @@ export type AssistantSessionOptions = {
   endpoint?: string;
   failureAnnouncement?: string;
   timeoutMs?: number;
-  successResponseGuard?: (
-    input: unknown,
-  ) => input is Pick<AssistantSuccessResponse, "message" | "suggestedActions">;
+  successResponseGuard?: (input: unknown) => input is AssistantSuccessfulBody;
 };
 
 type ActiveAssistantRequest = {
@@ -66,6 +72,7 @@ export type AssistantSession = {
   requestStatus: AssistantRequestStatus;
   lastFailedMessage: string | null;
   validationError: AssistantValidationError | null;
+  sessionExpiresAt: string | null;
   setDraft: (draft: string) => void;
   openAssistant: () => void;
   closeAssistant: () => void;
@@ -95,6 +102,42 @@ function validateMessage(
   return { message, error: null };
 }
 
+function safeFailureAnnouncement(
+  status: number,
+  input: unknown,
+  fallback: string,
+): string {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return fallback;
+  }
+  const envelope = input as Record<string, unknown>;
+  if (Object.keys(envelope).sort().join(",") !== "error,requestId,version") {
+    return fallback;
+  }
+  const error = envelope.error;
+  if (
+    envelope.version !== "1" ||
+    typeof envelope.requestId !== "string" ||
+    envelope.requestId.trim().length === 0 ||
+    typeof error !== "object" ||
+    error === null ||
+    Array.isArray(error)
+  ) {
+    return fallback;
+  }
+  const details = error as Record<string, unknown>;
+  if (Object.keys(details).sort().join(",") !== "code,message") {
+    return fallback;
+  }
+  if (status === 429 && details.code === "rate_limited") {
+    return "请求过于频繁，请稍后再试。";
+  }
+  if (status === 503 && details.code === "assistant_unavailable") {
+    return "助手服务暂不可用，请使用帮助中心或商务咨询。";
+  }
+  return fallback;
+}
+
 export function useAssistantSession(
   pathname: string,
   options: AssistantSessionOptions = {},
@@ -115,6 +158,7 @@ export function useAssistantSession(
     useState<AssistantRequestPayload | null>(null);
   const [validationError, setValidationError] =
     useState<AssistantValidationError | null>(null);
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<string | null>(null);
   const requestStatusRef = useRef<AssistantRequestStatus>("idle");
   const requestToken = useRef(0);
   const activeRequest = useRef<ActiveAssistantRequest | null>(null);
@@ -189,7 +233,7 @@ export function useAssistantSession(
             signal: controller.signal,
           }).then(async (response) => ({
             response,
-            body: response.ok ? await response.json() : null,
+            body: await response.json().catch(() => null),
           })),
           control,
         ]);
@@ -197,7 +241,9 @@ export function useAssistantSession(
         if (timedOut) throw REQUEST_TIMEOUT;
         if (controller.signal.aborted) return;
         if (!response.ok || !successResponseGuard(body)) {
-          throw new Error("Assistant request failed");
+          throw new SafeAssistantRequestFailure(
+            safeFailureAnnouncement(response.status, body, failureAnnouncement),
+          );
         }
 
         setMessages((current) => [
@@ -215,6 +261,7 @@ export function useAssistantSession(
         setDraftState((current) => (current.trim() === message ? "" : current));
         setLatestAnnouncement(body.message.content);
         setLastFailedRequest(null);
+        if (body.session) setSessionExpiresAt(body.session.expiresAt);
         updateRequestStatus("idle");
       } catch (error) {
         if (token !== requestToken.current || error === NAVIGATION_ABORT) {
@@ -230,7 +277,11 @@ export function useAssistantSession(
         )
           return;
         setLastFailedRequest(payload);
-        setLatestAnnouncement(failureAnnouncement);
+        setLatestAnnouncement(
+          error instanceof SafeAssistantRequestFailure
+            ? error.message
+            : failureAnnouncement,
+        );
         updateRequestStatus("failed");
       } finally {
         const active = activeRequest.current;
@@ -277,6 +328,7 @@ export function useAssistantSession(
     requestStatus,
     lastFailedMessage: lastFailedRequest?.message ?? null,
     validationError,
+    sessionExpiresAt,
     setDraft,
     openAssistant: () => setOpen(true),
     closeAssistant: () => setOpen(false),

@@ -8,6 +8,12 @@ describe("GET /api/v1/assistant/status", () => {
   it("returns the exact versioned placeholder status", async () => {
     const GET = createAssistantStatusHandler({
       requestIdFactory: () => "req-2",
+      getStatus: async () => ({
+        live: true,
+        ready: true,
+        capability: "placeholder",
+        message: "模型尚未配置，当前为安全占位模式。",
+      }),
     });
 
     const response = await GET(
@@ -20,7 +26,7 @@ describe("GET /api/v1/assistant/status", () => {
       version: "1",
       requestId: "req-2",
       live: true,
-      ready: false,
+      ready: true,
       capability: "placeholder",
       message: "模型尚未配置，当前为安全占位模式。",
     });
@@ -29,6 +35,12 @@ describe("GET /api/v1/assistant/status", () => {
   it("accepts only a bounded correlation id and exposes no credentials", async () => {
     const GET = createAssistantStatusHandler({
       requestIdFactory: () => "generated-request-id",
+      getStatus: async () => ({
+        live: false,
+        ready: false,
+        capability: "degraded",
+        message: "助手基础服务暂不可用。",
+      }),
     });
 
     const response = await GET(
@@ -40,8 +52,40 @@ describe("GET /api/v1/assistant/status", () => {
 
     expect(body.requestId).toBe("generated-request-id");
     expect(JSON.stringify(body)).not.toMatch(
-      /cookie|credential|token|secret/iu,
+      /cookie|credential|token|secret|agent:7777|stack/iu,
     );
+    expect(body).toMatchObject({
+      live: false,
+      ready: false,
+      capability: "degraded",
+    });
+  });
+
+  it("maps runtime configuration failures to one safe degraded envelope", async () => {
+    const GET = createAssistantStatusHandler({
+      requestIdFactory: () => "req-safe",
+      getStatus: async () => {
+        throw new Error(
+          "AGENTOS_INTERNAL_URL=http://agent:7777 OS_SECURITY_KEY=private",
+        );
+      },
+    });
+
+    const response = await GET(
+      new Request("http://localhost/api/v1/assistant/status"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      version: "1",
+      requestId: "req-safe",
+      live: false,
+      ready: false,
+      capability: "degraded",
+      message: "助手基础服务暂不可用。",
+    });
+    expect(JSON.stringify(body)).not.toMatch(/agent:7777|private|key/iu);
   });
 
   it("exports GET only", () => {

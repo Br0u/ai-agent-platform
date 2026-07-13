@@ -192,8 +192,8 @@ describeAcceptance("built Next assistant startup boundary", () => {
 
   it("starts with valid runtime config and fails fast for invalid runtime config", async () => {
     const instrumentationTrace = ".next/server/instrumentation.js.nft.json";
-    const chatTrace =
-      ".next/server/app/api/v1/assistant/chat/route.js.nft.json";
+    const sessionTrace =
+      ".next/server/app/api/v1/assistant/session/route.js.nft.json";
     const tracedFiles = readTraceFiles(instrumentationTrace).join("\n");
     expect(tracedFiles).not.toMatch(
       /(?:packages\/database|node_modules\/\.pnpm\/pg@)/u,
@@ -207,9 +207,9 @@ describeAcceptance("built Next assistant startup boundary", () => {
     expect(
       tracedBundlesContaining(instrumentationTrace, symbolExpression),
     ).toHaveLength(1);
-    expect(tracedBundlesContaining(chatTrace, symbolExpression)).toHaveLength(
-      1,
-    );
+    expect(
+      tracedBundlesContaining(sessionTrace, symbolExpression),
+    ).toHaveLength(1);
 
     const valid = start({
       ...process.env,
@@ -222,27 +222,17 @@ describeAcceptance("built Next assistant startup boundary", () => {
       const homepage = await waitForHomepage(valid.child, valid.output);
       expect(homepage.response.status).toBe(200);
 
-      const chat = await fetch(
-        `http://127.0.0.1:${homepage.port}/api/v1/assistant/chat`,
+      const session = await fetch(
+        `http://127.0.0.1:${homepage.port}/api/v1/assistant/session`,
         {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            message: "如何开始了解平台？",
-            context: { pathname: "/" },
-          }),
+          method: "DELETE",
         },
       );
-      expect(chat.status).toBe(200);
-      expect(chat.headers.get("set-cookie")).toContain(
+      expect(session.status).toBe(204);
+      expect(session.headers.get("set-cookie")).toContain(
         "aap_assistant_sid_dev=",
       );
-      await expect(chat.json()).resolves.toMatchObject({
-        version: "1",
-        mode: "placeholder",
-        session: { temporary: true },
-        message: { role: "assistant" },
-      });
+      expect(await session.text()).toBe("");
     } finally {
       await stop(valid.child);
     }
