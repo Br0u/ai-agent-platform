@@ -9,6 +9,7 @@ from agno.db.postgres import AsyncPostgresDb
 from agno.os import AgentOS
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from pydantic import SecretStr
 from sqlalchemy import text
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -30,9 +31,9 @@ ReadinessProbe = Callable[[AsyncPostgresDb], Awaitable[bool]]
 class BearerAuthMiddleware:
     """Apply one constant-time bearer-key boundary to every HTTP route."""
 
-    def __init__(self, app: ASGIApp, *, security_key: str) -> None:
+    def __init__(self, app: ASGIApp, *, security_key: SecretStr) -> None:
         self.app = app
-        self._security_key = security_key.encode("utf-8")
+        self._security_key = security_key.get_secret_value().encode("utf-8")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -137,11 +138,12 @@ def create_app(
         db=runtime_database,
         base_app=base_app,
         auto_provision_dbs=False,
+        telemetry=False,
     )
     application = agent_os.get_app()
     application.add_middleware(
         BearerAuthMiddleware,
-        security_key=runtime_settings.os_security_key.get_secret_value(),
+        security_key=runtime_settings.os_security_key,
     )
     return application
 

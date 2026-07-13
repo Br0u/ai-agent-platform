@@ -4,6 +4,7 @@ from typing import Any, cast
 
 import pytest
 from agno.db.postgres import AsyncPostgresDb
+from agno.os import AgentOS
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -213,9 +214,35 @@ def test_agentos_receives_exact_model_free_composition_and_same_database(
         "db": database,
         "base_app": captured["base_app"],
         "auto_provision_dbs": False,
+        "telemetry": False,
     }
     assert isinstance(captured["base_app"], FastAPI)
     assert probed == [database]
+
+
+def test_real_agentos_instance_has_telemetry_disabled(
+    settings: RuntimeSettings,
+) -> None:
+    instances: list[AgentOS] = []
+
+    def real_factory(**kwargs: Any) -> AgentOS:
+        instance = AgentOS(**kwargs)
+        instances.append(instance)
+        return instance
+
+    create_app(settings=settings, agent_os_factory=real_factory)
+
+    assert len(instances) == 1
+    assert instances[0].telemetry is False
+
+
+def test_bearer_middleware_configuration_does_not_retain_plaintext_key(
+    settings: RuntimeSettings,
+) -> None:
+    app = make_app(settings, ready_probe)
+
+    assert SECURITY_KEY not in repr(app.user_middleware)
+    assert all(SECURITY_KEY not in repr(entry.kwargs) for entry in app.user_middleware)
 
 
 def test_discovered_agentos_route_uses_the_same_bearer_boundary(
