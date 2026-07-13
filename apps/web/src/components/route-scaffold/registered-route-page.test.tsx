@@ -39,14 +39,7 @@ describe("RegisteredRoutePage", () => {
         section.getAttribute("id"),
       ),
     ).toEqual([
-      "quick-start",
-      "deployment",
-      "upgrade",
-      "operations",
-      "api",
       "features",
-      "hardware",
-      "faq",
     ]);
     expect(container.querySelector("#overview")).not.toBeInTheDocument();
     expect(

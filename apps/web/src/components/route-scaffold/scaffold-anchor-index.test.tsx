@@ -11,14 +11,14 @@ import {
 describe("ScaffoldAnchorIndex", () => {
   it("renders a semantic directory and real targets for scaffold sections", () => {
     const { container } = render(
-      <ScaffoldAnchorIndex anchors={navigationAnchorsForPath("/docs")} />,
+      <ScaffoldAnchorIndex anchors={navigationAnchorsForPath("/compatibility")} />,
     );
 
     const directory = screen.getByRole("navigation", { name: "页面目录" });
     for (const [id, label] of [
-      ["quick-start", "快速开始"],
-      ["deployment", "部署指南"],
-      ["faq", "常见问题 FAQ"],
+      ["hardware", "硬件配置要求"],
+      ["gpu", "GPU 适配列表"],
+      ["browser", "浏览器兼容"],
     ] as const) {
       const link = within(directory).getByRole("link", { name: label });
       expect(link).toHaveAttribute("href", `#${id}`);

@@ -14,10 +14,15 @@ const expectedPortal = [
     href: "/product",
     children: [
       {
-        label: "产品中心",
+        label: "产品矩阵",
         items: [
-          ["产品介绍", "/product#overview"],
-          ["产品矩阵", "/product#modules"],
+          ["超融合", "/product/hci"],
+          ["元启AI开发平台", "/product/tgdataxai"],
+          ["视频智能体", "/product/video-agent"],
+          ["数据智能体", "/product/data-agent"],
+          ["知识智能体", "/product/knowledge-agent"],
+          ["办公智能体", "/product/office-agent"],
+          ["码多多", "/product/code-agent"],
         ],
       },
       {
@@ -48,19 +53,19 @@ const expectedPortal = [
       {
         label: "落地文档",
         items: [
-          ["快速开始", "/docs#quick-start"],
-          ["部署指南", "/docs#deployment"],
-          ["升级手册", "/docs#upgrade"],
-          ["运维手册", "/docs#operations"],
+          ["快速开始", "/docs/quick-start"],
+          ["部署指南", "/docs/deployment"],
+          ["升级手册", "/docs/upgrade"],
+          ["运维手册", "/docs/operations"],
         ],
       },
       {
         label: "开发与适配",
         items: [
-          ["API 文档", "/docs#api"],
+          ["API 文档", "/docs/api"],
           ["功能手册", "/docs#features"],
-          ["GPU / 硬件适配", "/docs#hardware"],
-          ["常见问题 FAQ", "/docs#faq"],
+          ["GPU / 硬件适配", "/docs/hardware"],
+          ["常见问题 FAQ", "/docs/faq"],
         ],
       },
     ],
@@ -260,7 +265,7 @@ const expectedFooter = [
     label: "文档与部署",
     items: [
       ["文档", "/docs"],
-      ["部署指南", "/docs#deployment"],
+      ["部署指南", "/docs/deployment"],
       ["兼容性", "/compatibility"],
     ],
   },
@@ -529,22 +534,11 @@ describe("navigation targets", () => {
 
   it("derives every configured hash target from the navigation sources", () => {
     const expectedAnchors = {
-      "/product": [
-        { id: "overview", label: "产品介绍", status: undefined },
-        { id: "modules", label: "产品矩阵", status: undefined },
-      ],
       "/releases": [
         { id: "release-notes", label: "Release Note", status: undefined },
       ],
       "/docs": [
-        { id: "quick-start", label: "快速开始", status: "scaffold" },
-        { id: "deployment", label: "部署指南", status: "scaffold" },
-        { id: "upgrade", label: "升级手册", status: "scaffold" },
-        { id: "operations", label: "运维手册", status: "scaffold" },
-        { id: "api", label: "API 文档", status: "scaffold" },
         { id: "features", label: "功能手册", status: "scaffold" },
-        { id: "hardware", label: "GPU / 硬件适配", status: "scaffold" },
-        { id: "faq", label: "常见问题 FAQ", status: "scaffold" },
       ],
       "/downloads": [
         { id: "latest", label: "最新版本", status: "placeholder" },
