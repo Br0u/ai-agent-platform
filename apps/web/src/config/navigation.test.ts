@@ -18,9 +18,9 @@ const expectedPortal = [
         items: [
           ["超融合", "/product/hci"],
           ["元启AI开发平台", "/product/tgdataxai"],
-          ["视频智能体", "/product/video-agent"],
+          ["视觉检索一体机", "/product/video-agent"],
           ["数据智能体", "/product/data-agent"],
-          ["知识智能体", "/product/knowledge-agent"],
+          ["智能导办一体机", "/product/knowledge-agent"],
           ["办公智能体", "/product/office-agent"],
           ["码多多", "/product/code-agent"],
         ],
