@@ -1,0 +1,27 @@
+.enterprise-auth-page__form {
+  min-width: 0;
+}
+
+.enterprise-auth-page__form img {
+  max-width: 100%;
+  height: auto;
+}
+
+.enterprise-auth-page__form code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.enterprise-auth-page__form :where(a, button, input):focus-visible {
+  outline: 3px solid rgb(76 145 235 / 24%);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .enterprise-auth-page__form *,
+  .enterprise-auth-page__form *::before,
+  .enterprise-auth-page__form *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

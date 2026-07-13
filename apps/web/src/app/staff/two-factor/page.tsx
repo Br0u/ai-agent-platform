@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
+import { AuthPage } from "@/components/auth/auth-page";
 import { TwoFactorForm } from "@/components/auth/two-factor-form";
 import { getCurrentActor, requireWorkforce } from "@/server/auth/access";
 import { safeReturnPath } from "@/server/auth/actions";
@@ -25,28 +26,27 @@ export default async function Page({
     else await requireWorkforce({ setupFlow: "two-factor" });
   }
   return (
-    <main className="auth-page">
-      <section aria-labelledby="two-factor-title" className="auth-page__panel">
-        <p className="auth-page__eyebrow">Two-factor Authentication</p>
-        <h1 id="two-factor-title">双因素认证</h1>
-        <p className="auth-page__intro">
-          {actor?.realm === "workforce"
+    <AuthPage
+      intro={
+        actor?.realm === "workforce"
+          ? actor.twoFactorEnabled
+            ? "管理当前身份验证器。移除后必须重新完成 TOTP 设置才能进入后台。"
+            : "使用身份验证器完成管理员 TOTP 设置。"
+          : "输入身份验证器生成的六位验证码。"
+      }
+      realmLabel="Two-Factor Authentication"
+      title="双因素认证"
+    >
+      <TwoFactorForm
+        mode={
+          actor?.realm === "workforce"
             ? actor.twoFactorEnabled
-              ? "管理当前身份验证器。移除后必须重新完成 TOTP 设置才能进入后台。"
-              : "使用身份验证器完成管理员 TOTP 设置。"
-            : "输入身份验证器生成的六位验证码。"}
-        </p>
-        <TwoFactorForm
-          mode={
-            actor?.realm === "workforce"
-              ? actor.twoFactorEnabled
-                ? "manage"
-                : "enroll"
-              : "challenge"
-          }
-          returnTo={returnTo}
-        />
-      </section>
-    </main>
+              ? "manage"
+              : "enroll"
+            : "challenge"
+        }
+        returnTo={returnTo}
+      />
+    </AuthPage>
   );
 }

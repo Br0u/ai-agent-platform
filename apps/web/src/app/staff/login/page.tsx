@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { AuthPage } from "@/components/auth/auth-page";
 import { StaffLoginForm } from "@/components/auth/staff-login-form";
 
 export const metadata: Metadata = {
@@ -14,15 +15,12 @@ export default async function Page({
 }) {
   const { returnTo } = await searchParams;
   return (
-    <main className="auth-page">
-      <section aria-labelledby="staff-login-title" className="auth-page__panel">
-        <p className="auth-page__eyebrow">Workforce Access</p>
-        <h1 id="staff-login-title">员工安全登录</h1>
-        <p className="auth-page__intro">
-          仅限已由企业管理员开通的内部员工账号。
-        </p>
-        <StaffLoginForm returnTo={returnTo} />
-      </section>
-    </main>
+    <AuthPage
+      intro="仅限已由企业管理员开通的内部员工账号。"
+      realmLabel="Workforce Access"
+      title="员工安全登录"
+    >
+      <StaffLoginForm returnTo={returnTo} />
+    </AuthPage>
   );
 }
