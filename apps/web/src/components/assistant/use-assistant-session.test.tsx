@@ -1,4 +1,12 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAssistantSession } from "./use-assistant-session";
 
@@ -10,7 +18,10 @@ const success = (message: string) =>
 
 describe("useAssistantSession", () => {
   beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
 
   it("trims a valid Unicode message and sends the current pathname", async () => {
     vi.mocked(fetch).mockResolvedValue(success("回答"));
@@ -103,24 +114,61 @@ describe("useAssistantSession", () => {
     ]);
   });
 
-  it("keeps session state while a consumer disappears and clears on controller remount", async () => {
+  it("keeps session state while a separate consumer unmounts and remounts", async () => {
     vi.mocked(fetch).mockResolvedValue(success("保留回答"));
-    const { result, rerender, unmount } = renderHook(
-      ({ visible }) => {
-        const session = useAssistantSession("/");
-        return { session, consumer: visible ? session.messages : null };
-      },
-      { initialProps: { visible: true } },
-    );
-    act(() => result.current.session.setDraft("保留问题"));
-    await act(() => result.current.session.submit());
-    rerender({ visible: false });
-    rerender({ visible: true });
-    expect(result.current.consumer).toHaveLength(2);
-    unmount();
+    function Consumer({
+      session,
+    }: {
+      session: ReturnType<typeof useAssistantSession>;
+    }) {
+      return (
+        <div>
+          <button onClick={() => void session.submit("保留问题")} type="button">
+            提交
+          </button>
+          {session.messages.map((message) => (
+            <p key={message.id}>{message.content}</p>
+          ))}
+        </div>
+      );
+    }
+    function Controller({ visible }: { visible: boolean }) {
+      const session = useAssistantSession("/");
+      return visible ? <Consumer session={session} /> : null;
+    }
 
-    const fresh = renderHook(() => useAssistantSession("/"));
-    expect(fresh.result.current.messages).toEqual([]);
+    const view = render(<Controller visible />);
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
+    await waitFor(() => expect(screen.getByText("保留回答")).toBeVisible());
+    view.rerender(<Controller visible={false} />);
+    expect(screen.queryByText("保留回答")).not.toBeInTheDocument();
+    view.rerender(<Controller visible />);
+    expect(screen.getByText("保留回答")).toBeVisible();
+  });
+
+  it("clears session state after the full controller unmounts and remounts", async () => {
+    vi.mocked(fetch).mockResolvedValue(success("旧回答"));
+    function Controller() {
+      const session = useAssistantSession("/");
+      return (
+        <div>
+          <button onClick={() => void session.submit("旧问题")} type="button">
+            提交
+          </button>
+          {session.messages.map((message) => (
+            <p key={message.id}>{message.content}</p>
+          ))}
+        </div>
+      );
+    }
+
+    const view = render(<Controller />);
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
+    await waitFor(() => expect(screen.getByText("旧回答")).toBeVisible());
+    view.unmount();
+    render(<Controller />);
+    expect(screen.queryByText("旧回答")).not.toBeInTheDocument();
+    expect(screen.queryByText("旧问题")).not.toBeInTheDocument();
   });
 
   it("ignores an older response after a newer request owns the session", async () => {

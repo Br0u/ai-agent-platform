@@ -10,6 +10,11 @@ describe("shouldShowAssistant", () => {
     "/pricing",
     "/docs",
     "/support",
+    "/help",
+    "/blog",
+    "/releases",
+    "/roadmap",
+    "/contact",
   ])("allows the registered assistant route %s", (pathname) => {
     expect(shouldShowAssistant(pathname)).toBe(true);
   });
@@ -24,8 +29,6 @@ describe("shouldShowAssistant", () => {
     "/console/profile",
     "/admin",
     "/admin/products",
-    "/help",
-    "/blog",
     "/product/one/more",
   ])("denies the assistant route %s", (pathname) => {
     expect(shouldShowAssistant(pathname)).toBe(false);

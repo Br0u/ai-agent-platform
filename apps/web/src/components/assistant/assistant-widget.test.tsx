@@ -41,9 +41,35 @@ describe("AssistantWidget", () => {
     fireEvent.click(launcher);
     expect(screen.getByRole("dialog", { name: "M 助手" })).toBeVisible();
     expect(screen.getByText("AI 服务尚未接入")).toBeVisible();
+    expect(screen.getByRole("link", { name: "帮助中心" })).toHaveAttribute(
+      "href",
+      "/help",
+    );
+    expect(screen.getByRole("link", { name: "商务咨询" })).toHaveAttribute(
+      "href",
+      "/contact",
+    );
     expect(
       screen.getByRole("textbox", { name: "向 M 助手提问" }),
     ).toHaveFocus();
+  });
+
+  it("ignores blank input and trims free input before submitting", async () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+    const input = screen.getByRole("textbox", { name: "向 M 助手提问" });
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    expect(fetch).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "  自由问题  " } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body)),
+    ).toMatchObject({
+      message: "自由问题",
+    });
   });
 
   it("closes on Escape and returns focus to the launcher", () => {
