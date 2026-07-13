@@ -94,6 +94,22 @@ describe("useAssistantSession", () => {
     expect(result.current.messages).toEqual([]);
   });
 
+  it("accepts exactly 500 emoji and rejects 501 by Unicode code point", async () => {
+    vi.mocked(fetch).mockResolvedValue(success("回答"));
+    const { result } = renderHook(() => useAssistantSession("/"));
+
+    act(() => result.current.setDraft("😀".repeat(500)));
+    await act(() => result.current.submit());
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body)).message,
+    ).toBe("😀".repeat(500));
+
+    act(() => result.current.setDraft("😀".repeat(501)));
+    await act(() => result.current.submit());
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("prevents duplicate submits while a request is active", async () => {
     let resolve!: (response: Response) => void;
     vi.mocked(fetch).mockReturnValue(new Promise((done) => (resolve = done)));

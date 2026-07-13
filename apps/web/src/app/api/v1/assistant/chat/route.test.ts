@@ -48,6 +48,19 @@ function streamingRequest(chunks: string[]) {
   } as RequestInit & { duplex: "half" });
 }
 
+function escapedEmojiBody(count: number) {
+  return `{"message":"${"\\ud83d\\ude00".repeat(count)}","context":{"pathname":"/help"}}`;
+}
+
+function declaredRequest(body: string) {
+  const declared = request(body);
+  declared.headers.set(
+    "content-length",
+    String(new TextEncoder().encode(body).byteLength),
+  );
+  return declared;
+}
+
 function dependencies(options?: {
   reply?: AssistantProvider["reply"];
   times?: number[];
@@ -110,6 +123,54 @@ describe("POST /api/v1/assistant/chat", () => {
 
     expect(response.status).toBe(200);
     expect(deps.provider.reply).toHaveBeenCalledOnce();
+  });
+
+  it("accepts a declared JSON body containing 500 escaped emoji", async () => {
+    const deps = dependencies();
+    const body = escapedEmojiBody(500);
+
+    const response = await createAssistantChatHandler(deps)(
+      declaredRequest(body),
+    );
+
+    expect(new TextEncoder().encode(body).byteLength).toBeGreaterThan(4096);
+    expect(response.status).toBe(200);
+    expect(deps.provider.reply).toHaveBeenCalledExactlyOnceWith({
+      message: "😀".repeat(500),
+      context: { pathname: "/help" },
+    });
+  });
+
+  it("accepts a chunked JSON body containing 500 escaped emoji", async () => {
+    const deps = dependencies();
+    const body = escapedEmojiBody(500);
+    const midpoint = Math.floor(body.length / 2);
+
+    const response = await createAssistantChatHandler(deps)(
+      streamingRequest([body.slice(0, midpoint), body.slice(midpoint)]),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.provider.reply).toHaveBeenCalledExactlyOnceWith({
+      message: "😀".repeat(500),
+      context: { pathname: "/help" },
+    });
+  });
+
+  it("contract-rejects 501 escaped emoji after reading the bounded body", async () => {
+    const deps = dependencies();
+    const body = escapedEmojiBody(501);
+
+    const response = await createAssistantChatHandler(deps)(
+      declaredRequest(body),
+    );
+
+    expect(new TextEncoder().encode(body).byteLength).toBeLessThan(16 * 1024);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual(
+      INVALID_ASSISTANT_REQUEST_RESPONSE,
+    );
+    expect(deps.provider.reply).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -315,12 +376,12 @@ describe("POST /api/v1/assistant/chat", () => {
     expect(JSON.stringify(deps.records)).not.toMatch(/secret|unsafe/iu);
   });
 
-  it("rejects an oversized declared body before parsing", async () => {
+  it("rejects a declared body over 16 KiB before parsing", async () => {
     const deps = dependencies();
     const oversized = request(
       JSON.stringify({ message: "问题", context: { pathname: "/help" } }),
     );
-    oversized.headers.set("content-length", "4097");
+    oversized.headers.set("content-length", String(16 * 1024 + 1));
 
     const response = await createAssistantChatHandler(deps)(oversized);
 
@@ -332,13 +393,12 @@ describe("POST /api/v1/assistant/chat", () => {
     expect(deps.logger.log).toHaveBeenCalledOnce();
   });
 
-  it("rejects an oversized chunked body while streaming", async () => {
+  it("rejects a chunked body over 16 KiB while streaming", async () => {
     const deps = dependencies();
-    const oversized = JSON.stringify({
+    const oversized = `${JSON.stringify({
       message: "问题",
       context: { pathname: "/help" },
-      ignored: "x".repeat(4097),
-    });
+    })}${" ".repeat(16 * 1024 + 1)}`;
     const midpoint = Math.floor(oversized.length / 2);
 
     const response = await createAssistantChatHandler(deps)(

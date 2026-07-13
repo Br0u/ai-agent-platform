@@ -394,7 +394,7 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
   const dialog = page.getByRole("dialog", { name: "M 助手" });
   const input = page.getByLabel("向 M 助手提问");
   await expect(input).toBeFocused();
-  await expect(input).toHaveAttribute("maxlength", "500");
+  await expect(input).not.toHaveAttribute("maxlength");
   await expect(page.getByText("最多输入 500 个字符。")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
@@ -448,6 +448,27 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
     expect(staticMobilePanelRule).toContain("env(safe-area-inset-bottom)");
     await expectNoHorizontalOverflow(page);
   }
+
+  let unicodeChatRequests = 0;
+  page.on("request", (request) => {
+    if (pathname(request.url()) === ASSISTANT_API) unicodeChatRequests += 1;
+  });
+  const send = page.getByRole("button", { name: "发送", exact: true });
+  await input.fill("😀".repeat(500));
+  await expect(send).toBeEnabled();
+  const unicodeResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(ASSISTANT_API) && response.status() === 200,
+  );
+  await send.click();
+  await unicodeResponse;
+  expect(unicodeChatRequests).toBe(1);
+
+  await input.fill("😀".repeat(501));
+  await expect(input).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByText("问题不能超过 500 个字符。")).toBeVisible();
+  await expect(send).toBeDisabled();
+  expect(unicodeChatRequests).toBe(1);
 
   let interceptedChatRequests = 0;
   await page.route(`**${ASSISTANT_API}`, async (route) => {

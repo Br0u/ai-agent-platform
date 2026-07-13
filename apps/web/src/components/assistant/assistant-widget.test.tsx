@@ -126,19 +126,26 @@ describe("AssistantWidget", () => {
     );
   });
 
-  it("shows the 500-character input contract and an accessible over-limit error", () => {
+  it("uses a code-point-aware 500-character input contract", async () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
     const input = screen.getByRole("textbox", { name: "向 M 助手提问" });
     const helper = screen.getByText("最多输入 500 个字符。");
+    const send = screen.getByRole("button", { name: "发送" });
 
-    expect(input).toHaveAttribute("maxlength", "500");
+    expect(input).not.toHaveAttribute("maxlength");
     expect(input).toHaveAttribute("aria-describedby", helper.id);
-    fireEvent.change(input, { target: { value: "问".repeat(501) } });
+    fireEvent.change(input, { target: { value: "😀".repeat(500) } });
+    expect(input).not.toHaveAttribute("aria-invalid");
+    expect(send).toBeEnabled();
+    fireEvent.click(send);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(input, { target: { value: "😀".repeat(501) } });
     expect(input).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByText("问题不能超过 500 个字符。")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "发送" }));
-    expect(fetch).not.toHaveBeenCalled();
+    expect(send).toBeDisabled();
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("submits free input, disables controls while sending, and announces only the newest answer", async () => {

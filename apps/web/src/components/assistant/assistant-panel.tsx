@@ -119,7 +119,6 @@ export function AssistantPanel({ session, onClose }: AssistantPanelProps) {
             aria-invalid={overLimit ? "true" : undefined}
             disabled={sending}
             id="assistant-question"
-            maxLength={500}
             onChange={(event) => session.setDraft(event.target.value)}
             placeholder="输入你的问题"
             ref={inputRef}

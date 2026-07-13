@@ -29,7 +29,7 @@ const defaultDependencies: AssistantChatHandlerDependencies = {
   requestIdFactory: () => crypto.randomUUID(),
 };
 
-const MAX_REQUEST_BODY_BYTES = 4096;
+const MAX_REQUEST_BODY_BYTES = 16 * 1024;
 const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,64}$/u;
 
 function safeRequestId(request: Request, factory: () => string): string {
