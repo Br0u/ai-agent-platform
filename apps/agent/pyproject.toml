@@ -1,0 +1,32 @@
+[project]
+name = "agent-service"
+version = "0.1.0"
+description = "Internal model-free Agno AgentOS service"
+requires-python = ">=3.13"
+dependencies = [
+    "agno>=2.7.2",
+    "fastapi>=0.139.0",
+    "psycopg[binary]>=3.3.4",
+    "pydantic-settings>=2.14.2",
+    "sqlalchemy>=2.0.51",
+    "uvicorn>=0.51.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.19,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "mypy>=2.3.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.15.21",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[tool.mypy]
+plugins = ["pydantic.mypy"]
