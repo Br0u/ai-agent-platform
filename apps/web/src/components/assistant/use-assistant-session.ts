@@ -3,6 +3,7 @@
 import {
   isAssistantSuccessResponse,
   safeAssistantSuggestedActions,
+  type AssistantSuccessResponse,
   type AssistantSuggestedAction,
 } from "@/features/assistant/assistant-contract";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -45,6 +46,9 @@ export type AssistantSessionOptions = {
   endpoint?: string;
   failureAnnouncement?: string;
   timeoutMs?: number;
+  successResponseGuard?: (
+    input: unknown,
+  ) => input is Pick<AssistantSuccessResponse, "message" | "suggestedActions">;
 };
 
 type ActiveAssistantRequest = {
@@ -99,6 +103,8 @@ export function useAssistantSession(
   const failureAnnouncement =
     options.failureAnnouncement ?? FAILURE_ANNOUNCEMENT;
   const timeoutMs = options.timeoutMs ?? ASSISTANT_REQUEST_TIMEOUT_MS;
+  const successResponseGuard =
+    options.successResponseGuard ?? isAssistantSuccessResponse;
   const [open, setOpen] = useState(false);
   const [draft, setDraftState] = useState("");
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
@@ -190,7 +196,7 @@ export function useAssistantSession(
         if (token !== requestToken.current) return;
         if (timedOut) throw REQUEST_TIMEOUT;
         if (controller.signal.aborted) return;
-        if (!response.ok || !isAssistantSuccessResponse(body)) {
+        if (!response.ok || !successResponseGuard(body)) {
           throw new Error("Assistant request failed");
         }
 
@@ -234,7 +240,13 @@ export function useAssistantSession(
         }
       }
     },
-    [endpoint, failureAnnouncement, timeoutMs, updateRequestStatus],
+    [
+      endpoint,
+      failureAnnouncement,
+      successResponseGuard,
+      timeoutMs,
+      updateRequestStatus,
+    ],
   );
 
   const submit = useCallback(

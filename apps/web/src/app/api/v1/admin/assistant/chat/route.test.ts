@@ -126,11 +126,16 @@ describe("POST /api/v1/admin/assistant/chat", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("set-cookie")).toBeNull();
     expect(requestIdFactory).not.toHaveBeenCalled();
-    await expect(response.json()).resolves.toMatchObject({
+    await expect(response.json()).resolves.toEqual({
       version: "1",
       requestId: "incoming-correlation",
       mode: "placeholder",
-      message: { id: "admin-message", content: "占位响应" },
+      message: {
+        id: "admin-message",
+        role: "assistant",
+        content: "占位响应",
+      },
+      suggestedActions: [],
     });
   });
 

@@ -4,6 +4,7 @@ import type {
   AdminAssistantSessionsSnapshot,
   AdminAssistantStatusSnapshot,
 } from "@/features/assistant/admin-assistant-contract";
+import { isAdminAssistantChatResponse } from "@/features/assistant/admin-assistant-contract";
 import { useAssistantSession } from "@/components/assistant/use-assistant-session";
 import type { FormEvent } from "react";
 import "./assistant-admin-page.css";
@@ -30,6 +31,7 @@ export function AssistantAdminPage({
   const assistant = useAssistantSession("/admin/assistant", {
     endpoint: "/api/v1/admin/assistant/chat",
     failureAnnouncement: "测试暂时失败，请稍后重试。",
+    successResponseGuard: isAdminAssistantChatResponse,
   });
 
   const submitTest = (event: FormEvent<HTMLFormElement>) => {
