@@ -14,7 +14,16 @@ import {
 } from "@/server/assistant/assistant-request-log";
 import { placeholderAssistantProvider } from "@/server/assistant/placeholder-assistant-provider";
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
+import {
+  resolveAnonymousSession,
+  type AssistantPublicSession,
+} from "@/server/assistant/anonymous-session";
 import { readBoundedJson } from "@/server/http/read-bounded-json";
+
+export type AssistantChatSessionResolution = {
+  publicSession: AssistantPublicSession;
+  setCookie?: string;
+};
 
 interface AssistantChatHandlerDependencies {
   provider: AssistantProvider;
@@ -22,6 +31,7 @@ interface AssistantChatHandlerDependencies {
   clock: () => number;
   requestIdFactory: () => string;
   messageIdFactory: () => string;
+  resolveSession: (request: Request) => Promise<AssistantChatSessionResolution>;
 }
 
 const defaultDependencies: AssistantChatHandlerDependencies = {
@@ -30,6 +40,7 @@ const defaultDependencies: AssistantChatHandlerDependencies = {
   clock: () => performance.now(),
   requestIdFactory: () => crypto.randomUUID(),
   messageIdFactory: () => crypto.randomUUID(),
+  resolveSession: resolveAnonymousSession,
 };
 
 const MAX_REQUEST_BODY_BYTES = 16 * 1024;
@@ -44,6 +55,7 @@ export function createAssistantChatHandler(
     );
     let body: AssistantSuccessResponse | AssistantErrorResponse;
     let statusCode: 200 | 400 | 503;
+    let session: AssistantChatSessionResolution | undefined;
 
     const input = await readBoundedJson(request, MAX_REQUEST_BODY_BYTES);
     const assistantRequest = input.ok
@@ -55,6 +67,7 @@ export function createAssistantChatHandler(
       statusCode = 400;
     } else {
       try {
+        session = await dependencies.resolveSession(request);
         const providerResponse =
           await dependencies.provider.reply(assistantRequest);
         if (!isAssistantProviderReply(providerResponse)) {
@@ -68,7 +81,7 @@ export function createAssistantChatHandler(
           version: "1",
           requestId,
           mode: "placeholder",
-          session: { temporary: true },
+          session: session.publicSession,
           message: {
             id: messageId,
             role: "assistant",
@@ -89,14 +102,20 @@ export function createAssistantChatHandler(
     try {
       response = Response.json(body, {
         status: statusCode,
-        headers: { "Cache-Control": "no-store" },
+        headers: {
+          "Cache-Control": "no-store",
+          ...(session?.setCookie ? { "Set-Cookie": session.setCookie } : {}),
+        },
       });
     } catch {
       body = createAssistantErrorResponse(requestId, "assistant_unavailable");
       statusCode = 503;
       response = Response.json(body, {
         status: statusCode,
-        headers: { "Cache-Control": "no-store" },
+        headers: {
+          "Cache-Control": "no-store",
+          ...(session?.setCookie ? { "Set-Cookie": session.setCookie } : {}),
+        },
       });
     }
 

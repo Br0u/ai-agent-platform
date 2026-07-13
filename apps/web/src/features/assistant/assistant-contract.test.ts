@@ -19,7 +19,7 @@ function success(overrides: Record<string, unknown> = {}) {
     version: "1",
     requestId: "req-1",
     mode: "placeholder",
-    session: { temporary: true },
+    session: { temporary: true, expiresAt: "2026-07-13T12:00:00.000Z" },
     message: { id: "msg-1", role: "assistant", content: "回答" },
     suggestedActions: [{ label: "帮助中心", href: "/help" }],
     ...overrides,
@@ -27,12 +27,32 @@ function success(overrides: Record<string, unknown> = {}) {
 }
 
 describe("assistant platform contract", () => {
+  it("requires a canonical expiry and exposes no session identifier", () => {
+    expect(isAssistantSuccessResponse(success())).toBe(true);
+    expect(
+      isAssistantSuccessResponse(
+        success({ session: { temporary: true, expiresAt: "not-a-date" } }),
+      ),
+    ).toBe(false);
+    expect(
+      isAssistantSuccessResponse(
+        success({
+          session: {
+            temporary: true,
+            expiresAt: "2026-07-13T12:00:00.000Z",
+            id: "must-not-be-public",
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
   it("expresses both runtime modes and all status capabilities", () => {
     const agentos = {
       version: "1",
       requestId: "req-1",
       mode: "agentos",
-      session: { temporary: true },
+      session: { temporary: true, expiresAt: "2026-07-13T12:00:00.000Z" },
       message: { id: "msg-1", role: "assistant", content: "回答" },
       suggestedActions: [],
     } satisfies AssistantSuccessResponse;

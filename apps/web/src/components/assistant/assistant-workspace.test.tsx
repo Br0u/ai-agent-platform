@@ -88,7 +88,7 @@ function successfulPlaceholderReply(content = "当前仅提供安全占位答复
       version: "1",
       requestId: "request-1",
       mode: "placeholder",
-      session: { temporary: true },
+      session: { temporary: true, expiresAt: "2026-07-13T12:00:00.000Z" },
       message: { id: "message-1", role: "assistant", content },
       suggestedActions: [],
     }),

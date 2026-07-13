@@ -17,6 +17,7 @@ import type {
   AssistantRequestLog,
   AssistantRequestLogger,
 } from "@/server/assistant/assistant-request-log";
+import type { ResolvedAnonymousSession } from "@/server/assistant/anonymous-session";
 import { createAssistantChatHandler } from "./handler";
 import * as route from "./route";
 
@@ -24,7 +25,10 @@ const success: AssistantSuccessResponse = {
   version: "1",
   requestId: "generated-request-id",
   mode: "placeholder",
-  session: { temporary: true },
+  session: {
+    temporary: true,
+    expiresAt: "2026-07-13T12:00:00.000Z",
+  },
   message: { id: "generated-message-id", role: "assistant", content: "ok" },
   suggestedActions: [{ label: "帮助中心", href: "/help" }],
 };
@@ -88,6 +92,32 @@ function dependencies(options?: {
   };
   const times = options?.times ?? [100, 107];
   let timeIndex = 0;
+  const session: ResolvedAnonymousSession = {
+    publicSession: {
+      temporary: true,
+      expiresAt: "2026-07-13T12:00:00.000Z",
+    },
+    internalSessionId: "internal-replayable-value",
+    cookie: {
+      name: "__Host-aap_assistant_sid",
+      value: "raw-cookie-value",
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: true,
+      },
+    },
+    setCookie:
+      "__Host-aap_assistant_sid=raw-cookie-value; Path=/; HttpOnly; Secure; SameSite=Lax",
+    rotated: true,
+    refreshed: false,
+    safeMetadata: {
+      temporary: true,
+      expiresAt: "2026-07-13T12:00:00.000Z",
+      rotated: true,
+    },
+  };
 
   return {
     provider,
@@ -96,6 +126,7 @@ function dependencies(options?: {
     clock: () => times[timeIndex++] ?? times.at(-1) ?? 0,
     requestIdFactory: () => "generated-request-id",
     messageIdFactory: () => "generated-message-id",
+    resolveSession: vi.fn(async () => session),
   };
 }
 
@@ -116,6 +147,9 @@ describe("POST /api/v1/assistant/chat", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("set-cookie")).toContain(
+      "__Host-aap_assistant_sid=raw-cookie-value",
+    );
     await expect(response.json()).resolves.toEqual({
       ...success,
       requestId: "incoming-request-id",
@@ -124,6 +158,9 @@ describe("POST /api/v1/assistant/chat", () => {
       message: "如何开始了解平台？",
       context: { pathname: "/pricing" },
     });
+    expect(deps.resolveSession).toHaveBeenCalledExactlyOnceWith(
+      expect.any(Request),
+    );
     expect(deps.records).toEqual([
       { requestId: "incoming-request-id", statusCode: 200, durationMs: 7 },
     ]);
@@ -190,6 +227,7 @@ describe("POST /api/v1/assistant/chat", () => {
       createAssistantErrorResponse("generated-request-id", "validation_error"),
     );
     expect(deps.provider.reply).not.toHaveBeenCalled();
+    expect(deps.resolveSession).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -361,7 +399,10 @@ describe("POST /api/v1/assistant/chat", () => {
       version: "1",
       requestId: "generated-request-id",
       mode: "placeholder",
-      session: { temporary: true },
+      session: {
+        temporary: true,
+        expiresAt: "2026-07-13T12:00:00.000Z",
+      },
       message: {
         id: "generated-message-id",
         role: "assistant",
@@ -589,7 +630,10 @@ describe("POST /api/v1/assistant/chat", () => {
       version: "1",
       requestId: "req-1",
       mode: "placeholder",
-      session: { temporary: true },
+      session: {
+        temporary: true,
+        expiresAt: "2026-07-13T12:00:00.000Z",
+      },
       message: {
         id: "generated-message-id",
         role: "assistant",
@@ -599,6 +643,9 @@ describe("POST /api/v1/assistant/chat", () => {
     });
     expect(JSON.stringify(body)).not.toMatch(
       /cookie|credential|token|secret/iu,
+    );
+    expect(JSON.stringify(body)).not.toMatch(
+      /raw-cookie-value|internal-replayable-value/iu,
     );
   });
 

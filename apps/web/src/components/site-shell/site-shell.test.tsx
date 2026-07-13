@@ -480,7 +480,10 @@ describe("SiteShell", () => {
           version: "1",
           requestId: "req-1",
           mode: "placeholder",
-          session: { temporary: true },
+          session: {
+            temporary: true,
+            expiresAt: "2026-07-13T12:00:00.000Z",
+          },
           message: {
             id: "msg-1",
             role: "assistant",
@@ -528,7 +531,10 @@ describe("SiteShell", () => {
           version: "1",
           requestId: "req-1",
           mode: "placeholder",
-          session: { temporary: true },
+          session: {
+            temporary: true,
+            expiresAt: "2026-07-13T12:00:00.000Z",
+          },
           message: {
             id: "msg-1",
             role: "assistant",

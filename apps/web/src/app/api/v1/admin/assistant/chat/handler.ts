@@ -7,7 +7,10 @@ import {
 } from "@/server/assistant/assistant-request-log";
 import { placeholderAssistantProvider } from "@/server/assistant/placeholder-assistant-provider";
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
-import { createAssistantChatHandler } from "@/app/api/v1/assistant/chat/handler";
+import {
+  createAssistantChatHandler,
+  type AssistantChatSessionResolution,
+} from "@/app/api/v1/assistant/chat/handler";
 
 type AdminAssistantChatDependencies = {
   authorize: () => Promise<unknown>;
@@ -16,6 +19,7 @@ type AdminAssistantChatDependencies = {
   clock: () => number;
   requestIdFactory: () => string;
   messageIdFactory: () => string;
+  resolveSession: () => Promise<AssistantChatSessionResolution>;
 };
 
 const defaultDependencies: AdminAssistantChatDependencies = {
@@ -25,6 +29,12 @@ const defaultDependencies: AdminAssistantChatDependencies = {
   clock: () => performance.now(),
   requestIdFactory: () => crypto.randomUUID(),
   messageIdFactory: () => crypto.randomUUID(),
+  resolveSession: async () => ({
+    publicSession: {
+      temporary: true,
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    },
+  }),
 };
 
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
@@ -67,6 +77,7 @@ export function createAdminAssistantChatHandler(
       clock: dependencies.clock,
       requestIdFactory: () => requestId,
       messageIdFactory: dependencies.messageIdFactory,
+      resolveSession: dependencies.resolveSession,
     })(request);
   };
 }

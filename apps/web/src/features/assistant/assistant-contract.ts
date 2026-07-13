@@ -40,7 +40,7 @@ export interface AssistantSuccessResponse {
   version: "1";
   requestId: string;
   mode: AssistantMode;
-  session: { temporary: true };
+  session: { temporary: true; expiresAt: string };
   message: AssistantResponseMessage;
   suggestedActions: AssistantSuggestedAction[];
 }
@@ -256,8 +256,10 @@ export function isAssistantSuccessResponse(
     !isAssistantRequestId(input.requestId) ||
     (input.mode !== "placeholder" && input.mode !== "agentos") ||
     !isRecord(input.session) ||
-    !hasExactKeys(input.session, ["temporary"]) ||
+    !hasExactKeys(input.session, ["expiresAt", "temporary"]) ||
     input.session.temporary !== true ||
+    typeof input.session.expiresAt !== "string" ||
+    !isCanonicalIsoDate(input.session.expiresAt) ||
     !isRecord(input.message) ||
     !hasExactKeys(input.message, ["id", "role", "content"]) ||
     !isAssistantMessageId(input.message.id) ||
@@ -273,6 +275,13 @@ export function isAssistantSuccessResponse(
   }
 
   return input.suggestedActions.every(isAssistantSuggestedAction);
+}
+
+function isCanonicalIsoDate(value: string): boolean {
+  const timestamp = Date.parse(value);
+  return (
+    Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value
+  );
 }
 
 export function parseAssistantRequest(input: unknown): AssistantRequest | null {

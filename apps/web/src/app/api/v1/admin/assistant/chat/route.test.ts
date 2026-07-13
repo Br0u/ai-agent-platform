@@ -124,6 +124,7 @@ describe("POST /api/v1/admin/assistant/chat", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("set-cookie")).toBeNull();
     expect(requestIdFactory).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toMatchObject({
       version: "1",
