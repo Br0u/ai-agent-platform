@@ -140,7 +140,27 @@ function declaredLength(response: Response): number | null {
   return value;
 }
 
-async function parseJson(response: Response): Promise<unknown> {
+function cancelReader(
+  reader: ReadableStreamDefaultReader<Uint8Array> | null,
+  response: Response | null,
+): void {
+  try {
+    const cancellation = reader
+      ? reader.cancel()
+      : response?.body && !response.body.locked
+        ? response.body.cancel()
+        : null;
+    if (cancellation) void cancellation.catch(() => undefined);
+  } catch {
+    // Resource cleanup must never replace the sanitized transport error.
+  }
+}
+
+async function parseJson(
+  response: Response,
+  setReader: (reader: ReadableStreamDefaultReader<Uint8Array> | null) => void,
+  timedOut: () => boolean,
+): Promise<unknown> {
   const length = declaredLength(response);
   if (length !== null && length > MAX_RESPONSE_BYTES) {
     throw new AgentOSClientError("response_too_large");
@@ -151,9 +171,37 @@ async function parseJson(response: Response): Promise<unknown> {
   ) {
     throw new AgentOSClientError("invalid_content_type");
   }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > MAX_RESPONSE_BYTES) {
-    throw new AgentOSClientError("response_too_large");
+  const reader = response.body?.getReader();
+  if (!reader) throw new AgentOSClientError("invalid_response");
+  setReader(reader);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    if (timedOut()) throw new AgentOSClientError("timeout");
+    while (true) {
+      const chunk = await reader.read();
+      if (timedOut()) throw new AgentOSClientError("timeout");
+      if (chunk.done) break;
+      total += chunk.value.byteLength;
+      if (total > MAX_RESPONSE_BYTES) {
+        throw new AgentOSClientError("response_too_large");
+      }
+      chunks.push(chunk.value);
+    }
+  } finally {
+    setReader(null);
+    try {
+      reader.releaseLock();
+    } catch {
+      // A timed-out reader can remain locked until its source accepts cancel.
+    }
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
   }
   try {
     return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
@@ -183,55 +231,90 @@ export function createAgentOSClient(options: {
     Authorization: `Bearer ${options.settings.securityKey}`,
   };
 
-  async function request(path: string, acceptedStatuses: readonly number[]) {
+  async function request<T>(
+    path: string,
+    acceptedStatuses: readonly number[],
+    validate: (status: number, body: unknown) => T,
+  ): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let response: Response;
-    try {
-      response = await fetcher(`${options.settings.baseUrl}${path}`, {
-        method: "GET",
-        headers,
-        signal: controller.signal,
-        redirect: "manual",
-        cache: "no-store",
-        credentials: "omit",
-      });
-    } catch {
-      throw new AgentOSClientError(
-        controller.signal.aborted ? "timeout" : "transport_error",
-      );
-    } finally {
-      clearTimeout(timer);
-    }
+    let response: Response | null = null;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+    let didTimeout = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        didTimeout = true;
+        controller.abort();
+        cancelReader(reader, response);
+        reject(new AgentOSClientError("timeout"));
+      }, timeoutMs);
+    });
+    const operation = (async () => {
+      let bodyWasConsumed = false;
+      try {
+        response = await fetcher(`${options.settings.baseUrl}${path}`, {
+          method: "GET",
+          headers,
+          signal: controller.signal,
+          redirect: "manual",
+          cache: "no-store",
+          credentials: "omit",
+        });
+        if (didTimeout) throw new AgentOSClientError("timeout");
+        if (response.status >= 300 && response.status < 400) {
+          throw new AgentOSClientError("redirect_rejected");
+        }
+        if (!acceptedStatuses.includes(response.status)) {
+          throw new AgentOSClientError("unexpected_status");
+        }
+        const body = await parseJson(
+          response,
+          (activeReader) => {
+            reader = activeReader;
+          },
+          () => didTimeout,
+        );
+        bodyWasConsumed = true;
+        if (didTimeout) throw new AgentOSClientError("timeout");
+        return validate(response.status, body);
+      } catch (error) {
+        if (error instanceof AgentOSClientError) throw error;
+        throw new AgentOSClientError(
+          didTimeout ? "timeout" : "transport_error",
+        );
+      } finally {
+        if (!bodyWasConsumed) cancelReader(reader, response);
+      }
+    })();
 
-    if (response.status >= 300 && response.status < 400) {
-      throw new AgentOSClientError("redirect_rejected");
+    try {
+      return await Promise.race([operation, deadline]);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-    if (!acceptedStatuses.includes(response.status)) {
-      throw new AgentOSClientError("unexpected_status");
-    }
-    return { status: response.status, body: await parseJson(response) };
   }
 
   async function ready(): Promise<AgentOSReadyResponse> {
-    const response = await request("/internal/health/ready", [200, 503]);
-    if (
-      !isReadyResponse(response.body) ||
-      response.body.ready !== (response.status === 200) ||
-      (response.body.ready && response.body.capability === "degraded")
-    ) {
-      throw new AgentOSClientError("invalid_response");
-    }
-    return response.body;
+    return request("/internal/health/ready", [200, 503], (status, body) => {
+      if (
+        !isReadyResponse(body) ||
+        body.ready !== (status === 200) ||
+        (body.ready && body.capability === "degraded")
+      ) {
+        throw new AgentOSClientError("invalid_response");
+      }
+      return body;
+    });
   }
 
   return {
     async live() {
-      const response = await request("/internal/health/live", [200]);
-      if (!isLiveResponse(response.body) || response.body.live !== true) {
-        throw new AgentOSClientError("invalid_response");
-      }
-      return response.body;
+      return request("/internal/health/live", [200], (_status, body) => {
+        if (!isLiveResponse(body) || body.live !== true) {
+          throw new AgentOSClientError("invalid_response");
+        }
+        return body;
+      });
     },
     ready,
     async capability() {

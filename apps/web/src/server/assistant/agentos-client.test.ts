@@ -16,6 +16,20 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+async function within<T>(promise: Promise<T>, timeoutMs = 250) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<"test-deadline">((resolve) => {
+        timer = setTimeout(() => resolve("test-deadline"), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("AgentOS client settings", () => {
@@ -177,6 +191,84 @@ describe("AgentOS protected transport", () => {
     });
 
     await expect(client.live()).rejects.toMatchObject({ code: "timeout" });
+  });
+
+  it("times out and cancels a 200 response whose JSON body never closes", async () => {
+    let cancelled = false;
+    const stalled = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(stalled)
+      .mockResolvedValueOnce(
+        jsonResponse({
+          live: true,
+          ready: false,
+          capability: "placeholder",
+          message: "service is live",
+        }),
+      );
+    const client = createAgentOSClient({
+      settings: { baseUrl: INTERNAL_URL, securityKey: SECURITY_KEY },
+      fetcher,
+      timeoutMs: 5,
+    });
+
+    const first = await within(client.live().catch((error: unknown) => error));
+    expect(first).toMatchObject({ code: "timeout" });
+    expect(JSON.stringify(first)).not.toMatch(
+      /agent:7777|agentos-internal-security|raw-response/u,
+    );
+    await vi.waitFor(() => expect(cancelled).toBe(true));
+
+    await expect(client.live()).resolves.toMatchObject({
+      live: true,
+      capability: "placeholder",
+    });
+  });
+
+  it("honors the deadline even when an abnormal reader ignores abort and cancel", async () => {
+    const cancel = vi.fn(() => new Promise<void>(() => undefined));
+    const stuckResponse = {
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      body: {
+        locked: true,
+        getReader: () => ({
+          read: () => new Promise(() => undefined),
+          cancel,
+          releaseLock: vi.fn(),
+        }),
+      },
+    } as unknown as Response;
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(stuckResponse)
+      .mockResolvedValueOnce(
+        jsonResponse({
+          live: true,
+          ready: false,
+          capability: "placeholder",
+          message: "service is live",
+        }),
+      );
+    const client = createAgentOSClient({
+      settings: { baseUrl: INTERNAL_URL, securityKey: SECURITY_KEY },
+      fetcher,
+      timeoutMs: 5,
+    });
+
+    await expect(within(client.live())).rejects.toMatchObject({
+      code: "timeout",
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+    await expect(client.live()).resolves.toMatchObject({ live: true });
   });
 
   it("returns only typed sanitized errors and never logs sensitive inputs", async () => {

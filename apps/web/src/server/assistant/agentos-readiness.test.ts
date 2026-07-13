@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createAgentOSProbe,
   createAgentOSReadinessCircuit,
   resolveAgentOSReadinessSettings,
   type AgentOSReadinessSnapshot,
 } from "./agentos-readiness";
+import { createAgentOSClient } from "./agentos-client";
 
 const READY_PLACEHOLDER: AgentOSReadinessSnapshot = {
   live: true,
@@ -25,6 +27,20 @@ function deferred<T>() {
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
+}
+
+async function within<T>(promise: Promise<T>, timeoutMs = 250) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<"test-deadline">((resolve) => {
+        timer = setTimeout(() => resolve("test-deadline"), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 describe("AgentOS readiness cache and circuit", () => {
@@ -150,6 +166,63 @@ describe("AgentOS readiness cache and circuit", () => {
       state: "closed",
       consecutiveFailures: 1,
     });
+  });
+
+  it("turns stalled response bodies into one shared failure and opens normally", async () => {
+    let now = 0;
+    let cancelled = 0;
+    const fetcher = vi.fn<typeof fetch>(async (url) => {
+      if (String(url).endsWith("/internal/health/ready")) {
+        return new Response(
+          JSON.stringify({ ready: true, capability: "placeholder" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          cancel() {
+            cancelled += 1;
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    const client = createAgentOSClient({
+      settings: {
+        baseUrl: "http://agent:7777",
+        securityKey: "agentos-internal-security-key-32-bytes",
+      },
+      fetcher,
+      timeoutMs: 5,
+    });
+    const circuit = createAgentOSReadinessCircuit({
+      probe: createAgentOSProbe(client),
+      now: () => now,
+      cacheTtlMs: 1,
+      failureThreshold: 2,
+      resetAfterMs: 30_000,
+    });
+
+    await expect(within(circuit.status())).resolves.toEqual(DEGRADED);
+    expect(circuit.inspect()).toMatchObject({
+      state: "closed",
+      consecutiveFailures: 1,
+    });
+    now = 1;
+    await expect(
+      within(
+        Promise.all([circuit.status(), circuit.status(), circuit.status()]),
+      ),
+    ).resolves.toEqual([DEGRADED, DEGRADED, DEGRADED]);
+    expect(circuit.inspect()).toMatchObject({
+      state: "open",
+      consecutiveFailures: 2,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(cancelled).toBe(2);
+
+    await expect(circuit.status()).resolves.toEqual(DEGRADED);
+    expect(fetcher).toHaveBeenCalledTimes(4);
   });
 
   it("permits one half-open probe and makes all concurrent callers await it", async () => {
