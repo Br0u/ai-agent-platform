@@ -17,11 +17,15 @@ src/
 │   ├── console/                 # 客户控制台业务组件
 │   ├── admin/                   # 运营后台业务组件
 │   └── route-scaffold/          # 搭建中/功能禁用统一页面
+├── features/<module>/           # 聚焦功能的领域模型、配置、纯逻辑和客户端协调器
+├── server/<module>/             # 应用端口和不访问外部服务的内部占位Provider
 ├── assets/                      # 字体与页面素材
 └── config/routes.ts             # PRD路由和状态登记表
 ```
 
-共享导航、页脚和设计令牌位于`packages/ui`；数据库位于`packages/database`；外部能力接口位于`packages/integrations`。
+共享导航、页脚和设计令牌位于`packages/ui`；数据库位于`packages/database`；外部能力适配器位于`packages/integrations`。
+
+`src/features/<module>`用于一个聚焦功能内的领域类型、静态配置、纯函数和客户端状态协调，不放数据库访问或外部服务SDK。`src/server/<module>`可以定义应用所需的端口，并提供仅依赖应用内静态规则的占位Provider。凡是实际调用外部AI服务、第三方API或其SDK的适配器，必须放在`packages/integrations`，再通过应用端口接入；占位Provider不等同于外部集成。
 
 ## 开发一个页面模块
 
