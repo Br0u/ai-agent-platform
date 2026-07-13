@@ -383,6 +383,7 @@ describe("production deployment security contracts", () => {
   it("builds AgentOS from a pinned, locked, non-root multi-stage image", () => {
     const dockerfile = read("apps/agent/Dockerfile");
     const dockerIgnore = read("apps/agent/.dockerignore");
+    const rootDockerIgnore = read(".dockerignore");
 
     expect(dockerfile).toMatch(
       /^FROM python:3\.13\.13-slim-trixie@sha256:[a-f0-9]{64} AS builder/mu,
@@ -404,6 +405,12 @@ describe("production deployment security contracts", () => {
     expect(dockerIgnore).toContain(".venv");
     expect(dockerIgnore).toContain("tests");
     expect(dockerIgnore).toContain(".env");
+    expect(rootDockerIgnore).toContain("**/.venv");
+    expect(rootDockerIgnore).toContain("**/.pytest_cache");
+    expect(rootDockerIgnore).toContain("**/.mypy_cache");
+    expect(rootDockerIgnore).toContain("**/.ruff_cache");
+    expect(rootDockerIgnore).toContain("**/__pycache__");
+    expect(rootDockerIgnore).toContain("**/dist");
   });
 
   it("keeps every production credential out of rendered Compose config", () => {
@@ -773,8 +780,21 @@ describe("production deployment security contracts", () => {
     expect(workflow).toContain(
       "TEST_DATABASE_URL: postgresql://ai_agent_owner@127.0.0.1:5432/ai_agent_platform_identity_test_ci",
     );
+    expect(workflow).not.toMatch(/echo "DATABASE_URL=.*" >> "\$GITHUB_ENV"/u);
     expect(workflow).toContain(
-      "DATABASE_URL=postgresql://ai_agent_migrator@127.0.0.1:5432/ai_agent_platform_ci",
+      'DATABASE_URL="$MIGRATOR_DATABASE_URL" pnpm --filter @ai-agent-platform/database db:prepare',
+    );
+    expect(workflow).toContain(
+      'DATABASE_URL="$MIGRATOR_DATABASE_URL" pnpm --filter @ai-agent-platform/database db:seed-auth-e2e',
+    );
+    expect(workflow).toContain(
+      'DATABASE_URL="$RUNTIME_DATABASE_URL" pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-smoke.spec.ts',
+    );
+    expect(workflow).toMatch(
+      /MIGRATOR_DATABASE_URL=postgresql:\/\/ai_agent_migrator:[^\n]*\/ai_agent_platform_identity_test_ci/u,
+    );
+    expect(workflow).toMatch(
+      /RUNTIME_DATABASE_URL=postgresql:\/\/ai_agent_runtime:[^\n]*\/ai_agent_platform_identity_test_ci/u,
     );
     expect(workflow).toContain(
       "CREATE DATABASE ai_agent_platform_identity_test_ci",

@@ -57,7 +57,6 @@ jobs:
             export "$name=$value"
             echo "$name=$value" >> "$GITHUB_ENV"
           done
-          echo "DATABASE_URL=postgresql://ai_agent_migrator@127.0.0.1:5432/ai_agent_platform_ci" >> "$GITHUB_ENV"
           echo "MIGRATOR_DATABASE_URL=postgresql://ai_agent_migrator:${MIGRATOR_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci" >> "$GITHUB_ENV"
           echo "RUNTIME_DATABASE_URL=postgresql://ai_agent_runtime:${RUNTIME_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci" >> "$GITHUB_ENV"
           echo "BACKUP_DATABASE_URL=postgresql://ai_agent_backup:${BACKUP_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci" >> "$GITHUB_ENV"
@@ -115,11 +114,11 @@ jobs:
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm build
-      - run: pnpm --filter @ai-agent-platform/database db:seed-auth-e2e
+      - run: DATABASE_URL="$MIGRATOR_DATABASE_URL" pnpm --filter @ai-agent-platform/database db:seed-auth-e2e
         env:
           NODE_ENV: test
       - run: pnpm --filter @ai-agent-platform/web exec playwright install --with-deps chromium
-      - run: pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-smoke.spec.ts
+      - run: DATABASE_URL="$RUNTIME_DATABASE_URL" pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-smoke.spec.ts
       - run: docker build --target migrator -f apps/web/Dockerfile .
       - run: docker build --target runner -f apps/web/Dockerfile .
       - name: Validate Nginx configuration
