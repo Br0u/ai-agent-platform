@@ -34,11 +34,58 @@ const answer = (
   );
 
 describe("AssistantWidget", () => {
-  beforeEach(() =>
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(answer("最新回答"))),
-  );
+  let animationFrames: Map<number, FrameRequestCallback>;
+  let nextAnimationFrame: number;
+
+  const setReducedMotion = (matches: boolean) => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({
+        matches: matches && query === "(prefers-reduced-motion: reduce)",
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    );
+  };
+
+  const flushAnimationFrames = () => {
+    act(() => {
+      const queuedFrames = [...animationFrames.entries()];
+      animationFrames.clear();
+      for (const [, callback] of queuedFrames) callback(0);
+    });
+  };
+
+  const installAnimationFrameMocks = () => {
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn((callback: FrameRequestCallback) => {
+        nextAnimationFrame += 1;
+        animationFrames.set(nextAnimationFrame, callback);
+        return nextAnimationFrame;
+      }),
+    );
+    vi.stubGlobal(
+      "cancelAnimationFrame",
+      vi.fn((frame: number) => animationFrames.delete(frame)),
+    );
+  };
+
+  beforeEach(() => {
+    animationFrames = new Map();
+    nextAnimationFrame = 0;
+    setReducedMotion(false);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(answer("最新回答")));
+    installAnimationFrameMocks();
+  });
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -52,7 +99,11 @@ describe("AssistantWidget", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     fireEvent.click(launcher);
-    expect(screen.getByRole("dialog", { name: "M 助手" })).toBeVisible();
+    const dialog = screen.getByRole("dialog", { name: "M 助手" });
+    expect(dialog).toHaveAttribute("data-motion-state", "entering");
+    flushAnimationFrames();
+    expect(dialog).toHaveAttribute("data-motion-state", "open");
+    expect(dialog).toBeVisible();
     expect(screen.getByText("AI 服务尚未接入")).toBeVisible();
     expect(screen.getByRole("link", { name: "帮助中心" })).toHaveAttribute(
       "href",
@@ -88,13 +139,85 @@ describe("AssistantWidget", () => {
     });
   });
 
-  it("closes on Escape and returns focus to the launcher", () => {
+  it("keeps the drawer mounted but inert during its 160ms exit", () => {
+    vi.useFakeTimers();
+    installAnimationFrameMocks();
     render(<Harness />);
     const launcher = screen.getByRole("button", { name: "打开 M 助手" });
     fireEvent.click(launcher);
-    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    flushAnimationFrames();
+    const dialog = screen.getByRole("dialog");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+
+    expect(dialog).toHaveAttribute("data-motion-state", "closing");
+    expect(dialog).toHaveAttribute("aria-hidden", "true");
+    expect(dialog).toHaveAttribute("inert");
+    expect(dialog).toBeInTheDocument();
     expect(launcher).toHaveFocus();
+
+    act(() => vi.advanceTimersByTime(159));
+    expect(dialog).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1));
+    expect(dialog).not.toBeInTheDocument();
+  });
+
+  it("cancels an in-flight exit when the drawer is reopened", () => {
+    vi.useFakeTimers();
+    installAnimationFrameMocks();
+    render(<Harness />);
+    const launcher = screen.getByRole("button", { name: "打开 M 助手" });
+    fireEvent.click(launcher);
+    flushAnimationFrames();
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "关闭 M 助手" }));
+    act(() => vi.advanceTimersByTime(80));
+
+    fireEvent.click(launcher);
+    expect(dialog).toHaveAttribute("data-motion-state", "entering");
+    expect(globalThis.requestAnimationFrame).toHaveBeenCalled();
+    flushAnimationFrames();
+    expect(screen.getByRole("dialog")).toHaveAttribute(
+      "data-motion-state",
+      "open",
+    );
+    act(() => vi.advanceTimersByTime(160));
+    expect(dialog).toBeInTheDocument();
+  });
+
+  it("clears queued animation work when unmounted", () => {
+    vi.useFakeTimers();
+    installAnimationFrameMocks();
+    const firstRender = render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+    firstRender.unmount();
+    expect(globalThis.cancelAnimationFrame).toHaveBeenCalled();
+
+    const { unmount } = render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+    flushAnimationFrames();
+    const baselineTimers = vi.getTimerCount();
+    fireEvent.click(screen.getByRole("button", { name: "关闭 M 助手" }));
+    expect(vi.getTimerCount()).toBeGreaterThan(baselineTimers);
+
+    unmount();
+    expect(vi.getTimerCount()).toBeLessThanOrEqual(baselineTimers);
+  });
+
+  it("opens and unmounts immediately when reduced motion is requested", () => {
+    vi.useFakeTimers();
+    installAnimationFrameMocks();
+    setReducedMotion(true);
+    render(<Harness />);
+    const launcher = screen.getByRole("button", { name: "打开 M 助手" });
+    fireEvent.click(launcher);
+    const dialog = screen.getByRole("dialog", { name: "M 助手" });
+    expect(dialog).toHaveAttribute("data-motion-state", "open");
+    expect(globalThis.requestAnimationFrame).not.toHaveBeenCalled();
+
+    const baselineTimers = vi.getTimerCount();
+    fireEvent.click(screen.getByRole("button", { name: "关闭 M 助手" }));
+    expect(dialog).not.toBeInTheDocument();
+    expect(vi.getTimerCount()).toBeLessThanOrEqual(baselineTimers);
   });
 
   it("can render the shared drawer without adding a floating launcher", () => {

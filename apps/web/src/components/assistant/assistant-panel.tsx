@@ -2,20 +2,30 @@ import Link from "next/link";
 import { useEffect, useRef, type FormEvent } from "react";
 import { ASSISTANT_PRESET_QUESTIONS } from "@/features/assistant/assistant-contract";
 import type { AssistantSession } from "./use-assistant-session";
+import type { AssistantMotionState } from "./assistant-widget";
 
 const INPUT_HELPER_ID = "assistant-question-help";
 
 type AssistantPanelProps = {
   session: AssistantSession;
   onClose: () => void;
+  motionState: AssistantMotionState;
 };
 
-export function AssistantPanel({ session, onClose }: AssistantPanelProps) {
+export function AssistantPanel({
+  session,
+  onClose,
+  motionState,
+}: AssistantPanelProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const sending = session.requestStatus === "sending";
   const overLimit = Array.from(session.draft.trim()).length > 500;
 
-  useEffect(() => inputRef.current?.focus(), []);
+  useEffect(() => {
+    if (motionState === "entering" || motionState === "open") {
+      inputRef.current?.focus();
+    }
+  }, [motionState]);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -25,9 +35,12 @@ export function AssistantPanel({ session, onClose }: AssistantPanelProps) {
   return (
     <section
       aria-label="M 助手"
+      aria-hidden={motionState === "closing" ? true : undefined}
       className="assistant-panel"
+      data-motion-state={motionState}
+      inert={motionState === "closing" ? true : undefined}
       onKeyDown={(event) => {
-        if (event.key === "Escape") onClose();
+        if (motionState !== "closing" && event.key === "Escape") onClose();
       }}
       role="dialog"
     >

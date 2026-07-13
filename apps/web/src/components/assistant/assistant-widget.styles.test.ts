@@ -21,4 +21,26 @@ describe("assistant widget CSS", () => {
       /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.assistant-launcher[\s\S]*?animation:\s*none/u,
     );
   });
+
+  it("uses asymmetric, transform-only drawer motion within the approved travel", () => {
+    expect(css).toMatch(
+      /\.assistant-panel\[data-motion-state="entering"\][\s\S]*?translateY\(12px\)/u,
+    );
+    expect(css).toMatch(
+      /\.assistant-panel\[data-motion-state="open"\][\s\S]*?transition:[^;]*transform 220ms cubic-bezier\(0\.23, 1, 0\.32, 1\)[^;]*opacity 220ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/u,
+    );
+    expect(css).toMatch(
+      /\.assistant-panel\[data-motion-state="closing"\][\s\S]*?transition:[^;]*transform 160ms cubic-bezier\(0\.23, 1, 0\.32, 1\)[^;]*opacity 160ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/u,
+    );
+    expect(css).not.toMatch(/transition:\s*all/u);
+  });
+
+  it("gives new messages subtle motion and removes all assistant motion when reduced", () => {
+    expect(css).toMatch(
+      /@keyframes assistant-message-enter[\s\S]*?translateY\(6px\)[\s\S]*?translateY\(0\)/u,
+    );
+    expect(css).toMatch(
+      /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.assistant-panel\[data-motion-state\][\s\S]*?transform:\s*none[\s\S]*?transition:\s*none[\s\S]*?\.assistant-message[\s\S]*?animation:\s*none/u,
+    );
+  });
 });

@@ -56,11 +56,15 @@ function collectEvidence(page: Page): BrowserEvidence {
   return evidence;
 }
 
-async function configure(page: Page, testInfo: TestInfo) {
+async function configure(
+  page: Page,
+  testInfo: TestInfo,
+  reducedMotion: "no-preference" | "reduce" = "no-preference",
+) {
   const project = testInfo.project.name as keyof typeof VIEWPORTS;
   expect(Object.keys(VIEWPORTS)).toContain(project);
   await page.setViewportSize(VIEWPORTS[project]);
-  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.emulateMedia({ reducedMotion });
 }
 
 async function expectExactViewportWidth(page: Page) {
@@ -152,7 +156,8 @@ test("portal launchers, drawer, and standalone assistant are keyboard-safe", asy
     const style = getComputedStyle(element);
     return { name: style.animationName, duration: style.animationDuration };
   });
-  expect(markMotion.name === "none" || markMotion.duration === "0s").toBe(true);
+  expect(markMotion.name).not.toBe("none");
+  expect(markMotion.duration).not.toBe("0s");
 
   await page.keyboard.press("Enter");
   const dialog = page.getByRole("dialog", { name: "M 助手" });
@@ -167,19 +172,60 @@ test("portal launchers, drawer, and standalone assistant are keyboard-safe", asy
       transitionProperty: style.transitionProperty,
     };
   });
-  expect(drawerMotion.transform).toBe("none");
-  expect(
-    drawerMotion.transitionProperty.includes("transform") &&
-      drawerMotion.transitionDuration !== "0s",
-  ).toBe(false);
+  expect(drawerMotion.transitionProperty).toBe("transform, opacity");
+  expect(drawerMotion.transitionDuration).toBe("0.22s, 0.22s");
   await attachScreenshot(page, testInfo, "portal-drawer");
+
+  await page.getByRole("button", { name: "如何开始了解平台？" }).click();
+  const newestAnswer = page.locator(".assistant-message--assistant").last();
+  await expect(newestAnswer).toBeVisible();
+  const messageMotion = await newestAnswer.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { name: style.animationName, duration: style.animationDuration };
+  });
+  expect(messageMotion.name).toBe("assistant-message-enter");
+  expect(messageMotion.duration).toBe("0.18s");
 
   const fullChat = page.getByRole("link", { name: "打开完整 AI 助理" });
   await tabTo(page, fullChat);
   await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
   await expect(topEntry).toBeFocused();
+  const closingDrawer = page.locator(".assistant-panel");
+  await expect(closingDrawer).toHaveAttribute("data-motion-state", "closing");
+  await expect(closingDrawer).toHaveAttribute("aria-hidden", "true");
+  await expect(closingDrawer).toHaveAttribute("inert", "");
+  await page.waitForTimeout(80);
+  await expect(closingDrawer).toHaveCount(1);
+  await expect(closingDrawer).toHaveCount(0);
 
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.reload();
+  const reducedTopEntry = page.getByRole("button", { name: "打开 AI 助理" });
+  const reducedMarkMotion = await reducedTopEntry
+    .locator("svg")
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { name: style.animationName, duration: style.animationDuration };
+    });
+  expect(
+    reducedMarkMotion.name === "none" || reducedMarkMotion.duration === "0s",
+  ).toBe(true);
+  await reducedTopEntry.click();
+  const reducedDialog = page.getByRole("dialog", { name: "M 助手" });
+  const reducedDrawerMotion = await reducedDialog.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      transform: style.transform,
+      transitionDuration: style.transitionDuration,
+    };
+  });
+  expect(reducedDrawerMotion.transform).toBe("none");
+  expect(reducedDrawerMotion.transitionDuration).toBe("0s");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".assistant-panel")).toHaveCount(0);
+  await expect(reducedTopEntry).toBeFocused();
+
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.reload();
   const reloadedFloatingEntry = page.getByRole("button", {
     name: "打开 M 助手",

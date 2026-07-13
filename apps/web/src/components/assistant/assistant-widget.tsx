@@ -1,10 +1,26 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AssistantLauncher } from "./assistant-launcher";
 import { AssistantPanel } from "./assistant-panel";
 import { useAssistantExperience } from "./assistant-experience-provider";
 import "./assistant-widget.css";
+
+export type AssistantMotionState =
+  | "unmounted"
+  | "entering"
+  | "open"
+  | "closing";
+
+const ASSISTANT_EXIT_DURATION_MS = 160;
+
+function prefersReducedMotion() {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
 
 export function AssistantWidget({
   showLauncher = true,
@@ -13,11 +29,63 @@ export function AssistantWidget({
 }) {
   const experience = useAssistantExperience();
   const launcherRef = useRef<HTMLButtonElement>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [motionState, setMotionState] =
+    useState<AssistantMotionState>("unmounted");
+  const [previouslyOpen, setPreviouslyOpen] = useState(experience.session.open);
+  const reduceMotion = prefersReducedMotion();
+
+  if (previouslyOpen !== experience.session.open) {
+    setPreviouslyOpen(experience.session.open);
+    setMotionState(
+      experience.session.open
+        ? reduceMotion
+          ? "open"
+          : "entering"
+        : reduceMotion
+          ? "unmounted"
+          : "closing",
+    );
+  }
+
+  useEffect(() => {
+    const clearScheduledWork = () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      if (exitTimerRef.current !== null) {
+        clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+    };
+
+    clearScheduledWork();
+    if (experience.session.open) {
+      if (!reduceMotion && motionState === "entering") {
+        animationFrameRef.current = requestAnimationFrame(() => {
+          animationFrameRef.current = null;
+          setMotionState("open");
+        });
+      }
+    } else if (!reduceMotion && motionState === "closing") {
+      exitTimerRef.current = setTimeout(() => {
+        exitTimerRef.current = null;
+        setMotionState("unmounted");
+      }, ASSISTANT_EXIT_DURATION_MS);
+    }
+
+    return clearScheduledWork;
+  }, [experience.session.open, motionState, reduceMotion]);
+
+  const showPanel = motionState !== "unmounted";
 
   return (
     <div className="assistant-widget">
-      {experience.session.open ? (
+      {showPanel ? (
         <AssistantPanel
+          motionState={motionState}
           onClose={experience.close}
           session={experience.session}
         />
