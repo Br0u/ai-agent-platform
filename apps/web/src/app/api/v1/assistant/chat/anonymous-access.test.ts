@@ -4,10 +4,26 @@ const access = vi.hoisted(() => ({
   createAccessService: vi.fn(),
   getCurrentActor: vi.fn(),
 }));
+const rateLimit = vi.hoisted(() => ({
+  consume: vi.fn(async () => undefined),
+}));
 
 vi.mock("@/server/auth/access", () => ({
   createAccessService: access.createAccessService,
 }));
+
+vi.mock("@/server/assistant/assistant-rate-limit", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/server/assistant/assistant-rate-limit")
+    >();
+  return {
+    ...actual,
+    createDatabaseAssistantRateLimiter: () => ({
+      consume: rateLimit.consume,
+    }),
+  };
+});
 
 const RUNTIME_SETTINGS_KEY =
   "ai-agent-platform:assistant:anonymous-session-settings:v1";
@@ -75,6 +91,9 @@ describe("anonymous assistant access short-circuit", () => {
       });
       expect(access.createAccessService).not.toHaveBeenCalled();
       expect(access.getCurrentActor).not.toHaveBeenCalled();
+      expect(rateLimit.consume).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ scope: "anonymous" }),
+      );
     },
   );
 
@@ -85,5 +104,8 @@ describe("anonymous assistant access short-circuit", () => {
     expect(response.status).toBe(200);
     expect(access.createAccessService).toHaveBeenCalledOnce();
     expect(access.getCurrentActor).toHaveBeenCalledExactlyOnceWith("customer");
+    expect(rateLimit.consume).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ scope: "anonymous" }),
+    );
   });
 });

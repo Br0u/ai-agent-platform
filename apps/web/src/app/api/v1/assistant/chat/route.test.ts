@@ -18,7 +18,14 @@ import type {
   AssistantRequestLogger,
 } from "@/server/assistant/assistant-request-log";
 import type { ResolvedAnonymousSession } from "@/server/assistant/anonymous-session";
-import { createAssistantChatHandler } from "./handler";
+import {
+  AssistantRateLimitExceededError,
+  AssistantRateLimitUnavailableError,
+} from "@/server/assistant/assistant-rate-limit";
+import {
+  createAssistantChatHandler,
+  type AssistantChatSessionResolution,
+} from "./handler";
 import * as route from "./route";
 
 const success: AssistantSuccessResponse = {
@@ -118,6 +125,11 @@ function dependencies(options?: {
       rotated: true,
     },
   };
+  const rateLimiter = { consume: vi.fn(async () => undefined) };
+  const resolvedSession: AssistantChatSessionResolution = {
+    ...session,
+    actor: { kind: "anonymous" },
+  };
 
   return {
     provider,
@@ -126,7 +138,11 @@ function dependencies(options?: {
     clock: () => times[timeIndex++] ?? times.at(-1) ?? 0,
     requestIdFactory: () => "generated-request-id",
     messageIdFactory: () => "generated-message-id",
-    resolveSession: vi.fn(async () => session),
+    resolveSession: vi.fn(
+      async (): Promise<AssistantChatSessionResolution> => resolvedSession,
+    ),
+    rateLimiter,
+    resolveTrustedClientIp: vi.fn(() => "203.0.113.10"),
   };
 }
 
@@ -161,9 +177,150 @@ describe("POST /api/v1/assistant/chat", () => {
     expect(deps.resolveSession).toHaveBeenCalledExactlyOnceWith(
       expect.any(Request),
     );
+    expect(deps.rateLimiter.consume).toHaveBeenCalledExactlyOnceWith({
+      scope: "anonymous",
+      sessionId: "internal-replayable-value",
+      ipAddress: "203.0.113.10",
+    });
     expect(deps.records).toEqual([
       { requestId: "incoming-request-id", statusCode: 200, durationMs: 7 },
     ]);
+  });
+
+  it("resolves the session, consumes the limiter, then invokes the provider", async () => {
+    const order: string[] = [];
+    const deps = dependencies({
+      reply: async () => {
+        order.push("provider");
+        return providerSuccess;
+      },
+    });
+    deps.resolveSession.mockImplementation(async () => {
+      order.push("session");
+      return {
+        publicSession: success.session,
+        internalSessionId: "internal-session",
+        actor: { kind: "anonymous" as const },
+        setCookie: "aap_assistant_sid_dev=value",
+      };
+    });
+    deps.rateLimiter.consume.mockImplementation(async () => {
+      order.push("limit");
+    });
+
+    const response = await createAssistantChatHandler(deps)(
+      request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
+    );
+
+    expect(response.status).toBe(200);
+    expect(order).toEqual(["session", "limit", "provider"]);
+  });
+
+  it("uses only the server-resolved customer actor for customer limits", async () => {
+    const deps = dependencies();
+    deps.resolveSession.mockResolvedValue({
+      publicSession: success.session,
+      internalSessionId: "internal-session",
+      actor: { kind: "customer", userId: "server-customer-id" },
+      setCookie: "aap_assistant_sid_dev=value",
+    });
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          message: "问题",
+          context: { pathname: "/" },
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.rateLimiter.consume).toHaveBeenCalledExactlyOnceWith({
+      scope: "customer",
+      actorId: "server-customer-id",
+    });
+  });
+
+  it("ignores a body-supplied actor ID and limits only the server-resolved actor", async () => {
+    const deps = dependencies();
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          message: "问题",
+          context: { pathname: "/" },
+          actorId: "attacker-controlled",
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.rateLimiter.consume).toHaveBeenCalledExactlyOnceWith({
+      scope: "anonymous",
+      sessionId: "internal-replayable-value",
+      ipAddress: "203.0.113.10",
+    });
+    expect(JSON.stringify(deps.rateLimiter.consume.mock.calls)).not.toContain(
+      "attacker-controlled",
+    );
+  });
+
+  it("returns exact versioned 429 with Retry-After and refreshed Cookie", async () => {
+    const deps = dependencies();
+    deps.rateLimiter.consume.mockRejectedValue(
+      new AssistantRateLimitExceededError(37),
+    );
+
+    const response = await createAssistantChatHandler(deps)(
+      request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("37");
+    expect(response.headers.get("set-cookie")).toContain(
+      "__Host-aap_assistant_sid=raw-cookie-value",
+    );
+    await expect(response.json()).resolves.toEqual(
+      createAssistantErrorResponse("generated-request-id", "rate_limited"),
+    );
+    expect(deps.provider.reply).not.toHaveBeenCalled();
+    expect(deps.records).toEqual([
+      { requestId: "generated-request-id", statusCode: 429, durationMs: 7 },
+    ]);
+  });
+
+  it("fails closed with the safe versioned 503 when PostgreSQL is unavailable", async () => {
+    const deps = dependencies();
+    deps.rateLimiter.consume.mockRejectedValue(
+      new AssistantRateLimitUnavailableError(),
+    );
+
+    const response = await createAssistantChatHandler(deps)(
+      request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual(
+      createAssistantErrorResponse(
+        "generated-request-id",
+        "assistant_unavailable",
+      ),
+    );
+    expect(deps.provider.reply).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before limiting or provider work for an invalid trusted proxy IP", async () => {
+    const deps = dependencies();
+    deps.resolveTrustedClientIp.mockImplementation(() => {
+      throw new Error("invalid trusted IP");
+    });
+
+    const response = await createAssistantChatHandler(deps)(
+      request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
+    );
+
+    expect(response.status).toBe(503);
+    expect(deps.rateLimiter.consume).not.toHaveBeenCalled();
+    expect(deps.provider.reply).not.toHaveBeenCalled();
   });
 
   it("counts Unicode code points and accepts exactly 500 characters", async () => {
