@@ -506,7 +506,11 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
   await expect(
     page.getByText("发送失败，请重试或使用下方服务入口。", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByTestId("assistant-history")).toBeEmpty();
+  const history = page.getByTestId("assistant-history");
+  await expect(history).toContainText(
+    "AI 服务尚未接入。你可以先查看帮助中心或联系商务顾问。",
+  );
+  await expect(history).not.toContainText(failedDraft);
   const fallbacks = dialog.getByRole("navigation", { name: "其他服务" });
   await expect(fallbacks.getByRole("link", { name: "帮助中心" })).toBeVisible();
   await expect(fallbacks.getByRole("link", { name: "商务咨询" })).toBeVisible();
