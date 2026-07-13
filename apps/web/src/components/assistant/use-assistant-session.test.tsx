@@ -81,7 +81,7 @@ describe("useAssistantSession", () => {
     });
   });
 
-  it("retains the draft and user message on failure without a false answer", async () => {
+  it("retains the draft on failure without adding transcript messages", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 503 }));
     const { result } = renderHook(() => useAssistantSession("/support"));
     act(() => result.current.setDraft("需要帮助"));
@@ -90,12 +90,10 @@ describe("useAssistantSession", () => {
     expect(result.current.requestStatus).toBe("failed");
     expect(result.current.draft).toBe("需要帮助");
     expect(result.current.lastFailedMessage).toBe("需要帮助");
-    expect(result.current.messages).toHaveLength(1);
-    expect(result.current.messages[0]).toMatchObject({
-      role: "user",
-      content: "需要帮助",
-    });
-    expect(result.current.latestAnnouncement).toBe("");
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.latestAnnouncement).toBe(
+      "发送失败，请重试或使用帮助中心或商务咨询。",
+    );
   });
 
   it("retries exactly once without duplicating the user message", async () => {
@@ -112,6 +110,56 @@ describe("useAssistantSession", () => {
       "user",
       "assistant",
     ]);
+  });
+
+  it("retries the exact failed request pathname after navigation", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(success("原请求回答"));
+    const { result, rerender } = renderHook(
+      ({ pathname }) => useAssistantSession(pathname),
+      { initialProps: { pathname: "/docs" } },
+    );
+    act(() => result.current.setDraft("原请求"));
+    await act(() => result.current.submit());
+    rerender({ pathname: "/pricing" });
+    await act(() => result.current.retry());
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.map((call) => JSON.parse(String(call[1]?.body))),
+    ).toEqual([
+      { message: "原请求", context: { pathname: "/docs" } },
+      { message: "原请求", context: { pathname: "/docs" } },
+    ]);
+  });
+
+  it("does not leave an orphan user message when navigation aborts a request", async () => {
+    let resolveOld!: (response: Response) => void;
+    vi.mocked(fetch).mockReturnValue(
+      new Promise((done) => {
+        resolveOld = done;
+      }),
+    );
+    const { result, rerender } = renderHook(
+      ({ pathname }) => useAssistantSession(pathname),
+      { initialProps: { pathname: "/docs" } },
+    );
+    act(() => result.current.setDraft("被中止的问题"));
+    let pending!: Promise<void>;
+    act(() => {
+      pending = result.current.submit();
+    });
+    rerender({ pathname: "/pricing" });
+    await act(async () => {
+      resolveOld(success("过期回答"));
+      await pending;
+    });
+
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.draft).toBe("被中止的问题");
   });
 
   it("keeps session state while a separate consumer unmounts and remounts", async () => {

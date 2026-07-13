@@ -5,7 +5,6 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AssistantWidget } from "./assistant-widget";
@@ -33,9 +32,9 @@ describe("AssistantWidget", () => {
     render(<Harness />);
     const launcher = screen.getByRole("button", { name: "打开 M 助手" });
     expect(launcher).toBeVisible();
-    expect(within(launcher).getByRole("img").getAttribute("src")).toContain(
-      "m-assistant.webp",
-    );
+    const image = launcher.querySelector("img");
+    expect(image).toHaveAttribute("alt", "");
+    expect(image?.getAttribute("src")).toContain("m-assistant.webp");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     fireEvent.click(launcher);
@@ -133,6 +132,9 @@ describe("AssistantWidget", () => {
 
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "重试" })).toBeVisible(),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "发送失败，请重试或使用帮助中心或商务咨询。",
     );
     expect(screen.getByRole("link", { name: "帮助中心" })).toHaveAttribute(
       "href",

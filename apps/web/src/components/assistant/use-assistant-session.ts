@@ -11,6 +11,13 @@ export type AssistantMessage = {
 
 export type AssistantRequestStatus = "idle" | "sending" | "failed";
 
+type AssistantRequestPayload = {
+  message: string;
+  context: { pathname: string };
+};
+
+const FAILURE_ANNOUNCEMENT = "发送失败，请重试或使用帮助中心或商务咨询。";
+
 export type AssistantSession = {
   open: boolean;
   draft: string;
@@ -38,9 +45,8 @@ export function useAssistantSession(pathname: string): AssistantSession {
   const [latestAnnouncement, setLatestAnnouncement] = useState("");
   const [requestStatus, setRequestStatus] =
     useState<AssistantRequestStatus>("idle");
-  const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(
-    null,
-  );
+  const [lastFailedRequest, setLastFailedRequest] =
+    useState<AssistantRequestPayload | null>(null);
   const requestStatusRef = useRef<AssistantRequestStatus>("idle");
   const requestToken = useRef(0);
   const activeController = useRef<AbortController | null>(null);
@@ -67,28 +73,25 @@ export function useAssistantSession(pathname: string): AssistantSession {
   );
 
   const send = useCallback(
-    async (rawMessage: string, appendUser: boolean) => {
+    async (rawMessage: string, requestPathname: string) => {
       if (requestStatusRef.current === "sending") return;
       const message = validMessage(rawMessage);
       if (message === null) return;
+      const payload: AssistantRequestPayload = {
+        message,
+        context: { pathname: requestPathname },
+      };
 
       const token = ++requestToken.current;
       const controller = new AbortController();
       activeController.current = controller;
       updateRequestStatus("sending");
       setLatestAnnouncement("");
-      if (appendUser) {
-        setMessages((current) => [
-          ...current,
-          { id: nextMessageId.current++, role: "user", content: message },
-        ]);
-      }
-
       try {
         const response = await fetch("/api/v1/assistant/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, context: { pathname } }),
+          body: JSON.stringify(payload),
           signal: controller.signal,
         });
         const body: unknown = response.ok ? await response.json() : null;
@@ -99,6 +102,7 @@ export function useAssistantSession(pathname: string): AssistantSession {
 
         setMessages((current) => [
           ...current,
+          { id: nextMessageId.current++, role: "user", content: message },
           {
             id: nextMessageId.current++,
             role: "assistant",
@@ -107,7 +111,7 @@ export function useAssistantSession(pathname: string): AssistantSession {
         ]);
         setDraft("");
         setLatestAnnouncement(body.message);
-        setLastFailedMessage(null);
+        setLastFailedRequest(null);
         updateRequestStatus("idle");
       } catch (error) {
         if (
@@ -117,22 +121,25 @@ export function useAssistantSession(pathname: string): AssistantSession {
         ) {
           return;
         }
-        setLastFailedMessage(message);
+        setLastFailedRequest(payload);
+        setLatestAnnouncement(FAILURE_ANNOUNCEMENT);
         updateRequestStatus("failed");
       } finally {
         if (token === requestToken.current) activeController.current = null;
       }
     },
-    [pathname, updateRequestStatus],
+    [updateRequestStatus],
   );
 
   const submit = useCallback(
-    (message = draft) => send(message, true),
-    [draft, send],
+    (message = draft) => send(message, pathname),
+    [draft, pathname, send],
   );
   const retry = useCallback(async () => {
-    if (lastFailedMessage !== null) await send(lastFailedMessage, false);
-  }, [lastFailedMessage, send]);
+    if (lastFailedRequest !== null) {
+      await send(lastFailedRequest.message, lastFailedRequest.context.pathname);
+    }
+  }, [lastFailedRequest, send]);
 
   return {
     open,
@@ -140,7 +147,7 @@ export function useAssistantSession(pathname: string): AssistantSession {
     messages,
     latestAnnouncement,
     requestStatus,
-    lastFailedMessage,
+    lastFailedMessage: lastFailedRequest?.message ?? null,
     setDraft,
     openAssistant: () => setOpen(true),
     closeAssistant: () => setOpen(false),

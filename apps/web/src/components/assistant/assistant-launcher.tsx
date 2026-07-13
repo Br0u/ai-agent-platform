@@ -18,7 +18,7 @@ export const AssistantLauncher = forwardRef<
       type="button"
     >
       <Image
-        alt="M 助手"
+        alt=""
         height={52}
         src="/assets/assistant/m-assistant.webp"
         width={52}
