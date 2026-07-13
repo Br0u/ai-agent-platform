@@ -208,7 +208,8 @@ export function MegaMenu({
 
       {items.map((item, index) => {
         const isOpen = openIndex === index;
-        const currentSection = item.children[activeSectionIndex] || item.children[0];
+        const currentSection =
+          item.children[activeSectionIndex] || item.children[0];
 
         return (
           <div
@@ -238,7 +239,7 @@ export function MegaMenu({
                 >
                   {item.label}概览 <span aria-hidden="true">→</span>
                 </a>
-                
+
                 <div className="mega-menu__tabs">
                   {item.children.map((section, sectionIndex) => (
                     <button
@@ -261,25 +262,27 @@ export function MegaMenu({
                   <h2>{currentSection?.label}</h2>
                 </div>
                 <div className="mega-menu__links">
-                  {currentSection?.items.filter(isNavigationHrefItem).map((child) => (
-                    <a
-                      aria-current={
-                        isNavigationChildActive(child.href, activeHref)
-                          ? "page"
-                          : undefined
-                      }
-                      href={child.href}
-                      key={child.href}
-                    >
-                      <span className="mega-menu__link-label">
-                        <span>{child.label}</span>
-                        <NavigationStatusBadge status={child.status} />
-                      </span>
-                      {child.description ? (
-                        <small>{child.description}</small>
-                      ) : null}
-                    </a>
-                  ))}
+                  {currentSection?.items
+                    .filter(isNavigationHrefItem)
+                    .map((child) => (
+                      <a
+                        aria-current={
+                          isNavigationChildActive(child.href, activeHref)
+                            ? "page"
+                            : undefined
+                        }
+                        href={child.href}
+                        key={child.href}
+                      >
+                        <span className="mega-menu__link-label">
+                          <span>{child.label}</span>
+                          <NavigationStatusBadge status={child.status} />
+                        </span>
+                        {child.description ? (
+                          <small>{child.description}</small>
+                        ) : null}
+                      </a>
+                    ))}
                 </div>
               </div>
             </div>

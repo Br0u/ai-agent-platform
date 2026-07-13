@@ -563,7 +563,11 @@
   .mega-menu__sidebar {
     width: 240px;
     flex-shrink: 0;
-    background: color-mix(in srgb, var(--color-signal) 4%, var(--color-surface));
+    background: color-mix(
+      in srgb,
+      var(--color-signal) 4%,
+      var(--color-surface)
+    );
     border-right: 1px solid var(--color-line);
     padding: var(--space-6) 0;
   }
@@ -600,11 +604,17 @@
     font: 600 14px/1 var(--font-body);
     text-align: left;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    transition:
+      background 0.15s,
+      color 0.15s;
   }
 
   .mega-menu__tab:hover {
-    background: color-mix(in srgb, var(--color-signal) 8%, var(--color-surface));
+    background: color-mix(
+      in srgb,
+      var(--color-signal) 8%,
+      var(--color-surface)
+    );
     color: var(--color-primary);
   }
 
