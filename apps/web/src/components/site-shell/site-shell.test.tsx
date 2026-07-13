@@ -1,4 +1,11 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -292,6 +299,71 @@ describe("SiteShell", () => {
     renderAt("/docs");
     expect(fetch).not.toHaveBeenCalled();
     expect(screen.getByTestId("app-shell")).toBeVisible();
+  });
+
+  it.each([
+    ["/", true],
+    ["/pricing", true],
+    ["/product/agent-studio", true],
+    ["/login", false],
+    ["/console/profile", false],
+    ["/admin/products", false],
+  ])(
+    "shows the assistant only where allowed: %s",
+    async (pathname, visible) => {
+      renderAt(pathname);
+      if (pathname.startsWith("/console") || pathname.startsWith("/admin")) {
+        await waitFor(() =>
+          expect(screen.getByTestId("app-shell")).toBeVisible(),
+        );
+      }
+      expect(
+        screen.queryByRole("button", { name: "打开 M 助手" }) !== null,
+      ).toBe(visible);
+    },
+  );
+
+  it("preserves the assistant controller across pathname rerenders", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          mode: "placeholder",
+          message: "保留回答",
+          suggestedActions: [],
+        }),
+      ),
+    );
+    const view = renderAt("/");
+    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "保留问题" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("assistant-history")).toHaveTextContent(
+        "保留回答",
+      ),
+    );
+
+    mocks.pathname = "/login";
+    view.rerender(
+      <SiteShell>
+        <p>登录页</p>
+      </SiteShell>,
+    );
+    expect(
+      screen.queryByRole("button", { name: "打开 M 助手" }),
+    ).not.toBeInTheDocument();
+    mocks.pathname = "/pricing";
+    view.rerender(
+      <SiteShell>
+        <p>价格页</p>
+      </SiteShell>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+    expect(screen.getByTestId("assistant-history")).toHaveTextContent(
+      "保留回答",
+    );
   });
 
   it("aborts an in-flight session request when the shell unmounts", () => {

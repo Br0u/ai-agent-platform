@@ -3,6 +3,7 @@
 import { AppShell } from "@ai-agent-platform/ui";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
+import { shouldShowAssistant } from "../../config/assistant-visibility";
 import {
   adminNavigation,
   consoleNavigation,
@@ -13,6 +14,8 @@ import {
   customerLogoutAction,
   staffLogoutAction,
 } from "../../server/auth/server-actions";
+import { AssistantWidget } from "../assistant/assistant-widget";
+import { useAssistantSession } from "../assistant/use-assistant-session";
 import "./site-shell.css";
 
 const ADMIN_PERMISSION_KEYS = new Set(
@@ -96,6 +99,7 @@ function currentBrowserHref() {
 
 export function SiteShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const assistantSession = useAssistantSession(pathname);
   const { replace } = useRouter();
   const [activeHref, setActiveHref] = useState(pathname);
   const isRouteRoot = (root: string) =>
@@ -204,6 +208,9 @@ export function SiteShell({ children }: { children: ReactNode }) {
       variant={variant}
     >
       {children}
+      {shouldShowAssistant(pathname) ? (
+        <AssistantWidget session={assistantSession} />
+      ) : null}
     </AppShell>
   );
 }
