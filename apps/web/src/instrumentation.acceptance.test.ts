@@ -1,11 +1,14 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const RUN_ACCEPTANCE = process.env.RUN_ASSISTANT_STARTUP_ACCEPTANCE === "true";
 const describeAcceptance = RUN_ACCEPTANCE ? describe : describe.skip;
 const VALID_SECRET = "0123456789abcdef0123456789abcdef";
+const RUNTIME_SETTINGS_KEY =
+  "ai-agent-platform:assistant:anonymous-session-settings:v1";
 const originalNextEnv = readFileSync("next-env.d.ts", "utf8");
 
 function buildEnvironment(): NodeJS.ProcessEnv {
@@ -15,6 +18,22 @@ function buildEnvironment(): NodeJS.ProcessEnv {
   delete environment.NEXT_RUNTIME;
   delete environment.NEXT_PHASE;
   return environment;
+}
+
+function readTraceFiles(tracePath: string): string[] {
+  const trace = JSON.parse(readFileSync(tracePath, "utf8")) as {
+    files?: unknown;
+  };
+  expect(trace.files).toBeInstanceOf(Array);
+  return trace.files as string[];
+}
+
+function tracedBundlesContaining(tracePath: string, needle: string): string[] {
+  return readTraceFiles(tracePath)
+    .filter((file) => file.endsWith(".js"))
+    .filter((file) =>
+      readFileSync(resolve(dirname(tracePath), file), "utf8").includes(needle),
+    );
 }
 
 function availablePort(): Promise<number> {
@@ -125,11 +144,10 @@ describeAcceptance("built Next assistant startup boundary", () => {
   });
 
   it("starts with valid runtime config and fails fast for invalid runtime config", async () => {
-    const trace = JSON.parse(
-      readFileSync(".next/server/instrumentation.js.nft.json", "utf8"),
-    ) as { files?: unknown };
-    expect(trace.files).toBeInstanceOf(Array);
-    const tracedFiles = (trace.files as string[]).join("\n");
+    const instrumentationTrace = ".next/server/instrumentation.js.nft.json";
+    const chatTrace =
+      ".next/server/app/api/v1/assistant/chat/route.js.nft.json";
+    const tracedFiles = readTraceFiles(instrumentationTrace).join("\n");
     expect(tracedFiles).not.toMatch(
       /(?:packages\/database|node_modules\/\.pnpm\/pg@)/u,
     );
@@ -138,6 +156,13 @@ describeAcceptance("built Next assistant startup boundary", () => {
       "utf8",
     );
     expect(instrumentationBundle).not.toMatch(/require\(["']pg["']\)/u);
+    const symbolExpression = `Symbol.for("${RUNTIME_SETTINGS_KEY}")`;
+    expect(
+      tracedBundlesContaining(instrumentationTrace, symbolExpression),
+    ).toHaveLength(1);
+    expect(tracedBundlesContaining(chatTrace, symbolExpression)).toHaveLength(
+      1,
+    );
 
     const validPort = await availablePort();
     const valid = start(validPort, {
@@ -153,6 +178,28 @@ describeAcceptance("built Next assistant startup boundary", () => {
         validPort,
       );
       expect(homepage.status).toBe(200);
+
+      const chat = await fetch(
+        `http://127.0.0.1:${validPort}/api/v1/assistant/chat`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            message: "如何开始了解平台？",
+            context: { pathname: "/" },
+          }),
+        },
+      );
+      expect(chat.status).toBe(200);
+      expect(chat.headers.get("set-cookie")).toContain(
+        "aap_assistant_sid_dev=",
+      );
+      await expect(chat.json()).resolves.toMatchObject({
+        version: "1",
+        mode: "placeholder",
+        session: { temporary: true },
+        message: { role: "assistant" },
+      });
     } finally {
       await stop(valid.child);
     }

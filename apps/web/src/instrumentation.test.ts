@@ -3,6 +3,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const VALID_ORIGIN = "https://portal.example.com";
 const VALID_SECRET = "0123456789abcdef0123456789abcdef";
+const RUNTIME_SETTINGS_KEY =
+  "ai-agent-platform:assistant:anonymous-session-settings:v1";
+
+function clearRuntimeSettings(): void {
+  delete (globalThis as Record<PropertyKey, unknown>)[
+    Symbol.for(RUNTIME_SETTINGS_KEY)
+  ];
+}
 
 function runtimeEnvironment(options?: {
   origin?: string;
@@ -28,6 +36,7 @@ async function loadRegister() {
 }
 
 afterEach(() => {
+  clearRuntimeSettings();
   vi.doUnmock("@/server/assistant/anonymous-session-config");
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -107,5 +116,6 @@ describe("Next server startup instrumentation", () => {
     expect(leaf).not.toMatch(
       /assistant-actor|server\/auth|@ai-agent-platform\/database|node:(?:fs|crypto)|from\s+["']pg["']/u,
     );
+    expect(leaf).toContain(`Symbol.for(\n  "${RUNTIME_SETTINGS_KEY}"`);
   });
 });

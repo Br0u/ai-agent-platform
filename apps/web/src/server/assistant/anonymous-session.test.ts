@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ASSISTANT_ABSOLUTE_TTL_MS,
@@ -13,6 +13,17 @@ import {
 
 const SECRET = "0123456789abcdef0123456789abcdef";
 const START = Date.parse("2026-07-13T11:30:00.000Z");
+const RUNTIME_SETTINGS_KEY =
+  "ai-agent-platform:assistant:anonymous-session-settings:v1";
+
+function clearRuntimeSettings(): void {
+  delete (globalThis as Record<PropertyKey, unknown>)[
+    Symbol.for(RUNTIME_SETTINGS_KEY)
+  ];
+}
+
+beforeEach(clearRuntimeSettings);
+afterEach(clearRuntimeSettings);
 
 function settings(
   overrides: Partial<

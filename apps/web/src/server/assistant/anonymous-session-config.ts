@@ -79,7 +79,17 @@ export function resolveAnonymousSessionSettings(
   };
 }
 
-let runtimeSettings: AnonymousSessionSettings | undefined;
+const RUNTIME_SETTINGS_KEY = Symbol.for(
+  "ai-agent-platform:assistant:anonymous-session-settings:v1",
+);
+
+function runtimeSettingsStore(): Record<
+  symbol,
+  AnonymousSessionSettings | undefined
+> {
+  return globalThis as typeof globalThis &
+    Record<symbol, AnonymousSessionSettings | undefined>;
+}
 
 function runtimeEnvironment(): AssistantSessionEnvironment {
   return {
@@ -91,6 +101,7 @@ function runtimeEnvironment(): AssistantSessionEnvironment {
 export function validateAnonymousSessionRuntimeConfig(
   environment: AssistantSessionEnvironment = runtimeEnvironment(),
 ): AnonymousSessionSettings {
-  runtimeSettings ??= resolveAnonymousSessionSettings(environment);
-  return runtimeSettings;
+  const store = runtimeSettingsStore();
+  store[RUNTIME_SETTINGS_KEY] ??= resolveAnonymousSessionSettings(environment);
+  return store[RUNTIME_SETTINGS_KEY];
 }
