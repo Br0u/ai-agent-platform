@@ -535,14 +535,6 @@ describe("navigation targets", () => {
       if (!item.href) continue;
 
       const pathname = new URL(item.href, "https://local.invalid").pathname;
-      // The assistant page and route registry entry land together in the next task.
-      if (pathname === "/admin/assistant") {
-        expect(
-          matchRoute(pathname),
-          `${item.label}: ${pathname}`,
-        ).toBeUndefined();
-        continue;
-      }
       expect(matchRoute(pathname), `${item.label}: ${pathname}`).toBeDefined();
     }
   });

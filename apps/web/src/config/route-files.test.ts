@@ -26,4 +26,8 @@ describe("registered route files", () => {
   it("covers the live assistant workspace with an explicit App Router page", () => {
     expect(existsSync(pageFileForRoute("/assistant"))).toBe(true);
   });
+
+  it("covers the live protected assistant operations page", () => {
+    expect(existsSync(pageFileForRoute("/admin/assistant"))).toBe(true);
+  });
 });

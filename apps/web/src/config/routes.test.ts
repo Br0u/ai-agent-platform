@@ -55,6 +55,7 @@ const requiredRoutes = [
   "/admin/licenses",
   "/admin/tickets",
   "/admin/analytics",
+  "/admin/assistant",
   "/admin/users",
   "/admin/roles",
   "/admin/audit-logs",
@@ -104,6 +105,15 @@ describe("routeRegistry", () => {
       path: "/assistant",
       title: "AI 助理",
       group: "public",
+      status: "live",
+    });
+  });
+
+  it("registers the protected admin assistant as a live route", () => {
+    expect(matchRoute("/admin/assistant")).toEqual({
+      path: "/admin/assistant",
+      title: "AI 助理运营",
+      group: "admin",
       status: "live",
     });
   });

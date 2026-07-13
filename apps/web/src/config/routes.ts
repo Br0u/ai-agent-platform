@@ -82,6 +82,7 @@ export const routeRegistry: PortalRoute[] = [
   adminRoute("/admin/licenses", "License管理", "placeholder"),
   adminRoute("/admin/tickets", "工单管理", "placeholder"),
   adminRoute("/admin/analytics", "数据统计"),
+  adminRoute("/admin/assistant", "AI 助理运营", "live"),
   adminRoute("/admin/users", "用户管理"),
   adminRoute("/admin/roles", "角色权限"),
   adminRoute("/admin/audit-logs", "操作审计"),
