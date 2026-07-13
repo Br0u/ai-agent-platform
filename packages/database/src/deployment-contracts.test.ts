@@ -291,6 +291,143 @@ describe("production deployment security contracts", () => {
     expect(dockerIgnore).toContain("!**/.env.example");
   });
 
+  it("hardens the internal AgentOS container boundary and startup order", () => {
+    const compose = read("compose.yaml");
+    const bootstrapService = compose
+      .split("\n  agno-bootstrap:\n")[1]
+      ?.split("\n  agent-migrate:\n")[0];
+    const migrationService = compose
+      .split("\n  agent-migrate:\n")[1]
+      ?.split("\n  agent:\n")[0];
+    const agentService = compose
+      .split("\n  agent:\n")[1]
+      ?.split("\n  web:\n")[0];
+    const databaseService = compose
+      .split("\n  db:\n")[1]
+      ?.split("\n  migrate:\n")[0];
+    const backupService = compose.split("\n  backup:\n")[1];
+
+    expect(bootstrapService).toBeDefined();
+    expect(bootstrapService).toContain("postgres:18.3-alpine3.23");
+    expect(bootstrapService).toContain("03-agno-roles.sh");
+    expect(bootstrapService).toContain("03-agno-roles.sql");
+    expect(bootstrapService).toContain("condition: service_healthy");
+    expect(bootstrapService).toContain("POSTGRES_PASSWORD");
+    expect(databaseService).not.toContain("03-agno-roles");
+
+    expect(migrationService).toBeDefined();
+    expect(migrationService).toContain(
+      "AGNO_MIGRATOR_DATABASE_URL: ${AGNO_MIGRATOR_DATABASE_URL:?Set AGNO_MIGRATOR_DATABASE_URL in .env}",
+    );
+    expect(migrationService).not.toContain("POSTGRES_PASSWORD");
+    expect(migrationService).not.toContain("AGNO_DATABASE_URL:");
+    expect(migrationService).toMatch(
+      /agno-bootstrap:[\s\S]*condition: service_completed_successfully/u,
+    );
+
+    expect(agentService).toBeDefined();
+    expect(agentService).toContain(
+      "AGNO_DATABASE_URL: ${AGNO_DATABASE_URL:?Set AGNO_DATABASE_URL in .env}",
+    );
+    expect(agentService).toContain(
+      "OS_SECURITY_KEY: ${OS_SECURITY_KEY:?Set OS_SECURITY_KEY in .env}",
+    );
+    expect(agentService).not.toContain("AGNO_MIGRATOR_DATABASE_URL");
+    expect(agentService).toMatch(
+      /agent-migrate:[\s\S]*condition: service_completed_successfully/u,
+    );
+    expect(agentService).toContain("0.0.0.0");
+    expect(agentService).toContain("7777");
+    expect(agentService).toContain('expose:\n      - "7777"');
+    expect(agentService).not.toMatch(/^\s{4}ports:/mu);
+    expect(agentService).toContain("user: agent");
+    expect(agentService).toContain("read_only: true");
+    expect(agentService).toContain("/tmp:rw,noexec,nosuid,size=32m");
+    expect(agentService).toContain("no-new-privileges:true");
+    expect(agentService).toContain("cap_drop:\n      - ALL");
+    expect(agentService).toContain("/internal/health/ready");
+    expect(agentService).toContain("Authorization");
+    expect(agentService).toContain("os.environ['OS_SECURITY_KEY']");
+    expect(agentService).toContain("mem_limit:");
+    expect(agentService).toContain("cpus:");
+    expect(agentService).toContain("pids_limit:");
+    expect(agentService).toContain("networks:\n      - backend");
+    expect(agentService).not.toMatch(/OS_SECURITY_KEY:\s*[A-Za-z0-9_-]{20,}/u);
+
+    expect(backupService).toMatch(
+      /migrate:[\s\S]*condition: service_completed_successfully/u,
+    );
+    expect(backupService).toMatch(
+      /agent-migrate:[\s\S]*condition: service_completed_successfully/u,
+    );
+  });
+
+  it("builds AgentOS from a pinned, locked, non-root multi-stage image", () => {
+    const dockerfile = read("apps/agent/Dockerfile");
+    const dockerIgnore = read("apps/agent/.dockerignore");
+
+    expect(dockerfile).toMatch(
+      /^FROM python:3\.13\.13-slim-trixie@sha256:[a-f0-9]{64} AS builder/mu,
+    );
+    expect(dockerfile).toMatch(
+      /^FROM python:3\.13\.13-slim-trixie@sha256:[a-f0-9]{64} AS runtime/mu,
+    );
+    expect(dockerfile).toContain("uv sync --frozen --no-dev");
+    expect(dockerfile).toContain("COPY apps/agent/pyproject.toml");
+    expect(dockerfile).toContain("COPY apps/agent/uv.lock");
+    expect(dockerfile).toContain("COPY apps/agent/src");
+    expect(dockerfile).not.toContain("COPY . .");
+    expect(dockerfile).toContain("USER agent");
+    expect(dockerfile).toContain("app_factory");
+    expect(dockerIgnore).toContain(".venv");
+    expect(dockerIgnore).toContain("tests");
+    expect(dockerIgnore).toContain(".env");
+  });
+
+  it("runs the ordered, pinned AgentOS CI gates with masked fixtures", () => {
+    const workflow = read(".github/workflows/ci.yml");
+    expect(workflow).toContain(
+      "astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0",
+    );
+    expect(workflow).toContain('version: "0.11.19"');
+    for (const key of [
+      "AGNO_MIGRATOR_DATABASE_PASSWORD",
+      "AGNO_DATABASE_PASSWORD",
+      "AGNO_MIGRATOR_DATABASE_URL",
+      "AGNO_DATABASE_URL",
+      "OS_SECURITY_KEY",
+    ]) {
+      expect(workflow).toContain(key);
+    }
+    expect(workflow).toContain("::add-mask::$value");
+
+    const orderedGates = [
+      "Generate masked authentication and AgentOS fixtures",
+      "Initialize least-privilege database roles",
+      "db:prepare",
+      "Bootstrap Agno roles twice",
+      "uv --directory apps/agent sync --frozen",
+      "Run Agno migration twice",
+      "agno-role-boundary.integration.test.ts",
+      "uv --directory apps/agent run pytest",
+      "uv --directory apps/agent run ruff check",
+      "uv --directory apps/agent run mypy",
+      "docker build -f apps/agent/Dockerfile",
+    ];
+    for (const gate of orderedGates) {
+      expect(workflow).toContain(gate);
+    }
+    for (const [previous, next] of orderedGates
+      .slice(0, -1)
+      .map((gate, index) => [gate, orderedGates[index + 1]] as const)) {
+      expect(workflow.indexOf(previous)).toBeLessThan(workflow.indexOf(next));
+    }
+    expect(
+      workflow.match(/sh infra\/postgres\/03-agno-roles\.sh/g),
+    ).toHaveLength(2);
+    expect(workflow.match(/python -m agent_service\.migrate/g)).toHaveLength(2);
+  });
+
   it("limits isolated assistant E2E credentials to the seed migrator", () => {
     const base = read("compose.yaml");
     const override = read("compose.e2e.yaml");

@@ -36,20 +36,37 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      - name: Generate masked authentication fixtures
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.19"
+          enable-cache: true
+          cache-dependency-glob: apps/agent/uv.lock
+      - run: pnpm install --frozen-lockfile
+      - name: Generate masked authentication and AgentOS fixtures
         shell: bash
         run: |
-          for name in MIGRATOR_DATABASE_PASSWORD RUNTIME_DATABASE_PASSWORD BACKUP_DATABASE_PASSWORD \
+          for name in POSTGRES_PASSWORD MIGRATOR_DATABASE_PASSWORD RUNTIME_DATABASE_PASSWORD BACKUP_DATABASE_PASSWORD \
+            AGNO_MIGRATOR_DATABASE_PASSWORD AGNO_DATABASE_PASSWORD OS_SECURITY_KEY \
             BETTER_AUTH_SECRET E2E_CUSTOMER_PASSWORD E2E_STAFF_PASSWORD E2E_ADMIN_PASSWORD \
             E2E_PENDING_CUSTOMER_SESSION_TOKEN E2E_DISABLED_CUSTOMER_SESSION_TOKEN \
             E2E_STAFF_SESSION_TOKEN E2E_ROLE_TARGET_SESSION_TOKEN \
             E2E_ADMIN_SESSION_TOKEN E2E_NO_TOTP_ADMIN_SESSION_TOKEN \
             E2E_REVOKED_SESSION_TOKEN E2E_REPLACEMENT_PASSWORD; do
-            value="$(openssl rand -base64 36 | tr -d '\n')"
+            value="$(openssl rand -hex 32)"
             echo "::add-mask::$value"
+            export "$name=$value"
             echo "$name=$value" >> "$GITHUB_ENV"
           done
           echo "DATABASE_URL=postgresql://ai_agent_migrator@127.0.0.1:5432/ai_agent_platform_ci" >> "$GITHUB_ENV"
+          echo "MIGRATOR_DATABASE_URL=postgresql://ai_agent_migrator:${MIGRATOR_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci" >> "$GITHUB_ENV"
+          echo "RUNTIME_DATABASE_URL=postgresql://ai_agent_runtime:${RUNTIME_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci" >> "$GITHUB_ENV"
+          echo "BACKUP_DATABASE_URL=postgresql://ai_agent_backup:${BACKUP_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci" >> "$GITHUB_ENV"
+          agno_migrator_url="postgresql+psycopg_async://ai_agent_agno_migrator:${AGNO_MIGRATOR_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
+          agno_runtime_url="postgresql+psycopg_async://ai_agent_agno:${AGNO_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
+          echo "::add-mask::$agno_migrator_url"
+          echo "::add-mask::$agno_runtime_url"
+          echo "AGNO_MIGRATOR_DATABASE_URL=$agno_migrator_url" >> "$GITHUB_ENV"
+          echo "AGNO_DATABASE_URL=$agno_runtime_url" >> "$GITHUB_ENV"
       - name: Create isolated destructive-test database
         shell: bash
         env:
@@ -61,12 +78,37 @@ jobs:
         shell: bash
         env:
           POSTGRES_USER: ai_agent_owner
-          POSTGRES_DB: ai_agent_platform_ci
+          POSTGRES_DB: ai_agent_platform_identity_test_ci
           PGHOST: 127.0.0.1
           ROLE_SQL_FILE: infra/postgres/01-roles.sql
         run: sh infra/postgres/01-roles.sh
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @ai-agent-platform/database db:prepare
+      - run: DATABASE_URL="$MIGRATOR_DATABASE_URL" pnpm --filter @ai-agent-platform/database db:prepare
+      - name: Bootstrap Agno roles twice
+        shell: bash
+        env:
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_USER: ai_agent_owner
+          POSTGRES_DB: ai_agent_platform_identity_test_ci
+          AGNO_ROLE_SQL_FILE: infra/postgres/03-agno-roles.sql
+        run: |
+          sh infra/postgres/03-agno-roles.sh
+          sh infra/postgres/03-agno-roles.sh
+      - name: Sync locked AgentOS dependencies
+        run: uv --directory apps/agent sync --frozen
+      - name: Run Agno migration twice
+        shell: bash
+        run: |
+          uv --directory apps/agent run python -m agent_service.migrate
+          uv --directory apps/agent run python -m agent_service.migrate
+      - name: Verify Agno role-boundary and backup grants
+        run: pnpm --filter @ai-agent-platform/database exec vitest run src/agno-role-boundary.integration.test.ts
+      - name: Run AgentOS Python gates
+        shell: bash
+        run: |
+          uv --directory apps/agent run pytest
+          uv --directory apps/agent run ruff check .
+          uv --directory apps/agent run mypy src tests
+      - run: docker build -f apps/agent/Dockerfile .
       - run: pnpm test
       - run: pnpm typecheck
       - run: pnpm lint

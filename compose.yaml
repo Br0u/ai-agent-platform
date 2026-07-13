@@ -38,6 +38,105 @@ services:
     networks:
       - backend
 
+  agno-bootstrap:
+    image: postgres:18.3-alpine3.23
+    restart: "no"
+    user: postgres
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-ai_agent_owner}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_agent_platform}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      AGNO_MIGRATOR_DATABASE_PASSWORD: ${AGNO_MIGRATOR_DATABASE_PASSWORD:?Set AGNO_MIGRATOR_DATABASE_PASSWORD in .env}
+      AGNO_DATABASE_PASSWORD: ${AGNO_DATABASE_PASSWORD:?Set AGNO_DATABASE_PASSWORD in .env}
+    volumes:
+      - ./infra/postgres/03-agno-roles.sh:/opt/postgres/03-agno-roles.sh:ro
+      - ./infra/postgres/03-agno-roles.sql:/opt/postgres/03-agno-roles.sql:ro
+    command: ["/opt/postgres/03-agno-roles.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - backend
+
+  agent-migrate:
+    build:
+      context: .
+      dockerfile: apps/agent/Dockerfile
+    restart: "no"
+    command: ["python", "-m", "agent_service.migrate"]
+    environment:
+      AGNO_MIGRATOR_DATABASE_URL: ${AGNO_MIGRATOR_DATABASE_URL:?Set AGNO_MIGRATOR_DATABASE_URL in .env}
+    depends_on:
+      agno-bootstrap:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - backend
+
+  agent:
+    build:
+      context: .
+      dockerfile: apps/agent/Dockerfile
+    restart: unless-stopped
+    user: agent
+    command:
+      [
+        "uvicorn",
+        "agent_service.app:app_factory",
+        "--factory",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "7777",
+      ]
+    environment:
+      AGNO_DATABASE_URL: ${AGNO_DATABASE_URL:?Set AGNO_DATABASE_URL in .env}
+      OS_SECURITY_KEY: ${OS_SECURITY_KEY:?Set OS_SECURITY_KEY in .env}
+    depends_on:
+      agent-migrate:
+        condition: service_completed_successfully
+    expose:
+      - "7777"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os,urllib.request; request=urllib.request.Request('http://127.0.0.1:7777/internal/health/ready',headers={'Authorization':'Bearer '+os.environ['OS_SECURITY_KEY']}); urllib.request.urlopen(request,timeout=3).close()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    cpus: "1.0"
+    pids_limit: 256
+    networks:
+      - backend
+
   web:
     build:
       context: .
@@ -126,6 +225,8 @@ services:
       - backup_data:/backups
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      agent-migrate:
         condition: service_completed_successfully
     security_opt:
       - no-new-privileges:true
