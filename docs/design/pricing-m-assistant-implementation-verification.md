@@ -3,13 +3,13 @@
 ## Verification identity
 
 - Date: 2026-07-13 CST (+0800)
-- Implementation under test: `165a96f73f987c8bfb2c1de554d77bce04c153eb`
+- Implementation under test: `0aedcb8f503f46f5ea62343dfc32fbba4bb19086`
 - Pricing fix: `81579b1fc6be1a83af7e5f4f6c4d75ef1b3ef879`
 - Assistant safe-action fix: `af44f8279f246bbe6848210c44b46caf4fe6accb`
 - Operations fix: `f1f82bf9d82b177af124c21dc2dde8cb621f0c25`
 - Unicode request-limit fix: `2c445f68072769f66d81ef2325e15c893235ada6`
 - Pricing component boundary refactor: `6c729afea06d8475150891aa4ad47ce8e0d433cf`
-- Latest browser suite source: `165a96f73f987c8bfb2c1de554d77bce04c153eb`
+- Latest browser suite source: `0aedcb8f503f46f5ea62343dfc32fbba4bb19086`
 - Branch: `codex/feat-pricing-m-assistant`
 - Node.js: `v26.0.0`
 - pnpm: `11.5.2`
@@ -50,7 +50,7 @@ Wait for `✓ Ready`, then run in Terminal 2:
 BASE_URL="http://127.0.0.1:3113" PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" pnpm --filter @ai-agent-platform/web exec playwright test e2e/pricing-assistant.spec.ts --project=desktop --project=mobile
 ```
 
-Final result: exit 0, 10/10 passed in 26.3s. Five focused scenarios ran in both desktop and mobile projects:
+Final result: exit 0, 10/10 passed in 23.8s. Five focused scenarios ran in both desktop and mobile projects:
 
 1. API method rejection
 2. Preset assistant responses and safe suggested-action links
@@ -71,7 +71,7 @@ After verification, stop Terminal 1 with Ctrl-C. `lsof -nP -iTCP:3113 -sTCP:LIST
 - The assistant is present on `/pricing` and `/product`, and absent on `/login`, `/register`, and `/staff/login`.
 - All three preset responses render their safe links for `/docs#quick-start`, `/contact`, and `/support`; unsafe protocol-relative, backslash, query-redirect, and encoded-slash actions are removed before response storage and rendering.
 - Assistant request tests accept exactly 500 escaped emoji through both declared and chunked JSON bodies, contract-reject 501 code points, and reject declared or streamed bodies above 16 KiB.
-- The assistant input uses code-point-aware validation without native UTF-16 `maxlength`; 500 emoji submit successfully in desktop and mobile Chrome, while 501 show accessible feedback and issue no request.
+- The assistant input uses code-point-aware validation without native UTF-16 `maxlength`; whitespace-wrapped 500 emoji submit a trimmed body successfully in desktop and mobile Chrome, while whitespace-wrapped 501 show accessible feedback and issue no request.
 - Opening focuses the input; Escape closes the dialog and restores launcher focus. Reduced-motion mode removes launcher animation.
 - Mobile controls meet the 44px target. The drawer reaches the viewport bottom.
 - The mobile stylesheet contains the targeted `env(safe-area-inset-bottom)` contract. Chrome emulation reports an effective safe-area inset of 0; computed padding of at least 12px is base spacing only, not evidence of a nonzero effective inset.

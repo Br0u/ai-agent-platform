@@ -150,9 +150,9 @@ git commit -m "feat(pricing): add configuration and contact handoff"
 ### Task 3: Implement the pricing page and placeholder estimate interface
 
 **Files:**
-- Create: `apps/web/src/features/pricing/pricing-calculator.tsx`
-- Create: `apps/web/src/features/pricing/pricing-calculator.css`
-- Create: `apps/web/src/features/pricing/pricing-calculator.test.tsx`
+- Create: `apps/web/src/components/portal/pricing/pricing-calculator.tsx`
+- Create: `apps/web/src/components/portal/pricing/pricing-calculator.css`
+- Create: `apps/web/src/components/portal/pricing/pricing-calculator.test.tsx`
 - Create: `apps/web/src/features/pricing/pricing-contract.ts`
 - Create: `apps/web/src/app/pricing/page.tsx`
 - Create: `apps/web/src/app/pricing/page.test.tsx`
@@ -169,7 +169,7 @@ The route test must assert exact status codes and response bodies for: legal inp
 - [ ] **Step 2: Run the tests and confirm RED**
 
 ```bash
-pnpm --filter @ai-agent-platform/web test -- src/features/pricing/pricing-calculator.test.tsx src/app/pricing/page.test.tsx src/app/api/v1/pricing/estimate/route.test.ts
+pnpm --filter @ai-agent-platform/web test -- src/components/portal/pricing/pricing-calculator.test.tsx src/app/pricing/page.test.tsx src/app/api/v1/pricing/estimate/route.test.ts
 ```
 
 Expected: FAIL because the page and route do not exist.
