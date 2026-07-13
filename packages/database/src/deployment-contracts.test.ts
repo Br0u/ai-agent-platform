@@ -66,7 +66,47 @@ describe("production deployment security contracts", () => {
     expect(nginx).toContain("proxy_set_header X-Forwarded-For $remote_addr;");
     expect(
       nginx.match(/proxy_set_header X-Forwarded-Host \$http_host;/g),
-    ).toHaveLength(2);
+    ).toHaveLength(4);
+  });
+
+  it("rate-limits only the exact public pricing and assistant POST APIs", () => {
+    const nginx = read("infra/nginx/default.conf.template");
+    const pricingLocation = nginx
+      .split("location = /api/v1/pricing/estimate {")[1]
+      ?.split("\n  }")[0];
+    const assistantLocation = nginx
+      .split("location = /api/v1/assistant/chat {")[1]
+      ?.split("\n  }")[0];
+    const catchAllLocation = nginx.split("location / {")[1]?.split("\n  }")[0];
+
+    expect(nginx).toContain(
+      "limit_req_zone $public_api_post_key zone=pricing_estimate_per_ip:10m rate=10r/m;",
+    );
+    expect(nginx).toContain(
+      "limit_req_zone $public_api_post_key zone=assistant_chat_per_ip:10m rate=30r/m;",
+    );
+    expect(nginx).toMatch(/map \$request_method \$public_api_post_key/u);
+    expect(nginx).toMatch(/POST\s+\$binary_remote_addr/u);
+
+    expect(pricingLocation).toContain(
+      "limit_req zone=pricing_estimate_per_ip burst=5 nodelay;",
+    );
+    expect(assistantLocation).toContain(
+      "limit_req zone=assistant_chat_per_ip burst=10 nodelay;",
+    );
+    for (const location of [pricingLocation, assistantLocation]) {
+      expect(location).toContain("limit_req_status 429;");
+      expect(location).toContain("error_page 429 = @public_api_rate_limited;");
+    }
+    expect(nginx).toMatch(
+      /location @public_api_rate_limited \{[\s\S]*default_type application\/json;[\s\S]*return 429 '\{"status":"error","error":\{"code":"rate_limited","message":"请求过于频繁，请稍后重试。"\}\}';/u,
+    );
+
+    expect(catchAllLocation).toBeDefined();
+    expect(catchAllLocation).not.toContain("limit_req");
+    expect(nginx).not.toMatch(
+      /location\s+=?\s*\/(?:api\/health|api\/v1\/session)[^{]*\{[\s\S]*?limit_req/u,
+    );
   });
 
   it("uses separate migration and runtime URLs without publishing the origin", () => {
