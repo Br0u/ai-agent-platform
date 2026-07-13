@@ -13,7 +13,7 @@ type AssistantPanelProps = {
 export function AssistantPanel({ session, onClose }: AssistantPanelProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const sending = session.requestStatus === "sending";
-  const overLimit = Array.from(session.draft).length > 500;
+  const overLimit = Array.from(session.draft.trim()).length > 500;
 
   useEffect(() => inputRef.current?.focus(), []);
 

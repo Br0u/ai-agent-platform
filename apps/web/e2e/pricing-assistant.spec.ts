@@ -454,17 +454,23 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
     if (pathname(request.url()) === ASSISTANT_API) unicodeChatRequests += 1;
   });
   const send = page.getByRole("button", { name: "发送", exact: true });
-  await input.fill("😀".repeat(500));
+  await input.fill(`  ${"😀".repeat(500)}  `);
   await expect(send).toBeEnabled();
+  const unicodeRequest = page.waitForRequest((request) =>
+    request.url().endsWith(ASSISTANT_API),
+  );
   const unicodeResponse = page.waitForResponse(
     (response) =>
       response.url().endsWith(ASSISTANT_API) && response.status() === 200,
   );
   await send.click();
+  expect(JSON.parse((await unicodeRequest).postData() ?? "null").message).toBe(
+    "😀".repeat(500),
+  );
   await unicodeResponse;
   expect(unicodeChatRequests).toBe(1);
 
-  await input.fill("😀".repeat(501));
+  await input.fill(`  ${"😀".repeat(501)}  `);
   await expect(input).toHaveAttribute("aria-invalid", "true");
   await expect(page.getByText("问题不能超过 500 个字符。")).toBeVisible();
   await expect(send).toBeDisabled();

@@ -135,13 +135,20 @@ describe("AssistantWidget", () => {
 
     expect(input).not.toHaveAttribute("maxlength");
     expect(input).toHaveAttribute("aria-describedby", helper.id);
-    fireEvent.change(input, { target: { value: "😀".repeat(500) } });
+    fireEvent.change(input, {
+      target: { value: `  ${"😀".repeat(500)}  ` },
+    });
     expect(input).not.toHaveAttribute("aria-invalid");
     expect(send).toBeEnabled();
     fireEvent.click(send);
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body)).message,
+    ).toBe("😀".repeat(500));
 
-    fireEvent.change(input, { target: { value: "😀".repeat(501) } });
+    fireEvent.change(input, {
+      target: { value: `  ${"😀".repeat(501)}  ` },
+    });
     expect(input).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByText("问题不能超过 500 个字符。")).toBeVisible();
     expect(send).toBeDisabled();
