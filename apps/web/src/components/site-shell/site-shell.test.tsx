@@ -30,6 +30,12 @@ vi.mock("@/server/auth/server-actions", () => ({
   staffLogoutAction: vi.fn(),
 }));
 
+vi.mock("@/components/ui/floating-chat-widget-shadcnui", () => ({
+  FloatingChatWidget: ({ pathname }: { pathname: string }) => (
+    <div data-pathname={pathname} data-testid="floating-chat-widget" />
+  ),
+}));
+
 vi.mock("@ai-agent-platform/ui", () => ({
   AppShell: (props: MockAppShellProps) => {
     mocks.appShellProps = props;
@@ -293,6 +299,36 @@ describe("SiteShell", () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(screen.getByTestId("app-shell")).toBeVisible();
   });
+
+  it.each(["/", "/docs", "/product/agent-studio", "/contact"])(
+    "mounts the floating assistant on public content route %s",
+    (pathname) => {
+      renderAt(pathname);
+
+      expect(screen.getByTestId("floating-chat-widget")).toHaveAttribute(
+        "data-pathname",
+        pathname,
+      );
+    },
+  );
+
+  it.each([
+    "/login",
+    "/register",
+    "/staff/login",
+    "/console/profile",
+    "/admin/products",
+    "/unknown",
+  ])(
+    "does not mount the floating assistant on excluded route %s",
+    (pathname) => {
+      renderAt(pathname);
+
+      expect(
+        screen.queryByTestId("floating-chat-widget"),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it("aborts an in-flight session request when the shell unmounts", () => {
     vi.mocked(fetch).mockImplementation(

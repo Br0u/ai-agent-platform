@@ -13,6 +13,8 @@ import {
   customerLogoutAction,
   staffLogoutAction,
 } from "../../server/auth/server-actions";
+import { shouldShowAssistant } from "../assistant/assistant-visibility";
+import { FloatingChatWidget } from "../ui/floating-chat-widget-shadcnui";
 import "./site-shell.css";
 
 const ADMIN_PERMISSION_KEYS = new Set(
@@ -187,23 +189,28 @@ export function SiteShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AppShell
-      activeHref={activeHref}
-      adminNavigation={adminNavigation}
-      consoleNavigation={consoleNavigation}
-      footerNavigation={footerNavigation}
-      grantedPermissions={workspace.permissions}
-      logoutAction={
-        variant === "console"
-          ? customerLogoutAction
-          : variant === "admin"
-            ? staffLogoutAction
-            : undefined
-      }
-      portalNavigation={portalNavigation}
-      variant={variant}
-    >
-      {children}
-    </AppShell>
+    <>
+      <AppShell
+        activeHref={activeHref}
+        adminNavigation={adminNavigation}
+        consoleNavigation={consoleNavigation}
+        footerNavigation={footerNavigation}
+        grantedPermissions={workspace.permissions}
+        logoutAction={
+          variant === "console"
+            ? customerLogoutAction
+            : variant === "admin"
+              ? staffLogoutAction
+              : undefined
+        }
+        portalNavigation={portalNavigation}
+        variant={variant}
+      >
+        {children}
+      </AppShell>
+      {shouldShowAssistant(pathname) ? (
+        <FloatingChatWidget pathname={pathname} />
+      ) : null}
+    </>
   );
 }
