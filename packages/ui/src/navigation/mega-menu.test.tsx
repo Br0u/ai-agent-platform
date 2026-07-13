@@ -288,6 +288,7 @@ describe("MegaMenu", () => {
     );
 
     rerender(<MegaMenu items={items} activeHref="/product/guide#other" />);
+    fireEvent.click(screen.getByRole("button", { name: "指南" }));
     expect(screen.getByRole("link", { name: /配置指南/ })).not.toHaveAttribute(
       "aria-current",
     );
@@ -312,25 +313,18 @@ describe("MegaMenu", () => {
     expect(agentStudio).toHaveAttribute("aria-current", "page");
   });
 
-  it("uses exactly three or four panel columns and caps five sections at four", () => {
-    const { rerender } = renderMenu();
+  it("switches content sections when tabs are clicked", () => {
+    renderMenu();
     fireEvent.click(trigger("产品"));
-    expect(screen.getByRole("region")).toHaveClass("mega-menu__panel--3");
 
-    const fiveSectionItems: PortalNavigationItem[] = [
-      {
-        ...items[0],
-        children: [
-          ...items[0].children,
-          { label: "生态", items: [] },
-          { label: "服务", items: [] },
-        ],
-      },
-    ];
-    rerender(<MegaMenu items={fiveSectionItems} activeHref="/" />);
+    expect(screen.getByRole("heading", { name: "平台" })).toBeVisible();
+    expect(screen.getByRole("link", { name: /Agent Studio/ })).toBeVisible();
 
-    expect(screen.getByRole("region")).toHaveClass("mega-menu__panel--4");
-    expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(5);
+    fireEvent.click(screen.getByRole("button", { name: "指南" }));
+
+    expect(screen.getByRole("heading", { name: "指南" })).toBeVisible();
+    expect(screen.getByRole("link", { name: /配置指南/ })).toBeVisible();
+    expect(screen.queryByRole("link", { name: /Agent Studio/ })).toBeNull();
   });
 
   it("exports a reusable placeholder status badge", () => {
