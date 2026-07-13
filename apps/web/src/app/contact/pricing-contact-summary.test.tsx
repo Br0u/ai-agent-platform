@@ -43,5 +43,8 @@ describe("PricingContactSummary", () => {
     expect(container).not.toHaveTextContent(hostile);
     expect(container.querySelector("img")).toBeNull();
     expect(screen.getByText("功能模块：Workflow")).toBeVisible();
+    expect(container).not.toHaveTextContent("部署方式：本地私有化");
+    expect(container).not.toHaveTextContent("使用规模：体验验证");
+    expect(container).not.toHaveTextContent("服务周期：待商务确认");
   });
 });

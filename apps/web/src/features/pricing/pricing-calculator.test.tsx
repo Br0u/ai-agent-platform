@@ -5,7 +5,19 @@ import {
   screen,
   within,
 } from "@testing-library/react";
+import type { AnchorHTMLAttributes } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("next/link", () => ({
+  default: ({
+    children,
+    ...props
+  }: AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a {...props} data-next-link="true">
+      {children}
+    </a>
+  ),
+}));
 
 import { PricingCalculator } from "./pricing-calculator";
 
@@ -106,9 +118,10 @@ describe("PricingCalculator", () => {
     expect(contact).toHaveFocus();
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Workflow" }));
-    expect(contact).not.toHaveAttribute("aria-disabled");
-    expect(contact).not.toHaveAttribute("aria-describedby");
-    expect(contact).toHaveAttribute(
+    const enabledContact = screen.getByRole("link", { name: "获取正式报价" });
+    expect(enabledContact).not.toHaveAttribute("aria-disabled");
+    expect(enabledContact).not.toHaveAttribute("aria-describedby");
+    expect(enabledContact).toHaveAttribute(
       "href",
       "/contact?source=pricing&deployment=local-private&scale=pilot&modules=workflow&term=tbd",
     );
@@ -123,6 +136,16 @@ describe("PricingCalculator", () => {
     expect(screen.getByRole("link", { name: "获取正式报价" })).toHaveAttribute(
       "href",
       "/contact?source=pricing&deployment=local-private&scale=pilot&modules=agent-studio%2Cworkflow&term=tbd",
+    );
+  });
+
+  it("uses the Next.js client-navigation link for an enabled quote action", () => {
+    render(<PricingCalculator />);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Workflow" }));
+
+    expect(screen.getByRole("link", { name: "获取正式报价" })).toHaveAttribute(
+      "data-next-link",
+      "true",
     );
   });
 

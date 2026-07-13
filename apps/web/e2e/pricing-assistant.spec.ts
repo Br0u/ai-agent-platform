@@ -474,6 +474,16 @@ test("assistant session survives header, footer, and identity client routing", a
   await page.getByRole("button", { name: "打开 M 助手" }).click();
   const answer = await sendSuccessfulAssistantMessage(page);
 
+  await page.getByRole("button", { name: "关闭 M 助手" }).click();
+  await selectRepresentativePricingModules(page);
+  const pricingSentinel = `pricing-${testInfo.project.name}-${Date.now()}`;
+  await setNavigationSentinel(page, pricingSentinel);
+  await page.getByRole("link", { name: "获取正式报价" }).click();
+  await expect(page).toHaveURL(/\/contact\?source=pricing/u);
+  await expectNavigationSentinel(page, pricingSentinel);
+  await page.getByRole("button", { name: "打开 M 助手" }).click();
+  await expect(page.getByTestId("assistant-history")).toContainText(answer);
+
   await navigateFromHeaderToProduct(page, testInfo.project.name);
   await expect(page.getByTestId("assistant-history")).toContainText(answer);
 

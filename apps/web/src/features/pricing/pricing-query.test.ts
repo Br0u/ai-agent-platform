@@ -18,7 +18,20 @@ describe("pricing contact query", () => {
     );
   });
 
-  it("ignores unknown IDs and normalizes duplicate modules", () => {
+  it("sorts deduplicated module stable IDs lexically", () => {
+    expect(
+      buildPricingContactHref({
+        deployment: "local-private",
+        scale: "pilot",
+        modules: ["workflow", "model-gateway", "agent-runtime", "workflow"],
+        term: "1y",
+      }),
+    ).toBe(
+      "/contact?source=pricing&deployment=local-private&scale=pilot&modules=agent-runtime%2Cmodel-gateway%2Cworkflow&term=1y",
+    );
+  });
+
+  it("ignores unknown scalar IDs instead of substituting defaults", () => {
     expect(
       parsePricingContactQuery({
         source: "pricing",
@@ -28,10 +41,8 @@ describe("pricing contact query", () => {
         term: "unknown",
       }),
     ).toEqual({
-      deployment: "local-private",
       scale: "department",
       modules: ["agent-studio", "workflow"],
-      term: "tbd",
     });
   });
 

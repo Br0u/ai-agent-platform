@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import {
@@ -129,17 +130,25 @@ export function PricingCalculator() {
             请至少选择一个功能模块后获取正式报价。
           </p>
         )}
-        <a
-          className="pricing-contact"
-          href={canContact ? buildPricingContactHref(selection) : undefined}
-          role="link"
-          tabIndex={0}
-          aria-disabled={canContact ? undefined : "true"}
-          aria-describedby={canContact ? undefined : DISABLED_EXPLANATION_ID}
-          onClick={canContact ? undefined : (event) => event.preventDefault()}
-        >
-          获取正式报价
-        </a>
+        {canContact ? (
+          <Link
+            className="pricing-contact"
+            href={buildPricingContactHref(selection)}
+          >
+            获取正式报价
+          </Link>
+        ) : (
+          <a
+            aria-describedby={DISABLED_EXPLANATION_ID}
+            aria-disabled="true"
+            className="pricing-contact"
+            onClick={(event) => event.preventDefault()}
+            role="link"
+            tabIndex={0}
+          >
+            获取正式报价
+          </a>
+        )}
       </section>
     </div>
   );

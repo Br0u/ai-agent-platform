@@ -11,6 +11,13 @@ import {
   type TermId,
 } from "./pricing-config";
 
+export type PricingContactSelection = {
+  readonly deployment?: DeploymentId;
+  readonly scale?: ScaleId;
+  readonly modules?: readonly PricingModuleId[];
+  readonly term?: TermId;
+};
+
 export type PricingSearchParams = Record<
   string,
   string | readonly string[] | undefined
@@ -43,9 +50,7 @@ function normalizeModules(values: readonly string[]): PricingModuleId[] {
       .filter((id): id is PricingModuleId => knownId(id, moduleIds)),
   );
 
-  return MODULE_OPTIONS.filter((option) => requested.has(option.id)).map(
-    (option) => option.id,
-  );
+  return [...requested].sort();
 }
 
 function normalizeSelection(selection: PricingSelection): PricingSelection {
@@ -78,7 +83,7 @@ export function buildPricingContactHref(selection: PricingSelection): string {
 
 export function parsePricingContactQuery(
   searchParams: PricingSearchParams,
-): PricingSelection | null {
+): PricingContactSelection | null {
   if (firstValue(searchParams.source) !== "pricing") {
     return null;
   }
@@ -88,18 +93,22 @@ export function parsePricingContactQuery(
   const term = firstValue(searchParams.term);
   const modules = searchParams.modules;
 
-  return {
-    deployment: knownId<DeploymentId>(deployment, deploymentIds)
-      ? deployment
-      : DEFAULT_PRICING_SELECTION.deployment,
-    scale: knownId<ScaleId>(scale, scaleIds)
-      ? scale
-      : DEFAULT_PRICING_SELECTION.scale,
-    modules: normalizeModules(
-      modules === undefined ? [] : Array.isArray(modules) ? modules : [modules],
-    ),
-    term: knownId<TermId>(term, termIds)
-      ? term
-      : DEFAULT_PRICING_SELECTION.term,
-  };
+  const selection: {
+    deployment?: DeploymentId;
+    scale?: ScaleId;
+    modules?: readonly PricingModuleId[];
+    term?: TermId;
+  } = {};
+  const normalizedModules = normalizeModules(
+    modules === undefined ? [] : Array.isArray(modules) ? modules : [modules],
+  );
+
+  if (knownId<DeploymentId>(deployment, deploymentIds)) {
+    selection.deployment = deployment;
+  }
+  if (knownId<ScaleId>(scale, scaleIds)) selection.scale = scale;
+  if (normalizedModules.length > 0) selection.modules = normalizedModules;
+  if (knownId<TermId>(term, termIds)) selection.term = term;
+
+  return Object.keys(selection).length > 0 ? selection : null;
 }

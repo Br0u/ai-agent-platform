@@ -24,6 +24,23 @@ function request(body: string) {
   });
 }
 
+function streamingRequest(chunks: string[]) {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  });
+
+  return new Request("http://localhost/api/v1/pricing/estimate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+    duplex: "half",
+  } as RequestInit & { duplex: "half" });
+}
+
 describe("POST /api/v1/pricing/estimate", () => {
   it("accepts an allowlisted configuration and returns the exact 501 response", async () => {
     expect(parsePricingEstimateRequest(legalRequest)).toEqual(legalRequest);
@@ -109,6 +126,35 @@ describe("POST /api/v1/pricing/estimate", () => {
 
   it("returns the exact 400 response for malformed JSON", async () => {
     const response = await createPricingEstimateHandler()(request("{"));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual(
+      INVALID_PRICING_CONFIGURATION_RESPONSE,
+    );
+  });
+
+  it("rejects an oversized declared body with the stable 400 response", async () => {
+    const oversized = request(JSON.stringify(legalRequest));
+    oversized.headers.set("content-length", "4097");
+
+    const response = await createPricingEstimateHandler()(oversized);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual(
+      INVALID_PRICING_CONFIGURATION_RESPONSE,
+    );
+  });
+
+  it("rejects an oversized chunked body while streaming", async () => {
+    const oversized = `${JSON.stringify(legalRequest)}${" ".repeat(4097)}`;
+    const midpoint = Math.floor(oversized.length / 2);
+
+    const response = await createPricingEstimateHandler()(
+      streamingRequest([
+        oversized.slice(0, midpoint),
+        oversized.slice(midpoint),
+      ]),
+    );
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual(
