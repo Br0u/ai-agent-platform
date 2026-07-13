@@ -6,6 +6,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ElementType,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import "./navigation.css";
@@ -22,9 +23,11 @@ const CLOSE_DELAY_MS = 180;
 export function MegaMenu({
   items,
   activeHref,
+  linkComponent: Link = "a",
 }: {
   items: PortalNavigationItem[];
   activeHref: string;
+  linkComponent?: ElementType;
 }) {
   const baseId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -222,7 +225,7 @@ export function MegaMenu({
             }}
             role="region"
           >
-            <a
+            <Link
               aria-current={
                 isNavigationChildActive(item.href, activeHref)
                   ? "page"
@@ -233,7 +236,7 @@ export function MegaMenu({
             >
               <span>{item.label}概览</span>
               <span aria-hidden="true">→</span>
-            </a>
+            </Link>
 
             <div className="mega-menu__sections">
               {item.children.map((section, sectionIndex) => (
@@ -244,7 +247,7 @@ export function MegaMenu({
                   <h2>{section.label}</h2>
                   <div className="mega-menu__links">
                     {section.items.filter(isNavigationHrefItem).map((child) => (
-                      <a
+                      <Link
                         aria-current={
                           isNavigationChildActive(child.href, activeHref)
                             ? "page"
@@ -260,7 +263,7 @@ export function MegaMenu({
                         {child.description ? (
                           <small>{child.description}</small>
                         ) : null}
-                      </a>
+                      </Link>
                     ))}
                   </div>
                 </section>

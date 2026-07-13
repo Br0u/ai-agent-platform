@@ -6,6 +6,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ElementType,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import "./navigation.css";
@@ -39,11 +40,13 @@ export function MobileNavigation({
   activeHref,
   actionLabel = "登录 / 进入控制台",
   actionHref = "/login",
+  linkComponent: Link = "a",
 }: {
   items: PortalNavigationItem[];
   activeHref: string;
   actionLabel?: string;
   actionHref?: string;
+  linkComponent?: ElementType;
 }) {
   const baseId = useId();
   const drawerId = `${baseId}-mobile-drawer`;
@@ -235,7 +238,7 @@ export function MobileNavigation({
                     id={panelId}
                     role="region"
                   >
-                    <a
+                    <Link
                       aria-current={
                         isNavigationChildActive(item.href, activeHref)
                           ? "page"
@@ -246,14 +249,14 @@ export function MobileNavigation({
                       onClick={closeNavigation}
                     >
                       {item.label}概览
-                    </a>
+                    </Link>
                     {item.children.map((section, sectionIndex) => (
                       <section key={`${section.label}-${sectionIndex}`}>
                         <h2>{section.label}</h2>
                         {section.items
                           .filter(isNavigationHrefItem)
                           .map((child) => (
-                            <a
+                            <Link
                               aria-current={
                                 isNavigationChildActive(child.href, activeHref)
                                   ? "page"
@@ -275,7 +278,7 @@ export function MobileNavigation({
                                   <small>{child.description}</small>
                                 ) : null}
                               </span>
-                            </a>
+                            </Link>
                           ))}
                       </section>
                     ))}
@@ -286,13 +289,13 @@ export function MobileNavigation({
           </div>
 
           <div className="mobile-navigation__action-wrap">
-            <a
+            <Link
               className="mobile-navigation__action"
               href={actionHref}
               onClick={closeNavigation}
             >
               {actionLabel}
-            </a>
+            </Link>
           </div>
         </div>
       </div>

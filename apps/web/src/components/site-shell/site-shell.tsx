@@ -1,6 +1,7 @@
 "use client";
 
 import { AppShell } from "@ai-agent-platform/ui";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { shouldShowAssistant } from "../../config/assistant-visibility";
@@ -205,6 +206,7 @@ export function SiteShell({ children }: { children: ReactNode }) {
             : undefined
       }
       portalNavigation={portalNavigation}
+      portalLinkComponent={Link}
       variant={variant}
     >
       {children}

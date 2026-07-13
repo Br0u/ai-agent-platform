@@ -36,6 +36,10 @@
   content: "";
 }
 
+.site-header:has(.mobile-navigation__overlay:not([hidden])) {
+  z-index: 60;
+}
+
 .site-header-inner {
   display: grid;
   grid-template-columns: minmax(270px, 1fr) auto minmax(180px, 1fr);
