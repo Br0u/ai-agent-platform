@@ -12,6 +12,9 @@ env_file=.env.e2e
 cleanup() {
   docker compose -p "$project" --env-file "$env_file" $compose_files \
     down -v --remove-orphans >/dev/null 2>&1 || true
+  if [ -n "${secret_dir-}" ] && [ -d "$secret_dir" ]; then
+    rm -rf "$secret_dir"
+  fi
 }
 
 on_signal() {
@@ -136,6 +139,28 @@ for name in $required_variables; do
     exit 1
   fi
 done
+
+secret_dir=$(mktemp -d "${TMPDIR:-/tmp}/aap-assistant-e2e-secrets.XXXXXX")
+chmod 700 "$secret_dir"
+
+materialize_secret() {
+  variable_name=$1
+  secret_name=$2
+  secret_value=$3
+  secret_path="$secret_dir/$secret_name"
+  (umask 077 && printf '%s' "$secret_value" >"$secret_path")
+  chmod 600 "$secret_path"
+  export "$variable_name=$secret_path"
+}
+
+materialize_secret POSTGRES_PASSWORD_FILE postgres_password "$POSTGRES_PASSWORD"
+materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$MIGRATOR_DATABASE_PASSWORD"
+materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$RUNTIME_DATABASE_PASSWORD"
+materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$BACKUP_DATABASE_PASSWORD"
+materialize_secret MIGRATOR_DATABASE_URL_FILE migrator_database_url "$MIGRATOR_DATABASE_URL"
+materialize_secret RUNTIME_DATABASE_URL_FILE runtime_database_url "$RUNTIME_DATABASE_URL"
+materialize_secret BACKUP_DATABASE_URL_FILE backup_database_url "$BACKUP_DATABASE_URL"
+materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECRET"
 
 [ "$PUBLIC_HOST" = "127.0.0.1" ] || {
   echo "PUBLIC_HOST must be 127.0.0.1 for isolated E2E" >&2

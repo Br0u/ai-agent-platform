@@ -1,3 +1,7 @@
+\getenv migrator_password MIGRATOR_DATABASE_PASSWORD
+\getenv runtime_password RUNTIME_DATABASE_PASSWORD
+\getenv backup_password BACKUP_DATABASE_PASSWORD
+
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ai_agent_migrator') THEN
     CREATE ROLE ai_agent_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;

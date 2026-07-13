@@ -250,12 +250,15 @@ describe("production deployment security contracts", () => {
     expect(compose).toContain("RUNTIME_DATABASE_URL");
     expect(compose).toContain("BACKUP_DATABASE_URL");
     const webService = compose.split("\n  web:\n")[1]?.split("\n  proxy:\n")[0];
-    const backupService = compose.split("\n  backup:\n")[1];
+    const backupService = compose
+      .split("\n  backup:\n")[1]
+      ?.split("\nnetworks:\n")[0];
     expect(webService).toBeDefined();
     expect(webService).not.toMatch(/^\s{4}ports:/m);
     expect(backupService).toContain(
-      "BACKUP_DATABASE_URL: ${BACKUP_DATABASE_URL:?Set BACKUP_DATABASE_URL in .env}",
+      "SECRET_ENV_SPECS: BACKUP_DATABASE_URL=/run/secrets/backup_database_url",
     );
+    expect(backupService).toContain("secrets:\n      - backup_database_url");
     expect(backupService).not.toContain("RUNTIME_DATABASE_PASSWORD");
     expect(backupService).not.toContain("PGUSER");
     const backupScript = read("infra/docker/backup.sh");
@@ -305,34 +308,47 @@ describe("production deployment security contracts", () => {
     const databaseService = compose
       .split("\n  db:\n")[1]
       ?.split("\n  migrate:\n")[0];
-    const backupService = compose.split("\n  backup:\n")[1];
+    const backupService = compose
+      .split("\n  backup:\n")[1]
+      ?.split("\nnetworks:\n")[0];
 
     expect(bootstrapService).toBeDefined();
     expect(bootstrapService).toContain("postgres:18.3-alpine3.23");
     expect(bootstrapService).toContain("03-agno-roles.sh");
     expect(bootstrapService).toContain("03-agno-roles.sql");
     expect(bootstrapService).toContain("condition: service_healthy");
-    expect(bootstrapService).toContain("POSTGRES_PASSWORD");
+    expect(bootstrapService).toContain(
+      "POSTGRES_PASSWORD=/run/secrets/postgres_password",
+    );
+    expect(bootstrapService).toContain("- postgres_password");
+    expect(bootstrapService).toContain("- agno_migrator_database_password");
+    expect(bootstrapService).toContain("- agno_database_password");
     expect(databaseService).not.toContain("03-agno-roles");
 
     expect(migrationService).toBeDefined();
     expect(migrationService).toContain(
-      "AGNO_MIGRATOR_DATABASE_URL: ${AGNO_MIGRATOR_DATABASE_URL:?Set AGNO_MIGRATOR_DATABASE_URL in .env}",
+      "SECRET_ENV_SPECS: AGNO_MIGRATOR_DATABASE_URL=/run/secrets/agno_migrator_database_url",
     );
-    expect(migrationService).not.toContain("POSTGRES_PASSWORD");
-    expect(migrationService).not.toContain("AGNO_DATABASE_URL:");
+    expect(migrationService).toContain(
+      "secrets:\n      - agno_migrator_database_url",
+    );
+    expect(migrationService).not.toContain("postgres_password");
+    expect(migrationService).not.toContain("agno_database_url");
     expect(migrationService).toMatch(
       /agno-bootstrap:[\s\S]*condition: service_completed_successfully/u,
     );
 
     expect(agentService).toBeDefined();
     expect(agentService).toContain(
-      "AGNO_DATABASE_URL: ${AGNO_DATABASE_URL:?Set AGNO_DATABASE_URL in .env}",
+      "AGNO_DATABASE_URL=/run/secrets/agno_database_url",
     );
     expect(agentService).toContain(
-      "OS_SECURITY_KEY: ${OS_SECURITY_KEY:?Set OS_SECURITY_KEY in .env}",
+      "OS_SECURITY_KEY=/run/secrets/os_security_key",
     );
-    expect(agentService).not.toContain("AGNO_MIGRATOR_DATABASE_URL");
+    expect(agentService).toContain("- agno_database_url");
+    expect(agentService).toContain("- os_security_key");
+    expect(agentService).not.toContain("agno_migrator_database_url");
+    expect(agentService).not.toContain("postgres_password");
     expect(agentService).toMatch(
       /agent-migrate:[\s\S]*condition: service_completed_successfully/u,
     );
@@ -347,7 +363,9 @@ describe("production deployment security contracts", () => {
     expect(agentService).toContain("cap_drop:\n      - ALL");
     expect(agentService).toContain("/internal/health/ready");
     expect(agentService).toContain("Authorization");
-    expect(agentService).toContain("os.environ['OS_SECURITY_KEY']");
+    expect(agentService).toContain(
+      "pathlib.Path('/run/secrets/os_security_key').read_text().strip()",
+    );
     expect(agentService).toContain("mem_limit:");
     expect(agentService).toContain("cpus:");
     expect(agentService).toContain("pids_limit:");
@@ -379,9 +397,70 @@ describe("production deployment security contracts", () => {
     expect(dockerfile).not.toContain("COPY . .");
     expect(dockerfile).toContain("USER agent");
     expect(dockerfile).toContain("app_factory");
+    expect(dockerfile).toContain(
+      "COPY --from=builder --chown=agent:agent /app/apps/agent/.venv /app/apps/agent/.venv",
+    );
+    expect(dockerfile).toContain("ENV PATH=/app/apps/agent/.venv/bin:$PATH");
     expect(dockerIgnore).toContain(".venv");
     expect(dockerIgnore).toContain("tests");
     expect(dockerIgnore).toContain(".env");
+  });
+
+  it("keeps every production credential out of rendered Compose config", () => {
+    const secretKeys = [
+      "POSTGRES_PASSWORD",
+      "MIGRATOR_DATABASE_PASSWORD",
+      "RUNTIME_DATABASE_PASSWORD",
+      "BACKUP_DATABASE_PASSWORD",
+      "AGNO_MIGRATOR_DATABASE_PASSWORD",
+      "AGNO_DATABASE_PASSWORD",
+      "MIGRATOR_DATABASE_URL",
+      "RUNTIME_DATABASE_URL",
+      "BACKUP_DATABASE_URL",
+      "AGNO_MIGRATOR_DATABASE_URL",
+      "AGNO_DATABASE_URL",
+      "BETTER_AUTH_SECRET",
+      "OS_SECURITY_KEY",
+    ] as const;
+    const sentinels = Object.fromEntries(
+      secretKeys.map((key, index) => [key, `compose-secret-${index}-sentinel`]),
+    );
+    const sandbox = mkdtempSync(path.join(tmpdir(), "compose-secrets-"));
+    const secretFileEnv: Record<string, string> = {};
+    const runner = read("infra/docker/run-with-secret-env.sh");
+    expect(runner).toContain("/run/secrets/*");
+    expect(runner).toContain('exec "$@"');
+    expect(runner).not.toMatch(/set\s+-[^\n]*x/u);
+    expect(read(".gitignore")).toContain(".secrets/");
+    try {
+      for (const key of secretKeys) {
+        const secretFile = path.join(sandbox, key.toLowerCase());
+        writeFileSync(secretFile, sentinels[key], { mode: 0o600 });
+        chmodSync(secretFile, 0o600);
+        secretFileEnv[`${key}_FILE`] = secretFile;
+      }
+      const rendered = spawnSync("docker", ["compose", "config"], {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ...secretFileEnv,
+          BETTER_AUTH_URL: "http://127.0.0.1:3000",
+          BETTER_AUTH_TRUSTED_ORIGINS: "http://127.0.0.1:3000",
+          PUBLIC_HOST: "127.0.0.1",
+        },
+      });
+
+      expect(rendered.status, rendered.stderr).toBe(0);
+      for (const sentinel of Object.values(sentinels)) {
+        expect(rendered.stdout).not.toContain(sentinel);
+        expect(rendered.stderr).not.toContain(sentinel);
+      }
+      expect(rendered.stdout).toContain("source: postgres_password");
+      expect(rendered.stdout).toContain("source: os_security_key");
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
   });
 
   it("runs the ordered, pinned AgentOS CI gates with masked fixtures", () => {
@@ -412,7 +491,8 @@ describe("production deployment security contracts", () => {
       "uv --directory apps/agent run pytest",
       "uv --directory apps/agent run ruff check",
       "uv --directory apps/agent run mypy",
-      "docker build -f apps/agent/Dockerfile",
+      "docker build -t agent-service-ci -f apps/agent/Dockerfile",
+      "docker run --rm agent-service-ci uvicorn --version",
     ];
     for (const gate of orderedGates) {
       expect(workflow).toContain(gate);
@@ -555,6 +635,20 @@ describe("production deployment security contracts", () => {
       "RUNTIME_DATABASE_URL",
       "BACKUP_DATABASE_URL",
       "BACKUP_DATABASE_PASSWORD",
+      "OS_SECURITY_KEY",
+      "POSTGRES_PASSWORD_FILE",
+      "MIGRATOR_DATABASE_PASSWORD_FILE",
+      "RUNTIME_DATABASE_PASSWORD_FILE",
+      "BACKUP_DATABASE_PASSWORD_FILE",
+      "AGNO_MIGRATOR_DATABASE_PASSWORD_FILE",
+      "AGNO_DATABASE_PASSWORD_FILE",
+      "MIGRATOR_DATABASE_URL_FILE",
+      "RUNTIME_DATABASE_URL_FILE",
+      "BACKUP_DATABASE_URL_FILE",
+      "AGNO_MIGRATOR_DATABASE_URL_FILE",
+      "AGNO_DATABASE_URL_FILE",
+      "BETTER_AUTH_SECRET_FILE",
+      "OS_SECURITY_KEY_FILE",
       "PUBLIC_HOST",
       "ALLOW_LOCAL_VALIDATION_HOSTS=false",
       "TEST_DATABASE_URL",

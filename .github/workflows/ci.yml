@@ -108,7 +108,8 @@ jobs:
           uv --directory apps/agent run pytest
           uv --directory apps/agent run ruff check .
           uv --directory apps/agent run mypy src tests
-      - run: docker build -f apps/agent/Dockerfile .
+      - run: docker build -t agent-service-ci -f apps/agent/Dockerfile .
+      - run: docker run --rm agent-service-ci uvicorn --version
       - run: pnpm test
       - run: pnpm typecheck
       - run: pnpm lint
