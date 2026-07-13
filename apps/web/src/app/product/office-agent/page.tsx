@@ -43,5 +43,5 @@ export default function OfficeAgentPage() {
   };
 
   // 强制类型转换为 any 以避开严格的只读数组类型校验，因为我们构造的是兼容的数据形态
-  return <ModuleDetailPage moduleData={officeAgentModuleData as any} />;
+  return <ModuleDetailPage moduleData={officeAgentModuleData as unknown as React.ComponentProps<typeof ModuleDetailPage>["moduleData"]} />;
 }

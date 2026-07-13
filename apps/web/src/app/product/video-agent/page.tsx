@@ -25,6 +25,7 @@ export default function VideoAgentPage() {
         </div>
         <div className="va-container va-hero__content">
           <div style={{ display: "flex", justifyContent: "center", marginBottom: "32px" }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/logo.png" alt="华鲲元启" style={{ height: "40px" }} />
           </div>
           <h1 className="va-hero__title">{videoAgentIntro.title}</h1>

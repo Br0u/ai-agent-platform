@@ -25,6 +25,7 @@ export default function TGDataXAIPage() {
       <section className="tg-hero">
         <div className="tg-container tg-hero__content">
           <div style={{ display: "flex", justifyContent: "center", marginBottom: "32px" }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/logo.png" alt="华鲲元启" style={{ height: "40px" }} />
           </div>
           <p className="tg-hero__kicker">LLMOPS TECHNOLOGY</p>

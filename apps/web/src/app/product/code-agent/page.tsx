@@ -35,6 +35,7 @@ export default function CodeAgentPage() {
               </div>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: "24px" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/logo.png" alt="华鲲元启" style={{ height: "40px" }} />
             </div>
             
@@ -105,9 +106,9 @@ export default function CodeAgentPage() {
               </div>
 
               {/* 环绕代码丝带 */}
-              <div className="ca-ribbon ca-ribbon--1">print '码多多'</div>
-              <div className="ca-ribbon ca-ribbon--2">print 'Hello World'</div>
-              <div className="ca-ribbon ca-ribbon--3">print '码多多'</div>
+              <div className="ca-ribbon ca-ribbon--1">print &apos;码多多&apos;</div>
+              <div className="ca-ribbon ca-ribbon--2">print &apos;Hello World&apos;</div>
+              <div className="ca-ribbon ca-ribbon--3">print &apos;码多多&apos;</div>
             </div>
           </div>
         </div>

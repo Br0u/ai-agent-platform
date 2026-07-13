@@ -22,6 +22,7 @@ export default function HCIPage() {
         <div className="hci-container">
           <div className="hci-hero__header">
             <div style={{ display: "flex", justifyContent: "center", marginBottom: "32px" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/logo.png" alt="华鲲元启" style={{ height: "40px" }} />
             </div>
             <span className="hci-hero__kicker">{hciIntro.kicker}</span>

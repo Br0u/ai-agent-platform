@@ -10,7 +10,6 @@ import {
   industrySolutions,
   officeAgents,
   productCapabilities,
-  productResources,
   supportedModels,
 } from "./product-content";
 import "./product.css";

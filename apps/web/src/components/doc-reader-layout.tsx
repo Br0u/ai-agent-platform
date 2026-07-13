@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, createContext, useContext } from "react";
+import Link from "next/link";
 import "./doc-reader-layout.css";
 import { docsCategories } from "./docs-content";
 
@@ -82,10 +83,10 @@ export function DocReaderLayout({
           </div>
 
           <div className="doc-reader__nav-group">
-             <a href="/docs" className="doc-reader__nav-overview">
+             <Link href="/docs" className="doc-reader__nav-overview">
                 <span>全部产品文档</span>
                 <span className="doc-reader__nav-overview-arrow">→</span>
-             </a>
+             </Link>
           </div>
 
           {docsCategories.map((cat) => {
@@ -134,14 +135,14 @@ export function DocReaderLayout({
                             className={`doc-reader__nav-docs-wrapper ${isExpanded2 ? "is-open" : ""}`}
                           >
                             <div className="doc-reader__nav-docs">
-                              {sub.docs.map((doc: any, i) => (
-                                <a
+                              {sub.docs.map((doc: { href: string; title: string }, i) => (
+                                <Link
                                   key={i}
                                   href={doc.href}
                                   className="doc-reader__nav-doc-link"
                                 >
                                   {doc.title}
-                                </a>
+                                </Link>
                               ))}
                             </div>
                           </div>
@@ -190,9 +191,9 @@ export function DocReaderLayout({
               ))}
             </ul>
 
-            <a href="/support#bug" className="doc-reader__feedback">
+            <Link href="/support#bug" className="doc-reader__feedback">
               <span aria-hidden="true">💬</span> 意见反馈
-            </a>
+            </Link>
           </aside>
         )}
       </div>

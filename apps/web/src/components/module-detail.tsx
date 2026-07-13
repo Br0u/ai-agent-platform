@@ -1,12 +1,20 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import "./module-detail.css";
 import { type coreModules } from "./product-content";
 
 type ModuleData = (typeof coreModules)[number];
 
+type ExtendedModuleData = ModuleData & {
+  relatedDocs?: { href: string; title: string }[];
+  scenarios?: string[];
+  guide?: { step: string; description: string }[];
+};
+
 export function ModuleDetailPage({ moduleData }: { moduleData: ModuleData }) {
+  const extendedData = moduleData as ExtendedModuleData;
   // 辅助函数：根据能力生成一些“形容词”标题，模拟 PAI 的“功能全面、性能更高”等
   const featureTitles = ["功能全面", "性能更高", "稳定可靠", "简单易用", "安全合规", "弹性扩容"];
   
@@ -16,6 +24,7 @@ export function ModuleDetailPage({ moduleData }: { moduleData: ModuleData }) {
       <header className="module-hero-pai">
         <div className="module-hero-pai__content">
           <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: "24px" }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/logo.png" alt="华鲲元启" style={{ height: "40px" }} />
           </div>
           <h1 className="module-hero-pai__title">
@@ -55,13 +64,13 @@ export function ModuleDetailPage({ moduleData }: { moduleData: ModuleData }) {
       )}
 
       {/* 3. 产品动态 (Related Docs 模拟) */}
-      {(moduleData as any).relatedDocs && (moduleData as any).relatedDocs.length > 0 && (
+      {extendedData.relatedDocs && extendedData.relatedDocs.length > 0 && (
         <section className="pai-section pai-news">
           <div className="pai-container">
             <h2 className="pai-section__title">产品动态</h2>
             <div className="pai-news__grid">
-              {(moduleData as any).relatedDocs.map((doc: any, i: number) => (
-                <a key={i} href={doc.href} className="pai-news-card">
+              {extendedData.relatedDocs.map((doc, i: number) => (
+                <Link key={i} href={doc.href} className="pai-news-card">
                   <div className="pai-news-card__meta">
                     <span className="pai-news-card__tag">新发布</span>
                     <span className="pai-news-card__date">2026-03-1{i}</span>
@@ -70,7 +79,7 @@ export function ModuleDetailPage({ moduleData }: { moduleData: ModuleData }) {
                   <p className="pai-news-card__desc">
                     {moduleData.name} 最新发布了 {doc.title} 功能，涵盖多种部署架构下的性能调优、运维管理与开发环境适配，满足企业级场景需求。
                   </p>
-                </a>
+                </Link>
               ))}
             </div>
           </div>
@@ -112,7 +121,7 @@ export function ModuleDetailPage({ moduleData }: { moduleData: ModuleData }) {
       </section>
 
       {/* 5. 产品优势 (左右交替排版) */}
-      {(((moduleData as any).scenarios?.length > 0) || ((moduleData as any).guide?.length > 0)) && (
+      {(((extendedData.scenarios?.length ?? 0) > 0) || ((extendedData.guide?.length ?? 0) > 0)) && (
         <section className="pai-section pai-advantages">
           <div className="pai-container">
             <h2 className="pai-section__title">产品优势</h2>
@@ -122,7 +131,7 @@ export function ModuleDetailPage({ moduleData }: { moduleData: ModuleData }) {
             
             <div className="pai-adv-list">
               {/* 合并 scenarios 和 guide 作为优势条目 */}
-              {[...((moduleData as any).scenarios || []), ...((moduleData as any).guide?.map((g: any) => g.description) || [])].map((item, i) => (
+              {[...(extendedData.scenarios || []), ...(extendedData.guide?.map((g) => g.description) || [])].map((item, i) => (
                 <div key={i} className="pai-adv-item">
                   <div className="pai-adv-item__image">
                     {/* CSS 模拟的控制台截图骨架屏 */}
@@ -144,12 +153,12 @@ export function ModuleDetailPage({ moduleData }: { moduleData: ModuleData }) {
                   </div>
                   <div className="pai-adv-item__text">
                     <h3 className="pai-adv-item__title">
-                      {(moduleData as any).guide && (moduleData as any).guide[i] ? (moduleData as any).guide[i].step : "企业级 AI 核心场景突破"}
+                      {extendedData.guide && extendedData.guide[i] ? extendedData.guide[i].step : "企业级 AI 核心场景突破"}
                     </h3>
                     <p className="pai-adv-item__desc">
                       {item}
                     </p>
-                    <a href="/docs" className="pai-adv-item__link">查看更多 &gt;</a>
+                    <Link href="/docs" className="pai-adv-item__link">查看更多 &gt;</Link>
                   </div>
                 </div>
               ))}

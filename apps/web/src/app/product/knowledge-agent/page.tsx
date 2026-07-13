@@ -21,6 +21,7 @@ export default function KnowledgeAgentPage() {
         <div className="ka-container ka-hero__inner">
           <div className="ka-hero__text">
             <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: "24px" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/logo.png" alt="华鲲元启" style={{ height: "40px" }} />
             </div>
             <h1 className="ka-hero__title">{knowledgeAgentIntro.title}</h1>
