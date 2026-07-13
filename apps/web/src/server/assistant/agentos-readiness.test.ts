@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createAgentOSProbe,
@@ -18,6 +18,8 @@ const DEGRADED: AgentOSReadinessSnapshot = {
   ready: false,
   capability: "degraded",
 };
+
+afterEach(() => vi.restoreAllMocks());
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -44,6 +46,33 @@ async function within<T>(promise: Promise<T>, timeoutMs = 250) {
 }
 
 describe("AgentOS readiness cache and circuit", () => {
+  it("uses a monotonic default clock instead of Date.now", async () => {
+    const wallClock = vi.spyOn(Date, "now").mockImplementation(() => {
+      throw new Error("wall clock is forbidden for circuit state");
+    });
+    const circuit = createAgentOSReadinessCircuit({
+      probe: vi.fn(async () => READY_PLACEHOLDER),
+      cacheTtlMs: 10,
+      failureThreshold: 3,
+      resetAfterMs: 30_000,
+    });
+
+    await expect(circuit.status()).resolves.toEqual(READY_PLACEHOLDER);
+    expect(wallClock).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-finite injected monotonic clock values", () => {
+    const circuit = createAgentOSReadinessCircuit({
+      probe: vi.fn(async () => READY_PLACEHOLDER),
+      now: () => Number.NaN,
+      cacheTtlMs: 10,
+      failureThreshold: 3,
+      resetAfterMs: 30_000,
+    });
+
+    expect(() => circuit.status()).toThrow("finite monotonic milliseconds");
+  });
+
   it("strictly parses bounded readiness settings only when the factory is used", () => {
     expect(
       resolveAgentOSReadinessSettings({
@@ -113,6 +142,33 @@ describe("AgentOS readiness cache and circuit", () => {
       READY_PLACEHOLDER,
       READY_PLACEHOLDER,
     ]);
+  });
+
+  it("clamps a rollback while a probe completes so cache TTL is not inverted", async () => {
+    let now = 100;
+    const first = deferred<AgentOSReadinessSnapshot>();
+    const probe = vi
+      .fn<() => Promise<AgentOSReadinessSnapshot>>()
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValue(READY_PLACEHOLDER);
+    const circuit = createAgentOSReadinessCircuit({
+      probe,
+      now: () => now,
+      cacheTtlMs: 100,
+      failureThreshold: 3,
+      resetAfterMs: 30_000,
+    });
+
+    const pending = circuit.status();
+    now = 50;
+    first.resolve(READY_PLACEHOLDER);
+    await pending;
+    now = 150;
+    await circuit.status();
+    expect(probe).toHaveBeenCalledOnce();
+    now = 200;
+    await circuit.status();
+    expect(probe).toHaveBeenCalledTimes(2);
   });
 
   it("opens after three failures and does not probe during reset delay", async () => {
@@ -293,8 +349,42 @@ describe("AgentOS readiness cache and circuit", () => {
     ]);
     expect(circuit.inspect()).toMatchObject({
       state: "open",
-      openedAt: 40_000,
+      openedAtMonotonicMs: 40_000,
     });
+  });
+
+  it("does not move an open reset window backward when half-open completion rolls back", async () => {
+    let now = 100;
+    const halfOpen = deferred<AgentOSReadinessSnapshot>();
+    const probe = vi
+      .fn<() => Promise<AgentOSReadinessSnapshot>>()
+      .mockRejectedValueOnce(new Error("initial failure"))
+      .mockReturnValueOnce(halfOpen.promise)
+      .mockResolvedValueOnce(READY_PLACEHOLDER);
+    const circuit = createAgentOSReadinessCircuit({
+      probe,
+      now: () => now,
+      cacheTtlMs: 1,
+      failureThreshold: 1,
+      resetAfterMs: 30_000,
+    });
+    await circuit.status();
+    expect(circuit.inspect().openedAtMonotonicMs).toBe(100);
+
+    now = 30_100;
+    const pending = circuit.status();
+    expect(circuit.inspect().state).toBe("half-open");
+    now = 10;
+    halfOpen.reject(new Error("half-open failure"));
+    await pending;
+    expect(circuit.inspect()).toMatchObject({
+      state: "open",
+      openedAtMonotonicMs: 30_100,
+    });
+
+    now = 30_010;
+    await expect(circuit.status()).resolves.toEqual(DEGRADED);
+    expect(probe).toHaveBeenCalledTimes(2);
   });
 
   it("treats ready placeholder as success but ready false as a failure", async () => {

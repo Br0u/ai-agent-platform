@@ -57,6 +57,42 @@ describe("AgentOS client settings", () => {
       }),
     ).toThrow("OS_SECURITY_KEY must contain at least 32 bytes");
   });
+
+  it.each([
+    " ".repeat(32),
+    `${"a".repeat(32)}\r\nX-Injected: true`,
+    `${"a".repeat(16)}\t${"b".repeat(16)}`,
+    ` ${"a".repeat(32)}`,
+    `${"a".repeat(32)} `,
+    `${"a".repeat(31)}\0`,
+    "密钥".repeat(16),
+  ])("rejects a key that cannot safely form a Bearer token", (securityKey) => {
+    const fetcher = vi.fn<typeof fetch>();
+
+    expect(() =>
+      createAgentOSClient({
+        settings: resolveAgentOSClientSettings({
+          AGENTOS_INTERNAL_URL: INTERNAL_URL,
+          OS_SECURITY_KEY: securityKey,
+        }),
+        fetcher,
+      }),
+    ).toThrow("OS_SECURITY_KEY must be a valid Bearer token");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "a".repeat(64),
+    "AbCdEf0123456789_-AbCdEf0123456789_-",
+    "YWdlbnRvcy1pbnRlcm5hbC1zZWN1cml0eS1rZXk=",
+  ])("accepts safe hex, base64url, and token68 keys", (securityKey) => {
+    expect(
+      resolveAgentOSClientSettings({
+        AGENTOS_INTERNAL_URL: INTERNAL_URL,
+        OS_SECURITY_KEY: securityKey,
+      }),
+    ).toEqual({ baseUrl: INTERNAL_URL, securityKey });
+  });
 });
 
 describe("AgentOS protected transport", () => {

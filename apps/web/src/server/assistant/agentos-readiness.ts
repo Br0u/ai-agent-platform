@@ -1,5 +1,7 @@
 import "server-only";
 
+import { performance } from "node:perf_hooks";
+
 import type { AgentOSCapability, AgentOSClient } from "./agentos-client";
 
 export type AgentOSReadinessSnapshot = {
@@ -11,7 +13,7 @@ export type AgentOSReadinessSnapshot = {
 export type AgentOSCircuitInspection = {
   state: "closed" | "open" | "half-open";
   consecutiveFailures: number;
-  openedAt: number | null;
+  openedAtMonotonicMs: number | null;
 };
 
 export type AgentOSReadinessEnvironment = {
@@ -114,7 +116,7 @@ export function createAgentOSReadinessCircuit(options: {
   failureThreshold: number;
   resetAfterMs: number;
 }) {
-  const now = options.now ?? Date.now;
+  const now = options.now ?? (() => performance.now());
   for (const [name, value] of Object.entries({
     cacheTtlMs: options.cacheTtlMs,
     failureThreshold: options.failureThreshold,
@@ -131,13 +133,18 @@ export function createAgentOSReadinessCircuit(options: {
   let consecutiveFailures = 0;
   let openedAt: number | null = null;
   let halfOpen = false;
+  let lastMonotonicTime: number | null = null;
 
   function clock(): number {
     const value = now();
-    if (!Number.isSafeInteger(value) || value < 0) {
-      throw new TypeError("AgentOS readiness clock must return epoch ms");
+    if (!Number.isFinite(value) || value < 0) {
+      throw new TypeError(
+        "AgentOS readiness clock must return finite monotonic milliseconds",
+      );
     }
-    return value;
+    lastMonotonicTime =
+      lastMonotonicTime === null ? value : Math.max(lastMonotonicTime, value);
+    return lastMonotonicTime;
   }
 
   function startProbe(isHalfOpen: boolean): Promise<AgentOSReadinessSnapshot> {
@@ -195,7 +202,7 @@ export function createAgentOSReadinessCircuit(options: {
       return {
         state: halfOpen ? "half-open" : openedAt === null ? "closed" : "open",
         consecutiveFailures,
-        openedAt,
+        openedAtMonotonicMs: openedAt,
       };
     },
   };

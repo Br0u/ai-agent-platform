@@ -76,6 +76,9 @@ export function resolveAgentOSClientSettings(
   if (!securityKey || Buffer.byteLength(securityKey, "utf8") < 32) {
     throw new Error("OS_SECURITY_KEY must contain at least 32 bytes");
   }
+  if (!/^[A-Za-z0-9._~+/-]+=*$/u.test(securityKey)) {
+    throw new Error("OS_SECURITY_KEY must be a valid Bearer token");
+  }
   return { baseUrl: url.origin, securityKey };
 }
 
