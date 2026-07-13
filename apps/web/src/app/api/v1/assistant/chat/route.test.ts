@@ -25,10 +25,27 @@ function request(body: string, requestId?: string) {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      ...(requestId ? { "x-request-id": requestId } : {}),
+      ...(requestId !== undefined ? { "x-request-id": requestId } : {}),
     },
     body,
   });
+}
+
+function streamingRequest(chunks: string[]) {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  });
+
+  return new Request("http://localhost/api/v1/assistant/chat", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+    duplex: "half",
+  } as RequestInit & { duplex: "half" });
 }
 
 function dependencies(options?: {
@@ -123,6 +140,22 @@ describe("POST /api/v1/assistant/chat", () => {
       "pathname over 256 Unicode characters",
       { message: "问题", context: { pathname: `/${"😀".repeat(256)}` } },
     ],
+    [
+      "protocol-relative pathname",
+      { message: "问题", context: { pathname: "//evil.example/path" } },
+    ],
+    [
+      "pathname containing a backslash",
+      { message: "问题", context: { pathname: "/safe\\evil" } },
+    ],
+    [
+      "pathname containing an ASCII control",
+      { message: "问题", context: { pathname: "/safe\u0001evil" } },
+    ],
+    [
+      "pathname containing a dot segment",
+      { message: "问题", context: { pathname: "/safe/../admin" } },
+    ],
   ])("returns the exact stable 400 response for %s", async (_name, body) => {
     const secret = "private-message-never-log";
     const deps = dependencies({ times: [20, 10] });
@@ -163,6 +196,137 @@ describe("POST /api/v1/assistant/chat", () => {
     expect(deps.records).toEqual([
       { requestId: "generated-request-id", statusCode: 400, durationMs: 7 },
     ]);
+  });
+
+  it.each([
+    ["an empty value", ""],
+    ["body text containing PII", "user@example.com private body"],
+    ["whitespace", "request id with spaces"],
+    ["control characters", "request-id\tprivate"],
+    ["more than 64 characters", "a".repeat(65)],
+  ])("replaces an unsafe x-request-id containing %s", async (_name, header) => {
+    const deps = dependencies();
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          message: "private body",
+          context: { pathname: "/private-path" },
+        }),
+        header,
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.records).toEqual([
+      { requestId: "generated-request-id", statusCode: 200, durationMs: 7 },
+    ]);
+    expect(JSON.stringify(deps.records)).not.toMatch(
+      /user@example\.com|private body|private-path|request id with spaces/iu,
+    );
+  });
+
+  it("keeps a strict bounded token x-request-id", async () => {
+    const deps = dependencies();
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({ message: "问题", context: { pathname: "/help" } }),
+        "req_1234-AB.cd:ef",
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.records[0]?.requestId).toBe("req_1234-AB.cd:ef");
+  });
+
+  it("returns a stable response and attempts logging once when the logger throws", async () => {
+    const deps = dependencies();
+    deps.logger.log = vi.fn(() => {
+      throw new Error("logger unavailable");
+    });
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({ message: "问题", context: { pathname: "/help" } }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(success);
+    expect(deps.logger.log).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["invalid shape", { mode: "placeholder", message: 42 }],
+    [
+      "unserializable value",
+      {
+        mode: "placeholder",
+        message: "unsafe",
+        suggestedActions: [],
+        extra: 1n,
+      },
+    ],
+  ])("returns stable 503 for a provider %s", async (_name, value) => {
+    const deps = dependencies({
+      reply: async () => value as unknown as AssistantSuccessResponse,
+    });
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({ message: "secret", context: { pathname: "/secret" } }),
+      ),
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual(
+      ASSISTANT_UNAVAILABLE_RESPONSE,
+    );
+    expect(deps.logger.log).toHaveBeenCalledOnce();
+    expect(deps.records).toEqual([
+      { requestId: "generated-request-id", statusCode: 503, durationMs: 7 },
+    ]);
+    expect(JSON.stringify(deps.records)).not.toMatch(/secret|unsafe/iu);
+  });
+
+  it("rejects an oversized declared body before parsing", async () => {
+    const deps = dependencies();
+    const oversized = request(
+      JSON.stringify({ message: "问题", context: { pathname: "/help" } }),
+    );
+    oversized.headers.set("content-length", "4097");
+
+    const response = await createAssistantChatHandler(deps)(oversized);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual(
+      INVALID_ASSISTANT_REQUEST_RESPONSE,
+    );
+    expect(deps.provider.reply).not.toHaveBeenCalled();
+    expect(deps.logger.log).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an oversized chunked body while streaming", async () => {
+    const deps = dependencies();
+    const oversized = JSON.stringify({
+      message: "问题",
+      context: { pathname: "/help" },
+      ignored: "x".repeat(4097),
+    });
+    const midpoint = Math.floor(oversized.length / 2);
+
+    const response = await createAssistantChatHandler(deps)(
+      streamingRequest([
+        oversized.slice(0, midpoint),
+        oversized.slice(midpoint),
+      ]),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual(
+      INVALID_ASSISTANT_REQUEST_RESPONSE,
+    );
+    expect(deps.provider.reply).not.toHaveBeenCalled();
+    expect(deps.logger.log).toHaveBeenCalledOnce();
   });
 
   it("returns and logs the exact 503 response when the provider fails", async () => {
