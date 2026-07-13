@@ -1,7 +1,6 @@
 "use client";
 
 import { AppShell } from "@ai-agent-platform/ui";
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { shouldShowAssistant } from "../../config/assistant-visibility";
@@ -17,6 +16,7 @@ import {
 } from "../../server/auth/server-actions";
 import { AssistantWidget } from "../assistant/assistant-widget";
 import { useAssistantSession } from "../assistant/use-assistant-session";
+import { PortalNavigationLink } from "./portal-navigation-link";
 import "./site-shell.css";
 
 const ADMIN_PERMISSION_KEYS = new Set(
@@ -206,7 +206,7 @@ export function SiteShell({ children }: { children: ReactNode }) {
             : undefined
       }
       portalNavigation={portalNavigation}
-      portalLinkComponent={Link}
+      portalLinkComponent={PortalNavigationLink}
       variant={variant}
     >
       {children}

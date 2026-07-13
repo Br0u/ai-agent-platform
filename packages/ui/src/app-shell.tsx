@@ -1,10 +1,11 @@
-import type { ElementType, ReactNode } from "react";
+import type { ReactNode } from "react";
 import "./app-shell.css";
 import { PortalHeader } from "./navigation/portal-header";
 import { SidebarNavigation } from "./navigation/sidebar-navigation";
 import { SiteFooter } from "./navigation/site-footer";
 import type {
   NavigationSection,
+  NavigationLinkComponent,
   PortalNavigationItem,
   SidebarNavigationConfig,
 } from "./navigation/navigation-types";
@@ -14,7 +15,7 @@ export type AppShellProps = {
   variant: "portal" | "console" | "admin";
   activeHref: string;
   portalNavigation: PortalNavigationItem[];
-  portalLinkComponent?: ElementType;
+  portalLinkComponent?: NavigationLinkComponent;
   consoleNavigation: SidebarNavigationConfig;
   adminNavigation: SidebarNavigationConfig;
   footerNavigation: NavigationSection[];
@@ -75,7 +76,10 @@ export function AppShell({
         linkComponent={portalLinkComponent}
       />
       <div className="site-content">{children}</div>
-      <SiteFooter groups={footerNavigation} />
+      <SiteFooter
+        groups={footerNavigation}
+        linkComponent={portalLinkComponent}
+      />
     </div>
   );
 }

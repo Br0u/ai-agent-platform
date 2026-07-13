@@ -1,7 +1,9 @@
-import type { ElementType } from "react";
 import { MegaMenu } from "./mega-menu";
 import { MobileNavigation } from "./mobile-navigation";
-import type { PortalNavigationItem } from "./navigation-types";
+import type {
+  NavigationLinkComponent,
+  PortalNavigationItem,
+} from "./navigation-types";
 
 export function PortalHeader({
   items,
@@ -10,7 +12,7 @@ export function PortalHeader({
 }: {
   items: PortalNavigationItem[];
   activeHref: string;
-  linkComponent?: ElementType;
+  linkComponent?: NavigationLinkComponent;
 }) {
   return (
     <header className="site-header">

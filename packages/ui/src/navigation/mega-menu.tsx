@@ -6,7 +6,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type ElementType,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import "./navigation.css";
@@ -16,7 +15,10 @@ import {
   isNavigationParentActive,
 } from "./navigation-match";
 import { NavigationStatusBadge } from "./navigation-status";
-import type { PortalNavigationItem } from "./navigation-types";
+import type {
+  NavigationLinkComponent,
+  PortalNavigationItem,
+} from "./navigation-types";
 
 const CLOSE_DELAY_MS = 180;
 
@@ -27,7 +29,7 @@ export function MegaMenu({
 }: {
   items: PortalNavigationItem[];
   activeHref: string;
-  linkComponent?: ElementType;
+  linkComponent?: NavigationLinkComponent;
 }) {
   const baseId = useId();
   const rootRef = useRef<HTMLDivElement>(null);

@@ -10,6 +10,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./app-shell";
 import type {
+  NavigationLinkComponent,
   NavigationSection,
   PortalNavigationItem,
   SidebarNavigationConfig,
@@ -110,6 +111,7 @@ type RenderShellOptions = {
   activeHref?: string;
   grantedPermissions?: readonly string[];
   logoutAction?: () => Promise<void>;
+  portalLinkComponent?: NavigationLinkComponent;
 };
 
 function renderShell(
@@ -118,6 +120,7 @@ function renderShell(
     activeHref = "/",
     grantedPermissions,
     logoutAction,
+    portalLinkComponent,
   }: RenderShellOptions = {},
 ) {
   return render(
@@ -129,6 +132,7 @@ function renderShell(
       grantedPermissions={grantedPermissions}
       logoutAction={logoutAction}
       portalNavigation={portalNavigation}
+      portalLinkComponent={portalLinkComponent}
       variant={variant}
     >
       <p>页面内容</p>
@@ -139,6 +143,22 @@ function renderShell(
 afterEach(cleanup);
 
 describe("AppShell", () => {
+  it("forwards an injected routing adapter to header and footer links", () => {
+    const RoutingAdapter: NavigationLinkComponent = ({ href, ...props }) => (
+      <a data-routing-adapter="next" href={href} {...props} />
+    );
+    renderShell("portal", { portalLinkComponent: RoutingAdapter });
+
+    expect(
+      screen.getByRole("link", { name: "AI Agent Platform 首页" }),
+    ).toHaveAttribute("data-routing-adapter", "next");
+    expect(
+      within(screen.getByRole("contentinfo")).getByRole("link", {
+        name: "产品",
+      }),
+    ).toHaveAttribute("data-routing-adapter", "next");
+  });
+
   it("wraps portal content with the public header and footer", () => {
     const { container } = renderShell("portal");
 

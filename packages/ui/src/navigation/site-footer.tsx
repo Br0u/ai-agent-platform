@@ -1,5 +1,8 @@
 import "./navigation.css";
-import type { NavigationSection } from "./navigation-types";
+import type {
+  NavigationLinkComponent,
+  NavigationSection,
+} from "./navigation-types";
 
 const metaPlaceholders = [
   "公司信息待补充",
@@ -7,7 +10,13 @@ const metaPlaceholders = [
   "备案信息（占位）",
 ] as const;
 
-export function SiteFooter({ groups }: { groups: NavigationSection[] }) {
+export function SiteFooter({
+  groups,
+  linkComponent: Link = "a",
+}: {
+  groups: NavigationSection[];
+  linkComponent?: NavigationLinkComponent;
+}) {
   return (
     <footer className="portal-footer">
       <div className="portal-footer__main">
@@ -24,9 +33,9 @@ export function SiteFooter({ groups }: { groups: NavigationSection[] }) {
                 {group.items.map((item) =>
                   typeof item.href === "string" ? (
                     <li key={item.href}>
-                      <a className="portal-footer__link" href={item.href}>
+                      <Link className="portal-footer__link" href={item.href}>
                         {item.label}
-                      </a>
+                      </Link>
                     </li>
                   ) : null,
                 )}

@@ -9,6 +9,8 @@ export type {
   NavigationActionItem,
   NavigationHrefItem,
   NavigationLink,
+  NavigationLinkComponent,
+  NavigationLinkProps,
   NavigationSection,
   NavigationStatus,
   PortalNavigationItem,

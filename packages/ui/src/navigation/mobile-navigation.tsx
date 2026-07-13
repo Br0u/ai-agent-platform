@@ -6,7 +6,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type ElementType,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import "./navigation.css";
@@ -16,7 +15,10 @@ import {
   isNavigationParentActive,
 } from "./navigation-match";
 import { NavigationStatusBadge } from "./navigation-status";
-import type { PortalNavigationItem } from "./navigation-types";
+import type {
+  NavigationLinkComponent,
+  PortalNavigationItem,
+} from "./navigation-types";
 
 const FOCUSABLE_SELECTOR = [
   "a[href]",
@@ -46,7 +48,7 @@ export function MobileNavigation({
   activeHref: string;
   actionLabel?: string;
   actionHref?: string;
-  linkComponent?: ElementType;
+  linkComponent?: NavigationLinkComponent;
 }) {
   const baseId = useId();
   const drawerId = `${baseId}-mobile-drawer`;
