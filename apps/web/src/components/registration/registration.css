@@ -1,11 +1,3 @@
-.auth-page--registration {
-  background: var(--color-canvas);
-}
-
-.auth-page--registration::before {
-  display: none;
-}
-
 .registration-form__agreement,
 .review-form__confirm {
   display: flex;
