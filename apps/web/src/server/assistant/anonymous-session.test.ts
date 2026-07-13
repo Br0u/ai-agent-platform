@@ -4,7 +4,9 @@ import {
   ASSISTANT_ABSOLUTE_TTL_MS,
   ASSISTANT_IDLE_TTL_MS,
   createAnonymousSessionManager,
+  getAnonymousSessionManager,
   resolveAnonymousSessionSettings,
+  validateAnonymousSessionRuntimeConfig,
 } from "./anonymous-session";
 
 const SECRET = "0123456789abcdef0123456789abcdef";
@@ -49,6 +51,21 @@ function cookieHeader(name: string, value: string) {
 }
 
 describe("assistant anonymous session settings", () => {
+  it("validates runtime settings once and lets the request manager reuse them", () => {
+    const first = validateAnonymousSessionRuntimeConfig({
+      ASSISTANT_PUBLIC_ORIGIN: "https://cached.example.com",
+      ASSISTANT_SESSION_SECRET: SECRET,
+    });
+    const second = validateAnonymousSessionRuntimeConfig({
+      ASSISTANT_PUBLIC_ORIGIN: "http://unsafe.example.com",
+      ASSISTANT_SESSION_SECRET: "short",
+    });
+
+    expect(second).toBe(first);
+    expect(first.publicOrigin).toBe("https://cached.example.com");
+    expect(() => getAnonymousSessionManager()).not.toThrow();
+  });
+
   it("uses a secure __Host cookie for an exact HTTPS public origin", () => {
     const resolved = settings();
 

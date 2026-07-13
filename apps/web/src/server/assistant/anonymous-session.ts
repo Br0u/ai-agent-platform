@@ -410,11 +410,22 @@ export type AnonymousSessionManager = ReturnType<
 let defaultSettings: AnonymousSessionSettings | undefined;
 let defaultManager: AnonymousSessionManager | undefined;
 
-export function getAnonymousSessionManager(): AnonymousSessionManager {
-  defaultSettings ??= resolveAnonymousSessionSettings({
+function runtimeEnvironment(): AssistantSessionEnvironment {
+  return {
     ASSISTANT_PUBLIC_ORIGIN: process.env.ASSISTANT_PUBLIC_ORIGIN,
     ASSISTANT_SESSION_SECRET: process.env.ASSISTANT_SESSION_SECRET,
-  });
+  };
+}
+
+export function validateAnonymousSessionRuntimeConfig(
+  environment: AssistantSessionEnvironment = runtimeEnvironment(),
+): AnonymousSessionSettings {
+  defaultSettings ??= resolveAnonymousSessionSettings(environment);
+  return defaultSettings;
+}
+
+export function getAnonymousSessionManager(): AnonymousSessionManager {
+  defaultSettings ??= validateAnonymousSessionRuntimeConfig();
   defaultManager ??= createAnonymousSessionManager({
     settings: defaultSettings,
   });
