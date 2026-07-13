@@ -12,6 +12,7 @@ import type {
 
 export type AppShellProps = {
   children: ReactNode;
+  assistantEntry?: ReactNode;
   variant: "portal" | "console" | "admin";
   activeHref: string;
   portalNavigation: PortalNavigationItem[];
@@ -25,6 +26,7 @@ export type AppShellProps = {
 
 export function AppShell({
   children,
+  assistantEntry,
   variant,
   activeHref,
   portalNavigation,
@@ -72,6 +74,7 @@ export function AppShell({
     <div className="app-shell" data-shell-variant="portal">
       <PortalHeader
         activeHref={activeHref}
+        assistantEntry={assistantEntry}
         items={portalNavigation}
         linkComponent={portalLinkComponent}
       />

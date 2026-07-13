@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { MegaMenu } from "./mega-menu";
 import { MobileNavigation } from "./mobile-navigation";
 import type {
@@ -8,10 +9,12 @@ import type {
 export function PortalHeader({
   items,
   activeHref,
+  assistantEntry,
   linkComponent: Link = "a",
 }: {
   items: PortalNavigationItem[];
   activeHref: string;
+  assistantEntry?: ReactNode;
   linkComponent?: NavigationLinkComponent;
 }) {
   return (
@@ -35,6 +38,7 @@ export function PortalHeader({
         </nav>
 
         <div className="site-actions">
+          {assistantEntry}
           <Link className="site-login" href="/login">
             登录 / 进入平台
           </Link>

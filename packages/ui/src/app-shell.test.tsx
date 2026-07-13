@@ -7,6 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./app-shell";
 import type {
@@ -109,6 +110,7 @@ const footerNavigation: NavigationSection[] = [
 
 type RenderShellOptions = {
   activeHref?: string;
+  assistantEntry?: ReactNode;
   grantedPermissions?: readonly string[];
   logoutAction?: () => Promise<void>;
   portalLinkComponent?: NavigationLinkComponent;
@@ -118,6 +120,7 @@ function renderShell(
   variant: "portal" | "console" | "admin",
   {
     activeHref = "/",
+    assistantEntry,
     grantedPermissions,
     logoutAction,
     portalLinkComponent,
@@ -126,6 +129,7 @@ function renderShell(
   return render(
     <AppShell
       activeHref={activeHref}
+      assistantEntry={assistantEntry}
       adminNavigation={adminNavigation}
       consoleNavigation={consoleNavigation}
       footerNavigation={footerNavigation}
@@ -143,6 +147,32 @@ function renderShell(
 afterEach(cleanup);
 
 describe("AppShell", () => {
+  it("forwards the assistant entry to portal chrome only", () => {
+    const assistantEntry = <button type="button">打开工作区助理</button>;
+    const { rerender } = renderShell("portal", { assistantEntry });
+
+    expect(
+      screen.getByRole("button", { name: "打开工作区助理" }),
+    ).toBeVisible();
+
+    rerender(
+      <AppShell
+        activeHref="/admin"
+        adminNavigation={adminNavigation}
+        assistantEntry={assistantEntry}
+        consoleNavigation={consoleNavigation}
+        footerNavigation={footerNavigation}
+        portalNavigation={portalNavigation}
+        variant="admin"
+      >
+        页面内容
+      </AppShell>,
+    );
+    expect(
+      screen.queryByRole("button", { name: "打开工作区助理" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("forwards an injected routing adapter to header and footer links", () => {
     const RoutingAdapter: NavigationLinkComponent = ({ href, ...props }) => (
       <a data-routing-adapter="next" href={href} {...props} />

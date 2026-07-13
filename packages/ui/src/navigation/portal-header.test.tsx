@@ -35,6 +35,21 @@ const items: PortalNavigationItem[] = [
 afterEach(cleanup);
 
 describe("PortalHeader", () => {
+  it("places an injected assistant entry immediately before desktop login", () => {
+    render(
+      <PortalHeader
+        activeHref="/"
+        assistantEntry={<button type="button">AI 助理入口</button>}
+        items={items}
+      />,
+    );
+
+    const assistant = screen.getByRole("button", { name: "AI 助理入口" });
+    const login = screen.getByRole("link", { name: "登录 / 进入平台" });
+    expect(assistant.parentElement).toBe(login.parentElement);
+    expect(assistant.nextElementSibling).toBe(login);
+  });
+
   it("renders the product wordmark and login action", () => {
     render(<PortalHeader activeHref="/" items={items} />);
 
