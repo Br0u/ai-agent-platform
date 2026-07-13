@@ -92,12 +92,14 @@ def test_migration_requires_only_migrator_database_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AGNO_MIGRATOR_DATABASE_URL", MIGRATOR_URL)
+    monkeypatch.setenv("AGNO_SCHEMA", "public")
+    monkeypatch.setenv("OS_SECURITY_KEY", "runtime-only-key")
+    monkeypatch.setenv("AGNO_DATABASE_URL", RUNTIME_URL)
 
     settings = MigrationSettings(_env_file=None)
 
     assert settings.agno_migrator_database_url.get_secret_value() == MIGRATOR_URL
-    assert "os_security_key" not in MigrationSettings.model_fields
-    assert "agno_database_url" not in MigrationSettings.model_fields
+    assert set(MigrationSettings.model_fields) == {"agno_migrator_database_url"}
 
 
 def test_migration_requires_migrator_database_url() -> None:
@@ -177,7 +179,6 @@ def test_all_fields_use_explicit_uppercase_environment_aliases() -> None:
         "health_db_probe_timeout_seconds": "HEALTH_DB_PROBE_TIMEOUT_SECONDS",
     }
     assert migration_aliases == {
-        "agno_schema": "AGNO_SCHEMA",
         "agno_migrator_database_url": "AGNO_MIGRATOR_DATABASE_URL",
     }
 

@@ -41,15 +41,14 @@ class _AgentSettings(BaseSettings):
         hide_input_in_errors=True,
     )
 
-    agno_schema: Literal["agno"] = Field(
-        default="agno",
-        validation_alias="AGNO_SCHEMA",
-    )
-
 
 class RuntimeSettings(_AgentSettings):
     """Credentials and health controls available to the runtime role only."""
 
+    agno_schema: Literal["agno"] = Field(
+        default="agno",
+        validation_alias="AGNO_SCHEMA",
+    )
     os_security_key: SecretStr = Field(validation_alias="OS_SECURITY_KEY")
     agno_database_url: AsyncPostgresUrl = Field(validation_alias="AGNO_DATABASE_URL")
     agent_enabled: bool = Field(
