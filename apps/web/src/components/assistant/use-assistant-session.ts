@@ -43,6 +43,7 @@ export const ASSISTANT_REQUEST_TIMEOUT_MS = 15_000;
 
 export type AssistantSessionOptions = {
   endpoint?: string;
+  failureAnnouncement?: string;
   timeoutMs?: number;
 };
 
@@ -95,6 +96,8 @@ export function useAssistantSession(
   options: AssistantSessionOptions = {},
 ): AssistantSession {
   const endpoint = options.endpoint ?? PUBLIC_ASSISTANT_ENDPOINT;
+  const failureAnnouncement =
+    options.failureAnnouncement ?? FAILURE_ANNOUNCEMENT;
   const timeoutMs = options.timeoutMs ?? ASSISTANT_REQUEST_TIMEOUT_MS;
   const [open, setOpen] = useState(false);
   const [draft, setDraftState] = useState("");
@@ -221,7 +224,7 @@ export function useAssistantSession(
         )
           return;
         setLastFailedRequest(payload);
-        setLatestAnnouncement(FAILURE_ANNOUNCEMENT);
+        setLatestAnnouncement(failureAnnouncement);
         updateRequestStatus("failed");
       } finally {
         const active = activeRequest.current;
@@ -231,7 +234,7 @@ export function useAssistantSession(
         }
       }
     },
-    [endpoint, timeoutMs, updateRequestStatus],
+    [endpoint, failureAnnouncement, timeoutMs, updateRequestStatus],
   );
 
   const submit = useCallback(

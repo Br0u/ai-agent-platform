@@ -134,4 +134,20 @@ describe("AssistantAdminPage", () => {
     );
     expect(await screen.findByText("AI 服务尚未接入。")).toBeVisible();
   });
+
+  it("uses an internal failure message without public support directions", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(null, { status: 503 })),
+    );
+    render(<AssistantAdminPage sessions={sessions} status={status} />);
+
+    fireEvent.change(screen.getByLabelText("测试问题"), {
+      target: { value: "检查失败状态" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送测试" }));
+
+    expect(await screen.findByText("测试暂时失败，请稍后重试。")).toBeVisible();
+    expect(screen.queryByText(/帮助中心|商务咨询/u)).not.toBeInTheDocument();
+  });
 });

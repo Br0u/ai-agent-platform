@@ -29,6 +29,7 @@ export function AssistantAdminPage({
 }: AssistantAdminPageProps) {
   const assistant = useAssistantSession("/admin/assistant", {
     endpoint: "/api/v1/admin/assistant/chat",
+    failureAnnouncement: "测试暂时失败，请稍后重试。",
   });
 
   const submitTest = (event: FormEvent<HTMLFormElement>) => {

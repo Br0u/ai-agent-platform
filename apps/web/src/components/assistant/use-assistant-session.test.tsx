@@ -66,6 +66,7 @@ describe("useAssistantSession", () => {
     const { result } = renderHook(() =>
       useAssistantSession("/admin/assistant", {
         endpoint: "/api/v1/admin/assistant/chat",
+        failureAnnouncement: "测试暂时失败，请稍后重试。",
         timeoutMs: 25,
       }),
     );
@@ -82,6 +83,9 @@ describe("useAssistantSession", () => {
     });
     expect(result.current.requestStatus).toBe("failed");
     expect(result.current.lastFailedMessage).toBe("超时问题");
+    expect(result.current.latestAnnouncement).toBe(
+      "测试暂时失败，请稍后重试。",
+    );
 
     await act(() => result.current.retry());
     expect(fetch).toHaveBeenCalledTimes(2);
@@ -253,6 +257,23 @@ describe("useAssistantSession", () => {
     expect(result.current.messages).toEqual([]);
     expect(result.current.latestAnnouncement).toBe(
       "发送失败，请重试或使用帮助中心或商务咨询。",
+    );
+  });
+
+  it("uses a configured failure announcement for an HTTP failure", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 503 }));
+    const { result } = renderHook(() =>
+      useAssistantSession("/admin/assistant", {
+        endpoint: "/api/v1/admin/assistant/chat",
+        failureAnnouncement: "测试暂时失败，请稍后重试。",
+      }),
+    );
+
+    await act(() => result.current.submit("后台测试"));
+
+    expect(result.current.requestStatus).toBe("failed");
+    expect(result.current.latestAnnouncement).toBe(
+      "测试暂时失败，请稍后重试。",
     );
   });
 
