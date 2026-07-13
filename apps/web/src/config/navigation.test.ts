@@ -144,6 +144,12 @@ const expectedPortal = [
           ["工单提交", "/support#tickets"],
           ["Bug 反馈", "/support#bug"],
           ["社群支持", "/support#community"],
+        ],
+      },
+      {
+        label: "商务服务",
+        items: [
+          ["价格计算", "/pricing"],
           ["商务咨询", "/contact"],
         ],
       },
@@ -277,6 +283,7 @@ const expectedFooter = [
     items: [
       ["支持", "/support"],
       ["帮助中心", "/help"],
+      ["价格计算", "/pricing"],
       ["商务咨询", "/contact"],
     ],
   },

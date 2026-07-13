@@ -19,6 +19,7 @@ const requiredRoutes = [
   "/blog",
   "/blog/[slug]",
   "/cases",
+  "/pricing",
   "/contact",
   "/login",
   "/register",
@@ -86,6 +87,15 @@ describe("routeRegistry", () => {
     ]) {
       expect(matchRoute(path)?.status).toBe("placeholder");
     }
+  });
+
+  it("registers the pricing calculator as a live public route", () => {
+    expect(matchRoute("/pricing")).toEqual({
+      path: "/pricing",
+      title: "价格计算",
+      group: "public",
+      status: "live",
+    });
   });
 
   it("matches exact and dynamic routes but rejects unknown paths", () => {

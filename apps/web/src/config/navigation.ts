@@ -251,6 +251,12 @@ export const portalNavigation: PortalNavigationItem[] = [
             href: "/support#community",
             status: "placeholder",
           },
+        ],
+      },
+      {
+        label: "商务服务",
+        items: [
+          { label: "价格计算", href: "/pricing" },
           { label: "商务咨询", href: "/contact" },
         ],
       },
@@ -523,6 +529,7 @@ export const footerNavigation: NavigationSection[] = [
     items: [
       { label: "支持", href: "/support" },
       { label: "帮助中心", href: "/help" },
+      { label: "价格计算", href: "/pricing" },
       { label: "商务咨询", href: "/contact" },
     ],
   },
