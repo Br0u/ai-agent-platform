@@ -47,6 +47,7 @@ export const routeRegistry: PortalRoute[] = [
   publicRoute("/blog/[slug]", "资讯详情"),
   publicRoute("/cases", "客户案例"),
   publicRoute("/pricing", "价格计算", "live"),
+  publicRoute("/assistant", "AI 助理", "live"),
   publicRoute("/contact", "商务联系"),
   publicRoute("/login", "登录"),
   publicRoute("/register", "客户注册", "live"),

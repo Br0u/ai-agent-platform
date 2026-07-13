@@ -20,6 +20,7 @@ const requiredRoutes = [
   "/blog/[slug]",
   "/cases",
   "/pricing",
+  "/assistant",
   "/contact",
   "/login",
   "/register",
@@ -93,6 +94,15 @@ describe("routeRegistry", () => {
     expect(matchRoute("/pricing")).toEqual({
       path: "/pricing",
       title: "价格计算",
+      group: "public",
+      status: "live",
+    });
+  });
+
+  it("registers the standalone assistant as a live public route", () => {
+    expect(matchRoute("/assistant")).toEqual({
+      path: "/assistant",
+      title: "AI 助理",
       group: "public",
       status: "live",
     });
