@@ -1,12 +1,13 @@
 from collections.abc import Awaitable, Callable
-from typing import Any
+from contextlib import AbstractAsyncContextManager
+from typing import Any, cast
 
 import pytest
 from agno.db.postgres import AsyncPostgresDb
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from agent_service.app import create_app
+from agent_service.app import create_app, probe_database
 from agent_service.catalog import build_catalog
 from agent_service.config import RuntimeSettings
 from agent_service.database import build_database
@@ -250,3 +251,90 @@ def test_discovered_agentos_route_uses_the_same_bearer_boundary(
     assert correct.status_code != 401
     assert SECURITY_KEY not in missing.text
     assert SECURITY_KEY not in wrong.text
+
+
+def test_real_agentos_route_accepts_runtime_credentials_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OS_SECURITY_KEY", SECURITY_KEY)
+    monkeypatch.setenv("AGNO_DATABASE_URL", DATABASE_URL)
+
+    app = create_app()
+    schema = app.openapi()
+    candidates = [
+        path
+        for path, operations in schema["paths"].items()
+        if not path.startswith("/internal/")
+        and "{" not in path
+        and "get" in operations
+        and not any(
+            parameter.get("required")
+            for parameter in operations["get"].get("parameters", [])
+        )
+    ]
+
+    assert candidates, "AgentOS must contribute a discoverable GET route"
+    discovered_path = candidates[0]
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        missing = client.get(discovered_path)
+        wrong = client.get(
+            discovered_path,
+            headers={"Authorization": "Bearer wrong-key"},
+        )
+        correct = client.get(discovered_path, headers=AUTHORIZATION)
+
+    assert missing.status_code == 401
+    assert wrong.status_code == 401
+    assert correct.status_code not in {401, 500}
+    assert SECURITY_KEY not in missing.text
+    assert SECURITY_KEY not in wrong.text
+    assert SECURITY_KEY not in correct.text
+
+
+@pytest.mark.asyncio
+async def test_probe_database_uses_the_supplied_engine_and_executes_select_one() -> (
+    None
+):
+    statements: list[str] = []
+    connections = 0
+
+    class FakeConnection:
+        async def execute(self, statement: object) -> None:
+            statements.append(str(statement))
+
+    class FakeConnectionContext(AbstractAsyncContextManager[FakeConnection]):
+        async def __aenter__(self) -> FakeConnection:
+            return FakeConnection()
+
+        async def __aexit__(
+            self,
+            exc_type: object,
+            exc_value: object,
+            traceback: object,
+        ) -> None:
+            return None
+
+    class FakeEngine:
+        def connect(self) -> FakeConnectionContext:
+            nonlocal connections
+            connections += 1
+            return FakeConnectionContext()
+
+    class FakeDatabase:
+        db_engine = FakeEngine()
+
+    result = await probe_database(cast(AsyncPostgresDb, FakeDatabase()))
+
+    assert result is True
+    assert connections == 1
+    assert statements == ["SELECT 1"]
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_async_greenlet_bridge_is_available() -> None:
+    from sqlalchemy.util.concurrency import greenlet_spawn
+
+    result = await greenlet_spawn(lambda: "available")
+
+    assert result == "available"
