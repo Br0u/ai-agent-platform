@@ -28,7 +28,8 @@ async function loadRegister() {
 }
 
 afterEach(() => {
-  vi.doUnmock("@/server/assistant/anonymous-session");
+  vi.doUnmock("@/server/assistant/anonymous-session-config");
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.resetModules();
 });
@@ -41,9 +42,19 @@ describe("Next server startup instrumentation", () => {
     ["short secret", VALID_ORIGIN, "too-short"],
   ])("fails Node server startup for %s", async (_name, origin, secret) => {
     runtimeEnvironment({ origin, secret });
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`process.exit(${code})`);
+    });
     const register = await loadRegister();
 
-    await expect(register()).rejects.toThrow(/ASSISTANT_/u);
+    await expect(register()).rejects.toThrow("process.exit(1)");
+    expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith(
+      expect.stringMatching(/ASSISTANT_/u),
+    );
   });
 
   it("validates a valid Node runtime once and reuses the cached settings", async () => {
@@ -55,10 +66,10 @@ describe("Next server startup instrumentation", () => {
     vi.stubEnv("ASSISTANT_SESSION_SECRET", "short");
     await expect(register()).resolves.toBeUndefined();
 
-    const { getAnonymousSessionManager } = await import(
-      "@/server/assistant/anonymous-session"
+    const { validateAnonymousSessionRuntimeConfig } = await import(
+      "@/server/assistant/anonymous-session-config"
     );
-    expect(() => getAnonymousSessionManager()).not.toThrow();
+    expect(() => validateAnonymousSessionRuntimeConfig()).not.toThrow();
   });
 
   it.each([
@@ -71,7 +82,7 @@ describe("Next server startup instrumentation", () => {
     "does not load Node crypto or read runtime secrets during %s",
     async (_name, env) => {
       runtimeEnvironment({ ...env, origin: undefined, secret: undefined });
-      vi.doMock("@/server/assistant/anonymous-session", () => {
+      vi.doMock("@/server/assistant/anonymous-session-config", () => {
         throw new Error("Node-only assistant session module was loaded");
       });
       const register = await loadRegister();
@@ -83,10 +94,18 @@ describe("Next server startup instrumentation", () => {
   it("keeps the universal hook free of a static Node-only import", () => {
     const source = readFileSync("src/instrumentation.ts", "utf8");
     expect(source).not.toMatch(
-      /^import .*server\/assistant\/anonymous-session/mu,
+      /^import .*server\/assistant\/anonymous-session-config/mu,
     );
     expect(source).toMatch(
-      /await\s+import\(\s*["']@\/server\/assistant\/anonymous-session["']\s*\)/u,
+      /await\s+import\(\s*["']@\/server\/assistant\/anonymous-session-config["']\s*\)/u,
+    );
+
+    const leaf = readFileSync(
+      "src/server/assistant/anonymous-session-config.ts",
+      "utf8",
+    );
+    expect(leaf).not.toMatch(
+      /assistant-actor|server\/auth|@ai-agent-platform\/database|node:(?:fs|crypto)|from\s+["']pg["']/u,
     );
   });
 });

@@ -7,6 +7,7 @@
     "build": "next build --webpack",
     "start": "next start",
     "test": "vitest run",
+    "test:assistant-startup": "RUN_ASSISTANT_STARTUP_ACCEPTANCE=true vitest run src/instrumentation.acceptance.test.ts --maxWorkers=1",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings=0",

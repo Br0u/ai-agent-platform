@@ -5,9 +5,11 @@ import {
   ASSISTANT_IDLE_TTL_MS,
   createAnonymousSessionManager,
   getAnonymousSessionManager,
+} from "./anonymous-session";
+import {
   resolveAnonymousSessionSettings,
   validateAnonymousSessionRuntimeConfig,
-} from "./anonymous-session";
+} from "./anonymous-session-config";
 
 const SECRET = "0123456789abcdef0123456789abcdef";
 const START = Date.parse("2026-07-13T11:30:00.000Z");

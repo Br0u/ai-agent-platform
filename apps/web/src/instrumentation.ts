@@ -7,7 +7,16 @@ export async function register(): Promise<void> {
   }
 
   const { validateAnonymousSessionRuntimeConfig } = await import(
-    "@/server/assistant/anonymous-session"
+    "@/server/assistant/anonymous-session-config"
   );
-  validateAnonymousSessionRuntimeConfig();
+  try {
+    validateAnonymousSessionRuntimeConfig();
+  } catch (error) {
+    console.error(
+      error instanceof Error
+        ? error.message
+        : "Assistant session runtime configuration is invalid",
+    );
+    process.exit(1);
+  }
 }

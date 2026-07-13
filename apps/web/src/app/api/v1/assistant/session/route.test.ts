@@ -1,10 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  createAnonymousSessionManager,
-  resolveAnonymousSessionSettings,
-} from "@/server/assistant/anonymous-session";
+import { createAnonymousSessionManager } from "@/server/assistant/anonymous-session";
+import { resolveAnonymousSessionSettings } from "@/server/assistant/anonymous-session-config";
 import { createAssistantSessionDeleteHandler } from "./handler";
 import * as route from "./route";
 
