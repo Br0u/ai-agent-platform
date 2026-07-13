@@ -200,30 +200,50 @@ test("verifies pricing and M assistant across public and identity routes", async
     expect(launcherBox).not.toBeNull();
     expect(panelBox!.width).toBeGreaterThanOrEqual(360);
     expect(panelBox!.x).toBeLessThanOrEqual(13);
+    expect(
+      Math.abs(MOBILE_VIEWPORT.height - (panelBox!.y + panelBox!.height)),
+    ).toBeLessThanOrEqual(2);
     expect(launcherBox!.height).toBeGreaterThanOrEqual(44);
     const drawerStyle = await dialog.evaluate((element) => {
       const style = getComputedStyle(element);
       return {
         bottomLeft: style.borderBottomLeftRadius,
         bottomRight: style.borderBottomRightRadius,
+        paddingBottom: Number.parseFloat(style.paddingBottom),
       };
     });
     expect(drawerStyle.bottomLeft).toBe("0px");
     expect(drawerStyle.bottomRight).toBe("0px");
+    expect(drawerStyle.paddingBottom).toBeGreaterThanOrEqual(12);
     await expectMinimumControlSize(dialog.locator("button, a, input"));
-    const safeAreaRulePresent = await page.evaluate(() => {
-      const containsSafeArea = (rules: CSSRuleList): boolean =>
-        Array.from(rules).some((rule) => {
-          if (rule.cssText.includes("safe-area-inset-bottom")) return true;
-          return "cssRules" in rule
-            ? containsSafeArea((rule as CSSGroupingRule).cssRules)
-            : false;
-        });
-      return Array.from(document.styleSheets).some((sheet) =>
-        containsSafeArea(sheet.cssRules),
-      );
+    const mobilePanelRule = await page.evaluate(() => {
+      for (const sheet of Array.from(document.styleSheets)) {
+        for (const rule of Array.from(sheet.cssRules)) {
+          if (
+            !(rule instanceof CSSMediaRule) ||
+            !rule.conditionText.includes("max-width: 600px")
+          ) {
+            continue;
+          }
+          for (const nestedRule of Array.from(rule.cssRules)) {
+            if (
+              nestedRule instanceof CSSStyleRule &&
+              nestedRule.selectorText === ".assistant-panel"
+            ) {
+              return {
+                cssText: nestedRule.cssText,
+                paddingBottom: nestedRule.style.paddingBottom,
+              };
+            }
+          }
+        }
+      }
+      return null;
     });
-    expect(safeAreaRulePresent).toBe(true);
+    expect(mobilePanelRule).not.toBeNull();
+    expect(mobilePanelRule!.paddingBottom).toContain(
+      "env(safe-area-inset-bottom)",
+    );
     await expectNoHorizontalOverflow(page);
   }
 
@@ -234,8 +254,11 @@ test("verifies pricing and M assistant across public and identity routes", async
       status: 503,
       contentType: "application/json",
       body: JSON.stringify({
-        code: "ASSISTANT_UNAVAILABLE",
-        message: "Assistant service is unavailable",
+        mode: "placeholder",
+        error: {
+          code: "assistant_unavailable",
+          message: "助手服务暂不可用，请使用帮助中心或商务咨询。",
+        },
       }),
     });
   });
