@@ -25,8 +25,8 @@ ALTER ROLE ai_agent_agno
   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS
   PASSWORD :'agno_runtime_password';
 
-GRANT CONNECT ON DATABASE :DBNAME TO ai_agent_agno_migrator, ai_agent_agno;
-REVOKE CREATE ON DATABASE :DBNAME FROM ai_agent_agno_migrator, ai_agent_agno;
+GRANT CONNECT ON DATABASE :"DBNAME" TO ai_agent_agno_migrator, ai_agent_agno;
+REVOKE CREATE ON DATABASE :"DBNAME" FROM ai_agent_agno_migrator, ai_agent_agno;
 
 REVOKE USAGE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE, CREATE ON SCHEMA public TO ai_agent_migrator;

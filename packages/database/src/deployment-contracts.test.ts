@@ -107,6 +107,7 @@ describe("production deployment security contracts", () => {
       /(?:--set|-v|--variable)[^\n]*(?:password|secret)/iu,
     );
     expect(wrapper).not.toMatch(/set\s+-[^\n]*x/iu);
+    expect(wrapper).toContain("--single-transaction");
     expect(wrapper).toContain("require_nonblank");
     expect(agnoRoles).toContain(
       "\\getenv agno_migrator_password AGNO_MIGRATOR_DATABASE_PASSWORD",
@@ -114,6 +115,8 @@ describe("production deployment security contracts", () => {
     expect(agnoRoles).toContain(
       "\\getenv agno_runtime_password AGNO_DATABASE_PASSWORD",
     );
+    expect(agnoRoles).toContain('GRANT CONNECT ON DATABASE :"DBNAME"');
+    expect(agnoRoles).toContain('REVOKE CREATE ON DATABASE :"DBNAME"');
 
     for (const key of [
       "AGNO_MIGRATOR_DATABASE_PASSWORD",

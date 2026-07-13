@@ -30,6 +30,7 @@ export AGNO_MIGRATOR_DATABASE_PASSWORD
 export AGNO_DATABASE_PASSWORD
 
 psql --set=ON_ERROR_STOP=1 \
+  --single-transaction \
   --host="$POSTGRES_HOST" \
   --port="$POSTGRES_PORT" \
   --username="$POSTGRES_USER" \
