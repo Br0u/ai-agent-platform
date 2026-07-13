@@ -400,7 +400,7 @@ Cookie 中的匿名会话凭据及其任何可重放等价值不得出现在 JSO
 - BFF 仍实施第二层应用限流，不能把安全性只建立在反向代理存在上；
 - 匿名请求按哈希后的服务端会话 ID 加可信客户端 IP 限流，登录用户按平台 actor ID 限流，管理员测试台按管理员 actor ID 使用独立额度；
 - 多实例 BFF 的限流计数存储必须共享，首选 PostgreSQL；不得使用各实例互不一致的纯内存计数作为生产实现；
-- 只有 `TRUST_NGINX_PROXY=true` 且来源属于内部代理边界时才解析转发 IP；其他情况使用直接连接地址；
+- Next Route `Request` 不提供可靠的 socket peer 地址：只有 `TRUST_NGINX_PROXY=true` 且 Web 受 Compose 内部网络保护时才接受 Nginx 覆写的单一 `X-Real-IP`；其他情况忽略转发头并按 session/actor 限流，IP 第一层由 Nginx 承担；
 - 限流响应只返回统一 `429` 错误体，不泄露阈值与内部键。
 
 ## 14. 安全要求
