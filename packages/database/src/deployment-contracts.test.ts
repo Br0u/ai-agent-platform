@@ -1,4 +1,12 @@
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -85,12 +93,27 @@ describe("production deployment security contracts", () => {
       "GRANT SELECT ON ALL SEQUENCES IN SCHEMA agno TO ai_agent_backup",
     );
 
-    expect(wrapper).toContain(': "${AGNO_MIGRATOR_DATABASE_PASSWORD:?');
-    expect(wrapper).toContain(': "${AGNO_DATABASE_PASSWORD:?');
+    expect(wrapper).toContain(
+      'require_nonblank AGNO_MIGRATOR_DATABASE_PASSWORD \\\n  "${AGNO_MIGRATOR_DATABASE_PASSWORD-}"',
+    );
+    expect(wrapper).toContain(
+      'require_nonblank AGNO_DATABASE_PASSWORD "${AGNO_DATABASE_PASSWORD-}"',
+    );
     expect(wrapper).toContain('--username="$POSTGRES_USER"');
     expect(wrapper).toContain('--dbname="$POSTGRES_DB"');
     expect(wrapper).toContain("03-agno-roles.sql");
     expect(wrapper).not.toContain("01-roles.sh");
+    expect(wrapper).not.toMatch(
+      /(?:--set|-v|--variable)[^\n]*(?:password|secret)/iu,
+    );
+    expect(wrapper).not.toMatch(/set\s+-[^\n]*x/iu);
+    expect(wrapper).toContain("require_nonblank");
+    expect(agnoRoles).toContain(
+      "\\getenv agno_migrator_password AGNO_MIGRATOR_DATABASE_PASSWORD",
+    );
+    expect(agnoRoles).toContain(
+      "\\getenv agno_runtime_password AGNO_DATABASE_PASSWORD",
+    );
 
     for (const key of [
       "AGNO_MIGRATOR_DATABASE_PASSWORD",
@@ -103,6 +126,57 @@ describe("production deployment security contracts", () => {
     expect(env).not.toMatch(
       /(?:AGNO_MIGRATOR_DATABASE_PASSWORD|AGNO_DATABASE_PASSWORD)=(?!replace-with-)/u,
     );
+  });
+
+  it("keeps Agno role passwords out of psql argv and rejects blank values", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "agno-bootstrap-argv-"));
+    const psql = path.join(sandbox, "psql");
+    writeFileSync(psql, '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o700 });
+    chmodSync(psql, 0o700);
+    const wrapper = path.join(root, "infra/postgres/03-agno-roles.sh");
+    const secrets = {
+      POSTGRES_PASSWORD: `owner ' " $ \\ secret`,
+      AGNO_MIGRATOR_DATABASE_PASSWORD: `migrator ' " $ \\ secret`,
+      AGNO_DATABASE_PASSWORD: `runtime ' " $ \\ secret`,
+    };
+    const baseEnv = {
+      PATH: `${sandbox}:${process.env.PATH ?? ""}`,
+      POSTGRES_HOST: "127.0.0.1",
+      POSTGRES_PORT: "5432",
+      POSTGRES_USER: "owner",
+      POSTGRES_DB: "ai_agent_platform_identity_test",
+      AGNO_ROLE_SQL_FILE: path.join(root, "infra/postgres/03-agno-roles.sql"),
+      ...secrets,
+    };
+
+    try {
+      const captured = spawnSync("sh", [wrapper], {
+        encoding: "utf8",
+        env: baseEnv,
+      });
+      expect(captured.status).toBe(0);
+      const argv = `${captured.stdout}${captured.stderr}`;
+      for (const secret of Object.values(secrets)) {
+        expect(argv).not.toContain(secret);
+      }
+      expect(argv).not.toMatch(/(?:password|secret)=/iu);
+
+      for (const invalid of [undefined, "", " \t\n"]) {
+        const env = { ...baseEnv } as Record<string, string | undefined>;
+        env.AGNO_DATABASE_PASSWORD = invalid;
+        const rejected = spawnSync("sh", [wrapper], {
+          encoding: "utf8",
+          env: env as NodeJS.ProcessEnv,
+        });
+        expect(rejected.status).not.toBe(0);
+        expect(rejected.stderr).toContain("AGNO_DATABASE_PASSWORD");
+        for (const secret of Object.values(secrets)) {
+          expect(rejected.stderr).not.toContain(secret);
+        }
+      }
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
   });
 
   it("limits only POST requests on exact authentication routes", () => {

@@ -1,3 +1,6 @@
+\getenv agno_migrator_password AGNO_MIGRATOR_DATABASE_PASSWORD
+\getenv agno_runtime_password AGNO_DATABASE_PASSWORD
+
 DO $$
 BEGIN
   IF NOT EXISTS (
