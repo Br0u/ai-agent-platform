@@ -31,15 +31,15 @@ export type PricingModuleId = (typeof MODULE_OPTIONS)[number]["id"];
 export type TermId = (typeof TERM_OPTIONS)[number]["id"];
 
 export type PricingSelection = {
-  deployment: DeploymentId;
-  scale: ScaleId;
-  modules: readonly PricingModuleId[];
-  term: TermId;
+  readonly deployment: DeploymentId;
+  readonly scale: ScaleId;
+  readonly modules: readonly PricingModuleId[];
+  readonly term: TermId;
 };
 
-export const DEFAULT_PRICING_SELECTION: PricingSelection = {
+export const DEFAULT_PRICING_SELECTION: PricingSelection = Object.freeze({
   deployment: "local-private",
   scale: "pilot",
-  modules: [],
+  modules: Object.freeze([] as PricingModuleId[]),
   term: "tbd",
-};
+});

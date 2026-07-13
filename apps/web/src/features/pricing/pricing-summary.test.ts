@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_PRICING_SELECTION } from "./pricing-config";
+import {
+  DEFAULT_PRICING_SELECTION,
+  type PricingModuleId,
+} from "./pricing-config";
 import { buildPricingSummary } from "./pricing-summary";
 
 describe("pricing summary", () => {
@@ -10,6 +13,31 @@ describe("pricing summary", () => {
       modules: [],
       term: "tbd",
     });
+  });
+
+  it("keeps the shared default selection immutable at runtime", () => {
+    expect(Object.isFrozen(DEFAULT_PRICING_SELECTION)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_PRICING_SELECTION.modules)).toBe(true);
+    expect(() =>
+      (DEFAULT_PRICING_SELECTION.modules as PricingModuleId[]).push("workflow"),
+    ).toThrow();
+    expect(DEFAULT_PRICING_SELECTION.modules).toEqual([]);
+  });
+
+  it("builds the exact planned pricing selection summary", () => {
+    expect(
+      buildPricingSummary({
+        deployment: "local-private",
+        scale: "pilot",
+        modules: ["workflow", "agent-studio"],
+        term: "1y",
+      }),
+    ).toEqual([
+      "部署方式：本地私有化",
+      "使用规模：体验验证",
+      "功能模块：AI Agent Studio、Workflow",
+      "服务周期：一年",
+    ]);
   });
 
   it("builds human-readable rows in a stable order", () => {

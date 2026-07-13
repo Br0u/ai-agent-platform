@@ -22,23 +22,25 @@ function firstValue(value: string | readonly string[] | undefined) {
 
 function knownId<T extends string>(
   value: string | undefined,
-  ids: ReadonlySet<string>,
+  ids: ReadonlySet<T>,
 ): value is T {
-  return value !== undefined && ids.has(value);
+  return value !== undefined && ids.has(value as T);
 }
 
-const deploymentIds = new Set<string>(
+const deploymentIds = new Set<DeploymentId>(
   DEPLOYMENT_OPTIONS.map((option) => option.id),
 );
-const scaleIds = new Set<string>(SCALE_OPTIONS.map((option) => option.id));
-const moduleIds = new Set<string>(MODULE_OPTIONS.map((option) => option.id));
-const termIds = new Set<string>(TERM_OPTIONS.map((option) => option.id));
+const scaleIds = new Set<ScaleId>(SCALE_OPTIONS.map((option) => option.id));
+const moduleIds = new Set<PricingModuleId>(
+  MODULE_OPTIONS.map((option) => option.id),
+);
+const termIds = new Set<TermId>(TERM_OPTIONS.map((option) => option.id));
 
 function normalizeModules(values: readonly string[]): PricingModuleId[] {
   const requested = new Set(
     values
       .flatMap((value) => value.split(","))
-      .filter((id) => moduleIds.has(id)),
+      .filter((id): id is PricingModuleId => knownId(id, moduleIds)),
   );
 
   return MODULE_OPTIONS.filter((option) => requested.has(option.id)).map(
