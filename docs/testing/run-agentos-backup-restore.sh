@@ -6,17 +6,27 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
 
 project="aap-agentos-backup-restore-$$"
-env_file=$(mktemp "$repo_root/.env.agentos-backup-restore.XXXXXX")
-temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/aap-agentos-backup-restore.XXXXXX")
-secret_dir="$temp_dir/secrets"
-dump_dir="$temp_dir/dump"
-mkdir -p "$secret_dir" "$dump_dir"
+env_file=
+temp_dir=
+secret_dir=
+dump_dir=
 
 cleanup() {
-  docker compose -p "$project" --env-file "$env_file" \
-    down -v --remove-orphans >/dev/null 2>&1 || true
-  rm -rf "$temp_dir"
-  rm -f "$env_file"
+  if command -v docker >/dev/null 2>&1; then
+    if [ -n "$env_file" ] && [ -f "$env_file" ]; then
+      docker compose -p "$project" --env-file "$env_file" \
+        down -v --remove-orphans >/dev/null 2>&1 || true
+    else
+      docker compose -p "$project" down -v --remove-orphans \
+        >/dev/null 2>&1 || true
+    fi
+  fi
+  if [ -n "$temp_dir" ]; then
+    rm -rf "$temp_dir"
+  fi
+  if [ -n "$env_file" ]; then
+    rm -f "$env_file"
+  fi
 }
 
 on_signal() {
@@ -29,6 +39,16 @@ on_signal() {
 trap cleanup EXIT
 trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
+
+env_file=$(mktemp "$repo_root/.env.agentos-backup-restore.XXXXXX")
+temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/aap-agentos-backup-restore.XXXXXX")
+secret_dir="$temp_dir/secrets"
+dump_dir="$temp_dir/dump"
+mkdir -p "$secret_dir" "$dump_dir"
+
+if [ "${AAP_AGENTOS_RESTORE_TEST_FAIL_AFTER_TEMP:-false}" = "true" ]; then
+  exit 86
+fi
 
 command -v docker >/dev/null 2>&1 || {
   echo "docker is required" >&2
@@ -52,6 +72,9 @@ agno_runtime_password=$(secret)
 better_auth_secret=$(secret)
 os_security_key=$(secret)
 database=ai_agent_platform_agentos_restore_test
+owner=ai_agent_owner
+platform_user_id=00000000-0000-4000-8000-000000000001
+agno_session_id=backup-restore-session-fixture-v1
 
 materialize_secret() {
   variable_name=$1
@@ -81,7 +104,7 @@ materialize_secret OS_SECURITY_KEY_FILE os_security_key "$os_security_key"
 umask 077
 cat >"$env_file" <<EOF
 POSTGRES_DB=$database
-POSTGRES_USER=ai_agent_owner
+POSTGRES_USER=$owner
 POSTGRES_PASSWORD_FILE=$POSTGRES_PASSWORD_FILE
 MIGRATOR_DATABASE_PASSWORD_FILE=$MIGRATOR_DATABASE_PASSWORD_FILE
 RUNTIME_DATABASE_PASSWORD_FILE=$RUNTIME_DATABASE_PASSWORD_FILE
@@ -126,7 +149,7 @@ compose up -d --wait db
 compose run --rm migrate
 compose run --rm agno-bootstrap
 compose run --rm --no-deps agent-migrate
-compose up -d --no-deps agent backup
+compose up -d --no-deps agent
 
 attempt=0
 until compose exec -T agent python -c '
@@ -142,8 +165,9 @@ request = urllib.request.Request(
 with urllib.request.urlopen(request, timeout=3) as response:
     payload = json.load(response)
     assert response.status == 200
-    assert payload.get("ready") is True
-    assert payload.get("capability") == "placeholder"
+    assert payload == {"ready": True, "capability": "placeholder"}
+    assert type(payload["ready"]) is bool
+    assert type(payload["capability"]) is str
 ' >/dev/null 2>&1; do
   attempt=$((attempt + 1))
   if [ "$attempt" -ge 30 ]; then
@@ -153,6 +177,35 @@ with urllib.request.urlopen(request, timeout=3) as response:
   sleep 1
 done
 echo "AgentOS ready: ready=true capability=placeholder"
+
+compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -c \
+  "INSERT INTO public.users (id, name, email, identity_realm, status, email_verification_status)
+   VALUES ('$platform_user_id'::uuid, 'backup restore fixture', 'backup-restore-fixture@example.invalid', 'customer', 'active', 'verified')" \
+  >/dev/null
+compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -c \
+  "INSERT INTO agno.agno_sessions (session_id, session_type, created_at)
+   VALUES ('$agno_session_id', 'agent', 0)" \
+  >/dev/null
+
+platform_user_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
+  "SELECT count(*) FROM public.users")"
+agno_session_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
+  "SELECT count(*) FROM agno.agno_sessions")"
+platform_fixture_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
+  "SELECT count(*) FROM public.users WHERE id = '$platform_user_id'::uuid")"
+agno_fixture_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
+  "SELECT count(*) FROM agno.agno_sessions WHERE session_id = '$agno_session_id'")"
+
+if [ "$platform_user_count" -le 0 ] || \
+   [ "$agno_session_count" -le 0 ] || \
+   [ "$platform_fixture_count" != "1" ] || \
+   [ "$agno_fixture_count" != "1" ]; then
+  echo "fixture setup failed" >&2
+  exit 1
+fi
+echo "Backup fixture counts: users=$platform_user_count agno_sessions=$agno_session_count"
+
+compose up -d --no-deps backup
 
 backup_volume="${project}_backup_data"
 attempt=0
@@ -174,5 +227,10 @@ docker run --rm \
   postgres:18.3-alpine3.23 sh -c \
   'dump=$(find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump" | head -n 1); test -n "$dump"; cp "$dump" /out/generated.dump; chmod 0644 /out/generated.dump'
 
-infra/docker/restore-drill.sh "$dump_dir/generated.dump"
+infra/docker/restore-drill.sh \
+  "$dump_dir/generated.dump" \
+  "$platform_user_count" \
+  "$agno_session_count" \
+  "$platform_user_id" \
+  "$agno_session_id"
 echo "AgentOS backup and restore acceptance passed"

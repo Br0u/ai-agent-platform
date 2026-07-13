@@ -40,7 +40,14 @@ pnpm dev
 ```bash
 cp .env.example .env
 # 编辑.env并替换测试密码
-docker compose up -d --build --wait db migrate agno-bootstrap agent-migrate agent web proxy backup
+docker compose build migrate agent web backup
+docker compose up -d --wait db
+docker compose run --rm migrate
+docker compose run --rm agno-bootstrap
+docker compose run --rm --no-deps agent-migrate
+docker compose up -d --no-deps --wait agent
+docker compose up -d --wait web
+docker compose up -d --wait proxy backup
 ```
 
 访问`http://localhost:8080`；健康检查为`/api/health/live`和`/api/health/ready`。

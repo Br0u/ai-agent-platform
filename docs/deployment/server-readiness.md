@@ -56,9 +56,9 @@ docker compose up -d --wait db
 docker compose run --rm migrate
 docker compose run --rm agno-bootstrap
 docker compose run --rm --no-deps agent-migrate
-docker compose up -d --no-deps agent
-docker compose up -d web
-docker compose up -d proxy backup
+docker compose up -d --no-deps --wait agent
+docker compose up -d --wait web
+docker compose up -d --wait proxy backup
 docker compose ps
 ```
 
@@ -100,7 +100,9 @@ Nginx 仅对 `/login`、`/register`、`/staff/login`、`/staff/two-factor`、`/s
 
 ```bash
 chmod +x infra/docker/restore-drill.sh
-infra/docker/restore-drill.sh /secure/path/ai-agent-platform-YYYYMMDDTHHMMSSZ.dump
+infra/docker/restore-drill.sh \
+  /secure/path/ai-agent-platform-YYYYMMDDTHHMMSSZ.dump \
+  EXPECTED_USERS EXPECTED_AGNO_SESSIONS USER_FIXTURE_ID AGNO_SESSION_FIXTURE_ID
 ```
 
 脚本创建临时数据库卷和容器，恢复后验证平台迁移历史、关键表、`agno_sessions`、`agno_schema_versions`及非敏感行数，最后删除临时资源；它不会打印消息正文或临时数据库密码。生产备份还必须异机复制、加密并设置失败告警。

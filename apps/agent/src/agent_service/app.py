@@ -89,6 +89,14 @@ def _status_response(*, ready: bool, message: str, status_code: int) -> JSONResp
     )
 
 
+def _readiness_response(*, ready: bool, status_code: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"ready": ready, "capability": "placeholder"},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 def create_app(
     settings: RuntimeSettings | None = None,
     *,
@@ -121,14 +129,12 @@ def create_app(
             database_is_ready = False
 
         if not database_is_ready:
-            return _status_response(
+            return _readiness_response(
                 ready=False,
-                message="database unavailable",
                 status_code=503,
             )
-        return _status_response(
+        return _readiness_response(
             ready=True,
-            message="service is ready",
             status_code=200,
         )
 

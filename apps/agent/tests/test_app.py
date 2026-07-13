@@ -17,7 +17,8 @@ from agent_service.database import build_database
 DATABASE_URL = "postgresql+psycopg_async://runtime:private-password@db:5432/platform"
 SECURITY_KEY = "internal-security-key"
 AUTHORIZATION = {"Authorization": f"Bearer {SECURITY_KEY}"}
-SAFE_KEYS = {"live", "ready", "capability", "message"}
+LIVE_SAFE_KEYS = {"live", "ready", "capability", "message"}
+READY_SAFE_KEYS = {"ready", "capability"}
 Probe = Callable[[AsyncPostgresDb], Awaitable[bool]]
 
 
@@ -104,7 +105,7 @@ def test_live_is_independent_of_database_and_not_cached(
         "capability": "placeholder",
         "message": "service is live",
     }
-    assert set(response.json()) == SAFE_KEYS
+    assert set(response.json()) == LIVE_SAFE_KEYS
     assert calls == 0
 
 
@@ -128,12 +129,11 @@ def test_ready_returns_safe_503_when_database_is_unavailable(
     assert response.status_code == 503
     assert response.headers["cache-control"] == "no-store"
     assert response.json() == {
-        "live": True,
         "ready": False,
         "capability": "placeholder",
-        "message": "database unavailable",
     }
-    assert set(response.json()) == SAFE_KEYS
+    assert response.json()["ready"] is False
+    assert set(response.json()) == READY_SAFE_KEYS
     assert seen_databases == [database]
 
 
@@ -150,11 +150,10 @@ def test_ready_converts_probe_exceptions_to_safe_503(
 
     assert response.status_code == 503
     assert response.json() == {
-        "live": True,
         "ready": False,
         "capability": "placeholder",
-        "message": "database unavailable",
     }
+    assert response.json()["ready"] is False
     assert DATABASE_URL not in response.text
     assert SECURITY_KEY not in response.text
 
@@ -170,12 +169,11 @@ def test_ready_can_be_true_while_capability_remains_placeholder(
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert response.json() == {
-        "live": True,
         "ready": True,
         "capability": "placeholder",
-        "message": "service is ready",
     }
-    assert set(response.json()) == SAFE_KEYS
+    assert response.json()["ready"] is True
+    assert set(response.json()) == READY_SAFE_KEYS
 
 
 def test_agentos_receives_exact_model_free_composition_and_same_database(

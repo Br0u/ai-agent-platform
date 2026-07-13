@@ -3,6 +3,7 @@ import {
   chmodSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -666,22 +667,27 @@ describe("production deployment security contracts", () => {
 
   it("starts every production service in documented dependency order", () => {
     const runbook = read("docs/deployment/server-readiness.md");
+    const rootReadme = read("README.md");
     const orderedCommands = [
       "docker compose up -d --wait db",
       "docker compose run --rm migrate",
       "docker compose run --rm agno-bootstrap",
       "docker compose run --rm --no-deps agent-migrate",
-      "docker compose up -d --no-deps agent",
-      "docker compose up -d web",
-      "docker compose up -d proxy backup",
+      "docker compose up -d --no-deps --wait agent",
+      "docker compose up -d --wait web",
+      "docker compose up -d --wait proxy backup",
     ];
     for (const command of orderedCommands) {
       expect(runbook).toContain(command);
+      expect(rootReadme).toContain(command);
     }
     for (const [previous, next] of orderedCommands
       .slice(0, -1)
       .map((command, index) => [command, orderedCommands[index + 1]] as const)) {
       expect(runbook.indexOf(previous)).toBeLessThan(runbook.indexOf(next));
+      expect(rootReadme.indexOf(previous)).toBeLessThan(
+        rootReadme.indexOf(next),
+      );
     }
     expect(runbook).toContain(
       "db → migrate → agno-bootstrap → agent-migrate → agent → web → proxy/backup",
@@ -691,7 +697,6 @@ describe("production deployment security contracts", () => {
     expect(runbook).not.toContain("后续服务按`service_healthy`顺序启动");
 
     for (const file of [
-      "README.md",
       "docs/superpowers/plans/2026-07-10-project-foundation.md",
       "docs/superpowers/plans/2026-07-11-identity-access-control.md",
     ]) {
@@ -842,6 +847,18 @@ describe("production deployment security contracts", () => {
     );
     expect(script).toContain("agno_session_count");
     expect(script).toContain("agno_schema_version_count");
+    expect(script).toContain("expected_user_count");
+    expect(script).toContain("expected_agno_session_count");
+    expect(script).toContain("expected_user_id");
+    expect(script).toContain("expected_agno_session_id");
+    expect(script).toContain('[ "$user_count" -le 0 ]');
+    expect(script).toContain('[ "$agno_session_count" -le 0 ]');
+    expect(script).toContain('[ "$user_count" != "$expected_user_count" ]');
+    expect(script).toContain(
+      '[ "$agno_session_count" != "$expected_agno_session_count" ]',
+    );
+    expect(script).toContain("restored_user_fixture_count");
+    expect(script).toContain("restored_agno_session_fixture_count");
     expect(script).not.toMatch(/SELECT\s+(?:message|messages|content|runs?)/iu);
     expect(script).not.toContain('[ "$migration_count" -lt 1 ]');
   });
@@ -871,8 +888,8 @@ describe("production deployment security contracts", () => {
     expect(runbook).toMatch(
       /停止[^\n]*agent[\s\S]*恢复[^\n]*dump[\s\S]*agent-migrate[\s\S]*ready[\s\S]*重启[^\n]*web/iu,
     );
-    expect(rootReadme).toContain(
-      "db migrate agno-bootstrap agent-migrate agent web proxy backup",
+    expect(rootReadme).not.toContain(
+      "docker compose up -d --build --wait db migrate agno-bootstrap agent-migrate agent web proxy backup",
     );
   });
 
@@ -884,6 +901,9 @@ describe("production deployment security contracts", () => {
     expect(script).toContain("trap cleanup EXIT");
     expect(script).toContain("trap 'on_signal 130' INT");
     expect(script).toContain("trap 'on_signal 143' TERM");
+    expect(script.indexOf("trap cleanup EXIT")).toBeLessThan(
+      script.indexOf("mktemp"),
+    );
     expect(script).toContain('chmod 600 "$env_file"');
     expect(script).toContain('stat -f %Lp "$env_file"');
     expect(script).toContain('stat -c %a "$env_file"');
@@ -892,17 +912,61 @@ describe("production deployment security contracts", () => {
     expect(script).toMatch(/build[^\n]*migrate[^\n]*agent[^\n]*backup/u);
     expect(script).toContain("run --rm agno-bootstrap");
     expect(script).toContain("run --rm --no-deps agent-migrate");
-    expect(script).toContain("up -d --no-deps agent backup");
+    expect(script).toContain("up -d --no-deps agent");
+    expect(script).toContain("up -d --no-deps backup");
     expect(script).toContain("http://127.0.0.1:7777/internal/health/ready");
     expect(script).toContain("/run/secrets/os_security_key");
     expect(script).toContain("30");
-    expect(script).toContain('payload.get("ready") is True');
-    expect(script).toContain('payload.get("capability") == "placeholder"');
+    expect(script).toContain(
+      'payload == {"ready": True, "capability": "placeholder"}',
+    );
+    expect(script).toContain('type(payload["ready"]) is bool');
+    expect(script).toContain('type(payload["capability"]) is str');
+    expect(script).not.toContain('payload.get("ready")');
     expect(script).not.toMatch(/ports?:[^\n]*7777/u);
     expect(script).toContain("backup_data");
     expect(script).toContain("postgres:18.3-alpine3.23");
     expect(script).toContain("mktemp -d");
     expect(script).toContain("infra/docker/restore-drill.sh");
+    expect(script).toContain("INSERT INTO public.users");
+    expect(script).toContain("INSERT INTO agno.agno_sessions");
+    expect(script).toContain("platform_user_count");
+    expect(script).toContain("agno_session_count");
+    expect(script).toContain("AAP_AGENTOS_RESTORE_TEST_FAIL_AFTER_TEMP");
+  });
+
+  it("cleans temporary paths on a controlled failure immediately after allocation", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "agentos-restore-cleanup-"));
+    const runner = path.join(
+      root,
+      "docs/testing/run-agentos-backup-restore.sh",
+    );
+    const envPrefix = ".env.agentos-backup-restore.";
+    const before = readdirSync(root).filter((entry) =>
+      entry.startsWith(envPrefix),
+    );
+
+    try {
+      const failed = spawnSync("sh", [runner], {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${sandbox}:/usr/bin:/bin`,
+          TMPDIR: sandbox,
+          AAP_AGENTOS_RESTORE_TEST_FAIL_AFTER_TEMP: "true",
+        },
+      });
+      expect(failed.status).toBe(86);
+      expect(failed.stdout).not.toMatch(/password|secret|DATABASE_URL/iu);
+      expect(failed.stderr).not.toMatch(/password|secret|DATABASE_URL/iu);
+      expect(
+        readdirSync(root).filter((entry) => entry.startsWith(envPrefix)),
+      ).toEqual(before);
+      expect(readdirSync(sandbox)).toEqual([]);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
   });
 
   it("uses host webServer only when BASE_URL is absent", () => {

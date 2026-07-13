@@ -3,10 +3,38 @@
 set -eu
 
 backup_file="${1:-}"
+expected_user_count="${2:-}"
+expected_agno_session_count="${3:-}"
+expected_user_id="${4:-}"
+expected_agno_session_id="${5:-}"
 if [ -z "$backup_file" ] || [ ! -f "$backup_file" ]; then
-  echo "usage: $0 /absolute/path/to/ai-agent-platform-*.dump" >&2
+  echo "usage: $0 DUMP EXPECTED_USERS EXPECTED_AGNO_SESSIONS USER_FIXTURE_ID AGNO_SESSION_FIXTURE_ID" >&2
   exit 64
 fi
+for expected_count in "$expected_user_count" "$expected_agno_session_count"; do
+  case "$expected_count" in
+    ''|*[!0-9]*)
+      echo "expected restored counts must be positive integers" >&2
+      exit 64
+      ;;
+  esac
+  if [ "$expected_count" -le 0 ]; then
+    echo "expected restored counts must be positive integers" >&2
+    exit 64
+  fi
+done
+case "$expected_user_id" in
+  ''|*[!0-9A-Fa-f-]*)
+    echo "user fixture id is invalid" >&2
+    exit 64
+    ;;
+esac
+case "$expected_agno_session_id" in
+  ''|*[!A-Za-z0-9._-]*)
+    echo "Agno session fixture id is invalid" >&2
+    exit 64
+    ;;
+esac
 
 case "$backup_file" in
   /*) ;;
@@ -73,13 +101,23 @@ agno_session_count="$(docker exec "$container" psql -U "$owner" -d "$database" -
   "SELECT count(*) FROM agno.agno_sessions")"
 agno_schema_version_count="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \
   "SELECT count(*) FROM agno.agno_schema_versions")"
+restored_user_fixture_count="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \
+  "SELECT count(*) FROM public.users WHERE id = '$expected_user_id'::uuid")"
+restored_agno_session_fixture_count="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \
+  "SELECT count(*) FROM agno.agno_sessions WHERE session_id = '$expected_agno_session_id'")"
 
 if [ "$migration_count" != "$expected_migrations" ] || \
    [ "$latest_migration" != "$expected_latest_migration" ] || \
    [ "$schema_contract" != "t" ] || \
-   [ "$agno_schema_version_count" -lt 1 ]; then
+   [ "$agno_schema_version_count" -lt 1 ] || \
+   [ "$user_count" -le 0 ] || \
+   [ "$agno_session_count" -le 0 ] || \
+   [ "$user_count" != "$expected_user_count" ] || \
+   [ "$agno_session_count" != "$expected_agno_session_count" ] || \
+   [ "$restored_user_fixture_count" != "1" ] || \
+   [ "$restored_agno_session_fixture_count" != "1" ]; then
   echo "restore drill failed critical table checks" >&2
   exit 1
 fi
 
-echo "restore drill passed: migrations=$migration_count latest=$latest_migration users=$user_count agno_sessions=$agno_session_count agno_schema_versions=$agno_schema_version_count"
+echo "restore drill passed: migrations=$migration_count latest=$latest_migration users=$user_count user_fixture_id=$expected_user_id agno_sessions=$agno_session_count agno_session_fixture_id=$expected_agno_session_id agno_schema_versions=$agno_schema_version_count"
