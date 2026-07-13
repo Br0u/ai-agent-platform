@@ -231,6 +231,16 @@
   background: var(--color-primary);
 }
 
+.assistant-panel__full-chat {
+  display: grid;
+  min-height: 44px;
+  margin: 0 16px 8px;
+  place-items: center;
+  color: var(--color-surface);
+  background: var(--color-primary);
+  text-decoration: none;
+}
+
 .assistant-panel__fallbacks {
   display: grid;
   grid-template-columns: 1fr 1fr;

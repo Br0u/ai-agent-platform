@@ -137,6 +137,25 @@ describe("production deployment security contracts", () => {
     expect(backupImage).toContain("ENTRYPOINT");
   });
 
+  it("keeps the non-root migrator workspace writable and local env files out of Docker", () => {
+    const dockerfile = read("apps/web/Dockerfile");
+    const migrator = dockerfile
+      .split("FROM dependencies AS migrator")[1]
+      ?.split("FROM base AS builder")[0];
+    expect(migrator).toBeDefined();
+    expect(migrator).toContain("ENV PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false");
+    expect(migrator).toContain("RUN chown node:node /app");
+    expect(migrator).toContain("USER node");
+    expect(migrator?.indexOf("RUN chown node:node /app")).toBeLessThan(
+      migrator?.indexOf("USER node") ?? -1,
+    );
+
+    const dockerIgnore = read(".dockerignore");
+    expect(dockerIgnore).toContain("**/.env");
+    expect(dockerIgnore).toContain("**/.env.*");
+    expect(dockerIgnore).toContain("!**/.env.example");
+  });
+
   it("rejects unknown hosts before forwarding and preserves approved Host ports", () => {
     const nginx = read("infra/nginx/default.conf.template");
     const compose = read("compose.yaml");

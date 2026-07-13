@@ -137,6 +137,14 @@ export function AssistantPanel({ session, onClose }: AssistantPanelProps) {
         </p>
       </form>
 
+      <Link
+        className="assistant-panel__full-chat"
+        href="/assistant"
+        onClick={onClose}
+      >
+        打开完整 AI 助理
+      </Link>
+
       <nav aria-label="其他服务" className="assistant-panel__fallbacks">
         <Link href="/help">帮助中心</Link>
         <Link href="/contact">商务咨询</Link>

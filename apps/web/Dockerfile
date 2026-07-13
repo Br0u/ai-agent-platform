@@ -23,8 +23,12 @@ RUN pnpm install --frozen-lockfile
 
 FROM dependencies AS migrator
 
+ENV PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false
+
 COPY --chown=node:node packages/database ./packages/database
 COPY --chown=node:node infra/postgres/02-runtime-grants.sql ./infra/postgres/02-runtime-grants.sql
+
+RUN chown node:node /app /app/packages/database
 
 WORKDIR /app/packages/database
 

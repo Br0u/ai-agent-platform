@@ -63,6 +63,9 @@ describe("AssistantWidget", () => {
       "/contact",
     );
     expect(
+      screen.getByRole("link", { name: "打开完整 AI 助理" }),
+    ).toHaveAttribute("href", "/assistant");
+    expect(
       screen.getByRole("textbox", { name: "向 M 助手提问" }),
     ).toHaveFocus();
   });

@@ -1,0 +1,8 @@
+services:
+  migrate:
+    env_file:
+      - .env.e2e
+
+  web:
+    env_file:
+      - .env.e2e
