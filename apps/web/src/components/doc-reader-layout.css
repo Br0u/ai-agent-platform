@@ -44,7 +44,9 @@
   color: var(--color-muted);
   font-size: 13px;
   background: var(--color-canvas);
-  transition: border-color 0.2s, background 0.2s;
+  transition:
+    border-color 0.2s,
+    background 0.2s;
   cursor: text;
 }
 
@@ -197,7 +199,9 @@
   font-size: 13px;
   color: var(--color-muted);
   text-decoration: none;
-  transition: background 0.1s, color 0.1s;
+  transition:
+    background 0.1s,
+    color 0.1s;
   border-radius: 4px;
   margin-bottom: 2px;
 }
@@ -474,7 +478,7 @@
   .doc-reader__sidebar {
     display: none;
   }
-  
+
   .doc-reader__header {
     padding: var(--space-10) var(--space-6);
   }

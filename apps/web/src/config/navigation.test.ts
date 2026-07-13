@@ -537,9 +537,7 @@ describe("navigation targets", () => {
       "/releases": [
         { id: "release-notes", label: "Release Note", status: undefined },
       ],
-      "/docs": [
-        { id: "features", label: "功能手册", status: "scaffold" },
-      ],
+      "/docs": [{ id: "features", label: "功能手册", status: "scaffold" }],
       "/downloads": [
         { id: "latest", label: "最新版本", status: "placeholder" },
         {

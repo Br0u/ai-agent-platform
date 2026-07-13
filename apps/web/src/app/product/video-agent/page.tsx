@@ -24,7 +24,13 @@ export default function VideoAgentPage() {
           <div className="va-grid-lines"></div>
         </div>
         <div className="va-container va-hero__content">
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: "32px" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              marginBottom: "32px",
+            }}
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/logo.png" alt="华鲲元启" style={{ height: "40px" }} />
           </div>
@@ -43,16 +49,20 @@ export default function VideoAgentPage() {
           <div className="va-vs-container">
             {/* 左侧：传统小模型 */}
             <div className="va-vs-card va-vs-card--trad">
-              <h2 className="va-vs-card__title">{vsComparison.traditional.title}</h2>
+              <h2 className="va-vs-card__title">
+                {vsComparison.traditional.title}
+              </h2>
               <ul className="va-vs-list">
-                {vsComparison.traditional.items.map(item => (
+                {vsComparison.traditional.items.map((item) => (
                   <li key={item.label}>
                     <span className="va-vs-label">{item.label}:</span>
                     <span className="va-vs-desc">{item.desc}</span>
                   </li>
                 ))}
               </ul>
-              <div className="va-vs-footer">{vsComparison.traditional.footer}</div>
+              <div className="va-vs-footer">
+                {vsComparison.traditional.footer}
+              </div>
             </div>
 
             {/* 中间超大 VS */}
@@ -60,16 +70,20 @@ export default function VideoAgentPage() {
 
             {/* 右侧：视觉大模型 */}
             <div className="va-vs-card va-vs-card--ai">
-              <h2 className="va-vs-card__title">{vsComparison.largeModel.title}</h2>
+              <h2 className="va-vs-card__title">
+                {vsComparison.largeModel.title}
+              </h2>
               <ul className="va-vs-list">
-                {vsComparison.largeModel.items.map(item => (
+                {vsComparison.largeModel.items.map((item) => (
                   <li key={item.label}>
                     <span className="va-vs-label">{item.label}:</span>
                     <span className="va-vs-desc">{item.desc}</span>
                   </li>
                 ))}
               </ul>
-              <div className="va-vs-footer">{vsComparison.largeModel.footer}</div>
+              <div className="va-vs-footer">
+                {vsComparison.largeModel.footer}
+              </div>
             </div>
           </div>
         </div>
@@ -101,7 +115,7 @@ export default function VideoAgentPage() {
             <h2>应用场景</h2>
           </div>
           <div className="va-scenarios-grid">
-            {applicationScenarios.map(scenario => (
+            {applicationScenarios.map((scenario) => (
               <div className="va-scenario-tag" key={scenario}>
                 <span className="va-scenario-dot"></span>
                 {scenario}
@@ -117,12 +131,12 @@ export default function VideoAgentPage() {
           <div className="va-section-header">
             <h2>一体机典型配置</h2>
           </div>
-          
+
           <div className="va-hw-panel">
             <div className="va-hw-overview">
               <h3 className="va-hw-name">{hardwareConfig.modelName}</h3>
               <p className="va-hw-sub">{hardwareConfig.coreComponents}</p>
-              
+
               {/* CSS 手工绘制 2U 服务器带指示灯 */}
               <div className="va-server-mockup">
                 <div className="va-server-chassis">
@@ -165,7 +179,6 @@ export default function VideoAgentPage() {
               </table>
             </div>
           </div>
-
         </div>
       </section>
     </main>

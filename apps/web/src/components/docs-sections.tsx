@@ -21,8 +21,8 @@ export function DocsHero() {
         <span>文档中心</span>
       </h1>
       <p className="docs-hero__subtitle">
-        基于 Nextra 构建的企业级技术文档平台，支持多版本管理、全文检索、
-        Mermaid 架构图、OpenAPI 接口渲染与 PDF 导出，为您的团队提供一站式知识查阅体验。
+        基于 Nextra 构建的企业级技术文档平台，支持多版本管理、全文检索、 Mermaid
+        架构图、OpenAPI 接口渲染与 PDF 导出，为您的团队提供一站式知识查阅体验。
       </p>
       <div className="docs-hero__search" role="searchbox" tabIndex={0}>
         <span className="docs-hero__search-icon" aria-hidden="true">
@@ -103,9 +103,7 @@ export function DocsLayoutPreview() {
                 {f}
               </div>
             ))}
-            <div className="docs-wireframe__top-search">
-              🔍 搜索文档...
-            </div>
+            <div className="docs-wireframe__top-search">🔍 搜索文档...</div>
           </div>
 
           {/* 左侧导航 */}

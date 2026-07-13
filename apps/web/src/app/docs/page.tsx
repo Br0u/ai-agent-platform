@@ -12,7 +12,6 @@ export const metadata: Metadata = {
 export default function DocsPage() {
   return (
     <DocReaderLayout>
-
       <h2 className="doc-section-title">由浅入深，开始使用平台</h2>
       <p className="doc-section-desc">
         手把手教你快速上手核心产品，助你轻松开启 AI 智能体之旅。
@@ -30,7 +29,7 @@ export default function DocsPage() {
           if (cat.code === "D5") slug = "api";
           if (cat.code === "D6") slug = "hardware";
           if (cat.code === "D7") slug = "faq";
-          
+
           return (
             <a href={`/docs/${slug}`} key={i} className="doc-card">
               <div className="doc-card__icon">

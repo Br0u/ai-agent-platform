@@ -35,10 +35,16 @@ export function ProductHero() {
             以异构算力智能调度为底座，把模型仓库、知识工程、流程编排、训练、推理与评估连接为一套企业级开发体系。面向企业私有化场景，让智能体开发像搭积木一样简单。
           </p>
           <div className="product-hero__actions">
-            <Link className="product-action product-action--primary" href="/docs">
+            <Link
+              className="product-action product-action--primary"
+              href="/docs"
+            >
               阅读文档
             </Link>
-            <Link className="product-action product-action--outline" href="/contact">
+            <Link
+              className="product-action product-action--outline"
+              href="/contact"
+            >
               联系商务
             </Link>
           </div>
@@ -74,7 +80,9 @@ export function ProductCapabilityRail() {
       <div className="product-frame product-capability-rail">
         {productCapabilities.map((capability, index) => (
           <div className="product-capability" key={capability}>
-            <span className="product-capability__num">{String(index + 1).padStart(2, "0")}</span>
+            <span className="product-capability__num">
+              {String(index + 1).padStart(2, "0")}
+            </span>
             <strong className="product-capability__text">{capability}</strong>
           </div>
         ))}
@@ -85,25 +93,37 @@ export function ProductCapabilityRail() {
 
 /* ========== S3: 纯 CSS 华鲲振宇AI全栈解决方案全景图 ========== */
 export function ProductArchitecture() {
-  const { apps, aiDev, skills, coding, modelEngineering, modelManagement, computeIntegration, hardware } = fullStackArchitecture;
+  const {
+    apps,
+    aiDev,
+    skills,
+    coding,
+    modelEngineering,
+    modelManagement,
+    computeIntegration,
+    hardware,
+  } = fullStackArchitecture;
 
   return (
     <section className="product-section" id="architecture">
       <div className="product-frame">
         <header className="product-section-head text-center">
-          <h2 className="product-section-title">华鲲振宇AI全栈解决方案全景图</h2>
+          <h2 className="product-section-title">
+            华鲲振宇AI全栈解决方案全景图
+          </h2>
         </header>
-        
+
         {/* CSS 架构大图容器 */}
         <div className="hk-arch-diagram">
-          
           {/* L1: 智能应用广场 */}
           <div className="hk-arch-layer hk-arch-apps">
             <div className="hk-arch-box hk-arch-box--accent">
               <strong>{apps.title}</strong>
             </div>
-            {apps.items.map(item => (
-              <div key={item} className="hk-arch-box">{item}</div>
+            {apps.items.map((item) => (
+              <div key={item} className="hk-arch-box">
+                {item}
+              </div>
             ))}
           </div>
 
@@ -118,10 +138,14 @@ export function ProductArchitecture() {
               <div className="hk-arch-dev-main__content">
                 <div className="hk-arch-dev-title">{aiDev.title}</div>
                 <div className="hk-arch-dev-grid">
-                  {aiDev.categories.map(cat => (
+                  {aiDev.categories.map((cat) => (
                     <div key={cat.name} className="hk-arch-dev-col">
                       <div className="hk-arch-box-title">{cat.name}</div>
-                      {cat.items.map(i => <div key={i} className="hk-arch-box-sm">{i}</div>)}
+                      {cat.items.map((i) => (
+                        <div key={i} className="hk-arch-box-sm">
+                          {i}
+                        </div>
+                      ))}
                     </div>
                   ))}
                 </div>
@@ -134,14 +158,22 @@ export function ProductArchitecture() {
               <div className="hk-arch-dev-side__block">
                 <div className="hk-arch-dev-title">{skills.title}</div>
                 <div className="hk-arch-dev-side-grid">
-                  {skills.items.map(i => <div key={i} className="hk-arch-box-sm">{i}</div>)}
+                  {skills.items.map((i) => (
+                    <div key={i} className="hk-arch-box-sm">
+                      {i}
+                    </div>
+                  ))}
                 </div>
               </div>
               {/* 智能编程中心 */}
               <div className="hk-arch-dev-side__block">
                 <div className="hk-arch-dev-title">{coding.title}</div>
                 <div className="hk-arch-dev-side-grid">
-                  {coding.items.map(i => <div key={i} className="hk-arch-box-sm">{i}</div>)}
+                  {coding.items.map((i) => (
+                    <div key={i} className="hk-arch-box-sm">
+                      {i}
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -151,7 +183,11 @@ export function ProductArchitecture() {
           <div className="hk-arch-layer hk-arch-model-eng">
             <div className="hk-arch-dev-title">{modelEngineering.title}</div>
             <div className="hk-arch-model-eng-grid">
-              {modelEngineering.items.map(i => <div key={i} className="hk-arch-box-sm">{i}</div>)}
+              {modelEngineering.items.map((i) => (
+                <div key={i} className="hk-arch-box-sm">
+                  {i}
+                </div>
+              ))}
             </div>
           </div>
 
@@ -159,7 +195,7 @@ export function ProductArchitecture() {
           <div className="hk-arch-layer hk-arch-model-mgt">
             <div className="hk-arch-layer-title">{modelManagement.title}</div>
             <div className="hk-arch-model-mgt-grid">
-              {modelManagement.models.map(m => (
+              {modelManagement.models.map((m) => (
                 <div key={m.name} className="hk-arch-model-item">
                   <span className={`hk-arch-logo ${m.logo}`}></span>
                   <span className="hk-arch-model-name">{m.name}</span>
@@ -171,9 +207,15 @@ export function ProductArchitecture() {
 
           {/* L5: 算力融合平台 */}
           <div className="hk-arch-layer hk-arch-compute">
-            <div className="hk-arch-layer-title">{computeIntegration.title}</div>
+            <div className="hk-arch-layer-title">
+              {computeIntegration.title}
+            </div>
             <div className="hk-arch-compute-grid">
-              {computeIntegration.items.map(i => <div key={i} className="hk-arch-box-fill">{i}</div>)}
+              {computeIntegration.items.map((i) => (
+                <div key={i} className="hk-arch-box-fill">
+                  {i}
+                </div>
+              ))}
             </div>
           </div>
 
@@ -181,7 +223,7 @@ export function ProductArchitecture() {
           <div className="hk-arch-layer hk-arch-hardware">
             <div className="hk-arch-layer-title">{hardware.title}</div>
             <div className="hk-arch-hardware-grid">
-              {hardware.items.map(h => (
+              {hardware.items.map((h) => (
                 <div key={h.name} className="hk-arch-hw-box">
                   <div className="hk-arch-hw-icon"></div>
                   <strong>{h.name}</strong>
@@ -190,7 +232,6 @@ export function ProductArchitecture() {
               ))}
             </div>
           </div>
-
         </div>
       </div>
     </section>
@@ -248,7 +289,7 @@ export function OfficeAgents() {
                 <span className="product-agent-card__model">{agent.model}</span>
               </div>
               <p className="product-agent-card__desc">{agent.description}</p>
-              
+
               <div className="product-agent-card__caps">
                 <strong>核心能力</strong>
                 <ul>
@@ -307,7 +348,9 @@ export function IndustrySolutions() {
             <article className="product-industry-card" key={solution.code}>
               <div className="product-industry-card__icon">{solution.icon}</div>
               <h3 className="product-industry-card__title">{solution.title}</h3>
-              <p className="product-industry-card__desc">{solution.description}</p>
+              <p className="product-industry-card__desc">
+                {solution.description}
+              </p>
             </article>
           ))}
         </div>
@@ -346,10 +389,22 @@ export function ProductCTA() {
   return (
     <section className="product-cta">
       <div className="product-frame product-cta__content">
-        <h2 className="product-cta__title">把企业数据、算力与 AI 应用，留在可控边界内</h2>
+        <h2 className="product-cta__title">
+          把企业数据、算力与 AI 应用，留在可控边界内
+        </h2>
         <div className="product-hero__actions justify-center mt-8">
-          <Link className="product-action product-action--primary" href="/contact">联系商务</Link>
-          <Link className="product-action product-action--outline bg-white" href="/docs">查看部署文档</Link>
+          <Link
+            className="product-action product-action--primary"
+            href="/contact"
+          >
+            联系商务
+          </Link>
+          <Link
+            className="product-action product-action--outline bg-white"
+            href="/docs"
+          >
+            查看部署文档
+          </Link>
         </div>
       </div>
     </section>

@@ -16,14 +16,27 @@ type ExtendedModuleData = ModuleData & {
 export function ModuleDetailPage({ moduleData }: { moduleData: ModuleData }) {
   const extendedData = moduleData as ExtendedModuleData;
   // 辅助函数：根据能力生成一些“形容词”标题，模拟 PAI 的“功能全面、性能更高”等
-  const featureTitles = ["功能全面", "性能更高", "稳定可靠", "简单易用", "安全合规", "弹性扩容"];
-  
+  const featureTitles = [
+    "功能全面",
+    "性能更高",
+    "稳定可靠",
+    "简单易用",
+    "安全合规",
+    "弹性扩容",
+  ];
+
   return (
     <article className="module-detail">
       {/* 1. Hero Section (复刻图2 PAI Header) */}
       <header className="module-hero-pai">
         <div className="module-hero-pai__content">
-          <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: "24px" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-start",
+              marginBottom: "24px",
+            }}
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/logo.png" alt="华鲲元启" style={{ height: "40px" }} />
           </div>
@@ -35,7 +48,7 @@ export function ModuleDetailPage({ moduleData }: { moduleData: ModuleData }) {
             最新支持国产化适配与全栈私有化部署，构建更安全的智能体
           </h2>
           <p className="module-hero-pai__desc">{moduleData.description}</p>
-          
+
           <div className="module-hero-pai__actions">
             <button className="pai-btn pai-btn--primary">立即购买</button>
             <button className="pai-btn pai-btn--outline">免费试用</button>
@@ -54,7 +67,8 @@ export function ModuleDetailPage({ moduleData }: { moduleData: ModuleData }) {
                     {featureTitles[i % featureTitles.length]}
                   </h3>
                   <p className="pai-feature-card__desc">
-                    通过 {moduleData.name} 提供 {cap} 的核心能力，深度优化企业级 AI 任务的处理效率与响应速度，满足全场景需求。
+                    通过 {moduleData.name} 提供 {cap} 的核心能力，深度优化企业级
+                    AI 任务的处理效率与响应速度，满足全场景需求。
                   </p>
                 </div>
               ))}
@@ -77,7 +91,8 @@ export function ModuleDetailPage({ moduleData }: { moduleData: ModuleData }) {
                   </div>
                   <h3 className="pai-news-card__title">{doc.title} 上线</h3>
                   <p className="pai-news-card__desc">
-                    {moduleData.name} 最新发布了 {doc.title} 功能，涵盖多种部署架构下的性能调优、运维管理与开发环境适配，满足企业级场景需求。
+                    {moduleData.name} 最新发布了 {doc.title}{" "}
+                    功能，涵盖多种部署架构下的性能调优、运维管理与开发环境适配，满足企业级场景需求。
                   </p>
                 </Link>
               ))}
@@ -91,7 +106,11 @@ export function ModuleDetailPage({ moduleData }: { moduleData: ModuleData }) {
         <div className="pai-container">
           <h2 className="pai-section__title">产品简介</h2>
           <p className="pai-intro__desc">
-            {moduleData.title} ({moduleData.name}) 是面向开发者和企业的人工智能平台，提供包含模型构建、推理优化在内的 AI 开发全链路服务，内置多种行业场景插件，为用户提供低门槛、高性能的云原生 AI 工程化能力。
+            {moduleData.title} ({moduleData.name})
+            是面向开发者和企业的人工智能平台，提供包含模型构建、推理优化在内的
+            AI
+            开发全链路服务，内置多种行业场景插件，为用户提供低门槛、高性能的云原生
+            AI 工程化能力。
           </p>
           <div className="pai-intro__architecture">
             {/* 用 CSS 绘制的高级架构图骨架屏 */}
@@ -99,7 +118,10 @@ export function ModuleDetailPage({ moduleData }: { moduleData: ModuleData }) {
               <div className="pai-arch-mock__layer pai-arch-mock__layer--top">
                 <span>场景化解决方案 (Scenario-specific Solutions)</span>
                 <div className="pai-arch-mock__boxes">
-                  <div>AI Agent</div><div>自动驾驶</div><div>具身智能</div><div>金融风控</div>
+                  <div>AI Agent</div>
+                  <div>自动驾驶</div>
+                  <div>具身智能</div>
+                  <div>金融风控</div>
                 </div>
               </div>
               <div className="pai-arch-mock__layer pai-arch-mock__layer--mid">
@@ -121,17 +143,23 @@ export function ModuleDetailPage({ moduleData }: { moduleData: ModuleData }) {
       </section>
 
       {/* 5. 产品优势 (左右交替排版) */}
-      {(((extendedData.scenarios?.length ?? 0) > 0) || ((extendedData.guide?.length ?? 0) > 0)) && (
+      {((extendedData.scenarios?.length ?? 0) > 0 ||
+        (extendedData.guide?.length ?? 0) > 0) && (
         <section className="pai-section pai-advantages">
           <div className="pai-container">
             <h2 className="pai-section__title">产品优势</h2>
             <p className="pai-advantages__subtitle">
-              通过 {moduleData.name}，零代码快速实现模型集成、评测、部署的全方位服务，给您带来更快、更高效、更便捷的 AI 应用体验。
+              通过 {moduleData.name}
+              ，零代码快速实现模型集成、评测、部署的全方位服务，给您带来更快、更高效、更便捷的
+              AI 应用体验。
             </p>
-            
+
             <div className="pai-adv-list">
               {/* 合并 scenarios 和 guide 作为优势条目 */}
-              {[...(extendedData.scenarios || []), ...(extendedData.guide?.map((g) => g.description) || [])].map((item, i) => (
+              {[
+                ...(extendedData.scenarios || []),
+                ...(extendedData.guide?.map((g) => g.description) || []),
+              ].map((item, i) => (
                 <div key={i} className="pai-adv-item">
                   <div className="pai-adv-item__image">
                     {/* CSS 模拟的控制台截图骨架屏 */}
@@ -153,12 +181,14 @@ export function ModuleDetailPage({ moduleData }: { moduleData: ModuleData }) {
                   </div>
                   <div className="pai-adv-item__text">
                     <h3 className="pai-adv-item__title">
-                      {extendedData.guide && extendedData.guide[i] ? extendedData.guide[i].step : "企业级 AI 核心场景突破"}
+                      {extendedData.guide && extendedData.guide[i]
+                        ? extendedData.guide[i].step
+                        : "企业级 AI 核心场景突破"}
                     </h3>
-                    <p className="pai-adv-item__desc">
-                      {item}
-                    </p>
-                    <Link href="/docs" className="pai-adv-item__link">查看更多 &gt;</Link>
+                    <p className="pai-adv-item__desc">{item}</p>
+                    <Link href="/docs" className="pai-adv-item__link">
+                      查看更多 &gt;
+                    </Link>
                   </div>
                 </div>
               ))}

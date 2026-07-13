@@ -11,7 +11,9 @@ import {
 describe("ScaffoldAnchorIndex", () => {
   it("renders a semantic directory and real targets for scaffold sections", () => {
     const { container } = render(
-      <ScaffoldAnchorIndex anchors={navigationAnchorsForPath("/compatibility")} />,
+      <ScaffoldAnchorIndex
+        anchors={navigationAnchorsForPath("/compatibility")}
+      />,
     );
 
     const directory = screen.getByRole("navigation", { name: "页面目录" });

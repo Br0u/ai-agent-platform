@@ -21,14 +21,23 @@ export default function HCIPage() {
       <section className="hci-hero">
         <div className="hci-container">
           <div className="hci-hero__header">
-            <div style={{ display: "flex", justifyContent: "center", marginBottom: "32px" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                marginBottom: "32px",
+              }}
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/logo.png" alt="华鲲元启" style={{ height: "40px" }} />
             </div>
             <span className="hci-hero__kicker">{hciIntro.kicker}</span>
             <h1 className="hci-hero__title">
               {hciIntro.title.split("\n").map((line, i) => (
-                <span key={i}>{line}<br /></span>
+                <span key={i}>
+                  {line}
+                  <br />
+                </span>
               ))}
             </h1>
           </div>
@@ -38,7 +47,7 @@ export default function HCIPage() {
               <h2>{hciIntro.slogan}</h2>
               <p>{hciIntro.description}</p>
             </div>
-            
+
             {/* CSS 手绘：传统 IT 架构 VS 超融合架构 */}
             <div className="hci-arch-compare">
               {/* 传统 IT */}
@@ -54,8 +63,12 @@ export default function HCIPage() {
                 <div className="hci-arch-node hci-arch-sw">FC交换机</div>
                 <div className="hci-arch-lines-bot"></div>
                 <div className="hci-arch-row">
-                  <div className="hci-arch-node hci-arch-st">集中式存储阵列</div>
-                  <div className="hci-arch-node hci-arch-st">集中式存储阵列</div>
+                  <div className="hci-arch-node hci-arch-st">
+                    集中式存储阵列
+                  </div>
+                  <div className="hci-arch-node hci-arch-st">
+                    集中式存储阵列
+                  </div>
                 </div>
                 <div className="hci-arch-label">传统IT架构</div>
               </div>
@@ -75,12 +88,17 @@ export default function HCIPage() {
                   </div>
                   <div className="hci-arch-box-mid">商用服务器</div>
                   <div className="hci-arch-box-bot">
-                    <div className="node"></div><div className="node"></div><div className="node"></div><div className="node"></div>
+                    <div className="node"></div>
+                    <div className="node"></div>
+                    <div className="node"></div>
+                    <div className="node"></div>
                   </div>
                 </div>
                 <div className="hci-arch-lines-new"></div>
                 <div className="hci-arch-node hci-arch-sw-new">以太交换机</div>
-                <div className="hci-arch-label hci-arch-label--red">超融合架构</div>
+                <div className="hci-arch-label hci-arch-label--red">
+                  超融合架构
+                </div>
               </div>
             </div>
           </div>
@@ -96,7 +114,7 @@ export default function HCIPage() {
           </div>
 
           <div className="hci-highlights">
-            {hciHighlights.map(hl => (
+            {hciHighlights.map((hl) => (
               <div className="hci-hl-card" key={hl.title}>
                 <div className="hci-hl-icon">{hl.icon}</div>
                 <div className="hci-hl-content">
@@ -110,7 +128,7 @@ export default function HCIPage() {
           {/* CSS 手绘拓扑大图 */}
           <div className="hci-topology mt-16">
             <h3 className="hci-topo-title">TGHCI 超融合统一管理平台</h3>
-            
+
             <div className="hci-topo-top">
               <div className="hci-topo-apps">
                 <span>会议系统</span>
@@ -134,7 +152,9 @@ export default function HCIPage() {
             </div>
 
             <div className="hci-topo-bottom">
-              <div className="hci-topo-badge hci-topo-badge--bottom">多元化基础设施融合</div>
+              <div className="hci-topo-badge hci-topo-badge--bottom">
+                多元化基础设施融合
+              </div>
               <div className="hci-topo-infra">
                 <div className="hci-infra-col">
                   <div className="hci-infra-tag">计算虚拟化</div>
@@ -165,7 +185,7 @@ export default function HCIPage() {
           <div className="hci-section-header">
             <h2>TGHCI 超融合解决方案特性介绍</h2>
           </div>
-          
+
           <div className="hci-features-list">
             {hciFeatures.map((feat, index) => (
               <div className="hci-feature-row" key={feat.title}>
@@ -192,9 +212,9 @@ export default function HCIPage() {
           <div className="hci-section-header">
             <h2>TGHCI 超融合解决方案系统软件功能</h2>
           </div>
-          
+
           <div className="hci-software-grid">
-            {hciSoftwareFunctions.map(sw => (
+            {hciSoftwareFunctions.map((sw) => (
               <div className="hci-sw-card" key={sw.category}>
                 <div className="hci-sw-header">{sw.category}</div>
                 <div className="hci-sw-body">{sw.items}</div>
@@ -210,7 +230,7 @@ export default function HCIPage() {
           <div className="hci-section-header">
             <h2>TGHCI 超融合解决方案典型场景推荐硬件配置</h2>
           </div>
-          
+
           <div className="hci-table-wrapper">
             <table className="hci-hardware-table">
               <thead>

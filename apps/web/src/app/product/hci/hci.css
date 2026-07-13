@@ -37,7 +37,12 @@
   margin-bottom: 16px;
   display: inline-block;
   padding: 8px 32px;
-  background: linear-gradient(90deg, transparent, rgba(37, 99, 235, 0.05), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(37, 99, 235, 0.05),
+    transparent
+  );
   border-bottom: 2px solid #2563eb;
 }
 
@@ -49,10 +54,20 @@
   line-height: 1.6;
 }
 
-.mt-16 { margin-top: 64px; }
-.hci-fw-bold { font-weight: 700; }
-.hci-ws-pre { white-space: pre-line; line-height: 1.6; }
-.hci-text-red { color: #2563eb; font-weight: 700; } /* 变量名保留，实为蓝 */
+.mt-16 {
+  margin-top: 64px;
+}
+.hci-fw-bold {
+  font-weight: 700;
+}
+.hci-ws-pre {
+  white-space: pre-line;
+  line-height: 1.6;
+}
+.hci-text-red {
+  color: #2563eb;
+  font-weight: 700;
+} /* 变量名保留，实为蓝 */
 
 /* ========== S1: Hero ========== */
 .hci-hero {
@@ -126,11 +141,12 @@
   background: #fff;
   padding: 32px;
   border-radius: 12px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
   border: 1px solid #e2e8f0;
 }
 
-.hci-arch-trad, .hci-arch-new {
+.hci-arch-trad,
+.hci-arch-new {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -149,17 +165,32 @@
   z-index: 2;
 }
 
-.hci-arch-fw { border-color: #ef4444; color: #ef4444; }
-.hci-arch-svr { border-color: #3b82f6; color: #3b82f6; }
-.hci-arch-sw { border-color: #10b981; color: #10b981; }
-.hci-arch-st { border-color: #f59e0b; color: #f59e0b; }
+.hci-arch-fw {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+.hci-arch-svr {
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+.hci-arch-sw {
+  border-color: #10b981;
+  color: #10b981;
+}
+.hci-arch-st {
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
 
 .hci-arch-row {
   display: flex;
   gap: 8px;
 }
 
-.hci-arch-lines-top, .hci-arch-lines-mid, .hci-arch-lines-bot, .hci-arch-lines-new {
+.hci-arch-lines-top,
+.hci-arch-lines-mid,
+.hci-arch-lines-bot,
+.hci-arch-lines-new {
   height: 24px;
   width: 2px;
   background: #cbd5e1;
@@ -169,14 +200,18 @@
 .hci-arch-lines-mid::before {
   content: "";
   position: absolute;
-  top: 0; left: -40px; right: -40px;
+  top: 0;
+  left: -40px;
+  right: -40px;
   border-top: 2px solid #cbd5e1;
 }
 
 .hci-arch-lines-bot::after {
   content: "";
   position: absolute;
-  bottom: 0; left: -20px; right: -20px;
+  bottom: 0;
+  left: -20px;
+  right: -20px;
   border-bottom: 2px solid #cbd5e1;
 }
 
@@ -255,7 +290,6 @@
   font-weight: 700;
 }
 
-
 /* ========== S2: Highlights & Topology ========== */
 .hci-highlights {
   display: grid;
@@ -275,7 +309,7 @@
 }
 
 .hci-hl-card:hover {
-  box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
   border-color: #bfdbfe;
 }
 
@@ -330,12 +364,14 @@
 .hci-topo-title::before {
   content: "";
   display: block;
-  width: 32px; height: 32px;
+  width: 32px;
+  height: 32px;
   background: #2563eb;
   border-radius: 50%;
 }
 
-.hci-topo-top, .hci-topo-bottom {
+.hci-topo-top,
+.hci-topo-bottom {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -369,14 +405,17 @@
 .hci-topo-badge::after {
   content: "";
   position: absolute;
-  top: 100%; left: 50%;
+  top: 100%;
+  left: 50%;
   margin-left: -1px;
-  width: 2px; height: 40px;
+  width: 2px;
+  height: 40px;
   background: #bfdbfe;
 }
 
 .hci-topo-badge--bottom::after {
-  top: auto; bottom: 100%;
+  top: auto;
+  bottom: 100%;
 }
 
 .hci-topo-center {
@@ -398,13 +437,19 @@
   border-radius: 4px;
   padding: 10px;
   position: relative;
-  box-shadow: 10px 10px 0 rgba(0,0,0,0.05);
+  box-shadow: 10px 10px 0 rgba(0, 0, 0, 0.05);
 }
 
 .hci-server-rack-inner {
   width: 100%;
   height: 100%;
-  background: repeating-linear-gradient(180deg, #334155, #334155 10px, #0f172a 10px, #0f172a 12px);
+  background: repeating-linear-gradient(
+    180deg,
+    #334155,
+    #334155 10px,
+    #0f172a 10px,
+    #0f172a 12px
+  );
 }
 
 /* CSS 画刀片服务器 */
@@ -415,15 +460,23 @@
   border: 1px solid #64748b;
   border-radius: 2px;
   position: relative;
-  box-shadow: 5px 5px 0 rgba(0,0,0,0.05);
+  box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.05);
 }
 
 .hci-server-blade-inner {
   position: absolute;
-  top: 50%; left: 10px; right: 10px;
+  top: 50%;
+  left: 10px;
+  right: 10px;
   transform: translateY(-50%);
   height: 4px;
-  background: repeating-linear-gradient(90deg, #0f172a, #0f172a 8px, transparent 8px, transparent 12px);
+  background: repeating-linear-gradient(
+    90deg,
+    #0f172a,
+    #0f172a 8px,
+    transparent 8px,
+    transparent 12px
+  );
 }
 
 .hci-topo-infra {
@@ -460,19 +513,31 @@
 }
 
 /* 巨大的背景交叉线 */
-.hci-topology::before, .hci-topology::after {
+.hci-topology::before,
+.hci-topology::after {
   content: "";
   position: absolute;
-  top: 50%; left: 0; right: 0;
+  top: 50%;
+  left: 0;
+  right: 0;
   height: 100%;
-  background: linear-gradient(90deg, transparent 49%, rgba(37,99,235,0.05) 49%, rgba(37,99,235,0.05) 51%, transparent 51%);
+  background: linear-gradient(
+    90deg,
+    transparent 49%,
+    rgba(37, 99, 235, 0.05) 49%,
+    rgba(37, 99, 235, 0.05) 51%,
+    transparent 51%
+  );
   transform-origin: top center;
   z-index: 1;
 }
 
-.hci-topology::before { transform: rotate(45deg); }
-.hci-topology::after { transform: rotate(-45deg); }
-
+.hci-topology::before {
+  transform: rotate(45deg);
+}
+.hci-topology::after {
+  transform: rotate(-45deg);
+}
 
 /* ========== S3: 特性深度解析 ========== */
 .hci-features-list {
@@ -487,7 +552,7 @@
   background: #fff;
   border-radius: 12px;
   padding: 40px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.02);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
   border: 1px solid #f1f5f9;
 }
 
@@ -527,7 +592,6 @@
   margin-bottom: 0;
 }
 
-
 /* ========== S4: 软件功能网格 ========== */
 .hci-software-grid {
   display: grid;
@@ -544,7 +608,7 @@
 
 .hci-sw-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 10px 20px rgba(0,0,0,0.03);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.03);
   border-color: #2563eb;
 }
 
@@ -570,13 +634,12 @@
   background: #fff;
 }
 
-
 /* ========== S5: 硬件配置表 ========== */
 .hci-table-wrapper {
   overflow-x: auto;
   background: #fff;
   border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
   border: 1px solid #e2e8f0;
 }
 
@@ -592,7 +655,7 @@
   padding: 20px;
   font-weight: 700;
   font-size: 16px;
-  border-right: 1px solid rgba(255,255,255,0.1);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .hci-hardware-table th:last-child {
@@ -615,7 +678,6 @@
 .hci-hardware-table tr:last-child td {
   border-bottom: none;
 }
-
 
 /* Responsive */
 @media (max-width: 1024px) {
@@ -644,7 +706,8 @@
   .hci-highlights {
     grid-template-columns: 1fr;
   }
-  .hci-hardware-table th, .hci-hardware-table td {
+  .hci-hardware-table th,
+  .hci-hardware-table td {
     padding: 12px 10px;
     font-size: 13px;
   }

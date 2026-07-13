@@ -52,7 +52,6 @@
   color: var(--ka-text-sub);
 }
 
-
 /* ========== S1: AI 破局首屏 ========== */
 .ka-hero {
   position: relative;
@@ -64,9 +63,15 @@
 .ka-hero::before {
   content: "";
   position: absolute;
-  top: -20%; right: -10%;
-  width: 600px; height: 600px;
-  background: radial-gradient(circle, rgba(37,99,235,0.1) 0%, transparent 70%);
+  top: -20%;
+  right: -10%;
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(
+    circle,
+    rgba(37, 99, 235, 0.1) 0%,
+    transparent 70%
+  );
   border-radius: 50%;
 }
 
@@ -91,7 +96,7 @@
   font-weight: 700;
   border-radius: 20px;
   margin-bottom: 24px;
-  box-shadow: 0 4px 12px rgba(37,99,235,0.3);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
 }
 
 .ka-hero__title {
@@ -128,7 +133,7 @@
 .ka-text-highlight {
   color: #d32f2f;
   font-weight: 700;
-  background: rgba(211,47,47,0.1);
+  background: rgba(211, 47, 47, 0.1);
   padding: 0 4px;
   border-radius: 2px;
 }
@@ -139,7 +144,6 @@
   color: var(--ka-primary);
   font-weight: 500;
 }
-
 
 /* 首屏视觉模拟区 */
 .ka-hero__visual {
@@ -152,11 +156,11 @@
 .ka-mock-ui {
   width: 100%;
   max-width: 400px;
-  background: rgba(255,255,255,0.85);
+  background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(20px);
-  border: 1px solid rgba(255,255,255,0.5);
+  border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: 20px;
-  box-shadow: 0 20px 50px rgba(37,99,235,0.15);
+  box-shadow: 0 20px 50px rgba(37, 99, 235, 0.15);
   overflow: hidden;
   transform: rotateY(-5deg) rotateX(5deg);
   transition: transform 0.3s ease;
@@ -167,9 +171,9 @@
 }
 
 .ka-mock-header {
-  background: rgba(255,255,255,0.9);
+  background: rgba(255, 255, 255, 0.9);
   padding: 16px;
-  border-bottom: 1px solid rgba(0,0,0,0.05);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
   display: flex;
   align-items: center;
 }
@@ -180,14 +184,21 @@
 }
 
 .ka-mock-dots span {
-  width: 10px; height: 10px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: #e2e8f0;
 }
 
-.ka-mock-dots span:nth-child(1) { background: #ff5f56; }
-.ka-mock-dots span:nth-child(2) { background: #ffbd2e; }
-.ka-mock-dots span:nth-child(3) { background: #27c93f; }
+.ka-mock-dots span:nth-child(1) {
+  background: #ff5f56;
+}
+.ka-mock-dots span:nth-child(2) {
+  background: #ffbd2e;
+}
+.ka-mock-dots span:nth-child(3) {
+  background: #27c93f;
+}
 
 .ka-mock-title {
   flex: 1;
@@ -239,20 +250,25 @@
 }
 
 .ka-chat-typing span {
-  width: 6px; height: 6px;
+  width: 6px;
+  height: 6px;
   background: #94a3b8;
   border-radius: 50%;
   animation: typing 1s infinite alternate;
 }
 
-.ka-chat-typing span:nth-child(2) { animation-delay: 0.2s; }
-.ka-chat-typing span:nth-child(3) { animation-delay: 0.4s; }
+.ka-chat-typing span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.ka-chat-typing span:nth-child(3) {
+  animation-delay: 0.4s;
+}
 
 .ka-mock-form {
   background: #fff;
   border-radius: 8px;
   padding: 16px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
   border: 1px solid #e2e8f0;
   margin-top: 8px;
   animation: slideInUp 0.5s ease backwards;
@@ -265,17 +281,30 @@
   font-weight: 700;
   margin-bottom: 8px;
 }
-.ka-form-check:last-child { margin-bottom: 0; }
+.ka-form-check:last-child {
+  margin-bottom: 0;
+}
 
 @keyframes slideInUp {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 @keyframes typing {
-  from { opacity: 0.3; transform: translateY(0); }
-  to { opacity: 1; transform: translateY(-3px); }
+  from {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
 }
-
 
 /* ========== S2: 导办通关四大流程 ========== */
 .ka-timeline {
@@ -287,7 +316,9 @@
 .ka-timeline::before {
   content: "";
   position: absolute;
-  top: 0; bottom: 0; left: 24px;
+  top: 0;
+  bottom: 0;
+  left: 24px;
   width: 2px;
   background: var(--ka-primary-light);
 }
@@ -304,7 +335,8 @@
 }
 
 .ka-timeline-marker {
-  width: 50px; height: 50px;
+  width: 50px;
+  height: 50px;
   background: #fff;
   border: 2px solid var(--ka-primary);
   border-radius: 50%;
@@ -316,7 +348,7 @@
   color: var(--ka-primary);
   position: relative;
   z-index: 2;
-  box-shadow: 0 4px 10px rgba(37,99,235,0.2);
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.2);
 }
 
 .ka-timeline-content {
@@ -324,7 +356,7 @@
   background: #fff;
   padding: 32px;
   border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
   border: 1px solid #e2e8f0;
   transition: transform 0.3s;
 }
@@ -347,7 +379,6 @@
   line-height: 1.8;
 }
 
-
 /* ========== S3: 9大产品功能矩阵 ========== */
 .ka-features-grid {
   display: grid;
@@ -367,13 +398,14 @@
 }
 
 .ka-feature-card:hover {
-  box-shadow: 0 10px 30px rgba(37,99,235,0.1);
+  box-shadow: 0 10px 30px rgba(37, 99, 235, 0.1);
   transform: translateY(-5px);
   border-color: #bfdbfe;
 }
 
 .ka-feature-icon-wrapper {
-  width: 48px; height: 48px;
+  width: 48px;
+  height: 48px;
   background: var(--ka-primary-light);
   border-radius: 12px;
   display: flex;
@@ -400,7 +432,6 @@
   line-height: 1.6;
 }
 
-
 /* ========== S4: 需求单位卡片 ========== */
 .ka-units-wrapper {
   display: flex;
@@ -415,7 +446,7 @@
   border-radius: 16px;
   text-align: center;
   width: 280px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
   transition: transform 0.3s;
 }
 
@@ -434,13 +465,12 @@
   color: var(--ka-primary);
 }
 
-
 /* ========== S5: 双旗舰一体机配置 ========== */
 .ka-table-wrapper {
   background: #fff;
   border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.06);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.06);
   border: 1px solid #e2e8f0;
 }
 
@@ -465,7 +495,7 @@
 }
 
 .ka-tr-highlight td {
-  background: rgba(37,99,235,0.03);
+  background: rgba(37, 99, 235, 0.03);
 }
 
 .ka-td-form {
@@ -491,7 +521,6 @@
   margin-bottom: 8px;
 }
 
-
 /* Responsive */
 @media (max-width: 1024px) {
   .ka-hero__inner {
@@ -513,10 +542,12 @@
     left: 20px;
   }
   .ka-timeline-marker {
-    width: 40px; height: 40px;
+    width: 40px;
+    height: 40px;
     font-size: 16px;
   }
-  .ka-table th, .ka-table td {
+  .ka-table th,
+  .ka-table td {
     padding: 16px;
   }
   .ka-td-form {

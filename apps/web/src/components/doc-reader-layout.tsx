@@ -83,10 +83,10 @@ export function DocReaderLayout({
           </div>
 
           <div className="doc-reader__nav-group">
-             <Link href="/docs" className="doc-reader__nav-overview">
-                <span>全部产品文档</span>
-                <span className="doc-reader__nav-overview-arrow">→</span>
-             </Link>
+            <Link href="/docs" className="doc-reader__nav-overview">
+              <span>全部产品文档</span>
+              <span className="doc-reader__nav-overview-arrow">→</span>
+            </Link>
           </div>
 
           {docsCategories.map((cat) => {
@@ -122,28 +122,32 @@ export function DocReaderLayout({
                             className={`doc-reader__nav-sub-title ${isExpanded2 ? "is-open" : ""}`}
                             onClick={(e) => toggleLevel2(sub.id, e)}
                           >
-                            <span>{sub.title} ({sub.docs.length})</span>
+                            <span>
+                              {sub.title} ({sub.docs.length})
+                            </span>
                             <span
                               className={`doc-reader__nav-arrow-small ${isExpanded2 ? "is-open" : ""}`}
                             >
                               ›
                             </span>
                           </div>
-                          
+
                           {/* 真正的第三级：由于目前为空，这里渲染出来也会是空的 */}
                           <div
                             className={`doc-reader__nav-docs-wrapper ${isExpanded2 ? "is-open" : ""}`}
                           >
                             <div className="doc-reader__nav-docs">
-                              {sub.docs.map((doc: { href: string; title: string }, i) => (
-                                <Link
-                                  key={i}
-                                  href={doc.href}
-                                  className="doc-reader__nav-doc-link"
-                                >
-                                  {doc.title}
-                                </Link>
-                              ))}
+                              {sub.docs.map(
+                                (doc: { href: string; title: string }, i) => (
+                                  <Link
+                                    key={i}
+                                    href={doc.href}
+                                    className="doc-reader__nav-doc-link"
+                                  >
+                                    {doc.title}
+                                  </Link>
+                                ),
+                              )}
                             </div>
                           </div>
                         </div>
@@ -162,7 +166,9 @@ export function DocReaderLayout({
             <header className="doc-reader__header">
               <div className="doc-reader__header-inner">
                 <h1 className="doc-reader__title">{currentCategory.title}</h1>
-                <p className="doc-reader__desc">{currentCategory.description}</p>
+                <p className="doc-reader__desc">
+                  {currentCategory.description}
+                </p>
               </div>
             </header>
           ) : (
@@ -170,7 +176,8 @@ export function DocReaderLayout({
               <div className="doc-reader__header-inner">
                 <h1 className="doc-reader__title">欢迎来到官方文档</h1>
                 <p className="doc-reader__desc">
-                  覆盖产品介绍、操作指南、场景化用例、开发参考等信息，帮助您更好地上手平台、用好 AI 智能体。
+                  覆盖产品介绍、操作指南、场景化用例、开发参考等信息，帮助您更好地上手平台、用好
+                  AI 智能体。
                 </p>
               </div>
             </header>

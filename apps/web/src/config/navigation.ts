@@ -16,7 +16,11 @@ export const portalNavigation: PortalNavigationItem[] = [
           { label: "超融合", href: "/product/hci" },
           { label: "元启AI开发平台", href: "/product/tgdataxai" },
           { label: "视觉检索一体机", href: "/product/video-agent" },
-          { label: "数据智能体", href: "/product/data-agent", status: "placeholder" },
+          {
+            label: "数据智能体",
+            href: "/product/data-agent",
+            status: "placeholder",
+          },
           { label: "智能导办一体机", href: "/product/knowledge-agent" },
           { label: "办公智能体", href: "/product/office-agent" },
           { label: "码多多", href: "/product/code-agent" },

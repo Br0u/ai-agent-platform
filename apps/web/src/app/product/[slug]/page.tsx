@@ -32,7 +32,15 @@ export default async function Page({ params }: PageProps) {
 
   if (moduleData) {
     // 强制类型推断：由于我们在 coreModules 中添加了扩展字段，因此这里的类型应为包含新字段的对象
-    return <ModuleDetailPage moduleData={moduleData as React.ComponentProps<typeof ModuleDetailPage>["moduleData"]} />;
+    return (
+      <ModuleDetailPage
+        moduleData={
+          moduleData as React.ComponentProps<
+            typeof ModuleDetailPage
+          >["moduleData"]
+        }
+      />
+    );
   }
 
   return <RegisteredRoutePage pathname={pathname} />;

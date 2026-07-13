@@ -147,7 +147,9 @@
   padding: 24px;
   border-radius: 4px;
   text-decoration: none;
-  transition: box-shadow 0.2s, transform 0.2s;
+  transition:
+    box-shadow 0.2s,
+    transform 0.2s;
 }
 
 .pai-news-card:hover {
@@ -244,7 +246,7 @@
   font-size: 13px;
   color: #334155;
   border-radius: 4px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
 }
 
 .pai-arch-mock__layer--top .pai-arch-mock__boxes div {
@@ -301,7 +303,11 @@
 .pai-adv-item__image {
   flex: 1;
   min-width: 0;
-  background: linear-gradient(135deg, #a7f3d0 0%, #3b82f6 100%); /* 渐变底色模拟控制台发光 */
+  background: linear-gradient(
+    135deg,
+    #a7f3d0 0%,
+    #3b82f6 100%
+  ); /* 渐变底色模拟控制台发光 */
   border-radius: 8px;
   padding: 40px;
   display: flex;
@@ -353,7 +359,7 @@
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
-  border: 1px solid rgba(255,255,255,0.4);
+  border: 1px solid rgba(255, 255, 255, 0.4);
 }
 
 .pai-screenshot-mock__header {
@@ -371,9 +377,15 @@
   height: 10px;
   border-radius: 50%;
 }
-.dot-r { background: #ef4444; }
-.dot-y { background: #f59e0b; }
-.dot-g { background: #10b981; }
+.dot-r {
+  background: #ef4444;
+}
+.dot-y {
+  background: #f59e0b;
+}
+.dot-g {
+  background: #10b981;
+}
 
 .pai-screenshot-mock__body {
   height: 240px;
@@ -400,13 +412,21 @@
   border-radius: 4px;
 }
 
-.w-60 { width: 60%; }
-.w-40 { width: 40%; }
+.w-60 {
+  width: 60%;
+}
+.w-40 {
+  width: 40%;
+}
 
 .pai-mock-chart {
   margin-top: auto;
   height: 100px;
-  background: linear-gradient(180deg, rgba(28, 108, 228, 0.1) 0%, rgba(28, 108, 228, 0) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(28, 108, 228, 0.1) 0%,
+    rgba(28, 108, 228, 0) 100%
+  );
   border-top: 2px solid #1c6ce4;
   border-radius: 4px 4px 0 0;
 }
@@ -422,20 +442,22 @@
   .module-hero-pai__title {
     font-size: 36px;
   }
-  
+
   .module-hero-pai__subtitle {
     font-size: 20px;
   }
-  
-  .pai-features__grid, .pai-news__grid {
+
+  .pai-features__grid,
+  .pai-news__grid {
     grid-template-columns: 1fr;
   }
-  
+
   .pai-arch-mock__boxes {
     flex-direction: column;
   }
-  
-  .pai-adv-item, .pai-adv-item:nth-child(even) {
+
+  .pai-adv-item,
+  .pai-adv-item:nth-child(even) {
     flex-direction: column;
     gap: 32px;
     text-align: center;

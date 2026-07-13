@@ -4,7 +4,8 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "办公智能体 - 企业级应用矩阵 | AI Agent Platform",
-  description: "企业级办公智能体矩阵，涵盖公文写作、投标辅助、合同审核与智能会议等深度场景，提供开箱即用的 AI 提效能力。",
+  description:
+    "企业级办公智能体矩阵，涵盖公文写作、投标辅助、合同审核与智能会议等深度场景，提供开箱即用的 AI 提效能力。",
 };
 
 export default function OfficeAgentPage() {
@@ -13,7 +14,8 @@ export default function OfficeAgentPage() {
     code: "OA1",
     name: "Office Agent",
     title: "办公智能体矩阵",
-    description: "基于大模型的企业级办公智能体矩阵，覆盖公文写作、招投标、合同审核与智能会议四大高频业务场景，全面提升企业运转效率。",
+    description:
+      "基于大模型的企业级办公智能体矩阵，覆盖公文写作、招投标、合同审核与智能会议四大高频业务场景，全面提升企业运转效率。",
     // 提取四大核心能力用于顶部 4 列矩阵
     capabilities: [
       "法定公文全流程写作与合规校审",
@@ -43,5 +45,13 @@ export default function OfficeAgentPage() {
   };
 
   // 强制类型转换为 any 以避开严格的只读数组类型校验，因为我们构造的是兼容的数据形态
-  return <ModuleDetailPage moduleData={officeAgentModuleData as unknown as React.ComponentProps<typeof ModuleDetailPage>["moduleData"]} />;
+  return (
+    <ModuleDetailPage
+      moduleData={
+        officeAgentModuleData as unknown as React.ComponentProps<
+          typeof ModuleDetailPage
+        >["moduleData"]
+      }
+    />
+  );
 }

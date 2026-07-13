@@ -3,7 +3,8 @@ import "./code-agent.css";
 
 export const metadata: Metadata = {
   title: "码多多 · 私有化 AI 编程助手",
-  description: "码多多+VSCode=智能编码，效率狂飙。私有化部署的 AI 编程助手，开箱即用，全流程协同开发，一站式完成代码全生命周期构建。",
+  description:
+    "码多多+VSCode=智能编码，效率狂飙。私有化部署的 AI 编程助手，开箱即用，全流程协同开发，一站式完成代码全生命周期构建。",
 };
 
 export default function CodeAgentPage() {
@@ -34,14 +35,18 @@ export default function CodeAgentPage() {
                 <div className="ca-icon-hex-inner"></div>
               </div>
             </div>
-            <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: "24px" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-start",
+                marginBottom: "24px",
+              }}
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/logo.png" alt="华鲲元启" style={{ height: "40px" }} />
             </div>
-            
-            <h1 className="ca-hero__title">
-              码多多+VSCode=智能编码，效率狂飙
-            </h1>
+
+            <h1 className="ca-hero__title">码多多+VSCode=智能编码，效率狂飙</h1>
             <p className="ca-hero__subtitle">
               私有化部署的 <span>AI 编程助手</span>
             </p>
@@ -63,7 +68,12 @@ export default function CodeAgentPage() {
                 <div className="ca-dl-box__head">
                   <span className="ca-icon-vscode"></span> 下载VSCode
                 </div>
-                <a href="https://code.visualstudio.com/" target="_blank" rel="noreferrer" className="ca-btn ca-btn--outline">
+                <a
+                  href="https://code.visualstudio.com/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="ca-btn ca-btn--outline"
+                >
                   <span className="ca-icon-download"></span> 去下载
                 </a>
               </div>
@@ -85,7 +95,9 @@ export default function CodeAgentPage() {
                 <button className="ca-btn ca-btn--primary">
                   <span className="ca-icon-export"></span> 导出码多多
                 </button>
-                <p className="ca-dl-note">macOS 12 及以上 · Windows 10 及以上</p>
+                <p className="ca-dl-note">
+                  macOS 12 及以上 · Windows 10 及以上
+                </p>
               </div>
             </div>
           </div>
@@ -97,7 +109,7 @@ export default function CodeAgentPage() {
               <div className="ca-3d-base">
                 <div className="ca-3d-base-rings"></div>
               </div>
-              
+
               {/* 核心 3D 几何体 (CSS 绘制) */}
               <div className="ca-3d-cube-group">
                 <div className="ca-3d-cube ca-3d-cube--1"></div>
@@ -106,9 +118,15 @@ export default function CodeAgentPage() {
               </div>
 
               {/* 环绕代码丝带 */}
-              <div className="ca-ribbon ca-ribbon--1">print &apos;码多多&apos;</div>
-              <div className="ca-ribbon ca-ribbon--2">print &apos;Hello World&apos;</div>
-              <div className="ca-ribbon ca-ribbon--3">print &apos;码多多&apos;</div>
+              <div className="ca-ribbon ca-ribbon--1">
+                print &apos;码多多&apos;
+              </div>
+              <div className="ca-ribbon ca-ribbon--2">
+                print &apos;Hello World&apos;
+              </div>
+              <div className="ca-ribbon ca-ribbon--3">
+                print &apos;码多多&apos;
+              </div>
             </div>
           </div>
         </div>
@@ -119,17 +137,20 @@ export default function CodeAgentPage() {
         <div className="ca-container">
           <h2 className="ca-section-title">安装步骤</h2>
           <div className="ca-steps__grid">
-            
             {/* Step 1 */}
             <article className="ca-step-card">
               <span className="ca-step-watermark">01</span>
               <h3 className="ca-step-title">第一步</h3>
-              <p className="ca-step-desc">若您还没有安装Visual Studio Code，请先去下载安装</p>
+              <p className="ca-step-desc">
+                若您还没有安装Visual Studio Code，请先去下载安装
+              </p>
               <div className="ca-step-img ca-step-img--1">
                 <div className="ca-mock-box">
                   <div className="ca-mock-dl-btn">
                     ↓ 去下载
-                    <div className="ca-mock-tooltip">点击上方此处，前往官网下载VSCode</div>
+                    <div className="ca-mock-tooltip">
+                      点击上方此处，前往官网下载VSCode
+                    </div>
                   </div>
                 </div>
               </div>
@@ -144,7 +165,9 @@ export default function CodeAgentPage() {
                 <div className="ca-mock-box">
                   <div className="ca-mock-dl-btn ca-mock-dl-btn--primary">
                     [→] 导出码多多
-                    <div className="ca-mock-tooltip ca-mock-tooltip--left">点击上方此处，选择模型，导出码多多</div>
+                    <div className="ca-mock-tooltip ca-mock-tooltip--left">
+                      点击上方此处，选择模型，导出码多多
+                    </div>
                   </div>
                 </div>
               </div>
@@ -154,14 +177,18 @@ export default function CodeAgentPage() {
             <article className="ca-step-card">
               <span className="ca-step-watermark">03</span>
               <h3 className="ca-step-title">第三步</h3>
-              <p className="ca-step-desc">重启Visual Studio Code，即刻开启智能编码之旅</p>
+              <p className="ca-step-desc">
+                重启Visual Studio Code，即刻开启智能编码之旅
+              </p>
               <div className="ca-step-img ca-step-img--3">
                 <div className="ca-mock-vscode-window">
                   <div className="ca-mock-vscode-header"></div>
                   <div className="ca-mock-vscode-body">
                     <div className="ca-mock-vscode-sidebar">
                       <div className="ca-mock-mdd-icon">
-                        <div className="ca-mock-tooltip ca-mock-tooltip--small">此处显示码多多图标，证明安装成功</div>
+                        <div className="ca-mock-tooltip ca-mock-tooltip--small">
+                          此处显示码多多图标，证明安装成功
+                        </div>
                       </div>
                     </div>
                     <div className="ca-mock-vscode-main">
@@ -171,7 +198,6 @@ export default function CodeAgentPage() {
                 </div>
               </div>
             </article>
-
           </div>
         </div>
       </section>

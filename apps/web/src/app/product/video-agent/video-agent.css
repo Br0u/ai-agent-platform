@@ -51,9 +51,12 @@
   background: #2563eb;
 }
 
-.va-section-header h2::before { right: 100%; }
-.va-section-header h2::after { left: 100%; }
-
+.va-section-header h2::before {
+  right: 100%;
+}
+.va-section-header h2::after {
+  left: 100%;
+}
 
 /* ========== S1: AI 视觉首屏 ========== */
 .va-hero {
@@ -66,15 +69,19 @@
 
 .va-hero__bg {
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 0;
 }
 
 .va-grid-lines {
-  width: 100%; height: 100%;
-  background-image: 
-    linear-gradient(rgba(37,99,235,0.15) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(37,99,235,0.15) 1px, transparent 1px);
+  width: 100%;
+  height: 100%;
+  background-image:
+    linear-gradient(rgba(37, 99, 235, 0.15) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(37, 99, 235, 0.15) 1px, transparent 1px);
   background-size: 40px 40px;
   perspective: 500px;
   transform: rotateX(60deg) scale(2);
@@ -84,16 +91,27 @@
 
 .va-scanner {
   position: absolute;
-  top: 0; left: 0; right: 0;
+  top: 0;
+  left: 0;
+  right: 0;
   height: 100px;
-  background: linear-gradient(to bottom, transparent, rgba(37,99,235,0.2) 90%, #2563eb 100%);
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(37, 99, 235, 0.2) 90%,
+    #2563eb 100%
+  );
   animation: scan 4s linear infinite;
   z-index: 1;
 }
 
 @keyframes scan {
-  0% { transform: translateY(-100%); }
-  100% { transform: translateY(800px); }
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(800px);
+  }
 }
 
 .va-hero__content {
@@ -109,7 +127,7 @@
   letter-spacing: 2px;
   margin-bottom: 24px;
   color: #0f172a;
-  text-shadow: 0 4px 12px rgba(37,99,235,0.1);
+  text-shadow: 0 4px 12px rgba(37, 99, 235, 0.1);
 }
 
 .va-hero__desc {
@@ -138,7 +156,7 @@
   background: #2563eb;
   color: #fff;
   border: 1px solid #2563eb;
-  box-shadow: 0 4px 20px rgba(37,99,235,0.3);
+  box-shadow: 0 4px 20px rgba(37, 99, 235, 0.3);
 }
 
 .va-btn--primary:hover {
@@ -155,7 +173,6 @@
 .va-btn--outline:hover {
   background: #eff6ff;
 }
-
 
 /* ========== S2: VS 双雄对抗 ========== */
 .va-vs-container {
@@ -179,14 +196,14 @@
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   color: #475569;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.02);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
 }
 
 .va-vs-card--ai {
   background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
   border: 1px solid #60a5fa;
   color: #0f172a;
-  box-shadow: 0 10px 40px rgba(37,99,235,0.1);
+  box-shadow: 0 10px 40px rgba(37, 99, 235, 0.1);
 }
 
 .va-vs-card__title {
@@ -196,8 +213,12 @@
   text-align: center;
 }
 
-.va-vs-card--trad .va-vs-card__title { color: #64748b; }
-.va-vs-card--ai .va-vs-card__title { color: #1d4ed8; }
+.va-vs-card--trad .va-vs-card__title {
+  color: #64748b;
+}
+.va-vs-card--ai .va-vs-card__title {
+  color: #1d4ed8;
+}
 
 .va-vs-list {
   list-style: none;
@@ -263,13 +284,15 @@
   font-style: italic;
   color: #bfdbfe;
   position: absolute;
-  top: 50%; left: 50%;
+  top: 50%;
+  left: 50%;
   transform: translate(-50%, -50%);
-  text-shadow: 2px 2px 0 #fff, -2px -2px 0 #fff;
+  text-shadow:
+    2px 2px 0 #fff,
+    -2px -2px 0 #fff;
   z-index: 10;
   line-height: 1;
 }
-
 
 /* ========== S3: 能力矩阵 ========== */
 .va-features-grid {
@@ -284,13 +307,13 @@
   border-top: 4px solid #2563eb;
   padding: 40px 32px;
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.02);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
   transition: transform 0.2s;
 }
 
 .va-feature-card:hover {
   transform: translateY(-8px);
-  box-shadow: 0 12px 30px rgba(0,0,0,0.05);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.05);
 }
 
 .va-feature-icon {
@@ -327,12 +350,13 @@
 .va-feature-list li::before {
   content: "";
   position: absolute;
-  top: 8px; left: 0;
-  width: 6px; height: 6px;
+  top: 8px;
+  left: 0;
+  width: 6px;
+  height: 6px;
   background: #2563eb;
   border-radius: 50%;
 }
-
 
 /* ========== S4: 泛化场景网格 ========== */
 .va-scenarios-grid {
@@ -355,23 +379,29 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
 }
 
 .va-scenario-dot {
-  width: 10px; height: 10px;
+  width: 10px;
+  height: 10px;
   background: #10b981;
   border-radius: 50%;
-  box-shadow: 0 0 8px rgba(16,185,129,0.5);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
   animation: pulse 2s infinite;
 }
 
 @keyframes pulse {
-  0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.4); }
-  70% { box-shadow: 0 0 0 10px rgba(16,185,129,0); }
-  100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
 }
-
 
 /* ========== S5: 一体机极客选型表 ========== */
 .va-hw-panel {
@@ -382,7 +412,7 @@
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   padding: 48px;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.03);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.03);
 }
 
 .va-hw-overview {
@@ -420,7 +450,9 @@
   border-radius: 4px;
   display: flex;
   padding: 4px;
-  box-shadow: 0 10px 20px rgba(0,0,0,0.05), inset 0 2px 10px rgba(255,255,255,1);
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.05),
+    inset 0 2px 10px rgba(255, 255, 255, 1);
   position: relative;
 }
 
@@ -462,7 +494,8 @@
 
 .va-server-disk::before {
   content: "";
-  width: 60%; height: 4px;
+  width: 60%;
+  height: 4px;
   background: #94a3b8;
   position: absolute;
   top: 6px;
@@ -470,21 +503,32 @@
 
 .va-disk-led {
   position: absolute;
-  bottom: 8px; left: 50%;
+  bottom: 8px;
+  left: 50%;
   transform: translateX(-50%);
-  width: 6px; height: 6px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: #10b981;
   box-shadow: 0 0 4px #10b981;
   animation: blink 0.5s infinite alternate;
 }
 
-.va-server-disk:nth-child(even) .va-disk-led { animation-delay: 0.2s; }
-.va-server-disk:nth-child(3n) .va-disk-led { background: #f59e0b; box-shadow: 0 0 4px #f59e0b; }
+.va-server-disk:nth-child(even) .va-disk-led {
+  animation-delay: 0.2s;
+}
+.va-server-disk:nth-child(3n) .va-disk-led {
+  background: #f59e0b;
+  box-shadow: 0 0 4px #f59e0b;
+}
 
 @keyframes blink {
-  0% { opacity: 0.3; }
-  100% { opacity: 1; }
+  0% {
+    opacity: 0.3;
+  }
+  100% {
+    opacity: 1;
+  }
 }
 
 .va-server-label {
@@ -534,7 +578,6 @@
   font-size: 14px;
   line-height: 1.8;
 }
-
 
 /* Responsive */
 @media (max-width: 1024px) {
