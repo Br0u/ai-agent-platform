@@ -206,13 +206,13 @@ if [ "$platform_user_count" -le 0 ] || \
 fi
 echo "Backup fixture counts: users=$platform_user_count agno_sessions=$agno_session_count"
 
-compose up -d --no-deps backup
+compose run --rm --no-deps backup
 
 backup_volume="${project}_backup_data"
 attempt=0
 until docker run --rm -v "$backup_volume:/backups:ro" \
   postgres:18.3-alpine3.23 sh -c \
-  'find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump.enc" | grep -q .' \
+  'find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump.gpg" | grep -q .' \
   >/dev/null 2>&1; do
   attempt=$((attempt + 1))
   if [ "$attempt" -ge 30 ]; then
@@ -226,44 +226,127 @@ docker run --rm \
   -v "$backup_volume:/backups:ro" \
   -v "$dump_dir:/out" \
   postgres:18.3-alpine3.23 sh -c \
-  'dump=$(find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump.enc" | head -n 1); test -n "$dump"; cp "$dump" /out/generated.dump.enc; chmod 0600 /out/generated.dump.enc'
+  'dump=$(find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump.gpg" | head -n 1); test -n "$dump"; cp "$dump" /out/generated.dump.gpg; chmod 0600 /out/generated.dump.gpg'
 
-backup_crypto_image="$(compose images -q backup)"
-[ -n "$backup_crypto_image" ] || {
+backup_crypto_image="${project}-backup:latest"
+docker image inspect "$backup_crypto_image" >/dev/null 2>&1 || {
   echo "backup crypto image was not built" >&2
   exit 1
 }
+docker run --rm --entrypoint gpg "$backup_crypto_image" --version | sed -n '1p'
 
-wrong_key_output="$temp_dir/wrong-key.log"
-if BACKUP_ENCRYPTION_KEY_FILE="$WRONG_BACKUP_ENCRYPTION_KEY_FILE" \
-  BACKUP_CRYPTO_IMAGE="$backup_crypto_image" \
-  infra/docker/restore-drill.sh \
-    "$dump_dir/generated.dump.enc" \
-    "$platform_user_count" \
-    "$agno_session_count" \
-    "$platform_user_id" \
-    "$agno_session_id" >"$wrong_key_output" 2>&1; then
-  echo "restore unexpectedly accepted a wrong encryption key" >&2
+packet_output="$temp_dir/openpgp-packets.log"
+packet_gpg_home="$temp_dir/openpgp-packet-home"
+mkdir -p "$packet_gpg_home"
+chmod 700 "$packet_gpg_home"
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --entrypoint gpg \
+  -v "$dump_dir:/input:ro" \
+  -v "$packet_gpg_home:/gnupg" \
+  -v "$BACKUP_ENCRYPTION_KEY_FILE:/run/secrets/backup_encryption_key:ro" \
+  "$backup_crypto_image" \
+  --homedir /gnupg \
+  --batch \
+  --no-tty \
+  --pinentry-mode loopback \
+  --no-symkey-cache \
+  --passphrase-file /run/secrets/backup_encryption_key \
+  --list-packets /input/generated.dump.gpg >"$packet_output" 2>&1
+for packet_contract in \
+  "cipher 9" \
+  "aead 0" \
+  "s2k 3" \
+  "hash 10" \
+  "count 65011712" \
+  "mdc_method: 2"; do
+  grep -F "$packet_contract" "$packet_output" >/dev/null || {
+    echo "OpenPGP packet contract is missing: $packet_contract" >&2
+    exit 1
+  }
+done
+grep -F "$backup_encryption_key" "$packet_output" >/dev/null 2>&1 && {
+  echo "OpenPGP packet inspection leaked the encryption key" >&2
   exit 1
-fi
-for sensitive_value in \
-  "$backup_password" \
-  "$backup_encryption_key" \
-  "$wrong_backup_encryption_key" \
-  "backup restore fixture" \
-  "backup-restore-fixture@example.invalid"; do
-  if grep -F "$sensitive_value" "$wrong_key_output" >/dev/null 2>&1; then
-    echo "wrong-key restore leaked protected data" >&2
+}
+rm -rf "$packet_output" "$packet_gpg_home"
+echo "OpenPGP packet contract verified: AES256 S2K3 SHA512 count=65011712 MDC"
+
+assert_restore_rejected() {
+  rejection_label=$1
+  rejection_key_file=$2
+  rejection_backup_file=$3
+  rejection_output="$temp_dir/$rejection_label.log"
+  rejection_work_root="$temp_dir/$rejection_label-work"
+  mkdir -p "$rejection_work_root"
+
+  if BACKUP_ENCRYPTION_KEY_FILE="$rejection_key_file" \
+    BACKUP_CRYPTO_IMAGE="$backup_crypto_image" \
+    RESTORE_TMP_ROOT="$rejection_work_root" \
+    infra/docker/restore-drill.sh \
+      "$rejection_backup_file" \
+      "$platform_user_count" \
+      "$agno_session_count" \
+      "$platform_user_id" \
+      "$agno_session_id" >"$rejection_output" 2>&1; then
+    echo "$rejection_label restore unexpectedly succeeded" >&2
     exit 1
   fi
-done
-rm -f "$wrong_key_output"
+  if find "$rejection_work_root" -type f -name '*.dump*' | grep -q .; then
+    echo "$rejection_label restore left a usable plaintext dump" >&2
+    exit 1
+  fi
+  for sensitive_value in \
+    "$backup_password" \
+    "$backup_encryption_key" \
+    "$wrong_backup_encryption_key" \
+    "backup restore fixture" \
+    "backup-restore-fixture@example.invalid"; do
+    if grep -F "$sensitive_value" "$rejection_output" >/dev/null 2>&1; then
+      echo "$rejection_label restore leaked protected data" >&2
+      exit 1
+    fi
+  done
+  rm -rf "$rejection_output" "$rejection_work_root"
+}
+
+assert_restore_rejected \
+  wrong-key \
+  "$WRONG_BACKUP_ENCRYPTION_KEY_FILE" \
+  "$dump_dir/generated.dump.gpg"
 echo "wrong encryption key was rejected"
+
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --entrypoint sh \
+  -v "$dump_dir:/work" \
+  "$backup_crypto_image" \
+  -c '
+    set -eu
+    cp /work/generated.dump.gpg /work/tampered.dump.gpg
+    size=$(wc -c </work/tampered.dump.gpg)
+    [ "$size" -gt 64 ]
+    offset=$((size - 8))
+    original=$(dd if=/work/tampered.dump.gpg bs=1 skip="$offset" count=1 2>/dev/null | od -An -tu1 | tr -d " ")
+    [ -n "$original" ]
+    flipped=$((original ^ 1))
+    LC_ALL=C awk -v byte="$flipped" "BEGIN { printf \"%c\", byte }" | dd of=/work/tampered.dump.gpg bs=1 seek="$offset" count=1 conv=notrunc 2>/dev/null
+    chmod 0600 /work/tampered.dump.gpg
+  '
+cmp -s "$dump_dir/generated.dump.gpg" "$dump_dir/tampered.dump.gpg" && {
+  echo "ciphertext tamper fixture was not modified" >&2
+  exit 1
+}
+assert_restore_rejected \
+  tampered-ciphertext \
+  "$BACKUP_ENCRYPTION_KEY_FILE" \
+  "$dump_dir/tampered.dump.gpg"
+echo "tampered ciphertext was rejected"
 
 BACKUP_ENCRYPTION_KEY_FILE="$BACKUP_ENCRYPTION_KEY_FILE" \
 BACKUP_CRYPTO_IMAGE="$backup_crypto_image" \
 infra/docker/restore-drill.sh \
-  "$dump_dir/generated.dump.enc" \
+  "$dump_dir/generated.dump.gpg" \
   "$platform_user_count" \
   "$agno_session_count" \
   "$platform_user_id" \

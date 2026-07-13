@@ -277,16 +277,23 @@ describe("production deployment security contracts", () => {
     expect(backupService).toContain("cap_drop:\n      - ALL");
     expect(backupService).not.toMatch(/user:\s*(?:root|0)/u);
     const backupImage = read("infra/docker/backup.Dockerfile");
-    expect(backupImage).toContain("apk add --no-cache openssl");
+    expect(backupImage).toContain("apk add --no-cache gnupg");
     expect(backupImage).toContain("USER postgres");
     expect(backupImage).toContain("ENTRYPOINT");
     const workflow = read(".github/workflows/ci.yml");
-    expect(workflow).toContain("BACKUP_ENCRYPTION_KEY");
+    expect(workflow).toContain("BACKUP_ENCRYPTION_KEY_FILE");
+    expect(workflow).toContain(
+      'backup_encryption_key="$(openssl rand -hex 32)"',
+    );
+    expect(workflow).toContain('echo "::add-mask::$backup_encryption_key"');
+    expect(workflow).not.toMatch(
+      /echo "BACKUP_ENCRYPTION_KEY=[^\n]*" >> "\$GITHUB_ENV"/u,
+    );
     expect(workflow).toContain(
       "docker build -t backup-service-ci -f infra/docker/backup.Dockerfile .",
     );
     expect(workflow).toContain(
-      "docker run --rm --entrypoint openssl backup-service-ci version",
+      "docker run --rm --entrypoint gpg backup-service-ci --version",
     );
   });
 
@@ -434,7 +441,6 @@ describe("production deployment security contracts", () => {
       "MIGRATOR_DATABASE_PASSWORD",
       "RUNTIME_DATABASE_PASSWORD",
       "BACKUP_DATABASE_PASSWORD",
-      "BACKUP_ENCRYPTION_KEY",
       "AGNO_MIGRATOR_DATABASE_PASSWORD",
       "AGNO_DATABASE_PASSWORD",
       "MIGRATOR_DATABASE_URL",
@@ -651,6 +657,7 @@ describe("production deployment security contracts", () => {
     expect(ignored).toContain("playwright-report/");
     expect(ignored).toContain("test-results/");
     const env = read(".env.example");
+    expect(env).not.toMatch(/^BACKUP_ENCRYPTION_KEY=/mu);
     for (const key of [
       "BETTER_AUTH_SECRET",
       "BETTER_AUTH_URL",
@@ -660,7 +667,6 @@ describe("production deployment security contracts", () => {
       "RUNTIME_DATABASE_URL",
       "BACKUP_DATABASE_URL",
       "BACKUP_DATABASE_PASSWORD",
-      "BACKUP_ENCRYPTION_KEY",
       "OS_SECURITY_KEY",
       "POSTGRES_PASSWORD_FILE",
       "MIGRATOR_DATABASE_PASSWORD_FILE",
@@ -854,9 +860,13 @@ describe("production deployment security contracts", () => {
   it("requires restore drills to verify the exact migration and schema contract", () => {
     const script = read("infra/docker/restore-drill.sh");
     expect(script).toContain("BACKUP_ENCRYPTION_KEY_FILE");
-    expect(script).toContain("aes-256-cbc");
-    expect(script).toContain("-pbkdf2");
-    expect(script).toContain("-iter 600000");
+    expect(script).toContain("--decrypt");
+    expect(script).toContain("--pinentry-mode loopback");
+    expect(script).toContain("--passphrase-file");
+    expect(script).toContain("decrypted_candidate");
+    expect(script).toContain('mv "$decrypted_candidate" "$decrypted_dump"');
+    expect(script).not.toContain("aes-256-cbc");
+    expect(script).not.toContain("openssl enc");
     expect(script).toContain("--env-file");
     expect(script).not.toMatch(/docker run[^\n]*-e\s+POSTGRES_/u);
     expect(script).not.toContain("POSTGRES_PASSWORD=");
@@ -899,10 +909,17 @@ describe("production deployment security contracts", () => {
     expect(script).toContain("--format=custom");
     expect(script).toContain("PGPASSFILE");
     expect(script).not.toContain("BACKUP_DATABASE_URL");
-    expect(script).toContain("aes-256-cbc");
-    expect(script).toContain("-pbkdf2");
-    expect(script).toContain("-iter 600000");
-    expect(script).toContain(".dump.enc");
+    expect(script).toContain("--symmetric");
+    expect(script).toContain("--cipher-algo AES256");
+    expect(script).toContain("--s2k-mode 3");
+    expect(script).toContain("--s2k-digest-algo SHA512");
+    expect(script).toContain("--s2k-count 65011712");
+    expect(script).toContain("--force-mdc");
+    expect(script).toContain("--pinentry-mode loopback");
+    expect(script).toContain("--passphrase-file");
+    expect(script).not.toContain("aes-256-cbc");
+    expect(script).not.toContain("openssl enc");
+    expect(script).toContain(".dump.gpg");
     expect(script).toContain('mv "$encrypted_temporary_file" "$backup_file"');
     expect(script).toContain("trap cleanup EXIT");
     expect(script).toContain("trap 'exit 130' INT");
@@ -944,22 +961,23 @@ printf 'fake-custom-dump' >"$output"
         { mode: 0o700 },
       );
       writeFileSync(
-        path.join(bin, "openssl"),
+        path.join(bin, "gpg"),
         `#!/bin/sh
 set -eu
-printf '%s\\n' "$@" >"$CAPTURE_DIR/openssl.argv"
+printf '%s\\n' "$@" >"$CAPTURE_DIR/gpg.argv"
 input=
 output=
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    -in) shift; input=$1 ;;
-    -out) shift; output=$1 ;;
+    --output) shift; output=$1 ;;
+    --*) ;;
+    *) input=$1 ;;
   esac
   shift
 done
 test -n "$input"
 test -n "$output"
-{ printf 'Salted__'; cat "$input"; } >"$output"
+{ printf 'fake-openpgp'; cat "$input"; } >"$output"
 `,
         { mode: 0o700 },
       );
@@ -992,14 +1010,11 @@ test -n "$output"
         path.join(captures, "pg_dump.argv"),
         "utf8",
       );
-      const opensslArgv = readFileSync(
-        path.join(captures, "openssl.argv"),
-        "utf8",
-      );
+      const gpgArgv = readFileSync(path.join(captures, "gpg.argv"), "utf8");
       for (const secret of [databasePassword, encryptionKey]) {
         expect(output).not.toContain(secret);
         expect(pgDumpArgv).not.toContain(secret);
-        expect(opensslArgv).not.toContain(secret);
+        expect(gpgArgv).not.toContain(secret);
       }
       expect(pgDumpArgv).toContain("--host=db");
       expect(pgDumpArgv).toContain("--username=ai_agent_backup");
@@ -1009,10 +1024,53 @@ test -n "$output"
       expect(readdirSync(temporary)).toEqual([]);
       const backupFiles = readdirSync(backups);
       expect(backupFiles).toHaveLength(1);
-      expect(backupFiles[0]).toMatch(/^ai-agent-platform-.*\.dump\.enc$/u);
+      expect(gpgArgv).toContain("--cipher-algo\nAES256");
+      expect(gpgArgv).toContain("--force-mdc");
+      expect(backupFiles[0]).toMatch(/^ai-agent-platform-.*\.dump\.gpg$/u);
       expect(statSync(path.join(backups, backupFiles[0])).mode & 0o777).toBe(
         0o600,
       );
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("validates exactly the single passphrase line consumed by GnuPG", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "backup-key-format-"));
+    const validator = path.join(root, "infra/docker/validate-backup-key.sh");
+    const valid = [
+      "0123456789abcdef0123456789abcdef",
+      "0123456789abcdef0123456789abcdef\n",
+    ];
+    const invalid = [
+      "0123456789abcdef0123456789abcde",
+      "x\n0123456789abcdef0123456789abcdef0123456789abcdef",
+      "0123456789abcdef0123456789abcdef\nsecond-line",
+      "0123456789abcdef0123456789abcdef\r\n",
+      " 0123456789abcdef0123456789abcdef",
+      "0123456789abcdef0123456789abcdef ",
+      "0123456789abcdef\t0123456789abcdef",
+    ];
+
+    try {
+      for (const [index, value] of valid.entries()) {
+        const keyFile = path.join(sandbox, `valid-${index}`);
+        writeFileSync(keyFile, value, { mode: 0o600 });
+        const accepted = spawnSync("sh", [validator, keyFile], {
+          encoding: "utf8",
+        });
+        expect(accepted.status).toBe(0);
+        expect(`${accepted.stdout}${accepted.stderr}`).not.toContain(value);
+      }
+      for (const [index, value] of invalid.entries()) {
+        const keyFile = path.join(sandbox, `invalid-${index}`);
+        writeFileSync(keyFile, value, { mode: 0o600 });
+        const rejected = spawnSync("sh", [validator, keyFile], {
+          encoding: "utf8",
+        });
+        expect(rejected.status).not.toBe(0);
+        expect(`${rejected.stdout}${rejected.stderr}`).not.toContain(value);
+      }
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
@@ -1057,7 +1115,7 @@ test -n "$output"
     expect(script).toContain("run --rm agno-bootstrap");
     expect(script).toContain("run --rm --no-deps agent-migrate");
     expect(script).toContain("up -d --no-deps agent");
-    expect(script).toContain("up -d --no-deps backup");
+    expect(script).toContain("run --rm --no-deps backup");
     expect(script).toContain("http://127.0.0.1:7777/internal/health/ready");
     expect(script).toContain("/run/secrets/os_security_key");
     expect(script).toContain("30");
@@ -1069,9 +1127,14 @@ test -n "$output"
     expect(script).not.toContain('payload.get("ready")');
     expect(script).not.toMatch(/ports?:[^\n]*7777/u);
     expect(script).toContain("backup_data");
-    expect(script).toContain(".dump.enc");
+    expect(script).toContain(".dump.gpg");
     expect(script).toContain("BACKUP_ENCRYPTION_KEY_FILE");
     expect(script).toContain("wrong encryption key was rejected");
+    expect(script).toContain("tampered ciphertext was rejected");
+    expect(script).toContain("OpenPGP packet contract verified");
+    expect(script).toContain("mdc_method: 2");
+    expect(script).toContain("RESTORE_TMP_ROOT");
+    expect(script).toContain("left a usable plaintext dump");
     expect(script).toContain("postgres:18.3-alpine3.23");
     expect(script).toContain("mktemp -d");
     expect(script).toContain("infra/docker/restore-drill.sh");

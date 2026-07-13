@@ -40,7 +40,7 @@ pnpm dev
 ```bash
 cp .env.example .env
 # 编辑.env并替换测试密码
-# 创建独立的 0600 备份加密密钥文件，并让 BACKUP_ENCRYPTION_KEY_FILE 指向它
+# 创建独立的 0600 单行备份密钥文件（无空白/CR、至少 32 字节），并让 BACKUP_ENCRYPTION_KEY_FILE 指向它
 docker compose build migrate agent web backup
 docker compose up -d --wait db
 docker compose run --rm migrate

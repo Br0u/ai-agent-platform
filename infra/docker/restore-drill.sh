@@ -12,10 +12,8 @@ if [ -z "$backup_file" ] || [ ! -f "$backup_file" ]; then
   exit 64
 fi
 : "${BACKUP_ENCRYPTION_KEY_FILE:?Set BACKUP_ENCRYPTION_KEY_FILE to a readable secret file}"
-if [ ! -r "$BACKUP_ENCRYPTION_KEY_FILE" ] || [ ! -s "$BACKUP_ENCRYPTION_KEY_FILE" ]; then
-  echo "backup encryption key file is missing or empty" >&2
-  exit 78
-fi
+script_directory="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+"$script_directory/validate-backup-key.sh" "$BACKUP_ENCRYPTION_KEY_FILE"
 for expected_count in "$expected_user_count" "$expected_agno_session_count"; do
   case "$expected_count" in
     ''|*[!0-9]*)
@@ -60,6 +58,8 @@ expected_migrations="6"
 expected_latest_migration="1783854600000"
 temporary_directory=
 postgres_env_file=
+decrypted_candidate=
+decrypted_dump=
 
 cleanup() {
   docker rm -f "$container" >/dev/null 2>&1 || true
@@ -81,8 +81,15 @@ trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
 
 umask 077
-temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/aap-restore-drill.XXXXXX")"
+restore_tmp_root="${RESTORE_TMP_ROOT:-${TMPDIR:-/tmp}}"
+mkdir -p "$restore_tmp_root"
+temporary_directory="$(mktemp -d "$restore_tmp_root/aap-restore-drill.XXXXXX")"
 postgres_env_file="$temporary_directory/postgres.env"
+gpg_home="$temporary_directory/gnupg"
+decrypted_candidate="$temporary_directory/restored.dump.partial"
+decrypted_dump="$temporary_directory/restored.dump"
+mkdir -p "$gpg_home"
+chmod 700 "$gpg_home"
 cat >"$postgres_env_file" <<EOF
 POSTGRES_DB=$database
 POSTGRES_USER=$owner
@@ -92,16 +99,22 @@ chmod 600 "$postgres_env_file"
 
 docker run --rm \
   --user "$(id -u):$(id -g)" \
-  --entrypoint openssl \
+  --entrypoint gpg \
   -v "$(dirname "$backup_file"):/input:ro" \
   -v "$temporary_directory:/work" \
   -v "$BACKUP_ENCRYPTION_KEY_FILE:/run/secrets/backup_encryption_key:ro" \
   "$crypto_image" \
-  enc -d -aes-256-cbc -pbkdf2 -iter 600000 -md sha256 \
-  -pass file:/run/secrets/backup_encryption_key \
-  -in "/input/$(basename "$backup_file")" \
-  -out /work/restored.dump
-chmod 600 "$temporary_directory/restored.dump"
+  --homedir /work/gnupg \
+  --batch \
+  --yes \
+  --no-tty \
+  --pinentry-mode loopback \
+  --no-symkey-cache \
+  --passphrase-file /run/secrets/backup_encryption_key \
+  --output /work/restored.dump.partial \
+  --decrypt "/input/$(basename "$backup_file")"
+chmod 600 "$decrypted_candidate"
+mv "$decrypted_candidate" "$decrypted_dump"
 
 docker volume create "$volume" >/dev/null
 docker run -d --name "$container" \
