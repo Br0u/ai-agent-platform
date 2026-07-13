@@ -8,8 +8,13 @@ expected_agno_session_count="${3:-}"
 expected_user_id="${4:-}"
 expected_agno_session_id="${5:-}"
 if [ -z "$backup_file" ] || [ ! -f "$backup_file" ]; then
-  echo "usage: $0 DUMP EXPECTED_USERS EXPECTED_AGNO_SESSIONS USER_FIXTURE_ID AGNO_SESSION_FIXTURE_ID" >&2
+  echo "usage: $0 ENCRYPTED_DUMP EXPECTED_USERS EXPECTED_AGNO_SESSIONS USER_FIXTURE_ID AGNO_SESSION_FIXTURE_ID" >&2
   exit 64
+fi
+: "${BACKUP_ENCRYPTION_KEY_FILE:?Set BACKUP_ENCRYPTION_KEY_FILE to a readable secret file}"
+if [ ! -r "$BACKUP_ENCRYPTION_KEY_FILE" ] || [ ! -s "$BACKUP_ENCRYPTION_KEY_FILE" ]; then
+  echo "backup encryption key file is missing or empty" >&2
+  exit 78
 fi
 for expected_count in "$expected_user_count" "$expected_agno_session_count"; do
   case "$expected_count" in
@@ -40,29 +45,69 @@ case "$backup_file" in
   /*) ;;
   *) backup_file="$(pwd)/$backup_file" ;;
 esac
+case "$BACKUP_ENCRYPTION_KEY_FILE" in
+  /*) ;;
+  *) BACKUP_ENCRYPTION_KEY_FILE="$(pwd)/$BACKUP_ENCRYPTION_KEY_FILE" ;;
+esac
 
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 container="aap-restore-drill-$run_id"
 volume="aap-restore-drill-$run_id"
-password="$(openssl rand -hex 32)"
 database="restore_drill"
 owner="restore_owner"
+crypto_image="${BACKUP_CRYPTO_IMAGE:-ai-agent-platform-backup:latest}"
 expected_migrations="6"
 expected_latest_migration="1783854600000"
+temporary_directory=
+postgres_env_file=
 
 cleanup() {
   docker rm -f "$container" >/dev/null 2>&1 || true
   docker volume rm "$volume" >/dev/null 2>&1 || true
+  if [ -n "$temporary_directory" ]; then
+    rm -rf "$temporary_directory"
+  fi
 }
-trap cleanup EXIT INT TERM
+
+on_signal() {
+  code=$1
+  cleanup
+  trap - EXIT
+  exit "$code"
+}
+
+trap cleanup EXIT
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
+
+umask 077
+temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/aap-restore-drill.XXXXXX")"
+postgres_env_file="$temporary_directory/postgres.env"
+cat >"$postgres_env_file" <<EOF
+POSTGRES_DB=$database
+POSTGRES_USER=$owner
+POSTGRES_HOST_AUTH_METHOD=trust
+EOF
+chmod 600 "$postgres_env_file"
+
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --entrypoint openssl \
+  -v "$(dirname "$backup_file"):/input:ro" \
+  -v "$temporary_directory:/work" \
+  -v "$BACKUP_ENCRYPTION_KEY_FILE:/run/secrets/backup_encryption_key:ro" \
+  "$crypto_image" \
+  enc -d -aes-256-cbc -pbkdf2 -iter 600000 -md sha256 \
+  -pass file:/run/secrets/backup_encryption_key \
+  -in "/input/$(basename "$backup_file")" \
+  -out /work/restored.dump
+chmod 600 "$temporary_directory/restored.dump"
 
 docker volume create "$volume" >/dev/null
 docker run -d --name "$container" \
-  -e POSTGRES_DB="$database" \
-  -e POSTGRES_USER="$owner" \
-  -e POSTGRES_PASSWORD="$password" \
+  --env-file "$postgres_env_file" \
   -v "$volume:/var/lib/postgresql" \
-  -v "$(dirname "$backup_file"):/restore:ro" \
+  -v "$temporary_directory:/restore:ro" \
   postgres:18.3-alpine3.23 >/dev/null
 
 attempt=0
@@ -77,7 +122,7 @@ done
 
 docker exec "$container" pg_restore \
   --username="$owner" --dbname="$database" --clean --if-exists --no-owner --no-acl \
-  "/restore/$(basename "$backup_file")"
+  /restore/restored.dump
 
 migration_count="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \
   "SELECT count(*) FROM drizzle.__drizzle_migrations")"

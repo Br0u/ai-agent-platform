@@ -255,16 +255,21 @@ services:
       context: .
       dockerfile: infra/docker/backup.Dockerfile
     restart: unless-stopped
-    entrypoint: ["/opt/aap/run-with-secret-env.sh"]
     command: ["/usr/local/bin/aap-backup"]
     environment:
-      SECRET_ENV_SPECS: BACKUP_DATABASE_URL=/run/secrets/backup_database_url
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-ai_agent_platform}
+      PGUSER: ai_agent_backup
+      BACKUP_DATABASE_PASSWORD_FILE: /run/secrets/backup_database_password
+      BACKUP_ENCRYPTION_KEY_FILE: /run/secrets/backup_encryption_key
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_RUN_ONCE: ${BACKUP_RUN_ONCE:-false}
     secrets:
-      - backup_database_url
+      - backup_database_password
+      - backup_encryption_key
     volumes:
-      - ./infra/docker/run-with-secret-env.sh:/opt/aap/run-with-secret-env.sh:ro
       - backup_data:/backups
     depends_on:
       migrate:
@@ -299,6 +304,8 @@ secrets:
     file: ${RUNTIME_DATABASE_PASSWORD_FILE:-.secrets/runtime_database_password}
   backup_database_password:
     file: ${BACKUP_DATABASE_PASSWORD_FILE:-.secrets/backup_database_password}
+  backup_encryption_key:
+    file: ${BACKUP_ENCRYPTION_KEY_FILE:-.secrets/backup_encryption_key}
   agno_migrator_database_password:
     file: ${AGNO_MIGRATOR_DATABASE_PASSWORD_FILE:-.secrets/agno_migrator_database_password}
   agno_database_password:
@@ -307,8 +314,6 @@ secrets:
     file: ${MIGRATOR_DATABASE_URL_FILE:-.secrets/migrator_database_url}
   runtime_database_url:
     file: ${RUNTIME_DATABASE_URL_FILE:-.secrets/runtime_database_url}
-  backup_database_url:
-    file: ${BACKUP_DATABASE_URL_FILE:-.secrets/backup_database_url}
   agno_migrator_database_url:
     file: ${AGNO_MIGRATOR_DATABASE_URL_FILE:-.secrets/agno_migrator_database_url}
   agno_database_url:

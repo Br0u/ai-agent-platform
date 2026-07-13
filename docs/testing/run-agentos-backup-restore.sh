@@ -15,10 +15,7 @@ cleanup() {
   if command -v docker >/dev/null 2>&1; then
     if [ -n "$env_file" ] && [ -f "$env_file" ]; then
       docker compose -p "$project" --env-file "$env_file" \
-        down -v --remove-orphans >/dev/null 2>&1 || true
-    else
-      docker compose -p "$project" down -v --remove-orphans \
-        >/dev/null 2>&1 || true
+        down --rmi local -v --remove-orphans >/dev/null 2>&1 || true
     fi
   fi
   if [ -n "$temp_dir" ]; then
@@ -67,6 +64,8 @@ postgres_password=$(secret)
 migrator_password=$(secret)
 runtime_password=$(secret)
 backup_password=$(secret)
+backup_encryption_key=$(secret)
+wrong_backup_encryption_key=$(secret)
 agno_migrator_password=$(secret)
 agno_runtime_password=$(secret)
 better_auth_secret=$(secret)
@@ -91,11 +90,12 @@ materialize_secret POSTGRES_PASSWORD_FILE postgres_password "$postgres_password"
 materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$migrator_password"
 materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$runtime_password"
 materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$backup_password"
+materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key"
+materialize_secret WRONG_BACKUP_ENCRYPTION_KEY_FILE wrong_backup_encryption_key "$wrong_backup_encryption_key"
 materialize_secret AGNO_MIGRATOR_DATABASE_PASSWORD_FILE agno_migrator_database_password "$agno_migrator_password"
 materialize_secret AGNO_DATABASE_PASSWORD_FILE agno_database_password "$agno_runtime_password"
 materialize_secret MIGRATOR_DATABASE_URL_FILE migrator_database_url "postgresql://ai_agent_migrator:$migrator_password@db:5432/$database"
 materialize_secret RUNTIME_DATABASE_URL_FILE runtime_database_url "postgresql://ai_agent_runtime:$runtime_password@db:5432/$database"
-materialize_secret BACKUP_DATABASE_URL_FILE backup_database_url "postgresql://ai_agent_backup:$backup_password@db:5432/$database"
 materialize_secret AGNO_MIGRATOR_DATABASE_URL_FILE agno_migrator_database_url "postgresql+psycopg_async://ai_agent_agno_migrator:$agno_migrator_password@db:5432/$database"
 materialize_secret AGNO_DATABASE_URL_FILE agno_database_url "postgresql+psycopg_async://ai_agent_agno:$agno_runtime_password@db:5432/$database"
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$better_auth_secret"
@@ -109,11 +109,11 @@ POSTGRES_PASSWORD_FILE=$POSTGRES_PASSWORD_FILE
 MIGRATOR_DATABASE_PASSWORD_FILE=$MIGRATOR_DATABASE_PASSWORD_FILE
 RUNTIME_DATABASE_PASSWORD_FILE=$RUNTIME_DATABASE_PASSWORD_FILE
 BACKUP_DATABASE_PASSWORD_FILE=$BACKUP_DATABASE_PASSWORD_FILE
+BACKUP_ENCRYPTION_KEY_FILE=$BACKUP_ENCRYPTION_KEY_FILE
 AGNO_MIGRATOR_DATABASE_PASSWORD_FILE=$AGNO_MIGRATOR_DATABASE_PASSWORD_FILE
 AGNO_DATABASE_PASSWORD_FILE=$AGNO_DATABASE_PASSWORD_FILE
 MIGRATOR_DATABASE_URL_FILE=$MIGRATOR_DATABASE_URL_FILE
 RUNTIME_DATABASE_URL_FILE=$RUNTIME_DATABASE_URL_FILE
-BACKUP_DATABASE_URL_FILE=$BACKUP_DATABASE_URL_FILE
 AGNO_MIGRATOR_DATABASE_URL_FILE=$AGNO_MIGRATOR_DATABASE_URL_FILE
 AGNO_DATABASE_URL_FILE=$AGNO_DATABASE_URL_FILE
 BETTER_AUTH_SECRET_FILE=$BETTER_AUTH_SECRET_FILE
@@ -124,6 +124,7 @@ PUBLIC_HOST=127.0.0.1
 ALLOW_LOCAL_VALIDATION_HOSTS=true
 BACKUP_INTERVAL_SECONDS=86400
 BACKUP_RETENTION_DAYS=14
+BACKUP_RUN_ONCE=true
 EOF
 chmod 600 "$env_file"
 if env_permissions=$(stat -f %Lp "$env_file" 2>/dev/null); then
@@ -211,7 +212,7 @@ backup_volume="${project}_backup_data"
 attempt=0
 until docker run --rm -v "$backup_volume:/backups:ro" \
   postgres:18.3-alpine3.23 sh -c \
-  'find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump" | grep -q .' \
+  'find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump.enc" | grep -q .' \
   >/dev/null 2>&1; do
   attempt=$((attempt + 1))
   if [ "$attempt" -ge 30 ]; then
@@ -225,10 +226,44 @@ docker run --rm \
   -v "$backup_volume:/backups:ro" \
   -v "$dump_dir:/out" \
   postgres:18.3-alpine3.23 sh -c \
-  'dump=$(find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump" | head -n 1); test -n "$dump"; cp "$dump" /out/generated.dump; chmod 0644 /out/generated.dump'
+  'dump=$(find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump.enc" | head -n 1); test -n "$dump"; cp "$dump" /out/generated.dump.enc; chmod 0600 /out/generated.dump.enc'
 
+backup_crypto_image="$(compose images -q backup)"
+[ -n "$backup_crypto_image" ] || {
+  echo "backup crypto image was not built" >&2
+  exit 1
+}
+
+wrong_key_output="$temp_dir/wrong-key.log"
+if BACKUP_ENCRYPTION_KEY_FILE="$WRONG_BACKUP_ENCRYPTION_KEY_FILE" \
+  BACKUP_CRYPTO_IMAGE="$backup_crypto_image" \
+  infra/docker/restore-drill.sh \
+    "$dump_dir/generated.dump.enc" \
+    "$platform_user_count" \
+    "$agno_session_count" \
+    "$platform_user_id" \
+    "$agno_session_id" >"$wrong_key_output" 2>&1; then
+  echo "restore unexpectedly accepted a wrong encryption key" >&2
+  exit 1
+fi
+for sensitive_value in \
+  "$backup_password" \
+  "$backup_encryption_key" \
+  "$wrong_backup_encryption_key" \
+  "backup restore fixture" \
+  "backup-restore-fixture@example.invalid"; do
+  if grep -F "$sensitive_value" "$wrong_key_output" >/dev/null 2>&1; then
+    echo "wrong-key restore leaked protected data" >&2
+    exit 1
+  fi
+done
+rm -f "$wrong_key_output"
+echo "wrong encryption key was rejected"
+
+BACKUP_ENCRYPTION_KEY_FILE="$BACKUP_ENCRYPTION_KEY_FILE" \
+BACKUP_CRYPTO_IMAGE="$backup_crypto_image" \
 infra/docker/restore-drill.sh \
-  "$dump_dir/generated.dump" \
+  "$dump_dir/generated.dump.enc" \
   "$platform_user_count" \
   "$agno_session_count" \
   "$platform_user_id" \

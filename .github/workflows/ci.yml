@@ -45,7 +45,7 @@ jobs:
       - name: Generate masked authentication and AgentOS fixtures
         shell: bash
         run: |
-          for name in POSTGRES_PASSWORD MIGRATOR_DATABASE_PASSWORD RUNTIME_DATABASE_PASSWORD BACKUP_DATABASE_PASSWORD \
+          for name in POSTGRES_PASSWORD MIGRATOR_DATABASE_PASSWORD RUNTIME_DATABASE_PASSWORD BACKUP_DATABASE_PASSWORD BACKUP_ENCRYPTION_KEY \
             AGNO_MIGRATOR_DATABASE_PASSWORD AGNO_DATABASE_PASSWORD OS_SECURITY_KEY \
             BETTER_AUTH_SECRET E2E_CUSTOMER_PASSWORD E2E_STAFF_PASSWORD E2E_ADMIN_PASSWORD \
             E2E_PENDING_CUSTOMER_SESSION_TOKEN E2E_DISABLED_CUSTOMER_SESSION_TOKEN \
@@ -109,6 +109,8 @@ jobs:
           uv --directory apps/agent run mypy src tests
       - run: docker build -t agent-service-ci -f apps/agent/Dockerfile .
       - run: docker run --rm agent-service-ci uvicorn --version
+      - run: docker build -t backup-service-ci -f infra/docker/backup.Dockerfile .
+      - run: docker run --rm --entrypoint openssl backup-service-ci version
       - run: pnpm test
       - run: pnpm typecheck
       - run: pnpm lint

@@ -1,10 +1,12 @@
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -249,22 +251,25 @@ describe("production deployment security contracts", () => {
     const compose = read("compose.yaml");
     expect(compose).toContain("MIGRATOR_DATABASE_URL");
     expect(compose).toContain("RUNTIME_DATABASE_URL");
-    expect(compose).toContain("BACKUP_DATABASE_URL");
     const webService = compose.split("\n  web:\n")[1]?.split("\n  proxy:\n")[0];
     const backupService = compose
       .split("\n  backup:\n")[1]
       ?.split("\nnetworks:\n")[0];
     expect(webService).toBeDefined();
     expect(webService).not.toMatch(/^\s{4}ports:/m);
-    expect(backupService).toContain(
-      "SECRET_ENV_SPECS: BACKUP_DATABASE_URL=/run/secrets/backup_database_url",
-    );
-    expect(backupService).toContain("secrets:\n      - backup_database_url");
+    expect(backupService).toContain("PGHOST: db");
+    expect(backupService).toContain("PGUSER: ai_agent_backup");
+    expect(backupService).toContain("- backup_database_password");
+    expect(backupService).toContain("- backup_encryption_key");
+    expect(backupService).not.toContain("BACKUP_DATABASE_URL");
+    expect(backupService).not.toContain("backup_database_url");
     expect(backupService).not.toContain("RUNTIME_DATABASE_PASSWORD");
-    expect(backupService).not.toContain("PGUSER");
     const backupScript = read("infra/docker/backup.sh");
-    expect(backupScript).toContain('"$BACKUP_DATABASE_URL"');
-    expect(backupScript).not.toContain("PGDATABASE");
+    expect(backupScript).not.toContain("BACKUP_DATABASE_URL");
+    expect(backupScript).toContain("PGPASSFILE");
+    expect(backupScript).toContain('--dbname="$PGDATABASE"');
+    expect(backupScript).toContain("BACKUP_DATABASE_PASSWORD_FILE");
+    expect(backupScript).toContain("BACKUP_ENCRYPTION_KEY_FILE");
     expect(backupService).toContain(
       "dockerfile: infra/docker/backup.Dockerfile",
     );
@@ -272,8 +277,17 @@ describe("production deployment security contracts", () => {
     expect(backupService).toContain("cap_drop:\n      - ALL");
     expect(backupService).not.toMatch(/user:\s*(?:root|0)/u);
     const backupImage = read("infra/docker/backup.Dockerfile");
+    expect(backupImage).toContain("apk add --no-cache openssl");
     expect(backupImage).toContain("USER postgres");
     expect(backupImage).toContain("ENTRYPOINT");
+    const workflow = read(".github/workflows/ci.yml");
+    expect(workflow).toContain("BACKUP_ENCRYPTION_KEY");
+    expect(workflow).toContain(
+      "docker build -t backup-service-ci -f infra/docker/backup.Dockerfile .",
+    );
+    expect(workflow).toContain(
+      "docker run --rm --entrypoint openssl backup-service-ci version",
+    );
   });
 
   it("keeps the non-root migrator workspace writable and local env files out of Docker", () => {
@@ -420,6 +434,7 @@ describe("production deployment security contracts", () => {
       "MIGRATOR_DATABASE_PASSWORD",
       "RUNTIME_DATABASE_PASSWORD",
       "BACKUP_DATABASE_PASSWORD",
+      "BACKUP_ENCRYPTION_KEY",
       "AGNO_MIGRATOR_DATABASE_PASSWORD",
       "AGNO_DATABASE_PASSWORD",
       "MIGRATOR_DATABASE_URL",
@@ -563,6 +578,8 @@ describe("production deployment security contracts", () => {
       /\[ "\$env_permissions" = "600" \][\s\S]*exit 1/u,
     );
     expect(afterCreateOrReuse).not.toMatch(/cat\s+"?\$env_file"?/u);
+    expect(runner).toContain("BACKUP_ENCRYPTION_KEY_FILE");
+    expect(runner).not.toContain("BACKUP_DATABASE_URL_FILE");
   });
 
   it("rejects unknown hosts before forwarding and preserves approved Host ports", () => {
@@ -643,16 +660,17 @@ describe("production deployment security contracts", () => {
       "RUNTIME_DATABASE_URL",
       "BACKUP_DATABASE_URL",
       "BACKUP_DATABASE_PASSWORD",
+      "BACKUP_ENCRYPTION_KEY",
       "OS_SECURITY_KEY",
       "POSTGRES_PASSWORD_FILE",
       "MIGRATOR_DATABASE_PASSWORD_FILE",
       "RUNTIME_DATABASE_PASSWORD_FILE",
       "BACKUP_DATABASE_PASSWORD_FILE",
+      "BACKUP_ENCRYPTION_KEY_FILE",
       "AGNO_MIGRATOR_DATABASE_PASSWORD_FILE",
       "AGNO_DATABASE_PASSWORD_FILE",
       "MIGRATOR_DATABASE_URL_FILE",
       "RUNTIME_DATABASE_URL_FILE",
-      "BACKUP_DATABASE_URL_FILE",
       "AGNO_MIGRATOR_DATABASE_URL_FILE",
       "AGNO_DATABASE_URL_FILE",
       "BETTER_AUTH_SECRET_FILE",
@@ -683,7 +701,9 @@ describe("production deployment security contracts", () => {
     }
     for (const [previous, next] of orderedCommands
       .slice(0, -1)
-      .map((command, index) => [command, orderedCommands[index + 1]] as const)) {
+      .map(
+        (command, index) => [command, orderedCommands[index + 1]] as const,
+      )) {
       expect(runbook.indexOf(previous)).toBeLessThan(runbook.indexOf(next));
       expect(rootReadme.indexOf(previous)).toBeLessThan(
         rootReadme.indexOf(next),
@@ -833,6 +853,13 @@ describe("production deployment security contracts", () => {
 
   it("requires restore drills to verify the exact migration and schema contract", () => {
     const script = read("infra/docker/restore-drill.sh");
+    expect(script).toContain("BACKUP_ENCRYPTION_KEY_FILE");
+    expect(script).toContain("aes-256-cbc");
+    expect(script).toContain("-pbkdf2");
+    expect(script).toContain("-iter 600000");
+    expect(script).toContain("--env-file");
+    expect(script).not.toMatch(/docker run[^\n]*-e\s+POSTGRES_/u);
+    expect(script).not.toContain("POSTGRES_PASSWORD=");
     expect(script).toContain('expected_migrations="6"');
     expect(script).toContain("migration_count");
     expect(script).toContain("latest_migration");
@@ -869,9 +896,126 @@ describe("production deployment security contracts", () => {
       expect(script).toContain(`--schema=${schema}`);
     }
     expect(script.match(/pg_dump/g)).toHaveLength(1);
-    expect(script).toContain('--format=custom');
-    expect(script).toContain('temporary_file="/backups/.ai-agent-platform-');
-    expect(script).toContain('mv "$temporary_file" "$backup_file"');
+    expect(script).toContain("--format=custom");
+    expect(script).toContain("PGPASSFILE");
+    expect(script).not.toContain("BACKUP_DATABASE_URL");
+    expect(script).toContain("aes-256-cbc");
+    expect(script).toContain("-pbkdf2");
+    expect(script).toContain("-iter 600000");
+    expect(script).toContain(".dump.enc");
+    expect(script).toContain('mv "$encrypted_temporary_file" "$backup_file"');
+    expect(script).toContain("trap cleanup EXIT");
+    expect(script).toContain("trap 'exit 130' INT");
+    expect(script).toContain("trap 'exit 143' TERM");
+  });
+
+  it("keeps backup secrets out of command argv and removes plaintext work files", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "backup-secret-boundary-"));
+    const bin = path.join(sandbox, "bin");
+    const captures = path.join(sandbox, "captures");
+    const backups = path.join(sandbox, "backups");
+    const temporary = path.join(sandbox, "temporary");
+    const passwordFile = path.join(sandbox, "database-password");
+    const encryptionKeyFile = path.join(sandbox, "encryption-key");
+    const databasePassword = "backup:password\\sentinel";
+    const encryptionKey = "encryption-key-sentinel-0123456789abcdef";
+
+    try {
+      for (const directory of [bin, captures, backups, temporary]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeFileSync(passwordFile, databasePassword, { mode: 0o600 });
+      writeFileSync(encryptionKeyFile, encryptionKey, { mode: 0o600 });
+      writeFileSync(
+        path.join(bin, "pg_dump"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$@" >"$CAPTURE_DIR/pg_dump.argv"
+cp "$PGPASSFILE" "$CAPTURE_DIR/pgpass"
+output=
+for argument in "$@"; do
+  case "$argument" in
+    --file=*) output=\${argument#--file=} ;;
+  esac
+done
+test -n "$output"
+printf 'fake-custom-dump' >"$output"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "openssl"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$@" >"$CAPTURE_DIR/openssl.argv"
+input=
+output=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -in) shift; input=$1 ;;
+    -out) shift; output=$1 ;;
+  esac
+  shift
+done
+test -n "$input"
+test -n "$output"
+{ printf 'Salted__'; cat "$input"; } >"$output"
+`,
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync(
+        "sh",
+        [path.join(root, "infra/docker/backup.sh")],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
+            CAPTURE_DIR: captures,
+            PGHOST: "db",
+            PGPORT: "5432",
+            PGDATABASE: "ai_agent_platform",
+            PGUSER: "ai_agent_backup",
+            BACKUP_DATABASE_PASSWORD_FILE: passwordFile,
+            BACKUP_ENCRYPTION_KEY_FILE: encryptionKeyFile,
+            BACKUP_DIRECTORY: backups,
+            BACKUP_TMP_DIRECTORY: temporary,
+            BACKUP_RUN_ONCE: "true",
+          },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      const output = `${result.stdout}${result.stderr}`;
+      const pgDumpArgv = readFileSync(
+        path.join(captures, "pg_dump.argv"),
+        "utf8",
+      );
+      const opensslArgv = readFileSync(
+        path.join(captures, "openssl.argv"),
+        "utf8",
+      );
+      for (const secret of [databasePassword, encryptionKey]) {
+        expect(output).not.toContain(secret);
+        expect(pgDumpArgv).not.toContain(secret);
+        expect(opensslArgv).not.toContain(secret);
+      }
+      expect(pgDumpArgv).toContain("--host=db");
+      expect(pgDumpArgv).toContain("--username=ai_agent_backup");
+      expect(readFileSync(path.join(captures, "pgpass"), "utf8")).toBe(
+        "db:5432:ai_agent_platform:ai_agent_backup:backup\\:password\\\\sentinel\n",
+      );
+      expect(readdirSync(temporary)).toEqual([]);
+      const backupFiles = readdirSync(backups);
+      expect(backupFiles).toHaveLength(1);
+      expect(backupFiles[0]).toMatch(/^ai-agent-platform-.*\.dump\.enc$/u);
+      expect(statSync(path.join(backups, backupFiles[0])).mode & 0o777).toBe(
+        0o600,
+      );
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
   });
 
   it("documents AgentOS upgrades, startup order, and rollback sequencing", () => {
@@ -896,8 +1040,8 @@ describe("production deployment security contracts", () => {
   it("defines a failure-safe isolated AgentOS backup and restore acceptance", () => {
     const script = read("docs/testing/run-agentos-backup-restore.sh");
 
-    expect(script).toContain("docker compose -p \"$project\"");
-    expect(script).toContain("down -v --remove-orphans");
+    expect(script).toContain('docker compose -p "$project"');
+    expect(script).toContain("down --rmi local -v --remove-orphans");
     expect(script).toContain("trap cleanup EXIT");
     expect(script).toContain("trap 'on_signal 130' INT");
     expect(script).toContain("trap 'on_signal 143' TERM");
@@ -925,6 +1069,9 @@ describe("production deployment security contracts", () => {
     expect(script).not.toContain('payload.get("ready")');
     expect(script).not.toMatch(/ports?:[^\n]*7777/u);
     expect(script).toContain("backup_data");
+    expect(script).toContain(".dump.enc");
+    expect(script).toContain("BACKUP_ENCRYPTION_KEY_FILE");
+    expect(script).toContain("wrong encryption key was rejected");
     expect(script).toContain("postgres:18.3-alpine3.23");
     expect(script).toContain("mktemp -d");
     expect(script).toContain("infra/docker/restore-drill.sh");
@@ -936,7 +1083,9 @@ describe("production deployment security contracts", () => {
   });
 
   it("cleans temporary paths on a controlled failure immediately after allocation", () => {
-    const sandbox = mkdtempSync(path.join(tmpdir(), "agentos-restore-cleanup-"));
+    const sandbox = mkdtempSync(
+      path.join(tmpdir(), "agentos-restore-cleanup-"),
+    );
     const runner = path.join(
       root,
       "docs/testing/run-agentos-backup-restore.sh",
