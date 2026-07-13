@@ -47,6 +47,64 @@ describe("production deployment security contracts", () => {
     expect(script).toContain('--dbname="$POSTGRES_DB"');
   });
 
+  it("isolates Agno migrations and runtime behind owner-executed role bootstrap", () => {
+    const platformRoles = read("infra/postgres/01-roles.sql");
+    const agnoRoles = read("infra/postgres/03-agno-roles.sql");
+    const wrapper = read("infra/postgres/03-agno-roles.sh");
+    const env = read(".env.example");
+
+    expect(agnoRoles).toContain("ai_agent_agno_migrator");
+    expect(agnoRoles).toContain("ai_agent_agno");
+    expect(agnoRoles).toMatch(
+      /CREATE SCHEMA IF NOT EXISTS agno AUTHORIZATION ai_agent_agno_migrator/u,
+    );
+    expect(agnoRoles).toContain("REVOKE USAGE ON SCHEMA public FROM PUBLIC");
+    expect(platformRoles).toContain(
+      "REVOKE USAGE ON SCHEMA public FROM PUBLIC",
+    );
+    expect(agnoRoles).toContain("REVOKE ALL ON SCHEMA agno FROM PUBLIC");
+    expect(agnoRoles).toMatch(
+      /GRANT USAGE, CREATE ON SCHEMA agno TO ai_agent_agno_migrator/u,
+    );
+    expect(agnoRoles).toMatch(
+      /GRANT USAGE ON SCHEMA agno TO ai_agent_agno, ai_agent_backup/u,
+    );
+    expect(agnoRoles).toMatch(
+      /SET ROLE ai_agent_agno_migrator;[\s\S]*ALTER DEFAULT PRIVILEGES IN SCHEMA agno[\s\S]*GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ai_agent_agno/u,
+    );
+    expect(agnoRoles).toMatch(
+      /ALTER DEFAULT PRIVILEGES IN SCHEMA agno[\s\S]*REVOKE USAGE, UPDATE ON SEQUENCES FROM ai_agent_backup/u,
+    );
+    expect(agnoRoles).toContain(
+      "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA agno TO ai_agent_agno",
+    );
+    expect(agnoRoles).toContain(
+      "REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA agno FROM ai_agent_backup",
+    );
+    expect(agnoRoles).toContain(
+      "GRANT SELECT ON ALL SEQUENCES IN SCHEMA agno TO ai_agent_backup",
+    );
+
+    expect(wrapper).toContain(': "${AGNO_MIGRATOR_DATABASE_PASSWORD:?');
+    expect(wrapper).toContain(': "${AGNO_DATABASE_PASSWORD:?');
+    expect(wrapper).toContain('--username="$POSTGRES_USER"');
+    expect(wrapper).toContain('--dbname="$POSTGRES_DB"');
+    expect(wrapper).toContain("03-agno-roles.sql");
+    expect(wrapper).not.toContain("01-roles.sh");
+
+    for (const key of [
+      "AGNO_MIGRATOR_DATABASE_PASSWORD",
+      "AGNO_DATABASE_PASSWORD",
+      "AGNO_MIGRATOR_DATABASE_URL",
+      "AGNO_DATABASE_URL",
+    ]) {
+      expect(env).toContain(`${key}=`);
+    }
+    expect(env).not.toMatch(
+      /(?:AGNO_MIGRATOR_DATABASE_PASSWORD|AGNO_DATABASE_PASSWORD)=(?!replace-with-)/u,
+    );
+  });
+
   it("limits only POST requests on exact authentication routes", () => {
     const nginx = `${read("infra/nginx/nginx.conf")}\n${read("infra/nginx/default.conf.template")}`;
     expect(nginx).toContain(

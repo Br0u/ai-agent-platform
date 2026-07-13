@@ -16,6 +16,7 @@ ALTER ROLE ai_agent_backup PASSWORD :'backup_password';
 GRANT CONNECT ON DATABASE :DBNAME TO ai_agent_migrator, ai_agent_runtime, ai_agent_backup;
 GRANT CREATE ON DATABASE :DBNAME TO ai_agent_migrator;
 REVOKE CREATE ON DATABASE :DBNAME FROM ai_agent_runtime, ai_agent_backup;
+REVOKE USAGE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE, CREATE ON SCHEMA public TO ai_agent_migrator;
 GRANT USAGE ON SCHEMA public TO ai_agent_runtime, ai_agent_backup;
 REVOKE CREATE ON SCHEMA public FROM ai_agent_runtime, ai_agent_backup;

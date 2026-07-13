@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+: "${POSTGRES_HOST:=db}"
+: "${POSTGRES_PORT:=5432}"
+: "${POSTGRES_USER:?Set POSTGRES_USER}"
+: "${POSTGRES_DB:?Set POSTGRES_DB}"
+: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}"
+: "${AGNO_MIGRATOR_DATABASE_PASSWORD:?Set AGNO_MIGRATOR_DATABASE_PASSWORD}"
+: "${AGNO_DATABASE_PASSWORD:?Set AGNO_DATABASE_PASSWORD}"
+
+PGPASSWORD="$POSTGRES_PASSWORD" psql --set=ON_ERROR_STOP=1 \
+  --host="$POSTGRES_HOST" \
+  --port="$POSTGRES_PORT" \
+  --username="$POSTGRES_USER" \
+  --dbname="$POSTGRES_DB" \
+  --set=agno_migrator_password="$AGNO_MIGRATOR_DATABASE_PASSWORD" \
+  --set=agno_runtime_password="$AGNO_DATABASE_PASSWORD" \
+  --file="${AGNO_ROLE_SQL_FILE:-/opt/postgres/03-agno-roles.sql}"
