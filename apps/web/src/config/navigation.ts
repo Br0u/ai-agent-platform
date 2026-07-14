@@ -11,10 +11,19 @@ export const portalNavigation: PortalNavigationItem[] = [
     href: "/product",
     children: [
       {
-        label: "产品中心",
+        label: "产品矩阵",
         items: [
-          { label: "产品介绍", href: "/product#overview" },
-          { label: "产品矩阵", href: "/product#modules" },
+          { label: "超融合", href: "/product/hci" },
+          { label: "元启AI开发平台", href: "/product/tgdataxai" },
+          { label: "视觉检索一体机", href: "/product/video-agent" },
+          {
+            label: "数据智能体",
+            href: "/product/data-agent",
+            status: "placeholder",
+          },
+          { label: "智能导办一体机", href: "/product/knowledge-agent" },
+          { label: "办公智能体", href: "/product/office-agent" },
+          { label: "码多多", href: "/product/code-agent" },
         ],
       },
       {
@@ -47,22 +56,22 @@ export const portalNavigation: PortalNavigationItem[] = [
         items: [
           {
             label: "快速开始",
-            href: "/docs#quick-start",
+            href: "/docs/quick-start",
             status: "scaffold",
           },
           {
             label: "部署指南",
-            href: "/docs#deployment",
+            href: "/docs/deployment",
             status: "scaffold",
           },
           {
             label: "升级手册",
-            href: "/docs#upgrade",
+            href: "/docs/upgrade",
             status: "scaffold",
           },
           {
             label: "运维手册",
-            href: "/docs#operations",
+            href: "/docs/operations",
             status: "scaffold",
           },
         ],
@@ -70,16 +79,16 @@ export const portalNavigation: PortalNavigationItem[] = [
       {
         label: "开发与适配",
         items: [
-          { label: "API 文档", href: "/docs#api", status: "scaffold" },
+          { label: "API 文档", href: "/docs/api", status: "scaffold" },
           { label: "功能手册", href: "/docs#features", status: "scaffold" },
           {
             label: "GPU / 硬件适配",
-            href: "/docs#hardware",
+            href: "/docs/hardware",
             status: "scaffold",
           },
           {
             label: "常见问题 FAQ",
-            href: "/docs#faq",
+            href: "/docs/faq",
             status: "scaffold",
           },
         ],
@@ -522,7 +531,7 @@ export const footerNavigation: NavigationSection[] = [
     label: "文档与部署",
     items: [
       { label: "文档", href: "/docs" },
-      { label: "部署指南", href: "/docs#deployment", status: "scaffold" },
+      { label: "部署指南", href: "/docs/deployment", status: "scaffold" },
       { label: "兼容性", href: "/compatibility" },
     ],
   },

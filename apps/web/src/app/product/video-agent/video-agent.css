@@ -1,0 +1,599 @@
+/*
+ * 视频智能体 (视觉检索一体机) 专属 CSS
+ * 科技明亮风格、统一 Corporate Blue、Slate Gray
+ */
+
+.va-page {
+  font-family: var(--font-body);
+  color: #334155;
+  background-color: #fff;
+}
+
+.va-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--space-6);
+}
+
+.va-section {
+  padding: 80px 0;
+}
+
+.va-bg-dark {
+  background-color: #f1f5f9; /* 统一成浅灰色背景 */
+}
+
+.va-bg-gray {
+  background-color: #f8fafc;
+}
+
+.va-section-header {
+  text-align: center;
+  margin-bottom: 48px;
+}
+
+.va-section-header h2 {
+  font-size: 32px;
+  font-weight: 800;
+  color: #0f172a;
+  position: relative;
+  display: inline-block;
+  padding: 0 16px;
+}
+
+.va-section-header h2::before,
+.va-section-header h2::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 40px;
+  height: 2px;
+  background: #2563eb;
+}
+
+.va-section-header h2::before {
+  right: 100%;
+}
+.va-section-header h2::after {
+  left: 100%;
+}
+
+/* ========== S1: AI 视觉首屏 ========== */
+.va-hero {
+  position: relative;
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0e7ff 100%);
+  color: #0f172a;
+  padding: 140px 0 120px;
+  overflow: hidden;
+}
+
+.va-hero__bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 0;
+}
+
+.va-grid-lines {
+  width: 100%;
+  height: 100%;
+  background-image:
+    linear-gradient(rgba(37, 99, 235, 0.15) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(37, 99, 235, 0.15) 1px, transparent 1px);
+  background-size: 40px 40px;
+  perspective: 500px;
+  transform: rotateX(60deg) scale(2);
+  transform-origin: top center;
+  opacity: 0.8;
+}
+
+.va-scanner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(37, 99, 235, 0.2) 90%,
+    #2563eb 100%
+  );
+  animation: scan 4s linear infinite;
+  z-index: 1;
+}
+
+@keyframes scan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(800px);
+  }
+}
+
+.va-hero__content {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  max-width: 900px;
+}
+
+.va-hero__title {
+  font-size: 56px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  margin-bottom: 24px;
+  color: #0f172a;
+  text-shadow: 0 4px 12px rgba(37, 99, 235, 0.1);
+}
+
+.va-hero__desc {
+  font-size: 18px;
+  color: #475569;
+  line-height: 1.8;
+  margin-bottom: 48px;
+}
+
+.va-hero__actions {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+}
+
+.va-btn {
+  padding: 16px 40px;
+  font-size: 16px;
+  font-weight: 700;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.va-btn--primary {
+  background: #2563eb;
+  color: #fff;
+  border: 1px solid #2563eb;
+  box-shadow: 0 4px 20px rgba(37, 99, 235, 0.3);
+}
+
+.va-btn--primary:hover {
+  background: #1d4ed8;
+  transform: translateY(-2px);
+}
+
+.va-btn--outline {
+  background: #fff;
+  color: #2563eb;
+  border: 1px solid #2563eb;
+}
+
+.va-btn--outline:hover {
+  background: #eff6ff;
+}
+
+/* ========== S2: VS 双雄对抗 ========== */
+.va-vs-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  position: relative;
+}
+
+.va-vs-card {
+  flex: 1;
+  max-width: 480px;
+  padding: 40px;
+  border-radius: 12px;
+  position: relative;
+  overflow: hidden;
+}
+
+.va-vs-card--trad {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
+}
+
+.va-vs-card--ai {
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+  border: 1px solid #60a5fa;
+  color: #0f172a;
+  box-shadow: 0 10px 40px rgba(37, 99, 235, 0.1);
+}
+
+.va-vs-card__title {
+  font-size: 28px;
+  font-weight: 900;
+  margin-bottom: 32px;
+  text-align: center;
+}
+
+.va-vs-card--trad .va-vs-card__title {
+  color: #64748b;
+}
+.va-vs-card--ai .va-vs-card__title {
+  color: #1d4ed8;
+}
+
+.va-vs-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 32px 0;
+}
+
+.va-vs-list li {
+  display: flex;
+  align-items: center;
+  margin-bottom: 20px;
+  font-size: 16px;
+}
+
+.va-vs-label {
+  font-weight: 700;
+  width: 100px;
+  flex-shrink: 0;
+}
+
+.va-vs-desc {
+  flex: 1;
+}
+
+.va-vs-card--trad .va-vs-list li::before {
+  content: "×";
+  color: #94a3b8;
+  font-weight: 900;
+  margin-right: 12px;
+  font-size: 20px;
+}
+
+.va-vs-card--ai .va-vs-list li::before {
+  content: "✓";
+  color: #2563eb;
+  font-weight: 900;
+  margin-right: 12px;
+  font-size: 20px;
+}
+
+.va-vs-footer {
+  text-align: center;
+  padding: 12px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.va-vs-card--trad .va-vs-footer {
+  background: #e2e8f0;
+  color: #64748b;
+}
+
+.va-vs-card--ai .va-vs-footer {
+  background: #bfdbfe;
+  color: #1e40af;
+  border: 1px solid #93c5fd;
+}
+
+.va-vs-badge {
+  font-size: 100px;
+  font-weight: 900;
+  font-style: italic;
+  color: #bfdbfe;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-shadow:
+    2px 2px 0 #fff,
+    -2px -2px 0 #fff;
+  z-index: 10;
+  line-height: 1;
+}
+
+/* ========== S3: 能力矩阵 ========== */
+.va-features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 32px;
+}
+
+.va-feature-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-top: 4px solid #2563eb;
+  padding: 40px 32px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
+  transition: transform 0.2s;
+}
+
+.va-feature-card:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.05);
+}
+
+.va-feature-icon {
+  font-size: 40px;
+  font-weight: 900;
+  color: #eff6ff;
+  margin-bottom: 16px;
+  line-height: 1;
+}
+
+.va-feature-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: #0f172a;
+  margin-bottom: 24px;
+  line-height: 1.4;
+}
+
+.va-feature-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.va-feature-list li {
+  position: relative;
+  padding-left: 20px;
+  margin-bottom: 12px;
+  font-size: 14px;
+  color: #475569;
+  line-height: 1.6;
+}
+
+.va-feature-list li::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  background: #2563eb;
+  border-radius: 50%;
+}
+
+/* ========== S4: 泛化场景网格 ========== */
+.va-scenarios-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 16px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.va-scenario-tag {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  padding: 12px 32px;
+  border-radius: 30px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #334155;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+}
+
+.va-scenario-dot {
+  width: 10px;
+  height: 10px;
+  background: #10b981;
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+/* ========== S5: 一体机极客选型表 ========== */
+.va-hw-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 48px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.03);
+}
+
+.va-hw-overview {
+  text-align: center;
+}
+
+.va-hw-name {
+  font-size: 32px;
+  font-weight: 900;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+
+.va-hw-sub {
+  font-size: 16px;
+  font-weight: 700;
+  color: #2563eb;
+  margin-bottom: 40px;
+}
+
+/* CSS 手工绘制 2U 服务器面板 (亮色数据中心版) */
+.va-server-mockup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.va-server-chassis {
+  width: 600px;
+  height: 80px;
+  background: #f1f5f9;
+  border: 2px solid #cbd5e1;
+  border-radius: 4px;
+  display: flex;
+  padding: 4px;
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.05),
+    inset 0 2px 10px rgba(255, 255, 255, 1);
+  position: relative;
+}
+
+.va-server-ears {
+  width: 20px;
+  background: #e2e8f0;
+  border: 1px solid #cbd5e1;
+  border-radius: 2px;
+}
+
+.va-server-face {
+  flex: 1;
+  background: #f8fafc;
+  margin: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cbd5e1;
+}
+
+.va-server-disk-array {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  padding: 4px;
+}
+
+.va-server-disk {
+  background: #e2e8f0;
+  border: 1px solid #cbd5e1;
+  border-radius: 2px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.va-server-disk::before {
+  content: "";
+  width: 60%;
+  height: 4px;
+  background: #94a3b8;
+  position: absolute;
+  top: 6px;
+}
+
+.va-disk-led {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 4px #10b981;
+  animation: blink 0.5s infinite alternate;
+}
+
+.va-server-disk:nth-child(even) .va-disk-led {
+  animation-delay: 0.2s;
+}
+.va-server-disk:nth-child(3n) .va-disk-led {
+  background: #f59e0b;
+  box-shadow: 0 0 4px #f59e0b;
+}
+
+@keyframes blink {
+  0% {
+    opacity: 0.3;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.va-server-label {
+  font-size: 14px;
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 2px;
+}
+
+/* 硬件配置表 */
+.va-hw-table-wrapper {
+  overflow-x: auto;
+}
+
+.va-hw-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid #e2e8f0;
+}
+
+.va-hw-table th {
+  background: #f8fafc;
+  padding: 16px;
+  font-size: 16px;
+  font-weight: 800;
+  color: #0f172a;
+  border-bottom: 2px solid #cbd5e1;
+}
+
+.va-hw-table td {
+  padding: 20px 24px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.va-hw-cat {
+  background: #f1f5f9;
+  font-weight: 700;
+  color: #334155;
+  width: 25%;
+  border-right: 1px solid #e2e8f0;
+  text-align: center;
+  white-space: pre-line;
+}
+
+.va-hw-det {
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .va-vs-container {
+    flex-direction: column;
+    gap: 48px;
+  }
+  .va-vs-badge {
+    position: static;
+    transform: none;
+    margin: -40px 0;
+  }
+  .va-features-grid {
+    grid-template-columns: 1fr;
+  }
+  .va-server-chassis {
+    width: 100%;
+  }
+}

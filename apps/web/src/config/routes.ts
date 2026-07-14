@@ -30,7 +30,7 @@ const adminRoute = (
 
 export const routeRegistry: PortalRoute[] = [
   publicRoute("/", "首页", "live"),
-  publicRoute("/product", "产品介绍"),
+  publicRoute("/product", "产品介绍", "live"),
   publicRoute("/product/[slug]", "产品模块详情"),
   publicRoute("/releases", "版本列表"),
   publicRoute("/releases/[version]", "版本更新说明"),
@@ -38,6 +38,7 @@ export const routeRegistry: PortalRoute[] = [
   publicRoute("/downloads", "下载中心", "placeholder"),
   publicRoute("/openlab", "OpenLab", "placeholder"),
   publicRoute("/docs", "文档中心"),
+  publicRoute("/docs/[category]", "文档分类详情"),
   publicRoute("/compatibility", "环境兼容矩阵"),
   publicRoute("/marketplace", "Marketplace"),
   publicRoute("/marketplace/[slug]", "Marketplace资源详情"),

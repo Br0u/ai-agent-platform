@@ -1,0 +1,594 @@
+/*
+ * 码多多 (Code Agent) 专属 CSS
+ * 科技紫/蓝高亮渐变、Glassmorphism 效果、精美微阴影
+ */
+
+.code-agent-page {
+  font-family: var(--font-body);
+  color: #333;
+  background-color: #f8fafc;
+}
+
+.ca-container {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 var(--space-6);
+}
+
+/* ========== S1: Hero ========== */
+.ca-hero {
+  position: relative;
+  /* 非常梦幻的蓝紫融合背景 */
+  background:
+    radial-gradient(circle at top left, #f3e8ff 0%, #ffffff 30%),
+    radial-gradient(circle at bottom right, #e0e7ff 0%, #ffffff 40%);
+  padding: 100px 0;
+  border-bottom: 1px solid #ebedf0;
+  overflow: hidden;
+}
+
+/* 背景光晕层 */
+.ca-hero::before {
+  content: "";
+  position: absolute;
+  top: -20%;
+  right: -10%;
+  width: 800px;
+  height: 800px;
+  background: radial-gradient(
+    circle,
+    rgba(139, 92, 246, 0.15) 0%,
+    rgba(255, 255, 255, 0) 70%
+  );
+  border-radius: 50%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.ca-hero__grid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 64px;
+  align-items: center;
+}
+
+.ca-hero__content {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 六边形图标模拟 */
+.ca-icon-hex {
+  width: 56px;
+  height: 64px;
+  background: #2563eb;
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ca-icon-hex-inner {
+  width: 24px;
+  height: 24px;
+  background: #fff;
+  clip-path: polygon(50% 100%, 0 0, 100% 0);
+  border-radius: 2px;
+}
+
+.ca-hero__title {
+  font-size: 44px;
+  font-weight: 900;
+  color: #0f172a;
+  letter-spacing: -1px;
+  margin-bottom: 16px;
+}
+
+.ca-hero__subtitle {
+  font-size: 20px;
+  color: #475569;
+  margin-bottom: 40px;
+}
+
+.ca-hero__subtitle span {
+  color: #6d28d9;
+  font-weight: 700;
+}
+
+/* 功能特性标签 */
+.ca-features {
+  margin-bottom: 48px;
+}
+
+.ca-features__label {
+  display: block;
+  font-size: 14px;
+  font-weight: 800;
+  color: #1e293b;
+  margin-bottom: 16px;
+}
+
+.ca-features__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.ca-feature-tag {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 4px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+}
+
+/* 下载面板区 */
+.ca-download-panel {
+  display: flex;
+  gap: 16px;
+}
+
+.ca-dl-box {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.04);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.ca-dl-box--main {
+  flex: 1.5;
+  border-color: #ddd6fe; /* 淡紫边框 */
+}
+
+.ca-dl-box__head {
+  font-size: 14px;
+  font-weight: 700;
+  color: #334155;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ca-icon-vscode {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  background: #0066b8;
+  border-radius: 2px;
+}
+
+.ca-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  border-radius: 6px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.2s;
+}
+
+.ca-btn--outline {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  color: #1e293b;
+}
+
+.ca-btn--outline:hover {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.ca-btn--primary {
+  background: linear-gradient(90deg, #6d28d9 0%, #3b82f6 100%);
+  border: none;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(109, 40, 217, 0.3);
+}
+
+.ca-btn--primary:hover {
+  opacity: 0.9;
+  box-shadow: 0 6px 20px rgba(109, 40, 217, 0.4);
+}
+
+.ca-select-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.ca-select {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+  outline: none;
+}
+
+.ca-dl-note {
+  font-size: 12px;
+  color: #94a3b8;
+  text-align: center;
+  margin-top: 12px;
+}
+
+/* S1 右侧: 3D 悬浮效果模拟 */
+.ca-hero__visual {
+  position: relative;
+  height: 500px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  perspective: 1000px;
+}
+
+.ca-3d-scene {
+  position: relative;
+  width: 300px;
+  height: 300px;
+  transform-style: preserve-3d;
+  animation: float 6s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0) rotateX(10deg) rotateY(-10deg);
+  }
+  50% {
+    transform: translateY(-20px) rotateX(15deg) rotateY(-5deg);
+  }
+}
+
+.ca-3d-base {
+  position: absolute;
+  bottom: -60px;
+  left: 50%;
+  transform: translateX(-50%) rotateX(70deg);
+  width: 260px;
+  height: 260px;
+  background: radial-gradient(
+    circle,
+    rgba(139, 92, 246, 0.2) 0%,
+    transparent 70%
+  );
+  border-radius: 50%;
+}
+
+.ca-3d-base-rings {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 160px;
+  height: 160px;
+  border: 2px dashed rgba(139, 92, 246, 0.4);
+  border-radius: 50%;
+}
+
+.ca-3d-cube-group {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 160px;
+  height: 160px;
+}
+
+.ca-3d-cube {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: 4px solid rgba(139, 92, 246, 0.6);
+  border-radius: 8px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.4) 0%,
+    rgba(139, 92, 246, 0.1) 100%
+  );
+  backdrop-filter: blur(8px);
+  box-shadow:
+    inset 0 0 20px rgba(139, 92, 246, 0.2),
+    0 10px 30px rgba(59, 130, 246, 0.3);
+}
+
+.ca-3d-cube--1 {
+  transform: rotateZ(0deg) scale(1);
+}
+.ca-3d-cube--2 {
+  transform: rotateZ(45deg) scale(0.9);
+  border-color: rgba(59, 130, 246, 0.6);
+}
+.ca-3d-cube--3 {
+  transform: rotateZ(90deg) scale(0.8);
+  border-color: rgba(236, 72, 153, 0.5);
+}
+
+.ca-ribbon {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid #e0e7ff;
+  color: #4f46e5;
+  font-family: monospace;
+  font-weight: 700;
+  font-size: 14px;
+  padding: 8px 16px;
+  border-radius: 20px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  backdrop-filter: blur(4px);
+}
+
+.ca-ribbon--1 {
+  top: 20%;
+  left: -20%;
+  transform: rotateZ(-10deg) translateZ(50px);
+}
+
+.ca-ribbon--2 {
+  bottom: 20%;
+  right: -30%;
+  transform: rotateZ(15deg) translateZ(80px);
+}
+
+.ca-ribbon--3 {
+  top: -10%;
+  right: 10%;
+  transform: rotateZ(5deg) translateZ(-40px);
+  opacity: 0.8;
+  font-size: 12px;
+}
+
+/* ========== S2: 安装步骤 ========== */
+.ca-steps {
+  padding: 80px 0;
+  background: #f8fafc;
+}
+
+.ca-section-title {
+  font-size: 32px;
+  font-weight: 800;
+  color: #1e293b;
+  margin-bottom: 48px;
+}
+
+.ca-steps__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+.ca-step-card {
+  position: relative;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 32px;
+  overflow: hidden;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.01);
+}
+
+.ca-step-watermark {
+  position: absolute;
+  top: 10px;
+  right: 20px;
+  font-size: 80px;
+  font-weight: 900;
+  color: #f1f5f9;
+  z-index: 0;
+  line-height: 1;
+}
+
+.ca-step-title {
+  position: relative;
+  z-index: 1;
+  font-size: 20px;
+  font-weight: 800;
+  color: #334155;
+  margin-bottom: 12px;
+}
+
+.ca-step-desc {
+  position: relative;
+  z-index: 1;
+  font-size: 14px;
+  color: #64748b;
+  line-height: 1.6;
+  margin-bottom: 32px;
+  min-height: 44px;
+}
+
+.ca-step-img {
+  position: relative;
+  z-index: 1;
+  background: #fdfdfd;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+/* 拟物框 */
+.ca-mock-box {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+  position: relative;
+}
+
+.ca-mock-dl-btn {
+  border: 1px solid #cbd5e1;
+  color: #2563eb;
+  padding: 8px 24px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  position: relative;
+}
+
+.ca-mock-dl-btn--primary {
+  background: #4f46e5;
+  color: #fff;
+  border: none;
+}
+
+/* 工具提示浮层 */
+.ca-mock-tooltip {
+  position: absolute;
+  top: 120%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #2563eb;
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+}
+
+.ca-mock-tooltip::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  margin-left: -6px;
+  border-width: 6px;
+  border-style: solid;
+  border-color: transparent transparent #2563eb transparent;
+}
+
+.ca-mock-tooltip--left {
+  left: 0;
+  transform: translateX(-20%);
+}
+.ca-mock-tooltip--left::before {
+  left: 30%;
+}
+
+.ca-mock-tooltip--small {
+  font-size: 10px;
+  padding: 4px 8px;
+}
+
+/* 拟物 VSCode 窗口 */
+.ca-mock-vscode-window {
+  width: 100%;
+  height: 100%;
+  background: #1e1e1e;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.ca-mock-vscode-header {
+  height: 16px;
+  background: #333;
+  border-bottom: 1px solid #000;
+}
+
+.ca-mock-vscode-body {
+  flex: 1;
+  display: flex;
+}
+
+.ca-mock-vscode-sidebar {
+  width: 40px;
+  background: #252526;
+  border-right: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 12px;
+}
+
+.ca-mock-mdd-icon {
+  width: 20px;
+  height: 20px;
+  background: #6d28d9;
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  position: relative;
+}
+
+.ca-mock-mdd-icon .ca-mock-tooltip {
+  top: 0;
+  left: 150%;
+  transform: none;
+}
+.ca-mock-mdd-icon .ca-mock-tooltip::before {
+  top: 50%;
+  right: 100%;
+  left: auto;
+  bottom: auto;
+  margin-top: -6px;
+  border-color: transparent #2563eb transparent transparent;
+}
+
+.ca-mock-vscode-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.ca-mock-vscode-logo {
+  font-family: monospace;
+  font-size: 24px;
+  font-weight: 900;
+  color: #333; /* 暗色环境下的隐约文字 */
+  letter-spacing: 2px;
+}
+
+/* 响应式 */
+@media (max-width: 1024px) {
+  .ca-hero__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ca-hero__visual {
+    height: 400px;
+  }
+
+  .ca-steps__grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .ca-download-panel {
+    flex-direction: column;
+  }
+
+  .ca-steps__grid {
+    grid-template-columns: 1fr;
+  }
+}

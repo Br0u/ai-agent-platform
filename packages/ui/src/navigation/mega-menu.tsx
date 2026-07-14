@@ -40,6 +40,11 @@ export function MegaMenu({
   const pinnedIndexRef = useRef<number | null>(null);
   const focusPanelOnOpenRef = useRef(false);
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [activeSectionIndex, setActiveSectionIndex] = useState(0);
+
+  useEffect(() => {
+    setActiveSectionIndex(0);
+  }, [openIndex]);
 
   function cancelClose() {
     if (closeTimerRef.current !== null) {
@@ -208,15 +213,13 @@ export function MegaMenu({
 
       {items.map((item, index) => {
         const isOpen = openIndex === index;
-        const sectionColumnCount = Math.min(
-          4,
-          Math.max(3, item.children.length),
-        );
+        const currentSection =
+          item.children[activeSectionIndex] || item.children[0];
 
         return (
           <div
             aria-labelledby={`${baseId}-trigger-${index}`}
-            className={`mega-menu__panel mega-menu__panel--${sectionColumnCount}`}
+            className="mega-menu__panel"
             hidden={!isOpen}
             id={`${baseId}-panel-${index}`}
             key={item.href}
@@ -227,28 +230,44 @@ export function MegaMenu({
             }}
             role="region"
           >
-            <Link
-              aria-current={
-                isNavigationChildActive(item.href, activeHref)
-                  ? "page"
-                  : undefined
-              }
-              className="mega-menu__overview"
-              href={item.href}
-            >
-              <span>{item.label}概览</span>
-              <span aria-hidden="true">→</span>
-            </Link>
-
-            <div className="mega-menu__sections">
-              {item.children.map((section, sectionIndex) => (
-                <section
-                  className="mega-menu__section"
-                  key={`${section.label}-${sectionIndex}`}
+            <div className="mega-menu__layout">
+              <div className="mega-menu__sidebar">
+                <Link
+                  aria-current={
+                    isNavigationChildActive(item.href, activeHref)
+                      ? "page"
+                      : undefined
+                  }
+                  className="mega-menu__sidebar-overview"
+                  href={item.href}
                 >
-                  <h2>{section.label}</h2>
-                  <div className="mega-menu__links">
-                    {section.items.filter(isNavigationHrefItem).map((child) => (
+                  {item.label}概览 <span aria-hidden="true">→</span>
+                </Link>
+
+                <div className="mega-menu__tabs">
+                  {item.children.map((section, sectionIndex) => (
+                    <button
+                      key={`${section.label}-${sectionIndex}`}
+                      className="mega-menu__tab"
+                      aria-selected={activeSectionIndex === sectionIndex}
+                      onPointerEnter={() => setActiveSectionIndex(sectionIndex)}
+                      onClick={() => setActiveSectionIndex(sectionIndex)}
+                      type="button"
+                    >
+                      {section.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mega-menu__content">
+                <div className="mega-menu__section-header">
+                  <h2>{currentSection?.label}</h2>
+                </div>
+                <div className="mega-menu__links">
+                  {currentSection?.items
+                    .filter(isNavigationHrefItem)
+                    .map((child) => (
                       <Link
                         aria-current={
                           isNavigationChildActive(child.href, activeHref)
@@ -267,9 +286,8 @@ export function MegaMenu({
                         ) : null}
                       </Link>
                     ))}
-                  </div>
-                </section>
-              ))}
+                </div>
+              </div>
             </div>
           </div>
         );

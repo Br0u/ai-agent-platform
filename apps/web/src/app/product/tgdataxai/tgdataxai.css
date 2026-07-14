@@ -1,0 +1,788 @@
+/*
+ * 元启 AI 开发平台 (TGDataXAI) 专属 CSS
+ * 科技风、B 端企业级排版、高度复杂的 CSS 架构图展现
+ */
+
+.tg-page {
+  font-family: var(--font-body);
+  color: #334155;
+  background-color: #fff;
+}
+
+.tg-container {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 var(--space-6);
+}
+
+.tg-section {
+  padding: 80px 0;
+}
+
+.tg-bg-gray {
+  background-color: #f8fafc;
+  border-top: 1px solid #f1f5f9;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.tg-section-header {
+  text-align: center;
+  margin-bottom: 64px;
+}
+
+.tg-section-header h2 {
+  font-size: 36px;
+  font-weight: 800;
+  color: #0f172a;
+  margin-bottom: 16px;
+}
+
+.tg-section-header p {
+  font-size: 18px;
+  color: #64748b;
+}
+
+.mt-4 {
+  margin-top: 16px;
+}
+.mt-16 {
+  margin-top: 64px;
+}
+.mb-6 {
+  margin-bottom: 24px;
+}
+.mb-8 {
+  margin-bottom: 32px;
+}
+.mb-16 {
+  margin-bottom: 64px;
+}
+.tg-text-center {
+  text-align: center;
+}
+.tg-fw-bold {
+  font-weight: 700;
+}
+.tg-text-blue {
+  color: #2563eb;
+}
+.tg-ws-pre {
+  white-space: pre-line;
+  line-height: 1.6;
+}
+
+/* ========== S1: Hero ========== */
+.tg-hero {
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0e7ff 100%);
+  padding: 120px 0 100px;
+  position: relative;
+  overflow: hidden;
+}
+
+.tg-hero::before {
+  content: "";
+  position: absolute;
+  right: -100px;
+  top: -100px;
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(
+    circle,
+    rgba(59, 130, 246, 0.1) 0%,
+    transparent 60%
+  );
+  border-radius: 50%;
+}
+
+.tg-hero__content {
+  position: relative;
+  z-index: 1;
+  max-width: 800px;
+  text-align: center;
+}
+
+.tg-hero__kicker {
+  font-size: 14px;
+  font-weight: 800;
+  color: #3b82f6;
+  letter-spacing: 2px;
+  margin-bottom: 16px;
+}
+
+.tg-hero__title {
+  font-size: 56px;
+  font-weight: 900;
+  color: #0f172a;
+  letter-spacing: -1px;
+  margin-bottom: 24px;
+}
+
+.tg-hero__slogan {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 24px;
+  line-height: 1.4;
+}
+
+.tg-hero__desc {
+  font-size: 16px;
+  color: #475569;
+  line-height: 1.8;
+  margin-bottom: 40px;
+}
+
+.tg-hero__actions {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}
+
+.tg-btn {
+  padding: 14px 32px;
+  font-size: 16px;
+  font-weight: 600;
+  border-radius: 6px;
+  text-decoration: none;
+  transition: all 0.2s;
+}
+
+.tg-btn--primary {
+  background: #2563eb;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3);
+}
+
+.tg-btn--primary:hover {
+  background: #1d4ed8;
+  transform: translateY(-2px);
+}
+
+.tg-btn--outline {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+}
+
+.tg-btn--outline:hover {
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+/* ========== S2: Architecture Diagram ========== */
+.tg-arch-diagram {
+  display: flex;
+  gap: 24px;
+}
+
+.tg-arch-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.tg-arch-col--models {
+  flex: 0 0 280px;
+}
+
+.tg-arch-col--main {
+  flex: 1;
+}
+
+.tg-arch-col-split {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+
+.tg-arch-row {
+  display: flex;
+  gap: 24px;
+}
+
+.tg-arch-block {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
+  flex: 1;
+}
+
+.tg-arch-block--wide {
+  flex: 2;
+}
+
+.tg-arch-block--full {
+  width: 100%;
+}
+
+.tg-arch-block-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: #0f172a;
+  margin-bottom: 20px;
+  padding-left: 12px;
+  border-left: 4px solid #3b82f6;
+}
+
+/* 左侧模型仓库特有 */
+.tg-arch-model-group {
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tg-arch-tag {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  width: 100%;
+  text-align: center;
+}
+
+/* 内部模块划分 */
+.tg-arch-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.tg-arch-subblock {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.tg-arch-sub-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.tg-arch-grid-tags {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.tg-arch-grid-tags--horizontal {
+  display: flex;
+  gap: 12px;
+}
+
+.tg-arch-tag-sm {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  padding: 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #475569;
+  text-align: center;
+}
+
+.tg-arch-tag-md {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  padding: 12px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e293b;
+  text-align: center;
+  flex: 1;
+}
+
+/* 评估中心 & 权限管理 */
+.tg-arch-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.tg-arch-grid-6 {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 16px;
+}
+
+.tg-arch-eval-box,
+.tg-arch-base-box {
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  padding: 12px;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #4338ca;
+}
+
+.tg-arch-base-box {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #475569;
+}
+
+/* ========== S3: 核心功能与雷达 ========== */
+.tg-features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 32px;
+}
+
+.tg-feature-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 32px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
+  transition: transform 0.2s;
+}
+
+.tg-feature-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.06);
+}
+
+/* 拟物骨架屏 */
+.tg-feature-mock {
+  height: 140px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tg-mock-top {
+  height: 20px;
+  background: #e2e8f0;
+  border-bottom: 1px solid #cbd5e1;
+}
+
+.tg-mock-body {
+  flex: 1;
+  display: flex;
+}
+
+.tg-mock-sidebar {
+  width: 25%;
+  background: #f1f5f9;
+  border-right: 1px solid #e2e8f0;
+}
+
+.tg-mock-content {
+  flex: 1;
+  padding: 12px;
+  background: #fff;
+  background-image: repeating-linear-gradient(
+    180deg,
+    #f8fafc,
+    #f8fafc 10px,
+    transparent 10px,
+    transparent 20px
+  );
+}
+
+.tg-feature-card h3 {
+  font-size: 20px;
+  font-weight: 800;
+  color: #0f172a;
+  margin-bottom: 12px;
+}
+
+.tg-feature-card p {
+  font-size: 14px;
+  color: #64748b;
+  line-height: 1.6;
+}
+
+/* 雷达圆环布局 */
+.tg-radar-wrapper {
+  position: relative;
+  width: 400px;
+  height: 400px;
+  margin: 0 auto;
+  border: 2px dashed #cbd5e1;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tg-radar-center {
+  width: 120px;
+  height: 120px;
+  background: #2563eb;
+  color: #fff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-weight: 800;
+  font-size: 16px;
+  box-shadow: 0 0 0 10px rgba(37, 99, 235, 0.1);
+  z-index: 2;
+}
+
+.tg-radar-node {
+  position: absolute;
+  width: 90px;
+  height: 90px;
+  background: #fff;
+  border: 2px solid #8b5cf6;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #4f46e5;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+  z-index: 1;
+  text-align: center;
+  padding: 10px;
+}
+
+.tg-radar-node-1 {
+  top: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.tg-radar-node-2 {
+  top: 25%;
+  right: -20px;
+}
+.tg-radar-node-3 {
+  bottom: 10%;
+  right: 10px;
+}
+.tg-radar-node-4 {
+  bottom: 10%;
+  left: 10px;
+}
+.tg-radar-node-5 {
+  top: 25%;
+  left: -20px;
+}
+
+/* ========== S4: 三步向导 ========== */
+.tg-steps {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1000px;
+  margin: 0 auto;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 48px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.03);
+}
+
+.tg-step-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  flex: 1;
+  position: relative;
+}
+
+.tg-step-icon {
+  font-size: 32px;
+  font-weight: 900;
+  color: #94a3b8;
+  margin-bottom: 16px;
+}
+
+.tg-step-puzzle {
+  width: 100px;
+  height: 100px;
+  background: #eef2ff;
+  border: 2px solid #c7d2fe;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.tg-puzzle-icon {
+  width: 48px;
+  height: 48px;
+  background: #4f46e5;
+  border-radius: 8px;
+}
+
+.tg-puzzle-icon.book {
+  background: #10b981;
+}
+.tg-puzzle-icon.brain {
+  background: #f59e0b;
+}
+
+.tg-step-text {
+  font-size: 18px;
+  font-weight: 800;
+  color: #1e293b;
+  margin-bottom: 12px;
+}
+
+.tg-step-logos {
+  font-size: 13px;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 6px 16px;
+  border-radius: 20px;
+}
+
+.tg-step-divider {
+  font-size: 40px;
+  color: #cbd5e1;
+  margin: 0 24px;
+}
+
+/* ========== S5: 产品优势 ========== */
+.tg-advantages-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 24px;
+}
+
+.tg-adv-card {
+  background: #f8fafc;
+  border-left: 4px solid #3b82f6;
+  padding: 24px 32px;
+  border-radius: 0 8px 8px 0;
+}
+
+.tg-adv-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tg-adv-icon {
+  color: #3b82f6;
+  font-size: 20px;
+}
+
+.tg-adv-card h3 {
+  font-size: 18px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.tg-adv-card p {
+  font-size: 14px;
+  color: #475569;
+  line-height: 1.6;
+}
+
+/* ========== S6: 规格参数表格 ========== */
+.tg-table-wrapper {
+  overflow-x: auto;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+  border: 1px solid #e2e8f0;
+}
+
+.tg-tech-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tg-tech-table th {
+  background: #1e293b;
+  color: #fff;
+  text-align: left;
+  padding: 20px;
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.tg-tech-table td {
+  padding: 24px 20px;
+  border-bottom: 1px solid #e2e8f0;
+  color: #334155;
+  font-size: 14px;
+  vertical-align: top;
+}
+
+.tg-tech-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* ========== S7: 案例、FAQ、保障 ========== */
+.tg-cases-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 24px;
+}
+
+.tg-case-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tg-case-img {
+  height: 140px;
+  background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%);
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 12px;
+}
+
+.tg-case-tag {
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 12px;
+}
+
+.tg-case-content {
+  padding: 20px;
+}
+
+.tg-case-content h4 {
+  font-size: 16px;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.tg-case-content p {
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.tg-faq-support-grid {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 48px;
+}
+
+.tg-accordion {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tg-details {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tg-summary {
+  padding: 20px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1e293b;
+  cursor: pointer;
+  list-style: none;
+}
+.tg-summary::-webkit-details-marker {
+  display: none;
+}
+
+.tg-details-content {
+  padding: 0 20px 20px;
+  font-size: 14px;
+  color: #475569;
+  line-height: 1.6;
+}
+
+.tg-support {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 12px;
+  padding: 32px;
+}
+
+.tg-support-list {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.tg-support-title {
+  font-weight: 800;
+  color: #0369a1;
+  margin-bottom: 8px;
+}
+
+.tg-support-item ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.tg-support-item li {
+  font-size: 14px;
+  color: #334155;
+  margin-bottom: 8px;
+  padding-left: 16px;
+  position: relative;
+}
+
+.tg-support-item li::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: #0ea5e9;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .tg-arch-diagram {
+    flex-direction: column;
+  }
+  .tg-arch-row {
+    flex-direction: column;
+  }
+  .tg-steps {
+    flex-direction: column;
+    gap: 32px;
+  }
+  .tg-step-divider {
+    transform: rotate(90deg);
+  }
+  .tg-faq-support-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .tg-features-grid,
+  .tg-advantages-grid,
+  .tg-cases-grid,
+  .tg-arch-grid-4,
+  .tg-arch-grid-6 {
+    grid-template-columns: 1fr;
+  }
+}
