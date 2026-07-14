@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  copyFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -353,6 +354,155 @@ describe("production deployment security contracts", () => {
     expect(script).toContain("e2e/assistant-runtime.spec.ts");
     expect(script).toContain("--workers=1");
     expect(script).not.toMatch(/ports?:[^\n]*7777/u);
+    expect(script).toContain("owns_project=false");
+    expect(script).toContain("lock_acquired=false");
+    expect(script).toContain("run_token=");
+    expect(script).toContain('if ! mkdir "$lock_dir"');
+    expect(script).toContain(
+      'docker volume ls -q --filter "label=com.docker.compose.project=$project"',
+    );
+    expect(script).toContain(
+      'docker network ls -q --filter "label=com.docker.compose.project=$project"',
+    );
+    expect(script).toContain(
+      'docker image ls -q --filter "label=com.docker.compose.project=$project"',
+    );
+    expect(script).toContain('docker image ls -q "$project-*"');
+    expect(script).toContain('[ "$owns_project" = true ]');
+    expect(script.indexOf("owns_project=true")).toBeLessThan(
+      script.indexOf("compose build"),
+    );
+  });
+
+  it("owns and cleans only the isolated assistant runtime project it locked", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "aap-runtime-owner-"));
+    const repo = path.join(sandbox, "repo");
+    const bin = path.join(sandbox, "bin");
+    const temp = path.join(sandbox, "tmp");
+    const project = "aap-assistant-runtime-e2e-ownership";
+    const lock = path.join(
+      temp,
+      "aap-assistant-runtime-e2e-locks",
+      `${project}.lock`,
+    );
+    mkdirSync(path.join(repo, "docs/testing"), { recursive: true });
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(temp, { recursive: true });
+    copyFileSync(
+      path.join(root, "docs/testing/run-assistant-runtime-e2e.sh"),
+      path.join(repo, "docs/testing/run-assistant-runtime-e2e.sh"),
+    );
+    writeFileSync(
+      path.join(repo, ".env.e2e"),
+      [
+        "POSTGRES_DB=test",
+        "POSTGRES_USER=test",
+        "POSTGRES_PASSWORD=test-postgres",
+        "MIGRATOR_DATABASE_PASSWORD=test-migrator",
+        "RUNTIME_DATABASE_PASSWORD=test-runtime",
+        "BACKUP_DATABASE_PASSWORD=test-backup",
+        "MIGRATOR_DATABASE_URL=postgresql://test:test@db/test",
+        "RUNTIME_DATABASE_URL=postgresql://test:test@db/test",
+        "DATABASE_URL=postgresql://test:test@db/test",
+        "TEST_DATABASE_URL=postgresql://test:test@db/test_test",
+        "BETTER_AUTH_SECRET=test-better-auth-secret",
+        "BETTER_AUTH_URL=http://127.0.0.1:8080",
+        "BETTER_AUTH_TRUSTED_ORIGINS=http://127.0.0.1:8080",
+        "E2E_CUSTOMER_PASSWORD=test-customer",
+        "E2E_STAFF_PASSWORD=test-staff",
+        "E2E_ADMIN_PASSWORD=test-admin",
+        "E2E_PENDING_CUSTOMER_SESSION_TOKEN=test-pending",
+        "E2E_DISABLED_CUSTOMER_SESSION_TOKEN=test-disabled",
+        "E2E_STAFF_SESSION_TOKEN=test-staff-session",
+        "E2E_ROLE_TARGET_SESSION_TOKEN=test-role-target",
+        "E2E_ADMIN_SESSION_TOKEN=test-admin-session",
+        "E2E_NO_TOTP_ADMIN_SESSION_TOKEN=test-no-totp",
+        "E2E_REVOKED_SESSION_TOKEN=test-revoked",
+        "E2E_REPLACEMENT_PASSWORD=test-replacement",
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    writeFileSync(
+      path.join(bin, "openssl"),
+      '#!/bin/sh\nprintf "%064d\\n" 0\n',
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      path.join(bin, "lsof"),
+      '#!/bin/sh\n[ "${FAKE_PORT_BUSY:-false}" = true ]\n',
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      path.join(bin, "docker"),
+      `#!/bin/sh
+printf '%s\\n' "$*" >>"$FAKE_DOCKER_LOG"
+case "$1 $2" in
+  "ps -aq") [ "\${FAKE_RESOURCE:-}" = container ] && echo container-id; exit 0 ;;
+  "volume ls") [ "\${FAKE_RESOURCE:-}" = volume ] && echo volume-id; exit 0 ;;
+  "network ls") [ "\${FAKE_RESOURCE:-}" = network ] && echo network-id; exit 0 ;;
+  "image ls") [ "\${FAKE_RESOURCE:-}" = image ] && echo image-id; exit 0 ;;
+esac
+case " $* " in
+  *" compose "*" down --rmi local -v --remove-orphans "*) exit 0 ;;
+  *" compose "*" config --quiet "*) exit 0 ;;
+  *" compose "*" build migrate web agent backup "*) exit 42 ;;
+esac
+exit 0
+`,
+      { mode: 0o755 },
+    );
+
+    const run = (name: string, extra: NodeJS.ProcessEnv = {}) => {
+      const log = path.join(sandbox, `${name}.log`);
+      writeFileSync(log, "");
+      const result = spawnSync(
+        "sh",
+        [path.join(repo, "docs/testing/run-assistant-runtime-e2e.sh")],
+        {
+          cwd: repo,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
+            TMPDIR: temp,
+            AAP_ASSISTANT_RUNTIME_E2E_PROJECT: project,
+            FAKE_DOCKER_LOG: log,
+            ...extra,
+          },
+        },
+      );
+      const calls = readFileSync(log, "utf8");
+      return { result, calls };
+    };
+
+    try {
+      mkdirSync(lock, { recursive: true, mode: 0o700 });
+      writeFileSync(path.join(lock, "token"), "another-run\n", { mode: 0o600 });
+      const locked = run("locked");
+      expect(locked.result.status).not.toBe(0);
+      expect(locked.calls).not.toContain("down --rmi local");
+      expect(statSync(lock).isDirectory()).toBe(true);
+      rmSync(lock, { recursive: true });
+
+      const resource = run("resource", { FAKE_RESOURCE: "container" });
+      expect(resource.result.status).not.toBe(0);
+      expect(resource.calls).not.toContain("down --rmi local");
+      expect(() => statSync(lock)).toThrow();
+
+      const port = run("port", { FAKE_PORT_BUSY: "true" });
+      expect(port.result.status).not.toBe(0);
+      expect(port.calls).not.toContain("down --rmi local");
+      expect(() => statSync(lock)).toThrow();
+
+      const owned = run("owned");
+      expect(owned.result.status).toBe(42);
+      expect(
+        owned.calls.match(/down --rmi local -v --remove-orphans/gu),
+      ).toHaveLength(1);
+      expect(() => statSync(lock)).toThrow();
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
   });
 
   it("keeps the first assistant credential out of every browser diagnostic and admin payload", () => {

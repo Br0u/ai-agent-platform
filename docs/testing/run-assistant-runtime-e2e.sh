@@ -13,20 +13,48 @@ case "$project" in
     exit 1
     ;;
 esac
+case "$project" in
+  *[!A-Za-z0-9_.-]*)
+    echo "E2E project contains unsafe characters" >&2
+    exit 1
+    ;;
+esac
 
 compose_files="-f compose.yaml -f compose.e2e.yaml"
 env_file="$repo_root/.env.e2e"
 temp_dir=
 secret_dir=
+owns_project=false
+lock_acquired=false
+run_token=
+lock_dir=
+
+release_lock() {
+  if [ "$lock_acquired" != true ] || [ -z "$lock_dir" ]; then
+    return
+  fi
+  lock_token=
+  if [ -f "$lock_dir/token" ]; then
+    lock_token=$(cat "$lock_dir/token" 2>/dev/null || true)
+  fi
+  if [ "$lock_token" = "$run_token" ]; then
+    rm -f "$lock_dir/token"
+    rmdir "$lock_dir" 2>/dev/null || true
+    lock_acquired=false
+  else
+    echo "E2E lock token changed; leaving lock for manual review" >&2
+  fi
+}
 
 cleanup() {
-  if command -v docker >/dev/null 2>&1 && [ -f "$env_file" ]; then
+  if [ "$owns_project" = true ] && command -v docker >/dev/null 2>&1 && [ -f "$env_file" ]; then
     docker compose -p "$project" --env-file "$env_file" $compose_files \
       down --rmi local -v --remove-orphans >/dev/null 2>&1 || true
   fi
   if [ -n "$temp_dir" ]; then
     rm -rf "$temp_dir"
   fi
+  release_lock
 }
 
 on_signal() {
@@ -49,12 +77,41 @@ command -v openssl >/dev/null 2>&1 || {
   exit 1
 }
 
-if [ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$project")" ]; then
-  echo "Compose project $project already exists; refusing concurrent reuse" >&2
+runtime_tmp=${TMPDIR:-/tmp}
+case "$runtime_tmp" in
+  /*) ;;
+  *)
+    echo "TMPDIR must be an absolute path" >&2
+    exit 1
+    ;;
+esac
+umask 077
+lock_root="${runtime_tmp%/}/aap-assistant-runtime-e2e-locks"
+mkdir -p "$lock_root"
+chmod 700 "$lock_root"
+lock_dir="$lock_root/$project.lock"
+run_token=$(openssl rand -hex 16)
+if ! mkdir "$lock_dir" 2>/dev/null; then
+  echo "E2E project lock exists; inspect and remove stale locks manually" >&2
+  exit 1
+fi
+lock_acquired=true
+printf '%s\n' "$run_token" >"$lock_dir/token"
+chmod 600 "$lock_dir/token"
+
+existing_containers=$(docker ps -aq --filter "label=com.docker.compose.project=$project")
+existing_volumes=$(docker volume ls -q --filter "label=com.docker.compose.project=$project")
+existing_networks=$(docker network ls -q --filter "label=com.docker.compose.project=$project")
+existing_labeled_images=$(docker image ls -q --filter "label=com.docker.compose.project=$project")
+existing_named_images=$(docker image ls -q "$project-*")
+if [ -n "$existing_containers$existing_volumes$existing_networks$existing_labeled_images$existing_named_images" ]; then
+  echo "E2E project resources already exist; refusing ownership" >&2
+  release_lock
   exit 1
 fi
 if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "TCP port 8080 is already in use" >&2
+  release_lock
   exit 1
 fi
 
@@ -226,6 +283,7 @@ compose() {
 }
 
 compose config --quiet
+owns_project=true
 compose build migrate web agent backup
 compose up -d --wait db
 compose run --rm migrate
