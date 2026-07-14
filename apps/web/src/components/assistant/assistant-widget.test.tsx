@@ -397,6 +397,7 @@ describe("AssistantWidget", () => {
           error: {
             code: "assistant_unavailable",
             message: "raw http://agent:7777 secret detail",
+            retryable: true,
           },
         },
         { status: 503 },

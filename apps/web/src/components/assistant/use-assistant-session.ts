@@ -129,13 +129,20 @@ function safeFailureAnnouncement(
     return fallback;
   }
   const details = error as Record<string, unknown>;
-  if (Object.keys(details).sort().join(",") !== "code,message") {
+  if (
+    Object.keys(details).sort().join(",") !== "code,message,retryable" ||
+    typeof details.retryable !== "boolean"
+  ) {
     return fallback;
   }
-  if (status === 429 && details.code === "rate_limited") {
+  if (status === 429 && details.code === "rate_limited" && details.retryable) {
     return "请求过于频繁，请稍后再试。";
   }
-  if (status === 503 && details.code === "assistant_unavailable") {
+  if (
+    status === 503 &&
+    details.code === "assistant_unavailable" &&
+    details.retryable
+  ) {
     return unavailable;
   }
   return fallback;

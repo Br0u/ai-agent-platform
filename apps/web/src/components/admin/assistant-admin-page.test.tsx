@@ -192,6 +192,7 @@ describe("AssistantAdminPage", () => {
             error: {
               code: "rate_limited",
               message: "raw limiter row and threshold",
+              retryable: true,
             },
           },
           { status: 429 },
@@ -205,6 +206,7 @@ describe("AssistantAdminPage", () => {
             error: {
               code: "assistant_unavailable",
               message: "raw http://agent:7777 OS_SECURITY_KEY=private",
+              retryable: true,
             },
           },
           { status: 503 },

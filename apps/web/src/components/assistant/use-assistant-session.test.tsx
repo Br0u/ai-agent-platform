@@ -278,6 +278,7 @@ describe("useAssistantSession", () => {
           error: {
             code: "rate_limited",
             message: "请求过于频繁，请稍后再试。",
+            retryable: true,
           },
         },
         { status: 429, headers: { "Retry-After": "37" } },
@@ -303,6 +304,7 @@ describe("useAssistantSession", () => {
           error: {
             code: "rate_limited",
             message: "internal URL http://agent:7777 and secret key",
+            retryable: true,
           },
           extra: "unsafe",
         },
@@ -328,6 +330,7 @@ describe("useAssistantSession", () => {
           error: {
             code: "assistant_unavailable",
             message: "助手服务暂不可用，请使用帮助中心或商务咨询。",
+            retryable: true,
           },
         },
         { status: 503 },
@@ -340,6 +343,30 @@ describe("useAssistantSession", () => {
     expect(fetch).toHaveBeenCalledOnce();
     expect(result.current.latestAnnouncement).toBe(
       "助手服务暂不可用，请使用帮助中心或商务咨询。",
+    );
+  });
+
+  it("rejects a transient error with a false retryable flag", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      Response.json(
+        {
+          version: "1",
+          requestId: "req-invalid-retryable",
+          error: {
+            code: "rate_limited",
+            message: "untrusted",
+            retryable: false,
+          },
+        },
+        { status: 429 },
+      ),
+    );
+    const { result } = renderHook(() => useAssistantSession("/assistant"));
+
+    await act(() => result.current.submit("异常重试标记"));
+
+    expect(result.current.latestAnnouncement).toBe(
+      "发送失败，请重试或使用帮助中心或商务咨询。",
     );
   });
 

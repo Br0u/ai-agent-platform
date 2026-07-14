@@ -488,6 +488,7 @@ describe("AssistantWorkspace", () => {
           error: {
             code: "rate_limited",
             message: "raw internal limiter detail",
+            retryable: true,
           },
         },
         { status: 429 },

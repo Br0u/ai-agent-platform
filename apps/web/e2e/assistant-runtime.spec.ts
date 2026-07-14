@@ -241,6 +241,7 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
     error: {
       code: "rate_limited",
       message: "请求过于频繁，请稍后再试。",
+      retryable: true,
     },
   });
   expect(rejection.requestId).not.toBe("bff-rate-limit-sentinel");
