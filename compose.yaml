@@ -34,6 +34,8 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
       target: migrator
+      args:
+        PNPM_REGISTRY: ${PNPM_REGISTRY:-https://registry.npmmirror.com}
     restart: "no"
     entrypoint: ["/opt/aap/run-with-secret-env.sh"]
     command: ["pnpm", "db:prepare"]
@@ -171,6 +173,8 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        PNPM_REGISTRY: ${PNPM_REGISTRY:-https://registry.npmmirror.com}
     restart: unless-stopped
     entrypoint: ["/opt/aap/run-with-secret-env.sh"]
     command: ["node", "server.js"]
@@ -178,18 +182,34 @@ services:
       SECRET_ENV_SPECS: >-
         DATABASE_URL=/run/secrets/runtime_database_url
         BETTER_AUTH_SECRET=/run/secrets/better_auth_secret
+        OS_SECURITY_KEY=/run/secrets/os_security_key
+        ASSISTANT_SESSION_SECRET=/run/secrets/assistant_session_secret
+        ASSISTANT_RATE_LIMIT_SECRET=/run/secrets/assistant_rate_limit_secret
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:?Set BETTER_AUTH_URL in .env}
       BETTER_AUTH_TRUSTED_ORIGINS: ${BETTER_AUTH_TRUSTED_ORIGINS:?Set BETTER_AUTH_TRUSTED_ORIGINS in .env}
       FEATURE_EMAIL_VERIFICATION: ${FEATURE_EMAIL_VERIFICATION:-false}
+      AGENTOS_INTERNAL_URL: http://agent:7777
+      ASSISTANT_PUBLIC_ORIGIN: ${ASSISTANT_PUBLIC_ORIGIN:?Set ASSISTANT_PUBLIC_ORIGIN in .env}
+      ASSISTANT_PROVIDER_MODE: ${ASSISTANT_PROVIDER_MODE:-placeholder}
+      ASSISTANT_AGENTOS_DEFAULT_AGENT_ID: ${ASSISTANT_AGENTOS_DEFAULT_AGENT_ID:-}
+      ASSISTANT_AGENTOS_READINESS_TTL_MS: ${ASSISTANT_AGENTOS_READINESS_TTL_MS:-5000}
+      ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS: ${ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS:-1500}
+      ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD: ${ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD:-3}
+      ASSISTANT_AGENTOS_CIRCUIT_RESET_MS: ${ASSISTANT_AGENTOS_CIRCUIT_RESET_MS:-30000}
       TRUST_NGINX_PROXY: "true"
     secrets:
       - runtime_database_url
       - better_auth_secret
+      - os_security_key
+      - assistant_session_secret
+      - assistant_rate_limit_secret
     volumes:
       - ./infra/docker/run-with-secret-env.sh:/opt/aap/run-with-secret-env.sh:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
+      agent:
+        condition: service_healthy
     expose:
       - "3000"
     healthcheck:
@@ -322,3 +342,7 @@ secrets:
     file: ${BETTER_AUTH_SECRET_FILE:-.secrets/better_auth_secret}
   os_security_key:
     file: ${OS_SECURITY_KEY_FILE:-.secrets/os_security_key}
+  assistant_session_secret:
+    file: ${ASSISTANT_SESSION_SECRET_FILE:-.secrets/assistant_session_secret}
+  assistant_rate_limit_secret:
+    file: ${ASSISTANT_RATE_LIMIT_SECRET_FILE:-.secrets/assistant_rate_limit_secret}

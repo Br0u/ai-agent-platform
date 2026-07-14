@@ -102,7 +102,9 @@ server {
 
   location @public_api_rate_limited {
     default_type application/json;
-    return 429 '{"status":"error","error":{"code":"rate_limited","message":"请求过于频繁，请稍后重试。"}}';
+    add_header Cache-Control "no-store" always;
+    add_header Retry-After "60" always;
+    return 429 '{"version":"1","requestId":"$request_id","error":{"code":"rate_limited","message":"请求过于频繁，请稍后再试。"}}';
   }
 
   location / {

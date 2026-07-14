@@ -237,7 +237,7 @@ describe("production deployment security contracts", () => {
       expect(location).toContain("error_page 429 = @public_api_rate_limited;");
     }
     expect(nginx).toMatch(
-      /location @public_api_rate_limited \{[\s\S]*default_type application\/json;[\s\S]*return 429 '\{"status":"error","error":\{"code":"rate_limited","message":"请求过于频繁，请稍后重试。"\}\}';/u,
+      /location @public_api_rate_limited \{[\s\S]*default_type application\/json;[\s\S]*add_header Retry-After "60" always;[\s\S]*return 429 '\{"version":"1","requestId":"\$request_id","error":\{"code":"rate_limited","message":"请求过于频繁，请稍后再试。"\}\}';/u,
     );
 
     expect(catchAllLocation).toBeDefined();
@@ -245,6 +245,114 @@ describe("production deployment security contracts", () => {
     expect(nginx).not.toMatch(
       /location\s+=?\s*\/(?:api\/health|api\/v1\/session)[^{]*\{[\s\S]*?limit_req/u,
     );
+  });
+
+  it("wires the private AgentOS runtime into Web with external secret files", () => {
+    const compose = read("compose.yaml");
+    const webService = compose.split("\n  web:\n")[1]?.split("\n  proxy:\n")[0];
+    const agentService = compose
+      .split("\n  agent:\n")[1]
+      ?.split("\n  web:\n")[0];
+    const proxyService = compose
+      .split("\n  proxy:\n")[1]
+      ?.split("\n  backup:\n")[0];
+
+    expect(webService).toBeDefined();
+    expect(webService).toContain(
+      "DATABASE_URL=/run/secrets/runtime_database_url",
+    );
+    expect(webService).toContain(
+      "BETTER_AUTH_SECRET=/run/secrets/better_auth_secret",
+    );
+    expect(webService).toContain(
+      "OS_SECURITY_KEY=/run/secrets/os_security_key",
+    );
+    expect(webService).toContain(
+      "ASSISTANT_SESSION_SECRET=/run/secrets/assistant_session_secret",
+    );
+    expect(webService).toContain(
+      "ASSISTANT_RATE_LIMIT_SECRET=/run/secrets/assistant_rate_limit_secret",
+    );
+    for (const secret of [
+      "runtime_database_url",
+      "better_auth_secret",
+      "os_security_key",
+      "assistant_session_secret",
+      "assistant_rate_limit_secret",
+    ]) {
+      expect(webService).toContain(`- ${secret}`);
+      expect(compose).toContain(`  ${secret}:`);
+    }
+    expect(webService).not.toContain("migrator_database_url");
+    expect(webService).not.toContain("postgres_password");
+    expect(webService).not.toContain("agno_database_url");
+    expect(webService).toContain("AGENTOS_INTERNAL_URL: http://agent:7777");
+    expect(webService).toContain(
+      "ASSISTANT_PUBLIC_ORIGIN: ${ASSISTANT_PUBLIC_ORIGIN:?Set ASSISTANT_PUBLIC_ORIGIN in .env}",
+    );
+    expect(webService).toContain('TRUST_NGINX_PROXY: "true"');
+    for (const name of [
+      "ASSISTANT_PROVIDER_MODE",
+      "ASSISTANT_AGENTOS_DEFAULT_AGENT_ID",
+      "ASSISTANT_AGENTOS_READINESS_TTL_MS",
+      "ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS",
+      "ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD",
+      "ASSISTANT_AGENTOS_CIRCUIT_RESET_MS",
+    ]) {
+      expect(webService).toContain(`${name}:`);
+    }
+    expect(webService).toMatch(/agent:[\s\S]*condition: service_healthy/u);
+    expect(webService).not.toMatch(/^\s{4}ports:/mu);
+    expect(agentService).not.toMatch(/^\s{4}ports:/mu);
+    expect(proxyService).toMatch(/^\s{4}ports:/mu);
+  });
+
+  it("documents HTTPS production origin and exact loopback-only E2E origin", () => {
+    const example = read(".env.example");
+    const runbook = read("docs/deployment/server-readiness.md");
+    const runner = read("docs/testing/run-assistant-runtime-e2e.sh");
+
+    expect(example).toContain(
+      "ASSISTANT_PUBLIC_ORIGIN=https://ai-agent.example.com",
+    );
+    expect(runbook).toContain(
+      "ASSISTANT_PUBLIC_ORIGIN=https://ai-agent.example.com",
+    );
+    expect(runner).toContain("ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080");
+    expect(runner).toContain(
+      '[ "$ASSISTANT_PUBLIC_ORIGIN" = "http://127.0.0.1:8080" ]',
+    );
+  });
+
+  it("defines a failure-safe isolated assistant runtime acceptance", () => {
+    const script = read("docs/testing/run-assistant-runtime-e2e.sh");
+
+    expect(script).toContain(
+      "project=${AAP_ASSISTANT_RUNTIME_E2E_PROJECT:-aap-assistant-runtime-e2e}",
+    );
+    expect(script).toContain('docker compose -p "$project"');
+    expect(script).toContain("down --rmi local -v --remove-orphans");
+    expect(script).toContain("trap cleanup EXIT");
+    expect(script).toContain("trap 'on_signal 130' INT");
+    expect(script).toContain("trap 'on_signal 143' TERM");
+    expect(script.indexOf("trap cleanup EXIT")).toBeLessThan(
+      script.indexOf("mktemp"),
+    );
+    expect(script).toContain('chmod 600 "$env_file"');
+    expect(script).toContain('stat -f %Lp "$env_file"');
+    expect(script).toContain('stat -c %a "$env_file"');
+    expect(script).toContain('[ "$env_permissions" = "600" ]');
+    expect(script).toContain("config --quiet");
+    expect(script).toMatch(
+      /build[^\n]*migrate[^\n]*web[^\n]*agent[^\n]*backup/u,
+    );
+    expect(script.match(/run --rm migrate/g)).toHaveLength(2);
+    expect(script.match(/run --rm agno-bootstrap/g)).toHaveLength(2);
+    expect(script.match(/run --rm --no-deps agent-migrate/g)).toHaveLength(2);
+    expect(script).toContain("HostConfig.PortBindings");
+    expect(script).toContain("e2e/assistant-runtime.spec.ts");
+    expect(script).toContain("--workers=1");
+    expect(script).not.toMatch(/ports?:[^\n]*7777/u);
   });
 
   it("uses separate migration and runtime URLs without publishing the origin", () => {
@@ -308,6 +416,15 @@ describe("production deployment security contracts", () => {
     expect(migrator).toContain("USER node");
     expect(migrator?.indexOf("RUN chown node:node /app")).toBeLessThan(
       migrator?.indexOf("USER node") ?? -1,
+    );
+    expect(dockerfile).toContain(
+      "ARG PNPM_REGISTRY=https://registry.npmmirror.com",
+    );
+    expect(dockerfile).toContain(
+      'PNPM_CONFIG_REGISTRY="$PNPM_REGISTRY" pnpm install --frozen-lockfile',
+    );
+    expect(read("docs/testing/run-assistant-runtime-e2e.sh")).toContain(
+      "PNPM_REGISTRY=${PNPM_REGISTRY:-https://registry.npmjs.org}",
     );
 
     const dockerIgnore = read(".dockerignore");
@@ -450,6 +567,8 @@ describe("production deployment security contracts", () => {
       "AGNO_DATABASE_URL",
       "BETTER_AUTH_SECRET",
       "OS_SECURITY_KEY",
+      "ASSISTANT_SESSION_SECRET",
+      "ASSISTANT_RATE_LIMIT_SECRET",
     ] as const;
     const sentinels = Object.fromEntries(
       secretKeys.map((key, index) => [key, `compose-secret-${index}-sentinel`]),
@@ -476,6 +595,7 @@ describe("production deployment security contracts", () => {
           ...secretFileEnv,
           BETTER_AUTH_URL: "http://127.0.0.1:3000",
           BETTER_AUTH_TRUSTED_ORIGINS: "http://127.0.0.1:3000",
+          ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
           PUBLIC_HOST: "127.0.0.1",
         },
       });
