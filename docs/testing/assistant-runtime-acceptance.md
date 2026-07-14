@@ -27,9 +27,9 @@ sh docs/testing/run-assistant-runtime-e2e.sh
 
 2026-07-14 在 macOS Docker Desktop ARM64 运行：
 
-- 部署合同：`35 passed`，其中 fake PATH 覆盖已有锁、已有资源、端口占用和取得所有权后首次构建失败四条清理路径。
+- 部署合同：`36 passed`，其中 fake PATH 覆盖已有锁、已有资源、端口占用和取得所有权后首次构建失败四条清理路径。
 - 最近一次容器 Runtime Playwright：`3 passed`，耗时 4.8 秒；本轮所有权修复因`8080`被 Shadowrocket 占用未重跑，未终止用户进程。
-- 全仓最近一次测试：Integrations `7 passed`、UI `75 passed`、Web `955 passed / 43 skipped`；本轮 Database 全量为`123 passed / 17 skipped`。
+- 全仓最近一次测试：Integrations `7 passed`、UI `75 passed`、Web `955 passed / 43 skipped`；本轮 Database 全量为`124 passed / 17 skipped`。
 - Agent：Pytest `89 passed / 1 skipped`，Ruff 与 Mypy 通过；TypeScript typecheck、lint、format check 与生产 build 全部通过。
 - AgentOS 停止后约 1.5 秒观察到公开状态`degraded`，低于`1s TTL + 2s circuit reset + 5s margin`上限。
 - 脚本完成后复核：本项目容器 0、卷 0、本地项目镜像 0。

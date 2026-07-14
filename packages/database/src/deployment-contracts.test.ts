@@ -325,6 +325,26 @@ describe("production deployment security contracts", () => {
     );
   });
 
+  it("documents assistant secret files and current images in first deployment", () => {
+    const runbook = read("docs/deployment/server-readiness.md");
+    const firstDeployment = runbook
+      .split("## 首次部署\n")[1]
+      ?.split("\n## ")[0];
+
+    expect(firstDeployment).toBeDefined();
+    expect(firstDeployment).toContain("assistant_session_secret");
+    expect(firstDeployment).toContain("assistant_rate_limit_secret");
+    expect(firstDeployment).toContain("ASSISTANT_SESSION_SECRET_FILE");
+    expect(firstDeployment).toContain("ASSISTANT_RATE_LIMIT_SECRET_FILE");
+    expect(firstDeployment).toMatch(/独立随机[^\n]*至少 32 (?:bytes|字节)/u);
+    expect(firstDeployment).toContain("0600");
+    expect(firstDeployment).toContain("不得复用 Better Auth 或 AgentOS 密钥");
+    expect(firstDeployment).toContain("不要提交");
+    expect(firstDeployment).toContain(
+      "docker compose build web agent migrate agent-migrate backup",
+    );
+  });
+
   it("defines a failure-safe isolated assistant runtime acceptance", () => {
     const script = read("docs/testing/run-assistant-runtime-e2e.sh");
 

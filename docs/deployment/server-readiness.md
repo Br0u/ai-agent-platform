@@ -52,9 +52,16 @@ cp .env.example .env
 ASSISTANT_PUBLIC_ORIGIN=https://ai-agent.example.com
 # 分别生成平台 owner/migrator/runtime/backup、备份加密、Agno migrator/runtime、Better Auth 和 AgentOS 密钥；不要复用
 # BACKUP_ENCRYPTION_KEY_FILE 指向仓库外或已忽略的 0600 文件：恰好一行、无空白/CR、至少 32 字节；可有一个结尾换行
+# assistant_session_secret 与 assistant_rate_limit_secret 必须分别使用独立随机值（至少 32 bytes/字节），不得复用 Better Auth 或 AgentOS 密钥，也不要提交到 Git
+umask 077
+openssl rand -hex 32 > /secure/secrets/assistant_session_secret
+openssl rand -hex 32 > /secure/secrets/assistant_rate_limit_secret
+chmod 600 /secure/secrets/assistant_session_secret /secure/secrets/assistant_rate_limit_secret
+ASSISTANT_SESSION_SECRET_FILE=/secure/secrets/assistant_session_secret
+ASSISTANT_RATE_LIMIT_SECRET_FILE=/secure/secrets/assistant_rate_limit_secret
 # 生产 PUBLIC_HOST 必须改为对外域名
 docker compose config
-docker compose build migrate agent backup
+docker compose build web agent migrate agent-migrate backup
 docker compose up -d --wait db
 docker compose run --rm migrate
 docker compose run --rm agno-bootstrap
