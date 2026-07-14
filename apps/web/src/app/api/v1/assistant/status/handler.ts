@@ -1,6 +1,6 @@
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
 import {
-  getAssistantRuntime,
+  readSafeAssistantRuntimeStatus,
   type AssistantRuntimeStatus,
 } from "@/server/assistant/assistant-runtime";
 
@@ -11,7 +11,7 @@ interface AssistantStatusHandlerDependencies {
 
 const defaultDependencies: AssistantStatusHandlerDependencies = {
   requestIdFactory: () => crypto.randomUUID(),
-  getStatus: () => getAssistantRuntime().status(),
+  getStatus: readSafeAssistantRuntimeStatus,
 };
 
 export function createAssistantStatusHandler(

@@ -94,6 +94,15 @@ const PLACEHOLDER_MESSAGE = "模型尚未配置，当前为安全占位模式。
 const AVAILABLE_MESSAGE = "AI 助理基础服务已就绪。";
 const DEGRADED_MESSAGE = "助手基础服务暂不可用。";
 
+function degradedStatus(): AssistantRuntimeStatus {
+  return {
+    live: false,
+    ready: false,
+    capability: "degraded",
+    message: DEGRADED_MESSAGE,
+  };
+}
+
 function parseTrustNginxProxy(value: string | undefined): boolean {
   if (value === undefined || value === "false") return false;
   if (value === "true") return true;
@@ -104,12 +113,7 @@ function safeStatus(
   snapshot: AgentOSReadinessSnapshot,
 ): AssistantRuntimeStatus {
   if (!snapshot.live || !snapshot.ready || snapshot.capability === "degraded") {
-    return {
-      live: false,
-      ready: false,
-      capability: "degraded",
-      message: DEGRADED_MESSAGE,
-    };
+    return degradedStatus();
   }
   return {
     ...snapshot,
@@ -242,4 +246,14 @@ export function getAssistantRuntime(): AssistantRuntime {
   const store = runtimeStore();
   store[RUNTIME_KEY] ??= createAssistantRuntime();
   return store[RUNTIME_KEY];
+}
+
+export async function readSafeAssistantRuntimeStatus(
+  runtime: Pick<AssistantRuntime, "status"> = getAssistantRuntime(),
+): Promise<AssistantRuntimeStatus> {
+  try {
+    return await runtime.status();
+  } catch {
+    return degradedStatus();
+  }
 }

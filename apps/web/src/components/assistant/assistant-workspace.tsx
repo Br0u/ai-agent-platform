@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import {
   ASSISTANT_PRESET_QUESTIONS,
+  isAssistantStatusResponse,
   type AssistantStatusResponse,
 } from "@/features/assistant/assistant-contract";
 import { useAssistantExperience } from "./assistant-experience-provider";
@@ -14,6 +15,14 @@ const COMPOSER_HELP_ID = "assistant-workspace-composer-help";
 const FAILURE_MESSAGE = "发送失败，请重试或使用帮助中心或商务咨询。";
 const DESKTOP_RAIL_QUERY = "(min-width: 721px)";
 const NEW_SESSION_HELP_ID = "assistant-new-session-help";
+const DEGRADED_STATUS: AssistantStatusResponse = {
+  version: "1",
+  requestId: "client-status-fallback",
+  live: false,
+  ready: false,
+  capability: "degraded",
+  message: "助手基础服务暂不可用。",
+};
 
 type AssistantWorkspaceProps = {
   serviceState: AssistantStatusResponse;
@@ -21,11 +30,24 @@ type AssistantWorkspaceProps = {
 
 export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
   const { session, registerComposer } = useAssistantExperience();
+  const [currentServiceState, setCurrentServiceState] = useState(serviceState);
+  const [refreshingStatus, setRefreshingStatus] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
   const [railOverride, setRailOverride] = useState<boolean | null>(null);
   const railExpanded = railOverride ?? isDesktop;
   const sending = session.requestStatus === "sending";
   const hasError = session.validationError !== null;
+
+  const serviceLabel =
+    currentServiceState.capability === "degraded" || !currentServiceState.live
+      ? "基础设施暂不可用"
+      : currentServiceState.capability === "placeholder" &&
+          currentServiceState.ready
+        ? "模型尚未配置"
+        : currentServiceState.capability === "available" &&
+            currentServiceState.ready
+          ? "服务已就绪"
+          : "服务未就绪";
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
@@ -43,6 +65,26 @@ export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void session.submit();
+  };
+
+  const refreshServiceState = async () => {
+    if (refreshingStatus) return;
+    setRefreshingStatus(true);
+    try {
+      const response = await fetch("/api/v1/assistant/status", {
+        method: "GET",
+        cache: "no-store",
+      });
+      const body: unknown = await response.json();
+      if (!response.ok || !isAssistantStatusResponse(body)) {
+        throw new Error("Invalid assistant status response");
+      }
+      setCurrentServiceState(body);
+    } catch {
+      setCurrentServiceState(DEGRADED_STATUS);
+    } finally {
+      setRefreshingStatus(false);
+    }
   };
 
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -129,11 +171,19 @@ export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
           </div>
           <div
             className="assistant-workspace__service-state"
-            data-capability={serviceState.capability}
+            data-capability={currentServiceState.capability}
             data-testid="assistant-service-state"
           >
             <span aria-hidden="true" />
-            {serviceState.ready ? "服务已就绪" : "模型未配置"}
+            <strong>{serviceLabel}</strong>
+            <button
+              aria-label="刷新服务状态"
+              disabled={refreshingStatus}
+              onClick={() => void refreshServiceState()}
+              type="button"
+            >
+              {refreshingStatus ? "刷新中" : "刷新"}
+            </button>
           </div>
         </header>
 
@@ -144,8 +194,8 @@ export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
             </p>
             <h1>从一个问题开始，找到适合企业的 AI 路径。</h1>
             <p className="assistant-workspace__disclosure">
-              <span>{serviceState.message}</span> 后续将通过 Agno AgentOS 接入
-              Agent、Skill、知识与会话能力。
+              <span>{currentServiceState.message}</span> 后续将通过 Agno AgentOS
+              接入 Agent、Skill、知识与会话能力。
             </p>
             <div aria-label="常见问题" className="assistant-workspace__presets">
               {ASSISTANT_PRESET_QUESTIONS.map((question) => (
@@ -244,7 +294,7 @@ export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
             >
               {session.validationError?.message ??
                 (session.requestStatus === "failed"
-                  ? FAILURE_MESSAGE
+                  ? session.latestAnnouncement || FAILURE_MESSAGE
                   : "最多输入 500 个字符。当前对话不会保存为历史记录。")}
             </p>
             {session.requestStatus === "failed" ? (

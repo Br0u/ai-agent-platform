@@ -69,7 +69,7 @@ const placeholderStatus: AssistantStatusResponse = {
   version: "1",
   requestId: "workspace-status",
   live: true,
-  ready: false,
+  ready: true,
   capability: "placeholder",
   message: "模型尚未配置，当前为安全占位模式。",
 };
@@ -152,6 +152,63 @@ describe("AssistantWorkspace", () => {
     expect(
       screen.getByRole("button", { name: "如何开始了解平台？" }),
     ).toBeEnabled();
+  });
+
+  it("distinguishes degraded infrastructure from a healthy placeholder", () => {
+    render(
+      <AssistantExperienceProvider pathname="/assistant">
+        <AssistantWorkspace
+          serviceState={{
+            version: "1",
+            requestId: "degraded-status",
+            live: false,
+            ready: false,
+            capability: "degraded",
+            message: "助手基础服务暂不可用。",
+          }}
+        />
+      </AssistantExperienceProvider>,
+    );
+
+    expect(screen.getByText("基础设施暂不可用")).toBeVisible();
+    expect(screen.queryByText("模型未配置")).not.toBeInTheDocument();
+    expect(screen.getByText("助手基础服务暂不可用。")).toBeVisible();
+  });
+
+  it("manually refreshes status through the public versioned endpoint", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      Response.json({
+        version: "1",
+        requestId: "refreshed-status",
+        live: true,
+        ready: true,
+        capability: "placeholder",
+        message: "模型尚未配置，当前为安全占位模式。",
+      }),
+    );
+    render(
+      <AssistantExperienceProvider pathname="/assistant">
+        <AssistantWorkspace
+          serviceState={{
+            version: "1",
+            requestId: "initial-status",
+            live: false,
+            ready: false,
+            capability: "degraded",
+            message: "助手基础服务暂不可用。",
+          }}
+        />
+      </AssistantExperienceProvider>,
+    );
+
+    expect(fetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "刷新服务状态" }));
+
+    await waitFor(() => expect(screen.getByText("模型尚未配置")).toBeVisible());
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(
+      "/api/v1/assistant/status",
+      expect.objectContaining({ method: "GET", cache: "no-store" }),
+    );
   });
 
   it("uses the shared session to submit a preset question", async () => {
@@ -251,6 +308,34 @@ describe("AssistantWorkspace", () => {
       composer.closest("form") as HTMLFormElement,
     ).findByText("发送失败，请重试或使用帮助中心或商务咨询。");
     expect(composer.closest("form")).toContainElement(error);
+  });
+
+  it("renders the sanitized rate-limit error beside the composer without auto retry", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      Response.json(
+        {
+          version: "1",
+          requestId: "rate-limited",
+          error: {
+            code: "rate_limited",
+            message: "raw internal limiter detail",
+          },
+        },
+        { status: 429 },
+      ),
+    );
+    renderWorkspace();
+    const composer = screen.getByRole("textbox", { name: "输入问题" });
+    fireEvent.change(composer, { target: { value: "限流测试" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("请求过于频繁，请稍后再试。");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "请求过于频繁，请稍后再试。",
+    );
+    expect(screen.queryByText(/raw internal limiter detail/u)).toBeNull();
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it("starts collapsed on mobile and preserves a manual expansion across breakpoint changes", () => {

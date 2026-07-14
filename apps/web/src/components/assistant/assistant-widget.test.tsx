@@ -394,4 +394,36 @@ describe("AssistantWidget", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(screen.getAllByText("失败问题")).toHaveLength(1);
   });
+
+  it("renders a sanitized 503 in the visible panel alert and live region", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      Response.json(
+        {
+          version: "1",
+          requestId: "unavailable",
+          error: {
+            code: "assistant_unavailable",
+            message: "raw http://agent:7777 secret detail",
+          },
+        },
+        { status: 503 },
+      ),
+    );
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "不可用测试" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "助手服务暂不可用，请使用帮助中心或商务咨询。",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "助手服务暂不可用，请使用帮助中心或商务咨询。",
+    );
+    expect(screen.queryByText(/agent:7777|secret detail/u)).toBeNull();
+    expect(fetch).toHaveBeenCalledOnce();
+  });
 });

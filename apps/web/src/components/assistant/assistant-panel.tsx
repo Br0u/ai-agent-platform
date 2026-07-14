@@ -102,8 +102,8 @@ export function AssistantPanel({
         </div>
 
         {session.requestStatus === "failed" ? (
-          <div className="assistant-panel__error">
-            <p>发送失败，请重试或使用下方服务入口。</p>
+          <div className="assistant-panel__error" role="alert">
+            <p>{session.latestAnnouncement}</p>
             <button
               disabled={sending}
               onClick={() => void session.retry()}
