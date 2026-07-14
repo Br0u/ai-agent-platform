@@ -7,6 +7,7 @@ from typing import Protocol
 
 from agno.db.postgres import AsyncPostgresDb
 from agno.os import AgentOS
+from agno.os.settings import AgnoAPISettings
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import SecretStr
@@ -143,6 +144,10 @@ def create_app(
         agents=catalog.agents,
         db=runtime_database,
         base_app=base_app,
+        # The service owns the bearer boundary below. Keep Agno's auth layer
+        # disabled so its middleware does not capture the key in repr/log state
+        # or read a different CI-provided OS_SECURITY_KEY from the environment.
+        settings=AgnoAPISettings(os_security_key=None),
         auto_provision_dbs=False,
         telemetry=False,
     )

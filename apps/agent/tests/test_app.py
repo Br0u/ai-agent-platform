@@ -5,6 +5,7 @@ from typing import Any, cast
 import pytest
 from agno.db.postgres import AsyncPostgresDb
 from agno.os import AgentOS
+from agno.os.settings import AgnoAPISettings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -211,6 +212,7 @@ def test_agentos_receives_exact_model_free_composition_and_same_database(
         "agents": catalog.agents,
         "db": database,
         "base_app": captured["base_app"],
+        "settings": AgnoAPISettings(os_security_key=None),
         "auto_provision_dbs": False,
         "telemetry": False,
     }
