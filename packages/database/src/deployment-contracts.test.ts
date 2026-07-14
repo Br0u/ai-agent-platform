@@ -334,8 +334,17 @@ describe("production deployment security contracts", () => {
     expect(firstDeployment).toBeDefined();
     expect(firstDeployment).toContain("assistant_session_secret");
     expect(firstDeployment).toContain("assistant_rate_limit_secret");
-    expect(firstDeployment).toContain("ASSISTANT_SESSION_SECRET_FILE");
-    expect(firstDeployment).toContain("ASSISTANT_RATE_LIMIT_SECRET_FILE");
+    expect(firstDeployment).toContain(
+      "export ASSISTANT_PUBLIC_ORIGIN=https://ai-agent.example.com",
+    );
+    expect(firstDeployment).toContain(
+      "export ASSISTANT_SESSION_SECRET_FILE=/secure/secrets/assistant_session_secret",
+    );
+    expect(firstDeployment).toContain(
+      "export ASSISTANT_RATE_LIMIT_SECRET_FILE=/secure/secrets/assistant_rate_limit_secret",
+    );
+    expect(firstDeployment).toContain("写入`.env`中的同名键");
+    expect(firstDeployment).toContain("不要追加重复键");
     expect(firstDeployment).toMatch(/独立随机[^\n]*至少 32 (?:bytes|字节)/u);
     expect(firstDeployment).toContain("0600");
     expect(firstDeployment).toContain("不得复用 Better Auth 或 AgentOS 密钥");
