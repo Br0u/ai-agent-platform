@@ -1,0 +1,489 @@
+/* ==========================================================================
+   文档阅读器 (DocReaderLayout) 样式 - Aliyun Enterprise Style
+   ========================================================================== */
+
+.doc-reader {
+  display: flex;
+  min-height: calc(100vh - 64px);
+  background: var(--color-surface); /* 纯白底色 */
+  font-family: var(--font-body);
+}
+
+/* ======================== 左侧边栏 (Sidebar) ======================== */
+.doc-reader__sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--color-line);
+  background: var(--color-surface);
+  padding: 0;
+  position: sticky;
+  top: 64px;
+  height: calc(100vh - 64px);
+  overflow-y: auto;
+}
+
+.doc-reader__sidebar-header {
+  padding: var(--space-6) var(--space-6) var(--space-4);
+}
+
+.doc-reader__sidebar-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-ink);
+  margin: 0 0 var(--space-4);
+}
+
+/* 伪造的搜索框 */
+.doc-reader__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  color: var(--color-muted);
+  font-size: 13px;
+  background: var(--color-canvas);
+  transition:
+    border-color 0.2s,
+    background 0.2s;
+  cursor: text;
+}
+
+.doc-reader__search:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-line));
+  background: var(--color-surface);
+}
+
+.doc-reader__nav-group {
+  padding: 0 var(--space-4);
+  margin-bottom: var(--space-2);
+}
+
+.doc-reader__nav-group-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 0;
+  padding: var(--space-3) var(--space-2);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-ink);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.doc-reader__nav-group-title:hover {
+  background: color-mix(in srgb, var(--color-canvas) 80%, var(--color-surface));
+}
+
+.doc-reader__nav-arrow {
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--color-muted);
+  transform: translateY(-1px) rotate(0deg);
+  transition: transform 0.2s ease-in-out;
+}
+
+.doc-reader__nav-arrow.is-open {
+  transform: translateY(-1px) rotate(90deg);
+}
+
+.doc-reader__nav-tree-wrapper {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.2s ease-in-out;
+}
+
+.doc-reader__nav-tree-wrapper.is-open {
+  grid-template-rows: 1fr;
+}
+
+.doc-reader__nav-tree {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.doc-reader__nav-overview {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-3) var(--space-2);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-primary);
+  text-decoration: none;
+  border-radius: 4px;
+  transition: background 0.2s;
+  margin-top: var(--space-2);
+}
+
+.doc-reader__nav-overview:hover {
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+}
+
+.doc-reader__nav-overview-arrow {
+  font-size: 16px;
+}
+
+.doc-reader__nav-sub {
+  display: flex;
+  flex-direction: column;
+  margin-left: var(--space-2);
+}
+
+.doc-reader__nav-sub-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  font-size: 13px;
+  color: var(--color-ink);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.doc-reader__nav-sub-title:hover {
+  background: color-mix(in srgb, var(--color-canvas) 80%, var(--color-surface));
+}
+
+.doc-reader__nav-arrow-small {
+  font-size: 16px;
+  color: var(--color-muted);
+  transform: translateY(-1px) rotate(0deg);
+  transition: transform 0.2s ease-in-out;
+}
+
+.doc-reader__nav-arrow-small.is-open {
+  transform: translateY(-1px) rotate(90deg);
+}
+
+.doc-reader__nav-docs-wrapper {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.2s ease-in-out;
+}
+
+.doc-reader__nav-docs-wrapper.is-open {
+  grid-template-rows: 1fr;
+}
+
+.doc-reader__nav-docs {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  margin-left: var(--space-4);
+  border-left: 1px solid var(--color-border);
+}
+
+.doc-reader__nav-doc-link {
+  display: block;
+  padding: 6px var(--space-3);
+  font-size: 13px;
+  color: var(--color-muted);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.doc-reader__nav-doc-link:hover {
+  color: var(--color-primary);
+}
+
+.doc-reader__nav-link {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px 8px 24px;
+  font-size: 13px;
+  color: var(--color-muted);
+  text-decoration: none;
+  transition:
+    background 0.1s,
+    color 0.1s;
+  border-radius: 4px;
+  margin-bottom: 2px;
+}
+
+.doc-reader__nav-link:hover {
+  background: color-mix(in srgb, var(--color-canvas) 80%, var(--color-surface));
+  color: var(--color-primary);
+}
+
+.doc-reader__nav-link[aria-current="page"] {
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* ======================== 中侧正文 (Main Content) ======================== */
+.doc-reader__main {
+  flex-grow: 1;
+  min-width: 0;
+  background: var(--color-surface);
+  position: relative;
+}
+
+/* 顶部柔和的渐变区域 (Hero Header) */
+.doc-reader__header {
+  padding: var(--space-16) var(--space-12) var(--space-12);
+  background: linear-gradient(135deg, #fdfbfe 0%, #f4f0ff 40%, #eff7ff 100%);
+  border-bottom: 1px solid var(--color-line);
+}
+
+.doc-reader__header-inner {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.doc-reader__title {
+  margin: 0 0 var(--space-4);
+  font: 800 36px/1.3 var(--font-display);
+  color: var(--color-ink);
+  letter-spacing: -0.01em;
+}
+
+.doc-reader__desc {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--color-muted);
+  max-width: 800px;
+}
+
+/* 内容容器 */
+.doc-content {
+  padding: var(--space-12) var(--space-12) var(--space-16);
+  max-width: 900px;
+  margin: 0 auto;
+  color: var(--color-ink);
+  font-size: 14px;
+}
+
+/* ======================== 网格卡片系统 (Grid Cards) ======================== */
+.doc-section-title {
+  font: 700 24px/1.3 var(--font-display);
+  margin: 0 0 var(--space-6);
+  color: var(--color-ink);
+}
+
+.doc-section-desc {
+  font-size: 14px;
+  color: var(--color-muted);
+  margin-bottom: var(--space-8);
+}
+
+.doc-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-6);
+  margin-bottom: var(--space-12);
+}
+
+.doc-card {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-6);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 2px; /* 阿里云偏向极小圆角 */
+  text-decoration: none;
+  transition: all 0.2s ease-in-out;
+}
+
+.doc-card:hover {
+  box-shadow: 0 8px 24px rgba(16, 24, 56, 0.06);
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
+}
+
+.doc-card__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: var(--space-4);
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  border-radius: 4px;
+}
+
+.doc-card__icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.doc-card__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-ink);
+  margin: 0 0 var(--space-2);
+  transition: color 0.2s;
+}
+
+.doc-card:hover .doc-card__title {
+  color: var(--color-primary);
+}
+
+.doc-card__desc {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-muted);
+  margin: 0;
+  /* 多行截断 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ======================== FAQ 样式 (保留原先干净的列表，但更素雅) ======================== */
+.faq-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.faq-item {
+  border-bottom: 1px solid var(--color-line);
+  padding: var(--space-6) 0;
+}
+
+.faq-item:first-child {
+  border-top: 1px solid var(--color-line);
+}
+
+.faq-item__question {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--color-ink);
+  margin-bottom: var(--space-3);
+}
+
+.faq-item__answer {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--color-muted);
+  padding-left: 28px; /* 对齐问题文本 */
+}
+
+/* ======================== 文章底部导航 ======================== */
+.doc-reader__footer-nav {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--space-12);
+  padding-top: var(--space-8);
+  border-top: 1px solid var(--color-line);
+  max-width: 900px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.doc-nav-link {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  text-decoration: none;
+  color: var(--color-ink);
+  transition: color 0.15s;
+}
+
+.doc-nav-link:hover {
+  color: var(--color-primary);
+}
+
+.doc-nav-link span {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.doc-nav-link strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.doc-nav-link--next {
+  align-items: flex-end;
+  text-align: right;
+}
+
+/* ======================== 右侧目录 (TOC) ======================== */
+.doc-reader__toc {
+  width: 200px;
+  flex-shrink: 0;
+  padding: var(--space-12) var(--space-6);
+  position: sticky;
+  top: 64px;
+  height: calc(100vh - 64px);
+  overflow-y: auto;
+}
+
+.doc-reader__toc-title {
+  margin: 0 0 var(--space-4);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.doc-reader__toc-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--space-8);
+}
+
+.doc-reader__toc-list li {
+  margin-bottom: var(--space-3);
+}
+
+.doc-reader__toc-list a {
+  display: block;
+  font-size: 13px;
+  color: var(--color-muted);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.doc-reader__toc-list a:hover {
+  color: var(--color-primary);
+}
+
+.doc-reader__feedback {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--color-muted);
+  text-decoration: none;
+  transition: color 0.15s;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-line);
+}
+
+.doc-reader__feedback:hover {
+  color: var(--color-primary);
+}
+
+/* ======================== 响应式 ======================== */
+@media (max-width: 1024px) {
+  .doc-reader__toc {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .doc-reader__sidebar {
+    display: none;
+  }
+
+  .doc-reader__header {
+    padding: var(--space-10) var(--space-6);
+  }
+
+  .doc-content {
+    padding: var(--space-6);
+  }
+}

@@ -1,0 +1,556 @@
+/* 
+ * 知识智能体 (智能导办一体机) 专属 CSS
+ * 科技蓝、统一 Corporate Blue、Slate Gray
+ */
+
+:root {
+  --ka-primary: #2563eb; /* 科技蓝 */
+  --ka-primary-light: #eff6ff;
+  --ka-secondary: #1e88e5; /* 商务蓝 */
+  --ka-text-main: #0f172a;
+  --ka-text-sub: #64748b;
+}
+
+.ka-page {
+  font-family: var(--font-body);
+  color: var(--ka-text-main);
+  background-color: #ffffff;
+}
+
+.ka-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--space-6);
+}
+
+.ka-section {
+  padding: 80px 0;
+}
+
+.ka-bg-light {
+  background-color: #f8fafc;
+}
+
+.ka-bg-purple-light {
+  background-color: var(--ka-primary-light);
+}
+
+.ka-section-header {
+  text-align: center;
+  margin-bottom: 56px;
+}
+
+.ka-section-header h2 {
+  font-size: 36px;
+  font-weight: 800;
+  color: var(--ka-primary);
+  margin-bottom: 16px;
+}
+
+.ka-section-header p {
+  font-size: 18px;
+  color: var(--ka-text-sub);
+}
+
+/* ========== S1: AI 破局首屏 ========== */
+.ka-hero {
+  position: relative;
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0e7ff 100%);
+  padding: 100px 0;
+  overflow: hidden;
+}
+
+.ka-hero::before {
+  content: "";
+  position: absolute;
+  top: -20%;
+  right: -10%;
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(
+    circle,
+    rgba(37, 99, 235, 0.1) 0%,
+    transparent 70%
+  );
+  border-radius: 50%;
+}
+
+.ka-hero__inner {
+  display: flex;
+  align-items: center;
+  gap: 64px;
+  position: relative;
+  z-index: 2;
+}
+
+.ka-hero__text {
+  flex: 1;
+}
+
+.ka-hero__badge {
+  display: inline-block;
+  padding: 6px 16px;
+  background: var(--ka-primary);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 20px;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+}
+
+.ka-hero__title {
+  font-size: 52px;
+  font-weight: 900;
+  color: #0f172a;
+  line-height: 1.2;
+  margin-bottom: 32px;
+}
+
+.ka-hero__pain-point {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(10px);
+  border-left: 4px solid #ef4444;
+  padding: 20px;
+  border-radius: 0 8px 8px 0;
+  margin-bottom: 24px;
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.ka-pain-icon {
+  font-size: 24px;
+}
+
+.ka-hero__pain-point p {
+  font-size: 15px;
+  line-height: 1.6;
+  color: #334155;
+  margin: 0;
+}
+
+.ka-text-highlight {
+  color: #d32f2f;
+  font-weight: 700;
+  background: rgba(211, 47, 47, 0.1);
+  padding: 0 4px;
+  border-radius: 2px;
+}
+
+.ka-hero__solution {
+  font-size: 18px;
+  line-height: 1.8;
+  color: var(--ka-primary);
+  font-weight: 500;
+}
+
+/* 首屏视觉模拟区 */
+.ka-hero__visual {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  perspective: 1000px;
+}
+
+.ka-mock-ui {
+  width: 100%;
+  max-width: 400px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 20px;
+  box-shadow: 0 20px 50px rgba(37, 99, 235, 0.15);
+  overflow: hidden;
+  transform: rotateY(-5deg) rotateX(5deg);
+  transition: transform 0.3s ease;
+}
+
+.ka-mock-ui:hover {
+  transform: rotateY(0) rotateX(0) translateY(-10px);
+}
+
+.ka-mock-header {
+  background: rgba(255, 255, 255, 0.9);
+  padding: 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  display: flex;
+  align-items: center;
+}
+
+.ka-mock-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.ka-mock-dots span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #e2e8f0;
+}
+
+.ka-mock-dots span:nth-child(1) {
+  background: #ff5f56;
+}
+.ka-mock-dots span:nth-child(2) {
+  background: #ffbd2e;
+}
+.ka-mock-dots span:nth-child(3) {
+  background: #27c93f;
+}
+
+.ka-mock-title {
+  flex: 1;
+  text-align: center;
+  font-weight: 700;
+  color: var(--ka-text-main);
+  padding-right: 42px; /* balance dots */
+}
+
+.ka-mock-body {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ka-chat-bubble {
+  max-width: 80%;
+  padding: 12px 16px;
+  border-radius: 16px;
+  font-size: 14px;
+  line-height: 1.5;
+  animation: slideInUp 0.5s ease backwards;
+}
+
+.ka-chat--left {
+  align-self: flex-start;
+  background: #f1f5f9;
+  color: #334155;
+  border-bottom-left-radius: 4px;
+}
+
+.ka-chat--right {
+  align-self: flex-end;
+  background: var(--ka-primary);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+  animation-delay: 0.5s;
+}
+
+.ka-chat-bubble:nth-child(3) {
+  animation-delay: 1.2s;
+}
+
+.ka-chat-typing {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+}
+
+.ka-chat-typing span {
+  width: 6px;
+  height: 6px;
+  background: #94a3b8;
+  border-radius: 50%;
+  animation: typing 1s infinite alternate;
+}
+
+.ka-chat-typing span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.ka-chat-typing span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.ka-mock-form {
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e2e8f0;
+  margin-top: 8px;
+  animation: slideInUp 0.5s ease backwards;
+  animation-delay: 2s;
+}
+
+.ka-form-check {
+  font-size: 13px;
+  color: #10b981;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.ka-form-check:last-child {
+  margin-bottom: 0;
+}
+
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes typing {
+  from {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+/* ========== S2: 导办通关四大流程 ========== */
+.ka-timeline {
+  max-width: 800px;
+  margin: 0 auto;
+  position: relative;
+}
+
+.ka-timeline::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 24px;
+  width: 2px;
+  background: var(--ka-primary-light);
+}
+
+.ka-timeline-item {
+  display: flex;
+  gap: 32px;
+  margin-bottom: 48px;
+  position: relative;
+}
+
+.ka-timeline-item:last-child {
+  margin-bottom: 0;
+}
+
+.ka-timeline-marker {
+  width: 50px;
+  height: 50px;
+  background: #fff;
+  border: 2px solid var(--ka-primary);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 900;
+  color: var(--ka-primary);
+  position: relative;
+  z-index: 2;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.2);
+}
+
+.ka-timeline-content {
+  flex: 1;
+  background: #fff;
+  padding: 32px;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+  border: 1px solid #e2e8f0;
+  transition: transform 0.3s;
+}
+
+.ka-timeline-item:hover .ka-timeline-content {
+  transform: translateX(10px);
+  border-color: #bfdbfe;
+}
+
+.ka-timeline-content h3 {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--ka-text-main);
+  margin-bottom: 16px;
+}
+
+.ka-timeline-content p {
+  font-size: 16px;
+  color: var(--ka-text-sub);
+  line-height: 1.8;
+}
+
+/* ========== S3: 9大产品功能矩阵 ========== */
+.ka-features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+.ka-feature-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  padding: 32px;
+  border-radius: 12px;
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.ka-feature-card:hover {
+  box-shadow: 0 10px 30px rgba(37, 99, 235, 0.1);
+  transform: translateY(-5px);
+  border-color: #bfdbfe;
+}
+
+.ka-feature-icon-wrapper {
+  width: 48px;
+  height: 48px;
+  background: var(--ka-primary-light);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.ka-feature-icon-text {
+  font-size: 24px;
+  font-weight: 900;
+  color: var(--ka-primary);
+}
+
+.ka-feature-card h3 {
+  font-size: 18px;
+  font-weight: 800;
+  margin-bottom: 12px;
+}
+
+.ka-feature-card p {
+  font-size: 14px;
+  color: var(--ka-text-sub);
+  line-height: 1.6;
+}
+
+/* ========== S4: 需求单位卡片 ========== */
+.ka-units-wrapper {
+  display: flex;
+  justify-content: center;
+  gap: 40px;
+  flex-wrap: wrap;
+}
+
+.ka-unit-card {
+  background: #fff;
+  padding: 40px;
+  border-radius: 16px;
+  text-align: center;
+  width: 280px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+  transition: transform 0.3s;
+}
+
+.ka-unit-card:hover {
+  transform: scale(1.05);
+}
+
+.ka-unit-icon {
+  font-size: 64px;
+  margin-bottom: 24px;
+}
+
+.ka-unit-name {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--ka-primary);
+}
+
+/* ========== S5: 双旗舰一体机配置 ========== */
+.ka-table-wrapper {
+  background: #fff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.06);
+  border: 1px solid #e2e8f0;
+}
+
+.ka-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ka-table th {
+  background: var(--ka-primary);
+  color: #fff;
+  text-align: left;
+  padding: 24px 32px;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.ka-table td {
+  padding: 32px;
+  border-bottom: 1px solid #e2e8f0;
+  vertical-align: top;
+}
+
+.ka-tr-highlight td {
+  background: rgba(37, 99, 235, 0.03);
+}
+
+.ka-td-form {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--ka-primary);
+  width: 30%;
+  white-space: pre-line;
+  line-height: 1.5;
+  border-right: 1px dashed #e2e8f0;
+}
+
+.ka-td-desc {
+  font-size: 15px;
+  color: #475569;
+  line-height: 2;
+}
+
+.ka-model-name {
+  font-weight: 800;
+  color: #0f172a;
+  font-size: 18px;
+  margin-bottom: 8px;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .ka-hero__inner {
+    flex-direction: column;
+  }
+  .ka-features-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .ka-hero__title {
+    font-size: 36px;
+  }
+  .ka-features-grid {
+    grid-template-columns: 1fr;
+  }
+  .ka-timeline::before {
+    left: 20px;
+  }
+  .ka-timeline-marker {
+    width: 40px;
+    height: 40px;
+    font-size: 16px;
+  }
+  .ka-table th,
+  .ka-table td {
+    padding: 16px;
+  }
+  .ka-td-form {
+    font-size: 16px;
+  }
+}

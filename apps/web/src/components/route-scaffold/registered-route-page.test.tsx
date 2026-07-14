@@ -38,16 +38,7 @@ describe("RegisteredRoutePage", () => {
       Array.from(container.querySelectorAll("section[id]"), (section) =>
         section.getAttribute("id"),
       ),
-    ).toEqual([
-      "quick-start",
-      "deployment",
-      "upgrade",
-      "operations",
-      "api",
-      "features",
-      "hardware",
-      "faq",
-    ]);
+    ).toEqual(["features"]);
     expect(container.querySelector("#overview")).not.toBeInTheDocument();
     expect(
       renderedPage

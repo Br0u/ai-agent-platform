@@ -11,6 +11,7 @@ const requiredRoutes = [
   "/downloads",
   "/openlab",
   "/docs",
+  "/docs/[category]",
   "/compatibility",
   "/marketplace",
   "/marketplace/[slug]",
