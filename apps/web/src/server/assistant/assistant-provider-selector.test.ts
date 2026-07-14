@@ -78,7 +78,7 @@ describe("assistant provider selector", () => {
         ASSISTANT_PROVIDER_MODE: "placeholder",
         ASSISTANT_AGENTOS_DEFAULT_AGENT_ID: "support-agent",
       }),
-    ).toEqual({ mode: "placeholder", defaultAgentId: "support-agent" });
+    ).toEqual({ mode: "placeholder" });
     expect(() =>
       resolveAssistantProviderSettings({ ASSISTANT_PROVIDER_MODE: "auto" }),
     ).toThrow("ASSISTANT_PROVIDER_MODE");
@@ -89,4 +89,28 @@ describe("assistant provider selector", () => {
       }),
     ).toThrow("ASSISTANT_AGENTOS_DEFAULT_AGENT_ID");
   });
+
+  it.each([undefined, null, "", " invalid placeholder id "])(
+    "does not require or validate an Agent ID in placeholder mode (%s)",
+    (defaultAgentId) => {
+      expect(
+        resolveAssistantProviderSettings({
+          ASSISTANT_PROVIDER_MODE: "placeholder",
+          ASSISTANT_AGENTOS_DEFAULT_AGENT_ID: defaultAgentId,
+        }),
+      ).toEqual({ mode: "placeholder" });
+    },
+  );
+
+  it.each([undefined, null, "", " "])(
+    "requires a strict non-empty Agent ID in AgentOS mode (%s)",
+    (defaultAgentId) => {
+      expect(() =>
+        resolveAssistantProviderSettings({
+          ASSISTANT_PROVIDER_MODE: "agentos",
+          ASSISTANT_AGENTOS_DEFAULT_AGENT_ID: defaultAgentId,
+        }),
+      ).toThrow("ASSISTANT_AGENTOS_DEFAULT_AGENT_ID");
+    },
+  );
 });

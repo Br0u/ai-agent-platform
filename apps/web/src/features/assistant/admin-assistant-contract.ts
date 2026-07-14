@@ -29,6 +29,7 @@ export type AdminAssistantStatusSnapshot = {
     ready: boolean;
     capability: "placeholder" | "available" | "degraded";
     providerMode: AssistantMode;
+    selectedProvider: AssistantMode | "unavailable";
     persistence: "disabled";
     circuit: {
       state: "closed" | "open" | "half-open";

@@ -45,14 +45,6 @@ export function createAdminAssistantSessionsHandler(
     );
     try {
       await dependencies.access.requirePermission("admin:assistant");
-      const body: AdminAssistantSessionsResponse = {
-        version: "1",
-        requestId,
-        sessions: await dependencies.loadSessions(),
-      };
-      return Response.json(body, {
-        headers: NO_STORE_HEADERS,
-      });
     } catch (error) {
       if (error instanceof AuthAccessError) {
         const code =
@@ -67,6 +59,20 @@ export function createAdminAssistantSessionsHandler(
           },
         );
       }
+      return Response.json(
+        createAdminAssistantErrorResponse(requestId, "assistant_unavailable"),
+        { status: 503, headers: NO_STORE_HEADERS },
+      );
+    }
+
+    try {
+      const body: AdminAssistantSessionsResponse = {
+        version: "1",
+        requestId,
+        sessions: await dependencies.loadSessions(),
+      };
+      return Response.json(body, { headers: NO_STORE_HEADERS });
+    } catch {
       return Response.json(
         createAdminAssistantErrorResponse(requestId, "assistant_unavailable"),
         { status: 503, headers: NO_STORE_HEADERS },

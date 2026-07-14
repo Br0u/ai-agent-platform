@@ -26,6 +26,7 @@ const status = {
     ready: true,
     capability: "placeholder" as const,
     providerMode: "placeholder" as const,
+    selectedProvider: "placeholder" as const,
     persistence: "disabled" as const,
     circuit: { state: "closed" as const, consecutiveFailures: 0 },
   },

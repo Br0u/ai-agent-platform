@@ -7,13 +7,12 @@ export type AssistantProviderMode = "placeholder" | "agentos";
 
 export type AssistantProviderEnvironment = {
   ASSISTANT_PROVIDER_MODE?: string;
-  ASSISTANT_AGENTOS_DEFAULT_AGENT_ID?: string;
+  ASSISTANT_AGENTOS_DEFAULT_AGENT_ID?: string | null;
 };
 
-export type AssistantProviderSettings = {
-  mode: AssistantProviderMode;
-  defaultAgentId?: string;
-};
+export type AssistantProviderSettings =
+  | { mode: "placeholder"; defaultAgentId?: never }
+  | { mode: "agentos"; defaultAgentId: string };
 
 export function resolveAssistantProviderSettings(
   environment: AssistantProviderEnvironment,
@@ -22,21 +21,17 @@ export function resolveAssistantProviderSettings(
   if (mode !== "placeholder" && mode !== "agentos") {
     throw new Error("ASSISTANT_PROVIDER_MODE must be placeholder or agentos");
   }
+  if (mode === "placeholder") return { mode };
+
   const rawAgentId = environment.ASSISTANT_AGENTOS_DEFAULT_AGENT_ID;
-  if (rawAgentId !== undefined && rawAgentId !== rawAgentId.trim()) {
-    throw new Error("ASSISTANT_AGENTOS_DEFAULT_AGENT_ID is invalid");
-  }
   if (
-    rawAgentId !== undefined &&
-    (!/^[a-z0-9][a-z0-9_-]{0,127}$/u.test(rawAgentId) ||
-      rawAgentId.length > 128)
+    typeof rawAgentId !== "string" ||
+    rawAgentId !== rawAgentId.trim() ||
+    !/^[a-z0-9][a-z0-9_-]{0,127}$/u.test(rawAgentId)
   ) {
     throw new Error("ASSISTANT_AGENTOS_DEFAULT_AGENT_ID is invalid");
   }
-  return {
-    mode,
-    ...(rawAgentId ? { defaultAgentId: rawAgentId } : {}),
-  };
+  return { mode, defaultAgentId: rawAgentId };
 }
 
 export function selectAssistantProvider(input: {

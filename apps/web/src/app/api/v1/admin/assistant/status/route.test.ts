@@ -139,6 +139,112 @@ describe("GET /api/v1/admin/assistant/status", () => {
     expect(JSON.stringify(body)).not.toMatch(/private|url|secret/iu);
   });
 
+  it("does not let a malicious loader AuthAccessError impersonate an authorization failure", async () => {
+    const GET = createAdminAssistantStatusHandler({
+      access: {
+        requirePermission: vi.fn().mockResolvedValue({ realm: "workforce" }),
+      },
+      loadStatus: vi
+        .fn()
+        .mockRejectedValue(
+          new auth.AuthAccessError("AUTH_SESSION_REQUIRED", 401),
+        ),
+      requestIdFactory: () => "loader-auth-error",
+    });
+
+    const response = await GET(request("loader-auth-error"));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      version: "1",
+      requestId: "loader-auth-error",
+      error: {
+        code: "assistant_unavailable",
+        message: "AI assistant service is unavailable",
+      },
+    });
+  });
+
+  it.each([
+    {
+      name: "placeholder Provider with degraded AgentOS",
+      status: {
+        live: false,
+        ready: false,
+        capability: "degraded" as const,
+        message: "助手基础服务暂不可用。",
+      },
+      inspection: {
+        providerMode: "placeholder" as const,
+        persistence: "disabled" as const,
+        circuit: { state: "open" as const, consecutiveFailures: 3 },
+      },
+      expected: {
+        mode: "placeholder",
+        selectedProvider: "placeholder",
+        publicState: "placeholder",
+        agentosState: "not_connected",
+      },
+    },
+    {
+      name: "AgentOS mode without available capability",
+      status: {
+        live: true,
+        ready: true,
+        capability: "placeholder" as const,
+        message: "模型尚未配置，当前为安全占位模式。",
+      },
+      inspection: {
+        providerMode: "agentos" as const,
+        persistence: "disabled" as const,
+        circuit: { state: "closed" as const, consecutiveFailures: 0 },
+      },
+      expected: {
+        mode: "placeholder",
+        selectedProvider: "placeholder",
+        publicState: "not_configured",
+        agentosState: "ready",
+      },
+    },
+    {
+      name: "fully available AgentOS Provider",
+      status: {
+        live: true,
+        ready: true,
+        capability: "available" as const,
+        message: "AI 助理基础服务已就绪。",
+      },
+      inspection: {
+        providerMode: "agentos" as const,
+        persistence: "disabled" as const,
+        circuit: { state: "closed" as const, consecutiveFailures: 0 },
+      },
+      expected: {
+        mode: "agentos",
+        selectedProvider: "agentos",
+        publicState: "ready",
+        agentosState: "ready",
+      },
+    },
+  ])(
+    "derives public entry from $name",
+    async ({ status, inspection, expected }) => {
+      const result = await loadAdminAssistantStatus({
+        status: async () => status,
+        inspect: () => inspection,
+      } as never);
+
+      expect(result.mode).toBe(expected.mode);
+      expect(result.runtime.selectedProvider).toBe(expected.selectedProvider);
+      expect(
+        result.services.find(({ id }) => id === "public_entry")?.state,
+      ).toBe(expected.publicState);
+      expect(result.services.find(({ id }) => id === "agentos")?.state).toBe(
+        expected.agentosState,
+      );
+    },
+  );
+
   it("returns a correlated safe status snapshot with circuit metadata", async () => {
     const requestIdFactory = vi.fn(() => "unused-fallback");
     const GET = createAdminAssistantStatusHandler({
@@ -152,6 +258,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
           ready: true,
           capability: "placeholder",
           providerMode: "placeholder",
+          selectedProvider: "placeholder",
           persistence: "disabled",
           circuit: { state: "closed", consecutiveFailures: 2 },
         },
@@ -209,6 +316,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
       ready: true,
       capability: "placeholder",
       providerMode: "placeholder",
+      selectedProvider: "placeholder",
       persistence: "disabled",
       circuit: { state: "closed", consecutiveFailures: 2 },
     });
@@ -234,6 +342,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
       ready: false,
       capability: "degraded",
       providerMode: "placeholder",
+      selectedProvider: "unavailable",
       persistence: "disabled",
       circuit: { state: "closed", consecutiveFailures: 0 },
     });

@@ -78,7 +78,11 @@ export function AssistantAdminPage({
         </div>
         <dl aria-label="AgentOS 运行时状态">
           <div>
-            <dt>Provider</dt>
+            <dt>Selected Provider</dt>
+            <dd>{status.runtime.selectedProvider}</dd>
+          </div>
+          <div>
+            <dt>Configured Mode</dt>
             <dd>{status.runtime.providerMode}</dd>
           </div>
           <div>

@@ -105,6 +105,29 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
     expect(JSON.stringify(body)).not.toMatch(/customer|secret/iu);
   });
 
+  it("does not let a malicious loader AuthAccessError impersonate an authorization failure", async () => {
+    const GET = createAdminAssistantSessionsHandler({
+      access: {
+        requirePermission: vi.fn().mockResolvedValue({ realm: "workforce" }),
+      },
+      loadSessions: vi
+        .fn()
+        .mockRejectedValue(
+          new auth.AuthAccessError("AUTH_PERMISSION_DENIED", 403),
+        ),
+      requestIdFactory: () => "loader-auth-error",
+    });
+
+    const response = await GET(request("loader-auth-error"));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      version: "1",
+      requestId: "loader-auth-error",
+      error: { code: "assistant_unavailable" },
+    });
+  });
+
   it("returns a correlated versioned non-persisted snapshot", async () => {
     const requestIdFactory = vi.fn(() => "unused-fallback");
     const GET = createAdminAssistantSessionsHandler({

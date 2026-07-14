@@ -259,6 +259,36 @@ describe("POST /api/v1/admin/assistant/chat", () => {
     expect(assistantProvider.reply).not.toHaveBeenCalled();
   });
 
+  it("does not let a Provider AuthAccessError impersonate an authorization failure", async () => {
+    const assistantProvider: AssistantProvider = {
+      reply: vi
+        .fn()
+        .mockRejectedValue(
+          new auth.AuthAccessError("AUTH_SESSION_REQUIRED", 401),
+        ),
+    };
+    const POST = createAdminAssistantChatHandler({
+      access: {
+        requirePermission: vi.fn().mockResolvedValue({
+          userId: "admin-1",
+          realm: "workforce",
+        }),
+      },
+      rateLimiter: { consume: vi.fn().mockResolvedValue(undefined) },
+      provider: assistantProvider,
+      requestIdFactory: () => "provider-auth-error",
+    });
+
+    const response = await POST(request("provider-auth-error"));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      version: "1",
+      requestId: "provider-auth-error",
+      error: { code: "assistant_unavailable" },
+    });
+  });
+
   it("preserves a valid incoming request id through the base v1 contract", async () => {
     const requestIdFactory = vi.fn(() => "unused-fallback");
     const POST = createAdminAssistantChatHandler({

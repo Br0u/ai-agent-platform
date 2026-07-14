@@ -38,6 +38,8 @@ const SAFE_DEGRADED_INSPECTION: AssistantRuntimeInspection = {
 
 function serviceState(
   status: AssistantRuntimeStatus,
+  inspection: AssistantRuntimeInspection,
+  configurationValid: boolean,
 ): AdminAssistantStatusSnapshot["services"] {
   const agentosState = status.ready
     ? "ready"
@@ -49,12 +51,15 @@ function serviceState(
     : status.live
       ? "degraded"
       : "not_connected";
-  const publicState =
-    status.capability === "available"
-      ? "ready"
-      : status.capability === "placeholder"
-        ? "placeholder"
-        : "degraded";
+  const publicState = !configurationValid
+    ? "degraded"
+    : inspection.providerMode === "placeholder"
+      ? "placeholder"
+      : !status.live || !status.ready || status.capability === "degraded"
+        ? "degraded"
+        : status.capability === "available"
+          ? "ready"
+          : "not_configured";
 
   return [
     {
@@ -92,7 +97,9 @@ function serviceState(
           ? "AgentOS 模式可用"
           : publicState === "placeholder"
             ? "占位模式可用"
-            : "降级模式",
+            : publicState === "not_configured"
+              ? "默认 Agent 或模型尚未配置"
+              : "降级模式",
     },
   ];
 }
@@ -100,27 +107,41 @@ function serviceState(
 function snapshot(
   status: AssistantRuntimeStatus,
   inspection: AssistantRuntimeInspection,
+  configurationValid = true,
 ): AdminAssistantStatusSnapshot {
-  const mode =
-    status.capability === "available" && inspection.providerMode === "agentos"
-      ? "agentos"
-      : "placeholder";
+  const selectedProvider = !configurationValid
+    ? "unavailable"
+    : inspection.providerMode === "placeholder"
+      ? "placeholder"
+      : status.live && status.ready && status.capability === "available"
+        ? "agentos"
+        : status.live && status.ready && status.capability === "placeholder"
+          ? "placeholder"
+          : "unavailable";
+  const mode = selectedProvider === "agentos" ? "agentos" : "placeholder";
   return {
     mode,
     runtime: {
       live: status.live,
       ready: status.ready,
       capability: status.capability,
+      selectedProvider,
       ...inspection,
     },
-    services: serviceState(status),
+    services: serviceState(status, inspection, configurationValid),
     configuration: {
-      defaultAgent: mode === "agentos" ? "已配置" : "M 企业助理（占位）",
+      defaultAgent:
+        configurationValid && inspection.providerMode === "agentos"
+          ? "已配置"
+          : "M 企业助理（占位）",
       model: status.capability === "available" ? "已配置" : "未配置",
       skills: "未接入",
       sessionStorage: "未启用",
     },
-    message: status.message,
+    message:
+      configurationValid && inspection.providerMode === "placeholder"
+        ? "公开入口使用安全占位模式；AgentOS 基础设施状态独立展示。"
+        : status.message,
   };
 }
 
@@ -132,7 +153,7 @@ export async function loadAdminAssistantStatus(
     const status = await readSafeAssistantRuntimeStatus(resolved);
     return snapshot(status, resolved.inspect());
   } catch {
-    return snapshot(SAFE_DEGRADED_STATUS, SAFE_DEGRADED_INSPECTION);
+    return snapshot(SAFE_DEGRADED_STATUS, SAFE_DEGRADED_INSPECTION, false);
   }
 }
 
@@ -156,14 +177,6 @@ export function createAdminAssistantStatusHandler(
     );
     try {
       await dependencies.access.requirePermission("admin:assistant");
-      const body: AdminAssistantStatusResponse = {
-        version: "1",
-        requestId,
-        status: await dependencies.loadStatus(),
-      };
-      return Response.json(body, {
-        headers: NO_STORE_HEADERS,
-      });
     } catch (error) {
       if (error instanceof AuthAccessError) {
         const code =
@@ -178,6 +191,20 @@ export function createAdminAssistantStatusHandler(
           },
         );
       }
+      return Response.json(
+        createAdminAssistantErrorResponse(requestId, "assistant_unavailable"),
+        { status: 503, headers: NO_STORE_HEADERS },
+      );
+    }
+
+    try {
+      const body: AdminAssistantStatusResponse = {
+        version: "1",
+        requestId,
+        status: await dependencies.loadStatus(),
+      };
+      return Response.json(body, { headers: NO_STORE_HEADERS });
+    } catch {
       return Response.json(
         createAdminAssistantErrorResponse(requestId, "assistant_unavailable"),
         { status: 503, headers: NO_STORE_HEADERS },
