@@ -1161,7 +1161,7 @@ exit 0
     expect(workflow).toContain("ai_agent_platform_identity_test_ci");
     expect(workflow).toContain("ai_agent_platform_ci");
     expect(workflow).toContain(
-      "TEST_DATABASE_URL: postgresql://ai_agent_owner@127.0.0.1:5432/ai_agent_platform_identity_test_integration_ci",
+      "TEST_DATABASE_URL: postgresql://ai_agent_owner@127.0.0.1:5432/ai_agent_platform_identity_test_integration",
     );
     expect(workflow).toContain(
       "ROLE_BOUNDARY_DATABASE_URL: postgresql://ai_agent_owner@127.0.0.1:5432/ai_agent_platform_identity_test_ci",
@@ -1186,7 +1186,7 @@ exit 0
       "CREATE DATABASE ai_agent_platform_identity_test_ci",
     );
     expect(workflow).toContain(
-      "CREATE DATABASE ai_agent_platform_identity_test_integration_ci",
+      "CREATE DATABASE ai_agent_platform_identity_test_integration",
     );
     expect(workflow).toContain("name: Create isolated CI databases");
     expect(workflow).not.toContain("ai_agent_platform_test\n");
