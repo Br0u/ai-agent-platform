@@ -29,3 +29,14 @@ playwright-report/
 test-results/
 /tmp/
 ~$*.docx
+
+# Local-only documents and review/extraction artifacts.
+# Product documentation under docs/ remains versioned intentionally.
+*.doc
+*.docx
+*.pdf
+/findings.md
+/progress.md
+/task_plan.md
+/pdf_extract*.txt
+/.local-docs/
