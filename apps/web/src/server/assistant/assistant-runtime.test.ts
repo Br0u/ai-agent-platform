@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createAssistantRuntime,
   getAssistantRuntime,
+  readSafeAssistantRuntimeStatus,
 } from "./assistant-runtime";
 
 const VALID_ENVIRONMENT = {
@@ -29,6 +30,59 @@ afterEach(() => {
 });
 
 describe("assistant server runtime", () => {
+  it.each([
+    ["invalid provider mode", "ASSISTANT_PROVIDER_MODE", "raw-auto-mode"],
+    ["invalid proxy mode", "TRUST_NGINX_PROXY", "raw-maybe-proxy"],
+    ["missing AgentOS setting", "ASSISTANT_AGENTOS_READINESS_TTL_MS", ""],
+  ])(
+    "returns an exact safe degraded default status for %s",
+    async (_name, key, value) => {
+      for (const [environmentKey, environmentValue] of Object.entries(
+        VALID_ENVIRONMENT,
+      )) {
+        vi.stubEnv(environmentKey, environmentValue);
+      }
+      vi.stubEnv(key, value);
+
+      const status = await readSafeAssistantRuntimeStatus();
+
+      expect(status).toEqual({
+        live: false,
+        ready: false,
+        capability: "degraded",
+        message: "助手基础服务暂不可用。",
+      });
+      expect(JSON.stringify(status)).not.toMatch(
+        /raw-auto-mode|raw-maybe-proxy|agent:7777|security-key/iu,
+      );
+    },
+  );
+
+  it("preserves injected success and sanitizes injected failure", async () => {
+    const healthy = {
+      live: true,
+      ready: true,
+      capability: "placeholder" as const,
+      message: "模型尚未配置，当前为安全占位模式。",
+    };
+
+    await expect(
+      readSafeAssistantRuntimeStatus({ status: async () => healthy }),
+    ).resolves.toEqual(healthy);
+    await expect(
+      readSafeAssistantRuntimeStatus({
+        status: async () => {
+          throw new Error("raw http://agent:7777 secret");
+        },
+      }),
+    ).resolves.toEqual({
+      live: false,
+      ready: false,
+      capability: "degraded",
+      message: "助手基础服务暂不可用。",
+    });
+  });
+
   it("does not probe AgentOS while Provider mode is disabled", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const runtime = createAssistantRuntime({

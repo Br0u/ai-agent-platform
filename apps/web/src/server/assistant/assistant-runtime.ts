@@ -249,10 +249,11 @@ export function getAssistantRuntime(): AssistantRuntime {
 }
 
 export async function readSafeAssistantRuntimeStatus(
-  runtime: Pick<AssistantRuntime, "status"> = getAssistantRuntime(),
+  runtime?: Pick<AssistantRuntime, "status">,
 ): Promise<AssistantRuntimeStatus> {
   try {
-    return await runtime.status();
+    const resolvedRuntime = runtime ?? getAssistantRuntime();
+    return await resolvedRuntime.status();
   } catch {
     return degradedStatus();
   }
