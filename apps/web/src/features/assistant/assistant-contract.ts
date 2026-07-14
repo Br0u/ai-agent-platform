@@ -56,6 +56,7 @@ export interface AssistantErrorResponse {
   error: {
     code: AssistantErrorCode;
     message: string;
+    retryable: boolean;
   };
 }
 
@@ -85,7 +86,15 @@ export function createAssistantErrorResponse(
     assistant_unavailable: "助手服务暂不可用，请使用帮助中心或商务咨询。",
   };
 
-  return { version: "1", requestId, error: { code, message: messages[code] } };
+  return {
+    version: "1",
+    requestId,
+    error: {
+      code,
+      message: messages[code],
+      retryable: code !== "validation_error",
+    },
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

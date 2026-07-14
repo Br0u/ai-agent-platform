@@ -7,6 +7,7 @@ import {
   ASSISTANT_MAX_SUGGESTED_ACTIONS,
   ASSISTANT_MESSAGE_ID_MAX_CODE_POINTS,
   ASSISTANT_REQUEST_ID_MAX_CODE_POINTS,
+  createAssistantErrorResponse,
   isAssistantProviderReply,
   isAssistantStatusResponse,
   isAssistantSuccessResponse,
@@ -27,6 +28,19 @@ function success(overrides: Record<string, unknown> = {}) {
 }
 
 describe("assistant platform contract", () => {
+  it("marks transient errors retryable and validation errors terminal", () => {
+    expect(
+      createAssistantErrorResponse("req-1", "rate_limited").error.retryable,
+    ).toBe(true);
+    expect(
+      createAssistantErrorResponse("req-1", "assistant_unavailable").error
+        .retryable,
+    ).toBe(true);
+    expect(
+      createAssistantErrorResponse("req-1", "validation_error").error.retryable,
+    ).toBe(false);
+  });
+
   it("requires a canonical expiry and exposes no session identifier", () => {
     expect(isAssistantSuccessResponse(success())).toBe(true);
     expect(

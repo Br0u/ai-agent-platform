@@ -483,6 +483,7 @@ describe("POST /api/v1/assistant/chat", () => {
       error: {
         code: "validation_error",
         message: "请输入 1 至 500 个字符的问题。",
+        retryable: false,
       },
     });
     expect(JSON.stringify(responseBody)).not.toContain(secret);
@@ -795,6 +796,7 @@ describe("POST /api/v1/assistant/chat", () => {
       error: {
         code: "assistant_unavailable",
         message: "助手服务暂不可用，请使用帮助中心或商务咨询。",
+        retryable: true,
       },
     });
     expect(JSON.stringify(body)).not.toContain(secretMessage);

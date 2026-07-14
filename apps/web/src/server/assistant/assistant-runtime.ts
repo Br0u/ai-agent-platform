@@ -80,6 +80,11 @@ export type AssistantRuntimeInspection = {
   providerMode: AssistantProviderMode;
   persistence: "disabled";
   circuit: Pick<AgentOSCircuitInspection, "state" | "consecutiveFailures">;
+  readiness: {
+    cacheTtlMs: number;
+    probeTimeoutMs: number;
+    failureThreshold: number;
+  };
 };
 
 export type AssistantRuntimeSession = {
@@ -215,6 +220,7 @@ export function createAssistantRuntime(
     },
     inspect(): AssistantRuntimeInspection {
       const inspection = readiness?.inspect();
+      const readinessSettings = resolveAgentOSReadinessSettings(environment);
       return {
         providerMode: providerSettings.mode,
         persistence: "disabled",
@@ -224,6 +230,11 @@ export function createAssistantRuntime(
               consecutiveFailures: inspection.consecutiveFailures,
             }
           : { state: "closed", consecutiveFailures: 0 },
+        readiness: {
+          cacheTtlMs: readinessSettings.cacheTtlMs,
+          probeTimeoutMs: readinessSettings.probeTimeoutMs,
+          failureThreshold: readinessSettings.failureThreshold,
+        },
       };
     },
     async resolveProvider(): Promise<AssistantRuntimeProvider> {

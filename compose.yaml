@@ -208,8 +208,6 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-      agent:
-        condition: service_healthy
     expose:
       - "3000"
     healthcheck:

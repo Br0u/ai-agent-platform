@@ -23,6 +23,11 @@ const status = {
     selectedProvider: "placeholder" as const,
     persistence: "disabled" as const,
     circuit: { state: "closed" as const, consecutiveFailures: 2 },
+    readiness: {
+      cacheTtlMs: 5000,
+      probeTimeoutMs: 1500,
+      failureThreshold: 3,
+    },
   },
   services: [
     {
@@ -86,6 +91,15 @@ describe("AssistantAdminPage", () => {
     expect(screen.getByText("Failures").nextElementSibling).toHaveTextContent(
       "2",
     );
+    expect(screen.getByText("Health TTL").nextElementSibling).toHaveTextContent(
+      "5000 ms",
+    );
+    expect(
+      screen.getByText("Probe Timeout").nextElementSibling,
+    ).toHaveTextContent("1500 ms");
+    expect(
+      screen.getByText("Failure Threshold").nextElementSibling,
+    ).toHaveTextContent("3");
     expect(container.querySelectorAll("input[type='password']")).toHaveLength(
       0,
     );

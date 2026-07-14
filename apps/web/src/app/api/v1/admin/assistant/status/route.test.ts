@@ -61,6 +61,11 @@ describe("GET /api/v1/admin/assistant/status", () => {
       providerMode: "placeholder",
       persistence: "disabled",
       circuit: { state: "closed", consecutiveFailures: 0 },
+      readiness: {
+        cacheTtlMs: 5000,
+        probeTimeoutMs: 1500,
+        failureThreshold: 3,
+      },
     });
     runtime.getAssistantRuntime.mockReturnValue({
       status: runtime.status,
@@ -109,6 +114,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
           code: errorCode,
           message:
             status === 401 ? "Authentication required" : "Permission denied",
+          retryable: false,
         },
       });
       expect(loadStatus).not.toHaveBeenCalled();
@@ -134,6 +140,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
       error: {
         code: "assistant_unavailable",
         message: "AI assistant service is unavailable",
+        retryable: true,
       },
     });
     expect(JSON.stringify(body)).not.toMatch(/private|url|secret/iu);
@@ -161,6 +168,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
       error: {
         code: "assistant_unavailable",
         message: "AI assistant service is unavailable",
+        retryable: true,
       },
     });
   });
@@ -261,6 +269,11 @@ describe("GET /api/v1/admin/assistant/status", () => {
           selectedProvider: "placeholder",
           persistence: "disabled",
           circuit: { state: "closed", consecutiveFailures: 2 },
+          readiness: {
+            cacheTtlMs: 5000,
+            probeTimeoutMs: 1500,
+            failureThreshold: 3,
+          },
         },
         services: [
           {
@@ -319,6 +332,11 @@ describe("GET /api/v1/admin/assistant/status", () => {
       selectedProvider: "placeholder",
       persistence: "disabled",
       circuit: { state: "closed", consecutiveFailures: 2 },
+      readiness: {
+        cacheTtlMs: 5000,
+        probeTimeoutMs: 1500,
+        failureThreshold: 3,
+      },
     });
     expect(JSON.stringify(body)).not.toMatch(
       /https?:|database_url|api.?key|secret|token|openedAt|monotonic|cookie|session.?id|user.?agent/iu,
@@ -345,6 +363,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
       selectedProvider: "unavailable",
       persistence: "disabled",
       circuit: { state: "closed", consecutiveFailures: 0 },
+      readiness: { cacheTtlMs: 0, probeTimeoutMs: 0, failureThreshold: 0 },
     });
     expect(JSON.stringify(body)).not.toMatch(
       /agent:7777|private|security|url/iu,

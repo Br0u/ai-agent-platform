@@ -17,13 +17,13 @@ export function AssistantPanel({
   onClose,
   motionState,
 }: AssistantPanelProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const sending = session.requestStatus === "sending";
   const overLimit = Array.from(session.draft.trim()).length > 500;
 
   useEffect(() => {
     if (motionState === "entering") {
-      inputRef.current?.focus();
+      closeButtonRef.current?.focus();
     }
   }, [motionState]);
 
@@ -49,7 +49,12 @@ export function AssistantPanel({
           <h2>M 助手</h2>
           <p>AI 服务尚未接入</p>
         </div>
-        <button aria-label="关闭 M 助手" onClick={onClose} type="button">
+        <button
+          aria-label="关闭 M 助手"
+          onClick={onClose}
+          ref={closeButtonRef}
+          type="button"
+        >
           ×
         </button>
       </header>
@@ -134,7 +139,6 @@ export function AssistantPanel({
             id="assistant-question"
             onChange={(event) => session.setDraft(event.target.value)}
             placeholder="输入你的问题"
-            ref={inputRef}
             value={session.draft}
           />
           <button disabled={sending || overLimit} type="submit">

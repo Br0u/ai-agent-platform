@@ -238,7 +238,7 @@ describe("production deployment security contracts", () => {
       expect(location).toContain("error_page 429 = @public_api_rate_limited;");
     }
     expect(nginx).toMatch(
-      /location @public_api_rate_limited \{[\s\S]*default_type application\/json;[\s\S]*add_header Retry-After "60" always;[\s\S]*return 429 '\{"version":"1","requestId":"\$request_id","error":\{"code":"rate_limited","message":"请求过于频繁，请稍后再试。"\}\}';/u,
+      /location @public_api_rate_limited \{[\s\S]*default_type application\/json;[\s\S]*add_header Retry-After "60" always;[\s\S]*return 429 '\{"version":"1","requestId":"\$request_id","error":\{"code":"rate_limited","message":"请求过于频繁，请稍后再试。","retryable":true\}\}';/u,
     );
 
     expect(catchAllLocation).toBeDefined();
@@ -302,7 +302,7 @@ describe("production deployment security contracts", () => {
     ]) {
       expect(webService).toContain(`${name}:`);
     }
-    expect(webService).toMatch(/agent:[\s\S]*condition: service_healthy/u);
+    expect(webService).not.toMatch(/agent:[\s\S]*condition: service_healthy/u);
     expect(webService).not.toMatch(/^\s{4}ports:/mu);
     expect(agentService).not.toMatch(/^\s{4}ports:/mu);
     expect(proxyService).toMatch(/^\s{4}ports:/mu);

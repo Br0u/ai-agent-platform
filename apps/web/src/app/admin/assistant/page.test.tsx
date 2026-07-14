@@ -29,6 +29,11 @@ const status = {
     selectedProvider: "placeholder" as const,
     persistence: "disabled" as const,
     circuit: { state: "closed" as const, consecutiveFailures: 0 },
+    readiness: {
+      cacheTtlMs: 5000,
+      probeTimeoutMs: 1500,
+      failureThreshold: 3,
+    },
   },
   services: [
     {

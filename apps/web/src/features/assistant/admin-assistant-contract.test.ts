@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { isAdminAssistantChatResponse } from "./admin-assistant-contract";
+import {
+  createAdminAssistantErrorResponse,
+  isAdminAssistantChatResponse,
+} from "./admin-assistant-contract";
 
 function adminResponse(overrides: Record<string, unknown> = {}) {
   return {
@@ -18,6 +21,26 @@ function adminResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe("admin assistant test contract", () => {
+  it("marks only transient administrator errors retryable", () => {
+    expect(
+      createAdminAssistantErrorResponse("req-1", "rate_limited").error
+        .retryable,
+    ).toBe(true);
+    expect(
+      createAdminAssistantErrorResponse("req-1", "assistant_unavailable").error
+        .retryable,
+    ).toBe(true);
+    for (const code of [
+      "authentication_required",
+      "permission_denied",
+      "validation_error",
+    ] as const) {
+      expect(
+        createAdminAssistantErrorResponse("req-1", code).error.retryable,
+      ).toBe(false);
+    }
+  });
+
   it("accepts the exact protected test response without a public session", () => {
     expect(isAdminAssistantChatResponse(adminResponse())).toBe(true);
   });

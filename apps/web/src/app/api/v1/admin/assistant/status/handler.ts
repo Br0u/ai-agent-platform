@@ -34,6 +34,7 @@ const SAFE_DEGRADED_INSPECTION: AssistantRuntimeInspection = {
   providerMode: "placeholder",
   persistence: "disabled",
   circuit: { state: "closed", consecutiveFailures: 0 },
+  readiness: { cacheTtlMs: 0, probeTimeoutMs: 0, failureThreshold: 0 },
 };
 
 function serviceState(

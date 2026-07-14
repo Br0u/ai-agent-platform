@@ -186,6 +186,11 @@ describe("assistant server runtime", () => {
       providerMode: "placeholder",
       persistence: "disabled",
       circuit: { state: "closed", consecutiveFailures: 1 },
+      readiness: {
+        cacheTtlMs: 5000,
+        probeTimeoutMs: 1500,
+        failureThreshold: 3,
+      },
     });
     expect(JSON.stringify(runtime.inspect())).not.toMatch(
       /openedAt|monotonic|agent:7777|security-key/iu,

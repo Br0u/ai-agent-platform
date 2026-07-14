@@ -75,6 +75,7 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
           code: errorCode,
           message:
             status === 401 ? "Authentication required" : "Permission denied",
+          retryable: false,
         },
       });
       expect(loadSessions).not.toHaveBeenCalled();
@@ -100,6 +101,7 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
       error: {
         code: "assistant_unavailable",
         message: "AI assistant service is unavailable",
+        retryable: true,
       },
     });
     expect(JSON.stringify(body)).not.toMatch(/customer|secret/iu);

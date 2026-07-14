@@ -35,6 +35,11 @@ export type AdminAssistantStatusSnapshot = {
       state: "closed" | "open" | "half-open";
       consecutiveFailures: number;
     };
+    readiness: {
+      cacheTtlMs: number;
+      probeTimeoutMs: number;
+      failureThreshold: number;
+    };
   };
   services: AdminAssistantServiceState[];
   configuration: {
@@ -86,6 +91,7 @@ export type AdminAssistantErrorResponse = {
   error: {
     code: AdminAssistantErrorCode;
     message: string;
+    retryable: boolean;
   };
 };
 
@@ -160,6 +166,10 @@ export function createAdminAssistantErrorResponse(
   return {
     version: "1",
     requestId,
-    error: { code, message: ERROR_MESSAGES[code] },
+    error: {
+      code,
+      message: ERROR_MESSAGES[code],
+      retryable: code === "rate_limited" || code === "assistant_unavailable",
+    },
   };
 }

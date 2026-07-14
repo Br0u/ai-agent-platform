@@ -120,6 +120,7 @@ describe("POST /api/v1/admin/assistant/chat", () => {
           code: errorCode,
           message:
             status === 401 ? "Authentication required" : "Permission denied",
+          retryable: false,
         },
       });
       expect(assistantProvider.reply).not.toHaveBeenCalled();
@@ -148,6 +149,7 @@ describe("POST /api/v1/admin/assistant/chat", () => {
       error: {
         code: "assistant_unavailable",
         message: "AI assistant service is unavailable",
+        retryable: true,
       },
     });
     expect(JSON.stringify(body)).not.toMatch(/private|secret/iu);
@@ -229,6 +231,7 @@ describe("POST /api/v1/admin/assistant/chat", () => {
       error: {
         code: "rate_limited",
         message: "Too many assistant test requests",
+        retryable: true,
       },
     });
     expect(assistantProvider.reply).not.toHaveBeenCalled();

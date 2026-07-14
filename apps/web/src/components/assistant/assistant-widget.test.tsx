@@ -116,9 +116,7 @@ describe("AssistantWidget", () => {
     expect(
       screen.getByRole("link", { name: "打开完整 AI 助理" }),
     ).toHaveAttribute("href", "/assistant");
-    expect(
-      screen.getByRole("textbox", { name: "向 M 助手提问" }),
-    ).toHaveFocus();
+    expect(screen.getByRole("button", { name: "关闭 M 助手" })).toHaveFocus();
   });
 
   it("ignores blank input and trims free input before submitting", async () => {
@@ -166,20 +164,19 @@ describe("AssistantWidget", () => {
     installAnimationFrameMocks();
     render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
-    const input = screen.getByRole("textbox", { name: "向 M 助手提问" });
     const closeButton = screen.getByRole("button", { name: "关闭 M 助手" });
-    expect(input).toHaveFocus();
-
-    fireEvent.keyDown(input, { key: "Tab" });
-    closeButton.focus();
     expect(closeButton).toHaveFocus();
+
+    const input = screen.getByRole("textbox", { name: "向 M 助手提问" });
+    input.focus();
+    expect(input).toHaveFocus();
     flushAnimationFrames();
 
     expect(screen.getByRole("dialog")).toHaveAttribute(
       "data-motion-state",
       "open",
     );
-    expect(closeButton).toHaveFocus();
+    expect(input).toHaveFocus();
   });
 
   it("cancels an in-flight exit when the drawer is reopened", () => {
@@ -195,9 +192,7 @@ describe("AssistantWidget", () => {
 
     fireEvent.click(launcher);
     expect(dialog).toHaveAttribute("data-motion-state", "entering");
-    expect(
-      screen.getByRole("textbox", { name: "向 M 助手提问" }),
-    ).toHaveFocus();
+    expect(screen.getByRole("button", { name: "关闭 M 助手" })).toHaveFocus();
     expect(globalThis.requestAnimationFrame).toHaveBeenCalled();
     flushAnimationFrames();
     expect(screen.getByRole("dialog")).toHaveAttribute(
@@ -236,9 +231,7 @@ describe("AssistantWidget", () => {
     fireEvent.click(launcher);
     const dialog = screen.getByRole("dialog", { name: "M 助手" });
     expect(dialog).toHaveAttribute("data-motion-state", "entering");
-    expect(
-      screen.getByRole("textbox", { name: "向 M 助手提问" }),
-    ).toHaveFocus();
+    expect(screen.getByRole("button", { name: "关闭 M 助手" })).toHaveFocus();
     await act(async () => undefined);
     expect(dialog).toHaveAttribute("data-motion-state", "open");
     expect(globalThis.requestAnimationFrame).not.toHaveBeenCalled();

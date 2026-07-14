@@ -98,6 +98,18 @@ export function AssistantAdminPage({
             <dd>{status.runtime.circuit.consecutiveFailures}</dd>
           </div>
           <div>
+            <dt>Health TTL</dt>
+            <dd>{status.runtime.readiness.cacheTtlMs} ms</dd>
+          </div>
+          <div>
+            <dt>Probe Timeout</dt>
+            <dd>{status.runtime.readiness.probeTimeoutMs} ms</dd>
+          </div>
+          <div>
+            <dt>Failure Threshold</dt>
+            <dd>{status.runtime.readiness.failureThreshold}</dd>
+          </div>
+          <div>
             <dt>Persistence</dt>
             <dd>{status.runtime.persistence}</dd>
           </div>
