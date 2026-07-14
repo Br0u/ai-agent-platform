@@ -355,6 +355,43 @@ describe("production deployment security contracts", () => {
     expect(script).not.toMatch(/ports?:[^\n]*7777/u);
   });
 
+  it("keeps the first assistant credential out of every browser diagnostic and admin payload", () => {
+    const spec = read("apps/web/e2e/assistant-runtime.spec.ts");
+
+    expect(spec).toContain(
+      "let firstAssistantCookieCredential: string | undefined;",
+    );
+    expect(spec).toContain(
+      "function collectBrowserDiagnostics(context: BrowserContext)",
+    );
+    expect(spec).toContain('context.on("page", registerPage);');
+    expect(spec).toContain('page.on("console", (message) =>');
+    expect(spec).not.toContain('message.type() === "warning"');
+    expect(spec).toContain("function expectConsoleExcludesCredential(");
+    expect(spec).toContain("function readSafeJson(");
+    expect(spec).toContain(
+      "const assistantCredential = requiredAssistantCookieCredential();",
+    );
+    expect(spec).toMatch(
+      /const protectedValues = \[[\s\S]*assistantCredential,[\s\S]*\];/u,
+    );
+    expect(spec).toContain(
+      "await readSafeJson(adminStatusResponse, protectedValues)",
+    );
+    expect(spec).toContain(
+      "await readSafeJson(sessionsResponse, protectedValues)",
+    );
+    expect(spec).toContain(
+      "await readSafeJson(adminChatResponse, protectedValues)",
+    );
+    expect(spec).toContain(
+      "expectConsoleExcludesCredential(assistantCredential);",
+    );
+    expect(spec).not.toMatch(
+      /(?:console\.[a-z]+|attach)\([^\n]*firstAssistantCookieCredential/iu,
+    );
+  });
+
   it("uses separate migration and runtime URLs without publishing the origin", () => {
     const compose = read("compose.yaml");
     expect(compose).toContain("MIGRATOR_DATABASE_URL");

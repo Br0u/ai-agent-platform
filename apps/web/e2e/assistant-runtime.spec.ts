@@ -5,7 +5,9 @@ import {
   expect,
   request as requestFactory,
   test,
+  type APIResponse,
   type BrowserContext,
+  type Page,
 } from "@playwright/test";
 
 import {
@@ -24,20 +26,87 @@ const CHAT_BODY = {
   context: { pathname: "/assistant" },
 };
 
+const cumulativeConsoleMessages: string[] = [];
+let firstAssistantCookieCredential: string | undefined;
+
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
   return value;
 }
 
-function expectNoProtectedValue(body: unknown, protectedValues: string[]) {
+function expectNoProtectedValue(
+  body: unknown,
+  protectedValues: string[],
+  rawJson = JSON.stringify(body),
+) {
   const serialized = JSON.stringify(body);
   for (const value of protectedValues) {
-    expect(serialized.includes(value)).toBe(false);
+    const leaked = serialized.includes(value) || rawJson.includes(value);
+    expect(leaked, "protected value leaked in assistant response").toBe(false);
   }
-  expect(serialized).not.toMatch(
-    /(?:AGENTOS_INTERNAL_URL|OS_SECURITY_KEY|ASSISTANT_(?:SESSION|RATE_LIMIT)_SECRET|authorization|cookie|user-agent|x-real-ip)/iu,
+  const containsInternalField =
+    /(?:AGENTOS_INTERNAL_URL|OS_SECURITY_KEY|ASSISTANT_(?:SESSION|RATE_LIMIT)_SECRET|authorization|cookie|user-agent|x-real-ip)/iu.test(
+      `${serialized}\n${rawJson}`,
+    );
+  expect(
+    containsInternalField,
+    "internal assistant field leaked in response",
+  ).toBe(false);
+}
+
+async function readSafeJson(
+  response: APIResponse,
+  protectedValues: string[],
+): Promise<unknown> {
+  const rawJson = await response.text();
+  let body: unknown;
+  try {
+    body = JSON.parse(rawJson) as unknown;
+  } catch {
+    throw new Error("assistant response must be valid JSON");
+  }
+  expectNoProtectedValue(body, protectedValues, rawJson);
+  return body;
+}
+
+function collectBrowserDiagnostics(context: BrowserContext) {
+  const registeredPages = new WeakSet<Page>();
+  const registerPage = (page: Page) => {
+    if (registeredPages.has(page)) return;
+    registeredPages.add(page);
+    page.on("console", (message) => {
+      cumulativeConsoleMessages.push(message.text());
+    });
+    page.on("pageerror", (error) => {
+      cumulativeConsoleMessages.push(error.message);
+    });
+  };
+
+  for (const page of context.pages()) registerPage(page);
+  context.on("page", registerPage);
+}
+
+function expectConsoleExcludesCredential(credential: string) {
+  expect(
+    credential.length > 0,
+    "assistant cookie credential must be nonempty",
+  ).toBe(true);
+  const leaked = cumulativeConsoleMessages.some((message) =>
+    message.includes(credential),
   );
+  expect(leaked, "assistant cookie credential leaked to console").toBe(false);
+}
+
+function requiredAssistantCookieCredential(): string {
+  const credential = firstAssistantCookieCredential;
+  expect(
+    Boolean(credential),
+    "first assistant cookie credential was not captured",
+  ).toBe(true);
+  if (!credential)
+    throw new Error("assistant cookie credential is unavailable");
+  return credential;
 }
 
 function cookieCredential(setCookie: string): string {
@@ -98,14 +167,8 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
 }) => {
   if (!baseURL) throw new Error("BASE_URL is required");
   const context = await browser.newContext({ baseURL });
+  collectBrowserDiagnostics(context);
   const page = await context.newPage();
-  const consoleDiagnostics: string[] = [];
-  page.on("console", (message) => {
-    if (message.type() === "warning" || message.type() === "error") {
-      consoleDiagnostics.push(`${message.type()}:${message.text()}`);
-    }
-  });
-  page.on("pageerror", (error) => consoleDiagnostics.push(error.message));
 
   await page.goto("/assistant");
   const statusResponse = await context.request.get(STATUS_PATH);
@@ -149,8 +212,13 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
   expect(setCookie).toContain("SameSite=Lax");
   expect(setCookie).not.toContain("Secure");
   const credential = cookieCredential(setCookie);
+  firstAssistantCookieCredential = credential;
+  expect(
+    firstAssistantCookieCredential.length > 0,
+    "first assistant cookie credential must be nonempty",
+  ).toBe(true);
   expectNoProtectedValue(chat.body, [credential]);
-  expect(consoleDiagnostics).toEqual([]);
+  expectConsoleExcludesCredential(credential);
 
   const burst = await Promise.all(
     Array.from({ length: 11 }, () =>
@@ -201,7 +269,11 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
       timeout: 30_000,
     },
   );
-  expect(logs.includes(credential)).toBe(false);
+  expect(
+    logs.includes(credential),
+    "assistant cookie credential leaked to container logs",
+  ).toBe(false);
+  expectConsoleExcludesCredential(credential);
   await context.close();
 });
 
@@ -211,10 +283,12 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
 }) => {
   if (!baseURL) throw new Error("BASE_URL is required");
   const credentials = fixtureCredentials();
+  const assistantCredential = requiredAssistantCookieCredential();
   const protectedValues = [
     requiredEnvironment("BETTER_AUTH_SECRET"),
     credentials.staffSessionToken,
     credentials.adminSessionToken,
+    assistantCredential,
   ];
 
   const anonymous = await requestFactory.newContext({ baseURL });
@@ -228,11 +302,15 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
         ? await anonymous.get(endpoint)
         : await anonymous.post(endpoint, { data: CHAT_BODY });
     expect(response.status()).toBe(401);
-    expect((await response.json()).error.code).toBe("authentication_required");
+    const body = await readSafeJson(response, protectedValues);
+    expect(body).toMatchObject({
+      error: { code: "authentication_required" },
+    });
   }
   await anonymous.dispose();
 
   const staff = await browser.newContext({ baseURL });
+  collectBrowserDiagnostics(staff);
   await addSignedSession(
     staff,
     baseURL,
@@ -249,11 +327,13 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
         ? await staff.request.get(endpoint)
         : await staff.request.post(endpoint, { data: CHAT_BODY });
     expect(response.status()).toBe(403);
-    expect((await response.json()).error.code).toBe("permission_denied");
+    const body = await readSafeJson(response, protectedValues);
+    expect(body).toMatchObject({ error: { code: "permission_denied" } });
   }
   await staff.close();
 
   const admin = await browser.newContext({ baseURL });
+  collectBrowserDiagnostics(admin);
   await addSignedSession(
     admin,
     baseURL,
@@ -263,7 +343,7 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
   await completeSeededAdminTwoFactor(admin);
   const adminStatusResponse = await admin.request.get(ADMIN_STATUS_PATH);
   expect(adminStatusResponse.status()).toBe(200);
-  const adminStatus = await adminStatusResponse.json();
+  const adminStatus = await readSafeJson(adminStatusResponse, protectedValues);
   expect(adminStatus).toMatchObject({
     version: "1",
     status: {
@@ -276,11 +356,10 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
       },
     },
   });
-  expectNoProtectedValue(adminStatus, protectedValues);
 
   const sessionsResponse = await admin.request.get(ADMIN_SESSIONS_PATH);
   expect(sessionsResponse.status()).toBe(200);
-  const sessions = await sessionsResponse.json();
+  const sessions = await readSafeJson(sessionsResponse, protectedValues);
   expect(sessions).toMatchObject({
     version: "1",
     sessions: {
@@ -289,19 +368,18 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
       items: [],
     },
   });
-  expectNoProtectedValue(sessions, protectedValues);
 
   const adminChatResponse = await admin.request.post(ADMIN_CHAT_PATH, {
     data: CHAT_BODY,
   });
   expect(adminChatResponse.status()).toBe(200);
-  const adminChat = await adminChatResponse.json();
+  const adminChat = await readSafeJson(adminChatResponse, protectedValues);
   expect(adminChat).toMatchObject({
     version: "1",
     mode: "placeholder",
     message: { role: "assistant" },
   });
-  expectNoProtectedValue(adminChat, protectedValues);
+  expectConsoleExcludesCredential(assistantCredential);
   await admin.close();
 });
 
