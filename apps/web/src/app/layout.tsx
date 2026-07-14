@@ -18,7 +18,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="zh-CN" className={brandScript.variable}>
+    <html
+      lang="zh-CN"
+      className={brandScript.variable}
+      suppressHydrationWarning
+    >
       <body>
         <SiteShell>{children}</SiteShell>
       </body>

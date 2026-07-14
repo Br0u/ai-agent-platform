@@ -48,6 +48,37 @@ export const portalNavigation: PortalNavigationItem[] = [
     ],
   },
   {
+    label: "解决方案",
+    href: "/solutions",
+    children: [
+      {
+        label: "业务解决方案",
+        items: [
+          {
+            label: "企业 AI 应用开发",
+            href: "/solutions/yuanqi-ai-development",
+          },
+          { label: "企业智能办公", href: "/solutions/intelligent-office" },
+          {
+            label: "政务智能导办",
+            href: "/solutions/intelligent-guidance",
+          },
+          { label: "视觉智能分析", href: "/solutions/visual-retrieval" },
+        ],
+      },
+      {
+        label: "技术底座",
+        items: [
+          {
+            label: "企业 AI 全栈建设",
+            href: "/solutions/yuanqi-ai-full-stack",
+          },
+          { label: "AI 超融合基础设施", href: "/solutions/tghci-ai" },
+        ],
+      },
+    ],
+  },
+  {
     label: "文档",
     href: "/docs",
     children: [

@@ -5,6 +5,9 @@ const requiredRoutes = [
   "/",
   "/product",
   "/product/[slug]",
+  "/solutions",
+  "/solutions/[slug]",
+  "/solutions/[slug]/scenarios/[scenario]",
   "/releases",
   "/releases/[version]",
   "/roadmap",
@@ -89,9 +92,23 @@ describe("routeRegistry", () => {
     }
   });
 
+  it("marks the implemented solutions and consultation journey as live", () => {
+    for (const path of [
+      "/solutions",
+      "/solutions/example",
+      "/solutions/example/scenarios/example",
+      "/contact",
+    ]) {
+      expect(matchRoute(path)?.status).toBe("live");
+    }
+  });
+
   it("matches exact and dynamic routes but rejects unknown paths", () => {
     expect(matchRoute("/docs")?.path).toBe("/docs");
     expect(matchRoute("/product/agent-studio")?.path).toBe("/product/[slug]");
+    expect(matchRoute("/solutions/visual-retrieval")?.path).toBe(
+      "/solutions/[slug]",
+    );
     expect(matchRoute("/blog/platform-release")?.path).toBe("/blog/[slug]");
     expect(matchRoute("/unknown")).toBeUndefined();
   });

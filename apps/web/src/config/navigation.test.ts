@@ -47,6 +47,28 @@ const expectedPortal = [
     ],
   },
   {
+    label: "解决方案",
+    href: "/solutions",
+    children: [
+      {
+        label: "业务解决方案",
+        items: [
+          ["企业 AI 应用开发", "/solutions/yuanqi-ai-development"],
+          ["企业智能办公", "/solutions/intelligent-office"],
+          ["政务智能导办", "/solutions/intelligent-guidance"],
+          ["视觉智能分析", "/solutions/visual-retrieval"],
+        ],
+      },
+      {
+        label: "技术底座",
+        items: [
+          ["企业 AI 全栈建设", "/solutions/yuanqi-ai-full-stack"],
+          ["AI 超融合基础设施", "/solutions/tghci-ai"],
+        ],
+      },
+    ],
+  },
+  {
     label: "文档",
     href: "/docs",
     children: [
