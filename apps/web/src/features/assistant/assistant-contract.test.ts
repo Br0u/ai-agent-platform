@@ -80,6 +80,34 @@ describe("assistant platform contract", () => {
     ).toBe(false);
   });
 
+  it.each([
+    [
+      "ready without live",
+      { live: false, ready: true, capability: "available" },
+    ],
+    [
+      "ready while degraded",
+      { live: true, ready: true, capability: "degraded" },
+    ],
+    [
+      "unready placeholder",
+      { live: true, ready: false, capability: "placeholder" },
+    ],
+    [
+      "unready available",
+      { live: true, ready: false, capability: "available" },
+    ],
+  ])("rejects contradictory status semantics: %s", (_name, contradiction) => {
+    expect(
+      isAssistantStatusResponse({
+        version: "1",
+        requestId: "semantic-status",
+        message: "must not be adopted",
+        ...contradiction,
+      }),
+    ).toBe(false);
+  });
+
   it("accepts exact Unicode boundaries", () => {
     expect(
       isAssistantSuccessResponse(

@@ -94,17 +94,32 @@ function isSnapshot(value: unknown): value is AgentOSReadinessSnapshot {
     (record.capability === "placeholder" ||
       record.capability === "available" ||
       record.capability === "degraded") &&
-    !(record.ready && record.capability === "degraded")
+    (record.ready
+      ? record.live && record.capability !== "degraded"
+      : record.capability === "degraded")
   );
 }
 
 export function createAgentOSProbe(client: AgentOSClient) {
   return async (): Promise<AgentOSReadinessSnapshot> => {
-    const [live, ready] = await Promise.all([client.live(), client.ready()]);
+    const [liveResult, readyResult] = await Promise.allSettled([
+      client.live(),
+      client.ready(),
+    ]);
+    if (liveResult.status === "rejected" || !liveResult.value.live) {
+      return DEGRADED;
+    }
+    if (
+      readyResult.status === "rejected" ||
+      !readyResult.value.ready ||
+      readyResult.value.capability === "degraded"
+    ) {
+      return { live: true, ready: false, capability: "degraded" };
+    }
     return {
-      live: live.live,
-      ready: ready.ready,
-      capability: ready.capability,
+      live: true,
+      ready: true,
+      capability: readyResult.value.capability,
     };
   };
 }

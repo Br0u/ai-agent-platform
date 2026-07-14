@@ -94,9 +94,9 @@ const PLACEHOLDER_MESSAGE = "模型尚未配置，当前为安全占位模式。
 const AVAILABLE_MESSAGE = "AI 助理基础服务已就绪。";
 const DEGRADED_MESSAGE = "助手基础服务暂不可用。";
 
-function degradedStatus(): AssistantRuntimeStatus {
+function degradedStatus(live = false): AssistantRuntimeStatus {
   return {
-    live: false,
+    live,
     ready: false,
     capability: "degraded",
     message: DEGRADED_MESSAGE,
@@ -109,11 +109,12 @@ function parseTrustNginxProxy(value: string | undefined): boolean {
   throw new Error("TRUST_NGINX_PROXY must be true or false");
 }
 
-function safeStatus(
+export function normalizeAssistantRuntimeStatus(
   snapshot: AgentOSReadinessSnapshot,
 ): AssistantRuntimeStatus {
-  if (!snapshot.live || !snapshot.ready || snapshot.capability === "degraded") {
-    return degradedStatus();
+  if (!snapshot.live) return degradedStatus();
+  if (!snapshot.ready || snapshot.capability === "degraded") {
+    return degradedStatus(true);
   }
   return {
     ...snapshot,
@@ -203,7 +204,7 @@ export function createAssistantRuntime(
       return resolveTrustedClientIp(request.headers, trustNginxProxy);
     },
     async status(): Promise<AssistantRuntimeStatus> {
-      return safeStatus(await getReadiness().status());
+      return normalizeAssistantRuntimeStatus(await getReadiness().status());
     },
     async resolveProvider(): Promise<AssistantRuntimeProvider> {
       if (providerSettings.mode === "placeholder") {
@@ -253,7 +254,7 @@ export async function readSafeAssistantRuntimeStatus(
 ): Promise<AssistantRuntimeStatus> {
   try {
     const resolvedRuntime = runtime ?? getAssistantRuntime();
-    return await resolvedRuntime.status();
+    return normalizeAssistantRuntimeStatus(await resolvedRuntime.status());
   } catch {
     return degradedStatus();
   }

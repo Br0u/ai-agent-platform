@@ -137,6 +137,35 @@ describe("assistant server runtime", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it("preserves live when AgentOS is reachable but its ready dependency fails", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (url) => {
+      if (String(url).endsWith("/internal/health/live")) {
+        return Response.json({
+          live: true,
+          ready: false,
+          capability: "degraded",
+          message: "raw internal live detail",
+        });
+      }
+      throw new Error("raw database connection detail");
+    });
+    const runtime = createAssistantRuntime({
+      environment: {
+        ...VALID_ENVIRONMENT,
+        ASSISTANT_PROVIDER_MODE: "agentos",
+      },
+      fetcher,
+      createRateLimiter: () => ({ consume: vi.fn(async () => undefined) }),
+    });
+
+    await expect(runtime.status()).resolves.toEqual({
+      live: true,
+      ready: false,
+      capability: "degraded",
+      message: "助手基础服务暂不可用。",
+    });
+  });
+
   it("returns one safe degraded snapshot for malformed AgentOS responses", async () => {
     const fetcher = vi
       .fn<typeof fetch>()

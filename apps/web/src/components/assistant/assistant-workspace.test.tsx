@@ -18,6 +18,14 @@ type MediaQueryController = {
   setMatches: (matches: boolean) => void;
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function installMatchMedia(initialMatches: boolean): MediaQueryController {
   const listeners = new Set<(event: MediaQueryListEvent) => void>();
   let matches = initialMatches;
@@ -104,6 +112,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -207,8 +216,168 @@ describe("AssistantWorkspace", () => {
     await waitFor(() => expect(screen.getByText("模型尚未配置")).toBeVisible());
     expect(fetch).toHaveBeenCalledExactlyOnceWith(
       "/api/v1/assistant/status",
-      expect.objectContaining({ method: "GET", cache: "no-store" }),
+      expect.objectContaining({
+        method: "GET",
+        cache: "no-store",
+        signal: expect.any(AbortSignal),
+      }),
     );
+  });
+
+  it("uses a synchronous in-flight lock for rapid repeated refreshes", () => {
+    vi.mocked(fetch).mockReturnValue(new Promise<Response>(() => undefined));
+    renderWorkspace();
+    const refresh = screen.getByRole("button", { name: "刷新服务状态" });
+
+    fireEvent.click(refresh);
+    fireEvent.click(refresh);
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(refresh).toBeDisabled();
+    expect(refresh).toHaveAccessibleName("刷新服务状态中");
+  });
+
+  it("times out a pending status body and recovers with a safe degraded result", async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start() {
+            // Keep the response body pending past the bounded client timeout.
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    renderWorkspace();
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新服务状态" }));
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+
+    expect(screen.getByTestId("assistant-service-state")).toHaveTextContent(
+      "基础设施暂不可用",
+    );
+    expect(screen.getByRole("button", { name: "刷新服务状态" })).toBeEnabled();
+  });
+
+  it.each([
+    [
+      "network failure",
+      () => Promise.reject(new Error("raw private network detail")),
+    ],
+    [
+      "malformed response",
+      () =>
+        Promise.resolve(
+          Response.json({
+            version: "1",
+            requestId: "contradictory-status",
+            live: false,
+            ready: true,
+            capability: "available",
+            message: "raw private runtime detail",
+          }),
+        ),
+    ],
+  ])("maps %s to a sanitized degraded status", async (_name, request) => {
+    vi.mocked(fetch).mockImplementationOnce(request);
+    renderWorkspace();
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新服务状态" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("assistant-service-state")).toHaveTextContent(
+        "基础设施暂不可用",
+      ),
+    );
+    expect(screen.queryByText(/raw private/u)).toBeNull();
+    expect(screen.getByRole("button", { name: "刷新服务状态" })).toBeEnabled();
+  });
+
+  it("aborts an in-flight status refresh on unmount without updating state", () => {
+    let signal: AbortSignal | undefined;
+    vi.mocked(fetch).mockImplementation((_input, init) => {
+      signal = init?.signal as AbortSignal;
+      return new Promise<Response>(() => undefined);
+    });
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const view = renderWorkspace();
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新服务状态" }));
+    view.unmount();
+
+    expect(signal?.aborted).toBe(true);
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it("does not let a stale timed-out response overwrite a newer status", async () => {
+    vi.useFakeTimers();
+    const stale = deferred<Response>();
+    vi.mocked(fetch)
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce(
+        Response.json({
+          version: "1",
+          requestId: "newer-status",
+          live: true,
+          ready: true,
+          capability: "available",
+          message: "AI 助理基础服务已就绪。",
+        }),
+      );
+    renderWorkspace();
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新服务状态" }));
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+    fireEvent.click(screen.getByRole("button", { name: "刷新服务状态" }));
+    await act(async () => Promise.resolve());
+    expect(screen.getByTestId("assistant-service-state")).toHaveTextContent(
+      "服务已就绪",
+    );
+
+    stale.resolve(
+      Response.json({
+        version: "1",
+        requestId: "stale-status",
+        live: true,
+        ready: true,
+        capability: "placeholder",
+        message: "模型尚未配置，当前为安全占位模式。",
+      }),
+    );
+    await act(async () => Promise.resolve());
+    expect(screen.getByTestId("assistant-service-state")).toHaveTextContent(
+      "服务已就绪",
+    );
+  });
+
+  it("announces status refresh progress and its resulting service text", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      Response.json({
+        version: "1",
+        requestId: "accessible-status",
+        live: true,
+        ready: true,
+        capability: "available",
+        message: "AI 助理基础服务已就绪。",
+      }),
+    );
+    renderWorkspace();
+    const region = screen.getByTestId("assistant-service-state");
+    const refresh = screen.getByRole("button", { name: "刷新服务状态" });
+
+    expect(region).toHaveAttribute("role", "status");
+    expect(region).toHaveAttribute("aria-live", "polite");
+    expect(region).toHaveAttribute("aria-busy", "false");
+    fireEvent.click(refresh);
+    expect(region).toHaveAttribute("aria-busy", "true");
+    expect(refresh).toHaveAccessibleName("刷新服务状态中");
+
+    await waitFor(() => expect(region).toHaveTextContent("服务已就绪"));
+    expect(region).toHaveAttribute("aria-busy", "false");
+    expect(refresh).toHaveAccessibleName("刷新服务状态");
   });
 
   it("uses the shared session to submit a preset question", async () => {
@@ -331,9 +500,13 @@ describe("AssistantWorkspace", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("请求过于频繁，请稍后再试。");
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "请求过于频繁，请稍后再试。",
-    );
+    expect(
+      screen
+        .getAllByRole("status")
+        .some((status) =>
+          status.textContent?.includes("请求过于频繁，请稍后再试。"),
+        ),
+    ).toBe(true);
     expect(screen.queryByText(/raw internal limiter detail/u)).toBeNull();
     expect(fetch).toHaveBeenCalledOnce();
   });

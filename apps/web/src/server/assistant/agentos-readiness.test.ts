@@ -46,6 +46,45 @@ async function within<T>(promise: Promise<T>, timeoutMs = 250) {
 }
 
 describe("AgentOS readiness cache and circuit", () => {
+  it("preserves a successful live probe when the ready probe fails", async () => {
+    const client = {
+      live: vi.fn(async () => ({
+        live: true,
+        ready: false,
+        capability: "degraded" as const,
+        message: "internal live detail",
+      })),
+      ready: vi.fn(async () => {
+        throw new Error("raw database connection detail");
+      }),
+      capability: vi.fn(async () => "degraded" as const),
+    };
+
+    await expect(createAgentOSProbe(client)()).resolves.toEqual({
+      live: true,
+      ready: false,
+      capability: "degraded",
+    });
+  });
+
+  it("normalizes contradictory probe results to the public readiness invariant", async () => {
+    const client = {
+      live: vi.fn(async () => ({
+        live: false,
+        ready: true,
+        capability: "available" as const,
+        message: "internal contradiction",
+      })),
+      ready: vi.fn(async () => ({
+        ready: true,
+        capability: "available" as const,
+      })),
+      capability: vi.fn(async () => "available" as const),
+    };
+
+    await expect(createAgentOSProbe(client)()).resolves.toEqual(DEGRADED);
+  });
+
   it("uses a monotonic default clock instead of Date.now", async () => {
     const wallClock = vi.spyOn(Date, "now").mockImplementation(() => {
       throw new Error("wall clock is forbidden for circuit state");

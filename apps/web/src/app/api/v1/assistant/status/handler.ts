@@ -1,5 +1,6 @@
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
 import {
+  normalizeAssistantRuntimeStatus,
   readSafeAssistantRuntimeStatus,
   type AssistantRuntimeStatus,
 } from "@/server/assistant/assistant-runtime";
@@ -24,7 +25,7 @@ export function createAssistantStatusHandler(
     );
     let status: AssistantRuntimeStatus;
     try {
-      status = await dependencies.getStatus();
+      status = normalizeAssistantRuntimeStatus(await dependencies.getStatus());
     } catch {
       status = {
         live: false,

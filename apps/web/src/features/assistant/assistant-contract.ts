@@ -218,25 +218,33 @@ export function isAssistantProviderReply(
 export function isAssistantStatusResponse(
   input: unknown,
 ): input is AssistantStatusResponse {
-  return (
-    isRecord(input) &&
-    hasExactKeys(input, [
-      "version",
-      "requestId",
-      "live",
-      "ready",
-      "capability",
-      "message",
-    ]) &&
-    input.version === "1" &&
-    isAssistantRequestId(input.requestId) &&
-    typeof input.live === "boolean" &&
-    typeof input.ready === "boolean" &&
-    (input.capability === "placeholder" ||
-      input.capability === "available" ||
-      input.capability === "degraded") &&
-    isNonBlankBoundedString(input.message, ASSISTANT_CONTENT_MAX_CODE_POINTS)
-  );
+  if (
+    !(
+      isRecord(input) &&
+      hasExactKeys(input, [
+        "version",
+        "requestId",
+        "live",
+        "ready",
+        "capability",
+        "message",
+      ]) &&
+      input.version === "1" &&
+      isAssistantRequestId(input.requestId) &&
+      typeof input.live === "boolean" &&
+      typeof input.ready === "boolean" &&
+      (input.capability === "placeholder" ||
+        input.capability === "available" ||
+        input.capability === "degraded") &&
+      isNonBlankBoundedString(input.message, ASSISTANT_CONTENT_MAX_CODE_POINTS)
+    )
+  ) {
+    return false;
+  }
+
+  return input.ready
+    ? input.live && input.capability !== "degraded"
+    : input.capability === "degraded";
 }
 
 export function isAssistantSuccessResponse(

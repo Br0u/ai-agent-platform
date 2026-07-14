@@ -88,6 +88,31 @@ describe("GET /api/v1/assistant/status", () => {
     expect(JSON.stringify(body)).not.toMatch(/agent:7777|private|key/iu);
   });
 
+  it("normalizes contradictory runtime status before returning it publicly", async () => {
+    const GET = createAssistantStatusHandler({
+      requestIdFactory: () => "req-invariant",
+      getStatus: async () => ({
+        live: false,
+        ready: true,
+        capability: "available",
+        message: "raw contradictory status",
+      }),
+    });
+
+    const response = await GET(
+      new Request("http://localhost/api/v1/assistant/status"),
+    );
+
+    await expect(response.json()).resolves.toEqual({
+      version: "1",
+      requestId: "req-invariant",
+      live: false,
+      ready: false,
+      capability: "degraded",
+      message: "助手基础服务暂不可用。",
+    });
+  });
+
   it("exports GET only", () => {
     expect(route.GET).toBeTypeOf("function");
     expect("POST" in route).toBe(false);
