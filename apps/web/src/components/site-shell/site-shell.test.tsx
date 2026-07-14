@@ -498,7 +498,7 @@ describe("SiteShell", () => {
     fireEvent.change(screen.getByRole("textbox"), {
       target: { value: "保留问题" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
     await waitFor(() =>
       expect(screen.getByTestId("assistant-history")).toHaveTextContent(
         "保留回答",
@@ -518,7 +518,6 @@ describe("SiteShell", () => {
         <p>价格页</p>
       </SiteShell>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
     expect(screen.getByTestId("assistant-history")).toHaveTextContent(
       "保留回答",
     );
@@ -549,7 +548,7 @@ describe("SiteShell", () => {
     fireEvent.change(screen.getByRole("textbox"), {
       target: { value: "旧问题" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
     await waitFor(() =>
       expect(screen.getByTestId("assistant-history")).toHaveTextContent(
         "旧回答",

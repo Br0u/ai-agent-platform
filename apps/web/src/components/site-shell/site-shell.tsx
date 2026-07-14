@@ -15,11 +15,11 @@ import {
   customerLogoutAction,
   staffLogoutAction,
 } from "../../server/auth/server-actions";
-import { AssistantWidget } from "../assistant/assistant-widget";
 import {
   AssistantExperienceProvider,
   useAssistantExperience,
 } from "../assistant/assistant-experience-provider";
+import { FloatingChatWidget } from "../ui/floating-chat-widget-shadcnui";
 import { PortalNavigationLink } from "./portal-navigation-link";
 import { classifyShellRoute, type ShellRoute } from "./shell-route";
 import "./site-shell.css";
@@ -327,7 +327,7 @@ function AssistantEnabledShell({
       variant={variant}
     >
       {children}
-      <AssistantWidget showLauncher={variant === "portal"} />
+      <FloatingChatWidget showLauncher={variant === "portal"} />
     </AppShell>
   );
 }
