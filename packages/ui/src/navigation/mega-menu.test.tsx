@@ -78,7 +78,9 @@ function renderMenu(activeHref = "/") {
 }
 
 function trigger(name: string) {
-  return screen.getByRole("button", { name: new RegExp(name) });
+  return screen
+    .getAllByRole("link", { name: new RegExp(name) })
+    .find((link) => link.classList.contains("mega-menu__trigger"))!;
 }
 
 describe("MegaMenu", () => {
@@ -92,30 +94,31 @@ describe("MegaMenu", () => {
     vi.useRealTimers();
   });
 
-  it("renders closed button triggers wired to controlled panels", () => {
+  it("renders parent links that point to their overview pages", () => {
     renderMenu();
 
-    for (const label of ["产品", "文档", "下载"]) {
-      const button = trigger(label);
-      expect(button).toHaveAttribute("aria-expanded", "false");
-      expect(button).toHaveAttribute("aria-controls");
+    for (const [label, href] of [
+      ["产品", "/product"],
+      ["文档", "/docs"],
+      ["下载", "/downloads"],
+    ]) {
+      const link = trigger(label);
+      expect(link).toHaveAttribute("href", href);
+      expect(link).toHaveAttribute("aria-expanded", "false");
+      expect(link).toHaveAttribute("aria-controls");
       expect(
-        document.getElementById(button.getAttribute("aria-controls")!),
+        document.getElementById(link.getAttribute("aria-controls")!),
       ).toBeInstanceOf(HTMLElement);
     }
   });
 
-  it("opens a panel on click and shows its overview and child links", () => {
+  it("navigates to the parent overview on direct click", () => {
     renderMenu();
 
     fireEvent.click(trigger("产品"));
 
-    expect(trigger("产品")).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("link", { name: /产品概览/ })).toHaveAttribute(
-      "href",
-      "/product",
-    );
-    expect(screen.getByRole("link", { name: /Agent Studio/ })).toBeVisible();
+    expect(trigger("产品")).toHaveAttribute("href", "/product");
+    expect(trigger("产品")).toHaveAttribute("aria-expanded", "false");
   });
 
   it("opens on pointer enter", () => {
@@ -127,19 +130,15 @@ describe("MegaMenu", () => {
     expect(screen.getByRole("link", { name: /快速开始/ })).toBeVisible();
   });
 
-  it("promotes a hover-open panel on first click before toggling closed", () => {
+  it("closes a hover-open panel after the pointer leaves", () => {
     renderMenu();
     const productTrigger = trigger("产品");
 
     fireEvent.pointerEnter(productTrigger);
-    fireEvent.click(productTrigger);
     expect(productTrigger).toHaveAttribute("aria-expanded", "true");
 
     fireEvent.pointerLeave(productTrigger);
     act(() => vi.advanceTimersByTime(180));
-    expect(productTrigger).toHaveAttribute("aria-expanded", "true");
-
-    fireEvent.click(productTrigger);
     expect(productTrigger).toHaveAttribute("aria-expanded", "false");
   });
 
@@ -151,7 +150,6 @@ describe("MegaMenu", () => {
     act(() => vi.advanceTimersByTime(180));
 
     fireEvent.pointerEnter(productTrigger);
-    fireEvent.click(productTrigger);
     expect(productTrigger).toHaveAttribute("aria-expanded", "true");
 
     fireEvent.pointerLeave(productTrigger);
@@ -180,8 +178,8 @@ describe("MegaMenu", () => {
 
   it("switches directly between triggers and keeps only one panel open", () => {
     renderMenu();
-    fireEvent.click(trigger("产品"));
-    fireEvent.click(trigger("文档"));
+    fireEvent.pointerEnter(trigger("产品"));
+    fireEvent.pointerEnter(trigger("文档"));
 
     expect(trigger("产品")).toHaveAttribute("aria-expanded", "false");
     expect(trigger("文档")).toHaveAttribute("aria-expanded", "true");
@@ -191,7 +189,7 @@ describe("MegaMenu", () => {
 
   it("closes on an outside document pointerdown", () => {
     renderMenu();
-    fireEvent.click(trigger("产品"));
+    fireEvent.pointerEnter(trigger("产品"));
 
     fireEvent.pointerDown(document.body);
 
@@ -201,7 +199,7 @@ describe("MegaMenu", () => {
   it("closes on Escape and restores focus to the open trigger", () => {
     renderMenu();
     const productTrigger = trigger("产品");
-    fireEvent.click(productTrigger);
+    fireEvent.pointerEnter(productTrigger);
     screen.getByRole("link", { name: /Agent Studio/ }).focus();
 
     fireEvent.keyDown(document, { key: "Escape" });
@@ -237,7 +235,7 @@ describe("MegaMenu", () => {
   it("focuses the first overview link with ArrowDown when already open", () => {
     renderMenu();
     const productTrigger = trigger("产品");
-    fireEvent.click(productTrigger);
+    fireEvent.pointerEnter(productTrigger);
     productTrigger.focus();
 
     fireEvent.keyDown(productTrigger, { key: "ArrowDown" });
@@ -249,7 +247,7 @@ describe("MegaMenu", () => {
     renderMenu();
     expect(within(trigger("下载")).getByText("尚未开放")).toBeVisible();
 
-    fireEvent.click(trigger("下载"));
+    fireEvent.pointerEnter(trigger("下载"));
 
     const child = screen.getByRole("link", { name: /桌面客户端/ });
     expect(within(child).getByText("尚未开放")).toBeVisible();
@@ -259,7 +257,7 @@ describe("MegaMenu", () => {
     renderMenu("/product/agent-studio");
 
     expect(trigger("产品")).toHaveAttribute("aria-current", "page");
-    fireEvent.click(trigger("产品"));
+    fireEvent.pointerEnter(trigger("产品"));
     expect(screen.getByRole("link", { name: /Agent Studio/ })).toHaveAttribute(
       "aria-current",
       "page",
@@ -274,7 +272,7 @@ describe("MegaMenu", () => {
 
   it("requires configured query and hash constraints for child activity", () => {
     const { rerender } = renderMenu("/product/search?mode=basic");
-    fireEvent.click(trigger("产品"));
+    fireEvent.pointerEnter(trigger("产品"));
     expect(screen.getByRole("link", { name: /高级搜索/ })).not.toHaveAttribute(
       "aria-current",
     );
@@ -288,7 +286,6 @@ describe("MegaMenu", () => {
     );
 
     rerender(<MegaMenu items={items} activeHref="/product/guide#other" />);
-    fireEvent.click(screen.getByRole("button", { name: "指南" }));
     expect(screen.getByRole("link", { name: /配置指南/ })).not.toHaveAttribute(
       "aria-current",
     );
@@ -302,7 +299,7 @@ describe("MegaMenu", () => {
 
   it("requires an exact normalized full href for child activity", () => {
     const { rerender } = renderMenu("/product/agent-studio?foo=1");
-    fireEvent.click(trigger("产品"));
+    fireEvent.pointerEnter(trigger("产品"));
     const agentStudio = screen.getByRole("link", { name: /Agent Studio/ });
     expect(agentStudio).not.toHaveAttribute("aria-current");
 
@@ -313,18 +310,14 @@ describe("MegaMenu", () => {
     expect(agentStudio).toHaveAttribute("aria-current", "page");
   });
 
-  it("switches content sections when tabs are clicked", () => {
+  it("renders every content section in the open horizontal index", () => {
     renderMenu();
-    fireEvent.click(trigger("产品"));
+    fireEvent.pointerEnter(trigger("产品"));
 
     expect(screen.getByRole("heading", { name: "平台" })).toBeVisible();
     expect(screen.getByRole("link", { name: /Agent Studio/ })).toBeVisible();
-
-    fireEvent.click(screen.getByRole("button", { name: "指南" }));
-
     expect(screen.getByRole("heading", { name: "指南" })).toBeVisible();
     expect(screen.getByRole("link", { name: /配置指南/ })).toBeVisible();
-    expect(screen.queryByRole("link", { name: /Agent Studio/ })).toBeNull();
   });
 
   it("exports a reusable placeholder status badge", () => {

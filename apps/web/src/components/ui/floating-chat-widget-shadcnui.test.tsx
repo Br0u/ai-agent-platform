@@ -67,6 +67,14 @@ describe("FloatingChatWidget", () => {
     expect(screen.queryByText("GPT-4")).not.toBeInTheDocument();
   });
 
+  it("exposes the full assistant workspace from the compact panel", () => {
+    openWidget();
+
+    expect(
+      screen.getByRole("link", { name: "打开完整 AI 助理" }),
+    ).toHaveAttribute("href", "/assistant");
+  });
+
   it("sends a preset prompt and renders the returned message and action", async () => {
     openWidget();
     fireEvent.click(screen.getByRole("button", { name: "如何提交产品问题？" }));

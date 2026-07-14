@@ -108,6 +108,7 @@ export function AssistantWidget({
       ) : null}
       {showLauncher ? (
         <AssistantLauncher
+          isOpen={experience.session.open}
           onOpen={() => {
             if (launcherRef.current !== null) {
               experience.openFrom(launcherRef.current);

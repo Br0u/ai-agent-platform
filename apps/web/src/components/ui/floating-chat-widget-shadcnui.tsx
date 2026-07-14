@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
+  ArrowUpRight,
   BriefcaseBusiness,
   LifeBuoy,
   MessageSquare,
@@ -224,6 +225,11 @@ export function FloatingChatWidget({
                   <Send size={17} />
                 </button>
               </form>
+              <Link className="floating-assistant__full-link" href="/assistant">
+                <MessageSquare size={14} />
+                打开完整 AI 助理
+                <ArrowUpRight size={13} />
+              </Link>
               <div className="floating-assistant__meta">
                 <span className={overLimit ? "is-over-limit" : ""}>
                   {characterCount} / 500

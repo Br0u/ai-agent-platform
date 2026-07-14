@@ -5,6 +5,7 @@ const requiredRoutes = [
   "/",
   "/product",
   "/product/[slug]",
+  "/solutions",
   "/releases",
   "/releases/[version]",
   "/roadmap",

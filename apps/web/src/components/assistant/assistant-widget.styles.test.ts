@@ -24,13 +24,13 @@ describe("assistant widget CSS", () => {
 
   it("uses asymmetric, transform-only drawer motion within the approved travel", () => {
     expect(css).toMatch(
-      /\.assistant-panel\[data-motion-state="entering"\][\s\S]*?translateY\(12px\)/u,
+      /\.assistant-panel\[data-motion-state="entering"\][\s\S]*?translateY\(8px\)\s+scale\(0\.96\)/u,
     );
     expect(css).toMatch(
       /\.assistant-panel\[data-motion-state="open"\][\s\S]*?transition:[^;]*transform 220ms cubic-bezier\(0\.23, 1, 0\.32, 1\)[^;]*opacity 220ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/u,
     );
     expect(css).toMatch(
-      /\.assistant-panel\[data-motion-state="closing"\][\s\S]*?transition:[^;]*transform 160ms cubic-bezier\(0\.23, 1, 0\.32, 1\)[^;]*opacity 160ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/u,
+      /\.assistant-panel\[data-motion-state="closing"\][\s\S]*?transition:[^;]*transform 150ms cubic-bezier\(0\.23, 1, 0\.32, 1\)[^;]*opacity 150ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/u,
     );
     expect(css).not.toMatch(/transition:\s*all/u);
   });

@@ -28,12 +28,13 @@ type MockAppShellProps = {
 const mocks = vi.hoisted(() => ({
   appShellProps: undefined as MockAppShellProps | undefined,
   pathname: "/",
+  push: vi.fn(),
   replace: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => mocks.pathname,
-  useRouter: () => ({ replace: mocks.replace }),
+  useRouter: () => ({ push: mocks.push, replace: mocks.replace }),
 }));
 
 vi.mock("@/server/auth/server-actions", () => ({
@@ -93,6 +94,7 @@ afterEach(cleanup);
 beforeEach(() => {
   mocks.appShellProps = undefined;
   mocks.pathname = "/";
+  mocks.push.mockReset();
   mocks.replace.mockReset();
   vi.mocked(useAssistantSession).mockClear();
   vi.stubGlobal(
@@ -449,6 +451,14 @@ describe("SiteShell", () => {
     expect(screen.getByRole("button", { name: "打开 M 助手" })).toBeVisible();
   });
 
+  it("routes the portal assistant entry to the full assistant workspace", () => {
+    renderAt("/");
+
+    fireEvent.click(screen.getByRole("button", { name: "打开 AI 助理" }));
+
+    expect(mocks.push).toHaveBeenCalledWith("/assistant");
+  });
+
   it("gives the assistant workspace a top focus entry without a floating launcher", () => {
     renderAt("/assistant");
 
@@ -461,12 +471,7 @@ describe("SiteShell", () => {
 
   it("returns focus to the exact portal launcher that opened the drawer", () => {
     renderAt("/");
-    const top = screen.getByRole("button", { name: "打开 AI 助理" });
     const floating = screen.getByRole("button", { name: "打开 M 助手" });
-
-    fireEvent.click(top);
-    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    expect(top).toHaveFocus();
 
     fireEvent.click(floating);
     fireEvent.click(screen.getByRole("button", { name: "关闭 M 助手" }));

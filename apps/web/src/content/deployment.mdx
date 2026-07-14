@@ -1,0 +1,41 @@
+---
+title: 部署指南
+description: 使用 Docker Compose 部署企业级 AI Agent Platform，并完成上线前检查。
+---
+
+import { Callout, FileTree, Steps } from "nextra/components";
+
+本页描述开发验证和服务器部署共用的目录、配置和检查项。
+
+## 推荐目录
+
+<FileTree>
+  <FileTree.Folder name="ai-agent-platform" open>
+    <FileTree.File name=".env" />
+    <FileTree.File name="docker-compose.yml" />
+    <FileTree.Folder name="apps/web" />
+    <FileTree.Folder name="packages/database" />
+  </FileTree.Folder>
+</FileTree>
+
+## 部署步骤
+
+<Steps>
+
+### 配置环境变量
+
+至少配置 `DATABASE_URL`、`BETTER_AUTH_SECRET` 和 `ASSISTANT_PUBLIC_ORIGIN`。密钥只放在服务器环境或密钥管理服务中。
+
+### 初始化数据库
+
+执行迁移或初始化脚本，确认账号、角色和权限表已创建，再启动 Web 服务。
+
+### 验证健康状态
+
+检查 `/api/health/live` 和 `/api/health/ready`，然后用普通客户、员工和管理员账号分别验证访问边界。
+
+</Steps>
+
+<Callout type="warning">
+  不要把 `.env`、数据库密码、初始管理员密码或 TOTP 恢复码提交到 Git 仓库。
+</Callout>

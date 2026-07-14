@@ -31,7 +31,11 @@ export default function DocsPage() {
           if (cat.code === "D7") slug = "faq";
 
           return (
-            <a href={`/docs/${slug}`} key={i} className="doc-card">
+            <a
+              href={`/docs/${slug}`}
+              key={i}
+              className="doc-card doc-card--category"
+            >
               <div className="doc-card__icon">
                 <span style={{ fontSize: "18px" }}>{cat.icon}</span>
               </div>

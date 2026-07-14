@@ -2,7 +2,7 @@
 
 import { AppShell, AssistantHeaderEntry } from "@ai-agent-platform/ui";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { shouldShowAssistant } from "../../config/assistant-visibility";
 import {
   adminNavigation,
@@ -152,7 +152,13 @@ export function SiteShell({ children }: { children: ReactNode }) {
       portalLinkComponent={PortalNavigationLink}
       variant={variant}
     >
-      {children}
+      {variant === "portal" || variant === "assistant" ? (
+        <div className="site-route-transition" key={pathname}>
+          {children}
+        </div>
+      ) : (
+        children
+      )}
     </AppShell>
   );
 
@@ -164,7 +170,9 @@ export function SiteShell({ children }: { children: ReactNode }) {
         activeHref={activeHref}
         variant={variant === "assistant" ? "assistant" : "portal"}
       >
-        {children}
+        <div className="site-route-transition" key={pathname}>
+          {children}
+        </div>
       </AssistantEnabledShell>
     </AssistantExperienceProvider>
   );
@@ -301,14 +309,13 @@ function AssistantEnabledShell({
   variant: Extract<ShellRoute, "portal" | "assistant">;
 }) {
   const experience = useAssistantExperience();
-  const entryContainer = useRef<HTMLSpanElement>(null);
+  const router = useRouter();
   const activateHeaderEntry = () => {
     if (variant === "assistant") {
       experience.focusComposer();
       return;
     }
-    const trigger = entryContainer.current?.querySelector("button");
-    if (trigger instanceof HTMLElement) experience.openFrom(trigger);
+    router.push("/assistant");
   };
 
   return (
@@ -316,8 +323,11 @@ function AssistantEnabledShell({
       activeHref={activeHref}
       adminNavigation={adminNavigation}
       assistantEntry={
-        <span ref={entryContainer}>
-          <AssistantHeaderEntry onActivate={activateHeaderEntry} />
+        <span>
+          <AssistantHeaderEntry
+            isOpen={variant === "assistant" || experience.session.open}
+            onActivate={activateHeaderEntry}
+          />
         </span>
       }
       consoleNavigation={consoleNavigation}

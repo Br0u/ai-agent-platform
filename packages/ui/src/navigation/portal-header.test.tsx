@@ -46,8 +46,10 @@ describe("PortalHeader", () => {
 
     const assistant = screen.getByRole("button", { name: "AI 助理入口" });
     const login = screen.getByRole("link", { name: "登录 / 进入平台" });
+    const documents = screen.getByRole("navigation", { name: "文档导航" });
     expect(assistant.parentElement).toBe(login.parentElement);
-    expect(assistant.nextElementSibling).toBe(login);
+    expect(assistant.nextElementSibling).toBe(documents);
+    expect(documents.nextElementSibling).toBe(login);
   });
 
   it("renders the product wordmark and login action", () => {
@@ -73,16 +75,45 @@ describe("PortalHeader", () => {
     ).toHaveAttribute("href", "/login");
   });
 
-  it("composes the desktop mega menu and mobile navigation trigger", () => {
+  it("keeps documents beside the assistant and login actions", () => {
     render(<PortalHeader activeHref="/docs" items={items} />);
 
-    const navigation = screen.getByRole("navigation", { name: "主导航" });
+    const primaryNavigation = screen.getByRole("navigation", {
+      name: "主导航",
+    });
     expect(
-      within(navigation).getByRole("button", { name: /产品/ }),
+      within(primaryNavigation).getByRole("link", { name: "产品" }),
     ).toBeVisible();
     expect(
-      within(navigation).getByRole("button", { name: /文档/ }),
+      within(primaryNavigation).queryByRole("link", { name: "文档" }),
+    ).not.toBeInTheDocument();
+
+    const documentNavigation = screen.getByRole("navigation", {
+      name: "文档导航",
+    });
+    expect(
+      within(documentNavigation).getByRole("link", { name: "文档" }),
     ).toHaveAttribute("aria-current", "page");
+    expect(
+      within(documentNavigation).getByRole("link", { name: "文档" }),
+    ).not.toHaveAttribute("aria-expanded");
+    expect(
+      within(documentNavigation).getByRole("link", { name: "文档" }),
+    ).not.toHaveAttribute("aria-controls");
+    const assistant = screen.queryByRole("button", { name: "AI 助理入口" });
+    const login = screen.getByRole("link", { name: "登录 / 进入平台" });
+    expect(assistant).toBeNull();
+    expect(login.parentElement).toHaveClass("site-actions");
     expect(screen.getByRole("button", { name: "打开导航" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "打开导航" }));
+    const mobileDialog = screen.getByRole("dialog", { name: "全站导航" });
+    const mobileDocumentLink = within(mobileDialog).getByRole("link", {
+      name: "文档",
+    });
+    expect(mobileDocumentLink).toHaveAttribute("href", "/docs");
+    expect(
+      within(mobileDialog).queryByRole("button", { name: /文档/ }),
+    ).not.toBeInTheDocument();
   });
 });

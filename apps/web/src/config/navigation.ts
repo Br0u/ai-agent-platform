@@ -48,6 +48,28 @@ export const portalNavigation: PortalNavigationItem[] = [
     ],
   },
   {
+    label: "解决方案",
+    href: "/solutions",
+    children: [
+      {
+        label: "场景方案",
+        items: [
+          { label: "智能办公", href: "/solutions#office" },
+          { label: "行业知识问答", href: "/solutions#knowledge" },
+          { label: "视觉检索", href: "/solutions#vision" },
+        ],
+      },
+      {
+        label: "平台方案",
+        items: [
+          { label: "企业智能体开发", href: "/solutions#agent" },
+          { label: "数据分析与决策", href: "/solutions#data" },
+          { label: "国产化私有部署", href: "/solutions#private" },
+        ],
+      },
+    ],
+  },
+  {
     label: "文档",
     href: "/docs",
     children: [
@@ -57,39 +79,39 @@ export const portalNavigation: PortalNavigationItem[] = [
           {
             label: "快速开始",
             href: "/docs/quick-start",
-            status: "scaffold",
+            status: "live",
           },
           {
             label: "部署指南",
             href: "/docs/deployment",
-            status: "scaffold",
+            status: "live",
           },
           {
             label: "升级手册",
             href: "/docs/upgrade",
-            status: "scaffold",
+            status: "live",
           },
           {
             label: "运维手册",
             href: "/docs/operations",
-            status: "scaffold",
+            status: "live",
           },
         ],
       },
       {
         label: "开发与适配",
         items: [
-          { label: "API 文档", href: "/docs/api", status: "scaffold" },
+          { label: "API 文档", href: "/docs/api", status: "live" },
           { label: "功能手册", href: "/docs#features", status: "scaffold" },
           {
             label: "GPU / 硬件适配",
             href: "/docs/hardware",
-            status: "scaffold",
+            status: "live",
           },
           {
             label: "常见问题 FAQ",
             href: "/docs/faq",
-            status: "scaffold",
+            status: "live",
           },
         ],
       },

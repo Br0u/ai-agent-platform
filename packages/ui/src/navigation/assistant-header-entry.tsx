@@ -2,10 +2,12 @@ import { useId } from "react";
 import "../app-shell.css";
 
 export type AssistantHeaderEntryProps = {
+  isOpen?: boolean;
   onActivate: () => void;
 };
 
 export function AssistantHeaderEntry({
+  isOpen = false,
   onActivate,
 }: AssistantHeaderEntryProps) {
   const gradientId = `${useId()}-assistant-mobius-gradient`;
@@ -13,7 +15,9 @@ export function AssistantHeaderEntry({
   return (
     <button
       aria-label="打开 AI 助理"
+      aria-pressed={isOpen}
       className="assistant-header-entry"
+      data-active={isOpen ? "true" : undefined}
       onClick={onActivate}
       type="button"
     >

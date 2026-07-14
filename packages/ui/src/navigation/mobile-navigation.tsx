@@ -42,12 +42,14 @@ export function MobileNavigation({
   activeHref,
   actionLabel = "登录 / 进入控制台",
   actionHref = "/login",
+  directItemHrefs = [],
   linkComponent: Link = "a",
 }: {
   items: PortalNavigationItem[];
   activeHref: string;
   actionLabel?: string;
   actionHref?: string;
+  directItemHrefs?: string[];
   linkComponent?: NavigationLinkComponent;
 }) {
   const baseId = useId();
@@ -203,6 +205,26 @@ export function MobileNavigation({
 
           <div className="mobile-navigation__body">
             {items.map((item, index) => {
+              if (directItemHrefs.includes(item.href)) {
+                return (
+                  <div className="mobile-navigation__group" key={item.href}>
+                    <Link
+                      aria-current={
+                        isNavigationParentActive(item, activeHref)
+                          ? "page"
+                          : undefined
+                      }
+                      className="mobile-navigation__direct-link"
+                      href={item.href}
+                      onClick={closeNavigation}
+                    >
+                      <span>{item.label}</span>
+                      <NavigationStatusBadge status={item.status} />
+                    </Link>
+                  </div>
+                );
+              }
+
               const triggerId = `${baseId}-mobile-trigger-${index}`;
               const panelId = `${baseId}-mobile-panel-${index}`;
               const isExpanded = openIndex === index;
