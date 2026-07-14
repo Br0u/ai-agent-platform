@@ -1,5 +1,6 @@
 """Strict, role-separated configuration for the internal agent service."""
 
+import re
 from typing import Annotated, Literal
 
 from pydantic import Field, FiniteFloat, SecretStr, field_validator
@@ -71,8 +72,11 @@ class RuntimeSettings(_AgentSettings):
     @field_validator("os_security_key", mode="after")
     @classmethod
     def _validate_security_key(cls, value: SecretStr) -> SecretStr:
-        if not value.get_secret_value().strip():
-            raise ValueError("OS security key must not be blank")
+        secret = value.get_secret_value()
+        if len(secret.encode("utf-8")) < 32:
+            raise ValueError("OS security key must contain at least 32 bytes")
+        if re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", secret) is None:
+            raise ValueError("OS security key must be a valid Bearer token")
         return value
 
     @field_validator("agent_enabled", mode="after")

@@ -9,6 +9,7 @@ from agent_service.config import MigrationSettings, RuntimeSettings
 
 RUNTIME_URL = "postgresql+psycopg_async://runtime:runtime-password@db:5432/platform"
 MIGRATOR_URL = "postgresql+psycopg_async://migrator:migrator-password@db:5432/platform"
+SECURITY_KEY = "internal-security-key-0123456789abcdef"
 
 
 @pytest.fixture(autouse=True)
@@ -35,7 +36,7 @@ def isolated_agent_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
 
 @pytest.fixture
 def valid_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OS_SECURITY_KEY", "internal-security-key")
+    monkeypatch.setenv("OS_SECURITY_KEY", SECURITY_KEY)
     monkeypatch.setenv("AGNO_DATABASE_URL", RUNTIME_URL)
 
 
@@ -48,8 +49,11 @@ def test_runtime_requires_internal_security_key(
         RuntimeSettings(_env_file=None)
 
 
-@pytest.mark.parametrize("invalid_key", ["", "   "])
-def test_runtime_rejects_blank_internal_security_key_without_leaking_it(
+@pytest.mark.parametrize(
+    "invalid_key",
+    ["", "   ", "short", "a" * 31, "a" * 31 + " ", "é" * 32, "a" * 32 + "\n"],
+)
+def test_runtime_rejects_unsafe_internal_security_key_without_leaking_it(
     invalid_key: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -67,13 +71,13 @@ def test_runtime_accepts_non_blank_internal_security_key(
 ) -> None:
     settings = RuntimeSettings(_env_file=None)
 
-    assert settings.os_security_key.get_secret_value() == "internal-security-key"
+    assert settings.os_security_key.get_secret_value() == SECURITY_KEY
 
 
 def test_runtime_requires_runtime_database_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("OS_SECURITY_KEY", "internal-security-key")
+    monkeypatch.setenv("OS_SECURITY_KEY", SECURITY_KEY)
 
     with pytest.raises(ValidationError):
         RuntimeSettings(_env_file=None)
@@ -93,7 +97,7 @@ def test_migration_requires_only_migrator_database_url(
 ) -> None:
     monkeypatch.setenv("AGNO_MIGRATOR_DATABASE_URL", MIGRATOR_URL)
     monkeypatch.setenv("AGNO_SCHEMA", "public")
-    monkeypatch.setenv("OS_SECURITY_KEY", "runtime-only-key")
+    monkeypatch.setenv("OS_SECURITY_KEY", SECURITY_KEY)
     monkeypatch.setenv("AGNO_DATABASE_URL", RUNTIME_URL)
 
     settings = MigrationSettings(_env_file=None)
@@ -138,7 +142,7 @@ def test_uppercase_variables_win_when_both_cases_exist(
         "health_db_probe_timeout_seconds": "nan",
     }
     uppercase_values = {
-        "OS_SECURITY_KEY": "uppercase-security-key",
+        "OS_SECURITY_KEY": SECURITY_KEY,
         "AGNO_DATABASE_URL": RUNTIME_URL,
         "AGNO_SCHEMA": "agno",
         "AGENT_ENABLED": "false",
@@ -152,7 +156,7 @@ def test_uppercase_variables_win_when_both_cases_exist(
 
     settings = RuntimeSettings(_env_file=None)
 
-    assert settings.os_security_key.get_secret_value() == "uppercase-security-key"
+    assert settings.os_security_key.get_secret_value() == SECURITY_KEY
     assert settings.agno_database_url.get_secret_value() == RUNTIME_URL
     assert settings.agno_schema == "agno"
     assert settings.agent_enabled is False
@@ -206,7 +210,7 @@ def test_runtime_rejects_unsafe_database_urls(
     invalid_url: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("OS_SECURITY_KEY", "internal-security-key")
+    monkeypatch.setenv("OS_SECURITY_KEY", SECURITY_KEY)
     monkeypatch.setenv("AGNO_DATABASE_URL", invalid_url)
 
     with pytest.raises(ValidationError):
@@ -322,14 +326,14 @@ def test_secrets_are_wrapped_and_hidden_from_repr(valid_runtime_env: None) -> No
 
     assert isinstance(settings.os_security_key, SecretStr)
     assert isinstance(settings.agno_database_url, SecretStr)
-    assert "internal-security-key" not in rendered
+    assert SECURITY_KEY not in rendered
     assert "runtime-password" not in rendered
 
 
 def test_invalid_url_error_does_not_echo_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("OS_SECURITY_KEY", "internal-security-key")
+    monkeypatch.setenv("OS_SECURITY_KEY", SECURITY_KEY)
     monkeypatch.setenv(
         "AGNO_DATABASE_URL",
         "postgresql://runtime:do-not-leak@db:5432/platform",

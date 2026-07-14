@@ -15,7 +15,7 @@ from agent_service.database import build_database
 
 
 DATABASE_URL = "postgresql+psycopg_async://runtime:private-password@db:5432/platform"
-SECURITY_KEY = "internal-security-key"
+SECURITY_KEY = "internal-security-key-0123456789abcdef"
 AUTHORIZATION = {"Authorization": f"Bearer {SECURITY_KEY}"}
 LIVE_SAFE_KEYS = {"live", "ready", "capability", "message"}
 READY_SAFE_KEYS = {"ready", "capability"}
