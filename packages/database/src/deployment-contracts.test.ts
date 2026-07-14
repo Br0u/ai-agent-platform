@@ -1163,6 +1163,9 @@ exit 0
     expect(workflow).toContain(
       "TEST_DATABASE_URL: postgresql://ai_agent_owner@127.0.0.1:5432/ai_agent_platform_identity_test_integration_ci",
     );
+    expect(workflow).toContain(
+      "ROLE_BOUNDARY_DATABASE_URL: postgresql://ai_agent_owner@127.0.0.1:5432/ai_agent_platform_identity_test_ci",
+    );
     expect(workflow).not.toMatch(/echo "DATABASE_URL=.*" >> "\$GITHUB_ENV"/u);
     expect(workflow).toContain(
       'DATABASE_URL="$MIGRATOR_DATABASE_URL" pnpm --filter @ai-agent-platform/database db:prepare',

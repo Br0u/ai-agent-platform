@@ -4,7 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { assertSafeIdentityMigrationTestDatabaseUrl } from "./migrations/migration-test-safety";
 
 const configuredUrls = {
-  owner: process.env.TEST_DATABASE_URL,
+  owner:
+    process.env.ROLE_BOUNDARY_DATABASE_URL ?? process.env.TEST_DATABASE_URL,
   platformMigrator: process.env.MIGRATOR_DATABASE_URL,
   platformRuntime: process.env.RUNTIME_DATABASE_URL,
   backup: process.env.BACKUP_DATABASE_URL,
