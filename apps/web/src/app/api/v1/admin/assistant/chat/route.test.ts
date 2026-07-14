@@ -13,12 +13,24 @@ const auth = vi.hoisted(() => {
   return { AuthAccessError, requirePermission: vi.fn() };
 });
 
+const runtime = vi.hoisted(() => ({
+  getAssistantRuntime: vi.fn(),
+  consume: vi.fn(),
+  resolveProvider: vi.fn(),
+  reply: vi.fn(),
+}));
+
 vi.mock("@/server/auth/access", () => ({
   AuthAccessError: auth.AuthAccessError,
   requirePermission: auth.requirePermission,
 }));
 
+vi.mock("@/server/assistant/assistant-runtime", () => ({
+  getAssistantRuntime: runtime.getAssistantRuntime,
+}));
+
 import type { AssistantProvider } from "@/server/assistant/assistant-provider";
+import { AssistantRateLimitExceededError } from "@/server/assistant/assistant-rate-limit";
 import { createAdminAssistantChatHandler } from "./handler";
 
 function request(requestId?: string) {
@@ -42,7 +54,23 @@ const provider = (): AssistantProvider => ({
 describe("POST /api/v1/admin/assistant/chat", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    auth.requirePermission.mockResolvedValue({ realm: "workforce" });
+    auth.requirePermission.mockResolvedValue({
+      userId: "admin-1",
+      realm: "workforce",
+    });
+    runtime.consume.mockResolvedValue(undefined);
+    runtime.reply.mockResolvedValue({
+      content: "占位响应",
+      suggestedActions: [],
+    });
+    runtime.resolveProvider.mockResolvedValue({
+      provider: { reply: runtime.reply },
+      mode: "placeholder",
+    });
+    runtime.getAssistantRuntime.mockReturnValue({
+      rateLimiter: { consume: runtime.consume },
+      resolveProvider: runtime.resolveProvider,
+    });
   });
 
   it("exports only POST and requires exactly admin:assistant", async () => {
@@ -54,6 +82,12 @@ describe("POST /api/v1/admin/assistant/chat", () => {
     expect(auth.requirePermission).toHaveBeenCalledExactlyOnceWith(
       "admin:assistant",
     );
+    expect(runtime.consume).toHaveBeenCalledExactlyOnceWith({
+      scope: "admin-test",
+      actorId: "admin-1",
+    });
+    expect(runtime.resolveProvider).toHaveBeenCalledOnce();
+    expect(runtime.reply).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -63,11 +97,15 @@ describe("POST /api/v1/admin/assistant/chat", () => {
     "returns a correlated %s envelope without invoking the provider",
     async (authCode, status, errorCode) => {
       const assistantProvider = provider();
+      const limiter = { consume: vi.fn() };
       const POST = createAdminAssistantChatHandler({
-        authorize: vi
-          .fn()
-          .mockRejectedValue(new auth.AuthAccessError(authCode, status)),
+        access: {
+          requirePermission: vi
+            .fn()
+            .mockRejectedValue(new auth.AuthAccessError(authCode, status)),
+        },
         provider: assistantProvider,
+        rateLimiter: limiter,
         requestIdFactory: () => "unused-fallback",
       });
 
@@ -85,12 +123,17 @@ describe("POST /api/v1/admin/assistant/chat", () => {
         },
       });
       expect(assistantProvider.reply).not.toHaveBeenCalled();
+      expect(limiter.consume).not.toHaveBeenCalled();
     },
   );
 
   it("returns a safe correlated unavailable envelope for an unexpected error", async () => {
     const POST = createAdminAssistantChatHandler({
-      authorize: vi.fn().mockRejectedValue(new Error("private-secret")),
+      access: {
+        requirePermission: vi
+          .fn()
+          .mockRejectedValue(new Error("private-secret")),
+      },
       provider: provider(),
       requestIdFactory: () => "fallback-request",
     });
@@ -110,10 +153,121 @@ describe("POST /api/v1/admin/assistant/chat", () => {
     expect(JSON.stringify(body)).not.toMatch(/private|secret/iu);
   });
 
+  it("orders access, actor-scoped limiter, and Provider while ignoring a body actor", async () => {
+    const callOrder: string[] = [];
+    const assistantProvider = provider();
+    vi.mocked(assistantProvider.reply).mockImplementation(async () => {
+      callOrder.push("provider");
+      return { content: "占位响应", suggestedActions: [] };
+    });
+    const POST = createAdminAssistantChatHandler({
+      access: {
+        requirePermission: vi.fn(async () => {
+          callOrder.push("access");
+          return {
+            userId: "authoritative-admin",
+            realm: "workforce",
+          } as never;
+        }),
+      },
+      rateLimiter: {
+        consume: vi.fn(async (input) => {
+          callOrder.push("limiter");
+          expect(input).toEqual({
+            scope: "admin-test",
+            actorId: "authoritative-admin",
+          });
+        }),
+      },
+      provider: assistantProvider,
+      requestIdFactory: () => "ordered-request",
+      messageIdFactory: () => "ordered-message",
+      clock: () => 0,
+    });
+    const forged = new Request("http://localhost/api/v1/admin/assistant/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        actorId: "forged-admin",
+        message: "检查占位合同",
+        context: { pathname: "/admin/assistant" },
+      }),
+    });
+
+    const response = await POST(forged);
+
+    expect(response.status).toBe(200);
+    expect(callOrder).toEqual(["access", "limiter", "provider"]);
+  });
+
+  it("returns safe versioned 429 before Provider work", async () => {
+    const assistantProvider = provider();
+    const limiter = {
+      consume: vi
+        .fn()
+        .mockRejectedValue(new AssistantRateLimitExceededError(17)),
+    };
+    const POST = createAdminAssistantChatHandler({
+      access: {
+        requirePermission: vi.fn().mockResolvedValue({
+          userId: "admin-1",
+          realm: "workforce",
+        }),
+      },
+      rateLimiter: limiter,
+      provider: assistantProvider,
+      requestIdFactory: () => "rate-request",
+    });
+
+    const response = await POST(request("rate-request"));
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("17");
+    await expect(response.json()).resolves.toEqual({
+      version: "1",
+      requestId: "rate-request",
+      error: {
+        code: "rate_limited",
+        message: "Too many assistant test requests",
+      },
+    });
+    expect(assistantProvider.reply).not.toHaveBeenCalled();
+  });
+
+  it("maps limiter infrastructure failure to safe 503 before Provider work", async () => {
+    const assistantProvider = provider();
+    const POST = createAdminAssistantChatHandler({
+      access: {
+        requirePermission: vi.fn().mockResolvedValue({
+          userId: "admin-1",
+          realm: "workforce",
+        }),
+      },
+      rateLimiter: {
+        consume: vi.fn().mockRejectedValue(new Error("raw database URL")),
+      },
+      provider: assistantProvider,
+      requestIdFactory: () => "limit-failure",
+    });
+
+    const response = await POST(request("limit-failure"));
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.error.code).toBe("assistant_unavailable");
+    expect(JSON.stringify(body)).not.toMatch(/database|url|raw/iu);
+    expect(assistantProvider.reply).not.toHaveBeenCalled();
+  });
+
   it("preserves a valid incoming request id through the base v1 contract", async () => {
     const requestIdFactory = vi.fn(() => "unused-fallback");
     const POST = createAdminAssistantChatHandler({
-      authorize: vi.fn().mockResolvedValue({ realm: "workforce" }),
+      access: {
+        requirePermission: vi.fn().mockResolvedValue({
+          userId: "admin-1",
+          realm: "workforce",
+        }),
+      },
       provider: provider(),
       requestIdFactory,
       messageIdFactory: () => "admin-message",
@@ -142,7 +296,12 @@ describe("POST /api/v1/admin/assistant/chat", () => {
   it("uses one generated correlation for a 65-character incoming id", async () => {
     const requestIdFactory = vi.fn(() => "generated-correlation");
     const POST = createAdminAssistantChatHandler({
-      authorize: vi.fn().mockResolvedValue({ realm: "workforce" }),
+      access: {
+        requirePermission: vi.fn().mockResolvedValue({
+          userId: "admin-1",
+          realm: "workforce",
+        }),
+      },
       provider: provider(),
       requestIdFactory,
       messageIdFactory: () => "admin-message",

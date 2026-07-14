@@ -182,6 +182,14 @@ describe("assistant server runtime", () => {
       capability: "degraded",
       message: "助手基础服务暂不可用。",
     });
+    expect(runtime.inspect()).toEqual({
+      providerMode: "placeholder",
+      persistence: "disabled",
+      circuit: { state: "closed", consecutiveFailures: 1 },
+    });
+    expect(JSON.stringify(runtime.inspect())).not.toMatch(
+      /openedAt|monotonic|agent:7777|security-key/iu,
+    );
   });
 
   it("fails closed only when explicit AgentOS mode cannot become ready", async () => {

@@ -11,7 +11,7 @@ vi.mock("@/server/auth/access", () => ({
   requirePermission: mocks.requirePermission,
 }));
 vi.mock("@/app/api/v1/admin/assistant/status/handler", () => ({
-  loadPlaceholderAdminAssistantStatus: mocks.loadStatus,
+  loadAdminAssistantStatus: mocks.loadStatus,
 }));
 vi.mock("@/app/api/v1/admin/assistant/sessions/handler", () => ({
   loadPlaceholderAdminAssistantSessions: mocks.loadSessions,
@@ -21,6 +21,14 @@ import AdminAssistantPage from "./page";
 
 const status = {
   mode: "placeholder" as const,
+  runtime: {
+    live: true,
+    ready: true,
+    capability: "placeholder" as const,
+    providerMode: "placeholder" as const,
+    persistence: "disabled" as const,
+    circuit: { state: "closed" as const, consecutiveFailures: 0 },
+  },
   services: [
     {
       id: "agentos",
@@ -52,7 +60,8 @@ const status = {
 };
 
 const sessions = {
-  persisted: false as const,
+  persistence: "disabled" as const,
+  capability: "placeholder" as const,
   items: [],
   message: "占位模式不持久化会话；会话审计将在存储接入后开放。",
 };

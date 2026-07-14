@@ -15,6 +15,14 @@ import { AssistantAdminPage } from "./assistant-admin-page";
 
 const status = {
   mode: "placeholder" as const,
+  runtime: {
+    live: true,
+    ready: true,
+    capability: "placeholder" as const,
+    providerMode: "placeholder" as const,
+    persistence: "disabled" as const,
+    circuit: { state: "closed" as const, consecutiveFailures: 2 },
+  },
   services: [
     {
       id: "agentos",
@@ -46,7 +54,8 @@ const status = {
 } satisfies AdminAssistantStatusSnapshot;
 
 const sessions = {
-  persisted: false as const,
+  persistence: "disabled" as const,
+  capability: "placeholder" as const,
   items: [],
   message: "占位模式不持久化会话；会话审计将在存储接入后开放。",
 } satisfies AdminAssistantSessionsSnapshot;
@@ -69,6 +78,13 @@ describe("AssistantAdminPage", () => {
     expect(screen.getByText("公开入口")).toBeVisible();
     expect(screen.getByRole("heading", { name: "只读配置" })).toBeVisible();
     expect(screen.getByText("M 企业助理（占位）")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "运行时状态" })).toBeVisible();
+    expect(screen.getByText("Circuit").nextElementSibling).toHaveTextContent(
+      "closed",
+    );
+    expect(screen.getByText("Failures").nextElementSibling).toHaveTextContent(
+      "2",
+    );
     expect(container.querySelectorAll("input[type='password']")).toHaveLength(
       0,
     );
@@ -148,5 +164,50 @@ describe("AssistantAdminPage", () => {
 
     expect(await screen.findByText("测试暂时失败，请稍后重试。")).toBeVisible();
     expect(screen.queryByText(/帮助中心|商务咨询/u)).not.toBeInTheDocument();
+  });
+
+  it("renders safe versioned 429 and 503 failures accessibly without raw detail", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            version: "1",
+            requestId: "rate-request",
+            error: {
+              code: "rate_limited",
+              message: "raw limiter row and threshold",
+            },
+          },
+          { status: 429 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            version: "1",
+            requestId: "failed-request",
+            error: {
+              code: "assistant_unavailable",
+              message: "raw http://agent:7777 OS_SECURITY_KEY=private",
+            },
+          },
+          { status: 503 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistantAdminPage sessions={sessions} status={status} />);
+    const input = screen.getByLabelText("测试问题");
+
+    fireEvent.change(input, { target: { value: "第一次测试" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送测试" }));
+    expect(await screen.findByText("请求过于频繁，请稍后再试。")).toBeVisible();
+
+    fireEvent.change(input, { target: { value: "第二次测试" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送测试" }));
+    expect(await screen.findByText("测试暂时失败，请稍后重试。")).toBeVisible();
+    expect(
+      screen.queryByText(/agent:7777|security_key|limiter row/iu),
+    ).not.toBeInTheDocument();
   });
 });

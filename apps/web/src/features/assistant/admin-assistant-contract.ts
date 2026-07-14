@@ -13,12 +13,28 @@ import {
 export type AdminAssistantServiceState = {
   id: "agentos" | "database" | "model" | "public_entry";
   label: string;
-  state: "not_connected" | "not_configured" | "placeholder";
+  state:
+    | "ready"
+    | "degraded"
+    | "not_connected"
+    | "not_configured"
+    | "placeholder";
   detail: string;
 };
 
 export type AdminAssistantStatusSnapshot = {
-  mode: "placeholder";
+  mode: AssistantMode;
+  runtime: {
+    live: boolean;
+    ready: boolean;
+    capability: "placeholder" | "available" | "degraded";
+    providerMode: AssistantMode;
+    persistence: "disabled";
+    circuit: {
+      state: "closed" | "open" | "half-open";
+      consecutiveFailures: number;
+    };
+  };
   services: AdminAssistantServiceState[];
   configuration: {
     defaultAgent: string;
@@ -29,18 +45,10 @@ export type AdminAssistantStatusSnapshot = {
   message: string;
 };
 
-export type AdminAssistantSessionSummary = {
-  maskedId: string;
-  mode: "placeholder" | "agentos";
-  status: "active" | "closed";
-  createdAt: string;
-  lastActiveAt: string;
-  messageCount: number;
-};
-
 export type AdminAssistantSessionsSnapshot = {
-  persisted: false;
-  items: AdminAssistantSessionSummary[];
+  persistence: "disabled";
+  capability: "placeholder";
+  items: [];
   message: string;
 };
 
@@ -68,6 +76,7 @@ export type AdminAssistantErrorCode =
   | "authentication_required"
   | "permission_denied"
   | "validation_error"
+  | "rate_limited"
   | "assistant_unavailable";
 
 export type AdminAssistantErrorResponse = {
@@ -83,6 +92,7 @@ const ERROR_MESSAGES: Record<AdminAssistantErrorCode, string> = {
   authentication_required: "Authentication required",
   permission_denied: "Permission denied",
   validation_error: "Invalid assistant request",
+  rate_limited: "Too many assistant test requests",
   assistant_unavailable: "AI assistant service is unavailable",
 };
 

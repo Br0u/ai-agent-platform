@@ -55,9 +55,11 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
     async (authCode, status, errorCode) => {
       const loadSessions = vi.fn();
       const GET = createAdminAssistantSessionsHandler({
-        authorize: vi
-          .fn()
-          .mockRejectedValue(new auth.AuthAccessError(authCode, status)),
+        access: {
+          requirePermission: vi
+            .fn()
+            .mockRejectedValue(new auth.AuthAccessError(authCode, status)),
+        },
         loadSessions,
         requestIdFactory: () => "unused-fallback",
       });
@@ -81,7 +83,9 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
 
   it("returns a safe correlated unavailable envelope for source failure", async () => {
     const GET = createAdminAssistantSessionsHandler({
-      authorize: vi.fn().mockResolvedValue({ realm: "workforce" }),
+      access: {
+        requirePermission: vi.fn().mockResolvedValue({ realm: "workforce" }),
+      },
       loadSessions: vi.fn().mockRejectedValue(new Error("customer-secret")),
       requestIdFactory: () => "fallback-request",
     });
@@ -104,7 +108,9 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
   it("returns a correlated versioned non-persisted snapshot", async () => {
     const requestIdFactory = vi.fn(() => "unused-fallback");
     const GET = createAdminAssistantSessionsHandler({
-      authorize: vi.fn().mockResolvedValue({ realm: "workforce" }),
+      access: {
+        requirePermission: vi.fn().mockResolvedValue({ realm: "workforce" }),
+      },
       loadSessions: loadPlaceholderAdminAssistantSessions,
       requestIdFactory,
     });
@@ -119,20 +125,23 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
       version: "1",
       requestId: "sessions-correlation",
       sessions: {
-        persisted: false,
+        persistence: "disabled",
+        capability: "placeholder",
         items: [],
         message: "占位模式不持久化会话；会话审计将在存储接入后开放。",
       },
     });
     expect(JSON.stringify(body)).not.toMatch(
-      /customer|messageText|secret|token/iu,
+      /customer|messageText|secret|token|cookie|session.?id|ip|user.?agent/iu,
     );
   });
 
   it("uses the factory for a 65-character incoming id", async () => {
     const requestIdFactory = vi.fn(() => "generated-sessions-id");
     const GET = createAdminAssistantSessionsHandler({
-      authorize: vi.fn().mockResolvedValue({ realm: "workforce" }),
+      access: {
+        requirePermission: vi.fn().mockResolvedValue({ realm: "workforce" }),
+      },
       loadSessions: loadPlaceholderAdminAssistantSessions,
       requestIdFactory,
     });

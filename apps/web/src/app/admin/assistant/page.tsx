@@ -1,5 +1,5 @@
 import { loadPlaceholderAdminAssistantSessions } from "@/app/api/v1/admin/assistant/sessions/handler";
-import { loadPlaceholderAdminAssistantStatus } from "@/app/api/v1/admin/assistant/status/handler";
+import { loadAdminAssistantStatus } from "@/app/api/v1/admin/assistant/status/handler";
 import { AssistantAdminPage } from "@/components/admin/assistant-admin-page";
 import { metadataForRegisteredRoute } from "@/components/route-scaffold/registered-route-page";
 import type {
@@ -18,7 +18,7 @@ export default async function AdminAssistantPage() {
     AdminAssistantStatusSnapshot,
     AdminAssistantSessionsSnapshot,
   ] = await Promise.all([
-    loadPlaceholderAdminAssistantStatus(),
+    loadAdminAssistantStatus(),
     loadPlaceholderAdminAssistantSessions(),
   ]);
 

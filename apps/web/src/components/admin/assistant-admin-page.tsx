@@ -31,6 +31,7 @@ export function AssistantAdminPage({
   const assistant = useAssistantSession("/admin/assistant", {
     endpoint: "/api/v1/admin/assistant/chat",
     failureAnnouncement: "测试暂时失败，请稍后重试。",
+    unavailableAnnouncement: "测试暂时失败，请稍后重试。",
     successResponseGuard: isAdminAssistantChatResponse,
   });
 
@@ -50,7 +51,7 @@ export function AssistantAdminPage({
           <h1 id="assistant-admin-title">AI 助理运营</h1>
           <span>{status.message}</span>
         </div>
-        <strong data-mode={status.mode}>PLACEHOLDER</strong>
+        <strong data-mode={status.mode}>{status.mode.toUpperCase()}</strong>
       </header>
 
       <ul aria-label="AI 助理服务状态" className="assistant-admin__status-grid">
@@ -66,6 +67,38 @@ export function AssistantAdminPage({
           </li>
         ))}
       </ul>
+
+      <section
+        aria-labelledby="assistant-runtime-title"
+        className="assistant-admin__runtime"
+      >
+        <div>
+          <p>RUNTIME / SAFE METADATA</p>
+          <h2 id="assistant-runtime-title">运行时状态</h2>
+        </div>
+        <dl aria-label="AgentOS 运行时状态">
+          <div>
+            <dt>Provider</dt>
+            <dd>{status.runtime.providerMode}</dd>
+          </div>
+          <div>
+            <dt>Capability</dt>
+            <dd>{status.runtime.capability}</dd>
+          </div>
+          <div>
+            <dt>Circuit</dt>
+            <dd>{status.runtime.circuit.state}</dd>
+          </div>
+          <div>
+            <dt>Failures</dt>
+            <dd>{status.runtime.circuit.consecutiveFailures}</dd>
+          </div>
+          <div>
+            <dt>Persistence</dt>
+            <dd>{status.runtime.persistence}</dd>
+          </div>
+        </dl>
+      </section>
 
       <div className="assistant-admin__workspace">
         <section
@@ -135,6 +168,9 @@ export function AssistantAdminPage({
             <p>SESSION STORAGE</p>
             <h2 id="assistant-sessions-title">最近会话</h2>
             <span>{sessions.message}</span>
+            <small>
+              {sessions.capability} / {sessions.persistence}
+            </small>
           </div>
           <strong>{sessions.items.length.toString().padStart(2, "0")}</strong>
         </section>

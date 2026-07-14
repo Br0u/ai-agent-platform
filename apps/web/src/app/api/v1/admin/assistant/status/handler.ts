@@ -1,59 +1,144 @@
-import { AuthAccessError, requirePermission } from "@/server/auth/access";
+import {
+  AuthAccessError,
+  requirePermission,
+  type AccessService,
+} from "@/server/auth/access";
 import {
   createAdminAssistantErrorResponse,
   type AdminAssistantStatusSnapshot,
   type AdminAssistantStatusResponse,
 } from "@/features/assistant/admin-assistant-contract";
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
+import {
+  getAssistantRuntime,
+  readSafeAssistantRuntimeStatus,
+  type AssistantRuntime,
+  type AssistantRuntimeInspection,
+  type AssistantRuntimeStatus,
+} from "@/server/assistant/assistant-runtime";
 
 type AdminAssistantStatusDependencies = {
-  authorize: () => Promise<unknown>;
+  access: Pick<AccessService, "requirePermission">;
   loadStatus: () => Promise<AdminAssistantStatusSnapshot>;
   requestIdFactory: () => string;
 };
 
-export async function loadPlaceholderAdminAssistantStatus(): Promise<AdminAssistantStatusSnapshot> {
+const SAFE_DEGRADED_STATUS: AssistantRuntimeStatus = {
+  live: false,
+  ready: false,
+  capability: "degraded",
+  message: "助手基础服务暂不可用。",
+};
+
+const SAFE_DEGRADED_INSPECTION: AssistantRuntimeInspection = {
+  providerMode: "placeholder",
+  persistence: "disabled",
+  circuit: { state: "closed", consecutiveFailures: 0 },
+};
+
+function serviceState(
+  status: AssistantRuntimeStatus,
+): AdminAssistantStatusSnapshot["services"] {
+  const agentosState = status.ready
+    ? "ready"
+    : status.live
+      ? "degraded"
+      : "not_connected";
+  const databaseState = status.ready
+    ? "ready"
+    : status.live
+      ? "degraded"
+      : "not_connected";
+  const publicState =
+    status.capability === "available"
+      ? "ready"
+      : status.capability === "placeholder"
+        ? "placeholder"
+        : "degraded";
+
+  return [
+    {
+      id: "agentos",
+      label: "AgentOS",
+      state: agentosState,
+      detail: status.ready
+        ? "基础服务已就绪"
+        : status.live
+          ? "依赖尚未就绪"
+          : "服务不可用",
+    },
+    {
+      id: "database",
+      label: "运行数据库",
+      state: databaseState,
+      detail: status.ready
+        ? "运行依赖已就绪"
+        : status.live
+          ? "运行依赖异常"
+          : "状态不可用",
+    },
+    {
+      id: "model",
+      label: "模型",
+      state: status.capability === "available" ? "ready" : "not_configured",
+      detail: status.capability === "available" ? "能力已启用" : "尚未配置",
+    },
+    {
+      id: "public_entry",
+      label: "公开入口",
+      state: publicState,
+      detail:
+        publicState === "ready"
+          ? "AgentOS 模式可用"
+          : publicState === "placeholder"
+            ? "占位模式可用"
+            : "降级模式",
+    },
+  ];
+}
+
+function snapshot(
+  status: AssistantRuntimeStatus,
+  inspection: AssistantRuntimeInspection,
+): AdminAssistantStatusSnapshot {
+  const mode =
+    status.capability === "available" && inspection.providerMode === "agentos"
+      ? "agentos"
+      : "placeholder";
   return {
-    mode: "placeholder",
-    services: [
-      {
-        id: "agentos",
-        label: "AgentOS",
-        state: "not_connected",
-        detail: "尚未连接",
-      },
-      {
-        id: "database",
-        label: "会话数据库",
-        state: "not_configured",
-        detail: "尚未启用",
-      },
-      {
-        id: "model",
-        label: "模型",
-        state: "not_configured",
-        detail: "尚未配置",
-      },
-      {
-        id: "public_entry",
-        label: "公开入口",
-        state: "placeholder",
-        detail: "占位模式可用",
-      },
-    ],
+    mode,
+    runtime: {
+      live: status.live,
+      ready: status.ready,
+      capability: status.capability,
+      ...inspection,
+    },
+    services: serviceState(status),
     configuration: {
-      defaultAgent: "M 企业助理（占位）",
-      model: "未配置",
+      defaultAgent: mode === "agentos" ? "已配置" : "M 企业助理（占位）",
+      model: status.capability === "available" ? "已配置" : "未配置",
       skills: "未接入",
       sessionStorage: "未启用",
     },
-    message: "当前仅提供本地占位回复，尚未连接真实 AgentOS、模型或会话存储。",
+    message: status.message,
   };
 }
 
+export async function loadAdminAssistantStatus(
+  runtime?: Pick<AssistantRuntime, "status" | "inspect">,
+): Promise<AdminAssistantStatusSnapshot> {
+  try {
+    const resolved = runtime ?? getAssistantRuntime();
+    const status = await readSafeAssistantRuntimeStatus(resolved);
+    return snapshot(status, resolved.inspect());
+  } catch {
+    return snapshot(SAFE_DEGRADED_STATUS, SAFE_DEGRADED_INSPECTION);
+  }
+}
+
 const defaultDependencies: AdminAssistantStatusDependencies = {
-  authorize: () => requirePermission("admin:assistant"),
-  loadStatus: loadPlaceholderAdminAssistantStatus,
+  access: { requirePermission },
+  loadStatus: loadAdminAssistantStatus,
   requestIdFactory: () => crypto.randomUUID(),
 };
 
@@ -70,7 +155,7 @@ export function createAdminAssistantStatusHandler(
       dependencies.requestIdFactory,
     );
     try {
-      await dependencies.authorize();
+      await dependencies.access.requirePermission("admin:assistant");
       const body: AdminAssistantStatusResponse = {
         version: "1",
         requestId,

@@ -1,4 +1,8 @@
-import { AuthAccessError, requirePermission } from "@/server/auth/access";
+import {
+  AuthAccessError,
+  requirePermission,
+  type AccessService,
+} from "@/server/auth/access";
 import {
   createAdminAssistantErrorResponse,
   type AdminAssistantSessionsResponse,
@@ -7,21 +11,22 @@ import {
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
 
 type AdminAssistantSessionsDependencies = {
-  authorize: () => Promise<unknown>;
+  access: Pick<AccessService, "requirePermission">;
   loadSessions: () => Promise<AdminAssistantSessionsSnapshot>;
   requestIdFactory: () => string;
 };
 
 export async function loadPlaceholderAdminAssistantSessions(): Promise<AdminAssistantSessionsSnapshot> {
   return {
-    persisted: false,
+    persistence: "disabled",
+    capability: "placeholder",
     items: [],
     message: "占位模式不持久化会话；会话审计将在存储接入后开放。",
   };
 }
 
 const defaultDependencies: AdminAssistantSessionsDependencies = {
-  authorize: () => requirePermission("admin:assistant"),
+  access: { requirePermission },
   loadSessions: loadPlaceholderAdminAssistantSessions,
   requestIdFactory: () => crypto.randomUUID(),
 };
@@ -39,7 +44,7 @@ export function createAdminAssistantSessionsHandler(
       dependencies.requestIdFactory,
     );
     try {
-      await dependencies.authorize();
+      await dependencies.access.requirePermission("admin:assistant");
       const body: AdminAssistantSessionsResponse = {
         version: "1",
         requestId,

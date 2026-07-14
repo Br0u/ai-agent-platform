@@ -1,4 +1,9 @@
-import { AuthAccessError, requirePermission } from "@/server/auth/access";
+import {
+  AuthAccessError,
+  requirePermission,
+  type AccessService,
+  type WorkforceActor,
+} from "@/server/auth/access";
 import {
   createAdminAssistantErrorResponse,
   type AdminAssistantChatResponse,
@@ -15,13 +20,22 @@ import {
   assistantRequestLogger,
   type AssistantRequestLogger,
 } from "@/server/assistant/assistant-request-log";
-import { placeholderAssistantProvider } from "@/server/assistant/placeholder-assistant-provider";
+import { getAssistantRuntime } from "@/server/assistant/assistant-runtime";
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
+import {
+  AssistantRateLimitExceededError,
+  type AssistantRateLimiter,
+} from "@/server/assistant/assistant-rate-limit";
 import { readBoundedJson } from "@/server/http/read-bounded-json";
 
 type AdminAssistantChatDependencies = {
-  authorize: () => Promise<unknown>;
-  provider: AssistantProvider;
+  access: Pick<AccessService, "requirePermission">;
+  provider?: AssistantProvider;
+  resolveProvider: () => Promise<{
+    provider: AssistantProvider;
+    mode: "placeholder" | "agentos";
+  }>;
+  rateLimiter: AssistantRateLimiter;
   logger: AssistantRequestLogger;
   clock: () => number;
   requestIdFactory: () => string;
@@ -29,8 +43,11 @@ type AdminAssistantChatDependencies = {
 };
 
 const defaultDependencies: AdminAssistantChatDependencies = {
-  authorize: () => requirePermission("admin:assistant"),
-  provider: placeholderAssistantProvider,
+  access: { requirePermission },
+  resolveProvider: () => getAssistantRuntime().resolveProvider(),
+  rateLimiter: {
+    consume: (input) => getAssistantRuntime().rateLimiter.consume(input),
+  },
   logger: assistantRequestLogger,
   clock: () => performance.now(),
   requestIdFactory: () => crypto.randomUUID(),
@@ -50,8 +67,9 @@ export function createAdminAssistantChatHandler(
       request,
       dependencies.requestIdFactory,
     );
+    let actor: WorkforceActor;
     try {
-      await dependencies.authorize();
+      actor = await dependencies.access.requirePermission("admin:assistant");
     } catch (error) {
       if (error instanceof AuthAccessError) {
         const code =
@@ -74,7 +92,8 @@ export function createAdminAssistantChatHandler(
 
     const startedAt = dependencies.clock();
     let body: AdminAssistantChatResponse | AdminAssistantErrorResponse;
-    let statusCode: 200 | 400 | 503;
+    let statusCode: 200 | 400 | 429 | 503;
+    let retryAfterSeconds: number | undefined;
     const input = await readBoundedJson(request, MAX_REQUEST_BODY_BYTES);
     const assistantRequest = input.ok
       ? parseAssistantRequest(input.value)
@@ -85,8 +104,15 @@ export function createAdminAssistantChatHandler(
       statusCode = 400;
     } else {
       try {
+        await dependencies.rateLimiter.consume({
+          scope: "admin-test",
+          actorId: actor.userId,
+        });
+        const selected = dependencies.provider
+          ? { provider: dependencies.provider, mode: "placeholder" as const }
+          : await dependencies.resolveProvider();
         const providerResponse =
-          await dependencies.provider.reply(assistantRequest);
+          await selected.provider.reply(assistantRequest);
         if (!isAssistantProviderReply(providerResponse)) {
           throw new TypeError("Invalid assistant provider response");
         }
@@ -97,7 +123,7 @@ export function createAdminAssistantChatHandler(
         body = {
           version: "1",
           requestId,
-          mode: "placeholder",
+          mode: selected.mode,
           message: {
             id: messageId,
             role: "assistant",
@@ -108,12 +134,18 @@ export function createAdminAssistantChatHandler(
           ),
         };
         statusCode = 200;
-      } catch {
-        body = createAdminAssistantErrorResponse(
-          requestId,
-          "assistant_unavailable",
-        );
-        statusCode = 503;
+      } catch (error) {
+        if (error instanceof AssistantRateLimitExceededError) {
+          body = createAdminAssistantErrorResponse(requestId, "rate_limited");
+          statusCode = 429;
+          retryAfterSeconds = error.retryAfterSeconds;
+        } else {
+          body = createAdminAssistantErrorResponse(
+            requestId,
+            "assistant_unavailable",
+          );
+          statusCode = 503;
+        }
       }
     }
 
@@ -121,7 +153,12 @@ export function createAdminAssistantChatHandler(
     try {
       response = Response.json(body, {
         status: statusCode,
-        headers: NO_STORE_HEADERS,
+        headers: {
+          ...NO_STORE_HEADERS,
+          ...(retryAfterSeconds === undefined
+            ? {}
+            : { "Retry-After": String(retryAfterSeconds) }),
+        },
       });
     } catch {
       body = createAdminAssistantErrorResponse(
@@ -129,6 +166,7 @@ export function createAdminAssistantChatHandler(
         "assistant_unavailable",
       );
       statusCode = 503;
+      retryAfterSeconds = undefined;
       response = Response.json(body, {
         status: statusCode,
         headers: NO_STORE_HEADERS,

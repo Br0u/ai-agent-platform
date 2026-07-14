@@ -42,6 +42,7 @@ type AssistantSuccessfulBody = Pick<
   Partial<Pick<AssistantSuccessResponse, "session">>;
 
 const FAILURE_ANNOUNCEMENT = "发送失败，请重试或使用帮助中心或商务咨询。";
+const UNAVAILABLE_ANNOUNCEMENT = "助手服务暂不可用，请使用帮助中心或商务咨询。";
 const PUBLIC_ASSISTANT_ENDPOINT = "/api/v1/assistant/chat";
 const NAVIGATION_ABORT = Symbol("assistant-navigation-abort");
 const REQUEST_TIMEOUT = Symbol("assistant-request-timeout");
@@ -53,6 +54,7 @@ export const ASSISTANT_REQUEST_TIMEOUT_MS = 15_000;
 export type AssistantSessionOptions = {
   endpoint?: string;
   failureAnnouncement?: string;
+  unavailableAnnouncement?: string;
   timeoutMs?: number;
   successResponseGuard?: (input: unknown) => input is AssistantSuccessfulBody;
 };
@@ -106,6 +108,7 @@ function safeFailureAnnouncement(
   status: number,
   input: unknown,
   fallback: string,
+  unavailable: string,
 ): string {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     return fallback;
@@ -133,7 +136,7 @@ function safeFailureAnnouncement(
     return "请求过于频繁，请稍后再试。";
   }
   if (status === 503 && details.code === "assistant_unavailable") {
-    return "助手服务暂不可用，请使用帮助中心或商务咨询。";
+    return unavailable;
   }
   return fallback;
 }
@@ -145,6 +148,8 @@ export function useAssistantSession(
   const endpoint = options.endpoint ?? PUBLIC_ASSISTANT_ENDPOINT;
   const failureAnnouncement =
     options.failureAnnouncement ?? FAILURE_ANNOUNCEMENT;
+  const unavailableAnnouncement =
+    options.unavailableAnnouncement ?? UNAVAILABLE_ANNOUNCEMENT;
   const timeoutMs = options.timeoutMs ?? ASSISTANT_REQUEST_TIMEOUT_MS;
   const successResponseGuard =
     options.successResponseGuard ?? isAssistantSuccessResponse;
@@ -242,7 +247,12 @@ export function useAssistantSession(
         if (controller.signal.aborted) return;
         if (!response.ok || !successResponseGuard(body)) {
           throw new SafeAssistantRequestFailure(
-            safeFailureAnnouncement(response.status, body, failureAnnouncement),
+            safeFailureAnnouncement(
+              response.status,
+              body,
+              failureAnnouncement,
+              unavailableAnnouncement,
+            ),
           );
         }
 
@@ -294,6 +304,7 @@ export function useAssistantSession(
     [
       endpoint,
       failureAnnouncement,
+      unavailableAnnouncement,
       successResponseGuard,
       timeoutMs,
       updateRequestStatus,

@@ -9,6 +9,7 @@ import {
   createAgentOSProbe,
   createAgentOSReadinessCircuit,
   resolveAgentOSReadinessSettings,
+  type AgentOSCircuitInspection,
   type AgentOSReadinessSnapshot,
 } from "./agentos-readiness";
 import { createAnonymousSessionManager } from "./anonymous-session";
@@ -73,6 +74,12 @@ export type AssistantRuntimeStatus = AgentOSReadinessSnapshot & {
 export type AssistantRuntimeProvider = {
   provider: AssistantProvider;
   mode: AssistantProviderMode;
+};
+
+export type AssistantRuntimeInspection = {
+  providerMode: AssistantProviderMode;
+  persistence: "disabled";
+  circuit: Pick<AgentOSCircuitInspection, "state" | "consecutiveFailures">;
 };
 
 export type AssistantRuntimeSession = {
@@ -205,6 +212,19 @@ export function createAssistantRuntime(
     },
     async status(): Promise<AssistantRuntimeStatus> {
       return normalizeAssistantRuntimeStatus(await getReadiness().status());
+    },
+    inspect(): AssistantRuntimeInspection {
+      const inspection = readiness?.inspect();
+      return {
+        providerMode: providerSettings.mode,
+        persistence: "disabled",
+        circuit: inspection
+          ? {
+              state: inspection.state,
+              consecutiveFailures: inspection.consecutiveFailures,
+            }
+          : { state: "closed", consecutiveFailures: 0 },
+      };
     },
     async resolveProvider(): Promise<AssistantRuntimeProvider> {
       if (providerSettings.mode === "placeholder") {
