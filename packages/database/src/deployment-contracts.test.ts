@@ -840,9 +840,14 @@ exit 0
       "AGNO_MIGRATOR_DATABASE_URL",
       "AGNO_DATABASE_URL",
       "OS_SECURITY_KEY",
+      "ASSISTANT_SESSION_SECRET",
+      "ASSISTANT_RATE_LIMIT_SECRET",
     ]) {
       expect(workflow).toContain(key);
     }
+    expect(workflow).toContain(
+      "ASSISTANT_PUBLIC_ORIGIN: http://127.0.0.1:3000",
+    );
     expect(workflow).toContain("::add-mask::$value");
 
     const orderedGates = [
@@ -1530,6 +1535,7 @@ test -n "$output"
     expect(config).toContain("process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH");
     expect(config).toContain('name: "mobile"');
     expect(config).toContain("viewport: { width: 390, height: 844 }");
+    expect(config).toContain('command: "node .next/standalone/server.js"');
     expect(config).toMatch(/webServer:\s*externalBaseUrl\s*\?\s*undefined/u);
     expect(read("apps/web/e2e/auth-smoke.spec.ts")).toContain("test(");
     const accessSpec = read("apps/web/e2e/auth-access.spec.ts");

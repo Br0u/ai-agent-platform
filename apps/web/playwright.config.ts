@@ -35,7 +35,7 @@ export default defineConfig({
   webServer: externalBaseUrl
     ? undefined
     : {
-        command: "pnpm start",
+        command: "node .next/standalone/server.js",
         url: `${baseURL}/api/health/live`,
         reuseExistingServer: false,
         timeout: 120_000,
