@@ -385,7 +385,7 @@ test("portal header entry, quick assistant, dock, and standalone workspace are k
     0,
   );
   const composer = page.getByRole("textbox", { name: "输入问题" });
-  await page.getByRole("button", { name: "打开 AI 助理" }).click();
+  await page.getByRole("button", { name: "聚焦 AI 助理提问框" }).click();
   await expectVisibleKeyboardFocus(composer);
   await expectExactViewportWidth(page);
   await attachScreenshot(page, testInfo, "assistant-workspace");
