@@ -15,6 +15,10 @@ AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT=aap-assistant-e2e-task9 \
 
 脚本在构建前原子取得项目锁，并拒绝接管已有容器、卷、网络、项目镜像或已被占用的 `8080` 端口。只有本次运行取得所有权后，退出 trap 才执行 `down --rmi local -v --remove-orphans`，随后删除临时 secret 目录和自己的锁。
 
+可配置项目名用于并发运行和保留某次失败现场，但仅接受 `aap-assistant-e2e` 或带安全字符后缀的同前缀名称，避免 shell 与路径注入。数据库、认证和 Assistant 密钥全部写入权限为 `0600` 的临时 secret 文件，不进入命令参数；临时目录由所有权感知的 EXIT trap 清理。Dockerfile 的 pnpm store 使用 BuildKit 内容寻址缓存，目的是让 registry 中断后能够复用已校验包，不缓存项目 secret，也不改变锁文件校验。
+
+所有权只会在锁、同名资源、端口、secret 和 `docker compose config --quiet` 全部通过后取得。在此之前任何失败都不会调用 `docker compose down`；取得所有权后的 build、up、Playwright 或正常退出则恰好清理一次。
+
 ## 自动验证范围
 
 - 同时运行 `e2e/assistant-experience.spec.ts` 与 `e2e/pricing-assistant.spec.ts`，不会遗漏旧价格计算验收。
@@ -28,7 +32,8 @@ AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT=aap-assistant-e2e-task9 \
 
 ## 最新真实运行记录
 
-- 静态契约：`37/37` 通过。
+- 部署契约：`38/38` 通过，其中 fake Docker/pnpm/openssl/lsof harness 在 CI 可直接执行，不依赖本机 Docker。
+- 可执行安全分支覆盖：已有锁、已有同项目资源、端口占用、secret 创建失败、compose config 失败均为 `down 0`；取得所有权后的 build/up/后续失败与成功均为 `down 1`，且临时 secret 和自有锁无残留。
 - Playwright：两个 spec、两个项目共发现 `22` 个用例。
 - 完整 runner 两次使用官方 npm registry 构建，分别在 `937/943`、`935/943` 个依赖下载后因网络超时退出，均未进入 Playwright；镜像源复核同样返回连接重置，因此没有继续盲目重试。
 - 每次失败后的独立项目容器、卷、网络、项目镜像、锁和临时 secret 均为 `0` 残留。

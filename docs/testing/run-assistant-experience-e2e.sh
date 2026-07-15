@@ -268,8 +268,8 @@ materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret 
   exit 1
 }
 
-owns_project=true
 docker compose -p "$project" --env-file "$env_file" $compose_files config --quiet
+owns_project=true
 docker compose -p "$project" --env-file "$env_file" $compose_files build migrate web
 docker compose -p "$project" --env-file "$env_file" $compose_files up -d --wait db
 docker compose -p "$project" --env-file "$env_file" $compose_files run --rm migrate
