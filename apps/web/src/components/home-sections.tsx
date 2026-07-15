@@ -1,110 +1,179 @@
 import Image from "next/image";
 import Link from "next/link";
+import { Fragment } from "react";
+import platformLoop from "../assets/home/platform-loop.webp";
+import resourcesFolder from "../assets/home/resources-folder.webp";
+import solutionsPlatform from "../assets/home/solutions-platform.webp";
 import platformOverview from "../assets/huakun-yuanqi/platform-overview.png";
-import wordmark from "../assets/huakun-yuanqi/wordmark.png";
 import {
   capabilities,
   enterpriseProofs,
+  homeCopy,
   platformLayers,
   resources,
   solutions,
 } from "./home-content";
+import { HomeIcon } from "./home-icon";
 import "./home.css";
 
-const platformOverviewSrc =
-  typeof platformOverview === "string"
-    ? platformOverview
-    : platformOverview.src;
+type GradientHeadingCopy = {
+  before: string;
+  emphasis: string;
+  after: string;
+};
+
+function GradientHeadingText({ copy }: { copy: GradientHeadingCopy }) {
+  return (
+    <>
+      {copy.before}
+      <span className="home-gradient-text">{copy.emphasis}</span>
+      {copy.after}
+    </>
+  );
+}
 
 export function HeroEvidence() {
   return (
-    <section className="home-section home-hero" aria-labelledby="hero-title">
+    <section
+      className="home-section home-hero"
+      data-home-region="hero"
+      aria-labelledby="hero-title"
+    >
       <div className="home-frame home-hero__grid">
         <div className="home-hero__copy">
-          <Image
-            className="home-hero__wordmark"
-            src={wordmark}
-            alt="华鲲元启"
-            width={817}
-            height={219}
-            priority
-          />
-          <p className="home-technical-line">
-            国产算力 · 私有化部署 · 企业级 AI 开发
-          </p>
-          <h1 id="hero-title">让企业 AI 从模型走向业务</h1>
+          <p className="home-technical-line">{homeCopy.hero.technicalLine}</p>
+          <h1 id="hero-title">
+            <GradientHeadingText copy={homeCopy.hero.heading} />
+          </h1>
           <p className="home-product-name">
-            <span>华鲲元启 AI开发赋能平台</span>
-            <small>TGDataXAI</small>
+            <span>{homeCopy.hero.productName}</span>
+            <small>{homeCopy.hero.productCode}</small>
           </p>
-          <p className="home-hero__summary">
-            以异构算力智能调度为底座，把模型仓库、知识工程、流程编排、训练、推理与评估连接为一套企业级开发体系，让智能体开发像搭积木一样简单。
-          </p>
+          <p className="home-hero__summary">{homeCopy.hero.summary}</p>
           <div className="home-actions">
-            <Link className="home-action home-action--primary" href="/product">
-              了解平台
+            <Link
+              className="home-action home-action--primary"
+              href={homeCopy.hero.primaryCta.href}
+            >
+              {homeCopy.hero.primaryCta.label}
             </Link>
-            <Link className="home-action" href="/docs">
-              阅读文档
+            <Link
+              className="home-action"
+              href={homeCopy.hero.secondaryCta.href}
+            >
+              {homeCopy.hero.secondaryCta.label}
             </Link>
           </div>
         </div>
-        <figure className="home-evidence">
+        <figure className="home-evidence home-glass-panel">
           <div className="home-evidence__bar">
-            <span>PLATFORM / UI-01</span>
-            <span>TGDataXAI</span>
+            <span>{homeCopy.hero.evidenceLabel}</span>
+            <span>{homeCopy.hero.evidenceProduct}</span>
           </div>
-          {/* eslint-disable-next-line @next/next/no-img-element -- Native loading avoids conflicting desktop LCP and mobile preload behavior for this responsive screenshot. */}
-          <img
-            src={platformOverviewSrc}
+          <Image
+            src={platformOverview}
             alt="华鲲元启应用广场界面"
             width={3178}
             height={1730}
-            loading="eager"
-            decoding="async"
+            priority
           />
-          <figcaption>应用广场界面 · 用户提供的华鲲元启平台截图</figcaption>
+          <figcaption>{homeCopy.hero.evidenceCaption}</figcaption>
         </figure>
       </div>
     </section>
   );
 }
 
-export function CapabilityRail() {
+function CapabilityRail() {
   return (
-    <section className="home-section" aria-label="平台关键能力">
-      <div className="home-frame home-capability-rail">
-        {capabilities.map((capability, index) => (
-          <div className="home-capability" key={capability}>
-            <span>{String(index + 1).padStart(2, "0")}</span>
-            <strong>{capability}</strong>
-          </div>
-        ))}
-      </div>
-    </section>
+    <div className="home-capability-rail">
+      {capabilities.map((capability, index) => (
+        <Fragment key={capability.code}>
+          <article className="home-capability-card">
+            <span className="home-capability-card__code">
+              {capability.code}
+            </span>
+            <div className="home-capability-card__copy">
+              <h3>{capability.title}</h3>
+              <p>{capability.description}</p>
+            </div>
+            <span className="home-icon-shell">
+              <HomeIcon name={capability.icon} />
+            </span>
+          </article>
+          {index < capabilities.length - 1 ? (
+            <span className="home-capability-connector" aria-hidden="true">
+              ›
+            </span>
+          ) : null}
+        </Fragment>
+      ))}
+    </div>
   );
 }
 
-export function PlatformFlow() {
+function PlatformFlow() {
   return (
-    <section className="home-section" aria-labelledby="platform-flow-title">
-      <div className="home-frame home-section-grid">
-        <header>
-          <p className="home-section-kicker">Platform / 01</p>
-          <h2 id="platform-flow-title">一套平台，贯通企业 AI 开发全流程</h2>
-          <p className="home-section-intro">
-            从企业数据进入知识工程，到智能体发布与模型运行，能力被组织为可理解、可管理的开发路径。
-          </p>
-        </header>
-        <div className="home-index-list">
-          {platformLayers.map((layer) => (
-            <article className="home-index-row" key={layer.code}>
-              <span>{layer.code}</span>
-              <h3>{layer.title}</h3>
-              <p>{layer.description}</p>
-            </article>
-          ))}
+    <div className="home-platform__grid">
+      <header className="home-platform__intro home-glass-panel">
+        <p className="home-section-kicker">{homeCopy.platform.kicker}</p>
+        <h2>
+          <GradientHeadingText copy={homeCopy.platform.heading} />
+        </h2>
+        <p className="home-section-intro">{homeCopy.platform.intro}</p>
+        <div className="home-actions">
+          <Link
+            className="home-action home-action--primary"
+            href={homeCopy.platform.primaryCta.href}
+          >
+            {homeCopy.platform.primaryCta.label}
+          </Link>
+          <Link
+            className="home-action"
+            href={homeCopy.platform.secondaryCta.href}
+          >
+            {homeCopy.platform.secondaryCta.label}
+          </Link>
         </div>
+        <Image
+          className="home-platform__illustration"
+          src={platformLoop}
+          alt=""
+          width={1448}
+          height={1086}
+          aria-hidden="true"
+          data-home-decoration="true"
+        />
+      </header>
+      <div className="home-platform__list home-glass-panel">
+        {platformLayers.map((layer) => (
+          <article className="home-platform-row" key={layer.code}>
+            <span className="home-icon-shell">
+              <HomeIcon name={layer.icon} />
+            </span>
+            <span className="home-platform-row__code">{layer.code}</span>
+            <h3>{layer.title}</h3>
+            <p>{layer.description}</p>
+            <span className="home-row-arrow" aria-hidden="true">
+              ›
+            </span>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function PlatformOverview() {
+  return (
+    <section
+      className="home-section home-platform-overview"
+      data-home-region="platform"
+      aria-label="平台能力与开发流程"
+    >
+      <div className="home-frame">
+        <CapabilityRail />
+        <PlatformFlow />
       </div>
     </section>
   );
@@ -113,18 +182,25 @@ export function PlatformFlow() {
 export function EnterpriseProof() {
   return (
     <section
-      className="home-section home-proof"
+      className="home-section home-enterprise"
+      data-home-region="enterprise"
       aria-labelledby="enterprise-proof-title"
     >
-      <div className="home-frame">
-        <header className="home-proof__heading">
-          <p className="home-section-kicker">Enterprise / 02</p>
-          <h2 id="enterprise-proof-title">为企业边界而设计</h2>
+      <div className="home-frame home-enterprise__layout">
+        <header className="home-enterprise__heading home-glass-panel">
+          <p className="home-section-kicker">{homeCopy.enterprise.kicker}</p>
+          <h2 id="enterprise-proof-title">{homeCopy.enterprise.heading}</h2>
+          <span className="home-enterprise__underline" aria-hidden="true" />
         </header>
-        <div className="home-proof__list">
+        <div className="home-enterprise__list home-glass-panel">
           {enterpriseProofs.map((proof, index) => (
-            <article className="home-proof__item" key={proof.title}>
-              <span>{String(index + 1).padStart(2, "0")}</span>
+            <article className="home-enterprise-row" key={proof.title}>
+              <span className="home-icon-shell">
+                <HomeIcon name={proof.icon} />
+              </span>
+              <span className="home-enterprise-row__code">
+                {String(index + 1).padStart(2, "0")}
+              </span>
               <h3>{proof.title}</h3>
               <p>{proof.description}</p>
             </article>
@@ -137,27 +213,43 @@ export function EnterpriseProof() {
 
 export function SolutionIndex() {
   return (
-    <section className="home-section" aria-labelledby="solution-index-title">
-      <div className="home-frame home-section-grid">
-        <header>
-          <p className="home-section-kicker">Solutions / 03</p>
-          <h2 id="solution-index-title">从平台能力，走向行业场景</h2>
-          <p className="home-section-intro">
-            行业方案建立在统一平台之上。视觉检索是其中的多模态子能力，不是独立上位平台。
-          </p>
+    <section
+      className="home-section home-solutions"
+      data-home-region="solutions"
+      aria-labelledby="solution-index-title"
+    >
+      <div className="home-frame home-solutions__grid">
+        <header className="home-solutions__intro home-glass-panel">
+          <p className="home-section-kicker">{homeCopy.solutions.kicker}</p>
+          <h2 id="solution-index-title">
+            <GradientHeadingText copy={homeCopy.solutions.heading} />
+          </h2>
+          <p className="home-section-intro">{homeCopy.solutions.intro}</p>
+          <Image
+            className="home-solutions__illustration"
+            src={solutionsPlatform}
+            alt=""
+            width={1448}
+            height={1086}
+            aria-hidden="true"
+            data-home-decoration="true"
+          />
         </header>
-        <div className="home-solution-list">
+        <div className="home-solution-list home-glass-panel">
           {solutions.map((solution, index) => (
             <article
               className={
                 solution.subsetLabel
-                  ? "home-solution home-solution--subset"
-                  : "home-solution"
+                  ? "home-solution-row home-solution-row--subset"
+                  : "home-solution-row"
               }
               key={solution.title}
             >
-              <span className="home-solution__code">S{index + 1}</span>
-              <div>
+              <span className="home-icon-shell">
+                <HomeIcon name={solution.icon} />
+              </span>
+              <span className="home-solution-row__code">S{index + 1}</span>
+              <div className="home-solution-row__copy">
                 <h3>{solution.title}</h3>
                 {solution.subsetLabel ? (
                   <strong className="home-subset-label">
@@ -181,23 +273,41 @@ export function ResourceTable() {
   return (
     <section
       className="home-section home-resources"
+      data-home-region="resources"
       aria-labelledby="resource-table-title"
     >
-      <div className="home-frame home-section-grid">
-        <header>
-          <p className="home-section-kicker">Resources / 04</p>
-          <h2 id="resource-table-title">下一步，从这里开始</h2>
+      <div className="home-frame home-resources__grid">
+        <header className="home-resources__intro home-glass-panel">
+          <p className="home-section-kicker">{homeCopy.resources.kicker}</p>
+          <h2 id="resource-table-title">
+            <GradientHeadingText copy={homeCopy.resources.heading} />
+          </h2>
+          <p className="home-section-intro">{homeCopy.resources.intro}</p>
+          <Image
+            className="home-resources__illustration"
+            src={resourcesFolder}
+            alt=""
+            width={1448}
+            height={1086}
+            aria-hidden="true"
+            data-home-decoration="true"
+          />
         </header>
-        <div className="home-resource-list">
+        <div className="home-resource-list home-glass-panel">
           {resources.map((resource) => (
             <Link
               className="home-resource"
               href={resource.href}
               key={resource.href}
             >
-              <strong>{resource.title}</strong>
-              <span>{resource.description}</span>
-              <span className="home-row-arrow" aria-hidden="true">
+              <span className="home-icon-shell">
+                <HomeIcon name={resource.icon} />
+              </span>
+              <span className="home-resource__copy">
+                <strong>{resource.title}</strong>
+                <span>{resource.description}</span>
+              </span>
+              <span className="home-resource__arrow" aria-hidden="true">
                 →
               </span>
             </Link>
@@ -212,6 +322,7 @@ export function PrivateDeploymentClose() {
   return (
     <section
       className="home-closing"
+      data-home-region="closing"
       aria-labelledby="private-deployment-title"
     >
       <div className="home-frame home-closing__grid">

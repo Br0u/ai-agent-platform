@@ -1,8 +1,7 @@
 import {
-  CapabilityRail,
   EnterpriseProof,
   HeroEvidence,
-  PlatformFlow,
+  PlatformOverview,
   PrivateDeploymentClose,
   ResourceTable,
   SolutionIndex,
@@ -11,9 +10,13 @@ import {
 export default function HomePage() {
   return (
     <main className="home" aria-label="华鲲元启门户首页">
+      <div className="home-atmosphere" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
       <HeroEvidence />
-      <CapabilityRail />
-      <PlatformFlow />
+      <PlatformOverview />
       <EnterpriseProof />
       <SolutionIndex />
       <ResourceTable />
