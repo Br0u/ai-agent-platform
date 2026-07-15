@@ -299,8 +299,9 @@
 
 @media (max-width: 720px) {
   .assistant-dock {
+    top: var(--assistant-dock-viewport-offset-top, 0px);
     width: 100vw;
-    height: 100dvh;
+    height: var(--assistant-dock-viewport-height, 100dvh);
     border-left: 0;
     box-shadow: none;
   }

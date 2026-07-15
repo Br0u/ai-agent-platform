@@ -1,6 +1,11 @@
 "use client";
 
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import {
+  AnimatePresence,
+  motion,
+  useIsPresent,
+  useReducedMotion,
+} from "framer-motion";
 import {
   ArrowUpRight,
   ChevronRight,
@@ -92,6 +97,60 @@ function restoreAttribute(
   else element.setAttribute(name, previousValue);
 }
 
+type ModalIsolation = {
+  background: HTMLElement | null;
+  leases: number;
+  previousAriaHidden: string | null;
+  previousInert: string | null;
+  previousOverflow: string;
+};
+
+let modalIsolation: ModalIsolation | null = null;
+
+function acquireModalIsolation() {
+  if (modalIsolation === null) {
+    const background = document.querySelector<HTMLElement>(
+      "[data-assistant-background-root]",
+    );
+    modalIsolation = {
+      background,
+      leases: 0,
+      previousAriaHidden: background?.getAttribute("aria-hidden") ?? null,
+      previousInert: background?.getAttribute("inert") ?? null,
+      previousOverflow: document.body.style.overflow,
+    };
+    background?.setAttribute("aria-hidden", "true");
+    background?.setAttribute("inert", "");
+    document.body.style.overflow = "hidden";
+  }
+
+  modalIsolation.leases += 1;
+  let released = false;
+  return () => {
+    if (released || modalIsolation === null) return;
+    released = true;
+    modalIsolation.leases -= 1;
+    if (modalIsolation.leases > 0) return;
+
+    const isolation = modalIsolation;
+    modalIsolation = null;
+    document.body.style.overflow = isolation.previousOverflow;
+    if (isolation.background !== null) {
+      restoreAttribute(
+        isolation.background,
+        "aria-hidden",
+        isolation.previousAriaHidden,
+      );
+      restoreAttribute(isolation.background, "inert", isolation.previousInert);
+    }
+  };
+}
+
+type MobileVisualViewport = {
+  height: number;
+  offsetTop: number;
+};
+
 function AssistantDockPanel() {
   const {
     close,
@@ -106,47 +165,51 @@ function AssistantDockPanel() {
   const { isMobile, isResizing, resizeHandleProps, width } =
     useAssistantDockSize();
   const prefersReducedMotion = useReducedMotion();
+  const isPresent = useIsPresent();
   const dialogRef = useRef<HTMLElement>(null);
   const backdropPointerRef = useRef<number | null>(null);
-  const releaseModalEffectsRef = useRef<(() => void) | null>(null);
+  const exitingRef = useRef(false);
+  const returnFocusTargetRef = useRef<HTMLElement | null>(null);
+  const exitIntentRef = useRef<"close" | "collapse" | null>(null);
+  const [mobileVisualViewport, setMobileVisualViewport] =
+    useState<MobileVisualViewport | null>(null);
   const descriptionId = useId();
   const currentServiceLabel = serviceLabel(serviceState);
   const sending = session.requestStatus === "sending";
   const closeFromEffect = useEffectEvent(close);
   const focusComposerFromEffect = useEffectEvent(focusComposer);
+  const isPresentFromEffect = useEffectEvent(() => isPresent);
+
+  useEffect(() => {
+    if (isPresent) exitingRef.current = false;
+  }, [isPresent]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
-    const background = document.querySelector<HTMLElement>(
-      "[data-assistant-background-root]",
-    );
-    const previousOverflow = document.body.style.overflow;
-    const previousAriaHidden = background?.getAttribute("aria-hidden") ?? null;
-    const previousInert = background?.getAttribute("inert") ?? null;
-
-    background?.setAttribute("aria-hidden", "true");
-    background?.setAttribute("inert", "");
-    document.body.style.overflow = "hidden";
-    queueMicrotask(focusComposerFromEffect);
-
-    let released = false;
-    const releaseModalEffects = () => {
-      if (released) return;
-      released = true;
-      document.body.style.overflow = previousOverflow;
-      if (background !== null) {
-        restoreAttribute(background, "aria-hidden", previousAriaHidden);
-        restoreAttribute(background, "inert", previousInert);
-      }
-    };
-    releaseModalEffectsRef.current = releaseModalEffects;
+    const activeElement = document.activeElement;
+    if (
+      activeElement instanceof HTMLElement &&
+      (dialog === null || !dialog.contains(activeElement))
+    ) {
+      returnFocusTargetRef.current = activeElement;
+    }
+    const releaseModalIsolation = acquireModalIsolation();
+    queueMicrotask(() => {
+      if (dialog === null || !isPresentFromEffect()) return;
+      focusComposerFromEffect();
+      if (dialog.contains(document.activeElement)) return;
+      getFocusableElements(dialog)[0]?.focus();
+      if (!dialog.contains(document.activeElement)) dialog.focus();
+    });
 
     const requestClose = () => {
-      releaseModalEffects();
+      exitingRef.current = true;
+      exitIntentRef.current = "close";
       closeFromEffect();
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (exitingRef.current || !isPresentFromEffect()) return;
       if (event.key === "Escape") {
         event.preventDefault();
         requestClose();
@@ -178,20 +241,80 @@ function AssistantDockPanel() {
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      releaseModalEffects();
-      if (releaseModalEffectsRef.current === releaseModalEffects) {
-        releaseModalEffectsRef.current = null;
+      releaseModalIsolation();
+      if (exitIntentRef.current === "close") {
+        const returnFocusTarget = returnFocusTargetRef.current;
+        queueMicrotask(() => {
+          if (modalIsolation === null && returnFocusTarget?.isConnected) {
+            returnFocusTarget.focus();
+          }
+        });
       }
     };
   }, []);
 
+  useEffect(() => {
+    if (!isMobile) return;
+    const visualViewport = window.visualViewport;
+    if (!visualViewport) return;
+    const dialog = dialogRef.current;
+    let cancelled = false;
+
+    const ensureComposerVisible = (target: HTMLElement) => {
+      const composerWrap = target.closest<HTMLElement>(
+        ".assistant-conversation__composer-wrap",
+      );
+      composerWrap?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+      const messageHistory = dialog?.querySelector<HTMLElement>(
+        "[data-testid='assistant-message-history']",
+      );
+      if (messageHistory !== null && messageHistory !== undefined) {
+        messageHistory.scrollTop = messageHistory.scrollHeight;
+      }
+    };
+    const updateVisualViewport = () => {
+      if (cancelled) return;
+      setMobileVisualViewport({
+        height: Math.max(1, visualViewport.height),
+        offsetTop: Math.max(0, visualViewport.offsetTop),
+      });
+      const activeElement = document.activeElement;
+      if (
+        activeElement instanceof HTMLElement &&
+        dialog?.contains(activeElement) &&
+        activeElement.matches("textarea")
+      ) {
+        queueMicrotask(() => ensureComposerVisible(activeElement));
+      }
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLElement && target.matches("textarea")) {
+        ensureComposerVisible(target);
+      }
+    };
+
+    queueMicrotask(updateVisualViewport);
+    visualViewport.addEventListener("resize", updateVisualViewport);
+    visualViewport.addEventListener("scroll", updateVisualViewport);
+    dialog?.addEventListener("focusin", onFocusIn);
+    return () => {
+      cancelled = true;
+      visualViewport.removeEventListener("resize", updateVisualViewport);
+      visualViewport.removeEventListener("scroll", updateVisualViewport);
+      dialog?.removeEventListener("focusin", onFocusIn);
+    };
+  }, [isMobile]);
+
   const requestClose = () => {
-    releaseModalEffectsRef.current?.();
+    exitingRef.current = true;
+    exitIntentRef.current = "close";
     close();
   };
 
   const requestCollapse = () => {
-    releaseModalEffectsRef.current?.();
+    exitingRef.current = true;
+    exitIntentRef.current = "collapse";
     collapseToQuick();
   };
 
@@ -216,6 +339,12 @@ function AssistantDockPanel() {
   const panelStyle = {
     "--assistant-dock-width":
       isMobile || width === null ? "100%" : `${width}px`,
+    ...(isMobile && mobileVisualViewport !== null
+      ? {
+          "--assistant-dock-viewport-height": `${mobileVisualViewport.height}px`,
+          "--assistant-dock-viewport-offset-top": `${mobileVisualViewport.offsetTop}px`,
+        }
+      : {}),
   } as CSSProperties;
 
   const backdropVariants = prefersReducedMotion

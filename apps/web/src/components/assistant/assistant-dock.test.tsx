@@ -26,6 +26,44 @@ const placeholderStatus: AssistantStatusResponse = {
 
 let mobileViewport = false;
 
+type MockVisualViewport = {
+  height: number;
+  offsetTop: number;
+  addEventListener: ReturnType<typeof vi.fn>;
+  removeEventListener: ReturnType<typeof vi.fn>;
+  dispatch: (type: "resize" | "scroll") => void;
+};
+
+function installVisualViewport({
+  height,
+  offsetTop,
+}: {
+  height: number;
+  offsetTop: number;
+}): MockVisualViewport {
+  const listeners = new Map<string, Set<EventListener>>();
+  const viewport: MockVisualViewport = {
+    height,
+    offsetTop,
+    addEventListener: vi.fn((type: string, listener: EventListener) => {
+      const registered = listeners.get(type) ?? new Set<EventListener>();
+      registered.add(listener);
+      listeners.set(type, registered);
+    }),
+    removeEventListener: vi.fn((type: string, listener: EventListener) => {
+      listeners.get(type)?.delete(listener);
+    }),
+    dispatch: (type) => {
+      listeners.get(type)?.forEach((listener) => listener(new Event(type)));
+    },
+  };
+  Object.defineProperty(window, "visualViewport", {
+    configurable: true,
+    value: viewport,
+  });
+  return viewport;
+}
+
 function DockHarness({ originalAriaHidden }: { originalAriaHidden?: "false" }) {
   const experience = useAssistantExperience();
 
@@ -41,6 +79,15 @@ function DockHarness({ originalAriaHidden }: { originalAriaHidden?: "false" }) {
           type="button"
         >
           打开 AI 助理工作区
+        </button>
+        <button
+          onClick={(event) => {
+            void experience.session.submit("发送中的问题");
+            experience.openDockFrom(event.currentTarget);
+          }}
+          type="button"
+        >
+          发送中打开 AI 助理工作区
         </button>
       </div>
       <AssistantDock />
@@ -98,6 +145,14 @@ beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
     configurable: true,
     value: vi.fn(),
+  });
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  Object.defineProperty(window, "visualViewport", {
+    configurable: true,
+    value: undefined,
   });
   vi.stubGlobal(
     "fetch",
@@ -246,6 +301,87 @@ describe("AssistantDock", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  it("keeps modal isolation through exit without letting the old dialog recapture focus", async () => {
+    renderDock({ originalAriaHidden: "false" });
+    const background = screen.getByTestId("assistant-background");
+    const trigger = screen.getByRole("button", {
+      name: "打开 AI 助理工作区",
+    });
+    const dialog = await openDock();
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "关闭 AI 助理工作区" }),
+    );
+
+    expect(dialog).toBeInTheDocument();
+    expect(background).toHaveAttribute("inert");
+    expect(background).toHaveAttribute("aria-hidden", "true");
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.activeElement).toBe(trigger);
+
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(dialog).not.toContainElement(document.activeElement as HTMLElement);
+
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(background).not.toHaveAttribute("inert");
+    expect(background).toHaveAttribute("aria-hidden", "false");
+    expect(document.body.style.overflow).toBe("clip");
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("keeps isolation and scroll lock when reopened during exit", async () => {
+    renderDock();
+    const background = screen.getByTestId("assistant-background");
+    const trigger = screen.getByRole("button", {
+      name: "打开 AI 助理工作区",
+    });
+    const dialog = await openDock();
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "关闭 AI 助理工作区" }),
+    );
+    fireEvent.click(trigger);
+
+    expect(background).toHaveAttribute("inert");
+    expect(background).toHaveAttribute("aria-hidden", "true");
+    expect(document.body.style.overflow).toBe("hidden");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 240));
+    });
+    expect(
+      screen.getByRole("dialog", { name: "AI 助理工作区" }),
+    ).toBeInTheDocument();
+    expect(background).toHaveAttribute("inert");
+    expect(document.body.style.overflow).toBe("hidden");
+  });
+
+  it("falls back to a focusable control when the composer is disabled", async () => {
+    const neverSettles = new Promise<Response>(() => undefined);
+    vi.mocked(fetch).mockImplementation((input) =>
+      String(input).includes("/chat")
+        ? neverSettles
+        : Promise.resolve(Response.json(placeholderStatus)),
+    );
+    renderDock();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "发送中打开 AI 助理工作区",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "AI 助理工作区",
+    });
+    const composer = within(dialog).getByRole("textbox", { name: "输入问题" });
+    await waitFor(() => expect(composer).toBeDisabled());
+    await waitFor(() =>
+      expect(dialog).toContainElement(
+        document.activeElement as HTMLElement | null,
+      ),
+    );
+    expect(document.activeElement).not.toBe(composer);
+  });
+
   it("exposes an accessible desktop resize separator and keeps it out of mobile", async () => {
     const desktop = renderDock();
     const desktopDialog = await openDock();
@@ -269,6 +405,58 @@ describe("AssistantDock", () => {
     const mobileDialog = await openDock();
     await waitFor(() => expect(mobileDialog).toHaveAttribute("data-mobile"));
     expect(within(mobileDialog).queryByRole("separator")).toBeNull();
+  });
+
+  it("tracks the mobile visual viewport and cleans up its listeners", async () => {
+    mobileViewport = true;
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 390,
+    });
+    const visualViewport = installVisualViewport({
+      height: 620,
+      offsetTop: 84,
+    });
+    const view = renderDock();
+    const dialog = await openDock();
+
+    await waitFor(() => {
+      expect(dialog).toHaveStyle({
+        "--assistant-dock-viewport-height": "620px",
+        "--assistant-dock-viewport-offset-top": "84px",
+      });
+    });
+    expect(within(dialog).queryByRole("separator")).toBeNull();
+
+    visualViewport.height = 418;
+    visualViewport.offsetTop = 126;
+    act(() => visualViewport.dispatch("resize"));
+    await waitFor(() => {
+      expect(dialog).toHaveStyle({
+        "--assistant-dock-viewport-height": "418px",
+        "--assistant-dock-viewport-offset-top": "126px",
+      });
+    });
+
+    const composer = within(dialog).getByRole("textbox", { name: "输入问题" });
+    fireEvent.focus(composer);
+    expect(
+      composer.closest(".assistant-conversation__composer-wrap"),
+    ).toHaveProperty("scrollIntoView");
+    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({
+      block: "nearest",
+      inline: "nearest",
+    });
+
+    view.unmount();
+    expect(visualViewport.removeEventListener).toHaveBeenCalledWith(
+      "resize",
+      expect.any(Function),
+    );
+    expect(visualViewport.removeEventListener).toHaveBeenCalledWith(
+      "scroll",
+      expect.any(Function),
+    );
   });
 
   it("keeps the dialog mounted long enough to run its exit transition", async () => {
