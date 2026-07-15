@@ -15,7 +15,7 @@ const CURRENCY_AMOUNT =
 type BrowserDiagnostic =
   | {
       kind: "console";
-      level: "warning" | "error";
+      level: string;
       text: string;
       url: string;
     }
@@ -64,14 +64,12 @@ function collectBrowserDiagnostics(page: Page): BrowserDiagnostic[] {
 
   page.on("console", (message) => {
     const level = message.type();
-    if (level === "warning" || level === "error") {
-      diagnostics.push({
-        kind: "console",
-        level,
-        text: message.text(),
-        url: message.location().url,
-      });
-    }
+    diagnostics.push({
+      kind: "console",
+      level,
+      text: message.text(),
+      url: message.location().url,
+    });
   });
   page.on("pageerror", (error) => {
     diagnostics.push({ kind: "pageerror", message: error.message });
@@ -85,7 +83,11 @@ function collectBrowserDiagnostics(page: Page): BrowserDiagnostic[] {
     });
   });
   page.on("response", (response) => {
-    if (response.status() >= 400) {
+    if (
+      response.status() === 404 ||
+      response.status() === 429 ||
+      response.status() >= 500
+    ) {
       diagnostics.push({
         kind: "http",
         method: response.request().method(),
@@ -102,25 +104,54 @@ function expectOnlyDeliberateDiagnostics(
   diagnostics: BrowserDiagnostic[],
   {
     applicationOrigin,
+    chat429Count = 0,
     chat503Count = 0,
-  }: { applicationOrigin: string; chat503Count?: number },
+  }: {
+    applicationOrigin: string;
+    chat429Count?: number;
+    chat503Count?: number;
+  },
 ) {
   const expectedHttp = diagnostics.filter(
     (diagnostic) =>
       diagnostic.kind === "http" &&
       diagnostic.method === "POST" &&
-      diagnostic.status === 503 &&
+      (diagnostic.status === 429 || diagnostic.status === 503) &&
       pathname(diagnostic.url) === ASSISTANT_API,
   );
-  expect(expectedHttp).toHaveLength(chat503Count);
+  expect(
+    diagnostics.filter(
+      (diagnostic) =>
+        diagnostic.kind === "http" &&
+        diagnostic.method === "POST" &&
+        diagnostic.status === 429 &&
+        pathname(diagnostic.url) === ASSISTANT_API,
+    ),
+  ).toHaveLength(chat429Count);
+  expect(
+    diagnostics.filter(
+      (diagnostic) =>
+        diagnostic.kind === "http" &&
+        diagnostic.method === "POST" &&
+        diagnostic.status === 503 &&
+        pathname(diagnostic.url) === ASSISTANT_API,
+    ),
+  ).toHaveLength(chat503Count);
 
   const expectedConsole = diagnostics.filter(
     (diagnostic) =>
       diagnostic.kind === "console" &&
       diagnostic.level === "error" &&
+      (expectedHttp.some(
+        (http) =>
+          http.kind === "http" &&
+          pathname(http.url) === pathname(diagnostic.url),
+      ) ||
+        diagnostic.text.includes("429") ||
+        diagnostic.text.includes("503")) &&
       pathname(diagnostic.url) === ASSISTANT_API,
   );
-  expect(expectedConsole).toHaveLength(chat503Count);
+  expect(expectedConsole).toHaveLength(chat429Count + chat503Count);
 
   const expected = new Set<BrowserDiagnostic>([
     ...expectedHttp,

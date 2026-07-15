@@ -944,6 +944,41 @@ exit 0
     expect(runner).not.toContain("BACKUP_DATABASE_URL_FILE");
   });
 
+  it("runs both assistant browser suites from an owned isolated project", () => {
+    const runner = read("docs/testing/run-assistant-experience-e2e.sh");
+    const webDockerfile = read("apps/web/Dockerfile");
+
+    expect(runner).toContain(
+      "project=${AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT:-aap-assistant-e2e}",
+    );
+    expect(runner).toContain("aap-assistant-e2e|aap-assistant-e2e-*");
+    expect(runner).toContain("lock_acquired=false");
+    expect(runner).toContain('if ! mkdir "$lock_dir"');
+    expect(runner).toContain("owns_project=false");
+    expect(runner).toContain('if [ "$owns_project" = true ]');
+    expect(runner).toContain("down --rmi local -v --remove-orphans");
+    expect(runner).toContain("TCP port 8080 is already in use");
+    expect(runner).toContain(
+      "export ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080",
+    );
+    expect(runner).toContain(
+      "materialize_secret ASSISTANT_SESSION_SECRET_FILE",
+    );
+    expect(runner).toContain(
+      "materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE",
+    );
+    expect(runner).toContain('rm -rf "$temp_dir"');
+    expect(runner).toContain("release_lock");
+    expect(runner).toContain("e2e/assistant-experience.spec.ts");
+    expect(runner).toContain("e2e/pricing-assistant.spec.ts");
+    expect(runner).toMatch(
+      /playwright test[\s\\\n]+e2e\/assistant-experience\.spec\.ts[\s\\\n]+e2e\/pricing-assistant\.spec\.ts/u,
+    );
+    expect(webDockerfile).toContain(
+      "--mount=type=cache,id=ai-agent-platform-pnpm-store",
+    );
+  });
+
   it("rejects unknown hosts before forwarding and preserves approved Host ports", () => {
     const nginx = read("infra/nginx/default.conf.template");
     const compose = read("compose.yaml");

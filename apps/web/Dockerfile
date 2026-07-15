@@ -21,7 +21,8 @@ COPY packages/database/package.json packages/database/package.json
 COPY packages/integrations/package.json packages/integrations/package.json
 COPY packages/ui/package.json packages/ui/package.json
 
-RUN PNPM_CONFIG_REGISTRY="$PNPM_REGISTRY" pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=ai-agent-platform-pnpm-store,target=/root/.local/share/pnpm/store,sharing=locked \
+    PNPM_CONFIG_REGISTRY="$PNPM_REGISTRY" pnpm install --frozen-lockfile
 
 FROM dependencies AS migrator
 

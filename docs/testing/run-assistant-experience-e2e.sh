@@ -5,16 +5,56 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
 
-project=aap-assistant-e2e
+project=${AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT:-aap-assistant-e2e}
+case "$project" in
+  aap-assistant-e2e|aap-assistant-e2e-*) ;;
+  *)
+    echo "E2E project must use the aap-assistant-e2e prefix" >&2
+    exit 1
+    ;;
+esac
+case "$project" in
+  *[!A-Za-z0-9_.-]*)
+    echo "E2E project contains unsafe characters" >&2
+    exit 1
+    ;;
+esac
+
 compose_files="-f compose.yaml -f compose.e2e.yaml"
-env_file=.env.e2e
+env_file="$repo_root/.env.e2e"
+temp_dir=
+secret_dir=
+owns_project=false
+lock_acquired=false
+run_token=
+lock_dir=
+
+release_lock() {
+  if [ "$lock_acquired" != true ] || [ -z "$lock_dir" ]; then
+    return
+  fi
+  lock_token=
+  if [ -f "$lock_dir/token" ]; then
+    lock_token=$(cat "$lock_dir/token" 2>/dev/null || true)
+  fi
+  if [ "$lock_token" = "$run_token" ]; then
+    rm -f "$lock_dir/token"
+    rmdir "$lock_dir" 2>/dev/null || true
+    lock_acquired=false
+  else
+    echo "E2E lock token changed; leaving lock for manual review" >&2
+  fi
+}
 
 cleanup() {
-  docker compose -p "$project" --env-file "$env_file" $compose_files \
-    down -v --remove-orphans >/dev/null 2>&1 || true
-  if [ -n "${secret_dir-}" ] && [ -d "$secret_dir" ]; then
-    rm -rf "$secret_dir"
+  if [ "$owns_project" = true ] && command -v docker >/dev/null 2>&1 && [ -f "$env_file" ]; then
+    docker compose -p "$project" --env-file "$env_file" $compose_files \
+      down --rmi local -v --remove-orphans >/dev/null 2>&1 || true
   fi
+  if [ -n "$temp_dir" ]; then
+    rm -rf "$temp_dir"
+  fi
+  release_lock
 }
 
 on_signal() {
@@ -36,6 +76,44 @@ command -v openssl >/dev/null 2>&1 || {
   echo "openssl is required" >&2
   exit 1
 }
+
+runtime_tmp=${TMPDIR:-/tmp}
+case "$runtime_tmp" in
+  /*) ;;
+  *)
+    echo "TMPDIR must be an absolute path" >&2
+    exit 1
+    ;;
+esac
+umask 077
+lock_root="${runtime_tmp%/}/aap-assistant-experience-e2e-locks"
+mkdir -p "$lock_root"
+chmod 700 "$lock_root"
+lock_dir="$lock_root/$project.lock"
+run_token=$(openssl rand -hex 16)
+if ! mkdir "$lock_dir" 2>/dev/null; then
+  echo "E2E project lock exists; inspect and remove stale locks manually" >&2
+  exit 1
+fi
+lock_acquired=true
+printf '%s\n' "$run_token" >"$lock_dir/token"
+chmod 600 "$lock_dir/token"
+
+existing_containers=$(docker ps -aq --filter "label=com.docker.compose.project=$project")
+existing_volumes=$(docker volume ls -q --filter "label=com.docker.compose.project=$project")
+existing_networks=$(docker network ls -q --filter "label=com.docker.compose.project=$project")
+existing_labeled_images=$(docker image ls -q --filter "label=com.docker.compose.project=$project")
+existing_named_images=$(docker image ls -q "$project-*")
+if [ -n "$existing_containers$existing_volumes$existing_networks$existing_labeled_images$existing_named_images" ]; then
+  echo "E2E project resources already exist; refusing ownership" >&2
+  release_lock
+  exit 1
+fi
+if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "TCP port 8080 is already in use" >&2
+  release_lock
+  exit 1
+fi
 
 secret() {
   openssl rand -hex 32
@@ -115,7 +193,7 @@ fi
 }
 
 set -a
-. "./$env_file"
+. "$env_file"
 set +a
 
 required_variables="
@@ -140,8 +218,17 @@ for name in $required_variables; do
   fi
 done
 
-secret_dir=$(mktemp -d "${TMPDIR:-/tmp}/aap-assistant-e2e-secrets.XXXXXX")
-chmod 700 "$secret_dir"
+export HTTP_PORT=8080
+export PUBLIC_HOST=127.0.0.1
+export ALLOW_LOCAL_VALIDATION_HOSTS=true
+export ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080
+export ASSISTANT_PROVIDER_MODE=placeholder
+export PNPM_REGISTRY=${PNPM_REGISTRY:-https://registry.npmjs.org}
+
+temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/aap-assistant-e2e.XXXXXX")
+secret_dir="$temp_dir/secrets"
+mkdir -p "$secret_dir"
+chmod 700 "$temp_dir" "$secret_dir"
 
 materialize_secret() {
   variable_name=$1
@@ -154,6 +241,8 @@ materialize_secret() {
 }
 
 backup_encryption_key=$(secret)
+assistant_session_secret=$(secret)
+assistant_rate_limit_secret=$(secret)
 
 materialize_secret POSTGRES_PASSWORD_FILE postgres_password "$POSTGRES_PASSWORD"
 materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$MIGRATOR_DATABASE_PASSWORD"
@@ -163,6 +252,8 @@ materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_enc
 materialize_secret MIGRATOR_DATABASE_URL_FILE migrator_database_url "$MIGRATOR_DATABASE_URL"
 materialize_secret RUNTIME_DATABASE_URL_FILE runtime_database_url "$RUNTIME_DATABASE_URL"
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECRET"
+materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$assistant_session_secret"
+materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret "$assistant_rate_limit_secret"
 
 [ "$PUBLIC_HOST" = "127.0.0.1" ] || {
   echo "PUBLIC_HOST must be 127.0.0.1 for isolated E2E" >&2
@@ -177,6 +268,7 @@ materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECR
   exit 1
 }
 
+owns_project=true
 docker compose -p "$project" --env-file "$env_file" $compose_files config --quiet
 docker compose -p "$project" --env-file "$env_file" $compose_files build migrate web
 docker compose -p "$project" --env-file "$env_file" $compose_files up -d --wait db
@@ -187,4 +279,5 @@ docker compose -p "$project" --env-file "$env_file" $compose_files up -d --wait 
 
 BASE_URL=http://127.0.0.1:8080 \
   pnpm --filter @ai-agent-platform/web exec playwright test \
-  e2e/assistant-experience.spec.ts
+  e2e/assistant-experience.spec.ts \
+  e2e/pricing-assistant.spec.ts

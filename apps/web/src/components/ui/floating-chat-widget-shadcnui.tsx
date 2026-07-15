@@ -349,6 +349,7 @@ export function FloatingChatWidget({
             }
           }}
           ref={launcherRef}
+          tabIndex={0}
           type="button"
           whileHover={prefersReducedMotion ? undefined : { scale: 1.05 }}
           whileTap={prefersReducedMotion ? undefined : { scale: 0.95 }}
