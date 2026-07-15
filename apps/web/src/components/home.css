@@ -1,4 +1,3 @@
-/* Foundation */
 .home {
   --home-canvas: #f4f7ff;
   --home-panel: rgb(255 255 255 / 76%);
@@ -74,12 +73,8 @@
   color: var(--home-blue);
 }
 
-.home-heading-before,
-.home-heading-after {
-  white-space: normal;
-}
-
-.home-heading-line {
+.home-heading-line,
+.home-hero .home-heading-before {
   display: block;
 }
 
@@ -93,7 +88,6 @@
   }
 }
 
-/* Shared typography and actions */
 .home-technical-line,
 .home-section-kicker {
   margin: 0;
@@ -211,7 +205,6 @@
     background-color 180ms ease;
 }
 
-/* Hero */
 .home-hero {
   min-height: 800px;
   background:
@@ -222,8 +215,7 @@
 .home-hero::after {
   position: absolute;
   z-index: -1;
-  right: -8%;
-  bottom: -18%;
+  inset: auto -8% -18% auto;
   width: 72%;
   height: 50%;
   border: 3px solid rgb(92 174 255 / 34%);
@@ -254,10 +246,6 @@
   font-weight: 760;
   letter-spacing: -0.065em;
   line-height: 0.98;
-}
-
-.home-hero .home-heading-before {
-  display: block;
 }
 
 .home-product-name {
@@ -310,7 +298,6 @@
   font-size: 12px;
 }
 
-/* Capability chain */
 .home-platform-overview,
 .home-enterprise,
 .home-solutions,
@@ -410,7 +397,6 @@
   left: 75%;
 }
 
-/* Platform */
 .home-platform__grid,
 .home-solutions__grid,
 .home-resources__grid {
@@ -487,7 +473,6 @@
   line-height: 1.7;
 }
 
-/* Enterprise */
 .home-enterprise__layout {
   display: grid;
   gap: clamp(28px, 3vw, 42px);
@@ -526,7 +511,6 @@
   border-bottom: 1px solid rgb(91 111 174 / 14%);
 }
 
-/* Solutions */
 .home-solutions__grid {
   grid-template-columns: minmax(0, 36fr) minmax(0, 64fr);
 }
@@ -572,7 +556,6 @@
   font-size: 11px;
 }
 
-/* Resources */
 .home-resources__grid {
   grid-template-columns: minmax(0, 35fr) minmax(0, 65fr);
 }
@@ -618,7 +601,6 @@
   line-height: 1.65;
 }
 
-/* Retained close */
 .home-closing {
   color: #fff;
   background:
@@ -661,7 +643,6 @@
   background: rgb(255 255 255 / 5%);
 }
 
-/* Motion and fallbacks */
 .home [data-home-region] {
   animation: home-region-enter 620ms var(--ease-out) both;
 }
