@@ -76,30 +76,34 @@ sh -c 'pnpm --filter @ai-agent-platform/web format:check; printf "exit=%s\n" "$?
 Use this exact prompt:
 
 ```text
-Transparent-background isolated 3D product illustration for a premium Chinese enterprise AI platform website. A sculptural loop made from two interlocking translucent glass ribbons, viewed from a slightly elevated front-right three-quarter angle. Frosted crystal material, soft cobalt blue and restrained violet gradients, subtle cyan rim light, luminous inner edge, elegant rounded geometry, no pedestal, no text, no logo, no letters, no UI, no border, no background, no cast shadow beyond a very soft contact glow. Match a clean high-key enterprise technology art direction, centered with generous transparent padding, 4:3 composition.
+Use case: stylized-concept. Asset type: enterprise website section illustration. Create a sculptural loop made from two interlocking translucent glass ribbons, viewed from a slightly elevated front-right three-quarter angle. Frosted crystal material, soft cobalt blue and restrained violet gradients, subtle cyan rim light, luminous inner edge, elegant rounded geometry. Center the subject with generous padding in a 4:3 composition. Place it on a perfectly flat solid #00ff00 chroma-key background for local background removal. The background must be one uniform color with no shadows, gradients, texture, reflections, floor plane, or lighting variation. Keep crisp separated edges and do not use #00ff00 anywhere in the subject. No pedestal, text, logo, letters, UI, border, cast shadow, contact shadow, reflection, or watermark.
 ```
 
-Save the returned source as `apps/web/src/assets/home/source/platform-loop.png`.
+Copy the built-in output from `$CODEX_HOME/generated_images/` to `tmp/imagegen/home/platform-loop-chroma.png`, then run:
+
+```bash
+python "${CODEX_HOME:-$HOME/.codex}/skills/.system/imagegen/scripts/remove_chroma_key.py" --input tmp/imagegen/home/platform-loop-chroma.png --out apps/web/src/assets/home/source/platform-loop.png --auto-key border --soft-matte --transparent-threshold 12 --opaque-threshold 220 --despill
+```
 
 - [ ] **Step 2: Generate the solutions-platform source with `@imagegen`**
 
 Use this exact prompt:
 
 ```text
-Transparent-background isolated isometric 3D illustration for a premium enterprise AI solutions website. A low rounded translucent glass platform in cobalt blue and restrained violet, with three floating glass interface tiles showing only simple abstract symbols: analytics bars, a magnifying glass, and a pie chart. A few tiny translucent cubes and connecting light arcs surround the platform. High-key soft lighting, frosted crystal material, subtle cyan highlights, no words, no numbers, no logo, no brand, no full UI screenshot, no border, no background, centered with generous transparent padding, 4:3 composition.
+Use case: stylized-concept. Asset type: enterprise website section illustration. Create a low rounded translucent glass platform in cobalt blue and restrained violet, with three floating glass interface tiles showing only simple abstract symbols: analytics bars, a magnifying glass, and a pie chart. Add only a few tiny translucent cubes and connecting light arcs. Use high-key soft lighting, frosted crystal material, and subtle cyan highlights. Center the subject with generous padding in a 4:3 composition. Place it on a perfectly flat solid #00ff00 chroma-key background for local background removal. The background must be one uniform color with no shadows, gradients, texture, reflections, floor plane, or lighting variation. Keep crisp separated edges and do not use #00ff00 anywhere in the subject. No words, numbers, logo, brand, full UI screenshot, border, cast shadow, contact shadow, reflection, or watermark.
 ```
 
-Save the returned source as `apps/web/src/assets/home/source/solutions-platform.png`.
+Copy the built-in output to `tmp/imagegen/home/solutions-platform-chroma.png`, then run the same installed background-removal helper with that input and `apps/web/src/assets/home/source/solutions-platform.png` as the output.
 
 - [ ] **Step 3: Generate the resources-folder source with `@imagegen`**
 
 Use this exact prompt:
 
 ```text
-Transparent-background isolated isometric 3D illustration for a premium enterprise software resources section. A translucent cobalt-blue glass document folder on a low rounded glass base, several white-blue document sheets emerging from the folder, and a small magnifying glass leaning against the right side. Restrained violet gradient accents, soft cyan rim light, frosted crystal material, clean high-key lighting, no words, no letters, no logo, no brand, no border, no background, centered with generous transparent padding, 4:3 composition.
+Use case: stylized-concept. Asset type: enterprise website section illustration. Create a translucent cobalt-blue glass document folder on a low rounded glass base, several white-blue document sheets emerging from the folder, and a small magnifying glass leaning against the right side. Use restrained violet gradient accents, soft cyan rim light, frosted crystal material, and clean high-key lighting. Center the subject with generous padding in a 4:3 composition. Place it on a perfectly flat solid #00ff00 chroma-key background for local background removal. The background must be one uniform color with no shadows, gradients, texture, reflections, floor plane, or lighting variation. Keep crisp separated edges and do not use #00ff00 anywhere in the subject. No words, letters, logo, brand, border, cast shadow, contact shadow, reflection, or watermark.
 ```
 
-Save the returned source as `apps/web/src/assets/home/source/resources-folder.png`.
+Copy the built-in output to `tmp/imagegen/home/resources-folder-chroma.png`, then run the same installed background-removal helper with that input and `apps/web/src/assets/home/source/resources-folder.png` as the output.
 
 - [ ] **Step 4: Inspect all three source images**
 
