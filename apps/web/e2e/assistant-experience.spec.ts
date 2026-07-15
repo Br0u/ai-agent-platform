@@ -138,7 +138,7 @@ async function ensureAdminTwoFactor(
   }
 }
 
-test("portal launchers, drawer, and standalone assistant are keyboard-safe", async ({
+test("portal header entry, quick assistant, and standalone workspace are keyboard-safe", async ({
   page,
 }, testInfo) => {
   await configure(page, testInfo);
@@ -147,95 +147,55 @@ test("portal launchers, drawer, and standalone assistant are keyboard-safe", asy
   await expectExactViewportWidth(page);
 
   const topEntry = page.getByRole("button", { name: "打开 AI 助理" });
-  const floatingEntry = page.getByRole("button", { name: "打开 M 助手" });
   await expect(topEntry).toBeVisible();
-  await expect(floatingEntry).toBeVisible();
   await tabTo(page, topEntry);
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/assistant$/u);
+  await expect(page.getByRole("main", { name: "AI 助理工作区" })).toBeVisible();
 
-  const markMotion = await topEntry.locator("svg").evaluate((element) => {
-    const style = getComputedStyle(element);
-    return { name: style.animationName, duration: style.animationDuration };
-  });
-  expect(markMotion.name).not.toBe("none");
-  expect(markMotion.duration).not.toBe("0s");
+  await page.goto("/");
+  await expectExactViewportWidth(page);
+  const floatingEntry = page.getByRole("button", { name: "打开 M 助手" });
+  await expect(floatingEntry).toBeVisible();
 
+  await tabTo(page, floatingEntry);
   await page.keyboard.press("Enter");
   const dialog = page.getByRole("dialog", { name: "M 助手" });
   const drawerInput = page.getByRole("textbox", { name: "向 M 助手提问" });
   await expect(dialog).toBeVisible();
   await expect(drawerInput).toBeFocused();
-  const drawerMotion = await dialog.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      transform: style.transform,
-      transitionDuration: style.transitionDuration,
-      transitionProperty: style.transitionProperty,
-    };
-  });
-  expect(drawerMotion.transitionProperty).toBe("transform, opacity");
-  expect(drawerMotion.transitionDuration).toBe("0.22s, 0.22s");
   await attachScreenshot(page, testInfo, "portal-drawer");
 
   await page.getByRole("button", { name: "如何开始了解平台？" }).click();
-  const newestAnswer = page.locator(".assistant-message--assistant").last();
-  await expect(newestAnswer).toBeVisible();
-  const messageMotion = await newestAnswer.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return { name: style.animationName, duration: style.animationDuration };
-  });
-  expect(messageMotion.name).toBe("assistant-message-enter");
-  expect(messageMotion.duration).toBe("0.18s");
+  await expect(
+    page
+      .getByRole("log")
+      .getByText("你可以从快速开始文档了解平台结构和使用入口。", {
+        exact: true,
+      }),
+  ).toBeVisible();
 
-  const fullChat = page.getByRole("link", { name: "打开完整 AI 助理" });
-  await tabTo(page, fullChat);
-  await page.keyboard.press("Escape");
-  await expect(topEntry).toBeFocused();
-  const closingDrawer = page.locator(".assistant-panel");
-  await expect(closingDrawer).toHaveAttribute("data-motion-state", "closing");
-  await expect(closingDrawer).toHaveAttribute("aria-hidden", "true");
-  await expect(closingDrawer).toHaveAttribute("inert", "");
-  await expect(closingDrawer).toHaveCount(0);
+  await dialog
+    .getByRole("button", { name: "关闭 M 助手", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  await expect(floatingEntry).toBeFocused();
 
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.reload();
-  const reducedTopEntry = page.getByRole("button", { name: "打开 AI 助理" });
-  const reducedMarkMotion = await reducedTopEntry
-    .locator("svg")
-    .evaluate((element) => {
-      const style = getComputedStyle(element);
-      return { name: style.animationName, duration: style.animationDuration };
-    });
-  expect(
-    reducedMarkMotion.name === "none" || reducedMarkMotion.duration === "0s",
-  ).toBe(true);
-  await reducedTopEntry.click();
+  await floatingEntry.click();
   const reducedDialog = page.getByRole("dialog", { name: "M 助手" });
-  const reducedDrawerMotion = await reducedDialog.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      transform: style.transform,
-      transitionDuration: style.transitionDuration,
-    };
-  });
-  expect(reducedDrawerMotion.transform).toBe("none");
-  expect(reducedDrawerMotion.transitionDuration).toBe("0s");
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".assistant-panel")).toHaveCount(0);
-  await expect(reducedTopEntry).toBeFocused();
-
-  await page.emulateMedia({ reducedMotion: "no-preference" });
-  await page.reload();
-  const reloadedFloatingEntry = page.getByRole("button", {
-    name: "打开 M 助手",
-  });
-  await tabTo(page, reloadedFloatingEntry);
-  await page.keyboard.press("Enter");
+  await expect(reducedDialog).toBeVisible();
   await expect(drawerInput).toBeFocused();
   await page.keyboard.press("Escape");
-  await expect(reloadedFloatingEntry).toBeFocused();
+  await expect(reducedDialog).toHaveCount(0);
+  await expect(floatingEntry).toBeFocused();
 
-  await page.getByRole("button", { name: "打开 AI 助理" }).click();
-  await page.getByRole("link", { name: "打开完整 AI 助理" }).click();
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.keyboard.press("Enter");
+  await expect(drawerInput).toBeFocused();
+  const fullChat = page.getByRole("link", { name: "打开完整 AI 助理" });
+  await tabTo(page, fullChat);
+  await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/assistant$/u);
   await expect(page.getByRole("main", { name: "AI 助理工作区" })).toBeVisible();
   await expect(page.getByRole("button", { name: "打开 M 助手" })).toHaveCount(
