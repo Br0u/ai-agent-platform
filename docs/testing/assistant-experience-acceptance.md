@@ -24,7 +24,8 @@ AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT=aap-assistant-e2e-task9 \
 - 同时运行 `e2e/assistant-experience.spec.ts` 与 `e2e/pricing-assistant.spec.ts`，不会遗漏旧价格计算验收。
 - 顶部入口打开右侧 Dock；桌面默认宽度为 `480px`，拖拽边界为 `380–760px`，键盘方向键可调整。
 - 只有正常 pointer up 和键盘调整写入宽度偏好；pointer cancel 不写入，刷新恢复最近一次主动宽度。
-- Quick → Dock → `/assistant` 共用草稿、消息和进行中的单次请求；Dock 可收起为 Quick。
+- 已打开的 Dock 在精确 `721→720→721` 断点切换中保持单一 dialog：`721px` 恢复 separator 与原桌面宽度偏好，`720px` 全屏、无 separator 且继续锁定背景滚动；移动全屏不会覆盖 `localStorage` 中的桌面宽度偏好。
+- Quick → Dock → `/assistant` 共用草稿、消息和进行中的单次请求；从完整页点击真实品牌首页入口返回门户后，surface 关闭但会话不丢失，重新打开 Quick/Dock 不会重复请求。
 - 遮罩与 Escape 可关闭 Dock，并把焦点还给原入口；任意时刻只有一个 dialog。
 - `390×844` 下 Dock 全屏且无 separator；缩小 viewport 模拟软键盘后输入区仍在可视范围，消息区可滚动且页面无横向溢出。
 - 采集所有 console 类型、page error、request failure 和意外 `404/429/5xx`；只对白名单内的占位服务或限流响应放行。
@@ -32,11 +33,9 @@ AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT=aap-assistant-e2e-task9 \
 
 ## 最新真实运行记录
 
-- 部署契约：`38/38` 通过，其中 fake Docker/pnpm/openssl/lsof harness 在 CI 可直接执行，不依赖本机 Docker。
+- 部署契约：`39/39` 通过，其中 fake Docker/pnpm/openssl/lsof harness 在 CI 可直接执行，不依赖本机 Docker。
 - 可执行安全分支覆盖：同一项目跨不同 `TMPDIR` 的固定锁、不同项目争用全局 `8080` 锁、已有容器/卷/网络/项目镜像、缺少 `lsof`、端口占用、secret 创建失败和 compose config 失败均为 `down 0`；取得所有权后的 build/up/后续失败与成功均为 `down 1`。替换 owner token 后同样为 `down 0` 并保留被篡改锁；正常路径的临时 secret 和自有锁无残留。
-- Playwright：两个 spec、两个项目共发现 `22` 个用例。
-- 完整 runner 两次使用官方 npm registry 构建，分别在 `937/943`、`935/943` 个依赖下载后因网络超时退出，均未进入 Playwright；镜像源复核同样返回连接重置，因此没有继续盲目重试。
-- 每次失败后的独立项目容器、卷、网络、项目镜像、锁和临时 secret 均为 `0` 残留。
-- 转为本机已安装依赖后，production standalone 构建成功，`38/38` 个静态页面生成。
-- standalone 服务在 `127.0.0.1:3100` 上完成本任务新增的三条关键浏览器验收：桌面伸缩与偏好持久化、Quick → Dock → 独立页单请求连续性、移动端全屏与软键盘可见性，结果为 `3 passed, 3 skipped`（按项目视口跳过不适用用例）。
-- 旧的快捷问答预设依赖 E2E PostgreSQL fixture；单独启动无数据库的 standalone 时按设计返回 `503`，不作为本地 standalone 通过项。完整数据库/认证/价格计算回归仍以可联网环境中的隔离 runner 为准。
+- Playwright：两个 spec、两个项目在提交 `7bf0b63` 的完整隔离 runner 中为 `19 passed / 3 expected skipped / 0 failed`，production standalone 构建生成 `38/38` 个页面。
+- `c6e0109` 已将 Dockerfile 的 pnpm store 改为 BuildKit 内容寻址缓存并加入有界网络重试；后续 migrate/web 依赖安装层均命中 `CACHED`，此前 registry 中断导致 runner 未进入 Playwright 的问题已关闭，不再作为当前限制。
+- `7bf0b63` 完整 runner 退出后，隔离项目容器、卷、网络、项目镜像、锁和临时 secret 均为 `0` 残留；全局 `8080` 端口已释放，原有默认 E2E 镜像 ID 未变化。
+- 最终规格复审新增精确断点恢复和完整页返回门户连续性后，Playwright 清单为 `24` 个用例；最终完整 runner 结果在本轮验证完成后更新。

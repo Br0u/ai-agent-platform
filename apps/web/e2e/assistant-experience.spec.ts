@@ -469,6 +469,78 @@ test("desktop dock clamps, persists only completed resizing, and restores focus"
   expectCleanEvidence(evidence, new URL(page.url()).origin);
 });
 
+test("open dock preserves its preferred width across the exact mobile breakpoint", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "desktop breakpoint contract");
+  await configure(page, testInfo, "reduce");
+  const evidence = collectEvidence(page);
+  const preferredWidth = 660;
+  await page.goto("/");
+  await page.evaluate(
+    ({ key, value }) => window.localStorage.setItem(key, String(value)),
+    { key: ASSISTANT_DOCK_WIDTH_STORAGE_KEY, value: preferredWidth },
+  );
+  await page.reload();
+  await activateAssistantWithStatus(page, () =>
+    page.getByRole("button", { name: "打开 AI 助理" }).click(),
+  );
+
+  const dialog = page.getByRole("dialog", { name: "AI 助理工作区" });
+  const separator = dialog.getByRole("separator", {
+    name: "调整 AI 助理工作区宽度",
+  });
+  const background = page.locator("[data-assistant-background-root]");
+  const expectModalIsolation = async () => {
+    await expect(dialog).toHaveCount(1);
+    await expect(background).toHaveAttribute("aria-hidden", "true");
+    await expect(background).toHaveAttribute("inert", "");
+    expect(await page.evaluate(() => document.body.style.overflow)).toBe(
+      "hidden",
+    );
+    await expectExactViewportWidth(page);
+  };
+  const expectInnerWidth = (width: number) =>
+    expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
+  const expectStoredPreference = () =>
+    expect
+      .poll(() =>
+        page.evaluate(
+          (key) => window.localStorage.getItem(key),
+          ASSISTANT_DOCK_WIDTH_STORAGE_KEY,
+        ),
+      )
+      .toBe(String(preferredWidth));
+
+  await page.setViewportSize({ width: 721, height: VIEWPORTS.desktop.height });
+  await expectInnerWidth(721);
+  await expectModalIsolation();
+  await expect(separator).toHaveCount(1);
+  await expectWidth(dialog, preferredWidth);
+  await expectStoredPreference();
+
+  await page.setViewportSize({ width: 720, height: VIEWPORTS.desktop.height });
+  await expectInnerWidth(720);
+  await expectModalIsolation();
+  await expect(separator).toHaveCount(0);
+  const mobileBox = await dialog.boundingBox();
+  expect(mobileBox).not.toBeNull();
+  expect(mobileBox!.x).toBe(0);
+  expect(mobileBox!.width).toBe(720);
+  await expectStoredPreference();
+
+  await page.setViewportSize({ width: 721, height: VIEWPORTS.desktop.height });
+  await expectInnerWidth(721);
+  await expectModalIsolation();
+  await expect(separator).toHaveCount(1);
+  await expectWidth(dialog, preferredWidth);
+  await expectStoredPreference();
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expectCleanEvidence(evidence, new URL(page.url()).origin);
+});
+
 test("quick, dock, and standalone workspace keep one in-flight conversation", async ({
   page,
 }, testInfo) => {
@@ -527,6 +599,34 @@ test("quick, dock, and standalone workspace keep one in-flight conversation", as
   const messageLog = page.getByRole("log", { name: "AI 助理对话" });
   await expect(messageLog).toContainText(question);
   await expect(messageLog).toContainText(answer);
+  expect(requestCount).toBe(1);
+
+  await page.getByRole("link", { name: "AI Agent Platform 首页" }).click();
+  await expect(page).toHaveURL(/\/$/u);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const launcher = page.getByRole("button", { name: "打开 M 助手" });
+  await expect(launcher).toBeVisible();
+
+  await launcher.click();
+  await expectSingleDialog(page, "M 助手");
+  const quickDialog = page.getByRole("dialog", { name: "M 助手" });
+  await expect(
+    quickDialog.getByRole("log", { name: "AI 助理对话" }),
+  ).toContainText(question);
+  await expect(
+    quickDialog.getByRole("log", { name: "AI 助理对话" }),
+  ).toContainText(answer);
+  expect(requestCount).toBe(1);
+
+  await quickDialog.getByRole("button", { name: "展开 AI 助理工作区" }).click();
+  await expectSingleDialog(page, "AI 助理工作区");
+  const reopenedDock = page.getByRole("dialog", { name: "AI 助理工作区" });
+  await expect(
+    reopenedDock.getByRole("log", { name: "AI 助理对话" }),
+  ).toContainText(question);
+  await expect(
+    reopenedDock.getByRole("log", { name: "AI 助理对话" }),
+  ).toContainText(answer);
   expect(requestCount).toBe(1);
   await expectExactViewportWidth(page);
   await page.unroute(`**${ASSISTANT_CHAT_ENDPOINT}`);
