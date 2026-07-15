@@ -41,6 +41,14 @@ describe("useAssistantSession", () => {
     expect(ASSISTANT_REQUEST_TIMEOUT_MS).toBe(15_000);
   });
 
+  it("exposes session data and commands without presentation state", () => {
+    const { result } = renderHook(() => useAssistantSession("/"));
+
+    expect(result.current).not.toHaveProperty("open");
+    expect(result.current).not.toHaveProperty("openAssistant");
+    expect(result.current).not.toHaveProperty("closeAssistant");
+  });
+
   it("supports a protected endpoint without duplicating the request controller", async () => {
     vi.mocked(fetch).mockResolvedValue(success("管理员回答"));
     const { result } = renderHook(() =>

@@ -1,4 +1,11 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AssistantExperienceProvider,
@@ -10,18 +17,30 @@ function Harness() {
 
   return (
     <div>
+      <output aria-label="助手展示形态">{experience.surface}</output>
       <button
-        onClick={(event) => experience.openFrom(event.currentTarget)}
+        onClick={(event) => experience.openQuickFrom(event.currentTarget)}
         type="button"
       >
-        顶部入口
+        快速入口
       </button>
       <button
-        onClick={(event) => experience.openFrom(event.currentTarget)}
+        onClick={(event) => experience.openDockFrom(event.currentTarget)}
         type="button"
       >
-        浮动入口
+        停靠入口
       </button>
+      <button onClick={experience.collapseToQuick} type="button">
+        收起到快速窗口
+      </button>
+      <button onClick={experience.close} type="button">
+        关闭
+      </button>
+      <input
+        aria-label="会话草稿"
+        onChange={(event) => experience.session.setDraft(event.target.value)}
+        value={experience.session.draft}
+      />
       <input
         aria-label="工作区输入框"
         ref={(element) => experience.registerComposer(element)}
@@ -29,39 +48,269 @@ function Harness() {
       <button onClick={experience.focusComposer} type="button">
         聚焦输入框
       </button>
-      {experience.session.open ? (
-        <div role="dialog">
-          <button onClick={experience.close} type="button">
-            关闭
-          </button>
-        </div>
-      ) : null}
+      <button
+        onClick={() => void experience.session.submit("跨页已发送问题")}
+        type="button"
+      >
+        发送跨页问题
+      </button>
+      <output aria-label="会话消息">
+        {experience.session.messages
+          .map((message) => message.content)
+          .join("|")}
+      </output>
     </div>
   );
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("AssistantExperienceProvider", () => {
-  it("returns focus to the exact trigger that opened the drawer", () => {
+  it("uses one closed to quick to dock to quick to closed state machine", () => {
     render(
       <AssistantExperienceProvider pathname="/">
         <Harness />
       </AssistantExperienceProvider>,
     );
-    const top = screen.getByRole("button", { name: "顶部入口" });
-    const floating = screen.getByRole("button", { name: "浮动入口" });
 
-    fireEvent.click(top);
+    expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("closed");
+    fireEvent.click(screen.getByRole("button", { name: "快速入口" }));
+    expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("quick");
+    fireEvent.click(screen.getByRole("button", { name: "停靠入口" }));
+    expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("dock");
+    fireEvent.click(screen.getByRole("button", { name: "收起到快速窗口" }));
+    expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("quick");
     fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-    expect(top).toHaveFocus();
-
-    fireEvent.click(floating);
-    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-    expect(floating).toHaveFocus();
+    expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("closed");
   });
 
-  it("focuses only a currently mounted registered composer", () => {
+  it("preserves the original launcher when an internal quick action opens dock", () => {
+    function FocusHarness() {
+      const experience = useAssistantExperience();
+      return (
+        <>
+          <button
+            onClick={(event) => experience.openQuickFrom(event.currentTarget)}
+            type="button"
+          >
+            原始启动器
+          </button>
+          {experience.surface === "quick" ? (
+            <button
+              onClick={(event) => experience.openDockFrom(event.currentTarget)}
+              type="button"
+            >
+              快速窗口内打开停靠助手
+            </button>
+          ) : null}
+          {experience.surface === "dock" ? (
+            <button onClick={experience.close} type="button">
+              关闭停靠助手
+            </button>
+          ) : null}
+        </>
+      );
+    }
+    render(
+      <AssistantExperienceProvider pathname="/">
+        <FocusHarness />
+      </AssistantExperienceProvider>,
+    );
+    const launcher = screen.getByRole("button", { name: "原始启动器" });
+    const launcherFocus = vi.spyOn(launcher, "focus");
+
+    fireEvent.click(launcher);
+    const internalTrigger = screen.getByRole("button", {
+      name: "快速窗口内打开停靠助手",
+    });
+    const internalFocus = vi.spyOn(internalTrigger, "focus");
+    fireEvent.click(internalTrigger);
+
+    expect(internalTrigger.isConnected).toBe(false);
+    expect(launcherFocus).not.toHaveBeenCalled();
+    expect(internalFocus).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "关闭停靠助手" }));
+    expect(launcherFocus).toHaveBeenCalledOnce();
+    expect(internalFocus).not.toHaveBeenCalled();
+  });
+
+  it("derives a closed assistant workspace surface synchronously and keeps the session", async () => {
+    const view = render(
+      <AssistantExperienceProvider pathname="/">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "快速入口" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "会话草稿" }), {
+      target: { value: "保留中的问题" },
+    });
+
+    view.rerender(
+      <AssistantExperienceProvider pathname="/assistant/?mode=full#composer">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+    expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("closed");
+    expect(screen.getByRole("textbox", { name: "会话草稿" })).toHaveValue(
+      "保留中的问题",
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    view.rerender(
+      <AssistantExperienceProvider pathname="/pricing">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+    expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("closed");
+    expect(screen.getByRole("textbox", { name: "会话草稿" })).toHaveValue(
+      "保留中的问题",
+    );
+  });
+
+  it("does not treat an assistant-prefixed portal route as the workspace", () => {
+    render(
+      <AssistantExperienceProvider pathname="/assistant-old">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "快速入口" }));
+    expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("quick");
+  });
+
+  it("closes synchronously on ordinary pathname changes without clearing the session or restoring old focus", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({
+          version: "1",
+          requestId: "request-route-change",
+          mode: "placeholder",
+          session: {
+            temporary: true,
+            expiresAt: "2026-07-15T12:00:00.000Z",
+          },
+          message: {
+            id: "message-route-change",
+            role: "assistant",
+            content: "跨页保留回答",
+          },
+          suggestedActions: [],
+        }),
+      ),
+    );
+    const view = render(
+      <AssistantExperienceProvider pathname="/pricing">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+    const launcher = screen.getByRole("button", { name: "快速入口" });
+    const launcherFocus = vi.spyOn(launcher, "focus");
+    fireEvent.click(launcher);
+    fireEvent.change(screen.getByRole("textbox", { name: "会话草稿" }), {
+      target: { value: "跨页保留草稿" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送跨页问题" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("会话消息")).toHaveTextContent(
+        "跨页保留回答",
+      ),
+    );
+
+    view.rerender(
+      <AssistantExperienceProvider pathname="/product">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+
+    expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("closed");
+    expect(screen.getByRole("textbox", { name: "会话草稿" })).toHaveValue(
+      "跨页保留草稿",
+    );
+    expect(screen.getByLabelText("会话消息")).toHaveTextContent("跨页保留回答");
+    expect(launcherFocus).not.toHaveBeenCalled();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(launcherFocus).not.toHaveBeenCalled();
+  });
+
+  it("clears a hidden workspace surface before returning to the portal", () => {
+    const view = render(
+      <AssistantExperienceProvider pathname="/assistant">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "快速入口" }));
+    expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("closed");
+    view.rerender(
+      <AssistantExperienceProvider pathname="/pricing">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+    expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("closed");
+  });
+
+  it("focuses only the most recently registered composer", () => {
+    function ComposerRegistry({
+      first,
+      second,
+    }: {
+      first: HTMLElement;
+      second: HTMLElement;
+    }) {
+      const experience = useAssistantExperience();
+      return (
+        <>
+          <button
+            onClick={() => experience.registerComposer(first)}
+            type="button"
+          >
+            注册第一个输入框
+          </button>
+          <button
+            onClick={() => experience.registerComposer(second)}
+            type="button"
+          >
+            注册第二个输入框
+          </button>
+          <button onClick={experience.focusComposer} type="button">
+            聚焦当前输入框
+          </button>
+        </>
+      );
+    }
+    const first = document.createElement("input");
+    const second = document.createElement("input");
+    document.body.append(first, second);
+    const firstFocus = vi.spyOn(first, "focus");
+    const secondFocus = vi.spyOn(second, "focus");
+    try {
+      render(
+        <AssistantExperienceProvider pathname="/">
+          <ComposerRegistry first={first} second={second} />
+        </AssistantExperienceProvider>,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "注册第一个输入框" }));
+      fireEvent.click(screen.getByRole("button", { name: "注册第二个输入框" }));
+      fireEvent.click(screen.getByRole("button", { name: "聚焦当前输入框" }));
+
+      expect(firstFocus).not.toHaveBeenCalled();
+      expect(secondFocus).toHaveBeenCalledOnce();
+    } finally {
+      first.remove();
+      second.remove();
+    }
+  });
+
+  it("focuses only the single currently mounted registered composer", () => {
     const focus = vi.spyOn(HTMLInputElement.prototype, "focus");
     const view = render(
       <AssistantExperienceProvider pathname="/assistant">

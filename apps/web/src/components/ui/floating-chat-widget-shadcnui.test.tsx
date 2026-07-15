@@ -7,7 +7,10 @@ import {
 } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AssistantExperienceProvider } from "../assistant/assistant-experience-provider";
+import {
+  AssistantExperienceProvider,
+  useAssistantExperience,
+} from "../assistant/assistant-experience-provider";
 import { FloatingChatWidget } from "./floating-chat-widget-shadcnui";
 
 const successfulReply = {
@@ -55,6 +58,35 @@ afterEach(() => {
 });
 
 describe("FloatingChatWidget", () => {
+  it("renders the compact panel only for the quick surface", async () => {
+    function SurfaceHarness() {
+      const experience = useAssistantExperience();
+      return (
+        <>
+          <button
+            onClick={(event) => experience.openDockFrom(event.currentTarget)}
+            type="button"
+          >
+            打开停靠助手
+          </button>
+          <FloatingChatWidget />
+        </>
+      );
+    }
+    render(
+      <AssistantExperienceProvider pathname="/">
+        <SurfaceHarness />
+      </AssistantExperienceProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+    expect(screen.getByRole("dialog", { name: "M 助手" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "打开停靠助手" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "M 助手" })).toBeNull(),
+    );
+  });
+
   it("opens the preserved Chinese chat content without a model selector", () => {
     openWidget();
 

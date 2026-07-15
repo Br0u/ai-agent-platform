@@ -67,7 +67,6 @@ type ActiveAssistantRequest = {
 };
 
 export type AssistantSession = {
-  open: boolean;
   draft: string;
   messages: AssistantMessage[];
   latestAnnouncement: string;
@@ -76,8 +75,6 @@ export type AssistantSession = {
   validationError: AssistantValidationError | null;
   sessionExpiresAt: string | null;
   setDraft: (draft: string) => void;
-  openAssistant: () => void;
-  closeAssistant: () => void;
   submit: (message?: string) => Promise<void>;
   retry: () => Promise<void>;
 };
@@ -160,7 +157,6 @@ export function useAssistantSession(
   const timeoutMs = options.timeoutMs ?? ASSISTANT_REQUEST_TIMEOUT_MS;
   const successResponseGuard =
     options.successResponseGuard ?? isAssistantSuccessResponse;
-  const [open, setOpen] = useState(false);
   const [draft, setDraftState] = useState("");
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [latestAnnouncement, setLatestAnnouncement] = useState("");
@@ -339,7 +335,6 @@ export function useAssistantSession(
   }, []);
 
   return {
-    open,
     draft,
     messages,
     latestAnnouncement,
@@ -348,8 +343,6 @@ export function useAssistantSession(
     validationError,
     sessionExpiresAt,
     setDraft,
-    openAssistant: () => setOpen(true),
-    closeAssistant: () => setOpen(false),
     submit,
     retry,
   };

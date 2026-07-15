@@ -325,7 +325,7 @@ function AssistantEnabledShell({
       assistantEntry={
         <span>
           <AssistantHeaderEntry
-            isOpen={variant === "assistant" || experience.session.open}
+            isOpen={experience.surface !== "closed"}
             onActivate={activateHeaderEntry}
           />
         </span>

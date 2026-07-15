@@ -29,7 +29,9 @@ export function FloatingChatWidget({
   showLauncher?: boolean;
 }) {
   const experience = useAssistantExperience();
-  const { close, openFrom, registerComposer, session } = experience;
+  const { close, openQuickFrom, registerComposer, session, surface } =
+    experience;
+  const quickOpen = surface === "quick";
   const launcherRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -43,7 +45,7 @@ export function FloatingChatWidget({
   const registerComposerFromEffect = useEffectEvent(registerComposer);
 
   useEffect(() => {
-    if (!session.open) return;
+    if (!quickOpen) return;
 
     closeRef.current?.focus();
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -51,13 +53,13 @@ export function FloatingChatWidget({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [session.open]);
+  }, [quickOpen]);
 
   useEffect(() => {
-    if (!session.open) return;
+    if (!quickOpen) return;
     registerComposerFromEffect(inputRef.current);
     return () => registerComposerFromEffect(null);
-  }, [session.open]);
+  }, [quickOpen]);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -67,7 +69,7 @@ export function FloatingChatWidget({
   return (
     <div className="floating-assistant">
       <AnimatePresence>
-        {session.open ? (
+        {quickOpen ? (
           <motion.section
             key="assistant-panel"
             aria-labelledby={titleId}
@@ -252,14 +254,14 @@ export function FloatingChatWidget({
 
       {showLauncher ? (
         <motion.button
-          aria-expanded={session.open}
-          aria-label={session.open ? "关闭 M 助手入口" : "打开 M 助手"}
-          className={`floating-assistant__launcher${session.open ? " is-open" : ""}`}
+          aria-expanded={quickOpen}
+          aria-label={quickOpen ? "关闭 M 助手入口" : "打开 M 助手"}
+          className={`floating-assistant__launcher${quickOpen ? " is-open" : ""}`}
           onClick={() => {
-            if (session.open) {
+            if (quickOpen) {
               close();
             } else if (launcherRef.current) {
-              openFrom(launcherRef.current);
+              openQuickFrom(launcherRef.current);
             }
           }}
           ref={launcherRef}
@@ -271,7 +273,7 @@ export function FloatingChatWidget({
             aria-hidden="true"
             className="floating-assistant__launcher-glow"
           />
-          {session.open ? <X size={24} /> : <MessageSquare size={24} />}
+          {quickOpen ? <X size={24} /> : <MessageSquare size={24} />}
         </motion.button>
       ) : null}
     </div>

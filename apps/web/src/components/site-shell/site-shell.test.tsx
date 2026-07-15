@@ -27,6 +27,7 @@ type MockAppShellProps = {
 
 const mocks = vi.hoisted(() => ({
   appShellProps: undefined as MockAppShellProps | undefined,
+  assistantEntryOpen: undefined as boolean | undefined,
   pathname: "/",
   push: vi.fn(),
   replace: vi.fn(),
@@ -63,8 +64,18 @@ vi.mock("@ai-agent-platform/ui", () => ({
       </div>
     );
   },
-  AssistantHeaderEntry: ({ onActivate }: { onActivate: () => void }) => (
-    <button onClick={onActivate} type="button">
+  AssistantHeaderEntry: ({
+    isOpen,
+    onActivate,
+  }: {
+    isOpen: boolean;
+    onActivate: () => void;
+  }) => (
+    <button
+      data-open={String((mocks.assistantEntryOpen = isOpen))}
+      onClick={onActivate}
+      type="button"
+    >
       打开 AI 助理
     </button>
   ),
@@ -93,6 +104,7 @@ afterEach(cleanup);
 
 beforeEach(() => {
   mocks.appShellProps = undefined;
+  mocks.assistantEntryOpen = undefined;
   mocks.pathname = "/";
   mocks.push.mockReset();
   mocks.replace.mockReset();
@@ -449,6 +461,14 @@ describe("SiteShell", () => {
     expect(useAssistantSession).toHaveBeenCalledOnce();
     expect(screen.getByRole("button", { name: "打开 AI 助理" })).toBeVisible();
     expect(screen.getByRole("button", { name: "打开 M 助手" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "打开 AI 助理" }),
+    ).toHaveAttribute("data-open", "false");
+
+    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+    expect(
+      screen.getByRole("button", { name: "打开 AI 助理" }),
+    ).toHaveAttribute("data-open", "true");
   });
 
   it("routes the portal assistant entry to the full assistant workspace", () => {
@@ -464,6 +484,9 @@ describe("SiteShell", () => {
 
     expect(useAssistantSession).toHaveBeenCalledOnce();
     expect(screen.getByRole("button", { name: "打开 AI 助理" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "打开 AI 助理" }),
+    ).toHaveAttribute("data-open", "false");
     expect(screen.queryByRole("button", { name: "打开 M 助手" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "打开 AI 助理" }));
     expect(screen.queryByRole("dialog")).toBeNull();
