@@ -11,7 +11,10 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantStatusResponse } from "@/features/assistant/assistant-contract";
-import { AssistantExperienceProvider } from "./assistant-experience-provider";
+import {
+  AssistantExperienceProvider,
+  useAssistantExperience,
+} from "./assistant-experience-provider";
 import { AssistantWorkspace } from "./assistant-workspace";
 
 type MediaQueryController = {
@@ -82,6 +85,15 @@ const placeholderStatus: AssistantStatusResponse = {
   message: "模型尚未配置，当前为安全占位模式。",
 };
 
+const availableStatus: AssistantStatusResponse = {
+  version: "1",
+  requestId: "workspace-available-status",
+  live: true,
+  ready: true,
+  capability: "available",
+  message: "AI 助理基础服务已就绪。",
+};
+
 function renderWorkspace() {
   return render(
     <AssistantExperienceProvider pathname="/assistant">
@@ -117,6 +129,43 @@ afterEach(() => {
 });
 
 describe("AssistantWorkspace", () => {
+  it("adopts its server state into the provider and renders later shared updates", async () => {
+    function SharedServiceStateProbe() {
+      const experience = useAssistantExperience();
+      return (
+        <>
+          <output aria-label="共享服务能力">
+            {experience.serviceState.capability}
+          </output>
+          <button
+            onClick={() => experience.adoptServiceState(availableStatus)}
+            type="button"
+          >
+            采用后续服务状态
+          </button>
+        </>
+      );
+    }
+
+    render(
+      <AssistantExperienceProvider pathname="/assistant">
+        <AssistantWorkspace serviceState={placeholderStatus} />
+        <SharedServiceStateProbe />
+      </AssistantExperienceProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("共享服务能力")).toHaveTextContent(
+        "placeholder",
+      ),
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "采用后续服务状态" }));
+    expect(screen.getByTestId("assistant-service-state")).toHaveTextContent(
+      "服务已就绪",
+    );
+  });
+
   it("uses the approved spatial direction and states the real placeholder capability", () => {
     renderWorkspace();
 

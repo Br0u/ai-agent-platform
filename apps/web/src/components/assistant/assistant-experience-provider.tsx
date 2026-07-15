@@ -14,12 +14,19 @@ import {
   useAssistantSession,
   type AssistantSession,
 } from "./use-assistant-session";
+import type { AssistantStatusResponse } from "@/features/assistant/assistant-contract";
+import { useAssistantServiceState } from "./use-assistant-service-state";
 
 export type AssistantSurface = "closed" | "quick" | "dock";
 
 export type AssistantExperience = {
   surface: AssistantSurface;
   session: AssistantSession;
+  serviceState: AssistantStatusResponse;
+  refreshingServiceState: boolean;
+  hasResolvedServiceState: boolean;
+  adoptServiceState: (state: AssistantStatusResponse) => void;
+  refreshServiceState: () => Promise<void>;
   openQuickFrom: (trigger: HTMLElement) => void;
   openDockFrom: (trigger: HTMLElement) => void;
   collapseToQuick: () => void;
@@ -45,6 +52,13 @@ export function AssistantExperienceProvider({
   pathname: string;
 }) {
   const session = useAssistantSession(pathname);
+  const {
+    serviceState,
+    refreshingServiceState,
+    hasResolvedServiceState,
+    adoptServiceState: adoptServiceStateInController,
+    refreshServiceState: refreshServiceStateInController,
+  } = useAssistantServiceState();
   const [presentation, setPresentation] = useState<{
     pathname: string | null;
     surface: AssistantSurface;
@@ -59,6 +73,20 @@ export function AssistantExperienceProvider({
     assistantWorkspace || !presentationMatchesPath
       ? "closed"
       : presentation.surface;
+  const hasResolvedServiceStateRef = useRef(hasResolvedServiceState);
+
+  const adoptServiceState = useCallback(
+    (state: AssistantStatusResponse) => {
+      hasResolvedServiceStateRef.current = true;
+      adoptServiceStateInController(state);
+    },
+    [adoptServiceStateInController],
+  );
+
+  const refreshServiceState = useCallback(() => {
+    hasResolvedServiceStateRef.current = true;
+    return refreshServiceStateInController();
+  }, [refreshServiceStateInController]);
 
   const openSurfaceFrom = useCallback(
     (
@@ -132,6 +160,29 @@ export function AssistantExperienceProvider({
     presentationMatchesPath,
   ]);
 
+  useEffect(() => {
+    if (
+      surface === "closed" ||
+      hasResolvedServiceState ||
+      refreshingServiceState
+    ) {
+      return;
+    }
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled || hasResolvedServiceStateRef.current) return;
+      void refreshServiceState();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    refreshServiceState,
+    hasResolvedServiceState,
+    refreshingServiceState,
+    surface,
+  ]);
+
   useEffect(
     () => () => {
       surfaceVersion.current += 1;
@@ -145,6 +196,11 @@ export function AssistantExperienceProvider({
     () => ({
       surface,
       session,
+      serviceState,
+      refreshingServiceState,
+      hasResolvedServiceState,
+      adoptServiceState,
+      refreshServiceState,
       openQuickFrom,
       openDockFrom,
       collapseToQuick,
@@ -155,10 +211,15 @@ export function AssistantExperienceProvider({
     [
       close,
       collapseToQuick,
+      adoptServiceState,
       focusComposer,
       openDockFrom,
       openQuickFrom,
       registerComposer,
+      refreshServiceState,
+      hasResolvedServiceState,
+      refreshingServiceState,
+      serviceState,
       session,
       surface,
     ],

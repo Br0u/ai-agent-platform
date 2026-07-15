@@ -6,8 +6,9 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AssistantStatusResponse } from "@/features/assistant/assistant-contract";
 import {
   AssistantExperienceProvider,
   useAssistantExperience,
@@ -66,12 +67,107 @@ function Harness() {
   );
 }
 
+const placeholderStatus: AssistantStatusResponse = {
+  version: "1",
+  requestId: "provider-server-status",
+  live: true,
+  ready: true,
+  capability: "placeholder",
+  message: "模型尚未配置，当前为安全占位模式。",
+};
+
+function ServiceStateHarness() {
+  const experience = useAssistantExperience();
+
+  return (
+    <>
+      <button
+        onClick={(event) => experience.openQuickFrom(event.currentTarget)}
+        type="button"
+      >
+        打开快速助手
+      </button>
+      <button
+        onClick={(event) => experience.openDockFrom(event.currentTarget)}
+        type="button"
+      >
+        打开停靠助手
+      </button>
+      <output aria-label="服务能力">
+        {experience.serviceState.capability}
+      </output>
+      <output aria-label="服务状态是否已解析">
+        {String(experience.hasResolvedServiceState)}
+      </output>
+    </>
+  );
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
 describe("AssistantExperienceProvider", () => {
+  it.each([
+    ["快速助手", "打开快速助手"],
+    ["停靠助手", "打开停靠助手"],
+  ])(
+    "lazily refreshes service state once when opening %s",
+    async (_name, buttonName) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(Response.json(placeholderStatus)),
+      );
+      render(
+        <AssistantExperienceProvider pathname="/">
+          <ServiceStateHarness />
+        </AssistantExperienceProvider>,
+      );
+
+      expect(screen.getByLabelText("服务状态是否已解析")).toHaveTextContent(
+        "false",
+      );
+      fireEvent.click(screen.getByRole("button", { name: buttonName }));
+
+      await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+      await waitFor(() =>
+        expect(screen.getByLabelText("服务能力")).toHaveTextContent(
+          "placeholder",
+        ),
+      );
+      expect(fetch).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("lets an assistant workspace child adopt server state without a duplicate request", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+
+    function ServerStateChild() {
+      const { adoptServiceState, serviceState } = useAssistantExperience();
+      useEffect(() => {
+        adoptServiceState(placeholderStatus);
+      }, [adoptServiceState]);
+      return (
+        <output aria-label="工作区服务能力">{serviceState.capability}</output>
+      );
+    }
+
+    render(
+      <AssistantExperienceProvider pathname="/assistant">
+        <ServerStateChild />
+      </AssistantExperienceProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("工作区服务能力")).toHaveTextContent(
+        "placeholder",
+      ),
+    );
+    await act(async () => Promise.resolve());
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("uses one closed to quick to dock to quick to closed state machine", () => {
     render(
       <AssistantExperienceProvider pathname="/">

@@ -5,14 +5,12 @@ import Link from "next/link";
 import {
   useCallback,
   useEffect,
-  useRef,
   useState,
   type FormEvent,
   type KeyboardEvent,
 } from "react";
 import {
   ASSISTANT_PRESET_QUESTIONS,
-  isAssistantStatusResponse,
   type AssistantStatusResponse,
 } from "@/features/assistant/assistant-contract";
 import { useAssistantExperience } from "./assistant-experience-provider";
@@ -22,34 +20,22 @@ const COMPOSER_HELP_ID = "assistant-workspace-composer-help";
 const FAILURE_MESSAGE = "发送失败，请重试或使用帮助中心或商务咨询。";
 const DESKTOP_RAIL_QUERY = "(min-width: 721px)";
 const NEW_SESSION_HELP_ID = "assistant-new-session-help";
-const STATUS_REFRESH_TIMEOUT_MS = 5_000;
-const DEGRADED_STATUS: AssistantStatusResponse = {
-  version: "1",
-  requestId: "client-status-fallback",
-  live: false,
-  ready: false,
-  capability: "degraded",
-  message: "助手基础服务暂不可用。",
-};
 
 type AssistantWorkspaceProps = {
   serviceState: AssistantStatusResponse;
 };
 
-type StatusRefreshOperation = {
-  cancel: () => void;
-  timer: ReturnType<typeof setTimeout>;
-};
-
 export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
-  const { session, registerComposer } = useAssistantExperience();
-  const [currentServiceState, setCurrentServiceState] = useState(serviceState);
-  const [refreshingStatus, setRefreshingStatus] = useState(false);
+  const {
+    session,
+    registerComposer,
+    serviceState: currentServiceState,
+    refreshingServiceState: refreshingStatus,
+    adoptServiceState,
+    refreshServiceState,
+  } = useAssistantExperience();
   const [isDesktop, setIsDesktop] = useState(false);
   const [railOverride, setRailOverride] = useState<boolean | null>(null);
-  const mountedRef = useRef(false);
-  const refreshGenerationRef = useRef(0);
-  const statusRefreshRef = useRef<StatusRefreshOperation | null>(null);
   const railExpanded = railOverride ?? isDesktop;
   const sending = session.requestStatus === "sending";
   const hasError = session.validationError !== null;
@@ -71,13 +57,8 @@ export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
           : "服务未就绪";
 
   useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      refreshGenerationRef.current += 1;
-      statusRefreshRef.current?.cancel();
-    };
-  }, []);
+    adoptServiceState(serviceState);
+  }, [adoptServiceState, serviceState]);
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
@@ -95,62 +76,6 @@ export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void session.submit();
-  };
-
-  const refreshServiceState = async () => {
-    if (statusRefreshRef.current) return;
-    const id = refreshGenerationRef.current + 1;
-    refreshGenerationRef.current = id;
-    const controller = new AbortController();
-    let rejectInterruption: (reason?: unknown) => void = () => undefined;
-    let interrupted = false;
-    const interruption = new Promise<never>((_resolve, reject) => {
-      rejectInterruption = reject;
-    });
-    const cancel = () => {
-      if (interrupted) return;
-      interrupted = true;
-      controller.abort();
-      rejectInterruption(new Error("Assistant status refresh interrupted"));
-    };
-    const operation: StatusRefreshOperation = {
-      cancel,
-      timer: setTimeout(cancel, STATUS_REFRESH_TIMEOUT_MS),
-    };
-    statusRefreshRef.current = operation;
-    setRefreshingStatus(true);
-    try {
-      const body = await Promise.race([
-        (async (): Promise<AssistantStatusResponse> => {
-          const response = await fetch("/api/v1/assistant/status", {
-            method: "GET",
-            cache: "no-store",
-            signal: controller.signal,
-          });
-          const candidate: unknown = await response.json();
-          if (!response.ok || !isAssistantStatusResponse(candidate)) {
-            throw new Error("Invalid assistant status response");
-          }
-          return candidate;
-        })(),
-        interruption,
-      ]);
-      if (mountedRef.current && refreshGenerationRef.current === id) {
-        setCurrentServiceState(body);
-      }
-    } catch {
-      if (mountedRef.current && refreshGenerationRef.current === id) {
-        setCurrentServiceState(DEGRADED_STATUS);
-      }
-    } finally {
-      clearTimeout(operation.timer);
-      if (statusRefreshRef.current === operation) {
-        statusRefreshRef.current = null;
-        if (mountedRef.current && refreshGenerationRef.current === id) {
-          setRefreshingStatus(false);
-        }
-      }
-    }
   };
 
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
