@@ -447,7 +447,7 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
     dialog.getByRole("button", { name: "关闭 M 助手", exact: true }),
   ).toBeFocused();
   await expect(input).not.toHaveAttribute("maxlength");
-  await expect(page.getByText("最多输入 500 个字符。")).toBeVisible();
+  await expect(dialog.getByText("0 / 500", { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(launcher).toBeFocused();
@@ -589,7 +589,10 @@ test("assistant session survives header, footer, and identity client routing", a
   await page.getByRole("button", { name: "打开 M 助手" }).click();
   const answer = await sendSuccessfulAssistantMessage(page);
 
-  await page.getByRole("button", { name: "关闭 M 助手" }).click();
+  await page
+    .getByRole("dialog", { name: "M 助手" })
+    .getByRole("button", { name: "关闭 M 助手", exact: true })
+    .click();
   await selectRepresentativePricingModules(page);
   const pricingSentinel = `pricing-${testInfo.project.name}-${Date.now()}`;
   await setNavigationSentinel(page, pricingSentinel);
@@ -600,9 +603,13 @@ test("assistant session survives header, footer, and identity client routing", a
   await expect(page.getByTestId("assistant-history")).toContainText(answer);
 
   await navigateFromHeaderToProduct(page, testInfo.project.name);
+  await expect(page.getByRole("dialog", { name: "M 助手" })).toHaveCount(0);
+  await page.getByRole("button", { name: "打开 M 助手" }).click();
   await expect(page.getByTestId("assistant-history")).toContainText(answer);
-
-  await page.getByRole("button", { name: "关闭 M 助手" }).click();
+  await page
+    .getByRole("dialog", { name: "M 助手" })
+    .getByRole("button", { name: "关闭 M 助手", exact: true })
+    .click();
   const footerSentinel = `footer-${testInfo.project.name}-${Date.now()}`;
   await setNavigationSentinel(page, footerSentinel);
   await page
@@ -613,7 +620,10 @@ test("assistant session survives header, footer, and identity client routing", a
   await expectNavigationSentinel(page, footerSentinel);
   await page.getByRole("button", { name: "打开 M 助手" }).click();
   await expect(page.getByTestId("assistant-history")).toContainText(answer);
-  await page.getByRole("button", { name: "关闭 M 助手" }).click();
+  await page
+    .getByRole("dialog", { name: "M 助手" })
+    .getByRole("button", { name: "关闭 M 助手", exact: true })
+    .click();
 
   const identitySentinel = `identity-${testInfo.project.name}-${Date.now()}`;
   await setNavigationSentinel(page, identitySentinel);

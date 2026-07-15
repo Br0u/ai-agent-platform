@@ -157,7 +157,8 @@ function isExpectedNavigationCancellation(
     if (failure.method === "GET") {
       return (
         url.searchParams.has("_rsc") ||
-        url.pathname.startsWith("/_next/static/")
+        url.pathname.startsWith("/_next/static/") ||
+        (url.pathname === "/api/v1/session/staff" && url.search === "")
       );
     }
     return (
