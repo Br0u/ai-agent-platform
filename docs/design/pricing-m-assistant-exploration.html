@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>价格计算与 M 助手 · 视觉探索</title>
+  <!--
+    Design system
+    Type: 44 / 32 / 24 / 18 / 16 / 14 / 12px; DIN Alternate for display, PingFang SC for body.
+    Color: exact repository tokens only; canvas #F7F8FB, surface #FFFFFF, no large gradients.
+    Layout: 8px rhythm; desktop pricing uses 7:5 columns; mobile stacks configuration then summary.
+    Section headers: mono index + compact industrial heading + one-sentence intent.
+    Selection: Variant A, conservative structured panel, is the production direction.
+  -->
+  <style>
+    :root {
+      --primary: #3a67b1;
+      --signal: #56c0f8;
+      --structural: #4c91eb;
+      --accent: #9277dc;
+      --danger: #d91f26;
+      --ink: #101838;
+      --muted: #566078;
+      --canvas: #f7f8fb;
+      --surface: #ffffff;
+      --line: #dce3ef;
+      --dark: #101838;
+      --display: "DIN Alternate", "Arial Narrow", "PingFang SC", sans-serif;
+      --body: "PingFang SC", "Microsoft YaHei", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--canvas); color: var(--ink); font-family: var(--body); }
+    body { margin: 0; min-width: 320px; }
+    button, input { font: inherit; }
+    button { cursor: default; }
+    .canvas { width: min(100%, 1600px); margin: 0 auto; padding: 48px; }
+    .canvas-intro { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 440px); gap: 48px; align-items: end; padding: 8px 0 40px; }
+    .eyebrow, .variant-code, .micro-label { font: 700 12px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+    .eyebrow { color: var(--primary); }
+    h1 { margin: 10px 0 0; font: 700 44px/1.08 var(--display); letter-spacing: -.02em; text-wrap: balance; }
+    .canvas-intro p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.8; text-wrap: pretty; }
+    .system-note { border-top: 2px solid var(--ink); padding-top: 14px; }
+
+    .variant { margin: 0 0 48px; background: var(--surface); border: 1px solid var(--line); overflow: clip; }
+    .variant.selected { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 18%, transparent); }
+    .variant-label { display: grid; grid-template-columns: 80px 1fr auto; gap: 24px; align-items: start; padding: 24px 28px; border-bottom: 1px solid var(--line); }
+    .variant-code { color: var(--primary); }
+    .variant-label h2 { margin: 0; font: 700 24px/1.2 var(--display); }
+    .variant-label p { margin: 6px 0 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+    .selection { padding: 7px 10px; color: var(--surface); background: var(--primary); font: 700 12px/1.4 var(--mono); letter-spacing: .06em; white-space: nowrap; }
+    .comparison { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; padding: 28px; background: var(--canvas); }
+    .desktop-frame, .mobile-frame { min-width: 0; border: 1px solid var(--line); background: var(--surface); }
+    .frame-bar { display: flex; align-items: center; justify-content: space-between; min-height: 38px; padding: 0 14px; border-bottom: 1px solid var(--line); color: var(--muted); font: 600 11px/1 var(--mono); }
+    .frame-dots { letter-spacing: .2em; color: var(--structural); }
+    .desktop-screen { position: relative; min-height: 650px; overflow: hidden; }
+    .mini-nav { display: flex; align-items: center; justify-content: space-between; height: 58px; padding: 0 24px; border-bottom: 1px solid var(--line); }
+    .mini-brand { font: 700 16px/1 var(--display); }
+    .mini-links { color: var(--muted); font-size: 11px; word-spacing: 14px; }
+    .pricing-head { padding: 30px 32px 22px; }
+    .pricing-head .path { color: var(--muted); font: 600 10px/1.4 var(--mono); }
+    .pricing-head h3 { margin: 10px 0 8px; font: 700 32px/1.1 var(--display); }
+    .pricing-head p { max-width: 650px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .pricing-grid { display: grid; grid-template-columns: 7fr 5fr; gap: 16px; padding: 0 32px 32px; }
+    .config, .summary { border: 1px solid var(--line); }
+    .panel-heading { padding: 14px 16px; border-bottom: 1px solid var(--line); font: 700 12px/1.4 var(--mono); }
+    .config-body { display: grid; gap: 18px; padding: 18px 16px; }
+    .field-label { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px; font-weight: 700; }
+    .required { color: var(--primary); font: 600 10px var(--mono); }
+    .options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+    .option { min-height: 34px; padding: 8px; border: 1px solid var(--line); color: var(--muted); background: var(--surface); font-size: 10px; text-align: left; }
+    .option.active { border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--primary) 7%, var(--surface)); }
+    .summary-body { padding: 17px 16px; }
+    .summary-list { display: grid; gap: 11px; margin: 0 0 18px; padding: 0; list-style: none; font-size: 11px; }
+    .summary-list li { padding-bottom: 9px; border-bottom: 1px solid var(--line); }
+    .summary-list strong { display: block; margin-bottom: 3px; color: var(--muted); font: 600 9px var(--mono); }
+    .notice { margin: 0 0 14px; padding: 11px; color: var(--muted); background: var(--canvas); font-size: 10px; line-height: 1.6; }
+    .primary-action { width: 100%; min-height: 38px; border: 0; color: var(--surface); background: var(--primary); font-size: 11px; font-weight: 700; }
+
+    .assistant-stack { position: absolute; right: 18px; bottom: 18px; display: flex; align-items: flex-end; gap: 10px; z-index: 2; }
+    .state-label { padding: 4px 7px; color: var(--surface); background: var(--ink); font: 700 8px/1.2 var(--mono); letter-spacing: .06em; white-space: nowrap; }
+    .assistant-stack > .state-label { position: absolute; top: -20px; }
+    .assistant-stack > .open-state-label { left: 0; }
+    .assistant-stack > .collapsed-state-label { right: 0; }
+    .assistant-panel { width: 300px; border: 1px solid var(--line); background: var(--surface); box-shadow: 0 14px 34px rgba(16, 24, 56, .14); }
+    .assistant-head { display: flex; justify-content: space-between; align-items: start; padding: 14px 15px; border-bottom: 1px solid var(--line); }
+    .assistant-head h4 { margin: 0; font: 700 16px/1.2 var(--display); }
+    .status { display: flex; gap: 6px; align-items: center; margin-top: 5px; color: var(--muted); font-size: 9px; }
+    .status-dot { width: 6px; height: 6px; background: var(--accent); }
+    .close { color: var(--muted); font: 700 12px var(--mono); }
+    .assistant-body { padding: 14px 15px; }
+    .welcome { margin: 0 0 12px; font-size: 11px; line-height: 1.6; }
+    .presets { display: grid; gap: 6px; }
+    .preset { min-height: 32px; padding: 7px 9px; border: 1px solid var(--line); color: var(--ink); background: var(--surface); font-size: 10px; text-align: left; }
+    .assistant-message { margin: 12px 0; padding: 9px; background: var(--canvas); color: var(--muted); font-size: 10px; line-height: 1.55; }
+    .composer { display: grid; grid-template-columns: 1fr 50px; gap: 6px; }
+    .composer input { min-width: 0; height: 32px; padding: 0 8px; border: 1px solid var(--line); color: var(--muted); background: var(--surface); font-size: 10px; }
+    .send { border: 0; color: var(--surface); background: var(--primary); font-size: 10px; }
+    .fallback { display: flex; gap: 14px; margin-top: 11px; color: var(--primary); font-size: 9px; }
+    .launcher { display: grid; place-items: center; width: 68px; height: 68px; border: 1px solid var(--line); background: var(--surface); box-shadow: 0 8px 24px rgba(16, 24, 56, .12); }
+    .assistant-asset { width: 58px; height: 58px; object-fit: contain; }
+
+    .mobile-frame { align-self: start; }
+    .mobile-screen { position: relative; min-height: 650px; overflow: hidden; }
+    .mobile-nav { height: 48px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid var(--line); }
+    .mobile-pricing { padding: 18px 14px 120px; }
+    .mobile-pricing h3 { margin: 0 0 6px; font: 700 24px/1.1 var(--display); }
+    .mobile-pricing > p { margin: 0 0 14px; color: var(--muted); font-size: 10px; line-height: 1.6; }
+    .mobile-card { margin-bottom: 10px; border: 1px solid var(--line); padding: 12px; }
+    .mobile-card h5 { margin: 0 0 8px; font-size: 11px; }
+    .mobile-row { display: flex; gap: 5px; flex-wrap: wrap; }
+    .mobile-chip { padding: 6px 7px; border: 1px solid var(--line); color: var(--muted); font-size: 8px; }
+    .mobile-chip.active { color: var(--primary); border-color: var(--primary); }
+    .mobile-drawer { position: absolute; left: 0; right: 0; bottom: 0; max-height: 75%; border-top: 2px solid var(--primary); background: var(--surface); box-shadow: 0 -12px 30px rgba(16,24,56,.12); }
+    .drawer-handle { width: 34px; height: 3px; margin: 7px auto 3px; background: var(--line); }
+    .mobile-drawer .assistant-head, .mobile-drawer .assistant-body { padding-left: 14px; padding-right: 14px; }
+    .mobile-launcher { position: absolute; right: 12px; bottom: 286px; z-index: 4; display: grid; justify-items: end; gap: 4px; }
+    .mobile-launcher .launcher { width: 64px; height: 64px; }
+    .drawer-state-label { display: table; margin: 8px 14px 0; color: var(--primary); background: var(--canvas); }
+
+    /* B: a denser tool-like assistant dock with a top rail and fixed side summary. */
+    .variant-b .desktop-screen { background: var(--dark); }
+    .variant-b .mini-nav { color: var(--surface); border-color: color-mix(in srgb, var(--surface) 18%, transparent); }
+    .variant-b .mini-links { color: color-mix(in srgb, var(--surface) 68%, transparent); }
+    .variant-b .pricing-workbench { margin: 18px; background: var(--surface); }
+    .variant-b .pricing-head { display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: end; padding-top: 22px; }
+    .variant-b .pricing-head h3 { font-size: 28px; }
+    .variant-b .tech-tag { color: var(--accent); font: 700 10px var(--mono); }
+    .variant-b .pricing-grid { grid-template-columns: minmax(0, 1fr) 210px; }
+    .variant-b .assistant-stack { right: 0; bottom: 0; gap: 0; }
+    .variant-b .assistant-panel { width: 330px; border-color: var(--structural); box-shadow: none; }
+    .variant-b .launcher { border-color: var(--structural); background: var(--dark); }
+    .variant-b .mobile-screen { background: var(--dark); }
+    .variant-b .mobile-pricing { margin: 10px; padding-bottom: 116px; background: var(--surface); }
+    .variant-b .mobile-drawer { border-top-color: var(--structural); }
+
+    /* C: support-led editorial composition; pricing reads as a guided brief. */
+    .variant-c .desktop-screen { background: var(--surface); }
+    .variant-c .pricing-head { display: grid; grid-template-columns: 1fr 1fr; gap: 46px; padding-top: 40px; }
+    .variant-c .pricing-head h3 { font-size: 38px; }
+    .variant-c .pricing-head p { padding-top: 18px; border-top: 1px solid var(--ink); }
+    .variant-c .pricing-grid { grid-template-columns: 1fr; }
+    .variant-c .config { display: grid; grid-template-columns: 150px 1fr; }
+    .variant-c .panel-heading { border-bottom: 0; border-right: 1px solid var(--line); font-size: 11px; }
+    .variant-c .config-body { grid-template-columns: 1fr 1fr; }
+    .variant-c .summary { display: grid; grid-template-columns: 1fr 210px; }
+    .variant-c .summary-body { display: contents; }
+    .variant-c .summary-list { grid-template-columns: repeat(2, 1fr); padding: 16px; margin: 0; }
+    .variant-c .summary-cta { padding: 16px; border-left: 1px solid var(--line); }
+    .variant-c .assistant-panel { width: 320px; border-radius: 14px 14px 0 14px; }
+    .variant-c .launcher { border-radius: 50%; }
+    .variant-c .mobile-card { border-left: 0; border-right: 0; }
+
+    @media (max-width: 900px) {
+      .canvas { padding: 24px 16px; }
+      .canvas-intro { grid-template-columns: 1fr; gap: 20px; padding-bottom: 28px; }
+      h1 { font-size: 34px; }
+      .variant-label { grid-template-columns: 54px 1fr; gap: 12px; padding: 18px 16px; }
+      .selection { grid-column: 2; justify-self: start; }
+      .comparison { grid-template-columns: 1fr; padding: 16px; }
+      .desktop-frame { display: none; }
+      .mobile-frame { width: min(100%, 390px); margin: 0 auto; }
+      .mobile-screen { min-height: 690px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="canvas">
+    <header class="canvas-intro">
+      <div>
+        <div class="eyebrow">Design exploration / 2026.07.13</div>
+        <h1>价格计算与 M 助手</h1>
+      </div>
+      <p class="system-note">同一企业助手方向下的三种布局精炼。所有方案都保留真实需求配置、不展示虚构金额，并以机械折线 M 作为单一网站入口资产。</p>
+    </header>
+
+    <section class="variant selected variant-a">
+      <header class="variant-label">
+        <div class="variant-code">A / 01</div>
+        <div><h2>保守结构化面板</h2><p>稳定双栏、清晰分组、常规右下客服窗；最贴近现有门户的工业精确语言。</p></div>
+        <span class="selection">已选实现方向</span>
+      </header>
+      <div class="comparison">
+        <div class="desktop-frame">
+          <div class="frame-bar"><span class="frame-dots">● ● ●</span><span>DESKTOP · 1440 × 1000</span></div>
+          <div class="desktop-screen">
+            <div class="mini-nav"><span class="mini-brand">AI Agent Platform</span><span class="mini-links">产品 文档 支持 登录</span></div>
+            <div class="pricing-head"><span class="path">支持 / 商务服务 / 价格计算</span><h3>价格计算</h3><p>根据部署方式、使用规模、功能模块和服务周期整理需求。当前不产生真实价格。</p></div>
+            <div class="pricing-grid">
+              <div class="config"><div class="panel-heading">01 / 需求配置</div><div class="config-body">
+                <div><div class="field-label">部署方式 <span class="required">必选</span></div><div class="options"><button class="option active">本地私有化</button><button class="option">专有云</button><button class="option">待商务确认</button></div></div>
+                <div><div class="field-label">使用规模 <span class="required">必选</span></div><div class="options"><button class="option active">体验验证</button><button class="option">部门级</button><button class="option">企业级</button></div></div>
+                <div><div class="field-label">功能模块 <span class="required">至少一项</span></div><div class="options"><button class="option active">Agent Studio</button><button class="option">Knowledge Base</button><button class="option active">Workflow</button></div></div>
+                <div><div class="field-label">服务周期 <span class="required">必选</span></div><div class="options"><button class="option">一年</button><button class="option">三年</button><button class="option active">待商务确认</button></div></div>
+              </div></div>
+              <div class="summary"><div class="panel-heading">02 / 需求摘要</div><div class="summary-body"><ul class="summary-list"><li><strong>部署方式</strong>本地私有化</li><li><strong>使用规模</strong>体验验证</li><li><strong>功能模块</strong>Agent Studio、Workflow</li><li><strong>服务周期</strong>待商务确认</li></ul><p class="notice">在线估算尚未开放，最终价格以商务报价为准。</p><button class="primary-action">获取正式报价</button></div></div>
+            </div>
+            <div class="assistant-stack">
+              <div class="assistant-panel"><div class="assistant-head"><div><h4>M 助手</h4><div class="status"><span class="status-dot"></span>AI 服务尚未接入</div></div><span class="close">关闭</span></div><div class="assistant-body"><p class="welcome">你好，我可以先帮你找到平台文档、部署支持和产品问题入口。</p><div class="presets"><button class="preset">如何开始了解平台？</button><button class="preset">如何获取部署支持？</button><button class="preset">如何提交产品问题？</button></div><p class="assistant-message">当前由固定引导服务响应，不会生成 AI 回答。</p><div class="composer"><input aria-label="输入问题" value="" placeholder="输入你的问题" readonly><button class="send">发送</button></div><div class="fallback"><span>帮助中心</span><span>商务咨询</span></div></div></div>
+              <div class="launcher"><img class="assistant-asset" src="/apps/web/public/assets/assistant/m-assistant.webp" alt="机械折线 M 助手"></div>
+            </div>
+          </div>
+        </div>
+        <div class="mobile-frame"><div class="frame-bar"><span class="frame-dots">● ● ●</span><span>MOBILE · 390 × 844</span></div><div class="mobile-screen"><div class="mobile-nav"><span class="mini-brand">AI Agent Platform</span><span class="micro-label">菜单</span></div><div class="mobile-pricing"><h3>价格计算</h3><p>先配置需求，再查看摘要；不产生真实价格。</p><div class="mobile-card"><h5>01 / 部署方式</h5><div class="mobile-row"><span class="mobile-chip active">本地私有化</span><span class="mobile-chip">专有云</span></div></div><div class="mobile-card"><h5>02 / 功能模块</h5><div class="mobile-row"><span class="mobile-chip active">Agent Studio</span><span class="mobile-chip active">Workflow</span></div></div><div class="mobile-card"><h5>03 / 需求摘要</h5><p class="notice">在线估算尚未开放，最终价格以商务报价为准。</p></div></div><div class="mobile-drawer"><div class="drawer-handle"></div><div class="assistant-head"><div><h4>M 助手</h4><div class="status"><span class="status-dot"></span>AI 服务尚未接入</div></div><span class="close">关闭</span></div><div class="assistant-body"><p class="welcome">需要了解平台、部署支持或产品问题？</p><div class="presets"><button class="preset">如何获取部署支持？</button><button class="preset">如何提交产品问题？</button></div><div class="composer"><input aria-label="移动端输入问题" placeholder="输入你的问题" readonly><button class="send">发送</button></div><div class="fallback"><span>帮助中心</span><span>商务咨询</span></div></div></div></div></div>
+      </div>
+    </section>
+
+    <section class="variant variant-b">
+      <header class="variant-label"><div class="variant-code">B / 02</div><div><h2>紧凑技术停靠</h2><p>深色工作台、窄摘要轨和边缘停靠助手；更像工程工具，信息密度最高。</p></div></header>
+      <div class="comparison">
+        <div class="desktop-frame"><div class="frame-bar"><span class="frame-dots">● ● ●</span><span>DESKTOP · 1440 × 1000</span></div><div class="desktop-screen"><div class="mini-nav"><span class="mini-brand">AI Agent Platform</span><span class="mini-links">产品 文档 支持 登录</span></div><div class="pricing-workbench"><div class="pricing-head"><div><span class="path">SUPPORT / BUSINESS / PRICING</span><h3>价格计算</h3><p>整理部署与采购需求，不产生真实价格。</p></div><span class="tech-tag">CONFIGURATION WORKBENCH</span></div><div class="pricing-grid"><div class="config"><div class="panel-heading">CONFIG / 01—04</div><div class="config-body"><div><div class="field-label">部署方式 <span class="required">REQUIRED</span></div><div class="options"><button class="option active">本地私有化</button><button class="option">专有云</button><button class="option">待确认</button></div></div><div><div class="field-label">功能模块 <span class="required">2 SELECTED</span></div><div class="options"><button class="option active">Agent Studio</button><button class="option active">Workflow</button><button class="option">Observability</button></div></div></div></div><div class="summary"><div class="panel-heading">SUMMARY</div><div class="summary-body"><ul class="summary-list"><li><strong>DEPLOY</strong>本地私有化</li><li><strong>SCALE</strong>体验验证</li><li><strong>MODULES</strong>2 项</li><li><strong>TERM</strong>待确认</li></ul><p class="notice">在线估算尚未开放，最终价格以商务报价为准。</p><button class="primary-action">获取正式报价</button></div></div></div></div><div class="assistant-stack"><div class="assistant-panel"><div class="assistant-head"><div><h4>M / 支持终端</h4><div class="status"><span class="status-dot"></span>PLACEHOLDER MODE</div></div><span class="close">ESC</span></div><div class="assistant-body"><p class="welcome">选择一个支持路径，或输入不超过 500 个字符的问题。</p><div class="presets"><button class="preset">如何开始了解平台？</button><button class="preset">如何获取部署支持？</button><button class="preset">如何提交产品问题？</button></div><div class="composer"><input aria-label="技术停靠输入" placeholder="输入问题" readonly><button class="send">发送</button></div><div class="fallback"><span>帮助中心</span><span>商务咨询</span></div></div></div><div class="launcher"><img class="assistant-asset" src="/apps/web/public/assets/assistant/m-assistant.webp" alt="机械折线 M 助手"></div></div></div></div>
+        <div class="mobile-frame"><div class="frame-bar"><span class="frame-dots">● ● ●</span><span>MOBILE · 390 × 844</span></div><div class="mobile-screen"><div class="mobile-nav"><span class="mini-brand" style="color:#fff">AI Agent Platform</span><span class="micro-label" style="color:#fff">菜单</span></div><div class="mobile-pricing"><h3>价格计算</h3><p>CONFIGURATION WORKBENCH</p><div class="mobile-card"><h5>DEPLOY / 本地私有化</h5><div class="mobile-row"><span class="mobile-chip active">体验验证</span><span class="mobile-chip">企业级</span></div></div><div class="mobile-card"><h5>MODULES / 2 SELECTED</h5><div class="mobile-row"><span class="mobile-chip active">Agent Studio</span><span class="mobile-chip active">Workflow</span></div></div></div><div class="mobile-drawer"><div class="drawer-handle"></div><div class="assistant-head"><div><h4>M / 支持终端</h4><div class="status"><span class="status-dot"></span>AI 服务尚未接入</div></div><span class="close">关闭</span></div><div class="assistant-body"><div class="presets"><button class="preset">如何开始了解平台？</button><button class="preset">如何获取部署支持？</button></div><div class="composer"><input aria-label="技术停靠移动输入" placeholder="输入问题" readonly><button class="send">发送</button></div><div class="fallback"><span>帮助中心</span><span>商务咨询</span></div></div></div></div></div>
+      </div>
+    </section>
+
+    <section class="variant variant-c">
+      <header class="variant-label"><div class="variant-code">C / 03</div><div><h2>编辑式支持面板</h2><p>以商务沟通为叙事，配置像一份简洁需求书；助手更柔和但仍保持企业克制。</p></div></header>
+      <div class="comparison">
+        <div class="desktop-frame"><div class="frame-bar"><span class="frame-dots">● ● ●</span><span>DESKTOP · 1440 × 1000</span></div><div class="desktop-screen"><div class="mini-nav"><span class="mini-brand">AI Agent Platform</span><span class="mini-links">产品 文档 支持 登录</span></div><div class="pricing-head"><div><span class="path">商务服务 / 需求准备</span><h3>把部署需求<br>整理清楚</h3></div><p>选择计划采用的部署方式、使用规模和能力模块。我们会把它整理为商务沟通起点，而不是未经确认的价格承诺。</p></div><div class="pricing-grid"><div class="config"><div class="panel-heading">需求清单<br><span style="color:#566078;font-weight:400">四个步骤</span></div><div class="config-body"><div><div class="field-label">部署方式 <span class="required">01</span></div><div class="options"><button class="option active">本地私有化</button><button class="option">专有云</button><button class="option">待确认</button></div></div><div><div class="field-label">使用规模 <span class="required">02</span></div><div class="options"><button class="option active">体验验证</button><button class="option">部门级</button><button class="option">企业级</button></div></div><div><div class="field-label">功能模块 <span class="required">03</span></div><div class="options"><button class="option active">Agent Studio</button><button class="option active">Workflow</button><button class="option">Observability</button></div></div><div><div class="field-label">服务周期 <span class="required">04</span></div><div class="options"><button class="option">一年</button><button class="option">三年</button><button class="option active">待确认</button></div></div></div></div><div class="summary"><div class="panel-heading">当前摘要</div><div class="summary-body"><ul class="summary-list"><li><strong>部署方式</strong>本地私有化</li><li><strong>使用规模</strong>体验验证</li><li><strong>功能模块</strong>Agent Studio、Workflow</li><li><strong>服务周期</strong>待商务确认</li></ul><div class="summary-cta"><p class="notice">在线估算尚未开放，最终价格以商务报价为准。</p><button class="primary-action">获取正式报价</button></div></div></div></div><div class="assistant-stack"><div class="assistant-panel"><div class="assistant-head"><div><h4>需要我帮你找入口？</h4><div class="status"><span class="status-dot"></span>M 助手 · 固定引导</div></div><span class="close">关闭</span></div><div class="assistant-body"><p class="welcome">先从一个常见问题开始。</p><div class="presets"><button class="preset">如何开始了解平台？</button><button class="preset">如何获取部署支持？</button><button class="preset">如何提交产品问题？</button></div><div class="composer"><input aria-label="编辑式支持输入" placeholder="也可以输入你的问题" readonly><button class="send">发送</button></div><div class="fallback"><span>帮助中心</span><span>商务咨询</span></div></div></div><div class="launcher"><img class="assistant-asset" src="/apps/web/public/assets/assistant/m-assistant.webp" alt="机械折线 M 助手"></div></div></div></div>
+        <div class="mobile-frame"><div class="frame-bar"><span class="frame-dots">● ● ●</span><span>MOBILE · 390 × 844</span></div><div class="mobile-screen"><div class="mobile-nav"><span class="mini-brand">AI Agent Platform</span><span class="micro-label">菜单</span></div><div class="mobile-pricing"><span class="path">商务服务 / 需求准备</span><h3 style="margin-top:8px">把部署需求<br>整理清楚</h3><p>形成商务沟通起点，不产生真实价格。</p><div class="mobile-card"><h5>01 / 部署方式</h5><div class="mobile-row"><span class="mobile-chip active">本地私有化</span><span class="mobile-chip">待确认</span></div></div><div class="mobile-card"><h5>02 / 当前摘要</h5><p class="notice">在线估算尚未开放，最终价格以商务报价为准。</p></div></div><div class="mobile-drawer"><div class="drawer-handle"></div><div class="assistant-head"><div><h4>需要我帮你找入口？</h4><div class="status"><span class="status-dot"></span>M 助手 · 固定引导</div></div><span class="close">关闭</span></div><div class="assistant-body"><p class="welcome">先从一个常见问题开始。</p><div class="presets"><button class="preset">如何开始了解平台？</button><button class="preset">如何获取部署支持？</button></div><div class="composer"><input aria-label="编辑式支持移动输入" placeholder="输入你的问题" readonly><button class="send">发送</button></div><div class="fallback"><span>帮助中心</span><span>商务咨询</span></div></div></div></div></div>
+      </div>
+    </section>
+  </main>
+  <script>
+    // The comparison canvas shows both interaction states at once so reviewers
+    // can assess the closed entrance and the open panel/drawer independently.
+    document.querySelectorAll(".assistant-stack").forEach((stack) => {
+      stack.insertAdjacentHTML(
+        "afterbegin",
+        '<span class="state-label open-state-label">展开状态</span><span class="state-label collapsed-state-label">折叠状态</span>',
+      );
+    });
+
+    document.querySelectorAll(".mobile-screen").forEach((screen) => {
+      const drawer = screen.querySelector(".mobile-drawer");
+      drawer.insertAdjacentHTML(
+        "beforebegin",
+        '<div class="mobile-launcher"><span class="state-label">折叠状态</span><div class="launcher"><img class="assistant-asset" src="/apps/web/public/assets/assistant/m-assistant.webp" alt="机械折线 M 助手"></div></div>',
+      );
+      drawer.insertAdjacentHTML(
+        "afterbegin",
+        '<span class="state-label drawer-state-label">展开状态 · 底部抽屉</span>',
+      );
+    });
+  </script>
+</body>
+</html>

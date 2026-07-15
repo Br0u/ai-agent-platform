@@ -7,10 +7,15 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-ai_agent_platform}
       POSTGRES_USER: ${POSTGRES_USER:-ai_agent_owner}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      MIGRATOR_DATABASE_PASSWORD: ${MIGRATOR_DATABASE_PASSWORD:?Set MIGRATOR_DATABASE_PASSWORD in .env}
-      RUNTIME_DATABASE_PASSWORD: ${RUNTIME_DATABASE_PASSWORD:?Set RUNTIME_DATABASE_PASSWORD in .env}
-      BACKUP_DATABASE_PASSWORD: ${BACKUP_DATABASE_PASSWORD:?Set BACKUP_DATABASE_PASSWORD in .env}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      MIGRATOR_DATABASE_PASSWORD_FILE: /run/secrets/migrator_database_password
+      RUNTIME_DATABASE_PASSWORD_FILE: /run/secrets/runtime_database_password
+      BACKUP_DATABASE_PASSWORD_FILE: /run/secrets/backup_database_password
+    secrets:
+      - postgres_password
+      - migrator_database_password
+      - runtime_database_password
+      - backup_database_password
     volumes:
       - db_data:/var/lib/postgresql
       - ./infra/postgres/01-roles.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
@@ -29,12 +34,138 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
       target: migrator
+      args:
+        PNPM_REGISTRY: ${PNPM_REGISTRY:-https://registry.npmmirror.com}
     restart: "no"
+    entrypoint: ["/opt/aap/run-with-secret-env.sh"]
+    command: ["pnpm", "db:prepare"]
     environment:
-      DATABASE_URL: ${MIGRATOR_DATABASE_URL:?Set MIGRATOR_DATABASE_URL in .env}
+      SECRET_ENV_SPECS: DATABASE_URL=/run/secrets/migrator_database_url
+    secrets:
+      - migrator_database_url
+    volumes:
+      - ./infra/docker/run-with-secret-env.sh:/opt/aap/run-with-secret-env.sh:ro
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - backend
+
+  agno-bootstrap:
+    image: postgres:18.3-alpine3.23
+    restart: "no"
+    user: postgres
+    entrypoint: ["/opt/aap/run-with-secret-env.sh"]
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-ai_agent_owner}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_agent_platform}
+      SECRET_ENV_SPECS: >-
+        POSTGRES_PASSWORD=/run/secrets/postgres_password
+        AGNO_MIGRATOR_DATABASE_PASSWORD=/run/secrets/agno_migrator_database_password
+        AGNO_DATABASE_PASSWORD=/run/secrets/agno_database_password
+    secrets:
+      - postgres_password
+      - agno_migrator_database_password
+      - agno_database_password
+    volumes:
+      - ./infra/docker/run-with-secret-env.sh:/opt/aap/run-with-secret-env.sh:ro
+      - ./infra/postgres/03-agno-roles.sh:/opt/postgres/03-agno-roles.sh:ro
+      - ./infra/postgres/03-agno-roles.sql:/opt/postgres/03-agno-roles.sql:ro
+    command: ["/opt/postgres/03-agno-roles.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - backend
+
+  agent-migrate:
+    build:
+      context: .
+      dockerfile: apps/agent/Dockerfile
+    restart: "no"
+    entrypoint: ["/opt/aap/run-with-secret-env.sh"]
+    command: ["python", "-m", "agent_service.migrate"]
+    environment:
+      SECRET_ENV_SPECS: AGNO_MIGRATOR_DATABASE_URL=/run/secrets/agno_migrator_database_url
+    secrets:
+      - agno_migrator_database_url
+    volumes:
+      - ./infra/docker/run-with-secret-env.sh:/opt/aap/run-with-secret-env.sh:ro
+    depends_on:
+      agno-bootstrap:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - backend
+
+  agent:
+    build:
+      context: .
+      dockerfile: apps/agent/Dockerfile
+    restart: unless-stopped
+    user: agent
+    entrypoint: ["/opt/aap/run-with-secret-env.sh"]
+    command:
+      [
+        "uvicorn",
+        "agent_service.app:app_factory",
+        "--factory",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "7777",
+      ]
+    environment:
+      SECRET_ENV_SPECS: >-
+        AGNO_DATABASE_URL=/run/secrets/agno_database_url
+        OS_SECURITY_KEY=/run/secrets/os_security_key
+    secrets:
+      - agno_database_url
+      - os_security_key
+    volumes:
+      - ./infra/docker/run-with-secret-env.sh:/opt/aap/run-with-secret-env.sh:ro
+    depends_on:
+      agent-migrate:
+        condition: service_completed_successfully
+    expose:
+      - "7777"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import pathlib,urllib.request; key=pathlib.Path('/run/secrets/os_security_key').read_text().strip(); request=urllib.request.Request('http://127.0.0.1:7777/internal/health/ready',headers={'Authorization':'Bearer '+key}); urllib.request.urlopen(request,timeout=3).close()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    cpus: "1.0"
+    pids_limit: 256
     networks:
       - backend
 
@@ -42,14 +173,38 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        PNPM_REGISTRY: ${PNPM_REGISTRY:-https://registry.npmmirror.com}
     restart: unless-stopped
+    entrypoint: ["/opt/aap/run-with-secret-env.sh"]
+    command: ["node", "server.js"]
     environment:
-      DATABASE_URL: ${RUNTIME_DATABASE_URL:?Set RUNTIME_DATABASE_URL in .env}
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET in .env}
+      SECRET_ENV_SPECS: >-
+        DATABASE_URL=/run/secrets/runtime_database_url
+        BETTER_AUTH_SECRET=/run/secrets/better_auth_secret
+        OS_SECURITY_KEY=/run/secrets/os_security_key
+        ASSISTANT_SESSION_SECRET=/run/secrets/assistant_session_secret
+        ASSISTANT_RATE_LIMIT_SECRET=/run/secrets/assistant_rate_limit_secret
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:?Set BETTER_AUTH_URL in .env}
       BETTER_AUTH_TRUSTED_ORIGINS: ${BETTER_AUTH_TRUSTED_ORIGINS:?Set BETTER_AUTH_TRUSTED_ORIGINS in .env}
       FEATURE_EMAIL_VERIFICATION: ${FEATURE_EMAIL_VERIFICATION:-false}
+      AGENTOS_INTERNAL_URL: http://agent:7777
+      ASSISTANT_PUBLIC_ORIGIN: ${ASSISTANT_PUBLIC_ORIGIN:?Set ASSISTANT_PUBLIC_ORIGIN in .env}
+      ASSISTANT_PROVIDER_MODE: ${ASSISTANT_PROVIDER_MODE:-placeholder}
+      ASSISTANT_AGENTOS_DEFAULT_AGENT_ID: ${ASSISTANT_AGENTOS_DEFAULT_AGENT_ID:-}
+      ASSISTANT_AGENTOS_READINESS_TTL_MS: ${ASSISTANT_AGENTOS_READINESS_TTL_MS:-5000}
+      ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS: ${ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS:-1500}
+      ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD: ${ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD:-3}
+      ASSISTANT_AGENTOS_CIRCUIT_RESET_MS: ${ASSISTANT_AGENTOS_CIRCUIT_RESET_MS:-30000}
       TRUST_NGINX_PROXY: "true"
+    secrets:
+      - runtime_database_url
+      - better_auth_secret
+      - os_security_key
+      - assistant_session_secret
+      - assistant_rate_limit_secret
+    volumes:
+      - ./infra/docker/run-with-secret-env.sh:/opt/aap/run-with-secret-env.sh:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -118,14 +273,26 @@ services:
       context: .
       dockerfile: infra/docker/backup.Dockerfile
     restart: unless-stopped
+    command: ["/usr/local/bin/aap-backup"]
     environment:
-      BACKUP_DATABASE_URL: ${BACKUP_DATABASE_URL:?Set BACKUP_DATABASE_URL in .env}
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-ai_agent_platform}
+      PGUSER: ai_agent_backup
+      BACKUP_DATABASE_PASSWORD_FILE: /run/secrets/backup_database_password
+      BACKUP_ENCRYPTION_KEY_FILE: /run/secrets/backup_encryption_key
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_RUN_ONCE: ${BACKUP_RUN_ONCE:-false}
+    secrets:
+      - backup_database_password
+      - backup_encryption_key
     volumes:
       - backup_data:/backups
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      agent-migrate:
         condition: service_completed_successfully
     security_opt:
       - no-new-privileges:true
@@ -145,3 +312,35 @@ networks:
 volumes:
   db_data:
   backup_data:
+
+secrets:
+  postgres_password:
+    file: ${POSTGRES_PASSWORD_FILE:-.secrets/postgres_password}
+  migrator_database_password:
+    file: ${MIGRATOR_DATABASE_PASSWORD_FILE:-.secrets/migrator_database_password}
+  runtime_database_password:
+    file: ${RUNTIME_DATABASE_PASSWORD_FILE:-.secrets/runtime_database_password}
+  backup_database_password:
+    file: ${BACKUP_DATABASE_PASSWORD_FILE:-.secrets/backup_database_password}
+  backup_encryption_key:
+    file: ${BACKUP_ENCRYPTION_KEY_FILE:-.secrets/backup_encryption_key}
+  agno_migrator_database_password:
+    file: ${AGNO_MIGRATOR_DATABASE_PASSWORD_FILE:-.secrets/agno_migrator_database_password}
+  agno_database_password:
+    file: ${AGNO_DATABASE_PASSWORD_FILE:-.secrets/agno_database_password}
+  migrator_database_url:
+    file: ${MIGRATOR_DATABASE_URL_FILE:-.secrets/migrator_database_url}
+  runtime_database_url:
+    file: ${RUNTIME_DATABASE_URL_FILE:-.secrets/runtime_database_url}
+  agno_migrator_database_url:
+    file: ${AGNO_MIGRATOR_DATABASE_URL_FILE:-.secrets/agno_migrator_database_url}
+  agno_database_url:
+    file: ${AGNO_DATABASE_URL_FILE:-.secrets/agno_database_url}
+  better_auth_secret:
+    file: ${BETTER_AUTH_SECRET_FILE:-.secrets/better_auth_secret}
+  os_security_key:
+    file: ${OS_SECURITY_KEY_FILE:-.secrets/os_security_key}
+  assistant_session_secret:
+    file: ${ASSISTANT_SESSION_SECRET_FILE:-.secrets/assistant_session_secret}
+  assistant_rate_limit_secret:
+    file: ${ASSISTANT_RATE_LIMIT_SECRET_FILE:-.secrets/assistant_rate_limit_secret}

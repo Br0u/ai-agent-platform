@@ -6,6 +6,7 @@
 
 ```text
 apps/web/                 Next.js 全站应用
+apps/agent/               内部 AgentOS Python 服务
 packages/ui/              共享设计系统与组件
 packages/database/        PostgreSQL Schema、迁移与种子数据
 packages/integrations/    外部能力适配器与 Mock
@@ -39,11 +40,19 @@ pnpm dev
 ```bash
 cp .env.example .env
 # 编辑.env并替换测试密码
-docker compose up -d --build --wait db migrate web proxy backup
+# 创建独立的 0600 单行备份密钥文件（无空白/CR、至少 32 字节），并让 BACKUP_ENCRYPTION_KEY_FILE 指向它
+docker compose build migrate agent web backup
+docker compose up -d --wait db
+docker compose run --rm migrate
+docker compose run --rm agno-bootstrap
+docker compose run --rm --no-deps agent-migrate
+docker compose up -d --no-deps --wait agent
+docker compose up -d --wait web
+docker compose up -d --wait proxy backup
 ```
 
 访问`http://localhost:8080`；健康检查为`/api/health/live`和`/api/health/ready`。
 
 ## 当前状态
 
-已建立全站路由骨架、蓝靛紫设计系统、外部功能占位边界、PostgreSQL基础模型和Docker Compose部署基线。真实品牌资产及License、下载、OpenLab等外部能力仍为占位。
+已建立全站路由骨架、蓝靛紫设计系统、外部功能占位边界、PostgreSQL基础模型、内部 AgentOS 占位服务和Docker Compose部署基线。AgentOS当前不加载模型、Skill或知识库；真实品牌资产及License、下载、OpenLab等外部能力仍为占位。

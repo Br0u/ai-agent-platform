@@ -1,3 +1,14 @@
+import type { AnchorHTMLAttributes, ComponentType } from "react";
+
+export type NavigationLinkProps = Omit<
+  AnchorHTMLAttributes<HTMLAnchorElement>,
+  "href"
+> & {
+  href: string;
+};
+
+export type NavigationLinkComponent = ComponentType<NavigationLinkProps> | "a";
+
 export type NavigationStatus = "live" | "scaffold" | "placeholder";
 
 export type NavigationHrefItem = {

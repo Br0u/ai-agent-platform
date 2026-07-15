@@ -2,6 +2,7 @@ import { matchRoute } from "@/config/routes";
 import { navigationAnchorsForPath } from "@/config/navigation";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
 import { FeaturePlaceholderPage } from "../feature-placeholder-page";
 import { ScaffoldAnchorIndex } from "./scaffold-anchor-index";
 
@@ -15,7 +16,13 @@ export function metadataForRegisteredRoute(pathname: string): Metadata {
   };
 }
 
-export function RegisteredRoutePage({ pathname }: { pathname: string }) {
+export function RegisteredRoutePage({
+  pathname,
+  children,
+}: {
+  pathname: string;
+  children?: ReactNode;
+}) {
   const route = matchRoute(pathname);
 
   if (!route) notFound();
@@ -26,6 +33,7 @@ export function RegisteredRoutePage({ pathname }: { pathname: string }) {
     <main>
       <FeaturePlaceholderPage route={route}>
         {anchors.length ? <ScaffoldAnchorIndex anchors={anchors} /> : null}
+        {children}
       </FeaturePlaceholderPage>
     </main>
   );

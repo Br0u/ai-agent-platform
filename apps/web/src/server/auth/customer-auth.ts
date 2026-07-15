@@ -17,18 +17,9 @@ import {
   createSharedAuthOptions,
   type AuthEnvironment,
 } from "./shared-options";
+import { customerRealm } from "./customer-realm";
 
-export const customerRealm = {
-  realm: "customer",
-  basePath: "/api/auth/customer",
-  cookieName: "aap_customer_session",
-  maxAgeSeconds: 7 * 24 * 60 * 60,
-  mountGenericRouteHandler: false,
-  endpoints: {
-    allowed: ["/sign-in/email", "/sign-out", "/get-session"],
-    denied: ["/sign-up/email"],
-  },
-} as const;
+export { customerRealm } from "./customer-realm";
 
 type CustomerAuthDependencies = {
   env?: AuthEnvironment;

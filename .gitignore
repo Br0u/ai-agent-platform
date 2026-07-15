@@ -2,8 +2,16 @@
 .env
 .env.*
 !.env.example
+.secrets/
 node_modules/
 .pnpm-store/
+.venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .next/
 out/
 dist/
@@ -21,3 +29,14 @@ playwright-report/
 test-results/
 /tmp/
 ~$*.docx
+
+# Local-only documents and review/extraction artifacts.
+# Product documentation under docs/ remains versioned intentionally.
+*.doc
+*.docx
+*.pdf
+/findings.md
+/progress.md
+/task_plan.md
+/pdf_extract*.txt
+/.local-docs/

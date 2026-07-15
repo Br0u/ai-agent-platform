@@ -15,7 +15,10 @@ import {
   isNavigationParentActive,
 } from "./navigation-match";
 import { NavigationStatusBadge } from "./navigation-status";
-import type { PortalNavigationItem } from "./navigation-types";
+import type {
+  NavigationLinkComponent,
+  PortalNavigationItem,
+} from "./navigation-types";
 
 const FOCUSABLE_SELECTOR = [
   "a[href]",
@@ -39,11 +42,15 @@ export function MobileNavigation({
   activeHref,
   actionLabel = "登录 / 进入控制台",
   actionHref = "/login",
+  directItemHrefs = [],
+  linkComponent: Link = "a",
 }: {
   items: PortalNavigationItem[];
   activeHref: string;
   actionLabel?: string;
   actionHref?: string;
+  directItemHrefs?: string[];
+  linkComponent?: NavigationLinkComponent;
 }) {
   const baseId = useId();
   const drawerId = `${baseId}-mobile-drawer`;
@@ -198,6 +205,26 @@ export function MobileNavigation({
 
           <div className="mobile-navigation__body">
             {items.map((item, index) => {
+              if (directItemHrefs.includes(item.href)) {
+                return (
+                  <div className="mobile-navigation__group" key={item.href}>
+                    <Link
+                      aria-current={
+                        isNavigationParentActive(item, activeHref)
+                          ? "page"
+                          : undefined
+                      }
+                      className="mobile-navigation__direct-link"
+                      href={item.href}
+                      onClick={closeNavigation}
+                    >
+                      <span>{item.label}</span>
+                      <NavigationStatusBadge status={item.status} />
+                    </Link>
+                  </div>
+                );
+              }
+
               const triggerId = `${baseId}-mobile-trigger-${index}`;
               const panelId = `${baseId}-mobile-panel-${index}`;
               const isExpanded = openIndex === index;
@@ -235,7 +262,7 @@ export function MobileNavigation({
                     id={panelId}
                     role="region"
                   >
-                    <a
+                    <Link
                       aria-current={
                         isNavigationChildActive(item.href, activeHref)
                           ? "page"
@@ -246,14 +273,14 @@ export function MobileNavigation({
                       onClick={closeNavigation}
                     >
                       {item.label}概览
-                    </a>
+                    </Link>
                     {item.children.map((section, sectionIndex) => (
                       <section key={`${section.label}-${sectionIndex}`}>
                         <h2>{section.label}</h2>
                         {section.items
                           .filter(isNavigationHrefItem)
                           .map((child) => (
-                            <a
+                            <Link
                               aria-current={
                                 isNavigationChildActive(child.href, activeHref)
                                   ? "page"
@@ -275,7 +302,7 @@ export function MobileNavigation({
                                   <small>{child.description}</small>
                                 ) : null}
                               </span>
-                            </a>
+                            </Link>
                           ))}
                       </section>
                     ))}
@@ -286,13 +313,13 @@ export function MobileNavigation({
           </div>
 
           <div className="mobile-navigation__action-wrap">
-            <a
+            <Link
               className="mobile-navigation__action"
               href={actionHref}
               onClick={closeNavigation}
             >
               {actionLabel}
-            </a>
+            </Link>
           </div>
         </div>
       </div>

@@ -62,6 +62,7 @@ function renderNavigation(
   props?: Partial<{
     actionLabel: string;
     actionHref: string;
+    directItemHrefs: string[];
     items: PortalNavigationItem[];
   }>,
 ) {
@@ -148,6 +149,19 @@ describe("MobileNavigation", () => {
 
     expect(accordion("产品")).toHaveAttribute("aria-expanded", "false");
     expect(accordion("文档")).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("renders configured direct items as links instead of accordions", () => {
+    renderNavigation("/docs", { directItemHrefs: ["/docs"] });
+    const { dialog } = openNavigation();
+
+    expect(within(dialog).getByRole("link", { name: "文档" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(
+      within(dialog).queryByRole("button", { name: /文档/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("moves initial focus to close and traps Tab in visible controls", () => {

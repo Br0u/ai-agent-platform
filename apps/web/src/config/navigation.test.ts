@@ -47,6 +47,28 @@ const expectedPortal = [
     ],
   },
   {
+    label: "解决方案",
+    href: "/solutions",
+    children: [
+      {
+        label: "场景方案",
+        items: [
+          ["智能办公", "/solutions#office"],
+          ["行业知识问答", "/solutions#knowledge"],
+          ["视觉检索", "/solutions#vision"],
+        ],
+      },
+      {
+        label: "平台方案",
+        items: [
+          ["企业智能体开发", "/solutions#agent"],
+          ["数据分析与决策", "/solutions#data"],
+          ["国产化私有部署", "/solutions#private"],
+        ],
+      },
+    ],
+  },
+  {
     label: "文档",
     href: "/docs",
     children: [
@@ -149,6 +171,12 @@ const expectedPortal = [
           ["工单提交", "/support#tickets"],
           ["Bug 反馈", "/support#bug"],
           ["社群支持", "/support#community"],
+        ],
+      },
+      {
+        label: "商务服务",
+        items: [
+          ["价格计算", "/pricing"],
           ["商务咨询", "/contact"],
         ],
       },
@@ -208,6 +236,10 @@ const expectedCmsGroups = [
   {
     label: "运营概览",
     items: [["运营后台首页", "/admin"]],
+  },
+  {
+    label: "AI Operations",
+    items: [["AI 助理", "/admin/assistant"]],
   },
   {
     label: "站点内容",
@@ -282,6 +314,7 @@ const expectedFooter = [
     items: [
       ["支持", "/support"],
       ["帮助中心", "/help"],
+      ["价格计算", "/pricing"],
       ["商务咨询", "/contact"],
     ],
   },
@@ -368,14 +401,29 @@ describe("portalNavigation", () => {
     }
   });
 
-  it("marks document, compatibility, Marketplace and news children as scaffold", () => {
-    for (const label of ["文档", "兼容性", "Marketplace", "资讯"]) {
+  it("marks solution and document children as live while preserving scaffolded areas", () => {
+    const solution = portalNavigation.find((item) => item.label === "解决方案");
+    for (const child of solution?.children.flatMap((group) => group.items) ??
+      []) {
+      expect(child.status).toBeUndefined();
+    }
+
+    for (const label of ["兼容性", "Marketplace", "资讯"]) {
       const parent = portalNavigation.find((item) => item.label === label);
 
       expect(parent).toBeDefined();
       for (const child of parent?.children.flatMap((group) => group.items) ??
         []) {
         expect(child.status).toBe("scaffold");
+      }
+    }
+
+    const docs = portalNavigation.find((item) => item.label === "文档");
+    for (const child of docs?.children.flatMap((group) => group.items) ?? []) {
+      if (child.label === "功能手册") {
+        expect(child.status).toBe("scaffold");
+      } else {
+        expect(child.status).toBe("live");
       }
     }
   });
@@ -430,7 +478,7 @@ describe("consoleNavigation", () => {
 });
 
 describe("adminNavigation", () => {
-  it("preserves the exact five groups and all 22 items", () => {
+  it("preserves the exact groups and items", () => {
     expect(
       adminNavigation.groups.map((group) => ({
         label: group.label,
@@ -459,6 +507,7 @@ describe("adminNavigation", () => {
     );
     expect(permissions).toEqual({
       运营后台首页: "admin:analytics",
+      "AI 助理": "admin:assistant",
       首页配置: "admin:site",
       导航管理: "admin:navigation",
       产品内容: "admin:products",

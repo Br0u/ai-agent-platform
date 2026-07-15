@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { AuthPage } from "@/components/auth/auth-page";
 import { CustomerRegistrationForm } from "@/components/registration/customer-registration-form";
 import { AuthAccessError, getCurrentActor } from "@/server/auth/access";
 
@@ -24,15 +25,12 @@ export default async function Page() {
   if (actor?.realm === "customer")
     redirect(actor.status === "active" ? "/console" : "/console/onboarding");
   return (
-    <main className="auth-page auth-page--registration">
-      <section aria-labelledby="register-title" className="auth-page__panel">
-        <p className="auth-page__eyebrow">Customer Registration</p>
-        <h1 id="register-title">申请客户账号</h1>
-        <p className="auth-page__intro">
-          填写真实的联系人与公司信息。提交后可在客户入口查看审核状态。
-        </p>
-        <CustomerRegistrationForm />
-      </section>
-    </main>
+    <AuthPage
+      intro="填写真实的联系人与公司信息。提交后可在客户入口查看审核状态。"
+      realmLabel="Customer Registration"
+      title="申请客户账号"
+    >
+      <CustomerRegistrationForm />
+    </AuthPage>
   );
 }

@@ -1,0 +1,20 @@
+---
+title: GPU / 硬件适配
+description: 记录平台运行所需的 CPU、GPU、内存、存储和操作系统适配信息。
+---
+
+import { Callout } from "nextra/components";
+
+## 适配维度
+
+| 维度       | 当前文档范围      | 备注                       |
+| ---------- | ----------------- | -------------------------- |
+| CPU        | x86、ARM          | 以实际镜像架构为准         |
+| GPU        | NVIDIA / 国产 GPU | 需要结合驱动和推理引擎验证 |
+| 操作系统   | Linux             | Windows 适配另行评估       |
+| 容器运行时 | Docker / Compose  | 生产环境建议固定版本       |
+
+<Callout type="warning">
+  具体 GPU
+  型号、驱动版本和性能数据需要以交付环境的实测结果为准，不能仅凭型号名称判断兼容性。
+</Callout>

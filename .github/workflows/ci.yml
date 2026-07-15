@@ -23,7 +23,9 @@ jobs:
           --health-cmd "pg_isready -U ai_agent_owner -d ai_agent_platform_ci"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      TEST_DATABASE_URL: postgresql://ai_agent_owner@127.0.0.1:5432/ai_agent_platform_identity_test_ci
+      TEST_DATABASE_URL: postgresql://ai_agent_owner@127.0.0.1:5432/ai_agent_platform_identity_test_integration
+      ROLE_BOUNDARY_DATABASE_URL: postgresql://ai_agent_owner@127.0.0.1:5432/ai_agent_platform_identity_test_ci
+      ASSISTANT_PUBLIC_ORIGIN: http://127.0.0.1:3000
       BETTER_AUTH_URL: http://127.0.0.1:3000
       BETTER_AUTH_TRUSTED_ORIGINS: http://127.0.0.1:3000
       FEATURE_EMAIL_VERIFICATION: "false"
@@ -36,47 +38,100 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      - name: Generate masked authentication fixtures
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.19"
+          enable-cache: true
+          cache-dependency-glob: apps/agent/uv.lock
+      - run: pnpm install --frozen-lockfile
+      - name: Generate masked authentication and AgentOS fixtures
         shell: bash
         run: |
-          for name in MIGRATOR_DATABASE_PASSWORD RUNTIME_DATABASE_PASSWORD BACKUP_DATABASE_PASSWORD \
+          for name in POSTGRES_PASSWORD MIGRATOR_DATABASE_PASSWORD RUNTIME_DATABASE_PASSWORD BACKUP_DATABASE_PASSWORD \
+            AGNO_MIGRATOR_DATABASE_PASSWORD AGNO_DATABASE_PASSWORD OS_SECURITY_KEY \
+            ASSISTANT_SESSION_SECRET ASSISTANT_RATE_LIMIT_SECRET \
             BETTER_AUTH_SECRET E2E_CUSTOMER_PASSWORD E2E_STAFF_PASSWORD E2E_ADMIN_PASSWORD \
             E2E_PENDING_CUSTOMER_SESSION_TOKEN E2E_DISABLED_CUSTOMER_SESSION_TOKEN \
             E2E_STAFF_SESSION_TOKEN E2E_ROLE_TARGET_SESSION_TOKEN \
             E2E_ADMIN_SESSION_TOKEN E2E_NO_TOTP_ADMIN_SESSION_TOKEN \
             E2E_REVOKED_SESSION_TOKEN E2E_REPLACEMENT_PASSWORD; do
-            value="$(openssl rand -base64 36 | tr -d '\n')"
+            value="$(openssl rand -hex 32)"
             echo "::add-mask::$value"
+            export "$name=$value"
             echo "$name=$value" >> "$GITHUB_ENV"
           done
-          echo "DATABASE_URL=postgresql://ai_agent_migrator@127.0.0.1:5432/ai_agent_platform_ci" >> "$GITHUB_ENV"
-      - name: Create isolated destructive-test database
+          backup_encryption_key="$(openssl rand -hex 32)"
+          echo "::add-mask::$backup_encryption_key"
+          backup_encryption_key_file="$RUNNER_TEMP/backup_encryption_key"
+          (umask 077; printf '%s' "$backup_encryption_key" > "$backup_encryption_key_file")
+          chmod 600 "$backup_encryption_key_file"
+          echo "BACKUP_ENCRYPTION_KEY_FILE=$backup_encryption_key_file" >> "$GITHUB_ENV"
+          echo "MIGRATOR_DATABASE_URL=postgresql://ai_agent_migrator:${MIGRATOR_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci" >> "$GITHUB_ENV"
+          echo "RUNTIME_DATABASE_URL=postgresql://ai_agent_runtime:${RUNTIME_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci" >> "$GITHUB_ENV"
+          echo "BACKUP_DATABASE_URL=postgresql://ai_agent_backup:${BACKUP_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci" >> "$GITHUB_ENV"
+          agno_migrator_url="postgresql+psycopg_async://ai_agent_agno_migrator:${AGNO_MIGRATOR_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
+          agno_runtime_url="postgresql+psycopg_async://ai_agent_agno:${AGNO_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
+          echo "::add-mask::$agno_migrator_url"
+          echo "::add-mask::$agno_runtime_url"
+          echo "AGNO_MIGRATOR_DATABASE_URL=$agno_migrator_url" >> "$GITHUB_ENV"
+          echo "AGNO_DATABASE_URL=$agno_runtime_url" >> "$GITHUB_ENV"
+      - name: Create isolated CI databases
         shell: bash
         env:
           PGHOST: 127.0.0.1
           PGUSER: ai_agent_owner
           PGDATABASE: ai_agent_platform_ci
-        run: psql --set=ON_ERROR_STOP=1 --command="CREATE DATABASE ai_agent_platform_identity_test_ci"
+        run: |
+          psql --set=ON_ERROR_STOP=1 --command="CREATE DATABASE ai_agent_platform_identity_test_ci"
+          psql --set=ON_ERROR_STOP=1 --command="CREATE DATABASE ai_agent_platform_identity_test_integration"
       - name: Initialize least-privilege database roles
         shell: bash
         env:
           POSTGRES_USER: ai_agent_owner
-          POSTGRES_DB: ai_agent_platform_ci
+          POSTGRES_DB: ai_agent_platform_identity_test_ci
           PGHOST: 127.0.0.1
           ROLE_SQL_FILE: infra/postgres/01-roles.sql
         run: sh infra/postgres/01-roles.sh
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @ai-agent-platform/database db:prepare
+      - run: DATABASE_URL="$MIGRATOR_DATABASE_URL" pnpm --filter @ai-agent-platform/database db:prepare
+      - name: Bootstrap Agno roles twice
+        shell: bash
+        env:
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_USER: ai_agent_owner
+          POSTGRES_DB: ai_agent_platform_identity_test_ci
+          AGNO_ROLE_SQL_FILE: infra/postgres/03-agno-roles.sql
+        run: |
+          sh infra/postgres/03-agno-roles.sh
+          sh infra/postgres/03-agno-roles.sh
+      - name: Sync locked AgentOS dependencies
+        run: uv --directory apps/agent sync --frozen
+      - name: Run Agno migration twice
+        shell: bash
+        run: |
+          uv --directory apps/agent run python -m agent_service.migrate
+          uv --directory apps/agent run python -m agent_service.migrate
+      - name: Verify Agno role-boundary and backup grants
+        run: pnpm --filter @ai-agent-platform/database exec vitest run src/agno-role-boundary.integration.test.ts
+      - name: Run AgentOS Python gates
+        shell: bash
+        run: |
+          uv --directory apps/agent run pytest
+          uv --directory apps/agent run ruff check .
+          uv --directory apps/agent run mypy src tests
+      - run: docker build -t agent-service-ci -f apps/agent/Dockerfile .
+      - run: docker run --rm agent-service-ci uvicorn --version
+      - run: docker build -t backup-service-ci -f infra/docker/backup.Dockerfile .
+      - run: docker run --rm --entrypoint gpg backup-service-ci --version
       - run: pnpm test
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm build
-      - run: pnpm --filter @ai-agent-platform/database db:seed-auth-e2e
+      - run: DATABASE_URL="$MIGRATOR_DATABASE_URL" pnpm --filter @ai-agent-platform/database db:seed-auth-e2e
         env:
           NODE_ENV: test
       - run: pnpm --filter @ai-agent-platform/web exec playwright install --with-deps chromium
-      - run: pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-smoke.spec.ts
+      - run: DATABASE_URL="$RUNTIME_DATABASE_URL" pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-smoke.spec.ts
       - run: docker build --target migrator -f apps/web/Dockerfile .
       - run: docker build --target runner -f apps/web/Dockerfile .
       - name: Validate Nginx configuration

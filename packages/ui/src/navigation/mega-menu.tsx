@@ -15,31 +15,31 @@ import {
   isNavigationParentActive,
 } from "./navigation-match";
 import { NavigationStatusBadge } from "./navigation-status";
-import type { PortalNavigationItem } from "./navigation-types";
+import type {
+  NavigationLinkComponent,
+  PortalNavigationItem,
+} from "./navigation-types";
 
 const CLOSE_DELAY_MS = 180;
 
 export function MegaMenu({
   items,
   activeHref,
+  linkComponent: Link = "a",
 }: {
   items: PortalNavigationItem[];
   activeHref: string;
+  linkComponent?: NavigationLinkComponent;
 }) {
   const baseId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const triggerRefs = useRef<Array<HTMLAnchorElement | null>>([]);
   const panelRefs = useRef<Array<HTMLDivElement | null>>([]);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoverOpenIndexRef = useRef<number | null>(null);
   const pinnedIndexRef = useRef<number | null>(null);
   const focusPanelOnOpenRef = useRef(false);
   const [openIndex, setOpenIndex] = useState<number | null>(null);
-  const [activeSectionIndex, setActiveSectionIndex] = useState(0);
-
-  useEffect(() => {
-    setActiveSectionIndex(0);
-  }, [openIndex]);
 
   function cancelClose() {
     if (closeTimerRef.current !== null) {
@@ -71,23 +71,6 @@ export function MegaMenu({
     }
   }
 
-  function handleTriggerClick(index: number) {
-    cancelClose();
-    if (hoverOpenIndexRef.current === index) {
-      hoverOpenIndexRef.current = null;
-      pinnedIndexRef.current = index;
-      setOpenIndex(index);
-      return;
-    }
-
-    hoverOpenIndexRef.current = null;
-    setOpenIndex((currentIndex) => {
-      const nextIndex = currentIndex === index ? null : index;
-      pinnedIndexRef.current = nextIndex;
-      return nextIndex;
-    });
-  }
-
   function scheduleClose() {
     if (pinnedIndexRef.current === openIndex) {
       return;
@@ -102,7 +85,7 @@ export function MegaMenu({
   }
 
   function handleTriggerKeyDown(
-    event: ReactKeyboardEvent<HTMLButtonElement>,
+    event: ReactKeyboardEvent<HTMLAnchorElement>,
     index: number,
   ) {
     if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
@@ -181,40 +164,42 @@ export function MegaMenu({
           const isOpen = openIndex === index;
 
           return (
-            <button
+            <Link
               aria-controls={panelId}
               aria-current={
                 isNavigationParentActive(item, activeHref) ? "page" : undefined
               }
               aria-expanded={isOpen}
               className="mega-menu__trigger"
+              href={item.href}
               id={triggerId}
               key={item.href}
-              onClick={() => handleTriggerClick(index)}
+              onClick={close}
               onKeyDown={(event) => handleTriggerKeyDown(event, index)}
               onPointerEnter={() => openFromPointer(index)}
               onPointerLeave={scheduleClose}
               ref={(element) => {
                 triggerRefs.current[index] = element;
               }}
-              type="button"
             >
               <span>{item.label}</span>
               <NavigationStatusBadge status={item.status} />
-            </button>
+            </Link>
           );
         })}
       </div>
 
       {items.map((item, index) => {
         const isOpen = openIndex === index;
-        const currentSection =
-          item.children[activeSectionIndex] || item.children[0];
+        const sectionColumnCount = Math.min(
+          4,
+          Math.max(1, item.children.length),
+        );
 
         return (
           <div
             aria-labelledby={`${baseId}-trigger-${index}`}
-            className="mega-menu__panel"
+            className={`mega-menu__panel mega-menu__panel--${sectionColumnCount}`}
             hidden={!isOpen}
             id={`${baseId}-panel-${index}`}
             key={item.href}
@@ -225,47 +210,29 @@ export function MegaMenu({
             }}
             role="region"
           >
-            <div className="mega-menu__layout">
-              {/* 左侧边栏 - 分类 Tabs */}
-              <div className="mega-menu__sidebar">
-                <a
-                  aria-current={
-                    isNavigationChildActive(item.href, activeHref)
-                      ? "page"
-                      : undefined
-                  }
-                  className="mega-menu__sidebar-overview"
-                  href={item.href}
+            <Link
+              aria-current={
+                isNavigationChildActive(item.href, activeHref)
+                  ? "page"
+                  : undefined
+              }
+              className="mega-menu__overview"
+              href={item.href}
+            >
+              <span>{item.label}概览</span>
+              <span aria-hidden="true">→</span>
+            </Link>
+
+            <div className="mega-menu__sections">
+              {item.children.map((section, sectionIndex) => (
+                <section
+                  className="mega-menu__section"
+                  key={`${section.label}-${sectionIndex}`}
                 >
-                  {item.label}概览 <span aria-hidden="true">→</span>
-                </a>
-
-                <div className="mega-menu__tabs">
-                  {item.children.map((section, sectionIndex) => (
-                    <button
-                      key={`${section.label}-${sectionIndex}`}
-                      className="mega-menu__tab"
-                      aria-selected={activeSectionIndex === sectionIndex}
-                      onPointerEnter={() => setActiveSectionIndex(sectionIndex)}
-                      onClick={() => setActiveSectionIndex(sectionIndex)}
-                      type="button"
-                    >
-                      {section.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* 右侧内容区 - 当前分类下的链接 */}
-              <div className="mega-menu__content">
-                <div className="mega-menu__section-header">
-                  <h2>{currentSection?.label}</h2>
-                </div>
-                <div className="mega-menu__links">
-                  {currentSection?.items
-                    .filter(isNavigationHrefItem)
-                    .map((child) => (
-                      <a
+                  <h2>{section.label}</h2>
+                  <div className="mega-menu__links">
+                    {section.items.filter(isNavigationHrefItem).map((child) => (
+                      <Link
                         aria-current={
                           isNavigationChildActive(child.href, activeHref)
                             ? "page"
@@ -281,10 +248,11 @@ export function MegaMenu({
                         {child.description ? (
                           <small>{child.description}</small>
                         ) : null}
-                      </a>
+                      </Link>
                     ))}
-                </div>
-              </div>
+                  </div>
+                </section>
+              ))}
             </div>
           </div>
         );

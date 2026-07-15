@@ -18,4 +18,16 @@ describe("registered route files", () => {
 
     expect(missingRoutes).toEqual([]);
   });
+
+  it("covers the live pricing calculator with an explicit App Router page", () => {
+    expect(existsSync(pageFileForRoute("/pricing"))).toBe(true);
+  });
+
+  it("covers the live assistant workspace with an explicit App Router page", () => {
+    expect(existsSync(pageFileForRoute("/assistant"))).toBe(true);
+  });
+
+  it("covers the live protected assistant operations page", () => {
+    expect(existsSync(pageFileForRoute("/admin/assistant"))).toBe(true);
+  });
 });

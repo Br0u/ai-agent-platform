@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import nextra from "nextra";
 import path from "node:path";
 
 const nextConfig: NextConfig = {
@@ -25,4 +26,8 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+const withNextra = nextra({
+  contentDirBasePath: "/docs",
+});
+
+export default withNextra(nextConfig);

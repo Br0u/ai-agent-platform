@@ -70,4 +70,28 @@ describe("RegisteredRoutePage", () => {
     expect(anchorIndex.closest(".feature-shell")).not.toBeNull();
     expect(container.querySelector("main > .scaffold-anchor-index")).toBeNull();
   });
+
+  it("renders optional route content after the anchor index inside the feature shell", () => {
+    const { container } = render(
+      <RegisteredRoutePage pathname="/docs">
+        <section aria-label="route content">联系摘要</section>
+      </RegisteredRoutePage>,
+    );
+    const renderedPage = within(container);
+    const anchorIndex = renderedPage.getByRole("navigation", {
+      name: "页面目录",
+    });
+    const routeContent = renderedPage.getByRole("region", {
+      name: "route content",
+    });
+
+    expect(routeContent.closest(".feature-shell__inner")).not.toBeNull();
+    expect(
+      anchorIndex.compareDocumentPosition(routeContent) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      container.querySelector("main > [aria-label='route content']"),
+    ).toBeNull();
+  });
 });

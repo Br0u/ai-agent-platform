@@ -1,0 +1,367 @@
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
+from typing import Any, cast
+
+import pytest
+from agno.db.postgres import AsyncPostgresDb
+from agno.os import AgentOS
+from agno.os.settings import AgnoAPISettings
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from agent_service.app import create_app, probe_database
+from agent_service.catalog import build_catalog
+from agent_service.config import RuntimeSettings
+from agent_service.database import build_database
+
+
+DATABASE_URL = "postgresql+psycopg_async://runtime:private-password@db:5432/platform"
+SECURITY_KEY = "internal-security-key-0123456789abcdef"
+AUTHORIZATION = {"Authorization": f"Bearer {SECURITY_KEY}"}
+LIVE_SAFE_KEYS = {"live", "ready", "capability", "message"}
+READY_SAFE_KEYS = {"ready", "capability"}
+Probe = Callable[[AsyncPostgresDb], Awaitable[bool]]
+
+
+@pytest.fixture
+def settings() -> RuntimeSettings:
+    return RuntimeSettings.model_validate(
+        {
+            "OS_SECURITY_KEY": SECURITY_KEY,
+            "AGNO_DATABASE_URL": DATABASE_URL,
+        }
+    )
+
+
+async def ready_probe(_: AsyncPostgresDb) -> bool:
+    return True
+
+
+def make_app(settings: RuntimeSettings, probe: Probe) -> FastAPI:
+    return create_app(settings=settings, readiness_probe=probe)
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/internal/health/live", "/internal/health/ready", "/docs", "/openapi.json"],
+)
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {"Authorization": "Basic abc"},
+        {"Authorization": "Bearer"},
+        {"Authorization": "Bearer wrong-key"},
+        {"Authorization": f"Bearer {SECURITY_KEY} extra"},
+    ],
+)
+def test_every_http_surface_rejects_missing_or_invalid_bearer(
+    settings: RuntimeSettings,
+    path: str,
+    headers: dict[str, str],
+) -> None:
+    app = make_app(settings, ready_probe)
+
+    with TestClient(app) as client:
+        response = client.get(path, headers=headers)
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Unauthorized"}
+    assert SECURITY_KEY not in response.text
+
+
+@pytest.mark.parametrize("path", ["/docs", "/openapi.json"])
+def test_documentation_surfaces_accept_the_correct_bearer(
+    settings: RuntimeSettings,
+    path: str,
+) -> None:
+    app = make_app(settings, ready_probe)
+
+    with TestClient(app) as client:
+        response = client.get(path, headers=AUTHORIZATION)
+
+    assert response.status_code == 200
+
+
+def test_live_is_independent_of_database_and_not_cached(
+    settings: RuntimeSettings,
+) -> None:
+    calls = 0
+
+    async def failing_if_called(_: AsyncPostgresDb) -> bool:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("liveness must not query the database")
+
+    app = make_app(settings, failing_if_called)
+
+    with TestClient(app) as client:
+        response = client.get("/internal/health/live", headers=AUTHORIZATION)
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {
+        "live": True,
+        "ready": False,
+        "capability": "placeholder",
+        "message": "service is live",
+    }
+    assert set(response.json()) == LIVE_SAFE_KEYS
+    assert calls == 0
+
+
+@pytest.mark.parametrize("probe_result", [False])
+def test_ready_returns_safe_503_when_database_is_unavailable(
+    settings: RuntimeSettings,
+    probe_result: bool,
+) -> None:
+    seen_databases: list[object] = []
+
+    async def probe(database: AsyncPostgresDb) -> bool:
+        seen_databases.append(database)
+        return probe_result
+
+    database = build_database(settings)
+    app = create_app(settings=settings, database=database, readiness_probe=probe)
+
+    with TestClient(app) as client:
+        response = client.get("/internal/health/ready", headers=AUTHORIZATION)
+
+    assert response.status_code == 503
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {
+        "ready": False,
+        "capability": "placeholder",
+    }
+    assert response.json()["ready"] is False
+    assert set(response.json()) == READY_SAFE_KEYS
+    assert seen_databases == [database]
+
+
+def test_ready_converts_probe_exceptions_to_safe_503(
+    settings: RuntimeSettings,
+) -> None:
+    async def exploding_probe(_: AsyncPostgresDb) -> bool:
+        raise RuntimeError(f"could not connect to {DATABASE_URL}; key={SECURITY_KEY}")
+
+    app = make_app(settings, exploding_probe)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get("/internal/health/ready", headers=AUTHORIZATION)
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "ready": False,
+        "capability": "placeholder",
+    }
+    assert response.json()["ready"] is False
+    assert DATABASE_URL not in response.text
+    assert SECURITY_KEY not in response.text
+
+
+def test_ready_can_be_true_while_capability_remains_placeholder(
+    settings: RuntimeSettings,
+) -> None:
+    app = make_app(settings, ready_probe)
+
+    with TestClient(app) as client:
+        response = client.get("/internal/health/ready", headers=AUTHORIZATION)
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {
+        "ready": True,
+        "capability": "placeholder",
+    }
+    assert response.json()["ready"] is True
+    assert set(response.json()) == READY_SAFE_KEYS
+
+
+def test_agentos_receives_exact_model_free_composition_and_same_database(
+    settings: RuntimeSettings,
+) -> None:
+    captured: dict[str, Any] = {}
+    probed: list[object] = []
+    database = build_database(settings)
+
+    class CapturingAgentOS:
+        def __init__(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+        def get_app(self) -> FastAPI:
+            return captured["base_app"]
+
+    async def probe(received: AsyncPostgresDb) -> bool:
+        probed.append(received)
+        return True
+
+    app = create_app(
+        settings=settings,
+        database=database,
+        agent_os_factory=CapturingAgentOS,
+        readiness_probe=probe,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/internal/health/ready", headers=AUTHORIZATION)
+
+    catalog = build_catalog(settings)
+    assert response.status_code == 200
+    assert captured == {
+        "id": "ai-agent-platform",
+        "agents": catalog.agents,
+        "db": database,
+        "base_app": captured["base_app"],
+        "settings": AgnoAPISettings(os_security_key=None),
+        "auto_provision_dbs": False,
+        "telemetry": False,
+    }
+    assert isinstance(captured["base_app"], FastAPI)
+    assert probed == [database]
+
+
+def test_real_agentos_instance_has_telemetry_disabled(
+    settings: RuntimeSettings,
+) -> None:
+    instances: list[AgentOS] = []
+
+    def real_factory(**kwargs: Any) -> AgentOS:
+        instance = AgentOS(**kwargs)
+        instances.append(instance)
+        return instance
+
+    create_app(settings=settings, agent_os_factory=real_factory)
+
+    assert len(instances) == 1
+    assert instances[0].telemetry is False
+
+
+def test_bearer_middleware_configuration_does_not_retain_plaintext_key(
+    settings: RuntimeSettings,
+) -> None:
+    app = make_app(settings, ready_probe)
+
+    assert SECURITY_KEY not in repr(app.user_middleware)
+    assert all(SECURITY_KEY not in repr(entry.kwargs) for entry in app.user_middleware)
+
+
+def test_discovered_agentos_route_uses_the_same_bearer_boundary(
+    settings: RuntimeSettings,
+) -> None:
+    app = make_app(settings, ready_probe)
+    schema = app.openapi()
+    candidates = [
+        path
+        for path, operations in schema["paths"].items()
+        if not path.startswith("/internal/")
+        and "{" not in path
+        and "get" in operations
+        and not any(
+            parameter.get("required")
+            for parameter in operations["get"].get("parameters", [])
+        )
+    ]
+
+    assert candidates, "AgentOS must contribute a discoverable GET route"
+    discovered_path = candidates[0]
+
+    with TestClient(app) as client:
+        missing = client.get(discovered_path)
+        wrong = client.get(
+            discovered_path,
+            headers={"Authorization": "Bearer wrong-key"},
+        )
+        correct = client.get(discovered_path, headers=AUTHORIZATION)
+
+    assert missing.status_code == 401
+    assert wrong.status_code == 401
+    assert correct.status_code != 401
+    assert SECURITY_KEY not in missing.text
+    assert SECURITY_KEY not in wrong.text
+
+
+def test_real_agentos_route_accepts_runtime_credentials_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OS_SECURITY_KEY", SECURITY_KEY)
+    monkeypatch.setenv("AGNO_DATABASE_URL", DATABASE_URL)
+
+    app = create_app()
+    schema = app.openapi()
+    candidates = [
+        path
+        for path, operations in schema["paths"].items()
+        if not path.startswith("/internal/")
+        and "{" not in path
+        and "get" in operations
+        and not any(
+            parameter.get("required")
+            for parameter in operations["get"].get("parameters", [])
+        )
+    ]
+
+    assert candidates, "AgentOS must contribute a discoverable GET route"
+    discovered_path = candidates[0]
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        missing = client.get(discovered_path)
+        wrong = client.get(
+            discovered_path,
+            headers={"Authorization": "Bearer wrong-key"},
+        )
+        correct = client.get(discovered_path, headers=AUTHORIZATION)
+
+    assert missing.status_code == 401
+    assert wrong.status_code == 401
+    assert correct.status_code not in {401, 500}
+    assert SECURITY_KEY not in missing.text
+    assert SECURITY_KEY not in wrong.text
+    assert SECURITY_KEY not in correct.text
+
+
+@pytest.mark.asyncio
+async def test_probe_database_uses_the_supplied_engine_and_executes_select_one() -> (
+    None
+):
+    statements: list[str] = []
+    connections = 0
+
+    class FakeConnection:
+        async def execute(self, statement: object) -> None:
+            statements.append(str(statement))
+
+    class FakeConnectionContext(AbstractAsyncContextManager[FakeConnection]):
+        async def __aenter__(self) -> FakeConnection:
+            return FakeConnection()
+
+        async def __aexit__(
+            self,
+            exc_type: object,
+            exc_value: object,
+            traceback: object,
+        ) -> None:
+            return None
+
+    class FakeEngine:
+        def connect(self) -> FakeConnectionContext:
+            nonlocal connections
+            connections += 1
+            return FakeConnectionContext()
+
+    class FakeDatabase:
+        db_engine = FakeEngine()
+
+    result = await probe_database(cast(AsyncPostgresDb, FakeDatabase()))
+
+    assert result is True
+    assert connections == 1
+    assert statements == ["SELECT 1"]
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_async_greenlet_bridge_is_available() -> None:
+    from sqlalchemy.util.concurrency import greenlet_spawn
+
+    result = await greenlet_spawn(lambda: "available")
+
+    assert result == "available"

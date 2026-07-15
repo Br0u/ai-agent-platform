@@ -13,6 +13,9 @@
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "pnpm -r --if-present lint",
-    "format:check": "pnpm -r --if-present format:check"
+    "format:check": "pnpm -r --if-present format:check",
+    "agent:test": "uv --directory apps/agent run pytest -q",
+    "agent:lint": "uv --directory apps/agent run ruff check .",
+    "agent:typecheck": "uv --directory apps/agent run mypy src tests"
   }
 }

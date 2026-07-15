@@ -1,7 +1,11 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
+import type { ButtonHTMLAttributes } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { SiteFooter } from "./site-footer";
-import type { NavigationSection } from "./navigation-types";
+import type {
+  NavigationLinkComponent,
+  NavigationSection,
+} from "./navigation-types";
 
 const groups: NavigationSection[] = [
   {
@@ -38,9 +42,38 @@ const groups: NavigationSection[] = [
   },
 ];
 
+const ButtonAdapter = (props: ButtonHTMLAttributes<HTMLButtonElement>) => (
+  <button {...props} />
+);
+// @ts-expect-error Button adapters are not anchor-compatible navigation links.
+const invalidNavigationLink: NavigationLinkComponent = ButtonAdapter;
+void invalidNavigationLink;
+
 afterEach(cleanup);
 
 describe("SiteFooter", () => {
+  it("uses native anchors by default", () => {
+    render(<SiteFooter groups={groups} />);
+
+    for (const link of screen.getAllByRole("link")) {
+      expect(link.tagName).toBe("A");
+      expect(link).not.toHaveAttribute("data-routing-adapter");
+    }
+  });
+
+  it("uses an injected anchor-compatible routing adapter", () => {
+    const RoutingAdapter: NavigationLinkComponent = ({ href, ...props }) => (
+      <a data-routing-adapter="next" href={href} {...props} />
+    );
+
+    render(<SiteFooter groups={groups} linkComponent={RoutingAdapter} />);
+
+    for (const link of screen.getAllByRole("link")) {
+      expect(link).toHaveAttribute("data-routing-adapter", "next");
+      expect(link).toHaveAttribute("href");
+    }
+  });
+
   it("renders the footer landmark, exact brand copy, and named navigation", () => {
     render(<SiteFooter groups={groups} />);
 

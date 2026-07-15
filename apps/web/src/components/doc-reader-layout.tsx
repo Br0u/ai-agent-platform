@@ -40,6 +40,10 @@ export function DocReaderLayout({
   );
   const currentCategory =
     currentIndex !== -1 ? docsCategories[currentIndex] : null;
+  const headerTitle = currentCategory?.title || "欢迎来到官方文档";
+  const headerDescription =
+    currentCategory?.description ||
+    "覆盖产品介绍、操作指南、场景化用例、开发参考等信息，帮助您更好地上手平台、用好 AI 智能体。";
 
   const toggleLevel1 = (code: string) => {
     setExpandedLevel1((prev) => (prev === code ? null : code));
@@ -161,27 +165,18 @@ export function DocReaderLayout({
         </aside>
 
         {/* 中侧正文区域 */}
-        <main className="doc-reader__main">
-          {currentCategory ? (
-            <header className="doc-reader__header">
-              <div className="doc-reader__header-inner">
-                <h1 className="doc-reader__title">{currentCategory.title}</h1>
-                <p className="doc-reader__desc">
-                  {currentCategory.description}
-                </p>
-              </div>
-            </header>
-          ) : (
-            <header className="doc-reader__header">
-              <div className="doc-reader__header-inner">
-                <h1 className="doc-reader__title">欢迎来到官方文档</h1>
-                <p className="doc-reader__desc">
-                  覆盖产品介绍、操作指南、场景化用例、开发参考等信息，帮助您更好地上手平台、用好
-                  AI 智能体。
-                </p>
-              </div>
-            </header>
-          )}
+        <main
+          className={`doc-reader__main ${currentCategory ? "has-toc" : ""}`}
+        >
+          <header className="doc-reader__header">
+            <div className="doc-reader__header-inner">
+              <span className="doc-reader__header-kicker">
+                AI AGENT PLATFORM / DOCUMENTATION
+              </span>
+              <h1 className="doc-reader__title">{headerTitle}</h1>
+              <p className="doc-reader__desc">{headerDescription}</p>
+            </div>
+          </header>
 
           <div className="doc-content">{children}</div>
         </main>

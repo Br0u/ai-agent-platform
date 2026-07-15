@@ -13,18 +13,24 @@ WORKDIR /app
 
 FROM base AS dependencies
 
+ARG PNPM_REGISTRY=https://registry.npmmirror.com
+
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/web/package.json apps/web/package.json
 COPY packages/database/package.json packages/database/package.json
 COPY packages/integrations/package.json packages/integrations/package.json
 COPY packages/ui/package.json packages/ui/package.json
 
-RUN pnpm install --frozen-lockfile
+RUN PNPM_CONFIG_REGISTRY="$PNPM_REGISTRY" pnpm install --frozen-lockfile
 
 FROM dependencies AS migrator
 
+ENV PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false
+
 COPY --chown=node:node packages/database ./packages/database
 COPY --chown=node:node infra/postgres/02-runtime-grants.sql ./infra/postgres/02-runtime-grants.sql
+
+RUN chown node:node /app /app/packages/database
 
 WORKDIR /app/packages/database
 

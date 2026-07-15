@@ -5,6 +5,7 @@ const requiredRoutes = [
   "/",
   "/product",
   "/product/[slug]",
+  "/solutions",
   "/releases",
   "/releases/[version]",
   "/roadmap",
@@ -20,6 +21,8 @@ const requiredRoutes = [
   "/blog",
   "/blog/[slug]",
   "/cases",
+  "/pricing",
+  "/assistant",
   "/contact",
   "/login",
   "/register",
@@ -54,6 +57,7 @@ const requiredRoutes = [
   "/admin/licenses",
   "/admin/tickets",
   "/admin/analytics",
+  "/admin/assistant",
   "/admin/users",
   "/admin/roles",
   "/admin/audit-logs",
@@ -87,6 +91,33 @@ describe("routeRegistry", () => {
     ]) {
       expect(matchRoute(path)?.status).toBe("placeholder");
     }
+  });
+
+  it("registers the pricing calculator as a live public route", () => {
+    expect(matchRoute("/pricing")).toEqual({
+      path: "/pricing",
+      title: "价格计算",
+      group: "public",
+      status: "live",
+    });
+  });
+
+  it("registers the standalone assistant as a live public route", () => {
+    expect(matchRoute("/assistant")).toEqual({
+      path: "/assistant",
+      title: "AI 助理",
+      group: "public",
+      status: "live",
+    });
+  });
+
+  it("registers the protected admin assistant as a live route", () => {
+    expect(matchRoute("/admin/assistant")).toEqual({
+      path: "/admin/assistant",
+      title: "AI 助理运营",
+      group: "admin",
+      status: "live",
+    });
   });
 
   it("matches exact and dynamic routes but rejects unknown paths", () => {

@@ -46,6 +46,7 @@ const permissions: readonly PermissionSeed[] = [
   { key: "console:access", name: "访问客户控制台" },
   { key: "console:team", name: "管理客户团队" },
   { key: "admin:site", name: "管理站点" },
+  { key: "admin:assistant", name: "管理 AI 助理" },
   { key: "admin:navigation", name: "管理导航" },
   { key: "admin:products", name: "管理产品" },
   { key: "admin:releases", name: "管理版本" },

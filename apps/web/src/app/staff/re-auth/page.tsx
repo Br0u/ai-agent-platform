@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { AuthPage } from "@/components/auth/auth-page";
 import { ReAuthForm } from "@/components/auth/re-auth-form";
 import { requireWorkforce } from "@/server/auth/access";
 
@@ -15,15 +16,12 @@ export default async function Page({
   await requireWorkforce();
   const { returnTo } = await searchParams;
   return (
-    <main className="auth-page">
-      <section aria-labelledby="re-auth-title" className="auth-page__panel">
-        <p className="auth-page__eyebrow">Sensitive Action</p>
-        <h1 id="re-auth-title">重新验证身份</h1>
-        <p className="auth-page__intro">
-          敏感操作要求十分钟内完成密码和 TOTP 验证。提交后当前会话会先被注销。
-        </p>
-        <ReAuthForm returnTo={returnTo} />
-      </section>
-    </main>
+    <AuthPage
+      intro="敏感操作要求十分钟内完成密码和 TOTP 验证。提交后当前会话会先被注销。"
+      realmLabel="Sensitive Operation"
+      title="重新验证身份"
+    >
+      <ReAuthForm returnTo={returnTo} />
+    </AuthPage>
   );
 }

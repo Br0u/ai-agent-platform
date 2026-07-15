@@ -48,7 +48,16 @@ describe("staff two-factor page", () => {
     expect(mocks.requireWorkforce).toHaveBeenCalledWith({
       setupFlow: "two-factor",
     });
+    expect(screen.getByText("Two-Factor Authentication")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "双因素认证" })).toBeVisible();
+    expect(
+      screen.getByText("使用身份验证器完成管理员 TOTP 设置。"),
+    ).toBeVisible();
     expect(screen.getByRole("button", { name: "开始设置" })).toBeEnabled();
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "打开 AI 助理" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders management/removal mode for an already-enrolled actor instead of initial enable mode", async () => {

@@ -10,9 +10,15 @@
   --color-surface: #ffffff;
   --color-line: #dce3ef;
   --color-dark-canvas: #101838;
+  --color-admin-rail: #172141;
+  --color-admin-rail-active: #243155;
+  --color-admin-rail-muted: #aeb9d3;
+  --color-auth-canvas: #f3f5f9;
+  --color-workspace-line: #d8deea;
   --font-display: "DIN Alternate", "Arial Narrow", "PingFang SC", sans-serif;
   --font-body: "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;

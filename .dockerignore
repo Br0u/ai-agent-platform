@@ -4,6 +4,13 @@
 **/.next
 node_modules
 **/node_modules
+**/.venv
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/__pycache__
+**/*.pyc
+**/dist
 .playwright-cli
 coverage
 backups
@@ -12,5 +19,8 @@ uploads
 .env
 .env.*
 !.env.example
+**/.env
+**/.env.*
+!**/.env.example
 *.log
 *.tsbuildinfo

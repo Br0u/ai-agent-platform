@@ -20,7 +20,7 @@ Task 12 的本地实现与验收通过，可进入最终代码评审。SMTP、SS
 
 数据库集成行为另在隔离 PostgreSQL 中执行；浏览器行为在 Docker 生产镜像后方的 Nginx 入口执行。
 
-CI 等价验证使用两个数据库：`ai_agent_platform_ci`仅供迁移、授权和 E2E seed，`ai_agent_platform_identity_test_ci`仅供会清空 schema/catalog 的集成测试。全仓测试结束后，应用库仍保留 6 条 migration journal，E2E seed 成功写入 7 个 fixture 用户。
+CI 等价验证使用三个数据库：`ai_agent_platform_ci`仅供创建隔离库，`ai_agent_platform_identity_test_ci`供迁移、授权和 E2E seed，`ai_agent_platform_identity_test_integration`仅供会清空 schema/catalog 的集成测试。集成测试不会再破坏 E2E 数据库；全仓测试结束后，应用库仍保留 6 条 migration journal，E2E seed 成功写入 7 个 fixture 用户。
 
 ## 干净 Docker 环境
 
