@@ -335,7 +335,9 @@ test("captures named visual evidence", async ({ page }, testInfo) => {
     });
     await gotoHome(page, evidence.reducedMotion);
     await loadHomeImages(page);
+    await page.evaluate(() => document.fonts.ready);
     await page.screenshot({
+      animations: "disabled",
       path: resolve(outputDirectory, `${evidence.name}.png`),
       fullPage: true,
     });

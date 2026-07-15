@@ -892,8 +892,7 @@
   (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))
 ) {
   .home-glass-panel,
-  .home-capability-card,
-  .home-icon-shell {
+  .home-capability-card {
     background: rgb(250 252 255 / 96%);
   }
 }
