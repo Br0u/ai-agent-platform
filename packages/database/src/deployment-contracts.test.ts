@@ -1535,7 +1535,9 @@ test -n "$output"
     expect(config).toContain("process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH");
     expect(config).toContain('name: "mobile"');
     expect(config).toContain("viewport: { width: 390, height: 844 }");
-    expect(config).toContain('command: "node .next/standalone/server.js"');
+    expect(config).toContain(
+      'command: "node .next/standalone/apps/web/server.js"',
+    );
     expect(config).toMatch(/webServer:\s*externalBaseUrl\s*\?\s*undefined/u);
     expect(read("apps/web/e2e/auth-smoke.spec.ts")).toContain("test(");
     const accessSpec = read("apps/web/e2e/auth-access.spec.ts");
