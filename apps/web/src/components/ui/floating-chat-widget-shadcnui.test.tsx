@@ -181,6 +181,61 @@ describe("FloatingChatWidget", () => {
     expect(launcher).toHaveFocus();
   });
 
+  it("keeps a reopened quick instance isolated from the exiting instance refs", async () => {
+    function FocusHarness() {
+      const { focusComposer } = useAssistantExperience();
+      return (
+        <button onClick={focusComposer} type="button">
+          聚焦当前助手输入框
+        </button>
+      );
+    }
+
+    render(
+      <AssistantExperienceProvider pathname="/">
+        <FocusHarness />
+        <FloatingChatWidget />
+        <AssistantDock />
+      </AssistantExperienceProvider>,
+    );
+    await act(async () => Promise.resolve());
+    const launcher = screen.getByRole("button", { name: "打开 M 助手" });
+    fireEvent.click(launcher);
+    const firstDialog = screen.getByRole("dialog", { name: "M 助手" });
+
+    fireEvent.click(launcher);
+    fireEvent.click(launcher);
+
+    const secondDialog = screen.getByRole("dialog", { name: "M 助手" });
+    expect(secondDialog).not.toBe(firstDialog);
+    expect(firstDialog).toHaveAttribute("inert");
+    expect(secondDialog).not.toHaveAttribute("inert");
+    expect(screen.getAllByRole("dialog")).toEqual([secondDialog]);
+    const secondComposer = within(secondDialog).getByRole("textbox", {
+      name: "向 M 助手提问",
+    });
+
+    await waitFor(() => expect(firstDialog).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "聚焦当前助手输入框" }));
+    expect(secondComposer).toHaveFocus();
+
+    fireEvent.click(
+      within(secondDialog).getByRole("button", {
+        name: "展开 AI 助理工作区",
+      }),
+    );
+
+    expect(secondDialog).toHaveAttribute("inert");
+    expect(secondDialog).toHaveAttribute("aria-hidden", "true");
+    expect(secondDialog).not.toHaveAttribute("role");
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: "AI 助理工作区" }),
+      ).toBeVisible(),
+    );
+  });
+
   it("sends a preset prompt and renders the returned message and action", async () => {
     openWidget();
     fireEvent.click(screen.getByRole("button", { name: "如何提交产品问题？" }));
