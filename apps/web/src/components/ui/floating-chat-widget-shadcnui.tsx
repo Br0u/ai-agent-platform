@@ -180,6 +180,7 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
       </header>
 
       <div
+        aria-label="AI 助理对话"
         aria-live="polite"
         className="floating-assistant__messages"
         data-testid="assistant-history"

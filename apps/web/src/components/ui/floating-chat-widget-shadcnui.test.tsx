@@ -114,6 +114,9 @@ describe("FloatingChatWidget", () => {
     openWidget();
 
     expect(screen.getByRole("dialog", { name: "M 助手" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("log", { name: "AI 助理对话" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("AI 服务尚未接入")).toBeInTheDocument();
     expect(screen.getByText("如何开始了解平台？")).toBeInTheDocument();
     expect(screen.getByText("如何获取部署支持？")).toBeInTheDocument();
