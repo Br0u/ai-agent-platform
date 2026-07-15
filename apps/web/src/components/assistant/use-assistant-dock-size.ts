@@ -35,7 +35,7 @@ export type AssistantDockResizeHandleProps = {
 type ResizeOperation = {
   element: HTMLElement;
   latestWidth: number;
-  onLostPointerCapture: (event: Event) => void;
+  onLostPointerCapture: (event: PointerEvent) => void;
   onPointerCancel: (event: PointerEvent) => void;
   onPointerMove: (event: PointerEvent) => void;
   onPointerUp: (event: PointerEvent) => void;
@@ -187,7 +187,10 @@ export function useAssistantDockSize() {
       const operation: ResizeOperation = {
         element,
         latestWidth: startWidth,
-        onLostPointerCapture: () => finishResize({ persist: false }),
+        onLostPointerCapture: (pointerEvent: PointerEvent) => {
+          if (pointerEvent.pointerId !== operation.pointerId) return;
+          finishResize({ persist: false });
+        },
         onPointerCancel: (pointerEvent: PointerEvent) => {
           if (pointerEvent.pointerId !== operation.pointerId) return;
           finishResize({ persist: false });

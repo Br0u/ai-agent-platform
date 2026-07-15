@@ -72,6 +72,12 @@ function resizeHandle() {
   return screen.getByTestId("resize-handle");
 }
 
+function fireLostPointerCapture(element: Element, pointerId: number) {
+  const event = new Event("lostpointercapture");
+  Object.defineProperty(event, "pointerId", { value: pointerId });
+  fireEvent(element, event);
+}
+
 beforeEach(() => {
   viewportWidth = 1_280;
   mediaListeners = new Set();
@@ -375,15 +381,33 @@ describe("useAssistantDockSize", () => {
     fireEvent.pointerCancel(resizeHandle(), { pointerId: 7 });
   });
 
+  it("ignores lostpointercapture from a different pointer", async () => {
+    const setItem = vi.spyOn(window.localStorage, "setItem");
+    render(<DockSizeHarness />);
+    await waitFor(() =>
+      expect(stateElement()).toHaveAttribute("data-width", "480"),
+    );
+
+    fireEvent.pointerDown(resizeHandle(), {
+      button: 0,
+      clientX: 800,
+      pointerId: 7,
+    });
+    fireEvent.pointerMove(resizeHandle(), { clientX: 700, pointerId: 7 });
+    fireLostPointerCapture(resizeHandle(), 8);
+
+    expect(stateElement()).toHaveAttribute("data-resizing", "true");
+    expect(stateElement()).toHaveAttribute("data-width", "580");
+    expect(setItem).not.toHaveBeenCalled();
+    fireEvent.pointerCancel(resizeHandle(), { pointerId: 7 });
+  });
+
   it.each([
     [
       "pointercancel",
       () => fireEvent.pointerCancel(resizeHandle(), { pointerId: 4 }),
     ],
-    [
-      "lostpointercapture",
-      () => fireEvent(resizeHandle(), new Event("lostpointercapture")),
-    ],
+    ["lostpointercapture", () => fireLostPointerCapture(resizeHandle(), 4)],
     ["window blur", () => window.dispatchEvent(new Event("blur"))],
   ])("discards an unfinished drag on %s", async (_label, finish) => {
     const setItem = vi.spyOn(window.localStorage, "setItem");
