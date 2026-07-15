@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -18,9 +19,24 @@ import type { AssistantStatusResponse } from "@/features/assistant/assistant-con
 import { useAssistantServiceState } from "./use-assistant-service-state";
 
 export type AssistantSurface = "closed" | "quick" | "dock";
+type ActiveAssistantSurface = Exclude<AssistantSurface, "closed">;
+
+type AssistantPresentation = {
+  pathname: string | null;
+  surface: AssistantSurface;
+  version: number;
+};
+
+type AssistantExitToken = {
+  source: ActiveAssistantSurface;
+  sourceVersion: number;
+  destination: Extract<AssistantSurface, "closed" | "quick">;
+  destinationVersion: number;
+};
 
 export type AssistantExperience = {
   surface: AssistantSurface;
+  surfaceInstanceVersion: number;
   session: AssistantSession;
   serviceState: AssistantStatusResponse;
   refreshingServiceState: boolean;
@@ -31,7 +47,14 @@ export type AssistantExperience = {
   openDockFrom: (trigger: HTMLElement) => void;
   collapseToQuick: () => void;
   close: () => void;
-  restoreTriggerFocus: () => void;
+  completeSurfaceExit: (
+    source: ActiveAssistantSurface,
+    sourceVersion: number,
+  ) => void;
+  registerQuickFocusTarget: (
+    element: HTMLElement,
+    instanceVersion: number,
+  ) => () => void;
   registerComposer: (element: HTMLElement) => () => void;
   focusComposer: () => void;
 };
@@ -43,6 +66,14 @@ const AssistantExperienceContext = createContext<AssistantExperience | null>(
 function normalizePathname(pathname: string): string {
   const path = pathname.split(/[?#]/u, 1)[0] ?? "/";
   return path.replace(/\/+$/u, "") || "/";
+}
+
+function canReceiveFocus(element: HTMLElement | null): element is HTMLElement {
+  return (
+    element?.isConnected === true &&
+    !element.matches(":disabled") &&
+    element.getAttribute("aria-disabled") !== "true"
+  );
 }
 
 export function AssistantExperienceProvider({
@@ -60,14 +91,21 @@ export function AssistantExperienceProvider({
     adoptServiceState: adoptServiceStateInController,
     refreshServiceState: refreshServiceStateInController,
   } = useAssistantServiceState();
-  const [presentation, setPresentation] = useState<{
-    pathname: string | null;
-    surface: AssistantSurface;
-  }>({ pathname: null, surface: "closed" });
+  const [presentation, setPresentation] = useState<AssistantPresentation>({
+    pathname: null,
+    surface: "closed",
+    version: 0,
+  });
+  const presentationRef = useRef(presentation);
   const lastTrigger = useRef<HTMLElement | null>(null);
-  const pendingTriggerRestore = useRef(false);
+  const pendingExit = useRef<AssistantExitToken | null>(null);
+  const quickFocusTarget = useRef<{
+    element: HTMLElement;
+    version: number;
+  } | null>(null);
+  const pendingQuickFocusVersion = useRef<number | null>(null);
   const composer = useRef<HTMLElement | null>(null);
-  const surfaceVersion = useRef(0);
+  const nextSurfaceVersion = useRef(0);
   const normalizedPathname = normalizePathname(pathname);
   const assistantWorkspace = normalizedPathname === "/assistant";
   const presentationMatchesPath = presentation.pathname === normalizedPathname;
@@ -75,7 +113,13 @@ export function AssistantExperienceProvider({
     assistantWorkspace || !presentationMatchesPath
       ? "closed"
       : presentation.surface;
+  const surfaceInstanceVersion = presentation.version;
+  const currentRoute = useRef({ assistantWorkspace, normalizedPathname });
   const hasResolvedServiceStateRef = useRef(hasResolvedServiceState);
+
+  useLayoutEffect(() => {
+    currentRoute.current = { assistantWorkspace, normalizedPathname };
+  }, [assistantWorkspace, normalizedPathname]);
 
   const adoptServiceState = useCallback(
     (state: AssistantStatusResponse) => {
@@ -90,21 +134,59 @@ export function AssistantExperienceProvider({
     return refreshServiceStateInController();
   }, [refreshServiceStateInController]);
 
+  const commitPresentation = useCallback((next: AssistantPresentation) => {
+    presentationRef.current = next;
+    setPresentation(next);
+  }, []);
+
+  const issueSurfaceVersion = useCallback(
+    () => ++nextSurfaceVersion.current,
+    [],
+  );
+
+  const focusQuickTarget = useCallback((version: number) => {
+    queueMicrotask(() => {
+      const current = presentationRef.current;
+      const route = currentRoute.current;
+      const target = quickFocusTarget.current;
+      if (
+        route.assistantWorkspace ||
+        current.pathname !== route.normalizedPathname ||
+        current.surface !== "quick" ||
+        current.version !== version ||
+        target?.version !== version ||
+        !canReceiveFocus(target.element)
+      ) {
+        return;
+      }
+      pendingQuickFocusVersion.current = null;
+      target.element.focus();
+    });
+  }, []);
+
   const openSurfaceFrom = useCallback(
     (
       nextSurface: Extract<AssistantSurface, "quick" | "dock">,
       trigger: HTMLElement,
     ) => {
-      if (assistantWorkspace) return;
-      surfaceVersion.current += 1;
-      pendingTriggerRestore.current = false;
-      if (surface === "closed") lastTrigger.current = trigger;
-      setPresentation({
-        pathname: normalizedPathname,
+      const current = presentationRef.current;
+      const route = currentRoute.current;
+      if (route.assistantWorkspace) return;
+      const currentSurface =
+        current.pathname === route.normalizedPathname
+          ? current.surface
+          : "closed";
+      const version = issueSurfaceVersion();
+      pendingExit.current = null;
+      pendingQuickFocusVersion.current = null;
+      if (currentSurface === "closed") lastTrigger.current = trigger;
+      commitPresentation({
+        pathname: route.normalizedPathname,
         surface: nextSurface,
+        version,
       });
     },
-    [assistantWorkspace, normalizedPathname, surface],
+    [commitPresentation, issueSurfaceVersion],
   );
 
   const openQuickFrom = useCallback(
@@ -118,30 +200,109 @@ export function AssistantExperienceProvider({
   );
 
   const collapseToQuick = useCallback(() => {
-    if (surface !== "dock") return;
-    surfaceVersion.current += 1;
-    pendingTriggerRestore.current = false;
-    setPresentation({ pathname: normalizedPathname, surface: "quick" });
-  }, [normalizedPathname, surface]);
+    const current = presentationRef.current;
+    const route = currentRoute.current;
+    if (
+      route.assistantWorkspace ||
+      current.pathname !== route.normalizedPathname ||
+      current.surface !== "dock"
+    ) {
+      return;
+    }
+    const destinationVersion = issueSurfaceVersion();
+    pendingExit.current = {
+      source: "dock",
+      sourceVersion: current.version,
+      destination: "quick",
+      destinationVersion,
+    };
+    pendingQuickFocusVersion.current = null;
+    commitPresentation({
+      pathname: route.normalizedPathname,
+      surface: "quick",
+      version: destinationVersion,
+    });
+  }, [commitPresentation, issueSurfaceVersion]);
 
   const close = useCallback(() => {
-    if (surface === "closed") return;
-    surfaceVersion.current += 1;
-    pendingTriggerRestore.current = true;
-    setPresentation({ pathname: normalizedPathname, surface: "closed" });
-  }, [normalizedPathname, surface]);
+    const current = presentationRef.current;
+    const route = currentRoute.current;
+    if (
+      route.assistantWorkspace ||
+      current.pathname !== route.normalizedPathname ||
+      current.surface === "closed"
+    ) {
+      return;
+    }
+    const destinationVersion = issueSurfaceVersion();
+    pendingExit.current = {
+      source: current.surface,
+      sourceVersion: current.version,
+      destination: "closed",
+      destinationVersion,
+    };
+    pendingQuickFocusVersion.current = null;
+    commitPresentation({
+      pathname: route.normalizedPathname,
+      surface: "closed",
+      version: destinationVersion,
+    });
+  }, [commitPresentation, issueSurfaceVersion]);
 
-  const restoreTriggerFocus = useCallback(() => {
-    if (!pendingTriggerRestore.current) return;
-    pendingTriggerRestore.current = false;
-    const trigger = lastTrigger.current;
-    lastTrigger.current = null;
-    if (!trigger?.isConnected) return;
-    const disabled =
-      ("disabled" in trigger && trigger.disabled === true) ||
-      trigger.getAttribute("aria-disabled") === "true";
-    if (!disabled) trigger.focus();
-  }, []);
+  const completeSurfaceExit = useCallback(
+    (source: ActiveAssistantSurface, sourceVersion: number) => {
+      const token = pendingExit.current;
+      if (token?.source !== source || token.sourceVersion !== sourceVersion) {
+        return;
+      }
+      pendingExit.current = null;
+      const current = presentationRef.current;
+      const route = currentRoute.current;
+      if (
+        route.assistantWorkspace ||
+        current.pathname !== route.normalizedPathname ||
+        current.surface !== token.destination ||
+        current.version !== token.destinationVersion
+      ) {
+        return;
+      }
+      if (token.destination === "quick") {
+        pendingQuickFocusVersion.current = token.destinationVersion;
+        focusQuickTarget(token.destinationVersion);
+        return;
+      }
+
+      pendingQuickFocusVersion.current = null;
+      const trigger = lastTrigger.current;
+      lastTrigger.current = null;
+      if (canReceiveFocus(trigger)) trigger.focus();
+    },
+    [focusQuickTarget],
+  );
+
+  const registerQuickFocusTarget = useCallback(
+    (element: HTMLElement, instanceVersion: number) => {
+      const registration = { element, version: instanceVersion };
+      quickFocusTarget.current = registration;
+      const token = pendingExit.current;
+      const waitingForDockExit =
+        token?.source === "dock" &&
+        token.destination === "quick" &&
+        token.destinationVersion === instanceVersion;
+      if (
+        pendingQuickFocusVersion.current === instanceVersion ||
+        !waitingForDockExit
+      ) {
+        focusQuickTarget(instanceVersion);
+      }
+      return () => {
+        if (quickFocusTarget.current === registration) {
+          quickFocusTarget.current = null;
+        }
+      };
+    },
+    [focusQuickTarget],
+  );
 
   const registerComposer = useCallback((element: HTMLElement) => {
     composer.current = element;
@@ -161,15 +322,22 @@ export function AssistantExperienceProvider({
     ) {
       return;
     }
-    const version = ++surfaceVersion.current;
+    const version = issueSurfaceVersion();
+    pendingExit.current = null;
+    pendingQuickFocusVersion.current = null;
+    lastTrigger.current = null;
     queueMicrotask(() => {
-      if (surfaceVersion.current !== version) return;
-      setPresentation({ pathname: normalizedPathname, surface: "closed" });
-      pendingTriggerRestore.current = false;
-      lastTrigger.current = null;
+      if (nextSurfaceVersion.current !== version) return;
+      commitPresentation({
+        pathname: normalizedPathname,
+        surface: "closed",
+        version,
+      });
     });
   }, [
     assistantWorkspace,
+    commitPresentation,
+    issueSurfaceVersion,
     normalizedPathname,
     presentation.surface,
     presentationMatchesPath,
@@ -200,9 +368,11 @@ export function AssistantExperienceProvider({
 
   useEffect(
     () => () => {
-      surfaceVersion.current += 1;
-      pendingTriggerRestore.current = false;
+      nextSurfaceVersion.current += 1;
+      pendingExit.current = null;
+      pendingQuickFocusVersion.current = null;
       lastTrigger.current = null;
+      quickFocusTarget.current = null;
       composer.current = null;
     },
     [],
@@ -211,6 +381,7 @@ export function AssistantExperienceProvider({
   const value = useMemo(
     () => ({
       surface,
+      surfaceInstanceVersion,
       session,
       serviceState,
       refreshingServiceState,
@@ -221,25 +392,28 @@ export function AssistantExperienceProvider({
       openDockFrom,
       collapseToQuick,
       close,
-      restoreTriggerFocus,
+      completeSurfaceExit,
+      registerQuickFocusTarget,
       registerComposer,
       focusComposer,
     }),
     [
       close,
       collapseToQuick,
+      completeSurfaceExit,
       adoptServiceState,
       focusComposer,
       openDockFrom,
       openQuickFrom,
       registerComposer,
+      registerQuickFocusTarget,
       refreshServiceState,
-      restoreTriggerFocus,
       hasResolvedServiceState,
       refreshingServiceState,
       serviceState,
       session,
       surface,
+      surfaceInstanceVersion,
     ],
   );
 

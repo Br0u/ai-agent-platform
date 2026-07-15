@@ -99,6 +99,14 @@ describe("FloatingChatWidget", () => {
     expect(screen.queryByText("GPT-4")).not.toBeInTheDocument();
   });
 
+  it("focuses the quick close control after a direct open", async () => {
+    openWidget();
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "关闭 M 助手" })).toHaveFocus(),
+    );
+  });
+
   it("exposes the full assistant workspace from the compact panel", () => {
     openWidget();
 

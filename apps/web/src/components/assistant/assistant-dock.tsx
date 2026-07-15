@@ -152,10 +152,11 @@ type MobileVisualViewport = {
   offsetTop: number;
 };
 
-function AssistantDockPanel() {
+function AssistantDockPanel({ instanceVersion }: { instanceVersion: number }) {
   const {
     close,
     collapseToQuick,
+    completeSurfaceExit,
     focusComposer,
     refreshServiceState,
     refreshingServiceState,
@@ -176,6 +177,9 @@ function AssistantDockPanel() {
   const currentServiceLabel = serviceLabel(serviceState);
   const sending = session.requestStatus === "sending";
   const closeFromEffect = useEffectEvent(close);
+  const completeExitFromEffect = useEffectEvent(() =>
+    completeSurfaceExit("dock", instanceVersion),
+  );
   const focusComposerFromEffect = useEffectEvent(focusComposer);
   const isPresentFromEffect = useEffectEvent(() => isPresent);
 
@@ -233,6 +237,7 @@ function AssistantDockPanel() {
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       releaseModalIsolation();
+      completeExitFromEffect();
     };
   }, []);
 
@@ -567,7 +572,7 @@ function AssistantDockPanel() {
 }
 
 export function AssistantDock() {
-  const { restoreTriggerFocus, surface } = useAssistantExperience();
+  const { surface, surfaceInstanceVersion } = useAssistantExperience();
   const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -583,12 +588,13 @@ export function AssistantDock() {
   if (portalRoot === null) return null;
 
   return createPortal(
-    <AnimatePresence
-      onExitComplete={() => {
-        if (surface === "closed") restoreTriggerFocus();
-      }}
-    >
-      {surface === "dock" ? <AssistantDockPanel key="assistant-dock" /> : null}
+    <AnimatePresence>
+      {surface === "dock" ? (
+        <AssistantDockPanel
+          instanceVersion={surfaceInstanceVersion}
+          key={`assistant-dock-${surfaceInstanceVersion}`}
+        />
+      ) : null}
     </AnimatePresence>,
     portalRoot,
   );

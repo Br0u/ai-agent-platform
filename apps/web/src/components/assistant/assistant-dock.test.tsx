@@ -385,6 +385,8 @@ describe("AssistantDock", () => {
     ).toBeInTheDocument();
     expect(background).toHaveAttribute("inert");
     expect(document.body.style.overflow).toBe("hidden");
+    expect(secondTrigger).not.toHaveFocus();
+    expect(trigger).not.toHaveFocus();
 
     const reopenedDialog = screen.getByRole("dialog", {
       name: "AI 助理工作区",
@@ -421,16 +423,21 @@ describe("AssistantDock", () => {
 
   it("focuses the quick surface when the dock collapses", async () => {
     renderDock();
+    const background = screen.getByTestId("assistant-background");
     const dialog = await openDock();
 
     fireEvent.click(
       within(dialog).getByRole("button", { name: "收起为快速助手" }),
     );
     const quickDialog = await screen.findByRole("dialog", { name: "M 助手" });
+    const quickClose = within(quickDialog).getByRole("button", {
+      name: "关闭 M 助手",
+    });
+    expect(background).toHaveAttribute("inert");
+    expect(quickClose).not.toHaveFocus();
     await waitFor(() => expect(dialog).not.toBeInTheDocument());
-    expect(
-      within(quickDialog).getByRole("button", { name: "关闭 M 助手" }),
-    ).toHaveFocus();
+    expect(background).not.toHaveAttribute("inert");
+    expect(quickClose).toHaveFocus();
   });
 
   it("falls back to a focusable control when the composer is disabled", async () => {

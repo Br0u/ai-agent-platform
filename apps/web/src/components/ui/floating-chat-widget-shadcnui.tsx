@@ -18,10 +18,67 @@ import {
   useId,
   useRef,
   type FormEvent,
+  type RefObject,
 } from "react";
 import { ASSISTANT_PRESET_QUESTIONS } from "@/features/assistant/assistant-contract";
 import { useAssistantExperience } from "../assistant/assistant-experience-provider";
 import "./floating-chat-widget-shadcnui.css";
+
+function QuickSurfaceLifecycle({
+  closeRef,
+  inputRef,
+  instanceVersion,
+}: {
+  closeRef: RefObject<HTMLButtonElement | null>;
+  inputRef: RefObject<HTMLInputElement | null>;
+  instanceVersion: number;
+}) {
+  const {
+    close,
+    completeSurfaceExit,
+    registerComposer,
+    registerQuickFocusTarget,
+    surface,
+    surfaceInstanceVersion,
+  } = useAssistantExperience();
+  const requestCloseFromEffect = useEffectEvent(() => {
+    if (surface === "quick" && surfaceInstanceVersion === instanceVersion) {
+      close();
+    }
+  });
+  const completeExitFromEffect = useEffectEvent(() =>
+    completeSurfaceExit("quick", instanceVersion),
+  );
+
+  useEffect(() => {
+    const closeTarget = closeRef.current;
+    const input = inputRef.current;
+    const unregisterQuickFocusTarget =
+      closeTarget === null
+        ? undefined
+        : registerQuickFocusTarget(closeTarget, instanceVersion);
+    const unregisterComposer =
+      input === null ? undefined : registerComposer(input);
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") requestCloseFromEffect();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      unregisterComposer?.();
+      unregisterQuickFocusTarget?.();
+      completeExitFromEffect();
+    };
+  }, [
+    closeRef,
+    inputRef,
+    instanceVersion,
+    registerComposer,
+    registerQuickFocusTarget,
+  ]);
+
+  return null;
+}
 
 export function FloatingChatWidget({
   showLauncher = true,
@@ -29,14 +86,8 @@ export function FloatingChatWidget({
   showLauncher?: boolean;
 }) {
   const experience = useAssistantExperience();
-  const {
-    close,
-    openQuickFrom,
-    registerComposer,
-    restoreTriggerFocus,
-    session,
-    surface,
-  } = experience;
+  const { close, openQuickFrom, session, surface, surfaceInstanceVersion } =
+    experience;
   const quickOpen = surface === "quick";
   const launcherRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -47,27 +98,6 @@ export function FloatingChatWidget({
   const characterCount = Array.from(session.draft.trim()).length;
   const overLimit = characterCount > 500;
   const canSend = !sending && characterCount > 0 && !overLimit;
-  const closeFromEffect = useEffectEvent(close);
-  const registerComposerFromEffect = useEffectEvent(registerComposer);
-
-  useEffect(() => {
-    if (!quickOpen) return;
-
-    closeRef.current?.focus();
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") closeFromEffect();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [quickOpen]);
-
-  useEffect(() => {
-    if (!quickOpen) return;
-    const input = inputRef.current;
-    if (input === null) return;
-    return registerComposerFromEffect(input);
-  }, [quickOpen]);
-
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (canSend) void session.submit();
@@ -75,14 +105,10 @@ export function FloatingChatWidget({
 
   return (
     <div className="floating-assistant">
-      <AnimatePresence
-        onExitComplete={() => {
-          if (surface === "closed") restoreTriggerFocus();
-        }}
-      >
+      <AnimatePresence>
         {quickOpen ? (
           <motion.section
-            key="assistant-panel"
+            key={`assistant-panel-${surfaceInstanceVersion}`}
             aria-labelledby={titleId}
             aria-modal="true"
             className="floating-assistant__panel"
@@ -98,6 +124,11 @@ export function FloatingChatWidget({
             transition={{ type: "spring", damping: 26, stiffness: 320 }}
             role="dialog"
           >
+            <QuickSurfaceLifecycle
+              closeRef={closeRef}
+              inputRef={inputRef}
+              instanceVersion={surfaceInstanceVersion}
+            />
             <header className="floating-assistant__header">
               <div className="floating-assistant__identity">
                 <span aria-hidden="true" className="floating-assistant__avatar">

@@ -16,10 +16,14 @@ import {
 
 function Harness() {
   const experience = useAssistantExperience();
+  const [exitVersion, setExitVersion] = useState(0);
 
   return (
     <div>
       <output aria-label="助手展示形态">{experience.surface}</output>
+      <output aria-label="助手实例版本">
+        {experience.surfaceInstanceVersion}
+      </output>
       <button
         onClick={(event) => experience.openQuickFrom(event.currentTarget)}
         type="button"
@@ -38,8 +42,22 @@ function Harness() {
       <button onClick={experience.close} type="button">
         关闭
       </button>
-      <button onClick={experience.restoreTriggerFocus} type="button">
-        完成退出并恢复焦点
+      <input
+        aria-label="待完成助手版本"
+        onChange={(event) => setExitVersion(Number(event.target.value))}
+        value={exitVersion}
+      />
+      <button
+        onClick={() => experience.completeSurfaceExit("dock", exitVersion)}
+        type="button"
+      >
+        完成停靠退出
+      </button>
+      <button
+        onClick={() => experience.completeSurfaceExit("quick", exitVersion)}
+        type="button"
+      >
+        完成快速退出
       </button>
       <input
         aria-label="会话草稿"
@@ -192,6 +210,7 @@ describe("AssistantExperienceProvider", () => {
   it("preserves the original launcher until exit completion", () => {
     function FocusHarness() {
       const experience = useAssistantExperience();
+      const [exitVersion, setExitVersion] = useState(0);
       return (
         <>
           <button
@@ -209,11 +228,24 @@ describe("AssistantExperienceProvider", () => {
             </button>
           ) : null}
           {experience.surface === "dock" ? (
-            <button onClick={experience.close} type="button">
-              关闭停靠助手
-            </button>
+            <>
+              <output aria-label="当前停靠助手版本">
+                {experience.surfaceInstanceVersion}
+              </output>
+              <button onClick={experience.close} type="button">
+                关闭停靠助手
+              </button>
+            </>
           ) : null}
-          <button onClick={experience.restoreTriggerFocus} type="button">
+          <input
+            aria-label="待完成停靠助手版本"
+            onChange={(event) => setExitVersion(Number(event.target.value))}
+            value={exitVersion}
+          />
+          <button
+            onClick={() => experience.completeSurfaceExit("dock", exitVersion)}
+            type="button"
+          >
             停靠助手退出完成
           </button>
         </>
@@ -233,6 +265,11 @@ describe("AssistantExperienceProvider", () => {
     });
     const internalFocus = vi.spyOn(internalTrigger, "focus");
     fireEvent.click(internalTrigger);
+    fireEvent.change(screen.getByLabelText("待完成停靠助手版本"), {
+      target: {
+        value: screen.getByLabelText("当前停靠助手版本").textContent,
+      },
+    });
 
     expect(internalTrigger.isConnected).toBe(false);
     expect(launcherFocus).not.toHaveBeenCalled();
@@ -254,17 +291,133 @@ describe("AssistantExperienceProvider", () => {
     const focus = vi.spyOn(launcher, "focus");
 
     fireEvent.click(launcher);
+    fireEvent.change(screen.getByLabelText("待完成助手版本"), {
+      target: { value: screen.getByLabelText("助手实例版本").textContent },
+    });
     fireEvent.click(screen.getByRole("button", { name: "关闭" }));
     expect(focus).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "完成退出并恢复焦点" }));
-    fireEvent.click(screen.getByRole("button", { name: "完成退出并恢复焦点" }));
+    fireEvent.click(screen.getByRole("button", { name: "完成停靠退出" }));
+    fireEvent.click(screen.getByRole("button", { name: "完成停靠退出" }));
     expect(focus).toHaveBeenCalledOnce();
 
     fireEvent.click(launcher);
+    fireEvent.change(screen.getByLabelText("待完成助手版本"), {
+      target: { value: screen.getByLabelText("助手实例版本").textContent },
+    });
     launcher.setAttribute("disabled", "");
     fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-    fireEvent.click(screen.getByRole("button", { name: "完成退出并恢复焦点" }));
+    fireEvent.click(screen.getByRole("button", { name: "完成停靠退出" }));
     expect(focus).toHaveBeenCalledOnce();
+  });
+
+  it("rejects stale quick and dock exit completions after a new open", () => {
+    render(
+      <AssistantExperienceProvider pathname="/">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+    const quickTrigger = screen.getByRole("button", { name: "快速入口" });
+    const dockTrigger = screen.getByRole("button", { name: "停靠入口" });
+    const quickFocus = vi.spyOn(quickTrigger, "focus");
+    const dockFocus = vi.spyOn(dockTrigger, "focus");
+
+    fireEvent.click(quickTrigger);
+    const quickVersion = Number(
+      screen.getByLabelText("助手实例版本").textContent,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    fireEvent.click(dockTrigger);
+    const dockVersion = Number(
+      screen.getByLabelText("助手实例版本").textContent,
+    );
+    expect(dockVersion).toBeGreaterThan(quickVersion);
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+
+    fireEvent.change(screen.getByLabelText("待完成助手版本"), {
+      target: { value: String(quickVersion) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "完成快速退出" }));
+    expect(quickFocus).not.toHaveBeenCalled();
+    expect(dockFocus).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("待完成助手版本"), {
+      target: { value: String(dockVersion) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "完成停靠退出" }));
+    expect(dockFocus).toHaveBeenCalledOnce();
+    expect(quickFocus).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale dock instance after a same-kind reopen", () => {
+    function VersionHarness() {
+      const experience = useAssistantExperience();
+      const [exitVersion, setExitVersion] = useState(0);
+      return (
+        <>
+          <button
+            onClick={(event) => experience.openDockFrom(event.currentTarget)}
+            type="button"
+          >
+            第一停靠入口
+          </button>
+          <button
+            onClick={(event) => experience.openDockFrom(event.currentTarget)}
+            type="button"
+          >
+            第二停靠入口
+          </button>
+          <button onClick={experience.close} type="button">
+            关闭停靠窗口
+          </button>
+          <input
+            aria-label="待完成停靠版本"
+            onChange={(event) => setExitVersion(Number(event.target.value))}
+            value={exitVersion}
+          />
+          <button
+            onClick={() => experience.completeSurfaceExit("dock", exitVersion)}
+            type="button"
+          >
+            完成指定停靠退出
+          </button>
+          <output aria-label="当前停靠版本">
+            {experience.surfaceInstanceVersion}
+          </output>
+        </>
+      );
+    }
+    render(
+      <AssistantExperienceProvider pathname="/">
+        <VersionHarness />
+      </AssistantExperienceProvider>,
+    );
+    const firstTrigger = screen.getByRole("button", { name: "第一停靠入口" });
+    const secondTrigger = screen.getByRole("button", { name: "第二停靠入口" });
+    const firstFocus = vi.spyOn(firstTrigger, "focus");
+    const secondFocus = vi.spyOn(secondTrigger, "focus");
+
+    fireEvent.click(firstTrigger);
+    const firstVersion = Number(
+      screen.getByLabelText("当前停靠版本").textContent,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "关闭停靠窗口" }));
+    fireEvent.click(secondTrigger);
+    const secondVersion = Number(
+      screen.getByLabelText("当前停靠版本").textContent,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "关闭停靠窗口" }));
+
+    fireEvent.change(screen.getByLabelText("待完成停靠版本"), {
+      target: { value: String(firstVersion) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "完成指定停靠退出" }));
+    expect(firstFocus).not.toHaveBeenCalled();
+    expect(secondFocus).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("待完成停靠版本"), {
+      target: { value: String(secondVersion) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "完成指定停靠退出" }));
+    expect(secondFocus).toHaveBeenCalledOnce();
+    expect(firstFocus).not.toHaveBeenCalled();
   });
 
   it("derives a closed assistant workspace surface synchronously and keeps the session", async () => {
