@@ -223,8 +223,7 @@ async function selectRepresentativePricingModules(page: Page) {
 
 async function navigateFromHeaderToProduct(page: Page, projectName: string) {
   if (projectName === "desktop") {
-    await page.getByRole("button", { name: "产品", exact: true }).click();
-    await page.getByRole("link", { name: "产品概览", exact: true }).click();
+    await page.getByRole("link", { name: "产品", exact: true }).click();
   } else {
     await page.getByRole("button", { name: "打开导航" }).click();
     const navigation = page.getByRole("dialog", { name: "全站导航" });
@@ -277,8 +276,8 @@ async function sendSuccessfulAssistantMessage(page: Page) {
   );
   await dialog.getByRole("button", { name: "发送消息", exact: true }).click();
   await response;
-  await expect(page.getByTestId("assistant-history")).toContainText(question);
-  await expect(page.getByTestId("assistant-history")).toContainText(answer);
+  await expect(dialog.getByTestId("assistant-history")).toContainText(question);
+  await expect(dialog.getByTestId("assistant-history")).toContainText(answer);
   return answer;
 }
 
@@ -455,7 +454,9 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
 
   if (testInfo.project.name === "mobile") {
     const panelBox = await dialog.boundingBox();
-    const launcherBox = await launcher.boundingBox();
+    const launcherBox = await page
+      .getByRole("button", { name: "关闭 M 助手入口", exact: true })
+      .boundingBox();
     expect(panelBox).not.toBeNull();
     expect(launcherBox).not.toBeNull();
     expect(panelBox!.width).toBeGreaterThanOrEqual(360);
@@ -505,7 +506,10 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
   page.on("request", (request) => {
     if (pathname(request.url()) === ASSISTANT_API) unicodeChatRequests += 1;
   });
-  const send = page.getByRole("button", { name: "发送", exact: true });
+  const send = dialog.getByRole("button", {
+    name: "发送消息",
+    exact: true,
+  });
   await input.fill(`  ${"😀".repeat(500)}  `);
   await expect(send).toBeEnabled();
   const unicodeRequest = page.waitForRequest((request) =>
@@ -551,8 +555,9 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
       candidate.url().endsWith(ASSISTANT_API),
     );
     await page
+      .getByRole("dialog", { name: "M 助手" })
       .getByRole("button", {
-        name: expectedCount === 1 ? "发送" : "重试",
+        name: expectedCount === 1 ? "发送消息" : "重试",
         exact: true,
       })
       .click();
@@ -564,7 +569,7 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
   await expect(
     page.getByText("发送失败，请重试或使用下方服务入口。", { exact: true }),
   ).toBeVisible();
-  const history = page.getByTestId("assistant-history");
+  const history = dialog.getByTestId("assistant-history");
   await expect(history).toContainText(
     "AI 服务尚未接入。你可以先查看帮助中心或联系商务顾问。",
   );
@@ -600,12 +605,20 @@ test("assistant session survives header, footer, and identity client routing", a
   await expect(page).toHaveURL(/\/contact\?source=pricing/u);
   await expectNavigationSentinel(page, pricingSentinel);
   await page.getByRole("button", { name: "打开 M 助手" }).click();
-  await expect(page.getByTestId("assistant-history")).toContainText(answer);
+  await expect(
+    page
+      .getByRole("dialog", { name: "M 助手" })
+      .getByTestId("assistant-history"),
+  ).toContainText(answer);
 
   await navigateFromHeaderToProduct(page, testInfo.project.name);
   await expect(page.getByRole("dialog", { name: "M 助手" })).toHaveCount(0);
   await page.getByRole("button", { name: "打开 M 助手" }).click();
-  await expect(page.getByTestId("assistant-history")).toContainText(answer);
+  await expect(
+    page
+      .getByRole("dialog", { name: "M 助手" })
+      .getByTestId("assistant-history"),
+  ).toContainText(answer);
   await page
     .getByRole("dialog", { name: "M 助手" })
     .getByRole("button", { name: "关闭 M 助手", exact: true })
@@ -619,7 +632,11 @@ test("assistant session survives header, footer, and identity client routing", a
   await expect(page).toHaveURL(/\/help$/u);
   await expectNavigationSentinel(page, footerSentinel);
   await page.getByRole("button", { name: "打开 M 助手" }).click();
-  await expect(page.getByTestId("assistant-history")).toContainText(answer);
+  await expect(
+    page
+      .getByRole("dialog", { name: "M 助手" })
+      .getByTestId("assistant-history"),
+  ).toContainText(answer);
   await page
     .getByRole("dialog", { name: "M 助手" })
     .getByRole("button", { name: "关闭 M 助手", exact: true })
@@ -636,11 +653,19 @@ test("assistant session survives header, footer, and identity client routing", a
   await expect(page).toHaveURL(/\/help$/u);
   await expectNavigationSentinel(page, identitySentinel);
   await page.getByRole("button", { name: "打开 M 助手" }).click();
-  await expect(page.getByTestId("assistant-history")).toContainText(answer);
+  await expect(
+    page
+      .getByRole("dialog", { name: "M 助手" })
+      .getByTestId("assistant-history"),
+  ).toContainText(answer);
 
   await page.reload();
   await page.getByRole("button", { name: "打开 M 助手" }).click();
-  await expect(page.getByTestId("assistant-history")).toBeEmpty();
+  await expect(
+    page
+      .getByRole("dialog", { name: "M 助手" })
+      .getByTestId("assistant-history"),
+  ).toBeEmpty();
 
   expectOnlyDeliberateDiagnostics(diagnostics, {
     applicationOrigin: new URL(page.url()).origin,
