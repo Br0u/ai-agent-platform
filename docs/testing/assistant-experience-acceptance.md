@@ -40,3 +40,4 @@ AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT=aap-assistant-e2e-task9 \
 - `c6e0109` 已将 Dockerfile 的 pnpm store 改为 BuildKit 内容寻址缓存并加入有界网络重试；后续 migrate/web 依赖安装层均命中 `CACHED`，此前 registry 中断导致 runner 未进入 Playwright 的问题已关闭，不再作为当前限制。
 - `7bf0b63` 完整 runner 退出后，隔离项目容器、卷、网络、项目镜像、锁和临时 secret 均为 `0` 残留；全局 `8080` 端口已释放，原有默认 E2E 镜像 ID 未变化。
 - 最终规格复审新增精确断点恢复和完整页返回门户连续性后，Playwright 清单为 `24` 个用例；提交 `c044d07` 将完整 runner 固定为 `--workers=1` 后，隔离项目 `aap-assistant-e2e-task10-final-review3` 为 `20 passed / 4 expected skipped / 0 failed`。runner 退出后，本轮及三次预跑项目的容器、卷、网络、项目镜像、锁和临时 secret 均为 `0` 残留，全局 `8080` 端口已释放。
+- 终审修复 Dock 退出隔离、Quick/Dock/Workspace 共享服务状态、完整页首帧状态和顶部入口语义后，提交 `de17031` 使用隔离项目 `aap-assistant-e2e-final-de17031-v2` 再次运行完整 runner：`20 passed / 4 expected skipped / 0 failed`，耗时 `48.4s`，容器内 production build 生成 `38/38` 个页面。退出后该项目的容器、卷、网络、项目镜像、锁和临时 secret 均为 `0`，全局 `8080` 端口无监听。
