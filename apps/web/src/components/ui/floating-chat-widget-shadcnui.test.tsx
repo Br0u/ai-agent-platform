@@ -384,4 +384,18 @@ describe("FloatingChatWidget", () => {
       /\.floating-assistant__panel\.is-exiting\s*\{[\s\S]*?pointer-events:\s*none;/u,
     );
   });
+
+  it("keeps every mobile quick-assistant control at least 44 pixels", () => {
+    const stylesheet = readFileSync(
+      "src/components/ui/floating-chat-widget-shadcnui.css",
+      "utf8",
+    );
+
+    expect(stylesheet).toMatch(
+      /@media \(max-width: 640px\)[\s\S]*?\.floating-assistant__panel button,\s*\.floating-assistant__panel a\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/u,
+    );
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__footer input\s*\{[\s\S]*?min-height:\s*44px;/u,
+    );
+  });
 });

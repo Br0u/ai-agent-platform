@@ -451,6 +451,22 @@
     max-height: none;
   }
 
+  .floating-assistant__panel button,
+  .floating-assistant__panel a {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .floating-assistant__panel a {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .floating-assistant__footer input {
+    min-height: 44px;
+    padding-right: 59px;
+  }
+
   .floating-assistant__launcher.is-open {
     display: none;
   }
