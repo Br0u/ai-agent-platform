@@ -40,6 +40,10 @@
   -webkit-backdrop-filter: blur(22px) saturate(145%);
 }
 
+.floating-assistant__panel.is-exiting {
+  pointer-events: none;
+}
+
 .floating-assistant__header {
   position: relative;
   display: flex;
@@ -351,31 +355,6 @@
   margin-top: 9px;
   color: var(--color-muted);
   font-size: 10px;
-}
-
-.floating-assistant__full-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 10px;
-  color: var(--color-primary);
-  font-size: 11px;
-  font-weight: 700;
-  text-decoration: none;
-  transition:
-    color 160ms ease,
-    transform 160ms var(--ease-out);
-}
-
-.floating-assistant__full-link:active {
-  transform: scale(0.97);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .floating-assistant__full-link:hover {
-    color: var(--color-accent);
-    transform: translateX(2px);
-  }
 }
 
 .floating-assistant__meta > span.is-over-limit {

@@ -1,8 +1,12 @@
 "use client";
 
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
-  ArrowUpRight,
+  AnimatePresence,
+  motion,
+  useIsPresent,
+  useReducedMotion,
+} from "framer-motion";
+import {
   BriefcaseBusiness,
   LifeBuoy,
   MessageSquare,
@@ -17,6 +21,7 @@ import {
   useEffect,
   useEffectEvent,
   useId,
+  useLayoutEffect,
   useRef,
   type FormEvent,
   type RefObject,
@@ -29,11 +34,14 @@ function QuickSurfaceLifecycle({
   closeRef,
   inputRef,
   instanceVersion,
+  panelRef,
 }: {
   closeRef: RefObject<HTMLButtonElement | null>;
   inputRef: RefObject<HTMLInputElement | null>;
   instanceVersion: number;
+  panelRef: RefObject<HTMLElement | null>;
 }) {
+  const isPresent = useIsPresent();
   const {
     close,
     completeSurfaceExit,
@@ -50,6 +58,22 @@ function QuickSurfaceLifecycle({
   const completeExitFromEffect = useEffectEvent(() =>
     completeSurfaceExit("quick", instanceVersion),
   );
+
+  useLayoutEffect(() => {
+    if (isPresent) return;
+    const panel = panelRef.current;
+    if (panel === null) return;
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement && panel.contains(activeElement)) {
+      activeElement.blur();
+    }
+    panel.setAttribute("inert", "");
+    panel.setAttribute("aria-hidden", "true");
+    panel.removeAttribute("aria-labelledby");
+    panel.removeAttribute("aria-modal");
+    panel.removeAttribute("role");
+    panel.classList.add("is-exiting");
+  }, [isPresent, panelRef]);
 
   useEffect(() => {
     const closeTarget = closeRef.current;
@@ -99,6 +123,7 @@ export function FloatingChatWidget({
   const launcherRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
   const titleId = useId();
   const prefersReducedMotion = useReducedMotion();
   const sending = session.requestStatus === "sending";
@@ -129,12 +154,14 @@ export function FloatingChatWidget({
                 : { opacity: 0, y: 18, scale: 0.96 }
             }
             transition={{ type: "spring", damping: 26, stiffness: 320 }}
+            ref={panelRef}
             role="dialog"
           >
             <QuickSurfaceLifecycle
               closeRef={closeRef}
               inputRef={inputRef}
               instanceVersion={surfaceInstanceVersion}
+              panelRef={panelRef}
             />
             <header className="floating-assistant__header">
               <div className="floating-assistant__identity">
@@ -286,11 +313,6 @@ export function FloatingChatWidget({
                   <Send size={17} />
                 </button>
               </form>
-              <Link className="floating-assistant__full-link" href="/assistant">
-                <MessageSquare size={14} />
-                打开完整 AI 助理
-                <ArrowUpRight size={13} />
-              </Link>
               <div className="floating-assistant__meta">
                 <span className={overLimit ? "is-over-limit" : ""}>
                   {characterCount} / 500

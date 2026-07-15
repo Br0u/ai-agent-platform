@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -129,15 +130,13 @@ describe("FloatingChatWidget", () => {
     );
   });
 
-  it("exposes the full assistant workspace from the compact panel", () => {
+  it("offers one dock expansion action without bypassing it to the full page", () => {
     openWidget();
 
     expect(
       screen.getByRole("button", { name: "展开 AI 助理工作区" }).parentElement,
     ).toHaveClass("floating-assistant__header-actions");
-    expect(
-      screen.getByRole("link", { name: "打开完整 AI 助理" }),
-    ).toHaveAttribute("href", "/assistant");
+    expect(screen.queryByRole("link", { name: "打开完整 AI 助理" })).toBeNull();
   });
 
   it("expands the quick surface into the dock without losing its draft", async () => {
@@ -147,15 +146,23 @@ describe("FloatingChatWidget", () => {
         <AssistantDock />
       </AssistantExperienceProvider>,
     );
+    await act(async () => Promise.resolve());
     const launcher = screen.getByRole("button", { name: "打开 M 助手" });
     fireEvent.click(launcher);
     fireEvent.change(screen.getByRole("textbox", { name: "向 M 助手提问" }), {
       target: { value: "保留到工作区的问题" },
     });
 
+    const quickDialog = screen.getByRole("dialog", { name: "M 助手" });
     fireEvent.click(screen.getByRole("button", { name: "展开 AI 助理工作区" }));
 
-    const dock = await screen.findByRole("dialog", {
+    expect(quickDialog).toHaveAttribute("inert");
+    expect(quickDialog).toHaveAttribute("aria-hidden", "true");
+    expect(quickDialog).not.toHaveAttribute("role");
+    expect(quickDialog).not.toHaveAttribute("aria-modal");
+    expect(quickDialog).toHaveClass("is-exiting");
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    const dock = screen.getByRole("dialog", {
       name: "AI 助理工作区",
     });
     await waitFor(() =>
@@ -297,13 +304,15 @@ describe("FloatingChatWidget", () => {
 
   it("closes on Escape and restores focus to the launcher", async () => {
     const launcher = openWidget();
+    const quickDialog = screen.getByRole("dialog", { name: "M 助手" });
     fireEvent.keyDown(document, { key: "Escape" });
 
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("dialog", { name: "M 助手" }),
-      ).not.toBeInTheDocument(),
-    );
+    expect(quickDialog).toHaveAttribute("inert");
+    expect(quickDialog).toHaveAttribute("aria-hidden", "true");
+    expect(quickDialog).not.toHaveAttribute("role");
+    expect(quickDialog).toHaveClass("is-exiting");
+    expect(screen.queryByRole("dialog", { name: "M 助手" })).toBeNull();
+    await waitFor(() => expect(quickDialog).not.toBeInTheDocument());
     expect(launcher).toHaveFocus();
   });
 
@@ -315,6 +324,9 @@ describe("FloatingChatWidget", () => {
 
     expect(stylesheet).toContain(
       ".floating-assistant__launcher.is-open {\n    display: none;\n  }",
+    );
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__panel\.is-exiting\s*\{[\s\S]*?pointer-events:\s*none;/u,
     );
   });
 });
