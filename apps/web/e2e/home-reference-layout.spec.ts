@@ -167,6 +167,22 @@ test("matches the approved desktop composition", async ({ page }, testInfo) => {
       );
     expect(columns).toBe(2);
   }
+
+  for (const selector of [
+    ".home-platform-row",
+    ".home-enterprise-row",
+    ".home-solution-row",
+    ".home-resource",
+  ]) {
+    const radius = await page
+      .locator(selector)
+      .first()
+      .evaluate((element) =>
+        parseFloat(getComputedStyle(element).borderTopLeftRadius),
+      );
+    expect(radius).toBeGreaterThanOrEqual(18);
+    expect(radius).toBeLessThanOrEqual(26);
+  }
 });
 
 test("stacks reference regions without clipping on mobile", async ({

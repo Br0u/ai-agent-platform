@@ -351,10 +351,6 @@
   font-weight: 800;
 }
 
-.home-capability-card__copy {
-  margin-top: 48px;
-}
-
 .home-capability-card h3,
 .home-platform-row h3,
 .home-enterprise-row h3,
@@ -451,6 +447,13 @@
   border-bottom: 1px solid rgb(91 111 174 / 13%);
 }
 
+.home-platform-row,
+.home-enterprise-row,
+.home-solution-row,
+.home-resource {
+  border-radius: 20px;
+}
+
 .home-platform-row:last-child,
 .home-enterprise-row:last-child,
 .home-solution-row:last-child,
@@ -508,10 +511,6 @@
 /* Solutions */
 .home-solutions__grid {
   grid-template-columns: minmax(0, 36fr) minmax(0, 64fr);
-}
-
-.home-solutions__intro {
-  min-height: 790px;
 }
 
 .home-solution-list {
