@@ -339,7 +339,13 @@ test("portal header entry, quick assistant, dock, and standalone workspace are k
   await expect(quickClose).toBeFocused();
   await attachScreenshot(page, testInfo, "portal-drawer");
 
+  const presetResponse = page.waitForResponse(
+    (candidate) =>
+      candidate.url().endsWith(ASSISTANT_CHAT_ENDPOINT) &&
+      candidate.status() === 200,
+  );
   await page.getByRole("button", { name: "如何开始了解平台？" }).click();
+  await presetResponse;
   await expect(
     page
       .getByRole("log")
