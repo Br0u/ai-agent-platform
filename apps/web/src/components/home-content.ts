@@ -53,10 +53,8 @@ export const homeCopy = {
     productCode: "TGDataXAI",
     summary:
       "以异构算力智能调度为底座，把模型仓库、知识工程、流程编排、训练、推理与评估连接为一套企业级开发体系，让智能体开发像搭积木一样简单。",
-    ctas: [
-      { label: "了解平台", href: "/product" },
-      { label: "阅读文档", href: "/docs" },
-    ],
+    primaryCta: { label: "了解平台", href: "/product" },
+    secondaryCta: { label: "阅读文档", href: "/docs" },
     evidenceLabel: "PLATFORM / UI-01",
     evidenceProduct: "TGDataXAI",
     evidenceCaption: "应用广场界面 · 用户提供的华鲲元启平台截图",
@@ -70,10 +68,8 @@ export const homeCopy = {
     },
     intro:
       "从企业数据进入知识工程，到智能体发布与模型运行，能力被组织为可理解、可管理的开发路径。",
-    ctas: [
-      { label: "了解平台", href: "/product" },
-      { label: "阅读文档", href: "/docs" },
-    ],
+    primaryCta: { label: "了解平台", href: "/product" },
+    secondaryCta: { label: "阅读文档", href: "/docs" },
   },
   enterprise: {
     kicker: "ENTERPRISE / 02",
