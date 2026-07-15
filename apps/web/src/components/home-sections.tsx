@@ -22,14 +22,36 @@ type GradientHeadingCopy = {
   after: string;
 };
 
-function GradientHeadingText({ copy }: { copy: GradientHeadingCopy }) {
+function GradientHeadingText({
+  copy,
+  beforeBreakAt,
+}: {
+  copy: GradientHeadingCopy;
+  beforeBreakAt?: number;
+}) {
+  const beforeLead = beforeBreakAt
+    ? copy.before.slice(0, beforeBreakAt)
+    : copy.before;
+  const beforeTail = beforeBreakAt ? copy.before.slice(beforeBreakAt) : "";
+
   return (
     <>
-      {copy.before}
+      <span
+        className={beforeBreakAt ? "home-heading-line" : "home-heading-before"}
+      >
+        {beforeLead}
+      </span>
+      {beforeTail ? (
+        <span className="home-heading-before">{beforeTail}</span>
+      ) : null}
       <span className="home-gradient-text">{copy.emphasis}</span>
-      {copy.after}
+      <span className="home-heading-after">{copy.after}</span>
     </>
   );
+}
+
+function gradientHeadingLabel(copy: GradientHeadingCopy) {
+  return `${copy.before}${copy.emphasis}${copy.after}`;
 }
 
 export function HeroEvidence() {
@@ -42,7 +64,10 @@ export function HeroEvidence() {
       <div className="home-frame home-hero__grid">
         <div className="home-hero__copy">
           <p className="home-technical-line">{homeCopy.hero.technicalLine}</p>
-          <h1 id="hero-title">
+          <h1
+            id="hero-title"
+            aria-label={gradientHeadingLabel(homeCopy.hero.heading)}
+          >
             <GradientHeadingText copy={homeCopy.hero.heading} />
           </h1>
           <p className="home-product-name">
@@ -117,8 +142,11 @@ function PlatformFlow() {
     <div className="home-platform__grid">
       <header className="home-platform__intro home-glass-panel">
         <p className="home-section-kicker">{homeCopy.platform.kicker}</p>
-        <h2>
-          <GradientHeadingText copy={homeCopy.platform.heading} />
+        <h2 aria-label={gradientHeadingLabel(homeCopy.platform.heading)}>
+          <GradientHeadingText
+            copy={homeCopy.platform.heading}
+            beforeBreakAt={homeCopy.platform.heading.before.indexOf("贯通")}
+          />
         </h2>
         <p className="home-section-intro">{homeCopy.platform.intro}</p>
         <div className="home-actions">
@@ -221,8 +249,14 @@ export function SolutionIndex() {
       <div className="home-frame home-solutions__grid">
         <header className="home-solutions__intro home-glass-panel">
           <p className="home-section-kicker">{homeCopy.solutions.kicker}</p>
-          <h2 id="solution-index-title">
-            <GradientHeadingText copy={homeCopy.solutions.heading} />
+          <h2
+            id="solution-index-title"
+            aria-label={gradientHeadingLabel(homeCopy.solutions.heading)}
+          >
+            <GradientHeadingText
+              copy={homeCopy.solutions.heading}
+              beforeBreakAt={homeCopy.solutions.heading.before.indexOf("走向")}
+            />
           </h2>
           <p className="home-section-intro">{homeCopy.solutions.intro}</p>
           <Image
@@ -279,8 +313,16 @@ export function ResourceTable() {
       <div className="home-frame home-resources__grid">
         <header className="home-resources__intro home-glass-panel">
           <p className="home-section-kicker">{homeCopy.resources.kicker}</p>
-          <h2 id="resource-table-title">
-            <GradientHeadingText copy={homeCopy.resources.heading} />
+          <h2
+            id="resource-table-title"
+            aria-label={gradientHeadingLabel(homeCopy.resources.heading)}
+          >
+            <GradientHeadingText
+              copy={homeCopy.resources.heading}
+              beforeBreakAt={homeCopy.resources.heading.before.indexOf(
+                "从这里",
+              )}
+            />
           </h2>
           <p className="home-section-intro">{homeCopy.resources.intro}</p>
           <Image

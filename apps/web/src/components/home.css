@@ -74,6 +74,15 @@
   color: var(--home-blue);
 }
 
+.home-heading-before,
+.home-heading-after {
+  white-space: normal;
+}
+
+.home-heading-line {
+  display: block;
+}
+
 @supports ((background-clip: text) or (-webkit-background-clip: text)) {
   .home-gradient-text {
     background: linear-gradient(110deg, var(--home-blue), var(--home-violet));
@@ -217,9 +226,13 @@
   bottom: -18%;
   width: 72%;
   height: 50%;
-  border: 2px solid rgb(119 147 255 / 24%);
+  border: 3px solid rgb(92 174 255 / 34%);
   border-radius: 50%;
-  box-shadow: 0 0 48px rgb(40 108 255 / 22%);
+  box-shadow:
+    0 0 0 10px rgb(115 88 234 / 8%),
+    0 0 0 22px rgb(74 195 255 / 6%),
+    0 -8px 34px rgb(115 88 234 / 24%),
+    0 10px 38px rgb(74 195 255 / 24%);
   content: "";
   pointer-events: none;
   transform: rotate(-7deg);
@@ -235,12 +248,16 @@
 }
 
 .home-hero h1 {
-  max-width: 610px;
+  max-width: 425px;
   margin: 26px 0 30px;
-  font-size: clamp(66px, 6.6vw, 100px);
+  font-size: clamp(66px, 6vw, 88px);
   font-weight: 760;
   letter-spacing: -0.065em;
   line-height: 0.98;
+}
+
+.home-hero .home-heading-before {
+  display: block;
 }
 
 .home-product-name {
@@ -512,6 +529,10 @@
 /* Solutions */
 .home-solutions__grid {
   grid-template-columns: minmax(0, 36fr) minmax(0, 64fr);
+}
+
+.home-solutions__intro h2 {
+  font-size: clamp(50px, 4.2vw, 60px);
 }
 
 .home-solution-list {

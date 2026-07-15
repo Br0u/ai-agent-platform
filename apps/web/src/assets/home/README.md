@@ -6,11 +6,11 @@ These are decorative section illustrations. Consumers must render them with `alt
 
 ## Output mapping
 
-| Illustration | Transparent source PNG | Runtime WebP | Intended use |
-| --- | --- | --- | --- |
-| Platform loop | `source/platform-loop.png` | `platform-loop.webp` | Platform overview panel |
+| Illustration       | Transparent source PNG          | Runtime WebP              | Intended use             |
+| ------------------ | ------------------------------- | ------------------------- | ------------------------ |
+| Platform loop      | `source/platform-loop.png`      | `platform-loop.webp`      | Platform overview panel  |
 | Solutions platform | `source/solutions-platform.png` | `solutions-platform.webp` | Industry-solutions panel |
-| Resources folder | `source/resources-folder.png` | `resources-folder.webp` | Resources panel |
+| Resources folder   | `source/resources-folder.png`   | `resources-folder.webp`   | Resources panel          |
 
 ## Generation prompts
 
@@ -45,10 +45,10 @@ cwebp -q 88 -m 6 -alpha_q 95 \
 
 ## Validation
 
-| Asset | PNG dimensions / pixel format | PNG size | WebP pixel format | WebP size |
-| --- | --- | ---: | --- | ---: |
-| `platform-loop` | 1448 x 1086 / `rgba` | 898,207 B | `yuva420p` | 67,336 B |
-| `solutions-platform` | 1448 x 1086 / `rgba` | 787,254 B | `yuva420p` | 83,692 B |
-| `resources-folder` | 1448 x 1086 / `rgba` | 847,125 B | `yuva420p` | 91,902 B |
+| Asset                | PNG dimensions / pixel format |  PNG size | WebP pixel format | WebP size |
+| -------------------- | ----------------------------- | --------: | ----------------- | --------: |
+| `platform-loop`      | 1448 x 1086 / `rgba`          | 898,207 B | `yuva420p`        |  67,336 B |
+| `solutions-platform` | 1448 x 1086 / `rgba`          | 787,254 B | `yuva420p`        |  83,692 B |
+| `resources-folder`   | 1448 x 1086 / `rgba`          | 847,125 B | `yuva420p`        |  91,902 B |
 
 `ffprobe` confirmed every PNG exceeds 1024 x 768 and every PNG/WebP has alpha. All four PNG corners are fully transparent. A Pillow pixel scan found zero visible green-dominant pixels and zero green-dominant partially transparent edge pixels. Each runtime WebP is smaller than its PNG source.
