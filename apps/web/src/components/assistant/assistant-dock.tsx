@@ -33,6 +33,30 @@ const FOCUSABLE_SELECTOR = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
+export const ASSISTANT_DOCK_MOTION = {
+  backdrop: {
+    durationSeconds: 0.16,
+    variants: {
+      hidden: { opacity: 0 },
+      visible: { opacity: 1 },
+      exit: { opacity: 0 },
+    },
+  },
+  panel: {
+    enterDurationSeconds: 0.22,
+    exitDurationSeconds: 0.17,
+    offsetPixels: 18,
+    variants: {
+      hidden: { opacity: 0, x: 18 },
+      visible: { opacity: 1, x: 0 },
+      exit: { opacity: 0, x: 18 },
+    },
+  },
+  reducedDurationSeconds: 0.01,
+} as const;
+
+const ASSISTANT_DOCK_EASE = [0.22, 1, 0.36, 1] as const;
+
 function serviceLabel({
   capability,
   live,
@@ -194,43 +218,108 @@ function AssistantDockPanel() {
       isMobile || width === null ? "100%" : `${width}px`,
   } as CSSProperties;
 
+  const backdropVariants = prefersReducedMotion
+    ? {
+        hidden: { opacity: 0 },
+        visible: {
+          opacity: 1,
+          transition: {
+            duration: ASSISTANT_DOCK_MOTION.reducedDurationSeconds,
+          },
+        },
+        exit: {
+          opacity: 0,
+          transition: {
+            duration: ASSISTANT_DOCK_MOTION.reducedDurationSeconds,
+          },
+        },
+      }
+    : {
+        hidden: ASSISTANT_DOCK_MOTION.backdrop.variants.hidden,
+        visible: {
+          ...ASSISTANT_DOCK_MOTION.backdrop.variants.visible,
+          transition: {
+            duration: ASSISTANT_DOCK_MOTION.backdrop.durationSeconds,
+          },
+        },
+        exit: {
+          ...ASSISTANT_DOCK_MOTION.backdrop.variants.exit,
+          transition: {
+            duration: ASSISTANT_DOCK_MOTION.backdrop.durationSeconds,
+          },
+        },
+      };
+  const panelVariants = prefersReducedMotion
+    ? {
+        hidden: { opacity: 0 },
+        visible: {
+          opacity: 1,
+          transition: {
+            duration: ASSISTANT_DOCK_MOTION.reducedDurationSeconds,
+          },
+        },
+        exit: {
+          opacity: 0,
+          transition: {
+            duration: ASSISTANT_DOCK_MOTION.reducedDurationSeconds,
+          },
+        },
+      }
+    : {
+        hidden: ASSISTANT_DOCK_MOTION.panel.variants.hidden,
+        visible: {
+          ...ASSISTANT_DOCK_MOTION.panel.variants.visible,
+          transition: {
+            duration: ASSISTANT_DOCK_MOTION.panel.enterDurationSeconds,
+            ease: ASSISTANT_DOCK_EASE,
+          },
+        },
+        exit: {
+          ...ASSISTANT_DOCK_MOTION.panel.variants.exit,
+          transition: {
+            duration: ASSISTANT_DOCK_MOTION.panel.exitDurationSeconds,
+            ease: ASSISTANT_DOCK_EASE,
+          },
+        },
+      };
+
   return (
-    <motion.div
-      animate={{ opacity: 1 }}
+    <div
       className="assistant-dock-layer"
-      exit={{ opacity: 0 }}
-      initial={{ opacity: 0 }}
+      data-testid="assistant-dock-layer"
       onPointerCancel={() => {
         backdropPointerRef.current = null;
       }}
       onPointerDown={handleLayerPointerDown}
       onPointerUp={handleLayerPointerUp}
-      transition={{ duration: prefersReducedMotion ? 0.01 : 0.16 }}
     >
-      <div
+      <motion.div
+        animate="visible"
         aria-hidden="true"
         className="assistant-dock__backdrop"
         data-assistant-dock-backdrop
+        data-motion-part="backdrop"
         data-testid="assistant-dock-backdrop"
+        exit="exit"
+        initial="hidden"
+        variants={backdropVariants}
       />
       <motion.section
-        animate={{ opacity: 1, x: 0 }}
+        animate="visible"
         aria-describedby={descriptionId}
         aria-label="AI 助理工作区"
         aria-modal="true"
         className="assistant-dock"
         data-mobile={isMobile ? "true" : undefined}
+        data-motion-part="panel"
         data-resizing={isResizing ? "true" : undefined}
-        exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, x: 18 }}
-        initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, x: 18 }}
+        exit="exit"
+        initial="hidden"
         ref={dialogRef}
         role="dialog"
         style={panelStyle}
         tabIndex={-1}
-        transition={{
-          duration: prefersReducedMotion ? 0.01 : 0.22,
-          ease: [0.22, 1, 0.36, 1],
-        }}
+        variants={panelVariants}
       >
         {resizeHandleProps && width !== null ? (
           <div
@@ -332,7 +421,7 @@ function AssistantDockPanel() {
           />
         </div>
       </motion.section>
-    </motion.div>
+    </div>
   );
 }
 

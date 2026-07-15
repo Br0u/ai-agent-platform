@@ -13,7 +13,7 @@ import {
   AssistantExperienceProvider,
   useAssistantExperience,
 } from "./assistant-experience-provider";
-import { AssistantDock } from "./assistant-dock";
+import { ASSISTANT_DOCK_MOTION, AssistantDock } from "./assistant-dock";
 
 const placeholderStatus: AssistantStatusResponse = {
   version: "1",
@@ -114,12 +114,39 @@ afterEach(() => {
 });
 
 describe("AssistantDock", () => {
+  it("uses independent backdrop and panel motion variants", () => {
+    expect(ASSISTANT_DOCK_MOTION.backdrop).toEqual({
+      durationSeconds: 0.16,
+      variants: {
+        hidden: { opacity: 0 },
+        visible: { opacity: 1 },
+        exit: { opacity: 0 },
+      },
+    });
+    expect(ASSISTANT_DOCK_MOTION.panel).toEqual({
+      enterDurationSeconds: 0.22,
+      exitDurationSeconds: 0.17,
+      offsetPixels: 18,
+      variants: {
+        hidden: { opacity: 0, x: 18 },
+        visible: { opacity: 1, x: 0 },
+        exit: { opacity: 0, x: 18 },
+      },
+    });
+    expect(ASSISTANT_DOCK_MOTION.reducedDurationSeconds).toBe(0.01);
+  });
+
   it("portals the complete dock outside the background root", async () => {
     const view = renderDock();
     const dialog = await openDock();
+    const layer = screen.getByTestId("assistant-dock-layer");
+    const backdrop = screen.getByTestId("assistant-dock-backdrop");
 
     expect(document.body).toContainElement(dialog);
     expect(view.container).not.toContainElement(dialog);
+    expect(layer).not.toHaveAttribute("style");
+    expect(backdrop).toHaveAttribute("data-motion-part", "backdrop");
+    expect(dialog).toHaveAttribute("data-motion-part", "panel");
     expect(
       within(dialog).getByRole("heading", { name: "M 企业助理" }),
     ).toBeInTheDocument();
