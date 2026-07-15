@@ -106,7 +106,8 @@ function QuickSurfaceLifecycle({
 }
 
 function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
-  const { close, openDockFrom, session } = useAssistantExperience();
+  const { close, openDockFrom, quickInteractionReady, session } =
+    useAssistantExperience();
   const closeRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -123,9 +124,10 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
 
   return (
     <motion.section
-      aria-labelledby={titleId}
-      aria-modal="true"
-      className="floating-assistant__panel"
+      aria-hidden={quickInteractionReady ? undefined : "true"}
+      aria-labelledby={quickInteractionReady ? titleId : undefined}
+      aria-modal={quickInteractionReady ? "true" : undefined}
+      className={`floating-assistant__panel${quickInteractionReady ? "" : " is-blocked"}`}
       initial={
         prefersReducedMotion ? false : { opacity: 0, y: 18, scale: 0.96 }
       }
@@ -136,8 +138,9 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
           : { opacity: 0, y: 18, scale: 0.96 }
       }
       transition={{ type: "spring", damping: 26, stiffness: 320 }}
+      inert={!quickInteractionReady}
       ref={panelRef}
-      role="dialog"
+      role={quickInteractionReady ? "dialog" : undefined}
     >
       <QuickSurfaceLifecycle
         closeRef={closeRef}

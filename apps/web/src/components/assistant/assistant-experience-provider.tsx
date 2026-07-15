@@ -41,6 +41,7 @@ export type AssistantExperience = {
   serviceState: AssistantStatusResponse;
   refreshingServiceState: boolean;
   hasResolvedServiceState: boolean;
+  quickInteractionReady: boolean;
   adoptServiceState: (state: AssistantStatusResponse) => void;
   refreshServiceState: () => Promise<void>;
   openQuickFrom: (trigger: HTMLElement) => void;
@@ -96,6 +97,9 @@ export function AssistantExperienceProvider({
     surface: "closed",
     version: 0,
   });
+  const [blockedQuickVersion, setBlockedQuickVersion] = useState<number | null>(
+    null,
+  );
   const presentationRef = useRef(presentation);
   const lastTrigger = useRef<HTMLElement | null>(null);
   const pendingExit = useRef<AssistantExitToken | null>(null);
@@ -179,6 +183,7 @@ export function AssistantExperienceProvider({
       const version = issueSurfaceVersion();
       pendingExit.current = null;
       pendingQuickFocusVersion.current = null;
+      setBlockedQuickVersion(null);
       if (currentSurface === "closed") lastTrigger.current = trigger;
       commitPresentation({
         pathname: route.normalizedPathname,
@@ -217,6 +222,7 @@ export function AssistantExperienceProvider({
       destinationVersion,
     };
     pendingQuickFocusVersion.current = null;
+    setBlockedQuickVersion(destinationVersion);
     commitPresentation({
       pathname: route.normalizedPathname,
       surface: "quick",
@@ -242,6 +248,7 @@ export function AssistantExperienceProvider({
       destinationVersion,
     };
     pendingQuickFocusVersion.current = null;
+    setBlockedQuickVersion(null);
     commitPresentation({
       pathname: route.normalizedPathname,
       surface: "closed",
@@ -267,12 +274,14 @@ export function AssistantExperienceProvider({
         return;
       }
       if (token.destination === "quick") {
+        setBlockedQuickVersion(null);
         pendingQuickFocusVersion.current = token.destinationVersion;
         focusQuickTarget(token.destinationVersion);
         return;
       }
 
       pendingQuickFocusVersion.current = null;
+      setBlockedQuickVersion(null);
       const trigger = lastTrigger.current;
       lastTrigger.current = null;
       if (canReceiveFocus(trigger)) trigger.focus();
@@ -328,6 +337,7 @@ export function AssistantExperienceProvider({
     lastTrigger.current = null;
     queueMicrotask(() => {
       if (nextSurfaceVersion.current !== version) return;
+      setBlockedQuickVersion(null);
       commitPresentation({
         pathname: normalizedPathname,
         surface: "closed",
@@ -386,6 +396,8 @@ export function AssistantExperienceProvider({
       serviceState,
       refreshingServiceState,
       hasResolvedServiceState,
+      quickInteractionReady:
+        surface !== "quick" || blockedQuickVersion !== surfaceInstanceVersion,
       adoptServiceState,
       refreshServiceState,
       openQuickFrom,
@@ -409,6 +421,7 @@ export function AssistantExperienceProvider({
       registerQuickFocusTarget,
       refreshServiceState,
       hasResolvedServiceState,
+      blockedQuickVersion,
       refreshingServiceState,
       serviceState,
       session,

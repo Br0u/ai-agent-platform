@@ -368,11 +368,28 @@ describe("AssistantDock", () => {
     fireEvent.click(
       within(dialog).getByRole("button", { name: "关闭 AI 助理工作区" }),
     );
+    expect(dialog).toHaveAttribute("inert");
+    expect(dialog).toHaveAttribute("aria-hidden", "true");
+    expect(dialog).not.toHaveAttribute("role");
+    expect(dialog).not.toHaveAttribute("aria-modal");
+    expect(dialog).toHaveClass("is-exiting");
+    expect(dialog.closest(".assistant-dock-layer")).toHaveAttribute(
+      "data-exiting",
+      "true",
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
     const secondTrigger = screen.getByRole("button", {
       name: "从第二入口打开 AI 助理工作区",
       hidden: true,
     });
     fireEvent.click(secondTrigger);
+
+    const reopenedDialog = screen.getByRole("dialog", {
+      name: "AI 助理工作区",
+    });
+    expect(reopenedDialog).not.toBe(dialog);
+    expect(reopenedDialog).not.toHaveAttribute("inert");
+    expect(screen.getAllByRole("dialog")).toEqual([reopenedDialog]);
 
     expect(background).toHaveAttribute("inert");
     expect(background).toHaveAttribute("aria-hidden", "true");
@@ -388,9 +405,6 @@ describe("AssistantDock", () => {
     expect(secondTrigger).not.toHaveFocus();
     expect(trigger).not.toHaveFocus();
 
-    const reopenedDialog = screen.getByRole("dialog", {
-      name: "AI 助理工作区",
-    });
     fireEvent.click(
       within(reopenedDialog).getByRole("button", {
         name: "关闭 AI 助理工作区",
@@ -429,13 +443,31 @@ describe("AssistantDock", () => {
     fireEvent.click(
       within(dialog).getByRole("button", { name: "收起为快速助手" }),
     );
+    expect(dialog).toHaveAttribute("inert");
+    expect(dialog).toHaveAttribute("aria-hidden", "true");
+    expect(dialog).not.toHaveAttribute("role");
+    const blockedQuick = document.querySelector<HTMLElement>(
+      ".floating-assistant__panel:not(.is-exiting)",
+    );
+    expect(blockedQuick).not.toBeNull();
+    expect(blockedQuick).toHaveAttribute("inert");
+    expect(blockedQuick).toHaveAttribute("aria-hidden", "true");
+    expect(blockedQuick).not.toHaveAttribute("role");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const blockedQuickClose = within(blockedQuick as HTMLElement).getByRole(
+      "button",
+      {
+        name: "关闭 M 助手",
+        hidden: true,
+      },
+    );
+    expect(background).toHaveAttribute("inert");
+    expect(blockedQuickClose).not.toHaveFocus();
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
     const quickDialog = await screen.findByRole("dialog", { name: "M 助手" });
     const quickClose = within(quickDialog).getByRole("button", {
       name: "关闭 M 助手",
     });
-    expect(background).toHaveAttribute("inert");
-    expect(quickClose).not.toHaveFocus();
-    await waitFor(() => expect(dialog).not.toBeInTheDocument());
     expect(background).not.toHaveAttribute("inert");
     expect(quickClose).toHaveFocus();
   });
@@ -591,6 +623,10 @@ describe("AssistantDock", () => {
       within(dialog).getByRole("button", { name: "关闭 AI 助理工作区" }),
     );
     expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveAttribute("inert");
+    expect(dialog).toHaveAttribute("aria-hidden", "true");
+    expect(dialog).not.toHaveAttribute("role");
+    expect(screen.queryByRole("dialog")).toBeNull();
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 240));
     });

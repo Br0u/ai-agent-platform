@@ -18,6 +18,7 @@ import {
   useEffect,
   useEffectEvent,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -169,6 +170,7 @@ function AssistantDockPanel({ instanceVersion }: { instanceVersion: number }) {
   const prefersReducedMotion = useReducedMotion();
   const isPresent = useIsPresent();
   const dialogRef = useRef<HTMLElement>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
   const backdropPointerRef = useRef<number | null>(null);
   const exitingRef = useRef(false);
   const [mobileVisualViewport, setMobileVisualViewport] =
@@ -183,8 +185,30 @@ function AssistantDockPanel({ instanceVersion }: { instanceVersion: number }) {
   const focusComposerFromEffect = useEffectEvent(focusComposer);
   const isPresentFromEffect = useEffectEvent(() => isPresent);
 
-  useEffect(() => {
-    if (isPresent) exitingRef.current = false;
+  useLayoutEffect(() => {
+    if (isPresent) {
+      exitingRef.current = false;
+      return;
+    }
+    exitingRef.current = true;
+    const dialog = dialogRef.current;
+    const activeElement = document.activeElement;
+    if (
+      dialog !== null &&
+      activeElement instanceof HTMLElement &&
+      dialog.contains(activeElement)
+    ) {
+      activeElement.blur();
+    }
+    dialog?.setAttribute("inert", "");
+    dialog?.setAttribute("aria-hidden", "true");
+    dialog?.removeAttribute("aria-describedby");
+    dialog?.removeAttribute("aria-modal");
+    dialog?.removeAttribute("role");
+    dialog?.setAttribute("data-exiting", "true");
+    dialog?.classList.add("is-exiting");
+    layerRef.current?.setAttribute("data-exiting", "true");
+    layerRef.current?.classList.add("is-exiting");
   }, [isPresent]);
 
   useEffect(() => {
@@ -438,6 +462,7 @@ function AssistantDockPanel({ instanceVersion }: { instanceVersion: number }) {
       }}
       onPointerDown={handleLayerPointerDown}
       onPointerUp={handleLayerPointerUp}
+      ref={layerRef}
     >
       <motion.div
         animate="visible"

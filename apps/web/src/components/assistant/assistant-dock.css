@@ -6,6 +6,11 @@
   font-family: var(--font-body);
 }
 
+.assistant-dock-layer.is-exiting,
+.assistant-dock.is-exiting {
+  pointer-events: none;
+}
+
 .assistant-dock__backdrop {
   position: absolute;
   inset: 0;
