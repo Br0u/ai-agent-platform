@@ -25,6 +25,14 @@ export function AssistantConversation({
   const composerId = useId();
   const sending = session.requestStatus === "sending";
   const hasError = session.validationError !== null;
+  const requestFailed = session.requestStatus === "failed";
+  const feedbackMessage =
+    session.validationError?.message ??
+    (requestFailed
+      ? session.latestAnnouncement || FAILURE_MESSAGE
+      : "最多输入 500 个字符。当前对话不会保存为历史记录。");
+  const liveAnnouncement =
+    session.validationError?.message ?? session.latestAnnouncement;
   const registerTextarea = useCallback(
     (element: HTMLTextAreaElement | null) =>
       element === null ? undefined : registerComposer(element),
@@ -40,7 +48,8 @@ export function AssistantConversation({
     if (
       event.key !== "Enter" ||
       event.shiftKey ||
-      event.nativeEvent.isComposing
+      event.nativeEvent.isComposing ||
+      event.nativeEvent.keyCode === 229
     ) {
       return;
     }
@@ -56,7 +65,7 @@ export function AssistantConversation({
     >
       <div
         aria-label={ariaLabel}
-        aria-live="polite"
+        aria-live="off"
         aria-relevant="additions"
         className="assistant-conversation__messages"
         data-testid="assistant-message-history"
@@ -90,10 +99,10 @@ export function AssistantConversation({
               {message.role === "assistant" &&
               message.suggestedActions.length > 0 ? (
                 <nav aria-label="建议操作">
-                  {message.suggestedActions.map((action) => (
+                  {message.suggestedActions.map((action, actionIndex) => (
                     <Link
                       href={action.href}
-                      key={`${action.label}:${action.href}`}
+                      key={`${action.label}:${action.href}:${actionIndex}`}
                     >
                       {action.label}
                     </Link>
@@ -107,11 +116,10 @@ export function AssistantConversation({
 
       <div
         aria-atomic="true"
-        aria-live="polite"
         className="assistant-conversation__announcement"
-        role="status"
+        role={hasError || requestFailed ? "alert" : "status"}
       >
-        {session.latestAnnouncement}
+        {liveAnnouncement}
       </div>
 
       <div className="assistant-conversation__composer-wrap">
@@ -133,18 +141,10 @@ export function AssistantConversation({
             {sending ? "发送中" : "发送"}
           </button>
           <p
-            aria-live="polite"
+            data-error={hasError || requestFailed ? "true" : undefined}
             id={composerHelpId}
-            role={
-              hasError || session.requestStatus === "failed"
-                ? "alert"
-                : undefined
-            }
           >
-            {session.validationError?.message ??
-              (session.requestStatus === "failed"
-                ? session.latestAnnouncement || FAILURE_MESSAGE
-                : "最多输入 500 个字符。当前对话不会保存为历史记录。")}
+            {feedbackMessage}
           </p>
           {session.requestStatus === "failed" ? (
             <button

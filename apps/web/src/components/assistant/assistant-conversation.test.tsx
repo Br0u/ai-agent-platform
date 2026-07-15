@@ -5,6 +5,8 @@ import {
   screen,
   within,
 } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AssistantSession } from "./use-assistant-session";
 import { AssistantConversation } from "./assistant-conversation";
@@ -65,6 +67,7 @@ describe("AssistantConversation", () => {
 
     const log = screen.getByRole("log", { name: "AI 助理对话" });
     expect(log).toHaveAttribute("data-testid", "assistant-message-history");
+    expect(log).toHaveAttribute("aria-live", "off");
     expect(
       within(log).getByRole("article", { name: "你的消息" }),
     ).toHaveTextContent("如何部署？");
@@ -113,6 +116,20 @@ describe("AssistantConversation", () => {
     expect(session.submit).toHaveBeenCalledOnce();
   });
 
+  it("does not submit Safari IME Enter events reported with keyCode 229", () => {
+    const session = createSession({ draft: "正在输入中文" });
+    renderConversation(session);
+    const composer = screen.getByRole("textbox", { name: "输入问题" });
+
+    fireEvent.keyDown(composer, {
+      key: "Enter",
+      keyCode: 229,
+      which: 229,
+    });
+
+    expect(session.submit).not.toHaveBeenCalled();
+  });
+
   it("exposes the 500-character validation beside the composer", () => {
     const session = createSession({
       draft: "𠮷".repeat(501),
@@ -124,9 +141,13 @@ describe("AssistantConversation", () => {
     renderConversation(session);
 
     const composer = screen.getByRole("textbox", { name: "输入问题" });
+    const form = composer.closest("form") as HTMLFormElement;
+    const visibleError = within(form).getByText("问题不能超过 500 个字符。");
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("问题不能超过 500 个字符。");
-    expect(composer).toHaveAttribute("aria-describedby", alert.id);
+    expect(visibleError).not.toHaveAttribute("aria-live");
+    expect(visibleError).not.toHaveAttribute("role");
+    expect(composer).toHaveAttribute("aria-describedby", visibleError.id);
     expect(composer).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
   });
@@ -164,6 +185,57 @@ describe("AssistantConversation", () => {
     );
   });
 
+  it("uses one live region for request feedback instead of repeating a failure", () => {
+    renderConversation(
+      createSession({
+        latestAnnouncement: "发送失败，请重试或使用帮助中心或商务咨询。",
+        requestStatus: "failed",
+      }),
+    );
+
+    const log = screen.getByRole("log", { name: "AI 助理对话" });
+    const alert = screen.getByRole("alert");
+    const feedback = within(
+      screen
+        .getByRole("textbox", { name: "输入问题" })
+        .closest("form") as HTMLFormElement,
+    ).getByText("发送失败，请重试或使用帮助中心或商务咨询。");
+
+    expect(log).toHaveAttribute("aria-live", "off");
+    expect(alert).toHaveTextContent(
+      "发送失败，请重试或使用帮助中心或商务咨询。",
+    );
+    expect(feedback).not.toHaveAttribute("aria-live");
+    expect(feedback).not.toHaveAttribute("role");
+    expect(screen.queryAllByRole("alert")).toHaveLength(1);
+    expect(screen.queryAllByRole("status")).toHaveLength(0);
+  });
+
+  it("renders duplicate suggested actions without duplicate React keys", () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    renderConversation(
+      createSession({
+        messages: [
+          {
+            id: 1,
+            role: "assistant",
+            content: "可继续查看部署指南。",
+            suggestedActions: [
+              { label: "部署指南", href: "/docs/deployment" },
+              { label: "部署指南", href: "/docs/deployment" },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(screen.getAllByRole("link", { name: "部署指南" })).toHaveLength(2);
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it("registers the mounted composer and disposes that registration on unmount", () => {
     const dispose = vi.fn();
     const registerComposer = vi.fn(() => dispose);
@@ -173,5 +245,22 @@ describe("AssistantConversation", () => {
     expect(registerComposer).toHaveBeenCalledExactlyOnceWith(composer);
     view.unmount();
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("uses explicit dock and workspace layout variants", () => {
+    const css = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/components/assistant/assistant-conversation.css",
+      ),
+      "utf8",
+    );
+
+    expect(css).toMatch(
+      /\.assistant-conversation\[data-variant="workspace"\][^{]*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto;/s,
+    );
+    expect(css).toMatch(
+      /\.assistant-conversation\[data-variant="dock"\][^{]*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto;/s,
+    );
   });
 });

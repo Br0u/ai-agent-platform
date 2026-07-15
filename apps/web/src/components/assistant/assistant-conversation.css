@@ -1,7 +1,19 @@
 .assistant-conversation {
+  display: grid;
   min-width: 0;
+  min-height: 0;
   color: var(--color-ink);
   font-family: var(--font-body);
+}
+
+.assistant-conversation[data-variant="workspace"] {
+  flex: 1 1 auto;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.assistant-conversation[data-variant="dock"] {
+  block-size: 100%;
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .assistant-conversation button,
@@ -23,8 +35,19 @@
 
 .assistant-conversation__messages {
   display: grid;
+  min-height: 0;
   gap: var(--space-4);
+  overflow-y: auto;
+}
+
+.assistant-conversation[data-variant="workspace"]
+  .assistant-conversation__messages {
   margin-top: var(--space-8);
+}
+
+.assistant-conversation[data-variant="dock"] .assistant-conversation__messages {
+  margin-top: var(--space-4);
+  padding-inline: var(--space-4);
 }
 
 .assistant-conversation__message {
@@ -101,6 +124,11 @@
   background: linear-gradient(transparent, #f8f8fc 28%);
 }
 
+.assistant-conversation[data-variant="dock"]
+  .assistant-conversation__composer-wrap {
+  padding-inline: var(--space-4);
+}
+
 .assistant-conversation__composer {
   display: grid;
   width: 100%;
@@ -153,7 +181,7 @@
   line-height: 1.5;
 }
 
-.assistant-conversation__composer p[role="alert"] {
+.assistant-conversation__composer p[data-error="true"] {
   color: var(--color-danger);
 }
 

@@ -195,7 +195,10 @@
 }
 
 .assistant-workspace__conversation {
+  display: flex;
   width: min(100%, 940px);
+  min-height: 0;
+  flex-direction: column;
   margin: 0 auto;
   padding: clamp(var(--space-8), 6vw, var(--space-16))
     clamp(var(--space-4), 4vw, var(--space-12)) var(--space-8);

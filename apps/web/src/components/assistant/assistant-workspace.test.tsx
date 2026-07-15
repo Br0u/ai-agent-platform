@@ -501,9 +501,10 @@ describe("AssistantWorkspace", () => {
     expect(form).not.toBeNull();
 
     fireEvent.keyDown(composer, { key: "Enter" });
+    expect(screen.getByRole("alert")).toHaveTextContent("请输入问题。");
     expect(
       within(form as HTMLFormElement).getByText("请输入问题。"),
-    ).toHaveAttribute("role", "alert");
+    ).not.toHaveAttribute("role");
 
     fireEvent.change(composer, { target: { value: "𠮷".repeat(501) } });
     const error = within(form as HTMLFormElement).getByText(
@@ -558,13 +559,7 @@ describe("AssistantWorkspace", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("请求过于频繁，请稍后再试。");
-    expect(
-      screen
-        .getAllByRole("status")
-        .some((status) =>
-          status.textContent?.includes("请求过于频繁，请稍后再试。"),
-        ),
-    ).toBe(true);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(screen.queryByText(/raw internal limiter detail/u)).toBeNull();
     expect(fetch).toHaveBeenCalledOnce();
   });
@@ -617,6 +612,9 @@ describe("AssistantWorkspace", () => {
     );
     expect(css).toMatch(
       /@media \(max-width: 560px\)\s*{[\s\S]*?\.assistant-workspace\s*{[^}]*--assistant-workspace-shell-offset:\s*65px;/,
+    );
+    expect(css).toMatch(
+      /\.assistant-workspace__conversation\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*0;[^}]*flex-direction:\s*column;/s,
     );
   });
 });
