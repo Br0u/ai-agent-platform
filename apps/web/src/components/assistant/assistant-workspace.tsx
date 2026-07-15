@@ -2,22 +2,15 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import {
-  useCallback,
-  useEffect,
-  useState,
-  type FormEvent,
-  type KeyboardEvent,
-} from "react";
+import { useEffect, useState } from "react";
 import {
   ASSISTANT_PRESET_QUESTIONS,
   type AssistantStatusResponse,
 } from "@/features/assistant/assistant-contract";
+import { AssistantConversation } from "./assistant-conversation";
 import { useAssistantExperience } from "./assistant-experience-provider";
 import "./assistant-workspace.css";
 
-const COMPOSER_HELP_ID = "assistant-workspace-composer-help";
-const FAILURE_MESSAGE = "发送失败，请重试或使用帮助中心或商务咨询。";
 const DESKTOP_RAIL_QUERY = "(min-width: 721px)";
 const NEW_SESSION_HELP_ID = "assistant-new-session-help";
 
@@ -38,12 +31,6 @@ export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
   const [railOverride, setRailOverride] = useState<boolean | null>(null);
   const railExpanded = railOverride ?? isDesktop;
   const sending = session.requestStatus === "sending";
-  const hasError = session.validationError !== null;
-  const registerWorkspaceComposer = useCallback(
-    (element: HTMLTextAreaElement | null) =>
-      element === null ? undefined : registerComposer(element),
-    [registerComposer],
-  );
 
   const serviceLabel =
     currentServiceState.capability === "degraded" || !currentServiceState.live
@@ -72,23 +59,6 @@ export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
     return () =>
       mediaQuery.removeEventListener("change", synchronizeBreakpoint);
   }, []);
-
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    void session.submit();
-  };
-
-  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (
-      event.key !== "Enter" ||
-      event.shiftKey ||
-      event.nativeEvent.isComposing
-    ) {
-      return;
-    }
-    event.preventDefault();
-    void session.submit();
-  };
 
   return (
     <main aria-label="AI 助理工作区" className="assistant-workspace">
@@ -206,107 +176,17 @@ export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
             </div>
           </section>
 
-          <div
-            className="assistant-workspace__messages"
-            data-testid="assistant-message-history"
-          >
-            {session.messages.map((message) => (
-              <article
-                className={`assistant-workspace__message assistant-workspace__message--${message.role}`}
-                key={message.id}
-              >
-                {message.role === "assistant" ? (
-                  <Image
-                    alt=""
-                    height={36}
-                    src="/assets/assistant/m-assistant.webp"
-                    width={36}
-                  />
-                ) : (
-                  <span
-                    aria-hidden="true"
-                    className="assistant-workspace__user-mark"
-                  >
-                    YOU
-                  </span>
-                )}
-                <div>
-                  <p>{message.content}</p>
-                  {message.role === "assistant" &&
-                  message.suggestedActions.length > 0 ? (
-                    <nav aria-label="建议操作">
-                      {message.suggestedActions.map((action) => (
-                        <Link
-                          href={action.href}
-                          key={`${action.label}:${action.href}`}
-                        >
-                          {action.label}
-                        </Link>
-                      ))}
-                    </nav>
-                  ) : null}
-                </div>
-              </article>
-            ))}
-          </div>
+          <AssistantConversation
+            ariaLabel="AI 助理对话"
+            registerComposer={registerComposer}
+            session={session}
+            variant="workspace"
+          />
         </div>
-
-        <div
-          aria-atomic="true"
-          aria-live="polite"
-          className="assistant-workspace__announcement"
-          role="status"
-        >
-          {session.latestAnnouncement}
-        </div>
-
-        <footer className="assistant-workspace__composer-wrap">
-          <form className="assistant-workspace__composer" onSubmit={submit}>
-            <label htmlFor="assistant-workspace-question">输入问题</label>
-            <textarea
-              aria-describedby={COMPOSER_HELP_ID}
-              aria-invalid={hasError ? "true" : undefined}
-              disabled={sending}
-              id="assistant-workspace-question"
-              onChange={(event) => session.setDraft(event.target.value)}
-              onKeyDown={handleComposerKeyDown}
-              placeholder="输入你的问题，Shift + Enter 换行"
-              ref={registerWorkspaceComposer}
-              rows={2}
-              value={session.draft}
-            />
-            <button disabled={sending || hasError} type="submit">
-              {sending ? "发送中" : "发送"}
-            </button>
-            <p
-              aria-live="polite"
-              id={COMPOSER_HELP_ID}
-              role={
-                hasError || session.requestStatus === "failed"
-                  ? "alert"
-                  : undefined
-              }
-            >
-              {session.validationError?.message ??
-                (session.requestStatus === "failed"
-                  ? session.latestAnnouncement || FAILURE_MESSAGE
-                  : "最多输入 500 个字符。当前对话不会保存为历史记录。")}
-            </p>
-            {session.requestStatus === "failed" ? (
-              <button
-                className="assistant-workspace__retry"
-                onClick={() => void session.retry()}
-                type="button"
-              >
-                重试
-              </button>
-            ) : null}
-          </form>
-          <nav aria-label="其他服务" className="assistant-workspace__fallbacks">
-            <Link href="/help">帮助中心</Link>
-            <Link href="/contact">商务咨询</Link>
-          </nav>
-        </footer>
+        <nav aria-label="其他服务" className="assistant-workspace__fallbacks">
+          <Link href="/help">帮助中心</Link>
+          <Link href="/contact">商务咨询</Link>
+        </nav>
       </section>
     </main>
   );

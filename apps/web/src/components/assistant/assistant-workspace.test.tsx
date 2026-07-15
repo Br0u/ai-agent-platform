@@ -181,6 +181,14 @@ describe("AssistantWorkspace", () => {
       "data-capability",
       "placeholder",
     );
+    expect(screen.getByTestId("assistant-conversation")).toHaveAttribute(
+      "data-variant",
+      "workspace",
+    );
+    expect(screen.getByRole("log", { name: "AI 助理对话" })).toHaveAttribute(
+      "data-testid",
+      "assistant-message-history",
+    );
     expect(screen.getAllByRole("textbox", { name: "输入问题" })).toHaveLength(
       1,
     );

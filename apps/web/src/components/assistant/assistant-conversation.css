@@ -1,0 +1,203 @@
+.assistant-conversation {
+  min-width: 0;
+  color: var(--color-ink);
+  font-family: var(--font-body);
+}
+
+.assistant-conversation button,
+.assistant-conversation textarea,
+.assistant-conversation a {
+  font: inherit;
+}
+
+.assistant-conversation button,
+.assistant-conversation a {
+  min-height: 44px;
+}
+
+.assistant-conversation button:disabled,
+.assistant-conversation textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.assistant-conversation__messages {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-8);
+}
+
+.assistant-conversation__message {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-line);
+}
+
+.assistant-conversation__message--user {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.assistant-conversation__message--user > :first-child {
+  grid-column: 2;
+}
+
+.assistant-conversation__message--user > :last-child {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+.assistant-conversation__message img {
+  block-size: 36px;
+  inline-size: 36px;
+  object-fit: contain;
+}
+
+.assistant-conversation__user-mark {
+  display: grid;
+  block-size: 36px;
+  inline-size: 36px;
+  place-items: center;
+  border: 1px solid var(--color-line);
+  color: var(--color-muted);
+  font: 700 9px/1 var(--font-mono);
+}
+
+.assistant-conversation__message p {
+  margin: 0;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.assistant-conversation__message nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.assistant-conversation__message a {
+  display: inline-grid;
+  align-items: center;
+  color: var(--color-primary);
+}
+
+.assistant-conversation__announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.assistant-conversation__composer-wrap {
+  position: sticky;
+  bottom: 0;
+  padding: var(--space-3) 0;
+  background: linear-gradient(transparent, #f8f8fc 28%);
+}
+
+.assistant-conversation__composer {
+  display: grid;
+  width: 100%;
+  min-height: 92px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2) var(--space-3);
+  align-items: end;
+  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-6);
+  border: 1px solid #bdc9dc;
+  border-radius: 24px;
+  background: var(--color-surface);
+  box-shadow: 0 12px 30px rgb(16 24 56 / 8%);
+}
+
+.assistant-conversation__composer label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.assistant-conversation__composer textarea {
+  min-width: 0;
+  min-height: 52px;
+  resize: vertical;
+  border: 0;
+  outline: 0;
+  color: var(--color-ink);
+  background: transparent;
+  line-height: 1.6;
+}
+
+.assistant-conversation__composer > button[type="submit"] {
+  min-width: 68px;
+  padding: 0 var(--space-4);
+  border: 0;
+  border-radius: 999px;
+  color: var(--color-surface);
+  background: var(--color-primary);
+  cursor: pointer;
+  transition: transform 160ms var(--ease-out);
+}
+
+.assistant-conversation__composer p {
+  min-width: 0;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.assistant-conversation__composer p[role="alert"] {
+  color: var(--color-danger);
+}
+
+.assistant-conversation__retry {
+  justify-self: end;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  color: var(--color-primary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.assistant-conversation__composer button:active {
+  transform: scale(0.97);
+}
+
+.assistant-conversation button:focus-visible,
+.assistant-conversation textarea:focus-visible,
+.assistant-conversation a:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+@media (max-width: 720px) {
+  .assistant-conversation__composer {
+    padding-left: var(--space-4);
+  }
+}
+
+@media (max-width: 440px) {
+  .assistant-conversation__composer {
+    grid-template-columns: minmax(0, 1fr);
+    border-radius: 16px;
+  }
+
+  .assistant-conversation__composer > button[type="submit"],
+  .assistant-conversation__retry {
+    justify-self: stretch;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-conversation button {
+    transition-duration: 0.01ms;
+  }
+}
