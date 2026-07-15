@@ -97,7 +97,7 @@ const availableStatus: AssistantStatusResponse = {
 function renderWorkspace() {
   return render(
     <AssistantExperienceProvider pathname="/assistant">
-      <AssistantWorkspace serviceState={placeholderStatus} />
+      <AssistantWorkspace initialServiceState={placeholderStatus} />
     </AssistantExperienceProvider>,
   );
 }
@@ -149,7 +149,7 @@ describe("AssistantWorkspace", () => {
 
     render(
       <AssistantExperienceProvider pathname="/assistant">
-        <AssistantWorkspace serviceState={placeholderStatus} />
+        <AssistantWorkspace initialServiceState={placeholderStatus} />
         <SharedServiceStateProbe />
       </AssistantExperienceProvider>,
     );
@@ -224,7 +224,7 @@ describe("AssistantWorkspace", () => {
     render(
       <AssistantExperienceProvider pathname="/assistant">
         <AssistantWorkspace
-          serviceState={{
+          initialServiceState={{
             version: "1",
             requestId: "degraded-status",
             live: false,
@@ -236,7 +236,7 @@ describe("AssistantWorkspace", () => {
       </AssistantExperienceProvider>,
     );
 
-    expect(screen.getByText("基础设施暂不可用")).toBeVisible();
+    expect(screen.getByText("基础服务暂不可用")).toBeVisible();
     expect(screen.queryByText("模型未配置")).not.toBeInTheDocument();
     expect(screen.getByText("助手基础服务暂不可用。")).toBeVisible();
   });
@@ -255,7 +255,7 @@ describe("AssistantWorkspace", () => {
     render(
       <AssistantExperienceProvider pathname="/assistant">
         <AssistantWorkspace
-          serviceState={{
+          initialServiceState={{
             version: "1",
             requestId: "initial-status",
             live: false,
@@ -312,7 +312,7 @@ describe("AssistantWorkspace", () => {
     await act(async () => vi.advanceTimersByTimeAsync(5_000));
 
     expect(screen.getByTestId("assistant-service-state")).toHaveTextContent(
-      "基础设施暂不可用",
+      "基础服务暂不可用",
     );
     expect(screen.getByRole("button", { name: "刷新服务状态" })).toBeEnabled();
   });
@@ -344,7 +344,7 @@ describe("AssistantWorkspace", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("assistant-service-state")).toHaveTextContent(
-        "基础设施暂不可用",
+        "基础服务暂不可用",
       ),
     );
     expect(screen.queryByText(/raw private/u)).toBeNull();

@@ -23,11 +23,16 @@ type StatusRefreshOperation = {
   timer: ReturnType<typeof setTimeout>;
 };
 
-export function useAssistantServiceState() {
-  const [serviceState, setServiceState] =
-    useState<AssistantStatusResponse>(DEGRADED_STATUS);
+export function useAssistantServiceState(
+  initialServiceState?: AssistantStatusResponse,
+) {
+  const [serviceState, setServiceState] = useState<AssistantStatusResponse>(
+    initialServiceState ?? DEGRADED_STATUS,
+  );
   const [refreshingServiceState, setRefreshingServiceState] = useState(false);
-  const [hasResolvedServiceState, setHasResolvedServiceState] = useState(false);
+  const [hasResolvedServiceState, setHasResolvedServiceState] = useState(
+    initialServiceState !== undefined,
+  );
   const mountedRef = useRef(true);
   const refreshGenerationRef = useRef(0);
   const refreshOperationRef = useRef<StatusRefreshOperation | null>(null);

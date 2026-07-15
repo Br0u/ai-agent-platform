@@ -326,6 +326,7 @@ function AssistantEnabledShell({
         <span>
           <AssistantHeaderEntry
             isOpen={experience.surface !== "closed"}
+            mode={variant === "assistant" ? "workspace" : "launcher"}
             onActivate={activateHeaderEntry}
           />
         </span>

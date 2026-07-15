@@ -28,6 +28,7 @@ import {
 } from "react";
 import { ASSISTANT_PRESET_QUESTIONS } from "@/features/assistant/assistant-contract";
 import { useAssistantExperience } from "../assistant/assistant-experience-provider";
+import { getAssistantServicePresentation } from "../assistant/assistant-service-presentation";
 import "./floating-chat-widget-shadcnui.css";
 
 function QuickSurfaceLifecycle({
@@ -106,8 +107,15 @@ function QuickSurfaceLifecycle({
 }
 
 function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
-  const { close, openDockFrom, quickInteractionReady, session } =
-    useAssistantExperience();
+  const {
+    close,
+    hasResolvedServiceState,
+    openDockFrom,
+    quickInteractionReady,
+    refreshingServiceState,
+    serviceState,
+    session,
+  } = useAssistantExperience();
   const closeRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -117,6 +125,11 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
   const characterCount = Array.from(session.draft.trim()).length;
   const overLimit = characterCount > 500;
   const canSend = !sending && characterCount > 0 && !overLimit;
+  const servicePresentation = getAssistantServicePresentation({
+    serviceState,
+    hasResolvedServiceState,
+    refreshingServiceState,
+  });
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (canSend) void session.submit();
@@ -155,9 +168,16 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
           </span>
           <div>
             <h2 id={titleId}>M 助手</h2>
-            <p>
+            <p
+              aria-atomic="true"
+              aria-busy={refreshingServiceState}
+              aria-live="polite"
+              data-capability={serviceState.capability}
+              data-testid="assistant-quick-service-state"
+              role="status"
+            >
               <span aria-hidden="true" />
-              AI 服务尚未接入
+              {servicePresentation.compactLabel}
             </p>
           </div>
         </div>

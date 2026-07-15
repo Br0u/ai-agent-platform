@@ -74,6 +74,17 @@ describe("useAssistantServiceState", () => {
     expect(result.current.hasResolvedServiceState).toBe(true);
   });
 
+  it("starts resolved from a server-provided initial state", () => {
+    const { result } = renderHook(() =>
+      useAssistantServiceState(placeholderStatus),
+    );
+
+    expect(result.current.serviceState).toEqual(placeholderStatus);
+    expect(result.current.hasResolvedServiceState).toBe(true);
+    expect(result.current.refreshingServiceState).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("reuses one in-flight promise for two refreshes in the same tick", async () => {
     const pending = deferred<Response>();
     vi.mocked(fetch).mockReturnValue(pending.promise);

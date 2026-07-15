@@ -9,6 +9,8 @@ import {
 } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useEffect } from "react";
+import type { AssistantStatusResponse } from "@/features/assistant/assistant-contract";
 import {
   AssistantExperienceProvider,
   useAssistantExperience,
@@ -31,6 +33,50 @@ const successfulReply = {
   },
   suggestedActions: [{ label: "客户支持", href: "/support" }],
 };
+
+const serviceStates = {
+  available: {
+    version: "1",
+    requestId: "quick-available",
+    live: true,
+    ready: true,
+    capability: "available",
+    message: "AI 助理基础服务已就绪。",
+  },
+  degraded: {
+    version: "1",
+    requestId: "quick-degraded",
+    live: false,
+    ready: false,
+    capability: "degraded",
+    message: "助手基础服务暂不可用。",
+  },
+  placeholder: {
+    version: "1",
+    requestId: "quick-placeholder",
+    live: true,
+    ready: true,
+    capability: "placeholder",
+    message: "模型尚未配置，当前为安全占位模式。",
+  },
+} satisfies Record<string, AssistantStatusResponse>;
+
+function renderQuickWithServiceState(serviceState: AssistantStatusResponse) {
+  function StatusHarness() {
+    const experience = useAssistantExperience();
+    useEffect(() => {
+      experience.adoptServiceState(serviceState);
+    }, [experience.adoptServiceState]);
+    return <FloatingChatWidget />;
+  }
+
+  render(
+    <AssistantExperienceProvider pathname="/">
+      <StatusHarness />
+    </AssistantExperienceProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+}
 
 function openWidget() {
   render(
@@ -80,6 +126,33 @@ afterEach(() => {
 });
 
 describe("FloatingChatWidget", () => {
+  it.each([
+    [serviceStates.available, "服务已就绪"],
+    [serviceStates.placeholder, "模型尚未配置"],
+    [serviceStates.degraded, "基础服务暂不可用"],
+  ])("shows the shared %s service meaning", (serviceState, expectedLabel) => {
+    renderQuickWithServiceState(serviceState);
+
+    expect(
+      screen.getByTestId("assistant-quick-service-state"),
+    ).toHaveTextContent(expectedLabel);
+  });
+
+  it("shows the shared refreshing service meaning without starting another status source", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => undefined)),
+    );
+    openWidget();
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("assistant-quick-service-state"),
+      ).toHaveTextContent("状态刷新中"),
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("renders the compact panel only for the quick surface", async () => {
     function SurfaceHarness() {
       const experience = useAssistantExperience();
@@ -117,7 +190,9 @@ describe("FloatingChatWidget", () => {
     expect(
       screen.getByRole("log", { name: "AI 助理对话" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("AI 服务尚未接入")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("assistant-quick-service-state"),
+    ).toBeInTheDocument();
     expect(screen.getByText("如何开始了解平台？")).toBeInTheDocument();
     expect(screen.getByText("如何获取部署支持？")).toBeInTheDocument();
     expect(screen.getByText("如何提交产品问题？")).toBeInTheDocument();

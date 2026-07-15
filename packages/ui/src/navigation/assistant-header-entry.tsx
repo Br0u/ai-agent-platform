@@ -164,14 +164,17 @@ function drawAssistantMobius(
 
 export type AssistantHeaderEntryProps = {
   isOpen?: boolean;
+  mode?: "launcher" | "workspace";
   onActivate: (trigger: HTMLButtonElement) => void;
 };
 
 export function AssistantHeaderEntry({
   isOpen = false,
+  mode = "launcher",
   onActivate,
 }: AssistantHeaderEntryProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const workspaceMode = mode === "workspace";
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -265,10 +268,10 @@ export function AssistantHeaderEntry({
 
   return (
     <button
-      aria-label="打开 AI 助理"
-      aria-pressed={isOpen}
+      aria-label={workspaceMode ? "聚焦 AI 助理提问框" : "打开 AI 助理"}
+      aria-pressed={workspaceMode ? undefined : isOpen}
       className="assistant-header-entry"
-      data-active={isOpen ? "true" : undefined}
+      data-active={!workspaceMode && isOpen ? "true" : undefined}
       onClick={(event) => onActivate(event.currentTarget)}
       type="button"
     >
@@ -277,7 +280,9 @@ export function AssistantHeaderEntry({
         className="assistant-header-entry__mark"
         ref={canvasRef}
       />
-      <span className="assistant-header-entry__label">AI 助理</span>
+      <span className="assistant-header-entry__label">
+        {workspaceMode ? "继续提问" : "AI 助理"}
+      </span>
     </button>
   );
 }

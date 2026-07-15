@@ -161,29 +161,21 @@ describe("AssistantExperienceProvider", () => {
     },
   );
 
-  it("lets an assistant workspace child adopt server state without a duplicate request", async () => {
+  it("initializes an assistant workspace from server state without a duplicate request", async () => {
     vi.stubGlobal("fetch", vi.fn());
 
-    function ServerStateChild() {
-      const { adoptServiceState, serviceState } = useAssistantExperience();
-      useEffect(() => {
-        adoptServiceState(placeholderStatus);
-      }, [adoptServiceState]);
-      return (
-        <output aria-label="工作区服务能力">{serviceState.capability}</output>
-      );
-    }
-
     render(
-      <AssistantExperienceProvider pathname="/assistant">
-        <ServerStateChild />
+      <AssistantExperienceProvider
+        initialServiceState={placeholderStatus}
+        pathname="/assistant"
+      >
+        <ServiceStateHarness />
       </AssistantExperienceProvider>,
     );
 
-    await waitFor(() =>
-      expect(screen.getByLabelText("工作区服务能力")).toHaveTextContent(
-        "placeholder",
-      ),
+    expect(screen.getByLabelText("服务能力")).toHaveTextContent("placeholder");
+    expect(screen.getByLabelText("服务状态是否已解析")).toHaveTextContent(
+      "true",
     );
     await act(async () => Promise.resolve());
     expect(fetch).not.toHaveBeenCalled();

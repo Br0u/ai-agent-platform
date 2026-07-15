@@ -2,50 +2,52 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import {
   ASSISTANT_PRESET_QUESTIONS,
   type AssistantStatusResponse,
 } from "@/features/assistant/assistant-contract";
 import { AssistantConversation } from "./assistant-conversation";
 import { useAssistantExperience } from "./assistant-experience-provider";
+import { getAssistantServicePresentation } from "./assistant-service-presentation";
 import "./assistant-workspace.css";
 
 const DESKTOP_RAIL_QUERY = "(min-width: 721px)";
 const NEW_SESSION_HELP_ID = "assistant-new-session-help";
 
 type AssistantWorkspaceProps = {
-  serviceState: AssistantStatusResponse;
+  initialServiceState: AssistantStatusResponse;
 };
 
-export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
+export function AssistantWorkspace({
+  initialServiceState,
+}: AssistantWorkspaceProps) {
   const {
+    adoptServiceState,
     session,
     registerComposer,
     serviceState: currentServiceState,
     refreshingServiceState: refreshingStatus,
-    adoptServiceState,
+    hasResolvedServiceState,
     refreshServiceState,
   } = useAssistantExperience();
   const [isDesktop, setIsDesktop] = useState(false);
   const [railOverride, setRailOverride] = useState<boolean | null>(null);
   const railExpanded = railOverride ?? isDesktop;
   const sending = session.requestStatus === "sending";
+  const displayedServiceState = hasResolvedServiceState
+    ? currentServiceState
+    : initialServiceState;
 
-  const serviceLabel =
-    currentServiceState.capability === "degraded" || !currentServiceState.live
-      ? "基础设施暂不可用"
-      : currentServiceState.capability === "placeholder" &&
-          currentServiceState.ready
-        ? "模型尚未配置"
-        : currentServiceState.capability === "available" &&
-            currentServiceState.ready
-          ? "服务已就绪"
-          : "服务未就绪";
+  const servicePresentation = getAssistantServicePresentation({
+    serviceState: displayedServiceState,
+    hasResolvedServiceState: true,
+    refreshingServiceState: refreshingStatus,
+  });
 
-  useEffect(() => {
-    adoptServiceState(serviceState);
-  }, [adoptServiceState, serviceState]);
+  useLayoutEffect(() => {
+    adoptServiceState(initialServiceState);
+  }, [adoptServiceState, initialServiceState]);
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
@@ -135,12 +137,12 @@ export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
             aria-busy={refreshingStatus}
             aria-live="polite"
             className="assistant-workspace__service-state"
-            data-capability={currentServiceState.capability}
+            data-capability={displayedServiceState.capability}
             data-testid="assistant-service-state"
             role="status"
           >
             <span aria-hidden="true" />
-            <strong>{serviceLabel}</strong>
+            <strong>{servicePresentation.label}</strong>
             <button
               aria-label={refreshingStatus ? "刷新服务状态中" : "刷新服务状态"}
               disabled={refreshingStatus}
@@ -159,8 +161,8 @@ export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
             </p>
             <h1>从一个问题开始，找到适合企业的 AI 路径。</h1>
             <p className="assistant-workspace__disclosure">
-              <span>{currentServiceState.message}</span> 后续将通过 Agno AgentOS
-              接入 Agent、Skill、知识与会话能力。
+              <span>{displayedServiceState.message}</span> 后续将通过 Agno
+              AgentOS 接入 Agent、Skill、知识与会话能力。
             </p>
             <div aria-label="常见问题" className="assistant-workspace__presets">
               {ASSISTANT_PRESET_QUESTIONS.map((question) => (

@@ -79,9 +79,11 @@ function canReceiveFocus(element: HTMLElement | null): element is HTMLElement {
 
 export function AssistantExperienceProvider({
   children,
+  initialServiceState,
   pathname,
 }: {
   children: ReactNode;
+  initialServiceState?: AssistantStatusResponse;
   pathname: string;
 }) {
   const session = useAssistantSession(pathname);
@@ -91,7 +93,7 @@ export function AssistantExperienceProvider({
     hasResolvedServiceState,
     adoptServiceState: adoptServiceStateInController,
     refreshServiceState: refreshServiceStateInController,
-  } = useAssistantServiceState();
+  } = useAssistantServiceState(initialServiceState);
   const [presentation, setPresentation] = useState<AssistantPresentation>({
     pathname: null,
     surface: "closed",

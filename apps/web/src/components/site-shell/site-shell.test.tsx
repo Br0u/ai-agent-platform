@@ -28,6 +28,7 @@ type MockAppShellProps = {
 const mocks = vi.hoisted(() => ({
   appShellProps: undefined as MockAppShellProps | undefined,
   assistantEntryOpen: undefined as boolean | undefined,
+  assistantEntryMode: undefined as "launcher" | "workspace" | undefined,
   pathname: "/",
   push: vi.fn(),
   replace: vi.fn(),
@@ -67,19 +68,27 @@ vi.mock("@ai-agent-platform/ui", () => ({
   },
   AssistantHeaderEntry: ({
     isOpen,
+    mode = "launcher",
     onActivate,
   }: {
     isOpen: boolean;
+    mode?: "launcher" | "workspace";
     onActivate: (trigger: HTMLButtonElement) => void;
-  }) => (
-    <button
-      data-open={String((mocks.assistantEntryOpen = isOpen))}
-      onClick={(event) => onActivate(event.currentTarget)}
-      type="button"
-    >
-      打开 AI 助理
-    </button>
-  ),
+  }) => {
+    mocks.assistantEntryMode = mode;
+    return (
+      <button
+        aria-label={
+          mode === "workspace" ? "聚焦 AI 助理提问框" : "打开 AI 助理"
+        }
+        data-open={String((mocks.assistantEntryOpen = isOpen))}
+        onClick={(event) => onActivate(event.currentTarget)}
+        type="button"
+      >
+        {mode === "workspace" ? "继续提问" : "打开 AI 助理"}
+      </button>
+    );
+  },
 }));
 
 import {
@@ -116,6 +125,7 @@ afterEach(cleanup);
 beforeEach(() => {
   mocks.appShellProps = undefined;
   mocks.assistantEntryOpen = undefined;
+  mocks.assistantEntryMode = undefined;
   mocks.pathname = "/";
   mocks.push.mockReset();
   mocks.replace.mockReset();
@@ -521,15 +531,18 @@ describe("SiteShell", () => {
     renderAt("/assistant", <ComposerProbe />);
 
     expect(useAssistantSession).toHaveBeenCalledOnce();
-    expect(screen.getByRole("button", { name: "打开 AI 助理" })).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "打开 AI 助理" }),
+      screen.getByRole("button", { name: "聚焦 AI 助理提问框" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "聚焦 AI 助理提问框" }),
     ).toHaveAttribute("data-open", "false");
+    expect(mocks.assistantEntryMode).toBe("workspace");
     expect(screen.queryByRole("button", { name: "打开 M 助手" })).toBeNull();
     const composer = screen.getByRole("textbox", {
       name: "全页工作区输入框",
     });
-    fireEvent.click(screen.getByRole("button", { name: "打开 AI 助理" }));
+    fireEvent.click(screen.getByRole("button", { name: "聚焦 AI 助理提问框" }));
     expect(composer).toHaveFocus();
     expect(screen.queryByRole("dialog")).toBeNull();
   });

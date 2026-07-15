@@ -28,6 +28,7 @@ import { createPortal } from "react-dom";
 import { ASSISTANT_PRESET_QUESTIONS } from "@/features/assistant/assistant-contract";
 import { AssistantConversation } from "./assistant-conversation";
 import { useAssistantExperience } from "./assistant-experience-provider";
+import { getAssistantServicePresentation } from "./assistant-service-presentation";
 import { useAssistantDockSize } from "./use-assistant-dock-size";
 import "./assistant-dock.css";
 
@@ -63,21 +64,6 @@ export const ASSISTANT_DOCK_MOTION = {
 
 const ASSISTANT_DOCK_EASE = [0.22, 1, 0.36, 1] as const;
 const ASSISTANT_DOCK_NEAR_BOTTOM_THRESHOLD = 48;
-
-function serviceLabel({
-  capability,
-  live,
-  ready,
-}: {
-  capability: "placeholder" | "available" | "degraded";
-  live: boolean;
-  ready: boolean;
-}) {
-  if (capability === "degraded" || !live) return "基础服务暂不可用";
-  if (capability === "placeholder" && ready) return "模型尚未配置";
-  if (capability === "available" && ready) return "服务已就绪";
-  return "服务未就绪";
-}
 
 function getFocusableElements(dialog: HTMLElement) {
   return Array.from(
@@ -159,6 +145,7 @@ function AssistantDockPanel({ instanceVersion }: { instanceVersion: number }) {
     collapseToQuick,
     completeSurfaceExit,
     focusComposer,
+    hasResolvedServiceState,
     refreshServiceState,
     refreshingServiceState,
     registerComposer,
@@ -176,7 +163,11 @@ function AssistantDockPanel({ instanceVersion }: { instanceVersion: number }) {
   const [mobileVisualViewport, setMobileVisualViewport] =
     useState<MobileVisualViewport | null>(null);
   const descriptionId = useId();
-  const currentServiceLabel = serviceLabel(serviceState);
+  const servicePresentation = getAssistantServicePresentation({
+    serviceState,
+    hasResolvedServiceState,
+    refreshingServiceState,
+  });
   const sending = session.requestStatus === "sending";
   const closeFromEffect = useEffectEvent(close);
   const completeExitFromEffect = useEffectEvent(() =>
@@ -539,7 +530,7 @@ function AssistantDockPanel({ instanceVersion }: { instanceVersion: number }) {
             role="status"
           >
             <span aria-hidden="true" />
-            <strong>{currentServiceLabel}</strong>
+            <strong>{servicePresentation.label}</strong>
             <small>{serviceState.message}</small>
           </div>
           <button

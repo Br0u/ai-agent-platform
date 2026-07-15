@@ -13,7 +13,7 @@ export default async function AssistantPage() {
   const serviceState = await readSafeAssistantRuntimeStatus();
   return (
     <AssistantWorkspace
-      serviceState={{
+      initialServiceState={{
         version: "1",
         requestId: crypto.randomUUID(),
         ...serviceState,

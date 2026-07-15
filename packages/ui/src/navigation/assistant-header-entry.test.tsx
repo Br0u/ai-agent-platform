@@ -89,6 +89,21 @@ describe("AssistantHeaderEntry", () => {
     expect(onActivate).toHaveBeenCalledWith(button);
   });
 
+  it("describes the workspace action as focusing the composer instead of opening a surface", () => {
+    const onActivate = vi.fn();
+    render(<AssistantHeaderEntry mode="workspace" onActivate={onActivate} />);
+
+    const button = screen.getByRole("button", {
+      name: "聚焦 AI 助理提问框",
+    });
+    expect(button).toHaveTextContent("继续提问");
+    expect(button).not.toHaveAttribute("aria-pressed");
+    expect(button).not.toHaveAttribute("data-active");
+
+    fireEvent.click(button);
+    expect(onActivate).toHaveBeenCalledWith(button);
+  });
+
   it("reprojects the mesh on animation frames instead of rotating a flat asset", () => {
     render(<AssistantHeaderEntry onActivate={() => undefined} />);
 
