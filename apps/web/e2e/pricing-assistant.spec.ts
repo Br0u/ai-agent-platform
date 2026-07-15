@@ -429,14 +429,14 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
         for (const rule of Array.from(sheet.cssRules)) {
           if (
             !(rule instanceof CSSMediaRule) ||
-            !rule.conditionText.includes("max-width: 600px")
+            !rule.conditionText.includes("max-width: 640px")
           ) {
             continue;
           }
           for (const nestedRule of Array.from(rule.cssRules)) {
             if (
               nestedRule instanceof CSSStyleRule &&
-              nestedRule.selectorText === ".assistant-panel"
+              nestedRule.selectorText === ".floating-assistant__panel"
             ) {
               return nestedRule.style.paddingBottom;
             }
