@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -52,6 +53,11 @@ export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
   const railExpanded = railOverride ?? isDesktop;
   const sending = session.requestStatus === "sending";
   const hasError = session.validationError !== null;
+  const registerWorkspaceComposer = useCallback(
+    (element: HTMLTextAreaElement | null) =>
+      element === null ? undefined : registerComposer(element),
+    [registerComposer],
+  );
 
   const serviceLabel =
     currentServiceState.capability === "degraded" || !currentServiceState.live
@@ -340,7 +346,7 @@ export function AssistantWorkspace({ serviceState }: AssistantWorkspaceProps) {
               onChange={(event) => session.setDraft(event.target.value)}
               onKeyDown={handleComposerKeyDown}
               placeholder="输入你的问题，Shift + Enter 换行"
-              ref={registerComposer}
+              ref={registerWorkspaceComposer}
               rows={2}
               value={session.draft}
             />

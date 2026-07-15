@@ -24,7 +24,7 @@ export type AssistantExperience = {
   openDockFrom: (trigger: HTMLElement) => void;
   collapseToQuick: () => void;
   close: () => void;
-  registerComposer: (element: HTMLElement | null) => void;
+  registerComposer: (element: HTMLElement) => () => void;
   focusComposer: () => void;
 };
 
@@ -101,8 +101,11 @@ export function AssistantExperienceProvider({
     if (shouldRestoreFocus && trigger?.isConnected) trigger.focus();
   }, [normalizedPathname, surface]);
 
-  const registerComposer = useCallback((element: HTMLElement | null) => {
+  const registerComposer = useCallback((element: HTMLElement) => {
     composer.current = element;
+    return () => {
+      if (composer.current === element) composer.current = null;
+    };
   }, []);
 
   const focusComposer = useCallback(() => {

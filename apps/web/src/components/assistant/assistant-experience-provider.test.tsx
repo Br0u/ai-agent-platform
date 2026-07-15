@@ -6,6 +6,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AssistantExperienceProvider,
@@ -43,7 +44,9 @@ function Harness() {
       />
       <input
         aria-label="工作区输入框"
-        ref={(element) => experience.registerComposer(element)}
+        ref={(element) =>
+          element === null ? undefined : experience.registerComposer(element)
+        }
       />
       <button onClick={experience.focusComposer} type="button">
         聚焦输入框
@@ -266,23 +269,35 @@ describe("AssistantExperienceProvider", () => {
       second: HTMLElement;
     }) {
       const experience = useAssistantExperience();
+      const disposeFirst = useRef<(() => void) | null>(null);
+      const [registered, setRegistered] = useState<string[]>([]);
       return (
         <>
           <button
-            onClick={() => experience.registerComposer(first)}
+            onClick={() => {
+              disposeFirst.current = experience.registerComposer(first);
+              setRegistered((current) => [...current, "first"]);
+            }}
             type="button"
           >
             注册第一个输入框
           </button>
           <button
-            onClick={() => experience.registerComposer(second)}
+            onClick={() => {
+              experience.registerComposer(second);
+              setRegistered((current) => [...current, "second"]);
+            }}
             type="button"
           >
             注册第二个输入框
           </button>
+          <button onClick={() => disposeFirst.current?.()} type="button">
+            卸载第一个输入框
+          </button>
           <button onClick={experience.focusComposer} type="button">
             聚焦当前输入框
           </button>
+          <output aria-label="已注册输入框">{registered.join(",")}</output>
         </>
       );
     }
@@ -300,6 +315,10 @@ describe("AssistantExperienceProvider", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "注册第一个输入框" }));
       fireEvent.click(screen.getByRole("button", { name: "注册第二个输入框" }));
+      expect(screen.getByLabelText("已注册输入框")).toHaveTextContent(
+        "first,second",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "卸载第一个输入框" }));
       fireEvent.click(screen.getByRole("button", { name: "聚焦当前输入框" }));
 
       expect(firstFocus).not.toHaveBeenCalled();

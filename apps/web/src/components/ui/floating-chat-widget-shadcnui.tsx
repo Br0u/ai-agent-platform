@@ -57,8 +57,9 @@ export function FloatingChatWidget({
 
   useEffect(() => {
     if (!quickOpen) return;
-    registerComposerFromEffect(inputRef.current);
-    return () => registerComposerFromEffect(null);
+    const input = inputRef.current;
+    if (input === null) return;
+    return registerComposerFromEffect(input);
   }, [quickOpen]);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
