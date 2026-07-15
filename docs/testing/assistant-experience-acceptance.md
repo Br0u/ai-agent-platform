@@ -22,6 +22,7 @@ AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT=aap-assistant-e2e-task9 \
 ## 自动验证范围
 
 - 同时运行 `e2e/assistant-experience.spec.ts` 与 `e2e/pricing-assistant.spec.ts`，不会遗漏旧价格计算验收。
+- 两个浏览器项目共用同一隔离反向代理、IP 限流桶和数据库 fixture，因此 runner 固定使用 `--workers=1` 串行执行真实助手请求，避免测试自竞争；不会用 mock 或放宽断言代替真实链路。
 - 顶部入口打开右侧 Dock；桌面默认宽度为 `480px`，拖拽边界为 `380–760px`，键盘方向键可调整。
 - 只有正常 pointer up 和键盘调整写入宽度偏好；pointer cancel 不写入，刷新恢复最近一次主动宽度。
 - 已打开的 Dock 在精确 `721→720→721` 断点切换中保持单一 dialog：`721px` 恢复 separator 与原桌面宽度偏好，`720px` 全屏、无 separator 且继续锁定背景滚动；移动全屏不会覆盖 `localStorage` 中的桌面宽度偏好。
@@ -38,4 +39,4 @@ AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT=aap-assistant-e2e-task9 \
 - Playwright：两个 spec、两个项目在提交 `7bf0b63` 的完整隔离 runner 中为 `19 passed / 3 expected skipped / 0 failed`，production standalone 构建生成 `38/38` 个页面。
 - `c6e0109` 已将 Dockerfile 的 pnpm store 改为 BuildKit 内容寻址缓存并加入有界网络重试；后续 migrate/web 依赖安装层均命中 `CACHED`，此前 registry 中断导致 runner 未进入 Playwright 的问题已关闭，不再作为当前限制。
 - `7bf0b63` 完整 runner 退出后，隔离项目容器、卷、网络、项目镜像、锁和临时 secret 均为 `0` 残留；全局 `8080` 端口已释放，原有默认 E2E 镜像 ID 未变化。
-- 最终规格复审新增精确断点恢复和完整页返回门户连续性后，Playwright 清单为 `24` 个用例；最终完整 runner 结果在本轮验证完成后更新。
+- 最终规格复审新增精确断点恢复和完整页返回门户连续性后，Playwright 清单为 `24` 个用例；并行预跑已证明新增用例通过，但旧价格咨询流程会因共享 IP 限流桶与数据库 fixture 自竞争，因此完整 runner 已固定串行执行，最终结果在本轮验证完成后更新。

@@ -1006,6 +1006,7 @@ exit 0
     expect(runner).toMatch(
       /playwright test[\s\\\n]+e2e\/assistant-experience\.spec\.ts[\s\\\n]+e2e\/pricing-assistant\.spec\.ts/u,
     );
+    expect(runner).toContain("--workers=1");
     expect(webDockerfile).toContain(
       "--mount=type=cache,id=ai-agent-platform-pnpm-store",
     );

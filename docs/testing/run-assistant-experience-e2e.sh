@@ -329,4 +329,5 @@ docker compose -p "$project" --env-file "$env_file" $compose_files up -d --wait 
 BASE_URL=http://127.0.0.1:8080 \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-experience.spec.ts \
-  e2e/pricing-assistant.spec.ts
+  e2e/pricing-assistant.spec.ts \
+  --workers=1
