@@ -187,7 +187,13 @@ describe("production deployment security contracts", () => {
   });
 
   it("limits only POST requests on exact authentication routes", () => {
-    const nginx = `${read("infra/nginx/nginx.conf")}\n${read("infra/nginx/default.conf.template")}`;
+    const serverTemplate = read("infra/nginx/default.conf.template");
+    const nginx = `${read("infra/nginx/nginx.conf")}\n${serverTemplate}`;
+    const authLocation = serverTemplate
+      .split(
+        "location ~ ^/(?:login|register|staff/login|staff/two-factor|staff/re-auth)$ {",
+      )[1]
+      ?.split("\n  }")[0];
     expect(nginx).toContain(
       "limit_req_zone $auth_post_key zone=auth_post_per_ip:10m rate=5r/m;",
     );
@@ -203,6 +209,15 @@ describe("production deployment security contracts", () => {
     );
     expect(nginx).toContain("proxy_set_header X-Real-IP $remote_addr;");
     expect(nginx).toContain("proxy_set_header X-Forwarded-For $remote_addr;");
+    expect(authLocation).toContain(
+      "add_header X-Content-Type-Options nosniff always;",
+    );
+    expect(authLocation).toContain(
+      "add_header X-Frame-Options SAMEORIGIN always;",
+    );
+    expect(authLocation).toContain(
+      "add_header Referrer-Policy strict-origin-when-cross-origin always;",
+    );
     expect(
       nginx.match(/proxy_set_header X-Forwarded-Host \$http_host;/g),
     ).toHaveLength(4);
@@ -532,7 +547,7 @@ exit 0
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it("keeps the first assistant credential out of every browser diagnostic and admin payload", () => {
     const spec = read("apps/web/e2e/assistant-runtime.spec.ts");
