@@ -6,8 +6,10 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -952,8 +954,18 @@ exit 0
       "project=${AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT:-aap-assistant-e2e}",
     );
     expect(runner).toContain("aap-assistant-e2e|aap-assistant-e2e-*");
-    expect(runner).toContain("lock_acquired=false");
-    expect(runner).toContain('if ! mkdir "$lock_dir"');
+    expect(runner).toContain("project_lock_acquired=false");
+    expect(runner).toContain("port_lock_acquired=false");
+    expect(runner).toContain(
+      'project_lock_dir="/tmp/$project.assistant-e2e.lock"',
+    );
+    expect(runner).toContain(
+      'port_lock_dir="/tmp/aap-assistant-experience-e2e-port-8080.lock"',
+    );
+    expect(runner).not.toContain('lock_root="${runtime_tmp%/}');
+    expect(runner).toContain('if ! mkdir "$project_lock_dir"');
+    expect(runner).toContain('if ! mkdir "$port_lock_dir"');
+    expect(runner).toContain("lock_is_owned");
     expect(runner).toContain("owns_project=false");
     expect(runner).toContain('if [ "$owns_project" = true ]');
     expect(runner).toContain("down --rmi local -v --remove-orphans");
@@ -967,8 +979,10 @@ exit 0
     expect(runner).toContain(
       "materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE",
     );
-    expect(runner).toContain('rm -rf "$temp_dir"');
-    expect(runner).toContain("release_lock");
+    expect(runner).toContain("materialize_secret OS_SECURITY_KEY_FILE");
+    expect(runner).not.toContain('rm -rf "$temp_dir"');
+    expect(runner).toContain("release_owned_lock");
+    expect(runner).toContain("cleanup_temp_dir");
     expect(runner).toContain("e2e/assistant-experience.spec.ts");
     expect(runner).toContain("e2e/pricing-assistant.spec.ts");
     expect(runner).toMatch(
@@ -990,11 +1004,17 @@ exit 0
     const repo = path.join(sandbox, "repo");
     const bin = path.join(sandbox, "bin");
     const temp = path.join(sandbox, "tmp");
-    const project = "aap-assistant-e2e-contract";
-    const lock = path.join(
-      temp,
-      "aap-assistant-experience-e2e-locks",
-      `${project}.lock`,
+    const alternateTemp = path.join(sandbox, "alternate-tmp");
+    const project = `aap-assistant-e2e-${path.basename(sandbox)}`;
+    const projectLock = path.join("/tmp", `${project}.assistant-e2e.lock`);
+    const otherProject = `${project}-other`;
+    const otherProjectLock = path.join(
+      "/tmp",
+      `${otherProject}.assistant-e2e.lock`,
+    );
+    const portLock = path.join(
+      "/tmp",
+      "aap-assistant-experience-e2e-port-8080.lock",
     );
     const runner = path.join(
       repo,
@@ -1003,6 +1023,26 @@ exit 0
     mkdirSync(path.dirname(runner), { recursive: true });
     mkdirSync(bin, { recursive: true });
     mkdirSync(temp, { recursive: true });
+    mkdirSync(alternateTemp, { recursive: true });
+    for (const command of [
+      "cat",
+      "chmod",
+      "dirname",
+      "mkdir",
+      "mktemp",
+      "rm",
+      "rmdir",
+      "stat",
+    ]) {
+      const resolved = spawnSync("/bin/sh", ["-c", `command -v ${command}`], {
+        encoding: "utf8",
+      }).stdout.trim();
+      expect(resolved).not.toBe("");
+      symlinkSync(resolved, path.join(bin, command));
+    }
+    expect(() => statSync(projectLock)).toThrow();
+    expect(() => statSync(otherProjectLock)).toThrow();
+    expect(() => statSync(portLock)).toThrow();
     copyFileSync(
       path.join(root, "docs/testing/run-assistant-experience-e2e.sh"),
       runner,
@@ -1044,9 +1084,12 @@ exit 0
       ].join("\n"),
       { mode: 0o600 },
     );
-    writeFileSync(
-      path.join(bin, "openssl"),
-      `#!/bin/sh
+    const openssl = path.join(bin, "openssl");
+    const writeFakeOpenSsl = () =>
+      writeFileSync(
+        openssl,
+        `#!/bin/sh
+printf '%s\\n' "$*" >>"$FAKE_OPENSSL_LOG"
 count=0
 if [ -f "$FAKE_OPENSSL_COUNT_FILE" ]; then
   count=$(cat "$FAKE_OPENSSL_COUNT_FILE")
@@ -1058,13 +1101,17 @@ if [ -n "\${FAKE_OPENSSL_FAIL_AFTER:-}" ] && [ "$count" -gt "$FAKE_OPENSSL_FAIL_
 fi
 printf "%064d\\n" "$count"
 `,
-      { mode: 0o755 },
-    );
-    writeFileSync(
-      path.join(bin, "lsof"),
-      '#!/bin/sh\n[ "${FAKE_PORT_BUSY:-false}" = true ]\n',
-      { mode: 0o755 },
-    );
+        { mode: 0o755 },
+      );
+    writeFakeOpenSsl();
+    const lsof = path.join(bin, "lsof");
+    const writeFakeLsof = () =>
+      writeFileSync(
+        lsof,
+        '#!/bin/sh\nprintf "%s\\n" "$*" >>"$FAKE_LSOF_LOG"\n[ "${FAKE_PORT_BUSY:-false}" = true ]\n',
+        { mode: 0o755 },
+      );
+    writeFakeLsof();
     writeFileSync(
       path.join(bin, "docker"),
       `#!/bin/sh
@@ -1077,7 +1124,13 @@ case "$1 $2" in
 esac
 case " $* " in
   *" compose "*" config --quiet "*) [ "\${FAKE_DOCKER_FAIL:-}" = config ] && exit 41; exit 0 ;;
-  *" compose "*" build migrate web "*) [ "\${FAKE_DOCKER_FAIL:-}" = build ] && exit 42; exit 0 ;;
+  *" compose "*" build migrate web "*)
+    if [ "\${FAKE_REPLACE_OWNER_TOKEN:-false}" = true ]; then
+      printf '%s\\n' replaced-owner >"$FAKE_PROJECT_LOCK/token"
+    fi
+    [ "\${FAKE_DOCKER_FAIL:-}" = build ] && exit 42
+    exit 0
+    ;;
   *" compose "*" up -d --wait db "*) [ "\${FAKE_DOCKER_FAIL:-}" = up ] && exit 43; exit 0 ;;
   *" compose "*" down --rmi local -v --remove-orphans "*) exit 0 ;;
 esac
@@ -1103,22 +1156,29 @@ exit 0
       const dockerLog = path.join(sandbox, `${name}.docker.log`);
       const pnpmLog = path.join(sandbox, `${name}.pnpm.log`);
       const opensslCount = path.join(sandbox, `${name}.openssl.count`);
+      const opensslLog = path.join(sandbox, `${name}.openssl.log`);
+      const lsofLog = path.join(sandbox, `${name}.lsof.log`);
       writeFileSync(dockerLog, "");
       writeFileSync(pnpmLog, "");
-      const result = spawnSync("sh", [runner], {
+      writeFileSync(opensslLog, "");
+      writeFileSync(lsofLog, "");
+      const result = spawnSync("/bin/sh", [runner], {
         cwd: repo,
         encoding: "utf8",
         env: {
           ...process.env,
-          PATH: `${bin}:/usr/bin:/bin`,
+          PATH: bin,
           TMPDIR: temp,
           AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT: selectedProject,
           FAKE_DOCKER_LOG: dockerLog,
           FAKE_DOCKER_FAIL: "",
           FAKE_OPENSSL_FAIL_AFTER: "",
+          FAKE_OPENSSL_LOG: opensslLog,
           FAKE_PNPM_LOG: pnpmLog,
           FAKE_PNPM_FAIL: "false",
           FAKE_PORT_BUSY: "false",
+          FAKE_PROJECT_LOCK: projectLock,
+          FAKE_REPLACE_OWNER_TOKEN: "false",
           FAKE_RESOURCE: "",
           FAKE_OPENSSL_COUNT_FILE: opensslCount,
           ...extra,
@@ -1127,18 +1187,64 @@ exit 0
       return {
         result,
         dockerCalls: readFileSync(dockerLog, "utf8"),
+        lsofCalls: readFileSync(lsofLog, "utf8"),
+        opensslCalls: readFileSync(opensslLog, "utf8"),
         pnpmCalls: readFileSync(pnpmLog, "utf8"),
       };
     };
     const downCalls = (calls: string) =>
       calls.match(/down --rmi local -v --remove-orphans/gu) ?? [];
     const expectOwnedArtifactsCleaned = () => {
-      expect(() => statSync(lock)).toThrow();
-      expect(
-        readdirSync(temp).filter((entry) =>
-          entry.startsWith("aap-assistant-e2e."),
-        ),
-      ).toEqual([]);
+      expect(() => statSync(projectLock)).toThrow();
+      expect(() => statSync(portLock)).toThrow();
+      for (const directory of [temp, alternateTemp]) {
+        expect(
+          readdirSync(directory).filter((entry) =>
+            entry.startsWith("aap-assistant-e2e."),
+          ),
+        ).toEqual([]);
+      }
+    };
+
+    const fixtureSecrets = [
+      "fixture-postgres",
+      "fixture-migrator",
+      "fixture-runtime",
+      "fixture-backup",
+      "postgresql://fixture:fixture@db/test",
+      "postgresql://fixture:fixture@db/test_test",
+      "fixture-better-auth",
+      "fixture-customer",
+      "fixture-staff",
+      "fixture-admin",
+      "fixture-pending",
+      "fixture-disabled",
+      "fixture-staff-session",
+      "fixture-role-target",
+      "fixture-admin-session",
+      "fixture-no-totp",
+      "fixture-revoked",
+      "fixture-replacement",
+      ...Array.from({ length: 5 }, (_, index) =>
+        String(index + 1).padStart(64, "0"),
+      ),
+    ];
+    const writeFixtureLock = (directory: string, token: string) => {
+      mkdirSync(directory, { mode: 0o700 });
+      writeFileSync(path.join(directory, "token"), `${token}\n`, {
+        mode: 0o600,
+      });
+    };
+    const removeFixtureLock = (directory: string, allowedTokens: string[]) => {
+      try {
+        const tokenFile = path.join(directory, "token");
+        const token = readFileSync(tokenFile, "utf8").trim();
+        if (!allowedTokens.includes(token)) return;
+        rmSync(tokenFile);
+        rmdirSync(directory);
+      } catch {
+        // The runner already removed its own lock, or the directory never existed.
+      }
     };
 
     try {
@@ -1151,20 +1257,39 @@ exit 0
       expect(unsafe.dockerCalls).toBe("");
       expect(() => statSync(path.join(sandbox, "touch-pwned"))).toThrow();
 
-      mkdirSync(lock, { recursive: true, mode: 0o700 });
-      writeFileSync(path.join(lock, "token"), "other-owner\n", {
-        mode: 0o600,
-      });
-      const locked = run("locked");
+      writeFixtureLock(projectLock, "other-owner");
+      const locked = run("locked", { TMPDIR: alternateTemp });
       expect(locked.result.status).not.toBe(0);
       expect(downCalls(locked.dockerCalls)).toHaveLength(0);
-      expect(statSync(lock).isDirectory()).toBe(true);
-      rmSync(lock, { recursive: true });
+      expect(statSync(projectLock).isDirectory()).toBe(true);
+      removeFixtureLock(projectLock, ["other-owner"]);
 
-      const resource = run("resource", { FAKE_RESOURCE: "container" });
-      expect(resource.result.status).not.toBe(0);
-      expect(downCalls(resource.dockerCalls)).toHaveLength(0);
+      writeFixtureLock(portLock, "other-port-owner");
+      const reservedPort = run("reserved-port", {}, otherProject);
+      expect(reservedPort.result.status).not.toBe(0);
+      expect(downCalls(reservedPort.dockerCalls)).toHaveLength(0);
+      expect(statSync(portLock).isDirectory()).toBe(true);
+      expect(() => statSync(otherProjectLock)).toThrow();
+      removeFixtureLock(portLock, ["other-port-owner"]);
+
+      const resourceRuns = ["container", "volume", "network", "image"].map(
+        (resource) => {
+          const result = run(`resource-${resource}`, {
+            FAKE_RESOURCE: resource,
+          });
+          expect(result.result.status).not.toBe(0);
+          expect(downCalls(result.dockerCalls)).toHaveLength(0);
+          expectOwnedArtifactsCleaned();
+          return result;
+        },
+      );
+
+      rmSync(lsof);
+      const missingPortTool = run("missing-lsof");
+      expect(missingPortTool.result.status).not.toBe(0);
+      expect(downCalls(missingPortTool.dockerCalls)).toHaveLength(0);
       expectOwnedArtifactsCleaned();
+      writeFakeLsof();
 
       const port = run("port", { FAKE_PORT_BUSY: "true" });
       expect(port.result.status).not.toBe(0);
@@ -1188,6 +1313,19 @@ exit 0
       expect(build.dockerCalls).not.toContain("other-project");
       expectOwnedArtifactsCleaned();
 
+      const replacedOwner = run("replaced-owner", {
+        FAKE_DOCKER_FAIL: "build",
+        FAKE_REPLACE_OWNER_TOKEN: "true",
+      });
+      expect(replacedOwner.result.status).toBe(42);
+      expect(downCalls(replacedOwner.dockerCalls)).toHaveLength(0);
+      expect(readFileSync(path.join(projectLock, "token"), "utf8").trim()).toBe(
+        "replaced-owner",
+      );
+      expect(() => statSync(portLock)).toThrow();
+      removeFixtureLock(projectLock, ["replaced-owner"]);
+      expectOwnedArtifactsCleaned();
+
       const up = run("up", { FAKE_DOCKER_FAIL: "up" });
       expect(up.result.status).toBe(43);
       expect(downCalls(up.dockerCalls)).toHaveLength(1);
@@ -1206,23 +1344,43 @@ exit 0
       expectOwnedArtifactsCleaned();
 
       for (const runResult of [
+        unsafe,
         locked,
-        resource,
+        reservedPort,
+        ...resourceRuns,
+        missingPortTool,
         port,
         secret,
         config,
         build,
+        replacedOwner,
         up,
         later,
         success,
       ]) {
-        expect(
-          `${runResult.result.stdout}${runResult.result.stderr}`,
-        ).not.toMatch(
-          /fixture-(?:postgres|migrator|runtime|backup|better-auth)/u,
-        );
+        const combinedLogs = [
+          runResult.result.stdout,
+          runResult.result.stderr,
+          runResult.dockerCalls,
+          runResult.pnpmCalls,
+          runResult.opensslCalls,
+          runResult.lsofCalls,
+        ].join("\n");
+        for (const secret of fixtureSecrets) {
+          expect(combinedLogs).not.toContain(secret);
+        }
       }
     } finally {
+      removeFixtureLock(projectLock, [
+        "other-owner",
+        "replaced-owner",
+        String(1).padStart(64, "0"),
+      ]);
+      removeFixtureLock(otherProjectLock, [String(1).padStart(64, "0")]);
+      removeFixtureLock(portLock, [
+        "other-port-owner",
+        String(1).padStart(64, "0"),
+      ]);
       rmSync(sandbox, { recursive: true, force: true });
     }
   }, 15_000);
