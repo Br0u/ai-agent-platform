@@ -46,20 +46,17 @@
 }
 
 .home-atmosphere span:nth-child(1) {
-  top: 2%;
-  left: -12%;
+  inset: 2% auto auto -12%;
   background: rgb(40 108 255 / 30%);
 }
 
 .home-atmosphere span:nth-child(2) {
-  top: 28%;
-  right: -14%;
+  inset: 28% -14% auto auto;
   background: rgb(115 88 234 / 28%);
 }
 
 .home-atmosphere span:nth-child(3) {
-  top: 60%;
-  left: 16%;
+  inset: 60% auto auto 16%;
   background: rgb(74 195 255 / 22%);
 }
 
@@ -349,6 +346,10 @@
   font-family: var(--font-mono);
   font-size: 15px;
   font-weight: 800;
+}
+
+.home-capability-card__copy {
+  margin-top: 48px;
 }
 
 .home-capability-card h3,
