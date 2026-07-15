@@ -653,9 +653,8 @@ exit 0
     expect(dockerfile).toContain(
       "ARG PNPM_REGISTRY=https://registry.npmmirror.com",
     );
-    expect(dockerfile).toContain(
-      'PNPM_CONFIG_REGISTRY="$PNPM_REGISTRY" pnpm install --frozen-lockfile',
-    );
+    expect(dockerfile).toContain('PNPM_CONFIG_REGISTRY="$PNPM_REGISTRY"');
+    expect(dockerfile).toContain("pnpm install --frozen-lockfile");
     expect(read("docs/testing/run-assistant-runtime-e2e.sh")).toContain(
       "PNPM_REGISTRY=${PNPM_REGISTRY:-https://registry.npmjs.org}",
     );
@@ -664,6 +663,25 @@ exit 0
     expect(dockerIgnore).toContain("**/.env");
     expect(dockerIgnore).toContain("**/.env.*");
     expect(dockerIgnore).toContain("!**/.env.example");
+  });
+
+  it("uses one bounded, persistent pnpm store for web image dependencies", () => {
+    const dockerfile = read("apps/web/Dockerfile");
+    const dependencies = dockerfile
+      .split("FROM base AS dependencies")[1]
+      ?.split("FROM dependencies AS migrator")[0];
+
+    expect(dependencies).toBeDefined();
+    expect(dependencies).toContain(
+      "--mount=type=cache,id=ai-agent-platform-pnpm-store,target=/pnpm/store,sharing=locked",
+    );
+    expect(dependencies).toContain("PNPM_CONFIG_STORE_DIR=/pnpm/store");
+    expect(dependencies).toContain("PNPM_CONFIG_FETCH_RETRIES=5");
+    expect(dependencies).toContain("PNPM_CONFIG_FETCH_TIMEOUT=300000");
+    expect(dependencies).toContain("PNPM_CONFIG_NETWORK_CONCURRENCY=4");
+    expect(dependencies).toContain("pnpm install --frozen-lockfile");
+    expect(dependencies).not.toContain("--no-verify-store-integrity");
+    expect(dependencies).not.toContain("strict-ssl=false");
   });
 
   it("hardens the internal AgentOS container boundary and startup order", () => {
