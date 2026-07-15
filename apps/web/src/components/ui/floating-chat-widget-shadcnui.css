@@ -113,6 +113,12 @@
   box-shadow: 0 0 0 3px rgb(149 160 180 / 15%);
 }
 
+.floating-assistant__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .floating-assistant__icon-button {
   display: inline-flex;
   width: 36px;

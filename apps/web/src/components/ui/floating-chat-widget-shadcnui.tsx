@@ -6,6 +6,7 @@ import {
   BriefcaseBusiness,
   LifeBuoy,
   MessageSquare,
+  PanelRightOpen,
   RotateCcw,
   Send,
   Sparkles,
@@ -86,8 +87,14 @@ export function FloatingChatWidget({
   showLauncher?: boolean;
 }) {
   const experience = useAssistantExperience();
-  const { close, openQuickFrom, session, surface, surfaceInstanceVersion } =
-    experience;
+  const {
+    close,
+    openDockFrom,
+    openQuickFrom,
+    session,
+    surface,
+    surfaceInstanceVersion,
+  } = experience;
   const quickOpen = surface === "quick";
   const launcherRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -142,15 +149,25 @@ export function FloatingChatWidget({
                   </p>
                 </div>
               </div>
-              <button
-                aria-label="关闭 M 助手"
-                className="floating-assistant__icon-button"
-                onClick={close}
-                ref={closeRef}
-                type="button"
-              >
-                <X size={18} />
-              </button>
+              <div className="floating-assistant__header-actions">
+                <button
+                  aria-label="展开 AI 助理工作区"
+                  className="floating-assistant__icon-button"
+                  onClick={(event) => openDockFrom(event.currentTarget)}
+                  type="button"
+                >
+                  <PanelRightOpen aria-hidden="true" size={18} />
+                </button>
+                <button
+                  aria-label="关闭 M 助手"
+                  className="floating-assistant__icon-button"
+                  onClick={close}
+                  ref={closeRef}
+                  type="button"
+                >
+                  <X size={18} />
+                </button>
+              </div>
             </header>
 
             <div

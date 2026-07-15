@@ -86,6 +86,7 @@ describe("AssistantHeaderEntry", () => {
 
     fireEvent.click(button);
     expect(onActivate).toHaveBeenCalledTimes(1);
+    expect(onActivate).toHaveBeenCalledWith(button);
   });
 
   it("reprojects the mesh on animation frames instead of rotating a flat asset", () => {

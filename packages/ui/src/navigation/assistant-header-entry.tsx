@@ -164,7 +164,7 @@ function drawAssistantMobius(
 
 export type AssistantHeaderEntryProps = {
   isOpen?: boolean;
-  onActivate: () => void;
+  onActivate: (trigger: HTMLButtonElement) => void;
 };
 
 export function AssistantHeaderEntry({
@@ -269,7 +269,7 @@ export function AssistantHeaderEntry({
       aria-pressed={isOpen}
       className="assistant-header-entry"
       data-active={isOpen ? "true" : undefined}
-      onClick={onActivate}
+      onClick={(event) => onActivate(event.currentTarget)}
       type="button"
     >
       <canvas

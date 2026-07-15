@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +12,7 @@ import {
   AssistantExperienceProvider,
   useAssistantExperience,
 } from "../assistant/assistant-experience-provider";
+import { AssistantDock } from "../assistant/assistant-dock";
 import { FloatingChatWidget } from "./floating-chat-widget-shadcnui";
 
 const successfulReply = {
@@ -41,6 +43,25 @@ function openWidget() {
 }
 
 beforeEach(() => {
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    value: 1_280,
+  });
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn(
+      (query: string): MediaQueryList => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }),
+    ),
+  });
   vi.stubGlobal(
     "fetch",
     vi.fn().mockResolvedValue(
@@ -79,7 +100,8 @@ describe("FloatingChatWidget", () => {
       </AssistantExperienceProvider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+    const launcher = screen.getByRole("button", { name: "打开 M 助手" });
+    fireEvent.click(launcher);
     expect(screen.getByRole("dialog", { name: "M 助手" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "打开停靠助手" }));
     await waitFor(() =>
@@ -111,8 +133,45 @@ describe("FloatingChatWidget", () => {
     openWidget();
 
     expect(
+      screen.getByRole("button", { name: "展开 AI 助理工作区" }).parentElement,
+    ).toHaveClass("floating-assistant__header-actions");
+    expect(
       screen.getByRole("link", { name: "打开完整 AI 助理" }),
     ).toHaveAttribute("href", "/assistant");
+  });
+
+  it("expands the quick surface into the dock without losing its draft", async () => {
+    render(
+      <AssistantExperienceProvider pathname="/">
+        <FloatingChatWidget />
+        <AssistantDock />
+      </AssistantExperienceProvider>,
+    );
+    const launcher = screen.getByRole("button", { name: "打开 M 助手" });
+    fireEvent.click(launcher);
+    fireEvent.change(screen.getByRole("textbox", { name: "向 M 助手提问" }), {
+      target: { value: "保留到工作区的问题" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "展开 AI 助理工作区" }));
+
+    const dock = await screen.findByRole("dialog", {
+      name: "AI 助理工作区",
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "M 助手" })).toBeNull(),
+    );
+    expect(dock).toHaveTextContent("M 企业助理");
+    expect(screen.getByRole("textbox", { name: "输入问题" })).toHaveValue(
+      "保留到工作区的问题",
+    );
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+
+    fireEvent.click(
+      within(dock).getByRole("button", { name: "关闭 AI 助理工作区" }),
+    );
+    await waitFor(() => expect(dock).not.toBeInTheDocument());
+    expect(launcher).toHaveFocus();
   });
 
   it("sends a preset prompt and renders the returned message and action", async () => {
