@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { StrictMode, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantStatusResponse } from "@/features/assistant/assistant-contract";
 import { useAssistantServiceState } from "./use-assistant-service-state";
@@ -42,16 +42,26 @@ afterEach(() => {
 describe("useAssistantServiceState", () => {
   it("still accepts a refresh result after the Strict Mode effect probe", async () => {
     vi.mocked(fetch).mockResolvedValue(Response.json(availableStatus));
+    let probeSetups = 0;
+
+    function EffectProbe({ children }: { children: ReactNode }) {
+      useEffect(() => {
+        probeSetups += 1;
+      }, []);
+      return children;
+    }
+
     const { result } = renderHook(() => useAssistantServiceState(), {
-      wrapper: ({ children }: { children: ReactNode }) => (
-        <StrictMode>{children}</StrictMode>
-      ),
+      reactStrictMode: true,
+      wrapper: EffectProbe,
     });
+    await waitFor(() => expect(probeSetups).toBe(2));
 
     await act(async () => result.current.refreshServiceState());
 
     expect(result.current.serviceState).toEqual(availableStatus);
     expect(result.current.hasResolvedServiceState).toBe(true);
+    expect(result.current.refreshingServiceState).toBe(false);
   });
 
   it("starts with a safe unresolved degraded state and adopts a valid server state", () => {
@@ -64,17 +74,24 @@ describe("useAssistantServiceState", () => {
     expect(result.current.hasResolvedServiceState).toBe(true);
   });
 
-  it("uses a synchronous lock for two refreshes in the same tick", () => {
-    vi.mocked(fetch).mockReturnValue(new Promise<Response>(() => undefined));
+  it("reuses one in-flight promise for two refreshes in the same tick", async () => {
+    const pending = deferred<Response>();
+    vi.mocked(fetch).mockReturnValue(pending.promise);
     const { result } = renderHook(() => useAssistantServiceState());
+    let first!: Promise<void>;
+    let second!: Promise<void>;
 
     act(() => {
-      void result.current.refreshServiceState();
-      void result.current.refreshServiceState();
+      first = result.current.refreshServiceState();
+      second = result.current.refreshServiceState();
     });
 
+    expect(first).toBe(second);
     expect(fetch).toHaveBeenCalledOnce();
     expect(result.current.refreshingServiceState).toBe(true);
+    pending.resolve(Response.json(availableStatus));
+    await act(async () => first);
+    expect(result.current.refreshingServiceState).toBe(false);
   });
 
   it("times out a pending response body after five seconds", async () => {
@@ -156,7 +173,7 @@ describe("useAssistantServiceState", () => {
     expect(result.current.serviceState).toEqual(availableStatus);
   });
 
-  it("does not let server adoption override an active or completed client refresh", async () => {
+  it("does not let server adoption override an active client refresh", async () => {
     const pending = deferred<Response>();
     vi.mocked(fetch).mockReturnValue(pending.promise);
     const { result } = renderHook(() => useAssistantServiceState());
@@ -169,7 +186,15 @@ describe("useAssistantServiceState", () => {
     await waitFor(() =>
       expect(result.current.serviceState).toEqual(availableStatus),
     );
+  });
+
+  it("allows a newer server snapshot after a client refresh completes", async () => {
+    vi.mocked(fetch).mockResolvedValue(Response.json(availableStatus));
+    const { result } = renderHook(() => useAssistantServiceState());
+
+    await act(async () => result.current.refreshServiceState());
     act(() => result.current.adoptServiceState(placeholderStatus));
-    expect(result.current.serviceState).toEqual(availableStatus);
+
+    expect(result.current.serviceState).toEqual(placeholderStatus);
   });
 });

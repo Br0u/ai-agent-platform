@@ -19,6 +19,7 @@ const DEGRADED_STATUS: AssistantStatusResponse = {
 
 type StatusRefreshOperation = {
   cancel: () => void;
+  promise: Promise<void>;
   timer: ReturnType<typeof setTimeout>;
 };
 
@@ -30,17 +31,17 @@ export function useAssistantServiceState() {
   const mountedRef = useRef(true);
   const refreshGenerationRef = useRef(0);
   const refreshOperationRef = useRef<StatusRefreshOperation | null>(null);
-  const refreshHasStartedRef = useRef(false);
 
   const adoptServiceState = useCallback((state: AssistantStatusResponse) => {
-    if (refreshHasStartedRef.current) return;
+    if (refreshOperationRef.current) return;
     setServiceState(state);
     setHasResolvedServiceState(true);
   }, []);
 
-  const refreshServiceState = useCallback(async () => {
-    if (refreshOperationRef.current) return;
-    refreshHasStartedRef.current = true;
+  const refreshServiceState = useCallback((): Promise<void> => {
+    if (refreshOperationRef.current) {
+      return refreshOperationRef.current.promise;
+    }
     const id = refreshGenerationRef.current + 1;
     refreshGenerationRef.current = id;
     const controller = new AbortController();
@@ -57,56 +58,61 @@ export function useAssistantServiceState() {
     };
     const operation: StatusRefreshOperation = {
       cancel,
+      promise: Promise.resolve(),
       timer: setTimeout(cancel, STATUS_REFRESH_TIMEOUT_MS),
     };
     refreshOperationRef.current = operation;
     setRefreshingServiceState(true);
 
-    try {
-      const nextState = await Promise.race([
-        (async (): Promise<AssistantStatusResponse> => {
-          const response = await fetch("/api/v1/assistant/status", {
-            method: "GET",
-            cache: "no-store",
-            signal: controller.signal,
-          });
-          const candidate: unknown = await response.json();
-          if (!response.ok || !isAssistantStatusResponse(candidate)) {
-            throw new Error("Invalid assistant status response");
-          }
-          return candidate;
-        })(),
-        interruption,
-      ]);
-      if (mountedRef.current && refreshGenerationRef.current === id) {
-        setServiceState(nextState);
-        setHasResolvedServiceState(true);
-      }
-    } catch {
-      if (mountedRef.current && refreshGenerationRef.current === id) {
-        setServiceState(DEGRADED_STATUS);
-        setHasResolvedServiceState(true);
-      }
-    } finally {
-      clearTimeout(operation.timer);
-      if (refreshOperationRef.current === operation) {
-        refreshOperationRef.current = null;
+    operation.promise = (async () => {
+      try {
+        const nextState = await Promise.race([
+          (async (): Promise<AssistantStatusResponse> => {
+            const response = await fetch("/api/v1/assistant/status", {
+              method: "GET",
+              cache: "no-store",
+              signal: controller.signal,
+            });
+            const candidate: unknown = await response.json();
+            if (!response.ok || !isAssistantStatusResponse(candidate)) {
+              throw new Error("Invalid assistant status response");
+            }
+            return candidate;
+          })(),
+          interruption,
+        ]);
         if (mountedRef.current && refreshGenerationRef.current === id) {
-          setRefreshingServiceState(false);
+          setServiceState(nextState);
+          setHasResolvedServiceState(true);
+        }
+      } catch {
+        if (mountedRef.current && refreshGenerationRef.current === id) {
+          setServiceState(DEGRADED_STATUS);
+          setHasResolvedServiceState(true);
+        }
+      } finally {
+        clearTimeout(operation.timer);
+        if (refreshOperationRef.current === operation) {
+          refreshOperationRef.current = null;
+          if (mountedRef.current && refreshGenerationRef.current === id) {
+            setRefreshingServiceState(false);
+          }
         }
       }
-    }
+    })();
+
+    return operation.promise;
   }, []);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
       refreshGenerationRef.current += 1;
       refreshOperationRef.current?.cancel();
       refreshOperationRef.current = null;
-    },
-    [],
-  );
+    };
+  }, []);
 
   return {
     serviceState,
