@@ -31,6 +31,7 @@ export type AssistantExperience = {
   openDockFrom: (trigger: HTMLElement) => void;
   collapseToQuick: () => void;
   close: () => void;
+  restoreTriggerFocus: () => void;
   registerComposer: (element: HTMLElement) => () => void;
   focusComposer: () => void;
 };
@@ -64,6 +65,7 @@ export function AssistantExperienceProvider({
     surface: AssistantSurface;
   }>({ pathname: null, surface: "closed" });
   const lastTrigger = useRef<HTMLElement | null>(null);
+  const pendingTriggerRestore = useRef(false);
   const composer = useRef<HTMLElement | null>(null);
   const surfaceVersion = useRef(0);
   const normalizedPathname = normalizePathname(pathname);
@@ -95,6 +97,7 @@ export function AssistantExperienceProvider({
     ) => {
       if (assistantWorkspace) return;
       surfaceVersion.current += 1;
+      pendingTriggerRestore.current = false;
       if (surface === "closed") lastTrigger.current = trigger;
       setPresentation({
         pathname: normalizedPathname,
@@ -117,17 +120,28 @@ export function AssistantExperienceProvider({
   const collapseToQuick = useCallback(() => {
     if (surface !== "dock") return;
     surfaceVersion.current += 1;
+    pendingTriggerRestore.current = false;
     setPresentation({ pathname: normalizedPathname, surface: "quick" });
   }, [normalizedPathname, surface]);
 
   const close = useCallback(() => {
-    const shouldRestoreFocus = surface !== "closed";
+    if (surface === "closed") return;
     surfaceVersion.current += 1;
+    pendingTriggerRestore.current = true;
     setPresentation({ pathname: normalizedPathname, surface: "closed" });
+  }, [normalizedPathname, surface]);
+
+  const restoreTriggerFocus = useCallback(() => {
+    if (!pendingTriggerRestore.current) return;
+    pendingTriggerRestore.current = false;
     const trigger = lastTrigger.current;
     lastTrigger.current = null;
-    if (shouldRestoreFocus && trigger?.isConnected) trigger.focus();
-  }, [normalizedPathname, surface]);
+    if (!trigger?.isConnected) return;
+    const disabled =
+      ("disabled" in trigger && trigger.disabled === true) ||
+      trigger.getAttribute("aria-disabled") === "true";
+    if (!disabled) trigger.focus();
+  }, []);
 
   const registerComposer = useCallback((element: HTMLElement) => {
     composer.current = element;
@@ -151,6 +165,7 @@ export function AssistantExperienceProvider({
     queueMicrotask(() => {
       if (surfaceVersion.current !== version) return;
       setPresentation({ pathname: normalizedPathname, surface: "closed" });
+      pendingTriggerRestore.current = false;
       lastTrigger.current = null;
     });
   }, [
@@ -186,6 +201,7 @@ export function AssistantExperienceProvider({
   useEffect(
     () => () => {
       surfaceVersion.current += 1;
+      pendingTriggerRestore.current = false;
       lastTrigger.current = null;
       composer.current = null;
     },
@@ -205,6 +221,7 @@ export function AssistantExperienceProvider({
       openDockFrom,
       collapseToQuick,
       close,
+      restoreTriggerFocus,
       registerComposer,
       focusComposer,
     }),
@@ -217,6 +234,7 @@ export function AssistantExperienceProvider({
       openQuickFrom,
       registerComposer,
       refreshServiceState,
+      restoreTriggerFocus,
       hasResolvedServiceState,
       refreshingServiceState,
       serviceState,

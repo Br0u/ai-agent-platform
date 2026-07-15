@@ -29,8 +29,14 @@ export function FloatingChatWidget({
   showLauncher?: boolean;
 }) {
   const experience = useAssistantExperience();
-  const { close, openQuickFrom, registerComposer, session, surface } =
-    experience;
+  const {
+    close,
+    openQuickFrom,
+    registerComposer,
+    restoreTriggerFocus,
+    session,
+    surface,
+  } = experience;
   const quickOpen = surface === "quick";
   const launcherRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -69,7 +75,11 @@ export function FloatingChatWidget({
 
   return (
     <div className="floating-assistant">
-      <AnimatePresence>
+      <AnimatePresence
+        onExitComplete={() => {
+          if (surface === "closed") restoreTriggerFocus();
+        }}
+      >
         {quickOpen ? (
           <motion.section
             key="assistant-panel"

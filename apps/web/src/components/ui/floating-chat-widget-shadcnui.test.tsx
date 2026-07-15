@@ -164,11 +164,27 @@ describe("FloatingChatWidget", () => {
   });
 
   it("keeps failed input and retries the same request without duplicating it", async () => {
-    vi.mocked(fetch)
-      .mockRejectedValueOnce(new Error("offline"))
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify(successfulReply), { status: 200 }),
+    let chatAttempts = 0;
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (input === "/api/v1/assistant/chat" && init?.method === "POST") {
+        chatAttempts += 1;
+        return chatAttempts === 1
+          ? Promise.reject(new Error("offline"))
+          : Promise.resolve(
+              new Response(JSON.stringify(successfulReply), { status: 200 }),
+            );
+      }
+      return Promise.resolve(
+        Response.json({
+          version: "1",
+          requestId: "quick-status",
+          live: true,
+          ready: true,
+          capability: "placeholder",
+          message: "模型尚未配置。",
+        }),
       );
+    });
     openWidget();
     const input = screen.getByRole("textbox", { name: "向 M 助手提问" });
     fireEvent.change(input, { target: { value: "部署失败怎么办" } });
@@ -183,7 +199,11 @@ describe("FloatingChatWidget", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(chatAttempts).toBe(2));
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/v1/assistant/status",
+      expect.objectContaining({ method: "GET" }),
+    );
     expect(screen.getAllByText("部署失败怎么办")).toHaveLength(1);
   });
 

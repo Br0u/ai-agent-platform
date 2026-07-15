@@ -492,13 +492,13 @@ describe("SiteShell", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("returns focus to the exact portal launcher that opened the drawer", () => {
+  it("returns focus after the drawer exit to the exact portal launcher", async () => {
     renderAt("/");
     const floating = screen.getByRole("button", { name: "打开 M 助手" });
 
     fireEvent.click(floating);
     fireEvent.click(screen.getByRole("button", { name: "关闭 M 助手" }));
-    expect(floating).toHaveFocus();
+    await waitFor(() => expect(floating).toHaveFocus());
   });
 
   it("preserves the assistant controller across pathname rerenders", async () => {

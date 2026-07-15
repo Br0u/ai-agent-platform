@@ -38,6 +38,9 @@ function Harness() {
       <button onClick={experience.close} type="button">
         关闭
       </button>
+      <button onClick={experience.restoreTriggerFocus} type="button">
+        完成退出并恢复焦点
+      </button>
       <input
         aria-label="会话草稿"
         onChange={(event) => experience.session.setDraft(event.target.value)}
@@ -186,7 +189,7 @@ describe("AssistantExperienceProvider", () => {
     expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("closed");
   });
 
-  it("preserves the original launcher when an internal quick action opens dock", () => {
+  it("preserves the original launcher until exit completion", () => {
     function FocusHarness() {
       const experience = useAssistantExperience();
       return (
@@ -210,6 +213,9 @@ describe("AssistantExperienceProvider", () => {
               关闭停靠助手
             </button>
           ) : null}
+          <button onClick={experience.restoreTriggerFocus} type="button">
+            停靠助手退出完成
+          </button>
         </>
       );
     }
@@ -232,8 +238,33 @@ describe("AssistantExperienceProvider", () => {
     expect(launcherFocus).not.toHaveBeenCalled();
     expect(internalFocus).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "关闭停靠助手" }));
+    expect(launcherFocus).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "停靠助手退出完成" }));
     expect(launcherFocus).toHaveBeenCalledOnce();
     expect(internalFocus).not.toHaveBeenCalled();
+  });
+
+  it("restores a connected enabled trigger at most once", () => {
+    render(
+      <AssistantExperienceProvider pathname="/">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+    const launcher = screen.getByRole("button", { name: "停靠入口" });
+    const focus = vi.spyOn(launcher, "focus");
+
+    fireEvent.click(launcher);
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(focus).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "完成退出并恢复焦点" }));
+    fireEvent.click(screen.getByRole("button", { name: "完成退出并恢复焦点" }));
+    expect(focus).toHaveBeenCalledOnce();
+
+    fireEvent.click(launcher);
+    launcher.setAttribute("disabled", "");
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    fireEvent.click(screen.getByRole("button", { name: "完成退出并恢复焦点" }));
+    expect(focus).toHaveBeenCalledOnce();
   });
 
   it("derives a closed assistant workspace surface synchronously and keeps the session", async () => {

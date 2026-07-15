@@ -13,6 +13,7 @@ import {
   AssistantExperienceProvider,
   useAssistantExperience,
 } from "./assistant-experience-provider";
+import { FloatingChatWidget } from "../ui/floating-chat-widget-shadcnui";
 import { ASSISTANT_DOCK_MOTION, AssistantDock } from "./assistant-dock";
 
 const placeholderStatus: AssistantStatusResponse = {
@@ -81,6 +82,26 @@ function DockHarness({ originalAriaHidden }: { originalAriaHidden?: "false" }) {
           打开 AI 助理工作区
         </button>
         <button
+          onClick={(event) => experience.openDockFrom(event.currentTarget)}
+          type="button"
+        >
+          从第二入口打开 AI 助理工作区
+        </button>
+        <button
+          onClick={(event) => experience.openQuickFrom(event.currentTarget)}
+          type="button"
+        >
+          打开快速助手后进入工作区
+        </button>
+        {experience.surface === "quick" ? (
+          <button
+            onClick={(event) => experience.openDockFrom(event.currentTarget)}
+            type="button"
+          >
+            从快速助手进入工作区
+          </button>
+        ) : null}
+        <button
           onClick={(event) => {
             void experience.session.submit("发送中的问题");
             experience.openDockFrom(event.currentTarget);
@@ -91,6 +112,7 @@ function DockHarness({ originalAriaHidden }: { originalAriaHidden?: "false" }) {
         </button>
       </div>
       <AssistantDock />
+      <FloatingChatWidget showLauncher={false} />
     </>
   );
 }
@@ -243,9 +265,11 @@ describe("AssistantDock", () => {
         screen.queryByRole("dialog", { name: "AI 助理工作区" }),
       ).not.toBeInTheDocument(),
     );
-    expect(background).not.toHaveAttribute("inert");
-    expect(background).toHaveAttribute("aria-hidden", "false");
-    expect(document.body.style.overflow).toBe("clip");
+    await waitFor(() => {
+      expect(background).not.toHaveAttribute("inert");
+      expect(background).toHaveAttribute("aria-hidden", "false");
+      expect(document.body.style.overflow).toBe("clip");
+    });
     expect(document.activeElement).toBe(trigger);
   });
 
@@ -298,6 +322,8 @@ describe("AssistantDock", () => {
     fireEvent.click(
       within(dialog).getByRole("button", { name: "关闭 AI 助理工作区" }),
     );
+    expect(document.activeElement).not.toBe(trigger);
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
     expect(document.activeElement).toBe(trigger);
   });
 
@@ -317,15 +343,17 @@ describe("AssistantDock", () => {
     expect(background).toHaveAttribute("inert");
     expect(background).toHaveAttribute("aria-hidden", "true");
     expect(document.body.style.overflow).toBe("hidden");
-    expect(document.activeElement).toBe(trigger);
 
+    trigger.focus();
     fireEvent.keyDown(document, { key: "Tab" });
     expect(dialog).not.toContainElement(document.activeElement as HTMLElement);
 
     await waitFor(() => expect(dialog).not.toBeInTheDocument());
-    expect(background).not.toHaveAttribute("inert");
-    expect(background).toHaveAttribute("aria-hidden", "false");
-    expect(document.body.style.overflow).toBe("clip");
+    await waitFor(() => {
+      expect(background).not.toHaveAttribute("inert");
+      expect(background).toHaveAttribute("aria-hidden", "false");
+      expect(document.body.style.overflow).toBe("clip");
+    });
     expect(document.activeElement).toBe(trigger);
   });
 
@@ -340,7 +368,11 @@ describe("AssistantDock", () => {
     fireEvent.click(
       within(dialog).getByRole("button", { name: "关闭 AI 助理工作区" }),
     );
-    fireEvent.click(trigger);
+    const secondTrigger = screen.getByRole("button", {
+      name: "从第二入口打开 AI 助理工作区",
+      hidden: true,
+    });
+    fireEvent.click(secondTrigger);
 
     expect(background).toHaveAttribute("inert");
     expect(background).toHaveAttribute("aria-hidden", "true");
@@ -353,6 +385,52 @@ describe("AssistantDock", () => {
     ).toBeInTheDocument();
     expect(background).toHaveAttribute("inert");
     expect(document.body.style.overflow).toBe("hidden");
+
+    const reopenedDialog = screen.getByRole("dialog", {
+      name: "AI 助理工作区",
+    });
+    fireEvent.click(
+      within(reopenedDialog).getByRole("button", {
+        name: "关闭 AI 助理工作区",
+      }),
+    );
+    await waitFor(() => expect(reopenedDialog).not.toBeInTheDocument());
+    expect(secondTrigger).toHaveFocus();
+    expect(trigger).not.toHaveFocus();
+  });
+
+  it("restores the original quick launcher after quick to dock to closed", async () => {
+    renderDock();
+    const quickLauncher = screen.getByRole("button", {
+      name: "打开快速助手后进入工作区",
+    });
+    fireEvent.click(quickLauncher);
+    fireEvent.click(
+      screen.getByRole("button", { name: "从快速助手进入工作区" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "AI 助理工作区",
+    });
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "关闭 AI 助理工作区" }),
+    );
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(quickLauncher).toHaveFocus();
+  });
+
+  it("focuses the quick surface when the dock collapses", async () => {
+    renderDock();
+    const dialog = await openDock();
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "收起为快速助手" }),
+    );
+    const quickDialog = await screen.findByRole("dialog", { name: "M 助手" });
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(
+      within(quickDialog).getByRole("button", { name: "关闭 M 助手" }),
+    ).toHaveFocus();
   });
 
   it("falls back to a focusable control when the composer is disabled", async () => {
@@ -419,6 +497,12 @@ describe("AssistantDock", () => {
     });
     const view = renderDock();
     const dialog = await openDock();
+    const history = within(dialog).getByTestId("assistant-message-history");
+    Object.defineProperties(history, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 1_000 },
+    });
+    history.scrollTop = 680;
 
     await waitFor(() => {
       expect(dialog).toHaveStyle({
@@ -437,6 +521,7 @@ describe("AssistantDock", () => {
         "--assistant-dock-viewport-offset-top": "126px",
       });
     });
+    await waitFor(() => expect(history.scrollTop).toBe(700));
 
     const composer = within(dialog).getByRole("textbox", { name: "输入问题" });
     fireEvent.focus(composer);
@@ -457,6 +542,38 @@ describe("AssistantDock", () => {
       "scroll",
       expect.any(Function),
     );
+  });
+
+  it("preserves message history scroll when the reader is away from the bottom", async () => {
+    mobileViewport = true;
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 390,
+    });
+    const visualViewport = installVisualViewport({
+      height: 620,
+      offsetTop: 84,
+    });
+    renderDock();
+    const dialog = await openDock();
+    const history = within(dialog).getByTestId("assistant-message-history");
+    Object.defineProperties(history, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 1_000 },
+    });
+    history.scrollTop = 240;
+
+    visualViewport.height = 418;
+    visualViewport.offsetTop = 126;
+    act(() => visualViewport.dispatch("scroll"));
+
+    await waitFor(() =>
+      expect(dialog).toHaveStyle({
+        "--assistant-dock-viewport-height": "418px",
+        "--assistant-dock-viewport-offset-top": "126px",
+      }),
+    );
+    expect(history.scrollTop).toBe(240);
   });
 
   it("keeps the dialog mounted long enough to run its exit transition", async () => {

@@ -61,6 +61,7 @@ export const ASSISTANT_DOCK_MOTION = {
 } as const;
 
 const ASSISTANT_DOCK_EASE = [0.22, 1, 0.36, 1] as const;
+const ASSISTANT_DOCK_NEAR_BOTTOM_THRESHOLD = 48;
 
 function serviceLabel({
   capability,
@@ -169,8 +170,6 @@ function AssistantDockPanel() {
   const dialogRef = useRef<HTMLElement>(null);
   const backdropPointerRef = useRef<number | null>(null);
   const exitingRef = useRef(false);
-  const returnFocusTargetRef = useRef<HTMLElement | null>(null);
-  const exitIntentRef = useRef<"close" | "collapse" | null>(null);
   const [mobileVisualViewport, setMobileVisualViewport] =
     useState<MobileVisualViewport | null>(null);
   const descriptionId = useId();
@@ -186,13 +185,6 @@ function AssistantDockPanel() {
 
   useEffect(() => {
     const dialog = dialogRef.current;
-    const activeElement = document.activeElement;
-    if (
-      activeElement instanceof HTMLElement &&
-      (dialog === null || !dialog.contains(activeElement))
-    ) {
-      returnFocusTargetRef.current = activeElement;
-    }
     const releaseModalIsolation = acquireModalIsolation();
     queueMicrotask(() => {
       if (dialog === null || !isPresentFromEffect()) return;
@@ -204,7 +196,6 @@ function AssistantDockPanel() {
 
     const requestClose = () => {
       exitingRef.current = true;
-      exitIntentRef.current = "close";
       closeFromEffect();
     };
 
@@ -242,14 +233,6 @@ function AssistantDockPanel() {
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       releaseModalIsolation();
-      if (exitIntentRef.current === "close") {
-        const returnFocusTarget = returnFocusTargetRef.current;
-        queueMicrotask(() => {
-          if (modalIsolation === null && returnFocusTarget?.isConnected) {
-            returnFocusTarget.focus();
-          }
-        });
-      }
     };
   }, []);
 
@@ -260,20 +243,47 @@ function AssistantDockPanel() {
     const dialog = dialogRef.current;
     let cancelled = false;
 
-    const ensureComposerVisible = (target: HTMLElement) => {
+    const captureMessageScroll = () => {
+      const messageHistory = dialog?.querySelector<HTMLElement>(
+        "[data-testid='assistant-message-history']",
+      );
+      if (messageHistory === null || messageHistory === undefined) return null;
+      const scrollTop = messageHistory.scrollTop;
+      return {
+        messageHistory,
+        nearBottom:
+          messageHistory.scrollHeight -
+            messageHistory.clientHeight -
+            scrollTop <=
+          ASSISTANT_DOCK_NEAR_BOTTOM_THRESHOLD,
+        scrollTop,
+      };
+    };
+    const restoreMessageScroll = (
+      snapshot: ReturnType<typeof captureMessageScroll>,
+    ) => {
+      if (snapshot === null) return;
+      snapshot.messageHistory.scrollTop = snapshot.nearBottom
+        ? Math.max(
+            0,
+            snapshot.messageHistory.scrollHeight -
+              snapshot.messageHistory.clientHeight,
+          )
+        : snapshot.scrollTop;
+    };
+    const ensureComposerVisible = (
+      target: HTMLElement,
+      snapshot = captureMessageScroll(),
+    ) => {
       const composerWrap = target.closest<HTMLElement>(
         ".assistant-conversation__composer-wrap",
       );
       composerWrap?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-      const messageHistory = dialog?.querySelector<HTMLElement>(
-        "[data-testid='assistant-message-history']",
-      );
-      if (messageHistory !== null && messageHistory !== undefined) {
-        messageHistory.scrollTop = messageHistory.scrollHeight;
-      }
+      restoreMessageScroll(snapshot);
     };
     const updateVisualViewport = () => {
       if (cancelled) return;
+      const messageScroll = captureMessageScroll();
       setMobileVisualViewport({
         height: Math.max(1, visualViewport.height),
         offsetTop: Math.max(0, visualViewport.offsetTop),
@@ -284,7 +294,11 @@ function AssistantDockPanel() {
         dialog?.contains(activeElement) &&
         activeElement.matches("textarea")
       ) {
-        queueMicrotask(() => ensureComposerVisible(activeElement));
+        queueMicrotask(() =>
+          ensureComposerVisible(activeElement, messageScroll),
+        );
+      } else {
+        queueMicrotask(() => restoreMessageScroll(messageScroll));
       }
     };
     const onFocusIn = (event: FocusEvent) => {
@@ -308,13 +322,11 @@ function AssistantDockPanel() {
 
   const requestClose = () => {
     exitingRef.current = true;
-    exitIntentRef.current = "close";
     close();
   };
 
   const requestCollapse = () => {
     exitingRef.current = true;
-    exitIntentRef.current = "collapse";
     collapseToQuick();
   };
 
@@ -555,7 +567,7 @@ function AssistantDockPanel() {
 }
 
 export function AssistantDock() {
-  const { surface } = useAssistantExperience();
+  const { restoreTriggerFocus, surface } = useAssistantExperience();
   const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -571,7 +583,11 @@ export function AssistantDock() {
   if (portalRoot === null) return null;
 
   return createPortal(
-    <AnimatePresence>
+    <AnimatePresence
+      onExitComplete={() => {
+        if (surface === "closed") restoreTriggerFocus();
+      }}
+    >
       {surface === "dock" ? <AssistantDockPanel key="assistant-dock" /> : null}
     </AnimatePresence>,
     portalRoot,
