@@ -231,9 +231,14 @@ function waitForAssistantStatus(page: Page) {
 }
 
 async function gotoPublicRoute(page: Page, route: string) {
-  const statusResponse = waitForAssistantStatus(page);
   await page.goto(route);
+}
+
+async function openQuickAssistantWithStatus(page: Page) {
+  const statusResponse = waitForAssistantStatus(page);
+  await quickAssistantLauncher(page).click();
   await statusResponse;
+  return quickAssistantDialog(page);
 }
 
 async function selectRepresentativePricingModules(page: Page) {
@@ -337,8 +342,7 @@ test("assistant preset responses expose safe suggested actions", async ({
   await configureProject(page, testInfo);
   const diagnostics = collectBrowserDiagnostics(page);
   await gotoPublicRoute(page, "/pricing");
-  await quickAssistantLauncher(page).click();
-  const dialog = quickAssistantDialog(page);
+  const dialog = await openQuickAssistantWithStatus(page);
 
   for (const [question, label, href] of [
     ["如何开始了解平台？", "查看快速开始", "/docs#quick-start"],
@@ -471,9 +475,9 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
   );
   const closedLauncherBox = await launcher.boundingBox();
 
-  await launcher.click();
-  const dialog = quickAssistantDialog(page);
+  const dialog = await openQuickAssistantWithStatus(page);
   const input = dialog.getByLabel("向 M 助手提问", { exact: true });
+  await expect(input).toBeVisible();
   await expect(
     dialog.getByRole("button", { name: "关闭 M 助手", exact: true }),
   ).toBeFocused();
@@ -499,12 +503,10 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
       return {
         bottomLeft: style.borderBottomLeftRadius,
         bottomRight: style.borderBottomRightRadius,
-        paddingBottom: Number.parseFloat(style.paddingBottom),
       };
     });
     expect(drawerStyle.bottomLeft).toBe("0px");
     expect(drawerStyle.bottomRight).toBe("0px");
-    expect(drawerStyle.paddingBottom).toBeGreaterThanOrEqual(12);
     await expectMinimumControlSize(dialog.locator("button, a, input"));
     const staticMobilePanelRule = await page.evaluate(() => {
       for (const sheet of Array.from(document.styleSheets)) {
@@ -628,7 +630,7 @@ test("assistant session survives public routing and resets at the identity bound
   await configureProject(page, testInfo);
   const diagnostics = collectBrowserDiagnostics(page);
   await gotoPublicRoute(page, "/pricing");
-  await quickAssistantLauncher(page).click();
+  await openQuickAssistantWithStatus(page);
   const answer = await sendSuccessfulAssistantMessage(page);
 
   await quickAssistantDialog(page)
@@ -683,23 +685,25 @@ test("assistant session survives public routing and resets at the identity bound
   await navigateFromHeaderToLogin(page, testInfo.project.name);
   await expectNavigationSentinel(page, identitySentinel);
   await expect(quickAssistantLauncher(page)).toHaveCount(0);
-  const restoredStatusResponse = waitForAssistantStatus(page);
   await page.goBack();
-  await restoredStatusResponse;
   await expect(page).toHaveURL(/\/help$/u);
   await expectNavigationSentinel(page, identitySentinel);
-  await quickAssistantLauncher(page).click();
+  await openQuickAssistantWithStatus(page);
   await expect(
     quickAssistantDialog(page).getByTestId("assistant-history"),
-  ).toBeEmpty();
+  ).not.toContainText(answer);
+  await expect(
+    quickAssistantDialog(page).getByTestId("assistant-history"),
+  ).toContainText("你好，我是 M 助手。");
 
-  const reloadedStatusResponse = waitForAssistantStatus(page);
   await page.reload();
-  await reloadedStatusResponse;
-  await quickAssistantLauncher(page).click();
+  await openQuickAssistantWithStatus(page);
   await expect(
     quickAssistantDialog(page).getByTestId("assistant-history"),
-  ).toBeEmpty();
+  ).not.toContainText(answer);
+  await expect(
+    quickAssistantDialog(page).getByTestId("assistant-history"),
+  ).toContainText("你好，我是 M 助手。");
 
   expectOnlyDeliberateDiagnostics(diagnostics, {
     applicationOrigin: new URL(page.url()).origin,

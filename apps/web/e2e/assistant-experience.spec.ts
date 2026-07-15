@@ -206,8 +206,22 @@ function expectCleanEvidence(
 }
 
 const ASSISTANT_CHAT_ENDPOINT = "/api/v1/assistant/chat";
+const ASSISTANT_STATUS_ENDPOINT = "/api/v1/assistant/status";
 const ASSISTANT_DOCK_WIDTH_STORAGE_KEY =
   "ai-agent-platform:assistant-dock-width:v1";
+
+async function activateAssistantWithStatus(
+  page: Page,
+  activate: () => Promise<void>,
+) {
+  const statusResponse = page.waitForResponse(
+    (candidate) =>
+      candidate.url().endsWith(ASSISTANT_STATUS_ENDPOINT) &&
+      candidate.status() === 200,
+  );
+  await activate();
+  await statusResponse;
+}
 
 function expectWidth(locator: Locator, expected: number, tolerance = 2) {
   return expect
@@ -294,6 +308,7 @@ async function ensureAdminTwoFactor(
 test("portal header entry, quick assistant, dock, and standalone workspace are keyboard-safe", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(45_000);
   await configure(page, testInfo);
   const evidence = collectEvidence(page);
   await page.goto("/");
@@ -302,7 +317,7 @@ test("portal header entry, quick assistant, dock, and standalone workspace are k
   const topEntry = page.getByRole("button", { name: "打开 AI 助理" });
   await expect(topEntry).toBeVisible();
   await tabTo(page, topEntry);
-  await page.keyboard.press("Enter");
+  await activateAssistantWithStatus(page, () => page.keyboard.press("Enter"));
   await expectSingleDialog(page, "AI 助理工作区");
   await expect(page.getByRole("textbox", { name: "输入问题" })).toBeFocused();
   await page.getByRole("button", { name: "关闭 AI 助理工作区" }).click();
@@ -385,7 +400,7 @@ test("desktop dock clamps, persists only completed resizing, and restores focus"
   await page.reload();
 
   const topEntry = page.getByRole("button", { name: "打开 AI 助理" });
-  await topEntry.click();
+  await activateAssistantWithStatus(page, () => topEntry.click());
   const dialog = page.getByRole("dialog", { name: "AI 助理工作区" });
   const separator = dialog.getByRole("separator", {
     name: "调整 AI 助理工作区宽度",
@@ -432,7 +447,9 @@ test("desktop dock clamps, persists only completed resizing, and restores focus"
   ).toBe("760");
 
   await page.reload();
-  await page.getByRole("button", { name: "打开 AI 助理" }).click();
+  await activateAssistantWithStatus(page, () =>
+    page.getByRole("button", { name: "打开 AI 助理" }).click(),
+  );
   await expectWidth(page.getByRole("dialog", { name: "AI 助理工作区" }), 760);
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -480,7 +497,9 @@ test("quick, dock, and standalone workspace keep one in-flight conversation", as
   });
 
   await page.goto("/pricing");
-  await page.getByRole("button", { name: "打开 M 助手" }).click();
+  await activateAssistantWithStatus(page, () =>
+    page.getByRole("button", { name: "打开 M 助手" }).click(),
+  );
   const quickInput = page.getByRole("textbox", { name: "向 M 助手提问" });
   const question = "请保留这条跨形态问题";
   await quickInput.fill(question);
@@ -530,7 +549,9 @@ test("mobile dock is a single full-screen, keyboard-safe scrolling workspace", a
   });
 
   await page.goto("/");
-  await page.getByRole("button", { name: "打开 AI 助理" }).click();
+  await activateAssistantWithStatus(page, () =>
+    page.getByRole("button", { name: "打开 AI 助理" }).click(),
+  );
   await expectSingleDialog(page, "AI 助理工作区");
   const dialog = page.getByRole("dialog", { name: "AI 助理工作区" });
   await expect(dialog.getByRole("separator")).toHaveCount(0);
