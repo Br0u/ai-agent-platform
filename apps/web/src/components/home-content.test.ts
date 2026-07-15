@@ -6,7 +6,6 @@ import {
   platformLayers,
   resources,
   solutions,
-  type HomeIconName,
 } from "./home-content";
 
 describe("home content reference contract", () => {
@@ -94,7 +93,7 @@ describe("home content reference contract", () => {
         description: "从训练到治理 · 全链路管理",
         icon: "activity",
       },
-    ] satisfies Array<{ icon: HomeIconName }>;
+    ];
 
     expect(capabilities).toStrictEqual(expected);
   });
@@ -125,7 +124,7 @@ describe("home content reference contract", () => {
         description: "权限管理、用户管理、数据权限与算力分配。",
         icon: "shield",
       },
-    ] satisfies Array<{ icon: HomeIconName }>;
+    ];
 
     expect(platformLayers).toStrictEqual(expected);
   });
@@ -155,7 +154,7 @@ describe("home content reference contract", () => {
           "将用户、操作、数据权限与异构资源管理纳入同一企业级控制边界。",
         icon: "shield",
       },
-    ] satisfies Array<{ icon: HomeIconName }>;
+    ];
 
     expect(enterpriseProofs).toStrictEqual(expected);
   });
@@ -192,7 +191,7 @@ describe("home content reference contract", () => {
         subsetLabel: "基于华鲲元启的行业子能力",
         icon: "eye",
       },
-    ] satisfies Array<{ icon: HomeIconName }>;
+    ];
 
     expect(solutions).toStrictEqual(expected);
   });
@@ -223,7 +222,7 @@ describe("home content reference contract", () => {
         href: "/support",
         icon: "headphones",
       },
-    ] satisfies Array<{ icon: HomeIconName }>;
+    ];
 
     expect(resources).toStrictEqual(expected);
   });
