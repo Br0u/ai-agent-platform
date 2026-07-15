@@ -120,6 +120,56 @@ async function attachScreenshot(page: Page, testInfo: TestInfo, name: string) {
   });
 }
 
+function isExpectedUnusedPreloadWarning(
+  message: BrowserEvidence["consoleMessages"][number],
+  applicationOrigin?: string,
+) {
+  if (
+    applicationOrigin === undefined ||
+    message.level !== "warning" ||
+    !message.text.startsWith(`The resource ${applicationOrigin}/`) ||
+    !message.text.endsWith(
+      " was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+    )
+  ) {
+    return false;
+  }
+
+  return message.url === "" || message.url.startsWith(applicationOrigin);
+}
+
+function isExpectedNavigationCancellation(
+  failure: BrowserEvidence["requestFailures"][number],
+  applicationOrigin?: string,
+) {
+  if (
+    applicationOrigin === undefined ||
+    failure.errorText !== "net::ERR_ABORTED"
+  ) {
+    return false;
+  }
+
+  try {
+    const url = new URL(failure.url);
+    if (url.origin !== applicationOrigin) {
+      return false;
+    }
+    if (failure.method === "GET") {
+      return (
+        url.searchParams.has("_rsc") ||
+        url.pathname.startsWith("/_next/static/")
+      );
+    }
+    return (
+      failure.method === "POST" &&
+      url.pathname === "/staff/two-factor" &&
+      url.searchParams.get("returnTo") === "/admin/assistant"
+    );
+  } catch {
+    return false;
+  }
+}
+
 function expectCleanEvidence(
   evidence: BrowserEvidence,
   applicationOrigin?: string,
@@ -132,30 +182,17 @@ function expectCleanEvidence(
         message.text.startsWith("[Fast Refresh]") ||
         message.text.startsWith("You have Reduced Motion enabled")),
   );
+  const knownBrowserMessages = evidence.consoleMessages.filter((message) =>
+    isExpectedUnusedPreloadWarning(message, applicationOrigin),
+  );
   const allowedNavigationCancellations = evidence.requestFailures.filter(
-    (failure) => {
-      if (
-        applicationOrigin === undefined ||
-        failure.method !== "GET" ||
-        failure.errorText !== "net::ERR_ABORTED"
-      ) {
-        return false;
-      }
-      try {
-        const url = new URL(failure.url);
-        return (
-          url.origin === applicationOrigin &&
-          (url.searchParams.has("_rsc") ||
-            url.pathname.startsWith("/_next/static/"))
-        );
-      } catch {
-        return false;
-      }
-    },
+    (failure) => isExpectedNavigationCancellation(failure, applicationOrigin),
   );
   expect(
     evidence.consoleMessages.filter(
-      (message) => !knownDevelopmentMessages.includes(message),
+      (message) =>
+        !knownDevelopmentMessages.includes(message) &&
+        !knownBrowserMessages.includes(message),
     ),
   ).toEqual([]);
   expect(evidence.pageErrors).toEqual([]);

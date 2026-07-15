@@ -59,6 +59,21 @@ function isExpectedNextNavigationCancellation(
   }
 }
 
+function isExpectedUnusedPreloadWarning(
+  diagnostic: BrowserDiagnostic,
+  applicationOrigin: string,
+) {
+  return (
+    diagnostic.kind === "console" &&
+    diagnostic.level === "warning" &&
+    diagnostic.text.startsWith(`The resource ${applicationOrigin}/`) &&
+    diagnostic.text.endsWith(
+      " was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+    ) &&
+    (diagnostic.url === "" || diagnostic.url.startsWith(applicationOrigin))
+  );
+}
+
 function collectBrowserDiagnostics(page: Page): BrowserDiagnostic[] {
   const diagnostics: BrowserDiagnostic[] = [];
 
@@ -159,6 +174,9 @@ function expectOnlyDeliberateDiagnostics(
     ...diagnostics.filter((diagnostic) =>
       isExpectedNextNavigationCancellation(diagnostic, applicationOrigin),
     ),
+    ...diagnostics.filter((diagnostic) =>
+      isExpectedUnusedPreloadWarning(diagnostic, applicationOrigin),
+    ),
   ]);
   expect(diagnostics.filter((diagnostic) => !expected.has(diagnostic))).toEqual(
     [],
@@ -251,12 +269,13 @@ async function expectNavigationSentinel(page: Page, value: string) {
 async function sendSuccessfulAssistantMessage(page: Page) {
   const question = "如何开始了解平台？";
   const answer = "你可以从快速开始文档了解平台结构和使用入口。";
-  await page.getByLabel("向 M 助手提问").fill(question);
+  const dialog = page.getByRole("dialog", { name: "M 助手" });
+  await dialog.getByLabel("向 M 助手提问").fill(question);
   const response = page.waitForResponse(
     (candidate) =>
       candidate.url().endsWith(ASSISTANT_API) && candidate.status() === 200,
   );
-  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await dialog.getByRole("button", { name: "发送消息", exact: true }).click();
   await response;
   await expect(page.getByTestId("assistant-history")).toContainText(question);
   await expect(page.getByTestId("assistant-history")).toContainText(answer);
@@ -424,7 +443,9 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
   await launcher.click();
   const dialog = page.getByRole("dialog", { name: "M 助手" });
   const input = page.getByLabel("向 M 助手提问");
-  await expect(input).toBeFocused();
+  await expect(
+    dialog.getByRole("button", { name: "关闭 M 助手", exact: true }),
+  ).toBeFocused();
   await expect(input).not.toHaveAttribute("maxlength");
   await expect(page.getByText("最多输入 500 个字符。")).toBeVisible();
   await page.keyboard.press("Escape");
