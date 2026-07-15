@@ -341,6 +341,22 @@ test("assistant preset responses expose safe suggested actions", async ({
 }, testInfo) => {
   await configureProject(page, testInfo);
   const diagnostics = collectBrowserDiagnostics(page);
+  let statusRequests = 0;
+  await page.route(`**${ASSISTANT_STATUS_API}`, async (route) => {
+    statusRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        version: "1",
+        requestId: `pricing-presets-${testInfo.project.name}`,
+        live: true,
+        ready: false,
+        capability: "placeholder",
+        message: "模型尚未配置，当前为安全占位模式。",
+      }),
+    });
+  });
   await gotoPublicRoute(page, "/pricing");
   const dialog = await openQuickAssistantWithStatus(page);
 
@@ -359,6 +375,8 @@ test("assistant preset responses expose safe suggested actions", async ({
       dialog.getByRole("link", { name: label, exact: true }),
     ).toHaveAttribute("href", href);
   }
+  expect(statusRequests).toBe(1);
+  await page.unroute(`**${ASSISTANT_STATUS_API}`);
 
   expectOnlyDeliberateDiagnostics(diagnostics, {
     applicationOrigin: new URL(page.url()).origin,
