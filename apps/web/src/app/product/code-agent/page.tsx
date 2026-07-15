@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import "./code-agent.css";
-import { MobiusStripVisual } from "./mobius-strip-visual";
 
 export const metadata: Metadata = {
   title: "码多多 · 私有化 AI 编程助手",
@@ -105,7 +104,30 @@ export default function CodeAgentPage() {
 
           {/* 右侧 3D 悬浮组件区 */}
           <div className="ca-hero__visual">
-            <MobiusStripVisual />
+            <div className="ca-3d-scene">
+              {/* 发光底座 */}
+              <div className="ca-3d-base">
+                <div className="ca-3d-base-rings"></div>
+              </div>
+
+              {/* 核心 3D 几何体 (CSS 绘制) */}
+              <div className="ca-3d-cube-group">
+                <div className="ca-3d-cube ca-3d-cube--1"></div>
+                <div className="ca-3d-cube ca-3d-cube--2"></div>
+                <div className="ca-3d-cube ca-3d-cube--3"></div>
+              </div>
+
+              {/* 环绕代码丝带 */}
+              <div className="ca-ribbon ca-ribbon--1">
+                print &apos;码多多&apos;
+              </div>
+              <div className="ca-ribbon ca-ribbon--2">
+                print &apos;Hello World&apos;
+              </div>
+              <div className="ca-ribbon ca-ribbon--3">
+                print &apos;码多多&apos;
+              </div>
+            </div>
           </div>
         </div>
       </section>
