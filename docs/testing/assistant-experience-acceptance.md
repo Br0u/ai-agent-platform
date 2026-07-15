@@ -6,16 +6,16 @@
 sh docs/testing/run-assistant-experience-e2e.sh
 ```
 
-脚本默认使用隔离 Compose 项目 `aap-assistant-e2e`。并发或保留旧项目用于人工核查时，可以使用同前缀的独立项目：
+脚本默认使用隔离 Compose 项目 `aap-assistant-e2e`。需要保留失败现场或避免项目名冲突时，可以使用同前缀的独立项目：
 
 ```bash
 AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT=aap-assistant-e2e-task9 \
   sh docs/testing/run-assistant-experience-e2e.sh
 ```
 
-脚本在构建前原子取得位于 `/tmp` 的固定项目锁和全局 `8080` 端口锁，并拒绝接管已有容器、卷、网络、项目镜像或已被占用的端口。锁不依赖 `TMPDIR`，因此同一 Compose 项目从不同临时目录启动时仍会串行。只有本次运行持有的两个 `0600` owner token 都未被替换，退出 trap 才执行一次 `down --rmi local -v --remove-orphans`；令牌不匹配时拒绝清理并保留现场供人工核查。
+脚本在构建前原子取得位于 `/tmp` 的固定项目锁和全局 `8080` 端口锁，并拒绝接管已有容器、卷、网络、项目镜像或已被占用的端口。锁不依赖 `TMPDIR`，因此同一 Compose 项目从不同临时目录启动时仍会串行；不同项目也会因共享全局 `8080` 锁而串行，后启动的并发任务会被明确拒绝。只有本次运行持有的两个 `0600` owner token 都未被替换，退出 trap 才执行一次 `down --rmi local -v --remove-orphans`；令牌不匹配时拒绝清理并保留现场供人工核查。
 
-可配置项目名用于并发运行和保留某次失败现场，但仅接受 `aap-assistant-e2e` 或带安全字符后缀的同前缀名称，避免 shell 与路径注入。`.env.e2e` 是脚本生成或复用的本地凭据源，始终验证并收紧为 `0600`，不会输出内容；数据库、认证、AgentOS 和 Assistant 密钥在交给 Compose 前统一物化为临时 `0600` secret 文件，不进入命令参数。临时目录带独立 owner token，退出时只删除本次运行创建的已知文件并使用 `rmdir` 收口，不会对任意路径执行递归删除。Dockerfile 的 pnpm store 使用 BuildKit 内容寻址缓存，目的是让 registry 中断后能够复用已校验包，不缓存项目 secret，也不改变锁文件校验。
+可配置项目名用于保留某次失败现场或避免项目名冲突，但仅接受 `aap-assistant-e2e` 或带安全字符后缀的同前缀名称，避免 shell 与路径注入。`.env.e2e` 是脚本生成或复用的本地凭据源，始终验证并收紧为 `0600`，不会输出内容；数据库、认证、AgentOS 和 Assistant 密钥在交给 Compose 前统一物化为临时 `0600` secret 文件，不进入命令参数。临时目录带独立 owner token，退出时只删除本次运行创建的已知文件并使用 `rmdir` 收口，不会对任意路径执行递归删除。Dockerfile 的 pnpm store 使用 BuildKit 内容寻址缓存，目的是让 registry 中断后能够复用已校验包，不缓存项目 secret，也不改变锁文件校验。
 
 所有权只会在锁、同名资源、端口、secret 和 `docker compose config --quiet` 全部通过后取得。在此之前任何失败都不会调用 `docker compose down`；取得所有权后的 build、up、Playwright 或正常退出则恰好清理一次。缺少 `lsof` 时脚本按失败关闭处理，不会猜测端口是否空闲。
 
