@@ -16,6 +16,12 @@ export function assertSafeIdentityMigrationTestDatabaseUrl(
     return refusal("TEST_DATABASE_URL must use PostgreSQL");
   }
 
+  if (parsed.search || parsed.hash) {
+    return refusal(
+      "TEST_DATABASE_URL must not contain query parameters or fragments",
+    );
+  }
+
   const localHosts = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
   if (!localHosts.has(parsed.hostname)) {
     return refusal("host must be localhost, 127.0.0.1, or ::1");
