@@ -232,132 +232,63 @@
   margin-top: 12px;
 }
 
-/* S1 右侧: 3D 悬浮效果模拟 */
+/* S1 右侧: 真实莫比乌斯带视觉 */
 .ca-hero__visual {
   position: relative;
-  height: 500px;
+  height: 360px;
   display: flex;
   align-items: center;
   justify-content: center;
-  perspective: 1000px;
 }
 
-.ca-3d-scene {
+.ca-mobius {
   position: relative;
-  width: 300px;
-  height: 300px;
-  transform-style: preserve-3d;
-  animation: float 6s ease-in-out infinite;
+  isolation: isolate;
+  display: grid;
+  width: min(100%, 520px);
+  height: 360px;
+  place-items: center;
+  overflow: visible;
 }
 
-@keyframes float {
-  0%,
-  100% {
-    transform: translateY(0) rotateX(10deg) rotateY(-10deg);
-  }
-  50% {
-    transform: translateY(-20px) rotateX(15deg) rotateY(-5deg);
-  }
-}
-
-.ca-3d-base {
+.ca-mobius::before {
   position: absolute;
-  bottom: -60px;
-  left: 50%;
-  transform: translateX(-50%) rotateX(70deg);
-  width: 260px;
-  height: 260px;
+  right: 10%;
+  bottom: 4%;
+  left: 10%;
+  height: 22%;
+  border-radius: 50%;
   background: radial-gradient(
-    circle,
-    rgba(139, 92, 246, 0.2) 0%,
-    transparent 70%
+    ellipse,
+    rgba(92, 120, 235, 0.28) 0%,
+    rgba(150, 103, 241, 0.12) 42%,
+    transparent 74%
   );
-  border-radius: 50%;
+  content: "";
+  filter: blur(12px);
+  pointer-events: none;
+  z-index: 0;
 }
 
-.ca-3d-base-rings {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 160px;
-  height: 160px;
-  border: 2px dashed rgba(139, 92, 246, 0.4);
-  border-radius: 50%;
-}
-
-.ca-3d-cube-group {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 160px;
-  height: 160px;
-}
-
-.ca-3d-cube {
-  position: absolute;
-  top: 0;
-  left: 0;
+.ca-mobius__canvas {
+  position: relative;
+  z-index: 1;
+  display: block;
   width: 100%;
   height: 100%;
-  border: 4px solid rgba(139, 92, 246, 0.6);
-  border-radius: 8px;
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.4) 0%,
-    rgba(139, 92, 246, 0.1) 100%
-  );
-  backdrop-filter: blur(8px);
-  box-shadow:
-    inset 0 0 20px rgba(139, 92, 246, 0.2),
-    0 10px 30px rgba(59, 130, 246, 0.3);
+  max-width: 100%;
 }
 
-.ca-3d-cube--1 {
-  transform: rotateZ(0deg) scale(1);
-}
-.ca-3d-cube--2 {
-  transform: rotateZ(45deg) scale(0.9);
-  border-color: rgba(59, 130, 246, 0.6);
-}
-.ca-3d-cube--3 {
-  transform: rotateZ(90deg) scale(0.8);
-  border-color: rgba(236, 72, 153, 0.5);
-}
-
-.ca-ribbon {
+.ca-visually-hidden {
   position: absolute;
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid #e0e7ff;
-  color: #4f46e5;
-  font-family: monospace;
-  font-weight: 700;
-  font-size: 14px;
-  padding: 8px 16px;
-  border-radius: 20px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-  backdrop-filter: blur(4px);
-}
-
-.ca-ribbon--1 {
-  top: 20%;
-  left: -20%;
-  transform: rotateZ(-10deg) translateZ(50px);
-}
-
-.ca-ribbon--2 {
-  bottom: 20%;
-  right: -30%;
-  transform: rotateZ(15deg) translateZ(80px);
-}
-
-.ca-ribbon--3 {
-  top: -10%;
-  right: 10%;
-  transform: rotateZ(5deg) translateZ(-40px);
-  opacity: 0.8;
-  font-size: 12px;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* ========== S2: 安装步骤 ========== */
@@ -575,7 +506,11 @@
   }
 
   .ca-hero__visual {
-    height: 400px;
+    height: 320px;
+  }
+
+  .ca-mobius {
+    height: 320px;
   }
 
   .ca-steps__grid {
@@ -590,5 +525,25 @@
 
   .ca-steps__grid {
     grid-template-columns: 1fr;
+  }
+
+  .ca-mobius {
+    width: 100%;
+    height: 260px;
+  }
+
+  .ca-hero__visual {
+    height: 260px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .code-agent-page *,
+  .code-agent-page *::before,
+  .code-agent-page *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
   }
 }
