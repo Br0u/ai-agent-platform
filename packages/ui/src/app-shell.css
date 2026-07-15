@@ -148,26 +148,8 @@
   width: 25px;
   height: 25px;
   flex: 0 0 25px;
-  transform-origin: center;
-  transform-box: fill-box;
-  animation: assistant-mobius-turn 9s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  display: block;
   transition: filter 180ms var(--ease-out);
-}
-
-@keyframes assistant-mobius-turn {
-  0%,
-  100% {
-    transform: perspective(72px) rotate3d(0.12, 1, 0.05, -10deg) scaleX(1);
-  }
-  25% {
-    transform: perspective(72px) rotate3d(0.12, 1, 0.05, 74deg) scaleX(0.84);
-  }
-  50% {
-    transform: perspective(72px) rotate3d(0.12, 1, 0.05, 180deg) scaleX(1);
-  }
-  75% {
-    transform: perspective(72px) rotate3d(0.12, 1, 0.05, 286deg) scaleX(0.84);
-  }
 }
 
 .assistant-header-entry:active {
@@ -337,10 +319,6 @@
     transition: none;
   }
 
-  .assistant-header-entry__mark {
-    animation: none;
-  }
-
   .assistant-header-entry::after {
     transition: none;
   }
@@ -358,12 +336,8 @@
     color: ButtonText;
   }
 
-  .assistant-header-entry__mark .assistant-header-entry__facet {
-    fill: currentColor;
-    opacity: 1;
-  }
-
-  .assistant-header-entry__mark path {
-    stroke: currentColor;
+  .assistant-header-entry__mark {
+    filter: grayscale(1) contrast(1.8);
+    forced-color-adjust: none;
   }
 }

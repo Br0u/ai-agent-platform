@@ -1,93 +1,165 @@
-import { useId } from "react";
+"use client";
+
+import { useEffect, useRef } from "react";
 import "../app-shell.css";
+import {
+  createMobiusMesh,
+  mobiusScaleForViewport,
+  type MobiusFace,
+  type MobiusMesh,
+  type MobiusPoint,
+} from "./assistant-header-mobius";
 
-type Point2 = readonly [number, number];
+const TWO_PI = Math.PI * 2;
+const YAW_PERIOD_MS = 11_000;
+const FOCAL_LENGTH = 7.5;
+const HEADER_MESH = createMobiusMesh();
 
-type MobiusFace = {
-  points: readonly Point2[];
-  opacity: number;
+type ProjectedVertex = {
+  x: number;
+  y: number;
+  z: number;
 };
 
-type MobiusMarkMesh = {
-  faces: readonly MobiusFace[];
-  edges: readonly (readonly Point2[])[];
-  centerline: readonly Point2[];
+type ProjectedTriangle = {
+  points: [ProjectedVertex, ProjectedVertex, ProjectedVertex];
+  depth: number;
+  fillStyle: string;
 };
 
-const MOBIUS_SEGMENTS = 20;
-const MOBIUS_HALF_WIDTH = 0.72;
+function projectVertex(
+  vertex: MobiusPoint,
+  yaw: number,
+  pitch: number,
+  scale: number,
+  centerX: number,
+  centerY: number,
+  verticalFloat: number,
+): ProjectedVertex {
+  const cosYaw = Math.cos(yaw);
+  const sinYaw = Math.sin(yaw);
+  const x = vertex.x * cosYaw - vertex.z * sinYaw;
+  let y = vertex.y;
+  let z = vertex.x * sinYaw + vertex.z * cosYaw;
 
-function projectMobiusPoint(u: number, v: number) {
-  const x = (1 + v * Math.cos(u / 2)) * Math.cos(u);
-  const y = (1 + v * Math.cos(u / 2)) * Math.sin(u);
-  const z = v * Math.sin(u / 2);
+  const cosPitch = Math.cos(pitch);
+  const sinPitch = Math.sin(pitch);
+  const pitchedY = y * cosPitch - z * sinPitch;
+  z = y * sinPitch + z * cosPitch;
+  y = pitchedY;
 
-  const yaw = -0.62;
-  const pitch = 0.42;
-  const roll = -0.1;
-  const yawX = x * Math.cos(yaw) + z * Math.sin(yaw);
-  const yawZ = -x * Math.sin(yaw) + z * Math.cos(yaw);
-  const pitchY = y * Math.cos(pitch) - yawZ * Math.sin(pitch);
-  const pitchZ = y * Math.sin(pitch) + yawZ * Math.cos(pitch);
-  const screenX = yawX * Math.cos(roll) - pitchY * Math.sin(roll);
-  const screenY = yawX * Math.sin(roll) + pitchY * Math.cos(roll);
+  const perspective = FOCAL_LENGTH / (FOCAL_LENGTH - z);
 
   return {
-    point: [24 + screenX * 9.5, 24 - screenY * 9.5] as Point2,
-    depth: pitchZ,
+    x: centerX + x * scale * perspective,
+    y: centerY + y * scale * perspective + verticalFloat,
+    z,
   };
 }
 
-function createMobiusMarkMesh(): MobiusMarkMesh {
-  const faces: MobiusFace[] = [];
-  const edges: Point2[][] = [[], []];
-  const centerline: Point2[] = [];
+function projectFace(
+  face: MobiusFace,
+  mesh: MobiusMesh,
+  projectedVertices: ProjectedVertex[],
+): ProjectedTriangle {
+  const points: [ProjectedVertex, ProjectedVertex, ProjectedVertex] = [
+    projectedVertices[face[0]],
+    projectedVertices[face[1]],
+    projectedVertices[face[2]],
+  ];
+  const vertices = [
+    mesh.vertices[face[0]],
+    mesh.vertices[face[1]],
+    mesh.vertices[face[2]],
+  ];
+  const averageU = (vertices[0].u + vertices[1].u + vertices[2].u) / 3;
+  const averageV = (vertices[0].v + vertices[1].v + vertices[2].v) / 3;
+  const normalizedU = (((averageU % TWO_PI) + TWO_PI) % TWO_PI) / TWO_PI;
+  const hue = 222 + normalizedU * 68 + averageV * 6;
+  const saturation = 78 + averageV * 4;
+  const lightness = 48 + averageV * 10;
 
-  for (let index = 0; index < MOBIUS_SEGMENTS; index += 1) {
-    const startU = (index / MOBIUS_SEGMENTS) * Math.PI * 2;
-    const endU = ((index + 1) / MOBIUS_SEGMENTS) * Math.PI * 2;
-    const start = projectMobiusPoint(startU, -MOBIUS_HALF_WIDTH);
-    const startOpposite = projectMobiusPoint(startU, MOBIUS_HALF_WIDTH);
-    const end = projectMobiusPoint(endU, -MOBIUS_HALF_WIDTH);
-    const endOpposite = projectMobiusPoint(endU, MOBIUS_HALF_WIDTH);
-    const depth =
-      (start.depth + startOpposite.depth + end.depth + endOpposite.depth) / 4;
+  return {
+    points,
+    depth: (points[0].z + points[1].z + points[2].z) / 3,
+    fillStyle: `hsl(${hue.toFixed(1)} ${saturation.toFixed(1)}% ${lightness.toFixed(1)}%)`,
+  };
+}
 
-    faces.push({
-      points: [start.point, end.point, endOpposite.point, startOpposite.point],
-      opacity: 0.62 + Math.max(0, Math.min(1, (depth + 1.6) / 3.2)) * 0.32,
-    });
-    edges[0].push(start.point);
-    edges[1].push(startOpposite.point);
-    centerline.push(projectMobiusPoint(startU, 0).point);
+function drawAssistantMobius(
+  context: CanvasRenderingContext2D,
+  mesh: MobiusMesh,
+  width: number,
+  height: number,
+  elapsedMs: number,
+): void {
+  context.clearRect(0, 0, width, height);
+  if (width <= 0 || height <= 0) return;
 
-    if (index === MOBIUS_SEGMENTS - 1) {
-      edges[0].push(end.point);
-      edges[1].push(endOpposite.point);
-      centerline.push(projectMobiusPoint(endU, 0).point);
-    }
+  const yaw = ((elapsedMs % YAW_PERIOD_MS) / YAW_PERIOD_MS) * TWO_PI;
+  const pitch = 0.2 + Math.sin(elapsedMs / 2_600) * 0.075;
+  const verticalFloat = Math.sin(elapsedMs / 2_100) * height * 0.035;
+  const scale = mobiusScaleForViewport(width, height);
+  const projectedVertices = mesh.vertices.map((vertex) =>
+    projectVertex(
+      vertex,
+      yaw,
+      pitch,
+      scale,
+      width / 2,
+      height / 2,
+      verticalFloat,
+    ),
+  );
+  const triangles = mesh.faces
+    .map((face) => projectFace(face, mesh, projectedVertices))
+    .sort((first, second) => first.depth - second.depth);
+
+  for (const triangle of triangles) {
+    const [first, second, third] = triangle.points;
+    context.beginPath();
+    context.moveTo(first.x, first.y);
+    context.lineTo(second.x, second.y);
+    context.lineTo(third.x, third.y);
+    context.closePath();
+
+    context.globalAlpha = 1;
+    context.fillStyle = triangle.fillStyle;
+    context.fill();
+
+    context.globalAlpha = 0.2;
+    context.fillStyle = "rgba(255, 255, 255, 0.72)";
+    context.fill();
   }
 
-  return {
-    faces: faces.sort((left, right) => left.opacity - right.opacity),
-    edges,
-    centerline,
+  const rowSize = 7;
+  const drawMeshLine = (
+    vIndex: number,
+    alpha: number,
+    lineWidth: number,
+  ): void => {
+    const firstPoint = projectedVertices[vIndex];
+    if (!firstPoint) return;
+
+    context.beginPath();
+    context.moveTo(firstPoint.x, firstPoint.y);
+    for (let uIndex = 1; uIndex <= 32; uIndex += 1) {
+      const point = projectedVertices[uIndex * rowSize + vIndex];
+      if (point) context.lineTo(point.x, point.y);
+    }
+
+    context.globalAlpha = alpha;
+    context.strokeStyle = "#eef2ff";
+    context.lineWidth = lineWidth;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.stroke();
   };
-}
 
-const MOBIUS_MARK_MESH = createMobiusMarkMesh();
-
-function pointsAttribute(points: readonly Point2[]) {
-  return points.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
-}
-
-function pathAttribute(points: readonly Point2[]) {
-  return points
-    .map(
-      ([x, y], index) =>
-        `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`,
-    )
-    .join(" ");
+  drawMeshLine(0, 0.84, 1.05);
+  drawMeshLine(6, 0.84, 1.05);
+  drawMeshLine(3, 0.42, 0.72);
+  context.globalAlpha = 1;
 }
 
 export type AssistantHeaderEntryProps = {
@@ -99,7 +171,97 @@ export function AssistantHeaderEntry({
   isOpen = false,
   onActivate,
 }: AssistantHeaderEntryProps) {
-  const gradientId = `${useId()}-assistant-mobius-gradient`;
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let reducedMotion = mediaQuery.matches;
+    let animationFrameId: number | null = null;
+    let animationStart: number | null = null;
+    let width = 25;
+    let height = 25;
+    let disposed = false;
+
+    const resizeCanvas = (nextWidth: number, nextHeight: number): void => {
+      width = Math.max(1, Number.isFinite(nextWidth) ? nextWidth : 25);
+      height = Math.max(1, Number.isFinite(nextHeight) ? nextHeight : 25);
+      const devicePixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(width * devicePixelRatio);
+      canvas.height = Math.round(height * devicePixelRatio);
+      context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+
+      if (reducedMotion) {
+        drawAssistantMobius(context, HEADER_MESH, width, height, 0);
+      }
+    };
+
+    const drawFrame = (time: number): void => {
+      animationFrameId = null;
+      if (disposed) return;
+      if (animationStart === null) animationStart = time;
+
+      drawAssistantMobius(
+        context,
+        HEADER_MESH,
+        width,
+        height,
+        time - animationStart,
+      );
+
+      if (!reducedMotion) {
+        animationFrameId = window.requestAnimationFrame(drawFrame);
+      }
+    };
+
+    const scheduleAnimation = (): void => {
+      if (!reducedMotion && animationFrameId === null && !disposed) {
+        animationFrameId = window.requestAnimationFrame(drawFrame);
+      }
+    };
+
+    const handleMotionChange = (event: MediaQueryListEvent): void => {
+      reducedMotion = event.matches;
+      animationStart = null;
+
+      if (reducedMotion && animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+      }
+
+      drawFrame(0);
+      scheduleAnimation();
+    };
+
+    resizeCanvas(canvas.clientWidth || 25, canvas.clientHeight || 25);
+    drawFrame(0);
+
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver((entries) => {
+            const entry = entries[0];
+            resizeCanvas(
+              entry?.contentRect.width ?? canvas.clientWidth,
+              entry?.contentRect.height ?? canvas.clientHeight,
+            );
+          });
+    resizeObserver?.observe(canvas);
+
+    mediaQuery.addEventListener?.("change", handleMotionChange);
+
+    return () => {
+      disposed = true;
+      if (animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+      resizeObserver?.disconnect();
+      mediaQuery.removeEventListener?.("change", handleMotionChange);
+    };
+  }, []);
 
   return (
     <button
@@ -110,59 +272,11 @@ export function AssistantHeaderEntry({
       onClick={onActivate}
       type="button"
     >
-      <svg
+      <canvas
         aria-hidden="true"
         className="assistant-header-entry__mark"
-        focusable="false"
-        viewBox="0 0 48 48"
-      >
-        <defs>
-          <linearGradient id={gradientId} x1="4" x2="44" y1="8" y2="40">
-            <stop offset="0" stopColor="var(--color-signal)" />
-            <stop offset="0.5" stopColor="var(--color-structural)" />
-            <stop offset="1" stopColor="var(--color-accent)" />
-          </linearGradient>
-        </defs>
-        {MOBIUS_MARK_MESH.faces.map((face, index) => (
-          <polygon
-            key={`facet-${index}`}
-            className="assistant-header-entry__facet"
-            fill={`url(#${gradientId})`}
-            opacity={face.opacity}
-            points={pointsAttribute(face.points)}
-          />
-        ))}
-        <path
-          className="assistant-header-entry__edge"
-          d={pathAttribute(MOBIUS_MARK_MESH.edges[0] ?? [])}
-          fill="none"
-          stroke="currentColor"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeOpacity="0.7"
-          strokeWidth="1.15"
-        />
-        <path
-          className="assistant-header-entry__edge"
-          d={pathAttribute(MOBIUS_MARK_MESH.edges[1] ?? [])}
-          fill="none"
-          stroke="currentColor"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeOpacity="0.42"
-          strokeWidth="0.85"
-        />
-        <path
-          className="assistant-header-entry__seam"
-          d={pathAttribute(MOBIUS_MARK_MESH.centerline)}
-          fill="none"
-          stroke="white"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeOpacity="0.72"
-          strokeWidth="0.8"
-        />
-      </svg>
+        ref={canvasRef}
+      />
       <span className="assistant-header-entry__label">AI 助理</span>
     </button>
   );

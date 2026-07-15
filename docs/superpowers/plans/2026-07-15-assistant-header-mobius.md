@@ -4,9 +4,9 @@
 
 **Goal:** Replace the top navigation AI 助理 placeholder curves with a compact, recognizable Möbius strip mark and restore the unrelated code-agent hero visual.
 
-**Architecture:** Keep the navigation entry in `packages/ui` and render a small inline SVG mesh generated from the standard Möbius parameterization. Use CSS only for the lightweight looping 3D-like turn, hover/active emphasis, and reduced-motion fallback. Remove the mistakenly added product-page renderer and its tests so the code-agent page returns to its original structure.
+**Architecture:** Keep the navigation entry in `packages/ui` and reuse the standard Möbius mesh plus the Canvas yaw/pitch perspective projection from the earlier hero visual, reduced to a 32×6 mesh for the 25px mark. Drive the lightweight render loop with `requestAnimationFrame`, while preserving hover/active emphasis and reduced-motion fallback. Remove the mistakenly added product-page renderer and its tests so the code-agent page returns to its original structure.
 
-**Tech Stack:** React, inline SVG, CSS keyframes, Vitest, Testing Library.
+**Tech Stack:** React client component, Canvas 2D, CSS, Vitest, Testing Library.
 
 ---
 
@@ -27,14 +27,15 @@
 ### Task 2: Replace the AI 助理 header mark
 
 **Files:**
+- Create: `packages/ui/src/navigation/assistant-header-mobius.ts`
 - Modify: `packages/ui/src/navigation/assistant-header-entry.tsx`
 - Modify: `packages/ui/src/app-shell.css`
 - Modify: `packages/ui/src/navigation/assistant-header-entry.test.tsx`
 
-- [x] Add a focused SVG mesh made from connected Möbius-strip facets, with a continuous band silhouette, center seam, and depth-aware gradient.
-- [x] Animate the mark with a slow transform-only perspective turn; preserve the 44px control hit area and reduced-motion behavior.
-- [x] Keep the decorative SVG hidden from assistive technology and preserve forced-colors fallback.
-- [x] Update tests to assert mesh structure, unique gradient IDs, motion rules, accessibility, and forced-colors behavior.
+- [x] Add the shared Möbius parameterization and a compact 32×6 triangle mesh.
+- [x] Reproject the mesh every animation frame with yaw, pitch, perspective, depth sorting, gradient color, and highlight lines.
+- [x] Keep the decorative Canvas hidden from assistive technology and preserve reduced-motion and forced-colors fallbacks.
+- [x] Update tests to assert drawing, frame re-projection, cleanup behavior, accessibility, and CSS fallbacks.
 
 ### Task 3: Verify
 
