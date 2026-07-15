@@ -6,7 +6,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AssistantStatusResponse } from "@/features/assistant/assistant-contract";
 import {

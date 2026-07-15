@@ -63,10 +63,10 @@ const serviceStates = {
 
 function renderQuickWithServiceState(serviceState: AssistantStatusResponse) {
   function StatusHarness() {
-    const experience = useAssistantExperience();
+    const { adoptServiceState } = useAssistantExperience();
     useEffect(() => {
-      experience.adoptServiceState(serviceState);
-    }, [experience.adoptServiceState]);
+      adoptServiceState(serviceState);
+    }, [adoptServiceState]);
     return <FloatingChatWidget />;
   }
 
