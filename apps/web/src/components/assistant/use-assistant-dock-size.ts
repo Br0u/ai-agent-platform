@@ -237,7 +237,8 @@ export function useAssistantDockSize() {
       try {
         element.setPointerCapture(event.pointerId);
       } catch {
-        // Native listeners still provide cleanup when capture is unavailable.
+        finishResize({ persist: false });
+        return;
       }
       setIsResizing(true);
     },

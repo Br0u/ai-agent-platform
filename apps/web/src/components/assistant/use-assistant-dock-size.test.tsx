@@ -360,6 +360,54 @@ describe("useAssistantDockSize", () => {
     expect(stateElement()).toHaveAttribute("data-width", "760");
   });
 
+  it("fully rolls back when pointer capture fails and allows a later resize", async () => {
+    window.localStorage.setItem(ASSISTANT_DOCK_WIDTH_STORAGE_KEY, "700");
+    const setItem = vi.spyOn(window.localStorage, "setItem");
+    setItem.mockClear();
+    const setPointerCapture = vi
+      .spyOn(HTMLElement.prototype, "setPointerCapture")
+      .mockImplementationOnce(() => {
+        throw new DOMException("capture failed", "InvalidStateError");
+      });
+    render(<DockSizeHarness />);
+    await waitFor(() =>
+      expect(stateElement()).toHaveAttribute("data-width", "700"),
+    );
+
+    fireEvent.pointerDown(resizeHandle(), {
+      button: 0,
+      clientX: 800,
+      pointerId: 11,
+    });
+
+    expect(setPointerCapture).toHaveBeenCalledWith(11);
+    expect(stateElement()).toHaveAttribute("data-resizing", "false");
+    expect(stateElement()).toHaveAttribute("data-width", "700");
+    expect(document.body.style.userSelect).toBe("");
+    expect(document.body.style.cursor).toBe("");
+    expect(setItem).not.toHaveBeenCalled();
+
+    fireEvent.pointerMove(resizeHandle(), { clientX: 700, pointerId: 11 });
+    expect(stateElement()).toHaveAttribute("data-width", "700");
+
+    fireEvent.pointerDown(resizeHandle(), {
+      button: 0,
+      clientX: 800,
+      pointerId: 12,
+    });
+    expect(stateElement()).toHaveAttribute("data-resizing", "true");
+    fireEvent.pointerMove(resizeHandle(), { clientX: 750, pointerId: 12 });
+    fireEvent.pointerUp(resizeHandle(), { clientX: 750, pointerId: 12 });
+
+    expect(stateElement()).toHaveAttribute("data-resizing", "false");
+    expect(stateElement()).toHaveAttribute("data-width", "750");
+    expect(setItem).toHaveBeenCalledTimes(1);
+    expect(setItem).toHaveBeenCalledWith(
+      ASSISTANT_DOCK_WIDTH_STORAGE_KEY,
+      "750",
+    );
+  });
+
   it("ignores pointerup from a different pointer", async () => {
     const setItem = vi.spyOn(window.localStorage, "setItem");
     render(<DockSizeHarness />);
