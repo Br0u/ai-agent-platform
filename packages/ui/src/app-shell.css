@@ -148,15 +148,8 @@
   width: 25px;
   height: 25px;
   flex: 0 0 25px;
-  transform-origin: center;
-  animation: assistant-mobius-rotate 8s linear infinite;
+  display: block;
   transition: filter 180ms var(--ease-out);
-}
-
-@keyframes assistant-mobius-rotate {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .assistant-header-entry:active {
@@ -326,10 +319,6 @@
     transition: none;
   }
 
-  .assistant-header-entry__mark {
-    animation: none;
-  }
-
   .assistant-header-entry::after {
     transition: none;
   }
@@ -347,7 +336,8 @@
     color: ButtonText;
   }
 
-  .assistant-header-entry__mark path {
-    stroke: currentColor;
+  .assistant-header-entry__mark {
+    filter: grayscale(1) contrast(1.8);
+    forced-color-adjust: none;
   }
 }
