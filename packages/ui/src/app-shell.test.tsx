@@ -235,6 +235,9 @@ describe("AppShell", () => {
       "data-shell-variant",
       "portal",
     );
+    expect(container.querySelector("[data-assistant-background-root]")).toBe(
+      container.firstChild,
+    );
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeVisible();
     expect(screen.getByRole("contentinfo")).toBeVisible();
     expect(
@@ -245,6 +248,16 @@ describe("AppShell", () => {
     expect(screen.queryByText("客户控制台")).not.toBeInTheDocument();
     expect(screen.queryByText("CMS 运营后台")).not.toBeInTheDocument();
     expect(screen.getByText("页面内容")).toBeVisible();
+  });
+
+  it("marks the assistant workspace chrome as a portal-safe background root", () => {
+    const { container } = renderShell("assistant", {
+      activeHref: "/assistant",
+    });
+
+    expect(container.querySelector("[data-assistant-background-root]")).toBe(
+      container.firstChild,
+    );
   });
 
   it("renders the complete Console navigation with utilities and active route", () => {

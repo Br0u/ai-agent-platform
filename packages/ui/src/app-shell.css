@@ -6,6 +6,10 @@
   font-family: var(--font-body);
 }
 
+.app-shell[data-assistant-background-root] {
+  isolation: isolate;
+}
+
 .workspace-shell {
   display: flex;
 }
