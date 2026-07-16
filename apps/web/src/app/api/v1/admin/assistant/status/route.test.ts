@@ -157,8 +157,9 @@ describe("GET /api/v1/admin/assistant/status", () => {
         ready: true,
         capability: "placeholder",
         selectedProvider: "placeholder",
+        persistence: "disabled",
       },
-      configuration: { model: "未配置" },
+      configuration: { model: "未配置", sessionStorage: "未启用" },
     });
     expect(result.services.find(({ id }) => id === "agentos")).toMatchObject({
       state: "not_connected",
@@ -207,6 +208,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
     const result = await loadAdminAssistantStatus(realRuntime as never);
 
     expect(result.mode).toBe("agentos");
+    expect(result.runtime.persistence).toBe("agentos");
     expect(result.runtime.selectedProvider).toBe("unavailable");
     expect(result.services.find(({ id }) => id === "agentos")?.state).toBe(
       "ready",
@@ -224,8 +226,11 @@ describe("GET /api/v1/admin/assistant/status", () => {
     expect(result.configuration).toMatchObject({
       defaultAgent: "码多多（maduoduo）",
       model: "已配置（执行暂不可用）",
+      sessionStorage: "AgentOS 持久化已启用",
     });
-    expect(JSON.stringify(result)).not.toMatch(/fallback|回退|raw|private/iu);
+    expect(JSON.stringify(result)).not.toMatch(
+      /fallback|回退|raw|private|https?:|key|timestamp|session.?id|prompt|answer|reply|ip|user.?agent/iu,
+    );
   });
 
   it("does not claim a configured model when placeholder capability has an open execution circuit", async () => {
@@ -244,7 +249,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
       }),
       inspect: () => ({
         providerMode: "agentos" as const,
-        persistence: "disabled" as const,
+        persistence: "agentos" as const,
         circuits: {
           readiness: { state: "closed" as const, consecutiveFailures: 0 },
           execution: { state: "open" as const, consecutiveFailures: 3 },
@@ -258,6 +263,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
     } as never);
 
     expect(result.mode).toBe("agentos");
+    expect(result.runtime.persistence).toBe("agentos");
     expect(result.runtime.selectedProvider).toBe("unavailable");
     expect(result.services.find(({ id }) => id === "model")).toMatchObject({
       state: "not_configured",
@@ -318,6 +324,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
       detail: "模型状态不可用",
     });
     expect(result.configuration.model).toBe("状态不可用");
+    expect(result.configuration.sessionStorage).toBe("AgentOS 持久化已启用");
   });
 
   it("keeps AgentOS mode and sanitized unavailable metadata when lazy composition is invalid", async () => {
@@ -341,10 +348,12 @@ describe("GET /api/v1/admin/assistant/status", () => {
         capability: "degraded",
         providerMode: "agentos",
         selectedProvider: "unavailable",
+        persistence: "agentos",
       },
       configuration: {
         defaultAgent: "码多多（maduoduo）",
         model: "状态不可用",
+        sessionStorage: "AgentOS 持久化已启用",
       },
     });
     expect(result.services.find(({ id }) => id === "agentos")).toMatchObject({
@@ -382,7 +391,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
     });
     const inspect = vi.fn(() => ({
       providerMode: "agentos" as const,
-      persistence: "disabled" as const,
+      persistence: "agentos" as const,
       circuits: {
         readiness: { state: "closed" as const, consecutiveFailures: 0 },
         execution: { state: executionState, consecutiveFailures: 3 },
@@ -442,7 +451,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
     });
     const inspect = vi.fn(() => ({
       providerMode: "agentos" as const,
-      persistence: "disabled" as const,
+      persistence: "agentos" as const,
       circuits: {
         readiness: { state: "closed" as const, consecutiveFailures: 0 },
         execution: { state: executionState, consecutiveFailures: 0 },
@@ -621,7 +630,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
       },
       inspection: {
         providerMode: "agentos" as const,
-        persistence: "disabled" as const,
+        persistence: "agentos" as const,
         circuits: {
           readiness: { state: "closed" as const, consecutiveFailures: 0 },
           execution: { state: "closed" as const, consecutiveFailures: 0 },
@@ -650,7 +659,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
       },
       inspection: {
         providerMode: "agentos" as const,
-        persistence: "disabled" as const,
+        persistence: "agentos" as const,
         circuits: {
           readiness: { state: "closed" as const, consecutiveFailures: 0 },
           execution: { state: "closed" as const, consecutiveFailures: 0 },
@@ -705,7 +714,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
       }),
       inspect: () => ({
         providerMode: "agentos" as const,
-        persistence: "disabled" as const,
+        persistence: "agentos" as const,
         circuits: {
           readiness: { state: "closed" as const, consecutiveFailures: 0 },
           execution: { state: "open" as const, consecutiveFailures: 3 },

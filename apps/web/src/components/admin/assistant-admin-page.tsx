@@ -192,13 +192,13 @@ export function AssistantAdminPage({
         >
           <div>
             <p>SESSION STORAGE</p>
-            <h2 id="assistant-sessions-title">最近会话</h2>
+            <h2 id="assistant-sessions-title">会话持久化</h2>
             <span>{sessions.message}</span>
             <small>
-              {sessions.capability} / {sessions.persistence}
+              {sessions.persistence} / {sessions.listing}
             </small>
           </div>
-          <strong>{sessions.items.length.toString().padStart(2, "0")}</strong>
+          <strong>列表不可用</strong>
         </section>
 
         <nav

@@ -37,8 +37,8 @@ describe("useAssistantSession", () => {
     vi.unstubAllGlobals();
   });
 
-  it("uses the public endpoint and named 15 second timeout by default", () => {
-    expect(ASSISTANT_REQUEST_TIMEOUT_MS).toBe(15_000);
+  it("uses the public endpoint and named 60 second timeout by default", () => {
+    expect(ASSISTANT_REQUEST_TIMEOUT_MS).toBe(60_000);
   });
 
   it("exposes session data and commands without presentation state", () => {
@@ -66,7 +66,7 @@ describe("useAssistantSession", () => {
     expect(result.current.latestAnnouncement).toBe("管理员回答");
   });
 
-  it("turns a timeout into a retryable failure and releases the sending lock", async () => {
+  it("uses the default 60 second deadline, aborts, and waits for explicit retry", async () => {
     vi.useFakeTimers();
     vi.mocked(fetch)
       .mockReturnValueOnce(new Promise(() => undefined))
@@ -75,7 +75,6 @@ describe("useAssistantSession", () => {
       useAssistantSession("/admin/assistant", {
         endpoint: "/api/v1/admin/assistant/chat",
         failureAnnouncement: "测试暂时失败，请稍后重试。",
-        timeoutMs: 25,
       }),
     );
 
@@ -84,16 +83,25 @@ describe("useAssistantSession", () => {
       pending = result.current.submit("超时问题");
     });
     expect(result.current.requestStatus).toBe("sending");
+    const firstSignal = vi.mocked(fetch).mock.calls[0]?.[1]?.signal;
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(25);
+      await vi.advanceTimersByTimeAsync(59_999);
+    });
+    expect(result.current.requestStatus).toBe("sending");
+    expect(fetch).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
       await pending;
     });
+    expect(firstSignal?.aborted).toBe(true);
     expect(result.current.requestStatus).toBe("failed");
     expect(result.current.lastFailedMessage).toBe("超时问题");
     expect(result.current.latestAnnouncement).toBe(
       "测试暂时失败，请稍后重试。",
     );
+    expect(fetch).toHaveBeenCalledOnce();
 
     await act(() => result.current.retry());
     expect(fetch).toHaveBeenCalledTimes(2);

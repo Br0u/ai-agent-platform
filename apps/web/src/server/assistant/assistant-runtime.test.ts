@@ -201,7 +201,7 @@ describe("assistant server runtime", () => {
       session: { kind: "persistent", internalSessionId: "shared-session" },
     });
     await runtime.deleteSession("shared-session");
-    runtime.inspect();
+    expect(runtime.inspect().persistence).toBe("agentos");
 
     expect(createHealthClient).toHaveBeenCalledOnce();
     expect(createRunClient).toHaveBeenCalledOnce();
@@ -266,7 +266,7 @@ describe("assistant server runtime", () => {
 
     expect(runtime.inspect()).toEqual({
       providerMode: "agentos",
-      persistence: "disabled",
+      persistence: "agentos",
       circuits: {
         readiness: { state: "closed", consecutiveFailures: 0 },
         execution: { state: "closed", consecutiveFailures: 0 },
@@ -416,6 +416,7 @@ describe("assistant server runtime", () => {
       readiness: { state: "closed", consecutiveFailures: 0 },
       execution: { state: "open", consecutiveFailures: 3 },
     });
+    expect(runtime.inspect().persistence).toBe("agentos");
     await expect(runtime.status()).resolves.toEqual({
       live: true,
       ready: false,
@@ -464,6 +465,7 @@ describe("assistant server runtime", () => {
       capability: "degraded",
       message: "助手基础服务暂不可用。",
     });
+    expect(runtime.inspect().persistence).toBe("agentos");
     expect(execute).not.toHaveBeenCalled();
   });
 

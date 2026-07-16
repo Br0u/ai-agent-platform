@@ -99,7 +99,7 @@ type SafeCircuitInspection = Pick<
 
 export type AssistantRuntimeInspection = {
   providerMode: AssistantProviderMode;
-  persistence: "disabled";
+  persistence: "disabled" | "agentos";
   circuits: {
     readiness: SafeCircuitInspection;
     execution: SafeCircuitInspection;
@@ -226,7 +226,7 @@ function uncomposedInspection(
 ): AssistantRuntimeInspection {
   return {
     providerMode,
-    persistence: "disabled",
+    persistence: providerMode === "agentos" ? "agentos" : "disabled",
     circuits: {
       readiness: { ...CLOSED_CIRCUIT },
       execution: { ...CLOSED_CIRCUIT },
@@ -377,7 +377,7 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
       }
       return {
         providerMode: "agentos",
-        persistence: "disabled",
+        persistence: "agentos",
         circuits: {
           readiness: safeInspection(composition.readiness.inspect()),
           execution: safeInspection(composition.execution.inspect()),

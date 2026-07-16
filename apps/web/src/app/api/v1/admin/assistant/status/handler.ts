@@ -191,7 +191,10 @@ function snapshot(
                   ? "已配置（执行暂不可用）"
                   : "已配置",
       skills: "未接入",
-      sessionStorage: "未启用",
+      sessionStorage:
+        inspection.persistence === "agentos"
+          ? "AgentOS 持久化已启用"
+          : "未启用",
     },
     message:
       configurationValid && inspection.providerMode === "placeholder"

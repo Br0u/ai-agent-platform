@@ -64,9 +64,14 @@ const status = {
 
 const sessions = {
   persistence: "disabled" as const,
-  capability: "placeholder" as const,
-  items: [],
-  message: "占位模式不持久化会话；会话审计将在存储接入后开放。",
+  listing: "not_available" as const,
+  message: "占位模式未持久化会话；管理列表不可用。",
+} satisfies AdminAssistantSessionsSnapshot;
+
+const agentosSessions = {
+  persistence: "agentos" as const,
+  listing: "not_available" as const,
+  message: "AgentOS 持久化已启用，但管理列表不在本阶段范围。",
 } satisfies AdminAssistantSessionsSnapshot;
 
 afterEach(() => {
@@ -140,6 +145,29 @@ describe("AssistantAdminPage", () => {
     expect(screen.getByRole("button", { name: "Skill 管理" })).toBeDisabled();
     expect(screen.getByText(sessions.message)).toBeVisible();
     expect(screen.queryByText(/客户消息|消息原文/u)).not.toBeInTheDocument();
+  });
+
+  it("shows persistence and unavailable listing without a fake zero count", () => {
+    render(<AssistantAdminPage sessions={sessions} status={status} />);
+
+    expect(screen.getByRole("heading", { name: "会话持久化" })).toBeVisible();
+    expect(screen.getByText("列表不可用")).toBeVisible();
+    expect(screen.getByText(/disabled.*not_available/iu)).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "最近会话" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("00")).not.toBeInTheDocument();
+  });
+
+  it("states that AgentOS persistence is enabled while listing remains unavailable", () => {
+    render(<AssistantAdminPage sessions={agentosSessions} status={status} />);
+
+    expect(screen.getByText(agentosSessions.message)).toBeVisible();
+    expect(screen.getByText(/agentos.*not_available/iu)).toBeVisible();
+    expect(screen.getByText("列表不可用")).toBeVisible();
+    expect(
+      screen.queryByText(/可审计|可列出|最近会话/u),
+    ).not.toBeInTheDocument();
   });
 
   it("describes the protected test session truthfully for both provider modes", () => {

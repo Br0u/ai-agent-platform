@@ -13,14 +13,26 @@ const auth = vi.hoisted(() => {
   return { AuthAccessError, requirePermission: vi.fn() };
 });
 
+const runtime = vi.hoisted(() => ({
+  getAssistantRuntime: vi.fn(),
+  inspect: vi.fn(),
+}));
+
 vi.mock("@/server/auth/access", () => ({
   AuthAccessError: auth.AuthAccessError,
   requirePermission: auth.requirePermission,
 }));
 
+vi.mock("@/server/assistant/assistant-runtime", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/server/assistant/assistant-runtime")
+  >()),
+  getAssistantRuntime: runtime.getAssistantRuntime,
+}));
+
 import {
   createAdminAssistantSessionsHandler,
-  loadPlaceholderAdminAssistantSessions,
+  loadAdminAssistantSessions,
 } from "./handler";
 
 function request(requestId?: string) {
@@ -34,6 +46,11 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     auth.requirePermission.mockResolvedValue({ realm: "workforce" });
+    runtime.inspect.mockReturnValue({
+      providerMode: "placeholder",
+      persistence: "disabled",
+    });
+    runtime.getAssistantRuntime.mockReturnValue({ inspect: runtime.inspect });
   });
 
   it("exports only GET and requires exactly admin:assistant", async () => {
@@ -45,6 +62,8 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
     expect(auth.requirePermission).toHaveBeenCalledExactlyOnceWith(
       "admin:assistant",
     );
+    expect(runtime.getAssistantRuntime).toHaveBeenCalledOnce();
+    expect(runtime.inspect).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -130,13 +149,48 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
     });
   });
 
+  it.each([
+    {
+      persistence: "disabled" as const,
+      expected: {
+        persistence: "disabled",
+        listing: "not_available",
+        message: "占位模式未持久化会话；管理列表不可用。",
+      },
+    },
+    {
+      persistence: "agentos" as const,
+      expected: {
+        persistence: "agentos",
+        listing: "not_available",
+        message: "AgentOS 持久化已启用，但管理列表不在本阶段范围。",
+      },
+    },
+  ])(
+    "reports $persistence persistence without fabricating a session list",
+    async ({ persistence, expected }) => {
+      const inspect = vi.fn(() => ({ persistence }));
+
+      await expect(
+        loadAdminAssistantSessions({ inspect } as never),
+      ).resolves.toEqual(expected);
+      expect(inspect).toHaveBeenCalledOnce();
+      expect(JSON.stringify(expected)).not.toMatch(
+        /items|capability|session.?id|messageText|prompt|answer|reply|ip|user.?agent/iu,
+      );
+    },
+  );
+
   it("returns a correlated versioned non-persisted snapshot", async () => {
     const requestIdFactory = vi.fn(() => "unused-fallback");
     const GET = createAdminAssistantSessionsHandler({
       access: {
         requirePermission: vi.fn().mockResolvedValue({ realm: "workforce" }),
       },
-      loadSessions: loadPlaceholderAdminAssistantSessions,
+      loadSessions: () =>
+        loadAdminAssistantSessions({
+          inspect: () => ({ persistence: "disabled" }),
+        } as never),
       requestIdFactory,
     });
 
@@ -151,13 +205,12 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
       requestId: "sessions-correlation",
       sessions: {
         persistence: "disabled",
-        capability: "placeholder",
-        items: [],
-        message: "占位模式不持久化会话；会话审计将在存储接入后开放。",
+        listing: "not_available",
+        message: "占位模式未持久化会话；管理列表不可用。",
       },
     });
     expect(JSON.stringify(body)).not.toMatch(
-      /customer|messageText|secret|token|cookie|session.?id|ip|user.?agent/iu,
+      /customer|messageText|secret|token|cookie|session.?id|prompt|answer|reply|ip|user.?agent/iu,
     );
   });
 
@@ -167,7 +220,10 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
       access: {
         requirePermission: vi.fn().mockResolvedValue({ realm: "workforce" }),
       },
-      loadSessions: loadPlaceholderAdminAssistantSessions,
+      loadSessions: () =>
+        loadAdminAssistantSessions({
+          inspect: () => ({ persistence: "disabled" }),
+        } as never),
       requestIdFactory,
     });
 

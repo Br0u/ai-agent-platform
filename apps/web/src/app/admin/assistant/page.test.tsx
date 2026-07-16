@@ -14,7 +14,7 @@ vi.mock("@/app/api/v1/admin/assistant/status/handler", () => ({
   loadAdminAssistantStatus: mocks.loadStatus,
 }));
 vi.mock("@/app/api/v1/admin/assistant/sessions/handler", () => ({
-  loadPlaceholderAdminAssistantSessions: mocks.loadSessions,
+  loadAdminAssistantSessions: mocks.loadSessions,
 }));
 
 import AdminAssistantPage from "./page";
@@ -70,9 +70,8 @@ const status = {
 
 const sessions = {
   persistence: "disabled" as const,
-  capability: "placeholder" as const,
-  items: [],
-  message: "占位模式不持久化会话；会话审计将在存储接入后开放。",
+  listing: "not_available" as const,
+  message: "占位模式未持久化会话；管理列表不可用。",
 };
 
 describe("AdminAssistantPage", () => {

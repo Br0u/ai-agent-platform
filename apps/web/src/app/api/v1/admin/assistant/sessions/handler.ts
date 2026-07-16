@@ -9,6 +9,10 @@ import {
   type AdminAssistantSessionsSnapshot,
 } from "@/features/assistant/admin-assistant-contract";
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
+import {
+  getAssistantRuntime,
+  type AssistantRuntime,
+} from "@/server/assistant/assistant-runtime";
 
 type AdminAssistantSessionsDependencies = {
   access: Pick<AccessService, "requirePermission">;
@@ -16,18 +20,23 @@ type AdminAssistantSessionsDependencies = {
   requestIdFactory: () => string;
 };
 
-export async function loadPlaceholderAdminAssistantSessions(): Promise<AdminAssistantSessionsSnapshot> {
+export async function loadAdminAssistantSessions(
+  runtime?: Pick<AssistantRuntime, "inspect">,
+): Promise<AdminAssistantSessionsSnapshot> {
+  const persistence = (runtime ?? getAssistantRuntime()).inspect().persistence;
   return {
-    persistence: "disabled",
-    capability: "placeholder",
-    items: [],
-    message: "占位模式不持久化会话；会话审计将在存储接入后开放。",
+    persistence,
+    listing: "not_available",
+    message:
+      persistence === "agentos"
+        ? "AgentOS 持久化已启用，但管理列表不在本阶段范围。"
+        : "占位模式未持久化会话；管理列表不可用。",
   };
 }
 
 const defaultDependencies: AdminAssistantSessionsDependencies = {
   access: { requirePermission },
-  loadSessions: loadPlaceholderAdminAssistantSessions,
+  loadSessions: loadAdminAssistantSessions,
   requestIdFactory: () => crypto.randomUUID(),
 };
 
