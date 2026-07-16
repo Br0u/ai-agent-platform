@@ -2,6 +2,10 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+function splitAnimationList(value: string) {
+  return value.split(",").map((item) => item.trim());
+}
+
 async function expectNoHorizontalOverflow(page: Page) {
   const dimensions = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,
@@ -525,17 +529,30 @@ test("reveals post-hero regions once with staged foreground motion and a breathi
   const purpleAtmosphere = page.locator(".home-atmosphere span:nth-child(2)");
   const purpleStyle = await purpleAtmosphere.evaluate((element) => {
     const style = getComputedStyle(element);
-    const animationNames = style.animationName.split(", ");
-    const animationDurations = style.animationDuration.split(", ");
-    const breathIndex = animationNames.indexOf("home-purple-breathe");
     return {
       animationName: style.animationName,
-      breathDuration:
-        breathIndex >= 0 ? animationDurations[breathIndex] : undefined,
+      animationDirection: style.animationDirection,
+      animationDuration: style.animationDuration,
+      animationIterationCount: style.animationIterationCount,
     };
   });
-  expect(purpleStyle.animationName).toContain("home-purple-breathe");
-  expect(purpleStyle.breathDuration).toBe("8s");
+  const purpleAnimationNames = splitAnimationList(purpleStyle.animationName);
+  const purpleAnimationDirections = splitAnimationList(
+    purpleStyle.animationDirection,
+  );
+  const purpleAnimationDurations = splitAnimationList(
+    purpleStyle.animationDuration,
+  );
+  const purpleAnimationIterationCounts = splitAnimationList(
+    purpleStyle.animationIterationCount,
+  );
+  const driftIndex = purpleAnimationNames.indexOf("home-atmosphere-drift");
+  const breathIndex = purpleAnimationNames.indexOf("home-purple-breathe");
+  expect(driftIndex).toBeGreaterThanOrEqual(0);
+  expect(breathIndex).toBeGreaterThanOrEqual(0);
+  expect(purpleAnimationDirections[breathIndex]).toBe("alternate");
+  expect(purpleAnimationDurations[breathIndex]).toBe("8s");
+  expect(purpleAnimationIterationCounts[breathIndex]).toBe("infinite");
 
   const breath = await purpleAtmosphere.evaluate((element) => {
     const animation = element
@@ -559,17 +576,64 @@ test("reveals post-hero regions once with staged foreground motion and a breathi
   expect(breath.opacities).toEqual(["0.72", "1"]);
   expect(breath.scales).toEqual(["0.94", "1.06"]);
 
-  const foregroundIterationCounts = await page
-    .locator('[data-home-reveal="true"] [data-home-reveal-item]')
+  const revealIterationCounts = await page
+    .locator(
+      '[data-home-reveal="true"], [data-home-reveal="true"] [data-home-reveal-item]',
+    )
     .evaluateAll((elements) =>
-      elements.flatMap((element) =>
-        element.getAnimations().map((animation) => {
-          const effect = animation.effect as KeyframeEffect | null;
-          return effect?.getTiming().iterations;
-        }),
-      ),
+      elements.map((element) => {
+        const style = getComputedStyle(element);
+        return {
+          animationIterationCount: style.animationIterationCount,
+          animationName: style.animationName,
+          itemType: element.getAttribute("data-home-reveal-item"),
+        };
+      }),
     );
-  expect(foregroundIterationCounts).not.toContain(Infinity);
+  for (const reveal of revealIterationCounts) {
+    const expectedAnimationName = reveal.itemType
+      ? `home-${reveal.itemType}-reveal`
+      : "home-section-reveal";
+    const names = splitAnimationList(reveal.animationName);
+    const iterations = splitAnimationList(reveal.animationIterationCount);
+    const expectedIndex = names.indexOf(expectedAnimationName);
+    expect(expectedIndex, expectedAnimationName).toBeGreaterThanOrEqual(0);
+    expect(iterations[expectedIndex], expectedAnimationName).toBe("1");
+  }
+
+  const firstResource = resources.locator(".home-resource").first();
+  await firstResource.evaluate((element) =>
+    Promise.all(
+      element
+        .getAnimations()
+        .filter((animation) => {
+          const iterations = animation.effect?.getTiming().iterations;
+          return iterations !== Infinity;
+        })
+        .map((animation) => animation.finished),
+    ),
+  );
+  await firstResource.hover();
+  await expect
+    .poll(() =>
+      firstResource.evaluate(
+        (element) =>
+          new DOMMatrixReadOnly(getComputedStyle(element).transform).m42,
+      ),
+    )
+    .toBeLessThan(-1);
+
+  await page.mouse.down();
+  await expect
+    .poll(() =>
+      firstResource.evaluate(
+        (element) =>
+          new DOMMatrixReadOnly(getComputedStyle(element).transform).m42,
+      ),
+    )
+    .toBeGreaterThan(0);
+  await page.mouse.move(0, 0);
+  await page.mouse.up();
 
   const heroAnimationNames = await page
     .locator('[data-home-region="hero"], [data-home-region="hero"] *')

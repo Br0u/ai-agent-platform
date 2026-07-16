@@ -707,21 +707,26 @@
 }
 
 .home-reveal-ready [data-home-reveal="true"].is-home-visible {
-  animation: home-section-reveal 520ms var(--ease-out) both;
+  opacity: 1;
+  animation: home-section-reveal 520ms var(--ease-out) backwards;
+  transform: none;
 }
 
-.home-reveal-ready
-  [data-home-reveal="true"].is-home-visible
+:where(.home-reveal-ready [data-home-reveal="true"].is-home-visible)
   [data-home-reveal-item="text"] {
+  opacity: 1;
+  filter: none;
   animation: home-text-reveal 480ms var(--ease-out) var(--home-reveal-delay)
-    both;
+    backwards;
+  transform: none;
 }
 
-.home-reveal-ready
-  [data-home-reveal="true"].is-home-visible
+:where(.home-reveal-ready [data-home-reveal="true"].is-home-visible)
   [data-home-reveal-item="block"] {
+  opacity: 1;
   animation: home-block-reveal 440ms var(--ease-out) var(--home-reveal-delay)
-    both;
+    backwards;
+  transform: none;
 }
 
 .home [data-home-reveal="true"] .home-section-kicker {
