@@ -144,11 +144,15 @@
 }
 
 .va-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 16px 40px;
   font-size: 16px;
   font-weight: 700;
   border-radius: 4px;
   cursor: pointer;
+  text-decoration: none;
   transition: all 0.3s;
 }
 
@@ -403,6 +407,74 @@
   }
 }
 
+/* ========== 典型案例 ========== */
+.va-case-section {
+  background: #fff;
+}
+
+.va-cases-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.va-case-card {
+  padding: 36px;
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #f8fafc, #eef4ff);
+}
+
+.va-case-card__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.va-case-card__meta span {
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.va-case-card__meta small {
+  color: #8a99b3;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.va-case-card h3 {
+  margin: 26px 0 14px;
+  color: #0f172a;
+  font-size: 24px;
+}
+
+.va-case-card > p {
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.va-case-card ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 26px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.va-case-card li {
+  padding: 7px 10px;
+  border: 1px solid #cbdaf3;
+  border-radius: 3px;
+  color: #38517f;
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+}
+
 /* ========== S5: 一体机极客选型表 ========== */
 .va-hw-panel {
   display: flex;
@@ -595,5 +667,15 @@
   }
   .va-server-chassis {
     width: 100%;
+  }
+}
+
+@media (max-width: 680px) {
+  .va-cases-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .va-case-card {
+    padding: 28px 22px;
   }
 }

@@ -21,7 +21,24 @@ describe("HomePage", () => {
     expect(
       screen.getByRole("img", { name: "华鲲元启应用广场界面" }),
     ).toBeVisible();
-    expect(screen.getByText("基于华鲲元启的行业子能力")).toBeVisible();
+    expect(screen.getAllByText("场景方案")).toHaveLength(3);
+    expect(screen.getAllByText("平台方案")).toHaveLength(2);
+    expect(screen.queryByText("数据问答与报告生成")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /智能办公一体化/u }),
+    ).toHaveAttribute("href", "/solutions/smart-office");
+    expect(
+      screen.getByRole("link", { name: /智能导办一体化/u }),
+    ).toHaveAttribute("href", "/solutions/intelligent-guidance");
+    expect(
+      screen.getByRole("link", { name: /视觉检索一体化/u }),
+    ).toHaveAttribute("href", "/solutions/visual-search");
+    expect(
+      screen.getByRole("link", { name: /企业智能体开发/u }),
+    ).toHaveAttribute("href", "/solutions/agent-development");
+    expect(
+      screen.getByRole("link", { name: /AI 超融合与私有部署/u }),
+    ).toHaveAttribute("href", "/solutions/ai-infrastructure");
     expect(screen.queryByText("AI Agent Platform")).not.toBeInTheDocument();
   });
 });

@@ -1,8 +1,11 @@
+import { SolutionCTA } from "@/components/solution-cta";
 import type { Metadata } from "next";
+import Link from "next/link";
 import {
   applicationScenarios,
   coreFeatures,
   hardwareConfig,
+  videoReferenceCases,
   videoAgentIntro,
   vsComparison,
 } from "./video-agent-content";
@@ -37,8 +40,12 @@ export default function VideoAgentPage() {
           <h1 className="va-hero__title">{videoAgentIntro.title}</h1>
           <p className="va-hero__desc">{videoAgentIntro.description}</p>
           <div className="va-hero__actions">
-            <button className="va-btn va-btn--primary">申请设备演示</button>
-            <button className="va-btn va-btn--outline">获取技术白皮书</button>
+            <Link href="/contact" className="va-btn va-btn--primary">
+              申请设备演示
+            </Link>
+            <Link href="/docs" className="va-btn va-btn--outline">
+              查看技术文档
+            </Link>
           </div>
         </div>
       </section>
@@ -125,6 +132,31 @@ export default function VideoAgentPage() {
         </div>
       </section>
 
+      <section className="va-section va-case-section">
+        <div className="va-container">
+          <div className="va-section-header">
+            <h2>典型案例</h2>
+          </div>
+          <div className="va-cases-grid">
+            {videoReferenceCases.map((referenceCase) => (
+              <article className="va-case-card" key={referenceCase.title}>
+                <div className="va-case-card__meta">
+                  <span>{referenceCase.industry}</span>
+                  <small>REFERENCE CASE</small>
+                </div>
+                <h3>{referenceCase.title}</h3>
+                <p>{referenceCase.challenge}</p>
+                <ul>
+                  {referenceCase.scenarios.map((scenario) => (
+                    <li key={scenario}>{scenario}</li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* S5: 一体机极客选型表 */}
       <section className="va-section">
         <div className="va-container">
@@ -181,6 +213,11 @@ export default function VideoAgentPage() {
           </div>
         </div>
       </section>
+
+      <SolutionCTA
+        title="让摄像头理解复杂场景"
+        description="从少量视频接入和可验证的业务规则开始，评估模型、算力与现有视频平台的集成方式。"
+      />
     </main>
   );
 }

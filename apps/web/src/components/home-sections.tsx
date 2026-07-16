@@ -143,33 +143,28 @@ export function SolutionIndex() {
           <p className="home-section-kicker">Solutions / 03</p>
           <h2 id="solution-index-title">从平台能力，走向行业场景</h2>
           <p className="home-section-intro">
-            行业方案建立在统一平台之上。视觉检索是其中的多模态子能力，不是独立上位平台。
+            三类场景方案承接具体业务任务，两类平台方案提供开发与算力底座。
           </p>
         </header>
         <div className="home-solution-list">
           {solutions.map((solution, index) => (
-            <article
-              className={
-                solution.subsetLabel
-                  ? "home-solution home-solution--subset"
-                  : "home-solution"
-              }
-              key={solution.title}
+            <Link
+              className="home-solution"
+              href={solution.href}
+              key={solution.href}
             >
               <span className="home-solution__code">S{index + 1}</span>
               <div>
                 <h3>{solution.title}</h3>
-                {solution.subsetLabel ? (
-                  <strong className="home-subset-label">
-                    {solution.subsetLabel}
-                  </strong>
-                ) : null}
+                <strong className="home-subset-label">
+                  {solution.groupLabel}
+                </strong>
                 <p>{solution.description}</p>
               </div>
               <span className="home-row-arrow" aria-hidden="true">
                 →
               </span>
-            </article>
+            </Link>
           ))}
         </div>
       </div>

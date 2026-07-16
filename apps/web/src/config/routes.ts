@@ -33,6 +33,7 @@ export const routeRegistry: PortalRoute[] = [
   publicRoute("/product", "产品介绍", "live"),
   publicRoute("/product/[slug]", "产品模块详情"),
   publicRoute("/solutions", "解决方案", "live"),
+  publicRoute("/solutions/[slug]", "解决方案详情", "live"),
   publicRoute("/releases", "版本列表"),
   publicRoute("/releases/[version]", "版本更新说明"),
   publicRoute("/roadmap", "产品路线图"),

@@ -4,6 +4,7 @@
  */
 
 .tg-page {
+  overflow-x: clip;
   font-family: var(--font-body);
   color: #334155;
   background-color: #fff;
@@ -608,6 +609,7 @@
 
 .tg-tech-table {
   width: 100%;
+  min-width: 760px;
   border-collapse: collapse;
 }
 
@@ -784,5 +786,40 @@
   .tg-arch-grid-4,
   .tg-arch-grid-6 {
     grid-template-columns: 1fr;
+  }
+
+  .tg-radar-wrapper {
+    display: grid;
+    width: 100%;
+    height: auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .tg-radar-center {
+    width: auto;
+    height: 104px;
+    grid-column: 1 / -1;
+    border-radius: 10px;
+  }
+
+  .tg-radar-node,
+  .tg-radar-node-1,
+  .tg-radar-node-2,
+  .tg-radar-node-3,
+  .tg-radar-node-4,
+  .tg-radar-node-5 {
+    position: static;
+    width: auto;
+    height: 72px;
+    border-radius: 8px;
+    transform: none;
+  }
+
+  .tg-table-wrapper {
+    width: 100%;
+    max-width: calc(100vw - 48px);
   }
 }

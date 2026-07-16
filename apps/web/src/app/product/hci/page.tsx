@@ -1,3 +1,4 @@
+import { SolutionCTA } from "@/components/solution-cta";
 import type { Metadata } from "next";
 import {
   hciFeatures,
@@ -256,6 +257,11 @@ export default function HCIPage() {
           </div>
         </div>
       </section>
+
+      <SolutionCTA
+        title="为现有业务与 AI 任务规划统一底座"
+        description="结合存量服务器、异构算力、存储网络和业务负载，确认最小配置、扩展方式与实施边界。"
+      />
     </main>
   );
 }

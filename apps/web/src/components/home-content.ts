@@ -51,29 +51,34 @@ export const enterpriseProofs = [
 
 export const solutions = [
   {
-    title: "知识问答与知识加工",
-    description: "企业资料进入知识库后，用于检索、问答与内容加工。",
-    subsetLabel: undefined,
+    title: "智能办公一体化",
+    description: "覆盖智能写作、合同审核、投标辅助和智能会议。",
+    groupLabel: "场景方案",
+    href: "/solutions/smart-office",
   },
   {
-    title: "数据问答与报告生成",
-    description: "连接结构化数据，形成面向业务人员的数据理解入口。",
-    subsetLabel: undefined,
+    title: "智能导办一体化",
+    description: "连接政策咨询、材料识别、智能填表与辅助审核。",
+    groupLabel: "场景方案",
+    href: "/solutions/intelligent-guidance",
   },
   {
-    title: "知识图谱",
-    description: "构建实体与关系网络，支撑更明确的知识连接。",
-    subsetLabel: undefined,
+    title: "视觉检索一体化",
+    description: "通过自然语言完成即时检索、持续布控和预警管理。",
+    groupLabel: "场景方案",
+    href: "/solutions/visual-search",
   },
   {
-    title: "图像与多模态处理",
-    description: "承载图像、语音和视频等多模态模型接入与业务处理。",
-    subsetLabel: undefined,
+    title: "企业智能体开发",
+    description: "组合模型、知识库和工作流，完成智能体构建与发布。",
+    groupLabel: "平台方案",
+    href: "/solutions/agent-development",
   },
   {
-    title: "视觉检索解决方案",
-    description: "即时检索、持续布控、自然语言配置与预警管理。",
-    subsetLabel: "基于华鲲元启的行业子能力",
+    title: "AI 超融合与私有部署",
+    description: "统一承载异构算力、虚拟化资源与企业 AI 任务。",
+    groupLabel: "平台方案",
+    href: "/solutions/ai-infrastructure",
   },
 ] as const;
 

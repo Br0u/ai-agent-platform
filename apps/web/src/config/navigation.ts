@@ -54,17 +54,22 @@ export const portalNavigation: PortalNavigationItem[] = [
       {
         label: "场景方案",
         items: [
-          { label: "智能办公", href: "/solutions#office" },
-          { label: "行业知识问答", href: "/solutions#knowledge" },
-          { label: "视觉检索", href: "/solutions#vision" },
+          { label: "智能办公", href: "/solutions/smart-office" },
+          { label: "智能导办", href: "/solutions/intelligent-guidance" },
+          { label: "视觉检索", href: "/solutions/visual-search" },
         ],
       },
       {
         label: "平台方案",
         items: [
-          { label: "企业智能体开发", href: "/solutions#agent" },
-          { label: "数据分析与决策", href: "/solutions#data" },
-          { label: "国产化私有部署", href: "/solutions#private" },
+          {
+            label: "企业智能体开发",
+            href: "/solutions/agent-development",
+          },
+          {
+            label: "AI超融合与私有部署",
+            href: "/solutions/ai-infrastructure",
+          },
         ],
       },
     ],

@@ -50,6 +50,19 @@ export const targetUnits = [
   { name: "代办机构", icon: "🤝" },
 ];
 
+export const guidanceReferenceCase = {
+  organization: "成都市郫都区行政审批局",
+  title: "个体工商户登记智能导办试点",
+  description:
+    "围绕个体工商户登记注册，将事项定位、材料上传、信息提取、表单填写与辅助预审串联为统一办事流程。",
+  results: [
+    { value: "40%+", label: "平均办理时间缩短" },
+    { value: "95%+", label: "一次性办结率" },
+    { value: "24 小时", label: "在线导办服务" },
+  ],
+  feedback: "不用跑、少打听、一次成",
+} as const;
+
 export const hardwareConfigs = {
   columns: ["产品形态", "产品描述"],
   rows: [

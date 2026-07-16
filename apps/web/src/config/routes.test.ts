@@ -6,6 +6,7 @@ const requiredRoutes = [
   "/product",
   "/product/[slug]",
   "/solutions",
+  "/solutions/[slug]",
   "/releases",
   "/releases/[version]",
   "/roadmap",
@@ -123,6 +124,9 @@ describe("routeRegistry", () => {
   it("matches exact and dynamic routes but rejects unknown paths", () => {
     expect(matchRoute("/docs")?.path).toBe("/docs");
     expect(matchRoute("/product/agent-studio")?.path).toBe("/product/[slug]");
+    expect(matchRoute("/solutions/smart-office")?.path).toBe(
+      "/solutions/[slug]",
+    );
     expect(matchRoute("/blog/platform-release")?.path).toBe("/blog/[slug]");
     expect(matchRoute("/unknown")).toBeUndefined();
   });

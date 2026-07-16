@@ -1,6 +1,8 @@
+import { SolutionCTA } from "@/components/solution-cta";
 import type { Metadata } from "next";
 import {
   hardwareConfigs,
+  guidanceReferenceCase,
   knowledgeAgentIntro,
   productFeatures,
   targetUnits,
@@ -157,6 +159,32 @@ export default function KnowledgeAgentPage() {
         </div>
       </section>
 
+      <section className="ka-section ka-case-section">
+        <div className="ka-container">
+          <div className="ka-section-header">
+            <h2>落地案例</h2>
+            <p>从标准化高频事项开始，让导办、填表和预审形成连续服务</p>
+          </div>
+
+          <article className="ka-case">
+            <div className="ka-case__content">
+              <p>{guidanceReferenceCase.organization}</p>
+              <h3>{guidanceReferenceCase.title}</h3>
+              <span>{guidanceReferenceCase.description}</span>
+              <blockquote>“{guidanceReferenceCase.feedback}”</blockquote>
+            </div>
+            <div className="ka-case__results">
+              {guidanceReferenceCase.results.map((result) => (
+                <div key={result.label}>
+                  <strong>{result.value}</strong>
+                  <span>{result.label}</span>
+                </div>
+              ))}
+            </div>
+          </article>
+        </div>
+      </section>
+
       {/* S5: 双旗舰一体机配置 */}
       <section className="ka-section">
         <div className="ka-container">
@@ -200,6 +228,11 @@ export default function KnowledgeAgentPage() {
           </div>
         </div>
       </section>
+
+      <SolutionCTA
+        title="从一个高频办事事项开始验证"
+        description="结合现有政策、材料清单与审核规范，评估导办知识、系统接口和典型并发配置。"
+      />
     </main>
   );
 }

@@ -53,17 +53,16 @@ const expectedPortal = [
       {
         label: "场景方案",
         items: [
-          ["智能办公", "/solutions#office"],
-          ["行业知识问答", "/solutions#knowledge"],
-          ["视觉检索", "/solutions#vision"],
+          ["智能办公", "/solutions/smart-office"],
+          ["智能导办", "/solutions/intelligent-guidance"],
+          ["视觉检索", "/solutions/visual-search"],
         ],
       },
       {
         label: "平台方案",
         items: [
-          ["企业智能体开发", "/solutions#agent"],
-          ["数据分析与决策", "/solutions#data"],
-          ["国产化私有部署", "/solutions#private"],
+          ["企业智能体开发", "/solutions/agent-development"],
+          ["AI超融合与私有部署", "/solutions/ai-infrastructure"],
         ],
       },
     ],

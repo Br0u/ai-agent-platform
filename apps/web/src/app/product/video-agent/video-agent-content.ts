@@ -62,6 +62,23 @@ export const applicationScenarios = [
   "更多泛化场景...",
 ];
 
+export const videoReferenceCases = [
+  {
+    industry: "公共安全",
+    title: "某地公安局九小场所智能布控",
+    challenge:
+      "场所分布零散、数量多，人工巡查覆盖有限，传统监控主要用于事后回看。",
+    scenarios: ["未成年人出入", "打架斗殴", "火情识别", "异常行为预警"],
+  },
+  {
+    industry: "城市治理",
+    title: "某地城市治理智能布控",
+    challenge:
+      "针对城市治理长尾场景，通过自然语言配置规则，提升视频数据处理和告警处置效率。",
+    scenarios: ["垃圾满溢", "指导员在岗", "占道经营", "城市设施损坏"],
+  },
+] as const;
+
 export const hardwareConfig = {
   modelName: "HuaKun AT3500 G3 (64G)",
   coreComponents: "视觉大模型 (43B) + 华鲲元启AI平台 + 行业视频智能体",

@@ -1,3 +1,4 @@
+import { SolutionCTA } from "@/components/solution-cta";
 import type { Metadata } from "next";
 import Link from "next/link";
 import {
@@ -375,6 +376,11 @@ export default function TGDataXAIPage() {
           </div>
         </div>
       </section>
+
+      <SolutionCTA
+        title="把第一个智能体真正交付到业务中"
+        description="从模型、知识库与工作流的最小组合开始，评估平台部署、业务接入和持续运营边界。"
+      />
     </main>
   );
 }

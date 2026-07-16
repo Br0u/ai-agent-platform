@@ -465,6 +465,88 @@
   color: var(--ka-primary);
 }
 
+/* ========== 落地案例 ========== */
+.ka-case-section {
+  background: #f8fafc;
+}
+
+.ka-case {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+  overflow: hidden;
+  border: 1px solid #d9e3f2;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(37, 99, 235, 0.08);
+}
+
+.ka-case__content {
+  padding: 44px;
+}
+
+.ka-case__content > p {
+  margin: 0 0 12px;
+  color: var(--ka-primary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.ka-case__content h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 30px;
+  line-height: 1.2;
+}
+
+.ka-case__content > span {
+  display: block;
+  max-width: 680px;
+  margin-top: 20px;
+  color: var(--ka-text-sub);
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.ka-case blockquote {
+  margin: 28px 0 0;
+  padding-left: 18px;
+  border-left: 3px solid var(--ka-primary);
+  color: #334155;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.ka-case__results {
+  display: grid;
+  align-content: center;
+  padding: 32px;
+  background: linear-gradient(145deg, #1d4ed8, #4f46e5);
+}
+
+.ka-case__results > div {
+  display: flex;
+  min-height: 82px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.ka-case__results > div:last-child {
+  border-bottom: 0;
+}
+
+.ka-case__results strong {
+  color: #fff;
+  font-size: 28px;
+}
+
+.ka-case__results span {
+  color: #dbeafe;
+  font-size: 13px;
+  text-align: right;
+}
+
 /* ========== S5: 双旗舰一体机配置 ========== */
 .ka-table-wrapper {
   background: #fff;
@@ -552,5 +634,21 @@
   }
   .ka-td-form {
     font-size: 16px;
+  }
+
+  .ka-case {
+    grid-template-columns: 1fr;
+  }
+
+  .ka-case__content {
+    padding: 28px 22px;
+  }
+
+  .ka-case__content h3 {
+    font-size: 24px;
+  }
+
+  .ka-case__results {
+    padding: 20px 22px;
   }
 }
