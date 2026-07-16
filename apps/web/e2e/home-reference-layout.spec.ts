@@ -350,6 +350,103 @@ test("stacks reference regions without clipping on mobile", async ({
   }
 });
 
+test("reveals post-hero regions once with staged foreground motion and a breathing purple atmosphere", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await gotoHome(page, "no-preference");
+
+  const resources = page.locator('[data-home-region="resources"]');
+  await expect(resources).not.toHaveClass(/is-home-visible/);
+  await resources.scrollIntoViewIfNeeded();
+  await expect(resources).toHaveClass(/is-home-visible/);
+
+  const firstText = resources.locator('[data-home-reveal-item="text"]').first();
+  const firstBlock = resources
+    .locator('[data-home-reveal-item="block"]')
+    .first();
+  await expect
+    .poll(() =>
+      firstText.evaluate((element) => getComputedStyle(element).opacity),
+    )
+    .toBe("1");
+
+  const revealAnimationNames = await Promise.all([
+    resources.evaluate((element) => getComputedStyle(element).animationName),
+    firstText.evaluate((element) => getComputedStyle(element).animationName),
+    firstBlock.evaluate((element) => getComputedStyle(element).animationName),
+  ]);
+  expect(revealAnimationNames[0]).toContain("home-section-reveal");
+  expect(revealAnimationNames[1]).toContain("home-text-reveal");
+  expect(revealAnimationNames[2]).toContain("home-block-reveal");
+
+  const purpleAtmosphere = page.locator(".home-atmosphere span:nth-child(2)");
+  const purpleStyle = await purpleAtmosphere.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const animationNames = style.animationName.split(", ");
+    const animationDurations = style.animationDuration.split(", ");
+    const breathIndex = animationNames.indexOf("home-purple-breathe");
+    return {
+      animationName: style.animationName,
+      breathDuration:
+        breathIndex >= 0 ? animationDurations[breathIndex] : undefined,
+    };
+  });
+  expect(purpleStyle.animationName).toContain("home-purple-breathe");
+  expect(purpleStyle.breathDuration).toBe("8s");
+
+  const breath = await purpleAtmosphere.evaluate((element) => {
+    const animation = element
+      .getAnimations()
+      .find(
+        (candidate) =>
+          (candidate as CSSAnimation).animationName === "home-purple-breathe",
+      );
+    const effect = animation?.effect as KeyframeEffect | null | undefined;
+    const timing = effect?.getTiming();
+    const keyframes = effect?.getKeyframes() ?? [];
+    return {
+      easing: keyframes[0]?.easing,
+      iterations: timing?.iterations,
+      opacities: keyframes.map((keyframe) => String(keyframe.opacity)),
+      scales: keyframes.map((keyframe) => String(keyframe.scale)),
+    };
+  });
+  expect(breath.iterations).toBe(Infinity);
+  expect(breath.easing).toBe("ease-in-out");
+  expect(breath.opacities).toEqual(["0.72", "1"]);
+  expect(breath.scales).toEqual(["0.94", "1.06"]);
+
+  const foregroundIterationCounts = await page
+    .locator('[data-home-reveal="true"] [data-home-reveal-item]')
+    .evaluateAll((elements) =>
+      elements.flatMap((element) =>
+        element.getAnimations().map((animation) => {
+          const effect = animation.effect as KeyframeEffect | null;
+          return effect?.getTiming().iterations;
+        }),
+      ),
+    );
+  expect(foregroundIterationCounts).not.toContain(Infinity);
+
+  const heroAnimationNames = await page
+    .locator('[data-home-region="hero"], [data-home-region="hero"] *')
+    .evaluateAll((elements) =>
+      elements.map((element) => getComputedStyle(element).animationName),
+    );
+  expect(
+    heroAnimationNames.some(
+      (animationName) =>
+        animationName.includes("home-section-reveal") ||
+        animationName.includes("home-purple-breathe"),
+    ),
+  ).toBe(false);
+
+  await page.locator('[data-home-region="hero"]').scrollIntoViewIfNeeded();
+  await expect(resources).toHaveClass(/is-home-visible/);
+});
+
 test("removes decorative motion when reduced motion is requested", async ({
   page,
 }) => {
@@ -370,6 +467,42 @@ test("removes decorative motion when reduced motion is requested", async ({
     expect(item.animationName).toBe("none");
     expect(item.transform).toBe("none");
   }
+
+  const reveals = await page
+    .locator(
+      '[data-home-reveal="true"], [data-home-reveal="true"] [data-home-reveal-item]',
+    )
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const style = getComputedStyle(element);
+        return {
+          animationName: style.animationName,
+          filter: style.filter,
+          opacity: style.opacity,
+          transform: style.transform,
+        };
+      }),
+    );
+  for (const item of reveals) {
+    expect(item.animationName).toBe("none");
+    expect(item.filter).toBe("none");
+    expect(item.opacity).toBe("1");
+    expect(item.transform).toBe("none");
+  }
+
+  const purpleAtmosphere = await page
+    .locator(".home-atmosphere span:nth-child(2)")
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        animationName: style.animationName,
+        scale: style.scale,
+        transform: style.transform,
+      };
+    });
+  expect(purpleAtmosphere.animationName).toBe("none");
+  expect(["none", "1"]).toContain(purpleAtmosphere.scale);
+  expect(purpleAtmosphere.transform).toBe("none");
 
   const resource = page.locator(".home-resource").first();
   await resource.hover();
