@@ -276,6 +276,25 @@ describe("AgentOS run client", () => {
 });
 
 describe("AgentOS session deletion", () => {
+  it.each(["", ".", ".."])(
+    "rejects unsafe session path segment %j before fetch",
+    async (sessionId) => {
+      const fetcher = vi.fn<typeof fetch>();
+      const client = createAgentOSRunClient({ settings: settings(), fetcher });
+
+      const error = await client
+        .deleteSession(sessionId)
+        .catch((value: unknown) => value);
+
+      expect(error).toBeInstanceOf(AgentOSRunClientError);
+      expect(error).toMatchObject({ code: "invalid_response" });
+      expect(fetcher).not.toHaveBeenCalled();
+      const serialized = JSON.stringify(error);
+      expect(serialized).not.toContain(INTERNAL_URL);
+      if (sessionId.length > 0) expect(serialized).not.toContain(sessionId);
+    },
+  );
+
   it.each([200, 204, 404])("treats HTTP %s as success", async (status) => {
     const fetcher = vi
       .fn<typeof fetch>()

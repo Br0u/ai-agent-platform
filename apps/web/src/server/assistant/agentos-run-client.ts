@@ -147,6 +147,9 @@ export function createAgentOSRunClient(options: {
     },
 
     async deleteSession(sessionId) {
+      if (sessionId === "" || sessionId === "." || sessionId === "..") {
+        throw new AgentOSRunClientError("invalid_response");
+      }
       try {
         await transport.request({
           method: "DELETE",
