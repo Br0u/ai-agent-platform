@@ -338,18 +338,52 @@ protected_patterns_file="$temp_dir/protected-runtime-patterns"
 )
 chmod 600 "$protected_patterns_file"
 
+create_dynamic_patterns_file() {
+  patterns_file=$1
+  (umask 077 && : >"$patterns_file")
+  chmod 600 "$patterns_file"
+}
+
+placeholder_dynamic_patterns_file="$temp_dir/placeholder-dynamic-patterns"
+agentos_dynamic_patterns_file="$temp_dir/agentos-dynamic-patterns"
+create_dynamic_patterns_file "$placeholder_dynamic_patterns_file"
+create_dynamic_patterns_file "$agentos_dynamic_patterns_file"
+
 compose() {
   docker compose -p "$project" --env-file "$env_file" $compose_files "$@"
 }
 
+scan_pattern_file() {
+  patterns_file=$1
+  logs_file=$2
+  leak_message=$3
+  if grep -F -f "$patterns_file" "$logs_file" >/dev/null 2>&1; then
+    scan_status=0
+  else
+    scan_status=$?
+  fi
+  case "$scan_status" in
+    0)
+      echo "$leak_message" >&2
+      return 1
+      ;;
+    1) ;;
+    *)
+      echo "runtime log scanner failed" >&2
+      return 1
+      ;;
+  esac
+}
+
 scan_logs() {
   phase=$1
+  dynamic_patterns_file=$2
   logs_file="$temp_dir/$phase-runtime.log"
   compose logs --no-color web agent proxy >"$logs_file" 2>&1
-  if grep -F -f "$protected_patterns_file" "$logs_file" >/dev/null 2>&1; then
-    echo "sanitized container logs contain protected runtime data" >&2
-    exit 1
-  fi
+  scan_pattern_file "$protected_patterns_file" "$logs_file" \
+    "sanitized container logs contain protected runtime data"
+  scan_pattern_file "$dynamic_patterns_file" "$logs_file" \
+    "sanitized container logs contain dynamic protected runtime data"
 }
 
 compose config --quiet
@@ -395,6 +429,7 @@ esac
 
 export AAP_RUNTIME_E2E_PROJECT="$project"
 export AAP_RUNTIME_E2E_ENV_FILE="$env_file"
+export AAP_RUNTIME_DYNAMIC_PATTERNS_FILE="$placeholder_dynamic_patterns_file"
 BASE_URL=http://127.0.0.1:8080 \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
@@ -405,7 +440,7 @@ BASE_URL=http://127.0.0.1:8080 \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
   --grep-invert "@agentos|@guard"
 
-scan_logs "placeholder"
+scan_logs "placeholder" "$placeholder_dynamic_patterns_file"
 
 export AGENT_ENABLED=true
 export MODEL_PROVIDER=openai
@@ -423,11 +458,12 @@ compose run --rm -e NODE_ENV=test migrate pnpm db:seed-auth-e2e
 compose up -d --no-deps --force-recreate --wait web
 compose up -d --no-deps --force-recreate --wait proxy
 
+export AAP_RUNTIME_DYNAMIC_PATTERNS_FILE="$agentos_dynamic_patterns_file"
 BASE_URL=http://127.0.0.1:8080 \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
   --grep @agentos
 
-scan_logs "agentos"
+scan_logs "agentos" "$agentos_dynamic_patterns_file"
 
 echo "Assistant runtime E2E passed: guard 6 + placeholder 2 + AgentOS 4; no Web/Agent/DB host ports and cleanup is armed."

@@ -515,6 +515,7 @@ describe("production deployment security contracts", () => {
 
   it("defines a failure-safe isolated assistant runtime acceptance", () => {
     const script = read("docs/testing/run-assistant-runtime-e2e.sh");
+    const browserAcceptance = read("apps/web/e2e/assistant-runtime.spec.ts");
 
     expect(script).toContain('[ "${RUN_ASSISTANT_RUNTIME_E2E:-}" = true ]');
     expect(script).toContain(
@@ -585,9 +586,79 @@ describe("production deployment security contracts", () => {
     expect(script.indexOf('scan_logs "placeholder"')).toBeLessThan(
       script.indexOf("export AGENT_ENABLED=true"),
     );
-    expect(script).toContain('grep -F -f "$protected_patterns_file"');
+    expect(script).toContain(
+      'scan_pattern_file "$protected_patterns_file" "$logs_file"',
+    );
     expect(script).toContain('chmod 600 "$protected_patterns_file"');
     expect(script).not.toContain('grep -F "$protected_value"');
+    expect(script).toContain("scan_pattern_file() {");
+    expect(script).toContain(
+      'if grep -F -f "$patterns_file" "$logs_file" >/dev/null 2>&1; then',
+    );
+    expect(script).toContain("scan_status=$?");
+    expect(script).toContain('case "$scan_status" in');
+    expect(script).toContain("1) ;;");
+    expect(script).toContain('echo "runtime log scanner failed" >&2');
+    expect(script).toContain(
+      'placeholder_dynamic_patterns_file="$temp_dir/placeholder-dynamic-patterns"',
+    );
+    expect(script).toContain(
+      'agentos_dynamic_patterns_file="$temp_dir/agentos-dynamic-patterns"',
+    );
+    expect(script).toContain(
+      'create_dynamic_patterns_file "$placeholder_dynamic_patterns_file"',
+    );
+    expect(script).toContain(
+      'create_dynamic_patterns_file "$agentos_dynamic_patterns_file"',
+    );
+    expect(script.match(/AAP_RUNTIME_DYNAMIC_PATTERNS_FILE=/gu)).toHaveLength(
+      2,
+    );
+    expect(script).toContain(
+      'export AAP_RUNTIME_DYNAMIC_PATTERNS_FILE="$placeholder_dynamic_patterns_file"',
+    );
+    expect(script).toContain(
+      'export AAP_RUNTIME_DYNAMIC_PATTERNS_FILE="$agentos_dynamic_patterns_file"',
+    );
+    expect(script).toContain(
+      'scan_logs "placeholder" "$placeholder_dynamic_patterns_file"',
+    );
+    expect(script).toContain(
+      'scan_logs "agentos" "$agentos_dynamic_patterns_file"',
+    );
+    expect(browserAcceptance).toContain('"AAP_RUNTIME_DYNAMIC_PATTERNS_FILE"');
+    expect(browserAcceptance).toContain("appendFileSync(");
+    expect(browserAcceptance).toContain("(stats.mode & 0o777) !== 0o600");
+    expect(browserAcceptance).toContain('value.includes("\\n")');
+    expect(browserAcceptance).toContain('value.includes("\\r")');
+    expect(browserAcceptance).toContain('totp.searchParams.get("secret")');
+    expect(browserAcceptance).toContain("appendDynamicProtectedValue(uri)");
+    expect(browserAcceptance).toContain(
+      "appendDynamicProtectedValue(totpSecret)",
+    );
+    expect(browserAcceptance).toContain(
+      "appendDynamicProtectedValue(sessionId)",
+    );
+    expect(browserAcceptance).toContain(
+      "appendDynamicProtectedValue(cookieValue)",
+    );
+    expect(browserAcceptance).toContain(
+      "appendDynamicProtectedValue(parsed.credential)",
+    );
+    const invalidResponseIndex = browserAcceptance.indexOf(
+      "const invalidResponse =",
+    );
+    const blockedResponseIndex = browserAcceptance.indexOf(
+      "const blockedResponse =",
+      invalidResponseIndex,
+    );
+    const circuitAdminAuthIndex = browserAcceptance.indexOf(
+      "const credentials = fixtureCredentials();",
+      invalidResponseIndex,
+    );
+    expect(invalidResponseIndex).toBeGreaterThanOrEqual(0);
+    expect(blockedResponseIndex).toBeGreaterThan(invalidResponseIndex);
+    expect(blockedResponseIndex).toBeLessThan(circuitAdminAuthIndex);
     for (const variable of [
       "POSTGRES_PASSWORD",
       "MIGRATOR_DATABASE_PASSWORD",
@@ -1132,8 +1203,14 @@ exit 0
 
     expect(acceptanceTarget).toBeDefined();
     expect(acceptanceTarget).toContain("tests/e2e_agent");
+    expect(acceptanceTarget).toContain(
+      'CMD ["uvicorn", "e2e_agent.app:app_factory", "--factory", "--host", "0.0.0.0", "--port", "7777", "--no-access-log"]',
+    );
     expect(runtimeTarget).toBeDefined();
     expect(runtimeTarget).not.toContain("tests/e2e_agent");
+    expect(runtimeTarget).toContain(
+      'CMD ["uvicorn", "agent_service.app:app_factory", "--factory", "--host", "0.0.0.0", "--port", "7777", "--no-access-log"]',
+    );
     expect(dockerfile.indexOf(" AS acceptance\n")).toBeLessThan(
       dockerfile.indexOf(" AS runtime\n"),
     );
@@ -1141,10 +1218,24 @@ exit 0
     expect(productionAgent).toBeDefined();
     expect(productionAgent).not.toContain("target: acceptance");
     expect(productionAgent).toContain("agent_service.app:app_factory");
+    expect(productionAgent).toContain('"--no-access-log"');
     expect(acceptanceAgent).toBeDefined();
     expect(acceptanceAgent).toContain("target: acceptance");
     expect(acceptanceAgent).toContain("e2e_agent.app:app_factory");
+    expect(acceptanceAgent).toContain('"--no-access-log"');
     expect(acceptanceCompose.match(/target: acceptance/gu)).toHaveLength(1);
+
+    const productionRendered = renderComposeFixture();
+    expect(productionRendered.services.agent?.command).toEqual([
+      "uvicorn",
+      "agent_service.app:app_factory",
+      "--factory",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "7777",
+      "--no-access-log",
+    ]);
 
     const rendered = renderComposeFixture(["compose.yaml", "compose.e2e.yaml"]);
     expect(rendered.services.agent?.build?.target).toBe("acceptance");
@@ -1156,6 +1247,7 @@ exit 0
       "0.0.0.0",
       "--port",
       "7777",
+      "--no-access-log",
     ]);
     expect(Object.keys(rendered.services.agent?.networks ?? {})).toEqual([
       "backend",

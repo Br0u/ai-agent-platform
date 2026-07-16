@@ -35,7 +35,7 @@ USER agent
 
 EXPOSE 7777
 
-CMD ["uvicorn", "e2e_agent.app:app_factory", "--factory", "--host", "0.0.0.0", "--port", "7777"]
+CMD ["uvicorn", "e2e_agent.app:app_factory", "--factory", "--host", "0.0.0.0", "--port", "7777", "--no-access-log"]
 
 FROM runtime-base AS runtime
 
@@ -43,4 +43,4 @@ USER agent
 
 EXPOSE 7777
 
-CMD ["uvicorn", "agent_service.app:app_factory", "--factory", "--host", "0.0.0.0", "--port", "7777"]
+CMD ["uvicorn", "agent_service.app:app_factory", "--factory", "--host", "0.0.0.0", "--port", "7777", "--no-access-log"]

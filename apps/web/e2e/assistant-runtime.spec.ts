@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
+  appendFileSync,
   chmodSync,
   mkdtempSync,
   readFileSync,
@@ -36,10 +38,94 @@ const CHAT_BODY = {
   context: { pathname: "/assistant" },
 };
 const INVALID_RESPONSE_SENTINEL = "__aap_e2e_invalid_response__";
-const requestIdMatcher = expect.any(String);
-const messageIdMatcher = expect.any(String);
-const expiresAtMatcher = expect.stringMatching(
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
+const SAFE_RULE = Symbol("safe response rule");
+type SafeRule = {
+  readonly [SAFE_RULE]: true;
+  readonly accepts: (value: unknown) => boolean;
+};
+type SafeShape =
+  | null
+  | boolean
+  | number
+  | string
+  | SafeRule
+  | SafeShape[]
+  | { [key: string]: SafeShape };
+
+function safeRule(accepts: (value: unknown) => boolean): SafeRule {
+  return { [SAFE_RULE]: true, accepts };
+}
+
+function isSafeRule(value: SafeShape): value is SafeRule {
+  return typeof value === "object" && value !== null && SAFE_RULE in value;
+}
+
+function isSafeRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertExactSafeShape(
+  actual: unknown,
+  expected: SafeShape,
+  label: string,
+): void {
+  const assertNode = (value: unknown, shape: SafeShape, pathLabel: string) => {
+    if (isSafeRule(shape)) {
+      expect(shape.accepts(value), `${pathLabel}: invalid scalar`).toBe(true);
+      return;
+    }
+    if (Array.isArray(shape)) {
+      expect(Array.isArray(value), `${pathLabel}: expected array`).toBe(true);
+      if (!Array.isArray(value)) return;
+      expect(
+        value.length === shape.length,
+        `${pathLabel}: unexpected array length`,
+      ).toBe(true);
+      for (let index = 0; index < shape.length; index += 1) {
+        assertNode(value[index], shape[index]!, `${pathLabel}[${index}]`);
+      }
+      return;
+    }
+    if (typeof shape === "object" && shape !== null) {
+      expect(isSafeRecord(value), `${pathLabel}: expected object`).toBe(true);
+      if (!isSafeRecord(value)) return;
+      const expectedKeys = Object.keys(shape).sort();
+      const actualKeys = Object.keys(value).sort();
+      expect(
+        actualKeys.length === expectedKeys.length &&
+          expectedKeys.every((key, index) => actualKeys[index] === key),
+        `${pathLabel}: unexpected keys`,
+      ).toBe(true);
+      for (const key of expectedKeys) {
+        assertNode(value[key], shape[key]!, `${pathLabel}.${key}`);
+      }
+      return;
+    }
+    expect(Object.is(value, shape), `${pathLabel}: unexpected scalar`).toBe(
+      true,
+    );
+  };
+
+  assertNode(actual, expected, label);
+}
+
+function assertSafeResponse(actual: unknown, label: string) {
+  return {
+    matches(expected: SafeShape): void {
+      assertExactSafeShape(actual, expected, label);
+    },
+  };
+}
+
+const requestIdMatcher = safeRule((value) => typeof value === "string");
+const messageIdMatcher = safeRule((value) => typeof value === "string");
+const expiresAtMatcher = safeRule(
+  (value) =>
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value),
+);
+const nginxRequestIdMatcher = safeRule(
+  (value) => typeof value === "string" && /^[a-f0-9]{32}$/u.test(value),
 );
 
 const cumulativeConsoleMessages: string[] = [];
@@ -54,6 +140,23 @@ function requiredEnvironment(name: string): string {
 function optionalEnvironment(name: string): string[] {
   const value = process.env[name];
   return value ? [value] : [];
+}
+
+function appendDynamicProtectedValue(value: string): void {
+  if (value.length === 0 || value.includes("\n") || value.includes("\r")) {
+    throw new Error("dynamic protected value is invalid");
+  }
+  const patternsFile = requiredEnvironment("AAP_RUNTIME_DYNAMIC_PATTERNS_FILE");
+  let stats: ReturnType<typeof statSync>;
+  try {
+    stats = statSync(patternsFile);
+  } catch {
+    throw new Error("dynamic pattern file is invalid");
+  }
+  if (!stats.isFile() || (stats.mode & 0o777) !== 0o600) {
+    throw new Error("dynamic pattern file is invalid");
+  }
+  appendFileSync(patternsFile, `${value}\n`, { encoding: "utf8" });
 }
 
 function protectedFileValues(name: string): string[] {
@@ -134,7 +237,11 @@ function agentSessionIds(): Set<string> {
       timeout: 30_000,
     },
   ).trim();
-  return new Set(output === "" ? [] : output.split("\n"));
+  const sessionIds = new Set(output === "" ? [] : output.split("\n"));
+  for (const sessionId of sessionIds) {
+    appendDynamicProtectedValue(sessionId);
+  }
+  return sessionIds;
 }
 
 function sameStringSet(left: Set<string>, right: Set<string>): boolean {
@@ -297,6 +404,10 @@ async function readSafeJson(
   response: APIResponse,
   protectedValues: string[],
 ): Promise<unknown> {
+  const setCookie = response.headers()["set-cookie"];
+  if (setCookie?.includes("aap_assistant_sid_dev=")) {
+    cookieCredential(setCookie);
+  }
   return parseSafeJson(await response.text(), protectedValues);
 }
 
@@ -342,6 +453,7 @@ function requiredAssistantCookieCredential(): string {
 function cookieCredential(setCookie: string): string {
   const match = setCookie.match(/(?:^|,\s*)aap_assistant_sid_dev=([^;]+)/u);
   if (!match?.[1]) throw new Error("development assistant cookie is missing");
+  stableCookieCredential(match[1]);
   return match[1];
 }
 
@@ -363,6 +475,8 @@ function stableCookieCredential(cookieValue: string): string {
   ) {
     throw new Error("assistant cookie credential is invalid");
   }
+  appendDynamicProtectedValue(cookieValue);
+  appendDynamicProtectedValue(parsed.credential);
   return parsed.credential;
 }
 
@@ -377,6 +491,11 @@ async function completeSeededAdminTwoFactor(context: BrowserContext) {
       await page.locator("code").filter({ hasText: "otpauth://" }).textContent()
     )?.trim();
     if (!uri) throw new Error("TOTP enrollment URI is missing");
+    const totp = new URL(uri);
+    const totpSecret = totp.searchParams.get("secret");
+    if (!totpSecret) throw new Error("TOTP enrollment secret is missing");
+    appendDynamicProtectedValue(uri);
+    appendDynamicProtectedValue(totpSecret);
     await page.getByLabel("六位验证码").fill(totpFromUri(uri));
     await page.getByRole("button", { name: "验证并启用" }).click();
     await expect(page).toHaveURL(/\/admin\/assistant$/u);
@@ -442,6 +561,28 @@ test.describe("@guard assistant response safety guard", () => {
       safeFailure,
       "guard failure must use a fixed message without protected data",
     ).toBe(true);
+
+    const dynamicSecret = `debug-metadata-${randomUUID()}`;
+    let exactShapeRejected = false;
+    let exactShapeFailure = "";
+    try {
+      assertSafeResponse(
+        { version: "1", debug: { metadata: dynamicSecret } },
+        "guard response",
+      ).matches({ version: "1" });
+    } catch (error) {
+      exactShapeRejected = true;
+      exactShapeFailure =
+        error instanceof Error ? error.message : String(error);
+    }
+    expect(
+      exactShapeRejected,
+      "exact response shape must reject unknown fields",
+    ).toBe(true);
+    expect(
+      exactShapeFailure.includes(dynamicSecret),
+      "exact shape failure rendered an unknown sensitive value",
+    ).toBe(false);
   });
 
   test("loads chmod 600 secret contents while preserving the file path", () => {
@@ -558,7 +699,7 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
   const statusResponse = await context.request.get(STATUS_PATH);
   expect(statusResponse.status()).toBe(200);
   const status = await readSafeJson(statusResponse, protectedValues);
-  expect(status).toEqual({
+  assertSafeResponse(status, "placeholder public status").matches({
     version: "1",
     requestId: requestIdMatcher,
     live: true,
@@ -586,7 +727,7 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
   const browserResponse = await responsePromise;
   const chatBody = parseSafeJson(chat.rawJson, protectedValues);
   expect(chat.status).toBe(200);
-  expect(chatBody).toEqual({
+  assertSafeResponse(chatBody, "placeholder public chat").matches({
     version: "1",
     requestId: "public-browser-runtime-e2e",
     mode: "placeholder",
@@ -599,10 +740,22 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
     suggestedActions: [{ label: "查看快速开始", href: "/docs#quick-start" }],
   });
   const setCookie = (await browserResponse.headerValue("set-cookie")) ?? "";
-  expect(setCookie).toContain("aap_assistant_sid_dev=");
-  expect(setCookie).toContain("HttpOnly");
-  expect(setCookie).toContain("SameSite=Lax");
-  expect(setCookie).not.toContain("Secure");
+  expect(
+    setCookie.includes("aap_assistant_sid_dev="),
+    "assistant cookie is missing",
+  ).toBe(true);
+  expect(
+    setCookie.includes("HttpOnly"),
+    "assistant cookie is not HttpOnly",
+  ).toBe(true);
+  expect(
+    setCookie.includes("SameSite=Lax"),
+    "assistant cookie SameSite policy is invalid",
+  ).toBe(true);
+  expect(
+    setCookie.includes("Secure"),
+    "loopback assistant cookie unexpectedly requires Secure",
+  ).toBe(false);
   const credential = cookieCredential(setCookie);
   firstAssistantCookieCredential = credential;
   expect(
@@ -624,19 +777,26 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
       }),
     ),
   );
-  expect(burst.filter((response) => response.status() === 200)).toHaveLength(
-    10,
-  );
+  expect(
+    burst.filter((response) => response.status() === 200).length === 10,
+    "placeholder burst success count is invalid",
+  ).toBe(true);
   const rejected = burst.filter((response) => response.status() === 429);
-  expect(rejected).toHaveLength(1);
-  expect(rejected[0]!.headers()["retry-after"]).toBe("60");
+  expect(
+    rejected.length === 1,
+    "placeholder burst rejection count is invalid",
+  ).toBe(true);
+  expect(
+    rejected[0]!.headers()["retry-after"] === "60",
+    "rate limit retry interval is invalid",
+  ).toBe(true);
   const rejection = await readSafeJson(rejected[0]!, [
     ...protectedValues,
     credential,
   ]);
-  expect(rejection).toEqual({
+  assertSafeResponse(rejection, "placeholder rate limit").matches({
     version: "1",
-    requestId: expect.stringMatching(/^[a-f0-9]{32}$/u),
+    requestId: nginxRequestIdMatcher,
     error: {
       code: "rate_limited",
       message: "请求过于频繁，请稍后再试。",
@@ -708,7 +868,7 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
         : await anonymous.post(endpoint, { data: CHAT_BODY });
     expect(response.status()).toBe(401);
     const body = await readSafeJson(response, protectedValues);
-    expect(body).toEqual({
+    assertSafeResponse(body, "anonymous admin rejection").matches({
       version: "1",
       requestId: requestIdMatcher,
       error: {
@@ -739,7 +899,7 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
         : await staff.request.post(endpoint, { data: CHAT_BODY });
     expect(response.status()).toBe(403);
     const body = await readSafeJson(response, protectedValues);
-    expect(body).toEqual({
+    assertSafeResponse(body, "staff admin rejection").matches({
       version: "1",
       requestId: requestIdMatcher,
       error: {
@@ -763,7 +923,7 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
   const adminStatusResponse = await admin.request.get(ADMIN_STATUS_PATH);
   expect(adminStatusResponse.status()).toBe(200);
   const adminStatus = await readSafeJson(adminStatusResponse, protectedValues);
-  expect(adminStatus).toEqual({
+  assertSafeResponse(adminStatus, "placeholder admin status").matches({
     version: "1",
     requestId: requestIdMatcher,
     status: {
@@ -820,7 +980,7 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
   const sessionsResponse = await admin.request.get(ADMIN_SESSIONS_PATH);
   expect(sessionsResponse.status()).toBe(200);
   const sessions = await readSafeJson(sessionsResponse, protectedValues);
-  expect(sessions).toEqual({
+  assertSafeResponse(sessions, "placeholder admin sessions").matches({
     version: "1",
     requestId: requestIdMatcher,
     sessions: {
@@ -835,7 +995,7 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
   });
   expect(adminChatResponse.status()).toBe(200);
   const adminChat = await readSafeJson(adminChatResponse, protectedValues);
-  expect(adminChat).toEqual({
+  assertSafeResponse(adminChat, "placeholder admin chat").matches({
     version: "1",
     requestId: requestIdMatcher,
     mode: "placeholder",
@@ -864,7 +1024,7 @@ test.describe("@agentos deterministic runtime", () => {
       publicStatusResponse,
       protectedValues,
     );
-    expect(publicStatus).toEqual({
+    assertSafeResponse(publicStatus, "AgentOS public status").matches({
       version: "1",
       requestId: requestIdMatcher,
       live: true,
@@ -872,9 +1032,12 @@ test.describe("@agentos deterministic runtime", () => {
       capability: "available",
       message: "AI 助理基础服务已就绪。",
     });
-    expect(JSON.stringify(publicStatus)).not.toMatch(
-      /(?:maduoduo|e2e-deterministic|deterministic-turn|当前页面路径|用户问题)/iu,
-    );
+    expect(
+      /(?:maduoduo|e2e-deterministic|deterministic-turn|当前页面路径|用户问题)/iu.test(
+        JSON.stringify(publicStatus),
+      ),
+      "public status exposed internal Agent data",
+    ).toBe(false);
     await publicContext.close();
 
     const credentials = fixtureCredentials();
@@ -894,7 +1057,7 @@ test.describe("@agentos deterministic runtime", () => {
       ...protectedValues,
       credentials.noTotpAdminSessionToken,
     ]);
-    expect(adminStatus).toEqual({
+    assertSafeResponse(adminStatus, "AgentOS admin status").matches({
       version: "1",
       requestId: requestIdMatcher,
       status: {
@@ -951,9 +1114,12 @@ test.describe("@agentos deterministic runtime", () => {
         message: "AI 助理基础服务已就绪。",
       },
     });
-    expect(JSON.stringify(adminStatus)).not.toMatch(
-      /(?:e2e-deterministic|deterministic-turn|当前页面路径|用户问题)/iu,
-    );
+    expect(
+      /(?:e2e-deterministic|deterministic-turn|当前页面路径|用户问题)/iu.test(
+        JSON.stringify(adminStatus),
+      ),
+      "admin status exposed internal Agent data",
+    ).toBe(false);
 
     const sessionsBefore = agentSessionIds();
     const adminChatResponse = await admin.request.post(ADMIN_CHAT_PATH, {
@@ -964,7 +1130,7 @@ test.describe("@agentos deterministic runtime", () => {
       ...protectedValues,
       credentials.noTotpAdminSessionToken,
     ]);
-    expect(adminChat).toEqual({
+    assertSafeResponse(adminChat, "AgentOS admin chat").matches({
       version: "1",
       requestId: requestIdMatcher,
       mode: "agentos",
@@ -986,7 +1152,7 @@ test.describe("@agentos deterministic runtime", () => {
       ...protectedValues,
       credentials.noTotpAdminSessionToken,
     ]);
-    expect(sessions).toEqual({
+    assertSafeResponse(sessions, "AgentOS admin sessions").matches({
       version: "1",
       requestId: requestIdMatcher,
       sessions: {
@@ -1013,7 +1179,7 @@ test.describe("@agentos deterministic runtime", () => {
     });
     expect(firstResponse.status()).toBe(200);
     const first = await readSafeJson(firstResponse, protectedValues);
-    expect(first).toEqual({
+    assertSafeResponse(first, "AgentOS first turn").matches({
       version: "1",
       requestId: requestIdMatcher,
       mode: "agentos",
@@ -1050,7 +1216,7 @@ test.describe("@agentos deterministic runtime", () => {
       ...protectedValues,
       firstCredential,
     ]);
-    expect(second).toEqual({
+    assertSafeResponse(second, "AgentOS second turn").matches({
       version: "1",
       requestId: requestIdMatcher,
       mode: "agentos",
@@ -1083,7 +1249,7 @@ test.describe("@agentos deterministic runtime", () => {
       independentResponse,
       protectedValues,
     );
-    expect(independent).toEqual({
+    assertSafeResponse(independent, "AgentOS independent turn").matches({
       version: "1",
       requestId: requestIdMatcher,
       mode: "agentos",
@@ -1099,10 +1265,15 @@ test.describe("@agentos deterministic runtime", () => {
 
     const deletion = await context.request.delete(SESSION_PATH);
     expect(deletion.status()).toBe(204);
-    expect(await deletion.text()).toBe("");
-    expect(deletion.headers()["set-cookie"]).toContain(
-      "aap_assistant_sid_dev=",
-    );
+    expect(
+      (await deletion.text()) === "",
+      "assistant session deletion returned a body",
+    ).toBe(true);
+    expect(
+      deletion.headers()["set-cookie"]?.includes("aap_assistant_sid_dev=") ===
+        true,
+      "assistant session deletion did not clear its cookie",
+    ).toBe(true);
     const cookiesAfterDeletion = await context.cookies();
     expect(
       cookiesAfterDeletion.some(
@@ -1123,7 +1294,7 @@ test.describe("@agentos deterministic runtime", () => {
     });
     expect(thirdResponse.status()).toBe(200);
     const third = await readSafeJson(thirdResponse, protectedValues);
-    expect(third).toEqual({
+    assertSafeResponse(third, "AgentOS replacement turn").matches({
       version: "1",
       requestId: requestIdMatcher,
       mode: "agentos",
@@ -1155,9 +1326,12 @@ test.describe("@agentos deterministic runtime", () => {
     expect(["{}", "null"]).toContain(servicePortBindings("agent"));
     expect(["{}", "null"]).toContain(servicePortBindings("db"));
     expect(internalUnauthenticatedWebSocketStatus()).toBe(403);
-    expect(JSON.stringify(cumulativeConsoleMessages)).not.toMatch(
-      /(?:OS_SECURITY_KEY|authorization:\s*bearer)/iu,
-    );
+    expect(
+      /(?:OS_SECURITY_KEY|authorization:\s*bearer)/iu.test(
+        JSON.stringify(cumulativeConsoleMessages),
+      ),
+      "browser diagnostics exposed an internal credential",
+    ).toBe(false);
   });
 
   test("returns a safe 503 for invalid output and opens the execution circuit", async ({
@@ -1176,7 +1350,7 @@ test.describe("@agentos deterministic runtime", () => {
     });
     expect(invalidResponse.status()).toBe(503);
     const invalid = await readSafeJson(invalidResponse, protectedValues);
-    expect(invalid).toEqual({
+    assertSafeResponse(invalid, "AgentOS invalid response").matches({
       version: "1",
       requestId: requestIdMatcher,
       error: {
@@ -1185,9 +1359,31 @@ test.describe("@agentos deterministic runtime", () => {
         retryable: true,
       },
     });
-    expect(JSON.stringify(invalid)).not.toMatch(
-      /(?:__aap_e2e_invalid_response__|deterministic-turn|invalid_response)/iu,
-    );
+    expect(
+      /(?:__aap_e2e_invalid_response__|deterministic-turn|invalid_response)/iu.test(
+        JSON.stringify(invalid),
+      ),
+      "invalid model output reached the public response",
+    ).toBe(false);
+
+    const blockedResponse = await context.request.post(CHAT_PATH, {
+      data: CHAT_BODY,
+    });
+    expect(blockedResponse.status()).toBe(503);
+    const blocked = await readSafeJson(blockedResponse, protectedValues);
+    assertSafeResponse(blocked, "AgentOS circuit rejection").matches({
+      version: "1",
+      requestId: requestIdMatcher,
+      error: {
+        code: "assistant_unavailable",
+        message: "助手服务暂不可用，请使用帮助中心或商务咨询。",
+        retryable: true,
+      },
+    });
+    expect(
+      JSON.stringify(blocked).includes("deterministic-turn"),
+      "circuit rejection contained model output",
+    ).toBe(false);
 
     const credentials = fixtureCredentials();
     const admin = await browser.newContext({ baseURL });
@@ -1204,7 +1400,7 @@ test.describe("@agentos deterministic runtime", () => {
       ...protectedValues,
       credentials.adminSessionToken,
     ]);
-    expect(adminStatus).toEqual({
+    assertSafeResponse(adminStatus, "AgentOS degraded admin status").matches({
       version: "1",
       requestId: requestIdMatcher,
       status: {
@@ -1262,26 +1458,10 @@ test.describe("@agentos deterministic runtime", () => {
       },
     });
 
-    const blockedResponse = await context.request.post(CHAT_PATH, {
-      data: CHAT_BODY,
-    });
-    expect(blockedResponse.status()).toBe(503);
-    const blocked = await readSafeJson(blockedResponse, protectedValues);
-    expect(blocked).toEqual({
-      version: "1",
-      requestId: requestIdMatcher,
-      error: {
-        code: "assistant_unavailable",
-        message: "助手服务暂不可用，请使用帮助中心或商务咨询。",
-        retryable: true,
-      },
-    });
-    expect(JSON.stringify(blocked)).not.toContain("deterministic-turn");
-
     const statusResponse = await context.request.get(STATUS_PATH);
     expect(statusResponse.status()).toBe(200);
     const status = await readSafeJson(statusResponse, protectedValues);
-    expect(status).toEqual({
+    assertSafeResponse(status, "AgentOS degraded public status").matches({
       version: "1",
       requestId: requestIdMatcher,
       live: true,

@@ -1,3 +1,7 @@
+import socket
+
+import agno.api.agent as agno_agent_api
+import pytest
 from agno.agent import Agent
 from agno.models.message import Message
 from agno.models.openai import OpenAIResponses
@@ -13,14 +17,33 @@ from e2e_agent.deterministic_model import (
 )
 
 
-def test_deterministic_model_runs_through_agno_without_network(monkeypatch) -> None:
-    def reject_network(*_args, **_kwargs):
-        raise AssertionError("acceptance Agent must not use the network")
+def _reject_external_access(*_args, **_kwargs):
+    raise AssertionError("acceptance Agent must stay offline")
 
-    monkeypatch.setattr("agno.api.agent.create_agent_run", reject_network)
-    monkeypatch.setattr("socket.create_connection", reject_network)
-    monkeypatch.setattr("socket.getaddrinfo", reject_network)
-    monkeypatch.setattr("socket.socket.connect", reject_network)
+
+@pytest.fixture(autouse=True)
+def _offline_guard(monkeypatch):
+    monkeypatch.setattr(agno_agent_api, "create_agent_run", _reject_external_access)
+    monkeypatch.setattr(agno_agent_api, "acreate_agent_run", _reject_external_access)
+    monkeypatch.setattr(socket, "create_connection", _reject_external_access)
+    monkeypatch.setattr(socket, "getaddrinfo", _reject_external_access)
+    monkeypatch.setattr(socket, "gethostbyname", _reject_external_access)
+    monkeypatch.setattr(socket, "gethostbyname_ex", _reject_external_access)
+    monkeypatch.setattr(socket.socket, "connect", _reject_external_access)
+    monkeypatch.setattr(socket.socket, "connect_ex", _reject_external_access)
+
+
+def test_offline_guard_blocks_telemetry_and_dns_immediately() -> None:
+    assert agno_agent_api.create_agent_run is _reject_external_access
+    assert socket.getaddrinfo is _reject_external_access
+
+    with pytest.raises(AssertionError, match="acceptance Agent must stay offline"):
+        agno_agent_api.create_agent_run()
+    with pytest.raises(AssertionError, match="acceptance Agent must stay offline"):
+        socket.getaddrinfo("provider.example.invalid", 443)
+
+
+def test_deterministic_model_runs_through_agno_without_network() -> None:
     agent = Agent(model=DeterministicModel(), telemetry=False)
 
     output = agent.run("first user turn")
@@ -43,7 +66,7 @@ def test_deterministic_model_counts_user_messages_in_the_agno_request() -> None:
 
 
 def test_deterministic_model_returns_blank_for_exact_invalid_sentinel() -> None:
-    agent = Agent(model=DeterministicModel())
+    agent = Agent(model=DeterministicModel(), telemetry=False)
 
     output = agent.run(INVALID_RESPONSE_SENTINEL)
 
