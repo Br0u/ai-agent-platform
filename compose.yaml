@@ -181,8 +181,9 @@ services:
     cpus: "1.0"
     pids_limit: 256
     networks:
-      - backend
-      - model_egress
+      backend:
+      model_egress:
+        gw_priority: 1
 
   web:
     build:

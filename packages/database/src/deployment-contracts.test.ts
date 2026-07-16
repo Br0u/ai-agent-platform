@@ -20,6 +20,125 @@ import { describe, expect, it } from "vitest";
 const root = path.resolve(import.meta.dirname, "../../..");
 const read = (file: string) => readFileSync(path.join(root, file), "utf8");
 
+const composeSecretKeys = [
+  "POSTGRES_PASSWORD",
+  "MIGRATOR_DATABASE_PASSWORD",
+  "RUNTIME_DATABASE_PASSWORD",
+  "BACKUP_DATABASE_PASSWORD",
+  "BACKUP_ENCRYPTION_KEY",
+  "AGNO_MIGRATOR_DATABASE_PASSWORD",
+  "AGNO_DATABASE_PASSWORD",
+  "MIGRATOR_DATABASE_URL",
+  "RUNTIME_DATABASE_URL",
+  "BACKUP_DATABASE_URL",
+  "AGNO_MIGRATOR_DATABASE_URL",
+  "AGNO_DATABASE_URL",
+  "BETTER_AUTH_SECRET",
+  "OS_SECURITY_KEY",
+  "ASSISTANT_SESSION_SECRET",
+  "ASSISTANT_RATE_LIMIT_SECRET",
+  "MODEL_API_KEY",
+] as const;
+
+type RenderedSecretAttachment = string | { source?: string; target?: string };
+
+type RenderedNetworkAttachment = null | { gw_priority?: number };
+
+type RenderedService = {
+  cap_drop?: string[];
+  cpus?: number | string;
+  entrypoint?: string[];
+  environment?: Record<string, string | null>;
+  mem_limit?: number | string;
+  networks?: Record<string, RenderedNetworkAttachment>;
+  pids_limit?: number;
+  ports?: unknown[];
+  read_only?: boolean;
+  secrets?: RenderedSecretAttachment[];
+  security_opt?: string[];
+  tmpfs?: string[];
+  user?: string;
+};
+
+type RenderedCompose = {
+  networks: Record<string, { internal?: boolean }>;
+  services: Record<string, RenderedService>;
+};
+
+const renderComposeFixture = (): RenderedCompose => {
+  const sentinels = Object.fromEntries(
+    composeSecretKeys.map((key, index) => [
+      key,
+      `compose-secret-${index}-sentinel`,
+    ]),
+  );
+  sentinels.MODEL_API_KEY =
+    "protected-model-api-key-sentinel:/credential/path-content";
+  const sandbox = mkdtempSync(path.join(tmpdir(), "compose-secrets-"));
+  const secretFileEnv: Record<string, string> = {};
+
+  try {
+    for (const key of composeSecretKeys) {
+      const secretFile = path.join(sandbox, key.toLowerCase());
+      writeFileSync(secretFile, sentinels[key], { mode: 0o600 });
+      chmodSync(secretFile, 0o600);
+      secretFileEnv[`${key}_FILE`] = secretFile;
+    }
+
+    const execution = spawnSync(
+      "docker",
+      ["compose", "config", "--format", "json"],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ...secretFileEnv,
+          BETTER_AUTH_URL: "http://127.0.0.1:3000",
+          BETTER_AUTH_TRUSTED_ORIGINS: "http://127.0.0.1:3000",
+          ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
+          PUBLIC_HOST: "127.0.0.1",
+        },
+      },
+    );
+
+    const exposedProtectedFixture = Object.values(sentinels).some(
+      (sentinel) =>
+        execution.stdout.includes(sentinel) ||
+        execution.stderr.includes(sentinel),
+    );
+    if (exposedProtectedFixture) {
+      throw new Error("rendered Compose output exposed protected fixture data");
+    }
+    if (execution.status !== 0) {
+      throw new Error("fixture-backed Docker Compose rendering failed");
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(execution.stdout);
+    } catch {
+      throw new Error("rendered Docker Compose output was not valid JSON");
+    }
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !("services" in parsed) ||
+      !("networks" in parsed)
+    ) {
+      throw new Error("rendered Docker Compose model was incomplete");
+    }
+    return parsed as RenderedCompose;
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
+};
+
+const secretSource = (
+  attachment: RenderedSecretAttachment,
+): string | undefined =>
+  typeof attachment === "string" ? attachment : attachment.source;
+
 describe("production deployment security contracts", () => {
   it("keeps runtime and backup roles on separate least-privilege matrices", () => {
     const sql = `${read("infra/postgres/01-roles.sql")}\n${read("infra/postgres/02-runtime-grants.sql")}`;
@@ -761,7 +880,7 @@ exit 0
     expect(agentService).toContain("mem_limit:");
     expect(agentService).toContain("cpus:");
     expect(agentService).toContain("pids_limit:");
-    expect(agentService).toContain("networks:\n      - backend");
+    expect(agentService).toContain("networks:\n      backend:");
     expect(agentService).not.toMatch(/OS_SECURITY_KEY:\s*[A-Za-z0-9_-]{20,}/u);
 
     expect(backupService).toMatch(
@@ -820,7 +939,7 @@ exit 0
       expect(agentService).toContain(`${name}: ${expected}`);
     }
     expect(agentService).toContain(
-      "networks:\n      - backend\n      - model_egress",
+      "networks:\n      backend:\n      model_egress:\n        gw_priority: 1",
     );
     expect(agentService).not.toMatch(/^\s{4}ports:/mu);
     expect(agentService).toContain("read_only: true");
@@ -920,67 +1039,82 @@ exit 0
   });
 
   it("keeps every production credential out of rendered Compose config", () => {
-    const secretKeys = [
-      "POSTGRES_PASSWORD",
-      "MIGRATOR_DATABASE_PASSWORD",
-      "RUNTIME_DATABASE_PASSWORD",
-      "BACKUP_DATABASE_PASSWORD",
-      "AGNO_MIGRATOR_DATABASE_PASSWORD",
-      "AGNO_DATABASE_PASSWORD",
-      "MIGRATOR_DATABASE_URL",
-      "RUNTIME_DATABASE_URL",
-      "BACKUP_DATABASE_URL",
-      "AGNO_MIGRATOR_DATABASE_URL",
-      "AGNO_DATABASE_URL",
-      "BETTER_AUTH_SECRET",
-      "OS_SECURITY_KEY",
-      "ASSISTANT_SESSION_SECRET",
-      "ASSISTANT_RATE_LIMIT_SECRET",
-      "MODEL_API_KEY",
-    ] as const;
-    const sentinels = Object.fromEntries(
-      secretKeys.map((key, index) => [key, `compose-secret-${index}-sentinel`]),
-    );
-    sentinels.MODEL_API_KEY =
-      "protected-model-api-key-sentinel:/credential/path-content";
-    const sandbox = mkdtempSync(path.join(tmpdir(), "compose-secrets-"));
-    const secretFileEnv: Record<string, string> = {};
     const runner = read("infra/docker/run-with-secret-env.sh");
     expect(runner).toContain("/run/secrets/*");
     expect(runner).toContain('exec "$@"');
     expect(runner).not.toMatch(/set\s+-[^\n]*x/u);
     expect(read(".gitignore")).toContain(".secrets/");
-    try {
-      for (const key of secretKeys) {
-        const secretFile = path.join(sandbox, key.toLowerCase());
-        writeFileSync(secretFile, sentinels[key], { mode: 0o600 });
-        chmodSync(secretFile, 0o600);
-        secretFileEnv[`${key}_FILE`] = secretFile;
-      }
-      const rendered = spawnSync("docker", ["compose", "config"], {
-        cwd: root,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          ...secretFileEnv,
-          BETTER_AUTH_URL: "http://127.0.0.1:3000",
-          BETTER_AUTH_TRUSTED_ORIGINS: "http://127.0.0.1:3000",
-          ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
-          PUBLIC_HOST: "127.0.0.1",
-        },
-      });
+    const rendered = renderComposeFixture();
+    expect(Object.keys(rendered.services).length).toBeGreaterThan(0);
+  });
 
-      for (const sentinel of Object.values(sentinels)) {
-        expect(rendered.stdout).not.toContain(sentinel);
-        expect(rendered.stderr).not.toContain(sentinel);
-      }
-      expect(rendered.status, rendered.stderr).toBe(0);
-      expect(rendered.stdout).toContain("source: postgres_password");
-      expect(rendered.stdout).toContain("source: os_security_key");
-      expect(rendered.stdout).toContain("source: model_api_key");
-    } finally {
-      rmSync(sandbox, { recursive: true, force: true });
-    }
+  it("enforces the rendered Compose model across every service", () => {
+    const rendered = renderComposeFixture();
+    const services = Object.entries(rendered.services);
+    const agent = rendered.services.agent;
+    const modelSecretHolders = services
+      .filter(([, service]) =>
+        service.secrets?.some(
+          (attachment) => secretSource(attachment) === "model_api_key",
+        ),
+      )
+      .map(([name]) => name);
+    const modelEgressMembers = services
+      .filter(([, service]) =>
+        Object.hasOwn(service.networks ?? {}, "model_egress"),
+      )
+      .map(([name]) => name);
+    const rawModelKeyEnvironmentHolders = services
+      .filter(([, service]) =>
+        Object.hasOwn(service.environment ?? {}, "MODEL_API_KEY"),
+      )
+      .map(([name]) => name);
+    const publishedPortServices = services
+      .filter(([, service]) => (service.ports?.length ?? 0) > 0)
+      .map(([name]) => name);
+    const modelSecret = agent?.secrets?.find(
+      (attachment) => secretSource(attachment) === "model_api_key",
+    );
+    const backendAttachment = agent?.networks?.backend;
+    const modelEgressAttachment = agent?.networks?.model_egress;
+
+    expect(new Set(modelSecretHolders)).toEqual(new Set(["agent"]));
+    expect(new Set(modelEgressMembers)).toEqual(new Set(["agent"]));
+    expect(new Set(rawModelKeyEnvironmentHolders)).toEqual(new Set());
+    expect(new Set(publishedPortServices)).toEqual(new Set(["proxy"]));
+
+    expect(agent).toBeDefined();
+    expect(agent?.ports ?? []).toHaveLength(0);
+    expect(secretSource(modelSecret as RenderedSecretAttachment)).toBe(
+      "model_api_key",
+    );
+    expect(
+      typeof modelSecret === "string" ? undefined : modelSecret?.target,
+    ).toBe("/run/secrets/model_api_key");
+    expect(agent?.entrypoint).toEqual([
+      "/bin/sh",
+      "-eu",
+      "-c",
+      expect.stringContaining("/opt/aap/run-with-secret-env.sh"),
+      "--",
+    ]);
+    expect(agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "MODEL_API_KEY=/run/secrets/model_api_key",
+    );
+    expect(Object.hasOwn(agent?.networks ?? {}, "backend")).toBe(true);
+    expect(backendAttachment?.gw_priority ?? 0).toBe(0);
+    expect(modelEgressAttachment?.gw_priority).toBe(1);
+    expect(rendered.networks.backend?.internal).toBe(true);
+    expect(rendered.networks.model_egress?.internal ?? false).toBe(false);
+
+    expect(agent?.user).toBe("agent");
+    expect(agent?.read_only).toBe(true);
+    expect(new Set(agent?.cap_drop)).toEqual(new Set(["ALL"]));
+    expect(agent?.security_opt).toContain("no-new-privileges:true");
+    expect(agent?.tmpfs).toContain("/tmp:rw,noexec,nosuid,size=32m");
+    expect(Number(agent?.mem_limit)).toBe(512 * 1_024 * 1_024);
+    expect(Number(agent?.cpus)).toBe(1);
+    expect(agent?.pids_limit).toBe(256);
   });
 
   it("runs the ordered, pinned AgentOS CI gates with masked fixtures", () => {
