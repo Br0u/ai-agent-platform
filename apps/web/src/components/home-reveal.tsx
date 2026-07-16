@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 
 const REVEAL_SELECTOR = '[data-home-reveal="true"]';
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 const VISIBLE_CLASS = "is-home-visible";
 const READY_CLASS = "home-reveal-ready";
 
@@ -18,9 +19,11 @@ export function HomeRevealObserver() {
       root.querySelectorAll<HTMLElement>(REVEAL_SELECTOR),
     );
     const reveal = (target: Element) => target.classList.add(VISIBLE_CLASS);
+    const prefersReducedMotion =
+      window.matchMedia?.(REDUCED_MOTION_QUERY).matches ?? false;
 
     if (
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+      prefersReducedMotion ||
       typeof window.IntersectionObserver !== "function"
     ) {
       targets.forEach(reveal);

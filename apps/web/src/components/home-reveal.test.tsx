@@ -29,6 +29,23 @@ function createRect(top: number, bottom: number): DOMRect {
   };
 }
 
+function createIntersectionEntry(
+  target: Element,
+  isIntersecting: boolean,
+): IntersectionObserverEntry {
+  const targetRect = createRect(750, 900);
+
+  return {
+    boundingClientRect: targetRect,
+    intersectionRatio: isIntersecting ? 1 : 0,
+    intersectionRect: isIntersecting ? targetRect : createRect(0, 0),
+    isIntersecting,
+    rootBounds: createRect(0, 800),
+    target,
+    time: 0,
+  };
+}
+
 function renderHome(firstRect?: { top: number; bottom: number }) {
   return render(
     <>
@@ -146,7 +163,7 @@ describe("HomeRevealObserver", () => {
 
     act(() => {
       observerCallback?.(
-        [{ isIntersecting: true, target } as IntersectionObserverEntry],
+        [createIntersectionEntry(target, true)],
         observer as unknown as IntersectionObserver,
       );
     });
@@ -191,7 +208,10 @@ describe("HomeRevealObserver", () => {
     );
   });
 
-  it("reveals all targets without enabling observer styling when the API is missing", () => {
+  it("handles missing browser APIs with safe progressive enhancement", () => {
+    const intersectionObserver = window.IntersectionObserver;
+    const matchMedia = window.matchMedia;
+
     vi.stubGlobal("IntersectionObserver", undefined);
 
     renderHome();
@@ -201,5 +221,22 @@ describe("HomeRevealObserver", () => {
     expect(screen.getByTestId("reveal-two")).toHaveClass("is-home-visible");
     expect(observer.observe).not.toHaveBeenCalled();
     expect(rectSpy).not.toHaveBeenCalled();
+
+    cleanup();
+    vi.stubGlobal("IntersectionObserver", intersectionObserver);
+    vi.stubGlobal("matchMedia", undefined);
+
+    renderHome();
+
+    expect(screen.getByTestId("home")).toHaveClass("home-reveal-ready");
+    expect(observer.observe).toHaveBeenCalledTimes(2);
+    expect(observer.observe).toHaveBeenCalledWith(
+      screen.getByTestId("reveal-one"),
+    );
+    expect(observer.observe).toHaveBeenCalledWith(
+      screen.getByTestId("reveal-two"),
+    );
+
+    vi.stubGlobal("matchMedia", matchMedia);
   });
 });
