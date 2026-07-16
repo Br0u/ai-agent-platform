@@ -386,8 +386,8 @@ expect(
 ).toBeGreaterThanOrEqual(66);
 expect(contentFrames).toHaveLength(4);
 contentFrames.forEach((width) => {
-  expect(width).toBeGreaterThanOrEqual(1_100);
-  expect(width).toBeLessThanOrEqual(1_121);
+  expect(width).toBeGreaterThan(1_300);
+  expect(Math.abs(width - heroFrame!.width)).toBeLessThanOrEqual(1);
 });
 ```
 
@@ -426,22 +426,15 @@ pnpm --filter @ai-agent-platform/web build
 pnpm --filter @ai-agent-platform/web exec playwright test e2e/home-reference-layout.spec.ts --project=desktop --grep "approved desktop composition"
 ```
 
-Expected: FAIL because content frames are still 1360px and rows exceed the new limits.
+Expected: FAIL because rows exceed the new compact height limits.
 
 - [ ] **Step 3: Implement post-Hero density overrides**
 
 Modify existing declarations instead of appending duplicate overrides where practical. Keep `.home-frame`, all `.home-hero*`, and all `.home-closing*` values unchanged.
 
-Required desktop values:
+Required desktop values. Keep all regions on the shared `1360px` `.home-frame`; do not add a narrower max-width override:
 
 ```css
-.home-platform-overview > .home-frame,
-.home-enterprise > .home-frame,
-.home-solutions > .home-frame,
-.home-resources > .home-frame {
-  max-width: 1120px;
-}
-
 .home-platform-overview,
 .home-enterprise,
 .home-solutions,
@@ -449,7 +442,15 @@ Required desktop values:
   padding-block: clamp(64px, 6vw, 96px);
 }
 
-.home-capability-rail { gap: clamp(14px, 1.5vw, 20px); }
+.home-capability-rail {
+  grid-template-columns: repeat(3, minmax(0, 1fr) 36px) minmax(0, 1fr);
+  gap: clamp(6px, 0.75vw, 10px);
+}
+.home-capability-connector {
+  position: static;
+  align-self: center;
+  justify-self: center;
+}
 .home-capability-card {
   min-height: 132px;
   padding: 20px;
@@ -852,8 +853,9 @@ Review:
 Confirm:
 
 - Hero and closing CTA retain their prior width and composition.
-- Regions 2–5 are visibly narrower and 20–30% shorter without text clipping.
-- Before/after screenshots preserve Hero and closing composition while regions 2–5 become narrower and shorter.
+- Regions 2–5 align with the Hero width and are 20–30% shorter without text clipping.
+- Before/after screenshots preserve Hero and closing composition while regions 2–5 become denser and keep the same outer width.
+- Platform capability connectors sit completely inside dedicated gaps without overlapping either adjacent card.
 - No empty region remains hidden in the full-page screenshot.
 
 Screenshots intentionally disable animation and verify composition only. The live Playwright motion test from Task 4 is the source of truth for the 8-second breath, reveal timing, Hero exclusion, and reduced-motion behavior.

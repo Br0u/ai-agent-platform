@@ -241,8 +241,8 @@ test("matches the approved desktop composition", async ({ page }, testInfo) => {
     frames.map((frame) => frame.getBoundingClientRect().width),
   );
   for (const width of contentFrameWidths) {
-    expect(width).toBeGreaterThanOrEqual(1100);
-    expect(width).toBeLessThanOrEqual(1121);
+    expect(width).toBeGreaterThan(1300);
+    expect(Math.abs(width - heroFrame!.width)).toBeLessThanOrEqual(1);
   }
 
   const capabilityTops = await page
@@ -293,6 +293,41 @@ test("matches the approved desktop composition", async ({ page }, testInfo) => {
   );
   await expectRowsToFit(page, ".home-solution-row--subset", 140);
   await expectRowsToFit(page, ".home-resource", 128);
+});
+
+test("keeps platform connectors inside dedicated card gaps", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await gotoHome(page);
+
+  const capabilityCards = await page
+    .locator(".home-capability-card")
+    .evaluateAll((cards) =>
+      cards.map((card) => {
+        const rect = card.getBoundingClientRect();
+        return { left: rect.left, right: rect.right };
+      }),
+    );
+  const capabilityConnectors = await page
+    .locator(".home-capability-connector")
+    .evaluateAll((connectors) =>
+      connectors.map((connector) => {
+        const rect = connector.getBoundingClientRect();
+        return { left: rect.left, right: rect.right };
+      }),
+    );
+  expect(capabilityCards).toHaveLength(4);
+  expect(capabilityConnectors).toHaveLength(3);
+  capabilityConnectors.forEach((connector, index) => {
+    expect(connector.left).toBeGreaterThanOrEqual(
+      capabilityCards[index].right + 1,
+    );
+    expect(connector.right).toBeLessThanOrEqual(
+      capabilityCards[index + 1].left - 1,
+    );
+  });
 });
 
 test("keeps the compact tablet composition without clipping", async ({

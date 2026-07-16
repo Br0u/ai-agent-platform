@@ -21,13 +21,6 @@
   margin-inline: auto;
 }
 
-.home-platform-overview > .home-frame,
-.home-enterprise > .home-frame,
-.home-solutions > .home-frame,
-.home-resources > .home-frame {
-  max-width: 1120px;
-}
-
 .home-section,
 .home-closing {
   position: relative;
@@ -358,8 +351,8 @@
 .home-capability-rail {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: clamp(14px, 1.5vw, 20px);
+  grid-template-columns: repeat(3, minmax(0, 1fr) 36px) minmax(0, 1fr);
+  gap: clamp(6px, 0.75vw, 10px);
 }
 
 .home-capability-card {
@@ -421,30 +414,17 @@
 }
 
 .home-capability-connector {
-  position: absolute;
   z-index: 2;
-  top: 50%;
   display: grid;
   width: 30px;
   height: 30px;
+  align-self: center;
+  justify-self: center;
   place-items: center;
   border-radius: 50%;
   color: var(--home-blue-text);
   background: var(--home-canvas);
   font-size: 30px;
-  transform: translate(-50%, -50%);
-}
-
-.home-capability-connector:nth-child(2) {
-  left: 25%;
-}
-
-.home-capability-connector:nth-child(4) {
-  left: 50%;
-}
-
-.home-capability-connector:nth-child(6) {
-  left: 75%;
 }
 
 .home-platform__grid,
@@ -977,6 +957,7 @@
 
   .home-capability-rail {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: clamp(14px, 2vw, 20px);
   }
 
   .home-capability-connector {
