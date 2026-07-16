@@ -14,7 +14,7 @@ from pydantic import SecretStr
 from sqlalchemy import text
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from agent_service.catalog import build_catalog
+from agent_service.catalog import AgentCapability, build_catalog
 from agent_service.config import RuntimeSettings
 from agent_service.database import build_database
 
@@ -77,23 +77,34 @@ async def probe_database(database: AsyncPostgresDb) -> bool:
     return True
 
 
-def _status_response(*, ready: bool, message: str, status_code: int) -> JSONResponse:
+def _status_response(
+    *,
+    ready: bool,
+    capability: AgentCapability,
+    message: str,
+    status_code: int,
+) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content={
             "live": True,
             "ready": ready,
-            "capability": "placeholder",
+            "capability": capability,
             "message": message,
         },
         headers={"Cache-Control": "no-store"},
     )
 
 
-def _readiness_response(*, ready: bool, status_code: int) -> JSONResponse:
+def _readiness_response(
+    *,
+    ready: bool,
+    capability: AgentCapability,
+    status_code: int,
+) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
-        content={"ready": ready, "capability": "placeholder"},
+        content={"ready": ready, "capability": capability},
         headers={"Cache-Control": "no-store"},
     )
 
@@ -105,16 +116,17 @@ def create_app(
     agent_os_factory: AgentOSFactory = AgentOS,
     readiness_probe: ReadinessProbe = probe_database,
 ) -> FastAPI:
-    """Compose the protected FastAPI and model-free AgentOS surfaces."""
+    """Compose the protected FastAPI and configured AgentOS surfaces."""
     runtime_settings = settings or RuntimeSettings()
     runtime_database = database or build_database(runtime_settings)
-    catalog = build_catalog(runtime_settings)
+    catalog = build_catalog(runtime_settings, runtime_database)
     base_app = FastAPI(title="AI Agent Platform AgentOS")
 
     @base_app.get("/internal/health/live", include_in_schema=False)
     async def live() -> JSONResponse:
         return _status_response(
             ready=False,
+            capability=catalog.capability,
             message="service is live",
             status_code=200,
         )
@@ -132,10 +144,12 @@ def create_app(
         if not database_is_ready:
             return _readiness_response(
                 ready=False,
+                capability=catalog.capability,
                 status_code=503,
             )
         return _readiness_response(
             ready=True,
+            capability=catalog.capability,
             status_code=200,
         )
 

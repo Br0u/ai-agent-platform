@@ -3,20 +3,25 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any, cast
 
 import pytest
+from agno.agent import Agent
 from agno.db.postgres import AsyncPostgresDb
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.settings import AgnoAPISettings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import agent_service.app as app_module
 from agent_service.app import create_app, probe_database
-from agent_service.catalog import build_catalog
+from agent_service.catalog import AgentCapability, AgentCatalog, build_catalog
 from agent_service.config import RuntimeSettings
 from agent_service.database import build_database
 
 
 DATABASE_URL = "postgresql+psycopg_async://runtime:private-password@db:5432/platform"
 SECURITY_KEY = "internal-security-key-0123456789abcdef"
+MODEL_ID = "health-must-not-expose-model-id"
+MODEL_API_KEY = "health-must-not-expose-model-api-key"
 AUTHORIZATION = {"Authorization": f"Bearer {SECURITY_KEY}"}
 LIVE_SAFE_KEYS = {"live", "ready", "capability", "message"}
 READY_SAFE_KEYS = {"ready", "capability"}
@@ -29,6 +34,20 @@ def settings() -> RuntimeSettings:
         {
             "OS_SECURITY_KEY": SECURITY_KEY,
             "AGNO_DATABASE_URL": DATABASE_URL,
+        }
+    )
+
+
+@pytest.fixture
+def enabled_settings() -> RuntimeSettings:
+    return RuntimeSettings.model_validate(
+        {
+            "OS_SECURITY_KEY": SECURITY_KEY,
+            "AGNO_DATABASE_URL": DATABASE_URL,
+            "AGENT_ENABLED": True,
+            "MODEL_PROVIDER": "openai",
+            "MODEL_ID": MODEL_ID,
+            "MODEL_API_KEY": MODEL_API_KEY,
         }
     )
 
@@ -177,7 +196,82 @@ def test_ready_can_be_true_while_capability_remains_placeholder(
     assert set(response.json()) == READY_SAFE_KEYS
 
 
-def test_agentos_receives_exact_model_free_composition_and_same_database(
+@pytest.mark.parametrize(
+    ("settings_fixture", "capability"),
+    [("settings", "placeholder"), ("enabled_settings", "available")],
+)
+def test_health_uses_catalog_capability_same_database_and_no_model_details(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    settings_fixture: str,
+    capability: AgentCapability,
+) -> None:
+    runtime_settings = cast(RuntimeSettings, request.getfixturevalue(settings_fixture))
+    database = build_database(runtime_settings)
+    captured: dict[str, Any] = {}
+    catalog_inputs: list[tuple[RuntimeSettings, AsyncPostgresDb]] = []
+    probe_inputs: list[AsyncPostgresDb] = []
+
+    model = OpenAIResponses(id=MODEL_ID, api_key=MODEL_API_KEY)
+
+    def fail_if_model_runs(*args: object, **kwargs: object) -> None:
+        raise AssertionError("health must not invoke the configured model")
+
+    monkeypatch.setattr(model, "invoke", fail_if_model_runs)
+    monkeypatch.setattr(model, "ainvoke", fail_if_model_runs)
+    agents = (
+        [Agent(id="maduoduo", name="码多多", model=model, db=database)]
+        if capability == "available"
+        else []
+    )
+
+    def fake_build_catalog(
+        received_settings: RuntimeSettings,
+        received_database: AsyncPostgresDb,
+    ) -> AgentCatalog:
+        catalog_inputs.append((received_settings, received_database))
+        return AgentCatalog(agents=agents, capability=capability)
+
+    class CapturingAgentOS:
+        def __init__(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+        def get_app(self) -> FastAPI:
+            return captured["base_app"]
+
+    async def probe(received_database: AsyncPostgresDb) -> bool:
+        probe_inputs.append(received_database)
+        return True
+
+    monkeypatch.setattr(app_module, "build_catalog", fake_build_catalog)
+    app = create_app(
+        settings=runtime_settings,
+        database=database,
+        agent_os_factory=CapturingAgentOS,
+        readiness_probe=probe,
+    )
+
+    with TestClient(app) as client:
+        live_response = client.get("/internal/health/live", headers=AUTHORIZATION)
+        ready_response = client.get("/internal/health/ready", headers=AUTHORIZATION)
+
+    assert live_response.json() == {
+        "live": True,
+        "ready": False,
+        "capability": capability,
+        "message": "service is live",
+    }
+    assert ready_response.json() == {"ready": True, "capability": capability}
+    responses = live_response.text + ready_response.text
+    assert MODEL_ID not in responses
+    assert MODEL_API_KEY not in responses
+    assert catalog_inputs == [(runtime_settings, database)]
+    assert captured["db"] is database
+    assert captured["agents"] == agents
+    assert probe_inputs == [database]
+
+
+def test_agentos_receives_exact_disabled_composition_and_same_database(
     settings: RuntimeSettings,
 ) -> None:
     captured: dict[str, Any] = {}
@@ -205,7 +299,7 @@ def test_agentos_receives_exact_model_free_composition_and_same_database(
     with TestClient(app) as client:
         response = client.get("/internal/health/ready", headers=AUTHORIZATION)
 
-    catalog = build_catalog(settings)
+    catalog = build_catalog(settings, database)
     assert response.status_code == 200
     assert captured == {
         "id": "ai-agent-platform",
