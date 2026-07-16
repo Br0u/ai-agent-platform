@@ -172,9 +172,18 @@ describe("AgentOS run client", () => {
     });
   });
 
-  it.each([401, 404, 429, 500, 503])(
-    "rejects upstream HTTP %s",
-    async (status) => {
+  it.each([
+    [401, "authentication"],
+    [403, "authentication"],
+    [404, "not_found"],
+    [429, "rate_limited"],
+    [400, "other_client_error"],
+    [422, "other_client_error"],
+    [500, "server_error"],
+    [503, "server_error"],
+  ] as const)(
+    "maps upstream HTTP %s to sanitized run code %s",
+    async (status, code) => {
       const client = createAgentOSRunClient({
         settings: settings(),
         fetcher: vi
@@ -182,8 +191,21 @@ describe("AgentOS run client", () => {
           .mockResolvedValue(jsonResponse({ content: "secret" }, status)),
       });
 
-      await expect(client.runAgent({ message: "hello" })).rejects.toMatchObject(
-        { code: "unexpected_status" },
+      const error = await client
+        .runAgent({ message: "private prompt", sessionId: "private-session" })
+        .catch((value: unknown) => value);
+
+      expect(error).toBeInstanceOf(AgentOSRunClientError);
+      if (!(error instanceof AgentOSRunClientError)) {
+        throw new TypeError("Expected AgentOSRunClientError");
+      }
+      expect(error).toMatchObject({ code });
+      expect(`${error.name}:${error.message}`).toBe(
+        "AgentOSRunClientError:AgentOS run request failed",
+      );
+      expect(JSON.stringify(error)).toBe(`{"code":"${code}"}`);
+      expect(JSON.stringify(error)).not.toMatch(
+        /agent:7777|security|secret|private|prompt|session/iu,
       );
     },
   );
@@ -377,9 +399,10 @@ describe("AgentOS session deletion", () => {
 
   it.each([
     [302, "redirect_rejected"],
-    [401, "unexpected_status"],
-    [500, "unexpected_status"],
-    [503, "unexpected_status"],
+    [401, "authentication"],
+    [429, "rate_limited"],
+    [500, "server_error"],
+    [503, "server_error"],
   ])("rejects HTTP %s deletion", async (status, code) => {
     const response =
       status === 302

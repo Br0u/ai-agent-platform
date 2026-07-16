@@ -148,7 +148,6 @@ function snapshot(
       capability: status.capability,
       selectedProvider,
       ...inspection,
-      circuit: inspection.circuits.readiness,
     },
     services: serviceState(status, inspection, configurationValid),
     configuration: {

@@ -12,12 +12,19 @@ const placeholder = {
 const agentos = { reply: async () => ({ content: "a", suggestedActions: [] }) };
 
 describe("assistant provider selector", () => {
+  it("returns placeholder only when placeholder mode is explicit", () => {
+    expect(
+      selectAssistantProvider({
+        mode: "placeholder",
+        ready: true,
+        capability: "available",
+        placeholder: placeholder as AssistantProvider,
+        agentos: agentos as AssistantProvider,
+      }),
+    ).toBe(placeholder);
+  });
+
   it.each([
-    {
-      mode: "placeholder" as const,
-      ready: true,
-      capability: "available" as const,
-    },
     {
       mode: "agentos" as const,
       ready: false,
@@ -33,14 +40,27 @@ describe("assistant provider selector", () => {
       ready: true,
       capability: "degraded" as const,
     },
-  ])("returns placeholder unless every non-secret gate is true", (state) => {
-    expect(
-      selectAssistantProvider({
-        ...state,
-        placeholder: placeholder as AssistantProvider,
-        agentos: agentos as AssistantProvider,
-      }),
-    ).toBe(placeholder);
+  ])("fails closed when explicit AgentOS mode is unavailable", (state) => {
+    const error = (() => {
+      try {
+        return selectAssistantProvider({
+          ...state,
+          placeholder: placeholder as AssistantProvider,
+          agentos: agentos as AssistantProvider,
+        });
+      } catch (value) {
+        return value;
+      }
+    })();
+
+    expect(error).toMatchObject({
+      name: "AssistantProviderSelectionUnavailableError",
+      code: "ASSISTANT_PROVIDER_SELECTION_UNAVAILABLE",
+      message: "Assistant provider selection unavailable",
+    });
+    expect(JSON.stringify(error)).toBe(
+      '{"code":"ASSISTANT_PROVIDER_SELECTION_UNAVAILABLE"}',
+    );
   });
 
   it("selects AgentOS only when explicit mode, readiness, and capability agree", () => {

@@ -31,11 +31,7 @@ export type AdminAssistantStatusSnapshot = {
     providerMode: AssistantMode;
     selectedProvider: AssistantMode | "unavailable";
     persistence: "disabled";
-    circuit: {
-      state: "closed" | "open" | "half-open";
-      consecutiveFailures: number;
-    };
-    circuits?: {
+    circuits: {
       readiness: {
         state: "closed" | "open" | "half-open";
         consecutiveFailures: number;

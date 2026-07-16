@@ -22,7 +22,10 @@ const status = {
     providerMode: "placeholder" as const,
     selectedProvider: "placeholder" as const,
     persistence: "disabled" as const,
-    circuit: { state: "closed" as const, consecutiveFailures: 2 },
+    circuits: {
+      readiness: { state: "closed" as const, consecutiveFailures: 2 },
+      execution: { state: "open" as const, consecutiveFailures: 3 },
+    },
     readiness: {
       cacheTtlMs: 5000,
       probeTimeoutMs: 1500,
@@ -85,12 +88,18 @@ describe("AssistantAdminPage", () => {
     expect(screen.getByRole("heading", { name: "只读配置" })).toBeVisible();
     expect(screen.getByText("M 企业助理（占位）")).toBeVisible();
     expect(screen.getByRole("heading", { name: "运行时状态" })).toBeVisible();
-    expect(screen.getByText("Circuit").nextElementSibling).toHaveTextContent(
-      "closed",
-    );
-    expect(screen.getByText("Failures").nextElementSibling).toHaveTextContent(
-      "2",
-    );
+    expect(
+      screen.getByText("Readiness Circuit").nextElementSibling,
+    ).toHaveTextContent("closed");
+    expect(
+      screen.getByText("Readiness Failures").nextElementSibling,
+    ).toHaveTextContent("2");
+    expect(
+      screen.getByText("Execution Circuit").nextElementSibling,
+    ).toHaveTextContent("open");
+    expect(
+      screen.getByText("Execution Failures").nextElementSibling,
+    ).toHaveTextContent("3");
     expect(screen.getByText("Health TTL").nextElementSibling).toHaveTextContent(
       "5000 ms",
     );
@@ -106,6 +115,7 @@ describe("AssistantAdminPage", () => {
     expect(
       screen.queryByLabelText(/model.*key|api.*key/iu),
     ).not.toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/timestamp|openedAt|raw error/iu);
   });
 
   it("loads page styling from a dedicated stylesheet instead of inline CSS", () => {

@@ -7,6 +7,7 @@ import {
   type AgentOSTransportEnvironment,
   type AgentOSTransportErrorCode,
   type AgentOSTransportSettings,
+  type AgentOSUnexpectedStatusCategory,
 } from "./agentos-transport";
 import { ASSISTANT_CONTENT_MAX_CODE_POINTS } from "@/features/assistant/assistant-contract";
 
@@ -38,13 +39,17 @@ export type AgentOSRunClient = {
 };
 
 export type AgentOSRunClientErrorCode =
-  | AgentOSTransportErrorCode
-  | "invalid_content_type";
+  | Exclude<AgentOSTransportErrorCode, "unexpected_status">
+  | AgentOSUnexpectedStatusCategory
+  | "unexpected_status";
 
 export class AgentOSRunClientError extends Error {
   constructor(readonly code: AgentOSRunClientErrorCode) {
     super("AgentOS run request failed");
-    this.name = "AgentOSRunClientError";
+    Object.defineProperty(this, "name", {
+      value: "AgentOSRunClientError",
+      configurable: true,
+    });
   }
 }
 
@@ -103,6 +108,11 @@ function isBoundedContent(value: unknown): value is string {
 function sanitized(error: unknown): AgentOSRunClientError {
   if (error instanceof AgentOSRunClientError) return error;
   if (error instanceof AgentOSTransportError) {
+    if (error.code === "unexpected_status") {
+      return new AgentOSRunClientError(
+        error.statusCategory ?? "unexpected_status",
+      );
+    }
     return new AgentOSRunClientError(error.code);
   }
   return new AgentOSRunClientError("transport_error");

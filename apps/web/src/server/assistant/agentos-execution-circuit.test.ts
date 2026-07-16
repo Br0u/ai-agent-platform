@@ -52,11 +52,12 @@ describe("AgentOS execution circuit", () => {
     "timeout",
     "transport_error",
     "redirect_rejected",
-    "unexpected_status",
+    "authentication",
+    "not_found",
+    "server_error",
     "invalid_content_type",
     "response_too_large",
     "invalid_response",
-    "invalid_request",
   ] as const)(
     "counts the sanitized AgentOS run/client error %s",
     async (code) => {
@@ -74,16 +75,27 @@ describe("AgentOS execution circuit", () => {
     },
   );
 
-  it("does not count request validation, rate-limit, user Abort, or external abort", async () => {
+  it("does not count invalid requests, upstream rate limits, other 4xx, user Abort, or external abort", async () => {
     const { circuit } = circuitFixture();
     const validation = new TypeError("public validation error");
     const rateLimit = Object.assign(new Error("public rate limit"), {
       code: "RATE_LIMITED",
     });
     const userAbort = new DOMException("user aborted", "AbortError");
-    const externalAbort = failure("external_abort");
+    const runClientErrors = [
+      failure("invalid_request"),
+      failure("rate_limited"),
+      failure("other_client_error"),
+      failure("unexpected_status"),
+      failure("external_abort"),
+    ];
 
-    for (const error of [validation, rateLimit, userAbort, externalAbort]) {
+    for (const error of [
+      validation,
+      rateLimit,
+      userAbort,
+      ...runClientErrors,
+    ]) {
       await expect(
         circuit.execute(async () => {
           throw error;

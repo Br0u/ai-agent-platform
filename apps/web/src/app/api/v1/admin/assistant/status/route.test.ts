@@ -289,9 +289,9 @@ describe("GET /api/v1/admin/assistant/status", () => {
     } as never);
 
     expect(result.runtime.selectedProvider).toBe("unavailable");
-    expect(result.runtime.circuit).toEqual({
-      state: "closed",
-      consecutiveFailures: 0,
+    expect(result.runtime.circuits).toEqual({
+      readiness: { state: "closed", consecutiveFailures: 0 },
+      execution: { state: "open", consecutiveFailures: 3 },
     });
     expect(result.services.find(({ id }) => id === "agentos")).toMatchObject({
       state: "ready",
@@ -321,7 +321,6 @@ describe("GET /api/v1/admin/assistant/status", () => {
           providerMode: "placeholder",
           selectedProvider: "placeholder",
           persistence: "disabled",
-          circuit: { state: "closed", consecutiveFailures: 2 },
           circuits: {
             readiness: { state: "closed", consecutiveFailures: 2 },
             execution: { state: "closed", consecutiveFailures: 0 },
@@ -388,7 +387,6 @@ describe("GET /api/v1/admin/assistant/status", () => {
       providerMode: "placeholder",
       selectedProvider: "placeholder",
       persistence: "disabled",
-      circuit: { state: "closed", consecutiveFailures: 2 },
       circuits: {
         readiness: { state: "closed", consecutiveFailures: 2 },
         execution: { state: "closed", consecutiveFailures: 0 },
@@ -423,7 +421,6 @@ describe("GET /api/v1/admin/assistant/status", () => {
       providerMode: "placeholder",
       selectedProvider: "unavailable",
       persistence: "disabled",
-      circuit: { state: "closed", consecutiveFailures: 0 },
       circuits: {
         readiness: { state: "closed", consecutiveFailures: 0 },
         execution: { state: "closed", consecutiveFailures: 0 },

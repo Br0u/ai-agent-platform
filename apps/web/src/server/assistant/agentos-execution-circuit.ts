@@ -27,9 +27,25 @@ export class AgentOSExecutionUnavailableError extends Error {
 }
 
 function countedFailure(error: unknown): boolean {
-  return (
-    error instanceof AgentOSRunClientError && error.code !== "external_abort"
-  );
+  if (!(error instanceof AgentOSRunClientError)) return false;
+  switch (error.code) {
+    case "timeout":
+    case "transport_error":
+    case "redirect_rejected":
+    case "authentication":
+    case "not_found":
+    case "server_error":
+    case "invalid_content_type":
+    case "response_too_large":
+    case "invalid_response":
+      return true;
+    case "external_abort":
+    case "invalid_request":
+    case "rate_limited":
+    case "other_client_error":
+    case "unexpected_status":
+      return false;
+  }
 }
 
 export function createAgentOSExecutionCircuit(options: {

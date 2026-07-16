@@ -38,11 +38,41 @@ export type AgentOSTransportErrorCode =
   | "response_too_large"
   | "invalid_response";
 
+export type AgentOSUnexpectedStatusCategory =
+  | "authentication"
+  | "not_found"
+  | "rate_limited"
+  | "server_error"
+  | "other_client_error";
+
 export class AgentOSTransportError extends Error {
-  constructor(readonly code: AgentOSTransportErrorCode) {
+  declare readonly statusCategory?: AgentOSUnexpectedStatusCategory;
+
+  constructor(
+    readonly code: AgentOSTransportErrorCode,
+    statusCategory?: AgentOSUnexpectedStatusCategory,
+  ) {
     super("AgentOS request failed");
-    this.name = "AgentOSTransportError";
+    Object.defineProperty(this, "name", {
+      value: "AgentOSTransportError",
+      configurable: true,
+    });
+    Object.defineProperty(this, "statusCategory", {
+      value: statusCategory,
+      configurable: true,
+    });
   }
+}
+
+function classifyUnexpectedStatus(
+  status: number,
+): AgentOSUnexpectedStatusCategory | undefined {
+  if (status === 401 || status === 403) return "authentication";
+  if (status === 404) return "not_found";
+  if (status === 429) return "rate_limited";
+  if (status >= 500 && status <= 599) return "server_error";
+  if (status >= 400 && status <= 499) return "other_client_error";
+  return undefined;
 }
 
 export function resolveAgentOSTransportSettings(
@@ -266,7 +296,10 @@ export function createAgentOSTransport(options: {
             throw new AgentOSTransportError("redirect_rejected");
           }
           if (!request.acceptedStatuses.includes(response.status)) {
-            throw new AgentOSTransportError("unexpected_status");
+            throw new AgentOSTransportError(
+              "unexpected_status",
+              classifyUnexpectedStatus(response.status),
+            );
           }
           validateMediaType(
             response.headers.get("content-type"),

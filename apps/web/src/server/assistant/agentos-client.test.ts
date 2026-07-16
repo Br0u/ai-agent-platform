@@ -390,6 +390,7 @@ describe("AgentOS protected transport", () => {
 
     const error = await client.live().catch((value: unknown) => value);
     expect(error).toBeInstanceOf(AgentOSClientError);
+    expect(error).toMatchObject({ code: "unexpected_status" });
     const serialized = JSON.stringify(error);
     for (const sensitive of [INTERNAL_URL, SECURITY_KEY, secretBody]) {
       expect(serialized).not.toContain(sensitive);

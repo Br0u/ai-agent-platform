@@ -109,3 +109,53 @@ describe("AgentOS transport path boundary", () => {
     },
   );
 });
+
+describe("AgentOS transport status classification", () => {
+  it.each([
+    [401, "authentication"],
+    [403, "authentication"],
+    [404, "not_found"],
+    [429, "rate_limited"],
+    [500, "server_error"],
+    [503, "server_error"],
+    [400, "other_client_error"],
+    [422, "other_client_error"],
+  ] as const)(
+    "keeps health-compatible unexpected_status while classifying HTTP %s as %s",
+    async (status, statusCategory) => {
+      const rawBody = "private response prompt session secret";
+      const transport = createAgentOSTransport({
+        settings: { baseUrl: INTERNAL_URL, securityKey: SECURITY_KEY },
+        fetcher: vi
+          .fn<typeof fetch>()
+          .mockResolvedValue(new Response(rawBody, { status })),
+      });
+
+      const error = await transport
+        .request({
+          method: "POST",
+          path: "/agents/maduoduo/runs",
+          acceptedStatuses: [200],
+          timeoutMs: 250,
+          maxResponseBytes: 1_024,
+        })
+        .catch((value: unknown) => value);
+
+      expect(error).toBeInstanceOf(AgentOSTransportError);
+      if (!(error instanceof AgentOSTransportError)) {
+        throw new TypeError("Expected AgentOSTransportError");
+      }
+      expect(error).toMatchObject({
+        code: "unexpected_status",
+        statusCategory,
+      });
+      expect(`${error.name}:${error.message}`).toBe(
+        "AgentOSTransportError:AgentOS request failed",
+      );
+      expect(JSON.stringify(error)).toBe('{"code":"unexpected_status"}');
+      expect(JSON.stringify(error)).not.toMatch(
+        /private|response|prompt|session|secret|401|403|404|429|500|503/iu,
+      );
+    },
+  );
+});

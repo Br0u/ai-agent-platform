@@ -90,12 +90,20 @@ export function AssistantAdminPage({
             <dd>{status.runtime.capability}</dd>
           </div>
           <div>
-            <dt>Circuit</dt>
-            <dd>{status.runtime.circuit.state}</dd>
+            <dt>Readiness Circuit</dt>
+            <dd>{status.runtime.circuits.readiness.state}</dd>
           </div>
           <div>
-            <dt>Failures</dt>
-            <dd>{status.runtime.circuit.consecutiveFailures}</dd>
+            <dt>Readiness Failures</dt>
+            <dd>{status.runtime.circuits.readiness.consecutiveFailures}</dd>
+          </div>
+          <div>
+            <dt>Execution Circuit</dt>
+            <dd>{status.runtime.circuits.execution.state}</dd>
+          </div>
+          <div>
+            <dt>Execution Failures</dt>
+            <dd>{status.runtime.circuits.execution.consecutiveFailures}</dd>
           </div>
           <div>
             <dt>Health TTL</dt>
