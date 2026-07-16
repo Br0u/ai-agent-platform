@@ -414,17 +414,22 @@
 }
 
 .home-capability-connector {
+  position: relative;
   z-index: 2;
   display: grid;
   width: 30px;
   height: 30px;
   align-self: center;
   justify-self: center;
+  overflow: hidden;
   place-items: center;
   border-radius: 50%;
-  color: var(--home-blue-text);
-  background: var(--home-canvas);
-  font-size: 30px;
+}
+
+.home-capability-connector__image {
+  display: block;
+  width: 30px;
+  height: 30px;
 }
 
 .home-platform__grid,

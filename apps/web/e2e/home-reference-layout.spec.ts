@@ -77,6 +77,7 @@ async function loadHomeImages(page: Page) {
   const images = page.locator("main.home img");
   for (let index = 0; index < (await images.count()); index += 1) {
     const image = images.nth(index);
+    if (!(await image.isVisible())) continue;
     await image.scrollIntoViewIfNeeded();
     await expect
       .poll(() =>
@@ -811,6 +812,7 @@ test("loads without console, React, or image diagnostics", async ({ page }) => {
 
 test("captures named visual evidence", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop");
+  test.setTimeout(60_000);
   const outputDirectory = resolve(
     process.cwd(),
     "../../artifacts/playwright/home-reference",

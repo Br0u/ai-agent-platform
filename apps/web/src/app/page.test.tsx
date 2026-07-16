@@ -134,6 +134,25 @@ describe("HomePage", () => {
     }
   });
 
+  it("uses the supplied image asset for each platform connector", () => {
+    render(<HomePage />);
+
+    const home = screen.getByRole("main", { name: "华鲲元启门户首页" });
+    const connectors = Array.from(
+      home.querySelectorAll(".home-capability-connector"),
+    );
+
+    expect(connectors).toHaveLength(3);
+    for (const connector of connectors) {
+      const image = connector.querySelector("img");
+
+      expect(image).toBeInTheDocument();
+      expect(image).toHaveAttribute("alt", "");
+      expect(image?.getAttribute("src")).toContain("capability-connector");
+      expect(connector).not.toHaveTextContent("›");
+    }
+  });
+
   it("keeps only calls to action and resources interactive", () => {
     render(<HomePage />);
 

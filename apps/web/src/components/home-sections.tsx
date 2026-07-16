@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { Fragment } from "react";
+import capabilityConnector from "../assets/home/capability-connector.webp";
 import platformLoop from "../assets/home/platform-loop.webp";
 import resourcesFolder from "../assets/home/resources-folder.webp";
 import solutionsPlatform from "../assets/home/solutions-platform.webp";
@@ -131,7 +132,14 @@ function CapabilityRail() {
           </article>
           {index < capabilities.length - 1 ? (
             <span className="home-capability-connector" aria-hidden="true">
-              ›
+              <Image
+                src={capabilityConnector}
+                alt=""
+                className="home-capability-connector__image"
+                width={30}
+                height={30}
+                sizes="30px"
+              />
             </span>
           ) : null}
         </Fragment>
