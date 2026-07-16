@@ -1,3 +1,4 @@
+import asyncio
 from importlib import import_module
 from types import MappingProxyType
 import socket
@@ -99,12 +100,22 @@ OPENAI_COMPATIBLE_ENDPOINT_CASES: tuple[OpenAICompatibleEndpointCase, ...] = (
 )
 POISONED_PROVIDER_ENVIRONMENT = {
     "OPENAI_API_KEY": "poison-openai-key",
+    "OPENAI_ADMIN_KEY": "poison-openai-admin-key",
     "OPENAI_BASE_URL": "https://poison-openai.invalid/v1",
+    "OPENAI_CUSTOM_HEADERS": (
+        "Authorization: Bearer poison-openai-auth\n"
+        "OpenAI-Project: poison-header-project"
+    ),
     "OPENAI_ORG_ID": "poison-openai-organization",
     "OPENAI_PROJECT_ID": "poison-openai-project",
     "ANTHROPIC_API_KEY": "poison-anthropic-key",
     "ANTHROPIC_AUTH_TOKEN": "poison-anthropic-token",
     "ANTHROPIC_BASE_URL": "https://poison-anthropic.invalid",
+    "ANTHROPIC_CUSTOM_HEADERS": (
+        "X-Api-Key: poison-anthropic-key\n"
+        "Authorization: Bearer poison-anthropic-auth"
+    ),
+    "ANTHROPIC_WEBHOOK_SIGNING_KEY": "poison-anthropic-webhook-key",
     "GOOGLE_API_KEY": "poison-google-key",
     "GOOGLE_GENAI_USE_VERTEXAI": "true",
     "GOOGLE_GENAI_USE_ENTERPRISE": "true",
@@ -159,6 +170,29 @@ def has_explicit_api_key(client: Any) -> bool:
 
 def model_repr_contains_explicit_api_key(model: Model) -> bool:
     return EXPLICIT_API_KEY in repr(model)
+
+
+def invoke_openai_compatible_client(client: Any, provider: ModelProvider) -> None:
+    if provider == "openai":
+        client.responses.create(model=MODEL_ID, input="ping")
+        return
+    client.chat.completions.create(
+        model=MODEL_ID,
+        messages=[{"role": "user", "content": "ping"}],
+    )
+
+
+async def invoke_openai_compatible_async_client(
+    client: Any,
+    provider: ModelProvider,
+) -> None:
+    if provider == "openai":
+        await client.responses.create(model=MODEL_ID, input="ping")
+        return
+    await client.chat.completions.create(
+        model=MODEL_ID,
+        messages=[{"role": "user", "content": "ping"}],
+    )
 
 
 def test_registry_does_not_eagerly_import_provider_modules() -> None:
@@ -241,9 +275,89 @@ def test_openai_compatible_client_ignores_poisoned_environment(
     assert has_explicit_api_key(client)
 
 
+@pytest.mark.parametrize("provider", ("openai", "dashscope", "deepseek", "minimax"))
+def test_openai_compatible_requests_ignore_poisoned_custom_auth_headers(
+    provider: ModelProvider,
+    poisoned_provider_environment: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RequestCaptured(BaseException):
+        pass
+
+    captured_requests: list[httpx.Request] = []
+
+    def capture_request(
+        client: httpx.Client,
+        request: httpx.Request,
+        **kwargs: object,
+    ) -> httpx.Response:
+        del client, kwargs
+        captured_requests.append(request)
+        raise RequestCaptured
+
+    async def capture_async_request(
+        client: httpx.AsyncClient,
+        request: httpx.Request,
+        **kwargs: object,
+    ) -> httpx.Response:
+        del client, kwargs
+        captured_requests.append(request)
+        raise RequestCaptured
+
+    monkeypatch.setattr(httpx.Client, "send", capture_request)
+    monkeypatch.setattr(httpx.AsyncClient, "send", capture_async_request)
+    model = model_registry.build_model(make_settings(provider))
+
+    with pytest.raises(RequestCaptured):
+        invoke_openai_compatible_client(get_client(model), provider)
+    with pytest.raises(RequestCaptured):
+        asyncio.run(
+            invoke_openai_compatible_async_client(
+                getattr(model, "get_async_client")(),
+                provider,
+            )
+        )
+
+    assert len(captured_requests) == 2
+    for request in captured_requests:
+        uses_explicit_authorization = (
+            request.headers.get("authorization")
+            == f"Bearer {EXPLICIT_API_KEY}"
+        )
+        project_header_is_absent = "openai-project" not in request.headers
+        assert uses_explicit_authorization
+        assert project_header_is_absent
+
+
 def test_anthropic_clients_ignore_poisoned_endpoint_and_auth_token(
     poisoned_provider_environment: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class RequestCaptured(BaseException):
+        pass
+
+    captured_requests: list[httpx.Request] = []
+
+    def capture_request(
+        client: httpx.Client,
+        request: httpx.Request,
+        **kwargs: object,
+    ) -> httpx.Response:
+        del client, kwargs
+        captured_requests.append(request)
+        raise RequestCaptured
+
+    async def capture_async_request(
+        client: httpx.AsyncClient,
+        request: httpx.Request,
+        **kwargs: object,
+    ) -> httpx.Response:
+        del client, kwargs
+        captured_requests.append(request)
+        raise RequestCaptured
+
+    monkeypatch.setattr(httpx.Client, "send", capture_request)
+    monkeypatch.setattr(httpx.AsyncClient, "send", capture_async_request)
     model = model_registry.build_model(make_settings("anthropic"))
 
     client = get_client(model)
@@ -255,6 +369,27 @@ def test_anthropic_clients_ignore_poisoned_endpoint_and_auth_token(
     assert async_client.auth_token is None
     assert has_explicit_api_key(client)
     assert has_explicit_api_key(async_client)
+    with pytest.raises(RequestCaptured):
+        client.messages.create(
+            model=MODEL_ID,
+            max_tokens=1,
+            messages=[{"role": "user", "content": "ping"}],
+        )
+    with pytest.raises(RequestCaptured):
+        asyncio.run(
+            async_client.messages.create(
+                model=MODEL_ID,
+                max_tokens=1,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+        )
+
+    assert len(captured_requests) == 2
+    for request in captured_requests:
+        uses_explicit_api_key = request.headers.get("x-api-key") == EXPLICIT_API_KEY
+        authorization_is_absent = "authorization" not in request.headers
+        assert uses_explicit_api_key
+        assert authorization_is_absent
 
 
 def test_gemini_client_ignores_poisoned_vertex_project_and_credentials(
@@ -332,3 +467,21 @@ def test_registry_factory_mapping_is_runtime_immutable() -> None:
         cast(dict[ModelProvider, ModelFactory], factories)["openai"] = factories[
             "openai"
         ]
+
+
+def test_openai_client_params_are_isolated_between_models() -> None:
+    first = model_registry.build_model(make_settings("openai"))
+    second = model_registry.build_model(make_settings("openai"))
+
+    assert getattr(first, "client_params") is not getattr(second, "client_params")
+    first_client_params = getattr(first, "client_params")
+    second_client_params = getattr(second, "client_params")
+    assert first_client_params is not None
+    assert second_client_params is not None
+    first_client_params["project"] = "mutated-project"
+
+    assert second_client_params["project"] == ""
+
+    third = model_registry.build_model(make_settings("openai"))
+
+    assert getattr(third, "client_params")["project"] == ""

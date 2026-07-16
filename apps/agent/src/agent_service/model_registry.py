@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Final, Protocol
+from typing import Final, Protocol, cast
 
 from agno.models.base import Model
 
@@ -17,10 +17,6 @@ _DASHSCOPE_BASE_URL: Final = (
 )
 _DEEPSEEK_BASE_URL: Final = "https://api.deepseek.com"
 _MINIMAX_BASE_URL: Final = "https://api.minimax.io/v1"
-_DISABLED_OPENAI_CLIENT_ENV_FIELDS: Final = {
-    "project": "",
-    "webhook_secret": "",
-}
 
 
 class _RedactedApiKey(str):
@@ -38,16 +34,45 @@ def _api_key(settings: ActiveModelSettings) -> _RedactedApiKey:
     return _RedactedApiKey(settings.api_key.get_secret_value())
 
 
+def _openai_default_headers(api_key: _RedactedApiKey) -> dict[str, str]:
+    from openai import Omit
+
+    return {
+        "Authorization": _RedactedApiKey(f"Bearer {api_key}"),
+        "OpenAI-Organization": cast(str, Omit()),
+        "OpenAI-Project": cast(str, Omit()),
+    }
+
+
+def _openai_client_params() -> dict[str, str]:
+    return {
+        "admin_api_key": "",
+        "project": "",
+        "webhook_secret": "",
+    }
+
+
+def _anthropic_default_headers(api_key: _RedactedApiKey) -> dict[str, str]:
+    from anthropic import Omit
+
+    return {
+        "X-Api-Key": api_key,
+        "Authorization": cast(str, Omit()),
+    }
+
+
 def _build_openai_model(settings: ActiveModelSettings) -> Model:
     from agno.models.openai import OpenAIResponses
 
+    api_key = _api_key(settings)
     return OpenAIResponses(
         id=settings.model_id,
-        api_key=_api_key(settings),
+        api_key=api_key,
         organization="",
         base_url=settings.base_url or _OPENAI_BASE_URL,
         timeout=settings.timeout_seconds,
-        client_params=_DISABLED_OPENAI_CLIENT_ENV_FIELDS,
+        default_headers=_openai_default_headers(api_key),
+        client_params=_openai_client_params(),
     )
 
 
@@ -64,14 +89,18 @@ def _build_anthropic_model(settings: ActiveModelSettings) -> Model:
         client=Anthropic(
             api_key=api_key,
             auth_token=None,
+            webhook_key="",
             base_url=_ANTHROPIC_BASE_URL,
             timeout=settings.timeout_seconds,
+            default_headers=_anthropic_default_headers(api_key),
         ),
         async_client=AsyncAnthropic(
             api_key=api_key,
             auth_token=None,
+            webhook_key="",
             base_url=_ANTHROPIC_BASE_URL,
             timeout=settings.timeout_seconds,
+            default_headers=_anthropic_default_headers(api_key),
         ),
     )
 
@@ -112,39 +141,45 @@ def _build_google_model(settings: ActiveModelSettings) -> Model:
 def _build_dashscope_model(settings: ActiveModelSettings) -> Model:
     from agno.models.dashscope import DashScope
 
+    api_key = _api_key(settings)
     return DashScope(
         id=settings.model_id,
-        api_key=_api_key(settings),
+        api_key=api_key,
         organization="",
         base_url=settings.base_url or _DASHSCOPE_BASE_URL,
         timeout=settings.timeout_seconds,
-        client_params=_DISABLED_OPENAI_CLIENT_ENV_FIELDS,
+        default_headers=_openai_default_headers(api_key),
+        client_params=_openai_client_params(),
     )
 
 
 def _build_deepseek_model(settings: ActiveModelSettings) -> Model:
     from agno.models.deepseek import DeepSeek
 
+    api_key = _api_key(settings)
     return DeepSeek(
         id=settings.model_id,
-        api_key=_api_key(settings),
+        api_key=api_key,
         organization="",
         base_url=settings.base_url or _DEEPSEEK_BASE_URL,
         timeout=settings.timeout_seconds,
-        client_params=_DISABLED_OPENAI_CLIENT_ENV_FIELDS,
+        default_headers=_openai_default_headers(api_key),
+        client_params=_openai_client_params(),
     )
 
 
 def _build_minimax_model(settings: ActiveModelSettings) -> Model:
     from agno.models.minimax import MiniMax
 
+    api_key = _api_key(settings)
     return MiniMax(
         id=settings.model_id,
-        api_key=_api_key(settings),
+        api_key=api_key,
         organization="",
         base_url=settings.base_url or _MINIMAX_BASE_URL,
         timeout=settings.timeout_seconds,
-        client_params=_DISABLED_OPENAI_CLIENT_ENV_FIELDS,
+        default_headers=_openai_default_headers(api_key),
+        client_params=_openai_client_params(),
     )
 
 
