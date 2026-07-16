@@ -10,9 +10,11 @@ from agno.os import AgentOS
 from agno.os.settings import AgnoAPISettings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.types import Message, Receive, Scope, Send
+from starlette.websockets import WebSocketDisconnect
 
 import agent_service.app as app_module
-from agent_service.app import create_app, probe_database
+from agent_service.app import BearerAuthMiddleware, create_app, probe_database
 from agent_service.catalog import AgentCapability, AgentCatalog, build_catalog
 from agent_service.config import RuntimeSettings
 from agent_service.database import build_database
@@ -85,8 +87,87 @@ def test_every_http_surface_rejects_missing_or_invalid_bearer(
         response = client.get(path, headers=headers)
 
     assert response.status_code == 401
+    assert response.content == b'{"detail":"Unauthorized"}'
     assert response.json() == {"detail": "Unauthorized"}
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["content-type"] == "application/json"
     assert SECURITY_KEY not in response.text
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"Authorization": "Bearer wrong-key"}],
+)
+def test_websocket_rejects_missing_or_invalid_bearer_before_accept(
+    settings: RuntimeSettings,
+    headers: dict[str, str],
+) -> None:
+    app = make_app(settings, ready_probe)
+
+    with TestClient(app) as client:
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            with client.websocket_connect("/workflows/ws", headers=headers):
+                pass
+
+    assert exc_info.value.code == 4401
+    assert exc_info.value.reason == "Unauthorized"
+    assert SECURITY_KEY not in str(exc_info.value)
+
+
+def test_websocket_correct_bearer_reaches_agentos_route(
+    settings: RuntimeSettings,
+) -> None:
+    app = make_app(settings, ready_probe)
+
+    with TestClient(app) as client:
+        with client.websocket_connect(
+            "/workflows/ws",
+            headers=AUTHORIZATION,
+        ) as websocket:
+            connected = websocket.receive_json()
+            websocket.send_json({"action": "ping"})
+            pong = websocket.receive_json()
+
+    assert connected["event"] == "connected"
+    assert pong == {"event": "pong"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope_type", ["lifespan", "custom"])
+async def test_websocket_boundary_passes_unrelated_asgi_scopes_through_unchanged(
+    settings: RuntimeSettings,
+    scope_type: str,
+) -> None:
+    calls: list[tuple[bool, bool, bool]] = []
+    scope = cast(Scope, {"type": scope_type})
+
+    async def receive() -> Message:
+        return cast(Message, {"type": "test.receive"})
+
+    async def send(_: Message) -> None:
+        return None
+
+    async def downstream(
+        received_scope: Scope,
+        received_receive: Receive,
+        received_send: Send,
+    ) -> None:
+        calls.append(
+            (
+                received_scope is scope,
+                received_receive is receive,
+                received_send is send,
+            )
+        )
+
+    middleware = BearerAuthMiddleware(
+        downstream,
+        security_key=settings.os_security_key,
+    )
+
+    await middleware(scope, receive, send)
+
+    assert calls == [(True, True, True)]
 
 
 @pytest.mark.parametrize("path", ["/docs", "/openapi.json"])

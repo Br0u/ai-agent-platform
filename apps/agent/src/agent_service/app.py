@@ -1,7 +1,7 @@
 """Configured runtime Agent and AgentOS application composition."""
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 import hmac
 from typing import Protocol
 
@@ -29,36 +29,53 @@ AgentOSFactory = Callable[..., AgentOSApplication]
 ReadinessProbe = Callable[[AsyncPostgresDb], Awaitable[bool]]
 
 
+def _has_valid_bearer_header(
+    headers: Iterable[tuple[bytes, bytes]],
+    security_key: bytes,
+) -> bool:
+    authorization_values = [
+        value for name, value in headers if name.lower() == b"authorization"
+    ]
+    if len(authorization_values) != 1:
+        return False
+
+    parts = authorization_values[0].split(b" ")
+    if len(parts) != 2:
+        return False
+
+    scheme, token = parts
+    scheme_matches = hmac.compare_digest(scheme.lower(), b"bearer")
+    token_matches = hmac.compare_digest(token, security_key)
+    return scheme_matches and token_matches
+
+
 class BearerAuthMiddleware:
-    """Apply one constant-time bearer-key boundary to every HTTP route."""
+    """Apply one constant-time bearer-key boundary to HTTP and WebSocket routes."""
 
     def __init__(self, app: ASGIApp, *, security_key: SecretStr) -> None:
         self.app = app
         self._security_key = security_key.get_secret_value().encode("utf-8")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
+        scope_type = scope["type"]
+        if scope_type not in {"http", "websocket"}:
             await self.app(scope, receive, send)
             return
 
-        authorization_values = [
-            value
-            for name, value in scope.get("headers", [])
-            if name.lower() == b"authorization"
-        ]
-        authorized = False
-        if len(authorization_values) == 1:
-            parts = authorization_values[0].split(b" ")
-            if len(parts) == 2:
-                scheme, token = parts
-                authorized = hmac.compare_digest(
-                    scheme.lower(), b"bearer"
-                ) and hmac.compare_digest(
-                    token,
-                    self._security_key,
+        if not _has_valid_bearer_header(
+            scope.get("headers", []),
+            self._security_key,
+        ):
+            if scope_type == "websocket":
+                await send(
+                    {
+                        "type": "websocket.close",
+                        "code": 4401,
+                        "reason": "Unauthorized",
+                    }
                 )
+                return
 
-        if not authorized:
             response = JSONResponse(
                 status_code=401,
                 content={"detail": "Unauthorized"},
