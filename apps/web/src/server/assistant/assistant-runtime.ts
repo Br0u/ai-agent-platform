@@ -207,6 +207,24 @@ function safeInspection(inspection: {
   };
 }
 
+function uncomposedInspection(
+  providerMode: AssistantProviderMode,
+): AssistantRuntimeInspection {
+  return {
+    providerMode,
+    persistence: "disabled",
+    circuits: {
+      readiness: { ...CLOSED_CIRCUIT },
+      execution: { ...CLOSED_CIRCUIT },
+    },
+    readiness: {
+      cacheTtlMs: 0,
+      probeTimeoutMs: 0,
+      failureThreshold: 0,
+    },
+  };
+}
+
 export function createAssistantRuntime(options: RuntimeOptions = {}) {
   const environment = readRuntimeEnvironment(
     options.environment ?? process.env,
@@ -330,21 +348,14 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
 
     inspect(): AssistantRuntimeInspection {
       if (providerSettings.mode === "placeholder") {
-        return {
-          providerMode: "placeholder",
-          persistence: "disabled",
-          circuits: {
-            readiness: { ...CLOSED_CIRCUIT },
-            execution: { ...CLOSED_CIRCUIT },
-          },
-          readiness: {
-            cacheTtlMs: 0,
-            probeTimeoutMs: 0,
-            failureThreshold: 0,
-          },
-        };
+        return uncomposedInspection("placeholder");
       }
-      const composition = getAgentOSComposition();
+      let composition: AgentOSComposition;
+      try {
+        composition = getAgentOSComposition();
+      } catch {
+        return uncomposedInspection("agentos");
+      }
       return {
         providerMode: "agentos",
         persistence: "disabled",

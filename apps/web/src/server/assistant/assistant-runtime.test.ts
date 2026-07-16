@@ -241,8 +241,8 @@ describe("assistant server runtime", () => {
   });
 
   it.each(["50999", "55001", "51000.5", "Infinity", "NaN", ""])(
-    "rejects invalid run timeout %s in AgentOS mode",
-    (raw) => {
+    "rejects invalid run timeout %s when composing AgentOS status",
+    async (raw) => {
       const runtime = createAssistantRuntime({
         environment: {
           ...AGENTOS_ENVIRONMENT,
@@ -250,11 +250,40 @@ describe("assistant server runtime", () => {
         },
       });
 
-      expect(() => runtime.inspect()).toThrow(
+      await expect(runtime.status()).rejects.toThrow(
         "ASSISTANT_AGENTOS_RUN_TIMEOUT_MS",
       );
     },
   );
+
+  it("preserves the configured AgentOS mode in safe inspection when lazy composition is invalid", async () => {
+    const runtime = createAssistantRuntime({
+      environment: {
+        ...AGENTOS_ENVIRONMENT,
+        ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: "1",
+      },
+    });
+
+    expect(runtime.inspect()).toEqual({
+      providerMode: "agentos",
+      persistence: "disabled",
+      circuits: {
+        readiness: { state: "closed", consecutiveFailures: 0 },
+        execution: { state: "closed", consecutiveFailures: 0 },
+      },
+      readiness: {
+        cacheTtlMs: 0,
+        probeTimeoutMs: 0,
+        failureThreshold: 0,
+      },
+    });
+    await expect(readSafeAssistantRuntimeStatus(runtime)).resolves.toEqual({
+      live: false,
+      ready: false,
+      capability: "degraded",
+      message: "助手基础服务暂不可用。",
+    });
+  });
 
   it("does not silently select placeholder when AgentOS is healthy but capability is unavailable", async () => {
     const healthClient: AgentOSClient = {

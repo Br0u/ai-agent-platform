@@ -70,13 +70,13 @@ function serviceState(
     ? "degraded"
     : inspection.providerMode === "placeholder"
       ? "placeholder"
-      : executionUnavailable ||
-          !infrastructureReady ||
-          readiness.capability === "degraded"
+      : !infrastructureReady || readiness.capability === "degraded"
         ? "degraded"
-        : readiness.capability === "available"
-          ? "ready"
-          : "not_configured";
+        : readiness.capability === "placeholder"
+          ? "not_configured"
+          : executionUnavailable
+            ? "degraded"
+            : "ready";
 
   return [
     {
@@ -106,24 +106,24 @@ function serviceState(
     {
       id: "model",
       label: "模型",
-      state: executionUnavailable
-        ? "degraded"
-        : inspection.providerMode === "placeholder"
+      state:
+        inspection.providerMode === "placeholder" ||
+        readiness.capability === "placeholder"
           ? "not_configured"
-          : readiness.capability === "available"
-            ? "ready"
-            : readiness.capability === "placeholder"
-              ? "not_configured"
-              : "degraded",
-      detail: executionUnavailable
-        ? "模型执行暂不可用"
-        : inspection.providerMode === "placeholder"
+          : readiness.capability === "degraded"
+            ? "degraded"
+            : executionUnavailable
+              ? "degraded"
+              : "ready",
+      detail:
+        inspection.providerMode === "placeholder" ||
+        readiness.capability === "placeholder"
           ? "尚未配置"
-          : readiness.capability === "available"
-            ? "能力已启用"
-            : readiness.capability === "placeholder"
-              ? "尚未配置"
-              : "模型状态不可用",
+          : readiness.capability === "degraded"
+            ? "模型状态不可用"
+            : executionUnavailable
+              ? "模型执行暂不可用"
+              : "能力已启用",
     },
     {
       id: "public_entry",
@@ -175,19 +175,21 @@ function snapshot(
     services: serviceState(readiness, inspection, configurationValid),
     configuration: {
       defaultAgent:
-        configurationValid && inspection.providerMode === "agentos"
+        inspection.providerMode === "agentos"
           ? "码多多（maduoduo）"
           : "M 企业助理（占位）",
       model:
-        configurationValid && inspection.providerMode === "agentos"
-          ? executionUnavailable
-            ? "已配置（执行暂不可用）"
-            : readiness.capability === "available"
-              ? "已配置"
-              : readiness.capability === "placeholder"
-                ? "未配置"
-                : "状态不可用"
-          : "未配置",
+        inspection.providerMode === "placeholder"
+          ? "未配置"
+          : !configurationValid
+            ? "状态不可用"
+            : readiness.capability === "placeholder"
+              ? "未配置"
+              : readiness.capability === "degraded"
+                ? "状态不可用"
+                : executionUnavailable
+                  ? "已配置（执行暂不可用）"
+                  : "已配置",
       skills: "未接入",
       sessionStorage: "未启用",
     },
@@ -201,18 +203,20 @@ function snapshot(
 export async function loadAdminAssistantStatus(
   runtime?: Pick<AssistantRuntime, "status" | "readinessStatus" | "inspect">,
 ): Promise<AdminAssistantStatusSnapshot> {
+  let inspection = SAFE_DEGRADED_INSPECTION;
   try {
     const resolved = runtime ?? getAssistantRuntime();
+    inspection = resolved.inspect();
     const [status, readiness] = await Promise.all([
       readSafeAssistantRuntimeStatus(resolved),
       resolved.readinessStatus(),
     ]);
-    return snapshot(status, readiness, resolved.inspect());
+    return snapshot(status, readiness, inspection);
   } catch {
     return snapshot(
       SAFE_DEGRADED_STATUS,
       SAFE_UNPROBED_READINESS,
-      SAFE_DEGRADED_INSPECTION,
+      inspection,
       false,
     );
   }

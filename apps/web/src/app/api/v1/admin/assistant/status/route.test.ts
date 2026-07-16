@@ -229,6 +229,50 @@ describe("GET /api/v1/admin/assistant/status", () => {
     expect(JSON.stringify(result)).not.toMatch(/fallback|回退|raw|private/iu);
   });
 
+  it("does not claim a configured model when placeholder capability has an open execution circuit", async () => {
+    const result = await loadAdminAssistantStatus({
+      status: async () => ({
+        live: true,
+        ready: false,
+        capability: "degraded" as const,
+        message: "助手基础服务暂不可用。",
+      }),
+      readinessStatus: async () => ({
+        probed: true,
+        live: true,
+        ready: true,
+        capability: "placeholder" as const,
+      }),
+      inspect: () => ({
+        providerMode: "agentos" as const,
+        persistence: "disabled" as const,
+        circuits: {
+          readiness: { state: "closed" as const, consecutiveFailures: 0 },
+          execution: { state: "open" as const, consecutiveFailures: 3 },
+        },
+        readiness: {
+          cacheTtlMs: 5000,
+          probeTimeoutMs: 1500,
+          failureThreshold: 3,
+        },
+      }),
+    } as never);
+
+    expect(result.mode).toBe("agentos");
+    expect(result.runtime.selectedProvider).toBe("unavailable");
+    expect(result.services.find(({ id }) => id === "model")).toMatchObject({
+      state: "not_configured",
+      detail: "尚未配置",
+    });
+    expect(
+      result.services.find(({ id }) => id === "public_entry"),
+    ).toMatchObject({
+      state: "not_configured",
+      detail: "默认 Agent 或模型尚未配置",
+    });
+    expect(result.configuration.model).toBe("未配置");
+  });
+
   it("does not mark unhealthy readiness as ready when execution is also open", async () => {
     const actual = await vi.importActual<
       typeof import("@/server/assistant/assistant-runtime")
@@ -269,6 +313,54 @@ describe("GET /api/v1/admin/assistant/status", () => {
     );
     expect(result.services.find(({ id }) => id === "public_entry")?.state).toBe(
       "degraded",
+    );
+    expect(result.services.find(({ id }) => id === "model")).toMatchObject({
+      state: "degraded",
+      detail: "模型状态不可用",
+    });
+    expect(result.configuration.model).toBe("状态不可用");
+  });
+
+  it("keeps AgentOS mode and sanitized unavailable metadata when lazy composition is invalid", async () => {
+    const actual = await vi.importActual<
+      typeof import("@/server/assistant/assistant-runtime")
+    >("@/server/assistant/assistant-runtime");
+    const realRuntime = actual.createAssistantRuntime({
+      environment: {
+        ...AGENTOS_ENVIRONMENT,
+        ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: "1",
+      },
+    });
+
+    const result = await loadAdminAssistantStatus(realRuntime as never);
+
+    expect(result).toMatchObject({
+      mode: "agentos",
+      runtime: {
+        live: false,
+        ready: false,
+        capability: "degraded",
+        providerMode: "agentos",
+        selectedProvider: "unavailable",
+      },
+      configuration: {
+        defaultAgent: "码多多（maduoduo）",
+        model: "状态不可用",
+      },
+    });
+    expect(result.services.find(({ id }) => id === "agentos")).toMatchObject({
+      state: "not_connected",
+      detail: "尚未探测",
+    });
+    expect(result.services.find(({ id }) => id === "model")).toMatchObject({
+      state: "degraded",
+      detail: "模型状态不可用",
+    });
+    expect(result.services.find(({ id }) => id === "public_entry")?.state).toBe(
+      "degraded",
+    );
+    expect(JSON.stringify(result)).not.toMatch(
+      /agent:7777|security-key|private|fallback|回退|占位/iu,
     );
   });
 
