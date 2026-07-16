@@ -1,5 +1,7 @@
+import os
 import socket
 import stat
+import threading
 from pathlib import Path
 
 import agno.api.agent as agno_agent_api
@@ -129,6 +131,37 @@ def test_identity_audit_rejects_symlinks_nonregular_files_and_unsafe_modes(
             )
         assert identity not in str(error.value)
 
+    assert capsys.readouterr() == ("", "")
+
+
+def test_identity_audit_rejects_fifo_without_blocking_or_disclosing_identity(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    identity = "6f8f5771-7dd8-4ca8-94de-66f6fbb7a36d"
+    audit_file = tmp_path / "fifo"
+    os.mkfifo(audit_file)
+    result: dict[str, BaseException] = {}
+
+    def invoke_audit() -> None:
+        try:
+            audit_deleted_session_identity(
+                method="DELETE",
+                path=f"/sessions/{identity}",
+                audit_file=audit_file,
+            )
+        except BaseException as error:
+            result["error"] = error
+
+    worker = threading.Thread(target=invoke_audit, daemon=True)
+    worker.start()
+    worker.join(timeout=0.25)
+
+    assert not worker.is_alive(), "identity audit FIFO open did not return immediately"
+    error = result.get("error")
+    assert isinstance(error, RuntimeError)
+    assert str(error) == "identity audit sink is invalid"
+    assert identity not in str(error)
     assert capsys.readouterr() == ("", "")
 
 

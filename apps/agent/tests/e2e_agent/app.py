@@ -38,7 +38,12 @@ def _deleted_session_identity(method: str, path: str) -> str | None:
 
 
 def _open_identity_audit_sink(audit_file: Path) -> int:
-    flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_WRONLY
+        | os.O_APPEND
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     created = False
     try:
         try:

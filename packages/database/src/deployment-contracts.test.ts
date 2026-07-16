@@ -643,7 +643,38 @@ describe("production deployment security contracts", () => {
     expect(script).toContain(
       'identity_audit_path = "/tmp/aap-session-identity-audit"',
     );
+    const collectorMatch = script.match(
+      /identity_audit_collector=\$\(cat <<'PY'\n(?<source>[\s\S]*?)\nPY\n\)/u,
+    );
+    expect(collectorMatch?.groups?.source).toBeDefined();
+    const collectorSandbox = mkdtempSync(
+      path.join(tmpdir(), "identity-audit-collector-"),
+    );
+    try {
+      const fifo = path.join(collectorSandbox, "fifo");
+      const makeFifo = spawnSync(
+        "python3",
+        ["-c", "import os, sys; os.mkfifo(sys.argv[1])", fifo],
+        { encoding: "utf8" },
+      );
+      expect(makeFifo.status).toBe(0);
+      const collector = (collectorMatch?.groups?.source ?? "").replace(
+        'identity_audit_path = "/tmp/aap-session-identity-audit"',
+        `identity_audit_path = ${JSON.stringify(fifo)}`,
+      );
+      const execution = spawnSync("python3", ["-c", collector], {
+        encoding: "utf8",
+        timeout: 500,
+      });
+      expect(execution.error).toBeUndefined();
+      expect(execution.status).toBe(1);
+      expect(execution.stdout).toBe("");
+      expect(execution.stderr).toBe("identity audit collection failed\n");
+    } finally {
+      rmSync(collectorSandbox, { recursive: true, force: true });
+    }
     expect(script).toContain('getattr(os, "O_NOFOLLOW", 0)');
+    expect(script).toContain('getattr(os, "O_NONBLOCK", 0)');
     expect(script).toContain("stat.S_ISREG(metadata.st_mode)");
     expect(script).toContain("stat.S_IMODE(metadata.st_mode) != 0o600");
     expect(script).toContain("if not identities:");

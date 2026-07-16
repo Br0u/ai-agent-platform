@@ -399,7 +399,9 @@ identity_pattern = re.compile(
 try:
     descriptor = os.open(
         identity_audit_path,
-        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0),
     )
     try:
         metadata = os.fstat(descriptor)
