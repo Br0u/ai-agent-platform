@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI 助理 · 水滴毛玻璃真实预览</title>
+    <style>
+      :root {
+        --ink: #111a3b;
+        --muted: #687492;
+        --line: rgba(145, 161, 204, 0.25);
+        --blue: #5d83d0;
+        --indigo: #707acc;
+        --violet: #9b88db;
+        --surface: rgba(255, 255, 255, 0.6);
+        --panel: rgba(248, 250, 255, 0.78);
+        --font: "PingFang SC", "Microsoft YaHei", sans-serif;
+        --mono: "SFMono-Regular", Consolas, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        color: var(--ink);
+        background: #e8edf9;
+        font-family: var(--font);
+      }
+      main {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 42px 30px 64px;
+      }
+      .intro {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 28px;
+        margin-bottom: 20px;
+      }
+      .eyebrow {
+        margin: 0 0 8px;
+        color: var(--blue);
+        font: 700 10px/1 var(--mono);
+        letter-spacing: 0.16em;
+      }
+      h1 {
+        margin: 0;
+        font-size: clamp(30px, 4vw, 48px);
+        line-height: 0.98;
+        letter-spacing: -0.07em;
+      }
+      .intro p:last-child {
+        max-width: 480px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.7;
+      }
+      .notes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 20px;
+      }
+      .notes span {
+        padding: 8px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.8);
+        border-radius: 999px;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.42);
+        font-size: 11px;
+      }
+      .notes b {
+        color: var(--ink);
+      }
+      .showcase {
+        display: grid;
+        gap: 18px;
+      }
+      .mockup {
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.86);
+        border-radius: 28px;
+        background: linear-gradient(140deg, #dfe6f7, #f2f4fb 55%, #e0e6f7);
+        box-shadow:
+          0 22px 65px rgba(60, 78, 141, 0.14),
+          inset 0 1px rgba(255, 255, 255, 0.9);
+      }
+      .site-nav {
+        display: flex;
+        height: 76px;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 26px;
+        border-bottom: 1px solid rgba(126, 145, 197, 0.2);
+        background: rgba(255, 255, 255, 0.4);
+      }
+      .brand {
+        font-size: 18px;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }
+      .brand small {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font: 8px/1 var(--mono);
+        letter-spacing: 0.1em;
+      }
+      .nav-links {
+        display: flex;
+        gap: 19px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .mock-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 390px;
+        min-height: 610px;
+      }
+      .site-content {
+        padding: 78px 54px;
+      }
+      .content-card {
+        max-width: 500px;
+        padding: 34px;
+        border: 1px solid rgba(255, 255, 255, 0.82);
+        border-radius: 30px;
+        background: rgba(255, 255, 255, 0.38);
+        box-shadow: inset 0 1px rgba(255, 255, 255, 0.7);
+      }
+      .content-card span {
+        color: var(--blue);
+        font: 700 10px/1 var(--mono);
+        letter-spacing: 0.12em;
+      }
+      .content-card h2 {
+        margin: 18px 0 12px;
+        font-size: clamp(34px, 5vw, 60px);
+        line-height: 0.95;
+        letter-spacing: -0.08em;
+      }
+      .content-card p {
+        max-width: 320px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.8;
+      }
+      .assistant {
+        position: relative;
+        display: grid;
+        grid-template-rows: 64px minmax(0, 1fr) auto;
+        min-width: 0;
+        min-height: 610px;
+        overflow: hidden;
+        border-left: 1px solid rgba(255, 255, 255, 0.86);
+        border-radius: 30px 0 0 30px;
+        background: linear-gradient(
+          160deg,
+          rgba(250, 252, 255, 0.86),
+          rgba(237, 242, 255, 0.72)
+        );
+        box-shadow:
+          -22px 0 56px rgba(68, 83, 145, 0.12),
+          inset 1px 0 rgba(255, 255, 255, 0.72);
+      }
+      .assistant::before {
+        position: absolute;
+        z-index: 0;
+        top: -70px;
+        right: -50px;
+        width: 300px;
+        height: 210px;
+        border-radius: 50%;
+        background: linear-gradient(
+          135deg,
+          rgba(94, 166, 225, 0.2),
+          rgba(155, 136, 219, 0.2)
+        );
+        content: "";
+        filter: blur(26px);
+      }
+      .assistant > * {
+        position: relative;
+        z-index: 1;
+      }
+      .assistant-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 8px 13px 8px 20px;
+        border-bottom: 1px solid var(--line);
+      }
+      .assistant-head::after {
+        position: absolute;
+        right: 16px;
+        bottom: -1px;
+        left: 20px;
+        height: 1px;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgba(100, 137, 210, 0.42),
+          rgba(155, 136, 219, 0.38),
+          transparent
+        );
+        content: "";
+      }
+      .assistant-kicker {
+        margin: 0 0 4px;
+        color: var(--blue);
+        font: 700 8px/1 var(--mono);
+        letter-spacing: 0.15em;
+      }
+      .assistant-title {
+        margin: 0;
+        font-size: 14px;
+        line-height: 1.1;
+      }
+      .assistant-status {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        margin-top: 4px;
+        color: var(--muted);
+        font: 9px/1 var(--mono);
+      }
+      .status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #b9818f;
+        box-shadow: 0 0 0 3px rgba(185, 129, 143, 0.12);
+      }
+      .assistant-actions {
+        display: flex;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid rgba(255, 255, 255, 0.76);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.32);
+        box-shadow: inset 0 1px rgba(255, 255, 255, 0.7);
+      }
+      .assistant-actions button {
+        display: grid;
+        width: 29px;
+        height: 29px;
+        place-items: center;
+        border: 0;
+        border-radius: 50%;
+        color: #717b9b;
+        background: transparent;
+        font: 17px/1 var(--font);
+      }
+      .assistant-actions button:hover {
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.78);
+      }
+      .assistant-main {
+        min-height: 0;
+        overflow: auto;
+        padding: 34px 22px 26px;
+      }
+      .assistant-main > p {
+        margin: 0;
+        color: var(--blue);
+        font: 700 9px/1 var(--mono);
+        letter-spacing: 0.07em;
+      }
+      .assistant-main h3 {
+        margin: 13px 0 9px;
+        font-size: 35px;
+        line-height: 0.96;
+        letter-spacing: -0.08em;
+      }
+      .assistant-main .lead {
+        max-width: 280px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.7;
+      }
+      .question-list {
+        display: grid;
+        gap: 10px;
+        margin-top: 27px;
+      }
+      .question {
+        display: flex;
+        min-height: 55px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 0 14px 0 17px;
+        border: 1px solid rgba(156, 174, 218, 0.28);
+        border-radius: 22px;
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.43);
+        box-shadow:
+          0 8px 24px rgba(75, 92, 154, 0.06),
+          inset 0 1px rgba(255, 255, 255, 0.72);
+        font-size: 12px;
+      }
+      .question em {
+        display: grid;
+        width: 25px;
+        height: 25px;
+        place-items: center;
+        border-radius: 50%;
+        color: var(--blue);
+        background: rgba(108, 143, 214, 0.12);
+        font-size: 18px;
+        font-style: normal;
+      }
+      .assistant-footer {
+        padding: 12px 14px 15px;
+        border-top: 1px solid var(--line);
+        background: rgba(245, 247, 253, 0.36);
+      }
+      .composer {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: end;
+        padding: 9px 9px 9px 15px;
+        border: 1px solid rgba(158, 175, 215, 0.4);
+        border-radius: 25px;
+        background: rgba(255, 255, 255, 0.56);
+        box-shadow:
+          0 12px 28px rgba(75, 92, 154, 0.1),
+          inset 0 1px rgba(255, 255, 255, 0.82);
+      }
+      .composer textarea {
+        min-height: 50px;
+        resize: none;
+        border: 0;
+        outline: 0;
+        color: var(--ink);
+        background: transparent;
+        font: 12px/1.55 var(--font);
+      }
+      .composer textarea::placeholder {
+        color: #8994ae;
+      }
+      .send {
+        display: grid;
+        width: 43px;
+        height: 43px;
+        place-items: center;
+        border: 0;
+        border-radius: 17px;
+        color: white;
+        background: linear-gradient(145deg, #6b8fd8, #7c78ce);
+        box-shadow:
+          0 9px 18px rgba(91, 112, 190, 0.22),
+          inset 0 1px rgba(255, 255, 255, 0.34);
+        font-size: 18px;
+      }
+      .composer-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        margin: 8px 3px 0;
+        color: var(--muted);
+        font-size: 9px;
+      }
+      .second {
+        display: grid;
+        grid-template-columns: 390px minmax(0, 1fr);
+        min-height: 380px;
+      }
+      .second .assistant {
+        min-height: 380px;
+        border-right: 1px solid rgba(255, 255, 255, 0.86);
+        border-left: 0;
+        border-radius: 0 30px 30px 0;
+      }
+      .message-list {
+        display: grid;
+        align-content: start;
+        gap: 12px;
+        min-height: 0;
+        overflow: auto;
+        padding: 34px 22px 22px;
+      }
+      .message {
+        max-width: 92%;
+        padding: 14px 15px;
+        border: 1px solid rgba(160, 176, 214, 0.25);
+        border-radius: 22px 22px 22px 8px;
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.46);
+        box-shadow:
+          0 8px 20px rgba(79, 95, 157, 0.06),
+          inset 0 1px rgba(255, 255, 255, 0.72);
+        font-size: 12px;
+        line-height: 1.7;
+      }
+      .message.user {
+        justify-self: end;
+        border-radius: 22px 22px 8px 22px;
+        color: white;
+        background: linear-gradient(
+          145deg,
+          rgba(102, 139, 211, 0.9),
+          rgba(127, 119, 205, 0.9)
+        );
+      }
+      .second-copy {
+        display: grid;
+        align-content: center;
+        padding: 44px;
+      }
+      .second-copy span {
+        color: var(--blue);
+        font: 700 10px/1 var(--mono);
+        letter-spacing: 0.13em;
+      }
+      .second-copy h2 {
+        margin: 16px 0 10px;
+        font-size: 42px;
+        letter-spacing: -0.08em;
+      }
+      .second-copy p {
+        max-width: 360px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.8;
+      }
+      .caption {
+        margin: 19px 4px 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.7;
+      }
+      .caption b {
+        color: var(--ink);
+      }
+      @media (max-width: 900px) {
+        .mock-body,
+        .second {
+          grid-template-columns: 1fr;
+        }
+        .site-content,
+        .second-copy {
+          display: none;
+        }
+        .assistant,
+        .second .assistant {
+          width: min(100%, 460px);
+          min-height: 620px;
+          margin: 0 auto;
+          border: 1px solid rgba(255, 255, 255, 0.86);
+          border-radius: 30px;
+        }
+        .second .assistant {
+          min-height: 380px;
+        }
+      }
+      @media (max-width: 600px) {
+        main {
+          padding: 28px 14px 48px;
+        }
+        .intro {
+          display: block;
+        }
+        .intro p:last-child {
+          margin-top: 13px;
+        }
+        .site-nav {
+          padding-inline: 17px;
+        }
+        .nav-links {
+          display: none;
+        }
+        .assistant-head {
+          padding-left: 16px;
+        }
+        .assistant-main {
+          padding-inline: 18px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="intro">
+        <div>
+          <p class="eyebrow">AI ASSISTANT / LIQUID GLASS V3</p>
+          <h1>这次直接展示真实聊天框</h1>
+        </div>
+        <p>
+          上一版预览渲染失败。这一版去掉脆弱的绝对定位，直接把桌面抽屉、空状态、消息气泡、输入区和右上角按钮完整画出来。
+        </p>
+      </header>
+      <div class="notes">
+        <span><b>64px</b> 助理顶栏</span><span><b>76px</b> 主站 navbar</span
+        ><span><b>无 M 图标</b> 标题左侧</span
+        ><span><b>水滴毛玻璃</b> 低饱和辉光</span>
+      </div>
+      <section class="showcase">
+        <article class="mockup">
+          <div class="site-nav">
+            <div class="brand">
+              AI Agent Platform<small>BUILD ENTERPRISE AI FASTER</small>
+            </div>
+            <div class="nav-links">
+              <span>产品</span><span>解决方案</span><span>下载</span
+              ><span>支持</span>
+            </div>
+          </div>
+          <div class="mock-body">
+            <div class="site-content">
+              <div class="content-card">
+                <span>TGDataXAI / PLATFORM</span>
+                <h2>让企业 AI<br />走向业务</h2>
+                <p>
+                  主站内容保持背景层，助手用柔和毛玻璃独立出来，不再用锐利的直角和重阴影抢焦点。
+                </p>
+              </div>
+            </div>
+            <aside class="assistant">
+              <header class="assistant-head">
+                <div>
+                  <p class="assistant-kicker">AI ASSISTANT</p>
+                  <h3 class="assistant-title">M 企业助理</h3>
+                  <div class="assistant-status">
+                    <span class="status-dot"></span>基础服务暂不可用
+                  </div>
+                </div>
+                <div class="assistant-actions">
+                  <button aria-label="收起">⌄</button
+                  ><button aria-label="进入完整工作区">↗</button
+                  ><button aria-label="关闭">×</button>
+                </div>
+              </header>
+              <div class="assistant-main">
+                <p>在当前页面继续探索</p>
+                <h3>有什么可以帮你？</h3>
+                <p class="lead">输入问题，或从下面选择一个常用入口。</p>
+                <div class="question-list">
+                  <button class="question">
+                    <span>如何开始了解平台？</span><em>›</em></button
+                  ><button class="question">
+                    <span>如何获取部署支持？</span><em>›</em></button
+                  ><button class="question">
+                    <span>如何提交产品问题？</span><em>›</em>
+                  </button>
+                </div>
+              </div>
+              <footer class="assistant-footer">
+                <div class="composer">
+                  <textarea
+                    aria-label="输入问题"
+                    placeholder="输入你的问题，Shift + Enter 换行"
+                  ></textarea
+                  ><button class="send" aria-label="发送">↗</button>
+                </div>
+                <div class="composer-meta">
+                  <span>最多 500 个字符</span><span>帮助中心　商务咨询</span>
+                </div>
+              </footer>
+            </aside>
+          </div>
+        </article>
+        <article class="mockup second">
+          <aside class="assistant">
+            <header class="assistant-head">
+              <div>
+                <p class="assistant-kicker">AI ASSISTANT</p>
+                <h3 class="assistant-title">M 企业助理</h3>
+                <div class="assistant-status">
+                  <span class="status-dot"></span>服务状态已同步
+                </div>
+              </div>
+              <div class="assistant-actions">
+                <button aria-label="收起">⌄</button
+                ><button aria-label="进入完整工作区">↗</button
+                ><button aria-label="关闭">×</button>
+              </div>
+            </header>
+            <div class="message-list">
+              <div class="message">
+                你好，我可以帮你查找平台文档、部署支持和产品问题入口。
+              </div>
+              <div class="message user">如何获取部署支持？</div>
+              <div class="message">
+                可以先查看部署文档，也可以直接进入支持入口提交需求。
+              </div>
+            </div>
+            <footer class="assistant-footer">
+              <div class="composer">
+                <textarea
+                  aria-label="输入问题"
+                  placeholder="继续输入你的问题"
+                ></textarea
+                ><button class="send" aria-label="发送">↗</button>
+              </div>
+              <div class="composer-meta">
+                <span>0 / 500</span><span>帮助中心　商务咨询</span>
+              </div>
+            </footer>
+          </aside>
+          <div class="second-copy">
+            <span>MESSAGE / SOFT EDGES</span>
+            <h2>气泡也要软</h2>
+            <p>
+              消息气泡保留角色区分，但取消尖锐直角；用户消息使用低对比蓝靛紫，助手消息使用透明白，整体和背景融合。
+            </p>
+          </div>
+        </article>
+      </section>
+      <p class="caption">
+        <b>实现范围：</b>保留现有 React、状态管理、键盘交互和可访问性；修改
+        `assistant-dock.css`、`assistant-conversation.css`，并只调整必要的 JSX
+        结构来移除左上角 M 图标。
+      </p>
+    </main>
+  </body>
+</html>
