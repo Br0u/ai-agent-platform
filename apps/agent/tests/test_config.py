@@ -23,6 +23,15 @@ MODEL_PROVIDERS = (
     "deepseek",
     "minimax",
 )
+OPENAI_CUSTOM_HEADERS_PAYLOADS = (
+    "authorization: Bearer lowercase-secret\nHost: poison.invalid\nX-Poison: one",
+    "AuThOrIzAtIoN: Bearer mixed-secret\nHost: poison.invalid\nX-Poison: two",
+)
+ANTHROPIC_CUSTOM_HEADERS_PAYLOAD = (
+    "authorization: Bearer anthropic-secret\n"
+    "Host: poison.invalid\n"
+    "X-Poison: anthropic"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -37,7 +46,9 @@ def isolated_agent_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
         "HEALTH_READY_CACHE_TTL_SECONDS",
         "HEALTH_DB_PROBE_TIMEOUT_SECONDS",
         "OPENAI_API_KEY",
+        "OPENAI_CUSTOM_HEADERS",
         "ANTHROPIC_API_KEY",
+        "ANTHROPIC_CUSTOM_HEADERS",
         "GOOGLE_API_KEY",
         "DASHSCOPE_API_KEY",
         "DEEPSEEK_API_KEY",
@@ -215,6 +226,8 @@ def test_all_fields_use_explicit_uppercase_environment_aliases() -> None:
         "model_api_key": "MODEL_API_KEY",
         "model_base_url": "MODEL_BASE_URL",
         "model_run_timeout_seconds": "MODEL_RUN_TIMEOUT_SECONDS",
+        "openai_custom_headers": "OPENAI_CUSTOM_HEADERS",
+        "anthropic_custom_headers": "ANTHROPIC_CUSTOM_HEADERS",
         "health_ready_cache_ttl_seconds": "HEALTH_READY_CACHE_TTL_SECONDS",
         "health_db_probe_timeout_seconds": "HEALTH_DB_PROBE_TIMEOUT_SECONDS",
     }
@@ -677,6 +690,140 @@ def test_model_api_key_is_redacted_from_settings_and_validation_errors(
     assert MODEL_API_KEY not in str(error.value)
     assert MODEL_API_KEY not in repr(error.value.errors())
     assert MODEL_API_KEY not in error.value.json()
+
+
+@pytest.mark.parametrize(
+    "provider",
+    ["openai", "dashscope", "deepseek", "minimax"],
+)
+@pytest.mark.parametrize("payload", OPENAI_CUSTOM_HEADERS_PAYLOADS)
+def test_active_openai_compatible_provider_rejects_custom_headers_without_leak(
+    provider: str,
+    payload: str,
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_PROVIDER", provider)
+    monkeypatch.setenv("OPENAI_CUSTOM_HEADERS", payload)
+
+    with pytest.raises(ValidationError) as error:
+        RuntimeSettings(_env_file=None)
+
+    assert "OPENAI_CUSTOM_HEADERS" in str(error.value)
+    assert payload not in str(error.value)
+    assert payload not in repr(error.value)
+    assert payload not in repr(error.value.errors())
+    assert payload not in error.value.json()
+
+
+def test_active_anthropic_provider_rejects_custom_headers_without_leak(
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_PROVIDER", "anthropic")
+    monkeypatch.setenv(
+        "ANTHROPIC_CUSTOM_HEADERS",
+        ANTHROPIC_CUSTOM_HEADERS_PAYLOAD,
+    )
+
+    with pytest.raises(ValidationError) as error:
+        RuntimeSettings(_env_file=None)
+
+    assert "ANTHROPIC_CUSTOM_HEADERS" in str(error.value)
+    assert ANTHROPIC_CUSTOM_HEADERS_PAYLOAD not in str(error.value)
+    assert ANTHROPIC_CUSTOM_HEADERS_PAYLOAD not in repr(error.value)
+    assert ANTHROPIC_CUSTOM_HEADERS_PAYLOAD not in repr(error.value.errors())
+    assert ANTHROPIC_CUSTOM_HEADERS_PAYLOAD not in error.value.json()
+
+
+def test_disabled_agent_ignores_provider_custom_headers(
+    valid_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENT_ENABLED", "false")
+    monkeypatch.setenv("OPENAI_CUSTOM_HEADERS", OPENAI_CUSTOM_HEADERS_PAYLOADS[0])
+    monkeypatch.setenv(
+        "ANTHROPIC_CUSTOM_HEADERS",
+        ANTHROPIC_CUSTOM_HEADERS_PAYLOAD,
+    )
+
+    settings = RuntimeSettings(_env_file=None)
+
+    assert settings.active_model is None
+    assert settings.openai_custom_headers is None
+    assert settings.anthropic_custom_headers is None
+
+
+@pytest.mark.parametrize(
+    ("provider", "openai_payload", "anthropic_payload"),
+    [
+        ("google", OPENAI_CUSTOM_HEADERS_PAYLOADS[0], ANTHROPIC_CUSTOM_HEADERS_PAYLOAD),
+        ("openai", None, ANTHROPIC_CUSTOM_HEADERS_PAYLOAD),
+        ("anthropic", OPENAI_CUSTOM_HEADERS_PAYLOADS[0], None),
+    ],
+)
+def test_active_provider_ignores_irrelevant_custom_header_environment(
+    provider: str,
+    openai_payload: str | None,
+    anthropic_payload: str | None,
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_PROVIDER", provider)
+    if openai_payload is not None:
+        monkeypatch.setenv("OPENAI_CUSTOM_HEADERS", openai_payload)
+    if anthropic_payload is not None:
+        monkeypatch.setenv("ANTHROPIC_CUSTOM_HEADERS", anthropic_payload)
+
+    settings = RuntimeSettings(_env_file=None)
+
+    assert settings.active_model is not None
+    assert settings.active_model.provider == provider
+    assert settings.openai_custom_headers is None
+    assert settings.anthropic_custom_headers is None
+
+
+@pytest.mark.parametrize(
+    ("provider", "field_name", "payload", "environment_name"),
+    [
+        (
+            "openai",
+            "openai_custom_headers",
+            OPENAI_CUSTOM_HEADERS_PAYLOADS[0],
+            "OPENAI_CUSTOM_HEADERS",
+        ),
+        (
+            "anthropic",
+            "anthropic_custom_headers",
+            ANTHROPIC_CUSTOM_HEADERS_PAYLOAD,
+            "ANTHROPIC_CUSTOM_HEADERS",
+        ),
+    ],
+)
+def test_lowercase_direct_custom_header_alias_is_rejected_without_leak(
+    provider: str,
+    field_name: str,
+    payload: str,
+    environment_name: str,
+) -> None:
+    with pytest.raises(ValidationError) as error:
+        RuntimeSettings.model_validate(
+            {
+                "OS_SECURITY_KEY": SECURITY_KEY,
+                "AGNO_DATABASE_URL": RUNTIME_URL,
+                "AGENT_ENABLED": True,
+                "MODEL_PROVIDER": provider,
+                "MODEL_ID": "contract-model-id",
+                "MODEL_API_KEY": MODEL_API_KEY,
+                field_name: payload,
+            }
+        )
+
+    assert environment_name in str(error.value)
+    assert payload not in str(error.value)
+    assert payload not in repr(error.value)
+    assert payload not in repr(error.value.errors())
+    assert payload not in error.value.json()
 
 
 def test_schema_is_fixed_to_agno(valid_runtime_env: None) -> None:

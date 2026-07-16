@@ -2,15 +2,16 @@ import asyncio
 from importlib import import_module
 from types import MappingProxyType
 import socket
+import subprocess
 import sys
 from typing import Any, cast
 
 from agno.models.base import Model
 import httpx
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 import pytest
 
-from agent_service.config import ActiveModelSettings, ModelProvider
+from agent_service.config import ActiveModelSettings, ModelProvider, RuntimeSettings
 import agent_service.model_registry as model_registry
 from agent_service.model_registry import ModelFactory
 
@@ -22,6 +23,10 @@ CUSTOM_BASE_URL = "https://models.example.com/v1"
 OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
 ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
 GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
+RUNTIME_DATABASE_URL = (
+    "postgresql+psycopg_async://runtime:runtime-password@db:5432/platform"
+)
+RUNTIME_SECURITY_KEY = "internal-security-key-0123456789abcdef"
 ALL_PROVIDERS: tuple[ModelProvider, ...] = (
     "openai",
     "anthropic",
@@ -102,19 +107,11 @@ POISONED_PROVIDER_ENVIRONMENT = {
     "OPENAI_API_KEY": "poison-openai-key",
     "OPENAI_ADMIN_KEY": "poison-openai-admin-key",
     "OPENAI_BASE_URL": "https://poison-openai.invalid/v1",
-    "OPENAI_CUSTOM_HEADERS": (
-        "Authorization: Bearer poison-openai-auth\n"
-        "OpenAI-Project: poison-header-project"
-    ),
     "OPENAI_ORG_ID": "poison-openai-organization",
     "OPENAI_PROJECT_ID": "poison-openai-project",
     "ANTHROPIC_API_KEY": "poison-anthropic-key",
     "ANTHROPIC_AUTH_TOKEN": "poison-anthropic-token",
     "ANTHROPIC_BASE_URL": "https://poison-anthropic.invalid",
-    "ANTHROPIC_CUSTOM_HEADERS": (
-        "X-Api-Key: poison-anthropic-key\n"
-        "Authorization: Bearer poison-anthropic-auth"
-    ),
     "ANTHROPIC_WEBHOOK_SIGNING_KEY": "poison-anthropic-webhook-key",
     "GOOGLE_API_KEY": "poison-google-key",
     "GOOGLE_GENAI_USE_VERTEXAI": "true",
@@ -196,7 +193,60 @@ async def invoke_openai_compatible_async_client(
 
 
 def test_registry_does_not_eagerly_import_provider_modules() -> None:
-    assert all(module_name not in sys.modules for module_name in PROVIDER_MODULES)
+    script = (
+        "import sys\n"
+        "import agent_service.model_registry\n"
+        f"provider_modules = {PROVIDER_MODULES!r}\n"
+        "loaded = [name for name in provider_modules if name in sys.modules]\n"
+        "if loaded:\n"
+        "    raise SystemExit(','.join(loaded))\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+@pytest.mark.parametrize(
+    ("provider", "environment_name", "payload"),
+    [
+        (
+            "openai",
+            "OPENAI_CUSTOM_HEADERS",
+            "Authorization: Bearer rejected-openai-header",
+        ),
+        (
+            "anthropic",
+            "ANTHROPIC_CUSTOM_HEADERS",
+            "X-Api-Key: rejected-anthropic-header",
+        ),
+    ],
+)
+def test_runtime_rejects_custom_headers_before_model_build(
+    provider: ModelProvider,
+    environment_name: str,
+    payload: str,
+) -> None:
+    with pytest.raises(ValidationError):
+        settings = RuntimeSettings.model_validate(
+            {
+                "OS_SECURITY_KEY": RUNTIME_SECURITY_KEY,
+                "AGNO_DATABASE_URL": RUNTIME_DATABASE_URL,
+                "AGENT_ENABLED": True,
+                "MODEL_PROVIDER": provider,
+                "MODEL_ID": MODEL_ID,
+                "MODEL_API_KEY": EXPLICIT_API_KEY,
+                environment_name: payload,
+            }
+        )
+        active_model = settings.active_model
+        assert active_model is not None
+        model_registry.build_model(active_model)
 
 
 @pytest.mark.parametrize("provider", ALL_PROVIDERS)
@@ -306,6 +356,11 @@ def test_openai_compatible_requests_ignore_poisoned_custom_auth_headers(
 
     monkeypatch.setattr(httpx.Client, "send", capture_request)
     monkeypatch.setattr(httpx.AsyncClient, "send", capture_async_request)
+    monkeypatch.setenv(
+        "OPENAI_CUSTOM_HEADERS",
+        "Authorization: Bearer poison-openai-auth\n"
+        "OpenAI-Project: poison-header-project",
+    )
     model = model_registry.build_model(make_settings(provider))
 
     with pytest.raises(RequestCaptured):
@@ -358,6 +413,11 @@ def test_anthropic_clients_ignore_poisoned_endpoint_and_auth_token(
 
     monkeypatch.setattr(httpx.Client, "send", capture_request)
     monkeypatch.setattr(httpx.AsyncClient, "send", capture_async_request)
+    monkeypatch.setenv(
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "X-Api-Key: poison-anthropic-key\n"
+        "Authorization: Bearer poison-anthropic-auth",
+    )
     model = model_registry.build_model(make_settings("anthropic"))
 
     client = get_client(model)

@@ -43,6 +43,8 @@ _DIRECT_MODEL_SETTING_ALIASES = {
     "model_api_key": "MODEL_API_KEY",
     "model_base_url": "MODEL_BASE_URL",
     "model_run_timeout_seconds": "MODEL_RUN_TIMEOUT_SECONDS",
+    "openai_custom_headers": "OPENAI_CUSTOM_HEADERS",
+    "anthropic_custom_headers": "ANTHROPIC_CUSTOM_HEADERS",
 }
 _MODEL_SETTING_INPUT_KEYS = frozenset(
     {
@@ -51,11 +53,15 @@ _MODEL_SETTING_INPUT_KEYS = frozenset(
         "MODEL_API_KEY",
         "MODEL_BASE_URL",
         "MODEL_RUN_TIMEOUT_SECONDS",
+        "OPENAI_CUSTOM_HEADERS",
+        "ANTHROPIC_CUSTOM_HEADERS",
         "model_provider",
         "model_id",
         "model_api_key",
         "model_base_url",
         "model_run_timeout_seconds",
+        "openai_custom_headers",
+        "anthropic_custom_headers",
     }
 )
 
@@ -138,6 +144,18 @@ class RuntimeSettings(_AgentSettings):
         le=50,
         validation_alias="MODEL_RUN_TIMEOUT_SECONDS",
     )
+    openai_custom_headers: SecretStr | None = Field(
+        default=None,
+        validation_alias="OPENAI_CUSTOM_HEADERS",
+        exclude=True,
+        repr=False,
+    )
+    anthropic_custom_headers: SecretStr | None = Field(
+        default=None,
+        validation_alias="ANTHROPIC_CUSTOM_HEADERS",
+        exclude=True,
+        repr=False,
+    )
     health_ready_cache_ttl_seconds: PositiveFiniteFloat = Field(
         default=5.0,
         validation_alias="HEALTH_READY_CACHE_TTL_SECONDS",
@@ -179,6 +197,13 @@ class RuntimeSettings(_AgentSettings):
         raw_api_key = normalized_values.get("MODEL_API_KEY")
         if isinstance(raw_api_key, str):
             normalized_values["MODEL_API_KEY"] = SecretStr(raw_api_key)
+        for environment_name in (
+            "OPENAI_CUSTOM_HEADERS",
+            "ANTHROPIC_CUSTOM_HEADERS",
+        ):
+            raw_headers = normalized_values.get(environment_name)
+            if isinstance(raw_headers, str):
+                normalized_values[environment_name] = SecretStr(raw_headers)
         return normalized_values
 
     @field_validator("os_security_key", mode="after")
@@ -298,6 +323,36 @@ class RuntimeSettings(_AgentSettings):
         if isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value):
             return int(value)
         raise ValueError("model run timeout must be an integer")
+
+    @field_validator("openai_custom_headers", mode="after")
+    @classmethod
+    def _reject_openai_custom_headers(
+        cls,
+        value: SecretStr | None,
+        info: ValidationInfo,
+    ) -> None:
+        if (
+            value is not None
+            and info.data.get("agent_enabled")
+            and info.data.get("model_provider") in _BASE_URL_PROVIDERS
+        ):
+            raise ValueError("OPENAI_CUSTOM_HEADERS")
+        return None
+
+    @field_validator("anthropic_custom_headers", mode="after")
+    @classmethod
+    def _reject_anthropic_custom_headers(
+        cls,
+        value: SecretStr | None,
+        info: ValidationInfo,
+    ) -> None:
+        if (
+            value is not None
+            and info.data.get("agent_enabled")
+            and info.data.get("model_provider") == "anthropic"
+        ):
+            raise ValueError("ANTHROPIC_CUSTOM_HEADERS")
+        return None
 
     @property
     def active_model(self) -> ActiveModelSettings | None:
