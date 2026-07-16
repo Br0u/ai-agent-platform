@@ -15,6 +15,7 @@ export type AgentOSTransportRequest = {
   path: string;
   body?: BodyInit;
   acceptedStatuses: readonly number[];
+  acceptedMediaTypes?: readonly string[];
   timeoutMs: number;
   maxResponseBytes: number;
   signal?: AbortSignal;
@@ -29,9 +30,11 @@ export type AgentOSTransportResponse = {
 export type AgentOSTransportErrorCode =
   | "timeout"
   | "external_abort"
+  | "invalid_request"
   | "transport_error"
   | "redirect_rejected"
   | "unexpected_status"
+  | "invalid_content_type"
   | "response_too_large"
   | "invalid_response";
 
@@ -108,6 +111,48 @@ function abortError(
   return source ? new AgentOSTransportError(source) : null;
 }
 
+function resolveRequestUrl(
+  settings: AgentOSTransportSettings,
+  path: string,
+): string {
+  let url: URL;
+  try {
+    url = new URL(path, `${settings.baseUrl}/`);
+  } catch {
+    throw new AgentOSTransportError("invalid_request");
+  }
+  if (
+    !path.startsWith("/") ||
+    path.startsWith("//") ||
+    url.origin !== settings.baseUrl ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== path ||
+    url.search !== "" ||
+    url.hash !== "" ||
+    url.href !== `${settings.baseUrl}${path}`
+  ) {
+    throw new AgentOSTransportError("invalid_request");
+  }
+  return url.href;
+}
+
+function validateMediaType(
+  contentType: string | null,
+  acceptedMediaTypes: readonly string[] | undefined,
+): void {
+  if (acceptedMediaTypes === undefined) return;
+  const mediaType = contentType?.split(";", 1)[0]?.trim().toLowerCase();
+  if (
+    mediaType === undefined ||
+    !acceptedMediaTypes.some(
+      (accepted) => accepted.trim().toLowerCase() === mediaType,
+    )
+  ) {
+    throw new AgentOSTransportError("invalid_content_type");
+  }
+}
+
 async function readBoundedBody(
   response: Response,
   maxResponseBytes: number,
@@ -169,6 +214,7 @@ export function createAgentOSTransport(options: {
 
   return {
     async request(request) {
+      const requestUrl = resolveRequestUrl(options.settings, request.path);
       const controller = new AbortController();
       let response: Response | null = null;
       let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -205,18 +251,15 @@ export function createAgentOSTransport(options: {
         try {
           const beforeFetch = abortError(abortedBy);
           if (beforeFetch) throw beforeFetch;
-          response = await fetcher(
-            `${options.settings.baseUrl}${request.path}`,
-            {
-              method: request.method,
-              headers,
-              body: request.body,
-              signal: controller.signal,
-              redirect: "manual",
-              cache: "no-store",
-              credentials: "omit",
-            },
-          );
+          response = await fetcher(requestUrl, {
+            method: request.method,
+            headers,
+            body: request.body,
+            signal: controller.signal,
+            redirect: "manual",
+            cache: "no-store",
+            credentials: "omit",
+          });
           const afterFetch = abortError(abortedBy);
           if (afterFetch) throw afterFetch;
           if (response.status >= 300 && response.status < 400) {
@@ -225,6 +268,10 @@ export function createAgentOSTransport(options: {
           if (!request.acceptedStatuses.includes(response.status)) {
             throw new AgentOSTransportError("unexpected_status");
           }
+          validateMediaType(
+            response.headers.get("content-type"),
+            request.acceptedMediaTypes,
+          );
           const body = await readBoundedBody(
             response,
             request.maxResponseBytes,

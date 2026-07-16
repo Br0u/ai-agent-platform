@@ -154,6 +154,7 @@ export function createAgentOSClient(options: {
         method: "GET",
         path,
         acceptedStatuses,
+        acceptedMediaTypes: ["application/json"],
         timeoutMs,
         maxResponseBytes: MAX_RESPONSE_BYTES,
       });
@@ -165,7 +166,9 @@ export function createAgentOSClient(options: {
       if (error instanceof AgentOSClientError) throw error;
       if (error instanceof AgentOSTransportError) {
         throw new AgentOSClientError(
-          error.code === "external_abort" ? "transport_error" : error.code,
+          error.code === "external_abort" || error.code === "invalid_request"
+            ? "transport_error"
+            : error.code,
         );
       }
       throw new AgentOSClientError("transport_error");

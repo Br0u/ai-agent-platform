@@ -132,6 +132,7 @@ export function createAgentOSRunClient(options: {
           path: "/agents/maduoduo/runs",
           body: form,
           acceptedStatuses: [200],
+          acceptedMediaTypes: ["application/json"],
           timeoutMs: options.settings.runTimeoutMs,
           maxResponseBytes: AGENTOS_RUN_MAX_RESPONSE_BYTES,
           signal: input.signal,

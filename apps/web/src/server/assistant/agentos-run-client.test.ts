@@ -246,6 +246,57 @@ describe("AgentOS run client", () => {
     await assertion;
   });
 
+  it("rejects and cancels a stalled wrong media type before its deadline", async () => {
+    vi.useFakeTimers();
+    let cancelled = false;
+    const stalledHtml = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("private raw answer"));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/html; charset=utf-8" } },
+    );
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(stalledHtml);
+    const client = createAgentOSRunClient({
+      settings: settings("51000"),
+      fetcher,
+    });
+    const message = "private prompt";
+    const sessionId = "private-session-id";
+    const result = client
+      .runAgent({ message, sessionId })
+      .catch((value: unknown) => value);
+    let settled = false;
+    void result.then(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    const settledBeforeDeadline = settled;
+    if (!settled) await vi.advanceTimersByTimeAsync(51_000);
+    const error = await result;
+
+    expect(settledBeforeDeadline).toBe(true);
+    expect(error).toBeInstanceOf(AgentOSRunClientError);
+    expect(error).toMatchObject({ code: "invalid_content_type" });
+    expect(cancelled).toBe(true);
+    const serialized = JSON.stringify(error);
+    for (const sensitive of [
+      INTERNAL_URL,
+      SECURITY_KEY,
+      "text/html",
+      "private raw answer",
+      message,
+      sessionId,
+    ]) {
+      expect(serialized).not.toContain(sensitive);
+    }
+  });
+
   it("honors and sanitizes an external abort", async () => {
     const external = new AbortController();
     let reasonWasRead = false;

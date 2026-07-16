@@ -30,7 +30,10 @@ async function within<T>(promise: Promise<T>, timeoutMs = 250) {
   }
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("AgentOS client settings", () => {
   it.each([
@@ -283,6 +286,51 @@ describe("AgentOS protected transport", () => {
       live: true,
       capability: "placeholder",
     });
+  });
+
+  it("rejects and cancels a stalled wrong media type before its deadline", async () => {
+    vi.useFakeTimers();
+    let cancelled = false;
+    const stalledHtml = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("private raw body"));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/html; charset=utf-8" } },
+    );
+    const client = createAgentOSClient({
+      settings: { baseUrl: INTERNAL_URL, securityKey: SECURITY_KEY },
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(stalledHtml),
+      timeoutMs: 1_000,
+    });
+    const result = client.ready().catch((value: unknown) => value);
+    let settled = false;
+    void result.then(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    const settledBeforeDeadline = settled;
+    if (!settled) await vi.advanceTimersByTimeAsync(1_000);
+    const error = await result;
+
+    expect(settledBeforeDeadline).toBe(true);
+    expect(error).toBeInstanceOf(AgentOSClientError);
+    expect(error).toMatchObject({ code: "invalid_content_type" });
+    expect(cancelled).toBe(true);
+    const serialized = JSON.stringify(error);
+    for (const sensitive of [
+      INTERNAL_URL,
+      SECURITY_KEY,
+      "text/html",
+      "private raw body",
+    ]) {
+      expect(serialized).not.toContain(sensitive);
+    }
   });
 
   it("honors the deadline even when an abnormal reader ignores abort and cancel", async () => {

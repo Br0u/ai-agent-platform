@@ -68,3 +68,44 @@ describe("AgentOS transport cancellation", () => {
     ).rejects.toMatchObject({ code: "timeout" });
   });
 });
+
+describe("AgentOS transport path boundary", () => {
+  it.each([
+    "agents/maduoduo/runs",
+    "https://evil.test/private",
+    "//evil.test/private",
+    "//user:password@evil.test/private",
+    "/sessions/../private",
+    "/sessions/%2e%2e/private",
+    "/private?secret=value",
+    "/private#secret",
+    "/\\evil.test/private",
+  ])(
+    "rejects a non-canonical or non-origin path before fetch: %s",
+    async (path) => {
+      const fetcher = vi.fn<typeof fetch>();
+      const transport = createAgentOSTransport({
+        settings: { baseUrl: INTERNAL_URL, securityKey: SECURITY_KEY },
+        fetcher,
+      });
+
+      const error = await transport
+        .request({
+          method: "GET",
+          path,
+          acceptedStatuses: [200],
+          timeoutMs: 250,
+          maxResponseBytes: 1_024,
+        })
+        .catch((value: unknown) => value);
+
+      expect(error).toBeInstanceOf(AgentOSTransportError);
+      expect(error).toMatchObject({ code: "invalid_request" });
+      expect(fetcher).not.toHaveBeenCalled();
+      const serialized = JSON.stringify(error);
+      for (const sensitive of [INTERNAL_URL, SECURITY_KEY, path]) {
+        expect(serialized).not.toContain(sensitive);
+      }
+    },
+  );
+});
