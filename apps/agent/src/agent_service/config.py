@@ -27,7 +27,7 @@ _BASE_URL_PROVIDERS: frozenset[ModelProvider] = frozenset(
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ActiveModelSettings:
     """Validated model configuration consumed by the runtime model registry."""
 

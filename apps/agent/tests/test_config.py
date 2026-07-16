@@ -305,6 +305,7 @@ def test_enabled_agent_exposes_frozen_typed_active_model(
     assert get_args(config.ModelProvider) == MODEL_PROVIDERS
     assert is_dataclass(config.ActiveModelSettings)
     assert isinstance(settings.active_model, config.ActiveModelSettings)
+    assert not hasattr(settings.active_model, "__dict__")
     assert settings.active_model.provider == "openai"
     assert settings.active_model.model_id == "gpt-4.1-mini"
     assert isinstance(settings.active_model.api_key, SecretStr)
