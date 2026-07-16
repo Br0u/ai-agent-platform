@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import { Minimize2, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useLayoutEffect, useState } from "react";
 import {
@@ -121,36 +121,42 @@ export function AssistantWorkspace({
       <section className="assistant-workspace__surface">
         <header className="assistant-workspace__header">
           <div className="assistant-workspace__identity">
-            <Image
-              alt=""
-              height={40}
-              src="/assets/assistant/m-assistant.webp"
-              width={40}
-            />
             <span>
               <strong>M 企业助理</strong>
               <small>公开咨询 · 匿名临时会话</small>
             </span>
           </div>
-          <div
-            aria-atomic="true"
-            aria-busy={refreshingStatus}
-            aria-live="polite"
-            className="assistant-workspace__service-state"
-            data-capability={displayedServiceState.capability}
-            data-testid="assistant-service-state"
-            role="status"
-          >
-            <span aria-hidden="true" />
-            <strong>{servicePresentation.label}</strong>
-            <button
-              aria-label={refreshingStatus ? "刷新服务状态中" : "刷新服务状态"}
-              disabled={refreshingStatus}
-              onClick={() => void refreshServiceState()}
-              type="button"
+          <div className="assistant-workspace__header-actions">
+            <div
+              aria-atomic="true"
+              aria-busy={refreshingStatus}
+              aria-live="polite"
+              className="assistant-workspace__service-state"
+              data-capability={displayedServiceState.capability}
+              data-testid="assistant-service-state"
+              role="status"
             >
-              {refreshingStatus ? "刷新中" : "刷新"}
-            </button>
+              <span aria-hidden="true" />
+              <strong>{servicePresentation.label}</strong>
+              <button
+                aria-label={
+                  refreshingStatus ? "刷新服务状态中" : "刷新服务状态"
+                }
+                disabled={refreshingStatus}
+                onClick={() => void refreshServiceState()}
+                type="button"
+              >
+                <RefreshCw aria-hidden="true" size={14} />
+                <span>{refreshingStatus ? "刷新中" : "刷新"}</span>
+              </button>
+            </div>
+            <Link
+              aria-label="缩小 AI 助理并返回主页面"
+              className="assistant-workspace__minimize"
+              href="/"
+            >
+              <Minimize2 aria-hidden="true" size={17} />
+            </Link>
           </div>
         </header>
 

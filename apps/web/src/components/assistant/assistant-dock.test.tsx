@@ -16,6 +16,12 @@ import {
 import { FloatingChatWidget } from "../ui/floating-chat-widget-shadcnui";
 import { ASSISTANT_DOCK_MOTION, AssistantDock } from "./assistant-dock";
 
+const router = vi.hoisted(() => ({ push: vi.fn() }));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => router,
+}));
+
 const placeholderStatus: AssistantStatusResponse = {
   version: "1",
   requestId: "dock-placeholder-status",
@@ -135,6 +141,7 @@ async function openDock() {
 }
 
 beforeEach(() => {
+  router.push.mockReset();
   mobileViewport = false;
   Object.defineProperty(window, "innerWidth", {
     configurable: true,
@@ -415,61 +422,40 @@ describe("AssistantDock", () => {
     expect(trigger).not.toHaveFocus();
   });
 
-  it("restores the original quick launcher after quick to dock to closed", async () => {
+  it("keeps the quick surface separate from the legacy dock", async () => {
     renderDock();
-    const quickLauncher = screen.getByRole("button", {
-      name: "打开快速助手后进入工作区",
-    });
-    fireEvent.click(quickLauncher);
     fireEvent.click(
-      screen.getByRole("button", { name: "从快速助手进入工作区" }),
+      screen.getByRole("button", {
+        name: "打开快速助手后进入工作区",
+      }),
     );
-    const dialog = await screen.findByRole("dialog", {
-      name: "AI 助理工作区",
-    });
 
-    fireEvent.click(
-      within(dialog).getByRole("button", { name: "关闭 AI 助理工作区" }),
-    );
-    await waitFor(() => expect(dialog).not.toBeInTheDocument());
-    expect(quickLauncher).toHaveFocus();
+    const quickDialog = await screen.findByRole("dialog", { name: "M 助手" });
+    expect(quickDialog).toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "AI 助理工作区" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("focuses the quick surface when the dock collapses", async () => {
+  it("routes quick surface expansion to the full-screen workspace", async () => {
     renderDock();
-    const background = screen.getByTestId("assistant-background");
-    const dialog = await openDock();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "打开快速助手后进入工作区",
+      }),
+    );
+    const quickDialog = await screen.findByRole("dialog", { name: "M 助手" });
 
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "收起为快速助手" }),
+      within(quickDialog).getByRole("button", {
+        name: "展开 AI 助理工作区",
+      }),
     );
-    expect(dialog).toHaveAttribute("inert");
-    expect(dialog).toHaveAttribute("aria-hidden", "true");
-    expect(dialog).not.toHaveAttribute("role");
-    const blockedQuick = document.querySelector<HTMLElement>(
-      ".floating-assistant__panel:not(.is-exiting)",
-    );
-    expect(blockedQuick).not.toBeNull();
-    expect(blockedQuick).toHaveAttribute("inert");
-    expect(blockedQuick).toHaveAttribute("aria-hidden", "true");
-    expect(blockedQuick).not.toHaveAttribute("role");
-    expect(screen.queryByRole("dialog")).toBeNull();
-    const blockedQuickClose = within(blockedQuick as HTMLElement).getByRole(
-      "button",
-      {
-        name: "关闭 M 助手",
-        hidden: true,
-      },
-    );
-    expect(background).toHaveAttribute("inert");
-    expect(blockedQuickClose).not.toHaveFocus();
-    await waitFor(() => expect(dialog).not.toBeInTheDocument());
-    const quickDialog = await screen.findByRole("dialog", { name: "M 助手" });
-    const quickClose = within(quickDialog).getByRole("button", {
-      name: "关闭 M 助手",
-    });
-    expect(background).not.toHaveAttribute("inert");
-    expect(quickClose).toHaveFocus();
+
+    expect(router.push).toHaveBeenCalledWith("/assistant");
+    expect(
+      screen.queryByRole("dialog", { name: "AI 助理工作区" }),
+    ).not.toBeInTheDocument();
   });
 
   it("falls back to a focusable control when the composer is disabled", async () => {
