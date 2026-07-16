@@ -350,6 +350,27 @@ def test_enabled_agent_exposes_frozen_typed_active_model(
         setattr(settings.active_model, "timeout_seconds", 1)
 
 
+def test_runtime_accepts_direct_model_field_names(
+    valid_runtime_env: None,
+) -> None:
+    settings = RuntimeSettings(
+        _env_file=None,
+        agent_enabled=True,
+        model_provider="openai",
+        model_id="gpt-4.1-mini",
+        model_api_key=MODEL_API_KEY,
+        model_base_url="https://models.example.com/v1",
+        model_run_timeout_seconds=25,
+    )
+
+    assert settings.active_model is not None
+    assert settings.active_model.provider == "openai"
+    assert settings.active_model.model_id == "gpt-4.1-mini"
+    assert settings.active_model.api_key.get_secret_value() == MODEL_API_KEY
+    assert settings.active_model.base_url == "https://models.example.com/v1"
+    assert settings.active_model.timeout_seconds == 25
+
+
 @pytest.mark.parametrize("missing_name", ["MODEL_PROVIDER", "MODEL_ID", "MODEL_API_KEY"])
 def test_enabled_agent_requires_complete_model_configuration(
     missing_name: str,
@@ -369,6 +390,21 @@ def test_enabled_agent_rejects_blank_model_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("MODEL_API_KEY", blank_key)
+
+    with pytest.raises(ValidationError):
+        RuntimeSettings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    "invalid_key",
+    [" leading-key", "trailing-key ", "key\n", "\tkey"],
+)
+def test_enabled_agent_rejects_model_api_key_surrounding_whitespace(
+    invalid_key: str,
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_API_KEY", invalid_key)
 
     with pytest.raises(ValidationError):
         RuntimeSettings(_env_file=None)
@@ -518,6 +554,11 @@ def test_anthropic_and_google_reject_model_base_url(
     "base_url",
     [
         "http://models.example.com/v1",
+        " https://models.example.com/v1",
+        "https://models.example.com/v1\nextra",
+        "https://models .example.com/v1",
+        "https://models.example.com:not-a-port/v1",
+        "https://models.example.com:99999/v1",
         "https:///v1",
         "https://user:password@models.example.com/v1",
         "https://models.example.com/v1?region=cn",
@@ -549,6 +590,9 @@ def test_model_api_key_is_redacted_from_settings_and_validation_errors(
         RuntimeSettings(_env_file=None)
 
     assert MODEL_API_KEY not in repr(error.value)
+    assert MODEL_API_KEY not in str(error.value)
+    assert MODEL_API_KEY not in repr(error.value.errors())
+    assert MODEL_API_KEY not in error.value.json()
 
 
 def test_schema_is_fixed_to_agno(valid_runtime_env: None) -> None:

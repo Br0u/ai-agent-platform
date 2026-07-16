@@ -2,15 +2,16 @@
 
 from dataclasses import dataclass
 import re
-from typing import Annotated, Any, Literal, Self
-from urllib.parse import urlsplit
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     Field,
     FiniteFloat,
+    HttpUrl,
     SecretStr,
     TypeAdapter,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -34,6 +35,15 @@ _BASE_URL_PROVIDERS: frozenset[ModelProvider] = frozenset(
     {"openai", "dashscope", "deepseek", "minimax"}
 )
 _BOOLEAN_ADAPTER = TypeAdapter(bool)
+_HTTP_URL_ADAPTER = TypeAdapter(HttpUrl)
+_DIRECT_MODEL_SETTING_ALIASES = {
+    "agent_enabled": "AGENT_ENABLED",
+    "model_provider": "MODEL_PROVIDER",
+    "model_id": "MODEL_ID",
+    "model_api_key": "MODEL_API_KEY",
+    "model_base_url": "MODEL_BASE_URL",
+    "model_run_timeout_seconds": "MODEL_RUN_TIMEOUT_SECONDS",
+}
 _MODEL_SETTING_INPUT_KEYS = frozenset(
     {
         "MODEL_PROVIDER",
@@ -89,6 +99,7 @@ class _AgentSettings(BaseSettings):
         case_sensitive=True,
         extra="ignore",
         hide_input_in_errors=True,
+        validate_default=True,
     )
 
 
@@ -145,17 +156,21 @@ class RuntimeSettings(_AgentSettings):
     def _ignore_disabled_model_configuration(cls, values: Any) -> Any:
         if not isinstance(values, dict):
             return values
+        normalized_values = dict(values)
+        for field_name, validation_alias in _DIRECT_MODEL_SETTING_ALIASES.items():
+            if field_name in normalized_values:
+                normalized_values[validation_alias] = normalized_values.pop(field_name)
         try:
             agent_enabled = _BOOLEAN_ADAPTER.validate_python(
-                values.get("AGENT_ENABLED", False)
+                normalized_values.get("AGENT_ENABLED", False)
             )
         except ValidationError:
-            return values
+            return normalized_values
         if agent_enabled:
-            return values
+            return normalized_values
         return {
             key: value
-            for key, value in values.items()
+            for key, value in normalized_values.items()
             if key not in _MODEL_SETTING_INPUT_KEYS
         }
 
@@ -169,10 +184,27 @@ class RuntimeSettings(_AgentSettings):
             raise ValueError("OS security key must be a valid Bearer token")
         return value
 
+    @field_validator("model_provider", mode="after")
+    @classmethod
+    def _validate_model_provider(
+        cls,
+        value: ModelProvider | None,
+        info: ValidationInfo,
+    ) -> ModelProvider | None:
+        if info.data.get("agent_enabled") and value is None:
+            raise ValueError("MODEL_PROVIDER is required when the agent is enabled")
+        return value
+
     @field_validator("model_id", mode="after")
     @classmethod
-    def _validate_model_id(cls, value: str | None) -> str | None:
+    def _validate_model_id(
+        cls,
+        value: str | None,
+        info: ValidationInfo,
+    ) -> str | None:
         if value is None:
+            if info.data.get("agent_enabled"):
+                raise ValueError("MODEL_ID is required when the agent is enabled")
             return value
         if not value.strip() or value != value.strip():
             raise ValueError("model ID must not be blank or have surrounding whitespace")
@@ -186,9 +218,62 @@ class RuntimeSettings(_AgentSettings):
 
     @field_validator("model_api_key", mode="after")
     @classmethod
-    def _validate_model_api_key(cls, value: SecretStr | None) -> SecretStr | None:
-        if value is not None and not value.get_secret_value().strip():
-            raise ValueError("model API key must not be blank")
+    def _validate_model_api_key(
+        cls,
+        value: SecretStr | None,
+        info: ValidationInfo,
+    ) -> SecretStr | None:
+        if value is None:
+            if info.data.get("agent_enabled"):
+                raise ValueError("MODEL_API_KEY is required when the agent is enabled")
+            return value
+        secret = value.get_secret_value()
+        if not secret or secret != secret.strip():
+            raise ValueError(
+                "model API key must not be blank or have surrounding whitespace"
+            )
+        return value
+
+    @field_validator("model_base_url", mode="after")
+    @classmethod
+    def _validate_model_base_url(
+        cls,
+        value: str | None,
+        info: ValidationInfo,
+    ) -> str | None:
+        if value is None:
+            return value
+
+        provider = info.data.get("model_provider")
+        if provider is not None and provider not in _BASE_URL_PROVIDERS:
+            raise ValueError("MODEL_BASE_URL is not supported for the selected provider")
+        if any(
+            character.isspace()
+            or ord(character) <= 0x1F
+            or 0x7F <= ord(character) <= 0x9F
+            for character in value
+        ):
+            raise ValueError("MODEL_BASE_URL must not contain whitespace or controls")
+        try:
+            parsed = _HTTP_URL_ADAPTER.validate_python(value)
+        except ValidationError:
+            raise ValueError("MODEL_BASE_URL must be a valid HTTPS URL") from None
+        if (
+            parsed.scheme != "https"
+            or not value.lower().startswith("https://")
+            or value[8:9] in {"", "/"}
+            or not parsed.host
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query is not None
+            or parsed.fragment is not None
+            or "?" in value
+            or "#" in value
+        ):
+            raise ValueError(
+                "MODEL_BASE_URL must use HTTPS with a host and without "
+                "credentials, query, or fragment"
+            )
         return value
 
     @field_validator("model_run_timeout_seconds", mode="before")
@@ -201,49 +286,6 @@ class RuntimeSettings(_AgentSettings):
         if isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value):
             return int(value)
         raise ValueError("model run timeout must be an integer")
-
-    @model_validator(mode="after")
-    def _validate_model_configuration(self) -> Self:
-        if not self.agent_enabled:
-            return self
-
-        if self.model_provider is None:
-            raise ValueError("MODEL_PROVIDER is required when the agent is enabled")
-        if self.model_id is None:
-            raise ValueError("MODEL_ID is required when the agent is enabled")
-        if self.model_api_key is None:
-            raise ValueError("MODEL_API_KEY is required when the agent is enabled")
-
-        if self.model_base_url is not None:
-            if self.model_provider not in _BASE_URL_PROVIDERS:
-                raise ValueError(
-                    "MODEL_BASE_URL is not supported for the selected provider"
-                )
-            self._validate_model_base_url(self.model_base_url)
-        return self
-
-    @staticmethod
-    def _validate_model_base_url(value: str) -> None:
-        try:
-            parsed = urlsplit(value)
-            host = parsed.hostname
-        except ValueError:
-            raise ValueError("MODEL_BASE_URL must be a valid HTTPS URL") from None
-
-        if (
-            parsed.scheme != "https"
-            or not host
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.query
-            or parsed.fragment
-            or "?" in value
-            or "#" in value
-        ):
-            raise ValueError(
-                "MODEL_BASE_URL must use HTTPS with a host and without "
-                "credentials, query, or fragment"
-            )
 
     @property
     def active_model(self) -> ActiveModelSettings | None:
