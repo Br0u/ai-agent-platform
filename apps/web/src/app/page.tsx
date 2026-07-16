@@ -6,6 +6,7 @@ import {
   ResourceTable,
   SolutionIndex,
 } from "../components/home-sections";
+import { HomeRevealObserver } from "../components/home-reveal";
 
 export default function HomePage() {
   return (
@@ -21,6 +22,7 @@ export default function HomePage() {
       <SolutionIndex />
       <ResourceTable />
       <PrivateDeploymentClose />
+      <HomeRevealObserver />
     </main>
   );
 }

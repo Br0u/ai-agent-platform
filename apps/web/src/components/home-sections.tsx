@@ -114,7 +114,10 @@ function CapabilityRail() {
     <div className="home-capability-rail">
       {capabilities.map((capability, index) => (
         <Fragment key={capability.code}>
-          <article className="home-capability-card">
+          <article
+            className="home-capability-card"
+            data-home-reveal-item="block"
+          >
             <span className="home-capability-card__code">
               {capability.code}
             </span>
@@ -141,15 +144,22 @@ function PlatformFlow() {
   return (
     <div className="home-platform__grid">
       <header className="home-platform__intro home-glass-panel">
-        <p className="home-section-kicker">{homeCopy.platform.kicker}</p>
-        <h2 aria-label={gradientHeadingLabel(homeCopy.platform.heading)}>
+        <p className="home-section-kicker" data-home-reveal-item="text">
+          {homeCopy.platform.kicker}
+        </p>
+        <h2
+          aria-label={gradientHeadingLabel(homeCopy.platform.heading)}
+          data-home-reveal-item="text"
+        >
           <GradientHeadingText
             copy={homeCopy.platform.heading}
             beforeBreakAt={homeCopy.platform.heading.before.indexOf("贯通")}
           />
         </h2>
-        <p className="home-section-intro">{homeCopy.platform.intro}</p>
-        <div className="home-actions">
+        <p className="home-section-intro" data-home-reveal-item="text">
+          {homeCopy.platform.intro}
+        </p>
+        <div className="home-actions" data-home-reveal-item="block">
           <Link
             className="home-action home-action--primary"
             href={homeCopy.platform.primaryCta.href}
@@ -171,11 +181,16 @@ function PlatformFlow() {
           height={1086}
           aria-hidden="true"
           data-home-decoration="true"
+          data-home-reveal-item="block"
         />
       </header>
       <div className="home-platform__list home-glass-panel">
         {platformLayers.map((layer) => (
-          <article className="home-platform-row" key={layer.code}>
+          <article
+            className="home-platform-row"
+            data-home-reveal-item="block"
+            key={layer.code}
+          >
             <span className="home-icon-shell">
               <HomeIcon name={layer.icon} />
             </span>
@@ -197,6 +212,7 @@ export function PlatformOverview() {
     <section
       className="home-section home-platform-overview"
       data-home-region="platform"
+      data-home-reveal="true"
       aria-label="平台能力与开发流程"
     >
       <div className="home-frame">
@@ -212,17 +228,26 @@ export function EnterpriseProof() {
     <section
       className="home-section home-enterprise"
       data-home-region="enterprise"
+      data-home-reveal="true"
       aria-labelledby="enterprise-proof-title"
     >
       <div className="home-frame home-enterprise__layout">
         <header className="home-enterprise__heading home-glass-panel">
-          <p className="home-section-kicker">{homeCopy.enterprise.kicker}</p>
-          <h2 id="enterprise-proof-title">{homeCopy.enterprise.heading}</h2>
+          <p className="home-section-kicker" data-home-reveal-item="text">
+            {homeCopy.enterprise.kicker}
+          </p>
+          <h2 id="enterprise-proof-title" data-home-reveal-item="text">
+            {homeCopy.enterprise.heading}
+          </h2>
           <span className="home-enterprise__underline" aria-hidden="true" />
         </header>
         <div className="home-enterprise__list home-glass-panel">
           {enterpriseProofs.map((proof, index) => (
-            <article className="home-enterprise-row" key={proof.title}>
+            <article
+              className="home-enterprise-row"
+              data-home-reveal-item="block"
+              key={proof.title}
+            >
               <span className="home-icon-shell">
                 <HomeIcon name={proof.icon} />
               </span>
@@ -244,21 +269,27 @@ export function SolutionIndex() {
     <section
       className="home-section home-solutions"
       data-home-region="solutions"
+      data-home-reveal="true"
       aria-labelledby="solution-index-title"
     >
       <div className="home-frame home-solutions__grid">
         <header className="home-solutions__intro home-glass-panel">
-          <p className="home-section-kicker">{homeCopy.solutions.kicker}</p>
+          <p className="home-section-kicker" data-home-reveal-item="text">
+            {homeCopy.solutions.kicker}
+          </p>
           <h2
             id="solution-index-title"
             aria-label={gradientHeadingLabel(homeCopy.solutions.heading)}
+            data-home-reveal-item="text"
           >
             <GradientHeadingText
               copy={homeCopy.solutions.heading}
               beforeBreakAt={homeCopy.solutions.heading.before.indexOf("走向")}
             />
           </h2>
-          <p className="home-section-intro">{homeCopy.solutions.intro}</p>
+          <p className="home-section-intro" data-home-reveal-item="text">
+            {homeCopy.solutions.intro}
+          </p>
           <Image
             className="home-solutions__illustration"
             src={solutionsPlatform}
@@ -267,6 +298,7 @@ export function SolutionIndex() {
             height={1086}
             aria-hidden="true"
             data-home-decoration="true"
+            data-home-reveal-item="block"
           />
         </header>
         <div className="home-solution-list home-glass-panel">
@@ -277,6 +309,7 @@ export function SolutionIndex() {
                   ? "home-solution-row home-solution-row--subset"
                   : "home-solution-row"
               }
+              data-home-reveal-item="block"
               key={solution.title}
             >
               <span className="home-icon-shell">
@@ -308,14 +341,18 @@ export function ResourceTable() {
     <section
       className="home-section home-resources"
       data-home-region="resources"
+      data-home-reveal="true"
       aria-labelledby="resource-table-title"
     >
       <div className="home-frame home-resources__grid">
         <header className="home-resources__intro home-glass-panel">
-          <p className="home-section-kicker">{homeCopy.resources.kicker}</p>
+          <p className="home-section-kicker" data-home-reveal-item="text">
+            {homeCopy.resources.kicker}
+          </p>
           <h2
             id="resource-table-title"
             aria-label={gradientHeadingLabel(homeCopy.resources.heading)}
+            data-home-reveal-item="text"
           >
             <GradientHeadingText
               copy={homeCopy.resources.heading}
@@ -324,7 +361,9 @@ export function ResourceTable() {
               )}
             />
           </h2>
-          <p className="home-section-intro">{homeCopy.resources.intro}</p>
+          <p className="home-section-intro" data-home-reveal-item="text">
+            {homeCopy.resources.intro}
+          </p>
           <Image
             className="home-resources__illustration"
             src={resourcesFolder}
@@ -333,12 +372,14 @@ export function ResourceTable() {
             height={1086}
             aria-hidden="true"
             data-home-decoration="true"
+            data-home-reveal-item="block"
           />
         </header>
         <div className="home-resource-list home-glass-panel">
           {resources.map((resource) => (
             <Link
               className="home-resource"
+              data-home-reveal-item="block"
               href={resource.href}
               key={resource.href}
             >

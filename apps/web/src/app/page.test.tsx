@@ -34,6 +34,46 @@ describe("HomePage", () => {
     ]);
   });
 
+  it("marks only the four post-hero content regions for scroll reveal", () => {
+    render(<HomePage />);
+
+    const home = screen.getByRole("main", { name: "华鲲元启门户首页" });
+    const revealRegions = Array.from(
+      home.querySelectorAll(':scope > [data-home-reveal="true"]'),
+    );
+
+    expect(
+      revealRegions.map((region) => region.getAttribute("data-home-region")),
+    ).toStrictEqual(["platform", "enterprise", "solutions", "resources"]);
+
+    for (const regionName of ["hero", "closing"]) {
+      const region = home.querySelector(`[data-home-region="${regionName}"]`);
+
+      expect(region).not.toHaveAttribute("data-home-reveal");
+      expect(region?.querySelectorAll("[data-home-reveal-item]")).toHaveLength(
+        0,
+      );
+    }
+
+    const expectedMarkerCounts = {
+      platform: { text: 3, block: 10 },
+      enterprise: { text: 2, block: 4 },
+      solutions: { text: 3, block: 6 },
+      resources: { text: 3, block: 5 },
+    } as const;
+
+    for (const [regionName, counts] of Object.entries(expectedMarkerCounts)) {
+      const region = home.querySelector(`[data-home-region="${regionName}"]`);
+
+      expect(
+        region?.querySelectorAll('[data-home-reveal-item="text"]'),
+      ).toHaveLength(counts.text);
+      expect(
+        region?.querySelectorAll('[data-home-reveal-item="block"]'),
+      ).toHaveLength(counts.block);
+    }
+  });
+
   it("keeps the hero copy open and the product screenshot in a glass evidence panel", () => {
     render(<HomePage />);
 
