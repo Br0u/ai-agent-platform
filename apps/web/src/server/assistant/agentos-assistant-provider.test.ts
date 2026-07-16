@@ -1,18 +1,21 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentOSRunClient } from "./agentos-run-client";
 import type { AgentOSExecutionCircuit } from "./agentos-execution-circuit";
-import { AgentOSAssistantProvider } from "./agentos-assistant-provider";
+import {
+  AgentOSAssistantProvider,
+  defaultAgentOSCleanupRecorder,
+  type AgentOSCleanupFailureEvent,
+  type AgentOSCleanupRecorder,
+} from "./agentos-assistant-provider";
 
 function fixture(
   options: {
     runAgent?: AgentOSRunClient["runAgent"];
     deleteSession?: AgentOSRunClient["deleteSession"];
     randomUUID?: () => string;
-    cleanupRecorder?: (event: {
-      category: "ephemeral_session_cleanup_failed";
-      count: number;
-    }) => void;
+    cleanupRecorder?: AgentOSCleanupRecorder;
+    useDefaultCleanupRecorder?: boolean;
   } = {},
 ) {
   const runClient: AgentOSRunClient = {
@@ -30,7 +33,7 @@ function fixture(
     runClient,
     circuit,
     randomUUID: options.randomUUID ?? (() => "ephemeral-internal-id"),
-    cleanupRecorder,
+    ...(options.useDefaultCleanupRecorder ? {} : { cleanupRecorder }),
   });
   return { provider, runClient, circuit, cleanupRecorder };
 }
@@ -40,7 +43,32 @@ const assistantRequest = {
   context: { pathname: "/产品/码多多" },
 };
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("AgentOSAssistantProvider", () => {
+  it("projects default cleanup logs onto the fixed safe event shape", () => {
+    const warning = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    const augmentedEvent = {
+      category: "persistent_session_cleanup_failed",
+      count: 7,
+      raw: "private Cookie session prompt reply URL and key",
+    } as AgentOSCleanupFailureEvent & { raw: string };
+
+    defaultAgentOSCleanupRecorder(augmentedEvent);
+
+    expect(warning).toHaveBeenCalledExactlyOnceWith(
+      "Assistant session cleanup failed",
+      { category: "persistent_session_cleanup_failed", count: 7 },
+    );
+    expect(JSON.stringify(warning.mock.calls)).not.toMatch(
+      /private|cookie|session prompt|reply|url|key/iu,
+    );
+  });
+
   it("runs the fixed maduoduo Agent with the exact persistent session, prompt, and caller signal", async () => {
     const { provider, runClient, circuit } = fixture();
     const signal = new AbortController().signal;
@@ -150,5 +178,58 @@ describe("AgentOSAssistantProvider", () => {
       category: "ephemeral_session_cleanup_failed",
       count: 1,
     });
+  });
+
+  it("uses the production cleanup recorder by default without exposing cleanup inputs", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {
+      throw new Error("raw logger failure");
+    });
+    const { provider } = fixture({
+      useDefaultCleanupRecorder: true,
+      deleteSession: vi
+        .fn()
+        .mockRejectedValue(
+          new Error("raw session-id prompt reply URL and secret"),
+        ),
+    });
+
+    await expect(
+      provider.reply({
+        request: assistantRequest,
+        session: { kind: "ephemeral" },
+      }),
+    ).resolves.toEqual({ content: "真实模型回答", suggestedActions: [] });
+    expect(warning).toHaveBeenCalledExactlyOnceWith(
+      "Assistant session cleanup failed",
+      { category: "ephemeral_session_cleanup_failed", count: 1 },
+    );
+    expect(JSON.stringify(warning.mock.calls)).not.toMatch(
+      /ephemeral-internal-id|不要改写|真实模型回答|raw|url|secret/iu,
+    );
+  });
+
+  it("keeps the original run failure when the default cleanup logger throws", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {
+      throw new Error("raw logger failure");
+    });
+    const runError = Object.assign(new Error("safe run failure"), {
+      code: "timeout",
+    });
+    const { provider } = fixture({
+      useDefaultCleanupRecorder: true,
+      runAgent: vi.fn().mockRejectedValue(runError),
+      deleteSession: vi.fn().mockRejectedValue(new Error("raw cleanup cause")),
+    });
+
+    await expect(
+      provider.reply({
+        request: assistantRequest,
+        session: { kind: "ephemeral" },
+      }),
+    ).rejects.toBe(runError);
+    expect(warning).toHaveBeenCalledExactlyOnceWith(
+      "Assistant session cleanup failed",
+      { category: "ephemeral_session_cleanup_failed", count: 1 },
+    );
   });
 });

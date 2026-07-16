@@ -55,6 +55,7 @@ describe("AgentOS execution circuit", () => {
     "authentication",
     "not_found",
     "server_error",
+    "unexpected_status",
     "invalid_content_type",
     "response_too_large",
     "invalid_response",
@@ -86,7 +87,6 @@ describe("AgentOS execution circuit", () => {
       failure("invalid_request"),
       failure("rate_limited"),
       failure("other_client_error"),
-      failure("unexpected_status"),
       failure("external_abort"),
     ];
 
@@ -222,6 +222,46 @@ describe("AgentOS execution circuit", () => {
       consecutiveFailures: 0,
     });
   });
+
+  it.each([
+    "external_abort",
+    "rate_limited",
+    "other_client_error",
+    "invalid_request",
+  ] as const)(
+    "releases a half-open probe after non-counted %s without restarting cooldown",
+    async (code) => {
+      const { circuit, setNow } = circuitFixture({
+        failureThreshold: 1,
+        resetAfterMs: 10,
+      });
+      await circuit
+        .execute(async () => {
+          throw failure("timeout");
+        })
+        .catch(() => undefined);
+      setNow(10);
+      const nonCounted = failure(code);
+
+      await expect(
+        circuit.execute(async () => {
+          throw nonCounted;
+        }),
+      ).rejects.toBe(nonCounted);
+      expect(circuit.inspect()).toEqual({
+        state: "open",
+        consecutiveFailures: 1,
+      });
+
+      await expect(circuit.execute(async () => "recovered")).resolves.toBe(
+        "recovered",
+      );
+      expect(circuit.inspect()).toEqual({
+        state: "closed",
+        consecutiveFailures: 0,
+      });
+    },
+  );
 
   it("validates all options as positive safe integers", () => {
     for (const invalid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {

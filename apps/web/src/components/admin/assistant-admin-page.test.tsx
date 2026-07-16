@@ -142,6 +142,24 @@ describe("AssistantAdminPage", () => {
     expect(screen.queryByText(/客户消息|消息原文/u)).not.toBeInTheDocument();
   });
 
+  it("describes the protected test session truthfully for both provider modes", () => {
+    render(<AssistantAdminPage sessions={sessions} status={status} />);
+
+    expect(
+      screen.getByRole("heading", { name: "受保护的助手测试控制台" }),
+    ).toBeVisible();
+    expect(screen.getByText("临时会话，结束后清理")).toBeVisible();
+    expect(
+      screen.getByText(
+        "AgentOS 模式会调用已配置模型；占位模式返回安全占位回答。",
+      ),
+    ).toBeVisible();
+    expect(screen.getByPlaceholderText("输入助手测试问题")).toBeVisible();
+    expect(
+      screen.queryByText(/占位测试控制台|不调用真实模型|不会写入会话/iu),
+    ).not.toBeInTheDocument();
+  });
+
   it("sends an administrator test through the protected admin endpoint", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
@@ -163,7 +181,7 @@ describe("AssistantAdminPage", () => {
     render(<AssistantAdminPage sessions={sessions} status={status} />);
 
     fireEvent.change(screen.getByLabelText("测试问题"), {
-      target: { value: "检查占位合同" },
+      target: { value: "检查助手回答" },
     });
     fireEvent.click(screen.getByRole("button", { name: "发送测试" }));
 

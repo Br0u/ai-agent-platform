@@ -35,6 +35,7 @@ function countedFailure(error: unknown): boolean {
     case "authentication":
     case "not_found":
     case "server_error":
+    case "unexpected_status":
     case "invalid_content_type":
     case "response_too_large":
     case "invalid_response":
@@ -43,7 +44,6 @@ function countedFailure(error: unknown): boolean {
     case "invalid_request":
     case "rate_limited":
     case "other_client_error":
-    case "unexpected_status":
       return false;
   }
 }
@@ -104,8 +104,8 @@ export function createAgentOSExecutionCircuit(options: {
               options.failureThreshold,
               consecutiveFailures + 1,
             );
+            openedAt = clock();
           }
-          openedAt = clock();
           halfOpen = false;
         } else if (counted) {
           consecutiveFailures = Math.min(

@@ -92,6 +92,9 @@ describe("AdminAssistantPage", () => {
     expect(mocks.loadStatus).toHaveBeenCalledOnce();
     expect(mocks.loadSessions).toHaveBeenCalledOnce();
     expect(screen.getByRole("heading", { name: "AI 助理运营" })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "受保护的助手测试控制台" }),
+    ).toBeVisible();
   });
 
   it("does not load protected sources when the page guard rejects", async () => {

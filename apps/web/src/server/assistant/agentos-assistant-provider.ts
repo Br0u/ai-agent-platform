@@ -8,14 +8,31 @@ import type {
 import type { AgentOSExecutionCircuit } from "./agentos-execution-circuit";
 import type { AgentOSRunClient } from "./agentos-run-client";
 
+export type AgentOSCleanupFailureCategory =
+  | "ephemeral_session_cleanup_failed"
+  | "persistent_session_cleanup_failed";
+
 export type AgentOSCleanupFailureEvent = {
-  category: "ephemeral_session_cleanup_failed";
+  category: AgentOSCleanupFailureCategory;
   count: number;
 };
 
 export type AgentOSCleanupRecorder = (
   event: AgentOSCleanupFailureEvent,
 ) => void;
+
+export const defaultAgentOSCleanupRecorder: AgentOSCleanupRecorder = (
+  event,
+) => {
+  try {
+    console.warn("Assistant session cleanup failed", {
+      category: event.category,
+      count: event.count,
+    });
+  } catch {
+    // Observability must never replace the user-visible result.
+  }
+};
 
 export class AgentOSAssistantProvider implements AssistantProvider {
   private cleanupFailureCount = 0;
@@ -48,7 +65,7 @@ export class AgentOSAssistantProvider implements AssistantProvider {
   private recordCleanupFailure(): void {
     this.cleanupFailureCount += 1;
     try {
-      this.options.cleanupRecorder?.({
+      (this.options.cleanupRecorder ?? defaultAgentOSCleanupRecorder)({
         category: "ephemeral_session_cleanup_failed",
         count: this.cleanupFailureCount,
       });

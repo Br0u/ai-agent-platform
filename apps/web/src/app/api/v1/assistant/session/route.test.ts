@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createAnonymousSessionManager } from "@/server/assistant/anonymous-session";
 import { resolveAnonymousSessionSettings } from "@/server/assistant/anonymous-session-config";
@@ -7,6 +7,10 @@ import { createAssistantSessionDeleteHandler } from "./handler";
 import * as route from "./route";
 
 const START = Date.parse("2026-07-13T11:30:00.000Z");
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function fixture(origin = "https://portal.example.com") {
   let seed = 0;
@@ -98,10 +102,12 @@ describe("DELETE /api/v1/assistant/session", () => {
       const { manager } = fixture();
       const deleteSession = vi.fn(async () => undefined);
       const getRuntime = vi.fn(() => ({ deleteSession }));
+      const recordCleanupFailure = vi.fn();
       const DELETE = createAssistantSessionDeleteHandler({
         manager,
         resolveActor: async () => ({ kind: "anonymous" }),
         getRuntime,
+        recordCleanupFailure,
       });
 
       const response = await DELETE(
@@ -115,6 +121,7 @@ describe("DELETE /api/v1/assistant/session", () => {
       expect(response.headers.get("set-cookie")).toBe(manager.clearCookie());
       expect(getRuntime).not.toHaveBeenCalled();
       expect(deleteSession).not.toHaveBeenCalled();
+      expect(recordCleanupFailure).not.toHaveBeenCalled();
     },
   );
 
@@ -153,6 +160,7 @@ describe("DELETE /api/v1/assistant/session", () => {
       manager,
       resolveActor: async () => ({ kind: "anonymous" }),
       getRuntime: () => ({ deleteSession }),
+      recordCleanupFailure: vi.fn(),
     });
 
     const response = await DELETE(
@@ -167,6 +175,77 @@ describe("DELETE /api/v1/assistant/session", () => {
     expect(response.status).toBe(204);
     expect(response.headers.get("set-cookie")).toBe(manager.clearCookie());
     expect(await response.text()).toBe("");
+  });
+
+  it("records a persistent cleanup failure with only a stable category and count", async () => {
+    const { manager } = fixture();
+    const session = manager.resolve(new Headers(), { kind: "anonymous" });
+    const warning = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    const DELETE = createAssistantSessionDeleteHandler({
+      manager,
+      resolveActor: async () => ({ kind: "anonymous" }),
+      deleteInternalSession: vi
+        .fn()
+        .mockRejectedValue(
+          new Error("raw URL internal ID Cookie prompt reply and secret"),
+        ),
+    });
+
+    const response = await DELETE(
+      new Request("https://portal.example.com/api/v1/assistant/session", {
+        method: "DELETE",
+        headers: {
+          cookie: `${session.cookie.name}=${session.cookie.value}`,
+        },
+      }),
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("set-cookie")).toBe(manager.clearCookie());
+    expect(warning).toHaveBeenCalledExactlyOnceWith(
+      "Assistant session cleanup failed",
+      { category: "persistent_session_cleanup_failed", count: 1 },
+    );
+    expect(JSON.stringify(warning.mock.calls)).not.toMatch(
+      new RegExp(
+        `${session.internalSessionId}|${session.cookie.value}|raw|url|cookie|prompt|reply|secret`,
+        "iu",
+      ),
+    );
+  });
+
+  it("still clears the Cookie with 204 when the injected cleanup recorder throws", async () => {
+    const { manager } = fixture();
+    const session = manager.resolve(new Headers(), { kind: "anonymous" });
+    const recordCleanupFailure = vi.fn(() => {
+      throw new Error("raw logger failure");
+    });
+    const DELETE = createAssistantSessionDeleteHandler({
+      manager,
+      resolveActor: async () => ({ kind: "anonymous" }),
+      deleteInternalSession: vi
+        .fn()
+        .mockRejectedValue(new Error("raw remote cleanup failure")),
+      recordCleanupFailure,
+    });
+
+    const response = await DELETE(
+      new Request("https://portal.example.com/api/v1/assistant/session", {
+        method: "DELETE",
+        headers: {
+          cookie: `${session.cookie.name}=${session.cookie.value}`,
+        },
+      }),
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("set-cookie")).toBe(manager.clearCookie());
+    expect(recordCleanupFailure).toHaveBeenCalledExactlyOnceWith({
+      category: "persistent_session_cleanup_failed",
+      count: 1,
+    });
   });
 
   it("provides an explicit placeholder no-op and never claims remote deletion", async () => {

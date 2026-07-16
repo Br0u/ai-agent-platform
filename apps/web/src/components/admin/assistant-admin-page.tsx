@@ -132,9 +132,9 @@ export function AssistantAdminPage({
           <header>
             <div>
               <p>PROTECTED TEST CONSOLE</p>
-              <h2 id="assistant-test-title">受保护的占位测试控制台</h2>
+              <h2 id="assistant-test-title">受保护的助手测试控制台</h2>
             </div>
-            <span>不会写入会话</span>
+            <span>临时会话，结束后清理</span>
           </header>
           <form onSubmit={submitTest}>
             <label htmlFor="assistant-admin-question">测试问题</label>
@@ -142,12 +142,14 @@ export function AssistantAdminPage({
               id="assistant-admin-question"
               maxLength={500}
               onChange={(event) => assistant.setDraft(event.target.value)}
-              placeholder="输入用于验证占位合同的问题"
+              placeholder="输入助手测试问题"
               rows={4}
               value={assistant.draft}
             />
             <div>
-              <small>仅验证当前受保护的响应合同，不调用真实模型。</small>
+              <small>
+                AgentOS 模式会调用已配置模型；占位模式返回安全占位回答。
+              </small>
               <button
                 disabled={assistant.requestStatus === "sending"}
                 type="submit"
