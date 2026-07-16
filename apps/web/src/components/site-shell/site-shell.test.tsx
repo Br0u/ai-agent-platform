@@ -495,7 +495,7 @@ describe("SiteShell", () => {
     },
   );
 
-  it("gives portal routes a shared top entry and floating launcher", () => {
+  it("gives portal routes both a full-page header entry and quick launcher", () => {
     renderAt("/pricing");
 
     expect(useAssistantSession).toHaveBeenCalledOnce();
@@ -505,26 +505,21 @@ describe("SiteShell", () => {
       screen.getByRole("button", { name: "打开 AI 助理" }),
     ).toHaveAttribute("data-open", "false");
 
+    fireEvent.click(screen.getByRole("button", { name: "打开 AI 助理" }));
+    expect(mocks.push).toHaveBeenCalledWith("/assistant");
+
     fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
-    expect(
-      screen.getByRole("button", { name: "打开 AI 助理" }),
-    ).toHaveAttribute("data-open", "true");
+    expect(screen.getByRole("dialog", { name: "M 助手" })).toBeInTheDocument();
   });
 
-  it("opens the dock from the exact portal assistant entry", async () => {
+  it("does not mount a side assistant surface from the portal entry", () => {
     renderAt("/");
 
     const trigger = screen.getByRole("button", { name: "打开 AI 助理" });
     fireEvent.click(trigger);
 
-    const dialog = await screen.findByRole("dialog", {
-      name: "AI 助理工作区",
-    });
-    expect(mocks.push).not.toHaveBeenCalled();
-    await waitFor(() => expect(dialog.style.opacity).toBe("1"));
-    expect(dialog).toBeVisible();
-    expect(screen.getAllByRole("dialog")).toHaveLength(1);
-    expect(trigger).toHaveAttribute("data-open", "true");
+    expect(mocks.push).toHaveBeenCalledWith("/assistant");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("gives the assistant workspace a top focus entry without a floating launcher", () => {
@@ -545,105 +540,6 @@ describe("SiteShell", () => {
     fireEvent.click(screen.getByRole("button", { name: "聚焦 AI 助理提问框" }));
     expect(composer).toHaveFocus();
     expect(screen.queryByRole("dialog")).toBeNull();
-  });
-
-  it("returns focus after the drawer exit to the exact portal launcher", async () => {
-    renderAt("/");
-    const floating = screen.getByRole("button", { name: "打开 M 助手" });
-
-    fireEvent.click(floating);
-    fireEvent.click(screen.getByRole("button", { name: "关闭 M 助手" }));
-    await waitFor(() => expect(floating).toHaveFocus());
-  });
-
-  it("preserves the assistant controller across pathname rerenders", async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          version: "1",
-          requestId: "req-1",
-          mode: "placeholder",
-          session: {
-            temporary: true,
-            expiresAt: "2026-07-13T12:00:00.000Z",
-          },
-          message: {
-            id: "msg-1",
-            role: "assistant",
-            content: "保留回答",
-          },
-          suggestedActions: [],
-        }),
-      ),
-    );
-    const view = renderAt("/");
-    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
-    fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "保留问题" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
-    await waitFor(() =>
-      expect(screen.getByTestId("assistant-history")).toHaveTextContent(
-        "保留回答",
-      ),
-    );
-
-    mocks.pathname = "/assistant";
-    view.rerender(
-      <SiteShell>
-        <p>助理工作区</p>
-      </SiteShell>,
-    );
-    expect(screen.queryByRole("button", { name: "打开 M 助手" })).toBeNull();
-    mocks.pathname = "/pricing";
-    view.rerender(
-      <SiteShell>
-        <p>价格页</p>
-      </SiteShell>,
-    );
-    expect(screen.getByTestId("assistant-history")).toHaveTextContent(
-      "保留回答",
-    );
-  });
-
-  it("discards assistant state after crossing into a non-assistant shell", async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          version: "1",
-          requestId: "req-1",
-          mode: "placeholder",
-          session: {
-            temporary: true,
-            expiresAt: "2026-07-13T12:00:00.000Z",
-          },
-          message: {
-            id: "msg-1",
-            role: "assistant",
-            content: "旧回答",
-          },
-          suggestedActions: [],
-        }),
-      ),
-    );
-    const view = renderAt("/");
-    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
-    fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "旧问题" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
-    await waitFor(() =>
-      expect(screen.getByTestId("assistant-history")).toHaveTextContent(
-        "旧回答",
-      ),
-    );
-
-    mocks.pathname = "/login";
-    view.rerender(<SiteShell>登录页</SiteShell>);
-    mocks.pathname = "/";
-    view.rerender(<SiteShell>首页</SiteShell>);
-    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
-    expect(screen.queryByText("旧回答")).toBeNull();
   });
 
   it("aborts an in-flight session request when the shell unmounts", () => {

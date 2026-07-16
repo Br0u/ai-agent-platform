@@ -19,7 +19,6 @@ import {
   AssistantExperienceProvider,
   useAssistantExperience,
 } from "../assistant/assistant-experience-provider";
-import { AssistantDock } from "../assistant/assistant-dock";
 import { FloatingChatWidget } from "../ui/floating-chat-widget-shadcnui";
 import { PortalNavigationLink } from "./portal-navigation-link";
 import { classifyShellRoute, type ShellRoute } from "./shell-route";
@@ -310,12 +309,14 @@ function AssistantEnabledShell({
   variant: Extract<ShellRoute, "portal" | "assistant">;
 }) {
   const experience = useAssistantExperience();
+  const router = useRouter();
   const activateHeaderEntry = (trigger: HTMLButtonElement) => {
     if (variant === "assistant") {
       experience.focusComposer();
       return;
     }
-    experience.openDockFrom(trigger);
+    void trigger;
+    router.push("/assistant");
   };
 
   return (
@@ -339,7 +340,6 @@ function AssistantEnabledShell({
     >
       {children}
       <FloatingChatWidget showLauncher={variant === "portal"} />
-      {variant === "portal" ? <AssistantDock /> : null}
     </AppShell>
   );
 }

@@ -1,0 +1,274 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AI Agent 平台",
+    "subtitle": "Docker Compose 运行时架构 | 模块化单体 + 无模型 AgentOS 占位服务",
+    "output": "ai-agent-platform-architecture.html",
+    "viewBox": [1320, 740]
+  },
+  "components": [
+    {
+      "id": "external_systems",
+      "type": "external",
+      "label": "未来外部系统",
+      "sublabel": "授权 / 下载 / 开放实验室",
+      "pos": [40, 100],
+      "size": [190, 70],
+      "tag": "默认关闭"
+    },
+    {
+      "id": "browser",
+      "type": "frontend",
+      "label": "浏览器",
+      "sublabel": "门户 / 文档 / 控制台",
+      "pos": [40, 280],
+      "size": [150, 70]
+    },
+    {
+      "id": "proxy",
+      "type": "cloud",
+      "label": "Nginx 反向代理",
+      "sublabel": "公网 :8080",
+      "pos": [250, 280],
+      "size": [180, 70],
+      "tag": "主机校验 + 速率限制"
+    },
+    {
+      "id": "web",
+      "type": "backend",
+      "label": "Next.js Web 应用",
+      "sublabel": "App Router / API 路由",
+      "pos": [480, 180],
+      "size": [220, 84],
+      "tag": "门户 + 文档 + 控制台"
+    },
+    {
+      "id": "integrations",
+      "type": "backend",
+      "label": "集成适配器",
+      "sublabel": "稳定接口 / Mock",
+      "pos": [480, 360],
+      "size": [190, 76],
+      "tag": "功能开关"
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "AgentOS 服务",
+      "sublabel": "Python / FastAPI :7777",
+      "pos": [790, 180],
+      "size": [190, 84],
+      "tag": "无模型占位服务"
+    },
+    {
+      "id": "database",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "平台 / Drizzle / Agno 模式",
+      "pos": [790, 360],
+      "size": [190, 84],
+      "tag": "持久化卷"
+    },
+    {
+      "id": "platform_migrate",
+      "type": "cloud",
+      "label": "平台迁移",
+      "sublabel": "模式 + 种子 + 授权",
+      "pos": [480, 570],
+      "size": [190, 70],
+      "tag": "一次性任务"
+    },
+    {
+      "id": "agent_migrate",
+      "type": "cloud",
+      "label": "AgentOS 迁移",
+      "sublabel": "Agno 模式",
+      "pos": [790, 570],
+      "size": [190, 70],
+      "tag": "一次性任务"
+    },
+    {
+      "id": "backup",
+      "type": "cloud",
+      "label": "加密备份",
+      "sublabel": "定时转储 / 数据卷",
+      "pos": [1060, 570],
+      "size": [180, 70],
+      "tag": "保留策略"
+    },
+    {
+      "id": "secrets",
+      "type": "security",
+      "label": "Docker 密钥",
+      "sublabel": "URL / 密钥 / 密码",
+      "pos": [250, 570],
+      "size": [160, 70],
+      "tag": "不写入日志"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Docker Compose 部署",
+      "wraps": [
+        "proxy",
+        "web",
+        "integrations",
+        "agent",
+        "database",
+        "platform_migrate",
+        "agent_migrate",
+        "backup",
+        "secrets"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "内部后端网络",
+      "wraps": ["web", "integrations", "agent", "database"]
+    }
+  ],
+  "connections": [
+    {
+      "from": "external_systems",
+      "to": "integrations",
+      "label": "可选适配器",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "orthogonal-v"
+    },
+    {
+      "from": "browser",
+      "to": "proxy",
+      "label": "HTTP :8080",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight"
+    },
+    {
+      "from": "proxy",
+      "to": "web",
+      "label": "反向代理",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "orthogonal-h",
+      "labelDy": 19
+    },
+    {
+      "from": "web",
+      "to": "integrations",
+      "label": "功能适配",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "orthogonal-v"
+    },
+    {
+      "from": "web",
+      "to": "database",
+      "label": "平台 / Drizzle 数据",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "orthogonal-v"
+    },
+    {
+      "from": "web",
+      "to": "agent",
+      "label": "就绪探测 / 调用",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight",
+      "labelDy": 66
+    },
+    {
+      "from": "agent",
+      "to": "database",
+      "label": "Agno 模式",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelDy": 24
+    },
+    {
+      "from": "platform_migrate",
+      "to": "database",
+      "label": "平台 DDL",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "route": "orthogonal-v"
+    },
+    {
+      "from": "agent_migrate",
+      "to": "database",
+      "label": "Agno DDL",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "route": "straight"
+    },
+    {
+      "from": "backup",
+      "to": "database",
+      "label": "加密转储",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "right",
+      "route": "orthogonal-h"
+    },
+    {
+      "from": "secrets",
+      "to": "web",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "left",
+      "via": [
+        [330, 520],
+        [430, 520],
+        [430, 222]
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "应用层",
+      "items": [
+        "Next.js 提供门户、文档、控制台和 API 路由",
+        "领域服务负责数据库访问",
+        "外部系统关闭时，集成适配器保持接口稳定"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "数据层",
+      "items": [
+        "PostgreSQL 持久化平台和 AgentOS 数据",
+        "public / drizzle / agno 模式相互隔离",
+        "运行时服务不执行 DDL"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "安全",
+      "items": [
+        "Nginx 校验主机并限制公网 POST 路由频率",
+        "AgentOS 使用 Bearer 安全密钥保护",
+        "密钥通过 Docker secret 文件注入"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "启动顺序",
+      "items": [
+        "db -> migrate -> agent-migrate -> agent -> web -> proxy",
+        "备份等待两条迁移链路完成",
+        "AgentOS 当前仅提供占位能力"
+      ]
+    }
+  ]
+}

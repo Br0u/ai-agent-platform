@@ -12,33 +12,34 @@ import {
   MessageSquare,
   PanelRightOpen,
   RotateCcw,
-  Send,
   Sparkles,
   X,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   useEffect,
   useEffectEvent,
   useId,
   useLayoutEffect,
   useRef,
-  type FormEvent,
   type RefObject,
 } from "react";
 import { ASSISTANT_PRESET_QUESTIONS } from "@/features/assistant/assistant-contract";
 import { useAssistantExperience } from "../assistant/assistant-experience-provider";
+import {
+  AssistantPromptInput,
+  type AssistantPromptSubmit,
+} from "../assistant/assistant-prompt-input";
 import { getAssistantServicePresentation } from "../assistant/assistant-service-presentation";
 import "./floating-chat-widget-shadcnui.css";
 
 function QuickSurfaceLifecycle({
   closeRef,
-  inputRef,
   instanceVersion,
   panelRef,
 }: {
   closeRef: RefObject<HTMLButtonElement | null>;
-  inputRef: RefObject<HTMLInputElement | null>;
   instanceVersion: number;
   panelRef: RefObject<HTMLElement | null>;
 }) {
@@ -46,7 +47,6 @@ function QuickSurfaceLifecycle({
   const {
     close,
     completeSurfaceExit,
-    registerComposer,
     registerQuickFocusTarget,
     surface,
     surfaceInstanceVersion,
@@ -78,30 +78,20 @@ function QuickSurfaceLifecycle({
 
   useEffect(() => {
     const closeTarget = closeRef.current;
-    const input = inputRef.current;
     const unregisterQuickFocusTarget =
       closeTarget === null
         ? undefined
         : registerQuickFocusTarget(closeTarget, instanceVersion);
-    const unregisterComposer =
-      input === null ? undefined : registerComposer(input);
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") requestCloseFromEffect();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      unregisterComposer?.();
       unregisterQuickFocusTarget?.();
       completeExitFromEffect();
     };
-  }, [
-    closeRef,
-    inputRef,
-    instanceVersion,
-    registerComposer,
-    registerQuickFocusTarget,
-  ]);
+  }, [closeRef, instanceVersion, registerQuickFocusTarget]);
 
   return null;
 }
@@ -110,29 +100,29 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
   const {
     close,
     hasResolvedServiceState,
-    openDockFrom,
     quickInteractionReady,
     refreshingServiceState,
+    registerComposer,
     serviceState,
     session,
   } = useAssistantExperience();
   const closeRef = useRef<HTMLButtonElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLElement>(null);
+  const router = useRouter();
   const titleId = useId();
   const prefersReducedMotion = useReducedMotion();
   const sending = session.requestStatus === "sending";
-  const characterCount = Array.from(session.draft.trim()).length;
-  const overLimit = characterCount > 500;
-  const canSend = !sending && characterCount > 0 && !overLimit;
   const servicePresentation = getAssistantServicePresentation({
     serviceState,
     hasResolvedServiceState,
     refreshingServiceState,
   });
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (canSend) void session.submit();
+  const handlePromptSubmit = ({
+    attachments,
+    value,
+  }: AssistantPromptSubmit) => {
+    if (attachments.length > 0) return;
+    void session.submit(value);
   };
 
   return (
@@ -157,7 +147,6 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
     >
       <QuickSurfaceLifecycle
         closeRef={closeRef}
-        inputRef={inputRef}
         instanceVersion={instanceVersion}
         panelRef={panelRef}
       />
@@ -185,7 +174,7 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
           <button
             aria-label="展开 AI 助理工作区"
             className="floating-assistant__icon-button"
-            onClick={(event) => openDockFrom(event.currentTarget)}
+            onClick={() => router.push("/assistant")}
             type="button"
           >
             <PanelRightOpen aria-hidden="true" size={18} />
@@ -295,33 +284,18 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
       </div>
 
       <footer className="floating-assistant__footer">
-        <form onSubmit={submit}>
-          <label className="sr-only" htmlFor={`${titleId}-input`}>
-            向 M 助手提问
-          </label>
-          <input
-            aria-invalid={overLimit ? "true" : undefined}
-            disabled={sending}
-            id={`${titleId}-input`}
-            onChange={(event) => session.setDraft(event.target.value)}
-            placeholder="输入你的问题"
-            ref={inputRef}
-            type="text"
-            value={session.draft}
-          />
-          <button
-            aria-label="发送消息"
-            className="floating-assistant__send"
-            disabled={!canSend}
-            type="submit"
-          >
-            <Send size={17} />
-          </button>
-        </form>
+        <AssistantPromptInput
+          ariaLabel="AI 助理对话"
+          disabled={sending}
+          inputLabel="向 M 助手提问"
+          onChange={session.setDraft}
+          onSubmit={handlePromptSubmit}
+          registerComposer={registerComposer}
+          submitLabel="发送消息"
+          value={session.draft}
+          variant="quick"
+        />
         <div className="floating-assistant__meta">
-          <span className={overLimit ? "is-over-limit" : ""}>
-            {characterCount} / 500
-          </span>
           <nav aria-label="M 助手兜底链接">
             <Link href="/help">
               <LifeBuoy size={14} />

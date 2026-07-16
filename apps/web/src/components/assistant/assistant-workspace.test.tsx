@@ -175,6 +175,11 @@ describe("AssistantWorkspace", () => {
         name: "从一个问题开始，找到适合企业的 AI 路径。",
       }),
     ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "缩小 AI 助理并返回主页面" }),
+    ).toHaveAttribute("href", "/");
+    expect(screen.queryByRole("img")).toBeNull();
+    expect(screen.getByText("CONVERSATIONS")).toBeVisible();
     expect(screen.getByText(placeholderStatus.message)).toBeVisible();
     expect(screen.getByText("公开咨询 · 匿名临时会话")).toBeVisible();
     expect(screen.getByTestId("assistant-service-state")).toHaveAttribute(

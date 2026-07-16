@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./code-agent.css";
+import { MobiusStripVisual } from "./mobius-strip-visual";
 
 export const metadata: Metadata = {
   title: "码多多 · 私有化 AI 编程助手",
@@ -29,21 +30,15 @@ export default function CodeAgentPage() {
         <div className="ca-container ca-hero__grid">
           {/* 左侧文案与交互区 */}
           <div className="ca-hero__content">
-            <div className="ca-hero__logo">
-              {/* CSS 模拟蓝底六边形 / 铲子 icon */}
-              <div className="ca-icon-hex">
-                <div className="ca-icon-hex-inner"></div>
-              </div>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-start",
-                marginBottom: "24px",
-              }}
-            >
+            <div className="ca-brand-stack" aria-label="华鲲元启旗下码多多产品">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/logo.png" alt="华鲲元启" style={{ height: "40px" }} />
+              <img src="/logo.png" alt="华鲲元启" className="ca-parent-brand" />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/code-agent-logo.png"
+                alt="码多多产品标志"
+                className="ca-product-mark"
+              />
             </div>
 
             <h1 className="ca-hero__title">码多多+VSCode=智能编码，效率狂飙</h1>
@@ -104,30 +99,7 @@ export default function CodeAgentPage() {
 
           {/* 右侧 3D 悬浮组件区 */}
           <div className="ca-hero__visual">
-            <div className="ca-3d-scene">
-              {/* 发光底座 */}
-              <div className="ca-3d-base">
-                <div className="ca-3d-base-rings"></div>
-              </div>
-
-              {/* 核心 3D 几何体 (CSS 绘制) */}
-              <div className="ca-3d-cube-group">
-                <div className="ca-3d-cube ca-3d-cube--1"></div>
-                <div className="ca-3d-cube ca-3d-cube--2"></div>
-                <div className="ca-3d-cube ca-3d-cube--3"></div>
-              </div>
-
-              {/* 环绕代码丝带 */}
-              <div className="ca-ribbon ca-ribbon--1">
-                print &apos;码多多&apos;
-              </div>
-              <div className="ca-ribbon ca-ribbon--2">
-                print &apos;Hello World&apos;
-              </div>
-              <div className="ca-ribbon ca-ribbon--3">
-                print &apos;码多多&apos;
-              </div>
-            </div>
+            <MobiusStripVisual />
           </div>
         </div>
       </section>

@@ -15,8 +15,13 @@ import {
   AssistantExperienceProvider,
   useAssistantExperience,
 } from "../assistant/assistant-experience-provider";
-import { AssistantDock } from "../assistant/assistant-dock";
 import { FloatingChatWidget } from "./floating-chat-widget-shadcnui";
+
+const router = vi.hoisted(() => ({ push: vi.fn() }));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => router,
+}));
 
 const successfulReply = {
   version: "1",
@@ -90,6 +95,7 @@ function openWidget() {
 }
 
 beforeEach(() => {
+  router.push.mockReset();
   Object.defineProperty(window, "innerWidth", {
     configurable: true,
     value: 1_280,
@@ -208,55 +214,28 @@ describe("FloatingChatWidget", () => {
     );
   });
 
-  it("offers one dock expansion action without bypassing it to the full page", () => {
+  it("routes the quick expansion action to the full-page assistant", () => {
     openWidget();
 
     expect(
       screen.getByRole("button", { name: "展开 AI 助理工作区" }).parentElement,
     ).toHaveClass("floating-assistant__header-actions");
-    expect(screen.queryByRole("link", { name: "打开完整 AI 助理" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "展开 AI 助理工作区" }));
+    expect(router.push).toHaveBeenCalledWith("/assistant");
   });
 
-  it("expands the quick surface into the dock without losing its draft", async () => {
+  it("keeps the quick surface as the only side surface", async () => {
     render(
       <AssistantExperienceProvider pathname="/">
         <FloatingChatWidget />
-        <AssistantDock />
       </AssistantExperienceProvider>,
     );
     await act(async () => Promise.resolve());
     const launcher = screen.getByRole("button", { name: "打开 M 助手" });
     fireEvent.click(launcher);
-    fireEvent.change(screen.getByRole("textbox", { name: "向 M 助手提问" }), {
-      target: { value: "保留到工作区的问题" },
-    });
-
     const quickDialog = screen.getByRole("dialog", { name: "M 助手" });
-    fireEvent.click(screen.getByRole("button", { name: "展开 AI 助理工作区" }));
-
-    expect(quickDialog).toHaveAttribute("inert");
-    expect(quickDialog).toHaveAttribute("aria-hidden", "true");
-    expect(quickDialog).not.toHaveAttribute("role");
-    expect(quickDialog).not.toHaveAttribute("aria-modal");
-    expect(quickDialog).toHaveClass("is-exiting");
-    expect(screen.getAllByRole("dialog")).toHaveLength(1);
-    const dock = screen.getByRole("dialog", {
-      name: "AI 助理工作区",
-    });
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "M 助手" })).toBeNull(),
-    );
-    expect(dock).toHaveTextContent("M 企业助理");
-    expect(screen.getByRole("textbox", { name: "输入问题" })).toHaveValue(
-      "保留到工作区的问题",
-    );
-    expect(screen.getAllByRole("dialog")).toHaveLength(1);
-
-    fireEvent.click(
-      within(dock).getByRole("button", { name: "关闭 AI 助理工作区" }),
-    );
-    await waitFor(() => expect(dock).not.toBeInTheDocument());
-    expect(launcher).toHaveFocus();
+    expect(quickDialog).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "AI 助理工作区" })).toBeNull();
   });
 
   it("keeps a reopened quick instance isolated from the exiting instance refs", async () => {
@@ -273,7 +252,6 @@ describe("FloatingChatWidget", () => {
       <AssistantExperienceProvider pathname="/">
         <FocusHarness />
         <FloatingChatWidget />
-        <AssistantDock />
       </AssistantExperienceProvider>,
     );
     await act(async () => Promise.resolve());
@@ -302,16 +280,7 @@ describe("FloatingChatWidget", () => {
         name: "展开 AI 助理工作区",
       }),
     );
-
-    expect(secondDialog).toHaveAttribute("inert");
-    expect(secondDialog).toHaveAttribute("aria-hidden", "true");
-    expect(secondDialog).not.toHaveAttribute("role");
-    expect(screen.getAllByRole("dialog")).toHaveLength(1);
-    await waitFor(() =>
-      expect(
-        screen.getByRole("dialog", { name: "AI 助理工作区" }),
-      ).toBeVisible(),
-    );
+    expect(router.push).toHaveBeenCalledWith("/assistant");
   });
 
   it("sends a preset prompt and renders the returned message and action", async () => {
@@ -472,8 +441,15 @@ describe("FloatingChatWidget", () => {
     expect(stylesheet).toMatch(
       /@media \(max-width: 640px\)[\s\S]*?\.floating-assistant__panel button,\s*\.floating-assistant__panel a\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/u,
     );
-    expect(stylesheet).toMatch(
-      /\.floating-assistant__footer input\s*\{[\s\S]*?min-height:\s*44px;/u,
+    const composerStylesheet = readFileSync(
+      "src/components/assistant/assistant-prompt-input.css",
+      "utf8",
+    );
+    expect(composerStylesheet).toMatch(
+      /\.assistant-prompt-input__surface\s*\{[\s\S]*?min-height:\s*70px;/u,
+    );
+    expect(composerStylesheet).toMatch(
+      /\.assistant-prompt-input__submit\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*40px;/u,
     );
   });
 });
