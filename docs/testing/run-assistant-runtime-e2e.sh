@@ -230,7 +230,7 @@ export ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080
   exit 1
 }
 export ASSISTANT_PROVIDER_MODE=placeholder
-export ASSISTANT_AGENTOS_DEFAULT_AGENT_ID=runtime-e2e-placeholder
+export AGENT_ENABLED=false
 export ASSISTANT_AGENTOS_READINESS_TTL_MS=1000
 export ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS=500
 export ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD=1
@@ -251,6 +251,7 @@ backup_encryption_key=$(secret)
 os_security_key=$(secret)
 assistant_session_secret=$(secret)
 assistant_rate_limit_secret=$(secret)
+model_api_key=$(secret)
 
 materialize_secret() {
   variable_name=$1
@@ -277,6 +278,7 @@ materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECR
 materialize_secret OS_SECURITY_KEY_FILE os_security_key "$os_security_key"
 materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$assistant_session_secret"
 materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret "$assistant_rate_limit_secret"
+materialize_secret MODEL_API_KEY_FILE model_api_key "$model_api_key"
 
 compose() {
   docker compose -p "$project" --env-file "$env_file" $compose_files "$@"
@@ -334,7 +336,8 @@ for protected_value in \
   "$backup_encryption_key" \
   "$os_security_key" \
   "$assistant_session_secret" \
-  "$assistant_rate_limit_secret"; do
+  "$assistant_rate_limit_secret" \
+  "$model_api_key"; do
   if grep -F "$protected_value" "$logs_file" >/dev/null 2>&1; then
     echo "sanitized container logs contain protected runtime data" >&2
     exit 1

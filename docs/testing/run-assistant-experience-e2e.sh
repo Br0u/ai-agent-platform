@@ -267,6 +267,7 @@ export PUBLIC_HOST=127.0.0.1
 export ALLOW_LOCAL_VALIDATION_HOSTS=true
 export ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080
 export ASSISTANT_PROVIDER_MODE=placeholder
+export AGENT_ENABLED=false
 export PNPM_REGISTRY=${PNPM_REGISTRY:-https://registry.npmjs.org}
 
 temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/aap-assistant-e2e.XXXXXX")
@@ -291,6 +292,7 @@ backup_encryption_key=$(secret)
 os_security_key=$(secret)
 assistant_session_secret=$(secret)
 assistant_rate_limit_secret=$(secret)
+model_api_key=$(secret)
 
 materialize_secret POSTGRES_PASSWORD_FILE postgres_password "$POSTGRES_PASSWORD"
 materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$MIGRATOR_DATABASE_PASSWORD"
@@ -303,6 +305,7 @@ materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECR
 materialize_secret OS_SECURITY_KEY_FILE os_security_key "$os_security_key"
 materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$assistant_session_secret"
 materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret "$assistant_rate_limit_secret"
+materialize_secret MODEL_API_KEY_FILE model_api_key "$model_api_key"
 
 [ "$PUBLIC_HOST" = "127.0.0.1" ] || {
   echo "PUBLIC_HOST must be 127.0.0.1 for isolated E2E" >&2

@@ -311,7 +311,7 @@ describe("production deployment security contracts", () => {
     expect(webService).toContain('TRUST_NGINX_PROXY: "true"');
     for (const name of [
       "ASSISTANT_PROVIDER_MODE",
-      "ASSISTANT_AGENTOS_DEFAULT_AGENT_ID",
+      "ASSISTANT_AGENTOS_RUN_TIMEOUT_MS",
       "ASSISTANT_AGENTOS_READINESS_TTL_MS",
       "ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS",
       "ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD",
@@ -319,6 +319,8 @@ describe("production deployment security contracts", () => {
     ]) {
       expect(webService).toContain(`${name}:`);
     }
+    expect(webService).not.toContain("ASSISTANT_AGENTOS_DEFAULT_AGENT_ID");
+    expect(webService).not.toContain("MODEL_API_KEY");
     expect(webService).not.toMatch(/agent:[\s\S]*condition: service_healthy/u);
     expect(webService).not.toMatch(/^\s{4}ports:/mu);
     expect(agentService).not.toMatch(/^\s{4}ports:/mu);
@@ -770,6 +772,120 @@ exit 0
     );
   });
 
+  it("gives only AgentOS the model credential and controlled egress", () => {
+    const compose = read("compose.yaml");
+    const serviceNames = [
+      "db",
+      "migrate",
+      "agno-bootstrap",
+      "agent-migrate",
+      "agent",
+      "web",
+      "proxy",
+      "backup",
+    ] as const;
+    const serviceSections = Object.fromEntries(
+      serviceNames.map((name, index) => {
+        const nextName = serviceNames[index + 1];
+        const start = `\n  ${name}:\n`;
+        const end = nextName ? `\n  ${nextName}:\n` : "\nnetworks:\n";
+        return [name, compose.split(start)[1]?.split(end)[0]];
+      }),
+    ) as Record<(typeof serviceNames)[number], string | undefined>;
+    const agentService = serviceSections.agent;
+    const healthcheck = agentService
+      ?.split("\n    healthcheck:\n")[1]
+      ?.split("\n    read_only: true\n")[0];
+    const networkDefinitions = compose
+      .split("\nnetworks:\n")[1]
+      ?.split("\nvolumes:\n")[0];
+    const secretDefinitions = compose.split("\nsecrets:\n")[1];
+
+    expect(agentService).toBeDefined();
+    expect(agentService).toContain("MODEL_API_KEY=/run/secrets/model_api_key");
+    expect(agentService).toContain("- model_api_key");
+    expect(agentService).toContain(
+      'if [ -z "$${MODEL_BASE_URL-}" ]; then unset MODEL_BASE_URL; fi',
+    );
+    expect(agentService).toContain(
+      'exec /opt/aap/run-with-secret-env.sh "$$@"',
+    );
+    for (const [name, expected] of [
+      ["AGENT_ENABLED", "${AGENT_ENABLED:-false}"],
+      ["MODEL_PROVIDER", "${MODEL_PROVIDER:-}"],
+      ["MODEL_ID", "${MODEL_ID:-}"],
+      ["MODEL_BASE_URL", "${MODEL_BASE_URL:-}"],
+      ["MODEL_RUN_TIMEOUT_SECONDS", "${MODEL_RUN_TIMEOUT_SECONDS:-50}"],
+    ] as const) {
+      expect(agentService).toContain(`${name}: ${expected}`);
+    }
+    expect(agentService).toContain(
+      "networks:\n      - backend\n      - model_egress",
+    );
+    expect(agentService).not.toMatch(/^\s{4}ports:/mu);
+    expect(agentService).toContain("read_only: true");
+    expect(agentService).toContain("no-new-privileges:true");
+    expect(agentService).toContain("cap_drop:\n      - ALL");
+    expect(agentService).toContain("mem_limit: 512m");
+    expect(agentService).toContain('cpus: "1.0"');
+    expect(agentService).toContain("pids_limit: 256");
+
+    expect(healthcheck).toContain("/internal/health/ready");
+    expect(healthcheck).not.toMatch(/MODEL_|model_api_key|\/v1\/|\/runs/iu);
+
+    expect(networkDefinitions).toContain("  backend:\n    internal: true");
+    expect(networkDefinitions).toMatch(/^  model_egress:\s*$/mu);
+    expect(networkDefinitions).not.toMatch(
+      /model_egress:\s*\n\s+internal:\s*true/u,
+    );
+    expect(secretDefinitions).toContain(
+      "model_api_key:\n    file: ${MODEL_API_KEY_FILE:-.secrets/model_api_key}",
+    );
+
+    for (const name of serviceNames.filter((name) => name !== "agent")) {
+      expect(serviceSections[name]).toBeDefined();
+      expect(serviceSections[name]).not.toContain("model_api_key");
+      expect(serviceSections[name]).not.toContain("MODEL_API_KEY");
+      expect(serviceSections[name]).not.toContain("model_egress");
+    }
+  });
+
+  it("documents bounded model and AgentOS run timeout defaults", () => {
+    const example = read(".env.example");
+    const compose = read("compose.yaml");
+    const agentSettings = read("apps/agent/src/agent_service/config.py");
+    const runClient = read(
+      "apps/web/src/server/assistant/agentos-run-client.ts",
+    );
+
+    for (const line of [
+      "AGENT_ENABLED=false",
+      "MODEL_PROVIDER=",
+      "MODEL_ID=",
+      "MODEL_BASE_URL=",
+      "MODEL_RUN_TIMEOUT_SECONDS=50",
+      "MODEL_API_KEY_FILE=.secrets/model_api_key",
+      "ASSISTANT_AGENTOS_RUN_TIMEOUT_MS=55000",
+    ]) {
+      expect(example.split("\n")).toContain(line);
+    }
+    expect(example).not.toMatch(/^MODEL_API_KEY=/mu);
+    expect(example).not.toContain("ASSISTANT_AGENTOS_DEFAULT_AGENT_ID");
+    expect(compose).not.toContain("ASSISTANT_AGENTOS_DEFAULT_AGENT_ID");
+    expect(compose).toContain(
+      "ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: ${ASSISTANT_AGENTOS_RUN_TIMEOUT_MS:-55000}",
+    );
+    expect(agentSettings).toMatch(
+      /model_run_timeout_seconds:\s*int\s*=\s*Field\([\s\S]*?default=50,[\s\S]*?ge=1,[\s\S]*?le=50,/u,
+    );
+    expect(runClient).toContain("const DEFAULT_RUN_TIMEOUT_MS = 55_000;");
+    expect(runClient).toContain("const MIN_RUN_TIMEOUT_MS = 51_000;");
+    expect(runClient).toContain("const MAX_RUN_TIMEOUT_MS = 55_000;");
+    expect(runClient).toMatch(
+      /runTimeoutMs < MIN_RUN_TIMEOUT_MS\s*\|\|\s*runTimeoutMs > MAX_RUN_TIMEOUT_MS/u,
+    );
+  });
+
   it("builds AgentOS from a pinned, locked, non-root multi-stage image", () => {
     const dockerfile = read("apps/agent/Dockerfile");
     const dockerIgnore = read("apps/agent/.dockerignore");
@@ -820,10 +936,13 @@ exit 0
       "OS_SECURITY_KEY",
       "ASSISTANT_SESSION_SECRET",
       "ASSISTANT_RATE_LIMIT_SECRET",
+      "MODEL_API_KEY",
     ] as const;
     const sentinels = Object.fromEntries(
       secretKeys.map((key, index) => [key, `compose-secret-${index}-sentinel`]),
     );
+    sentinels.MODEL_API_KEY =
+      "protected-model-api-key-sentinel:/credential/path-content";
     const sandbox = mkdtempSync(path.join(tmpdir(), "compose-secrets-"));
     const secretFileEnv: Record<string, string> = {};
     const runner = read("infra/docker/run-with-secret-env.sh");
@@ -851,13 +970,14 @@ exit 0
         },
       });
 
-      expect(rendered.status, rendered.stderr).toBe(0);
       for (const sentinel of Object.values(sentinels)) {
         expect(rendered.stdout).not.toContain(sentinel);
         expect(rendered.stderr).not.toContain(sentinel);
       }
+      expect(rendered.status, rendered.stderr).toBe(0);
       expect(rendered.stdout).toContain("source: postgres_password");
       expect(rendered.stdout).toContain("source: os_security_key");
+      expect(rendered.stdout).toContain("source: model_api_key");
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
@@ -1016,6 +1136,34 @@ exit 0
     expect(runner.indexOf("config --quiet")).toBeLessThan(
       runner.indexOf("owns_project=true"),
     );
+  });
+
+  it("materializes an isolated model credential in every Compose runner", () => {
+    for (const file of [
+      "docs/testing/run-assistant-runtime-e2e.sh",
+      "docs/testing/run-assistant-experience-e2e.sh",
+      "docs/testing/run-agentos-backup-restore.sh",
+    ]) {
+      const runner = read(file);
+      const secretDirectory = runner.indexOf('secret_dir="$temp_dir/secrets"');
+      const generated = runner.indexOf("model_api_key=$(secret)");
+      const materialized = runner.indexOf(
+        'materialize_secret MODEL_API_KEY_FILE model_api_key "$model_api_key"',
+      );
+      const composeConfig = runner.indexOf("config --quiet");
+
+      expect(secretDirectory, file).toBeGreaterThan(-1);
+      expect(generated, file).toBeGreaterThan(secretDirectory);
+      expect(materialized, file).toBeGreaterThan(generated);
+      expect(composeConfig, file).toBeGreaterThan(materialized);
+      expect(runner).toMatch(/chmod 700 [^\n]*"\$secret_dir"/u);
+      expect(runner).toContain('chmod 600 "$secret_path"');
+      expect(runner).toContain("umask 077");
+      expect(runner).toContain("trap cleanup EXIT");
+      expect(runner).not.toContain('echo "$model_api_key"');
+      expect(runner).not.toContain('cat "$MODEL_API_KEY_FILE"');
+      expect(runner).not.toMatch(/set\s+-[^\n]*x/u);
+    }
   });
 
   it("executes the assistant experience runner with fail-closed ownership and cleanup", () => {

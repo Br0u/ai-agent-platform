@@ -37,11 +37,21 @@ trap cleanup EXIT
 trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
 
+runtime_tmp=${TMPDIR:-/tmp}
+case "$runtime_tmp" in
+  /*) ;;
+  *)
+    echo "TMPDIR must be an absolute path" >&2
+    exit 1
+    ;;
+esac
+umask 077
 env_file=$(mktemp "$repo_root/.env.agentos-backup-restore.XXXXXX")
-temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/aap-agentos-backup-restore.XXXXXX")
+temp_dir=$(mktemp -d "$runtime_tmp/aap-agentos-backup-restore.XXXXXX")
 secret_dir="$temp_dir/secrets"
 dump_dir="$temp_dir/dump"
 mkdir -p "$secret_dir" "$dump_dir"
+chmod 700 "$temp_dir" "$secret_dir" "$dump_dir"
 
 if [ "${AAP_AGENTOS_RESTORE_TEST_FAIL_AFTER_TEMP:-false}" = "true" ]; then
   exit 86
@@ -70,6 +80,7 @@ agno_migrator_password=$(secret)
 agno_runtime_password=$(secret)
 better_auth_secret=$(secret)
 os_security_key=$(secret)
+model_api_key=$(secret)
 database=ai_agent_platform_agentos_restore_test
 owner=ai_agent_owner
 platform_user_id=00000000-0000-4000-8000-000000000001
@@ -100,6 +111,8 @@ materialize_secret AGNO_MIGRATOR_DATABASE_URL_FILE agno_migrator_database_url "p
 materialize_secret AGNO_DATABASE_URL_FILE agno_database_url "postgresql+psycopg_async://ai_agent_agno:$agno_runtime_password@db:5432/$database"
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$better_auth_secret"
 materialize_secret OS_SECURITY_KEY_FILE os_security_key "$os_security_key"
+materialize_secret MODEL_API_KEY_FILE model_api_key "$model_api_key"
+export AGENT_ENABLED=false
 
 umask 077
 cat >"$env_file" <<EOF

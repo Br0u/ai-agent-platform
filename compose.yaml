@@ -119,7 +119,14 @@ services:
       dockerfile: apps/agent/Dockerfile
     restart: unless-stopped
     user: agent
-    entrypoint: ["/opt/aap/run-with-secret-env.sh"]
+    entrypoint:
+      [
+        "/bin/sh",
+        "-eu",
+        "-c",
+        'if [ -z "$${MODEL_BASE_URL-}" ]; then unset MODEL_BASE_URL; fi; exec /opt/aap/run-with-secret-env.sh "$$@"',
+        "--",
+      ]
     command:
       [
         "uvicorn",
@@ -134,9 +141,16 @@ services:
       SECRET_ENV_SPECS: >-
         AGNO_DATABASE_URL=/run/secrets/agno_database_url
         OS_SECURITY_KEY=/run/secrets/os_security_key
+        MODEL_API_KEY=/run/secrets/model_api_key
+      AGENT_ENABLED: ${AGENT_ENABLED:-false}
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-}
+      MODEL_ID: ${MODEL_ID:-}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-}
+      MODEL_RUN_TIMEOUT_SECONDS: ${MODEL_RUN_TIMEOUT_SECONDS:-50}
     secrets:
       - agno_database_url
       - os_security_key
+      - model_api_key
     volumes:
       - ./infra/docker/run-with-secret-env.sh:/opt/aap/run-with-secret-env.sh:ro
     depends_on:
@@ -168,6 +182,7 @@ services:
     pids_limit: 256
     networks:
       - backend
+      - model_egress
 
   web:
     build:
@@ -191,7 +206,7 @@ services:
       AGENTOS_INTERNAL_URL: http://agent:7777
       ASSISTANT_PUBLIC_ORIGIN: ${ASSISTANT_PUBLIC_ORIGIN:?Set ASSISTANT_PUBLIC_ORIGIN in .env}
       ASSISTANT_PROVIDER_MODE: ${ASSISTANT_PROVIDER_MODE:-placeholder}
-      ASSISTANT_AGENTOS_DEFAULT_AGENT_ID: ${ASSISTANT_AGENTOS_DEFAULT_AGENT_ID:-}
+      ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: ${ASSISTANT_AGENTOS_RUN_TIMEOUT_MS:-55000}
       ASSISTANT_AGENTOS_READINESS_TTL_MS: ${ASSISTANT_AGENTOS_READINESS_TTL_MS:-5000}
       ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS: ${ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS:-1500}
       ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD: ${ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD:-3}
@@ -308,6 +323,7 @@ networks:
   frontend:
   backend:
     internal: true
+  model_egress:
 
 volumes:
   db_data:
@@ -344,3 +360,5 @@ secrets:
     file: ${ASSISTANT_SESSION_SECRET_FILE:-.secrets/assistant_session_secret}
   assistant_rate_limit_secret:
     file: ${ASSISTANT_RATE_LIMIT_SECRET_FILE:-.secrets/assistant_rate_limit_secret}
+  model_api_key:
+    file: ${MODEL_API_KEY_FILE:-.secrets/model_api_key}
