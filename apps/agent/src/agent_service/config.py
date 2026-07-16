@@ -158,21 +158,28 @@ class RuntimeSettings(_AgentSettings):
             return values
         normalized_values = dict(values)
         for field_name, validation_alias in _DIRECT_MODEL_SETTING_ALIASES.items():
-            if field_name in normalized_values:
-                normalized_values[validation_alias] = normalized_values.pop(field_name)
+            if (
+                validation_alias not in normalized_values
+                and field_name in normalized_values
+            ):
+                normalized_values[validation_alias] = normalized_values[field_name]
+            normalized_values.pop(field_name, None)
         try:
             agent_enabled = _BOOLEAN_ADAPTER.validate_python(
                 normalized_values.get("AGENT_ENABLED", False)
             )
         except ValidationError:
-            return normalized_values
-        if agent_enabled:
-            return normalized_values
-        return {
-            key: value
-            for key, value in normalized_values.items()
-            if key not in _MODEL_SETTING_INPUT_KEYS
-        }
+            agent_enabled = None
+        if agent_enabled is False:
+            return {
+                key: value
+                for key, value in normalized_values.items()
+                if key not in _MODEL_SETTING_INPUT_KEYS
+            }
+        raw_api_key = normalized_values.get("MODEL_API_KEY")
+        if isinstance(raw_api_key, str):
+            normalized_values["MODEL_API_KEY"] = SecretStr(raw_api_key)
+        return normalized_values
 
     @field_validator("os_security_key", mode="after")
     @classmethod
@@ -252,8 +259,13 @@ class RuntimeSettings(_AgentSettings):
             or ord(character) <= 0x1F
             or 0x7F <= ord(character) <= 0x9F
             for character in value
-        ):
-            raise ValueError("MODEL_BASE_URL must not contain whitespace or controls")
+        ) or "\\" in value:
+            raise ValueError(
+                "MODEL_BASE_URL must not contain whitespace, controls, or backslashes"
+            )
+        authority = value[8:].split("/", maxsplit=1)[0]
+        if "@" in authority:
+            raise ValueError("MODEL_BASE_URL must not contain userinfo")
         try:
             parsed = _HTTP_URL_ADAPTER.validate_python(value)
         except ValidationError:
@@ -274,7 +286,7 @@ class RuntimeSettings(_AgentSettings):
                 "MODEL_BASE_URL must use HTTPS with a host and without "
                 "credentials, query, or fragment"
             )
-        return value
+        return str(parsed)
 
     @field_validator("model_run_timeout_seconds", mode="before")
     @classmethod

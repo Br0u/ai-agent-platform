@@ -14,6 +14,7 @@ RUNTIME_URL = "postgresql+psycopg_async://runtime:runtime-password@db:5432/platf
 MIGRATOR_URL = "postgresql+psycopg_async://migrator:migrator-password@db:5432/platform"
 SECURITY_KEY = "internal-security-key-0123456789abcdef"
 MODEL_API_KEY = "model-api-key-that-must-stay-secret"
+SELF_VALIDATION_SECRET = "self-validation-secret-that-must-not-leak"
 MODEL_PROVIDERS = (
     "openai",
     "anthropic",
@@ -371,6 +372,34 @@ def test_runtime_accepts_direct_model_field_names(
     assert settings.active_model.timeout_seconds == 25
 
 
+def test_uppercase_aliases_win_over_conflicting_direct_field_names(
+    valid_runtime_env: None,
+) -> None:
+    settings = RuntimeSettings(
+        _env_file=None,
+        AGENT_ENABLED=True,
+        MODEL_PROVIDER="openai",
+        MODEL_ID="alias-model",
+        MODEL_API_KEY=MODEL_API_KEY,
+        MODEL_BASE_URL="https://models.example.com/v1",
+        MODEL_RUN_TIMEOUT_SECONDS=25,
+        agent_enabled=False,
+        model_provider="anthropic",
+        model_id="field-name-model",
+        model_api_key=f" {SELF_VALIDATION_SECRET}",
+        model_base_url="https://field-name.example.com/v1",
+        model_run_timeout_seconds=1,
+    )
+
+    assert settings.agent_enabled is True
+    assert settings.active_model is not None
+    assert settings.active_model.provider == "openai"
+    assert settings.active_model.model_id == "alias-model"
+    assert settings.active_model.api_key.get_secret_value() == MODEL_API_KEY
+    assert settings.active_model.base_url == "https://models.example.com/v1"
+    assert settings.active_model.timeout_seconds == 25
+
+
 @pytest.mark.parametrize("missing_name", ["MODEL_PROVIDER", "MODEL_ID", "MODEL_API_KEY"])
 def test_enabled_agent_requires_complete_model_configuration(
     missing_name: str,
@@ -408,6 +437,47 @@ def test_enabled_agent_rejects_model_api_key_surrounding_whitespace(
 
     with pytest.raises(ValidationError):
         RuntimeSettings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    "invalid_key",
+    [
+        f" {SELF_VALIDATION_SECRET}",
+        f"{SELF_VALIDATION_SECRET} ",
+        f"{SELF_VALIDATION_SECRET}\n",
+        f"\t{SELF_VALIDATION_SECRET}",
+    ],
+)
+def test_model_api_key_self_validation_never_leaks_secret(
+    invalid_key: str,
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_API_KEY", invalid_key)
+
+    with pytest.raises(ValidationError) as error:
+        RuntimeSettings(_env_file=None)
+
+    assert SELF_VALIDATION_SECRET not in str(error.value)
+    assert SELF_VALIDATION_SECRET not in repr(error.value)
+    assert SELF_VALIDATION_SECRET not in repr(error.value.errors())
+    assert SELF_VALIDATION_SECRET not in error.value.json()
+
+
+def test_invalid_agent_enabled_never_bypasses_model_api_key_redaction(
+    valid_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENT_ENABLED", "not-a-boolean")
+    monkeypatch.setenv("MODEL_API_KEY", f" {SELF_VALIDATION_SECRET}")
+
+    with pytest.raises(ValidationError) as error:
+        RuntimeSettings(_env_file=None)
+
+    assert SELF_VALIDATION_SECRET not in str(error.value)
+    assert SELF_VALIDATION_SECRET not in repr(error.value)
+    assert SELF_VALIDATION_SECRET not in repr(error.value.errors())
+    assert SELF_VALIDATION_SECRET not in error.value.json()
 
 
 @pytest.mark.parametrize("provider", MODEL_PROVIDERS)
@@ -537,6 +607,18 @@ def test_supported_providers_accept_https_model_base_url(
     assert settings.active_model.base_url == "https://models.example.com/v1"
 
 
+def test_model_base_url_is_stored_as_validated_canonical_url(
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_BASE_URL", "https://MODELS.EXAMPLE.COM")
+
+    settings = RuntimeSettings(_env_file=None)
+
+    assert settings.active_model is not None
+    assert settings.active_model.base_url == "https://models.example.com/"
+
+
 @pytest.mark.parametrize("provider", ["anthropic", "google"])
 def test_anthropic_and_google_reject_model_base_url(
     provider: str,
@@ -560,6 +642,8 @@ def test_anthropic_and_google_reject_model_base_url(
         "https://models.example.com:not-a-port/v1",
         "https://models.example.com:99999/v1",
         "https:///v1",
+        "https://models.example.com\\@evil.example/v1",
+        "https://@models.example.com/v1",
         "https://user:password@models.example.com/v1",
         "https://models.example.com/v1?region=cn",
         "https://models.example.com/v1?",
