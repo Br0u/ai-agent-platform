@@ -1,15 +1,27 @@
 from collections.abc import Iterator
+from dataclasses import FrozenInstanceError, is_dataclass
 import math
+from typing import get_args
 
 import pytest
 from pydantic import SecretStr, ValidationError
 
+import agent_service.config as config
 from agent_service.config import MigrationSettings, RuntimeSettings
 
 
 RUNTIME_URL = "postgresql+psycopg_async://runtime:runtime-password@db:5432/platform"
 MIGRATOR_URL = "postgresql+psycopg_async://migrator:migrator-password@db:5432/platform"
 SECURITY_KEY = "internal-security-key-0123456789abcdef"
+MODEL_API_KEY = "model-api-key-that-must-stay-secret"
+MODEL_PROVIDERS = (
+    "openai",
+    "anthropic",
+    "google",
+    "dashscope",
+    "deepseek",
+    "minimax",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -25,8 +37,15 @@ def isolated_agent_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
         "HEALTH_DB_PROBE_TIMEOUT_SECONDS",
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
+        "GOOGLE_API_KEY",
+        "DASHSCOPE_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "MINIMAX_API_KEY",
         "MODEL_PROVIDER",
         "MODEL_ID",
+        "MODEL_API_KEY",
+        "MODEL_BASE_URL",
+        "MODEL_RUN_TIMEOUT_SECONDS",
     }
     for name in controlled_names:
         monkeypatch.delenv(name, raising=False)
@@ -38,6 +57,17 @@ def isolated_agent_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
 def valid_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OS_SECURITY_KEY", SECURITY_KEY)
     monkeypatch.setenv("AGNO_DATABASE_URL", RUNTIME_URL)
+
+
+@pytest.fixture
+def valid_enabled_runtime_env(
+    valid_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENT_ENABLED", "true")
+    monkeypatch.setenv("MODEL_PROVIDER", "openai")
+    monkeypatch.setenv("MODEL_ID", "gpt-4.1-mini")
+    monkeypatch.setenv("MODEL_API_KEY", MODEL_API_KEY)
 
 
 def test_runtime_requires_internal_security_key(
@@ -179,6 +209,11 @@ def test_all_fields_use_explicit_uppercase_environment_aliases() -> None:
         "os_security_key": "OS_SECURITY_KEY",
         "agno_database_url": "AGNO_DATABASE_URL",
         "agent_enabled": "AGENT_ENABLED",
+        "model_provider": "MODEL_PROVIDER",
+        "model_id": "MODEL_ID",
+        "model_api_key": "MODEL_API_KEY",
+        "model_base_url": "MODEL_BASE_URL",
+        "model_run_timeout_seconds": "MODEL_RUN_TIMEOUT_SECONDS",
         "health_ready_cache_ttl_seconds": "HEALTH_READY_CACHE_TTL_SECONDS",
         "health_db_probe_timeout_seconds": "HEALTH_DB_PROBE_TIMEOUT_SECONDS",
     }
@@ -248,34 +283,237 @@ def test_capability_cannot_be_overridden_from_environment(
     assert "capability" not in RuntimeSettings.model_fields
 
 
-def test_agent_cannot_be_enabled_before_model_configuration_exists(
+def test_disabled_agent_has_no_active_model_and_ignores_host_provider_variables(
     valid_runtime_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AGENT_ENABLED", "true")
+    for provider in MODEL_PROVIDERS:
+        monkeypatch.setenv(f"{provider.upper()}_API_KEY", f"host-{provider}-key")
+
+    settings = RuntimeSettings(_env_file=None)
+
+    assert settings.agent_enabled is False
+    assert settings.active_model is None
+    assert settings.model_api_key is None
+
+
+def test_enabled_agent_exposes_frozen_typed_active_model(
+    valid_enabled_runtime_env: None,
+) -> None:
+    settings = RuntimeSettings(_env_file=None)
+
+    assert get_args(config.ModelProvider) == MODEL_PROVIDERS
+    assert is_dataclass(config.ActiveModelSettings)
+    assert isinstance(settings.active_model, config.ActiveModelSettings)
+    assert settings.active_model.provider == "openai"
+    assert settings.active_model.model_id == "gpt-4.1-mini"
+    assert isinstance(settings.active_model.api_key, SecretStr)
+    assert settings.active_model.api_key.get_secret_value() == MODEL_API_KEY
+    assert settings.active_model.base_url is None
+    assert settings.active_model.timeout_seconds == 50
+    with pytest.raises(FrozenInstanceError):
+        setattr(settings.active_model, "timeout_seconds", 1)
+
+
+@pytest.mark.parametrize("missing_name", ["MODEL_PROVIDER", "MODEL_ID", "MODEL_API_KEY"])
+def test_enabled_agent_requires_complete_model_configuration(
+    missing_name: str,
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(missing_name)
 
     with pytest.raises(ValidationError):
         RuntimeSettings(_env_file=None)
 
 
-def test_provider_environment_does_not_enable_or_become_required(
-    valid_runtime_env: None,
+@pytest.mark.parametrize("blank_key", ["", "   "])
+def test_enabled_agent_rejects_blank_model_api_key(
+    blank_key: str,
+    valid_enabled_runtime_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "host-openai-key")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "host-anthropic-key")
-    monkeypatch.setenv("MODEL_PROVIDER", "openai")
-    monkeypatch.setenv("MODEL_ID", "host-model")
+    monkeypatch.setenv("MODEL_API_KEY", blank_key)
+
+    with pytest.raises(ValidationError):
+        RuntimeSettings(_env_file=None)
+
+
+@pytest.mark.parametrize("provider", MODEL_PROVIDERS)
+def test_enabled_agent_accepts_each_exact_provider(
+    provider: str,
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_PROVIDER", provider)
 
     settings = RuntimeSettings(_env_file=None)
 
-    assert settings.agent_enabled is False
-    assert not {
-        "openai_api_key",
-        "anthropic_api_key",
-        "model_provider",
-        "model_id",
-    }.intersection(RuntimeSettings.model_fields)
+    assert settings.active_model is not None
+    assert settings.active_model.provider == provider
+
+
+@pytest.mark.parametrize(
+    "provider",
+    ["OpenAI", "OPENAI", "Anthropic", "azure", "openai ", ""],
+)
+def test_model_provider_is_exact_and_case_sensitive(
+    provider: str,
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_PROVIDER", provider)
+
+    with pytest.raises(ValidationError):
+        RuntimeSettings(_env_file=None)
+
+
+def test_model_id_limit_is_128_code_points() -> None:
+    assert config.MODEL_ID_MAX_CODE_POINTS == 128
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    ["", " ", "\t", "\n", " model", "model ", "\tmodel", "model\n"],
+)
+def test_model_id_rejects_blank_or_surrounding_whitespace(
+    model_id: str,
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_ID", model_id)
+
+    with pytest.raises(ValidationError):
+        RuntimeSettings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    "control_character",
+    ["\x00", "\x01", "\x1f", "\x7f", "\x80", "\x9f"],
+)
+def test_model_id_rejects_c0_and_c1_control_characters(
+    control_character: str,
+    valid_enabled_runtime_env: None,
+) -> None:
+    with pytest.raises(ValidationError):
+        RuntimeSettings(_env_file=None, MODEL_ID=f"model{control_character}id")
+
+
+def test_model_id_accepts_128_unicode_code_points_and_safe_separators(
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    accepted_ids = ["模" * 128, "org/model.v1:chat_test-prod"]
+
+    for model_id in accepted_ids:
+        monkeypatch.setenv("MODEL_ID", model_id)
+        settings = RuntimeSettings(_env_file=None)
+        assert settings.active_model is not None
+        assert settings.active_model.model_id == model_id
+
+
+def test_model_id_rejects_129_code_points(
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_ID", "模" * 129)
+
+    with pytest.raises(ValidationError):
+        RuntimeSettings(_env_file=None)
+
+
+@pytest.mark.parametrize("timeout", ["1", "25", "50"])
+def test_model_timeout_accepts_integers_from_1_through_50(
+    timeout: str,
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_RUN_TIMEOUT_SECONDS", timeout)
+
+    settings = RuntimeSettings(_env_file=None)
+
+    assert settings.active_model is not None
+    assert settings.active_model.timeout_seconds == int(timeout)
+
+
+@pytest.mark.parametrize(
+    "timeout",
+    ["0", "51", "1.0", "1.5", "inf", "-inf", "nan", "NaN"],
+)
+def test_model_timeout_rejects_out_of_range_and_non_integer_values(
+    timeout: str,
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_RUN_TIMEOUT_SECONDS", timeout)
+
+    with pytest.raises(ValidationError):
+        RuntimeSettings(_env_file=None)
+
+
+@pytest.mark.parametrize("provider", ["openai", "dashscope", "deepseek", "minimax"])
+def test_supported_providers_accept_https_model_base_url(
+    provider: str,
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_PROVIDER", provider)
+    monkeypatch.setenv("MODEL_BASE_URL", "https://models.example.com/v1")
+
+    settings = RuntimeSettings(_env_file=None)
+
+    assert settings.active_model is not None
+    assert settings.active_model.base_url == "https://models.example.com/v1"
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "google"])
+def test_anthropic_and_google_reject_model_base_url(
+    provider: str,
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_PROVIDER", provider)
+    monkeypatch.setenv("MODEL_BASE_URL", "https://models.example.com/v1")
+
+    with pytest.raises(ValidationError):
+        RuntimeSettings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://models.example.com/v1",
+        "https:///v1",
+        "https://user:password@models.example.com/v1",
+        "https://models.example.com/v1?region=cn",
+        "https://models.example.com/v1?",
+        "https://models.example.com/v1#models",
+        "https://models.example.com/v1#",
+    ],
+)
+def test_model_base_url_rejects_unsafe_components(
+    base_url: str,
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_BASE_URL", base_url)
+
+    with pytest.raises(ValidationError):
+        RuntimeSettings(_env_file=None)
+
+
+def test_model_api_key_is_redacted_from_settings_and_validation_errors(
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = RuntimeSettings(_env_file=None)
+    assert MODEL_API_KEY not in repr(settings)
+
+    monkeypatch.setenv("MODEL_BASE_URL", "http://models.example.com/v1")
+    with pytest.raises(ValidationError) as error:
+        RuntimeSettings(_env_file=None)
+
+    assert MODEL_API_KEY not in repr(error.value)
 
 
 def test_schema_is_fixed_to_agno(valid_runtime_env: None) -> None:
