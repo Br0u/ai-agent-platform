@@ -43,6 +43,9 @@ const composeSecretKeys = [
 type RenderedSecretAttachment = string | { source?: string; target?: string };
 
 type RenderedNetworkAttachment = null | { gw_priority?: number };
+type RenderedVolumeAttachment =
+  | string
+  | { source?: string; target?: string; read_only?: boolean };
 
 type RenderedService = {
   build?: { target?: string };
@@ -60,6 +63,7 @@ type RenderedService = {
   security_opt?: string[];
   tmpfs?: string[];
   user?: string;
+  volumes?: RenderedVolumeAttachment[];
 };
 
 type RenderedCompose = {
@@ -119,6 +123,10 @@ const renderComposeFixture = (
           BETTER_AUTH_TRUSTED_ORIGINS: "http://127.0.0.1:3000",
           ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
           PUBLIC_HOST: "127.0.0.1",
+          MODEL_PROVIDER: "openai",
+          MODEL_ID: "provider-smoke-model",
+          MODEL_BASE_URL: "",
+          MODEL_RUN_TIMEOUT_SECONDS: "25",
         },
       },
     );
@@ -851,7 +859,6 @@ exit 0
 `,
       { mode: 0o755 },
     );
-
     const run = (name: string, extra: NodeJS.ProcessEnv = {}) => {
       const log = path.join(sandbox, `${name}.log`);
       writeFileSync(log, "");
@@ -1235,7 +1242,10 @@ exit 0
       "ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: ${ASSISTANT_AGENTOS_RUN_TIMEOUT_MS:-55000}",
     );
     expect(agentSettings).toMatch(
-      /model_run_timeout_seconds:\s*int\s*=\s*Field\([\s\S]*?default=50,[\s\S]*?ge=1,[\s\S]*?le=50,/u,
+      /timeout_seconds:\s*int\s*=\s*Field\(default=50,\s*ge=1,\s*le=50\)/u,
+    );
+    expect(agentSettings).toContain(
+      "timeout_seconds=self.model_run_timeout_seconds",
     );
     expect(runClient).toContain("const DEFAULT_RUN_TIMEOUT_MS = 55_000;");
     expect(runClient).toContain("const MIN_RUN_TIMEOUT_MS = 51_000;");
@@ -2676,5 +2686,205 @@ test -n "$output"
     expect(read("apps/web/src/app/staff/layout.tsx")).toContain(
       'export const dynamic = "force-dynamic"',
     );
+  });
+
+  it("renders a standalone hardened provider smoke service with only model egress", () => {
+    const rendered = renderComposeFixture(["compose.provider-smoke.yaml"]);
+    const service = rendered.services.smoke;
+
+    expect(Object.keys(rendered.services)).toEqual(["smoke"]);
+    expect(Object.keys(rendered.networks)).toEqual(["default"]);
+    expect(rendered.networks.default?.internal).not.toBe(true);
+    expect(service).toBeDefined();
+    expect(service?.build?.target).toBe("runtime");
+    expect(service?.ports ?? []).toEqual([]);
+    expect(service?.read_only).toBe(true);
+    expect(service?.user).toBe("agent");
+    expect(service?.cap_drop).toEqual(["ALL"]);
+    expect(service?.security_opt).toContain("no-new-privileges:true");
+    expect(service?.networks).toEqual({ default: null });
+    expect((service?.secrets ?? []).map(secretSource)).toEqual([
+      "model_api_key",
+    ]);
+    expect(service?.entrypoint?.join(" ")).toContain(
+      "/opt/aap/run-with-secret-env.sh",
+    );
+    expect(service?.command).toEqual([
+      "python",
+      "-m",
+      "agent_service.provider_smoke",
+    ]);
+    expect(service?.environment).toEqual({
+      MODEL_BASE_URL: "",
+      MODEL_ID: "provider-smoke-model",
+      MODEL_PROVIDER: "openai",
+      MODEL_RUN_TIMEOUT_SECONDS: "25",
+      SECRET_ENV_SPECS: "MODEL_API_KEY=/run/secrets/model_api_key",
+    });
+    expect(JSON.stringify(rendered)).not.toMatch(
+      /AGNO_DATABASE|OS_SECURITY|BETTER_AUTH|ASSISTANT_|postgres|agentos|web/iu,
+    );
+    expect(service?.volumes).toHaveLength(1);
+    expect(JSON.stringify(service?.volumes?.[0])).toContain(
+      "run-with-secret-env.sh",
+    );
+  });
+
+  it("runs provider smoke fail-closed and cleans its disposable project silently", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "provider-smoke-owner-"));
+    const repo = path.join(sandbox, "repo");
+    const bin = path.join(sandbox, "bin");
+    const temp = path.join(sandbox, "tmp");
+    const keyFile = path.join(sandbox, "model-api-key");
+    const dockerLog = path.join(sandbox, "docker.log");
+    const secret = "provider-smoke-secret-that-must-not-leak";
+    mkdirSync(path.join(repo, "docs/testing"), { recursive: true });
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(temp, { recursive: true });
+    copyFileSync(
+      path.join(root, "docs/testing/run-model-provider-smoke.sh"),
+      path.join(repo, "docs/testing/run-model-provider-smoke.sh"),
+    );
+    copyFileSync(
+      path.join(root, "compose.provider-smoke.yaml"),
+      path.join(repo, "compose.provider-smoke.yaml"),
+    );
+    writeFileSync(keyFile, `${secret}\n`, { mode: 0o600 });
+    chmodSync(keyFile, 0o600);
+    writeFileSync(
+      path.join(bin, "docker"),
+      `#!/bin/sh
+printf '%s\n' "$*" >>"$FAKE_DOCKER_LOG"
+printf '%s\n' "hidden compose warning" >&2
+case " $* " in
+  *" ps -aq "*|*" volume ls "*|*" network ls "*|*" image ls "*) exit 0 ;;
+  *" compose "*" config --quiet "*) exit 0 ;;
+  *" compose "*" build --pull smoke "*) [ "\${FAKE_MODE-}" = build-fail ] && exit 42; exit 0 ;;
+  *" compose "*" create smoke "*) exit 0 ;;
+  *" compose "*" run --rm smoke python -m agent_service.provider_smoke --validate-only "*) exit 0 ;;
+  *" compose "*" run --rm smoke "*)
+    if [ "\${FAKE_MODE-}" = unsafe-output ]; then
+      printf '%s\n' "unsafe provider answer"
+    else
+      printf '%s\n' "openai/provider-smoke-model: verified"
+    fi
+    exit 0
+    ;;
+  *" compose "*" down --rmi local -v --remove-orphans "*) exit 0 ;;
+esac
+exit 0
+`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      path.join(bin, "mktemp"),
+      `#!/bin/sh
+if [ "\${FAKE_MODE-}" = mktemp-fail ]; then
+  printf '%s\n' "raw allocation detail must stay hidden" >&2
+  exit 71
+fi
+exec /usr/bin/mktemp "$@"
+`,
+      { mode: 0o755 },
+    );
+
+    const run = (extra: NodeJS.ProcessEnv = {}) => {
+      writeFileSync(dockerLog, "");
+      return spawnSync(
+        "sh",
+        [path.join(repo, "docs/testing/run-model-provider-smoke.sh")],
+        {
+          cwd: repo,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${bin}:/usr/bin:/bin`,
+            TMPDIR: temp,
+            MODEL_PROVIDER: "openai",
+            MODEL_ID: "provider-smoke-model",
+            MODEL_API_KEY_FILE: keyFile,
+            MODEL_RUN_TIMEOUT_SECONDS: "25",
+            FAKE_DOCKER_LOG: dockerLog,
+            ...extra,
+          },
+        },
+      );
+    };
+
+    try {
+      const success = run();
+      const successCalls = readFileSync(dockerLog, "utf8");
+      expect(success.status).toBe(0);
+      expect(success.stdout).toBe("openai/provider-smoke-model: verified\n");
+      expect(success.stderr).toBe("");
+      expect(successCalls).toContain("config --quiet");
+      expect(successCalls).toContain("build --pull smoke");
+      expect(successCalls).toContain("create smoke");
+      expect(successCalls).toContain(
+        "run --rm smoke python -m agent_service.provider_smoke --validate-only",
+      );
+      expect(successCalls).toContain("run --rm smoke");
+      expect(successCalls).toContain("down --rmi local -v --remove-orphans");
+      expect(successCalls).not.toContain(secret);
+      expect(readdirSync(temp)).toEqual([]);
+
+      const unsafeOutput = run({ FAKE_MODE: "unsafe-output" });
+      expect(unsafeOutput.status).not.toBe(0);
+      expect(unsafeOutput.stdout).toBe("");
+      expect(unsafeOutput.stderr).toBe(
+        "provider smoke wrapper failed: output\n",
+      );
+      expect(readFileSync(dockerLog, "utf8")).toContain(
+        "down --rmi local -v --remove-orphans",
+      );
+      expect(readdirSync(temp)).toEqual([]);
+
+      const buildFailure = run({ FAKE_MODE: "build-fail" });
+      expect(buildFailure.status).not.toBe(0);
+      expect(buildFailure.stdout).toBe("");
+      expect(buildFailure.stderr).toBe(
+        "provider smoke wrapper failed: lifecycle\n",
+      );
+      expect(buildFailure.stderr).not.toContain("hidden compose warning");
+      expect(readFileSync(dockerLog, "utf8")).toContain(
+        "down --rmi local -v --remove-orphans",
+      );
+      expect(readdirSync(temp)).toEqual([]);
+
+      const allocationFailure = run({ FAKE_MODE: "mktemp-fail" });
+      expect(allocationFailure.status).not.toBe(0);
+      expect(allocationFailure.stdout).toBe("");
+      expect(allocationFailure.stderr).toBe(
+        "provider smoke wrapper failed: ownership\n",
+      );
+      expect(readFileSync(dockerLog, "utf8")).toBe("");
+      expect(readdirSync(temp)).toEqual([]);
+
+      chmodSync(keyFile, 0o644);
+      const unsafeKey = run();
+      expect(unsafeKey.status).not.toBe(0);
+      expect(unsafeKey.stdout).toBe("");
+      expect(unsafeKey.stderr).toBe(
+        "provider smoke wrapper failed: configuration\n",
+      );
+      expect(readFileSync(dockerLog, "utf8")).toBe("");
+      expect(readdirSync(temp)).toEqual([]);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it("documents provider verification honestly without claiming an unrun matrix", () => {
+    const guide = read("docs/testing/model-provider-smoke.md");
+    const index = read("docs/testing/README.md");
+
+    expect(guide).toContain("adapter-tested");
+    expect(guide).toContain("real-API verified");
+    expect(guide).toContain("单独");
+    expect(guide).toContain("不提交未实际运行的验证矩阵");
+    expect(guide).toContain("本地模型仓库");
+    expect(guide).toContain("MODEL_API_KEY_FILE");
+    expect(index).toContain("model-provider-smoke.md");
+    expect(index).toContain("run-model-provider-smoke.sh");
   });
 });

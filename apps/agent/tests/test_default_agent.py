@@ -3,7 +3,7 @@ from agno.models.openai import OpenAIResponses
 
 from agent_service.config import RuntimeSettings
 from agent_service.database import build_database
-from agent_service.default_agent import build_default_agent
+from agent_service.default_agent import MADUODUO_INSTRUCTIONS, build_default_agent
 
 
 DATABASE_URL = "postgresql+psycopg_async://runtime:password@db:5432/platform"
@@ -41,6 +41,7 @@ def test_build_default_agent_has_exact_runtime_identity_and_safe_contract() -> N
         "你没有工具或操作权限，不得伪造搜索、读取、写入、发送、执行或其他操作已经完成。",
         "不知道或无法验证时，直接说明限制，并请用户提供必要信息。",
     ]
+    assert agent.instructions == list(MADUODUO_INSTRUCTIONS)
     assert all("除非" not in instruction for instruction in agent.instructions)
 
 

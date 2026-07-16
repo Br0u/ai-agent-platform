@@ -8,6 +8,7 @@ from pydantic import SecretStr, ValidationError
 
 import agent_service.config as config
 from agent_service.config import MigrationSettings, RuntimeSettings
+from agent_service.provider_smoke import ProviderSmokeSettings
 
 
 RUNTIME_URL = "postgresql+psycopg_async://runtime:runtime-password@db:5432/platform"
@@ -32,6 +33,117 @@ ANTHROPIC_CUSTOM_HEADERS_PAYLOAD = (
     "Host: poison.invalid\n"
     "X-Poison: anthropic"
 )
+
+
+def _runtime_model_result(values: dict[str, object]) -> config.ActiveModelSettings:
+    settings = RuntimeSettings.model_validate(
+        {
+            "OS_SECURITY_KEY": SECURITY_KEY,
+            "AGNO_DATABASE_URL": RUNTIME_URL,
+            "AGENT_ENABLED": True,
+            **values,
+        }
+    )
+    active_model = settings.active_model
+    assert active_model is not None
+    return active_model
+
+
+def _smoke_model_result(values: dict[str, object]) -> config.ActiveModelSettings:
+    return ProviderSmokeSettings.model_validate(values).active_model
+
+
+@pytest.mark.parametrize(
+    ("provider", "base_url"),
+    [
+        ("openai", "https://models.example.com/v1"),
+        ("anthropic", None),
+        ("google", None),
+        ("dashscope", "https://models.example.com/v1"),
+        ("deepseek", "https://models.example.com/v1"),
+        ("minimax", "https://models.example.com/v1"),
+    ],
+)
+def test_runtime_and_provider_smoke_accept_the_same_six_provider_inputs(
+    provider: str,
+    base_url: str | None,
+) -> None:
+    values: dict[str, object] = {
+        "MODEL_PROVIDER": provider,
+        "MODEL_ID": f"{provider}/test-model",
+        "MODEL_API_KEY": MODEL_API_KEY,
+        "MODEL_RUN_TIMEOUT_SECONDS": "25",
+    }
+    if base_url is not None:
+        values["MODEL_BASE_URL"] = base_url
+
+    runtime = _runtime_model_result(values)
+    smoke = _smoke_model_result(values)
+
+    assert runtime == smoke
+    assert smoke.provider == provider
+    assert smoke.api_key.get_secret_value() == MODEL_API_KEY
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"MODEL_ID": "test-model", "MODEL_API_KEY": MODEL_API_KEY},
+        {"MODEL_PROVIDER": "openai", "MODEL_API_KEY": MODEL_API_KEY},
+        {"MODEL_PROVIDER": "openai", "MODEL_ID": "test-model"},
+        {
+            "MODEL_PROVIDER": "openai",
+            "MODEL_ID": " bad-model ",
+            "MODEL_API_KEY": MODEL_API_KEY,
+        },
+        {
+            "MODEL_PROVIDER": "openai",
+            "MODEL_ID": "test-model",
+            "MODEL_API_KEY": MODEL_API_KEY,
+            "MODEL_RUN_TIMEOUT_SECONDS": "0",
+        },
+        {
+            "MODEL_PROVIDER": "openai",
+            "MODEL_ID": "test-model",
+            "MODEL_API_KEY": MODEL_API_KEY,
+            "MODEL_RUN_TIMEOUT_SECONDS": "1.5",
+        },
+        {
+            "MODEL_PROVIDER": "anthropic",
+            "MODEL_ID": "test-model",
+            "MODEL_API_KEY": MODEL_API_KEY,
+            "MODEL_BASE_URL": "https://models.example.com/v1",
+        },
+        {
+            "MODEL_PROVIDER": "openai",
+            "MODEL_ID": "test-model",
+            "MODEL_API_KEY": MODEL_API_KEY,
+            "MODEL_BASE_URL": "http://models.example.com/v1",
+        },
+        {
+            "MODEL_PROVIDER": "unknown",
+            "MODEL_ID": "test-model",
+            "MODEL_API_KEY": MODEL_API_KEY,
+        },
+    ],
+    ids=[
+        "missing-provider",
+        "missing-model-id",
+        "missing-api-key",
+        "malformed-model-id",
+        "timeout-out-of-range",
+        "timeout-not-integer",
+        "forbidden-base-url",
+        "unsafe-base-url",
+        "unknown-provider",
+    ],
+)
+def test_runtime_and_provider_smoke_reject_the_same_invalid_inputs(
+    values: dict[str, object],
+) -> None:
+    for build in (_runtime_model_result, _smoke_model_result):
+        with pytest.raises(ValidationError):
+            build(values)
 
 
 @pytest.fixture(autouse=True)

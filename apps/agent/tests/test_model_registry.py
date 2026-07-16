@@ -1,5 +1,7 @@
 import asyncio
 from importlib import import_module
+import os
+from pathlib import Path
 from types import MappingProxyType
 import socket
 import subprocess
@@ -202,11 +204,19 @@ def test_registry_does_not_eagerly_import_provider_modules() -> None:
         "    raise SystemExit(','.join(loaded))\n"
     )
 
+    source_root = str(Path(__file__).resolve().parents[1] / "src")
+    inherited_pythonpath = os.environ.get("PYTHONPATH")
+    pythonpath = os.pathsep.join(
+        [source_root, inherited_pythonpath]
+        if inherited_pythonpath
+        else [source_root]
+    )
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
         check=False,
+        env={**os.environ, "PYTHONPATH": pythonpath},
     )
 
     assert result.returncode == 0, result.stderr or result.stdout
