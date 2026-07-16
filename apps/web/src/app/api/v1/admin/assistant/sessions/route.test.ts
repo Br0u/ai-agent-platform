@@ -209,6 +209,30 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
     expect(runtime.inspect).not.toHaveBeenCalled();
   });
 
+  it("returns the default unavailable snapshot with 200 when runtime resolution fails", async () => {
+    runtime.getAssistantRuntime.mockImplementationOnce(() => {
+      throw new Error("raw OS_SECURITY_KEY=secret");
+    });
+    const route = await import("./route");
+
+    const response = await route.GET(request("runtime-unavailable"));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    await expect(response.json()).resolves.toEqual({
+      version: "1",
+      requestId: "runtime-unavailable",
+      sessions: {
+        persistence: "unavailable",
+        listing: "not_available",
+        message: "持久化状态不可用；管理列表不可用。",
+      },
+    });
+    expect(auth.requirePermission).toHaveBeenCalledExactlyOnceWith(
+      "admin:assistant",
+    );
+  });
+
   it("returns a sanitized unavailable snapshot when inspection fails", async () => {
     const inspect = vi.fn(() => {
       throw new Error("raw private session config");

@@ -859,15 +859,24 @@ describe("GET /api/v1/admin/assistant/status", () => {
       capability: "degraded",
       providerMode: "placeholder",
       selectedProvider: "unavailable",
-      persistence: "disabled",
+      persistence: "unavailable",
       circuits: {
         readiness: { state: "closed", consecutiveFailures: 0 },
         execution: { state: "closed", consecutiveFailures: 0 },
       },
       readiness: { cacheTtlMs: 0, probeTimeoutMs: 0, failureThreshold: 0 },
     });
+    expect(body.status.configuration.sessionStorage).toBe("状态不可用");
+    expect(body.status.services).not.toContainEqual(
+      expect.objectContaining({ state: "ready" }),
+    );
+    expect(
+      body.status.services.find(
+        ({ id }: { id: string }) => id === "public_entry",
+      ),
+    ).toMatchObject({ state: "degraded", detail: "降级模式" });
     expect(JSON.stringify(body)).not.toMatch(
-      /agent:7777|private|security|url/iu,
+      /agent:7777|private|security|url|secret|raw/iu,
     );
   });
 

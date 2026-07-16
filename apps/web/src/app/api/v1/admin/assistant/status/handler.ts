@@ -40,7 +40,7 @@ const SAFE_UNPROBED_READINESS: AssistantRuntimeReadinessStatus = {
 
 const SAFE_DEGRADED_INSPECTION: AssistantRuntimeInspection = {
   providerMode: "placeholder",
-  persistence: "disabled",
+  persistence: "unavailable",
   circuits: {
     readiness: { state: "closed", consecutiveFailures: 0 },
     execution: { state: "closed", consecutiveFailures: 0 },
