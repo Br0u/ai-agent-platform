@@ -2,34 +2,17 @@
 
 set -eu
 
-fail() {
-  printf '%s\n' "provider smoke wrapper failed: $1" >&2
-  exit 1
-}
-
-case "${MODEL_PROVIDER-}" in
-  openai|anthropic|google|dashscope|deepseek|minimax) ;;
-  *) fail configuration ;;
-esac
-
-[ -n "${MODEL_ID-}" ] || fail configuration
-case "${MODEL_API_KEY_FILE-}" in
-  /*) ;;
-  *) fail configuration ;;
-esac
-[ ! -L "$MODEL_API_KEY_FILE" ] || fail configuration
-[ -f "$MODEL_API_KEY_FILE" ] || fail configuration
-
-if ! root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." 2>/dev/null && pwd); then
-  fail configuration
-fi
-cd "$root" 2>/dev/null || fail configuration
-
+failure_category=
 temp_dir=
 compose_log=
 resource_probe=
 project=
 owns_project=false
+
+fail() {
+  failure_category=$1
+  exit 1
+}
 
 compose() {
   docker compose -p "$project" -f compose.provider-smoke.yaml "$@"
@@ -51,23 +34,62 @@ cleanup_project_and_verify() {
   owns_project=false
 }
 
-cleanup() {
+finish() {
+  exit_status=$1
+  trap - EXIT INT TERM
+  cleanup_failed=false
   if [ "$owns_project" = true ] && [ -n "$compose_log" ]; then
-    compose down --rmi local -v --remove-orphans >>"$compose_log" 2>&1 || :
+    if ! cleanup_project_and_verify; then
+      cleanup_failed=true
+    fi
   fi
   if [ -n "$temp_dir" ]; then
-    rm -rf "$temp_dir" 2>/dev/null || :
+    if ! rm -rf "$temp_dir" 2>/dev/null; then
+      cleanup_failed=true
+    fi
   fi
-  return 0
+  if [ "$cleanup_failed" = true ]; then
+    failure_category=cleanup
+  fi
+  if [ -n "$failure_category" ]; then
+    printf '%s\n' "provider smoke wrapper failed: $failure_category" >&2
+    exit 1
+  fi
+  if [ "$exit_status" -ne 0 ]; then
+    printf '%s\n' "provider smoke wrapper failed: lifecycle" >&2
+    exit 1
+  fi
+  exit 0
 }
 
 on_signal() {
+  failure_category=lifecycle
   exit "$1"
 }
 
-trap cleanup EXIT
+trap 'finish "$?"' EXIT
 trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
+
+command -v python3 >/dev/null 2>&1 || fail configuration
+
+case "${MODEL_PROVIDER-}" in
+  openai|anthropic|google|dashscope|deepseek|minimax) ;;
+  *) fail configuration ;;
+esac
+
+[ -n "${MODEL_ID-}" ] || fail configuration
+case "${MODEL_API_KEY_FILE-}" in
+  /*) ;;
+  *) fail configuration ;;
+esac
+[ ! -L "$MODEL_API_KEY_FILE" ] || fail configuration
+[ -f "$MODEL_API_KEY_FILE" ] || fail configuration
+
+if ! root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." 2>/dev/null && pwd); then
+  fail configuration
+fi
+cd "$root" 2>/dev/null || fail configuration
 
 temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/aap-provider-smoke.XXXXXX" 2>/dev/null) || fail ownership
 chmod 700 "$temp_dir" 2>/dev/null || fail ownership

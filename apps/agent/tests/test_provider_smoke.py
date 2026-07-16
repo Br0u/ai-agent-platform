@@ -1,9 +1,12 @@
 from collections.abc import Iterator
+import os
 from pathlib import Path
 import signal
 import socket
+import subprocess
 import sys
 import textwrap
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -12,6 +15,7 @@ import pytest
 from agno.models.openai import OpenAIResponses
 from pydantic import ValidationError
 
+import agent_service.provider_smoke as provider_smoke
 from agent_service.default_agent import MADUODUO_INSTRUCTIONS
 from agent_service.provider_smoke import (
     MAX_RESPONSE_CODE_POINTS,
@@ -339,10 +343,177 @@ def _write_worker_script(tmp_path: Path, source: str) -> list[str]:
     return [sys.executable, str(script)]
 
 
+class _ParentAbort(BaseException):
+    pass
+
+
+def test_isolated_worker_maps_status_pipe_creation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        provider_smoke.os,
+        "pipe",
+        lambda: (_ for _ in ()).throw(OSError("raw pipe failure")),
+    )
+
+    assert run_isolated_smoke(_valid_settings(), timeout_seconds=0.1) == "invocation"
+
+
+@pytest.mark.parametrize(
+    "wait_error",
+    [KeyboardInterrupt(), _ParentAbort("parent aborted")],
+    ids=["keyboard-interrupt", "arbitrary-base-exception"],
+)
+def test_isolated_worker_reaps_process_group_when_parent_wait_is_interrupted(
+    wait_error: BaseException,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class InterruptedProcess:
+        pid = 43_210
+        returncode: int | None = None
+        wait_calls = 0
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise wait_error
+            self.returncode = -signal.SIGKILL
+            return self.returncode
+
+        def kill(self) -> None:
+            raise AssertionError("process-group termination should be attempted first")
+
+    process = InterruptedProcess()
+    popen_options: dict[str, object] = {}
+    killed_groups: list[tuple[int, int]] = []
+
+    def fake_popen(
+        _command: object,
+        **options: object,
+    ) -> InterruptedProcess:
+        popen_options.update(options)
+        return process
+
+    monkeypatch.setattr(provider_smoke.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        provider_smoke.os,
+        "killpg",
+        lambda process_group, sent_signal: killed_groups.append(
+            (process_group, sent_signal)
+        ),
+    )
+
+    try:
+        status = run_isolated_smoke(_valid_settings(), timeout_seconds=0.1)
+    except BaseException as error:  # pragma: no cover - assertion for RED behavior
+        pytest.fail(f"parent wait interruption escaped: {type(error).__name__}")
+
+    assert status == "invocation"
+    assert popen_options["start_new_session"] is True
+    assert killed_groups == [(process.pid, signal.SIGKILL)]
+    assert process.wait_calls == 2
+
+
+def test_isolated_worker_maps_termination_and_reap_failures_without_raw_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ResistantProcess:
+        pid = 43_211
+        returncode: int | None = None
+        wait_calls = 0
+        direct_kill_calls = 0
+
+        def wait(self, timeout: float | None = None) -> int:
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise subprocess.TimeoutExpired("worker", timeout or 0.0)
+            if self.wait_calls == 2:
+                raise OSError("raw reap failure")
+            self.returncode = -signal.SIGKILL
+            return self.returncode
+
+        def kill(self) -> None:
+            self.direct_kill_calls += 1
+
+    process = ResistantProcess()
+    monkeypatch.setattr(
+        provider_smoke.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(
+        provider_smoke.os,
+        "killpg",
+        lambda *_args: (_ for _ in ()).throw(OSError("raw group kill failure")),
+    )
+
+    status = run_isolated_smoke(_valid_settings(), timeout_seconds=0.1)
+
+    assert status == "timeout"
+    assert process.direct_kill_calls >= 1
+    assert process.wait_calls >= 3
+
+
+def test_isolated_worker_timeout_removes_worker_and_grandchild_processes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pid_file = tmp_path / "worker-tree-pids"
+    monkeypatch.setenv("AAP_PROVIDER_SMOKE_TEST_PID_FILE", str(pid_file))
+    command = _write_worker_script(
+        tmp_path,
+        """
+        import os
+        from pathlib import Path
+        import subprocess
+        import sys
+        import time
+
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        Path(os.environ["AAP_PROVIDER_SMOKE_TEST_PID_FILE"]).write_text(
+            f"{os.getpid()} {child.pid}",
+            encoding="ascii",
+        )
+        time.sleep(60)
+        """,
+    )
+
+    status = run_isolated_smoke(
+        _valid_settings(),
+        worker_command=command,
+        timeout_seconds=0.5,
+    )
+
+    assert status == "timeout"
+    worker_pid, child_pid = (int(value) for value in pid_file.read_text().split())
+    for pid in (worker_pid, child_pid):
+        for _attempt in range(100):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail(f"provider smoke process survived timeout: {pid}")
+
+
 def test_isolated_worker_discards_build_run_close_destructor_and_delayed_output(
     tmp_path: Path,
     capfd: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    killed_process_groups: list[int] = []
+    monkeypatch.setattr(
+        provider_smoke.os,
+        "killpg",
+        lambda process_group, _signal: killed_process_groups.append(process_group),
+    )
     command = _write_worker_script(
         tmp_path,
         f"""
@@ -398,6 +569,7 @@ def test_isolated_worker_discards_build_run_close_destructor_and_delayed_output(
     assert MODEL_API_KEY not in " ".join(command)
     assert MODEL_BASE_URL not in " ".join(command)
     assert PROVIDER_SMOKE_PROMPT not in " ".join(command)
+    assert killed_process_groups == []
 
 
 def test_isolated_worker_maps_close_exception_without_leaking(
@@ -428,6 +600,33 @@ def test_isolated_worker_maps_close_exception_without_leaking(
         )
         os.write(int(os.environ["AAP_PROVIDER_SMOKE_STATUS_FD"]), status.encode("ascii"))
         raise SystemExit(0 if status == "verified" else 1)
+        """,
+    )
+
+    status = run_isolated_smoke(
+        _valid_settings(),
+        worker_command=command,
+        timeout_seconds=1.0,
+    )
+
+    assert status == "invocation"
+    assert capfd.readouterr() == ("", "")
+
+
+def test_isolated_worker_requires_verified_status_and_zero_exit(
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    command = _write_worker_script(
+        tmp_path,
+        """
+        import os
+
+        os.write(
+            int(os.environ["AAP_PROVIDER_SMOKE_STATUS_FD"]),
+            b"verified",
+        )
+        raise SystemExit(9)
         """,
     )
 

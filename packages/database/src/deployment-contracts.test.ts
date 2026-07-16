@@ -2767,18 +2767,20 @@ test -n "$output"
     writeFileSync(
       path.join(bin, "docker"),
       `#!/bin/sh
+primary_mode=\${FAKE_PRIMARY_MODE:-\${FAKE_MODE-}}
+cleanup_mode=\${FAKE_CLEANUP_MODE:-\${FAKE_MODE-}}
 printf '%s\n' "$*" >>"$FAKE_DOCKER_LOG"
 printf '%s\n' "hidden compose warning" >&2
 case " $* " in
   *" ps -aq "*|*" volume ls "*|*" network ls "*|*" image ls "*)
-    if [ "\${FAKE_MODE-}" = replace-source ] && [ ! -f "$FAKE_DOCKER_STATE.replaced" ]; then
+    if [ "$primary_mode" = replace-source ] && [ ! -f "$FAKE_DOCKER_STATE.replaced" ]; then
       printf '%s\n' "$FAKE_REPLACEMENT_SECRET" >"$FAKE_SOURCE_KEY"
       chmod 600 "$FAKE_SOURCE_KEY"
       : >"$FAKE_DOCKER_STATE.replaced"
     fi
     if [ -s "$FAKE_DOCKER_STATE" ]; then
-      [ "\${FAKE_MODE-}" = cleanup-query-fail ] && exit 75
-      [ "\${FAKE_MODE-}" = cleanup-residual ] && printf '%s\n' "residual-resource"
+      [ "$cleanup_mode" = cleanup-query-fail ] && exit 75
+      [ "$cleanup_mode" = cleanup-residual ] && printf '%s\n' "residual-resource"
     fi
     exit 0
     ;;
@@ -2788,11 +2790,18 @@ case " $* " in
     fi
     exit 0
     ;;
-  *" compose "*" build --pull smoke "*) [ "\${FAKE_MODE-}" = build-fail ] && exit 42; exit 0 ;;
+  *" compose "*" build --pull smoke "*)
+    [ "$primary_mode" = build-fail ] && exit 42
+    if [ "$primary_mode" = signal-exit ]; then
+      exit 143
+    fi
+    exit 0
+    ;;
   *" compose "*" create smoke "*) exit 0 ;;
   *" compose "*" run --rm smoke python -m agent_service.provider_smoke --validate-only "*) exit 0 ;;
   *" compose "*" run --rm smoke "*)
-    if [ "\${FAKE_MODE-}" = unsafe-output ]; then
+    [ "$primary_mode" = provider-fail ] && exit 43
+    if [ "$primary_mode" = unsafe-output ]; then
       printf '%s\n' "unsafe provider answer"
     else
       printf '%s\n' "openai/provider-smoke-model: verified"
@@ -2801,7 +2810,7 @@ case " $* " in
     ;;
   *" compose "*" down --rmi local -v --remove-orphans "*)
     printf '%s\n' "down" >"$FAKE_DOCKER_STATE"
-    [ "\${FAKE_MODE-}" = cleanup-down-fail ] && exit 77
+    [ "$cleanup_mode" = cleanup-down-fail ] && exit 77
     exit 0
     ;;
 esac
@@ -2812,6 +2821,9 @@ exit 0
     writeFileSync(
       path.join(bin, "mktemp"),
       `#!/bin/sh
+if [ -n "\${FAKE_MKTEMP_LOG-}" ]; then
+  printf '%s\n' called >"$FAKE_MKTEMP_LOG"
+fi
 if [ "\${FAKE_MODE-}" = mktemp-fail ]; then
   printf '%s\n' "raw allocation detail must stay hidden" >&2
   exit 71
@@ -2820,6 +2832,7 @@ exec /usr/bin/mktemp "$@"
 `,
       { mode: 0o755 },
     );
+    symlinkSync("/usr/bin/dirname", path.join(bin, "dirname"));
 
     const run = (extra: NodeJS.ProcessEnv = {}) => {
       writeFileSync(dockerLog, "");
@@ -2827,7 +2840,7 @@ exec /usr/bin/mktemp "$@"
       rmSync(`${dockerState}.replaced`, { force: true });
       rmSync(snapshotCapture, { force: true });
       return spawnSync(
-        "sh",
+        "/bin/sh",
         [path.join(repo, "docs/testing/run-model-provider-smoke.sh")],
         {
           cwd: repo,
@@ -2945,27 +2958,75 @@ exec /usr/bin/mktemp "$@"
         expect(readdirSync(temp), mode).toEqual([]);
       }
 
-      const unsafeOutput = run({ FAKE_MODE: "unsafe-output" });
-      expect(unsafeOutput.status).not.toBe(0);
-      expect(unsafeOutput.stdout).toBe("");
-      expect(unsafeOutput.stderr).toBe(
-        "provider smoke wrapper failed: output\n",
-      );
-      expect(readFileSync(dockerLog, "utf8")).toContain(
-        "down --rmi local -v --remove-orphans",
-      );
-      expect(readdirSync(temp)).toEqual([]);
+      const primaryFailures = [
+        ["build-fail", "lifecycle"],
+        ["provider-fail", "provider"],
+        ["unsafe-output", "output"],
+        ["signal-exit", "lifecycle"],
+      ] as const;
+      const cleanupFailures = [
+        "cleanup-down-fail",
+        "cleanup-query-fail",
+        "cleanup-residual",
+      ] as const;
+      for (const [primaryMode, primaryCategory] of primaryFailures) {
+        const primaryFailure = run({ FAKE_PRIMARY_MODE: primaryMode });
+        expect(primaryFailure.status, primaryMode).not.toBe(0);
+        expect(primaryFailure.stdout, primaryMode).toBe("");
+        expect(primaryFailure.stderr, primaryMode).toBe(
+          `provider smoke wrapper failed: ${primaryCategory}\n`,
+        );
+        expect(primaryFailure.stderr, primaryMode).not.toContain(
+          "hidden compose warning",
+        );
+        expect(readFileSync(dockerLog, "utf8"), primaryMode).toContain(
+          "down --rmi local -v --remove-orphans",
+        );
+        expect(readdirSync(temp), primaryMode).toEqual([]);
 
-      const buildFailure = run({ FAKE_MODE: "build-fail" });
-      expect(buildFailure.status).not.toBe(0);
-      expect(buildFailure.stdout).toBe("");
-      expect(buildFailure.stderr).toBe(
-        "provider smoke wrapper failed: lifecycle\n",
+        for (const cleanupMode of cleanupFailures) {
+          const combinedFailure = run({
+            FAKE_PRIMARY_MODE: primaryMode,
+            FAKE_CLEANUP_MODE: cleanupMode,
+          });
+          expect(
+            combinedFailure.status,
+            `${primaryMode}/${cleanupMode}`,
+          ).not.toBe(0);
+          expect(combinedFailure.stdout, `${primaryMode}/${cleanupMode}`).toBe(
+            "",
+          );
+          expect(combinedFailure.stderr, `${primaryMode}/${cleanupMode}`).toBe(
+            "provider smoke wrapper failed: cleanup\n",
+          );
+          expect(
+            combinedFailure.stderr,
+            `${primaryMode}/${cleanupMode}`,
+          ).not.toContain("hidden compose warning");
+          expect(readdirSync(temp), `${primaryMode}/${cleanupMode}`).toEqual(
+            [],
+          );
+        }
+      }
+
+      const missingPythonMktempLog = path.join(
+        sandbox,
+        "missing-python-mktemp",
       );
-      expect(buildFailure.stderr).not.toContain("hidden compose warning");
-      expect(readFileSync(dockerLog, "utf8")).toContain(
-        "down --rmi local -v --remove-orphans",
+      const missingPython = run({
+        PATH: bin,
+        FAKE_MKTEMP_LOG: missingPythonMktempLog,
+      });
+      expect(missingPython.status).not.toBe(0);
+      expect(missingPython.stdout).toBe("");
+      expect(missingPython.stderr).toBe(
+        "provider smoke wrapper failed: configuration\n",
       );
+      expect(`${missingPython.stdout}${missingPython.stderr}`).not.toContain(
+        "python3",
+      );
+      expect(() => readFileSync(missingPythonMktempLog)).toThrow();
+      expect(readFileSync(dockerLog, "utf8")).toBe("");
       expect(readdirSync(temp)).toEqual([]);
 
       const allocationFailure = run({ FAKE_MODE: "mktemp-fail" });
@@ -2994,6 +3055,7 @@ exec /usr/bin/mktemp "$@"
 
   it("snapshots provider keys without blocking on FIFOs or zero-byte writes", () => {
     const runner = read("docs/testing/run-model-provider-smoke.sh");
+    expect(runner).toContain("command -v python3");
     const helperMatch = runner.match(
       /snapshot_helper='(?<source>[\s\S]*?)'\nexport AAP_PROVIDER_SMOKE_KEY_SOURCE=/u,
     );
@@ -3064,6 +3126,8 @@ exec /usr/bin/mktemp "$@"
     expect(guide).toContain("不提交未实际运行的验证矩阵");
     expect(guide).toContain("本地模型仓库");
     expect(guide).toContain("MODEL_API_KEY_FILE");
+    expect(guide).toContain("宿主机");
+    expect(guide).toContain("python3");
     expect(index).toContain("model-provider-smoke.md");
     expect(index).toContain("run-model-provider-smoke.sh");
   });

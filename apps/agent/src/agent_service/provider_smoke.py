@@ -4,6 +4,7 @@ from collections.abc import Callable, Sequence
 import gc
 import os
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -31,6 +32,7 @@ PROVIDER_SMOKE_PROMPT = "仅回复一个简短的确认词。"
 MAX_RESPONSE_CODE_POINTS = 32_768
 _STATUS_FD_ENV = "AAP_PROVIDER_SMOKE_STATUS_FD"
 _WORKER_GRACE_SECONDS = 5.0
+_REAP_TIMEOUT_SECONDS = 1.0
 SmokeStatus = Literal[
     "verified",
     "configuration",
@@ -235,6 +237,37 @@ def _read_worker_status(status_fd: int) -> SmokeStatus | None:
     return cast(SmokeStatus, decoded) if decoded in valid_statuses else None
 
 
+def _close_fd(status_fd: int) -> None:
+    try:
+        os.close(status_fd)
+    except BaseException:
+        pass
+
+
+def _terminate_worker_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Best-effort kill the isolated session and reap its direct child."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except BaseException:
+        try:
+            process.kill()
+        except BaseException:
+            pass
+
+    for _attempt in range(3):
+        try:
+            process.wait(timeout=_REAP_TIMEOUT_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        except BaseException:
+            pass
+        try:
+            process.kill()
+        except BaseException:
+            pass
+
+
 def run_isolated_smoke(
     settings: ProviderSmokeSettings,
     *,
@@ -242,7 +275,10 @@ def run_isolated_smoke(
     timeout_seconds: float | None = None,
 ) -> SmokeStatus:
     """Run the provider worker with output permanently attached to /dev/null."""
-    read_fd, write_fd = os.pipe()
+    try:
+        read_fd, write_fd = os.pipe()
+    except BaseException:
+        return "invocation"
     process: subprocess.Popen[bytes] | None = None
     try:
         command = tuple(worker_command) if worker_command is not None else _worker_command()
@@ -254,13 +290,14 @@ def run_isolated_smoke(
             close_fds=True,
             pass_fds=(write_fd,),
             env=_worker_environment(settings, write_fd),
+            start_new_session=True,
         )
     except BaseException:
-        os.close(read_fd)
-        os.close(write_fd)
+        _close_fd(read_fd)
+        _close_fd(write_fd)
         return "invocation"
 
-    os.close(write_fd)
+    _close_fd(write_fd)
     try:
         try:
             process.wait(
@@ -271,20 +308,34 @@ def run_isolated_smoke(
                 )
             )
         except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
+            _terminate_worker_process_group(process)
             return "timeout"
+        except BaseException:
+            _terminate_worker_process_group(process)
+            return "invocation"
 
-        status = _read_worker_status(read_fd)
-        if process.returncode is not None and process.returncode < 0:
-            return "signal"
-        if process.returncode == 0 and status == "verified":
-            return "verified"
-        if status in _FAILURE_STATUSES:
-            return status
-        return "invocation"
+        try:
+            status = _read_worker_status(read_fd)
+            if process.returncode is not None and process.returncode < 0:
+                _terminate_worker_process_group(process)
+                return "signal"
+            if process.returncode == 0 and status == "verified":
+                return "verified"
+            _terminate_worker_process_group(process)
+            if status in _FAILURE_STATUSES:
+                return status
+            return "invocation"
+        except BaseException:
+            _terminate_worker_process_group(process)
+            return "invocation"
     finally:
-        os.close(read_fd)
+        try:
+            is_running = process.returncode is None
+        except BaseException:
+            is_running = True
+        if is_running:
+            _terminate_worker_process_group(process)
+        _close_fd(read_fd)
 
 
 def _write_worker_status(status: SmokeStatus) -> bool:
