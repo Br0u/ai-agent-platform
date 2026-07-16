@@ -14,7 +14,7 @@ from pydantic import SecretStr
 from sqlalchemy import text
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from agent_service.catalog import AgentCapability, build_catalog
+from agent_service.catalog import AgentCapability, AgentCatalog, build_catalog
 from agent_service.config import RuntimeSettings
 from agent_service.database import build_database
 
@@ -24,6 +24,7 @@ class AgentOSApplication(Protocol):
 
 
 AgentOSFactory = Callable[..., AgentOSApplication]
+CatalogBuilder = Callable[[RuntimeSettings, AsyncPostgresDb], AgentCatalog]
 
 
 ReadinessProbe = Callable[[AsyncPostgresDb], Awaitable[bool]]
@@ -132,11 +133,12 @@ def create_app(
     database: AsyncPostgresDb | None = None,
     agent_os_factory: AgentOSFactory = AgentOS,
     readiness_probe: ReadinessProbe = probe_database,
+    catalog_builder: CatalogBuilder = build_catalog,
 ) -> FastAPI:
     """Compose the protected FastAPI and configured AgentOS surfaces."""
     runtime_settings = settings or RuntimeSettings()
     runtime_database = database or build_database(runtime_settings)
-    catalog = build_catalog(runtime_settings, runtime_database)
+    catalog = catalog_builder(runtime_settings, runtime_database)
     base_app = FastAPI(title="AI Agent Platform AgentOS")
 
     @base_app.get("/internal/health/live", include_in_schema=False)

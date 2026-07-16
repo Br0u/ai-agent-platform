@@ -302,6 +302,7 @@ compose run --rm --no-deps -e BACKUP_RUN_ONCE=true backup
 
 web_port_bindings=$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$(compose ps -q web)")
 agent_port_bindings=$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$(compose ps -q agent)")
+db_port_bindings=$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$(compose ps -q db)")
 case "$web_port_bindings" in
   '{}'|'null') ;;
   *)
@@ -316,12 +317,40 @@ case "$agent_port_bindings" in
   exit 1
   ;;
 esac
+case "$db_port_bindings" in
+  '{}'|'null') ;;
+  *)
+  echo "Database unexpectedly publishes a host port" >&2
+  exit 1
+  ;;
+esac
 
 export AAP_RUNTIME_E2E_PROJECT="$project"
 export AAP_RUNTIME_E2E_ENV_FILE="$env_file"
 BASE_URL=http://127.0.0.1:8080 \
   pnpm --filter @ai-agent-platform/web exec playwright test \
-  e2e/assistant-runtime.spec.ts --project=desktop --workers=1
+  e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
+  --grep-invert @agentos
+
+export AGENT_ENABLED=true
+export MODEL_PROVIDER=openai
+export MODEL_ID=e2e-deterministic
+unset MODEL_BASE_URL
+export MODEL_RUN_TIMEOUT_SECONDS=1
+export ASSISTANT_PROVIDER_MODE=agentos
+export ASSISTANT_AGENTOS_RUN_TIMEOUT_MS=51000
+export ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD=1
+export ASSISTANT_AGENTOS_CIRCUIT_RESET_MS=30000
+
+compose config --quiet
+compose up -d --no-deps --force-recreate --wait agent
+compose run --rm -e NODE_ENV=test migrate pnpm db:seed-auth-e2e
+compose up -d --no-deps --force-recreate --wait web
+
+BASE_URL=http://127.0.0.1:8080 \
+  pnpm --filter @ai-agent-platform/web exec playwright test \
+  e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
+  --grep @agentos
 
 logs_file="$temp_dir/sanitized-runtime.log"
 compose logs --no-color web agent proxy >"$logs_file" 2>&1
@@ -344,4 +373,4 @@ for protected_value in \
   fi
 done
 
-echo "Assistant runtime E2E passed; no Web/Agent host ports and cleanup is armed."
+echo "Assistant runtime E2E passed in placeholder and deterministic AgentOS phases; no Web/Agent/DB host ports and cleanup is armed."

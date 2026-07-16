@@ -1,5 +1,6 @@
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
+import inspect
 from typing import Any, cast
 
 import pytest
@@ -324,12 +325,12 @@ def test_health_uses_catalog_capability_same_database_and_no_model_details(
         probe_inputs.append(received_database)
         return True
 
-    monkeypatch.setattr(app_module, "build_catalog", fake_build_catalog)
     app = create_app(
         settings=runtime_settings,
         database=database,
         agent_os_factory=CapturingAgentOS,
         readiness_probe=probe,
+        catalog_builder=fake_build_catalog,
     )
 
     with TestClient(app) as client:
@@ -350,6 +351,12 @@ def test_health_uses_catalog_capability_same_database_and_no_model_details(
     assert captured["db"] is database
     assert captured["agents"] == agents
     assert probe_inputs == [database]
+
+
+def test_create_app_defaults_to_the_production_catalog_builder() -> None:
+    parameter = inspect.signature(create_app).parameters["catalog_builder"]
+
+    assert parameter.default is app_module.build_catalog
 
 
 def test_agentos_receives_exact_disabled_composition_and_same_database(

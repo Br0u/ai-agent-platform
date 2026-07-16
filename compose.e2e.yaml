@@ -1,4 +1,18 @@
 services:
+  agent:
+    build:
+      target: acceptance
+    command:
+      [
+        "uvicorn",
+        "e2e_agent.app:app_factory",
+        "--factory",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "7777",
+      ]
+
   migrate:
     environment:
       E2E_CUSTOMER_PASSWORD: ${E2E_CUSTOMER_PASSWORD:?Set E2E_CUSTOMER_PASSWORD in .env.e2e}

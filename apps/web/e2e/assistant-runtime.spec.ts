@@ -17,6 +17,7 @@ import {
 } from "./auth-fixtures";
 
 const CHAT_PATH = "/api/v1/assistant/chat";
+const SESSION_PATH = "/api/v1/assistant/session";
 const STATUS_PATH = "/api/v1/assistant/status";
 const ADMIN_STATUS_PATH = "/api/v1/admin/assistant/status";
 const ADMIN_SESSIONS_PATH = "/api/v1/admin/assistant/sessions";
@@ -25,6 +26,7 @@ const CHAT_BODY = {
   message: "如何开始了解平台？",
   context: { pathname: "/assistant" },
 };
+const INVALID_RESPONSE_SENTINEL = "__aap_e2e_invalid_response__";
 
 const cumulativeConsoleMessages: string[] = [];
 let firstAssistantCookieCredential: string | undefined;
@@ -33,6 +35,81 @@ function requiredEnvironment(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
   return value;
+}
+
+function optionalEnvironment(name: string): string[] {
+  const value = process.env[name];
+  return value ? [value] : [];
+}
+
+function runtimeProtectedValues(): string[] {
+  return [
+    "http://agent:7777",
+    ...optionalEnvironment("BETTER_AUTH_SECRET"),
+    ...optionalEnvironment("MIGRATOR_DATABASE_URL"),
+    ...optionalEnvironment("RUNTIME_DATABASE_URL"),
+    ...optionalEnvironment("MODEL_ID"),
+    ...optionalEnvironment("MODEL_API_KEY_FILE"),
+    ...optionalEnvironment("OS_SECURITY_KEY_FILE"),
+    ...optionalEnvironment("AGNO_DATABASE_URL_FILE"),
+  ];
+}
+
+function composeArgs(...args: string[]): string[] {
+  return [
+    "compose",
+    "-p",
+    requiredEnvironment("AAP_RUNTIME_E2E_PROJECT"),
+    "--env-file",
+    requiredEnvironment("AAP_RUNTIME_E2E_ENV_FILE"),
+    "-f",
+    "compose.yaml",
+    "-f",
+    "compose.e2e.yaml",
+    ...args,
+  ];
+}
+
+function countAgentSessions(): number {
+  const output = execFileSync(
+    "docker",
+    composeArgs(
+      "exec",
+      "-T",
+      "db",
+      "sh",
+      "-c",
+      'psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --tuples-only --no-align --command="SELECT COUNT(*) FROM agno.agno_sessions"',
+    ),
+    {
+      cwd: path.resolve(process.cwd(), "../.."),
+      encoding: "utf8",
+      timeout: 30_000,
+    },
+  ).trim();
+  const count = Number(output);
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error("Agent session count was not a non-negative integer");
+  }
+  return count;
+}
+
+function servicePortBindings(service: "agent" | "db"): string {
+  const containerId = execFileSync("docker", composeArgs("ps", "-q", service), {
+    cwd: path.resolve(process.cwd(), "../.."),
+    encoding: "utf8",
+    timeout: 30_000,
+  }).trim();
+  if (!containerId) throw new Error(`${service} container is unavailable`);
+  return execFileSync(
+    "docker",
+    ["inspect", "--format", "{{json .HostConfig.PortBindings}}", containerId],
+    {
+      cwd: path.resolve(process.cwd(), "../.."),
+      encoding: "utf8",
+      timeout: 30_000,
+    },
+  ).trim();
 }
 
 function expectNoProtectedValue(
@@ -113,32 +190,6 @@ function cookieCredential(setCookie: string): string {
   const match = setCookie.match(/(?:^|,\s*)aap_assistant_sid_dev=([^;]+)/u);
   if (!match?.[1]) throw new Error("development assistant cookie is missing");
   return match[1];
-}
-
-function stopAgentOS() {
-  const project = requiredEnvironment("AAP_RUNTIME_E2E_PROJECT");
-  const envFile = requiredEnvironment("AAP_RUNTIME_E2E_ENV_FILE");
-  execFileSync(
-    "docker",
-    [
-      "compose",
-      "-p",
-      project,
-      "--env-file",
-      envFile,
-      "-f",
-      "compose.yaml",
-      "-f",
-      "compose.e2e.yaml",
-      "stop",
-      "agent",
-    ],
-    {
-      cwd: path.resolve(process.cwd(), "../.."),
-      stdio: "ignore",
-      timeout: 30_000,
-    },
-  );
 }
 
 async function completeSeededAdminTwoFactor(context: BrowserContext) {
@@ -365,10 +416,10 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
     version: "1",
     sessions: {
       persistence: "disabled",
-      capability: "placeholder",
-      items: [],
+      listing: "not_available",
     },
   });
+  expect(sessions).not.toHaveProperty("sessions.items");
 
   const adminChatResponse = await admin.request.post(ADMIN_CHAT_PATH, {
     data: CHAT_BODY,
@@ -384,41 +435,265 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
   await admin.close();
 });
 
-test("public status degrades within the configured readiness bound after AgentOS stops", async ({
-  request,
-}) => {
-  stopAgentOS();
-  const ttlMs = Number(
-    requiredEnvironment("ASSISTANT_AGENTOS_READINESS_TTL_MS"),
-  );
-  const resetMs = Number(
-    requiredEnvironment("ASSISTANT_AGENTOS_CIRCUIT_RESET_MS"),
-  );
-  const deadlineMs = ttlMs + resetMs + 5_000;
-  const startedAt = Date.now();
-  let degraded: unknown;
+test.describe("@agentos deterministic runtime", () => {
+  test("reports only 码多多 as available and cleans the real Admin ephemeral run", async ({
+    browser,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("BASE_URL is required");
+    const protectedValues = runtimeProtectedValues();
+    const publicContext = await browser.newContext({ baseURL });
+    const publicStatusResponse = await publicContext.request.get(STATUS_PATH);
+    expect(publicStatusResponse.status()).toBe(200);
+    const publicStatus = await readSafeJson(
+      publicStatusResponse,
+      protectedValues,
+    );
+    expect(publicStatus).toMatchObject({
+      version: "1",
+      live: true,
+      ready: true,
+      capability: "available",
+    });
+    expect(JSON.stringify(publicStatus)).not.toMatch(
+      /(?:maduoduo|e2e-deterministic|deterministic-turn|当前页面路径|用户问题)/iu,
+    );
+    await publicContext.close();
 
-  while (Date.now() - startedAt <= deadlineMs) {
-    const response = await request.get(STATUS_PATH);
-    expect(response.status()).toBe(200);
-    const body = await response.json();
-    if (
-      body.live === false &&
-      body.ready === false &&
-      body.capability === "degraded"
-    ) {
-      degraded = body;
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
+    const credentials = fixtureCredentials();
+    const admin = await browser.newContext({ baseURL });
+    collectBrowserDiagnostics(admin);
+    await addSignedSession(
+      admin,
+      baseURL,
+      "workforce",
+      credentials.adminSessionToken,
+    );
+    await completeSeededAdminTwoFactor(admin);
 
-  expect(degraded).toMatchObject({
-    version: "1",
-    live: false,
-    ready: false,
-    capability: "degraded",
+    const adminStatusResponse = await admin.request.get(ADMIN_STATUS_PATH);
+    expect(adminStatusResponse.status()).toBe(200);
+    const adminStatus = await readSafeJson(adminStatusResponse, [
+      ...protectedValues,
+      credentials.adminSessionToken,
+    ]);
+    expect(adminStatus).toMatchObject({
+      version: "1",
+      status: {
+        mode: "agentos",
+        runtime: {
+          live: true,
+          ready: true,
+          capability: "available",
+          selectedProvider: "agentos",
+          persistence: "agentos",
+        },
+        configuration: {
+          defaultAgent: "码多多（maduoduo）",
+          model: "已配置",
+          skills: "未接入",
+          sessionStorage: "AgentOS 持久化已启用",
+        },
+      },
+    });
+    expect(JSON.stringify(adminStatus)).not.toMatch(
+      /(?:e2e-deterministic|deterministic-turn|当前页面路径|用户问题)/iu,
+    );
+
+    const sessionsBefore = countAgentSessions();
+    const adminChatResponse = await admin.request.post(ADMIN_CHAT_PATH, {
+      data: CHAT_BODY,
+    });
+    expect(adminChatResponse.status()).toBe(200);
+    const adminChat = await readSafeJson(adminChatResponse, [
+      ...protectedValues,
+      credentials.adminSessionToken,
+    ]);
+    expect(adminChat).toMatchObject({
+      version: "1",
+      mode: "agentos",
+      message: {
+        role: "assistant",
+        content: "deterministic-turn:1",
+      },
+      suggestedActions: [],
+    });
+    expect(countAgentSessions()).toBe(sessionsBefore);
+
+    const sessionsResponse = await admin.request.get(ADMIN_SESSIONS_PATH);
+    expect(sessionsResponse.status()).toBe(200);
+    const sessions = await readSafeJson(sessionsResponse, [
+      ...protectedValues,
+      credentials.adminSessionToken,
+    ]);
+    expect(sessions).toMatchObject({
+      version: "1",
+      sessions: {
+        persistence: "agentos",
+        listing: "not_available",
+      },
+    });
+    expect(sessions).not.toHaveProperty("sessions.items");
+    await admin.close();
   });
-  expect(Date.now() - startedAt).toBeLessThanOrEqual(deadlineMs);
-  expectNoProtectedValue(degraded, []);
+
+  test("keeps two real turns in one Cookie and starts over after DELETE", async ({
+    browser,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("BASE_URL is required");
+    const context = await browser.newContext({ baseURL });
+    collectBrowserDiagnostics(context);
+    const protectedValues = runtimeProtectedValues();
+
+    const firstResponse = await context.request.post(CHAT_PATH, {
+      data: CHAT_BODY,
+    });
+    expect(firstResponse.status()).toBe(200);
+    const first = await readSafeJson(firstResponse, protectedValues);
+    expect(first).toMatchObject({
+      version: "1",
+      mode: "agentos",
+      session: { temporary: true },
+      message: { role: "assistant", content: "deterministic-turn:1" },
+      suggestedActions: [],
+    });
+    const firstSetCookie = firstResponse.headers()["set-cookie"] ?? "";
+    const firstCredential = cookieCredential(firstSetCookie);
+    expectNoProtectedValue(first, [...protectedValues, firstCredential]);
+
+    const secondResponse = await context.request.post(CHAT_PATH, {
+      data: {
+        message: "请继续。",
+        context: { pathname: "/assistant" },
+      },
+    });
+    expect(secondResponse.status()).toBe(200);
+    const second = await readSafeJson(secondResponse, [
+      ...protectedValues,
+      firstCredential,
+    ]);
+    expect(second).toMatchObject({
+      version: "1",
+      mode: "agentos",
+      message: { role: "assistant", content: "deterministic-turn:2" },
+      suggestedActions: [],
+    });
+
+    const deletion = await context.request.delete(SESSION_PATH);
+    expect(deletion.status()).toBe(204);
+    expect(await deletion.text()).toBe("");
+    expect(deletion.headers()["set-cookie"]).toContain(
+      "aap_assistant_sid_dev=",
+    );
+    const cookiesAfterDeletion = await context.cookies();
+    expect(
+      cookiesAfterDeletion.some(
+        (cookie) => cookie.name === "aap_assistant_sid_dev",
+      ),
+    ).toBe(false);
+
+    const thirdResponse = await context.request.post(CHAT_PATH, {
+      data: {
+        message: "新会话。",
+        context: { pathname: "/assistant" },
+      },
+    });
+    expect(thirdResponse.status()).toBe(200);
+    const third = await readSafeJson(thirdResponse, protectedValues);
+    expect(third).toMatchObject({
+      version: "1",
+      mode: "agentos",
+      message: { role: "assistant", content: "deterministic-turn:1" },
+      suggestedActions: [],
+    });
+    expect(JSON.stringify(third)).not.toContain("deterministic-turn:2");
+    expectConsoleExcludesCredential(firstCredential);
+    await context.close();
+  });
+
+  test("rejects an unauthenticated WebSocket and keeps Agent plus DB private", async ({
+    browser,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("BASE_URL is required");
+    expect(["{}", "null"]).toContain(servicePortBindings("agent"));
+    expect(["{}", "null"]).toContain(servicePortBindings("db"));
+
+    const context = await browser.newContext({ baseURL });
+    const page = await context.newPage();
+    const websocketUrl = baseURL.replace(/^http/u, "ws") + "/workflows/ws";
+    const outcome = await page.evaluate(
+      (url) =>
+        new Promise<"opened" | "rejected">((resolve) => {
+          const socket = new WebSocket(url);
+          const timer = window.setTimeout(() => resolve("rejected"), 5_000);
+          socket.addEventListener("open", () => {
+            window.clearTimeout(timer);
+            socket.close();
+            resolve("opened");
+          });
+          socket.addEventListener("error", () => {
+            window.clearTimeout(timer);
+            resolve("rejected");
+          });
+          socket.addEventListener("close", () => {
+            window.clearTimeout(timer);
+            resolve("rejected");
+          });
+        }),
+      websocketUrl,
+    );
+    expect(outcome).toBe("rejected");
+    expect(JSON.stringify(cumulativeConsoleMessages)).not.toMatch(
+      /(?:OS_SECURITY_KEY|authorization:\s*bearer)/iu,
+    );
+    await context.close();
+  });
+
+  test("returns a safe 503 for invalid output and opens the execution circuit", async ({
+    browser,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("BASE_URL is required");
+    const protectedValues = runtimeProtectedValues();
+    const context = await browser.newContext({ baseURL });
+
+    const invalidResponse = await context.request.post(CHAT_PATH, {
+      data: {
+        message: INVALID_RESPONSE_SENTINEL,
+        context: { pathname: "/assistant" },
+      },
+    });
+    expect(invalidResponse.status()).toBe(503);
+    const invalid = await readSafeJson(invalidResponse, protectedValues);
+    expect(invalid).toMatchObject({
+      version: "1",
+      error: { code: "assistant_unavailable", retryable: true },
+    });
+    expect(JSON.stringify(invalid)).not.toMatch(
+      /(?:__aap_e2e_invalid_response__|deterministic-turn|invalid_response)/iu,
+    );
+
+    const blockedResponse = await context.request.post(CHAT_PATH, {
+      data: CHAT_BODY,
+    });
+    expect(blockedResponse.status()).toBe(503);
+    const blocked = await readSafeJson(blockedResponse, protectedValues);
+    expect(blocked).toMatchObject({
+      version: "1",
+      error: { code: "assistant_unavailable", retryable: true },
+    });
+    expect(JSON.stringify(blocked)).not.toContain("deterministic-turn");
+
+    const statusResponse = await context.request.get(STATUS_PATH);
+    expect(statusResponse.status()).toBe(200);
+    const status = await readSafeJson(statusResponse, protectedValues);
+    expect(status).toMatchObject({
+      version: "1",
+      ready: false,
+      capability: "degraded",
+    });
+    await context.close();
+  });
 });

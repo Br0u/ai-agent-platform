@@ -539,6 +539,27 @@ describe("production deployment security contracts", () => {
     expect(script.indexOf("owns_project=true")).toBeLessThan(
       script.indexOf("compose build"),
     );
+    expect(script).toContain("--grep-invert @agentos");
+    expect(script).toContain("--grep @agentos");
+    expect(script.indexOf("--grep-invert @agentos")).toBeLessThan(
+      script.indexOf("--grep @agentos"),
+    );
+    expect(script).toContain("export AGENT_ENABLED=false");
+    expect(script).toContain("export ASSISTANT_PROVIDER_MODE=placeholder");
+    expect(script).toContain("export AGENT_ENABLED=true");
+    expect(script).toContain("export MODEL_PROVIDER=openai");
+    expect(script).toContain("export MODEL_ID=e2e-deterministic");
+    expect(script).toContain("unset MODEL_BASE_URL");
+    expect(script).toContain("export MODEL_RUN_TIMEOUT_SECONDS=1");
+    expect(script).toContain("export ASSISTANT_PROVIDER_MODE=agentos");
+    expect(script).toContain("export ASSISTANT_AGENTOS_RUN_TIMEOUT_MS=51000");
+    expect(script).toContain(
+      "export ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD=1",
+    );
+    expect(
+      script.match(/--force-recreate --wait (?:agent|web)/gu),
+    ).toHaveLength(2);
+    expect(script).toContain("db_port_bindings=");
   });
 
   it("owns and cleans only the isolated assistant runtime project it locked", () => {
@@ -1013,9 +1034,7 @@ exit 0
     expect(dockerfile).toMatch(
       /^FROM python:3\.13\.13-slim-trixie@sha256:[a-f0-9]{64} AS builder/mu,
     );
-    expect(dockerfile).toMatch(
-      /^FROM python:3\.13\.13-slim-trixie@sha256:[a-f0-9]{64} AS runtime/mu,
-    );
+    expect(dockerfile).toMatch(/^FROM runtime-base AS runtime$/mu);
     expect(dockerfile).toContain("uv sync --frozen --no-dev");
     expect(dockerfile).toContain("COPY apps/agent/pyproject.toml");
     expect(dockerfile).toContain("COPY apps/agent/uv.lock");
@@ -1036,6 +1055,38 @@ exit 0
     expect(rootDockerIgnore).toContain("**/.ruff_cache");
     expect(rootDockerIgnore).toContain("**/__pycache__");
     expect(rootDockerIgnore).toContain("**/dist");
+  });
+
+  it("isolates the deterministic Agent in an acceptance-only image target", () => {
+    const dockerfile = read("apps/agent/Dockerfile");
+    const productionCompose = read("compose.yaml");
+    const acceptanceCompose = read("compose.e2e.yaml");
+    const acceptanceTarget = dockerfile
+      .split(" AS acceptance\n")[1]
+      ?.split(" AS runtime\n")[0];
+    const runtimeTarget = dockerfile.split(" AS runtime\n")[1];
+    const productionAgent = productionCompose
+      .split("\n  agent:\n")[1]
+      ?.split("\n  web:\n")[0];
+    const acceptanceAgent = acceptanceCompose
+      .split("\n  agent:\n")[1]
+      ?.split("\n  migrate:\n")[0];
+
+    expect(acceptanceTarget).toBeDefined();
+    expect(acceptanceTarget).toContain("tests/e2e_agent");
+    expect(runtimeTarget).toBeDefined();
+    expect(runtimeTarget).not.toContain("tests/e2e_agent");
+    expect(dockerfile.indexOf(" AS acceptance\n")).toBeLessThan(
+      dockerfile.indexOf(" AS runtime\n"),
+    );
+    expect(dockerfile.trimEnd()).toMatch(/CMD \[[^\n]+\]$/u);
+    expect(productionAgent).toBeDefined();
+    expect(productionAgent).not.toContain("target: acceptance");
+    expect(productionAgent).toContain("agent_service.app:app_factory");
+    expect(acceptanceAgent).toBeDefined();
+    expect(acceptanceAgent).toContain("target: acceptance");
+    expect(acceptanceAgent).toContain("e2e_agent.app:app_factory");
+    expect(acceptanceCompose.match(/target: acceptance/gu)).toHaveLength(1);
   });
 
   it("keeps every production credential out of rendered Compose config", () => {

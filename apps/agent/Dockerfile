@@ -14,7 +14,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY apps/agent/src ./src
 RUN uv sync --frozen --no-dev --no-editable
 
-FROM python:3.13.13-slim-trixie@sha256:aa938a849bcb82dce8f49480f056ab82bf5c1c3ebc294f0430f37b6820e7f286 AS runtime
+FROM python:3.13.13-slim-trixie@sha256:aa938a849bcb82dce8f49480f056ab82bf5c1c3ebc294f0430f37b6820e7f286 AS runtime-base
 
 ENV PATH=/app/apps/agent/.venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -26,6 +26,18 @@ RUN groupadd --system --gid 10001 agent \
 WORKDIR /app/apps/agent
 
 COPY --from=builder --chown=agent:agent /app/apps/agent/.venv /app/apps/agent/.venv
+
+FROM runtime-base AS acceptance
+
+COPY --chown=agent:agent apps/agent/tests/e2e_agent /app/apps/agent/e2e_agent
+
+USER agent
+
+EXPOSE 7777
+
+CMD ["uvicorn", "e2e_agent.app:app_factory", "--factory", "--host", "0.0.0.0", "--port", "7777"]
+
+FROM runtime-base AS runtime
 
 USER agent
 
