@@ -60,7 +60,10 @@ describe("GET /api/v1/admin/assistant/status", () => {
     runtime.inspect.mockReturnValue({
       providerMode: "placeholder",
       persistence: "disabled",
-      circuit: { state: "closed", consecutiveFailures: 0 },
+      circuits: {
+        readiness: { state: "closed", consecutiveFailures: 0 },
+        execution: { state: "closed", consecutiveFailures: 0 },
+      },
       readiness: {
         cacheTtlMs: 5000,
         probeTimeoutMs: 1500,
@@ -185,7 +188,10 @@ describe("GET /api/v1/admin/assistant/status", () => {
       inspection: {
         providerMode: "placeholder" as const,
         persistence: "disabled" as const,
-        circuit: { state: "open" as const, consecutiveFailures: 3 },
+        circuits: {
+          readiness: { state: "open" as const, consecutiveFailures: 3 },
+          execution: { state: "closed" as const, consecutiveFailures: 0 },
+        },
       },
       expected: {
         mode: "placeholder",
@@ -205,11 +211,14 @@ describe("GET /api/v1/admin/assistant/status", () => {
       inspection: {
         providerMode: "agentos" as const,
         persistence: "disabled" as const,
-        circuit: { state: "closed" as const, consecutiveFailures: 0 },
+        circuits: {
+          readiness: { state: "closed" as const, consecutiveFailures: 0 },
+          execution: { state: "closed" as const, consecutiveFailures: 0 },
+        },
       },
       expected: {
         mode: "placeholder",
-        selectedProvider: "placeholder",
+        selectedProvider: "unavailable",
         publicState: "not_configured",
         agentosState: "ready",
       },
@@ -225,7 +234,10 @@ describe("GET /api/v1/admin/assistant/status", () => {
       inspection: {
         providerMode: "agentos" as const,
         persistence: "disabled" as const,
-        circuit: { state: "closed" as const, consecutiveFailures: 0 },
+        circuits: {
+          readiness: { state: "closed" as const, consecutiveFailures: 0 },
+          execution: { state: "closed" as const, consecutiveFailures: 0 },
+        },
       },
       expected: {
         mode: "agentos",
@@ -253,6 +265,47 @@ describe("GET /api/v1/admin/assistant/status", () => {
     },
   );
 
+  it("shows healthy AgentOS infrastructure separately from an open model execution circuit", async () => {
+    const result = await loadAdminAssistantStatus({
+      status: async () => ({
+        live: true,
+        ready: false,
+        capability: "degraded" as const,
+        message: "助手基础服务暂不可用。",
+      }),
+      inspect: () => ({
+        providerMode: "agentos" as const,
+        persistence: "disabled" as const,
+        circuits: {
+          readiness: { state: "closed" as const, consecutiveFailures: 0 },
+          execution: { state: "open" as const, consecutiveFailures: 3 },
+        },
+        readiness: {
+          cacheTtlMs: 5000,
+          probeTimeoutMs: 1500,
+          failureThreshold: 3,
+        },
+      }),
+    } as never);
+
+    expect(result.runtime.selectedProvider).toBe("unavailable");
+    expect(result.runtime.circuit).toEqual({
+      state: "closed",
+      consecutiveFailures: 0,
+    });
+    expect(result.services.find(({ id }) => id === "agentos")).toMatchObject({
+      state: "ready",
+      detail: "基础服务已就绪",
+    });
+    expect(result.services.find(({ id }) => id === "model")).toMatchObject({
+      state: "degraded",
+      detail: "模型执行暂不可用",
+    });
+    expect(JSON.stringify(result)).not.toMatch(
+      /timestamp|openedAt|session.?id|prompt|reply|raw/iu,
+    );
+  });
+
   it("returns a correlated safe status snapshot with circuit metadata", async () => {
     const requestIdFactory = vi.fn(() => "unused-fallback");
     const GET = createAdminAssistantStatusHandler({
@@ -269,6 +322,10 @@ describe("GET /api/v1/admin/assistant/status", () => {
           selectedProvider: "placeholder",
           persistence: "disabled",
           circuit: { state: "closed", consecutiveFailures: 2 },
+          circuits: {
+            readiness: { state: "closed", consecutiveFailures: 2 },
+            execution: { state: "closed", consecutiveFailures: 0 },
+          },
           readiness: {
             cacheTtlMs: 5000,
             probeTimeoutMs: 1500,
@@ -332,6 +389,10 @@ describe("GET /api/v1/admin/assistant/status", () => {
       selectedProvider: "placeholder",
       persistence: "disabled",
       circuit: { state: "closed", consecutiveFailures: 2 },
+      circuits: {
+        readiness: { state: "closed", consecutiveFailures: 2 },
+        execution: { state: "closed", consecutiveFailures: 0 },
+      },
       readiness: {
         cacheTtlMs: 5000,
         probeTimeoutMs: 1500,
@@ -363,6 +424,10 @@ describe("GET /api/v1/admin/assistant/status", () => {
       selectedProvider: "unavailable",
       persistence: "disabled",
       circuit: { state: "closed", consecutiveFailures: 0 },
+      circuits: {
+        readiness: { state: "closed", consecutiveFailures: 0 },
+        execution: { state: "closed", consecutiveFailures: 0 },
+      },
       readiness: { cacheTtlMs: 0, probeTimeoutMs: 0, failureThreshold: 0 },
     });
     expect(JSON.stringify(body)).not.toMatch(

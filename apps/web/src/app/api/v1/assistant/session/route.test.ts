@@ -60,6 +60,34 @@ describe("DELETE /api/v1/assistant/session", () => {
     );
   });
 
+  it("uses the runtime deletion method by default only after a valid signed Cookie", async () => {
+    const { manager } = fixture();
+    const session = manager.resolve(new Headers(), { kind: "anonymous" });
+    const deleteSession = vi.fn(async () => undefined);
+    const getRuntime = vi.fn(() => ({ deleteSession }));
+    const DELETE = createAssistantSessionDeleteHandler({
+      manager,
+      resolveActor: async () => ({ kind: "anonymous" }),
+      getRuntime,
+    });
+
+    const response = await DELETE(
+      new Request("https://portal.example.com/api/v1/assistant/session", {
+        method: "DELETE",
+        headers: {
+          cookie: `${session.cookie.name}=${session.cookie.value}`,
+        },
+      }),
+    );
+
+    expect(response.status).toBe(204);
+    expect(getRuntime).toHaveBeenCalledOnce();
+    expect(deleteSession).toHaveBeenCalledExactlyOnceWith(
+      session.internalSessionId,
+    );
+    expect(deleteSession).not.toHaveBeenCalledWith(session.cookie.value);
+  });
+
   it.each([
     ["missing", undefined],
     ["invalid", "__Host-aap_assistant_sid=bad"],
@@ -68,11 +96,12 @@ describe("DELETE /api/v1/assistant/session", () => {
     "only clears a %s cookie without remote deletion",
     async (_name, cookie) => {
       const { manager } = fixture();
-      const deleteInternalSession = vi.fn(async () => undefined);
+      const deleteSession = vi.fn(async () => undefined);
+      const getRuntime = vi.fn(() => ({ deleteSession }));
       const DELETE = createAssistantSessionDeleteHandler({
         manager,
         resolveActor: async () => ({ kind: "anonymous" }),
-        deleteInternalSession,
+        getRuntime,
       });
 
       const response = await DELETE(
@@ -84,7 +113,8 @@ describe("DELETE /api/v1/assistant/session", () => {
 
       expect(response.status).toBe(204);
       expect(response.headers.get("set-cookie")).toBe(manager.clearCookie());
-      expect(deleteInternalSession).not.toHaveBeenCalled();
+      expect(getRuntime).not.toHaveBeenCalled();
+      expect(deleteSession).not.toHaveBeenCalled();
     },
   );
 
@@ -111,6 +141,32 @@ describe("DELETE /api/v1/assistant/session", () => {
     expect(response.status).toBe(204);
     expect(response.headers.get("set-cookie")).toBe(manager.clearCookie());
     expect(deleteInternalSession).not.toHaveBeenCalled();
+  });
+
+  it("still returns 204 and clears the Cookie when runtime cleanup fails", async () => {
+    const { manager } = fixture();
+    const session = manager.resolve(new Headers(), { kind: "anonymous" });
+    const deleteSession = vi
+      .fn()
+      .mockRejectedValue(new Error("raw remote cleanup URL and session"));
+    const DELETE = createAssistantSessionDeleteHandler({
+      manager,
+      resolveActor: async () => ({ kind: "anonymous" }),
+      getRuntime: () => ({ deleteSession }),
+    });
+
+    const response = await DELETE(
+      new Request("https://portal.example.com/api/v1/assistant/session", {
+        method: "DELETE",
+        headers: {
+          cookie: `${session.cookie.name}=${session.cookie.value}`,
+        },
+      }),
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("set-cookie")).toBe(manager.clearCookie());
+    expect(await response.text()).toBe("");
   });
 
   it("provides an explicit placeholder no-op and never claims remote deletion", async () => {

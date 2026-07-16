@@ -87,7 +87,13 @@ describe("POST /api/v1/admin/assistant/chat", () => {
       actorId: "admin-1",
     });
     expect(runtime.resolveProvider).toHaveBeenCalledOnce();
-    expect(runtime.reply).toHaveBeenCalledOnce();
+    expect(runtime.reply).toHaveBeenCalledExactlyOnceWith({
+      request: {
+        message: "检查占位合同",
+        context: { pathname: "/admin/assistant" },
+      },
+      session: { kind: "ephemeral" },
+    });
   });
 
   it.each([
@@ -234,6 +240,39 @@ describe("POST /api/v1/admin/assistant/chat", () => {
         retryable: true,
       },
     });
+    expect(assistantProvider.reply).not.toHaveBeenCalled();
+  });
+
+  it("validates after authorization and rejects invalid input before limiting or Provider work", async () => {
+    const assistantProvider = provider();
+    const limiter = { consume: vi.fn() };
+    const access = {
+      requirePermission: vi.fn().mockResolvedValue({
+        userId: "admin-1",
+        realm: "workforce",
+      }),
+    };
+    const POST = createAdminAssistantChatHandler({
+      access,
+      rateLimiter: limiter,
+      provider: assistantProvider,
+      requestIdFactory: () => "invalid-admin-request",
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/v1/admin/assistant/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          message: " ",
+          context: { pathname: "/admin/assistant" },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(access.requirePermission).toHaveBeenCalledOnce();
+    expect(limiter.consume).not.toHaveBeenCalled();
     expect(assistantProvider.reply).not.toHaveBeenCalled();
   });
 

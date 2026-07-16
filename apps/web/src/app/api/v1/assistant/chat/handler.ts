@@ -125,8 +125,14 @@ export function createAssistantChatHandler(
               provider: dependencies.provider ?? placeholderAssistantProvider,
               mode: "placeholder" as const,
             };
-        const providerResponse =
-          await selected.provider.reply(assistantRequest);
+        const providerResponse = await selected.provider.reply({
+          request: assistantRequest,
+          session: {
+            kind: "persistent",
+            internalSessionId: session.internalSessionId,
+          },
+          signal: request.signal,
+        });
         if (!isAssistantProviderReply(providerResponse)) {
           throw new TypeError("Invalid assistant provider response");
         }

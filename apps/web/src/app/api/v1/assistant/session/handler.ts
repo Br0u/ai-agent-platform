@@ -8,6 +8,10 @@ import {
   resolveAssistantActor,
   type AssistantActor,
 } from "@/server/assistant/assistant-actor";
+import {
+  getAssistantRuntime,
+  type AssistantRuntime,
+} from "@/server/assistant/assistant-runtime";
 
 export type DeleteInternalAssistantSession = (
   internalSessionId: string,
@@ -22,6 +26,7 @@ type AssistantSessionDeleteDependencies = {
   manager?: AnonymousSessionManager;
   resolveActor?: (request: Request) => Promise<AssistantActor>;
   deleteInternalSession?: DeleteInternalAssistantSession;
+  getRuntime?: () => Pick<AssistantRuntime, "deleteSession">;
 };
 
 export function createAssistantSessionDeleteHandler(
@@ -50,7 +55,10 @@ export function createAssistantSessionDeleteHandler(
       try {
         await (
           dependencies.deleteInternalSession ??
-          placeholderAssistantSessionDeletion
+          ((internalSessionId) =>
+            (
+              dependencies.getRuntime?.() ?? getAssistantRuntime()
+            ).deleteSession(internalSessionId))
         )(inspected.internalSessionId);
       } catch {
         // Clearing the browser credential remains safe even if a future

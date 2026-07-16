@@ -33,7 +33,10 @@ const SAFE_DEGRADED_STATUS: AssistantRuntimeStatus = {
 const SAFE_DEGRADED_INSPECTION: AssistantRuntimeInspection = {
   providerMode: "placeholder",
   persistence: "disabled",
-  circuit: { state: "closed", consecutiveFailures: 0 },
+  circuits: {
+    readiness: { state: "closed", consecutiveFailures: 0 },
+    execution: { state: "closed", consecutiveFailures: 0 },
+  },
   readiness: { cacheTtlMs: 0, probeTimeoutMs: 0, failureThreshold: 0 },
 };
 
@@ -42,21 +45,25 @@ function serviceState(
   inspection: AssistantRuntimeInspection,
   configurationValid: boolean,
 ): AdminAssistantStatusSnapshot["services"] {
-  const agentosState = status.ready
+  const executionUnavailable = inspection.circuits.execution.state !== "closed";
+  const infrastructureReady =
+    inspection.circuits.readiness.state === "closed" &&
+    status.live &&
+    (status.ready || executionUnavailable);
+  const agentosState = infrastructureReady
     ? "ready"
     : status.live
       ? "degraded"
       : "not_connected";
-  const databaseState = status.ready
-    ? "ready"
-    : status.live
-      ? "degraded"
-      : "not_connected";
+  const databaseState = agentosState;
   const publicState = !configurationValid
     ? "degraded"
     : inspection.providerMode === "placeholder"
       ? "placeholder"
-      : !status.live || !status.ready || status.capability === "degraded"
+      : executionUnavailable ||
+          !status.live ||
+          !status.ready ||
+          status.capability === "degraded"
         ? "degraded"
         : status.capability === "available"
           ? "ready"
@@ -67,7 +74,7 @@ function serviceState(
       id: "agentos",
       label: "AgentOS",
       state: agentosState,
-      detail: status.ready
+      detail: infrastructureReady
         ? "基础服务已就绪"
         : status.live
           ? "依赖尚未就绪"
@@ -77,7 +84,7 @@ function serviceState(
       id: "database",
       label: "运行数据库",
       state: databaseState,
-      detail: status.ready
+      detail: infrastructureReady
         ? "运行依赖已就绪"
         : status.live
           ? "运行依赖异常"
@@ -86,8 +93,20 @@ function serviceState(
     {
       id: "model",
       label: "模型",
-      state: status.capability === "available" ? "ready" : "not_configured",
-      detail: status.capability === "available" ? "能力已启用" : "尚未配置",
+      state: executionUnavailable
+        ? "degraded"
+        : status.capability === "available"
+          ? "ready"
+          : status.capability === "placeholder"
+            ? "not_configured"
+            : "degraded",
+      detail: executionUnavailable
+        ? "模型执行暂不可用"
+        : status.capability === "available"
+          ? "能力已启用"
+          : status.capability === "placeholder"
+            ? "尚未配置"
+            : "模型状态不可用",
     },
     {
       id: "public_entry",
@@ -114,11 +133,12 @@ function snapshot(
     ? "unavailable"
     : inspection.providerMode === "placeholder"
       ? "placeholder"
-      : status.live && status.ready && status.capability === "available"
+      : inspection.circuits.execution.state === "closed" &&
+          status.live &&
+          status.ready &&
+          status.capability === "available"
         ? "agentos"
-        : status.live && status.ready && status.capability === "placeholder"
-          ? "placeholder"
-          : "unavailable";
+        : "unavailable";
   const mode = selectedProvider === "agentos" ? "agentos" : "placeholder";
   return {
     mode,
@@ -128,12 +148,13 @@ function snapshot(
       capability: status.capability,
       selectedProvider,
       ...inspection,
+      circuit: inspection.circuits.readiness,
     },
     services: serviceState(status, inspection, configurationValid),
     configuration: {
       defaultAgent:
         configurationValid && inspection.providerMode === "agentos"
-          ? "已配置"
+          ? "码多多（maduoduo）"
           : "M 企业助理（占位）",
       model: status.capability === "available" ? "已配置" : "未配置",
       skills: "未接入",

@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { AgentOSClient } from "./agentos-client";
+import type {
+  AgentOSRunClient,
+  AgentOSRunSettings,
+} from "./agentos-run-client";
+import { AgentOSRunClientError } from "./agentos-run-client";
+import {
+  createAgentOSExecutionCircuit,
+  type AgentOSExecutionCircuit,
+} from "./agentos-execution-circuit";
 import {
   createAssistantRuntime,
   getAssistantRuntime,
@@ -11,14 +21,19 @@ const VALID_ENVIRONMENT = {
   ASSISTANT_SESSION_SECRET: "session-secret-0123456789abcdef0123456789",
   ASSISTANT_RATE_LIMIT_SECRET: "rate-secret-0123456789abcdef0123456789",
   ASSISTANT_PROVIDER_MODE: "placeholder",
-  ASSISTANT_AGENTOS_DEFAULT_AGENT_ID: "support-agent",
   ASSISTANT_AGENTOS_READINESS_TTL_MS: "5000",
   ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS: "1500",
   ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD: "3",
   ASSISTANT_AGENTOS_CIRCUIT_RESET_MS: "30000",
+  ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: "55000",
   AGENTOS_INTERNAL_URL: "http://agent:7777",
   OS_SECURITY_KEY: "agentos-internal-security-key-32-bytes",
   TRUST_NGINX_PROXY: "false",
+} as const;
+
+const AGENTOS_ENVIRONMENT = {
+  ...VALID_ENVIRONMENT,
+  ASSISTANT_PROVIDER_MODE: "agentos",
 } as const;
 
 const RUNTIME_KEY = Symbol.for("ai-agent-platform:assistant:runtime:v1");
@@ -29,16 +44,39 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function availableHealthClient(): AgentOSClient {
+  return {
+    live: vi.fn(async () => ({
+      live: true,
+      ready: true,
+      capability: "available" as const,
+      message: "private health detail",
+    })),
+    ready: vi.fn(async () => ({
+      ready: true,
+      capability: "available" as const,
+    })),
+    capability: vi.fn(async () => "available" as const),
+  };
+}
+
+function runClient(): AgentOSRunClient {
+  return {
+    runAgent: vi.fn(async () => ({ content: "码多多回答" })),
+    deleteSession: vi.fn(async () => undefined),
+  };
+}
+
 describe("assistant server runtime", () => {
   it.each([
     ["invalid provider mode", "ASSISTANT_PROVIDER_MODE", "raw-auto-mode"],
     ["invalid proxy mode", "TRUST_NGINX_PROXY", "raw-maybe-proxy"],
-    ["missing AgentOS setting", "ASSISTANT_AGENTOS_READINESS_TTL_MS", ""],
+    ["invalid AgentOS run timeout", "ASSISTANT_AGENTOS_RUN_TIMEOUT_MS", "1"],
   ])(
     "returns an exact safe degraded default status for %s",
     async (_name, key, value) => {
       for (const [environmentKey, environmentValue] of Object.entries(
-        VALID_ENVIRONMENT,
+        AGENTOS_ENVIRONMENT,
       )) {
         vi.stubEnv(environmentKey, environmentValue);
       }
@@ -83,136 +121,301 @@ describe("assistant server runtime", () => {
     });
   });
 
-  it("does not probe AgentOS while Provider mode is disabled", async () => {
+  it("keeps placeholder mode fully lazy and ignores every AgentOS setting", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const runtime = createAssistantRuntime({
-      environment: VALID_ENVIRONMENT,
-      fetcher,
-      createRateLimiter: () => ({ consume: vi.fn(async () => undefined) }),
-    });
-
-    await expect(runtime.resolveProvider()).resolves.toMatchObject({
-      mode: "placeholder",
-    });
-    expect(fetcher).not.toHaveBeenCalled();
-  });
-
-  it("reports healthy AgentOS placeholder capability without exposing internals", async () => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        Response.json({
-          live: true,
-          ready: true,
-          capability: "placeholder",
-          message: "internal database detail",
-        }),
-      )
-      .mockResolvedValueOnce(
-        Response.json({ ready: true, capability: "placeholder" }),
-      );
-    const runtime = createAssistantRuntime({
       environment: {
-        ...VALID_ENVIRONMENT,
-        ASSISTANT_PROVIDER_MODE: "agentos",
+        ASSISTANT_PROVIDER_MODE: "placeholder",
+        TRUST_NGINX_PROXY: "false",
+        ASSISTANT_AGENTOS_READINESS_TTL_MS: "broken",
+        ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS: "broken",
+        ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD: "broken",
+        ASSISTANT_AGENTOS_CIRCUIT_RESET_MS: "broken",
+        ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: "broken",
+        AGENTOS_INTERNAL_URL: "not a URL",
+        OS_SECURITY_KEY: "short",
       },
       fetcher,
       createRateLimiter: () => ({ consume: vi.fn(async () => undefined) }),
     });
 
-    const status = await runtime.status();
-
-    expect(status).toEqual({
+    await expect(runtime.status()).resolves.toEqual({
       live: true,
       ready: true,
       capability: "placeholder",
       message: "模型尚未配置，当前为安全占位模式。",
     });
-    expect(JSON.stringify(status)).not.toMatch(
-      /agent:7777|database detail|security-key/iu,
-    );
     await expect(runtime.resolveProvider()).resolves.toMatchObject({
       mode: "placeholder",
     });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    await expect(runtime.deleteSession("never-sent-remotely")).resolves.toBe(
+      undefined,
+    );
+    expect(runtime.inspect()).toEqual({
+      providerMode: "placeholder",
+      persistence: "disabled",
+      circuits: {
+        readiness: { state: "closed", consecutiveFailures: 0 },
+        execution: { state: "closed", consecutiveFailures: 0 },
+      },
+      readiness: {
+        cacheTtlMs: 0,
+        probeTimeoutMs: 0,
+        failureThreshold: 0,
+      },
+    });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("preserves live when AgentOS is reachable but its ready dependency fails", async () => {
-    const fetcher = vi.fn<typeof fetch>(async (url) => {
-      if (String(url).endsWith("/internal/health/live")) {
-        return Response.json({
-          live: true,
-          ready: false,
-          capability: "degraded",
-          message: "raw internal live detail",
-        });
-      }
-      throw new Error("raw database connection detail");
-    });
+  it("constructs one health client and one shared run client with the exact run timeout", async () => {
+    const healthClient = availableHealthClient();
+    const sharedRunClient = runClient();
+    const createHealthClient = vi.fn(() => healthClient);
+    const createRunClient = vi.fn(
+      (options: { settings: AgentOSRunSettings; fetcher?: typeof fetch }) => {
+        void options;
+        return sharedRunClient;
+      },
+    );
     const runtime = createAssistantRuntime({
       environment: {
-        ...VALID_ENVIRONMENT,
-        ASSISTANT_PROVIDER_MODE: "agentos",
+        ...AGENTOS_ENVIRONMENT,
+        ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: "51000",
       },
-      fetcher,
+      createHealthClient,
+      createRunClient,
       createRateLimiter: () => ({ consume: vi.fn(async () => undefined) }),
     });
 
+    await runtime.status();
+    const selected = await runtime.resolveProvider();
+    await selected.provider.reply({
+      request: { message: "问题", context: { pathname: "/docs" } },
+      session: { kind: "persistent", internalSessionId: "shared-session" },
+    });
+    await runtime.deleteSession("shared-session");
+    runtime.inspect();
+
+    expect(createHealthClient).toHaveBeenCalledOnce();
+    expect(createRunClient).toHaveBeenCalledOnce();
+    expect(createRunClient.mock.calls[0]?.[0].settings.runTimeoutMs).toBe(
+      51000,
+    );
+    expect(sharedRunClient.deleteSession).toHaveBeenCalledExactlyOnceWith(
+      "shared-session",
+    );
+  });
+
+  it.each([
+    [undefined, 55000],
+    ["51000", 51000],
+    ["55000", 55000],
+  ] as const)("passes run timeout %s as %i", (raw, expected) => {
+    const createRunClient = vi.fn(
+      (options: { settings: AgentOSRunSettings; fetcher?: typeof fetch }) => {
+        void options;
+        return runClient();
+      },
+    );
+    const runtime = createAssistantRuntime({
+      environment: {
+        ...AGENTOS_ENVIRONMENT,
+        ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: raw,
+      },
+      createHealthClient: () => availableHealthClient(),
+      createRunClient,
+    });
+
+    runtime.inspect();
+
+    expect(createRunClient.mock.calls[0]?.[0].settings.runTimeoutMs).toBe(
+      expected,
+    );
+  });
+
+  it.each(["50999", "55001", "51000.5", "Infinity", "NaN", ""])(
+    "rejects invalid run timeout %s in AgentOS mode",
+    (raw) => {
+      const runtime = createAssistantRuntime({
+        environment: {
+          ...AGENTOS_ENVIRONMENT,
+          ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: raw,
+        },
+      });
+
+      expect(() => runtime.inspect()).toThrow(
+        "ASSISTANT_AGENTOS_RUN_TIMEOUT_MS",
+      );
+    },
+  );
+
+  it("does not silently select placeholder when AgentOS is healthy but capability is unavailable", async () => {
+    const healthClient: AgentOSClient = {
+      live: vi.fn(async () => ({
+        live: true,
+        ready: true,
+        capability: "placeholder" as const,
+        message: "private detail",
+      })),
+      ready: vi.fn(async () => ({
+        ready: true,
+        capability: "placeholder" as const,
+      })),
+      capability: vi.fn(async () => "placeholder" as const),
+    };
+    const runtime = createAssistantRuntime({
+      environment: AGENTOS_ENVIRONMENT,
+      createHealthClient: () => healthClient,
+      createRunClient: () => runClient(),
+    });
+
+    await expect(runtime.status()).resolves.toEqual({
+      live: true,
+      ready: true,
+      capability: "placeholder",
+      message: "模型尚未配置，当前为安全占位模式。",
+    });
+    await expect(runtime.resolveProvider()).rejects.toMatchObject({
+      code: "ASSISTANT_RUNTIME_UNAVAILABLE",
+    });
+  });
+
+  it("lets the next real run become the single half-open probe after reset", async () => {
+    let now = 0;
+    const sharedRunClient = runClient();
+    vi.mocked(sharedRunClient.runAgent)
+      .mockRejectedValueOnce(new AgentOSRunClientError("timeout"))
+      .mockRejectedValueOnce(new AgentOSRunClientError("timeout"))
+      .mockRejectedValueOnce(new AgentOSRunClientError("timeout"))
+      .mockResolvedValueOnce({ content: "恢复后的真实回答" });
+    const runtime = createAssistantRuntime({
+      environment: AGENTOS_ENVIRONMENT,
+      createHealthClient: () => availableHealthClient(),
+      createRunClient: () => sharedRunClient,
+      createExecutionCircuit: (options) =>
+        createAgentOSExecutionCircuit({
+          ...options,
+          resetAfterMs: 10,
+          now: () => now,
+        }),
+    });
+    const invocation = {
+      request: { message: "问题", context: { pathname: "/" } },
+      session: {
+        kind: "persistent" as const,
+        internalSessionId: "internal-session",
+      },
+    };
+
+    const initialSelection = await runtime.resolveProvider();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expect(
+        initialSelection.provider.reply(invocation),
+      ).rejects.toMatchObject({ code: "ASSISTANT_EXECUTION_UNAVAILABLE" });
+    }
+
+    const openSelection = await runtime.resolveProvider();
+    await expect(
+      openSelection.provider.reply(invocation),
+    ).rejects.toMatchObject({
+      code: "ASSISTANT_EXECUTION_UNAVAILABLE",
+    });
+    expect(sharedRunClient.runAgent).toHaveBeenCalledTimes(3);
+
+    now = 10;
+    const recoverySelection = await runtime.resolveProvider();
+    await expect(recoverySelection.provider.reply(invocation)).resolves.toEqual(
+      {
+        content: "恢复后的真实回答",
+        suggestedActions: [],
+      },
+    );
+    expect(sharedRunClient.runAgent).toHaveBeenCalledTimes(4);
+    expect(runtime.inspect().circuits.execution).toEqual({
+      state: "closed",
+      consecutiveFailures: 0,
+    });
+  });
+
+  it("keeps readiness and execution circuits independent and degrades status when execution opens", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/internal/health/live")) {
+        return Response.json({
+          live: true,
+          ready: true,
+          capability: "available",
+          message: "private detail",
+        });
+      }
+      if (url.endsWith("/internal/health/ready")) {
+        return Response.json({ ready: true, capability: "available" });
+      }
+      if (url.endsWith("/agents/maduoduo/runs") && init?.method === "POST") {
+        return new Response("private model failure", { status: 500 });
+      }
+      throw new Error("unexpected URL");
+    });
+    const runtime = createAssistantRuntime({
+      environment: AGENTOS_ENVIRONMENT,
+      fetcher,
+      createRateLimiter: () => ({ consume: vi.fn(async () => undefined) }),
+    });
+    const selected = await runtime.resolveProvider();
+    const invocation = {
+      request: { message: "问题", context: { pathname: "/" } },
+      session: {
+        kind: "persistent" as const,
+        internalSessionId: "internal-session",
+      },
+    };
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expect(selected.provider.reply(invocation)).rejects.toMatchObject({
+        code: "ASSISTANT_EXECUTION_UNAVAILABLE",
+      });
+    }
+
+    expect(runtime.inspect().circuits).toEqual({
+      readiness: { state: "closed", consecutiveFailures: 0 },
+      execution: { state: "open", consecutiveFailures: 3 },
+    });
     await expect(runtime.status()).resolves.toEqual({
       live: true,
       ready: false,
       capability: "degraded",
       message: "助手基础服务暂不可用。",
     });
+    const openSelection = await runtime.resolveProvider();
+    await expect(
+      openSelection.provider.reply(invocation),
+    ).rejects.toMatchObject({
+      code: "ASSISTANT_EXECUTION_UNAVAILABLE",
+    });
+    expect(
+      fetcher.mock.calls.filter(([input]) =>
+        String(input).endsWith("/agents/maduoduo/runs"),
+      ),
+    ).toHaveLength(3);
   });
 
-  it("returns one safe degraded snapshot for malformed AgentOS responses", async () => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(Response.json({ ready: "yes", internal: "secret" }));
+  it("rejects a half-open execution circuit after readiness without invoking it", async () => {
+    const execute = vi.fn();
+    const halfOpenCircuit: AgentOSExecutionCircuit = {
+      execute,
+      inspect: () => ({ state: "half-open", consecutiveFailures: 3 }),
+    };
     const runtime = createAssistantRuntime({
-      environment: VALID_ENVIRONMENT,
-      fetcher,
-      createRateLimiter: () => ({ consume: vi.fn(async () => undefined) }),
-    });
-
-    await expect(runtime.status()).resolves.toEqual({
-      live: false,
-      ready: false,
-      capability: "degraded",
-      message: "助手基础服务暂不可用。",
-    });
-    expect(runtime.inspect()).toEqual({
-      providerMode: "placeholder",
-      persistence: "disabled",
-      circuit: { state: "closed", consecutiveFailures: 1 },
-      readiness: {
-        cacheTtlMs: 5000,
-        probeTimeoutMs: 1500,
-        failureThreshold: 3,
-      },
-    });
-    expect(JSON.stringify(runtime.inspect())).not.toMatch(
-      /openedAt|monotonic|agent:7777|security-key/iu,
-    );
-  });
-
-  it("fails closed only when explicit AgentOS mode cannot become ready", async () => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(Response.json({ broken: "private" }));
-    const runtime = createAssistantRuntime({
-      environment: {
-        ...VALID_ENVIRONMENT,
-        ASSISTANT_PROVIDER_MODE: "agentos",
-      },
-      fetcher,
-      createRateLimiter: () => ({ consume: vi.fn(async () => undefined) }),
+      environment: AGENTOS_ENVIRONMENT,
+      createHealthClient: () => availableHealthClient(),
+      createRunClient: () => runClient(),
+      createExecutionCircuit: () => halfOpenCircuit,
     });
 
     await expect(runtime.resolveProvider()).rejects.toMatchObject({
       code: "ASSISTANT_RUNTIME_UNAVAILABLE",
     });
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("shares the default runtime across route bundles without reading env at import", () => {

@@ -4,14 +4,27 @@ import {
   createAgentOSClient,
   resolveAgentOSClientSettings,
 } from "./agentos-client";
-import { AgentOSAssistantProvider } from "./agentos-assistant-provider";
+import {
+  AgentOSAssistantProvider,
+  type AgentOSCleanupRecorder,
+} from "./agentos-assistant-provider";
+import {
+  createAgentOSExecutionCircuit,
+  type AgentOSExecutionCircuit,
+  type AgentOSExecutionCircuitInspection,
+} from "./agentos-execution-circuit";
 import {
   createAgentOSProbe,
   createAgentOSReadinessCircuit,
   resolveAgentOSReadinessSettings,
-  type AgentOSCircuitInspection,
+  type AgentOSReadinessSettings,
   type AgentOSReadinessSnapshot,
 } from "./agentos-readiness";
+import {
+  createAgentOSRunClient,
+  resolveAgentOSRunSettings,
+  type AgentOSRunClient,
+} from "./agentos-run-client";
 import { createAnonymousSessionManager } from "./anonymous-session";
 import { resolveAnonymousSessionSettings } from "./anonymous-session-config";
 import { resolveAssistantActor, type AssistantActor } from "./assistant-actor";
@@ -33,11 +46,11 @@ type AssistantRuntimeEnvironment = {
   ASSISTANT_SESSION_SECRET?: string;
   ASSISTANT_RATE_LIMIT_SECRET?: string;
   ASSISTANT_PROVIDER_MODE?: string;
-  ASSISTANT_AGENTOS_DEFAULT_AGENT_ID?: string;
   ASSISTANT_AGENTOS_READINESS_TTL_MS?: string;
   ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS?: string;
   ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD?: string;
   ASSISTANT_AGENTOS_CIRCUIT_RESET_MS?: string;
+  ASSISTANT_AGENTOS_RUN_TIMEOUT_MS?: string;
   AGENTOS_INTERNAL_URL?: string;
   OS_SECURITY_KEY?: string;
   TRUST_NGINX_PROXY?: string;
@@ -51,8 +64,6 @@ function readRuntimeEnvironment(
     ASSISTANT_SESSION_SECRET: source.ASSISTANT_SESSION_SECRET,
     ASSISTANT_RATE_LIMIT_SECRET: source.ASSISTANT_RATE_LIMIT_SECRET,
     ASSISTANT_PROVIDER_MODE: source.ASSISTANT_PROVIDER_MODE,
-    ASSISTANT_AGENTOS_DEFAULT_AGENT_ID:
-      source.ASSISTANT_AGENTOS_DEFAULT_AGENT_ID,
     ASSISTANT_AGENTOS_READINESS_TTL_MS:
       source.ASSISTANT_AGENTOS_READINESS_TTL_MS,
     ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS:
@@ -61,6 +72,7 @@ function readRuntimeEnvironment(
       source.ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD,
     ASSISTANT_AGENTOS_CIRCUIT_RESET_MS:
       source.ASSISTANT_AGENTOS_CIRCUIT_RESET_MS,
+    ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: source.ASSISTANT_AGENTOS_RUN_TIMEOUT_MS,
     AGENTOS_INTERNAL_URL: source.AGENTOS_INTERNAL_URL,
     OS_SECURITY_KEY: source.OS_SECURITY_KEY,
     TRUST_NGINX_PROXY: source.TRUST_NGINX_PROXY,
@@ -76,10 +88,18 @@ export type AssistantRuntimeProvider = {
   mode: AssistantProviderMode;
 };
 
+type SafeCircuitInspection = Pick<
+  AgentOSExecutionCircuitInspection,
+  "state" | "consecutiveFailures"
+>;
+
 export type AssistantRuntimeInspection = {
   providerMode: AssistantProviderMode;
   persistence: "disabled";
-  circuit: Pick<AgentOSCircuitInspection, "state" | "consecutiveFailures">;
+  circuits: {
+    readiness: SafeCircuitInspection;
+    execution: SafeCircuitInspection;
+  };
   readiness: {
     cacheTtlMs: number;
     probeTimeoutMs: number;
@@ -99,12 +119,29 @@ export class AssistantRuntimeUnavailableError extends Error {
 
   constructor() {
     super("Assistant runtime unavailable");
+    Object.defineProperty(this, "name", {
+      value: "AssistantRuntimeUnavailableError",
+      configurable: true,
+    });
   }
 }
 
 const PLACEHOLDER_MESSAGE = "模型尚未配置，当前为安全占位模式。";
 const AVAILABLE_MESSAGE = "AI 助理基础服务已就绪。";
 const DEGRADED_MESSAGE = "助手基础服务暂不可用。";
+const CLOSED_CIRCUIT: SafeCircuitInspection = {
+  state: "closed",
+  consecutiveFailures: 0,
+};
+
+function placeholderStatus(): AssistantRuntimeStatus {
+  return {
+    live: true,
+    ready: true,
+    capability: "placeholder",
+    message: PLACEHOLDER_MESSAGE,
+  };
+}
 
 function degradedStatus(live = false): AssistantRuntimeStatus {
   return {
@@ -137,31 +174,51 @@ export function normalizeAssistantRuntimeStatus(
   };
 }
 
-export function createAssistantRuntime(
-  options: {
-    environment?: AssistantRuntimeEnvironment;
-    fetcher?: typeof fetch;
-    createRateLimiter?: (secret: string | undefined) => AssistantRateLimiter;
-    resolveActor?: (request: Request) => Promise<AssistantActor>;
-  } = {},
-) {
+type RuntimeOptions = {
+  environment?: AssistantRuntimeEnvironment;
+  fetcher?: typeof fetch;
+  createRateLimiter?: (secret: string | undefined) => AssistantRateLimiter;
+  resolveActor?: (request: Request) => Promise<AssistantActor>;
+  createHealthClient?: typeof createAgentOSClient;
+  createRunClient?: typeof createAgentOSRunClient;
+  createExecutionCircuit?: typeof createAgentOSExecutionCircuit;
+  cleanupRecorder?: AgentOSCleanupRecorder;
+};
+
+type AgentOSComposition = {
+  runClient: AgentOSRunClient;
+  readiness: ReturnType<typeof createAgentOSReadinessCircuit>;
+  execution: AgentOSExecutionCircuit;
+  provider: AgentOSAssistantProvider;
+  readinessSettings: AgentOSReadinessSettings;
+};
+
+function safeInspection(inspection: {
+  state: "closed" | "open" | "half-open";
+  consecutiveFailures: number;
+}): SafeCircuitInspection {
+  return {
+    state: inspection.state,
+    consecutiveFailures: inspection.consecutiveFailures,
+  };
+}
+
+export function createAssistantRuntime(options: RuntimeOptions = {}) {
   const environment = readRuntimeEnvironment(
     options.environment ?? process.env,
   );
   const providerSettings = resolveAssistantProviderSettings({
-    ...environment,
     ASSISTANT_PROVIDER_MODE:
       environment.ASSISTANT_PROVIDER_MODE ?? "placeholder",
   });
   const rateLimitSecret = environment.ASSISTANT_RATE_LIMIT_SECRET;
   const trustNginxProxy = parseTrustNginxProxy(environment.TRUST_NGINX_PROXY);
-  const agentosProvider = new AgentOSAssistantProvider();
   const actorResolver = options.resolveActor ?? resolveAssistantActor;
   let sessionManager:
     | ReturnType<typeof createAnonymousSessionManager>
     | undefined;
   let sharedRateLimiter: AssistantRateLimiter | undefined;
-  let readiness: ReturnType<typeof createAgentOSReadinessCircuit> | undefined;
+  let agentos: AgentOSComposition | undefined;
 
   function getSessionManager() {
     sessionManager ??= createAnonymousSessionManager({
@@ -179,21 +236,45 @@ export function createAssistantRuntime(
     return sharedRateLimiter;
   }
 
-  function getReadiness() {
-    if (readiness) return readiness;
+  function getAgentOSComposition(): AgentOSComposition {
+    if (agentos) return agentos;
     const readinessSettings = resolveAgentOSReadinessSettings(environment);
-    const client = createAgentOSClient({
-      settings: resolveAgentOSClientSettings(environment),
+    const healthSettings = resolveAgentOSClientSettings(environment);
+    const runSettings = resolveAgentOSRunSettings(environment);
+    const healthClient = (options.createHealthClient ?? createAgentOSClient)({
+      settings: healthSettings,
       fetcher: options.fetcher,
       timeoutMs: readinessSettings.probeTimeoutMs,
     });
-    readiness = createAgentOSReadinessCircuit({
-      probe: createAgentOSProbe(client),
+    const runClient = (options.createRunClient ?? createAgentOSRunClient)({
+      settings: runSettings,
+      fetcher: options.fetcher,
+    });
+    const readiness = createAgentOSReadinessCircuit({
+      probe: createAgentOSProbe(healthClient),
       cacheTtlMs: readinessSettings.cacheTtlMs,
       failureThreshold: readinessSettings.failureThreshold,
       resetAfterMs: readinessSettings.resetAfterMs,
     });
-    return readiness;
+    const execution = (
+      options.createExecutionCircuit ?? createAgentOSExecutionCircuit
+    )({
+      failureThreshold: readinessSettings.failureThreshold,
+      resetAfterMs: readinessSettings.resetAfterMs,
+    });
+    const provider = new AgentOSAssistantProvider({
+      runClient,
+      circuit: execution,
+      cleanupRecorder: options.cleanupRecorder,
+    });
+    agentos = {
+      runClient,
+      readiness,
+      execution,
+      provider,
+      readinessSettings,
+    };
+    return agentos;
   }
 
   return {
@@ -202,6 +283,7 @@ export function createAssistantRuntime(
         return getRateLimiter().consume(input);
       },
     } satisfies AssistantRateLimiter,
+
     async resolveSession(request: Request): Promise<AssistantRuntimeSession> {
       const actor = await actorResolver(request);
       const session = getSessionManager().resolve(request.headers, actor);
@@ -212,55 +294,86 @@ export function createAssistantRuntime(
         setCookie: session.setCookie,
       };
     },
+
     resolveTrustedClientIp(request: Request): string | undefined {
       return resolveTrustedClientIp(request.headers, trustNginxProxy);
     },
+
     async status(): Promise<AssistantRuntimeStatus> {
-      return normalizeAssistantRuntimeStatus(await getReadiness().status());
+      if (providerSettings.mode === "placeholder") return placeholderStatus();
+      const composition = getAgentOSComposition();
+      const snapshot = await composition.readiness.status();
+      if (composition.execution.inspect().state !== "closed") {
+        return degradedStatus(snapshot.live);
+      }
+      return normalizeAssistantRuntimeStatus(snapshot);
     },
+
     inspect(): AssistantRuntimeInspection {
-      const inspection = readiness?.inspect();
-      const readinessSettings = resolveAgentOSReadinessSettings(environment);
+      if (providerSettings.mode === "placeholder") {
+        return {
+          providerMode: "placeholder",
+          persistence: "disabled",
+          circuits: {
+            readiness: { ...CLOSED_CIRCUIT },
+            execution: { ...CLOSED_CIRCUIT },
+          },
+          readiness: {
+            cacheTtlMs: 0,
+            probeTimeoutMs: 0,
+            failureThreshold: 0,
+          },
+        };
+      }
+      const composition = getAgentOSComposition();
       return {
-        providerMode: providerSettings.mode,
+        providerMode: "agentos",
         persistence: "disabled",
-        circuit: inspection
-          ? {
-              state: inspection.state,
-              consecutiveFailures: inspection.consecutiveFailures,
-            }
-          : { state: "closed", consecutiveFailures: 0 },
+        circuits: {
+          readiness: safeInspection(composition.readiness.inspect()),
+          execution: safeInspection(composition.execution.inspect()),
+        },
         readiness: {
-          cacheTtlMs: readinessSettings.cacheTtlMs,
-          probeTimeoutMs: readinessSettings.probeTimeoutMs,
-          failureThreshold: readinessSettings.failureThreshold,
+          cacheTtlMs: composition.readinessSettings.cacheTtlMs,
+          probeTimeoutMs: composition.readinessSettings.probeTimeoutMs,
+          failureThreshold: composition.readinessSettings.failureThreshold,
         },
       };
     },
+
     async resolveProvider(): Promise<AssistantRuntimeProvider> {
       if (providerSettings.mode === "placeholder") {
         return { provider: placeholderAssistantProvider, mode: "placeholder" };
       }
 
-      const snapshot = await getReadiness().status();
+      const composition = getAgentOSComposition();
+      const snapshot = await composition.readiness.status();
       if (
         !snapshot.live ||
         !snapshot.ready ||
-        snapshot.capability === "degraded"
+        snapshot.capability !== "available"
       ) {
         throw new AssistantRuntimeUnavailableError();
       }
+      if (composition.execution.inspect().state === "half-open") {
+        throw new AssistantRuntimeUnavailableError();
+      }
       const provider = selectAssistantProvider({
-        ...providerSettings,
+        mode: "agentos",
         ready: snapshot.ready,
         capability: snapshot.capability,
         placeholder: placeholderAssistantProvider,
-        agentos: agentosProvider,
+        agentos: composition.provider,
       });
-      return {
-        provider,
-        mode: provider === agentosProvider ? "agentos" : "placeholder",
-      };
+      if (provider !== composition.provider) {
+        throw new AssistantRuntimeUnavailableError();
+      }
+      return { provider, mode: "agentos" };
+    },
+
+    async deleteSession(internalSessionId: string): Promise<void> {
+      if (providerSettings.mode === "placeholder") return;
+      await getAgentOSComposition().runClient.deleteSession(internalSessionId);
     },
   };
 }

@@ -16,6 +16,7 @@ import {
 } from "@ai-agent-platform/database";
 
 import { createAssistantErrorResponse } from "@/features/assistant/assistant-contract";
+import type { AssistantProvider } from "@/server/assistant/assistant-provider";
 import { createAnonymousSessionManager } from "@/server/assistant/anonymous-session";
 import { resolveAnonymousSessionSettings } from "@/server/assistant/anonymous-session-config";
 import {
@@ -80,12 +81,11 @@ describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
       now: () => 100_000,
       randomBytes: (length) => new Uint8Array(length).fill(++randomValue),
     });
-    const provider = {
-      reply: vi.fn(async () => ({
-        content: "placeholder",
-        suggestedActions: [],
-      })),
-    };
+    const reply = vi.fn<AssistantProvider["reply"]>(async () => ({
+      content: "placeholder",
+      suggestedActions: [],
+    }));
+    const provider: AssistantProvider = { reply };
     const handler = createAssistantChatHandler({
       provider,
       logger: { log: vi.fn() },
@@ -131,7 +131,21 @@ describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
     await expect(blockedRotatedCookie.json()).resolves.toEqual(
       createAssistantErrorResponse("integration-request-id", "rate_limited"),
     );
-    expect(provider.reply).toHaveBeenCalledTimes(3);
+    expect(reply).toHaveBeenCalledTimes(3);
+    for (const [invocation] of reply.mock.calls) {
+      expect(invocation).toMatchObject({
+        request: {
+          message: "如何开始了解平台？",
+          context: { pathname: "/" },
+        },
+        session: { kind: "persistent" },
+        signal: expect.any(AbortSignal),
+      });
+      expect(Object.keys(invocation.session).sort()).toEqual([
+        "internalSessionId",
+        "kind",
+      ]);
+    }
 
     const ipKey = assistantRateLimitKey(
       RATE_SECRET,

@@ -35,6 +35,16 @@ export type AdminAssistantStatusSnapshot = {
       state: "closed" | "open" | "half-open";
       consecutiveFailures: number;
     };
+    circuits?: {
+      readiness: {
+        state: "closed" | "open" | "half-open";
+        consecutiveFailures: number;
+      };
+      execution: {
+        state: "closed" | "open" | "half-open";
+        consecutiveFailures: number;
+      };
+    };
     readiness: {
       cacheTtlMs: number;
       probeTimeoutMs: number;
