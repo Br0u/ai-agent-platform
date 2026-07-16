@@ -701,7 +701,7 @@
   transform: translateY(32px);
 }
 
-.home-reveal-ready [data-home-reveal="true"] [data-home-reveal-item] {
+.home-reveal-ready :where([data-home-reveal="true"] [data-home-reveal-item]) {
   --home-reveal-delay: 0ms;
   opacity: 0;
 }

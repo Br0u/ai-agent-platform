@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 async function expectNoHorizontalOverflow(page: Page) {
   const dimensions = await page.evaluate(() => ({
@@ -38,6 +38,35 @@ async function gotoHome(
   await page.emulateMedia({ reducedMotion });
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.waitForLoadState("load");
+}
+
+async function readAnimationTiming(locator: Locator, animationName: string) {
+  return locator.evaluate((element, targetAnimationName) => {
+    const style = getComputedStyle(element);
+    const animationNames = style.animationName
+      .split(",")
+      .map((value) => value.trim());
+    const animationIndex = animationNames.indexOf(targetAnimationName);
+
+    if (animationIndex < 0) return null;
+
+    const parseTimeInMilliseconds = (value: string) => {
+      const normalized = value.trim();
+      const amount = Number.parseFloat(normalized);
+      return normalized.endsWith("ms") ? amount : amount * 1000;
+    };
+    const matchingValue = (value: string) => {
+      const values = value.split(",").map((item) => item.trim());
+      return values[animationIndex % values.length];
+    };
+
+    return {
+      delayMs: parseTimeInMilliseconds(matchingValue(style.animationDelay)),
+      durationMs: parseTimeInMilliseconds(
+        matchingValue(style.animationDuration),
+      ),
+    };
+  }, animationName);
 }
 
 async function loadHomeImages(page: Page) {
@@ -359,8 +388,13 @@ test("reveals post-hero regions once with staged foreground motion and a breathi
 
   const resources = page.locator('[data-home-region="resources"]');
   await expect(resources).not.toHaveClass(/is-home-visible/);
-  await resources.scrollIntoViewIfNeeded();
-  await expect(resources).toHaveClass(/is-home-visible/);
+  const revealRegions = page.locator('[data-home-reveal="true"]');
+  await expect(revealRegions).toHaveCount(4);
+  for (let index = 0; index < (await revealRegions.count()); index += 1) {
+    const region = revealRegions.nth(index);
+    await region.scrollIntoViewIfNeeded();
+    await expect(region).toHaveClass(/is-home-visible/);
+  }
 
   const firstText = resources.locator('[data-home-reveal-item="text"]').first();
   const firstBlock = resources
@@ -380,6 +414,113 @@ test("reveals post-hero regions once with staged foreground motion and a breathi
   expect(revealAnimationNames[0]).toContain("home-section-reveal");
   expect(revealAnimationNames[1]).toContain("home-text-reveal");
   expect(revealAnimationNames[2]).toContain("home-block-reveal");
+
+  expect(await readAnimationTiming(resources, "home-section-reveal")).toEqual({
+    delayMs: 0,
+    durationMs: 520,
+  });
+
+  const platform = page.locator('[data-home-region="platform"]');
+  const enterprise = page.locator('[data-home-region="enterprise"]');
+  const solutions = page.locator('[data-home-region="solutions"]');
+  const timingExpectations: Array<{
+    animationName: "home-block-reveal" | "home-text-reveal";
+    delayMs: number;
+    element: Locator;
+    label: string;
+  }> = [
+    {
+      animationName: "home-text-reveal",
+      delayMs: 0,
+      element: platform.locator(".home-section-kicker"),
+      label: "platform kicker",
+    },
+    {
+      animationName: "home-text-reveal",
+      delayMs: 60,
+      element: platform.locator("h2"),
+      label: "platform heading",
+    },
+    {
+      animationName: "home-text-reveal",
+      delayMs: 120,
+      element: platform.locator(".home-section-intro"),
+      label: "platform intro",
+    },
+    {
+      animationName: "home-block-reveal",
+      delayMs: 180,
+      element: platform.locator(".home-actions"),
+      label: "platform actions",
+    },
+    {
+      animationName: "home-block-reveal",
+      delayMs: 720,
+      element: platform.locator(".home-platform__illustration"),
+      label: "platform illustration",
+    },
+    {
+      animationName: "home-block-reveal",
+      delayMs: 540,
+      element: solutions.locator(".home-solutions__illustration"),
+      label: "solutions illustration",
+    },
+    {
+      animationName: "home-block-reveal",
+      delayMs: 480,
+      element: resources.locator(".home-resources__illustration"),
+      label: "resources illustration",
+    },
+  ];
+  const staggerGroups = [
+    {
+      delays: [240, 300, 360, 420],
+      elements: platform.locator(".home-capability-card"),
+      label: "platform capability",
+    },
+    {
+      delays: [480, 540, 600, 660],
+      elements: platform.locator(".home-platform-row"),
+      label: "platform row",
+    },
+    {
+      delays: [180, 240, 300, 360],
+      elements: enterprise.locator(".home-enterprise-row"),
+      label: "enterprise row",
+    },
+    {
+      delays: [240, 300, 360, 420, 480],
+      elements: solutions.locator(".home-solution-row"),
+      label: "solution row",
+    },
+    {
+      delays: [240, 300, 360, 420],
+      elements: resources.locator(".home-resource"),
+      label: "resource row",
+    },
+  ];
+  for (const group of staggerGroups) {
+    await expect(group.elements).toHaveCount(group.delays.length);
+    group.delays.forEach((delayMs, index) => {
+      timingExpectations.push({
+        animationName: "home-block-reveal",
+        delayMs,
+        element: group.elements.nth(index),
+        label: `${group.label} ${index + 1}`,
+      });
+    });
+  }
+
+  for (const expectation of timingExpectations) {
+    const timing = await readAnimationTiming(
+      expectation.element,
+      expectation.animationName,
+    );
+    expect(timing, expectation.label).toEqual({
+      delayMs: expectation.delayMs,
+      durationMs: expectation.animationName === "home-text-reveal" ? 480 : 440,
+    });
+  }
 
   const purpleAtmosphere = page.locator(".home-atmosphere span:nth-child(2)");
   const purpleStyle = await purpleAtmosphere.evaluate((element) => {
