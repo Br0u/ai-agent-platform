@@ -1,4 +1,13 @@
 import { execFileSync } from "node:child_process";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import {
@@ -42,6 +51,26 @@ function optionalEnvironment(name: string): string[] {
   return value ? [value] : [];
 }
 
+function protectedFileValues(name: string): string[] {
+  const filePath = process.env[name];
+  if (!filePath) return [];
+
+  let content: string;
+  try {
+    const stats = statSync(filePath);
+    if (!stats.isFile() || (stats.mode & 0o777) !== 0o600) {
+      throw new Error("invalid protected file");
+    }
+    content = readFileSync(filePath, "utf8");
+  } catch {
+    throw new Error("assistant protected secret file is invalid");
+  }
+  if (content.trim().length === 0) {
+    throw new Error("assistant protected secret file is invalid");
+  }
+  return [filePath, content];
+}
+
 function runtimeProtectedValues(): string[] {
   return [
     "http://agent:7777",
@@ -49,9 +78,22 @@ function runtimeProtectedValues(): string[] {
     ...optionalEnvironment("MIGRATOR_DATABASE_URL"),
     ...optionalEnvironment("RUNTIME_DATABASE_URL"),
     ...optionalEnvironment("MODEL_ID"),
-    ...optionalEnvironment("MODEL_API_KEY_FILE"),
-    ...optionalEnvironment("OS_SECURITY_KEY_FILE"),
-    ...optionalEnvironment("AGNO_DATABASE_URL_FILE"),
+    ...protectedFileValues("POSTGRES_PASSWORD_FILE"),
+    ...protectedFileValues("MIGRATOR_DATABASE_PASSWORD_FILE"),
+    ...protectedFileValues("RUNTIME_DATABASE_PASSWORD_FILE"),
+    ...protectedFileValues("BACKUP_DATABASE_PASSWORD_FILE"),
+    ...protectedFileValues("BACKUP_ENCRYPTION_KEY_FILE"),
+    ...protectedFileValues("AGNO_MIGRATOR_DATABASE_PASSWORD_FILE"),
+    ...protectedFileValues("AGNO_DATABASE_PASSWORD_FILE"),
+    ...protectedFileValues("MIGRATOR_DATABASE_URL_FILE"),
+    ...protectedFileValues("RUNTIME_DATABASE_URL_FILE"),
+    ...protectedFileValues("AGNO_MIGRATOR_DATABASE_URL_FILE"),
+    ...protectedFileValues("AGNO_DATABASE_URL_FILE"),
+    ...protectedFileValues("BETTER_AUTH_SECRET_FILE"),
+    ...protectedFileValues("OS_SECURITY_KEY_FILE"),
+    ...protectedFileValues("ASSISTANT_SESSION_SECRET_FILE"),
+    ...protectedFileValues("ASSISTANT_RATE_LIMIT_SECRET_FILE"),
+    ...protectedFileValues("MODEL_API_KEY_FILE"),
   ];
 }
 
@@ -112,22 +154,80 @@ function servicePortBindings(service: "agent" | "db"): string {
   ).trim();
 }
 
+const BLOCKED_RESPONSE_KEYS = new Set([
+  "agentosinternalurl",
+  "ossecuritykey",
+  "assistantsessionsecret",
+  "assistantratelimitsecret",
+  "authorization",
+  "cookie",
+  "useragent",
+  "xrealip",
+]);
+
+function normalizeResponseKey(key: string): string {
+  return key.replaceAll(/[^a-z0-9]/giu, "").toLowerCase();
+}
+
+function isBlockedResponseKey(key: string): boolean {
+  const normalized = normalizeResponseKey(key);
+  return (
+    BLOCKED_RESPONSE_KEYS.has(normalized) ||
+    /^(?:internal)?(?:run|session)id$/u.test(normalized)
+  );
+}
+
+function containsBlockedResponseKey(
+  value: unknown,
+  visited = new WeakSet<object>(),
+): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  if (visited.has(value)) return false;
+  visited.add(value);
+  if (Array.isArray(value)) {
+    return value.some((entry) => containsBlockedResponseKey(entry, visited));
+  }
+
+  return Object.entries(value).some(
+    ([key, entry]) =>
+      isBlockedResponseKey(key) || containsBlockedResponseKey(entry, visited),
+  );
+}
+
+function containsProtectedString(
+  value: unknown,
+  protectedValues: string[],
+  visited = new WeakSet<object>(),
+): boolean {
+  if (typeof value === "string") {
+    return protectedValues.some(
+      (protectedValue) =>
+        protectedValue.length > 0 && value.includes(protectedValue),
+    );
+  }
+  if (typeof value !== "object" || value === null) return false;
+  if (visited.has(value)) return false;
+  visited.add(value);
+  return Object.values(value).some((entry) =>
+    containsProtectedString(entry, protectedValues, visited),
+  );
+}
+
 function expectNoProtectedValue(
   body: unknown,
   protectedValues: string[],
-  rawJson = JSON.stringify(body),
+  rawJson?: string,
 ) {
-  const serialized = JSON.stringify(body);
-  for (const value of protectedValues) {
-    const leaked = serialized.includes(value) || rawJson.includes(value);
-    expect(leaked, "protected value leaked in assistant response").toBe(false);
-  }
-  const containsInternalField =
-    /(?:AGENTOS_INTERNAL_URL|OS_SECURITY_KEY|ASSISTANT_(?:SESSION|RATE_LIMIT)_SECRET|authorization|cookie|user-agent|x-real-ip)/iu.test(
-      `${serialized}\n${rawJson}`,
-    );
+  const leaked =
+    containsProtectedString(body, protectedValues) ||
+    (rawJson !== undefined &&
+      protectedValues.some(
+        (value) => value.length > 0 && rawJson.includes(value),
+      ));
+  expect(leaked, "protected value leaked in assistant response").toBe(false);
+
   expect(
-    containsInternalField,
+    containsBlockedResponseKey(body),
     "internal assistant field leaked in response",
   ).toBe(false);
 }
@@ -211,6 +311,153 @@ async function completeSeededAdminTwoFactor(context: BrowserContext) {
 }
 
 test.describe.configure({ mode: "serial" });
+
+if (process.env.AAP_RUNTIME_GUARD_TESTS === "true") {
+  test.describe("assistant response safety guard", () => {
+    test("rejects internal run and session identifier keys recursively", () => {
+      const forbiddenKeys = [
+        "sessionId",
+        "session_id",
+        "runId",
+        "run_id",
+        "internalSessionId",
+      ];
+      const rejected = forbiddenKeys.map((key) => {
+        try {
+          expectNoProtectedValue({ nested: [{ [key]: "opaque-id" }] }, []);
+          return false;
+        } catch {
+          return true;
+        }
+      });
+
+      expect(
+        rejected.every(Boolean),
+        "guard must reject every internal run or session identifier key",
+      ).toBe(true);
+    });
+
+    test("allows requestId and message.id", () => {
+      expectNoProtectedValue(
+        {
+          requestId: "public-request-id",
+          message: { id: "public-message-id", content: "safe" },
+        },
+        [],
+      );
+    });
+
+    test("rejects protected string values without rendering them", () => {
+      const protectedValue = "guard-unit-secret-never-render";
+      let rejected = false;
+      let safeFailure = false;
+      try {
+        expectNoProtectedValue(
+          { nested: [{ value: `prefix-${protectedValue}-suffix` }] },
+          [protectedValue],
+        );
+      } catch (error) {
+        rejected = true;
+        const message = error instanceof Error ? error.message : "";
+        safeFailure =
+          message.includes("protected value leaked in assistant response") &&
+          !message.includes(protectedValue);
+      }
+
+      expect(rejected, "guard must reject protected string values").toBe(true);
+      expect(
+        safeFailure,
+        "guard failure must use a fixed message without protected data",
+      ).toBe(true);
+    });
+
+    test("loads chmod 600 secret contents while preserving the file path", () => {
+      const secretDirectory = mkdtempSync(
+        path.join(os.tmpdir(), "aap-runtime-guard-"),
+      );
+      const secretPath = path.join(secretDirectory, "model-api-key");
+      const protectedValue = "file-backed-guard-secret-never-render";
+      const originalPath = process.env.MODEL_API_KEY_FILE;
+      writeFileSync(secretPath, protectedValue, { mode: 0o600 });
+      chmodSync(secretPath, 0o600);
+      process.env.MODEL_API_KEY_FILE = secretPath;
+
+      let rejected = false;
+      let safeFailure = false;
+      try {
+        const protectedValues = runtimeProtectedValues();
+        try {
+          expectNoProtectedValue({ value: protectedValue }, protectedValues);
+        } catch (error) {
+          rejected = true;
+          const message = error instanceof Error ? error.message : "";
+          safeFailure =
+            !message.includes(protectedValue) && !message.includes(secretPath);
+        }
+      } finally {
+        if (originalPath === undefined) delete process.env.MODEL_API_KEY_FILE;
+        else process.env.MODEL_API_KEY_FILE = originalPath;
+        rmSync(secretDirectory, { recursive: true, force: true });
+      }
+
+      expect(
+        rejected,
+        "guard must reject the contents loaded from a secret file",
+      ).toBe(true);
+      expect(
+        safeFailure,
+        "file-backed guard failure must not reveal path or content",
+      ).toBe(true);
+    });
+
+    test("fails closed for unreadable, empty, or non-600 secret files", () => {
+      const secretDirectory = mkdtempSync(
+        path.join(os.tmpdir(), "aap-runtime-guard-invalid-"),
+      );
+      const originalPath = process.env.MODEL_API_KEY_FILE;
+      const scenarios = [
+        path.join(secretDirectory, "missing"),
+        path.join(secretDirectory, "empty"),
+        path.join(secretDirectory, "wrong-mode"),
+      ];
+      writeFileSync(scenarios[1]!, "", { mode: 0o600 });
+      writeFileSync(scenarios[2]!, "mode-secret", { mode: 0o644 });
+      chmodSync(scenarios[2]!, 0o644);
+
+      const outcomes: Array<{ rejected: boolean; safeFailure: boolean }> = [];
+      try {
+        for (const secretPath of scenarios) {
+          process.env.MODEL_API_KEY_FILE = secretPath;
+          try {
+            runtimeProtectedValues();
+            outcomes.push({ rejected: false, safeFailure: false });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "";
+            outcomes.push({
+              rejected: true,
+              safeFailure:
+                message.includes("protected secret file is invalid") &&
+                !message.includes(secretPath),
+            });
+          }
+        }
+      } finally {
+        if (originalPath === undefined) delete process.env.MODEL_API_KEY_FILE;
+        else process.env.MODEL_API_KEY_FILE = originalPath;
+        rmSync(secretDirectory, { recursive: true, force: true });
+      }
+
+      expect(
+        outcomes.every((outcome) => outcome.rejected),
+        "invalid secret files must fail closed",
+      ).toBe(true);
+      expect(
+        outcomes.every((outcome) => outcome.safeFailure),
+        "invalid secret file errors must be fixed and path-free",
+      ).toBe(true);
+    });
+  });
+}
 
 test("public runtime is ready, placeholder chat is safe, and Nginx owns the first IP limit", async ({
   browser,
