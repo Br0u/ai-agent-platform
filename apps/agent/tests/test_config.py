@@ -297,6 +297,40 @@ def test_disabled_agent_has_no_active_model_and_ignores_host_provider_variables(
     assert settings.model_api_key is None
 
 
+@pytest.mark.parametrize(
+    ("name", "invalid_value"),
+    [
+        ("MODEL_PROVIDER", "OPENAI"),
+        ("MODEL_PROVIDER", "unknown"),
+        ("MODEL_ID", " "),
+        ("MODEL_ID", "model\x1fid"),
+        ("MODEL_API_KEY", "arbitrary-host-model-key"),
+        ("MODEL_BASE_URL", "http://models.example.com/v1"),
+        ("MODEL_BASE_URL", "https://user:password@models.example.com/v1"),
+        ("MODEL_RUN_TIMEOUT_SECONDS", "1.5"),
+        ("MODEL_RUN_TIMEOUT_SECONDS", "nan"),
+    ],
+)
+def test_disabled_agent_ignores_invalid_model_environment_fields(
+    name: str,
+    invalid_value: str,
+    valid_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENT_ENABLED", "false")
+    monkeypatch.setenv(name, invalid_value)
+
+    settings = RuntimeSettings(_env_file=None)
+
+    assert settings.active_model is None
+    assert settings.capability == "placeholder"
+    assert settings.model_provider is None
+    assert settings.model_id is None
+    assert settings.model_api_key is None
+    assert settings.model_base_url is None
+    assert settings.model_run_timeout_seconds == 50
+
+
 def test_enabled_agent_exposes_frozen_typed_active_model(
     valid_enabled_runtime_env: None,
 ) -> None:

@@ -2,10 +2,18 @@
 
 from dataclasses import dataclass
 import re
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import Field, FiniteFloat, SecretStr, field_validator, model_validator
+from pydantic import (
+    Field,
+    FiniteFloat,
+    SecretStr,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -24,6 +32,21 @@ ModelProvider = Literal[
 MODEL_ID_MAX_CODE_POINTS = 128
 _BASE_URL_PROVIDERS: frozenset[ModelProvider] = frozenset(
     {"openai", "dashscope", "deepseek", "minimax"}
+)
+_BOOLEAN_ADAPTER = TypeAdapter(bool)
+_MODEL_SETTING_INPUT_KEYS = frozenset(
+    {
+        "MODEL_PROVIDER",
+        "MODEL_ID",
+        "MODEL_API_KEY",
+        "MODEL_BASE_URL",
+        "MODEL_RUN_TIMEOUT_SECONDS",
+        "model_provider",
+        "model_id",
+        "model_api_key",
+        "model_base_url",
+        "model_run_timeout_seconds",
+    }
 )
 
 
@@ -116,6 +139,25 @@ class RuntimeSettings(_AgentSettings):
     _validate_database_url = field_validator("agno_database_url")(
         _validate_async_postgres_url
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _ignore_disabled_model_configuration(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+        try:
+            agent_enabled = _BOOLEAN_ADAPTER.validate_python(
+                values.get("AGENT_ENABLED", False)
+            )
+        except ValidationError:
+            return values
+        if agent_enabled:
+            return values
+        return {
+            key: value
+            for key, value in values.items()
+            if key not in _MODEL_SETTING_INPUT_KEYS
+        }
 
     @field_validator("os_security_key", mode="after")
     @classmethod
