@@ -1,6 +1,6 @@
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
-import { Pool } from "pg";
+import { Pool, type PoolConfig } from "pg";
 
 import * as schema from "./schema";
 
@@ -17,9 +17,21 @@ function getDatabaseUrl(): string {
   return url;
 }
 
+export function databasePoolOptions(connectionString: string): PoolConfig {
+  return {
+    connectionString,
+    max: 10,
+    connectionTimeoutMillis: 1_500,
+    idleTimeoutMillis: 10_000,
+    query_timeout: 2_000,
+    statement_timeout: 2_000,
+    allowExitOnIdle: false,
+  };
+}
+
 export function getDatabase(): NodePgDatabase<typeof schema> {
   if (!pool || !database) {
-    pool = new Pool({ connectionString: getDatabaseUrl() });
+    pool = new Pool(databasePoolOptions(getDatabaseUrl()));
     database = drizzle(pool, { schema });
   }
 
