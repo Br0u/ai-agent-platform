@@ -390,23 +390,12 @@ def test_runtime_and_migration_share_the_same_url_policy(
         MigrationSettings(_env_file=None)
 
 
-def test_placeholder_is_distinct_from_readiness(valid_runtime_env: None) -> None:
-    settings = RuntimeSettings(_env_file=None)
-
-    assert settings.capability == "placeholder"
-    assert settings.agent_enabled is False
-
-
-def test_capability_cannot_be_overridden_from_environment(
+def test_runtime_settings_has_no_capability_shadow_state(
     valid_runtime_env: None,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("CAPABILITY", "ready")
-
     settings = RuntimeSettings(_env_file=None)
 
-    assert settings.capability == "placeholder"
-    assert "capability" not in RuntimeSettings.model_fields
+    assert not hasattr(settings, "capability")
 
 
 def test_disabled_agent_has_no_active_model_and_ignores_host_provider_variables(
@@ -449,7 +438,6 @@ def test_disabled_agent_ignores_invalid_model_environment_fields(
     settings = RuntimeSettings(_env_file=None)
 
     assert settings.active_model is None
-    assert settings.capability == "placeholder"
     assert settings.model_provider is None
     assert settings.model_id is None
     assert settings.model_api_key is None

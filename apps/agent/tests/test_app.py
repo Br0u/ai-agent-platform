@@ -359,6 +359,43 @@ def test_create_app_defaults_to_the_production_catalog_builder() -> None:
     assert parameter.default is app_module.build_catalog
 
 
+def test_create_app_installs_agno_log_redaction_before_building_runtime(
+    settings: RuntimeSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    database = build_database(settings)
+
+    def install_redaction() -> None:
+        events.append("logging")
+
+    def catalog_builder(
+        _: RuntimeSettings,
+        __: AsyncPostgresDb,
+    ) -> AgentCatalog:
+        events.append("catalog")
+        return AgentCatalog(agents=[], capability="placeholder")
+
+    class CapturingAgentOS:
+        def __init__(self, **kwargs: Any) -> None:
+            events.append("agentos")
+            self._app = kwargs["base_app"]
+
+        def get_app(self) -> FastAPI:
+            return self._app
+
+    monkeypatch.setattr(app_module, "install_agno_log_redaction", install_redaction)
+
+    create_app(
+        settings=settings,
+        database=database,
+        agent_os_factory=CapturingAgentOS,
+        catalog_builder=catalog_builder,
+    )
+
+    assert events == ["logging", "catalog", "agentos"]
+
+
 def test_agentos_receives_exact_disabled_composition_and_same_database(
     settings: RuntimeSettings,
 ) -> None:

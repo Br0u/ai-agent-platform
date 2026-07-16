@@ -457,11 +457,6 @@ class RuntimeSettings(_AgentSettings):
             timeout_seconds=self.model_run_timeout_seconds,
         )
 
-    @property
-    def capability(self) -> Literal["placeholder"]:
-        return "placeholder"
-
-
 class MigrationSettings(_AgentSettings):
     """Credentials available only to the one-shot migration role."""
 

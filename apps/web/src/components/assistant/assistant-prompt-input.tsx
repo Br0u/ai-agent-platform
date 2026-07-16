@@ -299,13 +299,13 @@ export function AssistantPromptInput({
                 <button
                   aria-expanded={isModelMenuOpen}
                   aria-haspopup="menu"
-                  aria-label="选择模型，当前 AI 助理"
+                  aria-label="选择模型，当前码多多"
                   className="assistant-prompt-input__tool-button"
                   onClick={() => setIsModelMenuOpen((current) => !current)}
                   type="button"
                 >
                   <Sparkles aria-hidden="true" size={14} />
-                  <span>AI 助理</span>
+                  <span>码多多</span>
                 </button>
                 {isModelMenuOpen ? (
                   <div
@@ -319,7 +319,7 @@ export function AssistantPromptInput({
                       role="menuitem"
                       type="button"
                     >
-                      <span>AI 助理</span>
+                      <span>码多多</span>
                       <Check aria-hidden="true" size={14} />
                     </button>
                     <button

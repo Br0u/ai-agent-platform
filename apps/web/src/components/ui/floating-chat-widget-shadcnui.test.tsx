@@ -80,7 +80,7 @@ function renderQuickWithServiceState(serviceState: AssistantStatusResponse) {
       <StatusHarness />
     </AssistantExperienceProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+  fireEvent.click(screen.getByRole("button", { name: "打开码多多" }));
 }
 
 function openWidget() {
@@ -89,7 +89,7 @@ function openWidget() {
       <FloatingChatWidget />
     </AssistantExperienceProvider>,
   );
-  const launcher = screen.getByRole("button", { name: "打开 M 助手" });
+  const launcher = screen.getByRole("button", { name: "打开码多多" });
   fireEvent.click(launcher);
   return launcher;
 }
@@ -180,22 +180,20 @@ describe("FloatingChatWidget", () => {
       </AssistantExperienceProvider>,
     );
 
-    const launcher = screen.getByRole("button", { name: "打开 M 助手" });
+    const launcher = screen.getByRole("button", { name: "打开码多多" });
     fireEvent.click(launcher);
-    expect(screen.getByRole("dialog", { name: "M 助手" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "码多多" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "打开停靠助手" }));
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "M 助手" })).toBeNull(),
+      expect(screen.queryByRole("dialog", { name: "码多多" })).toBeNull(),
     );
   });
 
   it("opens the preserved Chinese chat content without a model selector", () => {
     openWidget();
 
-    expect(screen.getByRole("dialog", { name: "M 助手" })).toBeInTheDocument();
-    expect(
-      screen.getByRole("log", { name: "AI 助理对话" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "码多多" })).toBeInTheDocument();
+    expect(screen.getByRole("log", { name: "码多多对话" })).toBeInTheDocument();
     expect(
       screen.getByTestId("assistant-quick-service-state"),
     ).toBeInTheDocument();
@@ -210,7 +208,7 @@ describe("FloatingChatWidget", () => {
     openWidget();
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "关闭 M 助手" })).toHaveFocus(),
+      expect(screen.getByRole("button", { name: "关闭码多多" })).toHaveFocus(),
     );
   });
 
@@ -218,9 +216,9 @@ describe("FloatingChatWidget", () => {
     openWidget();
 
     expect(
-      screen.getByRole("button", { name: "展开 AI 助理工作区" }).parentElement,
+      screen.getByRole("button", { name: "展开码多多工作区" }).parentElement,
     ).toHaveClass("floating-assistant__header-actions");
-    fireEvent.click(screen.getByRole("button", { name: "展开 AI 助理工作区" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开码多多工作区" }));
     expect(router.push).toHaveBeenCalledWith("/assistant");
   });
 
@@ -231,11 +229,11 @@ describe("FloatingChatWidget", () => {
       </AssistantExperienceProvider>,
     );
     await act(async () => Promise.resolve());
-    const launcher = screen.getByRole("button", { name: "打开 M 助手" });
+    const launcher = screen.getByRole("button", { name: "打开码多多" });
     fireEvent.click(launcher);
-    const quickDialog = screen.getByRole("dialog", { name: "M 助手" });
+    const quickDialog = screen.getByRole("dialog", { name: "码多多" });
     expect(quickDialog).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "AI 助理工作区" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "码多多工作区" })).toBeNull();
   });
 
   it("keeps a reopened quick instance isolated from the exiting instance refs", async () => {
@@ -255,20 +253,20 @@ describe("FloatingChatWidget", () => {
       </AssistantExperienceProvider>,
     );
     await act(async () => Promise.resolve());
-    const launcher = screen.getByRole("button", { name: "打开 M 助手" });
+    const launcher = screen.getByRole("button", { name: "打开码多多" });
     fireEvent.click(launcher);
-    const firstDialog = screen.getByRole("dialog", { name: "M 助手" });
+    const firstDialog = screen.getByRole("dialog", { name: "码多多" });
 
     fireEvent.click(launcher);
     fireEvent.click(launcher);
 
-    const secondDialog = screen.getByRole("dialog", { name: "M 助手" });
+    const secondDialog = screen.getByRole("dialog", { name: "码多多" });
     expect(secondDialog).not.toBe(firstDialog);
     expect(firstDialog).toHaveAttribute("inert");
     expect(secondDialog).not.toHaveAttribute("inert");
     expect(screen.getAllByRole("dialog")).toEqual([secondDialog]);
     const secondComposer = within(secondDialog).getByRole("textbox", {
-      name: "向 M 助手提问",
+      name: "向码多多提问",
     });
 
     await waitFor(() => expect(firstDialog).not.toBeInTheDocument());
@@ -277,7 +275,7 @@ describe("FloatingChatWidget", () => {
 
     fireEvent.click(
       within(secondDialog).getByRole("button", {
-        name: "展开 AI 助理工作区",
+        name: "展开码多多工作区",
       }),
     );
     expect(router.push).toHaveBeenCalledWith("/assistant");
@@ -310,7 +308,7 @@ describe("FloatingChatWidget", () => {
 
   it("sends trimmed free text and clears the input after success", async () => {
     openWidget();
-    const input = screen.getByRole("textbox", { name: "向 M 助手提问" });
+    const input = screen.getByRole("textbox", { name: "向码多多提问" });
 
     fireEvent.change(input, { target: { value: "  请介绍知识库能力  " } });
     fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
@@ -331,7 +329,7 @@ describe("FloatingChatWidget", () => {
 
   it("does not steal focus from the composer while the draft changes", () => {
     openWidget();
-    const input = screen.getByRole("textbox", { name: "向 M 助手提问" });
+    const input = screen.getByRole("textbox", { name: "向码多多提问" });
 
     input.focus();
     fireEvent.change(input, { target: { value: "继续输入" } });
@@ -362,7 +360,7 @@ describe("FloatingChatWidget", () => {
       );
     });
     openWidget();
-    const input = screen.getByRole("textbox", { name: "向 M 助手提问" });
+    const input = screen.getByRole("textbox", { name: "向码多多提问" });
     fireEvent.change(input, { target: { value: "部署失败怎么办" } });
     fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
 
@@ -385,7 +383,7 @@ describe("FloatingChatWidget", () => {
 
   it("rejects input over 500 Unicode characters before sending", () => {
     openWidget();
-    fireEvent.change(screen.getByRole("textbox", { name: "向 M 助手提问" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "向码多多提问" }), {
       target: { value: "😀".repeat(501) },
     });
 
@@ -396,7 +394,7 @@ describe("FloatingChatWidget", () => {
 
   it("counts characters after trimming whitespace, matching the API", () => {
     openWidget();
-    fireEvent.change(screen.getByRole("textbox", { name: "向 M 助手提问" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "向码多多提问" }), {
       target: { value: `  ${"你".repeat(500)}  ` },
     });
 
@@ -406,14 +404,14 @@ describe("FloatingChatWidget", () => {
 
   it("closes on Escape and restores focus to the launcher", async () => {
     const launcher = openWidget();
-    const quickDialog = screen.getByRole("dialog", { name: "M 助手" });
+    const quickDialog = screen.getByRole("dialog", { name: "码多多" });
     fireEvent.keyDown(document, { key: "Escape" });
 
     expect(quickDialog).toHaveAttribute("inert");
     expect(quickDialog).toHaveAttribute("aria-hidden", "true");
     expect(quickDialog).not.toHaveAttribute("role");
     expect(quickDialog).toHaveClass("is-exiting");
-    expect(screen.queryByRole("dialog", { name: "M 助手" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "码多多" })).toBeNull();
     await waitFor(() => expect(quickDialog).not.toBeInTheDocument());
     expect(launcher).toHaveFocus();
   });

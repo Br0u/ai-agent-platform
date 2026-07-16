@@ -59,7 +59,7 @@ export function AssistantConversation({
         {session.messages.map((message) => (
           <article
             aria-label={
-              message.role === "assistant" ? "M 企业助理的消息" : "你的消息"
+              message.role === "assistant" ? "码多多的消息" : "你的消息"
             }
             className={`assistant-conversation__message assistant-conversation__message--${message.role}`}
             key={message.id}

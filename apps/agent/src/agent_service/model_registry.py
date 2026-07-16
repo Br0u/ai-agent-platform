@@ -67,10 +67,12 @@ def _build_openai_model(settings: ActiveModelSettings) -> Model:
     api_key = _api_key(settings)
     return OpenAIResponses(
         id=settings.model_id,
+        retries=0,
         api_key=api_key,
         organization="",
         base_url=settings.base_url or _OPENAI_BASE_URL,
         timeout=settings.timeout_seconds,
+        max_retries=0,
         default_headers=_openai_default_headers(api_key),
         client_params=_openai_client_params(),
     )
@@ -84,6 +86,7 @@ def _build_anthropic_model(settings: ActiveModelSettings) -> Model:
 
     return Claude(
         id=settings.model_id,
+        retries=0,
         api_key=api_key,
         timeout=settings.timeout_seconds,
         client=Anthropic(
@@ -92,6 +95,7 @@ def _build_anthropic_model(settings: ActiveModelSettings) -> Model:
             webhook_key="",
             base_url=_ANTHROPIC_BASE_URL,
             timeout=settings.timeout_seconds,
+            max_retries=0,
             default_headers=_anthropic_default_headers(api_key),
         ),
         async_client=AsyncAnthropic(
@@ -100,6 +104,7 @@ def _build_anthropic_model(settings: ActiveModelSettings) -> Model:
             webhook_key="",
             base_url=_ANTHROPIC_BASE_URL,
             timeout=settings.timeout_seconds,
+            max_retries=0,
             default_headers=_anthropic_default_headers(api_key),
         ),
     )
@@ -124,11 +129,13 @@ def _build_google_model(settings: ActiveModelSettings) -> Model:
         http_options={
             "base_url": _GEMINI_BASE_URL,
             "timeout": settings.timeout_seconds * 1000,
+            "retry_options": {"attempts": 1},
         },
     )
 
     return Gemini(
         id=settings.model_id,
+        retries=0,
         api_key=api_key,
         timeout=settings.timeout_seconds,
         vertexai=False,
@@ -144,10 +151,12 @@ def _build_dashscope_model(settings: ActiveModelSettings) -> Model:
     api_key = _api_key(settings)
     return DashScope(
         id=settings.model_id,
+        retries=0,
         api_key=api_key,
         organization="",
         base_url=settings.base_url or _DASHSCOPE_BASE_URL,
         timeout=settings.timeout_seconds,
+        max_retries=0,
         default_headers=_openai_default_headers(api_key),
         client_params=_openai_client_params(),
     )
@@ -159,10 +168,12 @@ def _build_deepseek_model(settings: ActiveModelSettings) -> Model:
     api_key = _api_key(settings)
     return DeepSeek(
         id=settings.model_id,
+        retries=0,
         api_key=api_key,
         organization="",
         base_url=settings.base_url or _DEEPSEEK_BASE_URL,
         timeout=settings.timeout_seconds,
+        max_retries=0,
         default_headers=_openai_default_headers(api_key),
         client_params=_openai_client_params(),
     )
@@ -174,10 +185,12 @@ def _build_minimax_model(settings: ActiveModelSettings) -> Model:
     api_key = _api_key(settings)
     return MiniMax(
         id=settings.model_id,
+        retries=0,
         api_key=api_key,
         organization="",
         base_url=settings.base_url or _MINIMAX_BASE_URL,
         timeout=settings.timeout_seconds,
+        max_retries=0,
         default_headers=_openai_default_headers(api_key),
         client_params=_openai_client_params(),
     )

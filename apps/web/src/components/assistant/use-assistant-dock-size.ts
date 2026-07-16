@@ -300,7 +300,7 @@ export function useAssistantDockSize() {
     isMobile || width === null
       ? null
       : {
-          "aria-label": "调整 AI 助理工作区宽度",
+          "aria-label": "调整码多多工作区宽度",
           "aria-orientation": "vertical",
           "aria-valuemax": maximumWidth,
           "aria-valuemin": ASSISTANT_DOCK_MIN_WIDTH,

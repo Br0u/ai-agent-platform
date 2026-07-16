@@ -555,3 +555,30 @@ def test_openai_client_params_are_isolated_between_models() -> None:
     third = model_registry.build_model(make_settings("openai"))
 
     assert getattr(third, "client_params")["project"] == ""
+
+
+@pytest.mark.parametrize("provider", ("openai", "dashscope", "deepseek", "minimax"))
+def test_openai_compatible_clients_disable_all_automatic_retries(
+    provider: ModelProvider,
+) -> None:
+    model = model_registry.build_model(make_settings(provider))
+
+    assert model.retries == 0
+    assert get_client(model).max_retries == 0
+    assert getattr(model, "get_async_client")().max_retries == 0
+
+
+def test_anthropic_clients_disable_all_automatic_retries() -> None:
+    model = model_registry.build_model(make_settings("anthropic"))
+
+    assert model.retries == 0
+    assert get_client(model).max_retries == 0
+    assert getattr(model, "get_async_client")().max_retries == 0
+
+
+def test_google_client_allows_exactly_one_attempt() -> None:
+    model = model_registry.build_model(make_settings("google"))
+    client = get_client(model)
+
+    assert model.retries == 0
+    assert client._api_client._http_options.retry_options.attempts == 1

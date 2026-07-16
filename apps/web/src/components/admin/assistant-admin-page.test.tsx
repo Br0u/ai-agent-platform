@@ -54,7 +54,7 @@ const status = {
     },
   ],
   configuration: {
-    defaultAgent: "M 企业助理（占位）",
+    defaultAgent: "码多多（占位）",
     model: "未配置",
     skills: "未接入",
     sessionStorage: "未启用",
@@ -97,7 +97,7 @@ describe("AssistantAdminPage", () => {
     expect(screen.getAllByText("模型")).toHaveLength(2);
     expect(screen.getByText("公开入口")).toBeVisible();
     expect(screen.getByRole("heading", { name: "只读配置" })).toBeVisible();
-    expect(screen.getByText("M 企业助理（占位）")).toBeVisible();
+    expect(screen.getByText("码多多（占位）")).toBeVisible();
     expect(screen.getByRole("heading", { name: "运行时状态" })).toBeVisible();
     expect(
       screen.getByText("Readiness Circuit").nextElementSibling,

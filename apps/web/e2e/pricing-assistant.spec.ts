@@ -215,11 +215,11 @@ async function expectMinimumControlSize(controls: Locator) {
 }
 
 function quickAssistantDialog(page: Page) {
-  return page.getByRole("dialog", { name: "M 助手", exact: true });
+  return page.getByRole("dialog", { name: "码多多", exact: true });
 }
 
 function quickAssistantLauncher(page: Page) {
-  return page.getByRole("button", { name: "打开 M 助手", exact: true });
+  return page.getByRole("button", { name: "打开码多多", exact: true });
 }
 
 function waitForAssistantStatus(page: Page) {
@@ -307,7 +307,7 @@ async function sendSuccessfulAssistantMessage(page: Page) {
   const question = "如何开始了解平台？";
   const answer = "你可以从快速开始文档了解平台结构和使用入口。";
   const dialog = quickAssistantDialog(page);
-  await dialog.getByLabel("向 M 助手提问", { exact: true }).fill(question);
+  await dialog.getByLabel("向码多多提问", { exact: true }).fill(question);
   const response = page.waitForResponse(
     (candidate) =>
       candidate.url().endsWith(ASSISTANT_API) && candidate.status() === 200,
@@ -494,10 +494,10 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
   const closedLauncherBox = await launcher.boundingBox();
 
   const dialog = await openQuickAssistantWithStatus(page);
-  const input = dialog.getByLabel("向 M 助手提问", { exact: true });
+  const input = dialog.getByLabel("向码多多提问", { exact: true });
   await expect(input).toBeVisible();
   await expect(
-    dialog.getByRole("button", { name: "关闭 M 助手", exact: true }),
+    dialog.getByRole("button", { name: "关闭码多多", exact: true }),
   ).toBeFocused();
   await expect(input).not.toHaveAttribute("maxlength");
   await expect(dialog.getByText("0 / 500", { exact: true })).toBeVisible();
@@ -625,7 +625,7 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
   );
   await expect(history).not.toContainText(failedDraft);
   const fallbacks = dialog.getByRole("navigation", {
-    name: "M 助手兜底链接",
+    name: "码多多兜底链接",
     exact: true,
   });
   await expect(
@@ -652,7 +652,7 @@ test("assistant session survives public routing and resets at the identity bound
   const answer = await sendSuccessfulAssistantMessage(page);
 
   await quickAssistantDialog(page)
-    .getByRole("button", { name: "关闭 M 助手", exact: true })
+    .getByRole("button", { name: "关闭码多多", exact: true })
     .click();
   await selectRepresentativePricingModules(page);
   const pricingSentinel = `pricing-${testInfo.project.name}-${Date.now()}`;
@@ -670,7 +670,7 @@ test("assistant session survives public routing and resets at the identity bound
 
   if (testInfo.project.name === "mobile") {
     await quickAssistantDialog(page)
-      .getByRole("button", { name: "关闭 M 助手", exact: true })
+      .getByRole("button", { name: "关闭码多多", exact: true })
       .click();
   }
   await navigateFromHeaderToProduct(page, testInfo.project.name);
@@ -680,7 +680,7 @@ test("assistant session survives public routing and resets at the identity bound
     quickAssistantDialog(page).getByTestId("assistant-history"),
   ).toContainText(answer);
   await quickAssistantDialog(page)
-    .getByRole("button", { name: "关闭 M 助手", exact: true })
+    .getByRole("button", { name: "关闭码多多", exact: true })
     .click();
   const footerSentinel = `footer-${testInfo.project.name}-${Date.now()}`;
   await setNavigationSentinel(page, footerSentinel);
@@ -695,7 +695,7 @@ test("assistant session survives public routing and resets at the identity bound
     quickAssistantDialog(page).getByTestId("assistant-history"),
   ).toContainText(answer);
   await quickAssistantDialog(page)
-    .getByRole("button", { name: "关闭 M 助手", exact: true })
+    .getByRole("button", { name: "关闭码多多", exact: true })
     .click();
 
   const identitySentinel = `identity-${testInfo.project.name}-${Date.now()}`;
@@ -712,7 +712,7 @@ test("assistant session survives public routing and resets at the identity bound
   ).not.toContainText(answer);
   await expect(
     quickAssistantDialog(page).getByTestId("assistant-history"),
-  ).toContainText("你好，我是 M 助手。");
+  ).toContainText("你好，我是码多多。");
 
   await page.reload();
   await openQuickAssistantWithStatus(page);
@@ -721,7 +721,7 @@ test("assistant session survives public routing and resets at the identity bound
   ).not.toContainText(answer);
   await expect(
     quickAssistantDialog(page).getByTestId("assistant-history"),
-  ).toContainText("你好，我是 M 助手。");
+  ).toContainText("你好，我是码多多。");
 
   expectOnlyDeliberateDiagnostics(diagnostics, {
     applicationOrigin: new URL(page.url()).origin,

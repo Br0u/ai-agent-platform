@@ -177,7 +177,7 @@ function snapshot(
       defaultAgent:
         inspection.providerMode === "agentos"
           ? "码多多（maduoduo）"
-          : "M 企业助理（占位）",
+          : "码多多（占位）",
       model:
         inspection.providerMode === "placeholder"
           ? "未配置"

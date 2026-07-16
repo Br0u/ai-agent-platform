@@ -64,7 +64,7 @@ const status = {
     },
   ],
   configuration: {
-    defaultAgent: "M 企业助理（占位）",
+    defaultAgent: "码多多（占位）",
     model: "未配置",
     skills: "未接入",
     sessionStorage: "未启用",

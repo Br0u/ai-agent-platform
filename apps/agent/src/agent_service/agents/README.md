@@ -1,5 +1,5 @@
 # Agents extension boundary
 
-No Agent or model is registered in this phase. The service exposes only a protected AgentOS shell and reports `capability: placeholder`.
+The fixed default Agent is currently implemented in `../default_agent.py`. The typed catalog in `../catalog.py` is the only place that enables it after validated model settings are available; otherwise the catalog reports the placeholder capability.
 
-A later implementation may add typed Agent definitions here after its model provider, credentials, failure policy, and tests are specified. Adding a file to this directory alone must not enable a runtime capability; registration belongs in the typed catalog.
+Future additional Agent definitions belong in this directory after their model provider, credentials, failure policy, and tests are specified. Adding a file here alone must never enable runtime capability; registration remains explicit in the typed catalog.

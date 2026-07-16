@@ -17,6 +17,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from agent_service.catalog import AgentCapability, AgentCatalog, build_catalog
 from agent_service.config import RuntimeSettings
 from agent_service.database import build_database
+from agent_service.runtime_logging import install_agno_log_redaction
 
 
 class AgentOSApplication(Protocol):
@@ -136,6 +137,7 @@ def create_app(
     catalog_builder: CatalogBuilder = build_catalog,
 ) -> FastAPI:
     """Compose the protected FastAPI and configured AgentOS surfaces."""
+    install_agno_log_redaction()
     runtime_settings = settings or RuntimeSettings()
     runtime_database = database or build_database(runtime_settings)
     catalog = catalog_builder(runtime_settings, runtime_database)

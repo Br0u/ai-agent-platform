@@ -5,8 +5,8 @@ import { readSafeAssistantRuntimeStatus } from "@/server/assistant/assistant-run
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "AI 助理 · AI Agent Platform",
-  description: "通过 M 企业助理查找平台产品、部署、兼容性与服务入口。",
+  title: "码多多 · AI Agent Platform",
+  description: "通过码多多获得公开、匿名的网页端通用 AI 助手服务。",
 };
 
 export default async function AssistantPage() {
