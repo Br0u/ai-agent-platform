@@ -232,11 +232,7 @@ function expectNoProtectedValue(
   ).toBe(false);
 }
 
-async function readSafeJson(
-  response: APIResponse,
-  protectedValues: string[],
-): Promise<unknown> {
-  const rawJson = await response.text();
+function parseSafeJson(rawJson: string, protectedValues: string[]): unknown {
   let body: unknown;
   try {
     body = JSON.parse(rawJson) as unknown;
@@ -245,6 +241,13 @@ async function readSafeJson(
   }
   expectNoProtectedValue(body, protectedValues, rawJson);
   return body;
+}
+
+async function readSafeJson(
+  response: APIResponse,
+  protectedValues: string[],
+): Promise<unknown> {
+  return parseSafeJson(await response.text(), protectedValues);
 }
 
 function collectBrowserDiagnostics(context: BrowserContext) {
@@ -456,6 +459,19 @@ if (process.env.AAP_RUNTIME_GUARD_TESTS === "true") {
         "invalid secret file errors must be fixed and path-free",
       ).toBe(true);
     });
+
+    test("routes every assistant JSON body through the safety guard", () => {
+      const source = readFileSync(
+        path.resolve(process.cwd(), "e2e/assistant-runtime.spec.ts"),
+        "utf8",
+      );
+      const directJsonCall = [".", "json", "(", ")"].join("");
+
+      expect(
+        source.includes(directJsonCall),
+        "assistant response bodies must not bypass the safety guard",
+      ).toBe(false);
+    });
   });
 }
 
@@ -464,6 +480,7 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
   baseURL,
 }) => {
   if (!baseURL) throw new Error("BASE_URL is required");
+  const protectedValues = runtimeProtectedValues();
   const context = await browser.newContext({ baseURL });
   collectBrowserDiagnostics(context);
   const page = await context.newPage();
@@ -471,7 +488,7 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
   await page.goto("/assistant");
   const statusResponse = await context.request.get(STATUS_PATH);
   expect(statusResponse.status()).toBe(200);
-  const status = await statusResponse.json();
+  const status = await readSafeJson(statusResponse, protectedValues);
   expect(status).toMatchObject({
     version: "1",
     live: true,
@@ -493,11 +510,12 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
       },
       body: JSON.stringify(input),
     });
-    return { status: response.status, body: await response.json() };
+    return { status: response.status, rawJson: await response.text() };
   }, CHAT_BODY);
   const browserResponse = await responsePromise;
+  const chatBody = parseSafeJson(chat.rawJson, protectedValues);
   expect(chat.status).toBe(200);
-  expect(chat.body).toMatchObject({
+  expect(chatBody).toMatchObject({
     version: "1",
     requestId: "public-browser-runtime-e2e",
     mode: "placeholder",
@@ -515,7 +533,11 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
     firstAssistantCookieCredential.length > 0,
     "first assistant cookie credential must be nonempty",
   ).toBe(true);
-  expectNoProtectedValue(chat.body, [credential]);
+  expectNoProtectedValue(
+    chatBody,
+    [...protectedValues, credential],
+    chat.rawJson,
+  );
   expectConsoleExcludesCredential(credential);
 
   const burst = await Promise.all(
@@ -532,7 +554,10 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
   const rejected = burst.filter((response) => response.status() === 429);
   expect(rejected).toHaveLength(1);
   expect(rejected[0]!.headers()["retry-after"]).toBe("60");
-  const rejection = await rejected[0]!.json();
+  const rejection = await readSafeJson(rejected[0]!, [
+    ...protectedValues,
+    credential,
+  ]);
   expect(rejection).toEqual({
     version: "1",
     requestId: expect.stringMatching(/^[a-f0-9]{32}$/u),
@@ -542,7 +567,9 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
       retryable: true,
     },
   });
-  expect(rejection.requestId).not.toBe("bff-rate-limit-sentinel");
+  expect(rejection).not.toMatchObject({
+    requestId: "bff-rate-limit-sentinel",
+  });
 
   const logs = execFileSync(
     "docker",
@@ -584,6 +611,7 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
   const credentials = fixtureCredentials();
   const assistantCredential = requiredAssistantCookieCredential();
   const protectedValues = [
+    ...runtimeProtectedValues(),
     requiredEnvironment("BETTER_AUTH_SECRET"),
     credentials.staffSessionToken,
     credentials.adminSessionToken,
