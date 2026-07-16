@@ -41,6 +41,14 @@ describe("useAssistantSession", () => {
     expect(ASSISTANT_REQUEST_TIMEOUT_MS).toBe(15_000);
   });
 
+  it("exposes session data and commands without presentation state", () => {
+    const { result } = renderHook(() => useAssistantSession("/"));
+
+    expect(result.current).not.toHaveProperty("open");
+    expect(result.current).not.toHaveProperty("openAssistant");
+    expect(result.current).not.toHaveProperty("closeAssistant");
+  });
+
   it("supports a protected endpoint without duplicating the request controller", async () => {
     vi.mocked(fetch).mockResolvedValue(success("管理员回答"));
     const { result } = renderHook(() =>
@@ -243,6 +251,46 @@ describe("useAssistantSession", () => {
       resolve(success("回答"));
       await first;
     });
+  });
+
+  it("keeps an active request alive across pathname changes", async () => {
+    let resolve!: (response: Response) => void;
+    vi.mocked(fetch).mockReturnValue(new Promise((done) => (resolve = done)));
+    const { result, rerender } = renderHook(
+      ({ pathname }) => useAssistantSession(pathname),
+      { initialProps: { pathname: "/pricing" } },
+    );
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = result.current.submit("跨路由问题");
+    });
+    expect(result.current.requestStatus).toBe("sending");
+
+    rerender({ pathname: "/assistant" });
+
+    expect(result.current.requestStatus).toBe("sending");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body)),
+    ).toEqual({
+      message: "跨路由问题",
+      context: { pathname: "/pricing" },
+    });
+
+    await act(async () => {
+      resolve(success("跨路由回答"));
+      await pending;
+    });
+
+    expect(result.current.requestStatus).toBe("idle");
+    expect(
+      result.current.messages.map(({ role, content }) => [role, content]),
+    ).toEqual([
+      ["user", "跨路由问题"],
+      ["assistant", "跨路由回答"],
+    ]);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("retains the draft on failure without adding transcript messages", async () => {
@@ -452,7 +500,7 @@ describe("useAssistantSession", () => {
     expect(result.current.draft).toBe("问题 B");
   });
 
-  it("does not leave an orphan user message when navigation aborts a request", async () => {
+  it("does not leave an orphan user message when an endpoint change aborts a request", async () => {
     let resolveOld!: (response: Response) => void;
     vi.mocked(fetch).mockReturnValue(
       new Promise((done) => {
@@ -460,8 +508,8 @@ describe("useAssistantSession", () => {
       }),
     );
     const { result, rerender } = renderHook(
-      ({ pathname }) => useAssistantSession(pathname),
-      { initialProps: { pathname: "/docs" } },
+      ({ endpoint }) => useAssistantSession("/docs", { endpoint }),
+      { initialProps: { endpoint: "/api/v1/assistant/chat" } },
     );
     act(() => result.current.setDraft("被中止的问题"));
     let pending!: Promise<void>;
@@ -469,7 +517,7 @@ describe("useAssistantSession", () => {
       pending = result.current.submit();
     });
     const signal = vi.mocked(fetch).mock.calls[0]?.[1]?.signal;
-    rerender({ pathname: "/pricing" });
+    rerender({ endpoint: "/api/v1/admin/assistant/chat" });
     await act(async () => {
       await pending;
     });
@@ -544,26 +592,29 @@ describe("useAssistantSession", () => {
     expect(screen.queryByText("旧问题")).not.toBeInTheDocument();
   });
 
-  it("ignores an older response after a newer request owns the session", async () => {
+  it("ignores an older response after a timeout change gives ownership to a newer request", async () => {
     let resolveOld!: (response: Response) => void;
     vi.mocked(fetch)
       .mockReturnValueOnce(new Promise((done) => (resolveOld = done)))
       .mockResolvedValueOnce(success("新回答"));
     const { result, rerender } = renderHook(
-      ({ pathname }) => useAssistantSession(pathname),
-      { initialProps: { pathname: "/docs" } },
+      ({ pathname, timeoutMs }) => useAssistantSession(pathname, { timeoutMs }),
+      { initialProps: { pathname: "/docs", timeoutMs: 1_000 } },
     );
     act(() => result.current.setDraft("旧问题"));
     let old!: Promise<void>;
     act(() => {
       old = result.current.submit();
     });
-    rerender({ pathname: "/pricing" });
+    rerender({ pathname: "/pricing", timeoutMs: 2_000 });
+    await act(async () => {
+      await old;
+    });
     act(() => result.current.setDraft("新问题"));
     await act(() => result.current.submit());
     await act(async () => {
       resolveOld(success("旧回答"));
-      await old;
+      await Promise.resolve();
     });
 
     await waitFor(() =>

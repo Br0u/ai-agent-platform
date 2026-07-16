@@ -40,6 +40,14 @@
   -webkit-backdrop-filter: blur(22px) saturate(145%);
 }
 
+.floating-assistant__panel.is-exiting {
+  pointer-events: none;
+}
+
+.floating-assistant__panel.is-blocked {
+  pointer-events: none;
+}
+
 .floating-assistant__header {
   position: relative;
   display: flex;
@@ -111,6 +119,12 @@
   border-radius: 50%;
   background: #95a0b4;
   box-shadow: 0 0 0 3px rgb(149 160 180 / 15%);
+}
+
+.floating-assistant__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .floating-assistant__icon-button {
@@ -347,31 +361,6 @@
   font-size: 10px;
 }
 
-.floating-assistant__full-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 10px;
-  color: var(--color-primary);
-  font-size: 11px;
-  font-weight: 700;
-  text-decoration: none;
-  transition:
-    color 160ms ease,
-    transform 160ms var(--ease-out);
-}
-
-.floating-assistant__full-link:active {
-  transform: scale(0.97);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .floating-assistant__full-link:hover {
-    color: var(--color-accent);
-    transform: translateX(2px);
-  }
-}
-
 .floating-assistant__meta > span.is-over-limit {
   color: var(--color-danger);
   font-weight: 700;
@@ -464,6 +453,22 @@
 
   .floating-assistant__messages {
     max-height: none;
+  }
+
+  .floating-assistant__panel button,
+  .floating-assistant__panel a {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .floating-assistant__panel a {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .floating-assistant__footer input {
+    min-height: 44px;
+    padding-right: 59px;
   }
 
   .floating-assistant__launcher.is-open {

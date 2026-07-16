@@ -6,8 +6,10 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -187,7 +189,13 @@ describe("production deployment security contracts", () => {
   });
 
   it("limits only POST requests on exact authentication routes", () => {
-    const nginx = `${read("infra/nginx/nginx.conf")}\n${read("infra/nginx/default.conf.template")}`;
+    const serverTemplate = read("infra/nginx/default.conf.template");
+    const nginx = `${read("infra/nginx/nginx.conf")}\n${serverTemplate}`;
+    const authLocation = serverTemplate
+      .split(
+        "location ~ ^/(?:login|register|staff/login|staff/two-factor|staff/re-auth)$ {",
+      )[1]
+      ?.split("\n  }")[0];
     expect(nginx).toContain(
       "limit_req_zone $auth_post_key zone=auth_post_per_ip:10m rate=5r/m;",
     );
@@ -203,6 +211,15 @@ describe("production deployment security contracts", () => {
     );
     expect(nginx).toContain("proxy_set_header X-Real-IP $remote_addr;");
     expect(nginx).toContain("proxy_set_header X-Forwarded-For $remote_addr;");
+    expect(authLocation).toContain(
+      "add_header X-Content-Type-Options nosniff always;",
+    );
+    expect(authLocation).toContain(
+      "add_header X-Frame-Options SAMEORIGIN always;",
+    );
+    expect(authLocation).toContain(
+      "add_header Referrer-Policy strict-origin-when-cross-origin always;",
+    );
     expect(
       nginx.match(/proxy_set_header X-Forwarded-Host \$http_host;/g),
     ).toHaveLength(4);
@@ -532,7 +549,7 @@ exit 0
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it("keeps the first assistant credential out of every browser diagnostic and admin payload", () => {
     const spec = read("apps/web/e2e/assistant-runtime.spec.ts");
@@ -636,9 +653,8 @@ exit 0
     expect(dockerfile).toContain(
       "ARG PNPM_REGISTRY=https://registry.npmmirror.com",
     );
-    expect(dockerfile).toContain(
-      'PNPM_CONFIG_REGISTRY="$PNPM_REGISTRY" pnpm install --frozen-lockfile',
-    );
+    expect(dockerfile).toContain('PNPM_CONFIG_REGISTRY="$PNPM_REGISTRY"');
+    expect(dockerfile).toContain("pnpm install --frozen-lockfile");
     expect(read("docs/testing/run-assistant-runtime-e2e.sh")).toContain(
       "PNPM_REGISTRY=${PNPM_REGISTRY:-https://registry.npmjs.org}",
     );
@@ -647,6 +663,25 @@ exit 0
     expect(dockerIgnore).toContain("**/.env");
     expect(dockerIgnore).toContain("**/.env.*");
     expect(dockerIgnore).toContain("!**/.env.example");
+  });
+
+  it("uses one bounded, persistent pnpm store for web image dependencies", () => {
+    const dockerfile = read("apps/web/Dockerfile");
+    const dependencies = dockerfile
+      .split("FROM base AS dependencies")[1]
+      ?.split("FROM dependencies AS migrator")[0];
+
+    expect(dependencies).toBeDefined();
+    expect(dependencies).toContain(
+      "--mount=type=cache,id=ai-agent-platform-pnpm-store,target=/pnpm/store,sharing=locked",
+    );
+    expect(dependencies).toContain("PNPM_CONFIG_STORE_DIR=/pnpm/store");
+    expect(dependencies).toContain("PNPM_CONFIG_FETCH_RETRIES=5");
+    expect(dependencies).toContain("PNPM_CONFIG_FETCH_TIMEOUT=300000");
+    expect(dependencies).toContain("PNPM_CONFIG_NETWORK_CONCURRENCY=4");
+    expect(dependencies).toContain("pnpm install --frozen-lockfile");
+    expect(dependencies).not.toContain("--no-verify-store-integrity");
+    expect(dependencies).not.toContain("strict-ssl=false");
   });
 
   it("hardens the internal AgentOS container boundary and startup order", () => {
@@ -928,6 +963,446 @@ exit 0
     expect(runner).toContain("BACKUP_ENCRYPTION_KEY_FILE");
     expect(runner).not.toContain("BACKUP_DATABASE_URL_FILE");
   });
+
+  it("runs both assistant browser suites from an owned isolated project", () => {
+    const runner = read("docs/testing/run-assistant-experience-e2e.sh");
+    const webDockerfile = read("apps/web/Dockerfile");
+
+    expect(runner).toContain(
+      "project=${AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT:-aap-assistant-e2e}",
+    );
+    expect(runner).toContain("aap-assistant-e2e|aap-assistant-e2e-*");
+    expect(runner).toContain("project_lock_acquired=false");
+    expect(runner).toContain("port_lock_acquired=false");
+    expect(runner).toContain(
+      'project_lock_dir="/tmp/$project.assistant-e2e.lock"',
+    );
+    expect(runner).toContain(
+      'port_lock_dir="/tmp/aap-assistant-experience-e2e-port-8080.lock"',
+    );
+    expect(runner).not.toContain('lock_root="${runtime_tmp%/}');
+    expect(runner).toContain('if ! mkdir "$project_lock_dir"');
+    expect(runner).toContain('if ! mkdir "$port_lock_dir"');
+    expect(runner).toContain("lock_is_owned");
+    expect(runner).toContain("owns_project=false");
+    expect(runner).toContain('if [ "$owns_project" = true ]');
+    expect(runner).toContain("down --rmi local -v --remove-orphans");
+    expect(runner).toContain("TCP port 8080 is already in use");
+    expect(runner).toContain(
+      "export ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080",
+    );
+    expect(runner).toContain(
+      "materialize_secret ASSISTANT_SESSION_SECRET_FILE",
+    );
+    expect(runner).toContain(
+      "materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE",
+    );
+    expect(runner).toContain("materialize_secret OS_SECURITY_KEY_FILE");
+    expect(runner).not.toContain('rm -rf "$temp_dir"');
+    expect(runner).toContain("release_owned_lock");
+    expect(runner).toContain("cleanup_temp_dir");
+    expect(runner).toContain("e2e/assistant-experience.spec.ts");
+    expect(runner).toContain("e2e/pricing-assistant.spec.ts");
+    expect(runner).toMatch(
+      /playwright test[\s\\\n]+e2e\/assistant-experience\.spec\.ts[\s\\\n]+e2e\/pricing-assistant\.spec\.ts/u,
+    );
+    expect(runner).toContain("--workers=1");
+    expect(webDockerfile).toContain(
+      "--mount=type=cache,id=ai-agent-platform-pnpm-store",
+    );
+    expect(
+      runner.indexOf("materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE"),
+    ).toBeLessThan(runner.indexOf("config --quiet"));
+    expect(runner.indexOf("config --quiet")).toBeLessThan(
+      runner.indexOf("owns_project=true"),
+    );
+  });
+
+  it("executes the assistant experience runner with fail-closed ownership and cleanup", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "aap-experience-owner-"));
+    const repo = path.join(sandbox, "repo");
+    const bin = path.join(sandbox, "bin");
+    const temp = path.join(sandbox, "tmp");
+    const alternateTemp = path.join(sandbox, "alternate-tmp");
+    const project = `aap-assistant-e2e-${path.basename(sandbox)}`;
+    const projectLock = path.join("/tmp", `${project}.assistant-e2e.lock`);
+    const otherProject = `${project}-other`;
+    const otherProjectLock = path.join(
+      "/tmp",
+      `${otherProject}.assistant-e2e.lock`,
+    );
+    const portLock = path.join(
+      "/tmp",
+      "aap-assistant-experience-e2e-port-8080.lock",
+    );
+    const runner = path.join(
+      repo,
+      "docs/testing/run-assistant-experience-e2e.sh",
+    );
+    mkdirSync(path.dirname(runner), { recursive: true });
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(temp, { recursive: true });
+    mkdirSync(alternateTemp, { recursive: true });
+    for (const command of [
+      "cat",
+      "chmod",
+      "dirname",
+      "mkdir",
+      "mktemp",
+      "rm",
+      "rmdir",
+      "stat",
+    ]) {
+      const resolved = spawnSync("/bin/sh", ["-c", `command -v ${command}`], {
+        encoding: "utf8",
+      }).stdout.trim();
+      expect(resolved).not.toBe("");
+      symlinkSync(resolved, path.join(bin, command));
+    }
+    expect(() => statSync(projectLock)).toThrow();
+    expect(() => statSync(otherProjectLock)).toThrow();
+    expect(() => statSync(portLock)).toThrow();
+    copyFileSync(
+      path.join(root, "docs/testing/run-assistant-experience-e2e.sh"),
+      runner,
+    );
+    writeFileSync(
+      path.join(repo, ".env.e2e"),
+      [
+        "POSTGRES_DB=test",
+        "POSTGRES_USER=test",
+        "POSTGRES_PASSWORD=fixture-postgres",
+        "MIGRATOR_DATABASE_PASSWORD=fixture-migrator",
+        "RUNTIME_DATABASE_PASSWORD=fixture-runtime",
+        "BACKUP_DATABASE_PASSWORD=fixture-backup",
+        "MIGRATOR_DATABASE_URL=postgresql://fixture:fixture@db/test",
+        "RUNTIME_DATABASE_URL=postgresql://fixture:fixture@db/test",
+        "BACKUP_DATABASE_URL=postgresql://fixture:fixture@db/test",
+        "DATABASE_URL=postgresql://fixture:fixture@db/test",
+        "TEST_DATABASE_URL=postgresql://fixture:fixture@db/test_test",
+        "BETTER_AUTH_SECRET=fixture-better-auth",
+        "BETTER_AUTH_URL=http://127.0.0.1:8080",
+        "BETTER_AUTH_TRUSTED_ORIGINS=http://127.0.0.1:8080",
+        "HTTP_PORT=8080",
+        "PUBLIC_HOST=127.0.0.1",
+        "ALLOW_LOCAL_VALIDATION_HOSTS=true",
+        "BACKUP_INTERVAL_SECONDS=86400",
+        "BACKUP_RETENTION_DAYS=14",
+        "FEATURE_EMAIL_VERIFICATION=false",
+        "E2E_CUSTOMER_PASSWORD=fixture-customer",
+        "E2E_STAFF_PASSWORD=fixture-staff",
+        "E2E_ADMIN_PASSWORD=fixture-admin",
+        "E2E_PENDING_CUSTOMER_SESSION_TOKEN=fixture-pending",
+        "E2E_DISABLED_CUSTOMER_SESSION_TOKEN=fixture-disabled",
+        "E2E_STAFF_SESSION_TOKEN=fixture-staff-session",
+        "E2E_ROLE_TARGET_SESSION_TOKEN=fixture-role-target",
+        "E2E_ADMIN_SESSION_TOKEN=fixture-admin-session",
+        "E2E_NO_TOTP_ADMIN_SESSION_TOKEN=fixture-no-totp",
+        "E2E_REVOKED_SESSION_TOKEN=fixture-revoked",
+        "E2E_REPLACEMENT_PASSWORD=fixture-replacement",
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    const openssl = path.join(bin, "openssl");
+    const writeFakeOpenSsl = () =>
+      writeFileSync(
+        openssl,
+        `#!/bin/sh
+printf '%s\\n' "$*" >>"$FAKE_OPENSSL_LOG"
+count=0
+if [ -f "$FAKE_OPENSSL_COUNT_FILE" ]; then
+  count=$(cat "$FAKE_OPENSSL_COUNT_FILE")
+fi
+count=$((count + 1))
+printf '%s\\n' "$count" >"$FAKE_OPENSSL_COUNT_FILE"
+if [ -n "\${FAKE_OPENSSL_FAIL_AFTER:-}" ] && [ "$count" -gt "$FAKE_OPENSSL_FAIL_AFTER" ]; then
+  exit 45
+fi
+printf "%064d\\n" "$count"
+`,
+        { mode: 0o755 },
+      );
+    writeFakeOpenSsl();
+    const lsof = path.join(bin, "lsof");
+    const writeFakeLsof = () =>
+      writeFileSync(
+        lsof,
+        '#!/bin/sh\nprintf "%s\\n" "$*" >>"$FAKE_LSOF_LOG"\n[ "${FAKE_PORT_BUSY:-false}" = true ]\n',
+        { mode: 0o755 },
+      );
+    writeFakeLsof();
+    writeFileSync(
+      path.join(bin, "docker"),
+      `#!/bin/sh
+printf '%s\\n' "$*" >>"$FAKE_DOCKER_LOG"
+case "$1 $2" in
+  "ps -aq") [ "\${FAKE_RESOURCE:-}" = container ] && echo existing-container; exit 0 ;;
+  "volume ls") [ "\${FAKE_RESOURCE:-}" = volume ] && echo existing-volume; exit 0 ;;
+  "network ls") [ "\${FAKE_RESOURCE:-}" = network ] && echo existing-network; exit 0 ;;
+  "image ls") [ "\${FAKE_RESOURCE:-}" = image ] && echo existing-image; exit 0 ;;
+esac
+case " $* " in
+  *" compose "*" config --quiet "*) [ "\${FAKE_DOCKER_FAIL:-}" = config ] && exit 41; exit 0 ;;
+  *" compose "*" build migrate web "*)
+    if [ "\${FAKE_REPLACE_OWNER_TOKEN:-false}" = true ]; then
+      printf '%s\\n' replaced-owner >"$FAKE_PROJECT_LOCK/token"
+    fi
+    [ "\${FAKE_DOCKER_FAIL:-}" = build ] && exit 42
+    exit 0
+    ;;
+  *" compose "*" up -d --wait db "*) [ "\${FAKE_DOCKER_FAIL:-}" = up ] && exit 43; exit 0 ;;
+  *" compose "*" down --rmi local -v --remove-orphans "*) exit 0 ;;
+esac
+exit 0
+`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      path.join(bin, "pnpm"),
+      `#!/bin/sh
+printf '%s\\n' "$*" >>"$FAKE_PNPM_LOG"
+[ "\${FAKE_PNPM_FAIL:-false}" = true ] && exit 44
+exit 0
+`,
+      { mode: 0o755 },
+    );
+
+    const run = (
+      name: string,
+      extra: NodeJS.ProcessEnv = {},
+      selectedProject = project,
+    ) => {
+      const dockerLog = path.join(sandbox, `${name}.docker.log`);
+      const pnpmLog = path.join(sandbox, `${name}.pnpm.log`);
+      const opensslCount = path.join(sandbox, `${name}.openssl.count`);
+      const opensslLog = path.join(sandbox, `${name}.openssl.log`);
+      const lsofLog = path.join(sandbox, `${name}.lsof.log`);
+      writeFileSync(dockerLog, "");
+      writeFileSync(pnpmLog, "");
+      writeFileSync(opensslLog, "");
+      writeFileSync(lsofLog, "");
+      const result = spawnSync("/bin/sh", [runner], {
+        cwd: repo,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: bin,
+          TMPDIR: temp,
+          AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT: selectedProject,
+          FAKE_DOCKER_LOG: dockerLog,
+          FAKE_DOCKER_FAIL: "",
+          FAKE_OPENSSL_FAIL_AFTER: "",
+          FAKE_OPENSSL_LOG: opensslLog,
+          FAKE_PNPM_LOG: pnpmLog,
+          FAKE_PNPM_FAIL: "false",
+          FAKE_PORT_BUSY: "false",
+          FAKE_PROJECT_LOCK: projectLock,
+          FAKE_REPLACE_OWNER_TOKEN: "false",
+          FAKE_RESOURCE: "",
+          FAKE_OPENSSL_COUNT_FILE: opensslCount,
+          ...extra,
+        },
+      });
+      return {
+        result,
+        dockerCalls: readFileSync(dockerLog, "utf8"),
+        lsofCalls: readFileSync(lsofLog, "utf8"),
+        opensslCalls: readFileSync(opensslLog, "utf8"),
+        pnpmCalls: readFileSync(pnpmLog, "utf8"),
+      };
+    };
+    const downCalls = (calls: string) =>
+      calls.match(/down --rmi local -v --remove-orphans/gu) ?? [];
+    const expectOwnedArtifactsCleaned = () => {
+      expect(() => statSync(projectLock)).toThrow();
+      expect(() => statSync(portLock)).toThrow();
+      for (const directory of [temp, alternateTemp]) {
+        expect(
+          readdirSync(directory).filter((entry) =>
+            entry.startsWith("aap-assistant-e2e."),
+          ),
+        ).toEqual([]);
+      }
+    };
+
+    const fixtureSecrets = [
+      "fixture-postgres",
+      "fixture-migrator",
+      "fixture-runtime",
+      "fixture-backup",
+      "postgresql://fixture:fixture@db/test",
+      "postgresql://fixture:fixture@db/test_test",
+      "fixture-better-auth",
+      "fixture-customer",
+      "fixture-staff",
+      "fixture-admin",
+      "fixture-pending",
+      "fixture-disabled",
+      "fixture-staff-session",
+      "fixture-role-target",
+      "fixture-admin-session",
+      "fixture-no-totp",
+      "fixture-revoked",
+      "fixture-replacement",
+      ...Array.from({ length: 5 }, (_, index) =>
+        String(index + 1).padStart(64, "0"),
+      ),
+    ];
+    const writeFixtureLock = (directory: string, token: string) => {
+      mkdirSync(directory, { mode: 0o700 });
+      writeFileSync(path.join(directory, "token"), `${token}\n`, {
+        mode: 0o600,
+      });
+    };
+    const removeFixtureLock = (directory: string, allowedTokens: string[]) => {
+      try {
+        const tokenFile = path.join(directory, "token");
+        const token = readFileSync(tokenFile, "utf8").trim();
+        if (!allowedTokens.includes(token)) return;
+        rmSync(tokenFile);
+        rmdirSync(directory);
+      } catch {
+        // The runner already removed its own lock, or the directory never existed.
+      }
+    };
+
+    try {
+      const unsafe = run(
+        "unsafe",
+        {},
+        "aap-assistant-e2e-../other-project;touch-pwned",
+      );
+      expect(unsafe.result.status).not.toBe(0);
+      expect(unsafe.dockerCalls).toBe("");
+      expect(() => statSync(path.join(sandbox, "touch-pwned"))).toThrow();
+
+      writeFixtureLock(projectLock, "other-owner");
+      const locked = run("locked", { TMPDIR: alternateTemp });
+      expect(locked.result.status).not.toBe(0);
+      expect(downCalls(locked.dockerCalls)).toHaveLength(0);
+      expect(statSync(projectLock).isDirectory()).toBe(true);
+      removeFixtureLock(projectLock, ["other-owner"]);
+
+      writeFixtureLock(portLock, "other-port-owner");
+      const reservedPort = run("reserved-port", {}, otherProject);
+      expect(reservedPort.result.status).not.toBe(0);
+      expect(downCalls(reservedPort.dockerCalls)).toHaveLength(0);
+      expect(statSync(portLock).isDirectory()).toBe(true);
+      expect(() => statSync(otherProjectLock)).toThrow();
+      removeFixtureLock(portLock, ["other-port-owner"]);
+
+      const resourceRuns = ["container", "volume", "network", "image"].map(
+        (resource) => {
+          const result = run(`resource-${resource}`, {
+            FAKE_RESOURCE: resource,
+          });
+          expect(result.result.status).not.toBe(0);
+          expect(downCalls(result.dockerCalls)).toHaveLength(0);
+          expectOwnedArtifactsCleaned();
+          return result;
+        },
+      );
+
+      rmSync(lsof);
+      const missingPortTool = run("missing-lsof");
+      expect(missingPortTool.result.status).not.toBe(0);
+      expect(downCalls(missingPortTool.dockerCalls)).toHaveLength(0);
+      expectOwnedArtifactsCleaned();
+      writeFakeLsof();
+
+      const port = run("port", { FAKE_PORT_BUSY: "true" });
+      expect(port.result.status).not.toBe(0);
+      expect(downCalls(port.dockerCalls)).toHaveLength(0);
+      expectOwnedArtifactsCleaned();
+
+      const secret = run("secret", { FAKE_OPENSSL_FAIL_AFTER: "1" });
+      expect(secret.result.status).toBe(45);
+      expect(downCalls(secret.dockerCalls)).toHaveLength(0);
+      expectOwnedArtifactsCleaned();
+
+      const config = run("config", { FAKE_DOCKER_FAIL: "config" });
+      expect(config.result.status).toBe(41);
+      expect(downCalls(config.dockerCalls)).toHaveLength(0);
+      expectOwnedArtifactsCleaned();
+
+      const build = run("build", { FAKE_DOCKER_FAIL: "build" });
+      expect(build.result.status).toBe(42);
+      expect(downCalls(build.dockerCalls)).toHaveLength(1);
+      expect(build.dockerCalls).toContain(`compose -p ${project}`);
+      expect(build.dockerCalls).not.toContain("other-project");
+      expectOwnedArtifactsCleaned();
+
+      const replacedOwner = run("replaced-owner", {
+        FAKE_DOCKER_FAIL: "build",
+        FAKE_REPLACE_OWNER_TOKEN: "true",
+      });
+      expect(replacedOwner.result.status).toBe(42);
+      expect(downCalls(replacedOwner.dockerCalls)).toHaveLength(0);
+      expect(readFileSync(path.join(projectLock, "token"), "utf8").trim()).toBe(
+        "replaced-owner",
+      );
+      expect(() => statSync(portLock)).toThrow();
+      removeFixtureLock(projectLock, ["replaced-owner"]);
+      expectOwnedArtifactsCleaned();
+
+      const up = run("up", { FAKE_DOCKER_FAIL: "up" });
+      expect(up.result.status).toBe(43);
+      expect(downCalls(up.dockerCalls)).toHaveLength(1);
+      expectOwnedArtifactsCleaned();
+
+      const later = run("later", { FAKE_PNPM_FAIL: "true" });
+      expect(later.result.status).toBe(44);
+      expect(downCalls(later.dockerCalls)).toHaveLength(1);
+      expectOwnedArtifactsCleaned();
+
+      const success = run("success");
+      expect(success.result.status).toBe(0);
+      expect(downCalls(success.dockerCalls)).toHaveLength(1);
+      expect(success.pnpmCalls).toContain("e2e/assistant-experience.spec.ts");
+      expect(success.pnpmCalls).toContain("e2e/pricing-assistant.spec.ts");
+      expectOwnedArtifactsCleaned();
+
+      for (const runResult of [
+        unsafe,
+        locked,
+        reservedPort,
+        ...resourceRuns,
+        missingPortTool,
+        port,
+        secret,
+        config,
+        build,
+        replacedOwner,
+        up,
+        later,
+        success,
+      ]) {
+        const combinedLogs = [
+          runResult.result.stdout,
+          runResult.result.stderr,
+          runResult.dockerCalls,
+          runResult.pnpmCalls,
+          runResult.opensslCalls,
+          runResult.lsofCalls,
+        ].join("\n");
+        for (const secret of fixtureSecrets) {
+          expect(combinedLogs).not.toContain(secret);
+        }
+      }
+    } finally {
+      removeFixtureLock(projectLock, [
+        "other-owner",
+        "replaced-owner",
+        String(1).padStart(64, "0"),
+      ]);
+      removeFixtureLock(otherProjectLock, [String(1).padStart(64, "0")]);
+      removeFixtureLock(portLock, [
+        "other-port-owner",
+        String(1).padStart(64, "0"),
+      ]);
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 15_000);
 
   it("rejects unknown hosts before forwarding and preserves approved Host ports", () => {
     const nginx = read("infra/nginx/default.conf.template");
@@ -1535,9 +2010,17 @@ test -n "$output"
     expect(config).toContain("process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH");
     expect(config).toContain('name: "mobile"');
     expect(config).toContain("viewport: { width: 390, height: 844 }");
+    expect(config).toContain(".next/standalone/apps/web/server.js");
     expect(config).toContain(
-      'command: "node .next/standalone/apps/web/server.js"',
+      "['.next/static','.next/standalone/apps/web/.next/static']",
     );
+    expect(config).toContain("['public','.next/standalone/apps/web/public']");
+    expect(config).toContain("fs.cpSync(source,target,{recursive:true})");
+    expect(config).toContain("ASSISTANT_PUBLIC_ORIGIN: baseURL");
+    expect(config).toContain("ASSISTANT_SESSION_SECRET:");
+    expect(config).toContain('HOSTNAME: "127.0.0.1"');
+    expect(config).toContain("PORT: new URL(baseURL).port");
+    expect(config).not.toContain(".env.local");
     expect(config).toMatch(/webServer:\s*externalBaseUrl\s*\?\s*undefined/u);
     expect(read("apps/web/e2e/auth-smoke.spec.ts")).toContain("test(");
     const accessSpec = read("apps/web/e2e/auth-access.spec.ts");

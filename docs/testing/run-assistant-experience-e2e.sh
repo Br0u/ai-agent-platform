@@ -5,16 +5,94 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
 
-project=aap-assistant-e2e
+project=${AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT:-aap-assistant-e2e}
+case "$project" in
+  aap-assistant-e2e|aap-assistant-e2e-*) ;;
+  *)
+    echo "E2E project must use the aap-assistant-e2e prefix" >&2
+    exit 1
+    ;;
+esac
+case "$project" in
+  *[!A-Za-z0-9_.-]*)
+    echo "E2E project contains unsafe characters" >&2
+    exit 1
+    ;;
+esac
+
 compose_files="-f compose.yaml -f compose.e2e.yaml"
-env_file=.env.e2e
+env_file="$repo_root/.env.e2e"
+temp_dir=
+secret_dir=
+temp_owner_file=
+owns_project=false
+project_lock_acquired=false
+port_lock_acquired=false
+run_token=
+project_lock_dir="/tmp/$project.assistant-e2e.lock"
+port_lock_dir="/tmp/aap-assistant-experience-e2e-port-8080.lock"
+
+lock_is_owned() {
+  lock_dir=$1
+  [ -f "$lock_dir/token" ] || return 1
+  lock_token=
+  lock_token=$(cat "$lock_dir/token" 2>/dev/null) || return 1
+  [ "$lock_token" = "$run_token" ]
+}
+
+release_owned_lock() {
+  lock_dir=$1
+  lock_acquired=$2
+  if [ "$lock_acquired" != true ]; then
+    return 0
+  fi
+  if ! lock_is_owned "$lock_dir"; then
+    echo "E2E lock token changed; leaving $lock_dir for manual review" >&2
+    return
+  fi
+  rm -f "$lock_dir/token"
+  rmdir "$lock_dir" 2>/dev/null ||
+    echo "E2E lock directory is not empty; leaving $lock_dir for manual review" >&2
+}
+
+cleanup_temp_dir() {
+  if [ -z "$temp_dir" ]; then
+    return 0
+  fi
+  if [ -z "$temp_owner_file" ] || [ ! -f "$temp_owner_file" ]; then
+    echo "E2E temp ownership token is missing; leaving $temp_dir for manual review" >&2
+    return
+  fi
+  temp_owner=$(cat "$temp_owner_file" 2>/dev/null || true)
+  if [ "$temp_owner" != "$run_token" ]; then
+    echo "E2E temp ownership token changed; leaving $temp_dir for manual review" >&2
+    return
+  fi
+  if [ -n "$secret_dir" ] && [ -d "$secret_dir" ]; then
+    for secret_path in "$secret_dir"/*; do
+      [ -f "$secret_path" ] || continue
+      rm -f "$secret_path"
+    done
+    rmdir "$secret_dir" 2>/dev/null ||
+      echo "E2E secret directory is not empty; leaving it for manual review" >&2
+  fi
+  rm -f "$temp_owner_file"
+  rmdir "$temp_dir" 2>/dev/null ||
+    echo "E2E temp directory is not empty; leaving it for manual review" >&2
+}
 
 cleanup() {
-  docker compose -p "$project" --env-file "$env_file" $compose_files \
-    down -v --remove-orphans >/dev/null 2>&1 || true
-  if [ -n "${secret_dir-}" ] && [ -d "$secret_dir" ]; then
-    rm -rf "$secret_dir"
+  if [ "$owns_project" = true ] && command -v docker >/dev/null 2>&1 && [ -f "$env_file" ]; then
+    if lock_is_owned "$project_lock_dir" && lock_is_owned "$port_lock_dir"; then
+      docker compose -p "$project" --env-file "$env_file" $compose_files \
+        down --rmi local -v --remove-orphans >/dev/null 2>&1 || true
+    else
+      echo "E2E ownership token changed; refusing docker compose down" >&2
+    fi
   fi
+  cleanup_temp_dir
+  release_owned_lock "$port_lock_dir" "$port_lock_acquired"
+  release_owned_lock "$project_lock_dir" "$project_lock_acquired"
 }
 
 on_signal() {
@@ -36,6 +114,50 @@ command -v openssl >/dev/null 2>&1 || {
   echo "openssl is required" >&2
   exit 1
 }
+command -v lsof >/dev/null 2>&1 || {
+  echo "lsof is required to reserve TCP port 8080 safely" >&2
+  exit 1
+}
+
+runtime_tmp=${TMPDIR:-/tmp}
+case "$runtime_tmp" in
+  /*) ;;
+  *)
+    echo "TMPDIR must be an absolute path" >&2
+    exit 1
+    ;;
+esac
+umask 077
+run_token=$(openssl rand -hex 16)
+if ! mkdir "$project_lock_dir" 2>/dev/null; then
+  echo "E2E project lock exists; inspect and remove stale locks manually" >&2
+  exit 1
+fi
+project_lock_acquired=true
+printf '%s\n' "$run_token" >"$project_lock_dir/token"
+chmod 600 "$project_lock_dir/token"
+
+if ! mkdir "$port_lock_dir" 2>/dev/null; then
+  echo "E2E TCP port 8080 lock exists; another isolated run owns the port" >&2
+  exit 1
+fi
+port_lock_acquired=true
+printf '%s\n' "$run_token" >"$port_lock_dir/token"
+chmod 600 "$port_lock_dir/token"
+
+existing_containers=$(docker ps -aq --filter "label=com.docker.compose.project=$project")
+existing_volumes=$(docker volume ls -q --filter "label=com.docker.compose.project=$project")
+existing_networks=$(docker network ls -q --filter "label=com.docker.compose.project=$project")
+existing_labeled_images=$(docker image ls -q --filter "label=com.docker.compose.project=$project")
+existing_named_images=$(docker image ls -q "$project-*")
+if [ -n "$existing_containers$existing_volumes$existing_networks$existing_labeled_images$existing_named_images" ]; then
+  echo "E2E project resources already exist; refusing ownership" >&2
+  exit 1
+fi
+if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "TCP port 8080 is already in use" >&2
+  exit 1
+fi
 
 secret() {
   openssl rand -hex 32
@@ -115,7 +237,7 @@ fi
 }
 
 set -a
-. "./$env_file"
+. "$env_file"
 set +a
 
 required_variables="
@@ -140,8 +262,20 @@ for name in $required_variables; do
   fi
 done
 
-secret_dir=$(mktemp -d "${TMPDIR:-/tmp}/aap-assistant-e2e-secrets.XXXXXX")
-chmod 700 "$secret_dir"
+export HTTP_PORT=8080
+export PUBLIC_HOST=127.0.0.1
+export ALLOW_LOCAL_VALIDATION_HOSTS=true
+export ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080
+export ASSISTANT_PROVIDER_MODE=placeholder
+export PNPM_REGISTRY=${PNPM_REGISTRY:-https://registry.npmjs.org}
+
+temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/aap-assistant-e2e.XXXXXX")
+temp_owner_file="$temp_dir/owner-token"
+(umask 077 && printf '%s\n' "$run_token" >"$temp_owner_file")
+chmod 600 "$temp_owner_file"
+secret_dir="$temp_dir/secrets"
+mkdir -p "$secret_dir"
+chmod 700 "$temp_dir" "$secret_dir"
 
 materialize_secret() {
   variable_name=$1
@@ -154,6 +288,9 @@ materialize_secret() {
 }
 
 backup_encryption_key=$(secret)
+os_security_key=$(secret)
+assistant_session_secret=$(secret)
+assistant_rate_limit_secret=$(secret)
 
 materialize_secret POSTGRES_PASSWORD_FILE postgres_password "$POSTGRES_PASSWORD"
 materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$MIGRATOR_DATABASE_PASSWORD"
@@ -163,6 +300,9 @@ materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_enc
 materialize_secret MIGRATOR_DATABASE_URL_FILE migrator_database_url "$MIGRATOR_DATABASE_URL"
 materialize_secret RUNTIME_DATABASE_URL_FILE runtime_database_url "$RUNTIME_DATABASE_URL"
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECRET"
+materialize_secret OS_SECURITY_KEY_FILE os_security_key "$os_security_key"
+materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$assistant_session_secret"
+materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret "$assistant_rate_limit_secret"
 
 [ "$PUBLIC_HOST" = "127.0.0.1" ] || {
   echo "PUBLIC_HOST must be 127.0.0.1 for isolated E2E" >&2
@@ -178,6 +318,7 @@ materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECR
 }
 
 docker compose -p "$project" --env-file "$env_file" $compose_files config --quiet
+owns_project=true
 docker compose -p "$project" --env-file "$env_file" $compose_files build migrate web
 docker compose -p "$project" --env-file "$env_file" $compose_files up -d --wait db
 docker compose -p "$project" --env-file "$env_file" $compose_files run --rm migrate
@@ -187,4 +328,6 @@ docker compose -p "$project" --env-file "$env_file" $compose_files up -d --wait 
 
 BASE_URL=http://127.0.0.1:8080 \
   pnpm --filter @ai-agent-platform/web exec playwright test \
-  e2e/assistant-experience.spec.ts
+  e2e/assistant-experience.spec.ts \
+  e2e/pricing-assistant.spec.ts \
+  --workers=1

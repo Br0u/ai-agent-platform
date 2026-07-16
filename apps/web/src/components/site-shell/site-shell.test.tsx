@@ -27,6 +27,8 @@ type MockAppShellProps = {
 
 const mocks = vi.hoisted(() => ({
   appShellProps: undefined as MockAppShellProps | undefined,
+  assistantEntryOpen: undefined as boolean | undefined,
+  assistantEntryMode: undefined as "launcher" | "workspace" | undefined,
   pathname: "/",
   push: vi.fn(),
   replace: vi.fn(),
@@ -54,6 +56,7 @@ vi.mock("@ai-agent-platform/ui", () => ({
 
     return (
       <div
+        data-assistant-background-root
         data-active-href={props.activeHref}
         data-testid="app-shell"
         data-variant={props.variant}
@@ -63,11 +66,29 @@ vi.mock("@ai-agent-platform/ui", () => ({
       </div>
     );
   },
-  AssistantHeaderEntry: ({ onActivate }: { onActivate: () => void }) => (
-    <button onClick={onActivate} type="button">
-      打开 AI 助理
-    </button>
-  ),
+  AssistantHeaderEntry: ({
+    isOpen,
+    mode = "launcher",
+    onActivate,
+  }: {
+    isOpen: boolean;
+    mode?: "launcher" | "workspace";
+    onActivate: (trigger: HTMLButtonElement) => void;
+  }) => {
+    mocks.assistantEntryMode = mode;
+    return (
+      <button
+        aria-label={
+          mode === "workspace" ? "聚焦 AI 助理提问框" : "打开 AI 助理"
+        }
+        data-open={String((mocks.assistantEntryOpen = isOpen))}
+        onClick={(event) => onActivate(event.currentTarget)}
+        type="button"
+      >
+        {mode === "workspace" ? "继续提问" : "打开 AI 助理"}
+      </button>
+    );
+  },
 }));
 
 import {
@@ -77,26 +98,57 @@ import {
   portalNavigation,
 } from "../../config/navigation";
 import { useAssistantSession } from "../assistant/use-assistant-session";
+import { useAssistantExperience } from "../assistant/assistant-experience-provider";
 import { SiteShell } from "./site-shell";
 
-function renderAt(pathname: string) {
+function ComposerProbe() {
+  const { registerComposer } = useAssistantExperience();
+
+  return (
+    <textarea
+      aria-label="全页工作区输入框"
+      ref={(element) =>
+        element === null ? undefined : registerComposer(element)
+      }
+    />
+  );
+}
+
+function renderAt(pathname: string, children: ReactNode = <p>页面内容</p>) {
   mocks.pathname = pathname;
   window.history.replaceState(null, "", pathname);
-  return render(
-    <SiteShell>
-      <p>页面内容</p>
-    </SiteShell>,
-  );
+  return render(<SiteShell>{children}</SiteShell>);
 }
 
 afterEach(cleanup);
 
 beforeEach(() => {
   mocks.appShellProps = undefined;
+  mocks.assistantEntryOpen = undefined;
+  mocks.assistantEntryMode = undefined;
   mocks.pathname = "/";
   mocks.push.mockReset();
   mocks.replace.mockReset();
   vi.mocked(useAssistantSession).mockClear();
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    value: 1_280,
+  });
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn(
+      (query: string): MediaQueryList => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }),
+    ),
+  });
   vi.stubGlobal(
     "fetch",
     vi.fn().mockImplementation((input: string | URL | Request) => {
@@ -449,33 +501,59 @@ describe("SiteShell", () => {
     expect(useAssistantSession).toHaveBeenCalledOnce();
     expect(screen.getByRole("button", { name: "打开 AI 助理" })).toBeVisible();
     expect(screen.getByRole("button", { name: "打开 M 助手" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "打开 AI 助理" }),
+    ).toHaveAttribute("data-open", "false");
+
+    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
+    expect(
+      screen.getByRole("button", { name: "打开 AI 助理" }),
+    ).toHaveAttribute("data-open", "true");
   });
 
-  it("routes the portal assistant entry to the full assistant workspace", () => {
+  it("opens the dock from the exact portal assistant entry", async () => {
     renderAt("/");
 
-    fireEvent.click(screen.getByRole("button", { name: "打开 AI 助理" }));
+    const trigger = screen.getByRole("button", { name: "打开 AI 助理" });
+    fireEvent.click(trigger);
 
-    expect(mocks.push).toHaveBeenCalledWith("/assistant");
+    const dialog = await screen.findByRole("dialog", {
+      name: "AI 助理工作区",
+    });
+    expect(mocks.push).not.toHaveBeenCalled();
+    await waitFor(() => expect(dialog.style.opacity).toBe("1"));
+    expect(dialog).toBeVisible();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(trigger).toHaveAttribute("data-open", "true");
   });
 
   it("gives the assistant workspace a top focus entry without a floating launcher", () => {
-    renderAt("/assistant");
+    renderAt("/assistant", <ComposerProbe />);
 
     expect(useAssistantSession).toHaveBeenCalledOnce();
-    expect(screen.getByRole("button", { name: "打开 AI 助理" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "聚焦 AI 助理提问框" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "聚焦 AI 助理提问框" }),
+    ).toHaveAttribute("data-open", "false");
+    expect(mocks.assistantEntryMode).toBe("workspace");
     expect(screen.queryByRole("button", { name: "打开 M 助手" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "打开 AI 助理" }));
+    const composer = screen.getByRole("textbox", {
+      name: "全页工作区输入框",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "聚焦 AI 助理提问框" }));
+    expect(composer).toHaveFocus();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("returns focus to the exact portal launcher that opened the drawer", () => {
+  it("returns focus after the drawer exit to the exact portal launcher", async () => {
     renderAt("/");
     const floating = screen.getByRole("button", { name: "打开 M 助手" });
 
     fireEvent.click(floating);
     fireEvent.click(screen.getByRole("button", { name: "关闭 M 助手" }));
-    expect(floating).toHaveFocus();
+    await waitFor(() => expect(floating).toHaveFocus());
   });
 
   it("preserves the assistant controller across pathname rerenders", async () => {

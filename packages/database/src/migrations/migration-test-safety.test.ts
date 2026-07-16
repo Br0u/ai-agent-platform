@@ -21,6 +21,7 @@ describe("identity migration test database safety", () => {
     "postgresql://postgres:secret@127.0.0.1:5432/template1",
     "postgresql://postgres:secret@127.0.0.1:5432/production",
     "postgresql://postgres:secret@127.0.0.1:5432/ai_agent_platform_identity_test/extra",
+    "postgresql://postgres:secret@127.0.0.1:5432/ai_agent_platform_identity_test?host=database.internal",
     "mysql://root:secret@127.0.0.1:3306/ai_agent_platform_identity_test",
     "not-a-database-url",
   ])(

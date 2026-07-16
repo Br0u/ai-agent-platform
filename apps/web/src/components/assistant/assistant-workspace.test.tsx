@@ -11,7 +11,10 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantStatusResponse } from "@/features/assistant/assistant-contract";
-import { AssistantExperienceProvider } from "./assistant-experience-provider";
+import {
+  AssistantExperienceProvider,
+  useAssistantExperience,
+} from "./assistant-experience-provider";
 import { AssistantWorkspace } from "./assistant-workspace";
 
 type MediaQueryController = {
@@ -82,10 +85,19 @@ const placeholderStatus: AssistantStatusResponse = {
   message: "模型尚未配置，当前为安全占位模式。",
 };
 
+const availableStatus: AssistantStatusResponse = {
+  version: "1",
+  requestId: "workspace-available-status",
+  live: true,
+  ready: true,
+  capability: "available",
+  message: "AI 助理基础服务已就绪。",
+};
+
 function renderWorkspace() {
   return render(
     <AssistantExperienceProvider pathname="/assistant">
-      <AssistantWorkspace serviceState={placeholderStatus} />
+      <AssistantWorkspace initialServiceState={placeholderStatus} />
     </AssistantExperienceProvider>,
   );
 }
@@ -117,6 +129,43 @@ afterEach(() => {
 });
 
 describe("AssistantWorkspace", () => {
+  it("adopts its server state into the provider and renders later shared updates", async () => {
+    function SharedServiceStateProbe() {
+      const experience = useAssistantExperience();
+      return (
+        <>
+          <output aria-label="共享服务能力">
+            {experience.serviceState.capability}
+          </output>
+          <button
+            onClick={() => experience.adoptServiceState(availableStatus)}
+            type="button"
+          >
+            采用后续服务状态
+          </button>
+        </>
+      );
+    }
+
+    render(
+      <AssistantExperienceProvider pathname="/assistant">
+        <AssistantWorkspace initialServiceState={placeholderStatus} />
+        <SharedServiceStateProbe />
+      </AssistantExperienceProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("共享服务能力")).toHaveTextContent(
+        "placeholder",
+      ),
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "采用后续服务状态" }));
+    expect(screen.getByTestId("assistant-service-state")).toHaveTextContent(
+      "服务已就绪",
+    );
+  });
+
   it("uses the approved spatial direction and states the real placeholder capability", () => {
     renderWorkspace();
 
@@ -131,6 +180,14 @@ describe("AssistantWorkspace", () => {
     expect(screen.getByTestId("assistant-service-state")).toHaveAttribute(
       "data-capability",
       "placeholder",
+    );
+    expect(screen.getByTestId("assistant-conversation")).toHaveAttribute(
+      "data-variant",
+      "workspace",
+    );
+    expect(screen.getByRole("log", { name: "AI 助理对话" })).toHaveAttribute(
+      "data-testid",
+      "assistant-message-history",
     );
     expect(screen.getAllByRole("textbox", { name: "输入问题" })).toHaveLength(
       1,
@@ -167,7 +224,7 @@ describe("AssistantWorkspace", () => {
     render(
       <AssistantExperienceProvider pathname="/assistant">
         <AssistantWorkspace
-          serviceState={{
+          initialServiceState={{
             version: "1",
             requestId: "degraded-status",
             live: false,
@@ -179,7 +236,7 @@ describe("AssistantWorkspace", () => {
       </AssistantExperienceProvider>,
     );
 
-    expect(screen.getByText("基础设施暂不可用")).toBeVisible();
+    expect(screen.getByText("基础服务暂不可用")).toBeVisible();
     expect(screen.queryByText("模型未配置")).not.toBeInTheDocument();
     expect(screen.getByText("助手基础服务暂不可用。")).toBeVisible();
   });
@@ -198,7 +255,7 @@ describe("AssistantWorkspace", () => {
     render(
       <AssistantExperienceProvider pathname="/assistant">
         <AssistantWorkspace
-          serviceState={{
+          initialServiceState={{
             version: "1",
             requestId: "initial-status",
             live: false,
@@ -255,7 +312,7 @@ describe("AssistantWorkspace", () => {
     await act(async () => vi.advanceTimersByTimeAsync(5_000));
 
     expect(screen.getByTestId("assistant-service-state")).toHaveTextContent(
-      "基础设施暂不可用",
+      "基础服务暂不可用",
     );
     expect(screen.getByRole("button", { name: "刷新服务状态" })).toBeEnabled();
   });
@@ -287,7 +344,7 @@ describe("AssistantWorkspace", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("assistant-service-state")).toHaveTextContent(
-        "基础设施暂不可用",
+        "基础服务暂不可用",
       ),
     );
     expect(screen.queryByText(/raw private/u)).toBeNull();
@@ -444,9 +501,10 @@ describe("AssistantWorkspace", () => {
     expect(form).not.toBeNull();
 
     fireEvent.keyDown(composer, { key: "Enter" });
+    expect(screen.getByRole("alert")).toHaveTextContent("请输入问题。");
     expect(
       within(form as HTMLFormElement).getByText("请输入问题。"),
-    ).toHaveAttribute("role", "alert");
+    ).not.toHaveAttribute("role");
 
     fireEvent.change(composer, { target: { value: "𠮷".repeat(501) } });
     const error = within(form as HTMLFormElement).getByText(
@@ -501,13 +559,7 @@ describe("AssistantWorkspace", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("请求过于频繁，请稍后再试。");
-    expect(
-      screen
-        .getAllByRole("status")
-        .some((status) =>
-          status.textContent?.includes("请求过于频繁，请稍后再试。"),
-        ),
-    ).toBe(true);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(screen.queryByText(/raw internal limiter detail/u)).toBeNull();
     expect(fetch).toHaveBeenCalledOnce();
   });
@@ -560,6 +612,9 @@ describe("AssistantWorkspace", () => {
     );
     expect(css).toMatch(
       /@media \(max-width: 560px\)\s*{[\s\S]*?\.assistant-workspace\s*{[^}]*--assistant-workspace-shell-offset:\s*65px;/,
+    );
+    expect(css).toMatch(
+      /\.assistant-workspace__conversation\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*0;[^}]*flex-direction:\s*column;/s,
     );
   });
 });

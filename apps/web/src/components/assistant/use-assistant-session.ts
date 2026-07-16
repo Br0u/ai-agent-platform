@@ -44,7 +44,7 @@ type AssistantSuccessfulBody = Pick<
 const FAILURE_ANNOUNCEMENT = "发送失败，请重试或使用帮助中心或商务咨询。";
 const UNAVAILABLE_ANNOUNCEMENT = "助手服务暂不可用，请使用帮助中心或商务咨询。";
 const PUBLIC_ASSISTANT_ENDPOINT = "/api/v1/assistant/chat";
-const NAVIGATION_ABORT = Symbol("assistant-navigation-abort");
+const REQUEST_CANCELLED = Symbol("assistant-request-cancelled");
 const REQUEST_TIMEOUT = Symbol("assistant-request-timeout");
 
 class SafeAssistantRequestFailure extends Error {}
@@ -67,7 +67,6 @@ type ActiveAssistantRequest = {
 };
 
 export type AssistantSession = {
-  open: boolean;
   draft: string;
   messages: AssistantMessage[];
   latestAnnouncement: string;
@@ -76,8 +75,6 @@ export type AssistantSession = {
   validationError: AssistantValidationError | null;
   sessionExpiresAt: string | null;
   setDraft: (draft: string) => void;
-  openAssistant: () => void;
-  closeAssistant: () => void;
   submit: (message?: string) => Promise<void>;
   retry: () => Promise<void>;
 };
@@ -160,7 +157,6 @@ export function useAssistantSession(
   const timeoutMs = options.timeoutMs ?? ASSISTANT_REQUEST_TIMEOUT_MS;
   const successResponseGuard =
     options.successResponseGuard ?? isAssistantSuccessResponse;
-  const [open, setOpen] = useState(false);
   const [draft, setDraftState] = useState("");
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [latestAnnouncement, setLatestAnnouncement] = useState("");
@@ -192,14 +188,14 @@ export function useAssistantSession(
 
   useEffect(() => {
     requestToken.current += 1;
-    cancelActiveRequest(NAVIGATION_ABORT);
+    cancelActiveRequest(REQUEST_CANCELLED);
     if (requestStatusRef.current === "sending") updateRequestStatus("idle");
-  }, [cancelActiveRequest, endpoint, pathname, timeoutMs, updateRequestStatus]);
+  }, [cancelActiveRequest, endpoint, timeoutMs, updateRequestStatus]);
 
   useEffect(
     () => () => {
       requestToken.current += 1;
-      cancelActiveRequest(NAVIGATION_ABORT);
+      cancelActiveRequest(REQUEST_CANCELLED);
     },
     [cancelActiveRequest],
   );
@@ -281,7 +277,7 @@ export function useAssistantSession(
         if (body.session) setSessionExpiresAt(body.session.expiresAt);
         updateRequestStatus("idle");
       } catch (error) {
-        if (token !== requestToken.current || error === NAVIGATION_ABORT) {
+        if (token !== requestToken.current || error === REQUEST_CANCELLED) {
           return;
         }
         if (!timedOut && error !== REQUEST_TIMEOUT && controller.signal.aborted)
@@ -339,7 +335,6 @@ export function useAssistantSession(
   }, []);
 
   return {
-    open,
     draft,
     messages,
     latestAnnouncement,
@@ -348,8 +343,6 @@ export function useAssistantSession(
     validationError,
     sessionExpiresAt,
     setDraft,
-    openAssistant: () => setOpen(true),
-    closeAssistant: () => setOpen(false),
     submit,
     retry,
   };

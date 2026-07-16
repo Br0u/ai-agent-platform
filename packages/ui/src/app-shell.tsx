@@ -115,7 +115,11 @@ export function AppShell({
   }
 
   return (
-    <div className="app-shell" data-shell-variant={variant}>
+    <div
+      className="app-shell"
+      data-assistant-background-root
+      data-shell-variant={variant}
+    >
       <PortalHeader
         activeHref={activeHref}
         assistantEntry={assistantEntry}

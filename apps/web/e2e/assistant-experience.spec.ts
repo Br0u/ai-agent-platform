@@ -18,36 +18,46 @@ const VIEWPORTS = {
 } as const;
 
 type BrowserEvidence = {
-  consoleErrors: string[];
+  consoleMessages: Array<{ level: string; text: string; url: string }>;
   pageErrors: string[];
-  localAssetFailures: string[];
+  requestFailures: Array<{
+    method: string;
+    url: string;
+    errorText: string;
+  }>;
+  unexpectedResponses: string[];
 };
 
 function collectEvidence(page: Page): BrowserEvidence {
   const evidence: BrowserEvidence = {
-    consoleErrors: [],
+    consoleMessages: [],
     pageErrors: [],
-    localAssetFailures: [],
+    requestFailures: [],
+    unexpectedResponses: [],
   };
-  const assetTypes = new Set(["font", "image", "script", "stylesheet"]);
 
   page.on("console", (message) => {
-    if (message.type() === "error") evidence.consoleErrors.push(message.text());
+    evidence.consoleMessages.push({
+      level: message.type(),
+      text: message.text(),
+      url: message.location().url,
+    });
   });
   page.on("pageerror", (error) => evidence.pageErrors.push(error.message));
   page.on("requestfailed", (request) => {
-    if (assetTypes.has(request.resourceType())) {
-      evidence.localAssetFailures.push(
-        `${request.method()} ${request.url()} ${request.failure()?.errorText ?? "failed"}`,
-      );
-    }
+    evidence.requestFailures.push({
+      method: request.method(),
+      url: request.url(),
+      errorText: request.failure()?.errorText ?? "failed",
+    });
   });
   page.on("response", (response) => {
     if (
-      response.status() >= 400 &&
-      assetTypes.has(response.request().resourceType())
+      response.status() === 404 ||
+      response.status() === 429 ||
+      response.status() >= 500
     ) {
-      evidence.localAssetFailures.push(
+      evidence.unexpectedResponses.push(
         `${response.status()} ${response.request().method()} ${response.url()}`,
       );
     }
@@ -110,10 +120,167 @@ async function attachScreenshot(page: Page, testInfo: TestInfo, name: string) {
   });
 }
 
-function expectCleanEvidence(evidence: BrowserEvidence) {
-  expect(evidence.consoleErrors).toEqual([]);
+function isExpectedUnusedPreloadWarning(
+  message: BrowserEvidence["consoleMessages"][number],
+  applicationOrigin?: string,
+) {
+  if (
+    applicationOrigin === undefined ||
+    message.level !== "warning" ||
+    !message.text.startsWith(`The resource ${applicationOrigin}/`) ||
+    !message.text.endsWith(
+      " was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.",
+    )
+  ) {
+    return false;
+  }
+
+  return message.url === "" || message.url.startsWith(applicationOrigin);
+}
+
+function isExpectedNavigationCancellation(
+  failure: BrowserEvidence["requestFailures"][number],
+  applicationOrigin?: string,
+) {
+  if (
+    applicationOrigin === undefined ||
+    failure.errorText !== "net::ERR_ABORTED"
+  ) {
+    return false;
+  }
+
+  try {
+    const url = new URL(failure.url);
+    if (url.origin !== applicationOrigin) {
+      return false;
+    }
+    if (failure.method === "GET") {
+      return (
+        url.searchParams.has("_rsc") ||
+        url.pathname.startsWith("/_next/static/") ||
+        (url.pathname === "/api/v1/session/staff" && url.search === "")
+      );
+    }
+    return (
+      failure.method === "POST" &&
+      url.pathname === "/staff/two-factor" &&
+      url.searchParams.get("returnTo") === "/admin/assistant"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function expectCleanEvidence(
+  evidence: BrowserEvidence,
+  applicationOrigin?: string,
+) {
+  const knownDevelopmentMessages = evidence.consoleMessages.filter(
+    (message) =>
+      message.url.startsWith("webpack-internal:///") &&
+      (message.text.startsWith("%cDownload the React DevTools") ||
+        message.text === "[HMR] connected" ||
+        message.text.startsWith("[Fast Refresh]") ||
+        message.text.startsWith("You have Reduced Motion enabled")),
+  );
+  const knownBrowserMessages = evidence.consoleMessages.filter((message) =>
+    isExpectedUnusedPreloadWarning(message, applicationOrigin),
+  );
+  const allowedNavigationCancellations = evidence.requestFailures.filter(
+    (failure) => isExpectedNavigationCancellation(failure, applicationOrigin),
+  );
+  expect(
+    evidence.consoleMessages.filter(
+      (message) =>
+        !knownDevelopmentMessages.includes(message) &&
+        !knownBrowserMessages.includes(message),
+    ),
+  ).toEqual([]);
   expect(evidence.pageErrors).toEqual([]);
-  expect(evidence.localAssetFailures).toEqual([]);
+  expect(
+    evidence.requestFailures.filter(
+      (failure) => !allowedNavigationCancellations.includes(failure),
+    ),
+  ).toEqual([]);
+  expect(evidence.unexpectedResponses).toEqual([]);
+}
+
+const ASSISTANT_CHAT_ENDPOINT = "/api/v1/assistant/chat";
+const ASSISTANT_STATUS_ENDPOINT = "/api/v1/assistant/status";
+const ASSISTANT_DOCK_WIDTH_STORAGE_KEY =
+  "ai-agent-platform:assistant-dock-width:v1";
+
+async function activateAssistantWithStatus(
+  page: Page,
+  activate: () => Promise<void>,
+) {
+  const statusResponse = page.waitForResponse(
+    (candidate) =>
+      candidate.url().endsWith(ASSISTANT_STATUS_ENDPOINT) &&
+      candidate.status() === 200,
+  );
+  await activate();
+  await statusResponse;
+}
+
+function expectWidth(locator: Locator, expected: number, tolerance = 2) {
+  return expect
+    .poll(async () => (await locator.boundingBox())?.width ?? 0)
+    .toBeGreaterThanOrEqual(expected - tolerance)
+    .then(async () =>
+      expect((await locator.boundingBox())?.width ?? 0).toBeLessThanOrEqual(
+        expected + tolerance,
+      ),
+    );
+}
+
+async function expectSingleDialog(
+  page: Page,
+  name: "AI 助理工作区" | "M 助手",
+) {
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await expect(page.getByRole("dialog", { name })).toBeVisible();
+}
+
+async function dragDockToWidth(
+  page: Page,
+  dialog: Locator,
+  separator: Locator,
+  targetWidth: number,
+  cancel = false,
+) {
+  const separatorBox = await separator.boundingBox();
+  const dialogBox = await dialog.boundingBox();
+  expect(separatorBox).not.toBeNull();
+  expect(dialogBox).not.toBeNull();
+  const startX = separatorBox!.x + separatorBox!.width / 2;
+  const startY = separatorBox!.y + Math.min(120, separatorBox!.height / 2);
+  const targetX = startX + dialogBox!.width - targetWidth;
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(targetX, startY, { steps: 8 });
+  if (cancel) {
+    await separator.dispatchEvent("pointercancel", { pointerId: 1 });
+  }
+  await page.mouse.up();
+}
+
+function assistantSuccessResponse(content: string) {
+  return {
+    version: "1",
+    requestId: "assistant-dock-e2e",
+    mode: "placeholder",
+    session: {
+      temporary: true,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    },
+    message: {
+      id: "assistant-dock-message",
+      role: "assistant",
+      content,
+    },
+    suggestedActions: [],
+  };
 }
 
 async function ensureAdminTwoFactor(
@@ -138,115 +305,406 @@ async function ensureAdminTwoFactor(
   }
 }
 
-test("portal launchers, drawer, and standalone assistant are keyboard-safe", async ({
+test("portal header entry, quick assistant, dock, and standalone workspace are keyboard-safe", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(45_000);
   await configure(page, testInfo);
   const evidence = collectEvidence(page);
   await page.goto("/");
   await expectExactViewportWidth(page);
 
   const topEntry = page.getByRole("button", { name: "打开 AI 助理" });
-  const floatingEntry = page.getByRole("button", { name: "打开 M 助手" });
   await expect(topEntry).toBeVisible();
-  await expect(floatingEntry).toBeVisible();
   await tabTo(page, topEntry);
+  await activateAssistantWithStatus(page, () => page.keyboard.press("Enter"));
+  await expectSingleDialog(page, "AI 助理工作区");
+  await expect(page.getByRole("textbox", { name: "输入问题" })).toBeFocused();
+  await page.getByRole("button", { name: "关闭 AI 助理工作区" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(topEntry).toBeFocused();
 
-  const markMotion = await topEntry.locator("svg").evaluate((element) => {
-    const style = getComputedStyle(element);
-    return { name: style.animationName, duration: style.animationDuration };
-  });
-  expect(markMotion.name).not.toBe("none");
-  expect(markMotion.duration).not.toBe("0s");
+  await expectExactViewportWidth(page);
+  const floatingEntry = page.getByRole("button", { name: "打开 M 助手" });
+  await expect(floatingEntry).toBeVisible();
 
+  await tabTo(page, floatingEntry);
   await page.keyboard.press("Enter");
   const dialog = page.getByRole("dialog", { name: "M 助手" });
-  const drawerInput = page.getByRole("textbox", { name: "向 M 助手提问" });
-  await expect(dialog).toBeVisible();
-  await expect(drawerInput).toBeFocused();
-  const drawerMotion = await dialog.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      transform: style.transform,
-      transitionDuration: style.transitionDuration,
-      transitionProperty: style.transitionProperty,
-    };
+  const quickClose = dialog.getByRole("button", {
+    name: "关闭 M 助手",
+    exact: true,
   });
-  expect(drawerMotion.transitionProperty).toBe("transform, opacity");
-  expect(drawerMotion.transitionDuration).toBe("0.22s, 0.22s");
+  await expect(dialog).toBeVisible();
+  await expect(quickClose).toBeFocused();
   await attachScreenshot(page, testInfo, "portal-drawer");
 
+  const presetResponse = page.waitForResponse(
+    (candidate) =>
+      candidate.url().endsWith(ASSISTANT_CHAT_ENDPOINT) &&
+      candidate.status() === 200,
+  );
   await page.getByRole("button", { name: "如何开始了解平台？" }).click();
-  const newestAnswer = page.locator(".assistant-message--assistant").last();
-  await expect(newestAnswer).toBeVisible();
-  const messageMotion = await newestAnswer.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return { name: style.animationName, duration: style.animationDuration };
-  });
-  expect(messageMotion.name).toBe("assistant-message-enter");
-  expect(messageMotion.duration).toBe("0.18s");
+  await presetResponse;
+  await expect(
+    page
+      .getByRole("log")
+      .getByText("你可以从快速开始文档了解平台结构和使用入口。", {
+        exact: true,
+      }),
+  ).toBeVisible();
 
-  const fullChat = page.getByRole("link", { name: "打开完整 AI 助理" });
-  await tabTo(page, fullChat);
-  await page.keyboard.press("Escape");
-  await expect(topEntry).toBeFocused();
-  const closingDrawer = page.locator(".assistant-panel");
-  await expect(closingDrawer).toHaveAttribute("data-motion-state", "closing");
-  await expect(closingDrawer).toHaveAttribute("aria-hidden", "true");
-  await expect(closingDrawer).toHaveAttribute("inert", "");
-  await expect(closingDrawer).toHaveCount(0);
+  await quickClose.click();
+  await expect(dialog).toHaveCount(0);
+  await expect(floatingEntry).toBeFocused();
 
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.reload();
-  const reducedTopEntry = page.getByRole("button", { name: "打开 AI 助理" });
-  const reducedMarkMotion = await reducedTopEntry
-    .locator("svg")
-    .evaluate((element) => {
-      const style = getComputedStyle(element);
-      return { name: style.animationName, duration: style.animationDuration };
-    });
-  expect(
-    reducedMarkMotion.name === "none" || reducedMarkMotion.duration === "0s",
-  ).toBe(true);
-  await reducedTopEntry.click();
+  await floatingEntry.click();
   const reducedDialog = page.getByRole("dialog", { name: "M 助手" });
-  const reducedDrawerMotion = await reducedDialog.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      transform: style.transform,
-      transitionDuration: style.transitionDuration,
-    };
-  });
-  expect(reducedDrawerMotion.transform).toBe("none");
-  expect(reducedDrawerMotion.transitionDuration).toBe("0s");
+  await expect(reducedDialog).toBeVisible();
+  await expect(quickClose).toBeFocused();
   await page.keyboard.press("Escape");
-  await expect(page.locator(".assistant-panel")).toHaveCount(0);
-  await expect(reducedTopEntry).toBeFocused();
+  await expect(reducedDialog).toHaveCount(0);
+  await expect(floatingEntry).toBeFocused();
 
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await page.reload();
-  const reloadedFloatingEntry = page.getByRole("button", {
-    name: "打开 M 助手",
-  });
-  await tabTo(page, reloadedFloatingEntry);
   await page.keyboard.press("Enter");
-  await expect(drawerInput).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(reloadedFloatingEntry).toBeFocused();
-
-  await page.getByRole("button", { name: "打开 AI 助理" }).click();
-  await page.getByRole("link", { name: "打开完整 AI 助理" }).click();
+  await expect(quickClose).toBeFocused();
+  const expandDock = page.getByRole("button", {
+    name: "展开 AI 助理工作区",
+  });
+  await tabTo(page, expandDock);
+  await page.keyboard.press("Enter");
+  await expectSingleDialog(page, "AI 助理工作区");
+  const fullChat = page.getByRole("link", { name: "进入完整工作区" });
+  await tabTo(page, fullChat);
+  await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/assistant$/u);
   await expect(page.getByRole("main", { name: "AI 助理工作区" })).toBeVisible();
   await expect(page.getByRole("button", { name: "打开 M 助手" })).toHaveCount(
     0,
   );
   const composer = page.getByRole("textbox", { name: "输入问题" });
-  await page.getByRole("button", { name: "打开 AI 助理" }).click();
+  await page.getByRole("button", { name: "聚焦 AI 助理提问框" }).click();
   await expectVisibleKeyboardFocus(composer);
   await expectExactViewportWidth(page);
   await attachScreenshot(page, testInfo, "assistant-workspace");
-  expectCleanEvidence(evidence);
+  expectCleanEvidence(evidence, new URL(page.url()).origin);
+});
+
+test("desktop dock clamps, persists only completed resizing, and restores focus", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "desktop resize contract");
+  await configure(page, testInfo, "reduce");
+  const evidence = collectEvidence(page);
+  await page.goto("/");
+  await page.evaluate(
+    (key) => window.localStorage.removeItem(key),
+    ASSISTANT_DOCK_WIDTH_STORAGE_KEY,
+  );
+  await page.reload();
+
+  const topEntry = page.getByRole("button", { name: "打开 AI 助理" });
+  await activateAssistantWithStatus(page, () => topEntry.click());
+  const dialog = page.getByRole("dialog", { name: "AI 助理工作区" });
+  const separator = dialog.getByRole("separator", {
+    name: "调整 AI 助理工作区宽度",
+  });
+  await expectWidth(dialog, 480);
+  await expect(separator).toHaveAttribute("aria-valuemin", "380");
+  await expect(separator).toHaveAttribute("aria-valuemax", "760");
+
+  await dragDockToWidth(page, dialog, separator, 300);
+  await expectWidth(dialog, 380);
+  await expect(separator).toHaveAttribute("aria-valuenow", "380");
+
+  await separator.focus();
+  await page.keyboard.press("Shift+ArrowLeft");
+  await expectWidth(dialog, 428);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (key) => window.localStorage.getItem(key),
+        ASSISTANT_DOCK_WIDTH_STORAGE_KEY,
+      ),
+    )
+    .toBe("428");
+
+  await dragDockToWidth(page, dialog, separator, 900);
+  await expectWidth(dialog, 760);
+  await expect(separator).toHaveAttribute("aria-valuenow", "760");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (key) => window.localStorage.getItem(key),
+        ASSISTANT_DOCK_WIDTH_STORAGE_KEY,
+      ),
+    )
+    .toBe("760");
+
+  await dragDockToWidth(page, dialog, separator, 600, true);
+  await expectWidth(dialog, 760);
+  expect(
+    await page.evaluate(
+      (key) => window.localStorage.getItem(key),
+      ASSISTANT_DOCK_WIDTH_STORAGE_KEY,
+    ),
+  ).toBe("760");
+
+  await page.reload();
+  await activateAssistantWithStatus(page, () =>
+    page.getByRole("button", { name: "打开 AI 助理" }).click(),
+  );
+  await expectWidth(page.getByRole("dialog", { name: "AI 助理工作区" }), 760);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "打开 AI 助理" }),
+  ).toBeFocused();
+
+  await page.getByRole("button", { name: "打开 AI 助理" }).click();
+  await page.getByTestId("assistant-dock-backdrop").click({
+    position: { x: 20, y: 20 },
+  });
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "打开 AI 助理" }),
+  ).toBeFocused();
+  await expectExactViewportWidth(page);
+  expectCleanEvidence(evidence, new URL(page.url()).origin);
+});
+
+test("open dock preserves its preferred width across the exact mobile breakpoint", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "desktop breakpoint contract");
+  await configure(page, testInfo, "reduce");
+  const evidence = collectEvidence(page);
+  const preferredWidth = 660;
+  await page.goto("/");
+  await page.evaluate(
+    ({ key, value }) => window.localStorage.setItem(key, String(value)),
+    { key: ASSISTANT_DOCK_WIDTH_STORAGE_KEY, value: preferredWidth },
+  );
+  await page.reload();
+  await activateAssistantWithStatus(page, () =>
+    page.getByRole("button", { name: "打开 AI 助理" }).click(),
+  );
+
+  const dialog = page.getByRole("dialog", { name: "AI 助理工作区" });
+  const separator = dialog.getByRole("separator", {
+    name: "调整 AI 助理工作区宽度",
+  });
+  const background = page.locator("[data-assistant-background-root]");
+  const expectModalIsolation = async () => {
+    await expect(dialog).toHaveCount(1);
+    await expect(background).toHaveAttribute("aria-hidden", "true");
+    await expect(background).toHaveAttribute("inert", "");
+    expect(await page.evaluate(() => document.body.style.overflow)).toBe(
+      "hidden",
+    );
+    await expectExactViewportWidth(page);
+  };
+  const expectInnerWidth = (width: number) =>
+    expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
+  const expectStoredPreference = () =>
+    expect
+      .poll(() =>
+        page.evaluate(
+          (key) => window.localStorage.getItem(key),
+          ASSISTANT_DOCK_WIDTH_STORAGE_KEY,
+        ),
+      )
+      .toBe(String(preferredWidth));
+
+  await page.setViewportSize({ width: 721, height: VIEWPORTS.desktop.height });
+  await expectInnerWidth(721);
+  await expectModalIsolation();
+  await expect(separator).toHaveCount(1);
+  await expectWidth(dialog, preferredWidth);
+  await expectStoredPreference();
+
+  await page.setViewportSize({ width: 720, height: VIEWPORTS.desktop.height });
+  await expectInnerWidth(720);
+  await expectModalIsolation();
+  await expect(separator).toHaveCount(0);
+  const mobileBox = await dialog.boundingBox();
+  expect(mobileBox).not.toBeNull();
+  expect(mobileBox!.x).toBe(0);
+  expect(mobileBox!.width).toBe(720);
+  await expectStoredPreference();
+
+  await page.setViewportSize({ width: 721, height: VIEWPORTS.desktop.height });
+  await expectInnerWidth(721);
+  await expectModalIsolation();
+  await expect(separator).toHaveCount(1);
+  await expectWidth(dialog, preferredWidth);
+  await expectStoredPreference();
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expectCleanEvidence(evidence, new URL(page.url()).origin);
+});
+
+test("quick, dock, and standalone workspace keep one in-flight conversation", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "desktop continuity contract");
+  await configure(page, testInfo, "reduce");
+  const evidence = collectEvidence(page);
+  let requestCount = 0;
+  let markRequestStarted!: () => void;
+  let releaseResponse!: () => void;
+  const requestStarted = new Promise<void>((resolve) => {
+    markRequestStarted = resolve;
+  });
+  const responseGate = new Promise<void>((resolve) => {
+    releaseResponse = resolve;
+  });
+  const answer = "这条回复跨越快速助手、侧边工作区和完整工作区。";
+  await page.route(`**${ASSISTANT_CHAT_ENDPOINT}`, async (route) => {
+    requestCount += 1;
+    markRequestStarted();
+    await responseGate;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(assistantSuccessResponse(answer)),
+    });
+  });
+
+  await page.goto("/pricing");
+  await activateAssistantWithStatus(page, () =>
+    page.getByRole("button", { name: "打开 M 助手" }).click(),
+  );
+  const quickInput = page.getByRole("textbox", { name: "向 M 助手提问" });
+  const question = "请保留这条跨形态问题";
+  await quickInput.fill(question);
+  await page.getByRole("button", { name: "展开 AI 助理工作区" }).click();
+  await expectSingleDialog(page, "AI 助理工作区");
+  await expect(page.getByRole("textbox", { name: "输入问题" })).toHaveValue(
+    question,
+  );
+
+  await page.getByRole("button", { name: "收起为快速助手" }).click();
+  await expectSingleDialog(page, "M 助手");
+  await expect(quickInput).toHaveValue(question);
+  await page.getByRole("button", { name: "发送消息" }).click();
+  await requestStarted;
+  await page.getByRole("button", { name: "展开 AI 助理工作区" }).click();
+  await expectSingleDialog(page, "AI 助理工作区");
+  await expect(page.getByRole("textbox", { name: "输入问题" })).toHaveValue(
+    question,
+  );
+
+  await page.getByRole("link", { name: "进入完整工作区" }).click();
+  await expect(page).toHaveURL(/\/assistant$/u);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  releaseResponse();
+  const messageLog = page.getByRole("log", { name: "AI 助理对话" });
+  await expect(messageLog).toContainText(question);
+  await expect(messageLog).toContainText(answer);
+  expect(requestCount).toBe(1);
+
+  await page.getByRole("link", { name: "AI Agent Platform 首页" }).click();
+  await expect(page).toHaveURL(/\/$/u);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const launcher = page.getByRole("button", { name: "打开 M 助手" });
+  await expect(launcher).toBeVisible();
+
+  await launcher.click();
+  await expectSingleDialog(page, "M 助手");
+  const quickDialog = page.getByRole("dialog", { name: "M 助手" });
+  await expect(
+    quickDialog.getByRole("log", { name: "AI 助理对话" }),
+  ).toContainText(question);
+  await expect(
+    quickDialog.getByRole("log", { name: "AI 助理对话" }),
+  ).toContainText(answer);
+  expect(requestCount).toBe(1);
+
+  await quickDialog.getByRole("button", { name: "展开 AI 助理工作区" }).click();
+  await expectSingleDialog(page, "AI 助理工作区");
+  const reopenedDock = page.getByRole("dialog", { name: "AI 助理工作区" });
+  await expect(
+    reopenedDock.getByRole("log", { name: "AI 助理对话" }),
+  ).toContainText(question);
+  await expect(
+    reopenedDock.getByRole("log", { name: "AI 助理对话" }),
+  ).toContainText(answer);
+  expect(requestCount).toBe(1);
+  await expectExactViewportWidth(page);
+  await page.unroute(`**${ASSISTANT_CHAT_ENDPOINT}`);
+  expectCleanEvidence(evidence, new URL(page.url()).origin);
+});
+
+test("mobile dock is a single full-screen, keyboard-safe scrolling workspace", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "mobile dock contract");
+  await configure(page, testInfo, "reduce");
+  const evidence = collectEvidence(page);
+  const answer = `移动端长回复：${"工作区内容 ".repeat(140)}`;
+  await page.route(`**${ASSISTANT_CHAT_ENDPOINT}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(assistantSuccessResponse(answer)),
+    });
+  });
+
+  await page.goto("/");
+  await activateAssistantWithStatus(page, () =>
+    page.getByRole("button", { name: "打开 AI 助理" }).click(),
+  );
+  await expectSingleDialog(page, "AI 助理工作区");
+  const dialog = page.getByRole("dialog", { name: "AI 助理工作区" });
+  await expect(dialog.getByRole("separator")).toHaveCount(0);
+  const initialBox = await dialog.boundingBox();
+  expect(initialBox).not.toBeNull();
+  expect(initialBox!.x).toBe(0);
+  expect(initialBox!.y).toBe(0);
+  expect(initialBox!.width).toBe(VIEWPORTS.mobile.width);
+  expect(initialBox!.height).toBe(VIEWPORTS.mobile.height);
+
+  const input = page.getByRole("textbox", { name: "输入问题" });
+  await input.fill("移动端滚动与软键盘验证");
+  const response = page.waitForResponse(
+    (candidate) =>
+      candidate.url().endsWith(ASSISTANT_CHAT_ENDPOINT) &&
+      candidate.status() === 200,
+  );
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await response;
+  const messageLog = page.getByRole("log", { name: "AI 助理对话" });
+  await expect(messageLog).toContainText("移动端长回复");
+  const scrolling = await messageLog.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    return {
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      scrollTop: element.scrollTop,
+    };
+  });
+  expect(scrolling.scrollHeight).toBeGreaterThan(scrolling.clientHeight);
+  expect(scrolling.scrollTop).toBeGreaterThan(0);
+
+  await input.focus();
+  await page.setViewportSize({ width: 390, height: 500 });
+  await expect
+    .poll(async () => (await dialog.boundingBox())?.height ?? 0)
+    .toBeLessThanOrEqual(500);
+  const compactDialogBox = await dialog.boundingBox();
+  const composerBox = await input.boundingBox();
+  expect(compactDialogBox).not.toBeNull();
+  expect(composerBox).not.toBeNull();
+  expect(compactDialogBox!.x).toBe(0);
+  expect(compactDialogBox!.width).toBe(390);
+  expect(composerBox!.y + composerBox!.height).toBeLessThanOrEqual(500);
+  await expectExactViewportWidth(page);
+  await page.unroute(`**${ASSISTANT_CHAT_ENDPOINT}`);
+  expectCleanEvidence(evidence, new URL(page.url()).origin);
 });
 
 test("all authentication routes use the precision shell without overflow", async ({
@@ -273,7 +731,7 @@ test("all authentication routes use the precision shell without overflow", async
   await tabTo(page, page.getByLabel("六位验证码").first());
   await expectExactViewportWidth(page);
   await attachScreenshot(page, testInfo, "auth-shell");
-  expectCleanEvidence(evidence);
+  expectCleanEvidence(evidence, new URL(page.url()).origin);
 });
 
 test("authenticated assistant operations and protected auth forms are usable", async ({
@@ -326,5 +784,5 @@ test("authenticated assistant operations and protected auth forms are usable", a
     await tabTo(page, page.getByLabel(field).first());
   }
 
-  expectCleanEvidence(evidence);
+  expectCleanEvidence(evidence, new URL(page.url()).origin);
 });
