@@ -79,6 +79,84 @@ class ActiveModelSettings:
     timeout_seconds: int
 
 
+def _validate_model_id_value(value: str) -> str:
+    if not value.strip() or value != value.strip():
+        raise ValueError("model ID must not be blank or have surrounding whitespace")
+    if len(value) > MODEL_ID_MAX_CODE_POINTS:
+        raise ValueError(
+            f"model ID must contain at most {MODEL_ID_MAX_CODE_POINTS} code points"
+        )
+    if any(
+        ord(character) <= 0x1F or 0x7F <= ord(character) <= 0x9F
+        for character in value
+    ):
+        raise ValueError("model ID must not contain C0 or C1 control characters")
+    return value
+
+
+def _validate_model_api_key_value(value: SecretStr) -> SecretStr:
+    secret = value.get_secret_value()
+    if not secret or secret != secret.strip():
+        raise ValueError(
+            "model API key must not be blank or have surrounding whitespace"
+        )
+    return value
+
+
+def _validate_model_base_url_value(
+    value: str | None,
+    provider: ModelProvider | None,
+) -> str | None:
+    if value is None:
+        return value
+
+    if provider is not None and provider not in _BASE_URL_PROVIDERS:
+        raise ValueError("MODEL_BASE_URL is not supported for the selected provider")
+    if any(
+        character.isspace()
+        or ord(character) <= 0x1F
+        or 0x7F <= ord(character) <= 0x9F
+        for character in value
+    ) or "\\" in value:
+        raise ValueError(
+            "MODEL_BASE_URL must not contain whitespace, controls, or backslashes"
+        )
+    authority = value[8:].split("/", maxsplit=1)[0]
+    if "@" in authority:
+        raise ValueError("MODEL_BASE_URL must not contain userinfo")
+    try:
+        parsed = _HTTP_URL_ADAPTER.validate_python(value)
+    except ValidationError:
+        raise ValueError("MODEL_BASE_URL must be a valid HTTPS URL") from None
+    if (
+        parsed.scheme != "https"
+        or not value.lower().startswith("https://")
+        or value[8:9] in {"", "/"}
+        or not parsed.host
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query is not None
+        or parsed.fragment is not None
+        or "?" in value
+        or "#" in value
+    ):
+        raise ValueError(
+            "MODEL_BASE_URL must use HTTPS with a host and without "
+            "credentials, query, or fragment"
+        )
+    return str(parsed)
+
+
+def _validate_model_timeout_input_value(value: object) -> int:
+    if isinstance(value, bool):
+        raise ValueError("model run timeout must be an integer")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value):
+        return int(value)
+    raise ValueError("model run timeout must be an integer")
+
+
 class _ActiveModelInput(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -95,28 +173,12 @@ class _ActiveModelInput(BaseModel):
     @field_validator("model_id", mode="after")
     @classmethod
     def _validate_model_id(cls, value: str) -> str:
-        if not value.strip() or value != value.strip():
-            raise ValueError("model ID must not be blank or have surrounding whitespace")
-        if len(value) > MODEL_ID_MAX_CODE_POINTS:
-            raise ValueError(
-                f"model ID must contain at most {MODEL_ID_MAX_CODE_POINTS} code points"
-            )
-        if any(
-            ord(character) <= 0x1F or 0x7F <= ord(character) <= 0x9F
-            for character in value
-        ):
-            raise ValueError("model ID must not contain C0 or C1 control characters")
-        return value
+        return _validate_model_id_value(value)
 
     @field_validator("api_key", mode="after")
     @classmethod
     def _validate_model_api_key(cls, value: SecretStr) -> SecretStr:
-        secret = value.get_secret_value()
-        if not secret or secret != secret.strip():
-            raise ValueError(
-                "model API key must not be blank or have surrounding whitespace"
-            )
-        return value
+        return _validate_model_api_key_value(value)
 
     @field_validator("base_url", mode="after")
     @classmethod
@@ -125,56 +187,12 @@ class _ActiveModelInput(BaseModel):
         value: str | None,
         info: ValidationInfo,
     ) -> str | None:
-        if value is None:
-            return value
-
-        provider = info.data.get("provider")
-        if provider is not None and provider not in _BASE_URL_PROVIDERS:
-            raise ValueError("MODEL_BASE_URL is not supported for the selected provider")
-        if any(
-            character.isspace()
-            or ord(character) <= 0x1F
-            or 0x7F <= ord(character) <= 0x9F
-            for character in value
-        ) or "\\" in value:
-            raise ValueError(
-                "MODEL_BASE_URL must not contain whitespace, controls, or backslashes"
-            )
-        authority = value[8:].split("/", maxsplit=1)[0]
-        if "@" in authority:
-            raise ValueError("MODEL_BASE_URL must not contain userinfo")
-        try:
-            parsed = _HTTP_URL_ADAPTER.validate_python(value)
-        except ValidationError:
-            raise ValueError("MODEL_BASE_URL must be a valid HTTPS URL") from None
-        if (
-            parsed.scheme != "https"
-            or not value.lower().startswith("https://")
-            or value[8:9] in {"", "/"}
-            or not parsed.host
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.query is not None
-            or parsed.fragment is not None
-            or "?" in value
-            or "#" in value
-        ):
-            raise ValueError(
-                "MODEL_BASE_URL must use HTTPS with a host and without "
-                "credentials, query, or fragment"
-            )
-        return str(parsed)
+        return _validate_model_base_url_value(value, info.data.get("provider"))
 
     @field_validator("timeout_seconds", mode="before")
     @classmethod
     def _validate_model_timeout_input(cls, value: object) -> int:
-        if isinstance(value, bool):
-            raise ValueError("model run timeout must be an integer")
-        if isinstance(value, int):
-            return value
-        if isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value):
-            return int(value)
-        raise ValueError("model run timeout must be an integer")
+        return _validate_model_timeout_input_value(value)
 
 
 def resolve_active_model_settings(
@@ -249,7 +267,7 @@ class RuntimeSettings(_AgentSettings):
         default=False,
         validation_alias="AGENT_ENABLED",
     )
-    model_provider: str | None = Field(
+    model_provider: ModelProvider | None = Field(
         default=None,
         validation_alias="MODEL_PROVIDER",
     )
@@ -265,8 +283,10 @@ class RuntimeSettings(_AgentSettings):
         default=None,
         validation_alias="MODEL_BASE_URL",
     )
-    model_run_timeout_seconds: Any = Field(
+    model_run_timeout_seconds: int = Field(
         default=50,
+        ge=1,
+        le=50,
         validation_alias="MODEL_RUN_TIMEOUT_SECONDS",
     )
     openai_custom_headers: SecretStr | None = Field(
@@ -341,17 +361,59 @@ class RuntimeSettings(_AgentSettings):
             raise ValueError("OS security key must be a valid Bearer token")
         return value
 
-    @model_validator(mode="after")
-    def _validate_enabled_model_configuration(self) -> "RuntimeSettings":
-        if self.agent_enabled:
-            resolve_active_model_settings(
-                provider=self.model_provider,
-                model_id=self.model_id,
-                api_key=self.model_api_key,
-                base_url=self.model_base_url,
-                timeout_seconds=self.model_run_timeout_seconds,
-            )
-        return self
+    @field_validator("model_provider", mode="after")
+    @classmethod
+    def _validate_model_provider(
+        cls,
+        value: ModelProvider | None,
+        info: ValidationInfo,
+    ) -> ModelProvider | None:
+        if info.data.get("agent_enabled") and value is None:
+            raise ValueError("MODEL_PROVIDER is required when the agent is enabled")
+        return value
+
+    @field_validator("model_id", mode="after")
+    @classmethod
+    def _validate_model_id(
+        cls,
+        value: str | None,
+        info: ValidationInfo,
+    ) -> str | None:
+        if value is None:
+            if info.data.get("agent_enabled"):
+                raise ValueError("MODEL_ID is required when the agent is enabled")
+            return value
+        return _validate_model_id_value(value)
+
+    @field_validator("model_api_key", mode="after")
+    @classmethod
+    def _validate_model_api_key(
+        cls,
+        value: SecretStr | None,
+        info: ValidationInfo,
+    ) -> SecretStr | None:
+        if value is None:
+            if info.data.get("agent_enabled"):
+                raise ValueError("MODEL_API_KEY is required when the agent is enabled")
+            return value
+        return _validate_model_api_key_value(value)
+
+    @field_validator("model_base_url", mode="after")
+    @classmethod
+    def _validate_model_base_url(
+        cls,
+        value: str | None,
+        info: ValidationInfo,
+    ) -> str | None:
+        return _validate_model_base_url_value(
+            value,
+            info.data.get("model_provider"),
+        )
+
+    @field_validator("model_run_timeout_seconds", mode="before")
+    @classmethod
+    def _validate_model_timeout_input(cls, value: object) -> int:
+        return _validate_model_timeout_input_value(value)
 
     @field_validator("openai_custom_headers", mode="after")
     @classmethod

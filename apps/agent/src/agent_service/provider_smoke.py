@@ -1,18 +1,26 @@
-"""One-shot, output-sanitized verification for an explicitly selected model."""
+"""One-shot, process-isolated verification for an explicitly selected model."""
 
-from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import Callable, Sequence
+import gc
 import os
+import re
+import stat
+import subprocess
 import sys
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from agno.agent import Agent
 from agno.models.base import Model
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from agent_service.config import (
     ActiveModelSettings,
+    ModelProvider,
+    _validate_model_api_key_value,
+    _validate_model_base_url_value,
+    _validate_model_id_value,
+    _validate_model_timeout_input_value,
     resolve_active_model_settings,
 )
 from agent_service.default_agent import MADUODUO_INSTRUCTIONS
@@ -21,6 +29,19 @@ from agent_service.model_registry import build_model
 
 PROVIDER_SMOKE_PROMPT = "仅回复一个简短的确认词。"
 MAX_RESPONSE_CODE_POINTS = 32_768
+_STATUS_FD_ENV = "AAP_PROVIDER_SMOKE_STATUS_FD"
+_WORKER_GRACE_SECONDS = 5.0
+SmokeStatus = Literal[
+    "verified",
+    "configuration",
+    "response",
+    "invocation",
+    "timeout",
+    "signal",
+]
+_FAILURE_STATUSES: frozenset[SmokeStatus] = frozenset(
+    {"configuration", "response", "invocation", "timeout", "signal"}
+)
 
 
 class ProviderSmokeSettings(BaseSettings):
@@ -34,7 +55,7 @@ class ProviderSmokeSettings(BaseSettings):
         validate_default=True,
     )
 
-    model_provider: str | None = Field(
+    model_provider: ModelProvider | None = Field(
         default=None,
         validation_alias="MODEL_PROVIDER",
     )
@@ -47,15 +68,53 @@ class ProviderSmokeSettings(BaseSettings):
         default=None,
         validation_alias="MODEL_BASE_URL",
     )
-    model_run_timeout_seconds: Any = Field(
+    model_run_timeout_seconds: int = Field(
         default=50,
+        ge=1,
+        le=50,
         validation_alias="MODEL_RUN_TIMEOUT_SECONDS",
     )
 
-    @model_validator(mode="after")
-    def _validate_active_model(self) -> "ProviderSmokeSettings":
-        self.active_model
-        return self
+    @field_validator("model_provider", mode="after")
+    @classmethod
+    def _require_model_provider(
+        cls,
+        value: ModelProvider | None,
+    ) -> ModelProvider:
+        if value is None:
+            raise ValueError("MODEL_PROVIDER is required")
+        return value
+
+    @field_validator("model_id", mode="after")
+    @classmethod
+    def _require_model_id(cls, value: str | None) -> str:
+        if value is None:
+            raise ValueError("MODEL_ID is required")
+        return _validate_model_id_value(value)
+
+    @field_validator("model_api_key", mode="after")
+    @classmethod
+    def _require_model_api_key(cls, value: SecretStr | None) -> SecretStr:
+        if value is None:
+            raise ValueError("MODEL_API_KEY is required")
+        return _validate_model_api_key_value(value)
+
+    @field_validator("model_base_url", mode="after")
+    @classmethod
+    def _validate_model_base_url(
+        cls,
+        value: str | None,
+        info: ValidationInfo,
+    ) -> str | None:
+        return _validate_model_base_url_value(
+            value,
+            info.data.get("model_provider"),
+        )
+
+    @field_validator("model_run_timeout_seconds", mode="before")
+    @classmethod
+    def _validate_model_timeout_input(cls, value: object) -> int:
+        return _validate_model_timeout_input_value(value)
 
     @property
     def active_model(self) -> ActiveModelSettings:
@@ -83,111 +142,226 @@ def build_smoke_agent(
     )
 
 
-@contextmanager
-def _suppress_process_output() -> Iterator[None]:
-    """Discard stdout/stderr at FD level for the complete provider invocation."""
-    sys.stdout.flush()
-    sys.stderr.flush()
-    stdout_stream = sys.stdout
-    stderr_stream = sys.stderr
-    stdout_copy = os.dup(1)
-    stderr_copy = os.dup(2)
-    null_fd = os.open(os.devnull, os.O_WRONLY)
-    null_stdout = open(os.devnull, "w", encoding="utf-8")
-    null_stderr = open(os.devnull, "w", encoding="utf-8")
+def _close_resource(resource: object | None) -> bool:
+    if resource is None:
+        return True
+    close = getattr(resource, "close", None)
+    if not callable(close):
+        return True
     try:
-        os.dup2(null_fd, 1)
-        os.dup2(null_fd, 2)
-        sys.stdout = null_stdout
-        sys.stderr = null_stderr
-        yield
-    finally:
-        for stream in (sys.stdout, sys.stderr):
-            try:
-                stream.flush()
-            except BaseException:
-                pass
-        sys.stdout = stdout_stream
-        sys.stderr = stderr_stream
-        os.dup2(stdout_copy, 1)
-        os.dup2(stderr_copy, 2)
-        null_stdout.close()
-        null_stderr.close()
-        os.close(null_fd)
-        os.close(stdout_copy)
-        os.close(stderr_copy)
+        close()
+    except BaseException:
+        return False
+    return True
 
 
-class _ProviderSmokeFailure(Exception):
-    def __init__(self, category: str) -> None:
-        self.category = category
-        super().__init__(category)
-
-
-def _execute(
+def _invoke_provider(
+    settings: ProviderSmokeSettings,
     *,
-    validate_only: bool,
-    settings_factory: Callable[..., ProviderSmokeSettings],
-    model_builder: Callable[[ActiveModelSettings], object],
-    agent_factory: Callable[..., Any],
-) -> ActiveModelSettings | None:
-    with _suppress_process_output():
-        try:
-            settings = settings_factory(_env_file=None)
-            active_model = settings.active_model
-        except BaseException:
-            raise _ProviderSmokeFailure("configuration") from None
+    model_builder: Callable[[ActiveModelSettings], object] = build_model,
+    agent_factory: Callable[..., Any] = Agent,
+) -> SmokeStatus:
+    """Run the injectable one-shot core; production calls this only in the worker."""
+    model: object | None = None
+    agent: Any = None
+    result: object | None = None
+    status: SmokeStatus = "invocation"
+    try:
+        model = model_builder(settings.active_model)
+        agent = build_smoke_agent(cast(Model, model), agent_factory=agent_factory)
+        result = agent.run(PROVIDER_SMOKE_PROMPT)
+        content = getattr(result, "content", None)
+        status = (
+            "verified"
+            if isinstance(content, str)
+            and bool(content.strip())
+            and len(content) <= MAX_RESPONSE_CODE_POINTS
+            else "response"
+        )
+    except BaseException:
+        status = "invocation"
+    finally:
+        resources_closed = True
+        for resource in (result, agent, model):
+            if not _close_resource(resource):
+                resources_closed = False
+        if not resources_closed:
+            status = "invocation"
+        result = None
+        agent = None
+        model = None
+        gc.collect()
+    return status
 
-        if validate_only:
-            return None
 
+def _worker_command() -> tuple[str, ...]:
+    return (sys.executable, "-m", "agent_service.provider_smoke", "--worker")
+
+
+def _worker_environment(settings: ProviderSmokeSettings, status_fd: int) -> dict[str, str]:
+    active_model = settings.active_model
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "MODEL_PROVIDER": active_model.provider,
+            "MODEL_ID": active_model.model_id,
+            "MODEL_API_KEY": active_model.api_key.get_secret_value(),
+            "MODEL_RUN_TIMEOUT_SECONDS": str(active_model.timeout_seconds),
+            _STATUS_FD_ENV: str(status_fd),
+        }
+    )
+    if active_model.base_url is None:
+        environment.pop("MODEL_BASE_URL", None)
+    else:
+        environment["MODEL_BASE_URL"] = active_model.base_url
+    return environment
+
+
+def _read_worker_status(status_fd: int) -> SmokeStatus | None:
+    try:
+        os.set_blocking(status_fd, False)
+        payload = os.read(status_fd, 64)
+        decoded = payload.decode("ascii")
+    except (OSError, UnicodeError):
+        return None
+    valid_statuses: tuple[SmokeStatus, ...] = (
+        "verified",
+        "configuration",
+        "response",
+        "invocation",
+        "timeout",
+        "signal",
+    )
+    return cast(SmokeStatus, decoded) if decoded in valid_statuses else None
+
+
+def run_isolated_smoke(
+    settings: ProviderSmokeSettings,
+    *,
+    worker_command: Sequence[str] | None = None,
+    timeout_seconds: float | None = None,
+) -> SmokeStatus:
+    """Run the provider worker with output permanently attached to /dev/null."""
+    read_fd, write_fd = os.pipe()
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        command = tuple(worker_command) if worker_command is not None else _worker_command()
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            pass_fds=(write_fd,),
+            env=_worker_environment(settings, write_fd),
+        )
+    except BaseException:
+        os.close(read_fd)
+        os.close(write_fd)
+        return "invocation"
+
+    os.close(write_fd)
+    try:
         try:
-            model = cast(Model, model_builder(active_model))
-            agent = build_smoke_agent(model, agent_factory=agent_factory)
-            result = agent.run(PROVIDER_SMOKE_PROMPT)
-            content = getattr(result, "content", None)
-            if (
-                not isinstance(content, str)
-                or not content.strip()
-                or len(content) > MAX_RESPONSE_CODE_POINTS
-            ):
-                raise _ProviderSmokeFailure("response")
-        except _ProviderSmokeFailure:
-            raise
-        except BaseException:
-            raise _ProviderSmokeFailure("invocation") from None
-    return active_model
+            process.wait(
+                timeout=(
+                    timeout_seconds
+                    if timeout_seconds is not None
+                    else settings.active_model.timeout_seconds + _WORKER_GRACE_SECONDS
+                )
+            )
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            return "timeout"
+
+        status = _read_worker_status(read_fd)
+        if process.returncode is not None and process.returncode < 0:
+            return "signal"
+        if process.returncode == 0 and status == "verified":
+            return "verified"
+        if status in _FAILURE_STATUSES:
+            return status
+        return "invocation"
+    finally:
+        os.close(read_fd)
+
+
+def _write_worker_status(status: SmokeStatus) -> bool:
+    raw_status_fd = os.environ.pop(_STATUS_FD_ENV, "")
+    if re.fullmatch(r"[1-9]\d*", raw_status_fd) is None:
+        return False
+    status_fd = int(raw_status_fd)
+    if status_fd < 3:
+        return False
+    try:
+        if not stat.S_ISFIFO(os.fstat(status_fd).st_mode):
+            return False
+        os.write(status_fd, status.encode("ascii"))
+        os.close(status_fd)
+    except OSError:
+        return False
+    return True
+
+
+def _worker_main(
+    *,
+    settings_factory: Callable[..., ProviderSmokeSettings] = ProviderSmokeSettings,
+    model_builder: Callable[[ActiveModelSettings], object] = build_model,
+    agent_factory: Callable[..., Any] = Agent,
+) -> int:
+    try:
+        settings = settings_factory(_env_file=None)
+    except BaseException:
+        status: SmokeStatus = "configuration"
+    else:
+        status = _invoke_provider(
+            settings,
+            model_builder=model_builder,
+            agent_factory=agent_factory,
+        )
+    if not _write_worker_status(status):
+        return 1
+    return 0 if status == "verified" else 1
 
 
 def main(
     argv: Sequence[str] | None = None,
     *,
     settings_factory: Callable[..., ProviderSmokeSettings] = ProviderSmokeSettings,
-    model_builder: Callable[[ActiveModelSettings], object] = build_model,
-    agent_factory: Callable[..., Any] = Agent,
+    isolated_runner: Callable[[ProviderSmokeSettings], SmokeStatus] | None = None,
 ) -> int:
     """Run once and expose only a stable category or a verified safe label."""
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments == ["--worker"]:
+        return _worker_main(settings_factory=settings_factory)
     if arguments not in ([], ["--validate-only"]):
         print("provider smoke failed: arguments", file=sys.stderr)
         return 2
 
     try:
-        active_model = _execute(
-            validate_only=arguments == ["--validate-only"],
-            settings_factory=settings_factory,
-            model_builder=model_builder,
-            agent_factory=agent_factory,
-        )
-    except _ProviderSmokeFailure as error:
-        print(f"provider smoke failed: {error.category}", file=sys.stderr)
-        return 1
+        settings = settings_factory(_env_file=None)
     except BaseException:
-        print("provider smoke failed: invocation", file=sys.stderr)
+        print("provider smoke failed: configuration", file=sys.stderr)
+        return 1
+    if arguments == ["--validate-only"]:
+        return 0
+
+    try:
+        status = (
+            isolated_runner(settings)
+            if isolated_runner is not None
+            else run_isolated_smoke(settings)
+        )
+    except BaseException:
+        status = "invocation"
+    if status != "verified":
+        category = status if status in _FAILURE_STATUSES else "invocation"
+        print(f"provider smoke failed: {category}", file=sys.stderr)
         return 1
 
-    if active_model is not None:
-        print(f"{active_model.provider}/{active_model.model_id}: verified")
+    active_model = settings.active_model
+    print(f"{active_model.provider}/{active_model.model_id}: verified")
     return 0
 
 

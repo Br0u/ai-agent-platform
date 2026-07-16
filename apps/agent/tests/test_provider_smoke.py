@@ -1,8 +1,9 @@
 from collections.abc import Iterator
-from contextlib import contextmanager
-import os
+from pathlib import Path
+import signal
 import socket
 import sys
+import textwrap
 from types import SimpleNamespace
 from typing import Any
 
@@ -12,13 +13,16 @@ from agno.models.openai import OpenAIResponses
 from pydantic import ValidationError
 
 from agent_service.default_agent import MADUODUO_INSTRUCTIONS
-import agent_service.provider_smoke as provider_smoke
 from agent_service.provider_smoke import (
     MAX_RESPONSE_CODE_POINTS,
     PROVIDER_SMOKE_PROMPT,
     ProviderSmokeSettings,
+    SmokeStatus,
+    _invoke_provider,
+    _worker_main,
     build_smoke_agent,
     main,
+    run_isolated_smoke,
 )
 
 
@@ -41,6 +45,7 @@ def isolated_smoke_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
         "MODEL_RUN_TIMEOUT_SECONDS",
         "OS_SECURITY_KEY",
         "AGNO_DATABASE_URL",
+        "AAP_PROVIDER_SMOKE_STATUS_FD",
     ):
         monkeypatch.delenv(name, raising=False)
         monkeypatch.delenv(name.lower(), raising=False)
@@ -82,6 +87,10 @@ def test_provider_smoke_settings_are_model_only_and_always_required() -> None:
     assert settings.active_model.api_key.get_secret_value() == MODEL_API_KEY
     assert settings.active_model.base_url == MODEL_BASE_URL
     assert settings.active_model.timeout_seconds == 12
+    assert settings.model_provider == "openai"
+    assert settings.model_base_url == MODEL_BASE_URL
+    assert settings.model_run_timeout_seconds == 12
+    assert isinstance(settings.model_run_timeout_seconds, int)
     assert not hasattr(settings, "agno_database_url")
     assert not hasattr(settings, "os_security_key")
 
@@ -104,23 +113,20 @@ class _FakeAgent:
         self,
         output: object,
         error: BaseException | None = None,
-        buffered_output: bool = False,
     ) -> None:
         self.output = output
         self.error = error
-        self.buffered_output = buffered_output
         self.prompts: list[str] = []
+        self.closed = False
 
     def run(self, prompt: str) -> object:
         self.prompts.append(prompt)
-        os.write(1, b"suppressed invocation stdout\n")
-        os.write(2, b"suppressed invocation stderr\n")
-        if self.buffered_output:
-            sys.stdout.write("buffered provider stdout")
-            sys.stderr.write("buffered provider stderr")
         if self.error is not None:
             raise self.error
         return SimpleNamespace(content=self.output)
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def _invoke(
@@ -128,9 +134,8 @@ def _invoke(
     output: object = "private provider answer",
     run_error: BaseException | None = None,
     model_error: BaseException | None = None,
-    buffered_output: bool = False,
-) -> tuple[int, _FakeAgent, list[dict[str, Any]]]:
-    fake_agent = _FakeAgent(output, run_error, buffered_output)
+) -> tuple[str, _FakeAgent, list[dict[str, Any]]]:
+    fake_agent = _FakeAgent(output, run_error)
     agent_arguments: list[dict[str, Any]] = []
 
     def model_builder(_settings: object) -> object:
@@ -142,24 +147,22 @@ def _invoke(
         agent_arguments.append(kwargs)
         return fake_agent
 
-    exit_code = main(
-        [],
-        settings_factory=lambda **_kwargs: _valid_settings(),
+    status = _invoke_provider(
+        _valid_settings(),
         model_builder=model_builder,
         agent_factory=agent_factory,
     )
-    return exit_code, fake_agent, agent_arguments
+    return status, fake_agent, agent_arguments
 
 
-def test_one_shot_success_suppresses_invocation_and_prints_only_safe_label(
-    capfd: pytest.CaptureFixture[str],
-) -> None:
-    exit_code, fake_agent, agent_arguments = _invoke(
+def test_injected_one_shot_success_uses_fixed_prompt_and_safe_agent() -> None:
+    status, fake_agent, agent_arguments = _invoke(
         output=f"private answer containing {MODEL_API_KEY} and {MODEL_BASE_URL}"
     )
 
-    assert exit_code == 0
+    assert status == "verified"
     assert fake_agent.prompts == [PROVIDER_SMOKE_PROMPT]
+    assert fake_agent.closed is True
     assert agent_arguments == [
         {
             "model": agent_arguments[0]["model"],
@@ -169,18 +172,15 @@ def test_one_shot_success_suppresses_invocation_and_prints_only_safe_label(
             "telemetry": False,
         }
     ]
-    assert capfd.readouterr() == (f"openai/{MODEL_ID}: verified\n", "")
 
 
 @pytest.mark.parametrize("content", [None, "", "   ", "x" * (MAX_RESPONSE_CODE_POINTS + 1)])
 def test_blank_or_oversize_responses_fail_with_only_a_stable_category(
     content: object,
-    capfd: pytest.CaptureFixture[str],
 ) -> None:
-    exit_code, _agent, _arguments = _invoke(output=content)
+    status, _agent, _arguments = _invoke(output=content)
 
-    assert exit_code != 0
-    assert capfd.readouterr() == ("", "provider smoke failed: response\n")
+    assert status == "response"
 
 
 @pytest.mark.parametrize(
@@ -192,35 +192,71 @@ def test_blank_or_oversize_responses_fail_with_only_a_stable_category(
 )
 def test_invocation_exceptions_never_leak_raw_details(
     failure: BaseException,
-    capfd: pytest.CaptureFixture[str],
 ) -> None:
-    exit_code, _agent, _arguments = _invoke(run_error=failure)
+    status, _agent, _arguments = _invoke(run_error=failure)
 
-    assert exit_code != 0
-    assert capfd.readouterr() == ("", "provider smoke failed: invocation\n")
-
-
-def test_buffered_invocation_output_is_suppressed_even_when_run_raises(
-    capfd: pytest.CaptureFixture[str],
-) -> None:
-    exit_code, _agent, _arguments = _invoke(
-        run_error=RuntimeError(MODEL_API_KEY),
-        buffered_output=True,
-    )
-
-    assert exit_code != 0
-    assert capfd.readouterr() == ("", "provider smoke failed: invocation\n")
+    assert status == "invocation"
 
 
-def test_model_construction_failure_is_sanitized(
-    capfd: pytest.CaptureFixture[str],
-) -> None:
-    exit_code, _agent, _arguments = _invoke(
+def test_model_construction_failure_is_sanitized() -> None:
+    status, _agent, _arguments = _invoke(
         model_error=RuntimeError(f"provider key {MODEL_API_KEY}")
     )
 
-    assert exit_code != 0
-    assert capfd.readouterr() == ("", "provider smoke failed: invocation\n")
+    assert status == "invocation"
+
+
+def test_close_failure_maps_to_invocation_without_exposing_exception() -> None:
+    class CloseFailureResult:
+        content = "private answer"
+
+        def close(self) -> None:
+            raise RuntimeError(f"close failed {MODEL_API_KEY}")
+
+    class CloseFailureAgent(_FakeAgent):
+        def run(self, prompt: str) -> object:
+            self.prompts.append(prompt)
+            return CloseFailureResult()
+
+    fake_agent = CloseFailureAgent("unused")
+
+    status = _invoke_provider(
+        _valid_settings(),
+        model_builder=lambda _settings: object(),
+        agent_factory=lambda **_kwargs: fake_agent,
+    )
+
+    assert status == "invocation"
+
+
+def test_close_failure_still_closes_every_constructed_resource() -> None:
+    closed: list[str] = []
+
+    class Resource:
+        def __init__(self, name: str, *, fail: bool = False) -> None:
+            self.name = name
+            self.fail = fail
+
+        def close(self) -> None:
+            closed.append(self.name)
+            if self.fail:
+                raise RuntimeError(MODEL_API_KEY)
+
+    class Result(Resource):
+        content = "private answer"
+
+    class AgentResource(Resource):
+        def run(self, _prompt: str) -> object:
+            return Result("result", fail=True)
+
+    status = _invoke_provider(
+        _valid_settings(),
+        model_builder=lambda _settings: Resource("model"),
+        agent_factory=lambda **_kwargs: AgentResource("agent"),
+    )
+
+    assert status == "invocation"
+    assert closed == ["result", "agent", "model"]
 
 
 def test_configuration_failure_is_sanitized(
@@ -229,7 +265,11 @@ def test_configuration_failure_is_sanitized(
     def invalid_settings(**_kwargs: object) -> ProviderSmokeSettings:
         raise ValueError(f"configuration included {MODEL_API_KEY}")
 
-    exit_code = main([], settings_factory=invalid_settings)
+    exit_code = main(
+        [],
+        settings_factory=invalid_settings,
+        isolated_runner=lambda _settings: "verified",
+    )
 
     assert exit_code != 0
     assert capfd.readouterr() == ("", "provider smoke failed: configuration\n")
@@ -240,10 +280,14 @@ def test_validate_only_checks_settings_without_constructing_a_model(
 ) -> None:
     calls: list[str] = []
 
+    def isolated_runner(_settings: ProviderSmokeSettings) -> SmokeStatus:
+        calls.append("worker")
+        return "verified"
+
     exit_code = main(
         ["--validate-only"],
         settings_factory=lambda **_kwargs: _valid_settings(),
-        model_builder=lambda _settings: calls.append("model"),
+        isolated_runner=isolated_runner,
     )
 
     assert exit_code == 0
@@ -260,22 +304,165 @@ def test_unknown_cli_arguments_fail_without_argparse_diagnostics(
     assert capfd.readouterr() == ("", "provider smoke failed: arguments\n")
 
 
-def test_output_suppression_setup_failure_is_sanitized(
+def test_success_prints_only_safe_label_from_isolated_status(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main(
+        [],
+        settings_factory=lambda **_kwargs: _valid_settings(),
+        isolated_runner=lambda _settings: "verified",
+    )
+
+    assert exit_code == 0
+    assert capfd.readouterr() == (f"openai/{MODEL_ID}: verified\n", "")
+
+
+def test_worker_rejects_stdout_as_a_status_channel(
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
-    @contextmanager
-    def fail_suppression() -> Iterator[None]:
-        raise OSError(f"raw fd error {MODEL_API_KEY}")
-        yield
+    monkeypatch.setenv("AAP_PROVIDER_SMOKE_STATUS_FD", "1")
 
-    monkeypatch.setattr(
-        provider_smoke,
-        "_suppress_process_output",
-        fail_suppression,
+    exit_code = _worker_main(
+        settings_factory=lambda **_kwargs: _valid_settings(),
+        model_builder=lambda _settings: object(),
+        agent_factory=lambda **_kwargs: _FakeAgent("private answer"),
     )
 
-    exit_code = main([], settings_factory=lambda **_kwargs: _valid_settings())
-
     assert exit_code != 0
-    assert capfd.readouterr() == ("", "provider smoke failed: invocation\n")
+    assert capfd.readouterr() == ("", "")
+
+
+def _write_worker_script(tmp_path: Path, source: str) -> list[str]:
+    script = tmp_path / "provider-smoke-worker.py"
+    script.write_text(textwrap.dedent(source), encoding="utf-8")
+    return [sys.executable, str(script)]
+
+
+def test_isolated_worker_discards_build_run_close_destructor_and_delayed_output(
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    command = _write_worker_script(
+        tmp_path,
+        f"""
+        import os
+        import sys
+        import threading
+        import time
+        sys.path.insert(0, {str(Path(__file__).resolve().parents[1] / "src")!r})
+        from types import SimpleNamespace
+        from agent_service.provider_smoke import ProviderSmokeSettings, _invoke_provider
+
+        key = os.environ["MODEL_API_KEY"]
+        url = os.environ["MODEL_BASE_URL"]
+
+        class Noisy:
+            def __init__(self, name):
+                self.name = name
+            def close(self):
+                print(f"close {{self.name}} {{key}} {{url}}")
+            def __del__(self):
+                print(f"del {{self.name}} {{key}} {{url}}")
+
+        class Result(Noisy):
+            content = "private provider answer"
+
+        class FakeAgent(Noisy):
+            def run(self, prompt):
+                print(f"run {{prompt}} {{key}} {{url}}")
+                threading.Thread(
+                    target=lambda: (time.sleep(0.05), print(f"delayed {{key}} {{url}}")),
+                ).start()
+                return Result("result")
+
+        settings = ProviderSmokeSettings(_env_file=None)
+        status = _invoke_provider(
+            settings,
+            model_builder=lambda _settings: Noisy("model"),
+            agent_factory=lambda **_kwargs: FakeAgent("agent"),
+        )
+        os.write(int(os.environ["AAP_PROVIDER_SMOKE_STATUS_FD"]), status.encode("ascii"))
+        raise SystemExit(0 if status == "verified" else 1)
+        """,
+    )
+
+    status = run_isolated_smoke(
+        _valid_settings(),
+        worker_command=command,
+        timeout_seconds=1.0,
+    )
+
+    assert status == "verified"
+    assert capfd.readouterr() == ("", "")
+    assert MODEL_API_KEY not in " ".join(command)
+    assert MODEL_BASE_URL not in " ".join(command)
+    assert PROVIDER_SMOKE_PROMPT not in " ".join(command)
+
+
+def test_isolated_worker_maps_close_exception_without_leaking(
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    command = _write_worker_script(
+        tmp_path,
+        f"""
+        import os
+        import sys
+        sys.path.insert(0, {str(Path(__file__).resolve().parents[1] / "src")!r})
+        from agent_service.provider_smoke import ProviderSmokeSettings, _invoke_provider
+
+        class Result:
+            content = "private answer"
+            def close(self):
+                raise RuntimeError(os.environ["MODEL_API_KEY"])
+
+        class FakeAgent:
+            def run(self, _prompt):
+                return Result()
+
+        status = _invoke_provider(
+            ProviderSmokeSettings(_env_file=None),
+            model_builder=lambda _settings: object(),
+            agent_factory=lambda **_kwargs: FakeAgent(),
+        )
+        os.write(int(os.environ["AAP_PROVIDER_SMOKE_STATUS_FD"]), status.encode("ascii"))
+        raise SystemExit(0 if status == "verified" else 1)
+        """,
+    )
+
+    status = run_isolated_smoke(
+        _valid_settings(),
+        worker_command=command,
+        timeout_seconds=1.0,
+    )
+
+    assert status == "invocation"
+    assert capfd.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("import time; time.sleep(5)", "timeout"),
+        (f"import os, signal; os.kill(os.getpid(), {signal.SIGTERM})", "signal"),
+        ("raise RuntimeError('raw provider failure')", "invocation"),
+    ],
+    ids=["timeout", "signal", "exception"],
+)
+def test_isolated_worker_maps_process_failures_to_stable_categories(
+    source: str,
+    expected: str,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    command = _write_worker_script(tmp_path, source)
+
+    status = run_isolated_smoke(
+        _valid_settings(),
+        worker_command=command,
+        timeout_seconds=0.1,
+    )
+
+    assert status == expected
+    assert capfd.readouterr() == ("", "")

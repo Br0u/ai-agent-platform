@@ -2700,8 +2700,12 @@ test -n "$output"
     expect(service?.ports ?? []).toEqual([]);
     expect(service?.read_only).toBe(true);
     expect(service?.user).toBe("agent");
+    expect(service?.tmpfs).toEqual(["/tmp:rw,noexec,nosuid,size=32m"]);
     expect(service?.cap_drop).toEqual(["ALL"]);
-    expect(service?.security_opt).toContain("no-new-privileges:true");
+    expect(service?.security_opt).toEqual(["no-new-privileges:true"]);
+    expect(service?.cpus).toBe(1);
+    expect(service?.mem_limit).toBe("536870912");
+    expect(service?.pids_limit).toBe(128);
     expect(service?.networks).toEqual({ default: null });
     expect((service?.secrets ?? []).map(secretSource)).toEqual([
       "model_api_key",
@@ -2725,8 +2729,12 @@ test -n "$output"
       /AGNO_DATABASE|OS_SECURITY|BETTER_AUTH|ASSISTANT_|postgres|agentos|web/iu,
     );
     expect(service?.volumes).toHaveLength(1);
+    expect(service?.volumes?.[0]).toMatchObject({
+      target: "/opt/aap/run-with-secret-env.sh",
+      read_only: true,
+    });
     expect(JSON.stringify(service?.volumes?.[0])).toContain(
-      "run-with-secret-env.sh",
+      "/infra/docker/run-with-secret-env.sh",
     );
   });
 
@@ -2736,8 +2744,12 @@ test -n "$output"
     const bin = path.join(sandbox, "bin");
     const temp = path.join(sandbox, "tmp");
     const keyFile = path.join(sandbox, "model-api-key");
+    const symlinkKeyFile = path.join(sandbox, "model-api-key-symlink");
     const dockerLog = path.join(sandbox, "docker.log");
+    const dockerState = path.join(sandbox, "docker.state");
+    const snapshotCapture = path.join(sandbox, "snapshot.capture");
     const secret = "provider-smoke-secret-that-must-not-leak";
+    const replacementSecret = "replacement-secret-that-must-not-be-used";
     mkdirSync(path.join(repo, "docs/testing"), { recursive: true });
     mkdirSync(bin, { recursive: true });
     mkdirSync(temp, { recursive: true });
@@ -2751,14 +2763,31 @@ test -n "$output"
     );
     writeFileSync(keyFile, `${secret}\n`, { mode: 0o600 });
     chmodSync(keyFile, 0o600);
+    symlinkSync(keyFile, symlinkKeyFile);
     writeFileSync(
       path.join(bin, "docker"),
       `#!/bin/sh
 printf '%s\n' "$*" >>"$FAKE_DOCKER_LOG"
 printf '%s\n' "hidden compose warning" >&2
 case " $* " in
-  *" ps -aq "*|*" volume ls "*|*" network ls "*|*" image ls "*) exit 0 ;;
-  *" compose "*" config --quiet "*) exit 0 ;;
+  *" ps -aq "*|*" volume ls "*|*" network ls "*|*" image ls "*)
+    if [ "\${FAKE_MODE-}" = replace-source ] && [ ! -f "$FAKE_DOCKER_STATE.replaced" ]; then
+      printf '%s\n' "$FAKE_REPLACEMENT_SECRET" >"$FAKE_SOURCE_KEY"
+      chmod 600 "$FAKE_SOURCE_KEY"
+      : >"$FAKE_DOCKER_STATE.replaced"
+    fi
+    if [ -s "$FAKE_DOCKER_STATE" ]; then
+      [ "\${FAKE_MODE-}" = cleanup-query-fail ] && exit 75
+      [ "\${FAKE_MODE-}" = cleanup-residual ] && printf '%s\n' "residual-resource"
+    fi
+    exit 0
+    ;;
+  *" compose "*" config --quiet "*)
+    if [ -n "\${FAKE_SNAPSHOT_CAPTURE-}" ]; then
+      /bin/cat "$MODEL_API_KEY_FILE" >"$FAKE_SNAPSHOT_CAPTURE"
+    fi
+    exit 0
+    ;;
   *" compose "*" build --pull smoke "*) [ "\${FAKE_MODE-}" = build-fail ] && exit 42; exit 0 ;;
   *" compose "*" create smoke "*) exit 0 ;;
   *" compose "*" run --rm smoke python -m agent_service.provider_smoke --validate-only "*) exit 0 ;;
@@ -2770,7 +2799,11 @@ case " $* " in
     fi
     exit 0
     ;;
-  *" compose "*" down --rmi local -v --remove-orphans "*) exit 0 ;;
+  *" compose "*" down --rmi local -v --remove-orphans "*)
+    printf '%s\n' "down" >"$FAKE_DOCKER_STATE"
+    [ "\${FAKE_MODE-}" = cleanup-down-fail ] && exit 77
+    exit 0
+    ;;
 esac
 exit 0
 `,
@@ -2790,6 +2823,9 @@ exec /usr/bin/mktemp "$@"
 
     const run = (extra: NodeJS.ProcessEnv = {}) => {
       writeFileSync(dockerLog, "");
+      writeFileSync(dockerState, "");
+      rmSync(`${dockerState}.replaced`, { force: true });
+      rmSync(snapshotCapture, { force: true });
       return spawnSync(
         "sh",
         [path.join(repo, "docs/testing/run-model-provider-smoke.sh")],
@@ -2805,6 +2841,10 @@ exec /usr/bin/mktemp "$@"
             MODEL_API_KEY_FILE: keyFile,
             MODEL_RUN_TIMEOUT_SECONDS: "25",
             FAKE_DOCKER_LOG: dockerLog,
+            FAKE_DOCKER_STATE: dockerState,
+            FAKE_SNAPSHOT_CAPTURE: snapshotCapture,
+            FAKE_SOURCE_KEY: keyFile,
+            FAKE_REPLACEMENT_SECRET: replacementSecret,
             ...extra,
           },
         },
@@ -2826,7 +2866,84 @@ exec /usr/bin/mktemp "$@"
       expect(successCalls).toContain("run --rm smoke");
       expect(successCalls).toContain("down --rmi local -v --remove-orphans");
       expect(successCalls).not.toContain(secret);
+      expect(successCalls).not.toContain(replacementSecret);
       expect(readdirSync(temp)).toEqual([]);
+
+      const secondSuccess = run();
+      expect(secondSuccess.status).toBe(0);
+      const firstProject = successCalls.match(
+        /compose -p (aap-provider-smoke-[^ ]+)/u,
+      )?.[1];
+      const secondProject = readFileSync(dockerLog, "utf8").match(
+        /compose -p (aap-provider-smoke-[^ ]+)/u,
+      )?.[1];
+      expect(firstProject).toBeDefined();
+      expect(secondProject).toBeDefined();
+      expect(secondProject).not.toBe(firstProject);
+      expect(firstProject?.replace("aap-provider-smoke-", "")).not.toMatch(
+        /^\d+$/u,
+      );
+
+      const preexistingSharedPath = path.join(temp, "aap-provider-smoke-locks");
+      writeFileSync(preexistingSharedPath, "preexisting path");
+      const ignoresPreexistingSharedPath = run();
+      expect(ignoresPreexistingSharedPath.status).toBe(0);
+      expect(ignoresPreexistingSharedPath.stdout).toBe(
+        "openai/provider-smoke-model: verified\n",
+      );
+      rmSync(preexistingSharedPath);
+
+      const symlinkKey = run({ MODEL_API_KEY_FILE: symlinkKeyFile });
+      expect(symlinkKey.status).not.toBe(0);
+      expect(symlinkKey.stdout).toBe("");
+      expect(symlinkKey.stderr).toBe(
+        "provider smoke wrapper failed: configuration\n",
+      );
+      expect(readFileSync(dockerLog, "utf8")).toBe("");
+
+      const fifoKeyFile = path.join(sandbox, "model-api-key-fifo");
+      const makeFifo = spawnSync(
+        "python3",
+        ["-c", "import os,sys; os.mkfifo(sys.argv[1])", fifoKeyFile],
+        { encoding: "utf8" },
+      );
+      expect(makeFifo.status).toBe(0);
+      const fifoKey = run({ MODEL_API_KEY_FILE: fifoKeyFile });
+      expect(fifoKey.status).not.toBe(0);
+      expect(fifoKey.stdout).toBe("");
+      expect(fifoKey.stderr).toBe(
+        "provider smoke wrapper failed: configuration\n",
+      );
+      expect(`${fifoKey.stdout}${fifoKey.stderr}`).not.toContain(fifoKeyFile);
+      expect(`${fifoKey.stdout}${fifoKey.stderr}`).not.toContain(secret);
+      expect(readFileSync(dockerLog, "utf8")).toBe("");
+
+      writeFileSync(keyFile, `${secret}\n`, { mode: 0o600 });
+      chmodSync(keyFile, 0o600);
+      const replacedSource = run({ FAKE_MODE: "replace-source" });
+      expect(replacedSource.status).toBe(0);
+      expect(replacedSource.stdout).toBe(
+        "openai/provider-smoke-model: verified\n",
+      );
+      expect(readFileSync(snapshotCapture, "utf8")).toBe(`${secret}\n`);
+      expect(readFileSync(keyFile, "utf8")).toBe(`${replacementSecret}\n`);
+
+      for (const mode of [
+        "cleanup-down-fail",
+        "cleanup-query-fail",
+        "cleanup-residual",
+      ]) {
+        const cleanupFailure = run({ FAKE_MODE: mode });
+        expect(cleanupFailure.status, mode).not.toBe(0);
+        expect(cleanupFailure.stdout, mode).toBe("");
+        expect(cleanupFailure.stderr, mode).toBe(
+          "provider smoke wrapper failed: cleanup\n",
+        );
+        expect(cleanupFailure.stderr, mode).not.toContain(
+          "hidden compose warning",
+        );
+        expect(readdirSync(temp), mode).toEqual([]);
+      }
 
       const unsafeOutput = run({ FAKE_MODE: "unsafe-output" });
       expect(unsafeOutput.status).not.toBe(0);
@@ -2860,6 +2977,7 @@ exec /usr/bin/mktemp "$@"
       expect(readFileSync(dockerLog, "utf8")).toBe("");
       expect(readdirSync(temp)).toEqual([]);
 
+      writeFileSync(keyFile, `${secret}\n`, { mode: 0o600 });
       chmodSync(keyFile, 0o644);
       const unsafeKey = run();
       expect(unsafeKey.status).not.toBe(0);
@@ -2873,6 +2991,68 @@ exec /usr/bin/mktemp "$@"
       rmSync(sandbox, { recursive: true, force: true });
     }
   }, 15_000);
+
+  it("snapshots provider keys without blocking on FIFOs or zero-byte writes", () => {
+    const runner = read("docs/testing/run-model-provider-smoke.sh");
+    const helperMatch = runner.match(
+      /snapshot_helper='(?<source>[\s\S]*?)'\nexport AAP_PROVIDER_SMOKE_KEY_SOURCE=/u,
+    );
+    expect(helperMatch?.groups?.source).toBeDefined();
+    const helper = helperMatch?.groups?.source ?? "";
+    const sandbox = mkdtempSync(path.join(tmpdir(), "provider-key-snapshot-"));
+    const source = path.join(sandbox, "source-key");
+    const fifo = path.join(sandbox, "source-fifo");
+    const secret = "snapshot-secret-that-must-not-leak";
+    writeFileSync(source, secret, { mode: 0o600 });
+    chmodSync(source, 0o600);
+    const makeFifo = spawnSync(
+      "python3",
+      ["-c", "import os,sys; os.mkfifo(sys.argv[1])", fifo],
+      { encoding: "utf8" },
+    );
+    expect(makeFifo.status).toBe(0);
+
+    const execute = (helperSource: string, input: string, output: string) =>
+      spawnSync("python3", ["-c", helperSource], {
+        encoding: "utf8",
+        timeout: 500,
+        env: {
+          ...process.env,
+          AAP_PROVIDER_SMOKE_KEY_SOURCE: input,
+          AAP_PROVIDER_SMOKE_KEY_SNAPSHOT: output,
+        },
+      });
+
+    try {
+      const fifoResult = execute(
+        helper,
+        fifo,
+        path.join(sandbox, "fifo-snapshot"),
+      );
+      expect(fifoResult.error).toBeUndefined();
+      expect(fifoResult.status).not.toBe(0);
+      expect(fifoResult.stdout).toBe("");
+      expect(`${fifoResult.stdout}${fifoResult.stderr}`).not.toContain(fifo);
+      expect(`${fifoResult.stdout}${fifoResult.stderr}`).not.toContain(secret);
+
+      const zeroWriteResult = execute(
+        `import os\nos.write = lambda *_args: 0\n${helper}`,
+        source,
+        path.join(sandbox, "zero-write-snapshot"),
+      );
+      expect(zeroWriteResult.error).toBeUndefined();
+      expect(zeroWriteResult.status).not.toBe(0);
+      expect(zeroWriteResult.stdout).toBe("");
+      expect(
+        `${zeroWriteResult.stdout}${zeroWriteResult.stderr}`,
+      ).not.toContain(source);
+      expect(
+        `${zeroWriteResult.stdout}${zeroWriteResult.stderr}`,
+      ).not.toContain(secret);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
 
   it("documents provider verification honestly without claiming an unrun matrix", () => {
     const guide = read("docs/testing/model-provider-smoke.md");

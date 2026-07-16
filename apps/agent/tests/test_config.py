@@ -476,6 +476,46 @@ def test_enabled_agent_exposes_frozen_typed_active_model(
         setattr(settings.active_model, "timeout_seconds", 1)
 
 
+def test_enabled_runtime_keeps_model_fields_typed_and_canonical(
+    valid_enabled_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_BASE_URL", "https://MODELS.EXAMPLE.COM")
+    monkeypatch.setenv("MODEL_RUN_TIMEOUT_SECONDS", "25")
+
+    settings = RuntimeSettings(_env_file=None)
+
+    assert settings.model_provider == "openai"
+    assert settings.model_provider in get_args(config.ModelProvider)
+    assert settings.model_run_timeout_seconds == 25
+    assert isinstance(settings.model_run_timeout_seconds, int)
+    assert settings.model_base_url == "https://models.example.com/"
+
+
+def test_runtime_aggregates_independent_model_errors_with_other_field_errors() -> None:
+    with pytest.raises(ValidationError) as captured:
+        RuntimeSettings.model_validate(
+            {
+                "OS_SECURITY_KEY": "short",
+                "AGNO_DATABASE_URL": RUNTIME_URL,
+                "AGENT_ENABLED": True,
+                "MODEL_PROVIDER": "unknown",
+                "MODEL_ID": " bad-model ",
+                "MODEL_API_KEY": " bad-key ",
+                "MODEL_RUN_TIMEOUT_SECONDS": "0",
+            }
+        )
+
+    locations = {error["loc"] for error in captured.value.errors()}
+    assert {
+        ("OS_SECURITY_KEY",),
+        ("MODEL_PROVIDER",),
+        ("MODEL_ID",),
+        ("MODEL_API_KEY",),
+        ("MODEL_RUN_TIMEOUT_SECONDS",),
+    }.issubset(locations)
+
+
 def test_runtime_accepts_direct_model_field_names(
     valid_runtime_env: None,
 ) -> None:
