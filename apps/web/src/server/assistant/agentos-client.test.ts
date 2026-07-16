@@ -185,29 +185,45 @@ describe("AgentOS protected transport", () => {
   );
 
   it.each([
-    new Response("", {
-      status: 302,
-      headers: { location: "https://evil.test" },
-    }),
-    new Response("not-json", {
-      status: 200,
-      headers: { "content-type": "text/plain" },
-    }),
-    jsonResponse({ ready: true, capability: "placeholder", extra: "unsafe" }),
-    jsonResponse({ ready: true, capability: "future" }),
-    new Response("x".repeat(20_000), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    }),
+    [
+      new Response("", {
+        status: 302,
+        headers: { location: "https://evil.test" },
+      }),
+      "redirect_rejected",
+    ],
+    [
+      new Response("not-json", {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      }),
+      "invalid_content_type",
+    ],
+    [
+      jsonResponse({
+        ready: true,
+        capability: "placeholder",
+        extra: "unsafe",
+      }),
+      "invalid_response",
+    ],
+    [jsonResponse({ ready: true, capability: "future" }), "invalid_response"],
+    [
+      new Response("x".repeat(20_000), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+      "response_too_large",
+    ],
   ])(
     "rejects redirects, unsafe types, schemas, and oversized bodies",
-    async (response) => {
+    async (response, code) => {
       const client = createAgentOSClient({
         settings: { baseUrl: INTERNAL_URL, securityKey: SECURITY_KEY },
-        fetcher: vi.fn<typeof fetch>().mockResolvedValue(response),
+        fetcher: vi.fn<typeof fetch>().mockResolvedValue(response as Response),
       });
 
-      await expect(client.ready()).rejects.toBeInstanceOf(AgentOSClientError);
+      await expect(client.ready()).rejects.toMatchObject({ code });
     },
   );
 
