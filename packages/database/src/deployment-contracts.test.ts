@@ -2010,9 +2010,17 @@ test -n "$output"
     expect(config).toContain("process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH");
     expect(config).toContain('name: "mobile"');
     expect(config).toContain("viewport: { width: 390, height: 844 }");
+    expect(config).toContain(".next/standalone/apps/web/server.js");
     expect(config).toContain(
-      'command: "node .next/standalone/apps/web/server.js"',
+      "['.next/static','.next/standalone/apps/web/.next/static']",
     );
+    expect(config).toContain("['public','.next/standalone/apps/web/public']");
+    expect(config).toContain("fs.cpSync(source,target,{recursive:true})");
+    expect(config).toContain("ASSISTANT_PUBLIC_ORIGIN: baseURL");
+    expect(config).toContain("ASSISTANT_SESSION_SECRET:");
+    expect(config).toContain('HOSTNAME: "127.0.0.1"');
+    expect(config).toContain("PORT: new URL(baseURL).port");
+    expect(config).not.toContain(".env.local");
     expect(config).toMatch(/webServer:\s*externalBaseUrl\s*\?\s*undefined/u);
     expect(read("apps/web/e2e/auth-smoke.spec.ts")).toContain("test(");
     const accessSpec = read("apps/web/e2e/auth-access.spec.ts");
