@@ -22,9 +22,6 @@ const auth = vi.hoisted(() => {
 
 const runtime = vi.hoisted(() => ({
   getAssistantRuntime: vi.fn(),
-  readSafeAssistantRuntimeStatus: vi.fn(
-    async (value: { status: () => Promise<unknown> }) => value.status(),
-  ),
   status: vi.fn(),
   readinessStatus: vi.fn(),
   inspect: vi.fn(),
@@ -35,9 +32,11 @@ vi.mock("@/server/auth/access", () => ({
   requirePermission: auth.requirePermission,
 }));
 
-vi.mock("@/server/assistant/assistant-runtime", () => ({
+vi.mock("@/server/assistant/assistant-runtime", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/server/assistant/assistant-runtime")
+  >()),
   getAssistantRuntime: runtime.getAssistantRuntime,
-  readSafeAssistantRuntimeStatus: runtime.readSafeAssistantRuntimeStatus,
 }));
 
 import {
@@ -364,6 +363,123 @@ describe("GET /api/v1/admin/assistant/status", () => {
     );
   });
 
+  it("derives one consistent degraded snapshot when execution opens after readiness", async () => {
+    let executionState: "closed" | "open" = "closed";
+    const status = vi.fn(async () => ({
+      live: true,
+      ready: false,
+      capability: "degraded" as const,
+      message: "助手基础服务暂不可用。",
+    }));
+    const readinessStatus = vi.fn(async () => {
+      executionState = "open";
+      return {
+        probed: true,
+        live: true,
+        ready: true,
+        capability: "available" as const,
+      };
+    });
+    const inspect = vi.fn(() => ({
+      providerMode: "agentos" as const,
+      persistence: "disabled" as const,
+      circuits: {
+        readiness: { state: "closed" as const, consecutiveFailures: 0 },
+        execution: { state: executionState, consecutiveFailures: 3 },
+      },
+      readiness: {
+        cacheTtlMs: 5000,
+        probeTimeoutMs: 1500,
+        failureThreshold: 3,
+      },
+    }));
+
+    const result = await loadAdminAssistantStatus({
+      status,
+      readinessStatus,
+      inspect,
+    } as never);
+
+    expect(result.runtime).toMatchObject({
+      live: true,
+      ready: false,
+      capability: "degraded",
+      selectedProvider: "unavailable",
+      circuits: { execution: { state: "open", consecutiveFailures: 3 } },
+    });
+    expect(result.services.find(({ id }) => id === "agentos")?.state).toBe(
+      "ready",
+    );
+    expect(result.services.find(({ id }) => id === "database")?.state).toBe(
+      "ready",
+    );
+    expect(result.services.find(({ id }) => id === "model")).toMatchObject({
+      state: "degraded",
+      detail: "模型执行暂不可用",
+    });
+    expect(result.configuration.model).toBe("已配置（执行暂不可用）");
+    expect(status).not.toHaveBeenCalled();
+    expect(readinessStatus).toHaveBeenCalledOnce();
+    expect(inspect).toHaveBeenCalledOnce();
+  });
+
+  it("derives one consistent ready snapshot when execution recovers after readiness", async () => {
+    let executionState: "closed" | "open" = "open";
+    const status = vi.fn(async () => ({
+      live: true,
+      ready: false,
+      capability: "degraded" as const,
+      message: "助手基础服务暂不可用。",
+    }));
+    const readinessStatus = vi.fn(async () => {
+      executionState = "closed";
+      return {
+        probed: true,
+        live: true,
+        ready: true,
+        capability: "available" as const,
+      };
+    });
+    const inspect = vi.fn(() => ({
+      providerMode: "agentos" as const,
+      persistence: "disabled" as const,
+      circuits: {
+        readiness: { state: "closed" as const, consecutiveFailures: 0 },
+        execution: { state: executionState, consecutiveFailures: 0 },
+      },
+      readiness: {
+        cacheTtlMs: 5000,
+        probeTimeoutMs: 1500,
+        failureThreshold: 3,
+      },
+    }));
+
+    const result = await loadAdminAssistantStatus({
+      status,
+      readinessStatus,
+      inspect,
+    } as never);
+
+    expect(result.runtime).toMatchObject({
+      live: true,
+      ready: true,
+      capability: "available",
+      selectedProvider: "agentos",
+      circuits: { execution: { state: "closed", consecutiveFailures: 0 } },
+    });
+    expect(result.services.find(({ id }) => id === "model")).toMatchObject({
+      state: "ready",
+      detail: "能力已启用",
+    });
+    expect(result.services.find(({ id }) => id === "public_entry")?.state).toBe(
+      "ready",
+    );
+    expect(result.configuration.model).toBe("已配置");
+    expect(status).not.toHaveBeenCalled();
+    expect(readinessStatus).toHaveBeenCalledOnce();
+    expect(inspect).toHaveBeenCalledOnce();
+  });
+
   it("exports only GET and requires exactly admin:assistant", async () => {
     const route = await import("./route");
     expect(Object.keys(route)).toEqual(["GET"]);
@@ -373,7 +489,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
     expect(auth.requirePermission).toHaveBeenCalledExactlyOnceWith(
       "admin:assistant",
     );
-    expect(runtime.status).toHaveBeenCalledOnce();
+    expect(runtime.status).not.toHaveBeenCalled();
     expect(runtime.readinessStatus).toHaveBeenCalledOnce();
     expect(runtime.inspect).toHaveBeenCalledOnce();
   });

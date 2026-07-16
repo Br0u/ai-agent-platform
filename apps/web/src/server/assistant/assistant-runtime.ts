@@ -178,6 +178,20 @@ export function normalizeAssistantRuntimeStatus(
   };
 }
 
+export function deriveAssistantRuntimeStatus(
+  snapshot: AgentOSReadinessSnapshot,
+  context: {
+    providerMode: AssistantProviderMode;
+    executionState: SafeCircuitInspection["state"];
+  },
+): AssistantRuntimeStatus {
+  if (context.providerMode === "placeholder") return placeholderStatus();
+  if (context.executionState !== "closed") {
+    return degradedStatus(snapshot.live);
+  }
+  return normalizeAssistantRuntimeStatus(snapshot);
+}
+
 type RuntimeOptions = {
   environment?: AssistantRuntimeEnvironment;
   fetcher?: typeof fetch;
@@ -322,13 +336,18 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
     },
 
     async status(): Promise<AssistantRuntimeStatus> {
-      if (providerSettings.mode === "placeholder") return placeholderStatus();
+      if (providerSettings.mode === "placeholder") {
+        return deriveAssistantRuntimeStatus(
+          { live: false, ready: false, capability: "placeholder" },
+          { providerMode: "placeholder", executionState: "closed" },
+        );
+      }
       const composition = getAgentOSComposition();
       const snapshot = await composition.readiness.status();
-      if (composition.execution.inspect().state !== "closed") {
-        return degradedStatus(snapshot.live);
-      }
-      return normalizeAssistantRuntimeStatus(snapshot);
+      return deriveAssistantRuntimeStatus(snapshot, {
+        providerMode: "agentos",
+        executionState: composition.execution.inspect().state,
+      });
     },
 
     async readinessStatus(): Promise<AssistantRuntimeReadinessStatus> {

@@ -10,8 +10,8 @@ import {
 } from "@/features/assistant/admin-assistant-contract";
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
 import {
+  deriveAssistantRuntimeStatus,
   getAssistantRuntime,
-  readSafeAssistantRuntimeStatus,
   type AssistantRuntime,
   type AssistantRuntimeInspection,
   type AssistantRuntimeReadinessStatus,
@@ -201,16 +201,28 @@ function snapshot(
 }
 
 export async function loadAdminAssistantStatus(
-  runtime?: Pick<AssistantRuntime, "status" | "readinessStatus" | "inspect">,
+  runtime?: Pick<AssistantRuntime, "readinessStatus" | "inspect">,
 ): Promise<AdminAssistantStatusSnapshot> {
   let inspection = SAFE_DEGRADED_INSPECTION;
   try {
     const resolved = runtime ?? getAssistantRuntime();
+    let readiness: AssistantRuntimeReadinessStatus;
+    try {
+      readiness = await resolved.readinessStatus();
+    } catch {
+      inspection = resolved.inspect();
+      return snapshot(
+        SAFE_DEGRADED_STATUS,
+        SAFE_UNPROBED_READINESS,
+        inspection,
+        false,
+      );
+    }
     inspection = resolved.inspect();
-    const [status, readiness] = await Promise.all([
-      readSafeAssistantRuntimeStatus(resolved),
-      resolved.readinessStatus(),
-    ]);
+    const status = deriveAssistantRuntimeStatus(readiness, {
+      providerMode: inspection.providerMode,
+      executionState: inspection.circuits.execution.state,
+    });
     return snapshot(status, readiness, inspection);
   } catch {
     return snapshot(
