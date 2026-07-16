@@ -516,6 +516,9 @@ describe("production deployment security contracts", () => {
   it("defines a failure-safe isolated assistant runtime acceptance", () => {
     const script = read("docs/testing/run-assistant-runtime-e2e.sh");
     const browserAcceptance = read("apps/web/e2e/assistant-runtime.spec.ts");
+    const acceptanceCompose = read("compose.e2e.yaml");
+    const productionCompose = read("compose.yaml");
+    const acceptanceAgentApp = read("apps/agent/tests/e2e_agent/app.py");
 
     expect(script).toContain('[ "${RUN_ASSISTANT_RUNTIME_E2E:-}" = true ]');
     expect(script).toContain(
@@ -626,6 +629,40 @@ describe("production deployment security contracts", () => {
     expect(script).toContain(
       'scan_logs "agentos" "$agentos_dynamic_patterns_file"',
     );
+    expect(acceptanceCompose).toContain(
+      "AAP_SESSION_IDENTITY_AUDIT_FILE: /tmp/aap-session-identity-audit",
+    );
+    expect(productionCompose).not.toContain("AAP_SESSION_IDENTITY_AUDIT_FILE");
+    expect(acceptanceAgentApp).toContain(
+      'os.environ.get("AAP_SESSION_IDENTITY_AUDIT_FILE")',
+    );
+    expect(script).toContain("collect_agent_session_identities() {");
+    expect(script).toContain(
+      'compose exec -T agent python -c "$identity_audit_collector" >>"$agentos_dynamic_patterns_file"',
+    );
+    expect(script).toContain(
+      'identity_audit_path = "/tmp/aap-session-identity-audit"',
+    );
+    expect(script).toContain('getattr(os, "O_NOFOLLOW", 0)');
+    expect(script).toContain("stat.S_ISREG(metadata.st_mode)");
+    expect(script).toContain("stat.S_IMODE(metadata.st_mode) != 0o600");
+    expect(script).toContain("if not identities:");
+    expect(script).toContain("identity_pattern.fullmatch(identity)");
+    expect(script).toContain(
+      'raise SystemExit("identity audit collection failed")',
+    );
+    expect(script).not.toContain('echo "$identity"');
+    const agentosRunIndex = script.indexOf("--grep @agentos");
+    const identityCollectionIndex = script.indexOf(
+      "collect_agent_session_identities",
+      agentosRunIndex,
+    );
+    const agentosScanIndex = script.indexOf(
+      'scan_logs "agentos"',
+      identityCollectionIndex,
+    );
+    expect(identityCollectionIndex).toBeGreaterThan(agentosRunIndex);
+    expect(agentosScanIndex).toBeGreaterThan(identityCollectionIndex);
     expect(browserAcceptance).toContain('"AAP_RUNTIME_DYNAMIC_PATTERNS_FILE"');
     expect(browserAcceptance).toContain("appendFileSync(");
     expect(browserAcceptance).toContain("(stats.mode & 0o777) !== 0o600");
@@ -645,6 +682,15 @@ describe("production deployment security contracts", () => {
     expect(browserAcceptance).toContain(
       "appendDynamicProtectedValue(parsed.credential)",
     );
+    expect(browserAcceptance).toContain(
+      "expectNoProtectedValue(first, [firstSessionId])",
+    );
+    expect(browserAcceptance).toContain(
+      "const newSessionId = replacementCandidates[0]",
+    );
+    expect(browserAcceptance).toContain(
+      "expectNoProtectedValue(third, [newSessionId])",
+    );
     const invalidResponseIndex = browserAcceptance.indexOf(
       "const invalidResponse =",
     );
@@ -659,6 +705,20 @@ describe("production deployment security contracts", () => {
     expect(invalidResponseIndex).toBeGreaterThanOrEqual(0);
     expect(blockedResponseIndex).toBeGreaterThan(invalidResponseIndex);
     expect(blockedResponseIndex).toBeLessThan(circuitAdminAuthIndex);
+    const degradedStatusIndex = browserAcceptance.indexOf(
+      "const status = await readSafeJson",
+      invalidResponseIndex,
+    );
+    const finalSessionSnapshotIndex = browserAcceptance.indexOf(
+      "agentSessionIds();",
+      degradedStatusIndex,
+    );
+    const finalContextCloseIndex = browserAcceptance.indexOf(
+      "await context.close();",
+      degradedStatusIndex,
+    );
+    expect(finalSessionSnapshotIndex).toBeGreaterThan(degradedStatusIndex);
+    expect(finalSessionSnapshotIndex).toBeLessThan(finalContextCloseIndex);
     for (const variable of [
       "POSTGRES_PASSWORD",
       "MIGRATOR_DATABASE_PASSWORD",
@@ -1219,10 +1279,14 @@ exit 0
     expect(productionAgent).not.toContain("target: acceptance");
     expect(productionAgent).toContain("agent_service.app:app_factory");
     expect(productionAgent).toContain('"--no-access-log"');
+    expect(productionAgent).not.toContain("AAP_SESSION_IDENTITY_AUDIT_FILE");
     expect(acceptanceAgent).toBeDefined();
     expect(acceptanceAgent).toContain("target: acceptance");
     expect(acceptanceAgent).toContain("e2e_agent.app:app_factory");
     expect(acceptanceAgent).toContain('"--no-access-log"');
+    expect(acceptanceAgent).toContain(
+      "AAP_SESSION_IDENTITY_AUDIT_FILE: /tmp/aap-session-identity-audit",
+    );
     expect(acceptanceCompose.match(/target: acceptance/gu)).toHaveLength(1);
 
     const productionRendered = renderComposeFixture();
@@ -1236,6 +1300,9 @@ exit 0
       "7777",
       "--no-access-log",
     ]);
+    expect(productionRendered.services.agent?.environment).not.toHaveProperty(
+      "AAP_SESSION_IDENTITY_AUDIT_FILE",
+    );
 
     const rendered = renderComposeFixture(["compose.yaml", "compose.e2e.yaml"]);
     expect(rendered.services.agent?.build?.target).toBe("acceptance");
@@ -1249,6 +1316,9 @@ exit 0
       "7777",
       "--no-access-log",
     ]);
+    expect(
+      rendered.services.agent?.environment?.AAP_SESSION_IDENTITY_AUDIT_FILE,
+    ).toBe("/tmp/aap-session-identity-audit");
     expect(Object.keys(rendered.services.agent?.networks ?? {})).toEqual([
       "backend",
     ]);

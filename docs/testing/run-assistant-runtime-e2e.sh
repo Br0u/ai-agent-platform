@@ -386,6 +386,53 @@ scan_logs() {
     "sanitized container logs contain dynamic protected runtime data"
 }
 
+identity_audit_collector=$(cat <<'PY'
+import os
+import re
+import stat
+import sys
+
+identity_audit_path = "/tmp/aap-session-identity-audit"
+identity_pattern = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+try:
+    descriptor = os.open(
+        identity_audit_path,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError
+        if stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise ValueError
+        payload = os.read(descriptor, 65537)
+        if len(payload) > 65536:
+            raise ValueError
+    finally:
+        os.close(descriptor)
+    text = payload.decode("ascii")
+    identities = text.splitlines()
+    if not identities:
+        raise ValueError
+    if not text.endswith("\n"):
+        raise ValueError
+    if any(identity_pattern.fullmatch(identity) is None for identity in identities):
+        raise ValueError
+except Exception:
+    raise SystemExit("identity audit collection failed") from None
+sys.stdout.write(text)
+PY
+)
+
+collect_agent_session_identities() {
+  if ! compose exec -T agent python -c "$identity_audit_collector" >>"$agentos_dynamic_patterns_file"; then
+    echo "Agent session identity audit collection failed" >&2
+    return 1
+  fi
+}
+
 compose config --quiet
 owns_project=true
 compose build migrate web agent backup
@@ -464,6 +511,7 @@ BASE_URL=http://127.0.0.1:8080 \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
   --grep @agentos
 
+collect_agent_session_identities
 scan_logs "agentos" "$agentos_dynamic_patterns_file"
 
 echo "Assistant runtime E2E passed: guard 6 + placeholder 2 + AgentOS 4; no Web/Agent/DB host ports and cleanup is armed."

@@ -13,6 +13,8 @@ services:
         "7777",
         "--no-access-log",
       ]
+    environment:
+      AAP_SESSION_IDENTITY_AUDIT_FILE: /tmp/aap-session-identity-audit
     networks: !override
       backend:
 

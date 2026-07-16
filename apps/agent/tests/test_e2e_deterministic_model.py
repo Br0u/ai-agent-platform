@@ -1,15 +1,23 @@
 import socket
+import stat
+from pathlib import Path
 
 import agno.api.agent as agno_agent_api
 import pytest
 from agno.agent import Agent
 from agno.models.message import Message
 from agno.models.openai import OpenAIResponses
+from starlette.types import Message as ASGIMessage
+from starlette.types import Receive, Scope, Send
 
 from agent_service.catalog import AgentCatalog
 from agent_service.config import RuntimeSettings
 from agent_service.database import build_database
-from e2e_agent.app import build_acceptance_catalog
+from e2e_agent.app import (
+    SessionIdentityAuditMiddleware,
+    audit_deleted_session_identity,
+    build_acceptance_catalog,
+)
 
 from e2e_agent.deterministic_model import (
     INVALID_RESPONSE_SENTINEL,
@@ -38,9 +46,120 @@ def test_offline_guard_blocks_telemetry_and_dns_immediately() -> None:
     assert socket.getaddrinfo is _reject_external_access
 
     with pytest.raises(AssertionError, match="acceptance Agent must stay offline"):
-        agno_agent_api.create_agent_run()
+        _reject_external_access()
     with pytest.raises(AssertionError, match="acceptance Agent must stay offline"):
         socket.getaddrinfo("provider.example.invalid", 443)
+
+
+def test_identity_audit_records_only_the_exact_delete_session_route(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    identity = "6f8f5771-7dd8-4ca8-94de-66f6fbb7a36d"
+    second_identity = "b4f5170c-cac7-4914-9d5d-b16986fc4a22"
+    audit_file = tmp_path / "session-identities"
+
+    assert audit_deleted_session_identity(
+        method="DELETE",
+        path=f"/sessions/{identity}",
+        audit_file=audit_file,
+    )
+    assert audit_deleted_session_identity(
+        method="DELETE",
+        path=f"/sessions/{second_identity}",
+        audit_file=audit_file,
+    )
+
+    assert audit_file.read_text(encoding="ascii") == (
+        f"{identity}\n{second_identity}\n"
+    )
+    assert stat.S_IMODE(audit_file.stat().st_mode) == 0o600
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/sessions/6f8f5771-7dd8-4ca8-94de-66f6fbb7a36d"),
+        ("DELETE", "/sessions/not-a-uuid"),
+        ("DELETE", "/sessions/6f8f5771-7dd8-4ca8-94de-66f6fbb7a36d/runs"),
+        ("DELETE", "/internal/sessions/6f8f5771-7dd8-4ca8-94de-66f6fbb7a36d"),
+    ],
+)
+def test_identity_audit_ignores_other_methods_and_paths(
+    tmp_path: Path,
+    method: str,
+    path: str,
+) -> None:
+    audit_file = tmp_path / "session-identities"
+
+    assert not audit_deleted_session_identity(
+        method=method,
+        path=path,
+        audit_file=audit_file,
+    )
+
+    assert not audit_file.exists()
+
+
+def test_identity_audit_rejects_symlinks_nonregular_files_and_unsafe_modes(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    identity = "6f8f5771-7dd8-4ca8-94de-66f6fbb7a36d"
+    target = tmp_path / "target"
+    target.write_text("", encoding="ascii")
+    target.chmod(0o600)
+    symlink = tmp_path / "symlink"
+    symlink.symlink_to(target)
+    directory = tmp_path / "directory"
+    directory.mkdir()
+    unsafe_mode = tmp_path / "unsafe-mode"
+    unsafe_mode.write_text("", encoding="ascii")
+    unsafe_mode.chmod(0o644)
+
+    for audit_file in [symlink, directory, unsafe_mode]:
+        with pytest.raises(
+            RuntimeError, match="identity audit sink is invalid"
+        ) as error:
+            audit_deleted_session_identity(
+                method="DELETE",
+                path=f"/sessions/{identity}",
+                audit_file=audit_file,
+            )
+        assert identity not in str(error.value)
+
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.asyncio
+async def test_identity_audit_middleware_records_before_forwarding(
+    tmp_path: Path,
+) -> None:
+    identity = "6f8f5771-7dd8-4ca8-94de-66f6fbb7a36d"
+    audit_file = tmp_path / "session-identities"
+    forwarded: list[Scope] = []
+
+    async def downstream(scope: Scope, _receive: Receive, _send: Send) -> None:
+        forwarded.append(scope)
+
+    async def receive() -> ASGIMessage:
+        return {"type": "http.disconnect"}
+
+    async def send(_message: ASGIMessage) -> None:
+        return None
+
+    middleware = SessionIdentityAuditMiddleware(downstream, audit_file=audit_file)
+    scope: Scope = {
+        "type": "http",
+        "method": "DELETE",
+        "path": f"/sessions/{identity}",
+    }
+
+    await middleware(scope, receive, send)
+
+    assert forwarded == [scope]
+    assert audit_file.read_text(encoding="ascii") == f"{identity}\n"
 
 
 def test_deterministic_model_runs_through_agno_without_network() -> None:

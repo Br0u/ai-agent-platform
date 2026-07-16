@@ -1204,6 +1204,7 @@ test.describe("@agentos deterministic runtime", () => {
     ).toBe(true);
     const firstSessionId = firstSessionCandidates[0];
     if (!firstSessionId) throw new Error("first Agent session was not created");
+    expectNoProtectedValue(first, [firstSessionId]);
 
     const secondResponse = await context.request.post(CHAT_PATH, {
       data: {
@@ -1310,11 +1311,14 @@ test.describe("@agentos deterministic runtime", () => {
     const replacementCandidates = [...sessionsAfterNewTurn].filter(
       (sessionId) => !sessionsAfterDeletion.has(sessionId),
     );
+    const newSessionId = replacementCandidates[0];
     expect(
-      replacementCandidates.length === 1 &&
-        replacementCandidates[0] !== firstSessionId,
+      replacementCandidates.length === 1 && newSessionId !== firstSessionId,
       "new turn after DELETE must create a different Agent session",
     ).toBe(true);
+    if (!newSessionId)
+      throw new Error("replacement Agent session was not created");
+    expectNoProtectedValue(third, [newSessionId]);
     expectConsoleExcludesCredential(firstCredential);
     await context.close();
   });
@@ -1469,6 +1473,7 @@ test.describe("@agentos deterministic runtime", () => {
       capability: "degraded",
       message: "助手基础服务暂不可用。",
     });
+    agentSessionIds();
     await admin.close();
     await context.close();
   });
