@@ -92,6 +92,22 @@ async function loadHomeImages(page: Page) {
   await page.evaluate(() => window.scrollTo(0, 0));
 }
 
+async function revealHomeRegionsInOrder(page: Page) {
+  const regions = page.locator('[data-home-reveal="true"]');
+  await expect(regions).toHaveCount(4);
+
+  for (let index = 0; index < (await regions.count()); index += 1) {
+    const region = regions.nth(index);
+    await region.scrollIntoViewIfNeeded();
+    await expect(region).toHaveClass(/is-home-visible/);
+  }
+
+  await expect(
+    page.locator('[data-home-reveal="true"]:not(.is-home-visible)'),
+  ).toHaveCount(0);
+  await page.evaluate(() => window.scrollTo(0, 0));
+}
+
 function collectDiagnostics(page: Page) {
   const diagnostics: string[] = [];
   page.on("console", (message) => {
@@ -797,6 +813,7 @@ test("captures named visual evidence", async ({ page }, testInfo) => {
     });
     await gotoHome(page, evidence.reducedMotion);
     await loadHomeImages(page);
+    await revealHomeRegionsInOrder(page);
     await page.evaluate(() => document.fonts.ready);
     await page.screenshot({
       animations: "disabled",
