@@ -12,8 +12,11 @@ from agno.models.response import ModelResponse
 INVALID_RESPONSE_SENTINEL = "__aap_e2e_invalid_response__"
 
 
-def _is_invalid_user_message(message: Message) -> bool:
-    return INVALID_RESPONSE_SENTINEL in message.get_content_string()
+def _user_question(message: Message) -> str:
+    content = message.get_content_string().replace("\r\n", "\n").replace("\r", "\n")
+    marker = "\n\n用户问题："
+    question = content.partition(marker)[2] if marker in content else content
+    return question.strip()
 
 
 @dataclass
@@ -29,7 +32,8 @@ class DeterministicModel(Model):
         user_messages = [message for message in messages if message.role == "user"]
         content = (
             ""
-            if any(_is_invalid_user_message(message) for message in user_messages)
+            if user_messages
+            and _user_question(user_messages[-1]) == INVALID_RESPONSE_SENTINEL
             else f"deterministic-turn:{len(user_messages)}"
         )
         return ModelResponse(role="assistant", content=content)

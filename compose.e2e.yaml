@@ -12,6 +12,8 @@ services:
         "--port",
         "7777",
       ]
+    networks: !override
+      backend:
 
   migrate:
     environment:

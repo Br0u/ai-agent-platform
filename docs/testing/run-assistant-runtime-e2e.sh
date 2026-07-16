@@ -2,6 +2,11 @@
 
 set -eu
 
+[ "${RUN_ASSISTANT_RUNTIME_E2E:-}" = true ] || {
+  echo "set RUN_ASSISTANT_RUNTIME_E2E=true to run the destructive isolated acceptance" >&2
+  exit 1
+}
+
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
 
@@ -252,6 +257,7 @@ os_security_key=$(secret)
 assistant_session_secret=$(secret)
 assistant_rate_limit_secret=$(secret)
 model_api_key=$(secret)
+agent_runtime_token=$os_security_key
 
 materialize_secret() {
   variable_name=$1
@@ -275,13 +281,75 @@ materialize_secret RUNTIME_DATABASE_URL_FILE runtime_database_url "$RUNTIME_DATA
 materialize_secret AGNO_MIGRATOR_DATABASE_URL_FILE agno_migrator_database_url "postgresql+psycopg_async://ai_agent_agno_migrator:$agno_migrator_password@db:5432/$POSTGRES_DB"
 materialize_secret AGNO_DATABASE_URL_FILE agno_database_url "postgresql+psycopg_async://ai_agent_agno:$agno_runtime_password@db:5432/$POSTGRES_DB"
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECRET"
-materialize_secret OS_SECURITY_KEY_FILE os_security_key "$os_security_key"
+materialize_secret OS_SECURITY_KEY_FILE os_security_key "$agent_runtime_token"
 materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$assistant_session_secret"
 materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret "$assistant_rate_limit_secret"
 materialize_secret MODEL_API_KEY_FILE model_api_key "$model_api_key"
 
+protected_patterns_file="$temp_dir/protected-runtime-patterns"
+(
+  umask 077
+  printf '%s\n' \
+    "$POSTGRES_PASSWORD" \
+    "$MIGRATOR_DATABASE_PASSWORD" \
+    "$RUNTIME_DATABASE_PASSWORD" \
+    "$BACKUP_DATABASE_PASSWORD" \
+    "$MIGRATOR_DATABASE_URL" \
+    "$RUNTIME_DATABASE_URL" \
+    "$DATABASE_URL" \
+    "$TEST_DATABASE_URL" \
+    "$BETTER_AUTH_SECRET" \
+    "$E2E_CUSTOMER_PASSWORD" \
+    "$E2E_STAFF_PASSWORD" \
+    "$E2E_ADMIN_PASSWORD" \
+    "$E2E_PENDING_CUSTOMER_SESSION_TOKEN" \
+    "$E2E_DISABLED_CUSTOMER_SESSION_TOKEN" \
+    "$E2E_STAFF_SESSION_TOKEN" \
+    "$E2E_ROLE_TARGET_SESSION_TOKEN" \
+    "$E2E_ADMIN_SESSION_TOKEN" \
+    "$E2E_NO_TOTP_ADMIN_SESSION_TOKEN" \
+    "$E2E_REVOKED_SESSION_TOKEN" \
+    "$E2E_REPLACEMENT_PASSWORD" \
+    "$agno_migrator_password" \
+    "$agno_runtime_password" \
+    "postgresql+psycopg_async://ai_agent_agno_migrator:$agno_migrator_password@db:5432/$POSTGRES_DB" \
+    "postgresql+psycopg_async://ai_agent_agno:$agno_runtime_password@db:5432/$POSTGRES_DB" \
+    "$backup_encryption_key" \
+    "$agent_runtime_token" \
+    "$assistant_session_secret" \
+    "$assistant_rate_limit_secret" \
+    "$model_api_key" \
+    "$POSTGRES_PASSWORD_FILE" \
+    "$MIGRATOR_DATABASE_PASSWORD_FILE" \
+    "$RUNTIME_DATABASE_PASSWORD_FILE" \
+    "$BACKUP_DATABASE_PASSWORD_FILE" \
+    "$BACKUP_ENCRYPTION_KEY_FILE" \
+    "$AGNO_MIGRATOR_DATABASE_PASSWORD_FILE" \
+    "$AGNO_DATABASE_PASSWORD_FILE" \
+    "$MIGRATOR_DATABASE_URL_FILE" \
+    "$RUNTIME_DATABASE_URL_FILE" \
+    "$AGNO_MIGRATOR_DATABASE_URL_FILE" \
+    "$AGNO_DATABASE_URL_FILE" \
+    "$BETTER_AUTH_SECRET_FILE" \
+    "$OS_SECURITY_KEY_FILE" \
+    "$ASSISTANT_SESSION_SECRET_FILE" \
+    "$ASSISTANT_RATE_LIMIT_SECRET_FILE" \
+    "$MODEL_API_KEY_FILE" >"$protected_patterns_file"
+)
+chmod 600 "$protected_patterns_file"
+
 compose() {
   docker compose -p "$project" --env-file "$env_file" $compose_files "$@"
+}
+
+scan_logs() {
+  phase=$1
+  logs_file="$temp_dir/$phase-runtime.log"
+  compose logs --no-color web agent proxy >"$logs_file" 2>&1
+  if grep -F -f "$protected_patterns_file" "$logs_file" >/dev/null 2>&1; then
+    echo "sanitized container logs contain protected runtime data" >&2
+    exit 1
+  fi
 }
 
 compose config --quiet
@@ -330,7 +398,14 @@ export AAP_RUNTIME_E2E_ENV_FILE="$env_file"
 BASE_URL=http://127.0.0.1:8080 \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
-  --grep-invert @agentos
+  --grep @guard
+
+BASE_URL=http://127.0.0.1:8080 \
+  pnpm --filter @ai-agent-platform/web exec playwright test \
+  e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
+  --grep-invert "@agentos|@guard"
+
+scan_logs "placeholder"
 
 export AGENT_ENABLED=true
 export MODEL_PROVIDER=openai
@@ -346,31 +421,13 @@ compose config --quiet
 compose up -d --no-deps --force-recreate --wait agent
 compose run --rm -e NODE_ENV=test migrate pnpm db:seed-auth-e2e
 compose up -d --no-deps --force-recreate --wait web
+compose up -d --no-deps --force-recreate --wait proxy
 
 BASE_URL=http://127.0.0.1:8080 \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
   --grep @agentos
 
-logs_file="$temp_dir/sanitized-runtime.log"
-compose logs --no-color web agent proxy >"$logs_file" 2>&1
-for protected_value in \
-  "$POSTGRES_PASSWORD" \
-  "$MIGRATOR_DATABASE_PASSWORD" \
-  "$RUNTIME_DATABASE_PASSWORD" \
-  "$BACKUP_DATABASE_PASSWORD" \
-  "$BETTER_AUTH_SECRET" \
-  "$agno_migrator_password" \
-  "$agno_runtime_password" \
-  "$backup_encryption_key" \
-  "$os_security_key" \
-  "$assistant_session_secret" \
-  "$assistant_rate_limit_secret" \
-  "$model_api_key"; do
-  if grep -F "$protected_value" "$logs_file" >/dev/null 2>&1; then
-    echo "sanitized container logs contain protected runtime data" >&2
-    exit 1
-  fi
-done
+scan_logs "agentos"
 
-echo "Assistant runtime E2E passed in placeholder and deterministic AgentOS phases; no Web/Agent/DB host ports and cleanup is armed."
+echo "Assistant runtime E2E passed: guard 6 + placeholder 2 + AgentOS 4; no Web/Agent/DB host ports and cleanup is armed."

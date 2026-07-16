@@ -45,7 +45,9 @@ type RenderedSecretAttachment = string | { source?: string; target?: string };
 type RenderedNetworkAttachment = null | { gw_priority?: number };
 
 type RenderedService = {
+  build?: { target?: string };
   cap_drop?: string[];
+  command?: string[];
   cpus?: number | string;
   entrypoint?: string[];
   environment?: Record<string, string | null>;
@@ -65,7 +67,9 @@ type RenderedCompose = {
   services: Record<string, RenderedService>;
 };
 
-const renderComposeFixture = (): RenderedCompose => {
+const renderComposeFixture = (
+  composeFiles = ["compose.yaml"],
+): RenderedCompose => {
   const sentinels = Object.fromEntries(
     composeSecretKeys.map((key, index) => [
       key,
@@ -87,13 +91,30 @@ const renderComposeFixture = (): RenderedCompose => {
 
     const execution = spawnSync(
       "docker",
-      ["compose", "config", "--format", "json"],
+      [
+        "compose",
+        ...composeFiles.flatMap((file) => ["-f", file]),
+        "config",
+        "--format",
+        "json",
+      ],
       {
         cwd: root,
         encoding: "utf8",
         env: {
           ...process.env,
           ...secretFileEnv,
+          E2E_CUSTOMER_PASSWORD: "compose-e2e-customer",
+          E2E_STAFF_PASSWORD: "compose-e2e-staff",
+          E2E_ADMIN_PASSWORD: "compose-e2e-admin",
+          E2E_PENDING_CUSTOMER_SESSION_TOKEN: "compose-e2e-pending",
+          E2E_DISABLED_CUSTOMER_SESSION_TOKEN: "compose-e2e-disabled",
+          E2E_STAFF_SESSION_TOKEN: "compose-e2e-staff-session",
+          E2E_ROLE_TARGET_SESSION_TOKEN: "compose-e2e-role-target",
+          E2E_ADMIN_SESSION_TOKEN: "compose-e2e-admin-session",
+          E2E_NO_TOTP_ADMIN_SESSION_TOKEN: "compose-e2e-no-totp",
+          E2E_REVOKED_SESSION_TOKEN: "compose-e2e-revoked",
+          E2E_REPLACEMENT_PASSWORD: "compose-e2e-replacement",
           BETTER_AUTH_URL: "http://127.0.0.1:3000",
           BETTER_AUTH_TRUSTED_ORIGINS: "http://127.0.0.1:3000",
           ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
@@ -495,6 +516,7 @@ describe("production deployment security contracts", () => {
   it("defines a failure-safe isolated assistant runtime acceptance", () => {
     const script = read("docs/testing/run-assistant-runtime-e2e.sh");
 
+    expect(script).toContain('[ "${RUN_ASSISTANT_RUNTIME_E2E:-}" = true ]');
     expect(script).toContain(
       "project=${AAP_ASSISTANT_RUNTIME_E2E_PROJECT:-aap-assistant-runtime-e2e}",
     );
@@ -539,9 +561,10 @@ describe("production deployment security contracts", () => {
     expect(script.indexOf("owns_project=true")).toBeLessThan(
       script.indexOf("compose build"),
     );
-    expect(script).toContain("--grep-invert @agentos");
+    expect(script).toContain('--grep-invert "@agentos|@guard"');
+    expect(script).toContain("--grep @guard");
     expect(script).toContain("--grep @agentos");
-    expect(script.indexOf("--grep-invert @agentos")).toBeLessThan(
+    expect(script.indexOf('--grep-invert "@agentos|@guard"')).toBeLessThan(
       script.indexOf("--grep @agentos"),
     );
     expect(script).toContain("export AGENT_ENABLED=false");
@@ -556,9 +579,36 @@ describe("production deployment security contracts", () => {
     expect(script).toContain(
       "export ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD=1",
     );
-    expect(
-      script.match(/--force-recreate --wait (?:agent|web)/gu),
-    ).toHaveLength(2);
+    expect(script).toContain("--force-recreate --wait proxy");
+    expect(script).toContain('scan_logs "placeholder"');
+    expect(script).toContain('scan_logs "agentos"');
+    expect(script.indexOf('scan_logs "placeholder"')).toBeLessThan(
+      script.indexOf("export AGENT_ENABLED=true"),
+    );
+    expect(script).toContain('grep -F -f "$protected_patterns_file"');
+    expect(script).toContain('chmod 600 "$protected_patterns_file"');
+    expect(script).not.toContain('grep -F "$protected_value"');
+    for (const variable of [
+      "POSTGRES_PASSWORD",
+      "MIGRATOR_DATABASE_PASSWORD",
+      "RUNTIME_DATABASE_PASSWORD",
+      "BACKUP_DATABASE_PASSWORD",
+      "BETTER_AUTH_SECRET",
+      "E2E_CUSTOMER_PASSWORD",
+      "E2E_STAFF_PASSWORD",
+      "E2E_ADMIN_PASSWORD",
+      "E2E_PENDING_CUSTOMER_SESSION_TOKEN",
+      "E2E_DISABLED_CUSTOMER_SESSION_TOKEN",
+      "E2E_STAFF_SESSION_TOKEN",
+      "E2E_ROLE_TARGET_SESSION_TOKEN",
+      "E2E_ADMIN_SESSION_TOKEN",
+      "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
+      "E2E_REVOKED_SESSION_TOKEN",
+      "E2E_REPLACEMENT_PASSWORD",
+    ]) {
+      expect(script).toContain(`\"$${variable}\"`);
+    }
+    expect(script).toContain("guard 6 + placeholder 2 + AgentOS 4");
     expect(script).toContain("db_port_bindings=");
   });
 
@@ -653,6 +703,7 @@ exit 0
             ...process.env,
             PATH: `${bin}:${process.env.PATH ?? ""}`,
             TMPDIR: temp,
+            RUN_ASSISTANT_RUNTIME_E2E: "true",
             AAP_ASSISTANT_RUNTIME_E2E_PROJECT: project,
             FAKE_DOCKER_LOG: log,
             ...extra,
@@ -664,6 +715,12 @@ exit 0
     };
 
     try {
+      const disabled = run("disabled", {
+        RUN_ASSISTANT_RUNTIME_E2E: "false",
+      });
+      expect(disabled.result.status).not.toBe(0);
+      expect(disabled.calls).toBe("");
+
       mkdirSync(lock, { recursive: true, mode: 0o700 });
       writeFileSync(path.join(lock, "token"), "another-run\n", { mode: 0o600 });
       const locked = run("locked");
@@ -1031,9 +1088,10 @@ exit 0
     const dockerIgnore = read("apps/agent/.dockerignore");
     const rootDockerIgnore = read(".dockerignore");
 
-    expect(dockerfile).toMatch(
-      /^FROM python:3\.13\.13-slim-trixie@sha256:[a-f0-9]{64} AS builder/mu,
-    );
+    const pinnedBase =
+      "python:3.13.13-slim-trixie@sha256:aa938a849bcb82dce8f49480f056ab82bf5c1c3ebc294f0430f37b6820e7f286";
+    expect(dockerfile).toContain(`FROM ${pinnedBase} AS builder`);
+    expect(dockerfile).toContain(`FROM ${pinnedBase} AS runtime-base`);
     expect(dockerfile).toMatch(/^FROM runtime-base AS runtime$/mu);
     expect(dockerfile).toContain("uv sync --frozen --no-dev");
     expect(dockerfile).toContain("COPY apps/agent/pyproject.toml");
@@ -1087,6 +1145,26 @@ exit 0
     expect(acceptanceAgent).toContain("target: acceptance");
     expect(acceptanceAgent).toContain("e2e_agent.app:app_factory");
     expect(acceptanceCompose.match(/target: acceptance/gu)).toHaveLength(1);
+
+    const rendered = renderComposeFixture(["compose.yaml", "compose.e2e.yaml"]);
+    expect(rendered.services.agent?.build?.target).toBe("acceptance");
+    expect(rendered.services.agent?.command).toEqual([
+      "uvicorn",
+      "e2e_agent.app:app_factory",
+      "--factory",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "7777",
+    ]);
+    expect(Object.keys(rendered.services.agent?.networks ?? {})).toEqual([
+      "backend",
+    ]);
+    expect(
+      Object.entries(rendered.services)
+        .filter(([, service]) => service.build?.target === "acceptance")
+        .map(([name]) => name),
+    ).toEqual(["agent"]);
   });
 
   it("keeps every production credential out of rendered Compose config", () => {

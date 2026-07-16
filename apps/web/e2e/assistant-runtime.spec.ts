@@ -36,6 +36,11 @@ const CHAT_BODY = {
   context: { pathname: "/assistant" },
 };
 const INVALID_RESPONSE_SENTINEL = "__aap_e2e_invalid_response__";
+const requestIdMatcher = expect.any(String);
+const messageIdMatcher = expect.any(String);
+const expiresAtMatcher = expect.stringMatching(
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
+);
 
 const cumulativeConsoleMessages: string[] = [];
 let firstAssistantCookieCredential: string | undefined;
@@ -112,7 +117,7 @@ function composeArgs(...args: string[]): string[] {
   ];
 }
 
-function countAgentSessions(): number {
+function agentSessionIds(): Set<string> {
   const output = execFileSync(
     "docker",
     composeArgs(
@@ -121,7 +126,7 @@ function countAgentSessions(): number {
       "db",
       "sh",
       "-c",
-      'psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --tuples-only --no-align --command="SELECT COUNT(*) FROM agno.agno_sessions"',
+      'psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --tuples-only --no-align --command="SELECT session_id FROM agno.agno_sessions ORDER BY session_id"',
     ),
     {
       cwd: path.resolve(process.cwd(), "../.."),
@@ -129,11 +134,56 @@ function countAgentSessions(): number {
       timeout: 30_000,
     },
   ).trim();
-  const count = Number(output);
-  if (!Number.isSafeInteger(count) || count < 0) {
-    throw new Error("Agent session count was not a non-negative integer");
+  return new Set(output === "" ? [] : output.split("\n"));
+}
+
+function sameStringSet(left: Set<string>, right: Set<string>): boolean {
+  return (
+    left.size === right.size && [...left].every((value) => right.has(value))
+  );
+}
+
+function internalUnauthenticatedWebSocketStatus(): number {
+  const script = `
+const net = require("node:net");
+const socket = net.createConnection({ host: "agent", port: 7777 });
+let response = "";
+const timer = setTimeout(() => process.exit(2), 5000);
+socket.on("connect", () => socket.write([
+  "GET /workflows/ws HTTP/1.1",
+  "Host: agent:7777",
+  "Upgrade: websocket",
+  "Connection: Upgrade",
+  "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+  "Sec-WebSocket-Version: 13",
+  "",
+  "",
+].join("\\r\\n")));
+socket.on("data", (chunk) => {
+  response += chunk.toString("utf8");
+  if (!response.includes("\\r\\n\\r\\n")) return;
+  clearTimeout(timer);
+  const match = response.match(/^HTTP\\/1\\.1 (\\d{3}) /u);
+  if (!match) process.exit(3);
+  process.stdout.write(match[1]);
+  socket.destroy();
+});
+socket.on("error", () => process.exit(4));
+`;
+  const output = execFileSync(
+    "docker",
+    composeArgs("exec", "-T", "web", "node", "-e", script),
+    {
+      cwd: path.resolve(process.cwd(), "../.."),
+      encoding: "utf8",
+      timeout: 10_000,
+    },
+  ).trim();
+  const status = Number(output);
+  if (!Number.isSafeInteger(status)) {
+    throw new Error("internal WebSocket rejection did not return HTTP status");
   }
-  return count;
+  return status;
 }
 
 function servicePortBindings(service: "agent" | "db"): string {
@@ -295,6 +345,27 @@ function cookieCredential(setCookie: string): string {
   return match[1];
 }
 
+function stableCookieCredential(cookieValue: string): string {
+  const payload = cookieValue.split(".")[0];
+  if (!payload) throw new Error("assistant cookie payload is missing");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch {
+    throw new Error("assistant cookie payload is invalid");
+  }
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("credential" in parsed) ||
+    typeof parsed.credential !== "string" ||
+    parsed.credential.length === 0
+  ) {
+    throw new Error("assistant cookie credential is invalid");
+  }
+  return parsed.credential;
+}
+
 async function completeSeededAdminTwoFactor(context: BrowserContext) {
   const page = await context.newPage();
   await page.goto("/staff/two-factor?returnTo=%2Fadmin%2Fassistant");
@@ -315,165 +386,163 @@ async function completeSeededAdminTwoFactor(context: BrowserContext) {
 
 test.describe.configure({ mode: "serial" });
 
-if (process.env.AAP_RUNTIME_GUARD_TESTS === "true") {
-  test.describe("assistant response safety guard", () => {
-    test("rejects internal run and session identifier keys recursively", () => {
-      const forbiddenKeys = [
-        "sessionId",
-        "session_id",
-        "runId",
-        "run_id",
-        "internalSessionId",
-      ];
-      const rejected = forbiddenKeys.map((key) => {
-        try {
-          expectNoProtectedValue({ nested: [{ [key]: "opaque-id" }] }, []);
-          return false;
-        } catch {
-          return true;
-        }
-      });
-
-      expect(
-        rejected.every(Boolean),
-        "guard must reject every internal run or session identifier key",
-      ).toBe(true);
-    });
-
-    test("allows requestId and message.id", () => {
-      expectNoProtectedValue(
-        {
-          requestId: "public-request-id",
-          message: { id: "public-message-id", content: "safe" },
-        },
-        [],
-      );
-    });
-
-    test("rejects protected string values without rendering them", () => {
-      const protectedValue = "guard-unit-secret-never-render";
-      let rejected = false;
-      let safeFailure = false;
+test.describe("@guard assistant response safety guard", () => {
+  test("rejects internal run and session identifier keys recursively", () => {
+    const forbiddenKeys = [
+      "sessionId",
+      "session_id",
+      "runId",
+      "run_id",
+      "internalSessionId",
+    ];
+    const rejected = forbiddenKeys.map((key) => {
       try {
-        expectNoProtectedValue(
-          { nested: [{ value: `prefix-${protectedValue}-suffix` }] },
-          [protectedValue],
-        );
+        expectNoProtectedValue({ nested: [{ [key]: "opaque-id" }] }, []);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+
+    expect(
+      rejected.every(Boolean),
+      "guard must reject every internal run or session identifier key",
+    ).toBe(true);
+  });
+
+  test("allows requestId and message.id", () => {
+    expectNoProtectedValue(
+      {
+        requestId: "public-request-id",
+        message: { id: "public-message-id", content: "safe" },
+      },
+      [],
+    );
+  });
+
+  test("rejects protected string values without rendering them", () => {
+    const protectedValue = "guard-unit-secret-never-render";
+    let rejected = false;
+    let safeFailure = false;
+    try {
+      expectNoProtectedValue(
+        { nested: [{ value: `prefix-${protectedValue}-suffix` }] },
+        [protectedValue],
+      );
+    } catch (error) {
+      rejected = true;
+      const message = error instanceof Error ? error.message : "";
+      safeFailure =
+        message.includes("protected value leaked in assistant response") &&
+        !message.includes(protectedValue);
+    }
+
+    expect(rejected, "guard must reject protected string values").toBe(true);
+    expect(
+      safeFailure,
+      "guard failure must use a fixed message without protected data",
+    ).toBe(true);
+  });
+
+  test("loads chmod 600 secret contents while preserving the file path", () => {
+    const secretDirectory = mkdtempSync(
+      path.join(os.tmpdir(), "aap-runtime-guard-"),
+    );
+    const secretPath = path.join(secretDirectory, "model-api-key");
+    const protectedValue = "file-backed-guard-secret-never-render";
+    const originalPath = process.env.MODEL_API_KEY_FILE;
+    writeFileSync(secretPath, protectedValue, { mode: 0o600 });
+    chmodSync(secretPath, 0o600);
+    process.env.MODEL_API_KEY_FILE = secretPath;
+
+    let rejected = false;
+    let safeFailure = false;
+    try {
+      const protectedValues = runtimeProtectedValues();
+      try {
+        expectNoProtectedValue({ value: protectedValue }, protectedValues);
       } catch (error) {
         rejected = true;
         const message = error instanceof Error ? error.message : "";
         safeFailure =
-          message.includes("protected value leaked in assistant response") &&
-          !message.includes(protectedValue);
+          !message.includes(protectedValue) && !message.includes(secretPath);
       }
+    } finally {
+      if (originalPath === undefined) delete process.env.MODEL_API_KEY_FILE;
+      else process.env.MODEL_API_KEY_FILE = originalPath;
+      rmSync(secretDirectory, { recursive: true, force: true });
+    }
 
-      expect(rejected, "guard must reject protected string values").toBe(true);
-      expect(
-        safeFailure,
-        "guard failure must use a fixed message without protected data",
-      ).toBe(true);
-    });
-
-    test("loads chmod 600 secret contents while preserving the file path", () => {
-      const secretDirectory = mkdtempSync(
-        path.join(os.tmpdir(), "aap-runtime-guard-"),
-      );
-      const secretPath = path.join(secretDirectory, "model-api-key");
-      const protectedValue = "file-backed-guard-secret-never-render";
-      const originalPath = process.env.MODEL_API_KEY_FILE;
-      writeFileSync(secretPath, protectedValue, { mode: 0o600 });
-      chmodSync(secretPath, 0o600);
-      process.env.MODEL_API_KEY_FILE = secretPath;
-
-      let rejected = false;
-      let safeFailure = false;
-      try {
-        const protectedValues = runtimeProtectedValues();
-        try {
-          expectNoProtectedValue({ value: protectedValue }, protectedValues);
-        } catch (error) {
-          rejected = true;
-          const message = error instanceof Error ? error.message : "";
-          safeFailure =
-            !message.includes(protectedValue) && !message.includes(secretPath);
-        }
-      } finally {
-        if (originalPath === undefined) delete process.env.MODEL_API_KEY_FILE;
-        else process.env.MODEL_API_KEY_FILE = originalPath;
-        rmSync(secretDirectory, { recursive: true, force: true });
-      }
-
-      expect(
-        rejected,
-        "guard must reject the contents loaded from a secret file",
-      ).toBe(true);
-      expect(
-        safeFailure,
-        "file-backed guard failure must not reveal path or content",
-      ).toBe(true);
-    });
-
-    test("fails closed for unreadable, empty, or non-600 secret files", () => {
-      const secretDirectory = mkdtempSync(
-        path.join(os.tmpdir(), "aap-runtime-guard-invalid-"),
-      );
-      const originalPath = process.env.MODEL_API_KEY_FILE;
-      const scenarios = [
-        path.join(secretDirectory, "missing"),
-        path.join(secretDirectory, "empty"),
-        path.join(secretDirectory, "wrong-mode"),
-      ];
-      writeFileSync(scenarios[1]!, "", { mode: 0o600 });
-      writeFileSync(scenarios[2]!, "mode-secret", { mode: 0o644 });
-      chmodSync(scenarios[2]!, 0o644);
-
-      const outcomes: Array<{ rejected: boolean; safeFailure: boolean }> = [];
-      try {
-        for (const secretPath of scenarios) {
-          process.env.MODEL_API_KEY_FILE = secretPath;
-          try {
-            runtimeProtectedValues();
-            outcomes.push({ rejected: false, safeFailure: false });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "";
-            outcomes.push({
-              rejected: true,
-              safeFailure:
-                message.includes("protected secret file is invalid") &&
-                !message.includes(secretPath),
-            });
-          }
-        }
-      } finally {
-        if (originalPath === undefined) delete process.env.MODEL_API_KEY_FILE;
-        else process.env.MODEL_API_KEY_FILE = originalPath;
-        rmSync(secretDirectory, { recursive: true, force: true });
-      }
-
-      expect(
-        outcomes.every((outcome) => outcome.rejected),
-        "invalid secret files must fail closed",
-      ).toBe(true);
-      expect(
-        outcomes.every((outcome) => outcome.safeFailure),
-        "invalid secret file errors must be fixed and path-free",
-      ).toBe(true);
-    });
-
-    test("routes every assistant JSON body through the safety guard", () => {
-      const source = readFileSync(
-        path.resolve(process.cwd(), "e2e/assistant-runtime.spec.ts"),
-        "utf8",
-      );
-      const directJsonCall = [".", "json", "(", ")"].join("");
-
-      expect(
-        source.includes(directJsonCall),
-        "assistant response bodies must not bypass the safety guard",
-      ).toBe(false);
-    });
+    expect(
+      rejected,
+      "guard must reject the contents loaded from a secret file",
+    ).toBe(true);
+    expect(
+      safeFailure,
+      "file-backed guard failure must not reveal path or content",
+    ).toBe(true);
   });
-}
+
+  test("fails closed for unreadable, empty, or non-600 secret files", () => {
+    const secretDirectory = mkdtempSync(
+      path.join(os.tmpdir(), "aap-runtime-guard-invalid-"),
+    );
+    const originalPath = process.env.MODEL_API_KEY_FILE;
+    const scenarios = [
+      path.join(secretDirectory, "missing"),
+      path.join(secretDirectory, "empty"),
+      path.join(secretDirectory, "wrong-mode"),
+    ];
+    writeFileSync(scenarios[1]!, "", { mode: 0o600 });
+    writeFileSync(scenarios[2]!, "mode-secret", { mode: 0o644 });
+    chmodSync(scenarios[2]!, 0o644);
+
+    const outcomes: Array<{ rejected: boolean; safeFailure: boolean }> = [];
+    try {
+      for (const secretPath of scenarios) {
+        process.env.MODEL_API_KEY_FILE = secretPath;
+        try {
+          runtimeProtectedValues();
+          outcomes.push({ rejected: false, safeFailure: false });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "";
+          outcomes.push({
+            rejected: true,
+            safeFailure:
+              message.includes("protected secret file is invalid") &&
+              !message.includes(secretPath),
+          });
+        }
+      }
+    } finally {
+      if (originalPath === undefined) delete process.env.MODEL_API_KEY_FILE;
+      else process.env.MODEL_API_KEY_FILE = originalPath;
+      rmSync(secretDirectory, { recursive: true, force: true });
+    }
+
+    expect(
+      outcomes.every((outcome) => outcome.rejected),
+      "invalid secret files must fail closed",
+    ).toBe(true);
+    expect(
+      outcomes.every((outcome) => outcome.safeFailure),
+      "invalid secret file errors must be fixed and path-free",
+    ).toBe(true);
+  });
+
+  test("routes every assistant JSON body through the safety guard", () => {
+    const source = readFileSync(
+      path.resolve(process.cwd(), "e2e/assistant-runtime.spec.ts"),
+      "utf8",
+    );
+    const directJsonCall = [".", "json", "(", ")"].join("");
+
+    expect(
+      source.includes(directJsonCall),
+      "assistant response bodies must not bypass the safety guard",
+    ).toBe(false);
+  });
+});
 
 test("public runtime is ready, placeholder chat is safe, and Nginx owns the first IP limit", async ({
   browser,
@@ -489,11 +558,13 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
   const statusResponse = await context.request.get(STATUS_PATH);
   expect(statusResponse.status()).toBe(200);
   const status = await readSafeJson(statusResponse, protectedValues);
-  expect(status).toMatchObject({
+  expect(status).toEqual({
     version: "1",
+    requestId: requestIdMatcher,
     live: true,
     ready: true,
     capability: "placeholder",
+    message: "模型尚未配置，当前为安全占位模式。",
   });
 
   const responsePromise = page.waitForResponse(
@@ -515,12 +586,17 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
   const browserResponse = await responsePromise;
   const chatBody = parseSafeJson(chat.rawJson, protectedValues);
   expect(chat.status).toBe(200);
-  expect(chatBody).toMatchObject({
+  expect(chatBody).toEqual({
     version: "1",
     requestId: "public-browser-runtime-e2e",
     mode: "placeholder",
-    session: { temporary: true },
-    message: { role: "assistant" },
+    session: { temporary: true, expiresAt: expiresAtMatcher },
+    message: {
+      id: messageIdMatcher,
+      role: "assistant",
+      content: "你可以从快速开始文档了解平台结构和使用入口。",
+    },
+    suggestedActions: [{ label: "查看快速开始", href: "/docs#quick-start" }],
   });
   const setCookie = (await browserResponse.headerValue("set-cookie")) ?? "";
   expect(setCookie).toContain("aap_assistant_sid_dev=");
@@ -567,9 +643,11 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
       retryable: true,
     },
   });
-  expect(rejection).not.toMatchObject({
-    requestId: "bff-rate-limit-sentinel",
-  });
+  expect(
+    (rejection as { requestId: string }).requestId ===
+      "bff-rate-limit-sentinel",
+    "Nginx must replace the untrusted request identifier",
+  ).toBe(false);
 
   const logs = execFileSync(
     "docker",
@@ -630,8 +708,14 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
         : await anonymous.post(endpoint, { data: CHAT_BODY });
     expect(response.status()).toBe(401);
     const body = await readSafeJson(response, protectedValues);
-    expect(body).toMatchObject({
-      error: { code: "authentication_required" },
+    expect(body).toEqual({
+      version: "1",
+      requestId: requestIdMatcher,
+      error: {
+        code: "authentication_required",
+        message: "Authentication required",
+        retryable: false,
+      },
     });
   }
   await anonymous.dispose();
@@ -655,7 +739,15 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
         : await staff.request.post(endpoint, { data: CHAT_BODY });
     expect(response.status()).toBe(403);
     const body = await readSafeJson(response, protectedValues);
-    expect(body).toMatchObject({ error: { code: "permission_denied" } });
+    expect(body).toEqual({
+      version: "1",
+      requestId: requestIdMatcher,
+      error: {
+        code: "permission_denied",
+        message: "Permission denied",
+        retryable: false,
+      },
+    });
   }
   await staff.close();
 
@@ -671,40 +763,88 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
   const adminStatusResponse = await admin.request.get(ADMIN_STATUS_PATH);
   expect(adminStatusResponse.status()).toBe(200);
   const adminStatus = await readSafeJson(adminStatusResponse, protectedValues);
-  expect(adminStatus).toMatchObject({
+  expect(adminStatus).toEqual({
     version: "1",
+    requestId: requestIdMatcher,
     status: {
       mode: "placeholder",
       runtime: {
         live: true,
         ready: true,
         capability: "placeholder",
+        providerMode: "placeholder",
+        selectedProvider: "placeholder",
         persistence: "disabled",
+        circuits: {
+          readiness: { state: "closed", consecutiveFailures: 0 },
+          execution: { state: "closed", consecutiveFailures: 0 },
+        },
+        readiness: { cacheTtlMs: 0, probeTimeoutMs: 0, failureThreshold: 0 },
       },
+      services: [
+        {
+          id: "agentos",
+          label: "AgentOS",
+          state: "not_connected",
+          detail: "尚未探测",
+        },
+        {
+          id: "database",
+          label: "运行数据库",
+          state: "not_connected",
+          detail: "尚未探测",
+        },
+        {
+          id: "model",
+          label: "模型",
+          state: "not_configured",
+          detail: "尚未配置",
+        },
+        {
+          id: "public_entry",
+          label: "公开入口",
+          state: "placeholder",
+          detail: "占位模式可用",
+        },
+      ],
+      configuration: {
+        defaultAgent: "M 企业助理（占位）",
+        model: "未配置",
+        skills: "未接入",
+        sessionStorage: "未启用",
+      },
+      message: "公开入口使用安全占位模式；AgentOS 基础设施尚未探测。",
     },
   });
 
   const sessionsResponse = await admin.request.get(ADMIN_SESSIONS_PATH);
   expect(sessionsResponse.status()).toBe(200);
   const sessions = await readSafeJson(sessionsResponse, protectedValues);
-  expect(sessions).toMatchObject({
+  expect(sessions).toEqual({
     version: "1",
+    requestId: requestIdMatcher,
     sessions: {
       persistence: "disabled",
       listing: "not_available",
+      message: "占位模式未持久化会话；管理列表不可用。",
     },
   });
-  expect(sessions).not.toHaveProperty("sessions.items");
 
   const adminChatResponse = await admin.request.post(ADMIN_CHAT_PATH, {
     data: CHAT_BODY,
   });
   expect(adminChatResponse.status()).toBe(200);
   const adminChat = await readSafeJson(adminChatResponse, protectedValues);
-  expect(adminChat).toMatchObject({
+  expect(adminChat).toEqual({
     version: "1",
+    requestId: requestIdMatcher,
     mode: "placeholder",
-    message: { role: "assistant" },
+    message: {
+      id: messageIdMatcher,
+      role: "assistant",
+      content: "你可以从快速开始文档了解平台结构和使用入口。",
+    },
+    suggestedActions: [{ label: "查看快速开始", href: "/docs#quick-start" }],
   });
   expectConsoleExcludesCredential(assistantCredential);
   await admin.close();
@@ -724,11 +864,13 @@ test.describe("@agentos deterministic runtime", () => {
       publicStatusResponse,
       protectedValues,
     );
-    expect(publicStatus).toMatchObject({
+    expect(publicStatus).toEqual({
       version: "1",
+      requestId: requestIdMatcher,
       live: true,
       ready: true,
       capability: "available",
+      message: "AI 助理基础服务已就绪。",
     });
     expect(JSON.stringify(publicStatus)).not.toMatch(
       /(?:maduoduo|e2e-deterministic|deterministic-turn|当前页面路径|用户问题)/iu,
@@ -742,7 +884,7 @@ test.describe("@agentos deterministic runtime", () => {
       admin,
       baseURL,
       "workforce",
-      credentials.adminSessionToken,
+      credentials.noTotpAdminSessionToken,
     );
     await completeSeededAdminTwoFactor(admin);
 
@@ -750,65 +892,109 @@ test.describe("@agentos deterministic runtime", () => {
     expect(adminStatusResponse.status()).toBe(200);
     const adminStatus = await readSafeJson(adminStatusResponse, [
       ...protectedValues,
-      credentials.adminSessionToken,
+      credentials.noTotpAdminSessionToken,
     ]);
-    expect(adminStatus).toMatchObject({
+    expect(adminStatus).toEqual({
       version: "1",
+      requestId: requestIdMatcher,
       status: {
         mode: "agentos",
         runtime: {
           live: true,
           ready: true,
           capability: "available",
+          providerMode: "agentos",
           selectedProvider: "agentos",
           persistence: "agentos",
+          circuits: {
+            readiness: { state: "closed", consecutiveFailures: 0 },
+            execution: { state: "closed", consecutiveFailures: 0 },
+          },
+          readiness: {
+            cacheTtlMs: 1000,
+            probeTimeoutMs: 500,
+            failureThreshold: 1,
+          },
         },
+        services: [
+          {
+            id: "agentos",
+            label: "AgentOS",
+            state: "ready",
+            detail: "基础服务已就绪",
+          },
+          {
+            id: "database",
+            label: "运行数据库",
+            state: "ready",
+            detail: "运行依赖已就绪",
+          },
+          {
+            id: "model",
+            label: "模型",
+            state: "ready",
+            detail: "能力已启用",
+          },
+          {
+            id: "public_entry",
+            label: "公开入口",
+            state: "ready",
+            detail: "AgentOS 模式可用",
+          },
+        ],
         configuration: {
           defaultAgent: "码多多（maduoduo）",
           model: "已配置",
           skills: "未接入",
           sessionStorage: "AgentOS 持久化已启用",
         },
+        message: "AI 助理基础服务已就绪。",
       },
     });
     expect(JSON.stringify(adminStatus)).not.toMatch(
       /(?:e2e-deterministic|deterministic-turn|当前页面路径|用户问题)/iu,
     );
 
-    const sessionsBefore = countAgentSessions();
+    const sessionsBefore = agentSessionIds();
     const adminChatResponse = await admin.request.post(ADMIN_CHAT_PATH, {
       data: CHAT_BODY,
     });
     expect(adminChatResponse.status()).toBe(200);
     const adminChat = await readSafeJson(adminChatResponse, [
       ...protectedValues,
-      credentials.adminSessionToken,
+      credentials.noTotpAdminSessionToken,
     ]);
-    expect(adminChat).toMatchObject({
+    expect(adminChat).toEqual({
       version: "1",
+      requestId: requestIdMatcher,
       mode: "agentos",
       message: {
+        id: messageIdMatcher,
         role: "assistant",
         content: "deterministic-turn:1",
       },
       suggestedActions: [],
     });
-    expect(countAgentSessions()).toBe(sessionsBefore);
+    expect(
+      sameStringSet(agentSessionIds(), sessionsBefore),
+      "Admin ephemeral run changed the persisted Agent session identity set",
+    ).toBe(true);
 
     const sessionsResponse = await admin.request.get(ADMIN_SESSIONS_PATH);
     expect(sessionsResponse.status()).toBe(200);
     const sessions = await readSafeJson(sessionsResponse, [
       ...protectedValues,
-      credentials.adminSessionToken,
+      credentials.noTotpAdminSessionToken,
     ]);
-    expect(sessions).toMatchObject({
+    expect(sessions).toEqual({
       version: "1",
+      requestId: requestIdMatcher,
       sessions: {
         persistence: "agentos",
         listing: "not_available",
+        message: "AgentOS 持久化已启用，但管理列表不在本阶段范围。",
       },
     });
-    expect(sessions).not.toHaveProperty("sessions.items");
     await admin.close();
   });
 
@@ -820,22 +1006,38 @@ test.describe("@agentos deterministic runtime", () => {
     const context = await browser.newContext({ baseURL });
     collectBrowserDiagnostics(context);
     const protectedValues = runtimeProtectedValues();
+    const sessionsBeforeFirstTurn = agentSessionIds();
 
     const firstResponse = await context.request.post(CHAT_PATH, {
       data: CHAT_BODY,
     });
     expect(firstResponse.status()).toBe(200);
     const first = await readSafeJson(firstResponse, protectedValues);
-    expect(first).toMatchObject({
+    expect(first).toEqual({
       version: "1",
+      requestId: requestIdMatcher,
       mode: "agentos",
-      session: { temporary: true },
-      message: { role: "assistant", content: "deterministic-turn:1" },
+      session: { temporary: true, expiresAt: expiresAtMatcher },
+      message: {
+        id: messageIdMatcher,
+        role: "assistant",
+        content: "deterministic-turn:1",
+      },
       suggestedActions: [],
     });
     const firstSetCookie = firstResponse.headers()["set-cookie"] ?? "";
     const firstCredential = cookieCredential(firstSetCookie);
     expectNoProtectedValue(first, [...protectedValues, firstCredential]);
+    const sessionsAfterFirstTurn = agentSessionIds();
+    const firstSessionCandidates = [...sessionsAfterFirstTurn].filter(
+      (sessionId) => !sessionsBeforeFirstTurn.has(sessionId),
+    );
+    expect(
+      firstSessionCandidates.length === 1,
+      "first browser context must create exactly one Agent session",
+    ).toBe(true);
+    const firstSessionId = firstSessionCandidates[0];
+    if (!firstSessionId) throw new Error("first Agent session was not created");
 
     const secondResponse = await context.request.post(CHAT_PATH, {
       data: {
@@ -848,12 +1050,52 @@ test.describe("@agentos deterministic runtime", () => {
       ...protectedValues,
       firstCredential,
     ]);
-    expect(second).toMatchObject({
+    expect(second).toEqual({
       version: "1",
+      requestId: requestIdMatcher,
       mode: "agentos",
-      message: { role: "assistant", content: "deterministic-turn:2" },
+      session: { temporary: true, expiresAt: expiresAtMatcher },
+      message: {
+        id: messageIdMatcher,
+        role: "assistant",
+        content: "deterministic-turn:2",
+      },
       suggestedActions: [],
     });
+    const stableCookie = (await context.cookies()).find(
+      (cookie) => cookie.name === "aap_assistant_sid_dev",
+    )?.value;
+    expect(
+      stableCookie !== undefined &&
+        stableCookieCredential(stableCookie) ===
+          stableCookieCredential(firstCredential),
+      "assistant Cookie credential changed between turn one and turn two",
+    ).toBe(true);
+
+    const independentContext = await browser.newContext({ baseURL });
+    collectBrowserDiagnostics(independentContext);
+    const independentResponse = await independentContext.request.post(
+      CHAT_PATH,
+      { data: CHAT_BODY },
+    );
+    expect(independentResponse.status()).toBe(200);
+    const independent = await readSafeJson(
+      independentResponse,
+      protectedValues,
+    );
+    expect(independent).toEqual({
+      version: "1",
+      requestId: requestIdMatcher,
+      mode: "agentos",
+      session: { temporary: true, expiresAt: expiresAtMatcher },
+      message: {
+        id: messageIdMatcher,
+        role: "assistant",
+        content: "deterministic-turn:1",
+      },
+      suggestedActions: [],
+    });
+    await independentContext.close();
 
     const deletion = await context.request.delete(SESSION_PATH);
     expect(deletion.status()).toBe(204);
@@ -867,6 +1109,11 @@ test.describe("@agentos deterministic runtime", () => {
         (cookie) => cookie.name === "aap_assistant_sid_dev",
       ),
     ).toBe(false);
+    expect(
+      agentSessionIds().has(firstSessionId),
+      "DELETE must remove the original persisted Agent session",
+    ).toBe(false);
+    const sessionsAfterDeletion = agentSessionIds();
 
     const thirdResponse = await context.request.post(CHAT_PATH, {
       data: {
@@ -876,54 +1123,41 @@ test.describe("@agentos deterministic runtime", () => {
     });
     expect(thirdResponse.status()).toBe(200);
     const third = await readSafeJson(thirdResponse, protectedValues);
-    expect(third).toMatchObject({
+    expect(third).toEqual({
       version: "1",
+      requestId: requestIdMatcher,
       mode: "agentos",
-      message: { role: "assistant", content: "deterministic-turn:1" },
+      session: { temporary: true, expiresAt: expiresAtMatcher },
+      message: {
+        id: messageIdMatcher,
+        role: "assistant",
+        content: "deterministic-turn:1",
+      },
       suggestedActions: [],
     });
-    expect(JSON.stringify(third)).not.toContain("deterministic-turn:2");
+    const sessionsAfterNewTurn = agentSessionIds();
+    const replacementCandidates = [...sessionsAfterNewTurn].filter(
+      (sessionId) => !sessionsAfterDeletion.has(sessionId),
+    );
+    expect(
+      replacementCandidates.length === 1 &&
+        replacementCandidates[0] !== firstSessionId,
+      "new turn after DELETE must create a different Agent session",
+    ).toBe(true);
     expectConsoleExcludesCredential(firstCredential);
     await context.close();
   });
 
   test("rejects an unauthenticated WebSocket and keeps Agent plus DB private", async ({
-    browser,
     baseURL,
   }) => {
     if (!baseURL) throw new Error("BASE_URL is required");
     expect(["{}", "null"]).toContain(servicePortBindings("agent"));
     expect(["{}", "null"]).toContain(servicePortBindings("db"));
-
-    const context = await browser.newContext({ baseURL });
-    const page = await context.newPage();
-    const websocketUrl = baseURL.replace(/^http/u, "ws") + "/workflows/ws";
-    const outcome = await page.evaluate(
-      (url) =>
-        new Promise<"opened" | "rejected">((resolve) => {
-          const socket = new WebSocket(url);
-          const timer = window.setTimeout(() => resolve("rejected"), 5_000);
-          socket.addEventListener("open", () => {
-            window.clearTimeout(timer);
-            socket.close();
-            resolve("opened");
-          });
-          socket.addEventListener("error", () => {
-            window.clearTimeout(timer);
-            resolve("rejected");
-          });
-          socket.addEventListener("close", () => {
-            window.clearTimeout(timer);
-            resolve("rejected");
-          });
-        }),
-      websocketUrl,
-    );
-    expect(outcome).toBe("rejected");
+    expect(internalUnauthenticatedWebSocketStatus()).toBe(403);
     expect(JSON.stringify(cumulativeConsoleMessages)).not.toMatch(
       /(?:OS_SECURITY_KEY|authorization:\s*bearer)/iu,
     );
-    await context.close();
   });
 
   test("returns a safe 503 for invalid output and opens the execution circuit", async ({
@@ -942,33 +1176,120 @@ test.describe("@agentos deterministic runtime", () => {
     });
     expect(invalidResponse.status()).toBe(503);
     const invalid = await readSafeJson(invalidResponse, protectedValues);
-    expect(invalid).toMatchObject({
+    expect(invalid).toEqual({
       version: "1",
-      error: { code: "assistant_unavailable", retryable: true },
+      requestId: requestIdMatcher,
+      error: {
+        code: "assistant_unavailable",
+        message: "助手服务暂不可用，请使用帮助中心或商务咨询。",
+        retryable: true,
+      },
     });
     expect(JSON.stringify(invalid)).not.toMatch(
       /(?:__aap_e2e_invalid_response__|deterministic-turn|invalid_response)/iu,
     );
+
+    const credentials = fixtureCredentials();
+    const admin = await browser.newContext({ baseURL });
+    await addSignedSession(
+      admin,
+      baseURL,
+      "workforce",
+      credentials.adminSessionToken,
+    );
+    await completeSeededAdminTwoFactor(admin);
+    const adminStatusResponse = await admin.request.get(ADMIN_STATUS_PATH);
+    expect(adminStatusResponse.status()).toBe(200);
+    const adminStatus = await readSafeJson(adminStatusResponse, [
+      ...protectedValues,
+      credentials.adminSessionToken,
+    ]);
+    expect(adminStatus).toEqual({
+      version: "1",
+      requestId: requestIdMatcher,
+      status: {
+        mode: "agentos",
+        runtime: {
+          live: true,
+          ready: false,
+          capability: "degraded",
+          providerMode: "agentos",
+          selectedProvider: "unavailable",
+          persistence: "agentos",
+          circuits: {
+            readiness: { state: "closed", consecutiveFailures: 0 },
+            execution: { state: "open", consecutiveFailures: 1 },
+          },
+          readiness: {
+            cacheTtlMs: 1000,
+            probeTimeoutMs: 500,
+            failureThreshold: 1,
+          },
+        },
+        services: [
+          {
+            id: "agentos",
+            label: "AgentOS",
+            state: "ready",
+            detail: "基础服务已就绪",
+          },
+          {
+            id: "database",
+            label: "运行数据库",
+            state: "ready",
+            detail: "运行依赖已就绪",
+          },
+          {
+            id: "model",
+            label: "模型",
+            state: "degraded",
+            detail: "模型执行暂不可用",
+          },
+          {
+            id: "public_entry",
+            label: "公开入口",
+            state: "degraded",
+            detail: "降级模式",
+          },
+        ],
+        configuration: {
+          defaultAgent: "码多多（maduoduo）",
+          model: "已配置（执行暂不可用）",
+          skills: "未接入",
+          sessionStorage: "AgentOS 持久化已启用",
+        },
+        message: "助手基础服务暂不可用。",
+      },
+    });
 
     const blockedResponse = await context.request.post(CHAT_PATH, {
       data: CHAT_BODY,
     });
     expect(blockedResponse.status()).toBe(503);
     const blocked = await readSafeJson(blockedResponse, protectedValues);
-    expect(blocked).toMatchObject({
+    expect(blocked).toEqual({
       version: "1",
-      error: { code: "assistant_unavailable", retryable: true },
+      requestId: requestIdMatcher,
+      error: {
+        code: "assistant_unavailable",
+        message: "助手服务暂不可用，请使用帮助中心或商务咨询。",
+        retryable: true,
+      },
     });
     expect(JSON.stringify(blocked)).not.toContain("deterministic-turn");
 
     const statusResponse = await context.request.get(STATUS_PATH);
     expect(statusResponse.status()).toBe(200);
     const status = await readSafeJson(statusResponse, protectedValues);
-    expect(status).toMatchObject({
+    expect(status).toEqual({
       version: "1",
+      requestId: requestIdMatcher,
+      live: true,
       ready: false,
       capability: "degraded",
+      message: "助手基础服务暂不可用。",
     });
+    await admin.close();
     await context.close();
   });
 });

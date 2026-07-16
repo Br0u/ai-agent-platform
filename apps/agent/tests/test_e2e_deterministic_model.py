@@ -13,8 +13,15 @@ from e2e_agent.deterministic_model import (
 )
 
 
-def test_deterministic_model_runs_through_agno_without_network() -> None:
-    agent = Agent(model=DeterministicModel())
+def test_deterministic_model_runs_through_agno_without_network(monkeypatch) -> None:
+    def reject_network(*_args, **_kwargs):
+        raise AssertionError("acceptance Agent must not use the network")
+
+    monkeypatch.setattr("agno.api.agent.create_agent_run", reject_network)
+    monkeypatch.setattr("socket.create_connection", reject_network)
+    monkeypatch.setattr("socket.getaddrinfo", reject_network)
+    monkeypatch.setattr("socket.socket.connect", reject_network)
+    agent = Agent(model=DeterministicModel(), telemetry=False)
 
     output = agent.run("first user turn")
 
@@ -44,7 +51,7 @@ def test_deterministic_model_returns_blank_for_exact_invalid_sentinel() -> None:
 
 
 def test_deterministic_model_recognizes_the_exact_bff_wrapped_sentinel() -> None:
-    agent = Agent(model=DeterministicModel())
+    agent = Agent(model=DeterministicModel(), telemetry=False)
     wrapped = (
         "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/assistant\n\n"
         f"用户问题：{INVALID_RESPONSE_SENTINEL}"
@@ -53,6 +60,99 @@ def test_deterministic_model_recognizes_the_exact_bff_wrapped_sentinel() -> None
     output = agent.run(wrapped)
 
     assert output.content == ""
+
+
+def test_deterministic_model_ignores_transport_whitespace_around_the_question() -> None:
+    model = DeterministicModel()
+    messages = [
+        Message(
+            role="user",
+            content=(
+                "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/assistant\n\n"
+                f"用户问题：{INVALID_RESPONSE_SENTINEL}\n"
+            ),
+        )
+    ]
+
+    response = model.response(messages)
+
+    assert response.content == ""
+
+
+def test_deterministic_model_accepts_multipart_crlf_line_endings() -> None:
+    model = DeterministicModel()
+    messages = [
+        Message(
+            role="user",
+            content=(
+                "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/assistant\r\n\r\n"
+                f"用户问题：{INVALID_RESPONSE_SENTINEL}\r\n"
+            ),
+        )
+    ]
+
+    response = model.response(messages)
+
+    assert response.content == ""
+
+
+def test_deterministic_model_does_not_reparse_a_marker_inside_the_question() -> None:
+    model = DeterministicModel()
+    messages = [
+        Message(
+            role="user",
+            content=(
+                "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/assistant\n\n"
+                f"用户问题：请解释\n\n用户问题：{INVALID_RESPONSE_SENTINEL}"
+            ),
+        )
+    ]
+
+    response = model.response(messages)
+
+    assert response.content == "deterministic-turn:1"
+
+
+def test_deterministic_model_only_matches_the_latest_exact_user_question() -> None:
+    model = DeterministicModel()
+    messages = [
+        Message(
+            role="user",
+            content=(
+                "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/assistant\n\n"
+                f"用户问题：{INVALID_RESPONSE_SENTINEL}"
+            ),
+        ),
+        Message(role="assistant", content=""),
+        Message(
+            role="user",
+            content=(
+                "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/assistant\n\n"
+                "用户问题：请继续。"
+            ),
+        ),
+    ]
+
+    response = model.response(messages)
+
+    assert response.content == "deterministic-turn:2"
+
+
+def test_deterministic_model_does_not_match_a_sentinel_substring() -> None:
+    model = DeterministicModel()
+    messages = [
+        Message(
+            role="user",
+            content=(
+                "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/assistant\n\n"
+                f"用户问题：请解释 {INVALID_RESPONSE_SENTINEL} 的用途"
+            ),
+        )
+    ]
+
+    response = model.response(messages)
+
+    assert response.content == "deterministic-turn:1"
 
 
 def test_acceptance_catalog_keeps_disabled_mode_as_placeholder() -> None:
