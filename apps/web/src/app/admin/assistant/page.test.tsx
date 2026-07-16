@@ -1,10 +1,11 @@
-import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   requirePermission: vi.fn(),
   loadStatus: vi.fn(),
-  loadSessions: vi.fn(),
+  getAssistantRuntime: vi.fn(),
+  inspect: vi.fn(),
 }));
 
 vi.mock("@/server/auth/access", () => ({
@@ -13,8 +14,11 @@ vi.mock("@/server/auth/access", () => ({
 vi.mock("@/app/api/v1/admin/assistant/status/handler", () => ({
   loadAdminAssistantStatus: mocks.loadStatus,
 }));
-vi.mock("@/app/api/v1/admin/assistant/sessions/handler", () => ({
-  loadAdminAssistantSessions: mocks.loadSessions,
+vi.mock("@/server/assistant/assistant-runtime", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/server/assistant/assistant-runtime")
+  >()),
+  getAssistantRuntime: mocks.getAssistantRuntime,
 }));
 
 import AdminAssistantPage from "./page";
@@ -74,12 +78,15 @@ const sessions = {
   message: "占位模式未持久化会话；管理列表不可用。",
 };
 
+afterEach(cleanup);
+
 describe("AdminAssistantPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.requirePermission.mockResolvedValue({ realm: "workforce" });
     mocks.loadStatus.mockResolvedValue(status);
-    mocks.loadSessions.mockResolvedValue(sessions);
+    mocks.inspect.mockReturnValue({ persistence: sessions.persistence });
+    mocks.getAssistantRuntime.mockReturnValue({ inspect: mocks.inspect });
   });
 
   it("requires the exact assistant permission before loading protected data", async () => {
@@ -89,7 +96,8 @@ describe("AdminAssistantPage", () => {
       "admin:assistant",
     );
     expect(mocks.loadStatus).toHaveBeenCalledOnce();
-    expect(mocks.loadSessions).toHaveBeenCalledOnce();
+    expect(mocks.getAssistantRuntime).toHaveBeenCalledOnce();
+    expect(mocks.inspect).toHaveBeenCalledOnce();
     expect(screen.getByRole("heading", { name: "AI 助理运营" })).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "受保护的助手测试控制台" }),
@@ -101,6 +109,23 @@ describe("AdminAssistantPage", () => {
 
     await expect(AdminAssistantPage()).rejects.toThrow("denied");
     expect(mocks.loadStatus).not.toHaveBeenCalled();
-    expect(mocks.loadSessions).not.toHaveBeenCalled();
+    expect(mocks.getAssistantRuntime).not.toHaveBeenCalled();
+  });
+
+  it("renders the safe unavailable sessions state when runtime resolution fails", async () => {
+    mocks.getAssistantRuntime.mockImplementationOnce(() => {
+      throw new Error("raw http://agent:7777 OS_SECURITY_KEY=secret");
+    });
+
+    render(await AdminAssistantPage());
+
+    expect(
+      screen.getByText("持久化状态不可用；管理列表不可用。"),
+    ).toBeVisible();
+    expect(screen.getByText(/unavailable.*not_available/iu)).toBeVisible();
+    expect(screen.getByText("列表不可用")).toBeVisible();
+    expect(document.body.textContent).not.toMatch(
+      /agent:7777|security|secret/iu,
+    );
   });
 });

@@ -348,12 +348,12 @@ describe("GET /api/v1/admin/assistant/status", () => {
         capability: "degraded",
         providerMode: "agentos",
         selectedProvider: "unavailable",
-        persistence: "agentos",
+        persistence: "unavailable",
       },
       configuration: {
         defaultAgent: "码多多（maduoduo）",
         model: "状态不可用",
-        sessionStorage: "AgentOS 持久化已启用",
+        sessionStorage: "状态不可用",
       },
     });
     expect(result.services.find(({ id }) => id === "agentos")).toMatchObject({

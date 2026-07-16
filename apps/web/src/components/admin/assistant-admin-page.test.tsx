@@ -74,6 +74,12 @@ const agentosSessions = {
   message: "AgentOS 持久化已启用，但管理列表不在本阶段范围。",
 } satisfies AdminAssistantSessionsSnapshot;
 
+const unavailableSessions = {
+  persistence: "unavailable" as const,
+  listing: "not_available" as const,
+  message: "持久化状态不可用；管理列表不可用。",
+} satisfies AdminAssistantSessionsSnapshot;
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -167,6 +173,19 @@ describe("AssistantAdminPage", () => {
     expect(screen.getByText("列表不可用")).toBeVisible();
     expect(
       screen.queryByText(/可审计|可列出|最近会话/u),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a safe unavailable persistence state without fabricated sessions", () => {
+    render(
+      <AssistantAdminPage sessions={unavailableSessions} status={status} />,
+    );
+
+    expect(screen.getByText(unavailableSessions.message)).toBeVisible();
+    expect(screen.getByText(/unavailable.*not_available/iu)).toBeVisible();
+    expect(screen.getByText("列表不可用")).toBeVisible();
+    expect(
+      screen.queryByText(/raw|secret|最近会话|可审计/iu),
     ).not.toBeInTheDocument();
   });
 

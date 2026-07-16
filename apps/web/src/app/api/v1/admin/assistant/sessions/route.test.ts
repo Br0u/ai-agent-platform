@@ -34,6 +34,7 @@ import {
   createAdminAssistantSessionsHandler,
   loadAdminAssistantSessions,
 } from "./handler";
+import { createAssistantRuntime } from "@/server/assistant/assistant-runtime";
 
 function request(requestId?: string) {
   return new Request("http://localhost/api/v1/admin/assistant/sessions", {
@@ -47,7 +48,6 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
     vi.clearAllMocks();
     auth.requirePermission.mockResolvedValue({ realm: "workforce" });
     runtime.inspect.mockReturnValue({
-      providerMode: "placeholder",
       persistence: "disabled",
     });
     runtime.getAssistantRuntime.mockReturnValue({ inspect: runtime.inspect });
@@ -166,20 +166,86 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
         message: "AgentOS 持久化已启用，但管理列表不在本阶段范围。",
       },
     },
+    {
+      persistence: "unavailable" as const,
+      expected: {
+        persistence: "unavailable",
+        listing: "not_available",
+        message: "持久化状态不可用；管理列表不可用。",
+      },
+    },
   ])(
     "reports $persistence persistence without fabricating a session list",
     async ({ persistence, expected }) => {
       const inspect = vi.fn(() => ({ persistence }));
 
-      await expect(
-        loadAdminAssistantSessions({ inspect } as never),
-      ).resolves.toEqual(expected);
+      await expect(loadAdminAssistantSessions({ inspect })).resolves.toEqual(
+        expected,
+      );
       expect(inspect).toHaveBeenCalledOnce();
       expect(JSON.stringify(expected)).not.toMatch(
         /items|capability|session.?id|messageText|prompt|answer|reply|ip|user.?agent/iu,
       );
     },
   );
+
+  it("returns a sanitized unavailable snapshot when runtime resolution fails", async () => {
+    runtime.getAssistantRuntime.mockImplementationOnce(() => {
+      throw new Error(
+        "raw AGENTOS_INTERNAL_URL=http://agent:7777 OS_SECURITY_KEY=secret",
+      );
+    });
+
+    const sessions = await loadAdminAssistantSessions();
+
+    expect(sessions).toEqual({
+      persistence: "unavailable",
+      listing: "not_available",
+      message: "持久化状态不可用；管理列表不可用。",
+    });
+    expect(JSON.stringify(sessions)).not.toMatch(
+      /raw|agent:7777|security|key|secret/iu,
+    );
+    expect(runtime.inspect).not.toHaveBeenCalled();
+  });
+
+  it("returns a sanitized unavailable snapshot when inspection fails", async () => {
+    const inspect = vi.fn(() => {
+      throw new Error("raw private session config");
+    });
+
+    const sessions = await loadAdminAssistantSessions({ inspect });
+
+    expect(sessions).toEqual({
+      persistence: "unavailable",
+      listing: "not_available",
+      message: "持久化状态不可用；管理列表不可用。",
+    });
+    expect(JSON.stringify(sessions)).not.toMatch(
+      /raw|private|session config/iu,
+    );
+    expect(runtime.getAssistantRuntime).not.toHaveBeenCalled();
+  });
+
+  it("does not probe the network when invalid AgentOS composition is inspected", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const realRuntime = createAssistantRuntime({
+      environment: {
+        ASSISTANT_PROVIDER_MODE: "agentos",
+        TRUST_NGINX_PROXY: "false",
+        AGENTOS_INTERNAL_URL: "not a URL",
+        OS_SECURITY_KEY: "private-invalid-key",
+      },
+      fetcher,
+    });
+
+    await expect(loadAdminAssistantSessions(realRuntime)).resolves.toEqual({
+      persistence: "unavailable",
+      listing: "not_available",
+      message: "持久化状态不可用；管理列表不可用。",
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
 
   it("returns a correlated versioned non-persisted snapshot", async () => {
     const requestIdFactory = vi.fn(() => "unused-fallback");
@@ -190,7 +256,7 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
       loadSessions: () =>
         loadAdminAssistantSessions({
           inspect: () => ({ persistence: "disabled" }),
-        } as never),
+        }),
       requestIdFactory,
     });
 
@@ -223,7 +289,7 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
       loadSessions: () =>
         loadAdminAssistantSessions({
           inspect: () => ({ persistence: "disabled" }),
-        } as never),
+        }),
       requestIdFactory,
     });
 

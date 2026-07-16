@@ -256,34 +256,42 @@ describe("assistant server runtime", () => {
     },
   );
 
-  it("preserves the configured AgentOS mode in safe inspection when lazy composition is invalid", async () => {
-    const runtime = createAssistantRuntime({
-      environment: {
-        ...AGENTOS_ENVIRONMENT,
-        ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: "1",
-      },
-    });
+  it.each([
+    ["invalid URL", { AGENTOS_INTERNAL_URL: "not a URL" }],
+    ["invalid security key", { OS_SECURITY_KEY: "short" }],
+    [
+      "invalid readiness timeout",
+      { ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS: "broken" },
+    ],
+    ["invalid run timeout", { ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: "1" }],
+  ])(
+    "keeps AgentOS selected but marks persistence unavailable for %s",
+    async (_name, override) => {
+      const runtime = createAssistantRuntime({
+        environment: { ...AGENTOS_ENVIRONMENT, ...override },
+      });
 
-    expect(runtime.inspect()).toEqual({
-      providerMode: "agentos",
-      persistence: "agentos",
-      circuits: {
-        readiness: { state: "closed", consecutiveFailures: 0 },
-        execution: { state: "closed", consecutiveFailures: 0 },
-      },
-      readiness: {
-        cacheTtlMs: 0,
-        probeTimeoutMs: 0,
-        failureThreshold: 0,
-      },
-    });
-    await expect(readSafeAssistantRuntimeStatus(runtime)).resolves.toEqual({
-      live: false,
-      ready: false,
-      capability: "degraded",
-      message: "助手基础服务暂不可用。",
-    });
-  });
+      expect(runtime.inspect()).toEqual({
+        providerMode: "agentos",
+        persistence: "unavailable",
+        circuits: {
+          readiness: { state: "closed", consecutiveFailures: 0 },
+          execution: { state: "closed", consecutiveFailures: 0 },
+        },
+        readiness: {
+          cacheTtlMs: 0,
+          probeTimeoutMs: 0,
+          failureThreshold: 0,
+        },
+      });
+      await expect(readSafeAssistantRuntimeStatus(runtime)).resolves.toEqual({
+        live: false,
+        ready: false,
+        capability: "degraded",
+        message: "助手基础服务暂不可用。",
+      });
+    },
+  );
 
   it("does not silently select placeholder when AgentOS is healthy but capability is unavailable", async () => {
     const healthClient: AgentOSClient = {

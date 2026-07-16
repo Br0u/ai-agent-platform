@@ -30,7 +30,7 @@ export type AdminAssistantStatusSnapshot = {
     capability: "placeholder" | "available" | "degraded";
     providerMode: AssistantMode;
     selectedProvider: AssistantMode | "unavailable";
-    persistence: "disabled" | "agentos";
+    persistence: "disabled" | "agentos" | "unavailable";
     circuits: {
       readiness: {
         state: "closed" | "open" | "half-open";
@@ -58,7 +58,7 @@ export type AdminAssistantStatusSnapshot = {
 };
 
 export type AdminAssistantSessionsSnapshot = {
-  persistence: "disabled" | "agentos";
+  persistence: "disabled" | "agentos" | "unavailable";
   listing: "not_available";
   message: string;
 };

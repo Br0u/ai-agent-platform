@@ -194,7 +194,9 @@ function snapshot(
       sessionStorage:
         inspection.persistence === "agentos"
           ? "AgentOS 持久化已启用"
-          : "未启用",
+          : inspection.persistence === "unavailable"
+            ? "状态不可用"
+            : "未启用",
     },
     message:
       configurationValid && inspection.providerMode === "placeholder"

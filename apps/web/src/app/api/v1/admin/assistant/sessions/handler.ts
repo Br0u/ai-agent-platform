@@ -11,7 +11,7 @@ import {
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
 import {
   getAssistantRuntime,
-  type AssistantRuntime,
+  type AssistantRuntimeInspection,
 } from "@/server/assistant/assistant-runtime";
 
 type AdminAssistantSessionsDependencies = {
@@ -20,17 +20,34 @@ type AdminAssistantSessionsDependencies = {
   requestIdFactory: () => string;
 };
 
+type AdminAssistantSessionsRuntime = {
+  inspect: () => Pick<AssistantRuntimeInspection, "persistence">;
+};
+
+const UNAVAILABLE_SESSIONS: AdminAssistantSessionsSnapshot = {
+  persistence: "unavailable",
+  listing: "not_available",
+  message: "持久化状态不可用；管理列表不可用。",
+};
+
 export async function loadAdminAssistantSessions(
-  runtime?: Pick<AssistantRuntime, "inspect">,
+  runtime?: AdminAssistantSessionsRuntime,
 ): Promise<AdminAssistantSessionsSnapshot> {
-  const persistence = (runtime ?? getAssistantRuntime()).inspect().persistence;
+  let persistence: AssistantRuntimeInspection["persistence"];
+  try {
+    persistence = (runtime ?? getAssistantRuntime()).inspect().persistence;
+  } catch {
+    return { ...UNAVAILABLE_SESSIONS };
+  }
   return {
     persistence,
     listing: "not_available",
     message:
       persistence === "agentos"
         ? "AgentOS 持久化已启用，但管理列表不在本阶段范围。"
-        : "占位模式未持久化会话；管理列表不可用。",
+        : persistence === "disabled"
+          ? "占位模式未持久化会话；管理列表不可用。"
+          : UNAVAILABLE_SESSIONS.message,
   };
 }
 
