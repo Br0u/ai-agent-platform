@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { AgentOSClient } from "@/server/assistant/agentos-client";
+import {
+  AgentOSRunClientError,
+  type AgentOSRunClient,
+} from "@/server/assistant/agentos-run-client";
+import type { AgentOSExecutionCircuit } from "@/server/assistant/agentos-execution-circuit";
+
 const auth = vi.hoisted(() => {
   class AuthAccessError extends Error {
     constructor(
@@ -19,6 +26,7 @@ const runtime = vi.hoisted(() => ({
     async (value: { status: () => Promise<unknown> }) => value.status(),
   ),
   status: vi.fn(),
+  readinessStatus: vi.fn(),
   inspect: vi.fn(),
 }));
 
@@ -44,6 +52,44 @@ function request(requestId?: string) {
   });
 }
 
+const AGENTOS_ENVIRONMENT = {
+  ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
+  ASSISTANT_SESSION_SECRET: "session-secret-0123456789abcdef0123456789",
+  ASSISTANT_RATE_LIMIT_SECRET: "rate-secret-0123456789abcdef0123456789",
+  ASSISTANT_PROVIDER_MODE: "agentos",
+  ASSISTANT_AGENTOS_READINESS_TTL_MS: "5000",
+  ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS: "1500",
+  ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD: "3",
+  ASSISTANT_AGENTOS_CIRCUIT_RESET_MS: "30000",
+  ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: "55000",
+  AGENTOS_INTERNAL_URL: "http://agent:7777",
+  OS_SECURITY_KEY: "agentos-internal-security-key-32-bytes",
+  TRUST_NGINX_PROXY: "false",
+} as const;
+
+function availableHealthClient(): AgentOSClient {
+  return {
+    live: vi.fn(async () => ({
+      live: true,
+      ready: true,
+      capability: "available" as const,
+      message: "private health detail",
+    })),
+    ready: vi.fn(async () => ({
+      ready: true,
+      capability: "available" as const,
+    })),
+    capability: vi.fn(async () => "available" as const),
+  };
+}
+
+function runClient(runAgent?: AgentOSRunClient["runAgent"]): AgentOSRunClient {
+  return {
+    runAgent: vi.fn(runAgent ?? (async () => ({ content: "真实模型回答" }))),
+    deleteSession: vi.fn(async () => undefined),
+  };
+}
+
 describe("GET /api/v1/admin/assistant/status", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -56,6 +102,12 @@ describe("GET /api/v1/admin/assistant/status", () => {
       ready: true,
       capability: "placeholder",
       message: "模型尚未配置，当前为安全占位模式。",
+    });
+    runtime.readinessStatus.mockResolvedValue({
+      probed: false,
+      live: false,
+      ready: false,
+      capability: "placeholder",
     });
     runtime.inspect.mockReturnValue({
       providerMode: "placeholder",
@@ -72,8 +124,152 @@ describe("GET /api/v1/admin/assistant/status", () => {
     });
     runtime.getAssistantRuntime.mockReturnValue({
       status: runtime.status,
+      readinessStatus: runtime.readinessStatus,
       inspect: runtime.inspect,
     });
+  });
+
+  it("keeps placeholder mode lazy and reports AgentOS infrastructure as unprobed", async () => {
+    const actual = await vi.importActual<
+      typeof import("@/server/assistant/assistant-runtime")
+    >("@/server/assistant/assistant-runtime");
+    const fetcher = vi.fn<typeof fetch>();
+    const realRuntime = actual.createAssistantRuntime({
+      environment: {
+        ASSISTANT_PROVIDER_MODE: "placeholder",
+        TRUST_NGINX_PROXY: "false",
+        ASSISTANT_AGENTOS_READINESS_TTL_MS: "broken",
+        ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS: "broken",
+        ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD: "broken",
+        ASSISTANT_AGENTOS_CIRCUIT_RESET_MS: "broken",
+        ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: "broken",
+        AGENTOS_INTERNAL_URL: "not a URL",
+        OS_SECURITY_KEY: "short",
+      },
+      fetcher,
+    });
+
+    const result = await loadAdminAssistantStatus(realRuntime as never);
+
+    expect(result).toMatchObject({
+      mode: "placeholder",
+      runtime: {
+        live: true,
+        ready: true,
+        capability: "placeholder",
+        selectedProvider: "placeholder",
+      },
+      configuration: { model: "未配置" },
+    });
+    expect(result.services.find(({ id }) => id === "agentos")).toMatchObject({
+      state: "not_connected",
+      detail: "尚未探测",
+    });
+    expect(result.services.find(({ id }) => id === "database")).toMatchObject({
+      state: "not_connected",
+      detail: "尚未探测",
+    });
+    expect(result.services.find(({ id }) => id === "model")?.state).toBe(
+      "not_configured",
+    );
+    expect(result.services.find(({ id }) => id === "public_entry")?.state).toBe(
+      "placeholder",
+    );
+    expect(result.message).toBe(
+      "公开入口使用安全占位模式；AgentOS 基础设施尚未探测。",
+    );
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("keeps configured AgentOS mode while separating healthy readiness from an open execution circuit", async () => {
+    const actual = await vi.importActual<
+      typeof import("@/server/assistant/assistant-runtime")
+    >("@/server/assistant/assistant-runtime");
+    const sharedRunClient = runClient(async () => {
+      throw new AgentOSRunClientError("server_error");
+    });
+    const realRuntime = actual.createAssistantRuntime({
+      environment: AGENTOS_ENVIRONMENT,
+      createHealthClient: () => availableHealthClient(),
+      createRunClient: () => sharedRunClient,
+    });
+    const selected = await realRuntime.resolveProvider();
+    const invocation = {
+      request: { message: "问题", context: { pathname: "/" } },
+      session: {
+        kind: "persistent" as const,
+        internalSessionId: "private-session",
+      },
+    };
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await selected.provider.reply(invocation).catch(() => undefined);
+    }
+
+    const result = await loadAdminAssistantStatus(realRuntime as never);
+
+    expect(result.mode).toBe("agentos");
+    expect(result.runtime.selectedProvider).toBe("unavailable");
+    expect(result.services.find(({ id }) => id === "agentos")?.state).toBe(
+      "ready",
+    );
+    expect(result.services.find(({ id }) => id === "database")?.state).toBe(
+      "ready",
+    );
+    expect(result.services.find(({ id }) => id === "model")).toMatchObject({
+      state: "degraded",
+      detail: "模型执行暂不可用",
+    });
+    expect(result.services.find(({ id }) => id === "public_entry")?.state).toBe(
+      "degraded",
+    );
+    expect(result.configuration).toMatchObject({
+      defaultAgent: "码多多（maduoduo）",
+      model: "已配置（执行暂不可用）",
+    });
+    expect(JSON.stringify(result)).not.toMatch(/fallback|回退|raw|private/iu);
+  });
+
+  it("does not mark unhealthy readiness as ready when execution is also open", async () => {
+    const actual = await vi.importActual<
+      typeof import("@/server/assistant/assistant-runtime")
+    >("@/server/assistant/assistant-runtime");
+    const unhealthyHealthClient: AgentOSClient = {
+      live: vi.fn(async () => ({
+        live: true,
+        ready: false,
+        capability: "degraded" as const,
+        message: "private degraded detail",
+      })),
+      ready: vi.fn(async () => ({
+        ready: false,
+        capability: "degraded" as const,
+      })),
+      capability: vi.fn(async () => "degraded" as const),
+    };
+    const executionCircuit: AgentOSExecutionCircuit = {
+      execute: async (operation) => operation(),
+      inspect: () => ({ state: "open", consecutiveFailures: 3 }),
+    };
+    const realRuntime = actual.createAssistantRuntime({
+      environment: AGENTOS_ENVIRONMENT,
+      createHealthClient: () => unhealthyHealthClient,
+      createRunClient: () => runClient(),
+      createExecutionCircuit: () => executionCircuit,
+    });
+
+    const result = await loadAdminAssistantStatus(realRuntime as never);
+
+    expect(result.mode).toBe("agentos");
+    expect(result.runtime.selectedProvider).toBe("unavailable");
+    expect(result.services.find(({ id }) => id === "agentos")?.state).toBe(
+      "degraded",
+    );
+    expect(result.services.find(({ id }) => id === "database")?.state).toBe(
+      "degraded",
+    );
+    expect(result.services.find(({ id }) => id === "public_entry")?.state).toBe(
+      "degraded",
+    );
   });
 
   it("exports only GET and requires exactly admin:assistant", async () => {
@@ -86,6 +282,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
       "admin:assistant",
     );
     expect(runtime.status).toHaveBeenCalledOnce();
+    expect(runtime.readinessStatus).toHaveBeenCalledOnce();
     expect(runtime.inspect).toHaveBeenCalledOnce();
   });
 
@@ -193,6 +390,12 @@ describe("GET /api/v1/admin/assistant/status", () => {
           execution: { state: "closed" as const, consecutiveFailures: 0 },
         },
       },
+      readiness: {
+        probed: false,
+        live: false,
+        ready: false,
+        capability: "degraded" as const,
+      },
       expected: {
         mode: "placeholder",
         selectedProvider: "placeholder",
@@ -216,8 +419,14 @@ describe("GET /api/v1/admin/assistant/status", () => {
           execution: { state: "closed" as const, consecutiveFailures: 0 },
         },
       },
+      readiness: {
+        probed: true,
+        live: true,
+        ready: true,
+        capability: "placeholder" as const,
+      },
       expected: {
-        mode: "placeholder",
+        mode: "agentos",
         selectedProvider: "unavailable",
         publicState: "not_configured",
         agentosState: "ready",
@@ -239,6 +448,12 @@ describe("GET /api/v1/admin/assistant/status", () => {
           execution: { state: "closed" as const, consecutiveFailures: 0 },
         },
       },
+      readiness: {
+        probed: true,
+        live: true,
+        ready: true,
+        capability: "available" as const,
+      },
       expected: {
         mode: "agentos",
         selectedProvider: "agentos",
@@ -248,9 +463,10 @@ describe("GET /api/v1/admin/assistant/status", () => {
     },
   ])(
     "derives public entry from $name",
-    async ({ status, inspection, expected }) => {
+    async ({ status, readiness, inspection, expected }) => {
       const result = await loadAdminAssistantStatus({
         status: async () => status,
+        readinessStatus: async () => readiness,
         inspect: () => inspection,
       } as never);
 
@@ -272,6 +488,12 @@ describe("GET /api/v1/admin/assistant/status", () => {
         ready: false,
         capability: "degraded" as const,
         message: "助手基础服务暂不可用。",
+      }),
+      readinessStatus: async () => ({
+        probed: true,
+        live: true,
+        ready: true,
+        capability: "available" as const,
       }),
       inspect: () => ({
         providerMode: "agentos" as const,

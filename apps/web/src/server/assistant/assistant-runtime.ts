@@ -83,6 +83,10 @@ export type AssistantRuntimeStatus = AgentOSReadinessSnapshot & {
   message: string;
 };
 
+export type AssistantRuntimeReadinessStatus = AgentOSReadinessSnapshot & {
+  probed: boolean;
+};
+
 export type AssistantRuntimeProvider = {
   provider: AssistantProvider;
   mode: AssistantProviderMode;
@@ -307,6 +311,21 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
         return degradedStatus(snapshot.live);
       }
       return normalizeAssistantRuntimeStatus(snapshot);
+    },
+
+    async readinessStatus(): Promise<AssistantRuntimeReadinessStatus> {
+      if (providerSettings.mode === "placeholder") {
+        return {
+          probed: false,
+          live: false,
+          ready: false,
+          capability: "placeholder",
+        };
+      }
+      return {
+        probed: true,
+        ...(await getAgentOSComposition().readiness.status()),
+      };
     },
 
     inspect(): AssistantRuntimeInspection {

@@ -10,6 +10,16 @@ function failure(code: ConstructorParameters<typeof AgentOSRunClientError>[0]) {
   return new AgentOSRunClientError(code);
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
 function circuitFixture(
   options: {
     failureThreshold?: number;
@@ -185,6 +195,90 @@ describe("AgentOS execution circuit", () => {
     expect(concurrentOperation).not.toHaveBeenCalled();
     resolveProbe?.("probe-ok");
     await expect(probe).resolves.toBe("probe-ok");
+    expect(circuit.inspect()).toEqual({
+      state: "closed",
+      consecutiveFailures: 0,
+    });
+  });
+
+  it("ignores a stale closed-generation success while the current half-open probe is pending", async () => {
+    const { circuit, setNow } = circuitFixture({
+      failureThreshold: 3,
+      resetAfterMs: 10,
+    });
+    const stale = deferred<string>();
+    const staleRun = circuit.execute(() => stale.promise);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await circuit
+        .execute(async () => {
+          throw failure("timeout");
+        })
+        .catch(() => undefined);
+    }
+    setNow(10);
+    const probe = deferred<string>();
+    const probeRun = circuit.execute(() => probe.promise);
+    const blockedOperation = vi.fn(async () => "must-not-run");
+
+    stale.resolve("stale-success");
+    await expect(staleRun).resolves.toBe("stale-success");
+
+    expect(circuit.inspect()).toEqual({
+      state: "half-open",
+      consecutiveFailures: 3,
+    });
+    await expect(circuit.execute(blockedOperation)).rejects.toEqual(
+      new AgentOSExecutionUnavailableError(),
+    );
+    expect(blockedOperation).not.toHaveBeenCalled();
+
+    probe.resolve("current-probe-success");
+    await expect(probeRun).resolves.toBe("current-probe-success");
+    expect(circuit.inspect()).toEqual({
+      state: "closed",
+      consecutiveFailures: 0,
+    });
+  });
+
+  it("ignores a stale closed-generation failure without restarting the half-open cooldown", async () => {
+    const { circuit, setNow } = circuitFixture({
+      failureThreshold: 3,
+      resetAfterMs: 10,
+    });
+    const stale = deferred<string>();
+    const staleRun = circuit.execute(() => stale.promise);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await circuit
+        .execute(async () => {
+          throw failure("timeout");
+        })
+        .catch(() => undefined);
+    }
+    setNow(10);
+    const probe = deferred<string>();
+    const probeRun = circuit.execute(() => probe.promise);
+    const staleFailure = failure("transport_error");
+
+    stale.reject(staleFailure);
+    await expect(staleRun).rejects.toEqual(
+      new AgentOSExecutionUnavailableError(),
+    );
+    expect(circuit.inspect()).toEqual({
+      state: "half-open",
+      consecutiveFailures: 3,
+    });
+    const blockedOperation = vi.fn(async () => "must-not-run");
+    await expect(circuit.execute(blockedOperation)).rejects.toEqual(
+      new AgentOSExecutionUnavailableError(),
+    );
+    expect(blockedOperation).not.toHaveBeenCalled();
+
+    const nonCountedProbeFailure = failure("external_abort");
+    probe.reject(nonCountedProbeFailure);
+    await expect(probeRun).rejects.toBe(nonCountedProbeFailure);
+    await expect(circuit.execute(async () => "recovered")).resolves.toBe(
+      "recovered",
+    );
     expect(circuit.inspect()).toEqual({
       state: "closed",
       consecutiveFailures: 0,

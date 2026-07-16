@@ -145,6 +145,13 @@ describe("assistant server runtime", () => {
       capability: "placeholder",
       message: "模型尚未配置，当前为安全占位模式。",
     });
+    expect(runtime).toHaveProperty("readinessStatus");
+    await expect(runtime.readinessStatus()).resolves.toEqual({
+      probed: false,
+      live: false,
+      ready: false,
+      capability: "placeholder",
+    });
     await expect(runtime.resolveProvider()).resolves.toMatchObject({
       mode: "placeholder",
     });
@@ -386,6 +393,13 @@ describe("assistant server runtime", () => {
       capability: "degraded",
       message: "助手基础服务暂不可用。",
     });
+    expect(runtime).toHaveProperty("readinessStatus");
+    await expect(runtime.readinessStatus()).resolves.toEqual({
+      probed: true,
+      live: true,
+      ready: true,
+      capability: "available",
+    });
     const openSelection = await runtime.resolveProvider();
     await expect(
       openSelection.provider.reply(invocation),
@@ -414,6 +428,12 @@ describe("assistant server runtime", () => {
 
     await expect(runtime.resolveProvider()).rejects.toMatchObject({
       code: "ASSISTANT_RUNTIME_UNAVAILABLE",
+    });
+    await expect(runtime.status()).resolves.toEqual({
+      live: true,
+      ready: false,
+      capability: "degraded",
+      message: "助手基础服务暂不可用。",
     });
     expect(execute).not.toHaveBeenCalled();
   });

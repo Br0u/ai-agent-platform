@@ -67,6 +67,7 @@ export function createAgentOSExecutionCircuit(options: {
   let consecutiveFailures = 0;
   let openedAt: number | null = null;
   let halfOpen = false;
+  let generation = Symbol("execution-circuit-generation");
 
   function clock(): number {
     const value = now();
@@ -88,23 +89,35 @@ export function createAgentOSExecutionCircuit(options: {
       if (openedAt !== null && (!isHalfOpenProbe || halfOpen)) {
         throw new AgentOSExecutionUnavailableError();
       }
-      if (isHalfOpenProbe) halfOpen = true;
+      if (isHalfOpenProbe) {
+        halfOpen = true;
+        generation = Symbol("execution-circuit-half-open");
+      }
+      const operationGeneration = generation;
 
       try {
         const result = await operation();
+        if (operationGeneration !== generation) return result;
         consecutiveFailures = 0;
         openedAt = null;
         halfOpen = false;
+        if (isHalfOpenProbe) {
+          generation = Symbol("execution-circuit-closed");
+        }
         return result;
       } catch (error) {
         const counted = countedFailure(error);
-        if (isHalfOpenProbe) {
+        if (operationGeneration !== generation) {
+          if (counted) throw new AgentOSExecutionUnavailableError();
+          throw error;
+        } else if (isHalfOpenProbe) {
           if (counted) {
             consecutiveFailures = Math.min(
               options.failureThreshold,
               consecutiveFailures + 1,
             );
             openedAt = clock();
+            generation = Symbol("execution-circuit-reopened");
           }
           halfOpen = false;
         } else if (counted) {
@@ -114,6 +127,7 @@ export function createAgentOSExecutionCircuit(options: {
           );
           if (consecutiveFailures >= options.failureThreshold) {
             openedAt = clock();
+            generation = Symbol("execution-circuit-opened");
           }
         }
 
