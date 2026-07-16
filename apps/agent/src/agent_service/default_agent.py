@@ -26,4 +26,5 @@ def build_default_agent(model: Model, database: AsyncPostgresDb) -> Agent:
         add_history_to_context=True,
         num_history_runs=6,
         tools=None,
+        telemetry=False,
     )

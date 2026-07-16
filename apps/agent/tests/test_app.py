@@ -314,20 +314,46 @@ def test_agentos_receives_exact_disabled_composition_and_same_database(
     assert probed == [database]
 
 
-def test_real_agentos_instance_has_telemetry_disabled(
-    settings: RuntimeSettings,
+def test_enabled_real_composition_disables_telemetry_and_reuses_database(
+    enabled_settings: RuntimeSettings,
 ) -> None:
     instances: list[AgentOS] = []
+    probed: list[AsyncPostgresDb] = []
 
     def real_factory(**kwargs: Any) -> AgentOS:
         instance = AgentOS(**kwargs)
         instances.append(instance)
         return instance
 
-    create_app(settings=settings, agent_os_factory=real_factory)
+    async def probe(received: AsyncPostgresDb) -> bool:
+        probed.append(received)
+        return True
+
+    database = build_database(enabled_settings)
+    app = create_app(
+        settings=enabled_settings,
+        database=database,
+        agent_os_factory=real_factory,
+        readiness_probe=probe,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/internal/health/ready", headers=AUTHORIZATION)
 
     assert len(instances) == 1
-    assert instances[0].telemetry is False
+    agent_os = instances[0]
+    assert response.status_code == 200
+    assert response.json() == {"ready": True, "capability": "available"}
+    assert agent_os.telemetry is False
+    assert agent_os.db is database
+    assert agent_os.agents is not None
+    assert len(agent_os.agents) == 1
+    agent = agent_os.agents[0]
+    assert isinstance(agent, Agent)
+    assert agent.id == "maduoduo"
+    assert agent.telemetry is False
+    assert agent.db is database
+    assert probed == [database]
 
 
 def test_bearer_middleware_configuration_does_not_retain_plaintext_key(

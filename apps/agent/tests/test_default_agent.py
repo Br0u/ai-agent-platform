@@ -28,6 +28,7 @@ def test_build_default_agent_has_exact_runtime_identity_and_safe_contract() -> N
     assert agent.add_history_to_context is True
     assert agent.num_history_runs == 6
     assert agent.tools == []
+    assert agent.telemetry is False
 
     assert agent.instructions == [
         "你是“码多多”，网页端通用助手。回答应清晰、准确、简洁。",

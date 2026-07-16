@@ -1,4 +1,4 @@
-"""Model-free AgentOS application composition."""
+"""Configured runtime Agent and AgentOS application composition."""
 
 import asyncio
 from collections.abc import Awaitable, Callable
