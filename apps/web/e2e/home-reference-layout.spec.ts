@@ -10,6 +10,27 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
 }
 
+async function expectRowsToFit(
+  page: Page,
+  selector: string,
+  maximumHeight?: number,
+) {
+  const rows = await page.locator(selector).evaluateAll((elements) =>
+    elements.map((element) => ({
+      clientHeight: element.clientHeight,
+      height: element.getBoundingClientRect().height,
+      scrollHeight: element.scrollHeight,
+    })),
+  );
+  expect(rows.length).toBeGreaterThan(0);
+  for (const row of rows) {
+    expect(row.scrollHeight).toBeLessThanOrEqual(row.clientHeight + 1);
+    if (maximumHeight !== undefined) {
+      expect(row.height).toBeLessThanOrEqual(maximumHeight);
+    }
+  }
+}
+
 async function gotoHome(
   page: Page,
   reducedMotion: "reduce" | "no-preference" = "reduce",
@@ -145,6 +166,36 @@ test("matches the approved desktop composition", async ({ page }, testInfo) => {
   expect(copy!.width / hero!.width).toBeGreaterThan(0.34);
   expect(copy!.width / hero!.width).toBeLessThan(0.48);
 
+  const heroFrame = await page
+    .locator(".home-hero > .home-frame")
+    .boundingBox();
+  const closingFrame = await page
+    .locator(".home-closing > .home-frame")
+    .boundingBox();
+  expect(heroFrame).not.toBeNull();
+  expect(closingFrame).not.toBeNull();
+  expect(heroFrame!.width).toBeGreaterThan(1300);
+  expect(closingFrame!.width).toBeGreaterThan(1300);
+  expect(heroFrame!.height).toBeGreaterThanOrEqual(800);
+  expect(closingFrame!.height).toBeGreaterThanOrEqual(560);
+
+  const heroHeadingFontSize = await page
+    .locator(".home-hero h1")
+    .evaluate((element) => parseFloat(getComputedStyle(element).fontSize));
+  expect(heroHeadingFontSize).toBeGreaterThanOrEqual(66);
+
+  const contentFrames = page.locator(
+    ".home-platform-overview > .home-frame, .home-enterprise > .home-frame, .home-solutions > .home-frame, .home-resources > .home-frame",
+  );
+  await expect(contentFrames).toHaveCount(4);
+  const contentFrameWidths = await contentFrames.evaluateAll((frames) =>
+    frames.map((frame) => frame.getBoundingClientRect().width),
+  );
+  for (const width of contentFrameWidths) {
+    expect(width).toBeGreaterThanOrEqual(1100);
+    expect(width).toBeLessThanOrEqual(1121);
+  }
+
   const capabilityTops = await page
     .locator(".home-capability-card")
     .evaluateAll((cards) =>
@@ -182,6 +233,69 @@ test("matches the approved desktop composition", async ({ page }, testInfo) => {
       );
     expect(radius).toBeGreaterThanOrEqual(18);
     expect(radius).toBeLessThanOrEqual(26);
+  }
+
+  await expectRowsToFit(page, ".home-platform-row", 140);
+  await expectRowsToFit(page, ".home-enterprise-row", 124);
+  await expectRowsToFit(
+    page,
+    ".home-solution-row:not(.home-solution-row--subset)",
+    124,
+  );
+  await expectRowsToFit(page, ".home-solution-row--subset", 140);
+  await expectRowsToFit(page, ".home-resource", 128);
+});
+
+test("keeps the compact tablet composition without clipping", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await gotoHome(page);
+
+  await expectNoHorizontalOverflow(page);
+  for (const selector of [
+    ".home-platform__grid",
+    ".home-solutions__grid",
+    ".home-resources__grid",
+  ]) {
+    const columns = await page
+      .locator(selector)
+      .evaluate(
+        (element) =>
+          getComputedStyle(element)
+            .gridTemplateColumns.split(/\s+/)
+            .filter(Boolean).length,
+      );
+    expect(columns).toBe(1);
+  }
+
+  const contentFrames = page.locator(
+    ".home-platform-overview > .home-frame, .home-enterprise > .home-frame, .home-solutions > .home-frame, .home-resources > .home-frame",
+  );
+  await expect(contentFrames).toHaveCount(4);
+  const contentFrameWidths = await contentFrames.evaluateAll((frames) =>
+    frames.map((frame) => frame.getBoundingClientRect().width),
+  );
+  for (const width of contentFrameWidths) {
+    expect(width).toBeLessThan(768);
+  }
+
+  const introPanels = await page
+    .locator(
+      ".home-platform__intro, .home-solutions__intro, .home-resources__intro",
+    )
+    .evaluateAll((panels) =>
+      panels.map((panel) => ({
+        clientHeight: panel.clientHeight,
+        minHeight: parseFloat(getComputedStyle(panel).minHeight),
+        scrollHeight: panel.scrollHeight,
+      })),
+    );
+  expect(introPanels).toHaveLength(3);
+  for (const panel of introPanels) {
+    expect(panel.minHeight).toBeLessThanOrEqual(480);
+    expect(panel.scrollHeight).toBeLessThanOrEqual(panel.clientHeight + 1);
   }
 });
 
@@ -223,6 +337,16 @@ test("stacks reference regions without clipping on mobile", async ({
             .filter(Boolean).length,
       );
     expect(columns).toBe(1);
+  }
+
+  for (const selector of [
+    ".home-capability-card",
+    ".home-platform-row",
+    ".home-enterprise-row",
+    ".home-solution-row",
+    ".home-resource",
+  ]) {
+    await expectRowsToFit(page, selector);
   }
 });
 
