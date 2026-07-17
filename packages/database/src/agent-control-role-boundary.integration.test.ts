@@ -222,7 +222,7 @@ describePostgres(
       );
     });
 
-    it("denies control runtime schema and table DDL", async () => {
+    it("denies control roles schema, table, and temporary-table DDL", async () => {
       await expectPermissionDenied(
         controlRuntime.query("CREATE SCHEMA forbidden_agent_control"),
       );
@@ -234,6 +234,16 @@ describePostgres(
       );
       await expectPermissionDenied(
         controlRuntime.query("DROP TABLE agent_control.model_configs"),
+      );
+      await expectPermissionDenied(
+        controlRuntime.query(
+          "CREATE TEMPORARY TABLE forbidden_agent_control_runtime_temp(id int)",
+        ),
+      );
+      await expectPermissionDenied(
+        controlMigrator.query(
+          "CREATE TEMPORARY TABLE forbidden_agent_control_migrator_temp(id int)",
+        ),
       );
     });
 

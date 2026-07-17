@@ -1,6 +1,5 @@
 """Literal versioned SQL for the isolated Agent model control schema."""
 
-
 AGENT_CONTROL_SCHEMA_VERSION = 1
 
 REQUIRED_TABLE_NAMES = frozenset(
@@ -20,8 +19,12 @@ EXPECTED_RUNTIME_GRANTS = frozenset(
     }
 )
 
+VERIFY_SCHEMA_OWNER_SQL = """SELECT pg_get_userbyid(n.nspowner)::text
+FROM pg_namespace AS n
+WHERE n.nspname = 'agent_control'
+"""
+
 PREPARE_SCHEMA_SQL = """
-ALTER SCHEMA agent_control OWNER TO ai_agent_control_migrator;
 REVOKE ALL ON SCHEMA agent_control FROM PUBLIC;
 REVOKE ALL ON SCHEMA agent_control
   FROM ai_agent_migrator, ai_agent_runtime, ai_agent_backup,

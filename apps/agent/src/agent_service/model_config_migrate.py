@@ -15,6 +15,7 @@ from agent_service.model_config_schema import (
     SCHEMA_VERSION_1_SQL,
     SELECT_SCHEMA_VERSION_SQL,
     VERIFY_RUNTIME_GRANTS_SQL,
+    VERIFY_SCHEMA_OWNER_SQL,
     VERIFY_SCHEMA_PRIVILEGES_SQL,
     VERIFY_TABLES_SQL,
 )
@@ -83,13 +84,15 @@ async def run_migration(
 ) -> None:
     """Apply schema version 1 and verify its exact runtime boundary."""
     migration_settings = settings or ControlMigrationSettings()
-    database_url = _psycopg_url(
-        migration_settings.database_url.get_secret_value()
-    )
+    database_url = _psycopg_url(migration_settings.database_url.get_secret_value())
     connection = await connector(database_url)
 
     async with connection:
         async with connection.cursor() as cursor:
+            await cursor.execute(VERIFY_SCHEMA_OWNER_SQL)
+            schema_owner = await cursor.fetchone()
+            if schema_owner != ("ai_agent_control_migrator",):
+                raise RuntimeError("Agent control migration verification failed")
             await cursor.execute(PREPARE_SCHEMA_SQL)
             await cursor.execute(SELECT_SCHEMA_VERSION_SQL)
             applied_version = await cursor.fetchone()

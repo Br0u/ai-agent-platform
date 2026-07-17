@@ -31,6 +31,12 @@ ALTER SCHEMA agent_control OWNER TO ai_agent_control_migrator;
 
 GRANT CONNECT ON DATABASE :"DBNAME"
   TO ai_agent_control_migrator, ai_agent_control;
+REVOKE TEMPORARY ON DATABASE :"DBNAME" FROM PUBLIC;
+GRANT TEMPORARY ON DATABASE :"DBNAME"
+  TO ai_agent_migrator, ai_agent_runtime, ai_agent_backup,
+     ai_agent_agno_migrator, ai_agent_agno;
+REVOKE TEMPORARY ON DATABASE :"DBNAME"
+  FROM ai_agent_control_migrator, ai_agent_control;
 REVOKE CREATE ON DATABASE :"DBNAME"
   FROM ai_agent_control_migrator, ai_agent_control;
 REVOKE ALL ON SCHEMA public

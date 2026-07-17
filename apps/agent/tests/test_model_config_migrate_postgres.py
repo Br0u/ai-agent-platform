@@ -92,6 +92,16 @@ async def test_real_control_migration_is_idempotent_owned_and_enforces_boundarie
             ]
 
             await cursor.execute(
+                """SELECT
+                  current_user::text,
+                  has_database_privilege(current_user, current_database(), 'CREATE')"""
+            )
+            assert await cursor.fetchone() == (
+                "ai_agent_control_migrator",
+                False,
+            )
+
+            await cursor.execute(
                 """SELECT c.relname::text, pg_get_userbyid(c.relowner)::text
                 FROM pg_class AS c
                 JOIN pg_namespace AS n ON n.oid = c.relnamespace

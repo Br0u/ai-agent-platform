@@ -30,6 +30,10 @@ PSYCOPG_URL = MIGRATOR_URL.replace(
     "postgresql://",
 )
 REPO_ROOT = Path(__file__).resolve().parents[3]
+EXPECTED_VERIFY_SCHEMA_OWNER_SQL = """SELECT pg_get_userbyid(n.nspowner)::text
+FROM pg_namespace AS n
+WHERE n.nspname = 'agent_control'
+"""
 
 
 def normalize_sql(value: str) -> str:
@@ -94,10 +98,13 @@ def test_schema_versioning_is_literal_idempotent_and_marks_version_one() -> None
     prepare = normalize_sql(PREPARE_SCHEMA_SQL)
     version_one = normalize_sql(SCHEMA_VERSION_1_SQL)
 
-    assert "ALTER SCHEMA agent_control OWNER TO ai_agent_control_migrator" in prepare
+    assert "CREATE SCHEMA" not in prepare
+    assert "ALTER SCHEMA" not in prepare
     assert "CREATE TABLE IF NOT EXISTS agent_control.schema_versions" in prepare
     assert "PRIMARY KEY" in prepare
-    assert "INSERT INTO agent_control.schema_versions (version) VALUES (1)" in version_one
+    assert (
+        "INSERT INTO agent_control.schema_versions (version) VALUES (1)" in version_one
+    )
     assert "ON CONFLICT (version) DO NOTHING" in version_one
     assert "{" not in PREPARE_SCHEMA_SQL + SCHEMA_VERSION_1_SQL
     assert "%s" not in PREPARE_SCHEMA_SQL + SCHEMA_VERSION_1_SQL
@@ -180,7 +187,6 @@ def test_schema_sql_has_exact_runtime_grants_and_no_broad_privileges() -> None:
 def test_schema_objects_are_explicitly_owned_by_the_control_migrator() -> None:
     sql = normalize_sql(PREPARE_SCHEMA_SQL + SCHEMA_VERSION_1_SQL)
 
-    assert "ALTER SCHEMA agent_control OWNER TO ai_agent_control_migrator" in sql
     for table_name in (
         "schema_versions",
         "model_configs",
@@ -188,8 +194,7 @@ def test_schema_objects_are_explicitly_owned_by_the_control_migrator() -> None:
         "control_events",
     ):
         assert (
-            f"ALTER TABLE agent_control.{table_name} OWNER TO "
-            "ai_agent_control_migrator"
+            f"ALTER TABLE agent_control.{table_name} OWNER TO ai_agent_control_migrator"
         ) in sql
     assert (
         "ALTER FUNCTION agent_control.guard_model_config_update() OWNER TO "
@@ -203,10 +208,11 @@ def test_role_bootstrap_creates_only_control_roles_and_rotates_both_passwords() 
     created_roles = set(re.findall(r"CREATE ROLE\s+(ai_agent_[a-z_]+)", role_sql))
     assert created_roles == {"ai_agent_control_migrator", "ai_agent_control"}
     assert (
-        "\\getenv control_migrator_password "
-        "AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD"
+        "\\getenv control_migrator_password AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD"
     ) in role_sql
-    assert "\\getenv control_runtime_password AGENT_CONTROL_DATABASE_PASSWORD" in role_sql
+    assert (
+        "\\getenv control_runtime_password AGENT_CONTROL_DATABASE_PASSWORD" in role_sql
+    )
     for role in ("ai_agent_control_migrator", "ai_agent_control"):
         assert f"ALTER ROLE {role}" in role_sql
     assert 'GRANT CONNECT ON DATABASE :"DBNAME"' in role_sql
@@ -217,6 +223,28 @@ def test_role_bootstrap_creates_only_control_roles_and_rotates_both_passwords() 
     ) in normalize_sql(role_sql)
     assert "GRANT USAGE ON SCHEMA" not in role_sql
     assert "GRANT SELECT" not in role_sql
+
+
+def test_role_bootstrap_removes_public_temporary_and_preserves_existing_roles() -> None:
+    role_sql = normalize_sql(
+        (REPO_ROOT / "infra/postgres/04-agent-control-roles.sql").read_text()
+    )
+
+    assert 'REVOKE TEMPORARY ON DATABASE :"DBNAME" FROM PUBLIC;' in role_sql
+    assert (
+        'GRANT TEMPORARY ON DATABASE :"DBNAME" TO '
+        "ai_agent_migrator, ai_agent_runtime, ai_agent_backup, "
+        "ai_agent_agno_migrator, ai_agent_agno;"
+    ) in role_sql
+    assert (
+        'REVOKE TEMPORARY ON DATABASE :"DBNAME" FROM '
+        "ai_agent_control_migrator, ai_agent_control;"
+    ) in role_sql
+    assert not re.search(
+        r'GRANT\s+TEMPORARY\s+ON\s+DATABASE\s+:"DBNAME"\s+TO\s+'
+        r"[^;]*ai_agent_control(?:_migrator)?",
+        role_sql,
+    )
 
 
 def test_role_bootstrap_wrapper_keeps_secrets_out_of_psql_argv(
@@ -261,8 +289,14 @@ def test_role_bootstrap_wrapper_keeps_secrets_out_of_psql_argv(
 
 
 class FakeCursor:
-    def __init__(self, *, version_applied: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        version_applied: bool = False,
+        schema_owner: str | None = "ai_agent_control_migrator",
+    ) -> None:
         self.version_applied = version_applied
+        self.schema_owner = schema_owner
         self.queries: list[str] = []
         self.current_query = ""
 
@@ -277,6 +311,8 @@ class FakeCursor:
         self.queries.append(query)
 
     async def fetchone(self) -> tuple[Any, ...] | None:
+        if self.current_query == EXPECTED_VERIFY_SCHEMA_OWNER_SQL:
+            return (self.schema_owner,) if self.schema_owner is not None else None
         if self.current_query == SELECT_SCHEMA_VERSION_SQL:
             return (1,) if self.version_applied else None
         if self.current_query == VERIFY_SCHEMA_PRIVILEGES_SQL:
@@ -327,6 +363,7 @@ async def test_run_migration_applies_version_one_and_verifies_boundary_in_one_tr
 
     assert events == ["connect", "transaction:begin", "transaction:commit"]
     assert cursor.queries == [
+        EXPECTED_VERIFY_SCHEMA_OWNER_SQL,
         PREPARE_SCHEMA_SQL,
         SELECT_SCHEMA_VERSION_SQL,
         SCHEMA_VERSION_1_SQL,
@@ -355,6 +392,30 @@ async def test_run_migration_skips_applied_version_but_reverifies_boundary() -> 
         VERIFY_RUNTIME_GRANTS_SQL,
         VERIFY_SCHEMA_PRIVILEGES_SQL,
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("schema_owner", [None, "postgres"])
+async def test_run_migration_rejects_invalid_schema_owner_before_prepare(
+    schema_owner: str | None,
+) -> None:
+    settings = ControlMigrationSettings.model_validate(
+        {"AGENT_CONTROL_MIGRATOR_DATABASE_URL": MIGRATOR_URL}
+    )
+    events: list[str] = []
+    cursor = FakeCursor(schema_owner=schema_owner)
+
+    async def connector(database_url: str) -> FakeConnection:
+        return FakeConnection(cursor, events)
+
+    with pytest.raises(
+        RuntimeError,
+        match="^Agent control migration verification failed$",
+    ):
+        await run_migration(settings, connector=connector)
+
+    assert cursor.queries == [EXPECTED_VERIFY_SCHEMA_OWNER_SQL]
+    assert PREPARE_SCHEMA_SQL not in cursor.queries
 
 
 def test_main_prints_only_fixed_success_message(
