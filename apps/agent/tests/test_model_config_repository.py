@@ -11,6 +11,7 @@ import psycopg
 from pydantic import SecretStr
 import pytest
 
+import agent_service.model_config_repository as repository_module
 from agent_service.model_config_crypto import SealedSecret
 from agent_service.model_config_repository import (
     ControlEvent,
@@ -258,6 +259,8 @@ def test_commands_and_events_reject_invalid_runtime_values_with_fixed_errors(
     assert "do-not-leak" not in rendered
     assert "sealed-ciphertext" not in rendered
     assert "s3cr" not in rendered
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
 
 
 def test_secret_bearing_types_are_frozen_and_hide_sealed_fields_from_repr() -> None:
@@ -292,14 +295,24 @@ def test_secret_bearing_types_are_frozen_and_hide_sealed_fields_from_repr() -> N
             value.revision = 2  # type: ignore[misc]
 
 
-def test_repository_constructor_validates_and_hides_database_url() -> None:
-    with pytest.raises(ModelConfigValidationError, match="^validation_error$") as error:
-        PostgresModelConfigRepository(
-            database_url="postgresql://control:super-secret@db/platform"
-        )
+def test_repository_constructor_validates_and_hides_database_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invalid_url = "postgresql+psycopg_async://control:super-secret@[broken/platform"
 
+    def fail_to_parse(_database_url: str) -> None:
+        raise ValueError(f"invalid DSN: {invalid_url}")
+
+    monkeypatch.setattr(repository_module, "make_url", fail_to_parse)
+
+    with pytest.raises(ModelConfigValidationError, match="^validation_error$") as error:
+        PostgresModelConfigRepository(database_url=invalid_url)
+
+    assert str(error.value) == "validation_error"
     assert "super-secret" not in str(error.value)
     assert "super-secret" not in repr(error.value)
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
 
 
 @pytest.mark.asyncio
@@ -626,6 +639,10 @@ async def test_event_insert_failure_rolls_back_head_retirement_and_new_revision(
         )
 
     assert "secret SQL details" not in str(error.value)
+    assert "secret SQL details" not in repr(error.value)
+    assert str(error.value) == "configuration_conflict"
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
     assert len(cursor.executions) == 4
     assert events[-1] == "transaction:rollback"
 
@@ -651,6 +668,10 @@ async def test_retryable_transaction_failures_map_to_fixed_conflict(
         await repository.save_draft(command(), event())
 
     assert "internal" not in str(error.value)
+    assert "internal" not in repr(error.value)
+    assert str(error.value) == "configuration_conflict"
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
     assert events[-1] == "transaction:rollback"
 
 
@@ -677,6 +698,60 @@ async def test_database_failure_maps_to_fixed_storage_error_and_rolls_back() -> 
         await repository.list_metadata()
 
     assert "do-not-leak" not in str(error.value)
+    assert "do-not-leak" not in repr(error.value)
+    assert str(error.value) == "storage_unavailable"
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+    assert events[-1] == "transaction:rollback"
+
+
+@pytest.mark.asyncio
+async def test_connector_failure_is_detached_from_fixed_storage_error() -> None:
+    async def failing_connector(_database_url: SecretStr) -> RepositoryConnection:
+        raise RuntimeError(f"{DATABASE_URL} SELECT api_key_ciphertext")
+
+    repository = PostgresModelConfigRepository(
+        database_url=DATABASE_URL,
+        connector=failing_connector,
+    )
+
+    with pytest.raises(ModelConfigStorageError, match="^storage_unavailable$") as error:
+        await repository.list_metadata()
+
+    rendered = f"{error.value!s} {error.value!r}"
+    assert "do-not-leak" not in rendered
+    assert "api_key_ciphertext" not in rendered
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_row_decode_failure_is_detached_from_fixed_storage_error() -> None:
+    repository, _cursor, events = repository_with(
+        [
+            Reply(
+                "FROM agent_control.model_configs",
+                many=[
+                    (
+                        "openai",
+                        "gpt-4.1-mini",
+                        "openai-default",
+                        "secret-invalid-suffix",
+                        1,
+                        "untested",
+                    )
+                ],
+            )
+        ]
+    )
+
+    with pytest.raises(ModelConfigStorageError, match="^storage_unavailable$") as error:
+        await repository.list_metadata()
+
+    rendered = f"{error.value!s} {error.value!r}"
+    assert "secret-invalid-suffix" not in rendered
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
     assert events[-1] == "transaction:rollback"
 
 

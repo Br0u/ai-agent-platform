@@ -170,6 +170,7 @@ def _validate_model_fields(
     model_id: object,
     endpoint_id: object,
 ) -> tuple[ModelProvider, str, str]:
+    validated: ModelConfigDraft | None = None
     try:
         validated = ModelConfigDraft.model_validate(
             {
@@ -181,6 +182,8 @@ def _validate_model_fields(
             }
         )
     except ValidationError:
+        pass
+    if validated is None:
         _invalid()
     return validated.provider, validated.model_id, validated.endpoint_id
 
@@ -405,9 +408,12 @@ def _validated_psycopg_url(database_url: SecretStr | str) -> SecretStr:
         raw_url = database_url
     else:
         _invalid()
+    parsed = None
     try:
         parsed = make_url(raw_url)
     except Exception:
+        pass
+    if parsed is None:
         _invalid()
     if (
         parsed.drivername != "postgresql+psycopg_async"
@@ -423,8 +429,9 @@ def _validated_psycopg_url(database_url: SecretStr | str) -> SecretStr:
 def _stored_sealed_from_row(row: tuple[Any, ...]) -> StoredSealedConfig:
     if len(row) != 10:
         _storage()
+    stored: StoredSealedConfig | None = None
     try:
-        return StoredSealedConfig(
+        stored = StoredSealedConfig(
             config_id=row[0],
             provider=row[1],
             model_id=row[2],
@@ -439,14 +446,18 @@ def _stored_sealed_from_row(row: tuple[Any, ...]) -> StoredSealedConfig:
             test_status=row[9],
         )
     except ModelConfigValidationError:
+        pass
+    if stored is None:
         _storage()
+    return stored
 
 
 def _metadata_from_row(row: tuple[Any, ...]) -> StoredModelConfigMetadata:
     if len(row) != 6:
         _storage()
+    metadata: StoredModelConfigMetadata | None = None
     try:
-        return StoredModelConfigMetadata(
+        metadata = StoredModelConfigMetadata(
             provider=row[0],
             model_id=row[1],
             endpoint_id=row[2],
@@ -455,7 +466,10 @@ def _metadata_from_row(row: tuple[Any, ...]) -> StoredModelConfigMetadata:
             test_status=row[5],
         )
     except (TypeError, ValueError):
+        pass
+    if metadata is None:
         _storage()
+    return metadata
 
 
 def _validate_provider(provider: object) -> ModelProvider:
@@ -514,7 +528,8 @@ class PostgresModelConfigRepository:
         except ModelConfigRepositoryError:
             raise
         except Exception:
-            _storage()
+            pass
+        _storage()
 
     async def load_sealed(self, provider: ModelProvider) -> StoredSealedConfig:
         validated_provider = _validate_provider(provider)
@@ -533,7 +548,8 @@ class PostgresModelConfigRepository:
         except ModelConfigRepositoryError:
             raise
         except Exception:
-            _storage()
+            pass
+        _storage()
 
     async def load_active(self) -> StoredActiveConfig | None:
         try:
@@ -547,8 +563,9 @@ class PostgresModelConfigRepository:
                     if len(row) != 13 or row[8] != row[10]:
                         _storage()
                     stored = _stored_sealed_from_row(row[:10])
+                    active: StoredActiveConfig | None = None
                     try:
-                        return StoredActiveConfig(
+                        active = StoredActiveConfig(
                             config_id=stored.config_id,
                             provider=stored.provider,
                             model_id=stored.model_id,
@@ -560,11 +577,15 @@ class PostgresModelConfigRepository:
                             activated_at=row[12],
                         )
                     except ModelConfigValidationError:
+                        pass
+                    if active is None:
                         _storage()
+                    return active
         except ModelConfigRepositoryError:
             raise
         except Exception:
-            _storage()
+            pass
+        _storage()
 
     async def save_draft(
         self,
@@ -572,6 +593,7 @@ class PostgresModelConfigRepository:
         event: ControlEvent,
     ) -> StoredModelConfigMetadata:
         _validate_event_matches_command(command, event)
+        database_conflict = False
         try:
             connection = await self.__connector(self.__database_url)
             async with connection:
@@ -652,6 +674,9 @@ class PostgresModelConfigRepository:
         except ModelConfigRepositoryError:
             raise
         except _CONFLICT_DATABASE_ERRORS:
-            _conflict()
+            database_conflict = True
         except Exception:
-            _storage()
+            pass
+        if database_conflict:
+            _conflict()
+        _storage()
