@@ -1,7 +1,7 @@
 # AI 助理后台动态模型配置设计规格
 
 > 日期：2026-07-17
-> 状态：已确认
+> 状态：已确认（实现审查已补充不可变 revision 恢复约束）
 > 前置规格：`docs/superpowers/specs/2026-07-16-maduoduo-single-agent-loop-design.md`
 
 ## 1. 背景
@@ -53,7 +53,7 @@ Browser -> Next.js BFF -> AgentOS -> 码多多 -> Agno Model Adapter
 | 页面位置 | 复用现有 `/admin/assistant` 和“AI 助理”导航 |
 | 配置所有者 | Agent 自有配置控制面；Web 负责用户鉴权、BFF 和审计 |
 | Provider | OpenAI、Claude、Gemini、Qwen、DeepSeek、MiniMax |
-| 配置数量 | 每个 Provider 一份，任意时刻一个活动配置 |
+| 配置数量 | 每个 Provider 一个当前可编辑配置头；持久层保留不可变 revision，任意时刻一个活动 revision |
 | 生效方式 | 测试成功后热切换，无需服务重启 |
 | 失败策略 | 当前模型不变，不自动切换其他 Provider |
 | Key 存储 | Agent 使用认证加密后持久化 |
@@ -222,7 +222,7 @@ Browser /admin/assistant
 
 ### 9.1 `agent_control.model_configs`
 
-每个云 Provider 最多一行：
+每次保存生成一行不可变 revision；每个云 Provider 通过部分唯一约束最多只有一个 `current` 配置头。后台仍只展示这个当前头，不把历史 revision 暴露为多份可编辑配置。被活动指针引用的旧 revision 必须保留，确保保存新草稿、测试失败或 Agent 重启后仍能恢复旧模型：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -235,11 +235,14 @@ Browser /admin/assistant
 | `api_key_last_four` | 仅用于脱敏展示 |
 | `encryption_key_version` | 加密密钥版本，首版固定为 `1` |
 | `revision` | 单调递增乐观锁版本 |
+| `is_current` | 当前可编辑头；每个 Provider 最多一个 `true` |
 | `test_status` | `untested | passed | failed` |
 | `last_tested_at` | 最近测试时间 |
 | `created_at` / `updated_at` | 审计时间戳 |
 
-不存原始响应、测试提示、模型回答、完整 Endpoint、明文 Key 或用户会话内容。
+`(provider, revision)` 唯一。保存新草稿时，在同一事务内把旧头标为非 current、插入新 revision 并写 control event。若未提交新 Key，Agent 必须先解密旧 Key，再使用新配置 ID、新 revision 和新随机 nonce 重新加密；不得复用绑定旧 AAD 的密文。
+
+不存原始响应、测试提示、模型回答、完整 Endpoint、明文 Key 或用户会话内容。历史 revision 的清理不在本阶段范围内；活动指针引用的 revision 禁止删除。
 
 ### 9.2 `agent_control.active_model_config`
 
@@ -250,7 +253,7 @@ Browser /admin/assistant
 - `activated_at`；
 - 单调递增的活动版本。
 
-配置行和活动指针在同一数据库事务内更新，确保数据库只有一个活动配置。
+配置 revision 和活动指针在同一数据库事务内更新，确保数据库只有一个活动 revision。活动指针引用精确不可变行；当前 Provider 后续保存新草稿不得改变该引用。
 
 ### 9.3 `agent_control.control_events`
 
@@ -335,7 +338,7 @@ endpoint_id -> provider, label, normalized base_url, enabled
 1. Web 验证 workforce session、`admin:assistant:configure` 和最近 MFA。
 2. Web 验证请求合同，但不记录 Key。
 3. Agent 校验 Provider、Model ID、Endpoint ID 和 Key 格式。
-4. 新 Key 使用 AES-GCM 加密；未提交新 Key 时复用现有密文。
+4. 新 Key 使用 AES-GCM 加密；未提交新 Key 时解密当前头的 Key，并使用新配置 ID、revision 和随机 nonce 重新加密，不复用旧 AAD 密文。
 5. 使用客户端 revision 执行 compare-and-swap；过期返回 409。
 6. 保存、状态变化和脱敏 control event 在同一事务提交；保存后状态为 `untested`，活动模型不变。
 7. Web 镜像脱敏平台审计；Agent control event 仍是远端写入结果的权威记录。
@@ -407,6 +410,8 @@ Agent `control_events` 与 Web 平台审计使用同一 request ID 对齐。Web 
 - `assistant_unavailable`。
 
 供应商原始错误、状态体、响应头和 URL 不得进入浏览器或生产日志。内部日志只记录固定事件名、request ID、Provider、revision 和固定错误类别。
+
+Agent 控制 API 使用固定 HTTP 映射：`validation_error`/`endpoint_not_allowed` 为 400，`configuration_conflict` 为 409，`credential_rejected`/`model_not_found` 为 422，`provider_unreachable` 为 502，`provider_timeout` 为 504，其余 `control_disabled`/`storage_unavailable`/`encryption_unavailable`/`assistant_unavailable` 为 503。Provider 返回空白或协议无效响应在内部归一为 `provider_unreachable`，不新增对外错误类别。内部 Bearer 缺失或无效返回 401，签名 assertion 无效或与路由不匹配返回 403。
 
 并发更新使用 revision compare-and-swap。两个管理员编辑同一 Provider 时，后提交的旧 revision 必须收到 409，页面要求刷新，不能静默覆盖。Agent 使用单进程激活锁串行执行测试后的活动指针切换。
 
