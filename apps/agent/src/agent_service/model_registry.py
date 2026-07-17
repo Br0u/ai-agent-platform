@@ -1,17 +1,20 @@
-"""Deterministic registry for native Agno model adapters."""
+"""Deterministic registry for owned native Agno model adapters."""
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Protocol, cast
 
 from agno.models.base import Model
+import httpx
 
 from agent_service.config import ActiveModelSettings, ModelProvider
+from agent_service.model_runtime_types import ManagedModel
 
 
 _OPENAI_BASE_URL: Final = "https://api.openai.com/v1"
 _ANTHROPIC_BASE_URL: Final = "https://api.anthropic.com"
-_GEMINI_BASE_URL: Final = "https://generativelanguage.googleapis.com/"
+_GEMINI_BASE_URL: Final = "https://generativelanguage.googleapis.com"
 _DASHSCOPE_BASE_URL: Final = (
     "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 )
@@ -19,15 +22,34 @@ _DEEPSEEK_BASE_URL: Final = "https://api.deepseek.com"
 _MINIMAX_BASE_URL: Final = "https://api.minimax.io/v1"
 
 
+class ProviderRequestError(RuntimeError):
+    """Fixed error raised before a Provider redirect can be followed."""
+
+
 class _RedactedApiKey(str):
     def __repr__(self) -> str:
         return "<redacted>"
 
 
-class ModelFactory(Protocol):
-    """Construct one Agno model from validated runtime settings."""
+@dataclass(frozen=True, slots=True)
+class _HttpClients:
+    sync: httpx.Client
+    asynchronous: httpx.AsyncClient
+    owns_sync: bool
+    owns_asynchronous: bool
 
-    def __call__(self, settings: ActiveModelSettings, /) -> Model: ...
+
+class ModelFactory(Protocol):
+    """Construct one owned Agno model from validated runtime settings."""
+
+    def __call__(
+        self,
+        settings: ActiveModelSettings,
+        /,
+        *,
+        http_client: httpx.Client | None = None,
+        http_async_client: httpx.AsyncClient | None = None,
+    ) -> ManagedModel: ...
 
 
 def _api_key(settings: ActiveModelSettings) -> _RedactedApiKey:
@@ -61,64 +83,237 @@ def _anthropic_default_headers(api_key: _RedactedApiKey) -> dict[str, str]:
     }
 
 
-def _build_openai_model(settings: ActiveModelSettings) -> Model:
-    from agno.models.openai import OpenAIResponses
+def _reject_sync_redirect(response: httpx.Response) -> None:
+    if response.is_redirect:
+        raise ProviderRequestError("provider request failed")
 
+
+async def _reject_async_redirect(response: httpx.Response) -> None:
+    if response.is_redirect:
+        raise ProviderRequestError("provider request failed")
+
+
+def _http_clients(
+    settings: ActiveModelSettings,
+    *,
+    http_client: httpx.Client | None,
+    http_async_client: httpx.AsyncClient | None,
+) -> _HttpClients:
+    if http_client is not None and http_client.follow_redirects:
+        raise ValueError("provider HTTP clients must reject redirects")
+    if http_async_client is not None and http_async_client.follow_redirects:
+        raise ValueError("provider HTTP clients must reject redirects")
+
+    owns_sync = http_client is None
+    owns_asynchronous = http_async_client is None
+    sync_client = http_client or httpx.Client(
+        follow_redirects=False,
+        timeout=settings.timeout_seconds,
+    )
+    asynchronous_client = http_async_client or httpx.AsyncClient(
+        follow_redirects=False,
+        timeout=settings.timeout_seconds,
+    )
+    sync_client.event_hooks["response"].append(_reject_sync_redirect)
+    asynchronous_client.event_hooks["response"].append(_reject_async_redirect)
+    return _HttpClients(
+        sync=sync_client,
+        asynchronous=asynchronous_client,
+        owns_sync=owns_sync,
+        owns_asynchronous=owns_asynchronous,
+    )
+
+
+async def _close_resources(
+    *,
+    sync_closers: tuple[Callable[[], object], ...] = (),
+    async_closers: tuple[Callable[[], Awaitable[object]], ...] = (),
+) -> None:
+    failed = False
+    for close in sync_closers:
+        try:
+            close()
+        except BaseException:
+            failed = True
+    for close in async_closers:
+        try:
+            await close()
+        except BaseException:
+            failed = True
+    if failed:
+        raise RuntimeError("owned provider client close failed")
+
+
+def _openai_compatible_managed_model(
+    settings: ActiveModelSettings,
+    *,
+    model_type: Callable[..., Model],
+    default_base_url: str,
+    http_client: httpx.Client | None,
+    http_async_client: httpx.AsyncClient | None,
+) -> ManagedModel:
+    from openai import AsyncOpenAI, OpenAI
+
+    clients = _http_clients(
+        settings,
+        http_client=http_client,
+        http_async_client=http_async_client,
+    )
     api_key = _api_key(settings)
-    return OpenAIResponses(
+    base_url = settings.base_url or default_base_url
+    default_headers = _openai_default_headers(api_key)
+    sync_sdk = OpenAI(
+        api_key=api_key,
+        admin_api_key="",
+        organization="",
+        project="",
+        webhook_secret="",
+        base_url=base_url,
+        timeout=settings.timeout_seconds,
+        max_retries=0,
+        default_headers=default_headers,
+        http_client=clients.sync,
+    )
+    async_sdk = AsyncOpenAI(
+        api_key=api_key,
+        admin_api_key="",
+        organization="",
+        project="",
+        webhook_secret="",
+        base_url=base_url,
+        timeout=settings.timeout_seconds,
+        max_retries=0,
+        default_headers=default_headers,
+        http_client=clients.asynchronous,
+    )
+    model = model_type(
         id=settings.model_id,
         retries=0,
         api_key=api_key,
         organization="",
-        base_url=settings.base_url or _OPENAI_BASE_URL,
+        base_url=base_url,
         timeout=settings.timeout_seconds,
         max_retries=0,
-        default_headers=_openai_default_headers(api_key),
+        default_headers=default_headers,
         client_params=_openai_client_params(),
+        client=sync_sdk,
+        async_client=async_sdk,
+    )
+
+    async def close_callback() -> None:
+        await _close_resources(
+            sync_closers=(sync_sdk.close,) if clients.owns_sync else (),
+            async_closers=(async_sdk.close,)
+            if clients.owns_asynchronous
+            else (),
+        )
+
+    return ManagedModel(model=model, close_callback=close_callback)
+
+
+def _build_openai_model(
+    settings: ActiveModelSettings,
+    /,
+    *,
+    http_client: httpx.Client | None = None,
+    http_async_client: httpx.AsyncClient | None = None,
+) -> ManagedModel:
+    from agno.models.openai import OpenAIResponses
+
+    return _openai_compatible_managed_model(
+        settings,
+        model_type=OpenAIResponses,
+        default_base_url=_OPENAI_BASE_URL,
+        http_client=http_client,
+        http_async_client=http_async_client,
     )
 
 
-def _build_anthropic_model(settings: ActiveModelSettings) -> Model:
+def _build_anthropic_model(
+    settings: ActiveModelSettings,
+    /,
+    *,
+    http_client: httpx.Client | None = None,
+    http_async_client: httpx.AsyncClient | None = None,
+) -> ManagedModel:
     from agno.models.anthropic import Claude
     from anthropic import Anthropic, AsyncAnthropic
 
+    clients = _http_clients(
+        settings,
+        http_client=http_client,
+        http_async_client=http_async_client,
+    )
     api_key = _api_key(settings)
-
-    return Claude(
+    base_url = settings.base_url or _ANTHROPIC_BASE_URL
+    default_headers = _anthropic_default_headers(api_key)
+    sync_sdk = Anthropic(
+        api_key=api_key,
+        auth_token=None,
+        webhook_key="",
+        base_url=base_url,
+        timeout=settings.timeout_seconds,
+        max_retries=0,
+        default_headers=default_headers,
+        http_client=clients.sync,
+    )
+    async_sdk = AsyncAnthropic(
+        api_key=api_key,
+        auth_token=None,
+        webhook_key="",
+        base_url=base_url,
+        timeout=settings.timeout_seconds,
+        max_retries=0,
+        default_headers=default_headers,
+        http_client=clients.asynchronous,
+    )
+    model = Claude(
         id=settings.model_id,
         retries=0,
         api_key=api_key,
         timeout=settings.timeout_seconds,
-        client=Anthropic(
-            api_key=api_key,
-            auth_token=None,
-            webhook_key="",
-            base_url=_ANTHROPIC_BASE_URL,
-            timeout=settings.timeout_seconds,
-            max_retries=0,
-            default_headers=_anthropic_default_headers(api_key),
-        ),
-        async_client=AsyncAnthropic(
-            api_key=api_key,
-            auth_token=None,
-            webhook_key="",
-            base_url=_ANTHROPIC_BASE_URL,
-            timeout=settings.timeout_seconds,
-            max_retries=0,
-            default_headers=_anthropic_default_headers(api_key),
-        ),
+        client=sync_sdk,
+        async_client=async_sdk,
     )
 
+    async def close_callback() -> None:
+        await _close_resources(
+            sync_closers=(sync_sdk.close,) if clients.owns_sync else (),
+            async_closers=(async_sdk.close,)
+            if clients.owns_asynchronous
+            else (),
+        )
 
-def _build_google_model(settings: ActiveModelSettings) -> Model:
+    return ManagedModel(model=model, close_callback=close_callback)
+
+
+def _build_google_model(
+    settings: ActiveModelSettings,
+    /,
+    *,
+    http_client: httpx.Client | None = None,
+    http_async_client: httpx.AsyncClient | None = None,
+) -> ManagedModel:
     from agno.models.google import Gemini
     from google import genai
     from google.genai.client import DebugConfig
+    from google.genai.types import HttpOptions, HttpRetryOptions
 
+    clients = _http_clients(
+        settings,
+        http_client=http_client,
+        http_async_client=http_async_client,
+    )
     api_key = _api_key(settings)
-    # Developer API mode ignores the SDK's inactive environment-derived
-    # project and location fields; the explicit endpoint keeps requests isolated.
-    client = genai.Client(
+    base_url = settings.base_url or _GEMINI_BASE_URL
+    http_options = HttpOptions(
+        base_url=base_url,
+        timeout=settings.timeout_seconds * 1000,
+        retry_options=HttpRetryOptions(attempts=1),
+        httpx_client=clients.sync,
+        httpx_async_client=clients.asynchronous,
+    )
+    sdk_client = genai.Client(
         vertexai=False,
         api_key=api_key,
         debug_config=DebugConfig(
@@ -126,14 +321,9 @@ def _build_google_model(settings: ActiveModelSettings) -> Model:
             replays_directory=None,
             replay_id=None,
         ),
-        http_options={
-            "base_url": _GEMINI_BASE_URL,
-            "timeout": settings.timeout_seconds * 1000,
-            "retry_options": {"attempts": 1},
-        },
+        http_options=http_options,
     )
-
-    return Gemini(
+    model = Gemini(
         id=settings.model_id,
         retries=0,
         api_key=api_key,
@@ -141,58 +331,77 @@ def _build_google_model(settings: ActiveModelSettings) -> Model:
         vertexai=False,
         project_id=None,
         location=None,
-        client=client,
+        client=sdk_client,
     )
 
+    async def close_callback() -> None:
+        await _close_resources(
+            sync_closers=(
+                sdk_client.close,
+                *((clients.sync.close,) if clients.owns_sync else ()),
+            ),
+            async_closers=(
+                sdk_client.aio.aclose,
+                *((clients.asynchronous.aclose,)
+                  if clients.owns_asynchronous
+                  else ()),
+            ),
+        )
 
-def _build_dashscope_model(settings: ActiveModelSettings) -> Model:
+    return ManagedModel(model=model, close_callback=close_callback)
+
+
+def _build_dashscope_model(
+    settings: ActiveModelSettings,
+    /,
+    *,
+    http_client: httpx.Client | None = None,
+    http_async_client: httpx.AsyncClient | None = None,
+) -> ManagedModel:
     from agno.models.dashscope import DashScope
 
-    api_key = _api_key(settings)
-    return DashScope(
-        id=settings.model_id,
-        retries=0,
-        api_key=api_key,
-        organization="",
-        base_url=settings.base_url or _DASHSCOPE_BASE_URL,
-        timeout=settings.timeout_seconds,
-        max_retries=0,
-        default_headers=_openai_default_headers(api_key),
-        client_params=_openai_client_params(),
+    return _openai_compatible_managed_model(
+        settings,
+        model_type=DashScope,
+        default_base_url=_DASHSCOPE_BASE_URL,
+        http_client=http_client,
+        http_async_client=http_async_client,
     )
 
 
-def _build_deepseek_model(settings: ActiveModelSettings) -> Model:
+def _build_deepseek_model(
+    settings: ActiveModelSettings,
+    /,
+    *,
+    http_client: httpx.Client | None = None,
+    http_async_client: httpx.AsyncClient | None = None,
+) -> ManagedModel:
     from agno.models.deepseek import DeepSeek
 
-    api_key = _api_key(settings)
-    return DeepSeek(
-        id=settings.model_id,
-        retries=0,
-        api_key=api_key,
-        organization="",
-        base_url=settings.base_url or _DEEPSEEK_BASE_URL,
-        timeout=settings.timeout_seconds,
-        max_retries=0,
-        default_headers=_openai_default_headers(api_key),
-        client_params=_openai_client_params(),
+    return _openai_compatible_managed_model(
+        settings,
+        model_type=DeepSeek,
+        default_base_url=_DEEPSEEK_BASE_URL,
+        http_client=http_client,
+        http_async_client=http_async_client,
     )
 
 
-def _build_minimax_model(settings: ActiveModelSettings) -> Model:
+def _build_minimax_model(
+    settings: ActiveModelSettings,
+    /,
+    *,
+    http_client: httpx.Client | None = None,
+    http_async_client: httpx.AsyncClient | None = None,
+) -> ManagedModel:
     from agno.models.minimax import MiniMax
 
-    api_key = _api_key(settings)
-    return MiniMax(
-        id=settings.model_id,
-        retries=0,
-        api_key=api_key,
-        organization="",
-        base_url=settings.base_url or _MINIMAX_BASE_URL,
-        timeout=settings.timeout_seconds,
-        max_retries=0,
-        default_headers=_openai_default_headers(api_key),
-        client_params=_openai_client_params(),
+    return _openai_compatible_managed_model(
+        settings,
+        model_type=MiniMax,
+        default_base_url=_MINIMAX_BASE_URL,
+        http_client=http_client,
+        http_async_client=http_async_client,
     )
 
 
@@ -208,6 +417,20 @@ _MODEL_FACTORIES: Final[Mapping[ModelProvider, ModelFactory]] = MappingProxyType
 )
 
 
+def build_managed_model(
+    settings: ActiveModelSettings,
+    *,
+    http_client: httpx.Client | None = None,
+    http_async_client: httpx.AsyncClient | None = None,
+) -> ManagedModel:
+    """Build only the explicitly selected native Agno model and its owners."""
+    return _MODEL_FACTORIES[settings.provider](
+        settings,
+        http_client=http_client,
+        http_async_client=http_async_client,
+    )
+
+
 def build_model(settings: ActiveModelSettings) -> Model:
-    """Build only the explicitly selected native Agno model."""
-    return _MODEL_FACTORIES[settings.provider](settings)
+    """Compatibility wrapper for current catalog and smoke callers."""
+    return build_managed_model(settings).model

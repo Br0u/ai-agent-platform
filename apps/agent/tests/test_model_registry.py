@@ -16,6 +16,7 @@ import pytest
 from agent_service.config import ActiveModelSettings, ModelProvider, RuntimeSettings
 import agent_service.model_registry as model_registry
 from agent_service.model_registry import ModelFactory
+from agent_service.model_runtime_types import ManagedModel
 
 
 EXPLICIT_API_KEY = "explicit-model-api-key"
@@ -505,12 +506,29 @@ def test_build_model_calls_only_selected_factory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[ModelProvider] = []
-    selected_model = cast(Model, object())
+    selected_model = import_module("agno.models.openai").OpenAIResponses(
+        id="selected-model",
+        api_key="selected-test-key",
+    )
 
     def factory_for(provider: ModelProvider) -> ModelFactory:
-        def factory(settings: ActiveModelSettings, /) -> Model:
+        def factory(
+            settings: ActiveModelSettings,
+            /,
+            *,
+            http_client: httpx.Client | None = None,
+            http_async_client: httpx.AsyncClient | None = None,
+        ) -> ManagedModel:
+            del settings, http_client, http_async_client
             calls.append(provider)
-            return selected_model
+
+            async def close_callback() -> None:
+                return None
+
+            return ManagedModel(
+                model=selected_model,
+                close_callback=close_callback,
+            )
 
         return factory
 
@@ -582,3 +600,217 @@ def test_google_client_allows_exactly_one_attempt() -> None:
 
     assert model.retries == 0
     assert client._api_client._http_options.retry_options.attempts == 1
+
+
+@pytest.mark.parametrize(
+    ("provider", "expected_base_url"),
+    (
+        ("openai", CUSTOM_BASE_URL),
+        ("dashscope", CUSTOM_BASE_URL),
+        ("deepseek", CUSTOM_BASE_URL),
+        ("minimax", CUSTOM_BASE_URL),
+    ),
+)
+def test_openai_compatible_managed_model_locks_approved_url_and_http_clients(
+    provider: ModelProvider,
+    expected_base_url: str,
+) -> None:
+    sync_client = httpx.Client(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(204)),
+        follow_redirects=False,
+    )
+    async_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(204)),
+        follow_redirects=False,
+    )
+    managed = model_registry.build_managed_model(
+        make_settings(provider, base_url=expected_base_url),
+        http_client=sync_client,
+        http_async_client=async_client,
+    )
+
+    assert isinstance(managed, ManagedModel)
+    assert normalized_base_url(get_client(managed.model)) == expected_base_url
+    assert normalized_base_url(
+        getattr(managed.model, "get_async_client")()
+    ) == expected_base_url
+    assert sync_client.follow_redirects is False
+    assert async_client.follow_redirects is False
+
+    asyncio.run(managed.aclose())
+    assert not sync_client.is_closed
+    assert not async_client.is_closed
+    sync_client.close()
+    asyncio.run(async_client.aclose())
+
+
+def test_anthropic_managed_model_uses_approved_base_url_and_injected_clients() -> None:
+    sync_client = httpx.Client(follow_redirects=False)
+    async_client = httpx.AsyncClient(follow_redirects=False)
+    managed = model_registry.build_managed_model(
+        make_settings("anthropic", base_url=CUSTOM_BASE_URL),
+        http_client=sync_client,
+        http_async_client=async_client,
+    )
+
+    assert normalized_base_url(get_client(managed.model)) == CUSTOM_BASE_URL
+    assert normalized_base_url(
+        getattr(managed.model, "get_async_client")()
+    ) == CUSTOM_BASE_URL
+
+    asyncio.run(managed.aclose())
+    assert not sync_client.is_closed
+    assert not async_client.is_closed
+    sync_client.close()
+    asyncio.run(async_client.aclose())
+
+
+def test_google_managed_model_locks_http_options_url_and_both_clients() -> None:
+    sync_client = httpx.Client(follow_redirects=False)
+    async_client = httpx.AsyncClient(follow_redirects=False)
+    managed = model_registry.build_managed_model(
+        make_settings("google", base_url=CUSTOM_BASE_URL),
+        http_client=sync_client,
+        http_async_client=async_client,
+    )
+
+    client = get_client(managed.model)
+    http_options = client._api_client._http_options
+    assert str(http_options.base_url).rstrip("/") == CUSTOM_BASE_URL
+    assert http_options.httpx_client is sync_client
+    assert http_options.httpx_async_client is async_client
+    assert http_options.retry_options.attempts == 1
+
+    asyncio.run(managed.aclose())
+    assert not sync_client.is_closed
+    assert not async_client.is_closed
+    sync_client.close()
+    asyncio.run(async_client.aclose())
+
+
+def test_managed_model_closes_every_owned_openai_client_exactly_once() -> None:
+    managed = model_registry.build_managed_model(make_settings("openai"))
+    sync_sdk_client = get_client(managed.model)
+    async_sdk_client = getattr(managed.model, "get_async_client")()
+
+    assert not sync_sdk_client.is_closed()
+    assert not async_sdk_client.is_closed()
+    asyncio.run(managed.aclose())
+    asyncio.run(managed.aclose())
+
+    assert sync_sdk_client.is_closed()
+    assert async_sdk_client.is_closed()
+
+
+def test_openai_redirect_is_not_followed_and_surfaces_only_fixed_failure() -> None:
+    requests: list[httpx.Request] = []
+    redirect_target = "http://127.0.0.1/provider-secret"
+    response_secret = "provider-secret-response"
+
+    def redirect(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            307,
+            headers={"location": redirect_target},
+            text=response_secret,
+        )
+
+    sync_client = httpx.Client(
+        transport=httpx.MockTransport(redirect),
+        follow_redirects=False,
+    )
+    async_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(redirect),
+        follow_redirects=False,
+    )
+    managed = model_registry.build_managed_model(
+        make_settings("openai", base_url=CUSTOM_BASE_URL),
+        http_client=sync_client,
+        http_async_client=async_client,
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        get_client(managed.model).responses.create(model=MODEL_ID, input="ping")
+
+    error_text = f"{exc_info.value!r} {exc_info.value}"
+    assert len(requests) == 1
+    assert redirect_target not in error_text
+    assert response_secret not in error_text
+    assert error_text in {
+        "APIConnectionError('Connection error.') Connection error.",
+        "ProviderRequestError('provider request failed') provider request failed",
+    }
+
+    asyncio.run(managed.aclose())
+    sync_client.close()
+    asyncio.run(async_client.aclose())
+
+
+def test_google_redirect_is_not_followed_and_surfaces_fixed_provider_failure() -> None:
+    requests: list[httpx.Request] = []
+    redirect_target = "http://[::1]/provider-secret"
+    response_secret = "provider-secret-response"
+
+    def redirect(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            307,
+            headers={"location": redirect_target},
+            text=response_secret,
+        )
+
+    sync_client = httpx.Client(
+        transport=httpx.MockTransport(redirect),
+        follow_redirects=False,
+    )
+    async_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(redirect),
+        follow_redirects=False,
+    )
+    managed = model_registry.build_managed_model(
+        make_settings("google", base_url=CUSTOM_BASE_URL),
+        http_client=sync_client,
+        http_async_client=async_client,
+    )
+
+    with pytest.raises(
+        model_registry.ProviderRequestError,
+        match="^provider request failed$",
+    ) as exc_info:
+        get_client(managed.model).models.generate_content(
+            model=MODEL_ID,
+            contents="ping",
+        )
+
+    error_text = f"{exc_info.value!r} {exc_info.value}"
+    assert len(requests) == 1
+    assert redirect_target not in error_text
+    assert response_secret not in error_text
+
+    asyncio.run(managed.aclose())
+    sync_client.close()
+    asyncio.run(async_client.aclose())
+
+
+def test_build_model_is_a_compatibility_wrapper_for_managed_builder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selected_model = import_module("agno.models.openai").OpenAIResponses(
+        id="compatibility-model",
+        api_key="compatibility-test-key",
+    )
+    calls: list[ActiveModelSettings] = []
+
+    def build_managed(settings: ActiveModelSettings) -> ManagedModel:
+        calls.append(settings)
+
+        async def close_callback() -> None:
+            return None
+
+        return ManagedModel(model=selected_model, close_callback=close_callback)
+
+    monkeypatch.setattr(model_registry, "build_managed_model", build_managed)
+    settings = make_settings("openai")
+
+    assert model_registry.build_model(settings) is selected_model
+    assert calls == [settings]
