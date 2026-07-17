@@ -11,17 +11,23 @@ from agent_service.config import ControlMigrationSettings
 from agent_service.model_config_schema import (
     EXPECTED_FUNCTION_BOUNDARY,
     EXPECTED_RUNTIME_GRANTS,
+    EXPECTED_SCHEMA_GRANTS,
+    EXPECTED_SCHEMA_VERSION_COLUMNS,
+    EXPECTED_SCHEMA_VERSION_CONSTRAINTS,
     EXPECTED_TABLE_OWNERS,
     EXPECTED_TRIGGER_BOUNDARY,
     PREPARE_SCHEMA_SQL,
     SCHEMA_VERSION_1_SQL,
     SELECT_SCHEMA_VERSION_SQL,
+    VERIFY_COLUMN_GRANTS_SQL,
     VERIFY_FORBIDDEN_TABLE_GRANTS_SQL,
     VERIFY_FUNCTION_BOUNDARY_SQL,
     VERIFY_PUBLIC_FUNCTION_GRANTS_SQL,
     VERIFY_RUNTIME_GRANTS_SQL,
     VERIFY_SCHEMA_OWNER_SQL,
     VERIFY_SCHEMA_PRIVILEGES_SQL,
+    VERIFY_SCHEMA_VERSION_COLUMNS_SQL,
+    VERIFY_SCHEMA_VERSION_CONSTRAINTS_SQL,
     VERIFY_TABLES_SQL,
     VERIFY_TRIGGER_BOUNDARY_SQL,
 )
@@ -71,10 +77,38 @@ async def _verify_migration(cursor: MigrationCursor) -> None:
     if actual_table_owners != EXPECTED_TABLE_OWNERS:
         raise RuntimeError("Agent control migration verification failed")
 
+    await cursor.execute(VERIFY_SCHEMA_VERSION_COLUMNS_SQL)
+    column_rows = await cursor.fetchall()
+    actual_schema_version_columns = tuple(
+        (str(row[0]), str(row[1]), row[2], str(row[3])) for row in column_rows
+    )
+    if actual_schema_version_columns != EXPECTED_SCHEMA_VERSION_COLUMNS:
+        raise RuntimeError("Agent control migration verification failed")
+
+    await cursor.execute(VERIFY_SCHEMA_VERSION_CONSTRAINTS_SQL)
+    constraint_rows = await cursor.fetchall()
+    actual_schema_version_constraints = tuple(
+        (str(row[0]), str(row[1]), row[2], row[3], row[4]) for row in constraint_rows
+    )
+    if actual_schema_version_constraints != EXPECTED_SCHEMA_VERSION_CONSTRAINTS:
+        raise RuntimeError("Agent control migration verification failed")
+
     await cursor.execute(VERIFY_FUNCTION_BOUNDARY_SQL)
     function_rows = await cursor.fetchall()
     actual_function_boundary = {
-        (str(row[0]), int(row[1]), str(row[2]), str(row[3])) for row in function_rows
+        (
+            str(row[0]),
+            int(row[1]),
+            str(row[2]),
+            str(row[3]),
+            str(row[4]),
+            str(row[5]),
+            row[6],
+            row[7],
+            row[8],
+            str(row[9]),
+        )
+        for row in function_rows
     }
     if actual_function_boundary != EXPECTED_FUNCTION_BOUNDARY:
         raise RuntimeError("Agent control migration verification failed")
@@ -82,7 +116,20 @@ async def _verify_migration(cursor: MigrationCursor) -> None:
     await cursor.execute(VERIFY_TRIGGER_BOUNDARY_SQL)
     trigger_rows = await cursor.fetchall()
     actual_trigger_boundary = {
-        tuple(str(value) for value in row) for row in trigger_rows
+        (
+            str(row[0]),
+            str(row[1]),
+            str(row[2]),
+            str(row[3]),
+            str(row[4]),
+            str(row[5]),
+            str(row[6]),
+            int(row[7]),
+            int(row[8]),
+            str(row[9]),
+            row[10],
+        )
+        for row in trigger_rows
     }
     if actual_trigger_boundary != EXPECTED_TRIGGER_BOUNDARY:
         raise RuntimeError("Agent control migration verification failed")
@@ -97,13 +144,18 @@ async def _verify_migration(cursor: MigrationCursor) -> None:
     if await cursor.fetchall():
         raise RuntimeError("Agent control migration verification failed")
 
+    await cursor.execute(VERIFY_COLUMN_GRANTS_SQL)
+    if await cursor.fetchall():
+        raise RuntimeError("Agent control migration verification failed")
+
     await cursor.execute(VERIFY_PUBLIC_FUNCTION_GRANTS_SQL)
     if await cursor.fetchall():
         raise RuntimeError("Agent control migration verification failed")
 
     await cursor.execute(VERIFY_SCHEMA_PRIVILEGES_SQL)
-    schema_privileges = await cursor.fetchone()
-    if schema_privileges != (True, False):
+    schema_rows = await cursor.fetchall()
+    actual_schema_grants = {(str(row[0]), str(row[1]), row[2]) for row in schema_rows}
+    if actual_schema_grants != EXPECTED_SCHEMA_GRANTS:
         raise RuntimeError("Agent control migration verification failed")
 
 

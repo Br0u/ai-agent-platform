@@ -53,6 +53,173 @@ EXPECTED_RUNTIME_GRANTS_WITH_OPTIONS = frozenset(
         ("model_configs", "UPDATE", False),
     }
 )
+EXPECTED_FUNCTION_SOURCE = (
+    "BEGIN IF NEW.id IS DISTINCT FROM OLD.id "
+    "OR NEW.provider IS DISTINCT FROM OLD.provider "
+    "OR NEW.model_id IS DISTINCT FROM OLD.model_id "
+    "OR NEW.endpoint_id IS DISTINCT FROM OLD.endpoint_id "
+    "OR NEW.api_key_ciphertext IS DISTINCT FROM OLD.api_key_ciphertext "
+    "OR NEW.api_key_nonce IS DISTINCT FROM OLD.api_key_nonce "
+    "OR NEW.api_key_last_four IS DISTINCT FROM OLD.api_key_last_four "
+    "OR NEW.encryption_key_version IS DISTINCT FROM OLD.encryption_key_version "
+    "OR NEW.revision IS DISTINCT FROM OLD.revision "
+    "OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN "
+    "RAISE EXCEPTION 'model config revision fields are immutable' "
+    "USING ERRCODE = '42501'; END IF; "
+    "IF OLD.is_current = false AND NEW.is_current = true THEN "
+    "RAISE EXCEPTION 'retired model config revisions cannot become current' "
+    "USING ERRCODE = '42501'; END IF; RETURN NEW; END;"
+)
+EXPECTED_FUNCTION_DEFINITION = frozenset(
+    {
+        (
+            "guard_model_config_update",
+            0,
+            "ai_agent_control_migrator",
+            "trigger",
+            "plpgsql",
+            "f",
+            False,
+            False,
+            True,
+            EXPECTED_FUNCTION_SOURCE,
+        )
+    }
+)
+EXPECTED_TRIGGER_DEFINITION = frozenset(
+    {
+        (
+            "model_configs_guard_update",
+            "model_configs",
+            "agent_control",
+            "guard_model_config_update",
+            "ai_agent_control_migrator",
+            "ai_agent_control_migrator",
+            "O",
+            19,
+            0,
+            "",
+            True,
+        )
+    }
+)
+EXPECTED_SCHEMA_GRANTS = frozenset(
+    {
+        ("ai_agent_control", "USAGE", False),
+        ("ai_agent_control_migrator", "CREATE", False),
+        ("ai_agent_control_migrator", "USAGE", False),
+    }
+)
+EXPECTED_SCHEMA_VERSION_COLUMNS = [
+    ("version", "smallint", True, ""),
+    ("applied_at", "timestamp with time zone", True, "now()"),
+]
+EXPECTED_SCHEMA_VERSION_CONSTRAINTS = [
+    ("c", "CHECK (version >= 1)", False, False, True),
+    ("p", "PRIMARY KEY (version)", False, False, True),
+]
+EXPECTED_VERIFY_FUNCTION_DEFINITION_SQL = """SELECT
+  p.proname::text,
+  p.pronargs::integer,
+  pg_get_userbyid(p.proowner)::text,
+  p.prorettype::regtype::text,
+  l.lanname::text,
+  p.prokind::text,
+  p.prosecdef,
+  p.proretset,
+  p.proconfig IS NULL,
+  regexp_replace(btrim(p.prosrc), '[[:space:]]+', ' ', 'g')
+FROM pg_proc AS p
+JOIN pg_namespace AS n ON n.oid = p.pronamespace
+JOIN pg_language AS l ON l.oid = p.prolang
+WHERE n.nspname = 'agent_control'
+ORDER BY p.proname, p.pronargs
+"""
+EXPECTED_VERIFY_TRIGGER_DEFINITION_SQL = """SELECT
+  t.tgname::text,
+  table_class.relname::text,
+  function_schema.nspname::text,
+  trigger_function.proname::text,
+  pg_get_userbyid(table_class.relowner)::text,
+  pg_get_userbyid(trigger_function.proowner)::text,
+  t.tgenabled::text,
+  t.tgtype::integer,
+  t.tgnargs::integer,
+  t.tgattr::text,
+  t.tgqual IS NULL
+FROM pg_trigger AS t
+JOIN pg_class AS table_class ON table_class.oid = t.tgrelid
+JOIN pg_namespace AS table_schema ON table_schema.oid = table_class.relnamespace
+JOIN pg_proc AS trigger_function ON trigger_function.oid = t.tgfoid
+JOIN pg_namespace AS function_schema
+  ON function_schema.oid = trigger_function.pronamespace
+WHERE table_schema.nspname = 'agent_control'
+  AND NOT t.tgisinternal
+ORDER BY t.tgname
+"""
+EXPECTED_VERIFY_COLUMN_GRANTS_SQL = """SELECT
+  c.relname::text,
+  a.attname::text,
+  CASE
+    WHEN acl.grantee = 0 THEN 'PUBLIC'
+    ELSE pg_get_userbyid(acl.grantee)::text
+  END,
+  acl.privilege_type::text,
+  acl.is_grantable
+FROM pg_attribute AS a
+JOIN pg_class AS c ON c.oid = a.attrelid
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+CROSS JOIN LATERAL aclexplode(a.attacl) AS acl
+WHERE n.nspname = 'agent_control'
+  AND c.relkind IN ('r', 'p')
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+ORDER BY c.relname, a.attnum, 3, acl.privilege_type
+"""
+EXPECTED_VERIFY_SCHEMA_ACL_SQL = """SELECT
+  CASE
+    WHEN acl.grantee = 0 THEN 'PUBLIC'
+    ELSE pg_get_userbyid(acl.grantee)::text
+  END,
+  acl.privilege_type::text,
+  acl.is_grantable
+FROM pg_namespace AS n
+CROSS JOIN LATERAL aclexplode(
+  COALESCE(n.nspacl, acldefault('n', n.nspowner))
+) AS acl
+WHERE n.nspname = 'agent_control'
+ORDER BY 1, acl.privilege_type
+"""
+EXPECTED_VERIFY_SCHEMA_VERSION_COLUMNS_SQL = """SELECT
+  a.attname::text,
+  format_type(a.atttypid, a.atttypmod)::text,
+  a.attnotnull,
+  COALESCE(pg_get_expr(d.adbin, d.adrelid), '')::text
+FROM pg_class AS c
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+JOIN pg_attribute AS a ON a.attrelid = c.oid
+LEFT JOIN pg_attrdef AS d
+  ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+WHERE n.nspname = 'agent_control'
+  AND c.relname = 'schema_versions'
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+ORDER BY a.attnum
+"""
+EXPECTED_VERIFY_SCHEMA_VERSION_CONSTRAINTS_SQL = """SELECT
+  con.contype::text,
+  pg_get_constraintdef(con.oid, true)::text,
+  con.condeferrable,
+  con.condeferred,
+  con.convalidated
+FROM pg_constraint AS con
+JOIN pg_class AS c ON c.oid = con.conrelid
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+WHERE n.nspname = 'agent_control'
+  AND c.relname = 'schema_versions'
+  AND con.contype IN ('c', 'p')
+ORDER BY con.contype, pg_get_constraintdef(con.oid, true)
+"""
 
 
 def normalize_sql(value: str) -> str:
@@ -121,6 +288,7 @@ def test_schema_versioning_is_literal_idempotent_and_marks_version_one() -> None
     assert "ALTER SCHEMA" not in prepare
     assert "ALTER TABLE agent_control.schema_versions" not in prepare
     assert "REVOKE ALL ON TABLE agent_control.schema_versions" not in prepare
+    assert "REVOKE ALL ON SCHEMA" not in prepare
     assert "CREATE TABLE IF NOT EXISTS agent_control.schema_versions" in prepare
     assert "PRIMARY KEY" in prepare
     assert (
@@ -151,6 +319,7 @@ def test_model_config_update_trigger_enforces_append_only_revisions() -> None:
         assert f"NEW.{immutable_column} IS DISTINCT FROM OLD.{immutable_column}" in sql
     assert "OLD.is_current = false AND NEW.is_current = true" in sql
     assert "ERRCODE = '42501'" in sql
+    assert "RETURN NEW; END; $$;" in sql
 
 
 def test_schema_sql_has_exact_runtime_grants_and_no_broad_privileges() -> None:
@@ -363,10 +532,43 @@ class FakeCursor:
                 rows.remove(("model_configs", "ai_agent_control_migrator"))
                 rows.add(("model_configs", "postgres"))
             return sorted(rows)
+        if self.current_query == EXPECTED_VERIFY_SCHEMA_VERSION_COLUMNS_SQL:
+            if self.security_drift == "schema_version_columns":
+                return [("version", "smallint", True, "")]
+            return list(EXPECTED_SCHEMA_VERSION_COLUMNS)
+        if self.current_query == EXPECTED_VERIFY_SCHEMA_VERSION_CONSTRAINTS_SQL:
+            rows = list(EXPECTED_SCHEMA_VERSION_CONSTRAINTS)
+            if self.security_drift == "schema_version_constraint_missing":
+                return rows[1:]
+            if self.security_drift == "schema_version_constraint_duplicate":
+                return [rows[0], rows[0], rows[1]]
+            return rows
+        if self.current_query == EXPECTED_VERIFY_FUNCTION_DEFINITION_SQL:
+            rows = set(EXPECTED_FUNCTION_DEFINITION)
+            if self.security_drift == "function_owner":
+                row = next(iter(rows))
+                rows = {(*row[:2], "postgres", *row[3:])}
+            if self.security_drift == "function_body":
+                row = next(iter(rows))
+                rows = {(*row[:-1], "BEGIN RETURN NEW; END;")}
+            if self.security_drift == "function_security_definer":
+                row = next(iter(rows))
+                rows = {(*row[:6], True, *row[7:])}
+            return sorted(rows)
         if self.current_query == VERIFY_FUNCTION_BOUNDARY_SQL:
             rows = set(EXPECTED_FUNCTION_BOUNDARY)
             if self.security_drift == "function_owner":
                 rows = {("guard_model_config_update", 0, "postgres", "trigger")}
+            return sorted(rows)
+        if self.current_query == EXPECTED_VERIFY_TRIGGER_DEFINITION_SQL:
+            rows = set(EXPECTED_TRIGGER_DEFINITION)
+            row = next(iter(rows))
+            if self.security_drift == "trigger_binding":
+                rows = {(row[0], "control_events", *row[2:])}
+            if self.security_drift == "trigger_disabled":
+                rows = {(*row[:6], "D", *row[7:])}
+            if self.security_drift == "trigger_shape":
+                rows = {(*row[:7], 17, *row[8:])}
             return sorted(rows)
         if self.current_query == VERIFY_TRIGGER_BOUNDARY_SQL:
             rows = set(EXPECTED_TRIGGER_BOUNDARY)
@@ -392,10 +594,30 @@ class FakeCursor:
             if self.security_drift == "forbidden_table_grant":
                 return [("model_configs", "PUBLIC", "SELECT", False)]
             return []
+        if self.current_query == EXPECTED_VERIFY_COLUMN_GRANTS_SQL:
+            if self.security_drift == "column_grant":
+                return [
+                    (
+                        "control_events",
+                        "result",
+                        "ai_agent_control",
+                        "UPDATE",
+                        False,
+                    )
+                ]
+            return []
         if self.current_query == VERIFY_PUBLIC_FUNCTION_GRANTS_SQL:
             if self.security_drift == "public_function_execute":
                 return [("guard_model_config_update", "EXECUTE", False)]
             return []
+        if self.current_query == EXPECTED_VERIFY_SCHEMA_ACL_SQL:
+            rows = set(EXPECTED_SCHEMA_GRANTS)
+            if self.security_drift == "schema_public_grant":
+                rows.add(("PUBLIC", "USAGE", False))
+            if self.security_drift == "schema_grant_option":
+                rows.remove(("ai_agent_control", "USAGE", False))
+                rows.add(("ai_agent_control", "USAGE", True))
+            return sorted(rows)
         raise AssertionError(f"unexpected fetchall query: {self.current_query}")
 
 
@@ -446,12 +668,15 @@ async def test_run_migration_applies_version_one_and_verifies_boundary_in_one_tr
         SELECT_SCHEMA_VERSION_SQL,
         SCHEMA_VERSION_1_SQL,
         VERIFY_TABLES_SQL,
-        VERIFY_FUNCTION_BOUNDARY_SQL,
-        VERIFY_TRIGGER_BOUNDARY_SQL,
+        EXPECTED_VERIFY_SCHEMA_VERSION_COLUMNS_SQL,
+        EXPECTED_VERIFY_SCHEMA_VERSION_CONSTRAINTS_SQL,
+        EXPECTED_VERIFY_FUNCTION_DEFINITION_SQL,
+        EXPECTED_VERIFY_TRIGGER_DEFINITION_SQL,
         VERIFY_RUNTIME_GRANTS_SQL,
         VERIFY_FORBIDDEN_TABLE_GRANTS_SQL,
+        EXPECTED_VERIFY_COLUMN_GRANTS_SQL,
         VERIFY_PUBLIC_FUNCTION_GRANTS_SQL,
-        VERIFY_SCHEMA_PRIVILEGES_SQL,
+        EXPECTED_VERIFY_SCHEMA_ACL_SQL,
     ]
 
 
@@ -469,14 +694,17 @@ async def test_run_migration_skips_applied_version_but_reverifies_boundary() -> 
     await run_migration(settings, connector=connector)
 
     assert SCHEMA_VERSION_1_SQL not in cursor.queries
-    assert cursor.queries[-7:] == [
+    assert cursor.queries[-10:] == [
         VERIFY_TABLES_SQL,
-        VERIFY_FUNCTION_BOUNDARY_SQL,
-        VERIFY_TRIGGER_BOUNDARY_SQL,
+        EXPECTED_VERIFY_SCHEMA_VERSION_COLUMNS_SQL,
+        EXPECTED_VERIFY_SCHEMA_VERSION_CONSTRAINTS_SQL,
+        EXPECTED_VERIFY_FUNCTION_DEFINITION_SQL,
+        EXPECTED_VERIFY_TRIGGER_DEFINITION_SQL,
         VERIFY_RUNTIME_GRANTS_SQL,
         VERIFY_FORBIDDEN_TABLE_GRANTS_SQL,
+        EXPECTED_VERIFY_COLUMN_GRANTS_SQL,
         VERIFY_PUBLIC_FUNCTION_GRANTS_SQL,
-        VERIFY_SCHEMA_PRIVILEGES_SQL,
+        EXPECTED_VERIFY_SCHEMA_ACL_SQL,
     ]
 
 
@@ -490,6 +718,16 @@ async def test_run_migration_skips_applied_version_but_reverifies_boundary() -> 
         "runtime_grant_option",
         "forbidden_table_grant",
         "public_function_execute",
+        "function_body",
+        "function_security_definer",
+        "trigger_disabled",
+        "trigger_shape",
+        "column_grant",
+        "schema_public_grant",
+        "schema_grant_option",
+        "schema_version_columns",
+        "schema_version_constraint_missing",
+        "schema_version_constraint_duplicate",
     ],
 )
 async def test_applied_migration_fails_closed_on_security_boundary_drift(
