@@ -61,19 +61,115 @@ describePostgres("PostgreSQL access-control seed", () => {
         (SELECT count(*)::text FROM role_permissions) AS grants`,
     );
     expect(counts.rows).toEqual([
-      { roles: "7", permissions: "18", grants: "46" },
+      { roles: "7", permissions: "20", grants: "48" },
     ]);
 
-    const assistantGrants = await pool.query<{ name: string }>(
-      `SELECT r.name FROM roles r
-       JOIN role_permissions rp ON rp.role_id = r.id
-       JOIN permissions p ON p.id = rp.permission_id
-       WHERE p.key = 'admin:assistant'
+    const modelPermissions = await pool.query<{
+      description: string;
+      key: string;
+      name: string;
+    }>(
+      `SELECT key, name, description FROM permissions
+       WHERE key IN (
+         'admin:assistant:configure',
+         'admin:assistant:secret:reveal'
+       )
+       ORDER BY key`,
+    );
+    expect(modelPermissions.rows).toEqual([
+      {
+        key: "admin:assistant:configure",
+        name: "配置 AI 助理模型",
+        description: "保存、替换 Key、测试和启用 AI 助理模型配置",
+      },
+      {
+        key: "admin:assistant:secret:reveal",
+        name: "查看 AI 助理模型密钥",
+        description: "查看已保存的 AI 助理模型 Key",
+      },
+    ]);
+
+    const workforceGrants = await pool.query<{
+      name: string;
+      permissionKeys: string[];
+    }>(
+      `SELECT r.name,
+              COALESCE(
+                array_agg(p.key ORDER BY p.key) FILTER (WHERE p.key IS NOT NULL),
+                ARRAY[]::text[]
+              ) AS "permissionKeys"
+       FROM roles r
+       LEFT JOIN role_permissions rp ON rp.role_id = r.id
+       LEFT JOIN permissions p ON p.id = rp.permission_id
+       WHERE r.realm_scope = 'workforce'
+       GROUP BY r.name
        ORDER BY r.name`,
     );
-    expect(assistantGrants.rows).toEqual([
-      { name: "admin" },
-      { name: "super_admin" },
+    expect(workforceGrants.rows).toEqual([
+      {
+        name: "admin",
+        permissionKeys: [
+          "admin:analytics",
+          "admin:assistant",
+          "admin:audit",
+          "admin:blog",
+          "admin:cases",
+          "admin:compatibility",
+          "admin:docs",
+          "admin:faq",
+          "admin:marketplace",
+          "admin:navigation",
+          "admin:products",
+          "admin:registrations",
+          "admin:releases",
+          "admin:roles",
+          "admin:site",
+          "admin:users",
+        ],
+      },
+      {
+        name: "content_operator",
+        permissionKeys: [
+          "admin:blog",
+          "admin:cases",
+          "admin:compatibility",
+          "admin:docs",
+          "admin:faq",
+          "admin:marketplace",
+          "admin:navigation",
+          "admin:products",
+          "admin:releases",
+          "admin:site",
+        ],
+      },
+      { name: "employee", permissionKeys: [] },
+      {
+        name: "super_admin",
+        permissionKeys: [
+          "admin:analytics",
+          "admin:assistant",
+          "admin:assistant:configure",
+          "admin:assistant:secret:reveal",
+          "admin:audit",
+          "admin:blog",
+          "admin:cases",
+          "admin:compatibility",
+          "admin:docs",
+          "admin:faq",
+          "admin:marketplace",
+          "admin:navigation",
+          "admin:products",
+          "admin:registrations",
+          "admin:releases",
+          "admin:roles",
+          "admin:site",
+          "admin:users",
+        ],
+      },
+      {
+        name: "support_operator",
+        permissionKeys: ["admin:registrations"],
+      },
     ]);
   });
 

@@ -37,6 +37,19 @@ const USER_CHANGES = [
   "role_changed",
   "permissions_changed",
 ] as const;
+const ASSISTANT_MODEL_PROVIDERS = [
+  "openai",
+  "anthropic",
+  "google",
+  "dashscope",
+  "deepseek",
+  "minimax",
+] as const;
+const ASSISTANT_MODEL_AUDIT_RESULTS = [
+  "requested",
+  "success",
+  "failure",
+] as const;
 const TARGET_TYPES = [
   "user",
   "session",
@@ -45,6 +58,7 @@ const TARGET_TYPES = [
   "role",
   "permission",
   "system",
+  "assistant_model_config",
 ] as const;
 
 type LoginMethod = (typeof LOGIN_METHODS)[number];
@@ -59,6 +73,14 @@ type SimpleUserChange = Exclude<
   UserChange,
   "role_added" | "role_removed" | "role_changed"
 >;
+export type AssistantModelAuditMetadata = {
+  provider: (typeof ASSISTANT_MODEL_PROVIDERS)[number];
+  modelId: string;
+  endpointId: string;
+  revision: number;
+  requestId: string;
+  result: (typeof ASSISTANT_MODEL_AUDIT_RESULTS)[number];
+};
 export type AuditTargetType = (typeof TARGET_TYPES)[number];
 
 export type AuditMetadataByEvent = {
@@ -88,6 +110,14 @@ export type AuditMetadataByEvent = {
         toRole: WorkforceRoleName;
       };
   "bootstrap.super_admin_created": Record<never, never>;
+  "assistant.model_config_save_requested": AssistantModelAuditMetadata;
+  "assistant.model_config_saved": AssistantModelAuditMetadata;
+  "assistant.model_config_test_requested": AssistantModelAuditMetadata;
+  "assistant.model_config_tested": AssistantModelAuditMetadata;
+  "assistant.model_config_activation_requested": AssistantModelAuditMetadata;
+  "assistant.model_config_activated": AssistantModelAuditMetadata;
+  "assistant.model_key_reveal_requested": AssistantModelAuditMetadata;
+  "assistant.model_key_revealed": AssistantModelAuditMetadata;
 };
 
 export type AuditEvent = keyof AuditMetadataByEvent;
@@ -262,6 +292,38 @@ function workforceUserUpdatedMetadata(value: unknown): SanitizedMetadata {
   };
 }
 
+function assistantModelAuditMetadata(value: unknown): SanitizedMetadata {
+  const metadata = assertExactKeys(
+    value,
+    ["provider", "modelId", "endpointId", "revision", "requestId", "result"],
+    "metadata",
+  );
+  const revision = metadata.revision;
+  if (
+    typeof revision !== "number" ||
+    !Number.isSafeInteger(revision) ||
+    revision < 0
+  ) {
+    throw new AuditInputError("metadata.revision");
+  }
+  return {
+    provider: enumValue(
+      metadata.provider,
+      ASSISTANT_MODEL_PROVIDERS,
+      "metadata.provider",
+    ),
+    modelId: boundedString(metadata.modelId, "metadata.modelId", 128),
+    endpointId: boundedString(metadata.endpointId, "metadata.endpointId", 64),
+    revision,
+    requestId: boundedString(metadata.requestId, "metadata.requestId", 128),
+    result: enumValue(
+      metadata.result,
+      ASSISTANT_MODEL_AUDIT_RESULTS,
+      "metadata.result",
+    ),
+  };
+}
+
 type AuditMetadataSchema = (value: unknown) => SanitizedMetadata;
 
 export const AUDIT_EVENT_SCHEMAS: Readonly<
@@ -290,6 +352,14 @@ export const AUDIT_EVENT_SCHEMAS: Readonly<
     enumMetadata(value, "initialRole", WORKFORCE_ROLE_NAMES),
   "workforce.user_updated": workforceUserUpdatedMetadata,
   "bootstrap.super_admin_created": emptyMetadata,
+  "assistant.model_config_save_requested": assistantModelAuditMetadata,
+  "assistant.model_config_saved": assistantModelAuditMetadata,
+  "assistant.model_config_test_requested": assistantModelAuditMetadata,
+  "assistant.model_config_tested": assistantModelAuditMetadata,
+  "assistant.model_config_activation_requested": assistantModelAuditMetadata,
+  "assistant.model_config_activated": assistantModelAuditMetadata,
+  "assistant.model_key_reveal_requested": assistantModelAuditMetadata,
+  "assistant.model_key_revealed": assistantModelAuditMetadata,
 });
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/u;
