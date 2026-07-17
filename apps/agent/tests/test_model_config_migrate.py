@@ -128,7 +128,7 @@ EXPECTED_VERIFY_FUNCTION_DEFINITION_SQL = """SELECT
   p.prosecdef,
   p.proretset,
   p.proconfig IS NULL,
-  regexp_replace(btrim(p.prosrc), '[[:space:]]+', ' ', 'g')
+  btrim(regexp_replace(p.prosrc, '[[:space:]]+', ' ', 'g'))
 FROM pg_proc AS p
 JOIN pg_namespace AS n ON n.oid = p.pronamespace
 JOIN pg_language AS l ON l.oid = p.prolang
@@ -365,12 +365,18 @@ def test_schema_sql_has_exact_runtime_grants_and_no_broad_privileges() -> None:
 
 def test_security_verification_queries_use_exact_catalog_acl_boundaries() -> None:
     table_owners = normalize_sql(VERIFY_TABLES_SQL)
+    function_definition = normalize_sql(VERIFY_FUNCTION_BOUNDARY_SQL)
     runtime_grants = normalize_sql(VERIFY_RUNTIME_GRANTS_SQL)
     forbidden_grants = normalize_sql(VERIFY_FORBIDDEN_TABLE_GRANTS_SQL)
     public_function_grants = normalize_sql(VERIFY_PUBLIC_FUNCTION_GRANTS_SQL)
 
     assert "FROM pg_class AS c JOIN pg_namespace AS n" in table_owners
     assert "pg_get_userbyid(c.relowner)::text" in table_owners
+    assert (
+        "btrim(regexp_replace(p.prosrc, '[[:space:]]+', ' ', 'g'))"
+        in function_definition
+    )
+    assert "regexp_replace(btrim(p.prosrc)" not in function_definition
     assert "aclexplode( COALESCE(c.relacl, acldefault('r', c.relowner)) )" in (
         runtime_grants
     )

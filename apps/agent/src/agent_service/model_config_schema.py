@@ -237,7 +237,7 @@ VERIFY_FUNCTION_BOUNDARY_SQL = """SELECT
   p.prosecdef,
   p.proretset,
   p.proconfig IS NULL,
-  regexp_replace(btrim(p.prosrc), '[[:space:]]+', ' ', 'g')
+  btrim(regexp_replace(p.prosrc, '[[:space:]]+', ' ', 'g'))
 FROM pg_proc AS p
 JOIN pg_namespace AS n ON n.oid = p.pronamespace
 JOIN pg_language AS l ON l.oid = p.prolang
