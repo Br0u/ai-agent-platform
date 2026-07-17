@@ -14,6 +14,8 @@ import pytest
 import agent_service.model_config_repository as repository_module
 from agent_service.model_config_crypto import SealedSecret
 from agent_service.model_config_repository import (
+    ActiveConfigPointer,
+    CommitVerifiedActivation,
     ControlEvent,
     ModelConfigConflictError,
     ModelConfigNotFoundError,
@@ -174,6 +176,68 @@ def event(*, revision: int = 1) -> ControlEvent:
     )
 
 
+def failed_test_event(
+    *,
+    revision: int = 1,
+    assertion_nonce: UUID = ASSERTION_NONCE,
+    result: str = "provider_unreachable",
+) -> ControlEvent:
+    return ControlEvent(
+        event_id=EVENT_ID,
+        request_id=REQUEST_ID,
+        assertion_nonce=assertion_nonce,
+        actor_user_id=ACTOR_ID,
+        action="model_config_tested",  # type: ignore[arg-type]
+        provider="openai",
+        model_id="gpt-4.1-mini",
+        endpoint_id="openai-default",
+        config_revision=revision,
+        result=result,  # type: ignore[arg-type]
+    )
+
+
+def activation_command(
+    *, expected_activation_version: int = 0
+) -> CommitVerifiedActivation:
+    return CommitVerifiedActivation(
+        provider="openai",
+        config_revision=1,
+        expected_activation_version=expected_activation_version,
+    )
+
+
+def activation_event() -> ControlEvent:
+    return ControlEvent(
+        event_id=EVENT_ID,
+        request_id=REQUEST_ID,
+        assertion_nonce=ASSERTION_NONCE,
+        actor_user_id=ACTOR_ID,
+        action="model_config_activated",
+        provider="openai",
+        model_id="gpt-4.1-mini",
+        endpoint_id="openai-default",
+        config_revision=1,
+        result="success",
+    )
+
+
+def reveal_event(
+    *, result: str = "success", assertion_nonce: UUID = ASSERTION_NONCE
+) -> ControlEvent:
+    return ControlEvent(
+        event_id=EVENT_ID,
+        request_id=REQUEST_ID,
+        assertion_nonce=assertion_nonce,
+        actor_user_id=ACTOR_ID,
+        action="model_key_revealed",
+        provider="openai",
+        model_id="gpt-4.1-mini",
+        endpoint_id="openai-default",
+        config_revision=1,
+        result=result,  # type: ignore[arg-type]
+    )
+
+
 def sealed_row(
     *,
     config_id: UUID = CONFIG_ID,
@@ -201,7 +265,17 @@ def test_repository_protocol_has_only_use_case_operations() -> None:
         if inspect.isfunction(member) and not name.startswith("_")
     }
 
-    assert operations == {"list_metadata", "save_draft", "load_sealed", "load_active"}
+    assert operations == {
+        "commit_reveal_failure",
+        "commit_reveal_success",
+        "commit_test_and_activation",
+        "list_metadata",
+        "load_active",
+        "load_for_reveal",
+        "load_sealed",
+        "record_failed_test",
+        "save_draft",
+    }
 
 
 @pytest.mark.parametrize(
@@ -217,6 +291,11 @@ def test_repository_protocol_has_only_use_case_operations() -> None:
         ("event", {"event_id": "not-a-uuid"}),
         ("event", {"action": "arbitrary_action"}),
         ("event", {"result": "raw provider failure"}),
+        ("event", {"action": "model_config_tested", "result": "success"}),
+        (
+            "event",
+            {"action": "model_key_revealed", "result": "provider_timeout"},
+        ),
         ("event", {"config_revision": True}),
     ],
 )
@@ -761,3 +840,423 @@ async def test_provider_inputs_are_runtime_validated() -> None:
 
     with pytest.raises(ModelConfigValidationError, match="^validation_error$"):
         await repository.load_sealed(cast(ModelProvider, "local"))
+
+
+@pytest.mark.asyncio
+async def test_failed_test_current_revision_updates_status_and_records_one_event() -> (
+    None
+):
+    repository, cursor, events = repository_with(
+        [
+            Reply(
+                "WHERE provider = %s AND revision = %s FOR UPDATE",
+                one=(CONFIG_ID, True, "gpt-4.1-mini", "openai-default"),
+            ),
+            Reply("SET test_status = 'failed'", rowcount=1),
+            Reply("INSERT INTO agent_control.control_events", rowcount=1),
+        ]
+    )
+
+    await repository.record_failed_test("openai", 1, failed_test_event())
+
+    assert [query.split(maxsplit=1)[0] for query, _ in cursor.executions] == [
+        "SELECT",
+        "UPDATE",
+        "INSERT",
+    ]
+    assert "last_tested_at = now()" in cursor.executions[1][0]
+    assert "active_model_config" not in " ".join(
+        query for query, _ in cursor.executions
+    )
+    assert cursor.executions[2][1][-1] == "provider_unreachable"  # type: ignore[index]
+    assert events[-1] == "transaction:commit"
+
+
+@pytest.mark.asyncio
+async def test_failed_test_superseded_revision_records_conflict_without_status_change() -> (
+    None
+):
+    repository, cursor, events = repository_with(
+        [
+            Reply(
+                "WHERE provider = %s AND revision = %s FOR UPDATE",
+                one=(CONFIG_ID, False, "gpt-4.1-mini", "openai-default"),
+            ),
+            Reply("INSERT INTO agent_control.control_events", rowcount=1),
+        ]
+    )
+
+    with pytest.raises(ModelConfigConflictError, match="^configuration_conflict$"):
+        await repository.record_failed_test("openai", 1, failed_test_event())
+
+    assert len(cursor.executions) == 2
+    assert cursor.executions[1][1][-1] == "configuration_conflict"  # type: ignore[index]
+    assert events[-1] == "transaction:commit"
+
+
+@pytest.mark.asyncio
+async def test_failed_test_duplicate_nonce_rolls_back_status_change() -> None:
+    repository, _cursor, events = repository_with(
+        [
+            Reply(
+                "WHERE provider = %s AND revision = %s FOR UPDATE",
+                one=(CONFIG_ID, True, "gpt-4.1-mini", "openai-default"),
+            ),
+            Reply("SET test_status = 'failed'", rowcount=1),
+            Reply(
+                "INSERT INTO agent_control.control_events",
+                error=psycopg.errors.UniqueViolation("nonce and SQL secret"),
+            ),
+        ]
+    )
+
+    with pytest.raises(
+        ModelConfigConflictError, match="^configuration_conflict$"
+    ) as error:
+        await repository.record_failed_test("openai", 1, failed_test_event())
+
+    assert events[-1] == "transaction:rollback"
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_activation_first_pointer_is_atomic_and_starts_global_version_one() -> (
+    None
+):
+    repository, cursor, events = repository_with(
+        [
+            Reply(
+                "WHERE provider = %s AND revision = %s FOR UPDATE",
+                one=(CONFIG_ID, True, "gpt-4.1-mini", "openai-default"),
+            ),
+            Reply("FROM agent_control.active_model_config", one=None),
+            Reply("SET test_status = 'passed'", rowcount=1),
+            Reply(
+                "INSERT INTO agent_control.active_model_config",
+                one=(ACTIVATED_AT,),
+                rowcount=1,
+            ),
+            Reply("INSERT INTO agent_control.control_events", rowcount=1),
+        ]
+    )
+
+    result = await repository.commit_test_and_activation(
+        activation_command(), activation_event()
+    )
+
+    assert result == ActiveConfigPointer(
+        config_id=CONFIG_ID,
+        provider="openai",
+        config_revision=1,
+        activation_version=1,
+        activated_at=ACTIVATED_AT,
+    )
+    assert cursor.executions[1][1] is None
+    assert "FOR UPDATE" in cursor.executions[1][0]
+    assert cursor.executions[3][1] == (CONFIG_ID, 1, 1)
+    assert events[-1] == "transaction:commit"
+
+
+@pytest.mark.asyncio
+async def test_activation_existing_pointer_uses_global_cas_not_provider_revision() -> (
+    None
+):
+    other_config_id = UUID("10000000-0000-4000-8000-000000000099")
+    repository, cursor, _events = repository_with(
+        [
+            Reply(
+                "WHERE provider = %s AND revision = %s FOR UPDATE",
+                one=(CONFIG_ID, True, "gpt-4.1-mini", "openai-default"),
+            ),
+            Reply(
+                "FROM agent_control.active_model_config",
+                one=(other_config_id, 9, 4),
+            ),
+            Reply("SET test_status = 'passed'", rowcount=1),
+            Reply(
+                "UPDATE agent_control.active_model_config",
+                one=(ACTIVATED_AT,),
+                rowcount=1,
+            ),
+            Reply("INSERT INTO agent_control.control_events", rowcount=1),
+        ]
+    )
+
+    result = await repository.commit_test_and_activation(
+        activation_command(expected_activation_version=4), activation_event()
+    )
+
+    assert result.activation_version == 5
+    assert cursor.executions[3][1] == (CONFIG_ID, 1, 5, 4)
+
+
+@pytest.mark.asyncio
+async def test_activation_global_version_conflict_records_one_event_without_mutation() -> (
+    None
+):
+    repository, cursor, events = repository_with(
+        [
+            Reply(
+                "WHERE provider = %s AND revision = %s FOR UPDATE",
+                one=(CONFIG_ID, True, "gpt-4.1-mini", "openai-default"),
+            ),
+            Reply(
+                "FROM agent_control.active_model_config",
+                one=(REPLACEMENT_ID, 2, 8),
+            ),
+            Reply("INSERT INTO agent_control.control_events", rowcount=1),
+        ]
+    )
+
+    with pytest.raises(ModelConfigConflictError, match="^configuration_conflict$"):
+        await repository.commit_test_and_activation(
+            activation_command(expected_activation_version=7), activation_event()
+        )
+
+    assert [query.split(maxsplit=1)[0] for query, _ in cursor.executions] == [
+        "SELECT",
+        "SELECT",
+        "INSERT",
+    ]
+    assert cursor.executions[-1][1][-1] == "configuration_conflict"  # type: ignore[index]
+    assert events[-1] == "transaction:commit"
+
+
+@pytest.mark.asyncio
+async def test_activation_event_failure_rolls_back_passed_status_and_pointer() -> None:
+    repository, _cursor, events = repository_with(
+        [
+            Reply(
+                "WHERE provider = %s AND revision = %s FOR UPDATE",
+                one=(CONFIG_ID, True, "gpt-4.1-mini", "openai-default"),
+            ),
+            Reply("FROM agent_control.active_model_config", one=None),
+            Reply("SET test_status = 'passed'", rowcount=1),
+            Reply(
+                "INSERT INTO agent_control.active_model_config",
+                one=(ACTIVATED_AT,),
+                rowcount=1,
+            ),
+            Reply(
+                "INSERT INTO agent_control.control_events",
+                error=psycopg.errors.UniqueViolation("nonce detail"),
+            ),
+        ]
+    )
+
+    with pytest.raises(
+        ModelConfigConflictError, match="^configuration_conflict$"
+    ) as error:
+        await repository.commit_test_and_activation(
+            activation_command(), activation_event()
+        )
+
+    assert events[-1] == "transaction:rollback"
+    assert error.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_load_for_reveal_reads_exact_revision_without_consuming_nonce() -> None:
+    repository, cursor, events = repository_with(
+        [
+            Reply(
+                "WHERE provider = %s AND revision = %s",
+                one=sealed_row(),
+            )
+        ]
+    )
+
+    result = await repository.load_for_reveal("openai", 1)
+
+    assert result.sealed == SEALED
+    assert result.revision == 1
+    assert len(cursor.executions) == 1
+    assert "control_events" not in cursor.executions[0][0]
+    assert "FOR UPDATE" not in cursor.executions[0][0]
+    assert events[-1] == "transaction:commit"
+
+
+@pytest.mark.asyncio
+async def test_reveal_success_commits_event_before_return() -> None:
+    repository, cursor, events = repository_with(
+        [
+            Reply(
+                "WHERE provider = %s AND revision = %s FOR UPDATE",
+                one=(CONFIG_ID, True, "gpt-4.1-mini", "openai-default"),
+            ),
+            Reply("INSERT INTO agent_control.control_events", rowcount=1),
+        ]
+    )
+
+    result = await repository.commit_reveal_success("openai", 1, reveal_event())
+
+    assert result == "committed"
+    assert cursor.executions[-1][1][-1] == "success"  # type: ignore[index]
+    assert events[-1] == "transaction:commit"
+
+
+@pytest.mark.asyncio
+async def test_reveal_success_stale_revision_commits_conflict_and_consumes_nonce() -> (
+    None
+):
+    repository, cursor, events = repository_with(
+        [
+            Reply(
+                "WHERE provider = %s AND revision = %s FOR UPDATE",
+                one=(CONFIG_ID, False, "gpt-4.1-mini", "openai-default"),
+            ),
+            Reply("INSERT INTO agent_control.control_events", rowcount=1),
+        ]
+    )
+
+    result = await repository.commit_reveal_success("openai", 1, reveal_event())
+
+    assert result == "stale"
+    assert cursor.executions[-1][1][-1] == "configuration_conflict"  # type: ignore[index]
+    assert events[-1] == "transaction:commit"
+
+
+@pytest.mark.asyncio
+async def test_reveal_failure_records_only_fixed_decryption_category() -> None:
+    repository, cursor, events = repository_with(
+        [
+            Reply(
+                "WHERE provider = %s AND revision = %s FOR UPDATE",
+                one=(CONFIG_ID, True, "gpt-4.1-mini", "openai-default"),
+            ),
+            Reply("INSERT INTO agent_control.control_events", rowcount=1),
+        ]
+    )
+
+    await repository.commit_reveal_failure(
+        "openai", 1, reveal_event(result="encryption_unavailable")
+    )
+
+    params = cursor.executions[-1][1]
+    assert params is not None
+    assert params[-1] == "encryption_unavailable"
+    assert events[-1] == "transaction:commit"
+
+
+@pytest.mark.asyncio
+async def test_reveal_event_write_failure_prevents_success_return() -> None:
+    repository, _cursor, events = repository_with(
+        [
+            Reply(
+                "WHERE provider = %s AND revision = %s FOR UPDATE",
+                one=(CONFIG_ID, True, "gpt-4.1-mini", "openai-default"),
+            ),
+            Reply(
+                "INSERT INTO agent_control.control_events",
+                error=psycopg.errors.UniqueViolation("nonce SQL detail"),
+            ),
+        ]
+    )
+
+    with pytest.raises(
+        ModelConfigConflictError, match="^configuration_conflict$"
+    ) as error:
+        await repository.commit_reveal_success("openai", 1, reveal_event())
+
+    assert events[-1] == "transaction:rollback"
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "replies"),
+    [
+        (
+            "failed_test",
+            [
+                Reply(
+                    "WHERE provider = %s AND revision = %s FOR UPDATE",
+                    one=(CONFIG_ID, False, "gpt-4.1-mini", "openai-default"),
+                ),
+                Reply(
+                    "INSERT INTO agent_control.control_events",
+                    error=RuntimeError("secret event storage detail"),
+                ),
+            ],
+        ),
+        (
+            "activation",
+            [
+                Reply(
+                    "WHERE provider = %s AND revision = %s FOR UPDATE",
+                    one=(CONFIG_ID, True, "gpt-4.1-mini", "openai-default"),
+                ),
+                Reply(
+                    "FROM agent_control.active_model_config",
+                    one=(REPLACEMENT_ID, 2, 8),
+                ),
+                Reply(
+                    "INSERT INTO agent_control.control_events",
+                    error=RuntimeError("secret event storage detail"),
+                ),
+            ],
+        ),
+        (
+            "reveal",
+            [
+                Reply(
+                    "WHERE provider = %s AND revision = %s FOR UPDATE",
+                    one=(CONFIG_ID, True, "gpt-4.1-mini", "openai-default"),
+                ),
+                Reply(
+                    "INSERT INTO agent_control.control_events",
+                    error=RuntimeError("secret event storage detail"),
+                ),
+            ],
+        ),
+    ],
+)
+async def test_result_event_storage_failure_never_commits_or_returns(
+    operation: str,
+    replies: list[Reply],
+) -> None:
+    repository, _cursor, events = repository_with(replies)
+
+    with pytest.raises(ModelConfigStorageError, match="^storage_unavailable$") as error:
+        if operation == "failed_test":
+            await repository.record_failed_test("openai", 1, failed_test_event())
+        elif operation == "activation":
+            await repository.commit_test_and_activation(
+                activation_command(expected_activation_version=7), activation_event()
+            )
+        else:
+            await repository.commit_reveal_success("openai", 1, reveal_event())
+
+    assert "secret event storage detail" not in repr(error.value)
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+    assert events[-1] == "transaction:rollback"
+
+
+@pytest.mark.asyncio
+async def test_activation_rejects_event_mismatch_before_connecting() -> None:
+    repository, cursor, events = repository_with([])
+    mismatched = activation_event()
+    object.__setattr__(mismatched, "config_revision", 2)
+
+    with pytest.raises(ModelConfigValidationError, match="^validation_error$"):
+        await repository.commit_test_and_activation(activation_command(), mismatched)
+
+    assert cursor.executions == []
+    assert events == []
+
+
+def test_activation_command_rejects_invalid_cas_values() -> None:
+    for values in (
+        {"provider": "local", "config_revision": 1, "expected_activation_version": 0},
+        {"provider": "openai", "config_revision": 0, "expected_activation_version": 0},
+        {
+            "provider": "openai",
+            "config_revision": 1,
+            "expected_activation_version": True,
+        },
+    ):
+        with pytest.raises(ModelConfigValidationError, match="^validation_error$"):
+            CommitVerifiedActivation(**values)  # type: ignore[arg-type]

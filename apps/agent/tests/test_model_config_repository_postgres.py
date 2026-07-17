@@ -13,12 +13,14 @@ import pytest
 
 from agent_service.model_config_crypto import ModelConfigCipher
 from agent_service.model_config_repository import (
+    ActiveConfigPointer,
+    CommitVerifiedActivation,
     ControlEvent,
     ModelConfigConflictError,
     PostgresModelConfigRepository,
     SaveSealedConfig,
 )
-from agent_service.model_config_types import StoredModelConfigMetadata
+from agent_service.model_config_types import ModelProvider, StoredModelConfigMetadata
 
 
 CONTROL_URL = os.getenv("AGENT_CONTROL_DATABASE_URL")
@@ -157,18 +159,20 @@ def save_command(
     expected_revision: int,
     assertion_nonce: UUID,
     model_suffix: str = "",
+    provider: ModelProvider = "openai",
+    endpoint_id: str = "openai-default",
 ) -> SaveSealedConfig:
     sealed = cipher.seal(
         config_id=config_id,
-        provider="openai",
+        provider=provider,
         revision=revision,
         secret=SecretStr(FIXTURE_PLAINTEXT),
     )
     return SaveSealedConfig(
         config_id=config_id,
-        provider="openai",
-        model_id=f"gpt-integration-revision-{revision}{model_suffix}",
-        endpoint_id="openai-default",
+        provider=provider,
+        model_id=f"integration-{provider}-revision-{revision}{model_suffix}",
+        endpoint_id=endpoint_id,
         revision=revision,
         expected_revision=expected_revision,
         sealed=sealed,
@@ -192,6 +196,55 @@ def save_event(
         endpoint_id=command.endpoint_id,
         config_revision=command.revision,
         result="success",
+    )
+
+
+def activation_event(command: SaveSealedConfig) -> ControlEvent:
+    return ControlEvent(
+        event_id=uuid4(),
+        request_id=uuid4(),
+        assertion_nonce=uuid4(),
+        actor_user_id=uuid4(),
+        action="model_config_activated",
+        provider=command.provider,
+        model_id=command.model_id,
+        endpoint_id=command.endpoint_id,
+        config_revision=command.revision,
+        result="success",
+    )
+
+
+def failed_test_event(command: SaveSealedConfig) -> ControlEvent:
+    return ControlEvent(
+        event_id=uuid4(),
+        request_id=uuid4(),
+        assertion_nonce=uuid4(),
+        actor_user_id=uuid4(),
+        action="model_config_tested",
+        provider=command.provider,
+        model_id=command.model_id,
+        endpoint_id=command.endpoint_id,
+        config_revision=command.revision,
+        result="provider_unreachable",
+    )
+
+
+def reveal_event(
+    command: SaveSealedConfig,
+    *,
+    result: str = "success",
+) -> ControlEvent:
+    return ControlEvent(
+        event_id=uuid4(),
+        request_id=uuid4(),
+        assertion_nonce=uuid4(),
+        actor_user_id=uuid4(),
+        action="model_key_revealed",
+        provider=command.provider,
+        model_id=command.model_id,
+        endpoint_id=command.endpoint_id,
+        config_revision=command.revision,
+        result=result,  # type: ignore[arg-type]
     )
 
 
@@ -331,6 +384,169 @@ async def test_real_repository_enforces_atomic_cas_secrecy_and_exact_active_revi
 
     await truncate_dedicated_control_tables(migrator_url)
     try:
+        first_activation_inputs: tuple[tuple[ModelProvider, str], ...] = (
+            ("openai", "openai-default"),
+            ("anthropic", "anthropic-default"),
+        )
+        first_activation_commands = [
+            save_command(
+                cipher=cipher,
+                config_id=uuid4(),
+                revision=1,
+                expected_revision=0,
+                assertion_nonce=uuid4(),
+                provider=provider,
+                endpoint_id=endpoint_id,
+            )
+            for provider, endpoint_id in first_activation_inputs
+        ]
+        for first_activation_command in first_activation_commands:
+            await repository.save_draft(
+                first_activation_command,
+                save_event(first_activation_command),
+            )
+
+        first_activation_results = await asyncio.gather(
+            *(
+                repository.commit_test_and_activation(
+                    CommitVerifiedActivation(
+                        provider=first_activation_command.provider,
+                        config_revision=1,
+                        expected_activation_version=0,
+                    ),
+                    activation_event(first_activation_command),
+                )
+                for first_activation_command in first_activation_commands
+            ),
+            return_exceptions=True,
+        )
+        successful_activations = [
+            result
+            for result in first_activation_results
+            if isinstance(result, ActiveConfigPointer)
+        ]
+        activation_conflicts = [
+            result
+            for result in first_activation_results
+            if isinstance(result, ModelConfigConflictError)
+        ]
+        assert len(successful_activations) == 1
+        assert len(activation_conflicts) == 1
+        assert successful_activations[0].activation_version == 1
+        assert activation_conflicts[0].__cause__ is None
+        assert activation_conflicts[0].__context__ is None
+
+        async with await psycopg.AsyncConnection.connect(
+            psycopg_url(runtime_url)
+        ) as conn:
+            assert await (
+                await conn.execute(
+                    """SELECT model_config_id, config_revision, activation_version
+                    FROM agent_control.active_model_config
+                    WHERE singleton = true"""
+                )
+            ).fetchone() == (
+                successful_activations[0].config_id,
+                successful_activations[0].config_revision,
+                successful_activations[0].activation_version,
+            )
+            statuses = await (
+                await conn.execute(
+                    """SELECT provider, test_status
+                    FROM agent_control.model_configs
+                    ORDER BY provider"""
+                )
+            ).fetchall()
+            assert sorted(status for _, status in statuses) == ["passed", "untested"]
+            assert await (
+                await conn.execute("SELECT count(*) FROM agent_control.control_events")
+            ).fetchone() == (3,)
+
+        losing_command = next(
+            command
+            for command in first_activation_commands
+            if command.config_id != successful_activations[0].config_id
+        )
+        winning_command = next(
+            command
+            for command in first_activation_commands
+            if command.config_id == successful_activations[0].config_id
+        )
+        await repository.record_failed_test(
+            losing_command.provider,
+            losing_command.revision,
+            failed_test_event(losing_command),
+        )
+        revealed = await repository.load_for_reveal(
+            winning_command.provider,
+            winning_command.revision,
+        )
+        plaintext = cipher.open(
+            config_id=revealed.config_id,
+            provider=revealed.provider,
+            revision=revealed.revision,
+            sealed=revealed.sealed,
+        ).get_secret_value()
+        assert plaintext == FIXTURE_PLAINTEXT
+        assert (
+            await repository.commit_reveal_success(
+                winning_command.provider,
+                winning_command.revision,
+                reveal_event(winning_command),
+            )
+            == "committed"
+        )
+
+        replacement_command = save_command(
+            cipher=cipher,
+            config_id=uuid4(),
+            revision=2,
+            expected_revision=1,
+            assertion_nonce=uuid4(),
+            provider=winning_command.provider,
+            endpoint_id=winning_command.endpoint_id,
+        )
+        await repository.save_draft(
+            replacement_command,
+            save_event(replacement_command),
+        )
+        assert (
+            await repository.commit_reveal_success(
+                winning_command.provider,
+                winning_command.revision,
+                reveal_event(winning_command),
+            )
+            == "stale"
+        )
+        await repository.commit_reveal_failure(
+            losing_command.provider,
+            losing_command.revision,
+            reveal_event(losing_command, result="encryption_unavailable"),
+        )
+
+        async with await psycopg.AsyncConnection.connect(
+            psycopg_url(runtime_url)
+        ) as conn:
+            assert await (
+                await conn.execute(
+                    """SELECT model_config_id, config_revision, activation_version
+                    FROM agent_control.active_model_config
+                    WHERE singleton = true"""
+                )
+            ).fetchone() == (successful_activations[0].config_id, 1, 1)
+            assert await (
+                await conn.execute(
+                    """SELECT test_status
+                    FROM agent_control.model_configs
+                    WHERE id = %s""",
+                    (losing_command.config_id,),
+                )
+            ).fetchone() == ("failed",)
+            assert await (
+                await conn.execute("SELECT count(*) FROM agent_control.control_events")
+            ).fetchone() == (8,)
+
+        await truncate_dedicated_control_tables(migrator_url)
         first_nonce = uuid4()
         first_id = uuid4()
         first_event_id = uuid4()

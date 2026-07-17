@@ -53,6 +53,21 @@ FROM agent_control.model_configs
 WHERE provider = %s AND is_current = true
 """
 
+_LOAD_EXACT_SEALED_SQL = """SELECT
+  id,
+  provider,
+  model_id,
+  endpoint_id,
+  api_key_ciphertext,
+  api_key_nonce,
+  api_key_last_four,
+  encryption_key_version,
+  revision,
+  test_status
+FROM agent_control.model_configs
+WHERE provider = %s AND revision = %s
+"""
+
 _LOAD_ACTIVE_SQL = """SELECT
   config.id,
   config.provider,
@@ -112,6 +127,84 @@ _INSERT_EVENT_SQL = """INSERT INTO agent_control.control_events (
   result
 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
+
+_LOCK_EXACT_CONFIG_SQL = """SELECT id, is_current, model_id, endpoint_id
+FROM agent_control.model_configs
+WHERE provider = %s AND revision = %s
+FOR UPDATE
+"""
+
+_MARK_TEST_FAILED_SQL = """UPDATE agent_control.model_configs
+SET test_status = 'failed', last_tested_at = now(), updated_at = now()
+WHERE id = %s AND provider = %s AND revision = %s AND is_current = true
+"""
+
+_LOCK_ACTIVE_POINTER_SQL = """SELECT
+  model_config_id,
+  config_revision,
+  activation_version
+FROM agent_control.active_model_config
+WHERE singleton = true
+FOR UPDATE
+"""
+
+_MARK_TEST_PASSED_SQL = """UPDATE agent_control.model_configs
+SET test_status = 'passed', last_tested_at = now(), updated_at = now()
+WHERE id = %s AND provider = %s AND revision = %s AND is_current = true
+"""
+
+_INSERT_ACTIVE_POINTER_SQL = """INSERT INTO agent_control.active_model_config (
+  singleton,
+  model_config_id,
+  config_revision,
+  activation_version
+) VALUES (true, %s, %s, %s)
+RETURNING activated_at
+"""
+
+_UPDATE_ACTIVE_POINTER_SQL = """UPDATE agent_control.active_model_config
+SET model_config_id = %s,
+    config_revision = %s,
+    activation_version = %s,
+    activated_at = now()
+WHERE singleton = true AND activation_version = %s
+RETURNING activated_at
+"""
+
+
+ControlAction = Literal[
+    "model_config_saved",
+    "model_config_tested",
+    "model_config_activated",
+    "model_key_revealed",
+]
+ControlResult = Literal[
+    "success",
+    "configuration_conflict",
+    "credential_rejected",
+    "model_not_found",
+    "provider_unreachable",
+    "provider_timeout",
+    "encryption_unavailable",
+]
+RevealCommitResult = Literal["committed", "stale"]
+
+_CONTROL_RESULTS_BY_ACTION: dict[ControlAction, frozenset[ControlResult]] = {
+    "model_config_saved": frozenset({"success"}),
+    "model_config_tested": frozenset(
+        {
+            "configuration_conflict",
+            "credential_rejected",
+            "model_not_found",
+            "provider_unreachable",
+            "provider_timeout",
+        }
+    ),
+    "model_config_activated": frozenset({"success", "configuration_conflict"}),
+    "model_key_revealed": frozenset(
+        {"success", "configuration_conflict", "encryption_unavailable"}
+    ),
+}
 
 
 class ModelConfigRepositoryError(RuntimeError):
@@ -242,26 +335,51 @@ class SaveSealedConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class CommitVerifiedActivation:
+    """CAS command for one verified current configuration and global pointer."""
+
+    provider: ModelProvider
+    config_revision: int
+    expected_activation_version: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "provider", _validate_provider(self.provider))
+        object.__setattr__(
+            self,
+            "config_revision",
+            _validate_positive_integer(self.config_revision),
+        )
+        object.__setattr__(
+            self,
+            "expected_activation_version",
+            _validate_non_negative_integer(self.expected_activation_version),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ControlEvent:
-    """Sanitized save-result audit event committed with its configuration."""
+    """Sanitized bounded control event committed with its configuration change."""
 
     event_id: UUID
     request_id: UUID
     assertion_nonce: UUID
     actor_user_id: UUID
-    action: Literal["model_config_saved"]
+    action: ControlAction
     provider: ModelProvider
     model_id: str
     endpoint_id: str
     config_revision: int
-    result: Literal["success"]
+    result: ControlResult
 
     def __post_init__(self) -> None:
         event_id = _validate_uuid(self.event_id)
         request_id = _validate_uuid(self.request_id)
         assertion_nonce = _validate_uuid(self.assertion_nonce)
         actor_user_id = _validate_uuid(self.actor_user_id)
-        if self.action != "model_config_saved" or self.result != "success":
+        if (
+            self.action not in _CONTROL_RESULTS_BY_ACTION
+            or self.result not in _CONTROL_RESULTS_BY_ACTION[self.action]
+        ):
             _invalid()
         provider, model_id, endpoint_id = _validate_model_fields(
             provider=self.provider,
@@ -353,6 +471,37 @@ class StoredActiveConfig:
         object.__setattr__(self, "activation_version", activation_version)
 
 
+@dataclass(frozen=True, slots=True)
+class ActiveConfigPointer:
+    """Committed singleton pointer identity returned by the activation CAS."""
+
+    config_id: UUID
+    provider: ModelProvider
+    config_revision: int
+    activation_version: int
+    activated_at: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "config_id", _validate_uuid(self.config_id))
+        object.__setattr__(self, "provider", _validate_provider(self.provider))
+        object.__setattr__(
+            self,
+            "config_revision",
+            _validate_positive_integer(self.config_revision),
+        )
+        object.__setattr__(
+            self,
+            "activation_version",
+            _validate_positive_integer(self.activation_version),
+        )
+        if (
+            type(self.activated_at) is not datetime
+            or self.activated_at.tzinfo is None
+            or self.activated_at.utcoffset() is None
+        ):
+            _invalid()
+
+
 class ModelConfigRepository(Protocol):
     async def list_metadata(self) -> list[StoredModelConfigMetadata]: ...
 
@@ -365,6 +514,39 @@ class ModelConfigRepository(Protocol):
     async def load_sealed(self, provider: ModelProvider) -> StoredSealedConfig: ...
 
     async def load_active(self) -> StoredActiveConfig | None: ...
+
+    async def record_failed_test(
+        self,
+        provider: ModelProvider,
+        revision: int,
+        event: ControlEvent,
+    ) -> None: ...
+
+    async def commit_test_and_activation(
+        self,
+        command: CommitVerifiedActivation,
+        event: ControlEvent,
+    ) -> ActiveConfigPointer: ...
+
+    async def load_for_reveal(
+        self,
+        provider: ModelProvider,
+        revision: int,
+    ) -> StoredSealedConfig: ...
+
+    async def commit_reveal_success(
+        self,
+        provider: ModelProvider,
+        revision: int,
+        event: ControlEvent,
+    ) -> RevealCommitResult: ...
+
+    async def commit_reveal_failure(
+        self,
+        provider: ModelProvider,
+        revision: int,
+        event: ControlEvent,
+    ) -> None: ...
 
 
 class RepositoryCursor(Protocol):
@@ -496,6 +678,109 @@ def _validate_event_matches_command(
         _invalid()
 
 
+def _validate_exact_event(
+    *,
+    provider: object,
+    revision: object,
+    event: object,
+    action: ControlAction,
+    allowed_results: frozenset[ControlResult],
+) -> tuple[ModelProvider, int, ControlEvent]:
+    validated_provider = _validate_provider(provider)
+    validated_revision = _validate_positive_integer(revision)
+    if type(event) is not ControlEvent:
+        _invalid()
+    validated_event = cast(ControlEvent, event)
+    validated_event.__post_init__()
+    if (
+        validated_event.action != action
+        or validated_event.result not in allowed_results
+        or validated_event.provider != validated_provider
+        or validated_event.config_revision != validated_revision
+    ):
+        _invalid()
+    return validated_provider, validated_revision, validated_event
+
+
+def _event_params(
+    event: ControlEvent, *, result: ControlResult | None = None
+) -> tuple[object, ...]:
+    return (
+        event.event_id,
+        event.request_id,
+        event.assertion_nonce,
+        event.actor_user_id,
+        event.action,
+        event.provider,
+        event.model_id,
+        event.endpoint_id,
+        event.config_revision,
+        event.result if result is None else result,
+    )
+
+
+def _validate_activation(
+    command: object,
+    event: object,
+) -> tuple[CommitVerifiedActivation, ControlEvent]:
+    if type(command) is not CommitVerifiedActivation or type(event) is not ControlEvent:
+        _invalid()
+    validated_command = cast(CommitVerifiedActivation, command)
+    validated_command.__post_init__()
+    _, _, validated_event = _validate_exact_event(
+        provider=validated_command.provider,
+        revision=validated_command.config_revision,
+        event=event,
+        action="model_config_activated",
+        allowed_results=frozenset({"success"}),
+    )
+    return validated_command, validated_event
+
+
+def _validate_locked_config_row(
+    row: tuple[Any, ...] | None,
+    event: ControlEvent,
+) -> tuple[UUID, bool]:
+    if row is None:
+        _conflict()
+    if (
+        len(row) != 4
+        or type(row[0]) is not UUID
+        or type(row[1]) is not bool
+        or type(row[2]) is not str
+        or type(row[3]) is not str
+    ):
+        _storage()
+    if row[2] != event.model_id or row[3] != event.endpoint_id:
+        _invalid()
+    return cast(UUID, row[0]), cast(bool, row[1])
+
+
+def _validate_pointer_row(row: tuple[Any, ...]) -> tuple[UUID, int, int]:
+    if (
+        len(row) != 3
+        or type(row[0]) is not UUID
+        or type(row[1]) is not int
+        or row[1] < 1
+        or type(row[2]) is not int
+        or row[2] < 1
+    ):
+        _storage()
+    return cast(UUID, row[0]), cast(int, row[1]), cast(int, row[2])
+
+
+def _validate_activated_at_row(row: tuple[Any, ...] | None) -> datetime:
+    if (
+        row is None
+        or len(row) != 1
+        or type(row[0]) is not datetime
+        or row[0].tzinfo is None
+        or row[0].utcoffset() is None
+    ):
+        _storage()
+    return cast(datetime, row[0])
+
+
 _CONFLICT_DATABASE_ERRORS = (
     psycopg.errors.UniqueViolation,
     psycopg.errors.SerializationFailure,
@@ -551,6 +836,31 @@ class PostgresModelConfigRepository:
             pass
         _storage()
 
+    async def load_for_reveal(
+        self,
+        provider: ModelProvider,
+        revision: int,
+    ) -> StoredSealedConfig:
+        validated_provider = _validate_provider(provider)
+        validated_revision = _validate_positive_integer(revision)
+        try:
+            connection = await self.__connector(self.__database_url)
+            async with connection:
+                async with connection.cursor() as cursor:
+                    await cursor.execute(
+                        _LOAD_EXACT_SEALED_SQL,
+                        (validated_provider, validated_revision),
+                    )
+                    row = await cursor.fetchone()
+                    if row is None:
+                        raise ModelConfigNotFoundError(_NOT_FOUND_ERROR)
+                    return _stored_sealed_from_row(row)
+        except ModelConfigRepositoryError:
+            raise
+        except Exception:
+            pass
+        _storage()
+
     async def load_active(self) -> StoredActiveConfig | None:
         try:
             connection = await self.__connector(self.__database_url)
@@ -586,6 +896,281 @@ class PostgresModelConfigRepository:
         except Exception:
             pass
         _storage()
+
+    async def record_failed_test(
+        self,
+        provider: ModelProvider,
+        revision: int,
+        event: ControlEvent,
+    ) -> None:
+        validated_provider, validated_revision, validated_event = _validate_exact_event(
+            provider=provider,
+            revision=revision,
+            event=event,
+            action="model_config_tested",
+            allowed_results=frozenset(
+                {
+                    "credential_rejected",
+                    "model_not_found",
+                    "provider_unreachable",
+                    "provider_timeout",
+                }
+            ),
+        )
+        stale_conflict = False
+        database_conflict = False
+        completed = False
+        try:
+            connection = await self.__connector(self.__database_url)
+            async with connection:
+                async with connection.cursor() as cursor:
+                    await cursor.execute(
+                        _LOCK_EXACT_CONFIG_SQL,
+                        (validated_provider, validated_revision),
+                    )
+                    row = await cursor.fetchone()
+                    if row is None:
+                        _conflict()
+                    if (
+                        len(row) != 4
+                        or type(row[0]) is not UUID
+                        or type(row[1]) is not bool
+                        or type(row[2]) is not str
+                        or type(row[3]) is not str
+                    ):
+                        _storage()
+                    if row[2] != validated_event.model_id or row[3] != (
+                        validated_event.endpoint_id
+                    ):
+                        _invalid()
+                    if cast(bool, row[1]):
+                        await cursor.execute(
+                            _MARK_TEST_FAILED_SQL,
+                            (row[0], validated_provider, validated_revision),
+                        )
+                        if cursor.rowcount != 1:
+                            _conflict()
+                        event_result: ControlResult = validated_event.result
+                    else:
+                        stale_conflict = True
+                        event_result = "configuration_conflict"
+                    await cursor.execute(
+                        _INSERT_EVENT_SQL,
+                        _event_params(validated_event, result=event_result),
+                    )
+                    if cursor.rowcount != 1:
+                        _storage()
+            completed = True
+        except ModelConfigRepositoryError:
+            raise
+        except _CONFLICT_DATABASE_ERRORS:
+            database_conflict = True
+        except Exception:
+            pass
+        if database_conflict:
+            _conflict()
+        if completed and stale_conflict:
+            _conflict()
+        if not completed:
+            _storage()
+
+    async def commit_test_and_activation(
+        self,
+        command: CommitVerifiedActivation,
+        event: ControlEvent,
+    ) -> ActiveConfigPointer:
+        validated_command, validated_event = _validate_activation(command, event)
+        database_conflict = False
+        stale_conflict = False
+        completed = False
+        pointer: ActiveConfigPointer | None = None
+        try:
+            connection = await self.__connector(self.__database_url)
+            async with connection:
+                async with connection.cursor() as cursor:
+                    await cursor.execute(
+                        _LOCK_EXACT_CONFIG_SQL,
+                        (
+                            validated_command.provider,
+                            validated_command.config_revision,
+                        ),
+                    )
+                    config_id, is_current = _validate_locked_config_row(
+                        await cursor.fetchone(),
+                        validated_event,
+                    )
+                    await cursor.execute(_LOCK_ACTIVE_POINTER_SQL)
+                    pointer_row = await cursor.fetchone()
+                    if pointer_row is None:
+                        actual_activation_version = 0
+                    else:
+                        _, _, actual_activation_version = _validate_pointer_row(
+                            pointer_row
+                        )
+                    if (
+                        not is_current
+                        or actual_activation_version
+                        != validated_command.expected_activation_version
+                    ):
+                        stale_conflict = True
+                    else:
+                        next_activation_version = actual_activation_version + 1
+                        await cursor.execute(
+                            _MARK_TEST_PASSED_SQL,
+                            (
+                                config_id,
+                                validated_command.provider,
+                                validated_command.config_revision,
+                            ),
+                        )
+                        if cursor.rowcount != 1:
+                            _conflict()
+                        if pointer_row is None:
+                            await cursor.execute(
+                                _INSERT_ACTIVE_POINTER_SQL,
+                                (
+                                    config_id,
+                                    validated_command.config_revision,
+                                    next_activation_version,
+                                ),
+                            )
+                        else:
+                            await cursor.execute(
+                                _UPDATE_ACTIVE_POINTER_SQL,
+                                (
+                                    config_id,
+                                    validated_command.config_revision,
+                                    next_activation_version,
+                                    actual_activation_version,
+                                ),
+                            )
+                        if cursor.rowcount != 1:
+                            _conflict()
+                        activated_at = _validate_activated_at_row(
+                            await cursor.fetchone()
+                        )
+                        pointer = ActiveConfigPointer(
+                            config_id=config_id,
+                            provider=validated_command.provider,
+                            config_revision=validated_command.config_revision,
+                            activation_version=next_activation_version,
+                            activated_at=activated_at,
+                        )
+                    await cursor.execute(
+                        _INSERT_EVENT_SQL,
+                        _event_params(
+                            validated_event,
+                            result=(
+                                "configuration_conflict"
+                                if stale_conflict
+                                else "success"
+                            ),
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        _storage()
+            completed = True
+        except ModelConfigRepositoryError:
+            raise
+        except _CONFLICT_DATABASE_ERRORS:
+            database_conflict = True
+        except Exception:
+            pass
+        if database_conflict:
+            _conflict()
+        if completed and stale_conflict:
+            _conflict()
+        if not completed or pointer is None:
+            _storage()
+        return pointer
+
+    async def commit_reveal_success(
+        self,
+        provider: ModelProvider,
+        revision: int,
+        event: ControlEvent,
+    ) -> RevealCommitResult:
+        validated_provider, validated_revision, validated_event = _validate_exact_event(
+            provider=provider,
+            revision=revision,
+            event=event,
+            action="model_key_revealed",
+            allowed_results=frozenset({"success"}),
+        )
+        return await self.__commit_reveal_event(
+            provider=validated_provider,
+            revision=validated_revision,
+            event=validated_event,
+            stale_is_conflict=True,
+        )
+
+    async def commit_reveal_failure(
+        self,
+        provider: ModelProvider,
+        revision: int,
+        event: ControlEvent,
+    ) -> None:
+        validated_provider, validated_revision, validated_event = _validate_exact_event(
+            provider=provider,
+            revision=revision,
+            event=event,
+            action="model_key_revealed",
+            allowed_results=frozenset({"encryption_unavailable"}),
+        )
+        await self.__commit_reveal_event(
+            provider=validated_provider,
+            revision=validated_revision,
+            event=validated_event,
+            stale_is_conflict=False,
+        )
+
+    async def __commit_reveal_event(
+        self,
+        *,
+        provider: ModelProvider,
+        revision: int,
+        event: ControlEvent,
+        stale_is_conflict: bool,
+    ) -> RevealCommitResult:
+        database_conflict = False
+        outcome: RevealCommitResult | None = None
+        completed = False
+        try:
+            connection = await self.__connector(self.__database_url)
+            async with connection:
+                async with connection.cursor() as cursor:
+                    await cursor.execute(
+                        _LOCK_EXACT_CONFIG_SQL,
+                        (provider, revision),
+                    )
+                    _, is_current = _validate_locked_config_row(
+                        await cursor.fetchone(),
+                        event,
+                    )
+                    if stale_is_conflict and not is_current:
+                        event_result: ControlResult = "configuration_conflict"
+                        outcome = "stale"
+                    else:
+                        event_result = event.result
+                        outcome = "committed"
+                    await cursor.execute(
+                        _INSERT_EVENT_SQL,
+                        _event_params(event, result=event_result),
+                    )
+                    if cursor.rowcount != 1:
+                        _storage()
+            completed = True
+        except ModelConfigRepositoryError:
+            raise
+        except _CONFLICT_DATABASE_ERRORS:
+            database_conflict = True
+        except Exception:
+            pass
+        if database_conflict:
+            _conflict()
+        if not completed or outcome is None:
+            _storage()
+        return outcome
 
     async def save_draft(
         self,
