@@ -45,11 +45,8 @@ const ASSISTANT_MODEL_PROVIDERS = [
   "deepseek",
   "minimax",
 ] as const;
-const ASSISTANT_MODEL_AUDIT_RESULTS = [
-  "requested",
-  "success",
-  "failure",
-] as const;
+const REQUESTED_ASSISTANT_MODEL_AUDIT_RESULTS = ["requested"] as const;
+const COMPLETED_ASSISTANT_MODEL_AUDIT_RESULTS = ["success", "failure"] as const;
 const TARGET_TYPES = [
   "user",
   "session",
@@ -73,13 +70,18 @@ type SimpleUserChange = Exclude<
   UserChange,
   "role_added" | "role_removed" | "role_changed"
 >;
-export type AssistantModelAuditMetadata = {
+type AssistantModelAuditResult =
+  | (typeof REQUESTED_ASSISTANT_MODEL_AUDIT_RESULTS)[number]
+  | (typeof COMPLETED_ASSISTANT_MODEL_AUDIT_RESULTS)[number];
+export type AssistantModelAuditMetadata<
+  Result extends AssistantModelAuditResult = AssistantModelAuditResult,
+> = {
   provider: (typeof ASSISTANT_MODEL_PROVIDERS)[number];
   modelId: string;
   endpointId: string;
   revision: number;
   requestId: string;
-  result: (typeof ASSISTANT_MODEL_AUDIT_RESULTS)[number];
+  result: Result;
 };
 export type AuditTargetType = (typeof TARGET_TYPES)[number];
 
@@ -110,14 +112,22 @@ export type AuditMetadataByEvent = {
         toRole: WorkforceRoleName;
       };
   "bootstrap.super_admin_created": Record<never, never>;
-  "assistant.model_config_save_requested": AssistantModelAuditMetadata;
-  "assistant.model_config_saved": AssistantModelAuditMetadata;
-  "assistant.model_config_test_requested": AssistantModelAuditMetadata;
-  "assistant.model_config_tested": AssistantModelAuditMetadata;
-  "assistant.model_config_activation_requested": AssistantModelAuditMetadata;
-  "assistant.model_config_activated": AssistantModelAuditMetadata;
-  "assistant.model_key_reveal_requested": AssistantModelAuditMetadata;
-  "assistant.model_key_revealed": AssistantModelAuditMetadata;
+  "assistant.model_config_save_requested": AssistantModelAuditMetadata<"requested">;
+  "assistant.model_config_saved": AssistantModelAuditMetadata<
+    "success" | "failure"
+  >;
+  "assistant.model_config_test_requested": AssistantModelAuditMetadata<"requested">;
+  "assistant.model_config_tested": AssistantModelAuditMetadata<
+    "success" | "failure"
+  >;
+  "assistant.model_config_activation_requested": AssistantModelAuditMetadata<"requested">;
+  "assistant.model_config_activated": AssistantModelAuditMetadata<
+    "success" | "failure"
+  >;
+  "assistant.model_key_reveal_requested": AssistantModelAuditMetadata<"requested">;
+  "assistant.model_key_revealed": AssistantModelAuditMetadata<
+    "success" | "failure"
+  >;
 };
 
 export type AuditEvent = keyof AuditMetadataByEvent;
@@ -292,7 +302,10 @@ function workforceUserUpdatedMetadata(value: unknown): SanitizedMetadata {
   };
 }
 
-function assistantModelAuditMetadata(value: unknown): SanitizedMetadata {
+function assistantModelAuditMetadata<const Results extends readonly string[]>(
+  value: unknown,
+  allowedResults: Results,
+): SanitizedMetadata {
   const metadata = assertExactKeys(
     value,
     ["provider", "modelId", "endpointId", "revision", "requestId", "result"],
@@ -316,11 +329,7 @@ function assistantModelAuditMetadata(value: unknown): SanitizedMetadata {
     endpointId: boundedString(metadata.endpointId, "metadata.endpointId", 64),
     revision,
     requestId: boundedString(metadata.requestId, "metadata.requestId", 128),
-    result: enumValue(
-      metadata.result,
-      ASSISTANT_MODEL_AUDIT_RESULTS,
-      "metadata.result",
-    ),
+    result: enumValue(metadata.result, allowedResults, "metadata.result"),
   };
 }
 
@@ -352,14 +361,22 @@ export const AUDIT_EVENT_SCHEMAS: Readonly<
     enumMetadata(value, "initialRole", WORKFORCE_ROLE_NAMES),
   "workforce.user_updated": workforceUserUpdatedMetadata,
   "bootstrap.super_admin_created": emptyMetadata,
-  "assistant.model_config_save_requested": assistantModelAuditMetadata,
-  "assistant.model_config_saved": assistantModelAuditMetadata,
-  "assistant.model_config_test_requested": assistantModelAuditMetadata,
-  "assistant.model_config_tested": assistantModelAuditMetadata,
-  "assistant.model_config_activation_requested": assistantModelAuditMetadata,
-  "assistant.model_config_activated": assistantModelAuditMetadata,
-  "assistant.model_key_reveal_requested": assistantModelAuditMetadata,
-  "assistant.model_key_revealed": assistantModelAuditMetadata,
+  "assistant.model_config_save_requested": (value) =>
+    assistantModelAuditMetadata(value, REQUESTED_ASSISTANT_MODEL_AUDIT_RESULTS),
+  "assistant.model_config_saved": (value) =>
+    assistantModelAuditMetadata(value, COMPLETED_ASSISTANT_MODEL_AUDIT_RESULTS),
+  "assistant.model_config_test_requested": (value) =>
+    assistantModelAuditMetadata(value, REQUESTED_ASSISTANT_MODEL_AUDIT_RESULTS),
+  "assistant.model_config_tested": (value) =>
+    assistantModelAuditMetadata(value, COMPLETED_ASSISTANT_MODEL_AUDIT_RESULTS),
+  "assistant.model_config_activation_requested": (value) =>
+    assistantModelAuditMetadata(value, REQUESTED_ASSISTANT_MODEL_AUDIT_RESULTS),
+  "assistant.model_config_activated": (value) =>
+    assistantModelAuditMetadata(value, COMPLETED_ASSISTANT_MODEL_AUDIT_RESULTS),
+  "assistant.model_key_reveal_requested": (value) =>
+    assistantModelAuditMetadata(value, REQUESTED_ASSISTANT_MODEL_AUDIT_RESULTS),
+  "assistant.model_key_revealed": (value) =>
+    assistantModelAuditMetadata(value, COMPLETED_ASSISTANT_MODEL_AUDIT_RESULTS),
 });
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/u;
