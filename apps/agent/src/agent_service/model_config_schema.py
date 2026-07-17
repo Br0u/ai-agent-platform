@@ -8,14 +8,40 @@ REQUIRED_TABLE_NAMES = frozenset(
 
 EXPECTED_RUNTIME_GRANTS = frozenset(
     {
-        ("active_model_config", "INSERT"),
-        ("active_model_config", "SELECT"),
-        ("active_model_config", "UPDATE"),
-        ("control_events", "INSERT"),
-        ("control_events", "SELECT"),
-        ("model_configs", "INSERT"),
-        ("model_configs", "SELECT"),
-        ("model_configs", "UPDATE"),
+        ("active_model_config", "INSERT", False),
+        ("active_model_config", "SELECT", False),
+        ("active_model_config", "UPDATE", False),
+        ("control_events", "INSERT", False),
+        ("control_events", "SELECT", False),
+        ("model_configs", "INSERT", False),
+        ("model_configs", "SELECT", False),
+        ("model_configs", "UPDATE", False),
+    }
+)
+
+EXPECTED_TABLE_OWNERS = frozenset(
+    {
+        ("active_model_config", "ai_agent_control_migrator"),
+        ("control_events", "ai_agent_control_migrator"),
+        ("model_configs", "ai_agent_control_migrator"),
+        ("schema_versions", "ai_agent_control_migrator"),
+    }
+)
+
+EXPECTED_FUNCTION_BOUNDARY = frozenset(
+    {("guard_model_config_update", 0, "ai_agent_control_migrator", "trigger")}
+)
+
+EXPECTED_TRIGGER_BOUNDARY = frozenset(
+    {
+        (
+            "model_configs_guard_update",
+            "model_configs",
+            "agent_control",
+            "guard_model_config_update",
+            "ai_agent_control_migrator",
+            "ai_agent_control_migrator",
+        )
     }
 )
 
@@ -34,9 +60,6 @@ CREATE TABLE IF NOT EXISTS agent_control.schema_versions (
   version smallint PRIMARY KEY CHECK (version >= 1),
   applied_at timestamptz NOT NULL DEFAULT now()
 );
-ALTER TABLE agent_control.schema_versions OWNER TO ai_agent_control_migrator;
-REVOKE ALL ON TABLE agent_control.schema_versions FROM PUBLIC;
-REVOKE ALL ON TABLE agent_control.schema_versions FROM ai_agent_control;
 """
 
 SELECT_SCHEMA_VERSION_SQL = """
@@ -148,20 +171,102 @@ VALUES (1)
 ON CONFLICT (version) DO NOTHING;
 """
 
-VERIFY_TABLES_SQL = """
-SELECT table_name::text
-FROM information_schema.tables
-WHERE table_schema = 'agent_control'
-  AND table_name IN ('model_configs', 'active_model_config', 'control_events')
-ORDER BY table_name
+VERIFY_TABLES_SQL = """SELECT
+  c.relname::text,
+  pg_get_userbyid(c.relowner)::text
+FROM pg_class AS c
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+WHERE n.nspname = 'agent_control'
+  AND c.relkind IN ('r', 'p')
+ORDER BY c.relname
 """
 
-VERIFY_RUNTIME_GRANTS_SQL = """
-SELECT table_name::text, privilege_type::text
-FROM information_schema.role_table_grants
-WHERE table_schema = 'agent_control'
-  AND grantee = 'ai_agent_control'
-ORDER BY table_name, privilege_type
+VERIFY_FUNCTION_BOUNDARY_SQL = """SELECT
+  p.proname::text,
+  p.pronargs::integer,
+  pg_get_userbyid(p.proowner)::text,
+  p.prorettype::regtype::text
+FROM pg_proc AS p
+JOIN pg_namespace AS n ON n.oid = p.pronamespace
+WHERE n.nspname = 'agent_control'
+ORDER BY p.proname, p.pronargs
+"""
+
+VERIFY_TRIGGER_BOUNDARY_SQL = """SELECT
+  t.tgname::text,
+  table_class.relname::text,
+  function_schema.nspname::text,
+  trigger_function.proname::text,
+  pg_get_userbyid(table_class.relowner)::text,
+  pg_get_userbyid(trigger_function.proowner)::text
+FROM pg_trigger AS t
+JOIN pg_class AS table_class ON table_class.oid = t.tgrelid
+JOIN pg_namespace AS table_schema ON table_schema.oid = table_class.relnamespace
+JOIN pg_proc AS trigger_function ON trigger_function.oid = t.tgfoid
+JOIN pg_namespace AS function_schema
+  ON function_schema.oid = trigger_function.pronamespace
+WHERE table_schema.nspname = 'agent_control'
+  AND NOT t.tgisinternal
+ORDER BY t.tgname
+"""
+
+VERIFY_RUNTIME_GRANTS_SQL = """SELECT
+  c.relname::text,
+  acl.privilege_type::text,
+  acl.is_grantable
+FROM pg_class AS c
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+CROSS JOIN LATERAL aclexplode(
+  COALESCE(c.relacl, acldefault('r', c.relowner))
+) AS acl
+WHERE n.nspname = 'agent_control'
+  AND c.relkind IN ('r', 'p')
+  AND acl.grantee = (
+    SELECT oid FROM pg_roles WHERE rolname = 'ai_agent_control'
+  )
+ORDER BY c.relname, acl.privilege_type
+"""
+
+VERIFY_FORBIDDEN_TABLE_GRANTS_SQL = """SELECT
+  c.relname::text,
+  CASE
+    WHEN acl.grantee = 0 THEN 'PUBLIC'
+    ELSE pg_get_userbyid(acl.grantee)::text
+  END,
+  acl.privilege_type::text,
+  acl.is_grantable
+FROM pg_class AS c
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+CROSS JOIN LATERAL aclexplode(
+  COALESCE(c.relacl, acldefault('r', c.relowner))
+) AS acl
+WHERE n.nspname = 'agent_control'
+  AND c.relkind IN ('r', 'p')
+  AND (
+    acl.grantee = 0
+    OR pg_get_userbyid(acl.grantee)::text IN (
+      'ai_agent_migrator',
+      'ai_agent_runtime',
+      'ai_agent_backup',
+      'ai_agent_agno_migrator',
+      'ai_agent_agno'
+    )
+  )
+ORDER BY c.relname, 2, acl.privilege_type
+"""
+
+VERIFY_PUBLIC_FUNCTION_GRANTS_SQL = """SELECT
+  p.proname::text,
+  acl.privilege_type::text,
+  acl.is_grantable
+FROM pg_proc AS p
+JOIN pg_namespace AS n ON n.oid = p.pronamespace
+CROSS JOIN LATERAL aclexplode(
+  COALESCE(p.proacl, acldefault('f', p.proowner))
+) AS acl
+WHERE n.nspname = 'agent_control'
+  AND acl.grantee = 0
+ORDER BY p.proname, acl.privilege_type
 """
 
 VERIFY_SCHEMA_PRIVILEGES_SQL = """

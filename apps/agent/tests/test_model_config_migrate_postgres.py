@@ -117,35 +117,105 @@ async def test_real_control_migration_is_idempotent_owned_and_enforces_boundarie
             ]
 
             await cursor.execute(
-                """SELECT p.proname::text, pg_get_userbyid(p.proowner)::text
+                """SELECT
+                  p.proname::text,
+                  p.pronargs::integer,
+                  pg_get_userbyid(p.proowner)::text,
+                  p.prorettype::regtype::text
                 FROM pg_proc AS p
                 JOIN pg_namespace AS n ON n.oid = p.pronamespace
-                WHERE n.nspname = 'agent_control'
-                  AND p.proname = 'guard_model_config_update'"""
+                WHERE n.nspname = 'agent_control'"""
             )
             assert await cursor.fetchall() == [
-                ("guard_model_config_update", "ai_agent_control_migrator")
+                (
+                    "guard_model_config_update",
+                    0,
+                    "ai_agent_control_migrator",
+                    "trigger",
+                )
             ]
 
             await cursor.execute(
-                """SELECT t.tgname::text, pg_get_userbyid(c.relowner)::text
+                """SELECT
+                  t.tgname::text,
+                  table_class.relname::text,
+                  function_schema.nspname::text,
+                  trigger_function.proname::text,
+                  pg_get_userbyid(table_class.relowner)::text,
+                  pg_get_userbyid(trigger_function.proowner)::text
                 FROM pg_trigger AS t
-                JOIN pg_class AS c ON c.oid = t.tgrelid
-                WHERE t.tgrelid = 'agent_control.model_configs'::regclass
+                JOIN pg_class AS table_class ON table_class.oid = t.tgrelid
+                JOIN pg_namespace AS table_schema
+                  ON table_schema.oid = table_class.relnamespace
+                JOIN pg_proc AS trigger_function ON trigger_function.oid = t.tgfoid
+                JOIN pg_namespace AS function_schema
+                  ON function_schema.oid = trigger_function.pronamespace
+                WHERE table_schema.nspname = 'agent_control'
                   AND NOT t.tgisinternal"""
             )
             assert await cursor.fetchall() == [
-                ("model_configs_guard_update", "ai_agent_control_migrator")
+                (
+                    "model_configs_guard_update",
+                    "model_configs",
+                    "agent_control",
+                    "guard_model_config_update",
+                    "ai_agent_control_migrator",
+                    "ai_agent_control_migrator",
+                )
             ]
 
             await cursor.execute(
-                """SELECT table_name::text, privilege_type::text
+                """SELECT
+                  table_name::text,
+                  privilege_type::text,
+                  is_grantable = 'YES'
                 FROM information_schema.role_table_grants
                 WHERE table_schema = 'agent_control'
                   AND grantee = 'ai_agent_control'
                 ORDER BY table_name, privilege_type"""
             )
             assert set(await cursor.fetchall()) == EXPECTED_RUNTIME_GRANTS
+
+            await cursor.execute(
+                """SELECT
+                  c.relname::text,
+                  CASE
+                    WHEN acl.grantee = 0 THEN 'PUBLIC'
+                    ELSE pg_get_userbyid(acl.grantee)::text
+                  END,
+                  acl.privilege_type::text,
+                  acl.is_grantable
+                FROM pg_class AS c
+                JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                CROSS JOIN LATERAL aclexplode(
+                  COALESCE(c.relacl, acldefault('r', c.relowner))
+                ) AS acl
+                WHERE n.nspname = 'agent_control'
+                  AND c.relkind IN ('r', 'p')
+                  AND (
+                    acl.grantee = 0
+                    OR pg_get_userbyid(acl.grantee)::text IN (
+                      'ai_agent_migrator',
+                      'ai_agent_runtime',
+                      'ai_agent_backup',
+                      'ai_agent_agno_migrator',
+                      'ai_agent_agno'
+                    )
+                  )"""
+            )
+            assert await cursor.fetchall() == []
+
+            await cursor.execute(
+                """SELECT p.proname::text, acl.privilege_type::text
+                FROM pg_proc AS p
+                JOIN pg_namespace AS n ON n.oid = p.pronamespace
+                CROSS JOIN LATERAL aclexplode(
+                  COALESCE(p.proacl, acldefault('f', p.proowner))
+                ) AS acl
+                WHERE n.nspname = 'agent_control'
+                  AND acl.grantee = 0"""
+            )
+            assert await cursor.fetchall() == []
 
             await cursor.execute(
                 """SELECT
@@ -190,3 +260,36 @@ async def test_real_control_migration_is_idempotent_owned_and_enforces_boundarie
                 "DELETE FROM agent_control.model_configs WHERE id = %s",
                 (config_id,),
             )
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not MIGRATOR_URL,
+    reason=(
+        "AGENT_CONTROL_MIGRATOR_DATABASE_URL is required for PostgreSQL integration"
+    ),
+)
+async def test_real_applied_migration_rejects_public_table_grant_drift() -> None:
+    assert MIGRATOR_URL is not None
+    safe_url = assert_safe_control_test_url(MIGRATOR_URL)
+    settings = ControlMigrationSettings.model_validate(
+        {"AGENT_CONTROL_MIGRATOR_DATABASE_URL": safe_url}
+    )
+    await run_migration(settings)
+
+    async with await psycopg.AsyncConnection.connect(psycopg_url(safe_url)) as conn:
+        await conn.execute("GRANT SELECT ON agent_control.model_configs TO PUBLIC")
+
+    try:
+        with pytest.raises(
+            RuntimeError,
+            match="^Agent control migration verification failed$",
+        ):
+            await run_migration(settings)
+    finally:
+        async with await psycopg.AsyncConnection.connect(psycopg_url(safe_url)) as conn:
+            await conn.execute(
+                "REVOKE SELECT ON agent_control.model_configs FROM PUBLIC"
+            )
+
+    await run_migration(settings)

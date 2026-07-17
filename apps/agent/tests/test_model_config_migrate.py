@@ -10,14 +10,21 @@ from agent_service.config import ControlMigrationSettings
 from agent_service.model_config_migrate import main, run_migration
 from agent_service.model_config_schema import (
     AGENT_CONTROL_SCHEMA_VERSION,
+    EXPECTED_FUNCTION_BOUNDARY,
     EXPECTED_RUNTIME_GRANTS,
+    EXPECTED_TABLE_OWNERS,
+    EXPECTED_TRIGGER_BOUNDARY,
     PREPARE_SCHEMA_SQL,
     REQUIRED_TABLE_NAMES,
     SCHEMA_VERSION_1_SQL,
     SELECT_SCHEMA_VERSION_SQL,
+    VERIFY_FORBIDDEN_TABLE_GRANTS_SQL,
+    VERIFY_FUNCTION_BOUNDARY_SQL,
+    VERIFY_PUBLIC_FUNCTION_GRANTS_SQL,
     VERIFY_RUNTIME_GRANTS_SQL,
     VERIFY_SCHEMA_PRIVILEGES_SQL,
     VERIFY_TABLES_SQL,
+    VERIFY_TRIGGER_BOUNDARY_SQL,
 )
 
 
@@ -34,6 +41,18 @@ EXPECTED_VERIFY_SCHEMA_OWNER_SQL = """SELECT pg_get_userbyid(n.nspowner)::text
 FROM pg_namespace AS n
 WHERE n.nspname = 'agent_control'
 """
+EXPECTED_RUNTIME_GRANTS_WITH_OPTIONS = frozenset(
+    {
+        ("active_model_config", "INSERT", False),
+        ("active_model_config", "SELECT", False),
+        ("active_model_config", "UPDATE", False),
+        ("control_events", "INSERT", False),
+        ("control_events", "SELECT", False),
+        ("model_configs", "INSERT", False),
+        ("model_configs", "SELECT", False),
+        ("model_configs", "UPDATE", False),
+    }
+)
 
 
 def normalize_sql(value: str) -> str:
@@ -100,6 +119,8 @@ def test_schema_versioning_is_literal_idempotent_and_marks_version_one() -> None
 
     assert "CREATE SCHEMA" not in prepare
     assert "ALTER SCHEMA" not in prepare
+    assert "ALTER TABLE agent_control.schema_versions" not in prepare
+    assert "REVOKE ALL ON TABLE agent_control.schema_versions" not in prepare
     assert "CREATE TABLE IF NOT EXISTS agent_control.schema_versions" in prepare
     assert "PRIMARY KEY" in prepare
     assert (
@@ -149,18 +170,7 @@ def test_schema_sql_has_exact_runtime_grants_and_no_broad_privileges() -> None:
         "GRANT SELECT, INSERT, UPDATE ON agent_control.active_model_config TO ai_agent_control;",
         "GRANT SELECT, INSERT ON agent_control.control_events TO ai_agent_control;",
     }
-    assert EXPECTED_RUNTIME_GRANTS == frozenset(
-        {
-            ("active_model_config", "INSERT"),
-            ("active_model_config", "SELECT"),
-            ("active_model_config", "UPDATE"),
-            ("control_events", "INSERT"),
-            ("control_events", "SELECT"),
-            ("model_configs", "INSERT"),
-            ("model_configs", "SELECT"),
-            ("model_configs", "UPDATE"),
-        }
-    )
+    assert EXPECTED_RUNTIME_GRANTS == EXPECTED_RUNTIME_GRANTS_WITH_OPTIONS
     assert "REVOKE ALL ON SCHEMA agent_control FROM PUBLIC;" in sql
     assert "REVOKE ALL ON ALL TABLES IN SCHEMA agent_control FROM PUBLIC;" in sql
     assert "ALTER DEFAULT PRIVILEGES" not in sql
@@ -184,11 +194,36 @@ def test_schema_sql_has_exact_runtime_grants_and_no_broad_privileges() -> None:
         )
 
 
+def test_security_verification_queries_use_exact_catalog_acl_boundaries() -> None:
+    table_owners = normalize_sql(VERIFY_TABLES_SQL)
+    runtime_grants = normalize_sql(VERIFY_RUNTIME_GRANTS_SQL)
+    forbidden_grants = normalize_sql(VERIFY_FORBIDDEN_TABLE_GRANTS_SQL)
+    public_function_grants = normalize_sql(VERIFY_PUBLIC_FUNCTION_GRANTS_SQL)
+
+    assert "FROM pg_class AS c JOIN pg_namespace AS n" in table_owners
+    assert "pg_get_userbyid(c.relowner)::text" in table_owners
+    assert "aclexplode( COALESCE(c.relacl, acldefault('r', c.relowner)) )" in (
+        runtime_grants
+    )
+    assert "acl.is_grantable" in runtime_grants
+    assert "information_schema.role_table_grants" not in runtime_grants
+    assert "WHEN acl.grantee = 0 THEN 'PUBLIC'" in forbidden_grants
+    for excluded_role in (
+        "ai_agent_migrator",
+        "ai_agent_runtime",
+        "ai_agent_backup",
+        "ai_agent_agno_migrator",
+        "ai_agent_agno",
+    ):
+        assert f"'{excluded_role}'" in forbidden_grants
+    assert "acldefault('f', p.proowner)" in public_function_grants
+    assert "acl.grantee = 0" in public_function_grants
+
+
 def test_schema_objects_are_explicitly_owned_by_the_control_migrator() -> None:
     sql = normalize_sql(PREPARE_SCHEMA_SQL + SCHEMA_VERSION_1_SQL)
 
     for table_name in (
-        "schema_versions",
         "model_configs",
         "active_model_config",
         "control_events",
@@ -294,9 +329,11 @@ class FakeCursor:
         *,
         version_applied: bool = False,
         schema_owner: str | None = "ai_agent_control_migrator",
+        security_drift: str | None = None,
     ) -> None:
         self.version_applied = version_applied
         self.schema_owner = schema_owner
+        self.security_drift = security_drift
         self.queries: list[str] = []
         self.current_query = ""
 
@@ -319,11 +356,46 @@ class FakeCursor:
             return (True, False)
         raise AssertionError(f"unexpected fetchone query: {self.current_query}")
 
-    async def fetchall(self) -> list[tuple[str, ...]]:
+    async def fetchall(self) -> list[tuple[Any, ...]]:
         if self.current_query == VERIFY_TABLES_SQL:
-            return [(name,) for name in sorted(REQUIRED_TABLE_NAMES)]
+            rows = set(EXPECTED_TABLE_OWNERS)
+            if self.security_drift == "table_owner":
+                rows.remove(("model_configs", "ai_agent_control_migrator"))
+                rows.add(("model_configs", "postgres"))
+            return sorted(rows)
+        if self.current_query == VERIFY_FUNCTION_BOUNDARY_SQL:
+            rows = set(EXPECTED_FUNCTION_BOUNDARY)
+            if self.security_drift == "function_owner":
+                rows = {("guard_model_config_update", 0, "postgres", "trigger")}
+            return sorted(rows)
+        if self.current_query == VERIFY_TRIGGER_BOUNDARY_SQL:
+            rows = set(EXPECTED_TRIGGER_BOUNDARY)
+            if self.security_drift == "trigger_binding":
+                rows = {
+                    (
+                        "model_configs_guard_update",
+                        "control_events",
+                        "agent_control",
+                        "guard_model_config_update",
+                        "ai_agent_control_migrator",
+                        "ai_agent_control_migrator",
+                    )
+                }
+            return sorted(rows)
         if self.current_query == VERIFY_RUNTIME_GRANTS_SQL:
-            return [tuple(value) for value in sorted(EXPECTED_RUNTIME_GRANTS)]
+            rows = set(EXPECTED_RUNTIME_GRANTS_WITH_OPTIONS)
+            if self.security_drift == "runtime_grant_option":
+                rows.remove(("model_configs", "SELECT", False))
+                rows.add(("model_configs", "SELECT", True))
+            return sorted(rows)
+        if self.current_query == VERIFY_FORBIDDEN_TABLE_GRANTS_SQL:
+            if self.security_drift == "forbidden_table_grant":
+                return [("model_configs", "PUBLIC", "SELECT", False)]
+            return []
+        if self.current_query == VERIFY_PUBLIC_FUNCTION_GRANTS_SQL:
+            if self.security_drift == "public_function_execute":
+                return [("guard_model_config_update", "EXECUTE", False)]
+            return []
         raise AssertionError(f"unexpected fetchall query: {self.current_query}")
 
 
@@ -336,8 +408,14 @@ class FakeConnection:
         self.events.append("transaction:begin")
         return self
 
-    async def __aexit__(self, *_args: object) -> None:
-        self.events.append("transaction:commit")
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        *_args: object,
+    ) -> None:
+        self.events.append(
+            "transaction:rollback" if exc_type is not None else "transaction:commit"
+        )
         return None
 
     def cursor(self) -> FakeCursor:
@@ -368,7 +446,11 @@ async def test_run_migration_applies_version_one_and_verifies_boundary_in_one_tr
         SELECT_SCHEMA_VERSION_SQL,
         SCHEMA_VERSION_1_SQL,
         VERIFY_TABLES_SQL,
+        VERIFY_FUNCTION_BOUNDARY_SQL,
+        VERIFY_TRIGGER_BOUNDARY_SQL,
         VERIFY_RUNTIME_GRANTS_SQL,
+        VERIFY_FORBIDDEN_TABLE_GRANTS_SQL,
+        VERIFY_PUBLIC_FUNCTION_GRANTS_SQL,
         VERIFY_SCHEMA_PRIVILEGES_SQL,
     ]
 
@@ -387,11 +469,70 @@ async def test_run_migration_skips_applied_version_but_reverifies_boundary() -> 
     await run_migration(settings, connector=connector)
 
     assert SCHEMA_VERSION_1_SQL not in cursor.queries
-    assert cursor.queries[-3:] == [
+    assert cursor.queries[-7:] == [
         VERIFY_TABLES_SQL,
+        VERIFY_FUNCTION_BOUNDARY_SQL,
+        VERIFY_TRIGGER_BOUNDARY_SQL,
         VERIFY_RUNTIME_GRANTS_SQL,
+        VERIFY_FORBIDDEN_TABLE_GRANTS_SQL,
+        VERIFY_PUBLIC_FUNCTION_GRANTS_SQL,
         VERIFY_SCHEMA_PRIVILEGES_SQL,
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "security_drift",
+    [
+        "table_owner",
+        "function_owner",
+        "trigger_binding",
+        "runtime_grant_option",
+        "forbidden_table_grant",
+        "public_function_execute",
+    ],
+)
+async def test_applied_migration_fails_closed_on_security_boundary_drift(
+    security_drift: str,
+) -> None:
+    settings = ControlMigrationSettings.model_validate(
+        {"AGENT_CONTROL_MIGRATOR_DATABASE_URL": MIGRATOR_URL}
+    )
+    events: list[str] = []
+    cursor = FakeCursor(version_applied=True, security_drift=security_drift)
+
+    async def connector(database_url: str) -> FakeConnection:
+        return FakeConnection(cursor, events)
+
+    with pytest.raises(
+        RuntimeError,
+        match="^Agent control migration verification failed$",
+    ):
+        await run_migration(settings, connector=connector)
+
+    assert SCHEMA_VERSION_1_SQL not in cursor.queries
+    assert events == ["transaction:begin", "transaction:rollback"]
+
+
+@pytest.mark.asyncio
+async def test_version_one_ddl_rolls_back_when_post_verification_fails() -> None:
+    settings = ControlMigrationSettings.model_validate(
+        {"AGENT_CONTROL_MIGRATOR_DATABASE_URL": MIGRATOR_URL}
+    )
+    events: list[str] = []
+    cursor = FakeCursor(security_drift="table_owner")
+
+    async def connector(database_url: str) -> FakeConnection:
+        return FakeConnection(cursor, events)
+
+    with pytest.raises(
+        RuntimeError,
+        match="^Agent control migration verification failed$",
+    ):
+        await run_migration(settings, connector=connector)
+
+    assert SCHEMA_VERSION_1_SQL in cursor.queries
+    assert events == ["transaction:begin", "transaction:rollback"]
 
 
 @pytest.mark.asyncio

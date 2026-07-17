@@ -9,15 +9,21 @@ import psycopg
 
 from agent_service.config import ControlMigrationSettings
 from agent_service.model_config_schema import (
+    EXPECTED_FUNCTION_BOUNDARY,
     EXPECTED_RUNTIME_GRANTS,
+    EXPECTED_TABLE_OWNERS,
+    EXPECTED_TRIGGER_BOUNDARY,
     PREPARE_SCHEMA_SQL,
-    REQUIRED_TABLE_NAMES,
     SCHEMA_VERSION_1_SQL,
     SELECT_SCHEMA_VERSION_SQL,
+    VERIFY_FORBIDDEN_TABLE_GRANTS_SQL,
+    VERIFY_FUNCTION_BOUNDARY_SQL,
+    VERIFY_PUBLIC_FUNCTION_GRANTS_SQL,
     VERIFY_RUNTIME_GRANTS_SQL,
     VERIFY_SCHEMA_OWNER_SQL,
     VERIFY_SCHEMA_PRIVILEGES_SQL,
     VERIFY_TABLES_SQL,
+    VERIFY_TRIGGER_BOUNDARY_SQL,
 )
 
 
@@ -61,14 +67,38 @@ async def connect_database(database_url: str) -> MigrationConnection:
 async def _verify_migration(cursor: MigrationCursor) -> None:
     await cursor.execute(VERIFY_TABLES_SQL)
     table_rows = await cursor.fetchall()
-    actual_tables = {str(row[0]) for row in table_rows}
-    if actual_tables != REQUIRED_TABLE_NAMES:
+    actual_table_owners = {(str(row[0]), str(row[1])) for row in table_rows}
+    if actual_table_owners != EXPECTED_TABLE_OWNERS:
+        raise RuntimeError("Agent control migration verification failed")
+
+    await cursor.execute(VERIFY_FUNCTION_BOUNDARY_SQL)
+    function_rows = await cursor.fetchall()
+    actual_function_boundary = {
+        (str(row[0]), int(row[1]), str(row[2]), str(row[3])) for row in function_rows
+    }
+    if actual_function_boundary != EXPECTED_FUNCTION_BOUNDARY:
+        raise RuntimeError("Agent control migration verification failed")
+
+    await cursor.execute(VERIFY_TRIGGER_BOUNDARY_SQL)
+    trigger_rows = await cursor.fetchall()
+    actual_trigger_boundary = {
+        tuple(str(value) for value in row) for row in trigger_rows
+    }
+    if actual_trigger_boundary != EXPECTED_TRIGGER_BOUNDARY:
         raise RuntimeError("Agent control migration verification failed")
 
     await cursor.execute(VERIFY_RUNTIME_GRANTS_SQL)
     grant_rows = await cursor.fetchall()
-    actual_grants = {(str(row[0]), str(row[1])) for row in grant_rows}
+    actual_grants = {(str(row[0]), str(row[1]), row[2]) for row in grant_rows}
     if actual_grants != EXPECTED_RUNTIME_GRANTS:
+        raise RuntimeError("Agent control migration verification failed")
+
+    await cursor.execute(VERIFY_FORBIDDEN_TABLE_GRANTS_SQL)
+    if await cursor.fetchall():
+        raise RuntimeError("Agent control migration verification failed")
+
+    await cursor.execute(VERIFY_PUBLIC_FUNCTION_GRANTS_SQL)
+    if await cursor.fetchall():
         raise RuntimeError("Agent control migration verification failed")
 
     await cursor.execute(VERIFY_SCHEMA_PRIVILEGES_SQL)
