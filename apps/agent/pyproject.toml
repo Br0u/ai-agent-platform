@@ -5,6 +5,7 @@ description = "Internal model-free Agno AgentOS service"
 requires-python = ">=3.13"
 dependencies = [
     "agno[anthropic,google,openai]>=2.7.2",
+    "cryptography>=46.0.5,<47",
     "fastapi>=0.139.0",
     "greenlet>=3.5.3",
     "psycopg[binary]>=3.3.4",
