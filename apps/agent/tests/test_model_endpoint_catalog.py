@@ -2,6 +2,8 @@ from dataclasses import asdict
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -192,6 +194,45 @@ def test_group_or_world_writable_files_are_rejected(
 def test_non_regular_file_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(EndpointCatalogError, match="^invalid endpoint catalog$"):
         load_model_endpoint_catalog(tmp_path)
+
+
+def test_fifo_is_rejected_without_blocking_before_file_type_check(
+    tmp_path: Path,
+) -> None:
+    fifo = tmp_path / "model-endpoints.fifo"
+    os.mkfifo(fifo, mode=0o600)
+    script = (
+        "from pathlib import Path\n"
+        "import sys\n"
+        "from agent_service.model_endpoint_catalog import "
+        "EndpointCatalogError, load_model_endpoint_catalog\n"
+        "try:\n"
+        "    load_model_endpoint_catalog(Path(sys.argv[1]))\n"
+        "except EndpointCatalogError:\n"
+        "    raise SystemExit(0)\n"
+        "raise SystemExit(2)\n"
+    )
+    source_root = str(Path(__file__).resolve().parents[1] / "src")
+    inherited_pythonpath = os.environ.get("PYTHONPATH")
+    pythonpath = os.pathsep.join(
+        [source_root, inherited_pythonpath]
+        if inherited_pythonpath
+        else [source_root]
+    )
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(fifo)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=1,
+            env={**os.environ, "PYTHONPATH": pythonpath},
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("endpoint catalog blocked while opening a FIFO")
+
+    assert result.returncode == 0, result.stderr or result.stdout
 
 
 def test_symlink_is_rejected(tmp_path: Path) -> None:

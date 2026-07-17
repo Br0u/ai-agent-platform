@@ -166,7 +166,12 @@ class ModelEndpointCatalog:
 
 
 def _read_deployment_file(path: Path) -> bytes:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     fd = -1
     try:
         fd = os.open(path, flags)
