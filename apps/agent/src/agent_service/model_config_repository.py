@@ -376,9 +376,13 @@ class ControlEvent:
         request_id = _validate_uuid(self.request_id)
         assertion_nonce = _validate_uuid(self.assertion_nonce)
         actor_user_id = _validate_uuid(self.actor_user_id)
+        if type(self.action) is not str or type(self.result) is not str:
+            _invalid()
+        action = cast(ControlAction, self.action)
+        result = cast(ControlResult, self.result)
         if (
-            self.action not in _CONTROL_RESULTS_BY_ACTION
-            or self.result not in _CONTROL_RESULTS_BY_ACTION[self.action]
+            action not in _CONTROL_RESULTS_BY_ACTION
+            or result not in _CONTROL_RESULTS_BY_ACTION[action]
         ):
             _invalid()
         provider, model_id, endpoint_id = _validate_model_fields(
@@ -391,10 +395,12 @@ class ControlEvent:
         object.__setattr__(self, "request_id", request_id)
         object.__setattr__(self, "assertion_nonce", assertion_nonce)
         object.__setattr__(self, "actor_user_id", actor_user_id)
+        object.__setattr__(self, "action", action)
         object.__setattr__(self, "provider", provider)
         object.__setattr__(self, "model_id", model_id)
         object.__setattr__(self, "endpoint_id", endpoint_id)
         object.__setattr__(self, "config_revision", revision)
+        object.__setattr__(self, "result", result)
 
 
 @dataclass(frozen=True, slots=True)

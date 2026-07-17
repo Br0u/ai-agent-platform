@@ -290,7 +290,11 @@ def test_repository_protocol_has_only_use_case_operations() -> None:
         ("command", {"sealed": SealedSecret(b"short", b"bad", 1, "oops")}),
         ("event", {"event_id": "not-a-uuid"}),
         ("event", {"action": "arbitrary_action"}),
+        ("event", {"action": []}),
+        ("event", {"action": {}}),
         ("event", {"result": "raw provider failure"}),
+        ("event", {"result": []}),
+        ("event", {"result": {}}),
         ("event", {"action": "model_config_tested", "result": "success"}),
         (
             "event",
