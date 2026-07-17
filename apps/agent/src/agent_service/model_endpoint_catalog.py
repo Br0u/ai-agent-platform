@@ -261,7 +261,7 @@ def _validated_hostname(host: str) -> tuple[str, bool]:
             raise EndpointCatalogError("invalid endpoint catalog")
         return ascii_host, False
 
-    if not address.is_global:
+    if not address.is_global or address.is_multicast:
         raise EndpointCatalogError("invalid endpoint catalog")
     return address.compressed, address.version == 6
 

@@ -16,7 +16,7 @@ import pytest
 from agent_service.config import ActiveModelSettings, ModelProvider, RuntimeSettings
 import agent_service.model_registry as model_registry
 from agent_service.model_registry import ModelFactory
-from agent_service.model_runtime_types import ManagedModel
+from agent_service.model_runtime_types import ManagedModel, ManagedModelCloseError
 
 
 EXPLICIT_API_KEY = "explicit-model-api-key"
@@ -700,6 +700,151 @@ def test_managed_model_closes_every_owned_openai_client_exactly_once() -> None:
 
     assert sync_sdk_client.is_closed()
     assert async_sdk_client.is_closed()
+
+
+def test_managed_handles_detach_only_their_own_injected_client_hooks() -> None:
+    def user_sync_hook(_response: httpx.Response) -> None:
+        return None
+
+    async def user_async_hook(_response: httpx.Response) -> None:
+        return None
+
+    sync_client = httpx.Client(
+        follow_redirects=False,
+        event_hooks={"response": [user_sync_hook]},
+    )
+    async_client = httpx.AsyncClient(
+        follow_redirects=False,
+        event_hooks={"response": [user_async_hook]},
+    )
+    first = model_registry.build_managed_model(
+        make_settings("openai"),
+        http_client=sync_client,
+        http_async_client=async_client,
+    )
+    first_sync_hook = sync_client.event_hooks["response"][-1]
+    first_async_hook = async_client.event_hooks["response"][-1]
+    second = model_registry.build_managed_model(
+        make_settings("openai"),
+        http_client=sync_client,
+        http_async_client=async_client,
+    )
+    second_sync_hook = sync_client.event_hooks["response"][-1]
+    second_async_hook = async_client.event_hooks["response"][-1]
+
+    assert first_sync_hook is not second_sync_hook
+    assert first_async_hook is not second_async_hook
+
+    asyncio.run(first.aclose())
+    assert sync_client.event_hooks["response"] == [
+        user_sync_hook,
+        second_sync_hook,
+    ]
+    assert async_client.event_hooks["response"] == [
+        user_async_hook,
+        second_async_hook,
+    ]
+    assert not sync_client.is_closed
+    assert not async_client.is_closed
+
+    asyncio.run(second.aclose())
+    assert sync_client.event_hooks["response"] == [user_sync_hook]
+    assert async_client.event_hooks["response"] == [user_async_hook]
+    sync_client.close()
+    asyncio.run(async_client.aclose())
+
+
+def test_repeated_managed_build_and_close_never_accumulates_injected_hooks() -> None:
+    sync_client = httpx.Client(follow_redirects=False)
+    async_client = httpx.AsyncClient(follow_redirects=False)
+
+    for _ in range(3):
+        managed = model_registry.build_managed_model(
+            make_settings("deepseek"),
+            http_client=sync_client,
+            http_async_client=async_client,
+        )
+        assert len(sync_client.event_hooks["response"]) == 1
+        assert len(async_client.event_hooks["response"]) == 1
+
+        asyncio.run(managed.aclose())
+        assert sync_client.event_hooks["response"] == []
+        assert async_client.event_hooks["response"] == []
+
+    sync_client.close()
+    asyncio.run(async_client.aclose())
+
+
+def test_close_failure_still_detaches_injected_hooks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sync_client = httpx.Client(follow_redirects=False)
+    async_client = httpx.AsyncClient(follow_redirects=False)
+    managed = model_registry.build_managed_model(
+        make_settings("google"),
+        http_client=sync_client,
+        http_async_client=async_client,
+    )
+    sdk_client = get_client(managed.model)
+
+    def fail_close() -> None:
+        raise RuntimeError("provider-secret-close-error")
+
+    monkeypatch.setattr(sdk_client, "close", fail_close)
+
+    with pytest.raises(
+        ManagedModelCloseError,
+        match="^managed model close failed$",
+    ):
+        asyncio.run(managed.aclose())
+
+    assert sync_client.event_hooks["response"] == []
+    assert async_client.event_hooks["response"] == []
+    assert not sync_client.is_closed
+    assert not async_client.is_closed
+    sync_client.close()
+    asyncio.run(async_client.aclose())
+
+
+def test_model_construction_failure_never_attaches_injected_hooks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def user_sync_hook(_response: httpx.Response) -> None:
+        return None
+
+    async def user_async_hook(_response: httpx.Response) -> None:
+        return None
+
+    sync_client = httpx.Client(
+        follow_redirects=False,
+        event_hooks={"response": [user_sync_hook]},
+    )
+    async_client = httpx.AsyncClient(
+        follow_redirects=False,
+        event_hooks={"response": [user_async_hook]},
+    )
+    openai_models = import_module("agno.models.openai")
+
+    def fail_model_construction(**_kwargs: object) -> Model:
+        raise RuntimeError("model construction failed")
+
+    monkeypatch.setattr(
+        openai_models,
+        "OpenAIResponses",
+        fail_model_construction,
+    )
+
+    with pytest.raises(RuntimeError, match="^model construction failed$"):
+        model_registry.build_managed_model(
+            make_settings("openai"),
+            http_client=sync_client,
+            http_async_client=async_client,
+        )
+
+    assert sync_client.event_hooks["response"] == [user_sync_hook]
+    assert async_client.event_hooks["response"] == [user_async_hook]
+    sync_client.close()
+    asyncio.run(async_client.aclose())
 
 
 def test_openai_redirect_is_not_followed_and_surfaces_only_fixed_failure() -> None:

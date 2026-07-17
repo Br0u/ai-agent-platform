@@ -39,6 +39,27 @@ class _HttpClients:
     owns_asynchronous: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _RedirectHookRegistration:
+    sync_client: httpx.Client
+    asynchronous_client: httpx.AsyncClient
+    sync_hook: Callable[[httpx.Response], None]
+    asynchronous_hook: Callable[[httpx.Response], Awaitable[None]]
+
+    def detach(self) -> None:
+        sync_hooks = self.sync_client.event_hooks["response"]
+        for index, hook in enumerate(sync_hooks):
+            if hook is self.sync_hook:
+                del sync_hooks[index]
+                break
+
+        asynchronous_hooks = self.asynchronous_client.event_hooks["response"]
+        for index, hook in enumerate(asynchronous_hooks):
+            if hook is self.asynchronous_hook:
+                del asynchronous_hooks[index]
+                break
+
+
 class ModelFactory(Protocol):
     """Construct one owned Agno model from validated runtime settings."""
 
@@ -83,16 +104,6 @@ def _anthropic_default_headers(api_key: _RedactedApiKey) -> dict[str, str]:
     }
 
 
-def _reject_sync_redirect(response: httpx.Response) -> None:
-    if response.is_redirect:
-        raise ProviderRequestError("provider request failed")
-
-
-async def _reject_async_redirect(response: httpx.Response) -> None:
-    if response.is_redirect:
-        raise ProviderRequestError("provider request failed")
-
-
 def _http_clients(
     settings: ActiveModelSettings,
     *,
@@ -114,14 +125,38 @@ def _http_clients(
         follow_redirects=False,
         timeout=settings.timeout_seconds,
     )
-    sync_client.event_hooks["response"].append(_reject_sync_redirect)
-    asynchronous_client.event_hooks["response"].append(_reject_async_redirect)
     return _HttpClients(
         sync=sync_client,
         asynchronous=asynchronous_client,
         owns_sync=owns_sync,
         owns_asynchronous=owns_asynchronous,
     )
+
+
+def _attach_redirect_hooks(clients: _HttpClients) -> _RedirectHookRegistration:
+    def reject_sync_redirect(response: httpx.Response) -> None:
+        if response.is_redirect:
+            raise ProviderRequestError("provider request failed")
+
+    async def reject_async_redirect(response: httpx.Response) -> None:
+        if response.is_redirect:
+            raise ProviderRequestError("provider request failed")
+
+    registration = _RedirectHookRegistration(
+        sync_client=clients.sync,
+        asynchronous_client=clients.asynchronous,
+        sync_hook=reject_sync_redirect,
+        asynchronous_hook=reject_async_redirect,
+    )
+    clients.sync.event_hooks["response"].append(reject_sync_redirect)
+    try:
+        clients.asynchronous.event_hooks["response"].append(
+            reject_async_redirect
+        )
+    except BaseException:
+        registration.detach()
+        raise
+    return registration
 
 
 async def _close_resources(
@@ -199,14 +234,18 @@ def _openai_compatible_managed_model(
         client=sync_sdk,
         async_client=async_sdk,
     )
+    redirect_hooks = _attach_redirect_hooks(clients)
 
     async def close_callback() -> None:
-        await _close_resources(
-            sync_closers=(sync_sdk.close,) if clients.owns_sync else (),
-            async_closers=(async_sdk.close,)
-            if clients.owns_asynchronous
-            else (),
-        )
+        try:
+            await _close_resources(
+                sync_closers=(sync_sdk.close,) if clients.owns_sync else (),
+                async_closers=(async_sdk.close,)
+                if clients.owns_asynchronous
+                else (),
+            )
+        finally:
+            redirect_hooks.detach()
 
     return ManagedModel(model=model, close_callback=close_callback)
 
@@ -275,14 +314,18 @@ def _build_anthropic_model(
         client=sync_sdk,
         async_client=async_sdk,
     )
+    redirect_hooks = _attach_redirect_hooks(clients)
 
     async def close_callback() -> None:
-        await _close_resources(
-            sync_closers=(sync_sdk.close,) if clients.owns_sync else (),
-            async_closers=(async_sdk.close,)
-            if clients.owns_asynchronous
-            else (),
-        )
+        try:
+            await _close_resources(
+                sync_closers=(sync_sdk.close,) if clients.owns_sync else (),
+                async_closers=(async_sdk.close,)
+                if clients.owns_asynchronous
+                else (),
+            )
+        finally:
+            redirect_hooks.detach()
 
     return ManagedModel(model=model, close_callback=close_callback)
 
@@ -333,20 +376,24 @@ def _build_google_model(
         location=None,
         client=sdk_client,
     )
+    redirect_hooks = _attach_redirect_hooks(clients)
 
     async def close_callback() -> None:
-        await _close_resources(
-            sync_closers=(
-                sdk_client.close,
-                *((clients.sync.close,) if clients.owns_sync else ()),
-            ),
-            async_closers=(
-                sdk_client.aio.aclose,
-                *((clients.asynchronous.aclose,)
-                  if clients.owns_asynchronous
-                  else ()),
-            ),
-        )
+        try:
+            await _close_resources(
+                sync_closers=(
+                    sdk_client.close,
+                    *((clients.sync.close,) if clients.owns_sync else ()),
+                ),
+                async_closers=(
+                    sdk_client.aio.aclose,
+                    *((clients.asynchronous.aclose,)
+                      if clients.owns_asynchronous
+                      else ()),
+                ),
+            )
+        finally:
+            redirect_hooks.detach()
 
     return ManagedModel(model=model, close_callback=close_callback)
 

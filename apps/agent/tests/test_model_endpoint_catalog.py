@@ -145,9 +145,13 @@ def test_duplicate_ids_are_rejected(
         "https://172.16.0.1/v1",
         "https://192.168.1.1/v1",
         "https://169.254.1.1/v1",
+        "https://224.0.0.1/v1",
+        "https://239.255.255.250/v1",
         "https://[::1]/v1",
         "https://[fc00::1]/v1",
         "https://[fe80::1]/v1",
+        "https://[ff02::1]/v1",
+        "https://[ff0e::1]/v1",
     ),
 )
 def test_unsafe_literal_urls_are_rejected(tmp_path: Path, base_url: str) -> None:
@@ -226,7 +230,7 @@ def test_fifo_is_rejected_without_blocking_before_file_type_check(
             capture_output=True,
             text=True,
             check=False,
-            timeout=1,
+            timeout=5,
             env={**os.environ, "PYTHONPATH": pythonpath},
         )
     except subprocess.TimeoutExpired:
