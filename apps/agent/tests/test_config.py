@@ -7,13 +7,26 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 import agent_service.config as config
-from agent_service.config import MigrationSettings, RuntimeSettings
+from agent_service.config import (
+    ControlMigrationSettings,
+    MigrationSettings,
+    RuntimeSettings,
+)
 from agent_service.provider_smoke import ProviderSmokeSettings
 
 
 RUNTIME_URL = "postgresql+psycopg_async://runtime:runtime-password@db:5432/platform"
 MIGRATOR_URL = "postgresql+psycopg_async://migrator:migrator-password@db:5432/platform"
+CONTROL_RUNTIME_URL = (
+    "postgresql+psycopg_async://control:control-password@db:5432/platform"
+)
+CONTROL_MIGRATOR_URL = (
+    "postgresql+psycopg_async://control-migrator:control-password@db:5432/platform"
+)
 SECURITY_KEY = "internal-security-key-0123456789abcdef"
+CONTROL_KEY = "independent-control-key-0123456789abcdef"
+ENCRYPTION_KEY = "0123456789abcdef" * 4
+ENDPOINTS_FILE = "/run/config/model-endpoints.json"
 MODEL_API_KEY = "model-api-key-that-must-stay-secret"
 SELF_VALIDATION_SECRET = "self-validation-secret-that-must-not-leak"
 MODEL_PROVIDERS = (
@@ -40,6 +53,10 @@ def _runtime_model_result(values: dict[str, object]) -> config.ActiveModelSettin
         {
             "OS_SECURITY_KEY": SECURITY_KEY,
             "AGNO_DATABASE_URL": RUNTIME_URL,
+            "AGENT_CONTROL_DATABASE_URL": CONTROL_RUNTIME_URL,
+            "MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY,
+            "AGENT_CONFIG_CONTROL_KEY": CONTROL_KEY,
+            "MODEL_ENDPOINTS_FILE": ENDPOINTS_FILE,
             "AGENT_ENABLED": True,
             **values,
         }
@@ -152,6 +169,11 @@ def isolated_agent_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
         "OS_SECURITY_KEY",
         "AGNO_DATABASE_URL",
         "AGNO_MIGRATOR_DATABASE_URL",
+        "AGENT_CONTROL_DATABASE_URL",
+        "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+        "MODEL_CONFIG_ENCRYPTION_KEY",
+        "AGENT_CONFIG_CONTROL_KEY",
+        "MODEL_ENDPOINTS_FILE",
         "AGNO_SCHEMA",
         "AGENT_ENABLED",
         "CAPABILITY",
@@ -181,6 +203,10 @@ def isolated_agent_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
 def valid_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OS_SECURITY_KEY", SECURITY_KEY)
     monkeypatch.setenv("AGNO_DATABASE_URL", RUNTIME_URL)
+    monkeypatch.setenv("AGENT_CONTROL_DATABASE_URL", CONTROL_RUNTIME_URL)
+    monkeypatch.setenv("MODEL_CONFIG_ENCRYPTION_KEY", ENCRYPTION_KEY)
+    monkeypatch.setenv("AGENT_CONFIG_CONTROL_KEY", CONTROL_KEY)
+    monkeypatch.setenv("MODEL_ENDPOINTS_FILE", ENDPOINTS_FILE)
 
 
 @pytest.fixture
@@ -265,6 +291,186 @@ def test_migration_requires_migrator_database_url() -> None:
         MigrationSettings(_env_file=None)
 
 
+def test_control_migration_reads_only_its_credentialed_database_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+        CONTROL_MIGRATOR_URL,
+    )
+    monkeypatch.setenv("AGNO_MIGRATOR_DATABASE_URL", MIGRATOR_URL)
+    monkeypatch.setenv("AGENT_CONTROL_DATABASE_URL", CONTROL_RUNTIME_URL)
+    monkeypatch.setenv("OS_SECURITY_KEY", SECURITY_KEY)
+
+    settings = ControlMigrationSettings(_env_file=None)
+
+    assert settings.database_url.get_secret_value() == CONTROL_MIGRATOR_URL
+    assert set(ControlMigrationSettings.model_fields) == {"database_url"}
+    assert ControlMigrationSettings.model_fields["database_url"].repr is False
+    assert "control-password" not in repr(settings)
+
+
+def test_control_migration_requires_its_database_url() -> None:
+    with pytest.raises(ValidationError):
+        ControlMigrationSettings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    "invalid_url",
+    [
+        "postgresql://control:secret@db:5432/platform",
+        "postgresql+psycopg://control:secret@db:5432/platform",
+        "postgresql+psycopg_async://control@db:5432/platform",
+        "postgresql+psycopg_async://control:secret@/platform",
+        "postgresql+psycopg_async://control:secret@db:5432",
+    ],
+)
+def test_control_migration_rejects_unsafe_urls_without_leaking_credentials(
+    invalid_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "control-migrator-do-not-leak"
+    monkeypatch.setenv(
+        "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+        invalid_url.replace("secret", secret),
+    )
+
+    with pytest.raises(ValidationError) as error:
+        ControlMigrationSettings(_env_file=None)
+
+    assert secret not in str(error.value)
+    assert secret not in repr(error.value)
+
+
+def test_runtime_accepts_isolated_control_settings(valid_runtime_env: None) -> None:
+    settings = RuntimeSettings(_env_file=None)
+
+    assert settings.agent_control_database_url is not None
+    assert settings.model_config_encryption_key is not None
+    assert settings.agent_config_control_key is not None
+    assert settings.agent_control_database_url.get_secret_value() == CONTROL_RUNTIME_URL
+    assert settings.model_config_encryption_key.get_secret_value() == ENCRYPTION_KEY
+    assert settings.agent_config_control_key.get_secret_value() == CONTROL_KEY
+    assert settings.model_endpoints_file == ENDPOINTS_FILE
+
+
+def test_runtime_control_settings_remain_optional_until_deployment_wiring(
+    valid_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "AGENT_CONTROL_DATABASE_URL",
+        "MODEL_CONFIG_ENCRYPTION_KEY",
+        "AGENT_CONFIG_CONTROL_KEY",
+        "MODEL_ENDPOINTS_FILE",
+    ):
+        monkeypatch.delenv(name)
+
+    settings = RuntimeSettings(_env_file=None)
+
+    assert settings.agent_control_database_url is None
+    assert settings.model_config_encryption_key is None
+    assert settings.agent_config_control_key is None
+    assert settings.model_endpoints_file is None
+
+
+@pytest.mark.parametrize(
+    "invalid_key",
+    [
+        "",
+        "0" * 63,
+        "0" * 65,
+        "A" * 64,
+        "0x" + "0" * 64,
+        "0" * 64 + "=",
+        "0" * 64 + "\n",
+        "g" * 64,
+    ],
+    ids=[
+        "empty",
+        "too-short",
+        "too-long",
+        "uppercase",
+        "prefix",
+        "padding",
+        "newline",
+        "non-hex",
+    ],
+)
+def test_runtime_rejects_malformed_encryption_key_with_fixed_value_free_error(
+    invalid_key: str,
+    valid_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_CONFIG_ENCRYPTION_KEY", invalid_key)
+
+    with pytest.raises(ValidationError) as error:
+        RuntimeSettings(_env_file=None)
+
+    rendered = str(error.value)
+    assert (
+        "model config encryption key must be 64 lowercase hexadecimal characters"
+        in rendered
+    )
+    if invalid_key:
+        assert invalid_key not in rendered
+    assert "input_value" not in repr(error.value)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["OS_SECURITY_KEY", "AGENT_CONFIG_CONTROL_KEY"],
+)
+@pytest.mark.parametrize(
+    "invalid_key",
+    ["", "short", "a" * 31, "a" * 31 + " ", "é" * 32, "a" * 32 + "\n"],
+)
+def test_runtime_rejects_unsafe_bearer_keys_without_leaking_values(
+    name: str,
+    invalid_key: str,
+    valid_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(name, invalid_key)
+
+    with pytest.raises(ValidationError) as error:
+        RuntimeSettings(_env_file=None)
+
+    if invalid_key:
+        assert invalid_key not in str(error.value)
+    assert "input_value" not in repr(error.value)
+
+
+def test_runtime_requires_independent_agentos_and_control_bearer_keys(
+    valid_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENT_CONFIG_CONTROL_KEY", SECURITY_KEY)
+
+    with pytest.raises(ValidationError) as error:
+        RuntimeSettings(_env_file=None)
+
+    rendered = str(error.value)
+    assert "AgentOS and control bearer keys must be different" in rendered
+    assert SECURITY_KEY not in rendered
+
+
+def test_control_runtime_database_url_uses_existing_async_url_policy(
+    valid_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "control-runtime-do-not-leak"
+    monkeypatch.setenv(
+        "AGENT_CONTROL_DATABASE_URL",
+        f"postgresql://control:{secret}@db:5432/platform",
+    )
+
+    with pytest.raises(ValidationError) as error:
+        RuntimeSettings(_env_file=None)
+
+    assert secret not in str(error.value)
+
+
 def test_lowercase_variables_do_not_satisfy_required_runtime_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -290,6 +496,10 @@ def test_uppercase_variables_win_when_both_cases_exist(
     lowercase_values = {
         "os_security_key": " ",
         "agno_database_url": "postgresql://unsafe:unsafe@db/platform",
+        "agent_control_database_url": "postgresql://unsafe:unsafe@db/platform",
+        "model_config_encryption_key": "invalid",
+        "agent_config_control_key": "short",
+        "model_endpoints_file": "/lowercase/ignored.json",
         "agno_schema": "public",
         "agent_enabled": "true",
         "health_ready_cache_ttl_seconds": "-1",
@@ -298,6 +508,10 @@ def test_uppercase_variables_win_when_both_cases_exist(
     uppercase_values = {
         "OS_SECURITY_KEY": SECURITY_KEY,
         "AGNO_DATABASE_URL": RUNTIME_URL,
+        "AGENT_CONTROL_DATABASE_URL": CONTROL_RUNTIME_URL,
+        "MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY,
+        "AGENT_CONFIG_CONTROL_KEY": CONTROL_KEY,
+        "MODEL_ENDPOINTS_FILE": ENDPOINTS_FILE,
         "AGNO_SCHEMA": "agno",
         "AGENT_ENABLED": "false",
         "HEALTH_READY_CACHE_TTL_SECONDS": "4",
@@ -312,6 +526,13 @@ def test_uppercase_variables_win_when_both_cases_exist(
 
     assert settings.os_security_key.get_secret_value() == SECURITY_KEY
     assert settings.agno_database_url.get_secret_value() == RUNTIME_URL
+    assert settings.agent_control_database_url is not None
+    assert settings.model_config_encryption_key is not None
+    assert settings.agent_config_control_key is not None
+    assert settings.agent_control_database_url.get_secret_value() == CONTROL_RUNTIME_URL
+    assert settings.model_config_encryption_key.get_secret_value() == ENCRYPTION_KEY
+    assert settings.agent_config_control_key.get_secret_value() == CONTROL_KEY
+    assert settings.model_endpoints_file == ENDPOINTS_FILE
     assert settings.agno_schema == "agno"
     assert settings.agent_enabled is False
     assert settings.health_ready_cache_ttl_seconds == 4
@@ -327,11 +548,19 @@ def test_all_fields_use_explicit_uppercase_environment_aliases() -> None:
         name: field.validation_alias
         for name, field in MigrationSettings.model_fields.items()
     }
+    control_migration_aliases = {
+        name: field.validation_alias
+        for name, field in ControlMigrationSettings.model_fields.items()
+    }
 
     assert runtime_aliases == {
         "agno_schema": "AGNO_SCHEMA",
         "os_security_key": "OS_SECURITY_KEY",
         "agno_database_url": "AGNO_DATABASE_URL",
+        "agent_control_database_url": "AGENT_CONTROL_DATABASE_URL",
+        "model_config_encryption_key": "MODEL_CONFIG_ENCRYPTION_KEY",
+        "agent_config_control_key": "AGENT_CONFIG_CONTROL_KEY",
+        "model_endpoints_file": "MODEL_ENDPOINTS_FILE",
         "agent_enabled": "AGENT_ENABLED",
         "model_provider": "MODEL_PROVIDER",
         "model_id": "MODEL_ID",
@@ -345,6 +574,9 @@ def test_all_fields_use_explicit_uppercase_environment_aliases() -> None:
     }
     assert migration_aliases == {
         "agno_migrator_database_url": "AGNO_MIGRATOR_DATABASE_URL",
+    }
+    assert control_migration_aliases == {
+        "database_url": "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
     }
 
 
@@ -453,6 +685,7 @@ def test_enabled_agent_exposes_frozen_typed_active_model(
     assert get_args(config.ModelProvider) == MODEL_PROVIDERS
     assert is_dataclass(config.ActiveModelSettings)
     assert isinstance(settings.active_model, config.ActiveModelSettings)
+    assert settings.bootstrap_model == settings.active_model
     assert not hasattr(settings.active_model, "__dict__")
     assert settings.active_model.provider == "openai"
     assert settings.active_model.model_id == "gpt-4.1-mini"
@@ -486,6 +719,10 @@ def test_runtime_aggregates_independent_model_errors_with_other_field_errors() -
             {
                 "OS_SECURITY_KEY": "short",
                 "AGNO_DATABASE_URL": RUNTIME_URL,
+                "AGENT_CONTROL_DATABASE_URL": CONTROL_RUNTIME_URL,
+                "MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY,
+                "AGENT_CONFIG_CONTROL_KEY": CONTROL_KEY,
+                "MODEL_ENDPOINTS_FILE": ENDPOINTS_FILE,
                 "AGENT_ENABLED": True,
                 "MODEL_PROVIDER": "unknown",
                 "MODEL_ID": " bad-model ",
@@ -553,8 +790,21 @@ def test_uppercase_aliases_win_over_conflicting_direct_field_names(
     assert settings.active_model.timeout_seconds == 25
 
 
+def test_enabled_agent_does_not_require_bootstrap_model_configuration(
+    valid_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENT_ENABLED", "true")
+
+    settings = RuntimeSettings(_env_file=None)
+
+    assert settings.agent_enabled is True
+    assert settings.bootstrap_model is None
+    assert settings.active_model is None
+
+
 @pytest.mark.parametrize("missing_name", ["MODEL_PROVIDER", "MODEL_ID", "MODEL_API_KEY"])
-def test_enabled_agent_requires_complete_model_configuration(
+def test_enabled_agent_rejects_partial_bootstrap_model_configuration(
     missing_name: str,
     valid_enabled_runtime_env: None,
     monkeypatch: pytest.MonkeyPatch,
@@ -951,6 +1201,10 @@ def test_lowercase_direct_custom_header_alias_is_rejected_without_leak(
             {
                 "OS_SECURITY_KEY": SECURITY_KEY,
                 "AGNO_DATABASE_URL": RUNTIME_URL,
+                "AGENT_CONTROL_DATABASE_URL": CONTROL_RUNTIME_URL,
+                "MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY,
+                "AGENT_CONFIG_CONTROL_KEY": CONTROL_KEY,
+                "MODEL_ENDPOINTS_FILE": ENDPOINTS_FILE,
                 "AGENT_ENABLED": True,
                 "MODEL_PROVIDER": provider,
                 "MODEL_ID": "contract-model-id",
@@ -1014,8 +1268,23 @@ def test_secrets_are_wrapped_and_hidden_from_repr(valid_runtime_env: None) -> No
 
     assert isinstance(settings.os_security_key, SecretStr)
     assert isinstance(settings.agno_database_url, SecretStr)
+    assert isinstance(settings.agent_control_database_url, SecretStr)
+    assert isinstance(settings.model_config_encryption_key, SecretStr)
+    assert isinstance(settings.agent_config_control_key, SecretStr)
+    for field_name in (
+        "os_security_key",
+        "agno_database_url",
+        "agent_control_database_url",
+        "model_config_encryption_key",
+        "agent_config_control_key",
+        "model_api_key",
+    ):
+        assert RuntimeSettings.model_fields[field_name].repr is False
     assert SECURITY_KEY not in rendered
     assert "runtime-password" not in rendered
+    assert "control-password" not in rendered
+    assert ENCRYPTION_KEY not in rendered
+    assert CONTROL_KEY not in rendered
 
 
 def test_invalid_url_error_does_not_echo_credentials(

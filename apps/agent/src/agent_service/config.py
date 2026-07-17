@@ -261,8 +261,33 @@ class RuntimeSettings(_AgentSettings):
         default="agno",
         validation_alias="AGNO_SCHEMA",
     )
-    os_security_key: SecretStr = Field(validation_alias="OS_SECURITY_KEY")
-    agno_database_url: AsyncPostgresUrl = Field(validation_alias="AGNO_DATABASE_URL")
+    os_security_key: SecretStr = Field(
+        validation_alias="OS_SECURITY_KEY",
+        repr=False,
+    )
+    agno_database_url: AsyncPostgresUrl = Field(
+        validation_alias="AGNO_DATABASE_URL",
+        repr=False,
+    )
+    agent_control_database_url: AsyncPostgresUrl | None = Field(
+        default=None,
+        validation_alias="AGENT_CONTROL_DATABASE_URL",
+        repr=False,
+    )
+    model_config_encryption_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="MODEL_CONFIG_ENCRYPTION_KEY",
+        repr=False,
+    )
+    agent_config_control_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="AGENT_CONFIG_CONTROL_KEY",
+        repr=False,
+    )
+    model_endpoints_file: str | None = Field(
+        default=None,
+        validation_alias="MODEL_ENDPOINTS_FILE",
+    )
     agent_enabled: bool = Field(
         default=False,
         validation_alias="AGENT_ENABLED",
@@ -278,6 +303,7 @@ class RuntimeSettings(_AgentSettings):
     model_api_key: SecretStr | None = Field(
         default=None,
         validation_alias="MODEL_API_KEY",
+        repr=False,
     )
     model_base_url: str | None = Field(
         default=None,
@@ -313,6 +339,16 @@ class RuntimeSettings(_AgentSettings):
     _validate_database_url = field_validator("agno_database_url")(
         _validate_async_postgres_url
     )
+
+    @field_validator("agent_control_database_url", mode="after")
+    @classmethod
+    def _validate_control_database_url(
+        cls,
+        value: SecretStr | None,
+    ) -> SecretStr | None:
+        if value is None:
+            return None
+        return _validate_async_postgres_url(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -361,15 +397,46 @@ class RuntimeSettings(_AgentSettings):
             raise ValueError("OS security key must be a valid Bearer token")
         return value
 
-    @field_validator("model_provider", mode="after")
+    @field_validator("model_config_encryption_key", mode="after")
     @classmethod
-    def _validate_model_provider(
+    def _validate_model_config_encryption_key(
         cls,
-        value: ModelProvider | None,
+        value: SecretStr | None,
+    ) -> SecretStr | None:
+        if value is None:
+            return None
+        secret = value.get_secret_value()
+        if re.fullmatch(r"[0-9a-f]{64}", secret) is None:
+            raise ValueError(
+                "model config encryption key must be 64 lowercase hexadecimal "
+                "characters"
+            )
+        if len(bytes.fromhex(secret)) != 32:
+            raise ValueError(
+                "model config encryption key must decode to exactly 32 bytes"
+            )
+        return value
+
+    @field_validator("agent_config_control_key", mode="after")
+    @classmethod
+    def _validate_agent_config_control_key(
+        cls,
+        value: SecretStr | None,
         info: ValidationInfo,
-    ) -> ModelProvider | None:
-        if info.data.get("agent_enabled") and value is None:
-            raise ValueError("MODEL_PROVIDER is required when the agent is enabled")
+    ) -> SecretStr | None:
+        if value is None:
+            return None
+        secret = value.get_secret_value()
+        if len(secret.encode("utf-8")) < 32:
+            raise ValueError("agent config control key must contain at least 32 bytes")
+        if re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", secret) is None:
+            raise ValueError("agent config control key must be a valid Bearer token")
+        os_security_key = info.data.get("os_security_key")
+        if (
+            isinstance(os_security_key, SecretStr)
+            and secret == os_security_key.get_secret_value()
+        ):
+            raise ValueError("AgentOS and control bearer keys must be different")
         return value
 
     @field_validator("model_id", mode="after")
@@ -380,8 +447,6 @@ class RuntimeSettings(_AgentSettings):
         info: ValidationInfo,
     ) -> str | None:
         if value is None:
-            if info.data.get("agent_enabled"):
-                raise ValueError("MODEL_ID is required when the agent is enabled")
             return value
         return _validate_model_id_value(value)
 
@@ -393,8 +458,6 @@ class RuntimeSettings(_AgentSettings):
         info: ValidationInfo,
     ) -> SecretStr | None:
         if value is None:
-            if info.data.get("agent_enabled"):
-                raise ValueError("MODEL_API_KEY is required when the agent is enabled")
             return value
         return _validate_model_api_key_value(value)
 
@@ -445,9 +508,29 @@ class RuntimeSettings(_AgentSettings):
             raise ValueError("ANTHROPIC_CUSTOM_HEADERS")
         return None
 
+    @model_validator(mode="after")
+    def _reject_partial_bootstrap_model(self) -> "RuntimeSettings":
+        bootstrap_fields = (
+            self.model_provider,
+            self.model_id,
+            self.model_api_key,
+        )
+        if self.agent_enabled and any(value is not None for value in bootstrap_fields):
+            if not all(value is not None for value in bootstrap_fields):
+                raise ValueError(
+                    "bootstrap model configuration requires MODEL_PROVIDER, MODEL_ID, "
+                    "and MODEL_API_KEY together"
+                )
+        return self
+
     @property
-    def active_model(self) -> ActiveModelSettings | None:
-        if not self.agent_enabled:
+    def bootstrap_model(self) -> ActiveModelSettings | None:
+        if (
+            not self.agent_enabled
+            or self.model_provider is None
+            or self.model_id is None
+            or self.model_api_key is None
+        ):
             return None
         return resolve_active_model_settings(
             provider=self.model_provider,
@@ -457,6 +540,11 @@ class RuntimeSettings(_AgentSettings):
             timeout_seconds=self.model_run_timeout_seconds,
         )
 
+    @property
+    def active_model(self) -> ActiveModelSettings | None:
+        """Backward-compatible alias for the deployment bootstrap model."""
+        return self.bootstrap_model
+
 class MigrationSettings(_AgentSettings):
     """Credentials available only to the one-shot migration role."""
 
@@ -465,5 +553,18 @@ class MigrationSettings(_AgentSettings):
     )
 
     _validate_database_url = field_validator("agno_migrator_database_url")(
+        _validate_async_postgres_url
+    )
+
+
+class ControlMigrationSettings(_AgentSettings):
+    """Credentials available only to the Agent control schema migrator."""
+
+    database_url: AsyncPostgresUrl = Field(
+        validation_alias="AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+        repr=False,
+    )
+
+    _validate_database_url = field_validator("database_url")(
         _validate_async_postgres_url
     )
