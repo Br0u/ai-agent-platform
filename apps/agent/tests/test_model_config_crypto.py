@@ -47,6 +47,7 @@ def assert_fixed_crypto_error(exc_info: pytest.ExceptionInfo[Exception]) -> None
     assert str(exc_info.value) == FIXED_ERROR
     assert repr(exc_info.value) == f"ModelConfigCryptoError('{FIXED_ERROR}')"
     assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
     assert exc_info.value.__suppress_context__ is True
 
 
@@ -71,6 +72,23 @@ def test_round_trip_uses_random_12_byte_nonce_and_exact_last_four() -> None:
         ).get_secret_value()
         == RAW_SECRET
     )
+
+
+def test_nonce_generator_is_requested_to_return_exactly_12_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested_sizes: list[int] = []
+
+    def deterministic_token_bytes(size: int) -> bytes:
+        requested_sizes.append(size)
+        return b"n" * size
+
+    monkeypatch.setattr(crypto_module.secrets, "token_bytes", deterministic_token_bytes)
+
+    sealed = seal_secret()
+
+    assert requested_sizes == [12]
+    assert sealed.nonce == b"n" * 12
 
 
 def test_master_key_is_decoded_from_exactly_64_lowercase_hex_characters(
@@ -148,6 +166,42 @@ def test_master_key_rejects_every_noncanonical_encoding(master_key: str) -> None
     assert master_key not in str(exc_info.value)
 
 
+def test_master_key_decode_failure_discards_underlying_exception_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingBytes:
+        @classmethod
+        def fromhex(cls, value: str) -> bytes:
+            raise ValueError(MASTER_KEY)
+
+    monkeypatch.setattr(crypto_module, "bytes", FailingBytes, raising=False)
+
+    with pytest.raises(ModelConfigCryptoError) as exc_info:
+        make_cipher()
+
+    assert_fixed_crypto_error(exc_info)
+    assert MASTER_KEY not in repr(exc_info.value)
+
+
+class SecretString(str):
+    pass
+
+
+@pytest.mark.parametrize(
+    "value",
+    (123, SecretString("01" * 32)),
+)
+def test_master_key_requires_get_secret_value_to_return_exact_str(
+    value: object,
+) -> None:
+    master_key = SecretStr(cast(str, value))
+
+    with pytest.raises(ModelConfigCryptoError) as exc_info:
+        ModelConfigCipher(master_key=master_key)
+
+    assert_fixed_crypto_error(exc_info)
+
+
 @pytest.mark.parametrize(
     ("config_id", "provider", "revision"),
     (
@@ -216,6 +270,77 @@ def test_wrong_master_key_fails_closed() -> None:
 
     with pytest.raises(ModelConfigCryptoError) as exc_info:
         make_cipher(OTHER_MASTER_KEY).open(
+            config_id=CONFIG_ID,
+            provider="deepseek",
+            revision=1,
+            sealed=sealed,
+        )
+
+    assert_fixed_crypto_error(exc_info)
+
+
+def test_seal_discards_unicode_encode_error_with_secret_object() -> None:
+    raw_secret = "surrogate-secret-\ud800-value"
+
+    with pytest.raises(ModelConfigCryptoError) as exc_info:
+        seal_secret(secret=raw_secret)
+
+    assert_fixed_crypto_error(exc_info)
+    assert raw_secret not in repr(exc_info.value)
+
+
+def test_open_discards_invalid_tag_exception_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RejectingAESGCM:
+        def __init__(self, key: bytes) -> None:
+            pass
+
+        def decrypt(self, nonce: bytes, data: bytes, aad: bytes) -> bytes:
+            raise crypto_module.InvalidTag(RAW_SECRET)
+
+    monkeypatch.setattr(crypto_module, "AESGCM", RejectingAESGCM)
+    cipher = make_cipher()
+    sealed = SealedSecret(
+        ciphertext=b"ciphertext-and-tag",
+        nonce=b"n" * 12,
+        key_version=1,
+        last_four="1234",
+    )
+
+    with pytest.raises(ModelConfigCryptoError) as exc_info:
+        cipher.open(
+            config_id=CONFIG_ID,
+            provider="deepseek",
+            revision=1,
+            sealed=sealed,
+        )
+
+    assert_fixed_crypto_error(exc_info)
+    assert RAW_SECRET not in repr(exc_info.value)
+
+
+def test_open_discards_invalid_utf8_exception_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class InvalidUtf8AESGCM:
+        def __init__(self, key: bytes) -> None:
+            pass
+
+        def decrypt(self, nonce: bytes, data: bytes, aad: bytes) -> bytes:
+            return b"\xff" * 8
+
+    monkeypatch.setattr(crypto_module, "AESGCM", InvalidUtf8AESGCM)
+    cipher = make_cipher()
+    sealed = SealedSecret(
+        ciphertext=b"ciphertext-and-tag",
+        nonce=b"n" * 12,
+        key_version=1,
+        last_four="1234",
+    )
+
+    with pytest.raises(ModelConfigCryptoError) as exc_info:
+        cipher.open(
             config_id=CONFIG_ID,
             provider="deepseek",
             revision=1,
@@ -299,6 +424,26 @@ def test_secret_accepts_exact_inclusive_length_boundaries(length: int) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "value",
+    (123, SecretString("valid-secret-value")),
+)
+def test_secret_requires_get_secret_value_to_return_exact_str(
+    value: object,
+) -> None:
+    secret = SecretStr(cast(str, value))
+
+    with pytest.raises(ModelConfigCryptoError) as exc_info:
+        make_cipher().seal(
+            config_id=CONFIG_ID,
+            provider="deepseek",
+            revision=1,
+            secret=secret,
+        )
+
+    assert_fixed_crypto_error(exc_info)
+
+
 @pytest.mark.parametrize("revision", (0, -1, True, 1.0, "1"))
 def test_revision_requires_an_exact_positive_integer(revision: object) -> None:
     with pytest.raises(ModelConfigCryptoError) as exc_info:
@@ -359,3 +504,34 @@ def test_sealed_secret_is_frozen_and_plaintext_never_leaks(
     assert RAW_SECRET not in repr(exc_info.value)
     assert MASTER_KEY not in caplog.text
     assert RAW_SECRET not in caplog.text
+
+
+def test_sealed_secret_repr_hides_ciphertext_nonce_and_last_four() -> None:
+    unique_suffix = "U9!q"
+    sealed = seal_secret(secret=f"provider-secret-{unique_suffix}")
+
+    assert sealed.last_four == unique_suffix
+    assert unique_suffix not in repr(sealed)
+    assert repr(sealed.ciphertext) not in repr(sealed)
+    assert repr(sealed.nonce) not in repr(sealed)
+
+
+def test_seal_and_open_never_log_plaintext(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    raw_secret = "logging-secret-sentinel-R7!x"
+    caplog.set_level(logging.DEBUG)
+    cipher = make_cipher()
+
+    sealed = seal_secret(cipher, secret=raw_secret)
+    assert raw_secret not in caplog.text
+
+    caplog.clear()
+    opened = cipher.open(
+        config_id=CONFIG_ID,
+        provider="deepseek",
+        revision=1,
+        sealed=sealed,
+    )
+    assert opened.get_secret_value() == raw_secret
+    assert raw_secret not in caplog.text

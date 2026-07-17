@@ -36,7 +36,7 @@ class SealedSecret:
     ciphertext: bytes = field(repr=False)
     nonce: bytes = field(repr=False)
     key_version: int
-    last_four: str
+    last_four: str = field(repr=False)
 
 
 def _fail() -> NoReturn:
@@ -63,10 +63,12 @@ def _validate_secret(secret: SecretStr) -> str:
     if not isinstance(secret, SecretStr):
         _fail()
     value = secret.get_secret_value()
-    if not MODEL_API_KEY_MIN_CODE_POINTS <= len(
-        value
-    ) <= MODEL_API_KEY_MAX_CODE_POINTS or any(
-        character.isspace() for character in value
+    if (
+        type(value) is not str
+        or not MODEL_API_KEY_MIN_CODE_POINTS
+        <= len(value)
+        <= MODEL_API_KEY_MAX_CODE_POINTS
+        or any(character.isspace() for character in value)
     ):
         _fail()
     return value
@@ -106,13 +108,20 @@ class ModelConfigCipher:
         if not isinstance(master_key, SecretStr):
             _fail()
         encoded_key = master_key.get_secret_value()
-        if _MASTER_KEY_PATTERN.fullmatch(encoded_key) is None:
+        if (
+            type(encoded_key) is not str
+            or _MASTER_KEY_PATTERN.fullmatch(encoded_key) is None
+        ):
             _fail()
+        aead: AESGCM | None = None
         try:
             decoded_key = bytes.fromhex(encoded_key)
-            self.__aead = AESGCM(decoded_key)
+            aead = AESGCM(decoded_key)
         except (TypeError, ValueError):
+            pass
+        if aead is None:
             _fail()
+        self.__aead = aead
 
     def seal(
         self,
@@ -136,6 +145,7 @@ class ModelConfigCipher:
             revision=revision,
             key_version=_KEY_VERSION,
         )
+        ciphertext: bytes | None = None
         try:
             ciphertext = self.__aead.encrypt(
                 nonce,
@@ -143,6 +153,8 @@ class ModelConfigCipher:
                 aad,
             )
         except (OverflowError, TypeError, ValueError):
+            pass
+        if ciphertext is None:
             _fail()
         return SealedSecret(
             ciphertext=ciphertext,
@@ -187,6 +199,7 @@ class ModelConfigCipher:
             revision=revision,
             key_version=sealed.key_version,
         )
+        plaintext: str | None = None
         try:
             plaintext = self.__aead.decrypt(
                 sealed.nonce,
@@ -194,6 +207,8 @@ class ModelConfigCipher:
                 aad,
             ).decode("utf-8")
         except (InvalidTag, OverflowError, TypeError, UnicodeError, ValueError):
+            pass
+        if plaintext is None:
             _fail()
         _validate_secret(SecretStr(plaintext))
         if plaintext[-4:] != sealed.last_four:
