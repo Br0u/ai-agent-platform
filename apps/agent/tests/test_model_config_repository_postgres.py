@@ -1,6 +1,7 @@
 """Optional PostgreSQL integration coverage for model configuration drafts."""
 
 import asyncio
+from dataclasses import dataclass
 import os
 import re
 from urllib.parse import unquote, urlsplit
@@ -21,37 +22,106 @@ from agent_service.model_config_types import StoredModelConfigMetadata
 
 
 CONTROL_URL = os.getenv("AGENT_CONTROL_DATABASE_URL")
+MIGRATOR_URL = os.getenv("AGENT_CONTROL_MIGRATOR_DATABASE_URL")
 DEDICATED_TEST_DATABASE = re.compile(
     r"(?:ai_agent_platform_(?:identity|control|agent_control)_test|agent_control_test)"
     r"(?:_[a-z0-9][a-z0-9-]{0,63})?"
 )
 MASTER_KEY = SecretStr("11" * 32)
 FIXTURE_PLAINTEXT = "fixture-super-secret-api-key-7f31"
+RUNTIME_TEST_URL = (
+    "postgresql+psycopg_async://ai_agent_control:runtime-password@localhost/"
+    "ai_agent_platform_agent_control_test"
+)
+MIGRATOR_TEST_URL = (
+    "postgresql+psycopg_async://ai_agent_control_migrator:migrator-password@"
+    "localhost:5432/ai_agent_platform_agent_control_test"
+)
 
 
-def assert_safe_control_test_url(database_url: str) -> str:
+@dataclass(frozen=True, slots=True)
+class ParsedControlTestUrl:
+    hostname: str
+    port: int
+    database: str
+
+
+def _parse_safe_control_test_url(
+    database_url: str,
+    *,
+    expected_username: str,
+    error_message: str,
+) -> ParsedControlTestUrl:
     prefix = "postgresql+psycopg_async://"
-    if not database_url.startswith(prefix):
-        raise ValueError("dedicated control repository test database is required")
+    if type(database_url) is not str or not database_url.startswith(prefix):
+        raise ValueError(error_message)
     try:
         parsed = urlsplit(f"postgresql://{database_url.removeprefix(prefix)}")
         hostname = parsed.hostname
-    except ValueError as error:
-        raise ValueError(
-            "dedicated control repository test database is required"
-        ) from error
+        parsed_port = parsed.port
+        port = 5432 if parsed_port is None else parsed_port
+        username = unquote(parsed.username or "")
+        password = unquote(parsed.password or "")
+        database_name = unquote(parsed.path.removeprefix("/"))
+    except (TypeError, ValueError):
+        raise ValueError(error_message) from None
     if (
-        not parsed.username
-        or parsed.password is None
+        username != expected_username
+        or not password
         or hostname not in {"localhost", "127.0.0.1", "::1"}
         or parsed.query
         or parsed.fragment
+        or port < 1
+        or not parsed.path.startswith("/")
+        or DEDICATED_TEST_DATABASE.fullmatch(database_name) is None
     ):
-        raise ValueError("dedicated control repository test database is required")
-    database_name = unquote(parsed.path.removeprefix("/"))
-    if DEDICATED_TEST_DATABASE.fullmatch(database_name) is None:
-        raise ValueError("dedicated control repository test database is required")
-    return database_url
+        raise ValueError(error_message)
+    return ParsedControlTestUrl(
+        hostname=hostname,
+        port=port,
+        database=database_name,
+    )
+
+
+def assert_safe_control_test_urls(
+    runtime_database_url: str,
+    migrator_database_url: str,
+) -> tuple[str, str]:
+    error_message = "dedicated control repository test database pair is required"
+    runtime = _parse_safe_control_test_url(
+        runtime_database_url,
+        expected_username="ai_agent_control",
+        error_message=error_message,
+    )
+    migrator = _parse_safe_control_test_url(
+        migrator_database_url,
+        expected_username="ai_agent_control_migrator",
+        error_message=error_message,
+    )
+    if runtime != migrator:
+        raise ValueError(error_message)
+    return runtime_database_url, migrator_database_url
+
+
+def missing_control_database_environment(
+    runtime_database_url: str | None,
+    migrator_database_url: str | None,
+) -> tuple[str, ...]:
+    missing: list[str] = []
+    if not runtime_database_url:
+        missing.append("AGENT_CONTROL_DATABASE_URL")
+    if not migrator_database_url:
+        missing.append("AGENT_CONTROL_MIGRATOR_DATABASE_URL")
+    return tuple(missing)
+
+
+MISSING_DATABASE_ENVIRONMENT = missing_control_database_environment(
+    CONTROL_URL,
+    MIGRATOR_URL,
+)
+INTEGRATION_SKIP_REASON = "missing PostgreSQL integration environment: " + ", ".join(
+    MISSING_DATABASE_ENVIRONMENT
+)
 
 
 def psycopg_url(database_url: str) -> str:
@@ -62,8 +132,15 @@ def psycopg_url(database_url: str) -> str:
     )
 
 
-async def truncate_dedicated_control_tables(database_url: str) -> None:
-    async with await psycopg.AsyncConnection.connect(psycopg_url(database_url)) as conn:
+async def truncate_dedicated_control_tables(migrator_database_url: str) -> None:
+    _parse_safe_control_test_url(
+        migrator_database_url,
+        expected_username="ai_agent_control_migrator",
+        error_message="dedicated control repository migrator database is required",
+    )
+    async with await psycopg.AsyncConnection.connect(
+        psycopg_url(migrator_database_url)
+    ) as conn:
         await conn.execute(
             """TRUNCATE TABLE
               agent_control.active_model_config,
@@ -118,20 +195,141 @@ def save_event(
     )
 
 
+def test_control_database_guards_accept_exact_roles_on_same_dedicated_database() -> (
+    None
+):
+    assert assert_safe_control_test_urls(
+        RUNTIME_TEST_URL,
+        MIGRATOR_TEST_URL,
+    ) == (RUNTIME_TEST_URL, MIGRATOR_TEST_URL)
+
+
+@pytest.mark.parametrize(
+    ("runtime_url", "migrator_url"),
+    [
+        (
+            RUNTIME_TEST_URL.replace("ai_agent_control:", "postgres:"),
+            MIGRATOR_TEST_URL,
+        ),
+        (
+            RUNTIME_TEST_URL,
+            MIGRATOR_TEST_URL.replace("ai_agent_control_migrator:", "postgres:"),
+        ),
+        (
+            RUNTIME_TEST_URL.replace("localhost", "database.internal"),
+            MIGRATOR_TEST_URL.replace("localhost", "database.internal"),
+        ),
+        (
+            RUNTIME_TEST_URL.replace(
+                "ai_agent_platform_agent_control_test",
+                "production",
+            ),
+            MIGRATOR_TEST_URL.replace(
+                "ai_agent_platform_agent_control_test",
+                "production",
+            ),
+        ),
+        (f"{RUNTIME_TEST_URL}?sslmode=disable", MIGRATOR_TEST_URL),
+        (RUNTIME_TEST_URL, f"{MIGRATOR_TEST_URL}#unsafe"),
+        (
+            RUNTIME_TEST_URL.replace(":runtime-password@", ":@"),
+            MIGRATOR_TEST_URL,
+        ),
+        (
+            RUNTIME_TEST_URL,
+            MIGRATOR_TEST_URL.replace(":migrator-password@", ":@"),
+        ),
+        (
+            RUNTIME_TEST_URL,
+            MIGRATOR_TEST_URL.replace("localhost:5432", "127.0.0.1:5432"),
+        ),
+        (
+            RUNTIME_TEST_URL,
+            MIGRATOR_TEST_URL.replace("localhost:5432", "localhost:5433"),
+        ),
+        (
+            RUNTIME_TEST_URL,
+            MIGRATOR_TEST_URL.replace("localhost:5432", "localhost:0"),
+        ),
+        (
+            RUNTIME_TEST_URL,
+            MIGRATOR_TEST_URL.replace(
+                "ai_agent_platform_agent_control_test",
+                "ai_agent_platform_agent_control_test_other",
+            ),
+        ),
+    ],
+)
+def test_control_database_guards_reject_unsafe_or_mismatched_pairs(
+    runtime_url: str,
+    migrator_url: str,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="^dedicated control repository test database pair is required$",
+    ) as error:
+        assert_safe_control_test_urls(runtime_url, migrator_url)
+
+    rendered = f"{error.value!s} {error.value!r}"
+    assert "runtime-password" not in rendered
+    assert "migrator-password" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("runtime_url", "migrator_url", "missing"),
+    [
+        (
+            None,
+            None,
+            ("AGENT_CONTROL_DATABASE_URL", "AGENT_CONTROL_MIGRATOR_DATABASE_URL"),
+        ),
+        (RUNTIME_TEST_URL, None, ("AGENT_CONTROL_MIGRATOR_DATABASE_URL",)),
+        (None, MIGRATOR_TEST_URL, ("AGENT_CONTROL_DATABASE_URL",)),
+        (RUNTIME_TEST_URL, MIGRATOR_TEST_URL, ()),
+    ],
+)
+def test_missing_database_environment_names_are_explicit(
+    runtime_url: str | None,
+    migrator_url: str | None,
+    missing: tuple[str, ...],
+) -> None:
+    assert missing_control_database_environment(runtime_url, migrator_url) == missing
+
+
+@pytest.mark.asyncio
+async def test_truncate_rejects_runtime_role_before_connecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def unexpected_connect(_database_url: str) -> None:
+        raise AssertionError("runtime URL reached database cleanup")
+
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", unexpected_connect)
+
+    with pytest.raises(
+        ValueError,
+        match="^dedicated control repository migrator database is required$",
+    ):
+        await truncate_dedicated_control_tables(RUNTIME_TEST_URL)
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(
-    not CONTROL_URL,
-    reason="AGENT_CONTROL_DATABASE_URL is required for PostgreSQL integration",
+    bool(MISSING_DATABASE_ENVIRONMENT),
+    reason=INTEGRATION_SKIP_REASON,
 )
 async def test_real_repository_enforces_atomic_cas_secrecy_and_exact_active_revision() -> (
     None
 ):
     assert CONTROL_URL is not None
-    safe_url = assert_safe_control_test_url(CONTROL_URL)
-    repository = PostgresModelConfigRepository(database_url=SecretStr(safe_url))
+    assert MIGRATOR_URL is not None
+    runtime_url, migrator_url = assert_safe_control_test_urls(
+        CONTROL_URL,
+        MIGRATOR_URL,
+    )
+    repository = PostgresModelConfigRepository(database_url=SecretStr(runtime_url))
     cipher = ModelConfigCipher(master_key=MASTER_KEY)
 
-    await truncate_dedicated_control_tables(safe_url)
+    await truncate_dedicated_control_tables(migrator_url)
     try:
         first_nonce = uuid4()
         first_id = uuid4()
@@ -148,7 +346,9 @@ async def test_real_repository_enforces_atomic_cas_secrecy_and_exact_active_revi
             save_event(first_command, event_id=first_event_id),
         )
 
-        async with await psycopg.AsyncConnection.connect(psycopg_url(safe_url)) as conn:
+        async with await psycopg.AsyncConnection.connect(
+            psycopg_url(runtime_url)
+        ) as conn:
             await conn.execute(
                 """INSERT INTO agent_control.active_model_config (
                   singleton, model_config_id, config_revision, activation_version
@@ -190,7 +390,9 @@ async def test_real_repository_enforces_atomic_cas_secrecy_and_exact_active_revi
         with pytest.raises(ModelConfigConflictError, match="^configuration_conflict$"):
             await repository.save_draft(replay_command, save_event(replay_command))
 
-        async with await psycopg.AsyncConnection.connect(psycopg_url(safe_url)) as conn:
+        async with await psycopg.AsyncConnection.connect(
+            psycopg_url(runtime_url)
+        ) as conn:
             assert await (
                 await conn.execute(
                     """SELECT id, revision
@@ -252,7 +454,9 @@ async def test_real_repository_enforces_atomic_cas_secrecy_and_exact_active_revi
         assert active.revision == 1
         assert active.activation_version == 1
 
-        async with await psycopg.AsyncConnection.connect(psycopg_url(safe_url)) as conn:
+        async with await psycopg.AsyncConnection.connect(
+            psycopg_url(runtime_url)
+        ) as conn:
             immutable_after = await (
                 await conn.execute(
                     """SELECT
@@ -314,4 +518,4 @@ async def test_real_repository_enforces_atomic_cas_secrecy_and_exact_active_revi
                 )
             ).fetchone() == (0,)
     finally:
-        await truncate_dedicated_control_tables(safe_url)
+        await truncate_dedicated_control_tables(migrator_url)
