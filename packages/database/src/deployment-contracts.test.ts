@@ -1348,6 +1348,12 @@ exit 0
     }
     expect(example).toContain("openssl rand -hex 32");
     expect(example).toContain("control Key different from OS_SECURITY_KEY");
+    expect(example).toContain(
+      "AGENT_ENABLED=true 仅注册码多多并启用动态模型控制面；启动时不要求 Provider、Model ID 或模型 Key。",
+    );
+    expect(example).toContain(
+      "MODEL_PROVIDER、MODEL_ID、MODEL_API_KEY_FILE 仅是可选、只读的部署 bootstrap/fallback；动态数据库配置优先。",
+    );
     expect(example).not.toMatch(/^MODEL_CONFIG_ENCRYPTION_KEY=/mu);
     expect(example).not.toMatch(/^AGENT_CONFIG_CONTROL_KEY=/mu);
 
@@ -1361,6 +1367,9 @@ exit 0
       expect(dockerReadme).toContain(migration);
     }
     expect(dockerReadme).toContain("动态配置优先");
+    expect(dockerReadme).toContain(
+      "`AGENT_ENABLED=true`只负责注册码多多并启用动态模型控制面",
+    );
     expect(dockerReadme).toContain("不持有 migrator 凭据");
     expect(dockerReadme).toContain("不挂载任何`agent_control`");
   });
