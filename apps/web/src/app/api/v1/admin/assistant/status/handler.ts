@@ -5,9 +5,8 @@ import {
 } from "@/server/auth/access";
 import {
   createAdminAssistantErrorResponse,
-  isAdminAssistantStatusResponse,
+  parseAdminAssistantStatusResponse,
   type AdminAssistantStatusSnapshot,
-  type AdminAssistantStatusResponse,
 } from "@/features/assistant/admin-assistant-contract";
 import {
   ADMIN_MODEL_PROVIDERS,
@@ -548,12 +547,12 @@ export function createAdminAssistantStatusHandler(
     }
 
     try {
-      const body: AdminAssistantStatusResponse = {
+      const body = parseAdminAssistantStatusResponse({
         version: "1",
         requestId,
         status: await dependencies.loadStatus(),
-      };
-      if (!isAdminAssistantStatusResponse(body)) {
+      });
+      if (body === null) {
         throw new TypeError("Invalid Admin assistant status");
       }
       return Response.json(body, { headers: NO_STORE_HEADERS });

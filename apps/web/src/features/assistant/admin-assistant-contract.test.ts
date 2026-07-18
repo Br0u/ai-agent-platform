@@ -4,6 +4,7 @@ import {
   createAdminAssistantErrorResponse,
   isAdminAssistantChatResponse,
   isAdminAssistantStatusResponse,
+  parseAdminAssistantStatusResponse,
 } from "./admin-assistant-contract";
 
 function adminResponse(overrides: Record<string, unknown> = {}) {
@@ -336,6 +337,61 @@ describe("admin assistant status contract", () => {
     for (const key of Reflect.ownKeys(runtime)) {
       expect(descriptorReads.get(key), String(key)).toBe(1);
     }
+  });
+
+  it("parses into detached plain objects and arrays", () => {
+    const source = statusResponse();
+    const parsed = parseAdminAssistantStatusResponse(source);
+
+    expect(parsed).not.toBeNull();
+    if (parsed === null) throw new Error("expected parsed status");
+    expect(parsed).not.toBe(source);
+    expect(parsed.status).not.toBe(source.status);
+    expect(parsed.status.runtime).not.toBe(source.status.runtime);
+    expect(parsed.status.runtime.circuits).not.toBe(
+      source.status.runtime.circuits,
+    );
+    expect(parsed.status.runtime.circuits.readiness).not.toBe(
+      source.status.runtime.circuits.readiness,
+    );
+    expect(parsed.status.runtime.readiness).not.toBe(
+      source.status.runtime.readiness,
+    );
+    expect(parsed.status.services).not.toBe(source.status.services);
+    expect(parsed.status.services[0]).not.toBe(source.status.services[0]);
+    expect(parsed.status.configuration).not.toBe(source.status.configuration);
+    expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(parsed.status)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(parsed.status.runtime)).toBe(Object.prototype);
+    expect(Array.isArray(parsed.status.services)).toBe(true);
+    expect(Object.getPrototypeOf(parsed.status.services)).toBe(Array.prototype);
+
+    source.requestId = "mutated-request";
+    source.status.message = "mutated message";
+    source.status.runtime.modelId = "mutated-model";
+    source.status.runtime.circuits.readiness.consecutiveFailures = 99;
+    source.status.runtime.readiness.cacheTtlMs = 99;
+    source.status.services[0]!.detail = "mutated detail";
+    source.status.services.push({
+      id: "model",
+      label: "mutated",
+      state: "degraded",
+      detail: "mutated",
+    });
+    source.status.configuration.model = "mutated configuration";
+
+    expect(parsed.requestId).toBe("status-request-1");
+    expect(parsed.status.message).toBe("AI 助理基础服务已就绪。");
+    expect(parsed.status.runtime.modelId).toBe("deepseek-chat");
+    expect(parsed.status.runtime.circuits.readiness.consecutiveFailures).toBe(
+      0,
+    );
+    expect(parsed.status.runtime.readiness.cacheTtlMs).toBe(5_000);
+    expect(parsed.status.services).toHaveLength(4);
+    expect(parsed.status.services[0]?.detail).toBe("基础服务已就绪");
+    expect(parsed.status.configuration.model).toBe(
+      "DeepSeek / deepseek-chat（动态配置）",
+    );
   });
 
   it("rejects extra fields outside runtime metadata", () => {

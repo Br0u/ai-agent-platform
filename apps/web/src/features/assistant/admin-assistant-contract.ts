@@ -270,20 +270,28 @@ function isSuggestedAction(value: unknown): value is AssistantSuggestedAction {
   );
 }
 
-function isCircuitInspection(value: unknown): boolean {
+function readCircuitInspection(
+  value: unknown,
+): AdminAssistantStatusSnapshot["runtime"]["circuits"]["readiness"] | null {
   const snapshot = readExactDataRecord(value, ["state", "consecutiveFailures"]);
-  return (
-    snapshot !== null &&
-    (snapshot.state === "closed" ||
-      snapshot.state === "open" ||
-      snapshot.state === "half-open") &&
-    isNonNegativeSafeInteger(snapshot.consecutiveFailures)
-  );
+  if (
+    snapshot === null ||
+    (snapshot.state !== "closed" &&
+      snapshot.state !== "open" &&
+      snapshot.state !== "half-open") ||
+    !isNonNegativeSafeInteger(snapshot.consecutiveFailures)
+  ) {
+    return null;
+  }
+  return {
+    state: snapshot.state,
+    consecutiveFailures: snapshot.consecutiveFailures,
+  };
 }
 
 function readAdminRuntimeMetadata(
   value: unknown,
-): Record<string, unknown> | null {
+): AdminAssistantStatusSnapshot["runtime"] | null {
   const snapshot = readExactDataRecord(value, [
     "live",
     "ready",
@@ -304,36 +312,38 @@ function readAdminRuntimeMetadata(
     snapshot === null ||
     typeof snapshot.live !== "boolean" ||
     typeof snapshot.ready !== "boolean" ||
-    !["placeholder", "available", "degraded"].includes(
-      snapshot.capability as string,
-    ) ||
-    !["placeholder", "agentos"].includes(snapshot.providerMode as string) ||
-    !["placeholder", "agentos", "unavailable"].includes(
-      snapshot.selectedProvider as string,
-    ) ||
-    !["disabled", "agentos", "unavailable"].includes(
-      snapshot.persistence as string,
-    )
+    (snapshot.capability !== "placeholder" &&
+      snapshot.capability !== "available" &&
+      snapshot.capability !== "degraded") ||
+    (snapshot.providerMode !== "placeholder" &&
+      snapshot.providerMode !== "agentos") ||
+    (snapshot.selectedProvider !== "placeholder" &&
+      snapshot.selectedProvider !== "agentos" &&
+      snapshot.selectedProvider !== "unavailable") ||
+    (snapshot.persistence !== "disabled" &&
+      snapshot.persistence !== "agentos" &&
+      snapshot.persistence !== "unavailable")
   ) {
     return null;
   }
-  const circuits = readExactDataRecord(snapshot.circuits, [
+  const circuitSnapshot = readExactDataRecord(snapshot.circuits, [
     "readiness",
     "execution",
   ]);
-  const readiness = readExactDataRecord(snapshot.readiness, [
+  const readinessCircuit = readCircuitInspection(circuitSnapshot?.readiness);
+  const executionCircuit = readCircuitInspection(circuitSnapshot?.execution);
+  const readinessSnapshot = readExactDataRecord(snapshot.readiness, [
     "cacheTtlMs",
     "probeTimeoutMs",
     "failureThreshold",
   ]);
   if (
-    circuits === null ||
-    !isCircuitInspection(circuits.readiness) ||
-    !isCircuitInspection(circuits.execution) ||
-    readiness === null ||
-    !isNonNegativeSafeInteger(readiness.cacheTtlMs) ||
-    !isNonNegativeSafeInteger(readiness.probeTimeoutMs) ||
-    !isNonNegativeSafeInteger(readiness.failureThreshold) ||
+    readinessCircuit === null ||
+    executionCircuit === null ||
+    readinessSnapshot === null ||
+    !isNonNegativeSafeInteger(readinessSnapshot.cacheTtlMs) ||
+    !isNonNegativeSafeInteger(readinessSnapshot.probeTimeoutMs) ||
+    !isNonNegativeSafeInteger(readinessSnapshot.failureThreshold) ||
     (snapshot.ready
       ? !snapshot.live || snapshot.capability === "degraded"
       : snapshot.capability !== "degraded")
@@ -356,6 +366,32 @@ function readAdminRuntimeMetadata(
     return null;
   }
 
+  const common: Omit<
+    AdminAssistantStatusSnapshot["runtime"],
+    | "source"
+    | "provider"
+    | "modelId"
+    | "configRevision"
+    | "activationVersion"
+    | "testStatus"
+  > = {
+    live: snapshot.live,
+    ready: snapshot.ready,
+    capability: snapshot.capability,
+    providerMode: snapshot.providerMode,
+    selectedProvider: snapshot.selectedProvider,
+    persistence: snapshot.persistence,
+    circuits: {
+      readiness: readinessCircuit,
+      execution: executionCircuit,
+    },
+    readiness: {
+      cacheTtlMs: readinessSnapshot.cacheTtlMs,
+      probeTimeoutMs: readinessSnapshot.probeTimeoutMs,
+      failureThreshold: readinessSnapshot.failureThreshold,
+    },
+  };
+
   if (snapshot.source === "none") {
     return snapshot.provider === null &&
       snapshot.modelId === null &&
@@ -366,7 +402,15 @@ function readAdminRuntimeMetadata(
         (snapshot.capability === "degraded" &&
           (snapshot.testStatus === "not_configured" ||
             snapshot.testStatus === "unavailable")))
-      ? snapshot
+      ? {
+          ...common,
+          source: "none",
+          provider: null,
+          modelId: null,
+          configRevision: null,
+          activationVersion: null,
+          testStatus: snapshot.testStatus,
+        }
       : null;
   }
   if (
@@ -380,42 +424,67 @@ function readAdminRuntimeMetadata(
     return snapshot.configRevision === null &&
       snapshot.activationVersion === null &&
       snapshot.testStatus === "untested"
-      ? snapshot
+      ? {
+          ...common,
+          source: "deployment",
+          provider: snapshot.provider,
+          modelId: snapshot.modelId,
+          configRevision: null,
+          activationVersion: null,
+          testStatus: "untested",
+        }
       : null;
   }
   return snapshot.source === "dynamic" &&
     isPositiveSafeInteger(snapshot.configRevision) &&
     isPositiveSafeInteger(snapshot.activationVersion) &&
     snapshot.testStatus === "passed"
-    ? snapshot
+    ? {
+        ...common,
+        source: "dynamic",
+        provider: snapshot.provider,
+        modelId: snapshot.modelId,
+        configRevision: snapshot.configRevision,
+        activationVersion: snapshot.activationVersion,
+        testStatus: "passed",
+      }
     : null;
 }
 
-function isAdminServiceState(value: unknown, expectedId: string): boolean {
+function readAdminServiceState(
+  value: unknown,
+  expectedId: AdminAssistantServiceState["id"],
+): AdminAssistantServiceState | null {
   const snapshot = readExactDataRecord(value, [
     "id",
     "label",
     "state",
     "detail",
   ]);
-  return (
-    snapshot !== null &&
-    snapshot.id === expectedId &&
-    isBoundedString(snapshot.label, ASSISTANT_ACTION_LABEL_MAX_CODE_POINTS) &&
-    [
-      "ready",
-      "degraded",
-      "not_connected",
-      "not_configured",
-      "placeholder",
-    ].includes(snapshot.state as string) &&
-    isBoundedString(snapshot.detail, ASSISTANT_CONTENT_MAX_CODE_POINTS)
-  );
+  if (
+    snapshot === null ||
+    snapshot.id !== expectedId ||
+    !isBoundedString(snapshot.label, ASSISTANT_ACTION_LABEL_MAX_CODE_POINTS) ||
+    (snapshot.state !== "ready" &&
+      snapshot.state !== "degraded" &&
+      snapshot.state !== "not_connected" &&
+      snapshot.state !== "not_configured" &&
+      snapshot.state !== "placeholder") ||
+    !isBoundedString(snapshot.detail, ASSISTANT_CONTENT_MAX_CODE_POINTS)
+  ) {
+    return null;
+  }
+  return {
+    id: expectedId,
+    label: snapshot.label,
+    state: snapshot.state,
+    detail: snapshot.detail,
+  };
 }
 
-export function isAdminAssistantStatusResponse(
+export function parseAdminAssistantStatusResponse(
   input: unknown,
-): input is AdminAssistantStatusResponse {
+): AdminAssistantStatusResponse | null {
   try {
     const response = readExactDataRecord(input, [
       "version",
@@ -438,19 +507,26 @@ export function isAdminAssistantStatusResponse(
       runtime === null ||
       !isBoundedString(status.message, ASSISTANT_CONTENT_MAX_CODE_POINTS)
     ) {
-      return false;
+      return null;
     }
-    if (runtime.providerMode !== status.mode) return false;
+    if (runtime.providerMode !== status.mode) return null;
 
-    const services = readExactDataArray(status.services, 4);
-    const serviceIds = ["agentos", "database", "model", "public_entry"];
-    if (
-      services === null ||
-      services.some(
-        (service, index) => !isAdminServiceState(service, serviceIds[index]!),
-      )
-    ) {
-      return false;
+    const serviceSources = readExactDataArray(status.services, 4);
+    const serviceIds = [
+      "agentos",
+      "database",
+      "model",
+      "public_entry",
+    ] as const;
+    if (serviceSources === null) return null;
+    const services: AdminAssistantServiceState[] = [];
+    for (let index = 0; index < serviceIds.length; index += 1) {
+      const service = readAdminServiceState(
+        serviceSources[index],
+        serviceIds[index],
+      );
+      if (service === null) return null;
+      services.push(service);
     }
     const configuration = readExactDataRecord(status.configuration, [
       "defaultAgent",
@@ -458,25 +534,52 @@ export function isAdminAssistantStatusResponse(
       "skills",
       "sessionStorage",
     ]);
-    return (
-      configuration !== null &&
-      isBoundedString(
+    if (
+      configuration === null ||
+      !isBoundedString(
         configuration.defaultAgent,
         ASSISTANT_CONTENT_MAX_CODE_POINTS,
-      ) &&
-      isBoundedString(configuration.model, ASSISTANT_CONTENT_MAX_CODE_POINTS) &&
-      isBoundedString(
+      ) ||
+      !isBoundedString(
+        configuration.model,
+        ASSISTANT_CONTENT_MAX_CODE_POINTS,
+      ) ||
+      !isBoundedString(
         configuration.skills,
         ASSISTANT_CONTENT_MAX_CODE_POINTS,
-      ) &&
-      isBoundedString(
+      ) ||
+      !isBoundedString(
         configuration.sessionStorage,
         ASSISTANT_CONTENT_MAX_CODE_POINTS,
       )
-    );
+    ) {
+      return null;
+    }
+    return {
+      version: "1",
+      requestId: response.requestId,
+      status: {
+        mode: status.mode,
+        runtime,
+        services,
+        configuration: {
+          defaultAgent: configuration.defaultAgent,
+          model: configuration.model,
+          skills: configuration.skills,
+          sessionStorage: configuration.sessionStorage,
+        },
+        message: status.message,
+      },
+    };
   } catch {
-    return false;
+    return null;
   }
+}
+
+export function isAdminAssistantStatusResponse(
+  input: unknown,
+): input is AdminAssistantStatusResponse {
+  return parseAdminAssistantStatusResponse(input) !== null;
 }
 
 export function isAdminAssistantChatResponse(

@@ -1105,6 +1105,75 @@ describe("GET /api/v1/admin/assistant/status", () => {
     expect(JSON.stringify(body)).not.toMatch(/sk-private|provider body/iu);
   });
 
+  it("serializes a detached safe snapshot instead of a loader Proxy toJSON", async () => {
+    const safeStatus = await loadAdminAssistantStatus({
+      runtime: {
+        readinessStatus: async () => ({
+          probed: true,
+          live: true,
+          ready: true,
+          capability: "available" as const,
+        }),
+        inspect: () => ({
+          providerMode: "agentos" as const,
+          persistence: "agentos" as const,
+          circuits: {
+            readiness: { state: "closed" as const, consecutiveFailures: 0 },
+            execution: { state: "closed" as const, consecutiveFailures: 0 },
+          },
+          readiness: {
+            cacheTtlMs: 5_000,
+            probeTimeoutMs: 1_500,
+            failureThreshold: 3,
+          },
+        }),
+      },
+      controlClient: controlClient(),
+      requestIdFactory: () => CONTROL_REQUEST_ID,
+    });
+    const maliciousToJSON = vi.fn(() => ({
+      ...safeStatus,
+      apiKey: "sk-private-proxy",
+      endpointId: "private-endpoint",
+      endpointUrl: "https://private.example.com",
+      errorDetail: "private provider body",
+    }));
+    const proxiedStatus = new Proxy(safeStatus, {
+      get(target, property, receiver) {
+        return property === "toJSON"
+          ? maliciousToJSON
+          : Reflect.get(target, property, receiver);
+      },
+    });
+    const GET = createAdminAssistantStatusHandler({
+      access: {
+        requirePermission: vi.fn().mockResolvedValue({ realm: "workforce" }),
+      },
+      loadStatus: vi.fn(async () => proxiedStatus),
+      requestIdFactory: () => "proxy-status",
+    });
+
+    const response = await GET(request("proxy-status"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      version: "1",
+      requestId: "proxy-status",
+      status: {
+        runtime: {
+          source: "dynamic",
+          provider: "deepseek",
+          modelId: "deepseek-chat",
+        },
+      },
+    });
+    expect(maliciousToJSON).not.toHaveBeenCalled();
+    expect(JSON.stringify(body)).not.toMatch(
+      /sk-private|private-endpoint|private\.example|provider body|apiKey|endpointUrl|errorDetail/iu,
+    );
+  });
+
   it("does not let a malicious loader AuthAccessError impersonate an authorization failure", async () => {
     const GET = createAdminAssistantStatusHandler({
       access: {
