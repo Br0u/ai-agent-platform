@@ -42,6 +42,8 @@ from agent_service.model_runtime_slot import (
     RuntimeModelStatus,
 )
 from agent_service.model_runtime_types import ManagedModel
+from agent_service.model_control_service import ModelControlService
+from agent_service.model_verifier import ModelVerificationResult
 
 
 DATABASE_URL = "postgresql+psycopg_async://runtime:private-password@db:5432/platform"
@@ -52,7 +54,9 @@ CONTROL_DATABASE_URL = (
     "postgresql+psycopg_async://control:private-password@db:5432/platform"
 )
 ENCRYPTION_KEY = "11" * 32
+CONTROL_KEY = "model-control-key-0123456789abcdef"
 AUTHORIZATION = {"Authorization": f"Bearer {SECURITY_KEY}"}
+CONTROL_AUTHORIZATION = {"Authorization": f"Bearer {CONTROL_KEY}"}
 LIVE_SAFE_KEYS = {"live", "ready", "capability", "message"}
 READY_SAFE_KEYS = {"ready", "capability"}
 Probe = Callable[[AsyncPostgresDb], Awaitable[bool]]
@@ -78,13 +82,19 @@ def managed_model(
     )
 
 
-def dynamic_settings(*, bootstrap: bool = False) -> RuntimeSettings:
+def dynamic_settings(
+    *,
+    bootstrap: bool = False,
+    model_timeout_seconds: int = 50,
+) -> RuntimeSettings:
     values: dict[str, object] = {
         "OS_SECURITY_KEY": SECURITY_KEY,
         "AGNO_DATABASE_URL": DATABASE_URL,
         "AGENT_CONTROL_DATABASE_URL": CONTROL_DATABASE_URL,
         "MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY,
+        "AGENT_CONFIG_CONTROL_KEY": CONTROL_KEY,
         "AGENT_ENABLED": True,
+        "MODEL_RUN_TIMEOUT_SECONDS": model_timeout_seconds,
     }
     if bootstrap:
         values.update(
@@ -304,6 +314,76 @@ def test_documentation_surfaces_accept_the_correct_bearer(
         response = client.get(path, headers=AUTHORIZATION)
 
     assert response.status_code == 200
+
+
+def test_unconfigured_control_paths_remain_behind_the_agentos_bearer(
+    settings: RuntimeSettings,
+) -> None:
+    app = make_app(settings, ready_probe)
+
+    with TestClient(app) as client:
+        missing = client.get("/internal/control/model-configs")
+        authorized = client.get(
+            "/internal/control/model-configs",
+            headers=AUTHORIZATION,
+        )
+
+    assert missing.status_code == 401
+    assert missing.json() == {"detail": "Unauthorized"}
+    assert missing.headers["cache-control"] == "no-store"
+    assert authorized.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "control_values",
+    (
+        {"AGENT_CONTROL_DATABASE_URL": CONTROL_DATABASE_URL},
+        {"MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY},
+        {"AGENT_CONFIG_CONTROL_KEY": CONTROL_KEY},
+        {
+            "AGENT_CONTROL_DATABASE_URL": CONTROL_DATABASE_URL,
+            "MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY,
+        },
+        {
+            "AGENT_CONTROL_DATABASE_URL": CONTROL_DATABASE_URL,
+            "AGENT_CONFIG_CONTROL_KEY": CONTROL_KEY,
+        },
+        {
+            "MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY,
+            "AGENT_CONFIG_CONTROL_KEY": CONTROL_KEY,
+        },
+    ),
+)
+def test_partial_model_control_configuration_fails_app_construction(
+    control_values: dict[str, str],
+) -> None:
+    settings = RuntimeSettings.model_validate(
+        {
+            "OS_SECURITY_KEY": SECURITY_KEY,
+            "AGNO_DATABASE_URL": DATABASE_URL,
+            **control_values,
+        }
+    )
+    catalog_called = False
+
+    def unexpected_catalog(
+        _settings: RuntimeSettings,
+        _database: AsyncPostgresDb,
+    ) -> AgentCatalog:
+        nonlocal catalog_called
+        catalog_called = True
+        raise AssertionError("partial control settings must fail before composition")
+
+    with pytest.raises(
+        ValueError,
+        match="^model control configuration is incomplete$",
+    ) as error:
+        create_app(settings=settings, catalog_builder=unexpected_catalog)
+
+    assert catalog_called is False
+    assert CONTROL_DATABASE_URL not in str(error.value)
+    assert ENCRYPTION_KEY not in str(error.value)
+    assert CONTROL_KEY not in str(error.value)
 
 
 def test_live_is_independent_of_database_and_not_cached(
@@ -1042,6 +1122,81 @@ def test_lifespan_reconciles_before_requests_and_closes_model_before_repository(
     assert events == ["reconciled", "request", "active-rev1", "repository"]
 
 
+def test_lifespan_injects_one_control_dependency_graph_with_runtime_verifier() -> None:
+    settings = dynamic_settings(model_timeout_seconds=37)
+    events: list[str] = []
+    repository = ActiveRepository(close_events=events)
+    cipher = ModelConfigCipher(
+        master_key=settings.model_config_encryption_key  # type: ignore[arg-type]
+    )
+    endpoints = load_model_endpoint_catalog()
+    slot = ModelRuntimeSlot()
+    catalog = AgentCatalog(
+        agents=[Agent(id="maduoduo", name="码多多", model=slot)],
+        slot=slot,
+        runtime_status_provider=slot.runtime_status,
+    )
+    repository_builds = 0
+    cipher_builds = 0
+    endpoint_builds = 0
+    captured: dict[str, object] = {}
+
+    def build_repository(_: SecretStr) -> ActiveRepository:
+        nonlocal repository_builds
+        repository_builds += 1
+        return repository
+
+    def build_cipher(_: SecretStr) -> ModelConfigCipher:
+        nonlocal cipher_builds
+        cipher_builds += 1
+        return cipher
+
+    def build_endpoints(_: str | None) -> ModelEndpointCatalog:
+        nonlocal endpoint_builds
+        endpoint_builds += 1
+        return endpoints
+
+    async def verifier(
+        _managed: ManagedModel,
+        *,
+        timeout_seconds: int,
+    ) -> ModelVerificationResult:
+        raise AssertionError(f"verifier must not run during startup: {timeout_seconds}")
+
+    def build_control_service(**kwargs: Any) -> ModelControlService:
+        captured.update(kwargs)
+        return ModelControlService(**kwargs)
+
+    app = create_app(
+        settings=settings,
+        readiness_probe=ready_probe,
+        catalog_builder=lambda _settings, _database: catalog,
+        repository_builder=build_repository,
+        cipher_builder=build_cipher,
+        endpoint_catalog_builder=build_endpoints,
+        model_verifier=verifier,
+        control_service_factory=build_control_service,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/internal/health/ready", headers=AUTHORIZATION)
+
+    assert response.status_code == 200
+    assert repository_builds == 1
+    assert cipher_builds == 1
+    assert endpoint_builds == 1
+    assert repository.loads == 1
+    assert events == ["repository"]
+    assert captured["repository"] is repository
+    assert captured["cipher"] is cipher
+    assert captured["endpoint_catalog"] is endpoints
+    assert captured["slot"] is slot
+    assert captured["bootstrap_model"] is None
+    assert captured["control_enabled"] is True
+    assert captured["verifier"] is verifier
+    assert captured["verification_timeout_seconds"] == 37
+
+
 @pytest.mark.asyncio
 async def test_lifespan_cancellation_waits_for_ordered_runtime_cleanup() -> None:
     settings = dynamic_settings()
@@ -1177,7 +1332,7 @@ async def test_lifespan_preserves_fixed_cleanup_failure_after_repository_close()
 
 
 @pytest.mark.parametrize("failing_dependency", ["cipher", "endpoint"])
-def test_lifespan_skips_dynamic_dependencies_when_no_active_pointer(
+def test_lifespan_control_dependency_failure_isolated_from_bootstrap_reconciliation(
     failing_dependency: str,
 ) -> None:
     settings = dynamic_settings(bootstrap=True)
@@ -1212,11 +1367,19 @@ def test_lifespan_skips_dynamic_dependencies_when_no_active_pointer(
 
     with TestClient(app) as client:
         response = client.get("/internal/health/ready", headers=AUTHORIZATION)
+        control_response = client.get(
+            "/internal/control/model-configs",
+            headers=CONTROL_AUTHORIZATION,
+        )
         status = app.state.model_runtime_status()
 
     assert repository.loads == 1
     assert response.json() == {"ready": True, "capability": "available"}
+    assert control_response.status_code == 503
+    assert control_response.json() == {"error": "storage_unavailable"}
+    assert control_response.headers["cache-control"] == "no-store"
     assert [item.model_id for item in built] == ["bootstrap-model"]
+    assert status.capability == "available"
     assert status.source == "deployment"
     assert status.activation_version is None
     assert closes == ["bootstrap-model"]
@@ -1233,6 +1396,10 @@ def test_lifespan_turns_control_failure_into_degraded_safe_runtime_status() -> N
 
     with TestClient(app) as client:
         response = client.get("/internal/health/ready", headers=AUTHORIZATION)
+        control_response = client.get(
+            "/internal/control/model-configs",
+            headers=CONTROL_AUTHORIZATION,
+        )
         status = app.state.model_runtime_status()
 
     assert response.json() == {"ready": True, "capability": "degraded"}
@@ -1244,6 +1411,8 @@ def test_lifespan_turns_control_failure_into_degraded_safe_runtime_status() -> N
         config_revision=None,
         activation_version=None,
     )
+    assert control_response.status_code == 503
+    assert control_response.json() == {"error": "storage_unavailable"}
     assert "private" not in response.text
 
 

@@ -5,7 +5,8 @@ from collections.abc import Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 import hmac
 import inspect
-from typing import Protocol
+import time
+from typing import Protocol, cast
 
 from agno.db.postgres import AsyncPostgresDb
 from agno.os import AgentOS
@@ -24,6 +25,7 @@ from agent_service.config import (
 from agent_service.database import build_database
 from agent_service.model_config_crypto import ModelConfigCipher
 from agent_service.model_config_repository import (
+    ModelConfigRepository,
     PostgresModelConfigRepository,
     StoredActiveConfig,
 )
@@ -32,6 +34,17 @@ from agent_service.model_endpoint_catalog import (
     load_model_endpoint_catalog,
 )
 from agent_service.model_registry import build_managed_model
+from agent_service.model_control_api import (
+    CONTROL_PATH_PREFIX,
+    ModelControlAuthMiddleware,
+    build_model_control_router,
+)
+from agent_service.model_control_auth import ModelControlAuthenticator
+from agent_service.model_control_service import (
+    ModelControlService,
+    ModelControlStorageError,
+)
+from agent_service.model_verifier import ModelVerificationResult, verify_model
 from agent_service.model_runtime_slot import (
     ModelRuntimeSlot,
     RuntimeModelMetadata,
@@ -59,6 +72,8 @@ RepositoryBuilder = Callable[[SecretStr], ActiveConfigRepository]
 CipherBuilder = Callable[[SecretStr], ModelConfigCipher]
 EndpointCatalogBuilder = Callable[[str | None], ModelEndpointCatalog]
 ManagedModelBuilder = Callable[[ActiveModelSettings], ManagedModel]
+ModelVerifier = Callable[..., Awaitable[ModelVerificationResult]]
+ControlServiceFactory = Callable[..., ModelControlService]
 DynamicDependenciesBuilder = Callable[
     [],
     tuple[ModelConfigCipher | None, ModelEndpointCatalog | None],
@@ -235,13 +250,25 @@ def _has_valid_bearer_header(
 class BearerAuthMiddleware:
     """Apply one constant-time bearer-key boundary to HTTP and WebSocket routes."""
 
-    def __init__(self, app: ASGIApp, *, security_key: SecretStr) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        security_key: SecretStr,
+        bypass_http_prefixes: tuple[str, ...] = (),
+    ) -> None:
         self.app = app
         self._security_key = security_key.get_secret_value().encode("utf-8")
+        self._bypass_http_prefixes = bypass_http_prefixes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         scope_type = scope["type"]
         if scope_type not in {"http", "websocket"}:
+            await self.app(scope, receive, send)
+            return
+        if scope_type == "http" and scope.get("path", "").startswith(
+            self._bypass_http_prefixes
+        ):
             await self.app(scope, receive, send)
             return
 
@@ -320,65 +347,136 @@ def create_app(
     cipher_builder: CipherBuilder = _build_cipher,
     endpoint_catalog_builder: EndpointCatalogBuilder = load_model_endpoint_catalog,
     model_builder: ManagedModelBuilder = build_managed_model,
+    model_verifier: ModelVerifier = verify_model,
+    control_service_factory: ControlServiceFactory = ModelControlService,
+    control_clock: Callable[[], float] = time.time,
 ) -> FastAPI:
     """Compose the protected FastAPI and configured AgentOS surfaces."""
     install_agno_log_redaction()
     runtime_settings = settings or RuntimeSettings()
+    control_values = (
+        runtime_settings.agent_control_database_url,
+        runtime_settings.model_config_encryption_key,
+        runtime_settings.agent_config_control_key,
+    )
+    if any(value is not None for value in control_values) and not all(
+        value is not None for value in control_values
+    ):
+        raise ValueError("model control configuration is incomplete") from None
+    control_configured = all(value is not None for value in control_values)
+    control_authenticator = (
+        ModelControlAuthenticator(
+            control_key=cast(SecretStr, runtime_settings.agent_config_control_key),
+            os_security_key=runtime_settings.os_security_key,
+        )
+        if control_configured
+        else None
+    )
     runtime_database = database or build_database(runtime_settings)
     catalog = catalog_builder(runtime_settings, runtime_database)
+    control_slot = catalog.slot or ModelRuntimeSlot()
+    control_service: ModelControlService | None = None
+
+    def get_control_service() -> ModelControlService:
+        if control_service is None:
+            raise ModelControlStorageError("storage_unavailable") from None
+        return control_service
 
     @asynccontextmanager
     async def runtime_lifespan(_: FastAPI):
+        nonlocal control_service
         slot = catalog.slot
         repository: ActiveConfigRepository | None = None
-        if slot is None:
-            yield
-            return
-
-        await slot.start()
+        cipher: ModelConfigCipher | None = None
+        endpoints: ModelEndpointCatalog | None = None
+        repository_unavailable = False
+        if slot is not None:
+            await slot.start()
         try:
-            try:
-                if runtime_settings.agent_control_database_url is not None:
+            if control_configured:
+                try:
                     repository = repository_builder(
-                        runtime_settings.agent_control_database_url
+                        cast(SecretStr, runtime_settings.agent_control_database_url)
                     )
+                except Exception:
+                    repository_unavailable = True
 
-                def build_dynamic_dependencies() -> tuple[
-                    ModelConfigCipher | None,
-                    ModelEndpointCatalog | None,
-                ]:
-                    cipher = (
-                        None
-                        if runtime_settings.model_config_encryption_key is None
-                        else cipher_builder(
-                            runtime_settings.model_config_encryption_key
+                if repository is not None:
+                    try:
+                        cipher = cipher_builder(
+                            cast(
+                                SecretStr,
+                                runtime_settings.model_config_encryption_key,
+                            )
                         )
-                    )
-                    endpoints = endpoint_catalog_builder(
-                        runtime_settings.model_endpoints_file
-                    )
-                    return cipher, endpoints
+                        endpoints = endpoint_catalog_builder(
+                            runtime_settings.model_endpoints_file
+                        )
+                        control_service = control_service_factory(
+                            repository=cast(ModelConfigRepository, repository),
+                            cipher=cipher,
+                            endpoint_catalog=endpoints,
+                            slot=control_slot,
+                            bootstrap_model=runtime_settings.bootstrap_model,
+                            control_enabled=runtime_settings.agent_enabled,
+                            model_builder=model_builder,
+                            verifier=model_verifier,
+                            verification_timeout_seconds=(
+                                runtime_settings.model_run_timeout_seconds
+                            ),
+                        )
+                    except Exception:
+                        control_service = None
 
-                await reconcile_runtime_model(
-                    settings=runtime_settings,
-                    slot=slot,
-                    repository=repository,
-                    cipher=None,
-                    endpoint_catalog=None,
-                    model_builder=model_builder,
-                    dynamic_dependencies_builder=build_dynamic_dependencies,
+            def build_dynamic_dependencies() -> tuple[
+                ModelConfigCipher | None,
+                ModelEndpointCatalog | None,
+            ]:
+                dynamic_cipher = (
+                    None
+                    if runtime_settings.model_config_encryption_key is None
+                    else cipher_builder(runtime_settings.model_config_encryption_key)
                 )
-            except Exception:
-                slot.deactivate(capability="degraded")
+                dynamic_endpoints = endpoint_catalog_builder(
+                    runtime_settings.model_endpoints_file
+                )
+                return dynamic_cipher, dynamic_endpoints
+
+            if slot is not None:
+                if repository_unavailable:
+                    slot.deactivate(capability="degraded")
+                else:
+                    try:
+                        await reconcile_runtime_model(
+                            settings=runtime_settings,
+                            slot=slot,
+                            repository=repository,
+                            cipher=cipher,
+                            endpoint_catalog=endpoints,
+                            model_builder=model_builder,
+                            dynamic_dependencies_builder=(
+                                None
+                                if cipher is not None and endpoints is not None
+                                else build_dynamic_dependencies
+                            ),
+                        )
+                    except Exception:
+                        slot.deactivate(capability="degraded")
             yield
         finally:
-            await _finish_runtime_cleanup(slot, repository)
+            control_service = None
+            if slot is not None:
+                await _finish_runtime_cleanup(slot, repository)
+            else:
+                await _close_repository(repository)
 
     base_app = FastAPI(
         title="AI Agent Platform AgentOS",
         lifespan=runtime_lifespan,
     )
     base_app.state.model_runtime_status = catalog.runtime_status_provider
+    if control_configured:
+        base_app.include_router(build_model_control_router(get_control_service))
 
     @base_app.get("/internal/health/live", include_in_schema=False)
     async def live() -> JSONResponse:
@@ -428,7 +526,14 @@ def create_app(
     application.add_middleware(
         BearerAuthMiddleware,
         security_key=runtime_settings.os_security_key,
+        bypass_http_prefixes=(CONTROL_PATH_PREFIX,) if control_configured else (),
     )
+    if control_authenticator is not None:
+        application.add_middleware(
+            ModelControlAuthMiddleware,
+            authenticator=control_authenticator,
+            clock=control_clock,
+        )
     return application
 
 
