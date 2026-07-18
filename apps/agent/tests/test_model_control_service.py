@@ -23,6 +23,7 @@ from agent_service.model_config_repository import (
     ModelConfigRepository,
     ModelConfigStorageError,
     SaveSealedConfig,
+    StoredActiveConfig,
     StoredSealedConfig,
 )
 from agent_service.model_config_types import (
@@ -188,6 +189,7 @@ class Candidate:
     close_count: int = 0
     close_entered: asyncio.Event | None = None
     close_release: asyncio.Event | None = None
+    close_error: BaseException | None = None
 
 
 def make_candidate(
@@ -195,6 +197,7 @@ def make_candidate(
     *,
     close_entered: asyncio.Event | None = None,
     close_release: asyncio.Event | None = None,
+    close_error: BaseException | None = None,
 ) -> Candidate:
     candidate: Candidate
 
@@ -204,6 +207,8 @@ def make_candidate(
             close_entered.set()
         if close_release is not None:
             await close_release.wait()
+        if close_error is not None:
+            raise close_error
 
     candidate = Candidate(
         provider=provider,
@@ -213,6 +218,7 @@ def make_candidate(
         ),
         close_entered=close_entered,
         close_release=close_release,
+        close_error=close_error,
     )
     return candidate
 
@@ -258,15 +264,23 @@ class ControlRepository(SavingRepository):
             raise self.record_error
         self.failed_tests.append((provider, revision, event))
 
-    async def load_active(self) -> object | None:
+    async def load_active(self) -> StoredActiveConfig | None:
         self.calls.append("load_active")
         if self.activation_version == 0:
             return None
-        return type(
-            "ActiveVersion",
-            (),
-            {"activation_version": self.activation_version},
-        )()
+        assert self.active_provider is not None
+        stored = self.sealed_by_provider[self.active_provider]
+        return StoredActiveConfig(
+            config_id=stored.config_id,
+            provider=stored.provider,
+            model_id=stored.model_id,
+            endpoint_id=stored.endpoint_id,
+            revision=stored.revision,
+            test_status="passed",
+            sealed=stored.sealed,
+            activation_version=self.activation_version,
+            activated_at=datetime(2026, 7, 18, tzinfo=UTC),
+        )
 
     async def commit_test_and_activation(
         self,
@@ -971,7 +985,7 @@ async def test_cancellation_while_closing_failed_candidate_finishes_one_close() 
 
 
 @pytest.mark.asyncio
-async def test_cancellation_during_activation_commit_closes_untransferred_candidate() -> (
+async def test_cancellation_during_activation_commit_waits_then_transfers_candidate() -> (
     None
 ):
     commit_entered = asyncio.Event()
@@ -982,6 +996,7 @@ async def test_cancellation_during_activation_commit_closes_untransferred_candid
         commit_release=commit_release,
     )
     candidate = make_candidate("openai")
+    slot = CapturingSlot()
 
     async def verifier(
         _managed: ManagedModel,
@@ -993,7 +1008,7 @@ async def test_cancellation_during_activation_commit_closes_untransferred_candid
     task = asyncio.create_task(
         service(
             repository,
-            slot=CapturingSlot(),
+            slot=slot,
             model_builder=lambda _settings: candidate.managed,
             verifier=verifier,
             uuid_values=(EVENT_ID,),
@@ -1005,11 +1020,249 @@ async def test_cancellation_during_activation_commit_closes_untransferred_candid
     )
     await commit_entered.wait()
     task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    commit_release.set()
 
     with pytest.raises(asyncio.CancelledError):
         await task
+    assert candidate.close_count == 0
+    assert repository.activation_version == 1
+    assert slot.status.activation_version == 1
+
+
+@pytest.mark.asyncio
+async def test_cancellation_after_commit_side_effect_activates_slot_before_propagating() -> (
+    None
+):
+    commit_side_effect = asyncio.Event()
+    allow_commit_return = asyncio.Event()
+
+    class SideEffectFirstRepository(ControlRepository):
+        async def commit_test_and_activation(
+            self,
+            command: CommitVerifiedActivation,
+            event: ControlEvent,
+        ) -> ActiveConfigPointer:
+            assert command.expected_activation_version == self.activation_version
+            self.activation_version += 1
+            self.active_provider = command.provider
+            self.activation_commands.append((command, event))
+            pointer = ActiveConfigPointer(
+                config_id=self.sealed_by_provider[command.provider].config_id,
+                provider=command.provider,
+                config_revision=command.config_revision,
+                activation_version=self.activation_version,
+                activated_at=datetime(2026, 7, 18, tzinfo=UTC),
+            )
+            commit_side_effect.set()
+            await allow_commit_return.wait()
+            return pointer
+
+    repository = SideEffectFirstRepository(
+        sealed_by_provider={"openai": stored_candidate("openai")}
+    )
+    candidate = make_candidate("openai")
+    slot = CapturingSlot()
+
+    async def verifier(
+        _managed: ManagedModel,
+        *,
+        timeout_seconds: int,
+    ) -> ModelVerificationResult:
+        return ModelVerificationResult(True, "success")
+
+    task = asyncio.create_task(
+        service(
+            repository,
+            slot=slot,
+            model_builder=lambda _settings: candidate.managed,
+            verifier=verifier,
+            uuid_values=(EVENT_ID,),
+        ).test_and_activate(
+            "openai",
+            1,
+            assertion(action="test_and_activate"),
+        )
+    )
+    await commit_side_effect.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    allow_commit_return.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert repository.activation_version == 1
+    assert repository.active_provider == "openai"
+    assert slot.status.provider == "openai"
+    assert slot.status.activation_version == 1
+    assert candidate.close_count == 0
+
+
+@pytest.mark.parametrize(
+    "malformed_pointer",
+    [
+        object(),
+        ActiveConfigPointer(
+            config_id=UUID("79999999-0000-4000-8000-000000000001"),
+            provider="openai",
+            config_revision=1,
+            activation_version=1,
+            activated_at=datetime(2026, 7, 18, tzinfo=UTC),
+        ),
+        ActiveConfigPointer(
+            config_id=UUID("70000000-0000-4000-8000-000000000001"),
+            provider="anthropic",
+            config_revision=1,
+            activation_version=1,
+            activated_at=datetime(2026, 7, 18, tzinfo=UTC),
+        ),
+        ActiveConfigPointer(
+            config_id=UUID("70000000-0000-4000-8000-000000000001"),
+            provider="openai",
+            config_revision=2,
+            activation_version=1,
+            activated_at=datetime(2026, 7, 18, tzinfo=UTC),
+        ),
+        ActiveConfigPointer(
+            config_id=UUID("70000000-0000-4000-8000-000000000001"),
+            provider="openai",
+            config_revision=1,
+            activation_version=2,
+            activated_at=datetime(2026, 7, 18, tzinfo=UTC),
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_malformed_committed_pointer_degrades_without_activation(
+    malformed_pointer: object,
+) -> None:
+    class MalformedPointerRepository(ControlRepository):
+        async def commit_test_and_activation(
+            self,
+            command: CommitVerifiedActivation,
+            event: ControlEvent,
+        ) -> ActiveConfigPointer:
+            self.activation_version += 1
+            self.active_provider = command.provider
+            self.activation_commands.append((command, event))
+            return cast(ActiveConfigPointer, malformed_pointer)
+
+    repository = MalformedPointerRepository(
+        sealed_by_provider={"openai": stored_candidate("openai")}
+    )
+    candidate = make_candidate("openai")
+    slot = CapturingSlot()
+
+    async def verifier(
+        _managed: ManagedModel,
+        *,
+        timeout_seconds: int,
+    ) -> ModelVerificationResult:
+        return ModelVerificationResult(True, "success")
+
+    with pytest.raises(
+        ModelControlAssistantError,
+        match="^assistant_unavailable$",
+    ) as error:
+        await service(
+            repository,
+            slot=slot,
+            model_builder=lambda _settings: candidate.managed,
+            verifier=verifier,
+            uuid_values=(EVENT_ID,),
+        ).test_and_activate(
+            "openai",
+            1,
+            assertion(action="test_and_activate"),
+        )
+
+    assert slot.activated == []
+    assert slot.deactivations == ["degraded"]
     assert candidate.close_count == 1
-    assert repository.activation_version == 0
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_malformed_active_pointer_read_fails_before_commit() -> None:
+    class MalformedActiveRepository(ControlRepository):
+        async def load_active(self) -> StoredActiveConfig | None:
+            return cast(StoredActiveConfig, object())
+
+    repository = MalformedActiveRepository(
+        sealed_by_provider={"openai": stored_candidate("openai")}
+    )
+    candidate = make_candidate("openai")
+    slot = CapturingSlot()
+
+    async def verifier(
+        _managed: ManagedModel,
+        *,
+        timeout_seconds: int,
+    ) -> ModelVerificationResult:
+        return ModelVerificationResult(True, "success")
+
+    with pytest.raises(
+        ModelControlStorageError,
+        match="^storage_unavailable$",
+    ) as error:
+        await service(
+            repository,
+            slot=slot,
+            model_builder=lambda _settings: candidate.managed,
+            verifier=verifier,
+            uuid_values=(EVENT_ID,),
+        ).test_and_activate(
+            "openai",
+            1,
+            assertion(action="test_and_activate"),
+        )
+
+    assert repository.activation_commands == []
+    assert slot.activated == []
+    assert candidate.close_count == 1
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_candidate_close_failure_is_fixed_and_not_chained() -> None:
+    repository = ControlRepository(
+        sealed_by_provider={"openai": stored_candidate("openai")}
+    )
+    candidate = make_candidate(
+        "openai",
+        close_error=RuntimeError("private close failure"),
+    )
+
+    async def verifier(
+        _managed: ManagedModel,
+        *,
+        timeout_seconds: int,
+    ) -> ModelVerificationResult:
+        return ModelVerificationResult(False, "provider_timeout")
+
+    with pytest.raises(
+        ModelControlAssistantError,
+        match="^assistant_unavailable$",
+    ) as error:
+        await service(
+            repository,
+            slot=CapturingSlot(),
+            model_builder=lambda _settings: candidate.managed,
+            verifier=verifier,
+            uuid_values=(EVENT_ID,),
+        ).test_and_activate(
+            "openai",
+            1,
+            assertion(action="test_and_activate"),
+        )
+
+    assert candidate.close_count == 1
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
 
 
 @pytest.mark.asyncio
@@ -1032,6 +1285,73 @@ async def test_missing_current_key_rejects_omitted_key_save_as_conflict() -> Non
     ) as error:
         await service(MissingRepository()).save_model_config(draft, assertion())
 
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "loaded",
+    [
+        object(),
+        stored_candidate("anthropic"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_activation_rejects_wrong_loaded_identity_as_storage(
+    loaded: object,
+) -> None:
+    class WrongIdentityRepository(ControlRepository):
+        async def load_sealed(self, provider: ModelProvider) -> StoredSealedConfig:
+            return cast(StoredSealedConfig, loaded)
+
+    repository = WrongIdentityRepository()
+
+    with pytest.raises(
+        ModelControlStorageError,
+        match="^storage_unavailable$",
+    ) as error:
+        await service(
+            repository,
+            model_builder=lambda _settings: (_ for _ in ()).throw(
+                AssertionError("builder must not run")
+            ),
+        ).test_and_activate(
+            "openai",
+            1,
+            assertion(action="test_and_activate"),
+        )
+
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "loaded",
+    [
+        object(),
+        stored_candidate("anthropic"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_omitted_key_save_rejects_wrong_loaded_identity_as_storage(
+    loaded: object,
+) -> None:
+    repository = SavingRepository(current=cast(StoredSealedConfig, loaded))
+    draft = ModelConfigDraft(
+        provider="openai",
+        model_id="gpt-5-mini",
+        endpoint_id="openai-official",
+        api_key=None,
+        expected_revision=1,
+    )
+
+    with pytest.raises(
+        ModelControlStorageError,
+        match="^storage_unavailable$",
+    ) as error:
+        await service(repository).save_model_config(draft, assertion())
+
+    assert repository.saved == []
     assert error.value.__cause__ is None
     assert error.value.__context__ is None
 
@@ -1120,6 +1440,80 @@ async def test_reveal_unknown_commit_result_never_returns_plaintext() -> None:
     assert error.value.__cause__ is None
     assert error.value.__context__ is None
     assert len(repository.reveal_attempts) == 1
+
+
+@pytest.mark.parametrize(
+    "loaded",
+    [
+        object(),
+        stored_candidate("anthropic"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_reveal_rejects_wrong_loaded_identity_as_storage(
+    loaded: object,
+) -> None:
+    class WrongRevealRepository(ControlRepository):
+        async def load_for_reveal(
+            self,
+            provider: ModelProvider,
+            revision: int,
+        ) -> StoredSealedConfig:
+            return cast(StoredSealedConfig, loaded)
+
+    repository = WrongRevealRepository()
+
+    with pytest.raises(
+        ModelControlStorageError,
+        match="^storage_unavailable$",
+    ) as error:
+        await service(repository, uuid_values=()).reveal_key(
+            "openai",
+            1,
+            assertion(action="reveal"),
+        )
+
+    assert repository.reveal_attempts == []
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_reveal_cancellation_traceback_contains_no_plaintext_reference() -> None:
+    commit_entered = asyncio.Event()
+
+    class BlockingRevealRepository(ControlRepository):
+        async def commit_reveal_success(
+            self,
+            provider: ModelProvider,
+            revision: int,
+            event: ControlEvent,
+        ) -> str:
+            commit_entered.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    repository = BlockingRevealRepository(reveal_config=stored_candidate("openai"))
+    task = asyncio.create_task(
+        service(repository, uuid_values=(EVENT_ID,)).reveal_key(
+            "openai",
+            1,
+            assertion(action="reveal"),
+        )
+    )
+    await commit_entered.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError) as error:
+        await task
+
+    traceback = error.value.__traceback__
+    assert traceback is not None
+    while traceback is not None:
+        for value in traceback.tb_frame.f_locals.values():
+            assert not isinstance(value, SecretStr)
+            assert not (type(value) is str and value == "openai-candidate-key")
+        traceback = traceback.tb_next
 
 
 @pytest.mark.asyncio

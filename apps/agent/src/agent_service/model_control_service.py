@@ -20,6 +20,8 @@ from agent_service.model_config_repository import (
     ModelConfigStorageError,
     ModelConfigValidationError,
     SaveSealedConfig,
+    StoredActiveConfig,
+    StoredSealedConfig,
 )
 from agent_service.model_config_types import (
     MODEL_PROVIDERS,
@@ -142,13 +144,14 @@ def _valid_assertion(
     )
 
 
-async def _finish_candidate_close(managed: ManagedModel) -> None:
+async def _finish_candidate_close(managed: ManagedModel) -> bool:
     """Complete one owned close despite cancellation, then re-propagate it."""
     close_task = asyncio.create_task(
         managed.aclose(),
         name="model-control-candidate-close",
     )
     cancellation_received = False
+    close_failed = False
     while True:
         try:
             await asyncio.shield(close_task)
@@ -158,9 +161,66 @@ async def _finish_candidate_close(managed: ManagedModel) -> None:
                 raise
             cancellation_received = True
         except Exception:
+            close_failed = True
             break
     if cancellation_received:
         raise asyncio.CancelledError
+    return not close_failed
+
+
+async def _commit_activation_definitively(
+    repository: ModelConfigRepository,
+    command: CommitVerifiedActivation,
+    event: ControlEvent,
+) -> tuple[object | None, str | None, bool]:
+    """Wait for one activation commit to reach a definite result under cancellation."""
+    commit_task = asyncio.create_task(
+        repository.commit_test_and_activation(command, event),
+        name="model-control-activation-commit",
+    )
+    cancellation_received = False
+    pointer: object | None = None
+    failure: str | None = None
+    while True:
+        try:
+            pointer = await asyncio.shield(commit_task)
+            break
+        except asyncio.CancelledError:
+            cancellation_received = True
+            if commit_task.cancelled():
+                break
+        except ModelConfigConflictError:
+            failure = "conflict"
+            break
+        except (ModelConfigStorageError, ModelConfigValidationError):
+            failure = "storage"
+            break
+        except Exception:
+            failure = "storage"
+            break
+    return pointer, failure, cancellation_received
+
+
+def _degrade_slot(slot: ModelRuntimeSlot) -> None:
+    try:
+        slot.deactivate(capability="degraded")
+    except Exception:
+        pass
+
+
+def _valid_committed_pointer(
+    pointer: object,
+    *,
+    stored: StoredSealedConfig,
+    expected_activation_version: int,
+) -> bool:
+    return bool(
+        type(pointer) is ActiveConfigPointer
+        and pointer.config_id == stored.config_id
+        and pointer.provider == stored.provider
+        and pointer.config_revision == stored.revision
+        and pointer.activation_version == expected_activation_version
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,11 +352,14 @@ class ModelControlService:
                 load_failure = "storage"
             if load_failure == "storage":
                 _storage_unavailable()
+            if load_failure == "conflict" or current is None:
+                _conflict()
             if (
-                load_failure == "conflict"
-                or current is None
-                or current.revision != draft.expected_revision
+                type(current) is not StoredSealedConfig
+                or current.provider != draft.provider
             ):
+                _storage_unavailable()
+            if current.revision != draft.expected_revision:
                 _conflict()
             try:
                 secret = self._cipher.open(
@@ -415,7 +478,11 @@ class ModelControlService:
             load_failure = "storage"
         if load_failure == "storage":
             _storage_unavailable()
-        if load_failure == "conflict" or stored is None or stored.revision != revision:
+        if load_failure == "conflict" or stored is None:
+            _conflict()
+        if type(stored) is not StoredSealedConfig or stored.provider != provider:
+            _storage_unavailable()
+        if stored.revision != revision:
             _conflict()
 
         secret = None
@@ -469,6 +536,8 @@ class ModelControlService:
         transferred = False
         outcome: ActiveConfigPointer | None = None
         failure: str | None = None
+        cancellation_received = False
+        close_succeeded = True
         try:
             verification: ModelVerificationResult | None = None
             try:
@@ -544,31 +613,66 @@ class ModelControlService:
                     result="success",
                 )
                 async with self._activation_lock:
-                    active = None
+                    active: StoredActiveConfig | None = None
                     try:
                         active = await self._repository.load_active()
-                        outcome = await self._repository.commit_test_and_activation(
-                            CommitVerifiedActivation(
-                                provider=stored.provider,
-                                config_revision=stored.revision,
-                                expected_activation_version=(
-                                    0 if active is None else active.activation_version
-                                ),
-                            ),
-                            event,
-                        )
                     except ModelConfigConflictError:
                         failure = "conflict"
                     except ModelConfigStorageError:
                         failure = "storage"
                     except Exception:
                         failure = "storage"
-                    if outcome is not None:
+
+                    if active is None:
+                        expected_current_version = 0
+                    elif type(active) is StoredActiveConfig:
+                        expected_current_version = active.activation_version
+                    else:
+                        failure = "storage"
+                        expected_current_version = 0
+                    expected_next_version = expected_current_version + 1
+                    committed: object | None = None
+                    if failure is None:
+                        try:
+                            (
+                                committed,
+                                failure,
+                                cancellation_received,
+                            ) = await _commit_activation_definitively(
+                                self._repository,
+                                CommitVerifiedActivation(
+                                    provider=stored.provider,
+                                    config_revision=stored.revision,
+                                    expected_activation_version=(
+                                        expected_current_version
+                                    ),
+                                ),
+                                event,
+                            )
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            failure = "storage"
+
+                    pointer_is_valid = (
+                        failure is None
+                        and committed is not None
+                        and _valid_committed_pointer(
+                            committed,
+                            stored=stored,
+                            expected_activation_version=expected_next_version,
+                        )
+                    )
+                    if failure is None and not pointer_is_valid:
+                        _degrade_slot(self._slot)
+                        failure = "assistant"
+                    elif pointer_is_valid and type(committed) is ActiveConfigPointer:
+                        outcome = committed
                         activated = False
                         try:
                             self._slot.activate(
                                 managed,
-                                outcome.activation_version,
+                                committed.activation_version,
                                 RuntimeModelMetadata(
                                     source="dynamic",
                                     provider=stored.provider,
@@ -582,15 +686,16 @@ class ModelControlService:
                         if activated:
                             transferred = True
                         else:
-                            try:
-                                self._slot.deactivate(capability="degraded")
-                            except Exception:
-                                pass
+                            _degrade_slot(self._slot)
                             failure = "assistant"
         finally:
             if not transferred:
-                await _finish_candidate_close(managed)
+                close_succeeded = await _finish_candidate_close(managed)
 
+        if cancellation_received:
+            raise asyncio.CancelledError
+        if not close_succeeded:
+            _assistant_unavailable()
         if failure == "conflict":
             _conflict()
         if failure == "storage":
@@ -637,86 +742,85 @@ class ModelControlService:
             load_failure = "storage"
         if load_failure == "storage":
             _storage_unavailable()
+        if load_failure == "conflict" or stored is None:
+            _conflict()
         if (
-            load_failure == "conflict"
-            or stored is None
+            type(stored) is not StoredSealedConfig
             or stored.provider != provider
             or stored.revision != revision
         ):
-            _conflict()
+            _storage_unavailable()
 
         plaintext: SecretStr | None = None
-        decrypt_failed = False
         try:
-            plaintext = self._cipher.open(
-                config_id=stored.config_id,
-                provider=stored.provider,
-                revision=stored.revision,
-                sealed=stored.sealed,
-            )
-        except ModelConfigCryptoError:
-            decrypt_failed = True
-        except Exception:
-            decrypt_failed = True
-
-        event: ControlEvent | None = None
-        try:
-            event = ControlEvent(
-                event_id=self._uuid_factory(),
-                request_id=assertion.request_id,
-                assertion_nonce=assertion.nonce,
-                actor_user_id=assertion.actor,
-                action="model_key_revealed",
-                provider=stored.provider,
-                model_id=stored.model_id,
-                endpoint_id=stored.endpoint_id,
-                config_revision=stored.revision,
-                result=("encryption_unavailable" if decrypt_failed else "success"),
-            )
-        except ModelConfigValidationError:
-            pass
-        if event is None:
-            plaintext = None
-            _validation_error()
-        commit_failure: str | None = None
-        commit_result: str | None = None
-        try:
-            if decrypt_failed:
-                await self._repository.commit_reveal_failure(
-                    stored.provider,
-                    stored.revision,
-                    event,
+            decrypt_failed = False
+            try:
+                plaintext = self._cipher.open(
+                    config_id=stored.config_id,
+                    provider=stored.provider,
+                    revision=stored.revision,
+                    sealed=stored.sealed,
                 )
-                commit_result = "committed"
-            else:
-                commit_result = await self._repository.commit_reveal_success(
-                    stored.provider,
-                    stored.revision,
-                    event,
-                )
-        except ModelConfigConflictError:
-            commit_failure = "conflict"
-        except ModelConfigStorageError:
-            commit_failure = "storage"
-        except Exception:
-            commit_failure = "storage"
+            except ModelConfigCryptoError:
+                decrypt_failed = True
+            except Exception:
+                decrypt_failed = True
 
-        if commit_failure == "conflict":
+            event: ControlEvent | None = None
+            try:
+                event = ControlEvent(
+                    event_id=self._uuid_factory(),
+                    request_id=assertion.request_id,
+                    assertion_nonce=assertion.nonce,
+                    actor_user_id=assertion.actor,
+                    action="model_key_revealed",
+                    provider=stored.provider,
+                    model_id=stored.model_id,
+                    endpoint_id=stored.endpoint_id,
+                    config_revision=stored.revision,
+                    result=("encryption_unavailable" if decrypt_failed else "success"),
+                )
+            except ModelConfigValidationError:
+                pass
+            if event is None:
+                _validation_error()
+
+            commit_failure: str | None = None
+            commit_result: str | None = None
+            try:
+                if decrypt_failed:
+                    await self._repository.commit_reveal_failure(
+                        stored.provider,
+                        stored.revision,
+                        event,
+                    )
+                    commit_result = "committed"
+                else:
+                    commit_result = await self._repository.commit_reveal_success(
+                        stored.provider,
+                        stored.revision,
+                        event,
+                    )
+            except ModelConfigConflictError:
+                commit_failure = "conflict"
+            except ModelConfigStorageError:
+                commit_failure = "storage"
+            except Exception:
+                commit_failure = "storage"
+
+            if commit_failure == "conflict":
+                _conflict()
+            if commit_failure == "storage" or commit_result is None:
+                _storage_unavailable()
+            if commit_result == "stale":
+                _conflict()
+            if type(commit_result) is not str or commit_result != "committed":
+                _storage_unavailable()
+            if decrypt_failed or plaintext is None:
+                _encryption_unavailable()
+            return plaintext
+        finally:
             plaintext = None
-            _conflict()
-        if commit_failure == "storage" or commit_result is None:
-            plaintext = None
-            _storage_unavailable()
-        if commit_result == "stale":
-            plaintext = None
-            _conflict()
-        if type(commit_result) is not str or commit_result != "committed":
-            plaintext = None
-            _storage_unavailable()
-        if decrypt_failed or plaintext is None:
-            plaintext = None
-            _encryption_unavailable()
-        return plaintext
 
     def runtime_status(self) -> RuntimeModelStatus:
         return self._slot.runtime_status()
