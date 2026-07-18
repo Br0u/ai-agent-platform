@@ -1,6 +1,6 @@
 # AI Agent Platform Customer Portal
 
-企业级 AI Agent Platform 客户门户。当前阶段先完成全站页面、基础后台、自建数据库与 Docker 部署能力；License、下载、OpenLab 及其他外部系统仅保留页面和接口契约。
+企业级 AI Agent Platform 客户门户。当前已完成全站页面、基础后台、自建数据库、Docker 部署，以及“码多多”单 Agent 与六家云模型动态配置闭环；License、下载、OpenLab、Skill、Knowledge、网页工具和本地算力等尚未接入能力只保留诚实入口或接口契约。
 
 ## 目录
 
@@ -27,6 +27,8 @@ apps/web/public/          Logo、产品截图等正式素材（当前为空）
 - 占位接口：`docs/api/integration-contracts.md`
 - UI 方向：`docs/design/AI Agent Platform - UI Directions.html`
 - 服务器准备：`docs/deployment/server-readiness.md`
+- 码多多运行时验收：`docs/testing/assistant-runtime-acceptance.md`
+- 真实 Provider 冒烟：`docs/testing/model-provider-smoke.md`
 
 ## 本地运行
 
@@ -40,19 +42,23 @@ pnpm dev
 ```bash
 cp .env.example .env
 # 编辑.env并替换测试密码
-# 创建独立的 0600 单行备份密钥文件（无空白/CR、至少 32 字节），并让 BACKUP_ENCRYPTION_KEY_FILE 指向它
-docker compose build migrate agent web backup
+# 按 .env.example 创建所有独立的 0600 单行 Secret；不要复用数据库、认证、控制面或模型加密密钥
+docker compose build migrate agent-migrate agent-control-migrate agent web backup
 docker compose up -d --wait db
 docker compose run --rm migrate
 docker compose run --rm agno-bootstrap
+docker compose run --rm agent-control-bootstrap
 docker compose run --rm --no-deps agent-migrate
+docker compose run --rm --no-deps agent-control-migrate
 docker compose up -d --no-deps --wait agent
 docker compose up -d --wait web
 docker compose up -d --wait proxy backup
 ```
 
-访问`http://localhost:8080`；健康检查为`/api/health/live`和`/api/health/ready`。
+访问 `http://localhost:8080`；健康检查为 `/api/health/live` 和 `/api/health/ready`。启用动态模型控制时设置 `AGENT_ENABLED=true`、`ASSISTANT_PROVIDER_MODE=agentos`，然后由最近完成 MFA 的授权管理员在 `/admin/assistant` 保存、测试并启用模型。
 
 ## 当前状态
 
-已建立全站路由骨架、蓝靛紫设计系统、外部功能占位边界、PostgreSQL基础模型、内部 AgentOS 占位服务和Docker Compose部署基线。AgentOS当前不加载模型、Skill或知识库；真实品牌资产及License、下载、OpenLab等外部能力仍为占位。
+已建立全站路由、蓝靛紫设计系统、PostgreSQL 最小权限角色、AgentOS 单 Agent 会话、AES-GCM 动态模型控制面和 Docker Compose 部署/验收基线。后台支持 OpenAI、Anthropic、Google、Qwen / DashScope、DeepSeek、MiniMax；动态活动配置优先于只读部署 bootstrap，失败候选不会替换旧活动模型，重启会从活动指针恢复。
+
+Skill、Knowledge、Tools/网页操作和自有服务器本地算力目前仍是未接入入口，不会加载能力或探测本地服务。实现边界参考 Agno 文档，但运行行为以仓库锁定的 Agno `2.7.2` 和本地测试为准。
