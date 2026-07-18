@@ -988,9 +988,39 @@ describe("production deployment security contracts", () => {
     const terminalConsoleScanIndex = browserAcceptance.indexOf(
       "const terminalConsoleText",
     );
+    const fullKeyScanTextIndex = browserAcceptance.indexOf(
+      "let fullKeyScanText = response.rawJson",
+      terminalResponseScanIndex,
+    );
+    const revealPlaintextRemovalIndex = browserAcceptance.indexOf(
+      "fullKeyScanText = fullKeyScanText.replaceAll(",
+      terminalResponseScanIndex,
+    );
+    const fullKeyScanIndex = browserAcceptance.indexOf(
+      "for (const key of Object.values(submittedKeys))",
+      terminalResponseScanIndex,
+    );
+    const lastFourScanTextIndex = browserAcceptance.indexOf(
+      "let lastFourScanText = fullKeyScanText",
+      terminalResponseScanIndex,
+    );
+    const allowedLastFourRemovalIndex = browserAcceptance.indexOf(
+      "lastFourScanText = lastFourScanText.replaceAll(",
+      terminalResponseScanIndex,
+    );
+    const lastFourScanIndex = browserAcceptance.indexOf(
+      "for (const lastFour of Object.values(submittedLastFour))",
+      terminalResponseScanIndex,
+    );
     expect(finalChatIndex).toBeGreaterThan(-1);
     expect(pendingResponseWaitIndex).toBeGreaterThan(finalChatIndex);
     expect(terminalResponseScanIndex).toBeGreaterThan(pendingResponseWaitIndex);
+    expect(fullKeyScanTextIndex).toBeGreaterThan(terminalResponseScanIndex);
+    expect(revealPlaintextRemovalIndex).toBeGreaterThan(fullKeyScanTextIndex);
+    expect(fullKeyScanIndex).toBeGreaterThan(revealPlaintextRemovalIndex);
+    expect(lastFourScanTextIndex).toBeGreaterThan(fullKeyScanIndex);
+    expect(allowedLastFourRemovalIndex).toBeGreaterThan(lastFourScanTextIndex);
+    expect(lastFourScanIndex).toBeGreaterThan(allowedLastFourRemovalIndex);
     expect(terminalConsoleScanIndex).toBeGreaterThan(finalChatIndex);
   });
 

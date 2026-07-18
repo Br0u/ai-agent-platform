@@ -2220,13 +2220,13 @@ test.describe("@control deterministic model control", () => {
           }
         }
       }
-      let scanText = response.rawJson;
+      let fullKeyScanText = response.rawJson;
       if (response.exposure === "model-key-reveal") {
         expect(response.allowedPlaintext).toBeTruthy();
-        scanText = scanText.replaceAll(response.allowedPlaintext!, "");
-      }
-      for (const allowedLastFour of response.allowedLastFour) {
-        scanText = scanText.replaceAll(allowedLastFour, "");
+        fullKeyScanText = fullKeyScanText.replaceAll(
+          response.allowedPlaintext!,
+          "",
+        );
       }
       for (const token of [
         credentials.modelAdminSessionToken,
@@ -2235,10 +2235,14 @@ test.describe("@control deterministic model control", () => {
         expect(response.rawJson).not.toContain(token);
       }
       for (const key of Object.values(submittedKeys)) {
-        expect(scanText).not.toContain(key);
+        expect(fullKeyScanText).not.toContain(key);
+      }
+      let lastFourScanText = fullKeyScanText;
+      for (const allowedLastFour of response.allowedLastFour) {
+        lastFourScanText = lastFourScanText.replaceAll(allowedLastFour, "");
       }
       for (const lastFour of Object.values(submittedLastFour)) {
-        expect(scanText).not.toContain(lastFour);
+        expect(lastFourScanText).not.toContain(lastFour);
       }
     }
     const terminalConsoleText = JSON.stringify(cumulativeConsoleMessages);
