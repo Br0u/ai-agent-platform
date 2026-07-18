@@ -934,6 +934,7 @@ async def test_activation_first_pointer_is_atomic_and_starts_global_version_one(
                 "WHERE provider = %s AND revision = %s FOR UPDATE",
                 one=(CONFIG_ID, True, "gpt-4.1-mini", "openai-default"),
             ),
+            Reply("SELECT pg_advisory_xact_lock", one=(None,)),
             Reply("FROM agent_control.active_model_config", one=None),
             Reply("SET test_status = 'passed'", rowcount=1),
             Reply(
@@ -956,9 +957,14 @@ async def test_activation_first_pointer_is_atomic_and_starts_global_version_one(
         activation_version=1,
         activated_at=ACTIVATED_AT,
     )
-    assert cursor.executions[1][1] is None
-    assert "FOR UPDATE" in cursor.executions[1][0]
-    assert cursor.executions[3][1] == (CONFIG_ID, 1, 1)
+    advisory_query, advisory_params = cursor.executions[1]
+    pointer_query, pointer_params = cursor.executions[2]
+    assert advisory_query == "SELECT pg_advisory_xact_lock(6251743982704117761)"
+    assert advisory_params is None
+    assert "FROM agent_control.active_model_config" in pointer_query
+    assert "FOR UPDATE" in pointer_query
+    assert pointer_params is None
+    assert cursor.executions[4][1] == (CONFIG_ID, 1, 1)
     assert events[-1] == "transaction:commit"
 
 
@@ -973,6 +979,7 @@ async def test_activation_existing_pointer_uses_global_cas_not_provider_revision
                 "WHERE provider = %s AND revision = %s FOR UPDATE",
                 one=(CONFIG_ID, True, "gpt-4.1-mini", "openai-default"),
             ),
+            Reply("SELECT pg_advisory_xact_lock", one=(None,)),
             Reply(
                 "FROM agent_control.active_model_config",
                 one=(other_config_id, 9, 4),
@@ -992,7 +999,7 @@ async def test_activation_existing_pointer_uses_global_cas_not_provider_revision
     )
 
     assert result.activation_version == 5
-    assert cursor.executions[3][1] == (CONFIG_ID, 1, 5, 4)
+    assert cursor.executions[4][1] == (CONFIG_ID, 1, 5, 4)
 
 
 @pytest.mark.asyncio
@@ -1005,6 +1012,7 @@ async def test_activation_global_version_conflict_records_one_event_without_muta
                 "WHERE provider = %s AND revision = %s FOR UPDATE",
                 one=(CONFIG_ID, True, "gpt-4.1-mini", "openai-default"),
             ),
+            Reply("SELECT pg_advisory_xact_lock", one=(None,)),
             Reply(
                 "FROM agent_control.active_model_config",
                 one=(REPLACEMENT_ID, 2, 8),
@@ -1021,6 +1029,7 @@ async def test_activation_global_version_conflict_records_one_event_without_muta
     assert [query.split(maxsplit=1)[0] for query, _ in cursor.executions] == [
         "SELECT",
         "SELECT",
+        "SELECT",
         "INSERT",
     ]
     assert cursor.executions[-1][1][-1] == "configuration_conflict"  # type: ignore[index]
@@ -1035,6 +1044,7 @@ async def test_activation_event_failure_rolls_back_passed_status_and_pointer() -
                 "WHERE provider = %s AND revision = %s FOR UPDATE",
                 one=(CONFIG_ID, True, "gpt-4.1-mini", "openai-default"),
             ),
+            Reply("SELECT pg_advisory_xact_lock", one=(None,)),
             Reply("FROM agent_control.active_model_config", one=None),
             Reply("SET test_status = 'passed'", rowcount=1),
             Reply(

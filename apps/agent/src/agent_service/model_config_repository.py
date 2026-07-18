@@ -148,6 +148,8 @@ WHERE singleton = true
 FOR UPDATE
 """
 
+_LOCK_ACTIVATION_TRANSACTION_SQL = "SELECT pg_advisory_xact_lock(6251743982704117761)"
+
 _MARK_TEST_PASSED_SQL = """UPDATE agent_control.model_configs
 SET test_status = 'passed', last_tested_at = now(), updated_at = now()
 WHERE id = %s AND provider = %s AND revision = %s AND is_current = true
@@ -934,25 +936,14 @@ class PostgresModelConfigRepository:
                         _LOCK_EXACT_CONFIG_SQL,
                         (validated_provider, validated_revision),
                     )
-                    row = await cursor.fetchone()
-                    if row is None:
-                        _conflict()
-                    if (
-                        len(row) != 4
-                        or type(row[0]) is not UUID
-                        or type(row[1]) is not bool
-                        or type(row[2]) is not str
-                        or type(row[3]) is not str
-                    ):
-                        _storage()
-                    if row[2] != validated_event.model_id or row[3] != (
-                        validated_event.endpoint_id
-                    ):
-                        _invalid()
-                    if cast(bool, row[1]):
+                    config_id, is_current = _validate_locked_config_row(
+                        await cursor.fetchone(),
+                        validated_event,
+                    )
+                    if is_current:
                         await cursor.execute(
                             _MARK_TEST_FAILED_SQL,
-                            (row[0], validated_provider, validated_revision),
+                            (config_id, validated_provider, validated_revision),
                         )
                         if cursor.rowcount != 1:
                             _conflict()
@@ -1005,6 +996,7 @@ class PostgresModelConfigRepository:
                         await cursor.fetchone(),
                         validated_event,
                     )
+                    await cursor.execute(_LOCK_ACTIVATION_TRANSACTION_SQL)
                     await cursor.execute(_LOCK_ACTIVE_POINTER_SQL)
                     pointer_row = await cursor.fetchone()
                     if pointer_row is None:

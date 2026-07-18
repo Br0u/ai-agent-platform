@@ -406,6 +406,9 @@ async def test_real_repository_enforces_atomic_cas_secrecy_and_exact_active_revi
                 save_event(first_activation_command),
             )
 
+        first_activation_events = [
+            activation_event(command) for command in first_activation_commands
+        ]
         first_activation_results = await asyncio.gather(
             *(
                 repository.commit_test_and_activation(
@@ -414,9 +417,13 @@ async def test_real_repository_enforces_atomic_cas_secrecy_and_exact_active_revi
                         config_revision=1,
                         expected_activation_version=0,
                     ),
-                    activation_event(first_activation_command),
+                    first_activation_event,
                 )
-                for first_activation_command in first_activation_commands
+                for first_activation_command, first_activation_event in zip(
+                    first_activation_commands,
+                    first_activation_events,
+                    strict=True,
+                )
             ),
             return_exceptions=True,
         )
@@ -460,18 +467,50 @@ async def test_real_repository_enforces_atomic_cas_secrecy_and_exact_active_revi
             assert sorted(status for _, status in statuses) == ["passed", "untested"]
             assert await (
                 await conn.execute("SELECT count(*) FROM agent_control.control_events")
-            ).fetchone() == (3,)
+            ).fetchone() == (4,)
 
-        losing_command = next(
-            command
-            for command in first_activation_commands
+        losing_index = next(
+            index
+            for index, command in enumerate(first_activation_commands)
             if command.config_id != successful_activations[0].config_id
         )
+        losing_command = first_activation_commands[losing_index]
+        losing_event = first_activation_events[losing_index]
         winning_command = next(
             command
             for command in first_activation_commands
             if command.config_id == successful_activations[0].config_id
         )
+        async with await psycopg.AsyncConnection.connect(
+            psycopg_url(runtime_url)
+        ) as conn:
+            assert await (
+                await conn.execute(
+                    """SELECT count(*)
+                    FROM agent_control.control_events
+                    WHERE assertion_nonce = %s
+                      AND action = 'model_config_activated'
+                      AND result = 'configuration_conflict'""",
+                    (losing_event.assertion_nonce,),
+                )
+            ).fetchone() == (1,)
+
+        with pytest.raises(ModelConfigConflictError, match="^configuration_conflict$"):
+            await repository.commit_test_and_activation(
+                CommitVerifiedActivation(
+                    provider=losing_command.provider,
+                    config_revision=losing_command.revision,
+                    expected_activation_version=0,
+                ),
+                losing_event,
+            )
+        async with await psycopg.AsyncConnection.connect(
+            psycopg_url(runtime_url)
+        ) as conn:
+            assert await (
+                await conn.execute("SELECT count(*) FROM agent_control.control_events")
+            ).fetchone() == (4,)
+
         await repository.record_failed_test(
             losing_command.provider,
             losing_command.revision,
@@ -544,7 +583,7 @@ async def test_real_repository_enforces_atomic_cas_secrecy_and_exact_active_revi
             ).fetchone() == ("failed",)
             assert await (
                 await conn.execute("SELECT count(*) FROM agent_control.control_events")
-            ).fetchone() == (8,)
+            ).fetchone() == (9,)
 
         await truncate_dedicated_control_tables(migrator_url)
         first_nonce = uuid4()
