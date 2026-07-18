@@ -11,8 +11,9 @@ export type AgentOSTransportSettings = {
 };
 
 export type AgentOSTransportRequest = {
-  method: "GET" | "POST" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "DELETE";
   path: string;
+  headers?: Readonly<Record<string, string>>;
   body?: BodyInit;
   acceptedStatuses: readonly number[];
   acceptedMediaTypes?: readonly string[];
@@ -24,6 +25,8 @@ export type AgentOSTransportRequest = {
 export type AgentOSTransportResponse = {
   status: number;
   contentType: string | null;
+  cacheControl: string | null;
+  pragma: string | null;
   body: Uint8Array;
 };
 
@@ -183,6 +186,53 @@ function validateMediaType(
   }
 }
 
+const REQUEST_HEADER_NAMES = {
+  "content-type": "Content-Type",
+  "x-agent-control-assertion": "X-Agent-Control-Assertion",
+  "x-request-id": "X-Request-Id",
+} as const;
+const HEADER_CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
+
+function resolveRequestHeaders(
+  securityKey: string,
+  input: Readonly<Record<string, string>> | undefined,
+): Record<string, string> {
+  const resolved: Record<string, string> = {
+    Accept: "application/json",
+    Authorization: `Bearer ${securityKey}`,
+  };
+  if (input === undefined) return resolved;
+
+  try {
+    const prototype = Object.getPrototypeOf(input);
+    if (prototype !== Object.prototype && prototype !== null) throw new Error();
+    const seen = new Set<string>();
+    for (const key of Reflect.ownKeys(input)) {
+      if (typeof key !== "string") throw new Error();
+      const normalized = key.toLowerCase();
+      const outputName =
+        REQUEST_HEADER_NAMES[normalized as keyof typeof REQUEST_HEADER_NAMES];
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      if (
+        outputName === undefined ||
+        seen.has(normalized) ||
+        descriptor === undefined ||
+        !descriptor.enumerable ||
+        !("value" in descriptor) ||
+        typeof descriptor.value !== "string" ||
+        HEADER_CONTROL_CHARACTER.test(descriptor.value)
+      ) {
+        throw new Error();
+      }
+      seen.add(normalized);
+      resolved[outputName] = descriptor.value;
+    }
+  } catch {
+    throw new AgentOSTransportError("invalid_request");
+  }
+  return resolved;
+}
+
 async function readBoundedBody(
   response: Response,
   maxResponseBytes: number,
@@ -237,14 +287,14 @@ export function createAgentOSTransport(options: {
   request(request: AgentOSTransportRequest): Promise<AgentOSTransportResponse>;
 } {
   const fetcher = options.fetcher ?? fetch;
-  const headers = {
-    Accept: "application/json",
-    Authorization: `Bearer ${options.settings.securityKey}`,
-  };
 
   return {
     async request(request) {
       const requestUrl = resolveRequestUrl(options.settings, request.path);
+      const headers = resolveRequestHeaders(
+        options.settings.securityKey,
+        request.headers,
+      );
       const controller = new AbortController();
       let response: Response | null = null;
       let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -319,6 +369,8 @@ export function createAgentOSTransport(options: {
           return {
             status: response.status,
             contentType: response.headers.get("content-type"),
+            cacheControl: response.headers.get("cache-control"),
+            pragma: response.headers.get("pragma"),
             body,
           };
         } catch (error) {

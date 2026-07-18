@@ -159,3 +159,200 @@ describe("AgentOS transport status classification", () => {
     },
   );
 });
+
+describe("AgentOS transport narrow request extensions", () => {
+  it("supports PUT and merges only the three control-client request headers", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("{}", {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const transport = createAgentOSTransport({
+      settings: { baseUrl: INTERNAL_URL, securityKey: SECURITY_KEY },
+      fetcher,
+    });
+
+    const response = await transport.request({
+      method: "PUT",
+      path: "/internal/control/model-configs/openai",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Agent-Control-Assertion": "payload.signature",
+        "X-Request-Id": "22222222-2222-4222-8222-222222222222",
+      },
+      body: "{}",
+      acceptedStatuses: [200],
+      acceptedMediaTypes: ["application/json"],
+      timeoutMs: 250,
+      maxResponseBytes: 1_024,
+    });
+
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(response).toMatchObject({
+      cacheControl: null,
+      pragma: null,
+    });
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({
+      method: "PUT",
+      redirect: "manual",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${SECURITY_KEY}`,
+        "Content-Type": "application/json",
+        "X-Agent-Control-Assertion": "payload.signature",
+        "X-Request-Id": "22222222-2222-4222-8222-222222222222",
+      },
+    });
+  });
+
+  it("returns only the cache headers needed for reveal validation", async () => {
+    const transport = createAgentOSTransport({
+      settings: { baseUrl: INTERNAL_URL, securityKey: SECURITY_KEY },
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response("{}", {
+          headers: {
+            "content-type": "application/json",
+            "cache-control": "no-store, private",
+            pragma: "no-cache",
+            "x-private-debug": "must-not-cross-transport",
+          },
+        }),
+      ),
+    });
+
+    const response = await transport.request({
+      method: "POST",
+      path: "/internal/control/model-configs/openai/reveal-key",
+      acceptedStatuses: [200],
+      timeoutMs: 250,
+      maxResponseBytes: 1_024,
+    });
+    expect(response).toMatchObject({
+      status: 200,
+      contentType: "application/json",
+      cacheControl: "no-store, private",
+      pragma: "no-cache",
+    });
+    expect([...response.body]).toEqual([...new TextEncoder().encode("{}")]);
+  });
+
+  it.each([
+    ["Authorization", "Bearer caller-secret"],
+    ["authorization", "Bearer caller-secret"],
+    ["Accept", "text/plain"],
+    ["accept", "text/plain"],
+    ["Cookie", "private=value"],
+    ["X-Forwarded-Host", "evil.test"],
+  ])("rejects caller-controlled %s before fetch", async (name, value) => {
+    const fetcher = vi.fn<typeof fetch>();
+    const transport = createAgentOSTransport({
+      settings: { baseUrl: INTERNAL_URL, securityKey: SECURITY_KEY },
+      fetcher,
+    });
+
+    const error = await transport
+      .request({
+        method: "GET",
+        path: "/internal/control/model-configs",
+        headers: { [name]: value },
+        acceptedStatuses: [200],
+        timeoutMs: 250,
+        maxResponseBytes: 1_024,
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AgentOSTransportError);
+    expect(error).toMatchObject({ code: "invalid_request" });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(JSON.stringify(error)).not.toContain(value);
+  });
+
+  it.each(["\r", "\n", "\0", "\t", "\u007f", "\u0085"])(
+    "rejects a request header value containing control %j",
+    async (control) => {
+      const privateValue = `safe${control}private`;
+      const fetcher = vi.fn<typeof fetch>();
+      const transport = createAgentOSTransport({
+        settings: { baseUrl: INTERNAL_URL, securityKey: SECURITY_KEY },
+        fetcher,
+      });
+
+      const error = await transport
+        .request({
+          method: "GET",
+          path: "/internal/control/model-configs",
+          headers: { "X-Request-Id": privateValue },
+          acceptedStatuses: [200],
+          timeoutMs: 250,
+          maxResponseBytes: 1_024,
+        })
+        .catch((caught: unknown) => caught);
+
+      expect(error).toMatchObject({ code: "invalid_request" });
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(JSON.stringify(error)).not.toContain("private");
+    },
+  );
+
+  it("rejects duplicate allowlisted names with different casing", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const transport = createAgentOSTransport({
+      settings: { baseUrl: INTERNAL_URL, securityKey: SECURITY_KEY },
+      fetcher,
+    });
+
+    await expect(
+      transport.request({
+        method: "GET",
+        path: "/internal/control/model-configs",
+        headers: {
+          "X-Request-Id": "22222222-2222-4222-8222-222222222222",
+          "x-request-id": "33333333-3333-4333-8333-333333333333",
+        },
+        acceptedStatuses: [200],
+        timeoutMs: 250,
+        maxResponseBytes: 1_024,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_request" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "redirect",
+      "/internal/control/model-configs",
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://evil.test/private" },
+      }),
+      "redirect_rejected",
+    ],
+    [
+      "path escape",
+      "/internal/control/model-configs/../private",
+      new Response("{}"),
+      "invalid_request",
+    ],
+    [
+      "overflow",
+      "/internal/control/model-configs",
+      new Response("x".repeat(1_025)),
+      "response_too_large",
+    ],
+  ])("retains %s protection", async (_name, path, response, code) => {
+    const transport = createAgentOSTransport({
+      settings: { baseUrl: INTERNAL_URL, securityKey: SECURITY_KEY },
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(response),
+    });
+
+    await expect(
+      transport.request({
+        method: "GET",
+        path,
+        acceptedStatuses: [200],
+        timeoutMs: 250,
+        maxResponseBytes: 1_024,
+      }),
+    ).rejects.toMatchObject({ code });
+  });
+});
