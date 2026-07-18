@@ -831,6 +831,45 @@ def _assert_route_frames_have_no_key_material(
                 assert raw_key not in repr(value)
 
 
+def _exception_chain_frame_locals(
+    error: BaseException,
+) -> list[tuple[str, str, dict[str, object]]]:
+    frames: list[tuple[str, str, dict[str, object]]] = []
+    pending = [error]
+    visited: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in visited:
+            continue
+        visited.add(id(current))
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+        traceback = current.__traceback__
+        while traceback is not None:
+            frame = traceback.tb_frame
+            if frame.f_code.co_filename != __file__:
+                frames.append(
+                    (
+                        frame.f_code.co_filename,
+                        frame.f_code.co_name,
+                        dict(frame.f_locals),
+                    )
+                )
+            traceback = traceback.tb_next
+    return frames
+
+
+def _assert_exception_chain_frames_have_no_key_material(
+    frames: list[tuple[str, str, dict[str, object]]],
+    raw_key: str,
+) -> None:
+    for _filename, _function, local_values in frames:
+        for value in local_values.values():
+            assert raw_key not in repr(value)
+
+
 def test_unknown_save_exception_is_fixed_and_clears_key_traceback_locals(
     capsys: pytest.CaptureFixture[str],
     caplog: pytest.LogCaptureFixture,
@@ -936,6 +975,77 @@ async def test_save_cancellation_propagates_after_clearing_route_key_locals() ->
     route_frames = _route_traceback_locals(service.failure)
     assert route_frames
     _assert_route_frames_have_no_key_material(route_frames, raw_key)
+
+
+@pytest.mark.asyncio
+async def test_body_receive_cancellation_has_no_key_reachable_from_exception_chain() -> (
+    None
+):
+    raw_key = "chunked-cancel-raw-api-key-cdef"
+    application = control_route_app(RecordingService())
+    path = "/internal/control/model-configs/openai"
+    first_body = json.dumps(
+        {
+            "modelId": "gpt-5-mini",
+            "endpointId": "openai-official",
+            "apiKey": raw_key,
+            "expectedRevision": 2,
+        },
+        separators=(",", ":"),
+    ).encode()
+    headers = [
+        (b"authorization", f"Bearer {CONTROL_KEY}".encode()),
+        (
+            b"x-agent-control-assertion",
+            signed_assertion(
+                action="save",
+                permission="admin:assistant:configure",
+            ).encode(),
+        ),
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(first_body)).encode()),
+    ]
+    scope = cast(
+        Scope,
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "PUT",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": headers,
+            "client": ("test", 123),
+            "server": ("test", 80),
+            "state": {},
+        },
+    )
+    received = 0
+    cancellation = asyncio.CancelledError()
+
+    async def receive() -> Message:
+        nonlocal received
+        received += 1
+        if received == 1:
+            return cast(
+                Message,
+                {"type": "http.request", "body": first_body, "more_body": True},
+            )
+        raise cancellation
+
+    async def send(_: Message) -> None:
+        raise AssertionError("cancelled body receive must not send a response")
+
+    with pytest.raises(asyncio.CancelledError) as raised:
+        await application(scope, receive, send)
+
+    assert received == 2
+    chain_frames = _exception_chain_frame_locals(raised.value)
+    assert any(function == "_read_json_object" for _, function, _ in chain_frames)
+    _assert_exception_chain_frames_have_no_key_material(chain_frames, raw_key)
 
 
 def test_test_and_activate_passes_only_revision_and_verified_assertion() -> None:

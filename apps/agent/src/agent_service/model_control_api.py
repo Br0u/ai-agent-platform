@@ -9,7 +9,7 @@ from typing import Final, cast
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import SecretStr, ValidationError
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from agent_service.model_config_types import (
     MODEL_PROVIDERS,
@@ -250,14 +250,35 @@ async def _read_json_object(request: Request) -> dict[str, object] | None:
             return None
 
     raw = bytearray()
+    message: Message | None = None
+    chunk: bytes = b""
+    body_bytes: bytes = b""
     try:
-        async for chunk in request.stream():
+        while True:
+            message = await request.receive()
+            if message["type"] != "http.request":
+                return None
+            chunk = message.get("body", b"")
+            if type(chunk) is not bytes:
+                return None
             if len(raw) + len(chunk) > _REQUEST_BODY_MAX_BYTES:
                 return None
             raw.extend(chunk)
-        parsed = json.loads(bytes(raw), object_pairs_hook=_strict_object)
+            more_body = message.get("more_body", False)
+            if type(more_body) is not bool:
+                return None
+            if not more_body:
+                break
+        body_bytes = bytes(raw)
+        parsed = json.loads(body_bytes, object_pairs_hook=_strict_object)
     except (UnicodeError, json.JSONDecodeError, TypeError, ValueError):
         return None
+    finally:
+        raw.clear()
+        message = None
+        chunk = b""
+        body_bytes = b""
+        del request
     if type(parsed) is not dict:
         return None
     return cast(dict[str, object], parsed)
