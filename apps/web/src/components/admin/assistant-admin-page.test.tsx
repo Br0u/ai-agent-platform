@@ -31,6 +31,12 @@ const status = {
       probeTimeoutMs: 1500,
       failureThreshold: 3,
     },
+    source: "none" as const,
+    provider: null,
+    modelId: null,
+    configRevision: null,
+    activationVersion: null,
+    testStatus: "not_configured" as const,
   },
   services: [
     {

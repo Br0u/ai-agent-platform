@@ -5,9 +5,20 @@ import {
 } from "@/server/auth/access";
 import {
   createAdminAssistantErrorResponse,
+  isAdminAssistantStatusResponse,
   type AdminAssistantStatusSnapshot,
   type AdminAssistantStatusResponse,
 } from "@/features/assistant/admin-assistant-contract";
+import {
+  ADMIN_MODEL_PROVIDERS,
+  type AdminModelProvider,
+} from "@/features/assistant/admin-model-config-contract";
+import {
+  createAgentModelControlClient,
+  resolveAgentModelControlSettings,
+  type AgentModelControlClient,
+  type AgentModelRuntimeResponse,
+} from "@/server/assistant/agent-model-control-client";
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
 import {
   deriveAssistantRuntimeStatus,
@@ -22,6 +33,31 @@ type AdminAssistantStatusDependencies = {
   access: Pick<AccessService, "requirePermission">;
   loadStatus: () => Promise<AdminAssistantStatusSnapshot>;
   requestIdFactory: () => string;
+};
+
+type AdminAssistantStatusLoadOptions = {
+  runtime?: Pick<AssistantRuntime, "readinessStatus" | "inspect">;
+  controlClient?: Pick<AgentModelControlClient, "runtimeStatus">;
+  requestIdFactory?: () => string;
+};
+
+type SafeControlRuntime = {
+  capability: "placeholder" | "available" | "degraded";
+  source: "none" | "deployment" | "dynamic";
+  provider: AdminModelProvider | null;
+  modelId: string | null;
+  configRevision: number | null;
+  activationVersion: number | null;
+  testStatus: "not_configured" | "untested" | "passed" | "unavailable";
+};
+
+const DISPLAY_NAMES: Readonly<Record<AdminModelProvider, string>> = {
+  openai: "OpenAI",
+  anthropic: "Claude",
+  google: "Gemini",
+  dashscope: "Qwen / DashScope",
+  deepseek: "DeepSeek",
+  minimax: "MiniMax",
 };
 
 const SAFE_DEGRADED_STATUS: AssistantRuntimeStatus = {
@@ -48,10 +84,183 @@ const SAFE_DEGRADED_INSPECTION: AssistantRuntimeInspection = {
   readiness: { cacheTtlMs: 0, probeTimeoutMs: 0, failureThreshold: 0 },
 };
 
+const SAFE_CONTROL_UNAVAILABLE: SafeControlRuntime = {
+  capability: "degraded",
+  source: "none",
+  provider: null,
+  modelId: null,
+  configRevision: null,
+  activationVersion: null,
+  testStatus: "unavailable",
+};
+
+function defaultModelControlClient(): Pick<
+  AgentModelControlClient,
+  "runtimeStatus"
+> {
+  return createAgentModelControlClient({
+    settings: resolveAgentModelControlSettings({
+      AGENTOS_INTERNAL_URL: process.env.AGENTOS_INTERNAL_URL,
+      OS_SECURITY_KEY: process.env.OS_SECURITY_KEY,
+      AGENT_CONFIG_CONTROL_KEY: process.env.AGENT_CONFIG_CONTROL_KEY,
+    }),
+  });
+}
+
+function isProvider(value: unknown): value is AdminModelProvider {
+  return (
+    typeof value === "string" &&
+    (ADMIN_MODEL_PROVIDERS as readonly string[]).includes(value)
+  );
+}
+
+function hasOnlyPairedSurrogates(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isSafeModelId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value === value.trim() &&
+    Array.from(value).length <= 128 &&
+    hasOnlyPairedSurrogates(value) &&
+    !/[\u0000-\u001f\u007f-\u009f]/u.test(value) &&
+    !/(?:[a-z][a-z0-9+.-]*:\/\/|\/\/)/iu.test(value)
+  );
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+}
+
+function safeControlRuntime(
+  value: AgentModelRuntimeResponse,
+): SafeControlRuntime {
+  if (
+    value.version !== "1" ||
+    !["placeholder", "available", "degraded"].includes(value.capability)
+  ) {
+    return SAFE_CONTROL_UNAVAILABLE;
+  }
+  if (value.source === null) {
+    if (
+      value.provider !== null ||
+      value.modelId !== null ||
+      value.configRevision !== null ||
+      value.activationVersion !== null ||
+      value.capability === "available"
+    ) {
+      return SAFE_CONTROL_UNAVAILABLE;
+    }
+    return value.capability === "placeholder"
+      ? {
+          capability: "placeholder",
+          source: "none",
+          provider: null,
+          modelId: null,
+          configRevision: null,
+          activationVersion: null,
+          testStatus: "not_configured",
+        }
+      : SAFE_CONTROL_UNAVAILABLE;
+  }
+  if (value.capability === "placeholder") return SAFE_CONTROL_UNAVAILABLE;
+  if (!isProvider(value.provider) || !isSafeModelId(value.modelId)) {
+    return SAFE_CONTROL_UNAVAILABLE;
+  }
+  if (value.source === "deployment") {
+    return value.configRevision === null && value.activationVersion === null
+      ? {
+          capability: value.capability,
+          source: "deployment",
+          provider: value.provider,
+          modelId: value.modelId,
+          configRevision: null,
+          activationVersion: null,
+          // Deployment bootstrap did not pass through the control-plane test.
+          testStatus: "untested",
+        }
+      : SAFE_CONTROL_UNAVAILABLE;
+  }
+  return value.source === "dynamic" &&
+    isPositiveInteger(value.configRevision) &&
+    isPositiveInteger(value.activationVersion)
+    ? {
+        capability: value.capability,
+        source: "dynamic",
+        provider: value.provider,
+        modelId: value.modelId,
+        configRevision: value.configRevision,
+        activationVersion: value.activationVersion,
+        // A dynamic revision can become active only after a passing test.
+        testStatus: "passed",
+      }
+    : SAFE_CONTROL_UNAVAILABLE;
+}
+
+type ModelPresentation = {
+  state: "ready" | "degraded" | "not_configured";
+  detail: string;
+  configuration: string;
+};
+
+function modelPresentation(
+  control: SafeControlRuntime,
+  executionUnavailable: boolean,
+  modelUnavailable: boolean,
+): ModelPresentation {
+  if (modelUnavailable || control.capability === "degraded") {
+    return {
+      state: "degraded",
+      detail: "模型状态不可用",
+      configuration: "状态不可用",
+    };
+  }
+  if (
+    control.source === "none" ||
+    control.provider === null ||
+    control.modelId === null
+  ) {
+    return {
+      state: "not_configured",
+      detail: "尚未配置",
+      configuration: "未配置",
+    };
+  }
+  const sourceLabel = control.source === "dynamic" ? "动态配置" : "部署配置";
+  const configured = `${DISPLAY_NAMES[control.provider]} / ${control.modelId}`;
+  if (executionUnavailable) {
+    return {
+      state: "degraded",
+      detail: "模型执行暂不可用",
+      configuration: `${configured}（${sourceLabel}，执行暂不可用）`,
+    };
+  }
+  return {
+    state: "ready",
+    detail: control.source === "dynamic" ? "动态模型已启用" : "部署模型已启用",
+    configuration: `${configured}（${sourceLabel}）`,
+  };
+}
+
 function serviceState(
   readiness: AssistantRuntimeReadinessStatus,
   inspection: AssistantRuntimeInspection,
-  configurationValid: boolean,
+  status: AssistantRuntimeStatus,
+  control: SafeControlRuntime,
+  runtimeValid: boolean,
+  modelUnavailable: boolean,
 ): AdminAssistantStatusSnapshot["services"] {
   const executionUnavailable = inspection.circuits.execution.state !== "closed";
   const infrastructureReady =
@@ -66,18 +275,24 @@ function serviceState(
         ? "ready"
         : "degraded";
   const databaseState = agentosState;
-  const publicState = !configurationValid
-    ? "degraded"
-    : inspection.providerMode === "placeholder"
-      ? "placeholder"
-      : !infrastructureReady || readiness.capability === "degraded"
-        ? "degraded"
-        : readiness.capability === "placeholder"
-          ? "not_configured"
-          : executionUnavailable
-            ? "degraded"
-            : "ready";
+  const publicState =
+    !runtimeValid || status.capability === "degraded"
+      ? "degraded"
+      : inspection.providerMode === "placeholder"
+        ? "placeholder"
+        : !infrastructureReady
+          ? "degraded"
+          : status.capability === "placeholder"
+            ? "not_configured"
+            : executionUnavailable
+              ? "degraded"
+              : "ready";
 
+  const model = modelPresentation(
+    control,
+    executionUnavailable,
+    modelUnavailable,
+  );
   return [
     {
       id: "agentos",
@@ -106,24 +321,8 @@ function serviceState(
     {
       id: "model",
       label: "模型",
-      state:
-        inspection.providerMode === "placeholder" ||
-        readiness.capability === "placeholder"
-          ? "not_configured"
-          : readiness.capability === "degraded"
-            ? "degraded"
-            : executionUnavailable
-              ? "degraded"
-              : "ready",
-      detail:
-        inspection.providerMode === "placeholder" ||
-        readiness.capability === "placeholder"
-          ? "尚未配置"
-          : readiness.capability === "degraded"
-            ? "模型状态不可用"
-            : executionUnavailable
-              ? "模型执行暂不可用"
-              : "能力已启用",
+      state: model.state,
+      detail: model.detail,
     },
     {
       id: "public_entry",
@@ -145,7 +344,9 @@ function snapshot(
   status: AssistantRuntimeStatus,
   readiness: AssistantRuntimeReadinessStatus,
   inspection: AssistantRuntimeInspection,
-  configurationValid = true,
+  control: SafeControlRuntime,
+  runtimeValid: boolean,
+  modelUnavailable: boolean,
 ): AdminAssistantStatusSnapshot {
   const infrastructureReady =
     readiness.probed &&
@@ -153,16 +354,22 @@ function snapshot(
     readiness.live &&
     readiness.ready;
   const executionUnavailable = inspection.circuits.execution.state !== "closed";
-  const selectedProvider = !configurationValid
-    ? "unavailable"
-    : inspection.providerMode === "placeholder"
-      ? "placeholder"
-      : !executionUnavailable &&
-          infrastructureReady &&
-          readiness.capability === "available"
-        ? "agentos"
-        : "unavailable";
+  const selectedProvider =
+    !runtimeValid || status.capability === "degraded"
+      ? "unavailable"
+      : inspection.providerMode === "placeholder"
+        ? "placeholder"
+        : !executionUnavailable &&
+            infrastructureReady &&
+            status.capability === "available"
+          ? "agentos"
+          : "unavailable";
   const mode = inspection.providerMode;
+  const model = modelPresentation(
+    control,
+    executionUnavailable,
+    modelUnavailable,
+  );
   return {
     mode,
     runtime: {
@@ -171,25 +378,30 @@ function snapshot(
       capability: status.capability,
       selectedProvider,
       ...inspection,
+      source: control.source,
+      provider: control.provider,
+      modelId: control.modelId,
+      configRevision: control.configRevision,
+      activationVersion: control.activationVersion,
+      testStatus: control.testStatus,
     },
-    services: serviceState(readiness, inspection, configurationValid),
+    services: serviceState(
+      readiness,
+      inspection,
+      status,
+      control,
+      runtimeValid,
+      modelUnavailable,
+    ),
     configuration: {
       defaultAgent:
         inspection.providerMode === "agentos"
           ? "码多多（maduoduo）"
           : "码多多（占位）",
       model:
-        inspection.providerMode === "placeholder"
-          ? "未配置"
-          : !configurationValid
-            ? "状态不可用"
-            : readiness.capability === "placeholder"
-              ? "未配置"
-              : readiness.capability === "degraded"
-                ? "状态不可用"
-                : executionUnavailable
-                  ? "已配置（执行暂不可用）"
-                  : "已配置",
+        runtimeValid || control.source !== "none"
+          ? model.configuration
+          : "状态不可用",
       skills: "未接入",
       sessionStorage:
         inspection.persistence === "agentos"
@@ -199,44 +411,100 @@ function snapshot(
             : "未启用",
     },
     message:
-      configurationValid && inspection.providerMode === "placeholder"
+      runtimeValid &&
+      control.capability === "placeholder" &&
+      inspection.providerMode === "placeholder"
         ? "公开入口使用安全占位模式；AgentOS 基础设施尚未探测。"
         : status.message,
   };
 }
 
 export async function loadAdminAssistantStatus(
-  runtime?: Pick<AssistantRuntime, "readinessStatus" | "inspect">,
+  options: AdminAssistantStatusLoadOptions = {},
 ): Promise<AdminAssistantStatusSnapshot> {
-  let inspection = SAFE_DEGRADED_INSPECTION;
-  try {
-    const resolved = runtime ?? getAssistantRuntime();
-    let readiness: AssistantRuntimeReadinessStatus;
+  const runtimeTask = (async () => {
+    const resolved = options.runtime ?? getAssistantRuntime();
     try {
-      readiness = await resolved.readinessStatus();
+      const readiness = await resolved.readinessStatus();
+      return { readiness, inspection: resolved.inspect(), valid: true };
     } catch {
-      inspection = resolved.inspect();
-      return snapshot(
-        SAFE_DEGRADED_STATUS,
-        SAFE_UNPROBED_READINESS,
-        inspection,
-        false,
-      );
+      return {
+        readiness: SAFE_UNPROBED_READINESS,
+        inspection: resolved.inspect(),
+        valid: false,
+      };
     }
-    inspection = resolved.inspect();
-    const status = deriveAssistantRuntimeStatus(readiness, {
-      providerMode: inspection.providerMode,
-      executionState: inspection.circuits.execution.state,
+  })();
+  const controlTask = (async () => {
+    const client = options.controlClient ?? defaultModelControlClient();
+    const response = await client.runtimeStatus({
+      requestId: (options.requestIdFactory ?? crypto.randomUUID)(),
     });
-    return snapshot(status, readiness, inspection);
-  } catch {
-    return snapshot(
-      SAFE_DEGRADED_STATUS,
-      SAFE_UNPROBED_READINESS,
-      inspection,
-      false,
-    );
-  }
+    return safeControlRuntime(response);
+  })();
+  const [runtimeResult, controlResult] = await Promise.allSettled([
+    runtimeTask,
+    controlTask,
+  ]);
+  const runtime =
+    runtimeResult.status === "fulfilled"
+      ? runtimeResult.value
+      : {
+          readiness: SAFE_UNPROBED_READINESS,
+          inspection: SAFE_DEGRADED_INSPECTION,
+          valid: false,
+        };
+  const control =
+    controlResult.status === "fulfilled"
+      ? controlResult.value
+      : SAFE_CONTROL_UNAVAILABLE;
+  const slotCapability =
+    runtime.inspection.providerMode === "placeholder"
+      ? "placeholder"
+      : runtime.readiness.capability;
+  const capabilityMismatch =
+    runtime.valid && slotCapability !== control.capability;
+  const baseStatus = runtime.valid
+    ? deriveAssistantRuntimeStatus(runtime.readiness, {
+        providerMode: runtime.inspection.providerMode,
+        executionState:
+          control.capability === "placeholder"
+            ? "closed"
+            : runtime.inspection.circuits.execution.state,
+      })
+    : SAFE_DEGRADED_STATUS;
+  const degraded =
+    !runtime.valid ||
+    capabilityMismatch ||
+    baseStatus.capability === "degraded" ||
+    control.capability === "degraded";
+  const status: AssistantRuntimeStatus = degraded
+    ? {
+        live: baseStatus.live,
+        ready: false,
+        capability: "degraded",
+        message: "助手基础服务暂不可用。",
+      }
+    : {
+        live: baseStatus.live,
+        ready: baseStatus.ready,
+        capability: control.capability,
+        message:
+          control.capability === "placeholder"
+            ? "模型尚未配置，当前为安全占位模式。"
+            : "AI 助理基础服务已就绪。",
+      };
+  return snapshot(
+    status,
+    runtime.readiness,
+    runtime.inspection,
+    control,
+    runtime.valid,
+    !runtime.valid ||
+      capabilityMismatch ||
+      control.capability === "degraded" ||
+      slotCapability === "degraded",
+  );
 }
 
 const defaultDependencies: AdminAssistantStatusDependencies = {
@@ -285,6 +553,9 @@ export function createAdminAssistantStatusHandler(
         requestId,
         status: await dependencies.loadStatus(),
       };
+      if (!isAdminAssistantStatusResponse(body)) {
+        throw new TypeError("Invalid Admin assistant status");
+      }
       return Response.json(body, { headers: NO_STORE_HEADERS });
     } catch {
       return Response.json(

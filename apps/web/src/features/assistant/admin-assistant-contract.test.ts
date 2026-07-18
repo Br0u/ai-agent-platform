@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createAdminAssistantErrorResponse,
   isAdminAssistantChatResponse,
+  isAdminAssistantStatusResponse,
 } from "./admin-assistant-contract";
 
 function adminResponse(overrides: Record<string, unknown> = {}) {
@@ -60,6 +61,295 @@ describe("admin assistant test contract", () => {
       isAdminAssistantChatResponse(
         adminResponse({ expiresAt: "2026-07-13T12:00:00.000Z" }),
       ),
+    ).toBe(false);
+  });
+});
+
+function statusResponse(runtimeOverrides: Record<string, unknown> = {}) {
+  return {
+    version: "1",
+    requestId: "status-request-1",
+    status: {
+      mode: "agentos",
+      runtime: {
+        live: true,
+        ready: true,
+        capability: "available",
+        providerMode: "agentos",
+        selectedProvider: "agentos",
+        persistence: "agentos",
+        circuits: {
+          readiness: { state: "closed", consecutiveFailures: 0 },
+          execution: { state: "closed", consecutiveFailures: 0 },
+        },
+        readiness: {
+          cacheTtlMs: 5_000,
+          probeTimeoutMs: 1_500,
+          failureThreshold: 3,
+        },
+        source: "dynamic",
+        provider: "deepseek",
+        modelId: "deepseek-chat",
+        configRevision: 3,
+        activationVersion: 8,
+        testStatus: "passed",
+        ...runtimeOverrides,
+      },
+      services: [
+        {
+          id: "agentos",
+          label: "AgentOS",
+          state: "ready",
+          detail: "基础服务已就绪",
+        },
+        {
+          id: "database",
+          label: "运行数据库",
+          state: "ready",
+          detail: "运行依赖已就绪",
+        },
+        {
+          id: "model",
+          label: "模型",
+          state: "ready",
+          detail: "动态模型已启用",
+        },
+        {
+          id: "public_entry",
+          label: "公开入口",
+          state: "ready",
+          detail: "AgentOS 模式可用",
+        },
+      ],
+      configuration: {
+        defaultAgent: "码多多（maduoduo）",
+        model: "DeepSeek / deepseek-chat（动态配置）",
+        skills: "未接入",
+        sessionStorage: "AgentOS 持久化已启用",
+      },
+      message: "AI 助理基础服务已就绪。",
+    },
+  };
+}
+
+describe("admin assistant status contract", () => {
+  it.each([
+    [
+      "dynamic",
+      {
+        source: "dynamic",
+        provider: "deepseek",
+        modelId: "deepseek-chat",
+        configRevision: 3,
+        activationVersion: 8,
+        testStatus: "passed",
+      },
+    ],
+    [
+      "deployment",
+      {
+        source: "deployment",
+        provider: "openai",
+        modelId: "gpt-5",
+        configRevision: null,
+        activationVersion: null,
+        testStatus: "untested",
+      },
+    ],
+    [
+      "none placeholder",
+      {
+        capability: "placeholder",
+        selectedProvider: "unavailable",
+        source: "none",
+        provider: null,
+        modelId: null,
+        configRevision: null,
+        activationVersion: null,
+        testStatus: "not_configured",
+      },
+    ],
+    [
+      "none unavailable",
+      {
+        live: true,
+        ready: false,
+        capability: "degraded",
+        selectedProvider: "unavailable",
+        source: "none",
+        provider: null,
+        modelId: null,
+        configRevision: null,
+        activationVersion: null,
+        testStatus: "unavailable",
+      },
+    ],
+    [
+      "known empty slot with degraded readiness",
+      {
+        live: true,
+        ready: false,
+        capability: "degraded",
+        selectedProvider: "unavailable",
+        source: "none",
+        provider: null,
+        modelId: null,
+        configRevision: null,
+        activationVersion: null,
+        testStatus: "not_configured",
+      },
+    ],
+  ])("accepts exact %s runtime metadata", (_name, runtime) => {
+    expect(isAdminAssistantStatusResponse(statusResponse(runtime))).toBe(true);
+  });
+
+  it.each([
+    ["api Key", { apiKey: "sk-private" }],
+    ["Key last four", { lastFour: "1234" }],
+    ["Endpoint URL", { endpointUrl: "https://private.example.com" }],
+    ["Endpoint ID", { endpointId: "deepseek-default" }],
+    ["error detail", { errorDetail: "private provider response" }],
+  ])("rejects an extra %s runtime field", (_name, leaked) => {
+    expect(isAdminAssistantStatusResponse(statusResponse(leaked))).toBe(false);
+  });
+
+  it.each([
+    [
+      "none with provider metadata",
+      {
+        source: "none",
+        provider: "openai",
+        modelId: "gpt-5",
+        configRevision: null,
+        activationVersion: null,
+        testStatus: "not_configured",
+      },
+    ],
+    [
+      "deployment revision",
+      {
+        source: "deployment",
+        provider: "openai",
+        modelId: "gpt-5",
+        configRevision: 1,
+        activationVersion: null,
+        testStatus: "untested",
+      },
+    ],
+    [
+      "dynamic without activation",
+      {
+        source: "dynamic",
+        provider: "openai",
+        modelId: "gpt-5",
+        configRevision: 1,
+        activationVersion: null,
+        testStatus: "passed",
+      },
+    ],
+    [
+      "dynamic untested",
+      {
+        source: "dynamic",
+        provider: "openai",
+        modelId: "gpt-5",
+        configRevision: 1,
+        activationVersion: 1,
+        testStatus: "untested",
+      },
+    ],
+    [
+      "degraded selected Provider",
+      {
+        live: true,
+        ready: false,
+        capability: "degraded",
+        selectedProvider: "agentos",
+      },
+    ],
+    [
+      "placeholder selected AgentOS",
+      {
+        capability: "placeholder",
+        source: "none",
+        provider: null,
+        modelId: null,
+        configRevision: null,
+        activationVersion: null,
+        testStatus: "not_configured",
+        selectedProvider: "agentos",
+      },
+    ],
+    ["available without selected AgentOS", { selectedProvider: "unavailable" }],
+  ])("rejects contradictory runtime metadata: %s", (_name, runtime) => {
+    expect(isAdminAssistantStatusResponse(statusResponse(runtime))).toBe(false);
+  });
+
+  it.each([
+    ["unknown Provider", { provider: "other" }],
+    ["URL-like Model ID", { modelId: "https://private.example.com/model" }],
+    ["control in Model ID", { modelId: "deepseek\u0000-chat" }],
+    ["oversized Model ID", { modelId: "m".repeat(129) }],
+    ["zero config revision", { configRevision: 0 }],
+    ["fractional config revision", { configRevision: 1.5 }],
+    ["zero activation version", { activationVersion: 0 }],
+    ["fractional activation version", { activationVersion: 1.5 }],
+    ["failed test status", { testStatus: "failed" }],
+    ["future test status", { testStatus: "future" }],
+  ])("rejects invalid safe metadata: %s", (_name, override) => {
+    expect(isAdminAssistantStatusResponse(statusResponse(override))).toBe(
+      false,
+    );
+  });
+
+  it("rejects accessors and symbol fields instead of invoking them", () => {
+    const response = statusResponse();
+    const getter = vi.fn(() => "deepseek-chat");
+    Object.defineProperty(response.status.runtime, "modelId", {
+      enumerable: true,
+      get: getter,
+    });
+
+    expect(isAdminAssistantStatusResponse(response)).toBe(false);
+    expect(getter).not.toHaveBeenCalled();
+
+    const symbolResponse = statusResponse();
+    Object.defineProperty(symbolResponse.status.runtime, Symbol("key"), {
+      enumerable: false,
+      value: "private",
+    });
+    expect(isAdminAssistantStatusResponse(symbolResponse)).toBe(false);
+  });
+
+  it("takes one runtime descriptor snapshot without TOCTOU re-reads", () => {
+    const response = statusResponse();
+    const runtime = response.status.runtime;
+    const descriptorReads = new Map<PropertyKey, number>();
+    response.status.runtime = new Proxy(runtime, {
+      getOwnPropertyDescriptor(target, property) {
+        descriptorReads.set(property, (descriptorReads.get(property) ?? 0) + 1);
+        return Reflect.getOwnPropertyDescriptor(target, property);
+      },
+    });
+
+    expect(isAdminAssistantStatusResponse(response)).toBe(true);
+    for (const key of Reflect.ownKeys(runtime)) {
+      expect(descriptorReads.get(key), String(key)).toBe(1);
+    }
+  });
+
+  it("rejects extra fields outside runtime metadata", () => {
+    const response = statusResponse() as ReturnType<typeof statusResponse> & {
+      key?: string;
+    };
+    response.key = "sk-private";
+
+    expect(isAdminAssistantStatusResponse(response)).toBe(false);
+    expect(
+      isAdminAssistantStatusResponse({
+        ...statusResponse(),
+        status: { ...statusResponse().status, error: "private detail" },
+      }),
     ).toBe(false);
   });
 });

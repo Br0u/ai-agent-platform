@@ -6,6 +6,12 @@ import {
   type AgentOSRunClient,
 } from "@/server/assistant/agentos-run-client";
 import type { AgentOSExecutionCircuit } from "@/server/assistant/agentos-execution-circuit";
+import type {
+  AgentModelControlClient,
+  AgentModelRuntimeResponse,
+} from "@/server/assistant/agent-model-control-client";
+import type { AssistantRuntime } from "@/server/assistant/assistant-runtime";
+import { isAdminAssistantStatusResponse } from "@/features/assistant/admin-assistant-contract";
 
 const auth = vi.hoisted(() => {
   class AuthAccessError extends Error {
@@ -89,6 +95,72 @@ function runClient(runAgent?: AgentOSRunClient["runAgent"]): AgentOSRunClient {
   };
 }
 
+const CONTROL_REQUEST_ID = "11111111-1111-4111-8111-111111111111";
+
+function controlRuntime(
+  overrides: Partial<AgentModelRuntimeResponse> = {},
+): AgentModelRuntimeResponse {
+  return {
+    version: "1",
+    capability: "available",
+    source: "dynamic",
+    provider: "deepseek",
+    modelId: "deepseek-chat",
+    configRevision: 3,
+    activationVersion: 8,
+    ...overrides,
+  };
+}
+
+function placeholderControlRuntime(): AgentModelRuntimeResponse {
+  return controlRuntime({
+    capability: "placeholder",
+    source: null,
+    provider: null,
+    modelId: null,
+    configRevision: null,
+    activationVersion: null,
+  });
+}
+
+function degradedControlRuntime(): AgentModelRuntimeResponse {
+  return controlRuntime({
+    capability: "degraded",
+    source: null,
+    provider: null,
+    modelId: null,
+    configRevision: null,
+    activationVersion: null,
+  });
+}
+
+function deploymentControlRuntime(): AgentModelRuntimeResponse {
+  return controlRuntime({
+    source: "deployment",
+    provider: "openai",
+    modelId: "gpt-5",
+    configRevision: null,
+    activationVersion: null,
+  });
+}
+
+function controlClient(
+  status: AgentModelRuntimeResponse = controlRuntime(),
+): Pick<AgentModelControlClient, "runtimeStatus"> {
+  return { runtimeStatus: vi.fn(async () => status) };
+}
+
+function runtimeSources(
+  runtimeSource: Pick<AssistantRuntime, "readinessStatus" | "inspect">,
+  status: AgentModelRuntimeResponse = controlRuntime(),
+) {
+  return {
+    runtime: runtimeSource,
+    controlClient: controlClient(status),
+    requestIdFactory: () => CONTROL_REQUEST_ID,
+  };
+}
+
 describe("GET /api/v1/admin/assistant/status", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -128,6 +200,411 @@ describe("GET /api/v1/admin/assistant/status", () => {
     });
   });
 
+  it("merges an available dynamic slot into safe Admin-only runtime metadata", async () => {
+    const runtimeStatus = vi.fn(async () =>
+      controlRuntime({
+        provider: "deepseek",
+        modelId: "deepseek-chat",
+        configRevision: 3,
+        activationVersion: 8,
+      }),
+    );
+    const result = await loadAdminAssistantStatus({
+      runtime: {
+        readinessStatus: vi.fn(async () => ({
+          probed: true,
+          live: true,
+          ready: true,
+          capability: "available" as const,
+        })),
+        inspect: vi.fn(() => ({
+          providerMode: "agentos" as const,
+          persistence: "agentos" as const,
+          circuits: {
+            readiness: { state: "closed" as const, consecutiveFailures: 0 },
+            execution: { state: "closed" as const, consecutiveFailures: 0 },
+          },
+          readiness: {
+            cacheTtlMs: 5_000,
+            probeTimeoutMs: 1_500,
+            failureThreshold: 3,
+          },
+        })),
+      },
+      controlClient: { runtimeStatus },
+      requestIdFactory: () => CONTROL_REQUEST_ID,
+    } as never);
+
+    expect(runtimeStatus).toHaveBeenCalledExactlyOnceWith({
+      requestId: CONTROL_REQUEST_ID,
+    });
+    expect(result.runtime).toMatchObject({
+      capability: "available",
+      source: "dynamic",
+      provider: "deepseek",
+      modelId: "deepseek-chat",
+      configRevision: 3,
+      activationVersion: 8,
+      testStatus: "passed",
+    });
+    expect(result.services.find(({ id }) => id === "model")).toMatchObject({
+      state: "ready",
+      detail: "动态模型已启用",
+    });
+    expect(result.configuration.model).toBe(
+      "DeepSeek / deepseek-chat（动态配置）",
+    );
+  });
+
+  it("labels a deployment bootstrap as untested without a dynamic revision", async () => {
+    const result = await loadAdminAssistantStatus({
+      runtime: {
+        readinessStatus: async () => ({
+          probed: true,
+          live: true,
+          ready: true,
+          capability: "available" as const,
+        }),
+        inspect: () => ({
+          providerMode: "agentos" as const,
+          persistence: "agentos" as const,
+          circuits: {
+            readiness: { state: "closed" as const, consecutiveFailures: 0 },
+            execution: { state: "closed" as const, consecutiveFailures: 0 },
+          },
+          readiness: {
+            cacheTtlMs: 5_000,
+            probeTimeoutMs: 1_500,
+            failureThreshold: 3,
+          },
+        }),
+      },
+      controlClient: controlClient(
+        controlRuntime({
+          source: "deployment",
+          provider: "openai",
+          modelId: "gpt-5",
+          configRevision: null,
+          activationVersion: null,
+        }),
+      ),
+      requestIdFactory: () => CONTROL_REQUEST_ID,
+    } as never);
+
+    expect(result.runtime).toMatchObject({
+      source: "deployment",
+      provider: "openai",
+      modelId: "gpt-5",
+      configRevision: null,
+      activationVersion: null,
+      testStatus: "untested",
+    });
+    expect(result.services.find(({ id }) => id === "model")).toMatchObject({
+      state: "ready",
+      detail: "部署模型已启用",
+    });
+    expect(result.configuration.model).toBe("OpenAI / gpt-5（部署配置）");
+  });
+
+  it("keeps an authoritative empty slot as not configured", async () => {
+    const result = await loadAdminAssistantStatus({
+      runtime: {
+        readinessStatus: async () => ({
+          probed: true,
+          live: true,
+          ready: true,
+          capability: "placeholder" as const,
+        }),
+        inspect: () => ({
+          providerMode: "agentos" as const,
+          persistence: "agentos" as const,
+          circuits: {
+            readiness: { state: "closed" as const, consecutiveFailures: 0 },
+            execution: { state: "closed" as const, consecutiveFailures: 0 },
+          },
+          readiness: {
+            cacheTtlMs: 5_000,
+            probeTimeoutMs: 1_500,
+            failureThreshold: 3,
+          },
+        }),
+      },
+      controlClient: controlClient(
+        controlRuntime({
+          capability: "placeholder",
+          source: null,
+          provider: null,
+          modelId: null,
+          configRevision: null,
+          activationVersion: null,
+        }),
+      ),
+      requestIdFactory: () => CONTROL_REQUEST_ID,
+    } as never);
+
+    expect(result.runtime).toMatchObject({
+      capability: "placeholder",
+      source: "none",
+      provider: null,
+      modelId: null,
+      configRevision: null,
+      activationVersion: null,
+      testStatus: "not_configured",
+    });
+    expect(result.services.find(({ id }) => id === "model")).toMatchObject({
+      state: "not_configured",
+      detail: "尚未配置",
+    });
+    expect(result.configuration.model).toBe("未配置");
+  });
+
+  it("fails closed when control storage reports a degraded empty slot", async () => {
+    const result = await loadAdminAssistantStatus({
+      runtime: {
+        readinessStatus: async () => ({
+          probed: true,
+          live: true,
+          ready: false,
+          capability: "degraded" as const,
+        }),
+        inspect: () => ({
+          providerMode: "agentos" as const,
+          persistence: "agentos" as const,
+          circuits: {
+            readiness: { state: "closed" as const, consecutiveFailures: 0 },
+            execution: { state: "closed" as const, consecutiveFailures: 0 },
+          },
+          readiness: {
+            cacheTtlMs: 5_000,
+            probeTimeoutMs: 1_500,
+            failureThreshold: 3,
+          },
+        }),
+      },
+      controlClient: controlClient(
+        controlRuntime({
+          capability: "degraded",
+          source: null,
+          provider: null,
+          modelId: null,
+          configRevision: null,
+          activationVersion: null,
+        }),
+      ),
+      requestIdFactory: () => CONTROL_REQUEST_ID,
+    } as never);
+
+    expect(result.runtime).toMatchObject({
+      ready: false,
+      capability: "degraded",
+      source: "none",
+      provider: null,
+      testStatus: "unavailable",
+    });
+    expect(result.services.find(({ id }) => id === "model")).toMatchObject({
+      state: "degraded",
+      detail: "模型状态不可用",
+    });
+    expect(result.configuration.model).toBe("状态不可用");
+  });
+
+  it("does not display a deployment fallback when Agent control is unreachable", async () => {
+    const readinessStatus = vi.fn(async () => ({
+      probed: true,
+      live: true,
+      ready: true,
+      capability: "available" as const,
+    }));
+    const runtimeStatus = vi.fn(async () => {
+      throw new Error(
+        "private deployment openai gpt-5 https://agent.internal key",
+      );
+    });
+    const result = await loadAdminAssistantStatus({
+      runtime: {
+        readinessStatus,
+        inspect: () => ({
+          providerMode: "agentos" as const,
+          persistence: "agentos" as const,
+          circuits: {
+            readiness: { state: "closed" as const, consecutiveFailures: 0 },
+            execution: { state: "closed" as const, consecutiveFailures: 0 },
+          },
+          readiness: {
+            cacheTtlMs: 5_000,
+            probeTimeoutMs: 1_500,
+            failureThreshold: 3,
+          },
+        }),
+      },
+      controlClient: { runtimeStatus },
+      requestIdFactory: () => CONTROL_REQUEST_ID,
+    } as never);
+
+    expect(readinessStatus).toHaveBeenCalledOnce();
+    expect(runtimeStatus).toHaveBeenCalledOnce();
+    expect(result.runtime).toMatchObject({
+      ready: false,
+      capability: "degraded",
+      source: "none",
+      provider: null,
+      modelId: null,
+      configRevision: null,
+      activationVersion: null,
+      testStatus: "unavailable",
+    });
+    expect(result.configuration.model).toBe("状态不可用");
+    expect(JSON.stringify(result)).not.toMatch(
+      /deployment|openai|gpt-5|agent\.internal|private|key|fallback|回退/iu,
+    );
+  });
+
+  it("still reads control status when readiness probing rejects", async () => {
+    const runtimeStatus = vi.fn(async () =>
+      controlRuntime({ source: "dynamic" }),
+    );
+    const result = await loadAdminAssistantStatus({
+      runtime: {
+        readinessStatus: vi.fn(async () => {
+          throw new Error("private readiness detail");
+        }),
+        inspect: () => ({
+          providerMode: "agentos" as const,
+          persistence: "agentos" as const,
+          circuits: {
+            readiness: { state: "open" as const, consecutiveFailures: 3 },
+            execution: { state: "closed" as const, consecutiveFailures: 0 },
+          },
+          readiness: {
+            cacheTtlMs: 5_000,
+            probeTimeoutMs: 1_500,
+            failureThreshold: 3,
+          },
+        }),
+      },
+      controlClient: { runtimeStatus },
+      requestIdFactory: () => CONTROL_REQUEST_ID,
+    } as never);
+
+    expect(runtimeStatus).toHaveBeenCalledOnce();
+    expect(result.runtime).toMatchObject({
+      ready: false,
+      capability: "degraded",
+      source: "dynamic",
+      provider: "deepseek",
+      testStatus: "passed",
+    });
+    expect(JSON.stringify(result)).not.toContain("private readiness detail");
+  });
+
+  it.each([
+    {
+      name: "readiness placeholder while control reports dynamic available",
+      readinessCapability: "placeholder" as const,
+      control: controlRuntime(),
+      expected: {
+        source: "dynamic",
+        provider: "deepseek",
+        testStatus: "passed",
+      },
+    },
+    {
+      name: "readiness available while control reports placeholder",
+      readinessCapability: "available" as const,
+      control: placeholderControlRuntime(),
+      expected: {
+        source: "none",
+        provider: null,
+        testStatus: "not_configured",
+      },
+    },
+  ])("fails closed on $name", async (scenario) => {
+    const result = await loadAdminAssistantStatus({
+      runtime: {
+        readinessStatus: async () => ({
+          probed: true,
+          live: true,
+          ready: true,
+          capability: scenario.readinessCapability,
+        }),
+        inspect: () => ({
+          providerMode: "agentos" as const,
+          persistence: "agentos" as const,
+          circuits: {
+            readiness: { state: "closed" as const, consecutiveFailures: 0 },
+            execution: { state: "closed" as const, consecutiveFailures: 0 },
+          },
+          readiness: {
+            cacheTtlMs: 5_000,
+            probeTimeoutMs: 1_500,
+            failureThreshold: 3,
+          },
+        }),
+      },
+      controlClient: controlClient(scenario.control),
+      requestIdFactory: () => CONTROL_REQUEST_ID,
+    });
+
+    expect(result.runtime).toMatchObject({
+      ready: false,
+      capability: "degraded",
+      selectedProvider: "unavailable",
+      ...scenario.expected,
+    });
+    expect(result.services.find(({ id }) => id === "model")).toMatchObject({
+      state: "degraded",
+      detail: "模型状态不可用",
+    });
+    expect(result.message).toBe("助手基础服务暂不可用。");
+  });
+
+  it("normalizes an impossible sourced placeholder before returning from the loader", async () => {
+    const result = await loadAdminAssistantStatus({
+      runtime: {
+        readinessStatus: async () => ({
+          probed: true,
+          live: true,
+          ready: true,
+          capability: "placeholder" as const,
+        }),
+        inspect: () => ({
+          providerMode: "agentos" as const,
+          persistence: "agentos" as const,
+          circuits: {
+            readiness: { state: "closed" as const, consecutiveFailures: 0 },
+            execution: { state: "closed" as const, consecutiveFailures: 0 },
+          },
+          readiness: {
+            cacheTtlMs: 5_000,
+            probeTimeoutMs: 1_500,
+            failureThreshold: 3,
+          },
+        }),
+      },
+      controlClient: controlClient(
+        controlRuntime({ capability: "placeholder", source: "dynamic" }),
+      ),
+      requestIdFactory: () => CONTROL_REQUEST_ID,
+    });
+
+    expect(result.runtime).toMatchObject({
+      capability: "degraded",
+      source: "none",
+      provider: null,
+      modelId: null,
+      configRevision: null,
+      activationVersion: null,
+      testStatus: "unavailable",
+    });
+    expect(
+      isAdminAssistantStatusResponse({
+        version: "1",
+        requestId: "safe-loader-result",
+        status: result,
+      }),
+    ).toBe(true);
+  });
+
   it("keeps placeholder mode lazy and reports AgentOS infrastructure as unprobed", async () => {
     const actual = await vi.importActual<
       typeof import("@/server/assistant/assistant-runtime")
@@ -148,7 +625,9 @@ describe("GET /api/v1/admin/assistant/status", () => {
       fetcher,
     });
 
-    const result = await loadAdminAssistantStatus(realRuntime as never);
+    const result = await loadAdminAssistantStatus(
+      runtimeSources(realRuntime, placeholderControlRuntime()),
+    );
 
     expect(result).toMatchObject({
       mode: "placeholder",
@@ -205,7 +684,9 @@ describe("GET /api/v1/admin/assistant/status", () => {
       await selected.provider.reply(invocation).catch(() => undefined);
     }
 
-    const result = await loadAdminAssistantStatus(realRuntime as never);
+    const result = await loadAdminAssistantStatus(
+      runtimeSources(realRuntime, deploymentControlRuntime()),
+    );
 
     expect(result.mode).toBe("agentos");
     expect(result.runtime.persistence).toBe("agentos");
@@ -225,7 +706,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
     );
     expect(result.configuration).toMatchObject({
       defaultAgent: "码多多（maduoduo）",
-      model: "已配置（执行暂不可用）",
+      model: "OpenAI / gpt-5（部署配置，执行暂不可用）",
       sessionStorage: "AgentOS 持久化已启用",
     });
     expect(JSON.stringify(result)).not.toMatch(
@@ -234,33 +715,38 @@ describe("GET /api/v1/admin/assistant/status", () => {
   });
 
   it("does not claim a configured model when placeholder capability has an open execution circuit", async () => {
-    const result = await loadAdminAssistantStatus({
-      status: async () => ({
-        live: true,
-        ready: false,
-        capability: "degraded" as const,
-        message: "助手基础服务暂不可用。",
-      }),
-      readinessStatus: async () => ({
-        probed: true,
-        live: true,
-        ready: true,
-        capability: "placeholder" as const,
-      }),
-      inspect: () => ({
-        providerMode: "agentos" as const,
-        persistence: "agentos" as const,
-        circuits: {
-          readiness: { state: "closed" as const, consecutiveFailures: 0 },
-          execution: { state: "open" as const, consecutiveFailures: 3 },
+    const result = await loadAdminAssistantStatus(
+      runtimeSources(
+        {
+          readinessStatus: async () => ({
+            probed: true,
+            live: true,
+            ready: true,
+            capability: "placeholder" as const,
+          }),
+          inspect: () => ({
+            providerMode: "agentos" as const,
+            persistence: "agentos" as const,
+            circuits: {
+              readiness: {
+                state: "closed" as const,
+                consecutiveFailures: 0,
+              },
+              execution: {
+                state: "open" as const,
+                consecutiveFailures: 3,
+              },
+            },
+            readiness: {
+              cacheTtlMs: 5000,
+              probeTimeoutMs: 1500,
+              failureThreshold: 3,
+            },
+          }),
         },
-        readiness: {
-          cacheTtlMs: 5000,
-          probeTimeoutMs: 1500,
-          failureThreshold: 3,
-        },
-      }),
-    } as never);
+        placeholderControlRuntime(),
+      ),
+    );
 
     expect(result.mode).toBe("agentos");
     expect(result.runtime.persistence).toBe("agentos");
@@ -306,7 +792,9 @@ describe("GET /api/v1/admin/assistant/status", () => {
       createExecutionCircuit: () => executionCircuit,
     });
 
-    const result = await loadAdminAssistantStatus(realRuntime as never);
+    const result = await loadAdminAssistantStatus(
+      runtimeSources(realRuntime, degradedControlRuntime()),
+    );
 
     expect(result.mode).toBe("agentos");
     expect(result.runtime.selectedProvider).toBe("unavailable");
@@ -338,7 +826,9 @@ describe("GET /api/v1/admin/assistant/status", () => {
       },
     });
 
-    const result = await loadAdminAssistantStatus(realRuntime as never);
+    const result = await loadAdminAssistantStatus(
+      runtimeSources(realRuntime, degradedControlRuntime()),
+    );
 
     expect(result).toMatchObject({
       mode: "agentos",
@@ -403,11 +893,9 @@ describe("GET /api/v1/admin/assistant/status", () => {
       },
     }));
 
-    const result = await loadAdminAssistantStatus({
-      status,
-      readinessStatus,
-      inspect,
-    } as never);
+    const result = await loadAdminAssistantStatus(
+      runtimeSources({ readinessStatus, inspect }, deploymentControlRuntime()),
+    );
 
     expect(result.runtime).toMatchObject({
       live: true,
@@ -426,7 +914,9 @@ describe("GET /api/v1/admin/assistant/status", () => {
       state: "degraded",
       detail: "模型执行暂不可用",
     });
-    expect(result.configuration.model).toBe("已配置（执行暂不可用）");
+    expect(result.configuration.model).toBe(
+      "OpenAI / gpt-5（部署配置，执行暂不可用）",
+    );
     expect(status).not.toHaveBeenCalled();
     expect(readinessStatus).toHaveBeenCalledOnce();
     expect(inspect).toHaveBeenCalledOnce();
@@ -463,11 +953,9 @@ describe("GET /api/v1/admin/assistant/status", () => {
       },
     }));
 
-    const result = await loadAdminAssistantStatus({
-      status,
-      readinessStatus,
-      inspect,
-    } as never);
+    const result = await loadAdminAssistantStatus(
+      runtimeSources({ readinessStatus, inspect }, deploymentControlRuntime()),
+    );
 
     expect(result.runtime).toMatchObject({
       live: true,
@@ -478,12 +966,12 @@ describe("GET /api/v1/admin/assistant/status", () => {
     });
     expect(result.services.find(({ id }) => id === "model")).toMatchObject({
       state: "ready",
-      detail: "能力已启用",
+      detail: "部署模型已启用",
     });
     expect(result.services.find(({ id }) => id === "public_entry")?.state).toBe(
       "ready",
     );
-    expect(result.configuration.model).toBe("已配置");
+    expect(result.configuration.model).toBe("OpenAI / gpt-5（部署配置）");
     expect(status).not.toHaveBeenCalled();
     expect(readinessStatus).toHaveBeenCalledOnce();
     expect(inspect).toHaveBeenCalledOnce();
@@ -563,6 +1051,60 @@ describe("GET /api/v1/admin/assistant/status", () => {
     expect(JSON.stringify(body)).not.toMatch(/private|url|secret/iu);
   });
 
+  it("rejects a polluted loader snapshot before serialization", async () => {
+    const unsafe = await loadAdminAssistantStatus({
+      runtime: {
+        readinessStatus: async () => ({
+          probed: true,
+          live: true,
+          ready: true,
+          capability: "available" as const,
+        }),
+        inspect: () => ({
+          providerMode: "agentos" as const,
+          persistence: "agentos" as const,
+          circuits: {
+            readiness: { state: "closed" as const, consecutiveFailures: 0 },
+            execution: { state: "closed" as const, consecutiveFailures: 0 },
+          },
+          readiness: {
+            cacheTtlMs: 5_000,
+            probeTimeoutMs: 1_500,
+            failureThreshold: 3,
+          },
+        }),
+      },
+      controlClient: controlClient(),
+      requestIdFactory: () => CONTROL_REQUEST_ID,
+    });
+    Object.assign(unsafe.runtime, {
+      apiKey: "sk-private-loader",
+      errorDetail: "private provider body",
+    });
+    const GET = createAdminAssistantStatusHandler({
+      access: {
+        requirePermission: vi.fn().mockResolvedValue({ realm: "workforce" }),
+      },
+      loadStatus: vi.fn(async () => unsafe),
+      requestIdFactory: () => "polluted-loader",
+    });
+
+    const response = await GET(request("polluted-loader"));
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).toEqual({
+      version: "1",
+      requestId: "polluted-loader",
+      error: {
+        code: "assistant_unavailable",
+        message: "AI assistant service is unavailable",
+        retryable: true,
+      },
+    });
+    expect(JSON.stringify(body)).not.toMatch(/sk-private|provider body/iu);
+  });
+
   it("does not let a malicious loader AuthAccessError impersonate an authorization failure", async () => {
     const GET = createAdminAssistantStatusHandler({
       access: {
@@ -593,18 +1135,17 @@ describe("GET /api/v1/admin/assistant/status", () => {
   it.each([
     {
       name: "placeholder Provider with degraded AgentOS",
-      status: {
-        live: false,
-        ready: false,
-        capability: "degraded" as const,
-        message: "助手基础服务暂不可用。",
-      },
       inspection: {
         providerMode: "placeholder" as const,
         persistence: "disabled" as const,
         circuits: {
           readiness: { state: "open" as const, consecutiveFailures: 3 },
           execution: { state: "closed" as const, consecutiveFailures: 0 },
+        },
+        readiness: {
+          cacheTtlMs: 5_000,
+          probeTimeoutMs: 1_500,
+          failureThreshold: 3,
         },
       },
       readiness: {
@@ -622,18 +1163,17 @@ describe("GET /api/v1/admin/assistant/status", () => {
     },
     {
       name: "AgentOS mode without available capability",
-      status: {
-        live: true,
-        ready: true,
-        capability: "placeholder" as const,
-        message: "模型尚未配置，当前为安全占位模式。",
-      },
       inspection: {
         providerMode: "agentos" as const,
         persistence: "agentos" as const,
         circuits: {
           readiness: { state: "closed" as const, consecutiveFailures: 0 },
           execution: { state: "closed" as const, consecutiveFailures: 0 },
+        },
+        readiness: {
+          cacheTtlMs: 5_000,
+          probeTimeoutMs: 1_500,
+          failureThreshold: 3,
         },
       },
       readiness: {
@@ -651,18 +1191,17 @@ describe("GET /api/v1/admin/assistant/status", () => {
     },
     {
       name: "fully available AgentOS Provider",
-      status: {
-        live: true,
-        ready: true,
-        capability: "available" as const,
-        message: "AI 助理基础服务已就绪。",
-      },
       inspection: {
         providerMode: "agentos" as const,
         persistence: "agentos" as const,
         circuits: {
           readiness: { state: "closed" as const, consecutiveFailures: 0 },
           execution: { state: "closed" as const, consecutiveFailures: 0 },
+        },
+        readiness: {
+          cacheTtlMs: 5_000,
+          probeTimeoutMs: 1_500,
+          failureThreshold: 3,
         },
       },
       readiness: {
@@ -680,12 +1219,21 @@ describe("GET /api/v1/admin/assistant/status", () => {
     },
   ])(
     "derives public entry from $name",
-    async ({ status, readiness, inspection, expected }) => {
-      const result = await loadAdminAssistantStatus({
-        status: async () => status,
-        readinessStatus: async () => readiness,
-        inspect: () => inspection,
-      } as never);
+    async ({ readiness, inspection, expected }) => {
+      const control =
+        inspection.providerMode === "placeholder" ||
+        readiness.capability === "placeholder"
+          ? placeholderControlRuntime()
+          : deploymentControlRuntime();
+      const result = await loadAdminAssistantStatus(
+        runtimeSources(
+          {
+            readinessStatus: async () => readiness,
+            inspect: () => inspection,
+          },
+          control,
+        ),
+      );
 
       expect(result.mode).toBe(expected.mode);
       expect(result.runtime.selectedProvider).toBe(expected.selectedProvider);
@@ -699,33 +1247,38 @@ describe("GET /api/v1/admin/assistant/status", () => {
   );
 
   it("shows healthy AgentOS infrastructure separately from an open model execution circuit", async () => {
-    const result = await loadAdminAssistantStatus({
-      status: async () => ({
-        live: true,
-        ready: false,
-        capability: "degraded" as const,
-        message: "助手基础服务暂不可用。",
-      }),
-      readinessStatus: async () => ({
-        probed: true,
-        live: true,
-        ready: true,
-        capability: "available" as const,
-      }),
-      inspect: () => ({
-        providerMode: "agentos" as const,
-        persistence: "agentos" as const,
-        circuits: {
-          readiness: { state: "closed" as const, consecutiveFailures: 0 },
-          execution: { state: "open" as const, consecutiveFailures: 3 },
+    const result = await loadAdminAssistantStatus(
+      runtimeSources(
+        {
+          readinessStatus: async () => ({
+            probed: true,
+            live: true,
+            ready: true,
+            capability: "available" as const,
+          }),
+          inspect: () => ({
+            providerMode: "agentos" as const,
+            persistence: "agentos" as const,
+            circuits: {
+              readiness: {
+                state: "closed" as const,
+                consecutiveFailures: 0,
+              },
+              execution: {
+                state: "open" as const,
+                consecutiveFailures: 3,
+              },
+            },
+            readiness: {
+              cacheTtlMs: 5000,
+              probeTimeoutMs: 1500,
+              failureThreshold: 3,
+            },
+          }),
         },
-        readiness: {
-          cacheTtlMs: 5000,
-          probeTimeoutMs: 1500,
-          failureThreshold: 3,
-        },
-      }),
-    } as never);
+        deploymentControlRuntime(),
+      ),
+    );
 
     expect(result.runtime.selectedProvider).toBe("unavailable");
     expect(result.runtime.circuits).toEqual({
@@ -769,6 +1322,12 @@ describe("GET /api/v1/admin/assistant/status", () => {
             probeTimeoutMs: 1500,
             failureThreshold: 3,
           },
+          source: "none",
+          provider: null,
+          modelId: null,
+          configRevision: null,
+          activationVersion: null,
+          testStatus: "not_configured",
         },
         services: [
           {
@@ -835,6 +1394,12 @@ describe("GET /api/v1/admin/assistant/status", () => {
         probeTimeoutMs: 1500,
         failureThreshold: 3,
       },
+      source: "none",
+      provider: null,
+      modelId: null,
+      configRevision: null,
+      activationVersion: null,
+      testStatus: "not_configured",
     });
     expect(JSON.stringify(body)).not.toMatch(
       /https?:|database_url|api.?key|secret|token|openedAt|monotonic|cookie|session.?id|user.?agent/iu,
@@ -865,6 +1430,12 @@ describe("GET /api/v1/admin/assistant/status", () => {
         execution: { state: "closed", consecutiveFailures: 0 },
       },
       readiness: { cacheTtlMs: 0, probeTimeoutMs: 0, failureThreshold: 0 },
+      source: "none",
+      provider: null,
+      modelId: null,
+      configRevision: null,
+      activationVersion: null,
+      testStatus: "unavailable",
     });
     expect(body.status.configuration.sessionStorage).toBe("状态不可用");
     expect(body.status.services).not.toContainEqual(
