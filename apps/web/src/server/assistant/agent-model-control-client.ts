@@ -4,8 +4,8 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 import {
   ADMIN_MODEL_PROVIDERS,
-  isAdminModelConfigRevisionInput,
-  isAdminModelConfigSaveInput,
+  parseAdminModelConfigRevisionInput,
+  parseAdminModelConfigSaveInput,
   type AdminModelConfigRevisionInput,
   type AdminModelConfigSaveInput,
   type AdminModelProvider,
@@ -165,24 +165,91 @@ function invalidResponse(): never {
   throw new AgentModelControlClientError("invalid_response");
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
+function readExactDataRecord(
+  value: unknown,
+  expectedKeySets: readonly (readonly string[])[],
+): Record<string, unknown> | null {
+  try {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return null;
+    }
+    const prototype = Reflect.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+    const ownKeys = Reflect.ownKeys(value);
+    if (ownKeys.some((key) => typeof key !== "string")) return null;
+    const actual = new Set(ownKeys as string[]);
+    const expected = expectedKeySets.find(
+      (keys) =>
+        keys.length === actual.size && keys.every((key) => actual.has(key)),
+    );
+    if (!expected) return null;
+
+    const snapshot: Record<string, unknown> = Object.create(null);
+    for (const key of expected) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+      if (
+        descriptor === undefined ||
+        !descriptor.enumerable ||
+        !("value" in descriptor)
+      ) {
+        return null;
+      }
+      snapshot[key] = descriptor.value;
+    }
+    return snapshot;
+  } catch {
+    return null;
   }
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
 }
 
-function hasExactKeys(
-  value: Record<string, unknown>,
-  expected: readonly string[],
-): boolean {
-  const actual = Object.keys(value).sort();
-  const sortedExpected = [...expected].sort();
-  return (
-    actual.length === sortedExpected.length &&
-    actual.every((key, index) => key === sortedExpected[index])
-  );
+function readExactDataArray(value: unknown, maximum: number): unknown[] | null {
+  try {
+    if (
+      !Array.isArray(value) ||
+      Reflect.getPrototypeOf(value) !== Array.prototype
+    ) {
+      return null;
+    }
+    const ownKeys = Reflect.ownKeys(value);
+    if (ownKeys.some((key) => typeof key !== "string")) return null;
+    const lengthDescriptor = Reflect.getOwnPropertyDescriptor(value, "length");
+    if (
+      lengthDescriptor === undefined ||
+      lengthDescriptor.enumerable ||
+      !("value" in lengthDescriptor) ||
+      typeof lengthDescriptor.value !== "number" ||
+      !Number.isSafeInteger(lengthDescriptor.value) ||
+      lengthDescriptor.value < 0 ||
+      lengthDescriptor.value > maximum
+    ) {
+      return null;
+    }
+    const expected = new Set(["length"]);
+    for (let index = 0; index < lengthDescriptor.value; index += 1) {
+      expected.add(String(index));
+    }
+    if (
+      ownKeys.length !== expected.size ||
+      !(ownKeys as string[]).every((key) => expected.has(key))
+    ) {
+      return null;
+    }
+    const snapshot: unknown[] = [];
+    for (let index = 0; index < lengthDescriptor.value; index += 1) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, String(index));
+      if (
+        descriptor === undefined ||
+        !descriptor.enumerable ||
+        !("value" in descriptor)
+      ) {
+        return null;
+      }
+      snapshot.push(descriptor.value);
+    }
+    return snapshot;
+  } catch {
+    return null;
+  }
 }
 
 function isSafeBearer(value: unknown): value is string {
@@ -238,47 +305,44 @@ export function createAgentModelControlAssertionSigner(options: {
   return {
     sign(input) {
       try {
+        const snapshot = readExactDataRecord(input, [
+          ["actor", "permission", "action", "provider", "requestId"],
+        ]);
         if (
-          !isRecord(input) ||
-          !hasExactKeys(input, [
-            "actor",
-            "permission",
-            "action",
-            "provider",
-            "requestId",
-          ])
+          snapshot === null ||
+          typeof snapshot.actor !== "string" ||
+          !CANONICAL_UUID.test(snapshot.actor) ||
+          typeof snapshot.requestId !== "string" ||
+          !CANONICAL_UUID.test(snapshot.requestId) ||
+          !isProvider(snapshot.provider) ||
+          typeof snapshot.action !== "string" ||
+          !Object.hasOwn(ACTION_PERMISSION, snapshot.action) ||
+          ACTION_PERMISSION[snapshot.action as AgentModelControlAction] !==
+            snapshot.permission
         ) {
           invalidRequest();
         }
         const issuedAt = clock();
-        const nonce = nonceFactory();
         if (
-          typeof input.actor !== "string" ||
-          !CANONICAL_UUID.test(input.actor) ||
-          typeof input.requestId !== "string" ||
-          !CANONICAL_UUID.test(input.requestId) ||
-          typeof nonce !== "string" ||
-          !CANONICAL_UUID.test(nonce) ||
-          !isProvider(input.provider) ||
-          typeof input.action !== "string" ||
-          !Object.hasOwn(ACTION_PERMISSION, input.action) ||
-          ACTION_PERMISSION[input.action as AgentModelControlAction] !==
-            input.permission ||
           !Number.isSafeInteger(issuedAt) ||
           issuedAt < 0 ||
           issuedAt > Number.MAX_SAFE_INTEGER - 5
         ) {
           invalidRequest();
         }
+        const nonce = nonceFactory();
+        if (typeof nonce !== "string" || !CANONICAL_UUID.test(nonce)) {
+          invalidRequest();
+        }
         const payload = {
-          action: input.action,
-          actor: input.actor,
+          action: snapshot.action,
+          actor: snapshot.actor,
           expiresAt: issuedAt + 5,
           issuedAt,
           nonce,
-          permission: input.permission,
-          provider: input.provider,
-          requestId: input.requestId,
+          permission: snapshot.permission,
+          provider: snapshot.provider,
+          requestId: snapshot.requestId,
         };
         const canonical = Buffer.from(JSON.stringify(payload), "utf8");
         const signature = createHmac("sha256", signingKey)
@@ -315,11 +379,26 @@ const ERROR_STATUS: Readonly<Record<AgentModelControlDomainErrorCode, number>> =
 const ACCEPTED_STATUSES = [200, 400, 401, 403, 409, 422, 502, 503, 504];
 const RESPONSE_MAX_BYTES = 64 * 1_024;
 const REQUEST_MAX_BYTES = 8 * 1_024;
+const AGENT_ENDPOINT_OPTIONS_MAX = 2_048;
 const STANDARD_TIMEOUT_MS = 5_000;
 const ACTIVATION_TIMEOUT_MS = 55_000;
 
 function isPositiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+}
+
+function hasOnlyPairedSurrogates(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function isSafeText(value: unknown, maximum: number): value is string {
@@ -328,6 +407,7 @@ function isSafeText(value: unknown, maximum: number): value is string {
     value.length > 0 &&
     value === value.trim() &&
     Array.from(value).length <= maximum &&
+    hasOnlyPairedSurrogates(value) &&
     !CONTROL_CHARACTER.test(value) &&
     !URL_LIKE.test(value)
   );
@@ -347,92 +427,145 @@ function isSecret(value: unknown): value is string {
     Array.from(value).length >= 8 &&
     Array.from(value).length <= 4_096 &&
     !/\s/u.test(value) &&
-    !CONTROL_CHARACTER.test(value)
+    !CONTROL_CHARACTER.test(value) &&
+    hasOnlyPairedSurrogates(value)
   );
 }
 
-function isMetadata(value: unknown): value is AgentModelConfigMetadata {
-  return (
-    isRecord(value) &&
-    hasExactKeys(value, [
+function readMetadata(value: unknown): AgentModelConfigMetadata | null {
+  const snapshot = readExactDataRecord(value, [
+    [
       "provider",
       "modelId",
       "endpointId",
       "apiKeyLastFour",
       "revision",
       "testStatus",
-    ]) &&
-    isProvider(value.provider) &&
-    isModelId(value.modelId) &&
-    isEndpointId(value.endpointId) &&
-    typeof value.apiKeyLastFour === "string" &&
-    Array.from(value.apiKeyLastFour).length === 4 &&
-    !/\s/u.test(value.apiKeyLastFour) &&
-    !CONTROL_CHARACTER.test(value.apiKeyLastFour) &&
-    isPositiveInteger(value.revision) &&
-    ["untested", "passed", "failed"].includes(value.testStatus as string)
-  );
+    ],
+  ]);
+  if (
+    snapshot === null ||
+    !isProvider(snapshot.provider) ||
+    !isModelId(snapshot.modelId) ||
+    !isEndpointId(snapshot.endpointId) ||
+    typeof snapshot.apiKeyLastFour !== "string" ||
+    Array.from(snapshot.apiKeyLastFour).length !== 4 ||
+    /\s/u.test(snapshot.apiKeyLastFour) ||
+    CONTROL_CHARACTER.test(snapshot.apiKeyLastFour) ||
+    !hasOnlyPairedSurrogates(snapshot.apiKeyLastFour) ||
+    !isPositiveInteger(snapshot.revision) ||
+    typeof snapshot.testStatus !== "string" ||
+    !["untested", "passed", "failed"].includes(snapshot.testStatus)
+  ) {
+    return null;
+  }
+  return {
+    provider: snapshot.provider,
+    modelId: snapshot.modelId,
+    endpointId: snapshot.endpointId,
+    apiKeyLastFour: snapshot.apiKeyLastFour,
+    revision: snapshot.revision,
+    testStatus: snapshot.testStatus as AgentModelConfigMetadata["testStatus"],
+  };
 }
 
-function isEndpointOption(value: unknown): value is {
+function readEndpointOption(value: unknown): {
   id: string;
   label: string;
   provider: AdminModelProvider;
-} {
-  return (
-    isRecord(value) &&
-    hasExactKeys(value, ["id", "label", "provider"]) &&
-    isEndpointId(value.id) &&
-    isSafeText(value.label, 80) &&
-    isProvider(value.provider)
-  );
-}
-
-function isBootstrap(
-  value: unknown,
-): value is NonNullable<AgentModelConfigListResponse["bootstrap"]> {
-  return (
-    isRecord(value) &&
-    hasExactKeys(value, ["provider", "modelId", "readOnly"]) &&
-    isProvider(value.provider) &&
-    isModelId(value.modelId) &&
-    value.readOnly === true
-  );
-}
-
-function isListResponse(value: unknown): value is AgentModelConfigListResponse {
+} | null {
+  const snapshot = readExactDataRecord(value, [["id", "label", "provider"]]);
   if (
-    !isRecord(value) ||
-    !hasExactKeys(value, [
-      "version",
-      "configs",
-      "endpoints",
-      "bootstrap",
-      "controlEnabled",
-    ]) ||
-    value.version !== "1" ||
-    !Array.isArray(value.configs) ||
-    value.configs.length > ADMIN_MODEL_PROVIDERS.length ||
-    !value.configs.every(isMetadata) ||
-    !Array.isArray(value.endpoints) ||
-    !value.endpoints.every(isEndpointOption) ||
-    !(value.bootstrap === null || isBootstrap(value.bootstrap)) ||
-    typeof value.controlEnabled !== "boolean"
+    snapshot === null ||
+    !isEndpointId(snapshot.id) ||
+    !isSafeText(snapshot.label, 80) ||
+    !isProvider(snapshot.provider)
   ) {
-    return false;
+    return null;
   }
-  const providers = value.configs.map(({ provider }) => provider);
-  const endpointIds = value.endpoints.map(({ id }) => id);
-  return (
-    new Set(providers).size === providers.length &&
-    new Set(endpointIds).size === endpointIds.length
-  );
+  return {
+    id: snapshot.id,
+    label: snapshot.label,
+    provider: snapshot.provider,
+  };
 }
 
-function isRuntimeResponse(value: unknown): value is AgentModelRuntimeResponse {
+function readBootstrap(
+  value: unknown,
+): NonNullable<AgentModelConfigListResponse["bootstrap"]> | null {
+  const snapshot = readExactDataRecord(value, [
+    ["provider", "modelId", "readOnly"],
+  ]);
   if (
-    !isRecord(value) ||
-    !hasExactKeys(value, [
+    snapshot === null ||
+    !isProvider(snapshot.provider) ||
+    !isModelId(snapshot.modelId) ||
+    snapshot.readOnly !== true
+  ) {
+    return null;
+  }
+  return {
+    provider: snapshot.provider,
+    modelId: snapshot.modelId,
+    readOnly: true,
+  };
+}
+
+function readListResponse(value: unknown): AgentModelConfigListResponse | null {
+  const snapshot = readExactDataRecord(value, [
+    ["version", "configs", "endpoints", "bootstrap", "controlEnabled"],
+  ]);
+  const rawConfigs = readExactDataArray(
+    snapshot?.configs,
+    ADMIN_MODEL_PROVIDERS.length,
+  );
+  const rawEndpoints = readExactDataArray(
+    snapshot?.endpoints,
+    AGENT_ENDPOINT_OPTIONS_MAX,
+  );
+  if (
+    snapshot?.version !== "1" ||
+    rawConfigs === null ||
+    rawEndpoints === null ||
+    typeof snapshot.controlEnabled !== "boolean"
+  ) {
+    return null;
+  }
+  const configs: AgentModelConfigMetadata[] = [];
+  for (const raw of rawConfigs) {
+    const config = readMetadata(raw);
+    if (config === null) return null;
+    configs.push(config);
+  }
+  const endpoints: AgentModelConfigListResponse["endpoints"] = [];
+  for (const raw of rawEndpoints) {
+    const endpoint = readEndpointOption(raw);
+    if (endpoint === null) return null;
+    endpoints.push(endpoint);
+  }
+  const providers = configs.map(({ provider }) => provider);
+  const endpointIds = endpoints.map(({ id }) => id);
+  if (
+    new Set(providers).size !== providers.length ||
+    new Set(endpointIds).size !== endpointIds.length
+  ) {
+    return null;
+  }
+  const bootstrap =
+    snapshot.bootstrap === null ? null : readBootstrap(snapshot.bootstrap);
+  if (snapshot.bootstrap !== null && bootstrap === null) return null;
+  return {
+    version: "1",
+    configs,
+    endpoints,
+    bootstrap,
+    controlEnabled: snapshot.controlEnabled,
+  };
+}
+
+function readRuntimeResponse(value: unknown): AgentModelRuntimeResponse | null {
+  const snapshot = readExactDataRecord(value, [
+    [
       "version",
       "capability",
       "source",
@@ -440,45 +573,87 @@ function isRuntimeResponse(value: unknown): value is AgentModelRuntimeResponse {
       "modelId",
       "configRevision",
       "activationVersion",
-    ]) ||
-    value.version !== "1" ||
-    !["placeholder", "available", "degraded"].includes(
-      value.capability as string,
-    )
+    ],
+  ]);
+  if (
+    snapshot?.version !== "1" ||
+    typeof snapshot.capability !== "string" ||
+    !["placeholder", "available", "degraded"].includes(snapshot.capability)
   ) {
-    return false;
+    return null;
   }
-  if (value.source === null) {
-    return (
-      value.capability !== "available" &&
-      value.provider === null &&
-      value.modelId === null &&
-      value.configRevision === null &&
-      value.activationVersion === null
-    );
+  if (snapshot.source === null) {
+    if (
+      snapshot.capability === "available" ||
+      snapshot.provider !== null ||
+      snapshot.modelId !== null ||
+      snapshot.configRevision !== null ||
+      snapshot.activationVersion !== null
+    ) {
+      return null;
+    }
+    return {
+      version: "1",
+      capability: snapshot.capability as "placeholder" | "degraded",
+      source: null,
+      provider: null,
+      modelId: null,
+      configRevision: null,
+      activationVersion: null,
+    };
   }
-  if (!isProvider(value.provider) || !isModelId(value.modelId)) return false;
-  if (value.source === "deployment") {
-    return value.configRevision === null && value.activationVersion === null;
+  if (!isProvider(snapshot.provider) || !isModelId(snapshot.modelId))
+    return null;
+  if (snapshot.source === "deployment") {
+    if (
+      snapshot.configRevision !== null ||
+      snapshot.activationVersion !== null
+    ) {
+      return null;
+    }
+    return {
+      version: "1",
+      capability:
+        snapshot.capability as AgentModelRuntimeResponse["capability"],
+      source: "deployment",
+      provider: snapshot.provider,
+      modelId: snapshot.modelId,
+      configRevision: null,
+      activationVersion: null,
+    };
   }
-  return (
-    value.source === "dynamic" &&
-    isPositiveInteger(value.configRevision) &&
-    isPositiveInteger(value.activationVersion)
-  );
+  if (
+    snapshot.source !== "dynamic" ||
+    !isPositiveInteger(snapshot.configRevision) ||
+    !isPositiveInteger(snapshot.activationVersion)
+  ) {
+    return null;
+  }
+  return {
+    version: "1",
+    capability: snapshot.capability as AgentModelRuntimeResponse["capability"],
+    source: "dynamic",
+    provider: snapshot.provider,
+    modelId: snapshot.modelId,
+    configRevision: snapshot.configRevision,
+    activationVersion: snapshot.activationVersion,
+  };
 }
 
-function isErrorResponse(
+function readErrorResponse(
   status: number,
   value: unknown,
-): value is { error: AgentModelControlDomainErrorCode } {
-  return (
-    isRecord(value) &&
-    hasExactKeys(value, ["error"]) &&
-    typeof value.error === "string" &&
-    Object.hasOwn(ERROR_STATUS, value.error) &&
-    ERROR_STATUS[value.error as AgentModelControlDomainErrorCode] === status
-  );
+): AgentModelControlDomainErrorCode | null {
+  const snapshot = readExactDataRecord(value, [["error"]]);
+  if (
+    snapshot === null ||
+    typeof snapshot.error !== "string" ||
+    !Object.hasOwn(ERROR_STATUS, snapshot.error) ||
+    ERROR_STATUS[snapshot.error as AgentModelControlDomainErrorCode] !== status
+  ) {
+    return null;
+  }
+  return snapshot.error as AgentModelControlDomainErrorCode;
 }
 
 function parseJson(bytes: Uint8Array): unknown {
@@ -545,7 +720,7 @@ export function createAgentModelControlClient(options: {
     body?: string;
     timeoutMs: number;
     privateNoStore?: boolean;
-    validate(value: unknown): value is T;
+    read(value: unknown): T | null;
   }): Promise<T> {
     try {
       const response = await transport.request({
@@ -566,20 +741,24 @@ export function createAgentModelControlClient(options: {
       }
       const parsed = parseJson(response.body);
       if (response.status !== 200) {
-        if (!isErrorResponse(response.status, parsed)) invalidResponse();
-        throw new AgentModelControlClientError(parsed.error);
+        const errorCode = readErrorResponse(response.status, parsed);
+        if (errorCode === null) invalidResponse();
+        throw new AgentModelControlClientError(errorCode);
       }
-      if (!requestOptions.validate(parsed)) invalidResponse();
-      return parsed;
+      let safe: T | null = null;
+      try {
+        safe = requestOptions.read(parsed);
+      } catch {
+        invalidResponse();
+      }
+      if (safe === null) invalidResponse();
+      return safe;
     } catch (error) {
       throw sanitized(error);
     }
   }
 
-  function readHeaders(requestId: unknown): Record<string, string> {
-    if (typeof requestId !== "string" || !CANONICAL_UUID.test(requestId)) {
-      invalidRequest();
-    }
+  function readHeaders(requestId: string): Record<string, string> {
     return { "X-Request-Id": requestId };
   }
 
@@ -591,46 +770,59 @@ export function createAgentModelControlClient(options: {
     };
   }
 
-  function isReadInput(value: unknown): value is { requestId: string } {
-    return (
-      isRecord(value) &&
-      hasExactKeys(value, ["requestId"]) &&
-      typeof value.requestId === "string" &&
-      CANONICAL_UUID.test(value.requestId)
-    );
+  function readReadInput(value: unknown): { requestId: string } | null {
+    const snapshot = readExactDataRecord(value, [["requestId"]]);
+    return snapshot !== null &&
+      typeof snapshot.requestId === "string" &&
+      CANONICAL_UUID.test(snapshot.requestId)
+      ? { requestId: snapshot.requestId }
+      : null;
   }
 
-  function isMutationCommand(
+  function readMutationCommand<T>(
     value: unknown,
-    inputGuard: (input: unknown) => boolean,
-  ): value is {
+    parseInput: (input: unknown) => T | null,
+  ): {
     actor: string;
     provider: AdminModelProvider;
     requestId: string;
-    input: AdminModelConfigSaveInput | AdminModelConfigRevisionInput;
-  } {
-    return (
-      isRecord(value) &&
-      hasExactKeys(value, ["actor", "provider", "requestId", "input"]) &&
-      typeof value.actor === "string" &&
-      CANONICAL_UUID.test(value.actor) &&
-      isProvider(value.provider) &&
-      typeof value.requestId === "string" &&
-      CANONICAL_UUID.test(value.requestId) &&
-      inputGuard(value.input)
-    );
+    input: T;
+  } | null {
+    const snapshot = readExactDataRecord(value, [
+      ["actor", "provider", "requestId", "input"],
+    ]);
+    if (
+      snapshot === null ||
+      typeof snapshot.actor !== "string" ||
+      !CANONICAL_UUID.test(snapshot.actor) ||
+      !isProvider(snapshot.provider) ||
+      typeof snapshot.requestId !== "string" ||
+      !CANONICAL_UUID.test(snapshot.requestId)
+    ) {
+      return null;
+    }
+    const input = parseInput(snapshot.input);
+    return input === null
+      ? null
+      : {
+          actor: snapshot.actor,
+          provider: snapshot.provider,
+          requestId: snapshot.requestId,
+          input,
+        };
   }
 
   return {
     async listModelConfigs(input) {
       try {
-        if (!isReadInput(input)) invalidRequest();
+        const safe = readReadInput(input);
+        if (safe === null) invalidRequest();
         return await request({
           method: "GET",
           path: "/internal/control/model-configs",
-          headers: readHeaders(input.requestId),
+          headers: readHeaders(safe.requestId),
           timeoutMs: STANDARD_TIMEOUT_MS,
-          validate: isListResponse,
+          read: readListResponse,
         });
       } catch (error) {
         throw sanitized(error);
@@ -639,13 +831,14 @@ export function createAgentModelControlClient(options: {
 
     async runtimeStatus(input) {
       try {
-        if (!isReadInput(input)) invalidRequest();
+        const safe = readReadInput(input);
+        if (safe === null) invalidRequest();
         return await request({
           method: "GET",
           path: "/internal/control/model-configs/runtime-status",
-          headers: readHeaders(input.requestId),
+          headers: readHeaders(safe.requestId),
           timeoutMs: STANDARD_TIMEOUT_MS,
-          validate: isRuntimeResponse,
+          read: readRuntimeResponse,
         });
       } catch (error) {
         throw sanitized(error);
@@ -654,10 +847,12 @@ export function createAgentModelControlClient(options: {
 
     async saveModelConfig(command) {
       try {
-        if (!isMutationCommand(command, isAdminModelConfigSaveInput)) {
-          invalidRequest();
-        }
-        const input = command.input as AdminModelConfigSaveInput;
+        const safe = readMutationCommand(
+          command,
+          parseAdminModelConfigSaveInput,
+        );
+        if (safe === null) invalidRequest();
+        const input = safe.input;
         if (input.expectedRevision >= Number.MAX_SAFE_INTEGER) invalidRequest();
         const payload = {
           modelId: input.modelId,
@@ -667,35 +862,36 @@ export function createAgentModelControlClient(options: {
         };
         const response = await request({
           method: "PUT",
-          path: `/internal/control/model-configs/${command.provider}`,
+          path: `/internal/control/model-configs/${safe.provider}`,
           headers: mutationHeaders({
-            actor: command.actor,
+            actor: safe.actor,
             permission: "admin:assistant:configure",
             action: "save",
-            provider: command.provider,
-            requestId: command.requestId,
+            provider: safe.provider,
+            requestId: safe.requestId,
           }),
           body: mutationBody(payload),
           timeoutMs: STANDARD_TIMEOUT_MS,
-          validate(value): value is AgentModelConfigSaveResponse {
+          read(value): AgentModelConfigSaveResponse | null {
+            const snapshot = readExactDataRecord(value, [
+              ["version", "config"],
+            ]);
+            const config = readMetadata(snapshot?.config);
             if (
-              !isRecord(value) ||
-              !hasExactKeys(value, ["version", "config"]) ||
-              value.version !== "1" ||
-              !isMetadata(value.config)
-            ) {
-              return false;
-            }
-            return (
-              value.config.provider === command.provider &&
-              value.config.modelId === input.modelId &&
-              value.config.endpointId === input.endpointId &&
-              value.config.revision === input.expectedRevision + 1 &&
-              value.config.testStatus === "untested" &&
-              (input.apiKey === undefined ||
-                value.config.apiKeyLastFour ===
+              snapshot?.version !== "1" ||
+              config === null ||
+              config.provider !== safe.provider ||
+              config.modelId !== input.modelId ||
+              config.endpointId !== input.endpointId ||
+              config.revision !== input.expectedRevision + 1 ||
+              config.testStatus !== "untested" ||
+              (input.apiKey !== undefined &&
+                config.apiKeyLastFour !==
                   Array.from(input.apiKey).slice(-4).join(""))
-            );
+            ) {
+              return null;
+            }
+            return { version: "1", config };
           },
         });
         return response;
@@ -706,36 +902,42 @@ export function createAgentModelControlClient(options: {
 
     async testAndActivate(command) {
       try {
-        if (!isMutationCommand(command, isAdminModelConfigRevisionInput)) {
-          invalidRequest();
-        }
-        const input = command.input as AdminModelConfigRevisionInput;
+        const safe = readMutationCommand(
+          command,
+          parseAdminModelConfigRevisionInput,
+        );
+        if (safe === null) invalidRequest();
+        const input = safe.input;
         return await request({
           method: "POST",
-          path: `/internal/control/model-configs/${command.provider}/test-and-activate`,
+          path: `/internal/control/model-configs/${safe.provider}/test-and-activate`,
           headers: mutationHeaders({
-            actor: command.actor,
+            actor: safe.actor,
             permission: "admin:assistant:configure",
             action: "test_and_activate",
-            provider: command.provider,
-            requestId: command.requestId,
+            provider: safe.provider,
+            requestId: safe.requestId,
           }),
           body: mutationBody({ revision: input.revision }),
           timeoutMs: ACTIVATION_TIMEOUT_MS,
-          validate(value): value is AgentModelActivationResponse {
-            return (
-              isRecord(value) &&
-              hasExactKeys(value, [
-                "version",
-                "provider",
-                "configRevision",
-                "activationVersion",
-              ]) &&
-              value.version === "1" &&
-              value.provider === command.provider &&
-              value.configRevision === input.revision &&
-              isPositiveInteger(value.activationVersion)
-            );
+          read(value): AgentModelActivationResponse | null {
+            const snapshot = readExactDataRecord(value, [
+              ["version", "provider", "configRevision", "activationVersion"],
+            ]);
+            if (
+              snapshot?.version !== "1" ||
+              snapshot.provider !== safe.provider ||
+              snapshot.configRevision !== input.revision ||
+              !isPositiveInteger(snapshot.activationVersion)
+            ) {
+              return null;
+            }
+            return {
+              version: "1",
+              provider: safe.provider,
+              configRevision: input.revision,
+              activationVersion: snapshot.activationVersion,
+            };
           },
         });
       } catch (error) {
@@ -745,29 +947,30 @@ export function createAgentModelControlClient(options: {
 
     async revealKey(command) {
       try {
-        if (!isMutationCommand(command, isAdminModelConfigRevisionInput)) {
-          invalidRequest();
-        }
-        const input = command.input as AdminModelConfigRevisionInput;
+        const safe = readMutationCommand(
+          command,
+          parseAdminModelConfigRevisionInput,
+        );
+        if (safe === null) invalidRequest();
+        const input = safe.input;
         return await request({
           method: "POST",
-          path: `/internal/control/model-configs/${command.provider}/reveal-key`,
+          path: `/internal/control/model-configs/${safe.provider}/reveal-key`,
           headers: mutationHeaders({
-            actor: command.actor,
+            actor: safe.actor,
             permission: "admin:assistant:secret:reveal",
             action: "reveal",
-            provider: command.provider,
-            requestId: command.requestId,
+            provider: safe.provider,
+            requestId: safe.requestId,
           }),
           body: mutationBody({ revision: input.revision }),
           timeoutMs: STANDARD_TIMEOUT_MS,
           privateNoStore: true,
-          validate(value): value is AgentModelRevealResponse {
-            return (
-              isRecord(value) &&
-              hasExactKeys(value, ["key"]) &&
-              isSecret(value.key)
-            );
+          read(value): AgentModelRevealResponse | null {
+            const snapshot = readExactDataRecord(value, [["key"]]);
+            return snapshot !== null && isSecret(snapshot.key)
+              ? { key: snapshot.key }
+              : null;
           },
         });
       } catch (error) {

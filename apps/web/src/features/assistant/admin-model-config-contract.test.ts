@@ -190,6 +190,99 @@ describe("admin model configuration metadata contract", () => {
     future.configs[0].revision = 2;
     expect(isAdminModelConfigSnapshot(future)).toBe(false);
   });
+
+  it("rejects hidden, symbol, accessor, and array-extra fields", () => {
+    const hidden = snapshot();
+    Object.defineProperty(hidden, "apiKeyCiphertext", {
+      value: "sealed-private-value",
+      enumerable: false,
+    });
+    expect(isAdminModelConfigSnapshot(hidden)).toBe(false);
+
+    const symbol = snapshot();
+    Reflect.set(symbol, Symbol("nonce"), "private");
+    expect(isAdminModelConfigSnapshot(symbol)).toBe(false);
+
+    const accessor = snapshot();
+    Object.defineProperty(accessor, "version", {
+      get: () => "1",
+      enumerable: true,
+    });
+    expect(isAdminModelConfigSnapshot(accessor)).toBe(false);
+
+    const arrayExtra = snapshot();
+    Object.defineProperty(arrayExtra.configs, "ciphertext", {
+      value: "private",
+      enumerable: false,
+    });
+    expect(isAdminModelConfigSnapshot(arrayExtra)).toBe(false);
+
+    const arrayAccessor = snapshot();
+    const first = arrayAccessor.configs[0];
+    Object.defineProperty(arrayAccessor.configs, "0", {
+      get: () => first,
+      enumerable: true,
+    });
+    expect(isAdminModelConfigSnapshot(arrayAccessor)).toBe(false);
+  });
+
+  it("returns false instead of throwing for hostile Proxy traps", () => {
+    const hostile = new Proxy(snapshot(), {
+      getPrototypeOf() {
+        throw new Error("private proxy detail");
+      },
+    });
+
+    expect(() => isAdminModelConfigSnapshot(hostile)).not.toThrow();
+    expect(isAdminModelConfigSnapshot(hostile)).toBe(false);
+  });
+
+  it("rejects a huge sparse array before inspecting any index", () => {
+    const huge = new Proxy(new Array(2 ** 32 - 1), {
+      getOwnPropertyDescriptor(target, key) {
+        if (key !== "length") {
+          throw new Error("must reject by the length bound first");
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    const value = snapshot();
+    Reflect.set(value, "configs", huge);
+
+    expect(() => isAdminModelConfigSnapshot(value)).not.toThrow();
+    expect(isAdminModelConfigSnapshot(value)).toBe(false);
+  });
+
+  it("rejects unpaired UTF-16 surrogates across safe metadata strings", () => {
+    for (const surrogate of ["\ud800", "\udfff"]) {
+      const model = snapshot();
+      model.configs[0].modelId = `gpt-${surrogate}`;
+      expect(isAdminModelConfigSnapshot(model)).toBe(false);
+
+      const label = snapshot();
+      label.endpoints.openai[0].label = `OpenAI ${surrogate}`;
+      expect(isAdminModelConfigSnapshot(label)).toBe(false);
+
+      const lastFour = snapshot();
+      lastFour.configs[0].apiKey = {
+        configured: true,
+        lastFour: `abc${surrogate}`,
+      };
+      expect(isAdminModelConfigSnapshot(lastFour)).toBe(false);
+    }
+  });
+
+  it("accepts valid astral characters by Unicode code point", () => {
+    const value = snapshot();
+    value.configs[0].modelId = "model-😀";
+    value.configs[0].apiKey = {
+      configured: true,
+      lastFour: "😀😀😀😀",
+    };
+    value.endpoints.openai[0].label = "OpenAI 😀";
+
+    expect(isAdminModelConfigSnapshot(value)).toBe(true);
+  });
 });
 
 describe("admin model configuration mutation inputs", () => {
@@ -259,5 +352,62 @@ describe("admin model configuration mutation inputs", () => {
     { revision: 1.5 },
   ])("rejects an unsafe revision input %#", (input) => {
     expect(isAdminModelConfigRevisionInput(input)).toBe(false);
+  });
+
+  it("rejects hidden/accessor fields and hostile Proxies without throwing", () => {
+    const hidden = {
+      modelId: "gpt-5-mini",
+      endpointId: "openai-official",
+      expectedRevision: 0,
+    };
+    Object.defineProperty(hidden, "apiKeyCiphertext", {
+      value: "private",
+      enumerable: false,
+    });
+    expect(isAdminModelConfigSaveInput(hidden)).toBe(false);
+
+    const revision = {};
+    Object.defineProperty(revision, "revision", {
+      get: () => 3,
+      enumerable: true,
+    });
+    expect(isAdminModelConfigRevisionInput(revision)).toBe(false);
+
+    const hostile = new Proxy(hidden, {
+      ownKeys() {
+        throw new Error("private proxy detail");
+      },
+    });
+    expect(() => isAdminModelConfigSaveInput(hostile)).not.toThrow();
+    expect(isAdminModelConfigSaveInput(hostile)).toBe(false);
+  });
+
+  it("rejects unpaired surrogates but accepts valid astral mutation input", () => {
+    for (const surrogate of ["\ud800", "\udfff"]) {
+      expect(
+        isAdminModelConfigSaveInput({
+          modelId: `gpt-${surrogate}`,
+          endpointId: "openai-official",
+          expectedRevision: 0,
+        }),
+      ).toBe(false);
+      expect(
+        isAdminModelConfigSaveInput({
+          modelId: "gpt-5-mini",
+          endpointId: "openai-official",
+          apiKey: `secret-${surrogate}`,
+          expectedRevision: 0,
+        }),
+      ).toBe(false);
+    }
+
+    expect(
+      isAdminModelConfigSaveInput({
+        modelId: "model-😀",
+        endpointId: "openai-official",
+        apiKey: "😀".repeat(8),
+        expectedRevision: 0,
+      }),
+    ).toBe(true);
   });
 });

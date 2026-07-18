@@ -368,6 +368,103 @@ describe("model control assertion signer", () => {
     expect(JSON.stringify(error)).not.toMatch(/private|control-internal/iu);
     expect(log).not.toHaveBeenCalled();
   });
+
+  it("rejects accessor/hidden/symbol assertion input before consuming a nonce", () => {
+    for (const build of [
+      () => {
+        const input = {
+          actor: ACTOR,
+          permission: "admin:assistant:configure",
+          action: "save",
+          provider: "openai",
+          requestId: REQUEST_ID,
+        };
+        Object.defineProperty(input, "provider", {
+          get: () => "openai",
+          enumerable: true,
+        });
+        return input;
+      },
+      () => {
+        const input = {
+          actor: ACTOR,
+          permission: "admin:assistant:configure",
+          action: "save",
+          provider: "openai",
+          requestId: REQUEST_ID,
+        };
+        Reflect.set(input, Symbol("key"), "private");
+        return input;
+      },
+      () => {
+        const input = {
+          actor: ACTOR,
+          permission: "admin:assistant:configure",
+          action: "save",
+          provider: "openai",
+          requestId: REQUEST_ID,
+        };
+        Object.defineProperty(input, "key", {
+          value: "private",
+          enumerable: false,
+        });
+        return input;
+      },
+    ]) {
+      const nonceFactory = vi.fn(() => NONCE);
+      const signer = createAgentModelControlAssertionSigner({
+        controlKey: CONTROL_KEY,
+        clock: () => NOW,
+        nonceFactory,
+      });
+
+      expect(() =>
+        signer.sign(build() as Parameters<typeof signer.sign>[0]),
+      ).toThrow(AgentModelControlClientError);
+      expect(nonceFactory).not.toHaveBeenCalled();
+    }
+  });
+
+  it("uses one data-descriptor snapshot without invoking Proxy getters", () => {
+    const target = {
+      actor: ACTOR,
+      permission: "admin:assistant:configure",
+      action: "save",
+      provider: "openai",
+      requestId: REQUEST_ID,
+    };
+    let providerDescriptors = 0;
+    const input = new Proxy(target, {
+      get() {
+        throw new Error("direct property read is forbidden");
+      },
+      getOwnPropertyDescriptor(object, key) {
+        const descriptor = Reflect.getOwnPropertyDescriptor(object, key);
+        if (key === "provider" && descriptor) {
+          providerDescriptors += 1;
+          return {
+            ...descriptor,
+            value: providerDescriptors === 1 ? "openai" : "local",
+          };
+        }
+        return descriptor;
+      },
+    });
+    const nonceFactory = vi.fn(() => NONCE);
+    const signer = createAgentModelControlAssertionSigner({
+      controlKey: CONTROL_KEY,
+      clock: () => NOW,
+      nonceFactory,
+    });
+
+    const assertion = signer.sign(input as Parameters<typeof signer.sign>[0]);
+    const payload = JSON.parse(
+      Buffer.from(assertion.split(".")[0]!, "base64url").toString("utf8"),
+    );
+    expect(payload.provider).toBe("openai");
+    expect(providerDescriptors).toBe(1);
+    expect(nonceFactory).toHaveBeenCalledOnce();
+  });
 });
 
 describe("private Agent model control client", () => {
@@ -927,5 +1024,324 @@ describe("private Agent model control client", () => {
         input: { revision: 3 },
       }),
     ).rejects.toMatchObject({ code: "invalid_response" });
+  });
+
+  it("rejects nested mutation accessor TOCTOU before nonce or fetch", async () => {
+    let reads = 0;
+    const input = {
+      endpointId: "openai-official",
+      expectedRevision: 0,
+    } as Record<string, unknown>;
+    Object.defineProperty(input, "modelId", {
+      get() {
+        reads += 1;
+        return reads === 1 ? "gpt-5-mini" : "https://private.example/v1";
+      },
+      enumerable: true,
+    });
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse({ error: "validation_error" }, 400));
+    const nonceFactory = vi.fn(() => NONCE);
+    const client = createAgentModelControlClient({
+      settings: settings(),
+      fetcher,
+      clock: () => NOW,
+      nonceFactory,
+    });
+
+    const error = await client
+      .saveModelConfig({
+        actor: ACTOR,
+        provider: "openai",
+        requestId: REQUEST_ID,
+        input: input as Parameters<typeof client.saveModelConfig>[0]["input"],
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ code: "invalid_request" });
+    expect(nonceFactory).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("rejects root accessor/symbol, nested hidden fields, and throwing Proxy traps pre-fetch", async () => {
+    const builders: Array<() => unknown> = [
+      () => {
+        const command = {
+          actor: ACTOR,
+          requestId: REQUEST_ID,
+          input: {
+            modelId: "gpt-5-mini",
+            endpointId: "openai-official",
+            expectedRevision: 0,
+          },
+        } as Record<string, unknown>;
+        Object.defineProperty(command, "provider", {
+          get: () => "openai",
+          enumerable: true,
+        });
+        return command;
+      },
+      () => {
+        const command = {
+          actor: ACTOR,
+          provider: "openai",
+          requestId: REQUEST_ID,
+          input: {
+            modelId: "gpt-5-mini",
+            endpointId: "openai-official",
+            expectedRevision: 0,
+          },
+        };
+        Reflect.set(command, Symbol("key"), "private");
+        return command;
+      },
+      () => {
+        const input = {
+          modelId: "gpt-5-mini",
+          endpointId: "openai-official",
+          expectedRevision: 0,
+        };
+        Object.defineProperty(input, "apiKeyCiphertext", {
+          value: "private",
+          enumerable: false,
+        });
+        return {
+          actor: ACTOR,
+          provider: "openai",
+          requestId: REQUEST_ID,
+          input,
+        };
+      },
+      () =>
+        new Proxy(
+          {
+            actor: ACTOR,
+            provider: "openai",
+            requestId: REQUEST_ID,
+            input: {
+              modelId: "gpt-5-mini",
+              endpointId: "openai-official",
+              expectedRevision: 0,
+            },
+          },
+          {
+            ownKeys() {
+              throw new Error("private proxy detail");
+            },
+          },
+        ),
+    ];
+
+    for (const build of builders) {
+      const fetcher = vi.fn<typeof fetch>();
+      const nonceFactory = vi.fn(() => NONCE);
+      const client = createAgentModelControlClient({
+        settings: settings(),
+        fetcher,
+        clock: () => NOW,
+        nonceFactory,
+      });
+      const error = await client
+        .saveModelConfig(
+          build() as Parameters<typeof client.saveModelConfig>[0],
+        )
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ code: "invalid_request" });
+      expect(nonceFactory).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects accessor/hidden/symbol and hostile Proxy read input before fetch", async () => {
+    const accessor = {} as Record<string, unknown>;
+    Object.defineProperty(accessor, "requestId", {
+      get: () => REQUEST_ID,
+      enumerable: true,
+    });
+    const hostile = new Proxy(
+      { requestId: REQUEST_ID },
+      {
+        getPrototypeOf() {
+          throw new Error("private proxy detail");
+        },
+      },
+    );
+    const hidden = { requestId: REQUEST_ID };
+    Object.defineProperty(hidden, "key", {
+      value: "private",
+      enumerable: false,
+    });
+    const symbol = { requestId: REQUEST_ID };
+    Reflect.set(symbol, Symbol("key"), "private");
+
+    for (const input of [accessor, hidden, symbol, hostile]) {
+      const fetcher = vi.fn<typeof fetch>();
+      const client = createAgentModelControlClient({
+        settings: settings(),
+        fetcher,
+      });
+      const error = await client
+        .listModelConfigs(
+          input as Parameters<typeof client.listModelConfigs>[0],
+        )
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ code: "invalid_request" });
+      expect(fetcher).not.toHaveBeenCalled();
+    }
+  });
+
+  it("snapshots valid Proxy mutation descriptors exactly once", async () => {
+    const target = {
+      actor: ACTOR,
+      provider: "openai",
+      requestId: REQUEST_ID,
+      input: {
+        modelId: "gpt-5-mini",
+        endpointId: "openai-official",
+        expectedRevision: 2,
+      },
+    };
+    let providerDescriptors = 0;
+    const command = new Proxy(target, {
+      get() {
+        throw new Error("direct property read is forbidden");
+      },
+      getOwnPropertyDescriptor(object, key) {
+        const descriptor = Reflect.getOwnPropertyDescriptor(object, key);
+        if (key === "provider" && descriptor) {
+          providerDescriptors += 1;
+          return {
+            ...descriptor,
+            value: providerDescriptors === 1 ? "openai" : "local",
+          };
+        }
+        return descriptor;
+      },
+    });
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse(saveResponse()));
+    const client = createAgentModelControlClient({
+      settings: settings(),
+      fetcher,
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+
+    await expect(
+      client.saveModelConfig(
+        command as Parameters<typeof client.saveModelConfig>[0],
+      ),
+    ).resolves.toEqual(saveResponse());
+    expect(providerDescriptors).toBe(1);
+    expect(fetcher.mock.calls[0]?.[0]).toBe(
+      `${INTERNAL_URL}/internal/control/model-configs/openai`,
+    );
+  });
+
+  it("rejects unpaired surrogate mutations before nonce/fetch", async () => {
+    for (const input of [
+      {
+        modelId: "gpt-\ud800",
+        endpointId: "openai-official",
+        expectedRevision: 0,
+      },
+      {
+        modelId: "gpt-5-mini",
+        endpointId: "openai-official",
+        apiKey: "secret-\udfff",
+        expectedRevision: 0,
+      },
+    ]) {
+      const fetcher = vi.fn<typeof fetch>();
+      const nonceFactory = vi.fn(() => NONCE);
+      const client = createAgentModelControlClient({
+        settings: settings(),
+        fetcher,
+        nonceFactory,
+      });
+      const error = await client
+        .saveModelConfig({
+          actor: ACTOR,
+          provider: "openai",
+          requestId: REQUEST_ID,
+          input,
+        })
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ code: "invalid_request" });
+      expect(nonceFactory).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects unpaired surrogates in list and reveal responses", async () => {
+    const unsafeList = listResponse();
+    unsafeList.endpoints[0].label = "OpenAI \ud800";
+    unsafeList.configs[0].apiKeyLastFour = "abc\udfff";
+    const listClient = createAgentModelControlClient({
+      settings: settings(),
+      fetcher: vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(jsonResponse(unsafeList)),
+    });
+    await expect(
+      listClient.listModelConfigs({ requestId: REQUEST_ID }),
+    ).rejects.toMatchObject({ code: "invalid_response" });
+
+    const revealClient = createAgentModelControlClient({
+      settings: settings(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse({ key: "secret-\ud800" }, 200, {
+          "cache-control": "no-store, private",
+          pragma: "no-cache",
+        }),
+      ),
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+    await expect(
+      revealClient.revealKey({
+        actor: ACTOR,
+        provider: "openai",
+        requestId: REQUEST_ID,
+        input: { revision: 3 },
+      }),
+    ).rejects.toMatchObject({ code: "invalid_response" });
+  });
+
+  it("accepts paired astral characters across safe response fields", async () => {
+    const safe = listResponse();
+    safe.configs[0].modelId = "model-😀";
+    safe.configs[0].apiKeyLastFour = "😀😀😀😀";
+    safe.endpoints[0].label = "OpenAI 😀";
+    const client = createAgentModelControlClient({
+      settings: settings(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(safe)),
+    });
+
+    await expect(
+      client.listModelConfigs({ requestId: REQUEST_ID }),
+    ).resolves.toEqual(safe);
+
+    const revealClient = createAgentModelControlClient({
+      settings: settings(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse({ key: "😀😀😀😀😀😀😀😀" }, 200, {
+          "cache-control": "no-store, private",
+          pragma: "no-cache",
+        }),
+      ),
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+    await expect(
+      revealClient.revealKey({
+        actor: ACTOR,
+        provider: "openai",
+        requestId: REQUEST_ID,
+        input: { revision: 3 },
+      }),
+    ).resolves.toEqual({ key: "😀😀😀😀😀😀😀😀" });
   });
 });
