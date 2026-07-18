@@ -8,8 +8,12 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 
+from agent_service.config import ActiveModelSettings
+from agent_service.model_runtime_types import ManagedModel
+
 
 INVALID_RESPONSE_SENTINEL = "__aap_e2e_invalid_response__"
+_close_counts: dict[str, int] = {}
 
 
 def _user_question(message: Message) -> str:
@@ -27,15 +31,18 @@ class DeterministicModel(Model):
     name: str = "DeterministicModel"
     provider: str = "Acceptance"
 
-    @staticmethod
-    def _response(messages: list[Message]) -> ModelResponse:
+    def _response(self, messages: list[Message]) -> ModelResponse:
         user_messages = [message for message in messages if message.role == "user"]
-        content = (
-            ""
-            if user_messages
+        invalid_question = bool(
+            user_messages
             and _user_question(user_messages[-1]) == INVALID_RESPONSE_SENTINEL
-            else f"deterministic-turn:{len(user_messages)}"
         )
+        if self.id.startswith("e2e-fail-") or invalid_question:
+            content = ""
+        elif self.id == "e2e-deterministic":
+            content = f"deterministic-turn:{len(user_messages)}"
+        else:
+            content = f"deterministic-model:{self.id}:turn:{len(user_messages)}"
         return ModelResponse(role="assistant", content=content)
 
     def invoke(
@@ -82,3 +89,19 @@ class DeterministicModel(Model):
         response_delta: ModelResponse,
     ) -> ModelResponse:
         return response_delta
+
+
+def acceptance_model_close_count(model_id: str) -> int:
+    """Expose only an ID-scoped close count for acceptance assertions."""
+    return _close_counts.get(model_id, 0)
+
+
+def build_acceptance_managed_model(settings: ActiveModelSettings) -> ManagedModel:
+    """Build the real owned runtime handle around an offline deterministic model."""
+    model_id = settings.model_id
+    model = DeterministicModel(id=model_id)
+
+    async def close_model() -> None:
+        _close_counts[model_id] = _close_counts.get(model_id, 0) + 1
+
+    return ManagedModel(model=model, close_callback=close_model)

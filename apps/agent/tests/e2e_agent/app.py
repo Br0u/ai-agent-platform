@@ -6,15 +6,11 @@ import stat
 from pathlib import Path
 from uuid import UUID
 
-from agno.db.postgres import AsyncPostgresDb
 from fastapi import FastAPI
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from agent_service.app import create_app
-from agent_service.catalog import AgentCatalog
-from agent_service.config import RuntimeSettings
-from agent_service.default_agent import build_default_agent
-from e2e_agent.deterministic_model import DeterministicModel
+from e2e_agent.deterministic_model import build_acceptance_managed_model
 
 
 _SESSION_DELETE_PATH = re.compile(
@@ -121,26 +117,12 @@ class SessionIdentityAuditMiddleware:
         await self.app(scope, receive, send)
 
 
-def build_acceptance_catalog(
-    settings: RuntimeSettings,
-    database: AsyncPostgresDb,
-) -> AgentCatalog:
-    """Build the normal placeholder or the single offline acceptance Agent."""
-    active_model = settings.active_model
-    if active_model is None:
-        return AgentCatalog()
-
-    model = DeterministicModel(id=active_model.model_id)
-    agent = build_default_agent(model=model, database=database)
-    return AgentCatalog(agents=[agent], capability="available")
-
-
 def app_factory() -> FastAPI:
     """Uvicorn factory for deterministic container acceptance only."""
     audit_file = os.environ.get("AAP_SESSION_IDENTITY_AUDIT_FILE")
     if not audit_file:
         raise RuntimeError("acceptance identity audit file is required")
-    app = create_app(catalog_builder=build_acceptance_catalog)
+    app = create_app(model_builder=build_acceptance_managed_model)
     app.add_middleware(
         SessionIdentityAuditMiddleware,
         audit_file=Path(audit_file),

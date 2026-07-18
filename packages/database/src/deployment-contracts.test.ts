@@ -126,6 +126,8 @@ const renderComposeFixture = (
           E2E_ROLE_TARGET_SESSION_TOKEN: "compose-e2e-role-target",
           E2E_ADMIN_SESSION_TOKEN: "compose-e2e-admin-session",
           E2E_NO_TOTP_ADMIN_SESSION_TOKEN: "compose-e2e-no-totp",
+          E2E_MODEL_ADMIN_SESSION_TOKEN: "compose-e2e-model-admin",
+          E2E_MODEL_ADMIN_STALE_SESSION_TOKEN: "compose-e2e-model-admin-stale",
           E2E_REVOKED_SESSION_TOKEN: "compose-e2e-revoked",
           E2E_REPLACEMENT_PASSWORD: "compose-e2e-replacement",
           BETTER_AUTH_URL: "http://127.0.0.1:3000",
@@ -554,9 +556,17 @@ describe("production deployment security contracts", () => {
     expect(script).toContain('stat -c %a "$env_file"');
     expect(script).toContain('[ "$env_permissions" = "600" ]');
     expect(script).toContain("config --quiet");
-    expect(script).toMatch(
-      /build[^\n]*migrate[^\n]*web[^\n]*agent[^\n]*backup/u,
-    );
+    for (const serviceName of [
+      "migrate",
+      "agent-migrate",
+      "agent-control-migrate",
+      "agent",
+      "backup",
+      "web",
+    ]) {
+      expect(script).toContain(`build_service ${serviceName}`);
+    }
+    expect(script).toContain('compose build "$service"');
     expect(script.match(/run --rm migrate/g)).toHaveLength(2);
     expect(script.match(/run --rm agno-bootstrap/g)).toHaveLength(2);
     expect(script.match(/run --rm --no-deps agent-migrate/g)).toHaveLength(2);
@@ -580,14 +590,14 @@ describe("production deployment security contracts", () => {
     expect(script).toContain('docker image ls -q "$project-*"');
     expect(script).toContain('[ "$owns_project" = true ]');
     expect(script.indexOf("owns_project=true")).toBeLessThan(
-      script.indexOf("compose build"),
+      script.indexOf("build_service migrate"),
     );
-    expect(script).toContain('--grep-invert "@agentos|@guard"');
+    expect(script).toContain('--grep-invert "@agentos|@guard|@control"');
     expect(script).toContain("--grep @guard");
     expect(script).toContain("--grep @agentos");
-    expect(script.indexOf('--grep-invert "@agentos|@guard"')).toBeLessThan(
-      script.indexOf("--grep @agentos"),
-    );
+    expect(
+      script.indexOf('--grep-invert "@agentos|@guard|@control"'),
+    ).toBeLessThan(script.indexOf("--grep @agentos"));
     expect(script).toContain("export AGENT_ENABLED=false");
     expect(script).toContain("export ASSISTANT_PROVIDER_MODE=placeholder");
     expect(script).toContain("export AGENT_ENABLED=true");
@@ -602,7 +612,23 @@ describe("production deployment security contracts", () => {
     );
     expect(script).toContain("--force-recreate --wait proxy");
     expect(script).toContain('scan_logs "placeholder"');
-    expect(script).toContain('scan_logs "agentos"');
+    expect(script).toContain('scan_logs "agentos-bootstrap"');
+    expect(script).toContain('scan_logs "dynamic-control"');
+    expect(script).toContain('compose logs --no-color >"$logs_file" 2>&1');
+    expect(script).not.toContain("compose logs --no-color web agent proxy");
+    const controlReset = script.slice(
+      script.indexOf('scan_logs "agentos-bootstrap"'),
+      script.indexOf("--grep @control"),
+    );
+    expect(controlReset).toContain(
+      "compose up -d --no-deps --force-recreate --wait agent",
+    );
+    expect(controlReset).toContain(
+      "compose up -d --no-deps --force-recreate --wait web",
+    );
+    expect(controlReset).toContain(
+      "compose up -d --no-deps --force-recreate --wait proxy",
+    );
     expect(script.indexOf('scan_logs "placeholder"')).toBeLessThan(
       script.indexOf("export AGENT_ENABLED=true"),
     );
@@ -644,7 +670,10 @@ describe("production deployment security contracts", () => {
       'scan_logs "placeholder" "$placeholder_dynamic_patterns_file"',
     );
     expect(script).toContain(
-      'scan_logs "agentos" "$agentos_dynamic_patterns_file"',
+      'scan_logs "agentos-bootstrap" "$agentos_dynamic_patterns_file"',
+    );
+    expect(script).toContain(
+      'scan_logs "dynamic-control" "$agentos_dynamic_patterns_file"',
     );
     expect(acceptanceCompose).toContain(
       "AAP_SESSION_IDENTITY_AUDIT_FILE: /tmp/aap-session-identity-audit",
@@ -706,7 +735,7 @@ describe("production deployment security contracts", () => {
       agentosRunIndex,
     );
     const agentosScanIndex = script.indexOf(
-      'scan_logs "agentos"',
+      'scan_logs "agentos-bootstrap"',
       identityCollectionIndex,
     );
     expect(identityCollectionIndex).toBeGreaterThan(agentosRunIndex);
@@ -782,13 +811,80 @@ describe("production deployment security contracts", () => {
       "E2E_ROLE_TARGET_SESSION_TOKEN",
       "E2E_ADMIN_SESSION_TOKEN",
       "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
+      "E2E_MODEL_ADMIN_SESSION_TOKEN",
+      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
       "E2E_REVOKED_SESSION_TOKEN",
       "E2E_REPLACEMENT_PASSWORD",
     ]) {
       expect(script).toContain(`\"$${variable}\"`);
     }
-    expect(script).toContain("guard 6 + placeholder 2 + AgentOS 4");
+    expect(script).toContain(
+      "guard, placeholder, AgentOS bootstrap, dynamic control, recovery, reveal and zero-residue cleanup",
+    );
     expect(script).toContain("db_port_bindings=");
+  });
+
+  it("injects only the offline managed-model builder into the real acceptance control plane", () => {
+    const acceptanceAgent = read("apps/agent/tests/e2e_agent/app.py");
+    const deterministicModel = read(
+      "apps/agent/tests/e2e_agent/deterministic_model.py",
+    );
+
+    expect(acceptanceAgent).toContain(
+      "create_app(model_builder=build_acceptance_managed_model)",
+    );
+    expect(acceptanceAgent).not.toContain("catalog_builder=");
+    expect(acceptanceAgent).not.toContain("build_acceptance_catalog");
+    expect(deterministicModel).toContain("ManagedModel");
+    expect(deterministicModel).toContain('self.id.startswith("e2e-fail-")');
+    expect(deterministicModel).toContain("build_acceptance_managed_model");
+    expect(deterministicModel).toContain("async def close_model() -> None:");
+  });
+
+  it("wires isolated model control secrets, protected ledgers, phases and cleanup", () => {
+    const script = read("docs/testing/run-assistant-runtime-e2e.sh");
+    const browserAcceptance = read("apps/web/e2e/assistant-runtime.spec.ts");
+
+    for (const materialized of [
+      "AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD_FILE",
+      "AGENT_CONTROL_DATABASE_PASSWORD_FILE",
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE",
+      "AGENT_CONTROL_DATABASE_URL_FILE",
+      "MODEL_CONFIG_ENCRYPTION_KEY_FILE",
+      "AGENT_CONFIG_CONTROL_KEY_FILE",
+    ]) {
+      expect(script).toContain(`materialize_secret ${materialized}`);
+      expect(script).toContain(`"$${materialized}"`);
+    }
+    expect(script).toContain("model_config_encryption_key=$(secret)");
+    expect(script).toContain("agent_config_control_key=$(secret)");
+    expect(script).toContain("model-key-full-patterns");
+    expect(script).toContain("model-key-last4-patterns");
+    expect(script).toContain(
+      'export AAP_RUNTIME_MODEL_KEYS_FILE="$model_keys_file"',
+    );
+    expect(script).toContain(
+      'export AAP_RUNTIME_MODEL_KEY_LAST4_FILE="$model_key_last4_file"',
+    );
+    expect(script).toContain("run --rm agent-control-bootstrap");
+    expect(script).toContain("run --rm --no-deps agent-control-migrate");
+    expect(script).toContain("--grep @control");
+    expect(script).toContain("assert_zero_residue");
+    expect(browserAcceptance).toContain("@control deterministic model control");
+    expect(browserAcceptance).toContain("AAP_RUNTIME_MODEL_KEYS_FILE");
+    expect(browserAcceptance).toContain("AAP_RUNTIME_MODEL_KEY_LAST4_FILE");
+    expect(browserAcceptance).toContain("e2e-fail-openai-rev2");
+    expect(browserAcceptance).toContain("page.clock.fastForward(30_000)");
+    expect(browserAcceptance).toContain("recreateAgent(false)");
+    expect(browserAcceptance).toContain(
+      "function collectAgentSessionIdentityAudit(): void",
+    );
+    expect(browserAcceptance).toMatch(
+      /function recreateAgent\(enabled: boolean\): void \{\s*collectAgentSessionIdentityAudit\(\);/u,
+    );
+    expect(browserAcceptance).toContain(
+      "await context.request.delete(SESSION_PATH)",
+    );
   });
 
   it("owns and cleans only the isolated assistant runtime project it locked", () => {
@@ -834,6 +930,8 @@ describe("production deployment security contracts", () => {
         "E2E_ROLE_TARGET_SESSION_TOKEN=test-role-target",
         "E2E_ADMIN_SESSION_TOKEN=test-admin-session",
         "E2E_NO_TOTP_ADMIN_SESSION_TOKEN=test-no-totp",
+        "E2E_MODEL_ADMIN_SESSION_TOKEN=test-model-admin",
+        "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN=test-model-admin-stale",
         "E2E_REVOKED_SESSION_TOKEN=test-revoked",
         "E2E_REPLACEMENT_PASSWORD=test-replacement",
       ].join("\n"),
@@ -862,7 +960,7 @@ esac
 case " $* " in
   *" compose "*" down --rmi local -v --remove-orphans "*) exit 0 ;;
   *" compose "*" config --quiet "*) exit 0 ;;
-  *" compose "*" build migrate web agent backup "*) exit 42 ;;
+  *" compose "*" build migrate "*) exit 42 ;;
 esac
 exit 0
 `,
@@ -1307,6 +1405,7 @@ exit 0
     expect(JSON.stringify(endpointFile)).not.toMatch(
       /localhost|127\.0\.0\.1|10\.0\.0\.1|192\.168\.|api[_-]?key|secret|password/iu,
     );
+    expect(dockerfile).toContain("install -d -o root -g root -m 0755 /etc/aap");
     expect(dockerfile).toContain(
       "COPY --chown=root:root --chmod=0644 infra/agent/model-endpoints.json /etc/aap/model-endpoints.json",
     );
@@ -1872,6 +1971,8 @@ exit 0
       "E2E_ROLE_TARGET_SESSION_TOKEN",
       "E2E_ADMIN_SESSION_TOKEN",
       "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
+      "E2E_MODEL_ADMIN_SESSION_TOKEN",
+      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
       "E2E_REVOKED_SESSION_TOKEN",
       "E2E_REPLACEMENT_PASSWORD",
     ];

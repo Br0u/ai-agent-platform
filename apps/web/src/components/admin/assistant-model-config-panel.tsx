@@ -1100,22 +1100,24 @@ export function AssistantModelConfigPanel({
                 </button>
               ) : null}
             </div>
-            <div>
-              <button disabled={!canMutate || pending !== null} type="submit">
-                {pending === "save" ? "保存中…" : "保存草稿"}
-              </button>
-              <button
-                disabled={
-                  !canMutate ||
-                  selectedConfig.revision === null ||
-                  pending !== null
-                }
-                onClick={() => void testAndActivate()}
-                type="button"
-              >
-                {pending === "activate" ? "测试中…" : "测试并启用"}
-              </button>
-            </div>
+            {snapshot.canConfigure ? (
+              <div>
+                <button disabled={!canMutate || pending !== null} type="submit">
+                  {pending === "save" ? "保存中…" : "保存草稿"}
+                </button>
+                <button
+                  disabled={
+                    !canMutate ||
+                    selectedConfig.revision === null ||
+                    pending !== null
+                  }
+                  onClick={() => void testAndActivate()}
+                  type="button"
+                >
+                  {pending === "activate" ? "测试中…" : "测试并启用"}
+                </button>
+              </div>
+            ) : null}
           </footer>
         </form>
       </div>

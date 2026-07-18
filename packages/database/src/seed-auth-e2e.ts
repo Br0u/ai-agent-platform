@@ -15,6 +15,8 @@ export type E2EEnvironment = {
   roleTargetSessionToken: string;
   adminSessionToken: string;
   noTotpAdminSessionToken: string;
+  modelAdminSessionToken: string;
+  modelAdminStaleSessionToken: string;
   revokedSessionToken: string;
   replacementPassword: string;
 };
@@ -76,6 +78,14 @@ export const fixtureIdentities = {
     status: "active",
     role: "admin",
   },
+  modelAdmin: {
+    id: "10000000-0000-4000-8000-000000000008",
+    email: "model-admin.fixture@example.invalid",
+    username: "model-admin.fixture",
+    realm: "workforce",
+    status: "active",
+    role: "super_admin",
+  },
 } as const;
 
 export function assertE2EEnvironment(
@@ -98,6 +108,11 @@ export function assertE2EEnvironment(
     ["E2E_ROLE_TARGET_SESSION_TOKEN", env.E2E_ROLE_TARGET_SESSION_TOKEN],
     ["E2E_ADMIN_SESSION_TOKEN", env.E2E_ADMIN_SESSION_TOKEN],
     ["E2E_NO_TOTP_ADMIN_SESSION_TOKEN", env.E2E_NO_TOTP_ADMIN_SESSION_TOKEN],
+    ["E2E_MODEL_ADMIN_SESSION_TOKEN", env.E2E_MODEL_ADMIN_SESSION_TOKEN],
+    [
+      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
+      env.E2E_MODEL_ADMIN_STALE_SESSION_TOKEN,
+    ],
     ["E2E_REVOKED_SESSION_TOKEN", env.E2E_REVOKED_SESSION_TOKEN],
     ["E2E_REPLACEMENT_PASSWORD", env.E2E_REPLACEMENT_PASSWORD],
   ] as const;
@@ -114,6 +129,8 @@ export function assertE2EEnvironment(
     roleTargetSessionToken: env.E2E_ROLE_TARGET_SESSION_TOKEN!,
     adminSessionToken: env.E2E_ADMIN_SESSION_TOKEN!,
     noTotpAdminSessionToken: env.E2E_NO_TOTP_ADMIN_SESSION_TOKEN!,
+    modelAdminSessionToken: env.E2E_MODEL_ADMIN_SESSION_TOKEN!,
+    modelAdminStaleSessionToken: env.E2E_MODEL_ADMIN_STALE_SESSION_TOKEN!,
     revokedSessionToken: env.E2E_REVOKED_SESSION_TOKEN!,
     replacementPassword: env.E2E_REPLACEMENT_PASSWORD!,
   };
@@ -227,6 +244,11 @@ export async function seedAuthE2EFixtures(
       fixtureIdentities.noTotpAdmin,
       credentials.adminPassword,
     );
+    await upsertIdentity(
+      client,
+      fixtureIdentities.modelAdmin,
+      credentials.adminPassword,
+    );
     await client.query(
       "DELETE FROM organization_memberships WHERE user_id = ANY($1::uuid[])",
       [fixtureUserIds],
@@ -249,6 +271,10 @@ export async function seedAuthE2EFixtures(
       "UPDATE users SET two_factor_enabled = true WHERE id = $1",
       [fixtureIdentities.roleTarget.id],
     );
+    await client.query(
+      "UPDATE users SET two_factor_enabled = true WHERE id = $1",
+      [fixtureIdentities.modelAdmin.id],
+    );
     // Model a real revocation edge: the session exists first, then the account
     // is disabled. The database correctly forbids creating a new disabled-user
     // session.
@@ -265,7 +291,9 @@ export async function seedAuthE2EFixtures(
          ('10000000-0000-4000-8000-000000000023', $6, $7, now() + interval '1 day', NULL, 'auth-e2e-pending-customer-fixture', 'customer', NULL),
          ('10000000-0000-4000-8000-000000000024', $8, $9, now() + interval '1 day', NULL, 'auth-e2e-disabled-customer-fixture', 'customer', NULL)
          ,('10000000-0000-4000-8000-000000000025', $10, $11, now() + interval '1 day', NULL, 'auth-e2e-role-target-fixture', 'workforce', now())
-         ,('10000000-0000-4000-8000-000000000026', $12, $13, now() + interval '1 day', NULL, 'auth-e2e-no-totp-admin-fixture', 'workforce', NULL)
+          ,('10000000-0000-4000-8000-000000000026', $12, $13, now() + interval '1 day', NULL, 'auth-e2e-no-totp-admin-fixture', 'workforce', NULL)
+          ,('10000000-0000-4000-8000-000000000027', $14, $16, now() + interval '1 day', NULL, 'auth-e2e-model-admin-fixture', 'workforce', now())
+          ,('10000000-0000-4000-8000-000000000028', $15, $16, now() + interval '1 day', NULL, 'auth-e2e-model-admin-stale-fixture', 'workforce', now() - interval '11 minutes')
        ON CONFLICT (token) DO UPDATE SET
          id = EXCLUDED.id, user_id = EXCLUDED.user_id, realm = EXCLUDED.realm,
          expires_at = EXCLUDED.expires_at, ip_address = EXCLUDED.ip_address,
@@ -285,6 +313,9 @@ export async function seedAuthE2EFixtures(
         fixtureIdentities.roleTarget.id,
         credentials.noTotpAdminSessionToken,
         fixtureIdentities.noTotpAdmin.id,
+        credentials.modelAdminSessionToken,
+        credentials.modelAdminStaleSessionToken,
+        fixtureIdentities.modelAdmin.id,
       ],
     );
     await client.query("UPDATE users SET status = 'disabled' WHERE id = $1", [

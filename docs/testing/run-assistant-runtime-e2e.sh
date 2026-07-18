@@ -52,7 +52,9 @@ release_lock() {
 }
 
 cleanup() {
+  verify_cleanup=false
   if [ "$owns_project" = true ] && command -v docker >/dev/null 2>&1 && [ -f "$env_file" ]; then
+    verify_cleanup=true
     docker compose -p "$project" --env-file "$env_file" $compose_files \
       down --rmi local -v --remove-orphans >/dev/null 2>&1 || true
   fi
@@ -60,6 +62,29 @@ cleanup() {
     rm -rf "$temp_dir"
   fi
   release_lock
+  if [ "$verify_cleanup" = true ]; then
+    assert_zero_residue
+  fi
+}
+
+assert_zero_residue() {
+  remaining_containers=$(docker ps -aq --filter "label=com.docker.compose.project=$project")
+  remaining_volumes=$(docker volume ls -q --filter "label=com.docker.compose.project=$project")
+  remaining_networks=$(docker network ls -q --filter "label=com.docker.compose.project=$project")
+  remaining_labeled_images=$(docker image ls -q --filter "label=com.docker.compose.project=$project")
+  remaining_named_images=$(docker image ls -q "$project-*")
+  if [ -n "$remaining_containers$remaining_volumes$remaining_networks$remaining_labeled_images$remaining_named_images" ]; then
+    echo "E2E cleanup left Docker resources" >&2
+    return 1
+  fi
+  if [ -n "$temp_dir" ] && [ -e "$temp_dir" ]; then
+    echo "E2E cleanup left temporary secret files" >&2
+    return 1
+  fi
+  if [ -n "$lock_dir" ] && [ -e "$lock_dir" ]; then
+    echo "E2E cleanup left its ownership lock" >&2
+    return 1
+  fi
 }
 
 on_signal() {
@@ -139,6 +164,8 @@ if [ ! -f "$env_file" ]; then
   role_target_session=$(secret)
   admin_session=$(secret)
   no_totp_admin_session=$(secret)
+  model_admin_session=$(secret)
+  model_admin_stale_session=$(secret)
   revoked_session=$(secret)
   replacement_password=$(secret)
 
@@ -172,6 +199,8 @@ E2E_STAFF_SESSION_TOKEN=$staff_session
 E2E_ROLE_TARGET_SESSION_TOKEN=$role_target_session
 E2E_ADMIN_SESSION_TOKEN=$admin_session
 E2E_NO_TOTP_ADMIN_SESSION_TOKEN=$no_totp_admin_session
+E2E_MODEL_ADMIN_SESSION_TOKEN=$model_admin_session
+E2E_MODEL_ADMIN_STALE_SESSION_TOKEN=$model_admin_stale_session
 E2E_REVOKED_SESSION_TOKEN=$revoked_session
 E2E_REPLACEMENT_PASSWORD=$replacement_password
 EOF
@@ -198,6 +227,17 @@ set -a
 . "$env_file"
 set +a
 
+# Older local E2E env files predate the dedicated model-admin fixtures. Keep
+# them immutable and generate run-scoped tokens instead of appending secrets.
+if [ -z "${E2E_MODEL_ADMIN_SESSION_TOKEN-}" ]; then
+  E2E_MODEL_ADMIN_SESSION_TOKEN=$(secret)
+  export E2E_MODEL_ADMIN_SESSION_TOKEN
+fi
+if [ -z "${E2E_MODEL_ADMIN_STALE_SESSION_TOKEN-}" ]; then
+  E2E_MODEL_ADMIN_STALE_SESSION_TOKEN=$(secret)
+  export E2E_MODEL_ADMIN_STALE_SESSION_TOKEN
+fi
+
 required_variables="
 POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD
 MIGRATOR_DATABASE_PASSWORD RUNTIME_DATABASE_PASSWORD BACKUP_DATABASE_PASSWORD
@@ -207,6 +247,7 @@ E2E_CUSTOMER_PASSWORD E2E_STAFF_PASSWORD E2E_ADMIN_PASSWORD
 E2E_PENDING_CUSTOMER_SESSION_TOKEN E2E_DISABLED_CUSTOMER_SESSION_TOKEN
 E2E_STAFF_SESSION_TOKEN E2E_ROLE_TARGET_SESSION_TOKEN
 E2E_ADMIN_SESSION_TOKEN E2E_NO_TOTP_ADMIN_SESSION_TOKEN
+E2E_MODEL_ADMIN_SESSION_TOKEN E2E_MODEL_ADMIN_STALE_SESSION_TOKEN
 E2E_REVOKED_SESSION_TOKEN E2E_REPLACEMENT_PASSWORD
 "
 for name in $required_variables; do
@@ -252,11 +293,15 @@ chmod 700 "$temp_dir" "$secret_dir"
 
 agno_migrator_password=$(secret)
 agno_runtime_password=$(secret)
+agent_control_migrator_password=$(secret)
+agent_control_runtime_password=$(secret)
 backup_encryption_key=$(secret)
 os_security_key=$(secret)
 assistant_session_secret=$(secret)
 assistant_rate_limit_secret=$(secret)
 model_api_key=$(secret)
+model_config_encryption_key=$(secret)
+agent_config_control_key=$(secret)
 agent_runtime_token=$os_security_key
 
 materialize_secret() {
@@ -276,15 +321,21 @@ materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$BACK
 materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key"
 materialize_secret AGNO_MIGRATOR_DATABASE_PASSWORD_FILE agno_migrator_database_password "$agno_migrator_password"
 materialize_secret AGNO_DATABASE_PASSWORD_FILE agno_database_password "$agno_runtime_password"
+materialize_secret AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD_FILE agent_control_migrator_database_password "$agent_control_migrator_password"
+materialize_secret AGENT_CONTROL_DATABASE_PASSWORD_FILE agent_control_database_password "$agent_control_runtime_password"
 materialize_secret MIGRATOR_DATABASE_URL_FILE migrator_database_url "$MIGRATOR_DATABASE_URL"
 materialize_secret RUNTIME_DATABASE_URL_FILE runtime_database_url "$RUNTIME_DATABASE_URL"
 materialize_secret AGNO_MIGRATOR_DATABASE_URL_FILE agno_migrator_database_url "postgresql+psycopg_async://ai_agent_agno_migrator:$agno_migrator_password@db:5432/$POSTGRES_DB"
 materialize_secret AGNO_DATABASE_URL_FILE agno_database_url "postgresql+psycopg_async://ai_agent_agno:$agno_runtime_password@db:5432/$POSTGRES_DB"
+materialize_secret AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE agent_control_migrator_database_url "postgresql+psycopg_async://ai_agent_control_migrator:$agent_control_migrator_password@db:5432/$POSTGRES_DB"
+materialize_secret AGENT_CONTROL_DATABASE_URL_FILE agent_control_database_url "postgresql+psycopg_async://ai_agent_control:$agent_control_runtime_password@db:5432/$POSTGRES_DB"
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECRET"
 materialize_secret OS_SECURITY_KEY_FILE os_security_key "$agent_runtime_token"
 materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$assistant_session_secret"
 materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret "$assistant_rate_limit_secret"
 materialize_secret MODEL_API_KEY_FILE model_api_key "$model_api_key"
+materialize_secret MODEL_CONFIG_ENCRYPTION_KEY_FILE model_config_encryption_key "$model_config_encryption_key"
+materialize_secret AGENT_CONFIG_CONTROL_KEY_FILE agent_config_control_key "$agent_config_control_key"
 
 protected_patterns_file="$temp_dir/protected-runtime-patterns"
 (
@@ -308,17 +359,25 @@ protected_patterns_file="$temp_dir/protected-runtime-patterns"
     "$E2E_ROLE_TARGET_SESSION_TOKEN" \
     "$E2E_ADMIN_SESSION_TOKEN" \
     "$E2E_NO_TOTP_ADMIN_SESSION_TOKEN" \
+    "$E2E_MODEL_ADMIN_SESSION_TOKEN" \
+    "$E2E_MODEL_ADMIN_STALE_SESSION_TOKEN" \
     "$E2E_REVOKED_SESSION_TOKEN" \
     "$E2E_REPLACEMENT_PASSWORD" \
     "$agno_migrator_password" \
     "$agno_runtime_password" \
+    "$agent_control_migrator_password" \
+    "$agent_control_runtime_password" \
     "postgresql+psycopg_async://ai_agent_agno_migrator:$agno_migrator_password@db:5432/$POSTGRES_DB" \
     "postgresql+psycopg_async://ai_agent_agno:$agno_runtime_password@db:5432/$POSTGRES_DB" \
+    "postgresql+psycopg_async://ai_agent_control_migrator:$agent_control_migrator_password@db:5432/$POSTGRES_DB" \
+    "postgresql+psycopg_async://ai_agent_control:$agent_control_runtime_password@db:5432/$POSTGRES_DB" \
     "$backup_encryption_key" \
     "$agent_runtime_token" \
     "$assistant_session_secret" \
     "$assistant_rate_limit_secret" \
     "$model_api_key" \
+    "$model_config_encryption_key" \
+    "$agent_config_control_key" \
     "$POSTGRES_PASSWORD_FILE" \
     "$MIGRATOR_DATABASE_PASSWORD_FILE" \
     "$RUNTIME_DATABASE_PASSWORD_FILE" \
@@ -326,15 +385,21 @@ protected_patterns_file="$temp_dir/protected-runtime-patterns"
     "$BACKUP_ENCRYPTION_KEY_FILE" \
     "$AGNO_MIGRATOR_DATABASE_PASSWORD_FILE" \
     "$AGNO_DATABASE_PASSWORD_FILE" \
+    "$AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD_FILE" \
+    "$AGENT_CONTROL_DATABASE_PASSWORD_FILE" \
     "$MIGRATOR_DATABASE_URL_FILE" \
     "$RUNTIME_DATABASE_URL_FILE" \
     "$AGNO_MIGRATOR_DATABASE_URL_FILE" \
     "$AGNO_DATABASE_URL_FILE" \
+    "$AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE" \
+    "$AGENT_CONTROL_DATABASE_URL_FILE" \
     "$BETTER_AUTH_SECRET_FILE" \
     "$OS_SECURITY_KEY_FILE" \
     "$ASSISTANT_SESSION_SECRET_FILE" \
     "$ASSISTANT_RATE_LIMIT_SECRET_FILE" \
-    "$MODEL_API_KEY_FILE" >"$protected_patterns_file"
+    "$MODEL_API_KEY_FILE" \
+    "$MODEL_CONFIG_ENCRYPTION_KEY_FILE" \
+    "$AGENT_CONFIG_CONTROL_KEY_FILE" >"$protected_patterns_file"
 )
 chmod 600 "$protected_patterns_file"
 
@@ -346,8 +411,13 @@ create_dynamic_patterns_file() {
 
 placeholder_dynamic_patterns_file="$temp_dir/placeholder-dynamic-patterns"
 agentos_dynamic_patterns_file="$temp_dir/agentos-dynamic-patterns"
+model_keys_file="$temp_dir/model-key-full-patterns"
+model_key_last4_file="$temp_dir/model-key-last4-patterns"
 create_dynamic_patterns_file "$placeholder_dynamic_patterns_file"
 create_dynamic_patterns_file "$agentos_dynamic_patterns_file"
+create_dynamic_patterns_file "$model_keys_file"
+create_dynamic_patterns_file "$model_key_last4_file"
+printf '%s\n' "$model_keys_file" "$model_key_last4_file" >>"$protected_patterns_file"
 
 compose() {
   docker compose -p "$project" --env-file "$env_file" $compose_files "$@"
@@ -379,11 +449,15 @@ scan_logs() {
   phase=$1
   dynamic_patterns_file=$2
   logs_file="$temp_dir/$phase-runtime.log"
-  compose logs --no-color web agent proxy >"$logs_file" 2>&1
+  compose logs --no-color >"$logs_file" 2>&1
   scan_pattern_file "$protected_patterns_file" "$logs_file" \
     "sanitized container logs contain protected runtime data"
   scan_pattern_file "$dynamic_patterns_file" "$logs_file" \
     "sanitized container logs contain dynamic protected runtime data"
+  scan_pattern_file "$model_keys_file" "$logs_file" \
+    "sanitized container logs contain a model credential"
+  scan_pattern_file "$model_key_last4_file" "$logs_file" \
+    "sanitized container logs contain model credential metadata"
 }
 
 identity_audit_collector=$(cat <<'PY'
@@ -435,9 +509,106 @@ collect_agent_session_identities() {
   fi
 }
 
+control_preflight=$(cat <<'PY'
+import asyncio
+import json
+import os
+import urllib.error
+import urllib.request
+
+from agent_service.app import _build_cipher, _build_repository
+from agent_service.config import RuntimeSettings
+from agent_service.model_control_service import ModelControlService
+from agent_service.model_endpoint_catalog import load_model_endpoint_catalog
+from agent_service.model_config_repository import PostgresModelConfigRepository
+from agent_service.model_runtime_slot import ModelRuntimeSlot
+
+
+async def query_metadata(repository: PostgresModelConfigRepository) -> int:
+    return len(await repository.list_metadata())
+
+
+try:
+    settings = RuntimeSettings()
+    repository = _build_repository(settings.agent_control_database_url)
+    row_count = asyncio.run(query_metadata(repository))
+    cipher = _build_cipher(settings.model_config_encryption_key)
+    endpoints = load_model_endpoint_catalog(settings.model_endpoints_file)
+    service = ModelControlService(
+        repository=repository,
+        cipher=cipher,
+        endpoint_catalog=endpoints,
+        slot=ModelRuntimeSlot(),
+        bootstrap_model=settings.bootstrap_model,
+        control_enabled=settings.agent_enabled,
+    )
+except Exception as error:
+    raise SystemExit(
+        f"control component preflight failed: {type(error).__name__}"
+    ) from None
+if row_count != 0 or service.runtime_status().capability != "placeholder":
+    raise SystemExit("control component preflight failed: invalid_state")
+print(
+    "Control components passed: database query succeeded, cipher and endpoint "
+    "catalog initialized."
+)
+
+request = urllib.request.Request(
+    "http://127.0.0.1:7777/internal/control/model-configs/runtime-status",
+    headers={
+        "Authorization": f"Bearer {os.environ['AGENT_CONFIG_CONTROL_KEY']}",
+        "X-Request-Id": "00000000-0000-4000-8000-000000000001",
+    },
+)
+try:
+    response = urllib.request.urlopen(request, timeout=3)
+    status = response.status
+    payload = json.loads(response.read())
+except urllib.error.HTTPError as error:
+    try:
+        code = json.loads(error.read()).get("error", "invalid_response")
+    except Exception:
+        code = "invalid_response"
+    raise SystemExit(f"control runtime preflight failed: HTTP {error.code} {code}") from None
+except Exception:
+    raise SystemExit("control runtime preflight failed: transport_error") from None
+
+expected = {
+    "version": "1",
+    "capability": "placeholder",
+    "source": None,
+    "provider": None,
+    "modelId": None,
+    "configRevision": None,
+    "activationVersion": None,
+}
+if status != 200 or payload != expected:
+    raise SystemExit(f"control runtime preflight failed: HTTP {status} invalid_response")
+print("Control preflight passed: HTTP 200, service initialized, database query succeeded.")
+PY
+)
+
+assert_control_preflight() {
+  compose exec -T agent /opt/aap/run-with-secret-env.sh \
+    python -c "$control_preflight"
+}
+
+build_service() {
+  service=$1
+  echo "Assistant runtime E2E phase: build $service"
+  compose build "$service"
+}
+
+echo "Assistant runtime E2E phase: validate compose"
 compose config --quiet
 owns_project=true
-compose build migrate web agent backup
+build_service migrate
+build_service agent-migrate
+build_service agent-control-migrate
+build_service agent
+build_service backup
+build_service web
+echo "Assistant runtime E2E phase: provision databases"
 compose up -d --wait db
 compose run --rm migrate
 compose run --rm migrate
@@ -445,7 +616,12 @@ compose run --rm agno-bootstrap
 compose run --rm agno-bootstrap
 compose run --rm --no-deps agent-migrate
 compose run --rm --no-deps agent-migrate
+compose run --rm agent-control-bootstrap
+compose run --rm agent-control-bootstrap
+compose run --rm --no-deps agent-control-migrate
+compose run --rm --no-deps agent-control-migrate
 compose up -d --no-deps --wait agent
+assert_control_preflight
 compose run --rm -e NODE_ENV=test migrate pnpm db:seed-auth-e2e
 compose up -d --no-deps --wait web
 compose up -d --no-deps --wait proxy
@@ -478,6 +654,8 @@ esac
 
 export AAP_RUNTIME_E2E_PROJECT="$project"
 export AAP_RUNTIME_E2E_ENV_FILE="$env_file"
+export AAP_RUNTIME_MODEL_KEYS_FILE="$model_keys_file"
+export AAP_RUNTIME_MODEL_KEY_LAST4_FILE="$model_key_last4_file"
 export AAP_RUNTIME_DYNAMIC_PATTERNS_FILE="$placeholder_dynamic_patterns_file"
 BASE_URL=http://127.0.0.1:8080 \
   pnpm --filter @ai-agent-platform/web exec playwright test \
@@ -487,7 +665,7 @@ BASE_URL=http://127.0.0.1:8080 \
 BASE_URL=http://127.0.0.1:8080 \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
-  --grep-invert "@agentos|@guard"
+  --grep-invert "@agentos|@guard|@control"
 
 scan_logs "placeholder" "$placeholder_dynamic_patterns_file"
 
@@ -514,6 +692,25 @@ BASE_URL=http://127.0.0.1:8080 \
   --grep @agentos
 
 collect_agent_session_identities
-scan_logs "agentos" "$agentos_dynamic_patterns_file"
+scan_logs "agentos-bootstrap" "$agentos_dynamic_patterns_file"
 
-echo "Assistant runtime E2E passed: guard 6 + placeholder 2 + AgentOS 4; no Web/Agent/DB host ports and cleanup is armed."
+# The AgentOS invalid-response check intentionally opens the execution circuit.
+# Recreate both runtime sides before exercising the dynamic-control path.
+compose up -d --no-deps --force-recreate --wait agent
+compose run --rm -e NODE_ENV=test migrate pnpm db:seed-auth-e2e
+compose up -d --no-deps --force-recreate --wait web
+compose up -d --no-deps --force-recreate --wait proxy
+
+BASE_URL=http://127.0.0.1:8080 \
+  pnpm --filter @ai-agent-platform/web exec playwright test \
+  e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
+  --grep @control
+
+collect_agent_session_identities
+scan_logs "dynamic-control" "$agentos_dynamic_patterns_file"
+
+cleanup
+trap - EXIT
+assert_zero_residue
+
+echo "Assistant runtime E2E passed: guard, placeholder, AgentOS bootstrap, dynamic control, recovery, reveal and zero-residue cleanup."

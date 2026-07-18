@@ -37,6 +37,11 @@ export const identities = {
     email: "no-totp-admin.fixture@example.invalid",
     username: "no-totp-admin.fixture",
   },
+  modelAdmin: {
+    id: "10000000-0000-4000-8000-000000000008",
+    email: "model-admin.fixture@example.invalid",
+    username: "model-admin.fixture",
+  },
 } as const;
 
 function requiredEnvironment(name: string): string {
@@ -63,6 +68,12 @@ export function fixtureCredentials() {
     adminSessionToken: requiredEnvironment("E2E_ADMIN_SESSION_TOKEN"),
     noTotpAdminSessionToken: requiredEnvironment(
       "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
+    ),
+    modelAdminSessionToken: requiredEnvironment(
+      "E2E_MODEL_ADMIN_SESSION_TOKEN",
+    ),
+    modelAdminStaleSessionToken: requiredEnvironment(
+      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
     ),
     revokedSessionToken: requiredEnvironment("E2E_REVOKED_SESSION_TOKEN"),
     replacementPassword: requiredEnvironment("E2E_REPLACEMENT_PASSWORD"),

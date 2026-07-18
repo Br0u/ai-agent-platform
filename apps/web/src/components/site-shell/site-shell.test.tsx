@@ -282,6 +282,36 @@ describe("SiteShell", () => {
     expect(mocks.appShellProps?.logoutAction).toEqual(expect.any(Function));
   });
 
+  it("accepts known assistant action permissions without a navigation item", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          realm: "workforce",
+          status: "active",
+          permissions: [
+            "admin:assistant",
+            "admin:assistant:configure",
+            "admin:assistant:secret:reveal",
+          ],
+          displayName: "Model administrator",
+          mustChangePassword: false,
+          twoFactorEnabled: true,
+        }),
+        { status: 200 },
+      ),
+    );
+
+    renderAt("/admin/assistant");
+
+    await waitFor(() => expect(screen.getByTestId("app-shell")).toBeVisible());
+    expect(mocks.replace).not.toHaveBeenCalled();
+    expect(mocks.appShellProps?.grantedPermissions).toEqual([
+      "admin:assistant",
+      "admin:assistant:configure",
+      "admin:assistant:secret:reveal",
+    ]);
+  });
+
   it("fails closed while a new admin access cycle validates a different actor", async () => {
     const workforceResponse = (displayName: string, permission: string) =>
       new Response(

@@ -8,22 +8,22 @@ import agno.api.agent as agno_agent_api
 import pytest
 from agno.agent import Agent
 from agno.models.message import Message
-from agno.models.openai import OpenAIResponses
+from pydantic import SecretStr
 from starlette.types import Message as ASGIMessage
 from starlette.types import Receive, Scope, Send
 
-from agent_service.catalog import AgentCatalog
-from agent_service.config import RuntimeSettings
-from agent_service.database import build_database
+from agent_service.config import ActiveModelSettings
+from agent_service.model_runtime_types import ManagedModel
 from e2e_agent.app import (
     SessionIdentityAuditMiddleware,
     audit_deleted_session_identity,
-    build_acceptance_catalog,
 )
 
 from e2e_agent.deterministic_model import (
     INVALID_RESPONSE_SENTINEL,
     DeterministicModel,
+    acceptance_model_close_count,
+    build_acceptance_managed_model,
 )
 
 
@@ -330,43 +330,43 @@ def test_deterministic_model_does_not_match_a_sentinel_substring() -> None:
     assert response.content == "deterministic-turn:1"
 
 
-def test_acceptance_catalog_keeps_disabled_mode_as_placeholder() -> None:
-    settings = RuntimeSettings.model_validate(
-        {
-            "OS_SECURITY_KEY": "internal-security-key-0123456789abcdef",
-            "AGNO_DATABASE_URL": (
-                "postgresql+psycopg_async://runtime:password@db:5432/platform"
-            ),
-        }
+def acceptance_settings(model_id: str) -> ActiveModelSettings:
+    return ActiveModelSettings(
+        provider="openai",
+        model_id=model_id,
+        api_key=SecretStr("acceptance-only-not-a-provider-key"),
+        base_url="https://api.openai.com/v1",
+        timeout_seconds=1,
     )
-    database = build_database(settings)
-
-    catalog = build_acceptance_catalog(settings, database)
-
-    assert catalog == AgentCatalog()
 
 
-def test_acceptance_catalog_uses_only_maduoduo_and_the_exact_database() -> None:
-    settings = RuntimeSettings.model_validate(
-        {
-            "OS_SECURITY_KEY": "internal-security-key-0123456789abcdef",
-            "AGNO_DATABASE_URL": (
-                "postgresql+psycopg_async://runtime:password@db:5432/platform"
-            ),
-            "AGENT_ENABLED": True,
-            "MODEL_PROVIDER": "openai",
-            "MODEL_ID": "e2e-deterministic",
-            "MODEL_API_KEY": "acceptance-only-not-a-provider-key",
-        }
+def test_acceptance_builder_returns_owned_id_specific_offline_model() -> None:
+    managed = build_acceptance_managed_model(acceptance_settings("e2e-openai-rev1"))
+
+    assert isinstance(managed, ManagedModel)
+    assert isinstance(managed.model, DeterministicModel)
+    response = managed.model.response([Message(role="user", content="hello")])
+    assert response.content == "deterministic-model:e2e-openai-rev1:turn:1"
+
+
+def test_acceptance_failure_prefix_returns_empty_verification_response() -> None:
+    managed = build_acceptance_managed_model(
+        acceptance_settings("e2e-fail-openai-rev2")
     )
-    database = build_database(settings)
 
-    catalog = build_acceptance_catalog(settings, database)
+    response = managed.model.response(
+        [Message(role="user", content="Reply with one short confirmation word.")]
+    )
 
-    assert catalog.capability == "available"
-    assert len(catalog.agents) == 1
-    agent = catalog.agents[0]
-    assert agent.id == "maduoduo"
-    assert agent.db is database
-    assert isinstance(agent.model, DeterministicModel)
-    assert not isinstance(agent.model, OpenAIResponses)
+    assert response.content == ""
+
+
+@pytest.mark.asyncio
+async def test_acceptance_owned_model_closes_exactly_once() -> None:
+    model_id = "e2e-close-once"
+    managed = build_acceptance_managed_model(acceptance_settings(model_id))
+
+    await managed.aclose()
+    await managed.aclose()
+
+    assert acceptance_model_close_count(model_id) == 1

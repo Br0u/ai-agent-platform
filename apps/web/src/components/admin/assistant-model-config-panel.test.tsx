@@ -1667,23 +1667,38 @@ describe("AssistantModelConfigPanel", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it.each([
-    [false, true],
-    [true, false],
-  ] as const)(
-    "enforces read-only state for canConfigure=%s controlEnabled=%s",
-    (canConfigure, controlEnabled) => {
-      render(
-        <AssistantModelConfigPanel
-          initialSnapshot={snapshot({ canConfigure, controlEnabled })}
-        />,
-      );
+  it("hides mutation controls when the actor cannot configure models", () => {
+    render(
+      <AssistantModelConfigPanel
+        initialSnapshot={snapshot({ canConfigure: false })}
+      />,
+    );
 
-      expect(screen.getByLabelText("Model ID")).toBeDisabled();
-      expect(screen.getByLabelText("Endpoint")).toBeDisabled();
-      expect(screen.getByLabelText("新 API Key（必填）")).toBeDisabled();
-      expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
-      expect(screen.getByRole("button", { name: "测试并启用" })).toBeDisabled();
-    },
-  );
+    expect(screen.getByLabelText("Model ID")).toBeDisabled();
+    expect(screen.getByLabelText("Endpoint")).toBeDisabled();
+    expect(screen.getByLabelText("新 API Key（必填）")).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "保存草稿" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "测试并启用" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps mutation controls disabled when deployment control is off", () => {
+    render(
+      <AssistantModelConfigPanel
+        initialSnapshot={snapshot({
+          canConfigure: true,
+          controlEnabled: false,
+        })}
+      />,
+    );
+
+    expect(screen.getByLabelText("Model ID")).toBeDisabled();
+    expect(screen.getByLabelText("Endpoint")).toBeDisabled();
+    expect(screen.getByLabelText("新 API Key（必填）")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "测试并启用" })).toBeDisabled();
+  });
 });

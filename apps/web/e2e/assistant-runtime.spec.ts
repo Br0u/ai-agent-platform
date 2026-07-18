@@ -33,11 +33,32 @@ const STATUS_PATH = "/api/v1/assistant/status";
 const ADMIN_STATUS_PATH = "/api/v1/admin/assistant/status";
 const ADMIN_SESSIONS_PATH = "/api/v1/admin/assistant/sessions";
 const ADMIN_CHAT_PATH = "/api/v1/admin/assistant/chat";
+const MODEL_CONFIG_PATH = "/api/v1/admin/assistant/model-configs";
 const CHAT_BODY = {
   message: "如何开始了解平台？",
   context: { pathname: "/assistant" },
 };
 const INVALID_RESPONSE_SENTINEL = "__aap_e2e_invalid_response__";
+const CONTROL_PROVIDERS = [
+  { provider: "openai", label: "OpenAI", endpoint: "openai-official" },
+  {
+    provider: "anthropic",
+    label: "Claude",
+    endpoint: "anthropic-official",
+  },
+  { provider: "google", label: "Gemini", endpoint: "google-official" },
+  {
+    provider: "dashscope",
+    label: "Qwen / DashScope",
+    endpoint: "dashscope-official",
+  },
+  {
+    provider: "deepseek",
+    label: "DeepSeek",
+    endpoint: "deepseek-official",
+  },
+  { provider: "minimax", label: "MiniMax", endpoint: "minimax-official" },
+] as const;
 const SAFE_RULE = Symbol("safe response rule");
 type SafeRule = {
   readonly [SAFE_RULE]: true;
@@ -159,6 +180,29 @@ function appendDynamicProtectedValue(value: string): void {
   appendFileSync(patternsFile, `${value}\n`, { encoding: "utf8" });
 }
 
+function appendProtectedLedger(name: string, value: string): void {
+  if (value.length === 0 || value.includes("\n") || value.includes("\r")) {
+    throw new Error("protected ledger value is invalid");
+  }
+  const ledgerPath = requiredEnvironment(name);
+  const stats = statSync(ledgerPath);
+  if (!stats.isFile() || (stats.mode & 0o777) !== 0o600) {
+    throw new Error("protected ledger is invalid");
+  }
+  appendFileSync(ledgerPath, `${value}\n`, { encoding: "utf8" });
+}
+
+function protectedLedgerValues(name: string): string[] {
+  const ledgerPath = requiredEnvironment(name);
+  const stats = statSync(ledgerPath);
+  if (!stats.isFile() || (stats.mode & 0o777) !== 0o600) {
+    throw new Error("protected ledger is invalid");
+  }
+  return readFileSync(ledgerPath, "utf8")
+    .split("\n")
+    .filter((value) => value.length > 0);
+}
+
 function protectedFileValues(name: string): string[] {
   const filePath = process.env[name];
   if (!filePath) return [];
@@ -185,7 +229,6 @@ function runtimeProtectedValues(): string[] {
     ...optionalEnvironment("BETTER_AUTH_SECRET"),
     ...optionalEnvironment("MIGRATOR_DATABASE_URL"),
     ...optionalEnvironment("RUNTIME_DATABASE_URL"),
-    ...optionalEnvironment("MODEL_ID"),
     ...protectedFileValues("POSTGRES_PASSWORD_FILE"),
     ...protectedFileValues("MIGRATOR_DATABASE_PASSWORD_FILE"),
     ...protectedFileValues("RUNTIME_DATABASE_PASSWORD_FILE"),
@@ -197,11 +240,18 @@ function runtimeProtectedValues(): string[] {
     ...protectedFileValues("RUNTIME_DATABASE_URL_FILE"),
     ...protectedFileValues("AGNO_MIGRATOR_DATABASE_URL_FILE"),
     ...protectedFileValues("AGNO_DATABASE_URL_FILE"),
+    ...protectedFileValues("AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD_FILE"),
+    ...protectedFileValues("AGENT_CONTROL_DATABASE_PASSWORD_FILE"),
+    ...protectedFileValues("AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE"),
+    ...protectedFileValues("AGENT_CONTROL_DATABASE_URL_FILE"),
     ...protectedFileValues("BETTER_AUTH_SECRET_FILE"),
     ...protectedFileValues("OS_SECURITY_KEY_FILE"),
     ...protectedFileValues("ASSISTANT_SESSION_SECRET_FILE"),
     ...protectedFileValues("ASSISTANT_RATE_LIMIT_SECRET_FILE"),
     ...protectedFileValues("MODEL_API_KEY_FILE"),
+    ...protectedFileValues("MODEL_CONFIG_ENCRYPTION_KEY_FILE"),
+    ...protectedFileValues("AGENT_CONFIG_CONTROL_KEY_FILE"),
+    ...protectedLedgerValues("AAP_RUNTIME_MODEL_KEYS_FILE"),
   ];
 }
 
@@ -309,6 +359,120 @@ function servicePortBindings(service: "agent" | "db"): string {
       timeout: 30_000,
     },
   ).trim();
+}
+
+function composeOutput(
+  args: string[],
+  environment: Record<string, string | undefined> = {},
+): string {
+  return execFileSync("docker", composeArgs(...args), {
+    cwd: path.resolve(process.cwd(), "../.."),
+    encoding: "utf8",
+    timeout: 120_000,
+    env: { ...process.env, ...environment },
+  }).trim();
+}
+
+function agentContainerMetadata(): { id: string; startedAt: string } {
+  const id = composeOutput(["ps", "-q", "agent"]);
+  if (!id) throw new Error("agent container is unavailable");
+  const startedAt = execFileSync(
+    "docker",
+    ["inspect", "--format", "{{.State.StartedAt}}", id],
+    { encoding: "utf8", timeout: 30_000 },
+  ).trim();
+  return { id, startedAt };
+}
+
+const OPTIONAL_IDENTITY_AUDIT_COLLECTOR = String.raw`
+import os
+import re
+import stat
+import sys
+
+path = "/tmp/aap-session-identity-audit"
+pattern = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+try:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0),
+    )
+except FileNotFoundError:
+    raise SystemExit(0)
+except OSError:
+    raise SystemExit("identity audit collection failed") from None
+
+try:
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError
+        if stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise ValueError
+        payload = os.read(descriptor, 65537)
+        if len(payload) > 65536:
+            raise ValueError
+    finally:
+        os.close(descriptor)
+except Exception:
+    raise SystemExit("identity audit collection failed") from None
+
+if not payload:
+    raise SystemExit(0)
+try:
+    text = payload.decode("ascii")
+    identities = text.splitlines()
+    if not text.endswith("\n"):
+        raise ValueError
+    if any(pattern.fullmatch(identity) is None for identity in identities):
+        raise ValueError
+except Exception:
+    raise SystemExit("identity audit collection failed") from None
+sys.stdout.write(text)
+`.trim();
+
+function collectAgentSessionIdentityAudit(): void {
+  const output = composeOutput([
+    "exec",
+    "-T",
+    "agent",
+    "python",
+    "-c",
+    OPTIONAL_IDENTITY_AUDIT_COLLECTOR,
+  ]);
+  if (output.length === 0) return;
+  for (const identity of output.split("\n")) {
+    appendDynamicProtectedValue(identity);
+  }
+}
+
+function recreateAgent(enabled: boolean): void {
+  collectAgentSessionIdentityAudit();
+  composeOutput(
+    ["up", "-d", "--no-deps", "--force-recreate", "--wait", "agent"],
+    { AGENT_ENABLED: enabled ? "true" : "false" },
+  );
+}
+
+function databaseQuery(sql: string): string {
+  return composeOutput([
+    "exec",
+    "-T",
+    "db",
+    "psql",
+    "--username",
+    requiredEnvironment("POSTGRES_USER"),
+    "--dbname",
+    requiredEnvironment("POSTGRES_DB"),
+    "--tuples-only",
+    "--no-align",
+    "--command",
+    sql,
+  ]);
 }
 
 const BLOCKED_RESPONSE_KEYS = new Set([
@@ -940,6 +1104,12 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
           execution: { state: "closed", consecutiveFailures: 0 },
         },
         readiness: { cacheTtlMs: 0, probeTimeoutMs: 0, failureThreshold: 0 },
+        source: "none",
+        provider: null,
+        modelId: null,
+        configRevision: null,
+        activationVersion: null,
+        testStatus: "not_configured",
       },
       services: [
         {
@@ -1078,6 +1248,12 @@ test.describe("@agentos deterministic runtime", () => {
             probeTimeoutMs: 500,
             failureThreshold: 1,
           },
+          source: "deployment",
+          provider: "openai",
+          modelId: "e2e-deterministic",
+          configRevision: null,
+          activationVersion: null,
+          testStatus: "untested",
         },
         services: [
           {
@@ -1096,7 +1272,7 @@ test.describe("@agentos deterministic runtime", () => {
             id: "model",
             label: "模型",
             state: "ready",
-            detail: "能力已启用",
+            detail: "部署模型已启用",
           },
           {
             id: "public_entry",
@@ -1107,7 +1283,7 @@ test.describe("@agentos deterministic runtime", () => {
         ],
         configuration: {
           defaultAgent: "码多多（maduoduo）",
-          model: "已配置",
+          model: "OpenAI / e2e-deterministic（部署配置）",
           skills: "未接入",
           sessionStorage: "AgentOS 持久化已启用",
         },
@@ -1115,7 +1291,7 @@ test.describe("@agentos deterministic runtime", () => {
       },
     });
     expect(
-      /(?:e2e-deterministic|deterministic-turn|当前页面路径|用户问题)/iu.test(
+      /(?:deterministic-turn|当前页面路径|用户问题)/iu.test(
         JSON.stringify(adminStatus),
       ),
       "admin status exposed internal Agent data",
@@ -1425,6 +1601,12 @@ test.describe("@agentos deterministic runtime", () => {
             probeTimeoutMs: 500,
             failureThreshold: 1,
           },
+          source: "deployment",
+          provider: "openai",
+          modelId: "e2e-deterministic",
+          configRevision: null,
+          activationVersion: null,
+          testStatus: "untested",
         },
         services: [
           {
@@ -1454,7 +1636,7 @@ test.describe("@agentos deterministic runtime", () => {
         ],
         configuration: {
           defaultAgent: "码多多（maduoduo）",
-          model: "已配置（执行暂不可用）",
+          model: "OpenAI / e2e-deterministic（部署配置，执行暂不可用）",
           skills: "未接入",
           sessionStorage: "AgentOS 持久化已启用",
         },
@@ -1476,5 +1658,372 @@ test.describe("@agentos deterministic runtime", () => {
     agentSessionIds();
     await admin.close();
     await context.close();
+  });
+});
+
+test.describe("@control deterministic model control", () => {
+  test("enforces authorization, switches atomically, restores, reveals briefly, and never leaks", async ({
+    browser,
+    baseURL,
+  }) => {
+    test.setTimeout(120_000);
+    if (!baseURL) throw new Error("BASE_URL is required");
+    const credentials = fixtureCredentials();
+    const originHeaders = {
+      "Content-Type": "application/json",
+      Origin: baseURL,
+    };
+    const submittedKeys: Record<string, string> = {};
+    const submittedLastFour: Record<string, string> = {};
+    const modelIds: Record<string, string> = {
+      openai: "e2e-openai-rev1",
+      anthropic: "e2e-anthropic-rev1",
+      google: "e2e-google-rev1",
+      dashscope: "e2e-qwen-rev1",
+      deepseek: "e2e-deepseek-rev1",
+      minimax: "e2e-minimax-rev1",
+    };
+
+    const registerKey = (provider: string, suffix: string) => {
+      const key = `e2e-acceptance-${provider}-${randomUUID()}-${suffix}`;
+      submittedKeys[provider] = key;
+      submittedLastFour[provider] = suffix;
+      appendProtectedLedger("AAP_RUNTIME_MODEL_KEYS_FILE", key);
+      appendProtectedLedger("AAP_RUNTIME_MODEL_KEY_LAST4_FILE", suffix);
+      return key;
+    };
+    const currentProtectedValues = () => runtimeProtectedValues();
+    const ask = async (expectedMarker: string) => {
+      const context = await browser.newContext({ baseURL });
+      collectBrowserDiagnostics(context);
+      const response = await context.request.post(CHAT_PATH, {
+        data: CHAT_BODY,
+      });
+      expect(response.status()).toBe(200);
+      const body = await readSafeJson(response, currentProtectedValues());
+      expect(JSON.stringify(body)).toContain(expectedMarker);
+      const deletion = await context.request.delete(SESSION_PATH);
+      expect(deletion.status()).toBe(204);
+      await context.close();
+    };
+
+    const admin = await browser.newContext({ baseURL });
+    collectBrowserDiagnostics(admin);
+    await addSignedSession(
+      admin,
+      baseURL,
+      "workforce",
+      credentials.adminSessionToken,
+    );
+    await completeSeededAdminTwoFactor(admin);
+    const adminPage = await admin.newPage();
+    await adminPage.goto("/admin/assistant");
+    await expect(
+      adminPage.getByRole("heading", { name: "云模型配置" }),
+    ).toBeVisible();
+    await expect(adminPage.getByLabel("Model ID")).toBeDisabled();
+    await expect(
+      adminPage.getByRole("button", { name: "保存草稿" }),
+    ).toHaveCount(0);
+    await expect(
+      adminPage.getByRole("button", { name: "查看已保存 Key" }),
+    ).toHaveCount(0);
+    const forbiddenKey = registerKey("admin-forbidden", "F001");
+    const forbiddenSave = await admin.request.put(
+      `${MODEL_CONFIG_PATH}/openai`,
+      {
+        headers: originHeaders,
+        data: {
+          modelId: "e2e-admin-forbidden",
+          endpointId: "openai-official",
+          apiKey: forbiddenKey,
+          expectedRevision: 0,
+        },
+      },
+    );
+    expect(forbiddenSave.status()).toBe(403);
+    const forbiddenSaveBody = await readSafeJson(
+      forbiddenSave,
+      currentProtectedValues(),
+    );
+    expect(JSON.stringify(forbiddenSaveBody)).toContain("permission_denied");
+    const forbiddenReveal = await admin.request.post(
+      `${MODEL_CONFIG_PATH}/openai/reveal-key`,
+      { headers: originHeaders, data: { revision: 1 } },
+    );
+    expect(forbiddenReveal.status()).toBe(403);
+    await readSafeJson(forbiddenReveal, currentProtectedValues());
+    await admin.close();
+
+    const stale = await browser.newContext({ baseURL });
+    collectBrowserDiagnostics(stale);
+    await addSignedSession(
+      stale,
+      baseURL,
+      "workforce",
+      credentials.modelAdminStaleSessionToken,
+    );
+    const stalePage = await stale.newPage();
+    await stalePage.goto("/admin/assistant");
+    const staleKey = registerKey("stale-forbidden", "F002");
+    await stalePage.getByLabel("Model ID").fill("e2e-stale-forbidden");
+    await stalePage.getByLabel(/新 API Key/u).fill(staleKey);
+    await stalePage.getByRole("button", { name: "保存草稿" }).click();
+    await expect(stalePage).toHaveURL(/\/staff\/re-auth$/u);
+    const staleResponse = await stale.request.put(
+      `${MODEL_CONFIG_PATH}/openai`,
+      {
+        headers: originHeaders,
+        data: {
+          modelId: "e2e-stale-forbidden",
+          endpointId: "openai-official",
+          apiKey: staleKey,
+          expectedRevision: 0,
+        },
+      },
+    );
+    expect(staleResponse.status()).toBe(401);
+    const staleBody = await readSafeJson(
+      staleResponse,
+      currentProtectedValues(),
+    );
+    expect(JSON.stringify(staleBody)).toContain("reauth_required");
+    expect(JSON.stringify(staleBody)).toContain("/staff/re-auth");
+    await stale.close();
+
+    const modelAdmin = await browser.newContext({ baseURL });
+    collectBrowserDiagnostics(modelAdmin);
+    await addSignedSession(
+      modelAdmin,
+      baseURL,
+      "workforce",
+      credentials.modelAdminSessionToken,
+    );
+    const page = await modelAdmin.newPage();
+    await page.goto("/admin/assistant");
+    await expect(page.getByText("控制面已启用", { exact: true })).toBeVisible();
+
+    for (const [index, fixture] of CONTROL_PROVIDERS.entries()) {
+      const suffix = `K${String(index + 1).padStart(3, "0")}`;
+      const key = registerKey(fixture.provider, suffix);
+      await page
+        .getByRole("tab", { name: new RegExp(fixture.label, "u") })
+        .click();
+      await page.getByLabel("Model ID").fill(modelIds[fixture.provider]!);
+      await expect(page.getByLabel("Endpoint")).toHaveValue(fixture.endpoint);
+      await page.getByLabel(/新 API Key/u).fill(key);
+      await page.getByRole("button", { name: "保存草稿" }).click();
+      await expect(
+        page.getByText("保存成功，配置状态已刷新。", { exact: true }),
+      ).toBeVisible();
+      await expect(page.getByText(`已配置 · 末四位 ${suffix}`)).toBeVisible();
+    }
+
+    const listedResponse = await modelAdmin.request.get(MODEL_CONFIG_PATH);
+    expect(listedResponse.status()).toBe(200);
+    const listed = await readSafeJson(listedResponse, currentProtectedValues());
+    const listedText = JSON.stringify(listed);
+    for (const fixture of CONTROL_PROVIDERS) {
+      expect(listedText).toContain(modelIds[fixture.provider]!);
+      expect(listedText).toContain(submittedLastFour[fixture.provider]!);
+      expect(listedText).not.toContain(submittedKeys[fixture.provider]!);
+    }
+
+    await page.getByRole("tab", { name: /OpenAI/u }).click();
+    await page.getByRole("button", { name: "测试并启用" }).click();
+    await expect(
+      page.getByText("测试通过，已启用 OpenAI rev 1。", { exact: true }),
+    ).toBeVisible();
+    await ask("deterministic-model:e2e-openai-rev1:turn:1");
+
+    await page.getByLabel("Model ID").fill("e2e-fail-openai-rev2");
+    await page.getByRole("button", { name: "保存草稿" }).click();
+    await expect(
+      page.getByText("保存成功，配置状态已刷新。", { exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "测试并启用" }).click();
+    await expect(
+      page.getByText("模型测试失败，配置状态已刷新。", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText(/仍运行 rev 1/u)).toBeVisible();
+    await ask("deterministic-model:e2e-openai-rev1:turn:1");
+
+    recreateAgent(true);
+    await ask("deterministic-model:e2e-openai-rev1:turn:1");
+
+    await page.reload();
+    await page.getByRole("tab", { name: /Qwen \/ DashScope/u }).click();
+    const beforeSwitch = agentContainerMetadata();
+    await page.getByRole("button", { name: "测试并启用" }).click();
+    await expect(
+      page.getByText("测试通过，已启用 Qwen / DashScope rev 1。", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    const afterSwitch = agentContainerMetadata();
+    expect(afterSwitch).toEqual(beforeSwitch);
+    await ask("deterministic-model:e2e-qwen-rev1:turn:1");
+
+    recreateAgent(true);
+    const afterRestart = agentContainerMetadata();
+    expect(afterRestart.id).not.toBe(afterSwitch.id);
+    expect(afterRestart.startedAt).not.toBe(afterSwitch.startedAt);
+    await ask("deterministic-model:e2e-qwen-rev1:turn:1");
+
+    const staleRevision = await modelAdmin.request.post(
+      `${MODEL_CONFIG_PATH}/openai/test-and-activate`,
+      { headers: originHeaders, data: { revision: 1 } },
+    );
+    expect(staleRevision.status()).toBe(409);
+    const conflictBody = await readSafeJson(
+      staleRevision,
+      currentProtectedValues(),
+    );
+    expect(JSON.stringify(conflictBody)).toContain("configuration_conflict");
+    for (const lastFour of Object.values(submittedLastFour)) {
+      expect(JSON.stringify(conflictBody)).not.toContain(lastFour);
+    }
+
+    await page.reload();
+    await page.getByRole("tab", { name: /Qwen \/ DashScope/u }).click();
+    await page.clock.install();
+    await page.getByRole("button", { name: "查看已保存 Key" }).click();
+    const revealed = page.getByLabel("临时显示的模型密钥");
+    await expect(revealed).toContainText(submittedKeys.dashscope!);
+    await expect(revealed).toContainText(
+      "复制后由操作系统剪贴板负责保管，30 秒隐藏不会清除剪贴板。",
+    );
+    await page.clock.fastForward(30_000);
+    await expect(revealed).toHaveCount(0);
+
+    const revealResponse = await modelAdmin.request.post(
+      `${MODEL_CONFIG_PATH}/dashscope/reveal-key`,
+      { headers: originHeaders, data: { revision: 1 } },
+    );
+    expect(revealResponse.status()).toBe(200);
+    expect(revealResponse.headers()["cache-control"]).toContain("no-store");
+    expect(revealResponse.headers()["cache-control"]).toContain("private");
+    const revealBody = parseSafeJson(await revealResponse.text(), []);
+    expect(JSON.stringify(revealBody)).toContain(submittedKeys.dashscope!);
+    const bootstrapReveal = await modelAdmin.request.post(
+      `${MODEL_CONFIG_PATH}/openai/reveal-key`,
+      { headers: originHeaders, data: { revision: 0 } },
+    );
+    expect(bootstrapReveal.status()).toBe(400);
+    await readSafeJson(bootstrapReveal, currentProtectedValues());
+
+    const capabilityRequests: string[] = [];
+    page.on("request", (request) => capabilityRequests.push(request.url()));
+    for (const label of [
+      "本地算力暂不可用",
+      "Skill 加载暂不可用",
+      "知识库暂不可用",
+      "网页与操作工具暂不可用",
+    ]) {
+      const button = page.getByRole("button", { name: label });
+      await expect(button).toBeDisabled();
+      await button.evaluate((element) =>
+        (element as HTMLButtonElement).click(),
+      );
+    }
+    expect(
+      capabilityRequests.some((url) =>
+        /(?:skill|knowledge|tools?|localhost|health)/iu.test(url),
+      ),
+    ).toBe(false);
+    for (const [title, status] of [
+      ["本地算力", "预留 / 未连接"],
+      ["Skill 加载", "未接入"],
+      ["知识库", "未接入"],
+      ["网页与操作工具", "未接入"],
+    ] as const) {
+      const card = page.getByRole("article").filter({ hasText: title });
+      await expect(card).toContainText(status);
+    }
+
+    const controlRows = databaseQuery(
+      "SELECT provider || ':' || revision || ':' || is_current || ':' || test_status || ':' || octet_length(api_key_ciphertext) || ':' || encode(api_key_ciphertext, 'hex') FROM agent_control.model_configs ORDER BY provider, revision",
+    );
+    expect(controlRows.split("\n")).toHaveLength(7);
+    expect(controlRows).toContain("openai:1:false:passed:");
+    expect(controlRows).toContain("openai:2:true:failed:");
+    for (const fixture of CONTROL_PROVIDERS) {
+      expect(controlRows).toContain(`${fixture.provider}:`);
+    }
+    const openAiCiphers = controlRows
+      .split("\n")
+      .filter((row) => row.startsWith("openai:"))
+      .map((row) => row.split(":").at(-1));
+    expect(openAiCiphers).toHaveLength(2);
+    expect(openAiCiphers[0]).toBeTruthy();
+    expect(openAiCiphers[1]).toBeTruthy();
+    expect(openAiCiphers[0]).not.toBe(openAiCiphers[1]);
+    const activePointer = databaseQuery(
+      "SELECT c.provider || ':' || a.config_revision || ':' || a.activation_version FROM agent_control.active_model_config a JOIN agent_control.model_configs c ON c.id = a.model_config_id",
+    );
+    expect(activePointer).toMatch(/^dashscope:1:[1-9][0-9]*$/u);
+    const auditText = databaseQuery(
+      "SELECT coalesce(string_agg(action || ':' || metadata::text, E'\\n'), '') FROM audit_logs WHERE action LIKE 'assistant.model_config%';",
+    );
+    const controlEventText = databaseQuery(
+      "SELECT coalesce(string_agg(action || ':' || provider || ':' || model_id || ':' || endpoint_id || ':' || result, E'\\n'), '') FROM agent_control.control_events;",
+    );
+    for (const key of Object.values(submittedKeys)) {
+      expect(controlRows).not.toContain(key);
+      expect(auditText).not.toContain(key);
+      expect(controlEventText).not.toContain(key);
+    }
+    for (const lastFour of Object.values(submittedLastFour)) {
+      expect(auditText).not.toContain(lastFour);
+      expect(controlEventText).not.toContain(lastFour);
+      expect(JSON.stringify(cumulativeConsoleMessages)).not.toContain(lastFour);
+    }
+
+    recreateAgent(false);
+    await page.close();
+    const disabledPage = await modelAdmin.newPage();
+    await disabledPage.goto("/admin/assistant");
+    await expect(
+      disabledPage.getByText("部署已关闭控制面", { exact: true }),
+    ).toBeVisible();
+    await expect(disabledPage.getByLabel("Model ID")).toBeDisabled();
+    const disabledSave = await modelAdmin.request.put(
+      `${MODEL_CONFIG_PATH}/google`,
+      {
+        headers: originHeaders,
+        data: {
+          modelId: "e2e-disabled-write",
+          endpointId: "google-official",
+          expectedRevision: 1,
+        },
+      },
+    );
+    expect(disabledSave.status()).toBe(503);
+    const disabledBody = await readSafeJson(
+      disabledSave,
+      currentProtectedValues(),
+    );
+    expect(JSON.stringify(disabledBody)).toContain("control_disabled");
+    await disabledPage.close();
+    recreateAgent(true);
+    await ask("deterministic-model:e2e-qwen-rev1:turn:1");
+    const finalAuditChatResponse = await modelAdmin.request.post(
+      ADMIN_CHAT_PATH,
+      { data: CHAT_BODY },
+    );
+    expect(finalAuditChatResponse.status()).toBe(200);
+    const finalAuditChat = await readSafeJson(
+      finalAuditChatResponse,
+      currentProtectedValues(),
+    );
+    expect(JSON.stringify(finalAuditChat)).toContain(
+      "deterministic-model:e2e-qwen-rev1:turn:1",
+    );
+    collectAgentSessionIdentityAudit();
+
+    for (const key of Object.values(submittedKeys)) {
+      expect(JSON.stringify(cumulativeConsoleMessages)).not.toContain(key);
+    }
+    await modelAdmin.close();
   });
 });
