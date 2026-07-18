@@ -26,6 +26,7 @@ RUN groupadd --system --gid 10001 agent \
 WORKDIR /app/apps/agent
 
 COPY --from=builder --chown=agent:agent /app/apps/agent/.venv /app/apps/agent/.venv
+COPY --chown=root:root --chmod=0644 infra/agent/model-endpoints.json /etc/aap/model-endpoints.json
 
 FROM runtime-base AS acceptance
 

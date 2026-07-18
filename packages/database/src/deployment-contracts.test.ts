@@ -38,6 +38,12 @@ const composeSecretKeys = [
   "ASSISTANT_SESSION_SECRET",
   "ASSISTANT_RATE_LIMIT_SECRET",
   "MODEL_API_KEY",
+  "AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD",
+  "AGENT_CONTROL_DATABASE_PASSWORD",
+  "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+  "AGENT_CONTROL_DATABASE_URL",
+  "MODEL_CONFIG_ENCRYPTION_KEY",
+  "AGENT_CONFIG_CONTROL_KEY",
 ] as const;
 
 type RenderedSecretAttachment = string | { source?: string; target?: string };
@@ -52,6 +58,7 @@ type RenderedService = {
   cap_drop?: string[];
   command?: string[];
   cpus?: number | string;
+  depends_on?: Record<string, { condition?: string }>;
   entrypoint?: string[];
   environment?: Record<string, string | null>;
   mem_limit?: number | string;
@@ -1059,7 +1066,7 @@ exit 0
       ?.split("\n  agent-migrate:\n")[0];
     const migrationService = compose
       .split("\n  agent-migrate:\n")[1]
-      ?.split("\n  agent:\n")[0];
+      ?.split("\n  agent-control-bootstrap:\n")[0];
     const agentService = compose
       .split("\n  agent:\n")[1]
       ?.split("\n  web:\n")[0];
@@ -1138,6 +1145,226 @@ exit 0
     );
   });
 
+  it("isolates model-control credentials by deployment role", () => {
+    const rendered = renderComposeFixture();
+    const services = rendered.services;
+    const sources = (name: string) =>
+      new Set(
+        (services[name]?.secrets ?? [])
+          .map(secretSource)
+          .filter((source): source is string => source !== undefined),
+      );
+    const controlSources = new Set([
+      "agent_control_migrator_database_password",
+      "agent_control_database_password",
+      "agent_control_migrator_database_url",
+      "agent_control_database_url",
+      "model_config_encryption_key",
+      "agent_config_control_key",
+    ]);
+    const visibleControlSources = (name: string) =>
+      new Set(
+        [...sources(name)].filter((source) => controlSources.has(source)),
+      );
+
+    expect(sources("agent-control-bootstrap")).toEqual(
+      new Set([
+        "postgres_password",
+        "agent_control_migrator_database_password",
+        "agent_control_database_password",
+      ]),
+    );
+    expect(sources("agent-control-migrate")).toEqual(
+      new Set(["agent_control_migrator_database_url"]),
+    );
+    expect(visibleControlSources("agent")).toEqual(
+      new Set([
+        "agent_control_database_url",
+        "model_config_encryption_key",
+        "agent_config_control_key",
+      ]),
+    );
+    expect(visibleControlSources("web")).toEqual(
+      new Set(["agent_config_control_key"]),
+    );
+    for (const serviceName of [
+      "db",
+      "migrate",
+      "agno-bootstrap",
+      "agent-migrate",
+      "backup",
+      "proxy",
+    ]) {
+      expect(visibleControlSources(serviceName)).toEqual(new Set());
+    }
+
+    expect(services.agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "AGNO_DATABASE_URL=/run/secrets/agno_database_url",
+    );
+    expect(services.agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "OS_SECURITY_KEY=/run/secrets/os_security_key",
+    );
+    expect(services.agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "AGENT_CONTROL_DATABASE_URL=/run/secrets/agent_control_database_url",
+    );
+    expect(services.agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "MODEL_CONFIG_ENCRYPTION_KEY=/run/secrets/model_config_encryption_key",
+    );
+    expect(services.agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "AGENT_CONFIG_CONTROL_KEY=/run/secrets/agent_config_control_key",
+    );
+    expect(services.web?.environment?.SECRET_ENV_SPECS).toContain(
+      "OS_SECURITY_KEY=/run/secrets/os_security_key",
+    );
+    expect(services.web?.environment?.SECRET_ENV_SPECS).toContain(
+      "AGENT_CONFIG_CONTROL_KEY=/run/secrets/agent_config_control_key",
+    );
+    expect(
+      services["agent-control-migrate"]?.environment?.SECRET_ENV_SPECS,
+    ).toBe(
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL=/run/secrets/agent_control_migrator_database_url",
+    );
+
+    expect(sources("agent")).toContain("os_security_key");
+    expect(sources("agent")).toContain("agno_database_url");
+    expect(sources("web")).toContain("os_security_key");
+    const controlKeySource = services.agent?.secrets?.find(
+      (attachment) =>
+        typeof attachment !== "string" &&
+        attachment.target === "/run/secrets/agent_config_control_key",
+    );
+    const osKeySource = services.agent?.secrets?.find(
+      (attachment) =>
+        typeof attachment !== "string" &&
+        attachment.target === "/run/secrets/os_security_key",
+    );
+    expect(secretSource(controlKeySource as RenderedSecretAttachment)).toBe(
+      "agent_config_control_key",
+    );
+    expect(secretSource(osKeySource as RenderedSecretAttachment)).toBe(
+      "os_security_key",
+    );
+    expect(secretSource(controlKeySource as RenderedSecretAttachment)).not.toBe(
+      secretSource(osKeySource as RenderedSecretAttachment),
+    );
+    expect(services.agent?.environment).not.toHaveProperty(
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+    );
+    expect(services.agent?.environment?.SECRET_ENV_SPECS).not.toContain(
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+    );
+    expect(services.web?.environment).not.toHaveProperty(
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+    );
+    expect(services.web?.environment?.SECRET_ENV_SPECS).not.toContain(
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+    );
+  });
+
+  it("orders isolated control bootstrap and migration before Agent runtime", () => {
+    const rendered = renderComposeFixture();
+    const bootstrap = rendered.services["agent-control-bootstrap"];
+    const migration = rendered.services["agent-control-migrate"];
+    const agent = rendered.services.agent;
+
+    expect(bootstrap?.depends_on?.db?.condition).toBe("service_healthy");
+    expect(bootstrap?.depends_on?.["agno-bootstrap"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(migration?.depends_on?.["agent-control-bootstrap"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(agent?.depends_on?.["agent-control-migrate"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(agent?.depends_on?.["agent-migrate"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(migration?.command).toEqual([
+      "python",
+      "-m",
+      "agent_service.model_config_migrate",
+    ]);
+    expect(Object.keys(bootstrap?.networks ?? {})).toEqual(["backend"]);
+    expect(Object.keys(migration?.networks ?? {})).toEqual(["backend"]);
+    expect(migration?.read_only).toBe(true);
+    expect(new Set(migration?.cap_drop)).toEqual(new Set(["ALL"]));
+    expect(migration?.security_opt).toContain("no-new-privileges:true");
+  });
+
+  it("ships an immutable deployment endpoint catalog only in the Agent image", () => {
+    const endpointFile = JSON.parse(
+      read("infra/agent/model-endpoints.json"),
+    ) as unknown;
+    const dockerfile = read("apps/agent/Dockerfile");
+    const webDockerfile = read("apps/web/Dockerfile");
+    const rendered = renderComposeFixture();
+    const agent = rendered.services.agent;
+    const web = rendered.services.web;
+
+    expect(endpointFile).toEqual({ version: "1", endpoints: [] });
+    expect(JSON.stringify(endpointFile)).not.toMatch(
+      /localhost|127\.0\.0\.1|10\.0\.0\.1|192\.168\.|api[_-]?key|secret|password/iu,
+    );
+    expect(dockerfile).toContain(
+      "COPY --chown=root:root --chmod=0644 infra/agent/model-endpoints.json /etc/aap/model-endpoints.json",
+    );
+    expect(webDockerfile).not.toContain("model-endpoints.json");
+    expect(agent?.environment?.MODEL_ENDPOINTS_FILE).toBe(
+      "/etc/aap/model-endpoints.json",
+    );
+    expect(web?.environment).not.toHaveProperty("MODEL_ENDPOINTS_FILE");
+    expect(agent?.read_only).toBe(true);
+    expect(agent?.ports ?? []).toEqual([]);
+    expect(Object.keys(agent?.networks ?? {})).toEqual([
+      "backend",
+      "model_egress",
+    ]);
+    expect(agent?.volumes ?? []).not.toContainEqual(
+      expect.objectContaining({ target: "/etc/aap/model-endpoints.json" }),
+    );
+    expect(web?.volumes ?? []).not.toContainEqual(
+      expect.objectContaining({ target: "/etc/aap/model-endpoints.json" }),
+    );
+  });
+
+  it("documents control-role secrets, migrations, and dynamic precedence", () => {
+    const example = read(".env.example");
+    const dockerReadme = read("infra/docker/README.md");
+
+    for (const key of [
+      "AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD",
+      "AGENT_CONTROL_DATABASE_PASSWORD",
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+      "AGENT_CONTROL_DATABASE_URL",
+      "AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD_FILE",
+      "AGENT_CONTROL_DATABASE_PASSWORD_FILE",
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE",
+      "AGENT_CONTROL_DATABASE_URL_FILE",
+      "MODEL_CONFIG_ENCRYPTION_KEY_FILE",
+      "AGENT_CONFIG_CONTROL_KEY_FILE",
+    ]) {
+      expect(example).toContain(`${key}=`);
+    }
+    expect(example).toContain("openssl rand -hex 32");
+    expect(example).toContain("control Key different from OS_SECURITY_KEY");
+    expect(example).not.toMatch(/^MODEL_CONFIG_ENCRYPTION_KEY=/mu);
+    expect(example).not.toMatch(/^AGENT_CONFIG_CONTROL_KEY=/mu);
+
+    for (const migration of [
+      "migrate",
+      "agno-bootstrap",
+      "agent-migrate",
+      "agent-control-bootstrap",
+      "agent-control-migrate",
+    ]) {
+      expect(dockerReadme).toContain(migration);
+    }
+    expect(dockerReadme).toContain("动态配置优先");
+    expect(dockerReadme).toContain("不持有 migrator 凭据");
+    expect(dockerReadme).toContain("不挂载任何`agent_control`");
+  });
+
   it("gives only AgentOS the model credential and controlled egress", () => {
     const compose = read("compose.yaml");
     const serviceNames = [
@@ -1145,6 +1372,8 @@ exit 0
       "migrate",
       "agno-bootstrap",
       "agent-migrate",
+      "agent-control-bootstrap",
+      "agent-control-migrate",
       "agent",
       "web",
       "proxy",
