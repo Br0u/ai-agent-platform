@@ -192,6 +192,104 @@ def test_worker_core_sanitizes_every_failure_and_closes_when_owned(
     assert capfd.readouterr() == ("", "")
 
 
+def test_worker_core_propagates_cancellation_during_verification_after_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    verification_entered = asyncio.Event()
+    close_finished = asyncio.Event()
+    close_calls = 0
+
+    async def close_callback() -> None:
+        nonlocal close_calls
+        close_calls += 1
+        await asyncio.sleep(0)
+        close_finished.set()
+
+    managed = ManagedModel(
+        model=OpenAIResponses(id="offline-smoke", api_key="offline-key"),
+        close_callback=close_callback,
+    )
+
+    async def verifier(
+        _candidate: ManagedModel,
+        *,
+        timeout_seconds: int,
+    ) -> ModelVerificationResult:
+        del timeout_seconds
+        verification_entered.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(provider_smoke, "verify_model", verifier)
+
+    async def scenario() -> None:
+        worker = asyncio.create_task(
+            _invoke_provider(
+                _valid_settings(),
+                model_builder=lambda _settings: managed,
+            )
+        )
+        await verification_entered.wait()
+        worker.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await worker
+        assert close_calls == 1
+        assert close_finished.is_set()
+
+    asyncio.run(scenario())
+
+
+def test_worker_core_propagates_close_cancellation_while_close_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    close_entered = asyncio.Event()
+    release_close = asyncio.Event()
+    close_finished = asyncio.Event()
+    close_calls = 0
+
+    async def close_callback() -> None:
+        nonlocal close_calls
+        close_calls += 1
+        close_entered.set()
+        await release_close.wait()
+        close_finished.set()
+
+    managed = ManagedModel(
+        model=OpenAIResponses(id="offline-smoke", api_key="offline-key"),
+        close_callback=close_callback,
+    )
+
+    async def verifier(
+        _candidate: ManagedModel,
+        *,
+        timeout_seconds: int,
+    ) -> ModelVerificationResult:
+        del timeout_seconds
+        return ModelVerificationResult(True, "success")
+
+    monkeypatch.setattr(provider_smoke, "verify_model", verifier)
+
+    async def scenario() -> None:
+        worker = asyncio.create_task(
+            _invoke_provider(
+                _valid_settings(),
+                model_builder=lambda _settings: managed,
+            )
+        )
+        await close_entered.wait()
+        worker.cancel()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await worker
+        finally:
+            release_close.set()
+            await asyncio.wait_for(close_finished.wait(), timeout=1)
+        assert close_calls == 1
+
+    asyncio.run(scenario())
+
+
 def test_configuration_and_argument_failures_are_sanitized(
     capfd: pytest.CaptureFixture[str],
 ) -> None:

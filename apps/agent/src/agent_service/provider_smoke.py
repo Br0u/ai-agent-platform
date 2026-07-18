@@ -157,13 +157,17 @@ async def _invoke_provider(
             status = "verified"
         elif not result.ok and result.category != "success":
             status = cast(SmokeStatus, result.category)
-    except BaseException:
+    except asyncio.CancelledError:
+        raise
+    except Exception:
         status = "invocation"
     finally:
         if managed is not None:
             try:
                 await managed.aclose()
-            except BaseException:
+            except asyncio.CancelledError:
+                raise
+            except Exception:
                 status = "invocation"
     return status
 

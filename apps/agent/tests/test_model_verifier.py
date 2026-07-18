@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
+from io import StringIO
 import logging
 from types import SimpleNamespace
 from typing import Any, cast, get_args
@@ -105,6 +106,26 @@ class LoggingFailureProbeModel(ProbeModel):
         self.calls.append((messages, assistant_message, kwargs))
         log_error(self.private_failure)
         raise RuntimeError(self.private_failure)
+
+
+@dataclass
+class NamespacedLoggingProbeModel(ProbeModel):
+    logger_name: str = "openai.task7_default"
+    private_failure: str = "private SDK URL, status body, key, and exception"
+    entered: asyncio.Event = field(default_factory=asyncio.Event)
+    release: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def ainvoke(
+        self,
+        messages: list[Message],
+        assistant_message: Message,
+        **kwargs: Any,
+    ) -> ModelResponse:
+        self.calls.append((messages, assistant_message, kwargs))
+        logging.getLogger(self.logger_name).error(self.private_failure)
+        self.entered.set()
+        await self.release.wait()
+        return ModelResponse(role="assistant", content="verified")
 
 
 class ExplosiveStatusProviderError(ModelProviderError):
@@ -417,6 +438,129 @@ def test_verification_log_suppression_is_task_local_and_filter_is_idempotent(
         )
         == 1
     )
+
+
+SENSITIVE_LOGGER_PREFIXES = (
+    "agno",
+    "agno-team",
+    "agno-workflow",
+    "openai",
+    "anthropic",
+    "google_genai",
+    "google.genai",
+    "httpx",
+    "httpcore",
+)
+
+
+def test_sensitive_logger_prefixes_match_locked_provider_dependencies() -> None:
+    assert model_verifier._SENSITIVE_LOGGER_PREFIXES == SENSITIVE_LOGGER_PREFIXES
+
+
+@pytest.mark.parametrize("logger_prefix", SENSITIVE_LOGGER_PREFIXES)
+def test_existing_sensitive_logger_handlers_suppress_only_verification_task(
+    logger_prefix: str,
+) -> None:
+    logger_name = f"{logger_prefix}.task7_existing_handler"
+    logger = logging.getLogger(logger_name)
+    output = StringIO()
+    handler = logging.StreamHandler(output)
+    original_level = logger.level
+    original_propagate = logger.propagate
+    logger.setLevel(logging.ERROR)
+    logger.propagate = False
+    logger.addHandler(handler)
+
+    async def scenario() -> None:
+        model = NamespacedLoggingProbeModel(logger_name=logger_name)
+        verification = asyncio.create_task(
+            verify_model(_managed(model), timeout_seconds=5)
+        )
+        await model.entered.wait()
+
+        logger.error("ordinary concurrent SDK log")
+        model.release.set()
+        assert await verification == ModelVerificationResult(True, "success")
+
+        await verify_model(_managed(ProbeModel()), timeout_seconds=5)
+
+    try:
+        asyncio.run(scenario())
+        rendered = output.getvalue()
+        assert "ordinary concurrent SDK log" in rendered
+        assert "private SDK" not in rendered
+        assert (
+            sum(
+                item is model_verifier._VERIFICATION_LOG_FILTER
+                for item in logger.filters
+            )
+            == 1
+        )
+        assert (
+            sum(
+                item is model_verifier._VERIFICATION_LOG_FILTER
+                for item in handler.filters
+            )
+            == 1
+        )
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(original_level)
+        logger.propagate = original_propagate
+
+
+@pytest.mark.parametrize("logger_prefix", SENSITIVE_LOGGER_PREFIXES)
+def test_lazy_sensitive_child_logger_is_filtered_by_root_handler(
+    logger_prefix: str,
+) -> None:
+    logger_name = f"{logger_prefix}.task7_lazy_child"
+    root_logger = logging.getLogger()
+    namespace_logger = logging.getLogger(logger_prefix)
+    original_namespace_propagate = namespace_logger.propagate
+    if logger_prefix in {"agno", "agno-team", "agno-workflow"}:
+        namespace_logger.propagate = True
+    output = StringIO()
+    handler = logging.StreamHandler(output)
+    handler.setLevel(logging.ERROR)
+    root_logger.addHandler(handler)
+
+    async def scenario() -> None:
+        model = NamespacedLoggingProbeModel(logger_name=logger_name)
+        verification = asyncio.create_task(
+            verify_model(_managed(model), timeout_seconds=5)
+        )
+        await model.entered.wait()
+
+        logging.getLogger(logger_name).error("ordinary lazy SDK log")
+        model.release.set()
+        assert await verification == ModelVerificationResult(True, "success")
+
+        await verify_model(_managed(ProbeModel()), timeout_seconds=5)
+
+    try:
+        asyncio.run(scenario())
+        rendered = output.getvalue()
+        assert len(rendered.splitlines()) == 1
+        assert "ordinary lazy SDK log" in rendered or "agno_runtime_error" in rendered
+        assert "private SDK" not in rendered
+        assert (
+            sum(
+                item is model_verifier._VERIFICATION_LOG_FILTER
+                for item in handler.filters
+            )
+            == 1
+        )
+        child_logger = logging.getLogger(logger_name)
+        assert (
+            sum(
+                item is model_verifier._VERIFICATION_LOG_FILTER
+                for item in child_logger.filters
+            )
+            == 1
+        )
+    finally:
+        root_logger.removeHandler(handler)
+        namespace_logger.propagate = original_namespace_propagate
 
 
 def test_verifier_timeout_cancels_the_only_invocation_without_closing() -> None:

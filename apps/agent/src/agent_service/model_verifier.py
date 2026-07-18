@@ -14,6 +14,17 @@ from agent_service.model_runtime_types import ManagedModel
 
 
 _VERIFICATION_PROMPT = "Reply with one short confirmation word."
+_SENSITIVE_LOGGER_PREFIXES = (
+    "agno",
+    "agno-team",
+    "agno-workflow",
+    "openai",
+    "anthropic",
+    "google_genai",
+    "google.genai",
+    "httpx",
+    "httpcore",
+)
 _suppress_adapter_logs: ContextVar[bool] = ContextVar(
     "suppress_model_verification_adapter_logs",
     default=False,
@@ -22,8 +33,11 @@ _suppress_adapter_logs: ContextVar[bool] = ContextVar(
 
 class _VerificationLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        del record
-        return not _suppress_adapter_logs.get()
+        sensitive = any(
+            record.name == prefix or record.name.startswith(f"{prefix}.")
+            for prefix in _SENSITIVE_LOGGER_PREFIXES
+        )
+        return not (sensitive and _suppress_adapter_logs.get())
 
 
 _VERIFICATION_LOG_FILTER = _VerificationLogFilter()
@@ -62,9 +76,31 @@ def _failure_category(error: Exception) -> VerificationCategory:
 
 
 def _install_verification_log_filter() -> None:
-    logger = agno_log.logger
-    if isinstance(logger, logging.Logger):
-        logger.addFilter(_VERIFICATION_LOG_FILTER)
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers:
+        handler.addFilter(_VERIFICATION_LOG_FILTER)
+
+    for prefix in _SENSITIVE_LOGGER_PREFIXES:
+        logging.getLogger(prefix)
+
+    logger_registry = tuple(logging.Logger.manager.loggerDict.items())
+    for logger_name, registered in logger_registry:
+        if not isinstance(registered, logging.Logger):
+            continue
+        if not any(
+            logger_name == prefix or logger_name.startswith(f"{prefix}.")
+            for prefix in _SENSITIVE_LOGGER_PREFIXES
+        ):
+            continue
+        registered.addFilter(_VERIFICATION_LOG_FILTER)
+        for handler in registered.handlers:
+            handler.addFilter(_VERIFICATION_LOG_FILTER)
+
+    agno_logger = agno_log.logger
+    if isinstance(agno_logger, logging.Logger):
+        agno_logger.addFilter(_VERIFICATION_LOG_FILTER)
+        for handler in agno_logger.handlers:
+            handler.addFilter(_VERIFICATION_LOG_FILTER)
 
 
 async def verify_model(
