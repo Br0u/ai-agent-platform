@@ -264,6 +264,196 @@ describe("AssistantModelConfigPanel", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders reveal only for an authorized dynamic saved Key while control is enabled", () => {
+    const cases: AdminModelConfigSnapshot[] = [
+      withSavedOpenAi(),
+      { ...withSavedOpenAi({ apiKey: null }), canReveal: true },
+      {
+        ...withSavedOpenAi(),
+        canReveal: true,
+        controlEnabled: false,
+      },
+      snapshot({
+        canReveal: true,
+        runtime: {
+          capability: "available",
+          source: "deployment",
+          provider: "openai",
+          modelId: "gpt-5",
+          configRevision: null,
+          activationVersion: null,
+        },
+      }),
+    ];
+
+    for (const value of cases) {
+      const view = render(
+        <AssistantModelConfigPanel initialSnapshot={value} />,
+      );
+      expect(
+        screen.queryByRole("button", { name: "查看已保存 Key" }),
+      ).not.toBeInTheDocument();
+      view.unmount();
+    }
+
+    render(
+      <AssistantModelConfigPanel
+        initialSnapshot={{ ...withSavedOpenAi(), canReveal: true }}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "查看已保存 Key" }),
+    ).toBeEnabled();
+  });
+
+  it("reveals ordinary selectable plaintext for exactly 30 seconds and clears it on Provider change", async () => {
+    vi.useFakeTimers();
+    const key = "PANEL-SECRET-SENTINEL";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async () =>
+        Response.json({
+          version: "1",
+          requestId: "33333333-3333-4333-8333-333333333333",
+          key,
+        }),
+      ),
+    );
+    render(
+      <AssistantModelConfigPanel
+        initialSnapshot={{ ...withSavedOpenAi(), canReveal: true }}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
+    });
+    expect(screen.getByText(key)).toBeVisible();
+    expect(screen.getByText("30 秒后隐藏")).toBeVisible();
+    expect(
+      screen.queryByDisplayValue(key, { exact: true }),
+    ).not.toBeInTheDocument();
+    expect(document.documentElement.outerHTML).not.toContain(`value="${key}"`);
+
+    fireEvent.click(screen.getByRole("tab", { name: /Claude/u }));
+    expect(screen.queryByText(key)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /OpenAI/u }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(29_999));
+    expect(screen.getByText(key)).toBeVisible();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(screen.queryByText(key)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["permission_denied", "当前账号无权查看模型密钥。"],
+    ["rate_limited", "查看过于频繁，请稍后重试。"],
+    ["storage_unavailable", "模型密钥暂时无法查看，请稍后重试。"],
+  ] as const)("renders a fixed safe message for %s", async (code, message) => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(Response.json(safeError(code), { status: 403 })),
+    );
+    render(
+      <AssistantModelConfigPanel
+        initialSnapshot={{ ...withSavedOpenAi(), canReveal: true }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByRole("alert")).not.toHaveTextContent(
+      "raw provider detail",
+    );
+  });
+
+  it("navigates only for the exact versioned reveal re-auth response", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          safeError("reauth_required", { redirectTo: "/staff/re-auth" }),
+          { status: 401 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        Response.json(
+          safeError("reauth_required", { redirectTo: "/untrusted" }),
+          { status: 401 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(
+      <AssistantModelConfigPanel
+        initialSnapshot={{ ...withSavedOpenAi(), canReveal: true }}
+        navigateToReauth={navigation.push}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
+    await waitFor(() =>
+      expect(navigation.push).toHaveBeenCalledExactlyOnceWith("/staff/re-auth"),
+    );
+
+    view.unmount();
+    navigation.push.mockReset();
+    render(
+      <AssistantModelConfigPanel
+        initialSnapshot={{ ...withSavedOpenAi(), canReveal: true }}
+        navigateToReauth={navigation.push}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "模型密钥暂时无法查看，请稍后重试。",
+    );
+    expect(navigation.push).not.toHaveBeenCalled();
+  });
+
+  it("warns before copying and writes to the clipboard only on an explicit click", async () => {
+    const key = "COPY-SECRET-SENTINEL";
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({
+          version: "1",
+          requestId: "44444444-4444-4444-8444-444444444444",
+          key,
+        }),
+      ),
+    );
+    render(
+      <AssistantModelConfigPanel
+        initialSnapshot={{ ...withSavedOpenAi(), canReveal: true }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
+    expect(await screen.findByText(key)).toBeVisible();
+    expect(
+      screen.getByText(
+        "复制后由操作系统剪贴板负责保管，30 秒隐藏不会清除剪贴板。",
+      ),
+    ).toBeVisible();
+    expect(writeText).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "复制 Key" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    expect(writeText).toHaveBeenCalledWith(key);
+    expect(screen.getByText("密钥已复制。")).toBeVisible();
+    expect(screen.getByText("密钥已复制。")).not.toHaveTextContent(key);
+  });
+
   it("keeps Provider and revision read-only while controlling only allowlisted inputs", () => {
     render(
       <AssistantModelConfigPanel
@@ -545,7 +735,11 @@ describe("AssistantModelConfigPanel", () => {
   it("locks mutations when a save network failure leaves the server result unknown", async () => {
     const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError("offline"));
     vi.stubGlobal("fetch", fetchMock);
-    render(<AssistantModelConfigPanel initialSnapshot={withSavedOpenAi()} />);
+    render(
+      <AssistantModelConfigPanel
+        initialSnapshot={{ ...withSavedOpenAi(), canReveal: true }}
+      />,
+    );
 
     fireEvent.change(screen.getByLabelText("新 API Key（可选）"), {
       target: { value: "sk-network-secret" },
@@ -558,6 +752,10 @@ describe("AssistantModelConfigPanel", () => {
     expect(screen.getByLabelText("新 API Key（可选）")).toHaveValue("");
     expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "测试并启用" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "查看已保存 Key" }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
     expect(screen.getByRole("button", { name: "刷新配置" })).toBeVisible();
     expect(fetchMock).toHaveBeenCalledOnce();
   });

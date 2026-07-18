@@ -17,6 +17,10 @@ import {
   type AdminModelConfigSnapshot,
   type AdminModelProvider,
 } from "@/features/assistant/admin-model-config-contract";
+import {
+  useModelKeyReveal,
+  type ModelKeyRevealError,
+} from "./use-model-key-reveal";
 
 type AssistantModelConfigPanelProps = {
   initialSnapshot: AdminModelConfigSnapshot;
@@ -24,6 +28,10 @@ type AssistantModelConfigPanelProps = {
 };
 
 type PendingAction = "save" | "activate" | "refresh" | null;
+
+function navigateToStaffReauth(path: "/staff/re-auth") {
+  window.location.assign(path);
+}
 
 type UnknownMutationDescriptor =
   | {
@@ -282,6 +290,20 @@ function safeFailureMessage(error: SafeError | null): string {
   }
 }
 
+function safeRevealFailureMessage(error: ModelKeyRevealError | null): string {
+  switch (error?.code) {
+    case "permission_denied":
+      return "当前账号无权查看模型密钥。";
+    case "rate_limited":
+      return "查看过于频繁，请稍后重试。";
+    case "storage_unavailable":
+    case "unavailable":
+    case "reauth_required":
+    default:
+      return "模型密钥暂时无法查看，请稍后重试。";
+  }
+}
+
 function snapshotProvesMutation(
   snapshot: AdminModelConfigSnapshot,
   descriptor: UnknownMutationDescriptor,
@@ -300,7 +322,7 @@ function snapshotProvesMutation(
 
 export function AssistantModelConfigPanel({
   initialSnapshot,
-  navigateToReauth = (path) => window.location.assign(path),
+  navigateToReauth = navigateToStaffReauth,
 }: AssistantModelConfigPanelProps) {
   const initialConfig = initialSnapshot.configs.find(
     (config) => config.provider === "openai",
@@ -318,6 +340,7 @@ export function AssistantModelConfigPanel({
   const [announcement, setAnnouncement] = useState("");
   const [pending, setPending] = useState<PendingAction>(null);
   const [syncRequired, setSyncRequired] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("");
   const activeController = useRef<AbortController | null>(null);
   const operationGeneration = useRef(0);
   const pendingRef = useRef(false);
@@ -330,6 +353,7 @@ export function AssistantModelConfigPanel({
   const providerTabs = useRef<
     Partial<Record<AdminModelProvider, HTMLButtonElement>>
   >({});
+  const keyReveal = useModelKeyReveal(selectedProvider);
 
   const selectedConfig = useMemo(
     () =>
@@ -338,8 +362,13 @@ export function AssistantModelConfigPanel({
   );
   const endpointOptions = snapshot.endpoints[selectedProvider];
   const writable = snapshot.canConfigure && snapshot.controlEnabled;
-  const canMutate = writable && !syncRequired;
+  const canMutate = writable && !syncRequired && keyReveal.status !== "loading";
   const keyRequired = selectedConfig.apiKey === null;
+  const hasDynamicSavedKey =
+    selectedConfig.revision !== null &&
+    selectedConfig.apiKey?.configured === true;
+  const canRevealSelectedKey =
+    snapshot.canReveal && snapshot.controlEnabled && hasDynamicSavedKey;
 
   const requireSync = useCallback(
     (
@@ -427,6 +456,7 @@ export function AssistantModelConfigPanel({
       nextConfig.endpointId ?? snapshot.endpoints[provider][0]?.id ?? "",
     );
     setValidation("");
+    setCopyStatus("");
     if (!syncRequiredRef.current) setAnnouncement("");
     selectedProviderRef.current = provider;
     setSelectedProvider(provider);
@@ -523,6 +553,8 @@ export function AssistantModelConfigPanel({
     if (!writable || syncRequiredRef.current || pendingRef.current) return;
     const input = validateDraft();
     if (input === null) return;
+    keyReveal.hide();
+    setCopyStatus("");
     const operation = startOperation("save");
     if (operation === null) return;
     const provider = selectedProvider;
@@ -678,6 +710,12 @@ export function AssistantModelConfigPanel({
     };
   }, [abortForLifecycle, refresh]);
 
+  useEffect(() => {
+    if (keyReveal.error?.redirectTo === "/staff/re-auth") {
+      navigateToReauth("/staff/re-auth");
+    }
+  }, [keyReveal.error, navigateToReauth]);
+
   const testAndActivate = async () => {
     if (
       !writable ||
@@ -689,6 +727,8 @@ export function AssistantModelConfigPanel({
     }
     const operation = startOperation("activate");
     if (operation === null) return;
+    keyReveal.hide();
+    setCopyStatus("");
     const provider = selectedProvider;
     const revision = selectedConfig.revision;
     const enteredAt = Date.now();
@@ -767,6 +807,29 @@ export function AssistantModelConfigPanel({
 
   const showRefresh =
     syncRequired || announcement === "配置已发生变化，请刷新后重试。";
+
+  const revealKey = () => {
+    if (
+      !canRevealSelectedKey ||
+      syncRequired ||
+      pending !== null ||
+      selectedConfig.revision === null
+    ) {
+      return;
+    }
+    setCopyStatus("");
+    void keyReveal.reveal(selectedProvider, selectedConfig.revision);
+  };
+
+  const copyKey = async () => {
+    if (keyReveal.plaintext === null) return;
+    try {
+      await navigator.clipboard.writeText(keyReveal.plaintext);
+      setCopyStatus("密钥已复制。");
+    } catch {
+      setCopyStatus("复制失败，请手动选择密钥。");
+    }
+  };
 
   return (
     <section
@@ -911,11 +974,61 @@ export function AssistantModelConfigPanel({
               />
             </label>
             <div className="assistant-model-config__key-status">
-              {selectedConfig.apiKey === null
-                ? "未保存后台 Key"
-                : `已配置 · 末四位 ${selectedConfig.apiKey.lastFour}`}
+              <span>
+                {selectedConfig.apiKey === null
+                  ? "未保存后台 Key"
+                  : `已配置 · 末四位 ${selectedConfig.apiKey.lastFour}`}
+              </span>
+              {canRevealSelectedKey ? (
+                <button
+                  disabled={
+                    syncRequired ||
+                    pending !== null ||
+                    keyReveal.status === "loading"
+                  }
+                  onClick={revealKey}
+                  type="button"
+                >
+                  {keyReveal.status === "loading"
+                    ? "正在查看…"
+                    : "查看已保存 Key"}
+                </button>
+              ) : null}
             </div>
           </div>
+
+          {keyReveal.error === null ? null : (
+            <p className="assistant-model-config__validation" role="alert">
+              {keyReveal.error.code === "reauth_required"
+                ? "需要重新验证身份，正在前往验证页面。"
+                : safeRevealFailureMessage(keyReveal.error)}
+            </p>
+          )}
+
+          {keyReveal.plaintext === null ? null : (
+            <section
+              aria-label="临时显示的模型密钥"
+              className="assistant-model-config__reveal"
+            >
+              <header>
+                <strong>已保存 Key</strong>
+                <span>{keyReveal.secondsRemaining} 秒后隐藏</span>
+              </header>
+              <code>{keyReveal.plaintext}</code>
+              <p>复制后由操作系统剪贴板负责保管，30 秒隐藏不会清除剪贴板。</p>
+              <div>
+                <button onClick={() => void copyKey()} type="button">
+                  复制 Key
+                </button>
+                <button onClick={keyReveal.hide} type="button">
+                  隐藏 Key
+                </button>
+                {copyStatus.length === 0 ? null : (
+                  <span aria-live="polite">{copyStatus}</span>
+                )}
+              </div>
+            </section>
+          )}
 
           {validation.length === 0 ? null : (
             <p className="assistant-model-config__validation" role="alert">
