@@ -2,12 +2,12 @@ from pathlib import Path
 import os
 import re
 import subprocess
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from agent_service.config import ControlMigrationSettings
-from agent_service.model_config_migrate import main, run_migration
+from agent_service.model_config_migrate import MigrationConnection, main, run_migration
 from agent_service.model_config_schema import (
     AGENT_CONTROL_SCHEMA_VERSION,
     EXPECTED_FUNCTION_BOUNDARY,
@@ -533,69 +533,84 @@ class FakeCursor:
 
     async def fetchall(self) -> list[tuple[Any, ...]]:
         if self.current_query == VERIFY_TABLES_SQL:
-            rows = set(EXPECTED_TABLE_OWNERS)
+            table_rows = set(EXPECTED_TABLE_OWNERS)
             if self.security_drift == "table_owner":
-                rows.remove(("model_configs", "ai_agent_control_migrator"))
-                rows.add(("model_configs", "postgres"))
-            return sorted(rows)
+                table_rows.remove(("model_configs", "ai_agent_control_migrator"))
+                table_rows.add(("model_configs", "postgres"))
+            return sorted(table_rows)
         if self.current_query == EXPECTED_VERIFY_SCHEMA_VERSION_COLUMNS_SQL:
             if self.security_drift == "schema_version_columns":
                 return [("version", "smallint", True, "")]
             return list(EXPECTED_SCHEMA_VERSION_COLUMNS)
         if self.current_query == EXPECTED_VERIFY_SCHEMA_VERSION_CONSTRAINTS_SQL:
-            rows = list(EXPECTED_SCHEMA_VERSION_CONSTRAINTS)
+            constraint_rows = list(EXPECTED_SCHEMA_VERSION_CONSTRAINTS)
             if self.security_drift == "schema_version_constraint_missing":
-                return rows[1:]
+                return constraint_rows[1:]
             if self.security_drift == "schema_version_constraint_duplicate":
-                return [rows[0], rows[0], rows[1]]
-            return rows
+                return [constraint_rows[0], constraint_rows[0], constraint_rows[1]]
+            return constraint_rows
         if self.current_query == EXPECTED_VERIFY_FUNCTION_DEFINITION_SQL:
-            rows = set(EXPECTED_FUNCTION_DEFINITION)
+            function_definition_rows = set(EXPECTED_FUNCTION_DEFINITION)
             if self.security_drift == "function_owner":
-                row = next(iter(rows))
-                rows = {(*row[:2], "postgres", *row[3:])}
+                row = next(iter(function_definition_rows))
+                function_definition_rows = {(*row[:2], "postgres", *row[3:])}
             if self.security_drift == "function_body":
-                row = next(iter(rows))
-                rows = {(*row[:-1], "BEGIN RETURN NEW; END;")}
+                row = next(iter(function_definition_rows))
+                function_definition_rows = {(*row[:-1], "BEGIN RETURN NEW; END;")}
             if self.security_drift == "function_security_definer":
-                row = next(iter(rows))
-                rows = {(*row[:6], True, *row[7:])}
-            return sorted(rows)
+                row = next(iter(function_definition_rows))
+                function_definition_rows = {(*row[:6], True, *row[7:])}
+            return sorted(function_definition_rows)
         if self.current_query == VERIFY_FUNCTION_BOUNDARY_SQL:
-            rows = set(EXPECTED_FUNCTION_BOUNDARY)
+            function_boundary_rows = set(EXPECTED_FUNCTION_BOUNDARY)
             if self.security_drift == "function_owner":
-                rows = {("guard_model_config_update", 0, "postgres", "trigger")}
-            return sorted(rows)
-        if self.current_query == EXPECTED_VERIFY_TRIGGER_DEFINITION_SQL:
-            rows = set(EXPECTED_TRIGGER_DEFINITION)
-            row = next(iter(rows))
-            if self.security_drift == "trigger_binding":
-                rows = {(row[0], "control_events", *row[2:])}
-            if self.security_drift == "trigger_disabled":
-                rows = {(*row[:6], "D", *row[7:])}
-            if self.security_drift == "trigger_shape":
-                rows = {(*row[:7], 17, *row[8:])}
-            return sorted(rows)
-        if self.current_query == VERIFY_TRIGGER_BOUNDARY_SQL:
-            rows = set(EXPECTED_TRIGGER_BOUNDARY)
-            if self.security_drift == "trigger_binding":
-                rows = {
+                function_boundary_row = next(iter(function_boundary_rows))
+                function_boundary_rows = {
                     (
-                        "model_configs_guard_update",
-                        "control_events",
-                        "agent_control",
-                        "guard_model_config_update",
-                        "ai_agent_control_migrator",
-                        "ai_agent_control_migrator",
+                        *function_boundary_row[:2],
+                        "postgres",
+                        *function_boundary_row[3:],
                     )
                 }
-            return sorted(rows)
+            return sorted(function_boundary_rows)
+        if self.current_query == EXPECTED_VERIFY_TRIGGER_DEFINITION_SQL:
+            trigger_definition_rows = set(EXPECTED_TRIGGER_DEFINITION)
+            trigger_definition_row = next(iter(trigger_definition_rows))
+            if self.security_drift == "trigger_binding":
+                trigger_definition_rows = {
+                    (
+                        trigger_definition_row[0],
+                        "control_events",
+                        *trigger_definition_row[2:],
+                    )
+                }
+            if self.security_drift == "trigger_disabled":
+                trigger_definition_rows = {
+                    (*trigger_definition_row[:6], "D", *trigger_definition_row[7:])
+                }
+            if self.security_drift == "trigger_shape":
+                trigger_definition_rows = {
+                    (*trigger_definition_row[:7], 17, *trigger_definition_row[8:])
+                }
+            return sorted(trigger_definition_rows)
+        if self.current_query == VERIFY_TRIGGER_BOUNDARY_SQL:
+            trigger_boundary_rows = set(EXPECTED_TRIGGER_BOUNDARY)
+            if self.security_drift == "trigger_binding":
+                trigger_boundary_row = next(iter(trigger_boundary_rows))
+                trigger_boundary_rows = {
+                    (
+                        trigger_boundary_row[0],
+                        "control_events",
+                        *trigger_boundary_row[2:],
+                    )
+                }
+            return sorted(trigger_boundary_rows)
         if self.current_query == VERIFY_RUNTIME_GRANTS_SQL:
-            rows = set(EXPECTED_RUNTIME_GRANTS_WITH_OPTIONS)
+            runtime_grant_rows = set(EXPECTED_RUNTIME_GRANTS_WITH_OPTIONS)
             if self.security_drift == "runtime_grant_option":
-                rows.remove(("model_configs", "SELECT", False))
-                rows.add(("model_configs", "SELECT", True))
-            return sorted(rows)
+                runtime_grant_rows.remove(("model_configs", "SELECT", False))
+                runtime_grant_rows.add(("model_configs", "SELECT", True))
+            return sorted(runtime_grant_rows)
         if self.current_query == VERIFY_FORBIDDEN_TABLE_GRANTS_SQL:
             if self.security_drift == "forbidden_table_grant":
                 return [("model_configs", "PUBLIC", "SELECT", False)]
@@ -617,13 +632,13 @@ class FakeCursor:
                 return [("guard_model_config_update", "EXECUTE", False)]
             return []
         if self.current_query == EXPECTED_VERIFY_SCHEMA_ACL_SQL:
-            rows = set(EXPECTED_SCHEMA_GRANTS)
+            schema_grant_rows = set(EXPECTED_SCHEMA_GRANTS)
             if self.security_drift == "schema_public_grant":
-                rows.add(("PUBLIC", "USAGE", False))
+                schema_grant_rows.add(("PUBLIC", "USAGE", False))
             if self.security_drift == "schema_grant_option":
-                rows.remove(("ai_agent_control", "USAGE", False))
-                rows.add(("ai_agent_control", "USAGE", True))
-            return sorted(rows)
+                schema_grant_rows.remove(("ai_agent_control", "USAGE", False))
+                schema_grant_rows.add(("ai_agent_control", "USAGE", True))
+            return sorted(schema_grant_rows)
         raise AssertionError(f"unexpected fetchall query: {self.current_query}")
 
 
@@ -660,10 +675,10 @@ async def test_run_migration_applies_version_one_and_verifies_boundary_in_one_tr
     events: list[str] = []
     cursor = FakeCursor()
 
-    async def connector(database_url: str) -> FakeConnection:
+    async def connector(database_url: str) -> MigrationConnection:
         assert database_url == PSYCOPG_URL
         events.append("connect")
-        return FakeConnection(cursor, events)
+        return cast(MigrationConnection, FakeConnection(cursor, events))
 
     await run_migration(settings, connector=connector)
 
@@ -694,8 +709,8 @@ async def test_run_migration_skips_applied_version_but_reverifies_boundary() -> 
     events: list[str] = []
     cursor = FakeCursor(version_applied=True)
 
-    async def connector(database_url: str) -> FakeConnection:
-        return FakeConnection(cursor, events)
+    async def connector(database_url: str) -> MigrationConnection:
+        return cast(MigrationConnection, FakeConnection(cursor, events))
 
     await run_migration(settings, connector=connector)
 
@@ -745,8 +760,8 @@ async def test_applied_migration_fails_closed_on_security_boundary_drift(
     events: list[str] = []
     cursor = FakeCursor(version_applied=True, security_drift=security_drift)
 
-    async def connector(database_url: str) -> FakeConnection:
-        return FakeConnection(cursor, events)
+    async def connector(database_url: str) -> MigrationConnection:
+        return cast(MigrationConnection, FakeConnection(cursor, events))
 
     with pytest.raises(
         RuntimeError,
@@ -766,8 +781,8 @@ async def test_version_one_ddl_rolls_back_when_post_verification_fails() -> None
     events: list[str] = []
     cursor = FakeCursor(security_drift="table_owner")
 
-    async def connector(database_url: str) -> FakeConnection:
-        return FakeConnection(cursor, events)
+    async def connector(database_url: str) -> MigrationConnection:
+        return cast(MigrationConnection, FakeConnection(cursor, events))
 
     with pytest.raises(
         RuntimeError,
@@ -790,8 +805,8 @@ async def test_run_migration_rejects_invalid_schema_owner_before_prepare(
     events: list[str] = []
     cursor = FakeCursor(schema_owner=schema_owner)
 
-    async def connector(database_url: str) -> FakeConnection:
-        return FakeConnection(cursor, events)
+    async def connector(database_url: str) -> MigrationConnection:
+        return cast(MigrationConnection, FakeConnection(cursor, events))
 
     with pytest.raises(
         RuntimeError,

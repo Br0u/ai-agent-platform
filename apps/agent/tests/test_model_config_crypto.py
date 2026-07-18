@@ -234,10 +234,12 @@ def test_ciphertext_and_nonce_tampering_fail_closed(field_name: str) -> None:
     cipher = make_cipher()
     sealed = seal_secret(cipher)
     original = cast(bytes, getattr(sealed, field_name))
-    tampered = replace(
-        sealed,
-        **{field_name: bytes([original[0] ^ 1]) + original[1:]},
-    )
+    tampered_value = bytes([original[0] ^ 1]) + original[1:]
+    if field_name == "ciphertext":
+        tampered = replace(sealed, ciphertext=tampered_value)
+    else:
+        assert field_name == "nonce"
+        tampered = replace(sealed, nonce=tampered_value)
 
     with pytest.raises(ModelConfigCryptoError) as exc_info:
         cipher.open(

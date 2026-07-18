@@ -43,6 +43,7 @@ from agent_service.model_control_service import (
     ModelControlStorageError,
     ModelControlValidationError,
 )
+from agent_service.model_registry import build_managed_model
 from agent_service.model_endpoint_catalog import (
     ModelEndpoint,
     ModelEndpointCatalog,
@@ -50,7 +51,7 @@ from agent_service.model_endpoint_catalog import (
 from agent_service.model_runtime_slot import ModelRuntimeSlot
 from agent_service.model_runtime_slot import RuntimeModelMetadata, RuntimeModelStatus
 from agent_service.model_runtime_types import ManagedModel
-from agent_service.model_verifier import ModelVerificationResult
+from agent_service.model_verifier import ModelVerificationResult, verify_model
 
 
 ACTOR_ID = UUID("10000000-0000-4000-8000-000000000001")
@@ -419,11 +420,6 @@ def service(
     verifier: Callable[..., Awaitable[ModelVerificationResult]] | None = None,
     uuid_values: tuple[UUID, ...] = (CONFIG_ID, EVENT_ID),
 ) -> ModelControlService:
-    kwargs: dict[str, object] = {}
-    if model_builder is not None:
-        kwargs["model_builder"] = model_builder
-    if verifier is not None:
-        kwargs["verifier"] = verifier
     return ModelControlService(
         repository=cast(ModelConfigRepository, repository),
         cipher=ModelConfigCipher(master_key=MASTER_KEY),
@@ -432,7 +428,8 @@ def service(
         bootstrap_model=bootstrap_model,
         control_enabled=control_enabled,
         uuid_factory=iter(uuid_values).__next__,
-        **kwargs,
+        model_builder=model_builder or build_managed_model,
+        verifier=verifier or verify_model,
     )
 
 
@@ -680,7 +677,9 @@ async def test_cross_provider_verification_overlaps_before_activation_lock() -> 
         timeout_seconds: int,
     ) -> ModelVerificationResult:
         assert timeout_seconds == 50
-        entered.add(_managed.model.provider)
+        provider = _managed.model.provider
+        assert provider is not None
+        entered.add(provider)
         if len(entered) == 2:
             both_entered.set()
         await asyncio.wait_for(both_entered.wait(), timeout=5)

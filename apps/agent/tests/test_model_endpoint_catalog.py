@@ -12,9 +12,10 @@ from agent_service.model_endpoint_catalog import (
     EndpointNotAllowedError,
     load_model_endpoint_catalog,
 )
+from agent_service.model_config_types import ModelProvider
 
 
-OFFICIAL_ENDPOINTS = {
+OFFICIAL_ENDPOINTS: dict[str, tuple[ModelProvider, str]] = {
     "openai-official": ("openai", "https://api.openai.com/v1"),
     "anthropic-official": ("anthropic", "https://api.anthropic.com"),
     "google-official": (
@@ -39,7 +40,9 @@ def write_endpoint_file(
 ) -> Path:
     path = tmp_path / "model-endpoints.json"
     path.write_text(
-        raw if raw is not None else json.dumps({"version": "1", "endpoints": endpoints}),
+        raw
+        if raw is not None
+        else json.dumps({"version": "1", "endpoints": endpoints}),
         encoding="utf-8",
     )
     path.chmod(mode)
@@ -104,7 +107,9 @@ def test_disabled_deployment_endpoint_is_not_public_or_resolvable(
 def test_provider_mismatch_is_rejected_without_exposing_url() -> None:
     catalog = load_model_endpoint_catalog()
 
-    with pytest.raises(EndpointNotAllowedError, match="^endpoint not allowed$") as exc_info:
+    with pytest.raises(
+        EndpointNotAllowedError, match="^endpoint not allowed$"
+    ) as exc_info:
         catalog.resolve("openai-official", "anthropic")
 
     assert "api.openai.com" not in str(exc_info.value)
@@ -160,7 +165,9 @@ def test_unsafe_literal_urls_are_rejected(tmp_path: Path, base_url: str) -> None
         [custom_endpoint(base_url=base_url)],
     )
 
-    with pytest.raises(EndpointCatalogError, match="^invalid endpoint catalog$") as exc_info:
+    with pytest.raises(
+        EndpointCatalogError, match="^invalid endpoint catalog$"
+    ) as exc_info:
         load_model_endpoint_catalog(path)
 
     assert base_url not in str(exc_info.value)
@@ -178,10 +185,15 @@ def test_url_validation_does_not_resolve_dns(
     monkeypatch.setattr(socket, "getaddrinfo", fail_dns)
     path = write_endpoint_file(tmp_path, [custom_endpoint()])
 
-    assert load_model_endpoint_catalog(path).resolve(
-        "openai-deployment",
-        "openai",
-    ).base_url == "https://models.example.com/v1"
+    assert (
+        load_model_endpoint_catalog(path)
+        .resolve(
+            "openai-deployment",
+            "openai",
+        )
+        .base_url
+        == "https://models.example.com/v1"
+    )
 
 
 @pytest.mark.parametrize("mode", (0o620, 0o606, 0o666))
@@ -219,9 +231,7 @@ def test_fifo_is_rejected_without_blocking_before_file_type_check(
     source_root = str(Path(__file__).resolve().parents[1] / "src")
     inherited_pythonpath = os.environ.get("PYTHONPATH")
     pythonpath = os.pathsep.join(
-        [source_root, inherited_pythonpath]
-        if inherited_pythonpath
-        else [source_root]
+        [source_root, inherited_pythonpath] if inherited_pythonpath else [source_root]
     )
 
     try:
@@ -268,7 +278,9 @@ def test_endpoint_file_and_items_forbid_extra_fields(tmp_path: Path) -> None:
         [{**custom_endpoint(), "api_key": "must-never-be-accepted"}],
     )
 
-    with pytest.raises(EndpointCatalogError, match="^invalid endpoint catalog$") as exc_info:
+    with pytest.raises(
+        EndpointCatalogError, match="^invalid endpoint catalog$"
+    ) as exc_info:
         load_model_endpoint_catalog(path)
 
     assert "must-never-be-accepted" not in str(exc_info.value)

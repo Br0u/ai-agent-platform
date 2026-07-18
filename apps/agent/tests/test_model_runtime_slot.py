@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 import threading
-from typing import Any
+from typing import Any, Protocol, cast
 
 from agno.models.base import Model
 from agno.models.response import ModelResponse
@@ -14,8 +14,10 @@ from agent_service.model_runtime_slot import (
     ModelRuntimeSlot,
     ModelRuntimeUnavailableError,
     RuntimeModelMetadata,
+    RuntimeModelSource,
     RuntimeModelStatus,
 )
+from agent_service.model_config_types import ModelProvider
 from agent_service.model_runtime_types import ManagedModel
 
 
@@ -27,6 +29,14 @@ LOCKED_MODEL_METHODS = {
     "_parse_provider_response",
     "_parse_provider_response_delta",
 }
+
+
+class ClosableIterator(Iterator[ModelResponse], Protocol):
+    def close(self) -> None: ...
+
+
+class ClosableAsyncIterator(AsyncIterator[ModelResponse], Protocol):
+    async def aclose(self) -> None: ...
 
 
 @dataclass
@@ -169,14 +179,14 @@ class ThreadBlockingAsyncConstructionModel(RuntimeProbeModel):
 
 
 def metadata(
-    provider: str,
+    provider: object,
     *,
     revision: int | None = 1,
-    source: str = "dynamic",
+    source: object = "dynamic",
 ) -> RuntimeModelMetadata:
     return RuntimeModelMetadata(
-        source=source,
-        provider=provider,
+        source=cast(RuntimeModelSource, source),
+        provider=cast(ModelProvider, provider),
         model_id=f"{provider}-model",
         config_revision=revision,
     )
@@ -435,7 +445,7 @@ def test_sync_stream_uses_one_snapshot_and_early_close_releases_it() -> None:
             next(stream)
         await asyncio.sleep(0)
 
-        early = slot.invoke_stream()
+        early = cast(ClosableIterator, slot.invoke_stream())
         assert content(next(early)) == "new:sync:1"
         early.close()
         await slot.shutdown()
@@ -567,7 +577,7 @@ def test_async_aclose_waits_for_concurrent_anext_before_releasing_retired_entry(
         slot.activate(managed(old, closes), 1, metadata("openai"))
         stream = slot.ainvoke_stream()
         assert content(await anext(stream)) == "old:first"
-        next_call = asyncio.create_task(anext(stream))
+        next_call: asyncio.Future[ModelResponse] = asyncio.ensure_future(anext(stream))
         await old.next_entered.wait()
         slot.activate(
             managed(RuntimeProbeModel(id="new"), closes),
@@ -702,7 +712,7 @@ def test_async_stream_early_close_and_cancel_release_exactly_once() -> None:
         await slot.start()
         slot.activate(managed(old, closes), 1, metadata("openai"))
 
-        stream = slot.ainvoke_stream()
+        stream = cast(ClosableAsyncIterator, slot.ainvoke_stream())
         assert content(await anext(stream)) == "old:first"
         slot.deactivate()
         await stream.aclose()
@@ -714,10 +724,12 @@ def test_async_stream_early_close_and_cancel_release_exactly_once() -> None:
         slot = ModelRuntimeSlot()
         await slot.start()
         slot.activate(managed(cancelling, closes), 1, metadata("openai"))
-        stream = slot.ainvoke_stream()
-        assert content(await anext(stream)) == "cancelling:first"
+        cancelling_stream = slot.ainvoke_stream()
+        assert content(await anext(cancelling_stream)) == "cancelling:first"
         slot.deactivate()
-        next_item = asyncio.create_task(anext(stream))
+        next_item: asyncio.Future[ModelResponse] = asyncio.ensure_future(
+            anext(cancelling_stream)
+        )
         await asyncio.sleep(0)
         next_item.cancel()
         with pytest.raises(asyncio.CancelledError):
