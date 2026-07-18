@@ -38,6 +38,7 @@ describe("assistant application rate limiter", () => {
       anonymous: { maximumAttempts: 20, windowMs: 60_000 },
       customer: { maximumAttempts: 60, windowMs: 60_000 },
       "admin-test": { maximumAttempts: 20, windowMs: 60_000 },
+      "admin-key-reveal": { maximumAttempts: 5, windowMs: 10 * 60_000 },
     });
   });
 
@@ -58,15 +59,24 @@ describe("assistant application rate limiter", () => {
       assistantRateLimitKey(SECRET, "anonymous", "ip", "203.0.113.10"),
       assistantRateLimitKey(SECRET, "customer", "actor", "customer-id"),
       assistantRateLimitKey(SECRET, "admin-test", "actor", "staff-id"),
+      assistantRateLimitKey(
+        SECRET,
+        "admin-key-reveal",
+        "actor",
+        "revealing-staff-id",
+      ),
     ];
 
-    expect(new Set(values)).toHaveLength(4);
+    expect(new Set(values)).toHaveLength(5);
     expect(values[0]).toMatch(/^assistant:anonymous:session:[a-f0-9]{64}$/u);
     expect(values[1]).toMatch(/^assistant:anonymous:ip:[a-f0-9]{64}$/u);
     expect(values[2]).toMatch(/^assistant:customer:actor:[a-f0-9]{64}$/u);
     expect(values[3]).toMatch(/^assistant:admin-test:actor:[a-f0-9]{64}$/u);
+    expect(values[4]).toMatch(
+      /^assistant:admin-key-reveal:actor:[a-f0-9]{64}$/u,
+    );
     expect(values.join("\n")).not.toMatch(
-      /session-secret|203\.0\.113\.10|customer-id|staff-id/u,
+      /session-secret|203\.0\.113\.10|customer-id|staff-id|revealing-staff-id/u,
     );
   });
 
@@ -133,7 +143,7 @@ describe("assistant application rate limiter", () => {
     expect(fake.committed()).toBe(false);
   });
 
-  it.each(["customer", "admin-test"] as const)(
+  it.each(["customer", "admin-test", "admin-key-reveal"] as const)(
     "consumes one actor bucket for %s scope",
     async (scope) => {
       const fake = fakeDatabase([1]);
