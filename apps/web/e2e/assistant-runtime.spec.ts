@@ -1715,11 +1715,16 @@ test.describe("@control deterministic model control", () => {
       allowedLastFour?: string[];
       allowedPlaintext?: string;
     } = {}) => {
-      const allowedValues = new Set(
-        allowedPlaintext === undefined
-          ? allowedLastFour
-          : [...allowedLastFour, allowedPlaintext],
-      );
+      const allowedValues = new Set(allowedLastFour);
+      if (allowedPlaintext !== undefined) {
+        allowedValues.add(allowedPlaintext);
+        const embeddedPlaintextLastFour = Object.values(submittedLastFour).find(
+          (lastFour) => allowedPlaintext.endsWith(lastFour),
+        );
+        if (embeddedPlaintextLastFour !== undefined) {
+          allowedValues.add(embeddedPlaintextLastFour);
+        }
+      }
       return [
         ...runtimeProtectedValues(),
         credentials.modelAdminSessionToken,
@@ -1774,15 +1779,6 @@ test.describe("@control deterministic model control", () => {
           try {
             const upstream = await route.fetch();
             const status = upstream.status();
-            const isApiError = status >= 400;
-            const isAssistantApi =
-              pathname.startsWith("/api/v1/admin/assistant/") ||
-              pathname.startsWith("/api/v1/assistant/");
-            if (!isApiError && !isAssistantApi) {
-              await route.fulfill({ response: upstream });
-              return;
-            }
-
             const rawJson = await upstream.text();
             let exposure: ControlResponseExposure = "strict";
             let allowedPlaintext: string | undefined;
@@ -1816,8 +1812,6 @@ test.describe("@control deterministic model control", () => {
               if (fixture !== undefined) {
                 exposure = "model-key-reveal";
                 allowedPlaintext = submittedKeys[fixture.provider];
-                const value = submittedLastFour[fixture.provider];
-                allowedLastFour = value === undefined ? [] : [value];
               }
             }
 
@@ -2065,7 +2059,6 @@ test.describe("@control deterministic model control", () => {
       exposure: "model-key-reveal",
       method: "POST",
       allowedPlaintext: submittedKeys.dashscope!,
-      allowedLastFour: [submittedLastFour.dashscope!],
     });
     expect(JSON.stringify(revealBody)).toContain(submittedKeys.dashscope!);
     const bootstrapReveal = await modelAdmin.request.post(
@@ -2205,17 +2198,18 @@ test.describe("@control deterministic model control", () => {
           );
           expect(fixture).toBeDefined();
           if (fixture !== undefined) {
-            expect(response.allowedLastFour).toEqual([
-              submittedLastFour[fixture.provider],
-            ]);
             if (response.exposure === "model-config-page") {
               expect(response.method).toBe("PUT");
               expect(response.allowedPlaintext).toBeUndefined();
+              expect(response.allowedLastFour).toEqual([
+                submittedLastFour[fixture.provider],
+              ]);
             } else {
               expect(response.method).toBe("POST");
               expect(response.allowedPlaintext).toBe(
                 submittedKeys[fixture.provider],
               );
+              expect(response.allowedLastFour).toEqual([]);
             }
           }
         }

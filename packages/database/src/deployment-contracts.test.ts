@@ -972,6 +972,58 @@ describe("production deployment security contracts", () => {
     expect(browserAcceptance).toContain(
       "expect([...response.allowedLastFour].sort()).toEqual(",
     );
+    const routeCaptureStartIndex = browserAcceptance.indexOf(
+      'await context.route("**/api/v1/**"',
+    );
+    const routeCaptureEndIndex = browserAcceptance.indexOf(
+      "async function drainControlResponses(",
+      routeCaptureStartIndex,
+    );
+    const routeCaptureSource = browserAcceptance.slice(
+      routeCaptureStartIndex,
+      routeCaptureEndIndex,
+    );
+    const routeFetchIndex = routeCaptureSource.indexOf("await route.fetch()");
+    const routeBodyIndex = routeCaptureSource.indexOf("await upstream.text()");
+    const routeLedgerIndex = routeCaptureSource.indexOf(
+      "controlResponseLedger.push(",
+    );
+    const routeFulfillIndex = routeCaptureSource.indexOf(
+      "await route.fulfill({ response: upstream, body: rawJson })",
+    );
+    expect(routeCaptureStartIndex).toBeGreaterThan(-1);
+    expect(routeCaptureEndIndex).toBeGreaterThan(routeCaptureStartIndex);
+    expect(routeCaptureSource).not.toContain("const isApiError");
+    expect(routeCaptureSource).not.toContain("const isAssistantApi");
+    expect(routeCaptureSource).not.toContain("return;");
+    expect(routeCaptureSource.match(/status === 200/gu)).toHaveLength(3);
+    expect(routeBodyIndex).toBeGreaterThan(routeFetchIndex);
+    expect(routeLedgerIndex).toBeGreaterThan(routeBodyIndex);
+    expect(routeFulfillIndex).toBeGreaterThan(routeLedgerIndex);
+    const routeRevealIndex = routeCaptureSource.indexOf(
+      'exposure = "model-key-reveal"',
+    );
+    expect(routeRevealIndex).toBeGreaterThan(-1);
+    expect(
+      routeCaptureSource.slice(routeRevealIndex, routeLedgerIndex),
+    ).not.toContain("allowedLastFour =");
+    const directRevealStartIndex = browserAcceptance.indexOf(
+      "const revealBody = await readControlJson(revealResponse",
+    );
+    const directRevealEndIndex = browserAcceptance.indexOf(
+      "const bootstrapReveal",
+      directRevealStartIndex,
+    );
+    expect(directRevealStartIndex).toBeGreaterThan(-1);
+    expect(directRevealEndIndex).toBeGreaterThan(directRevealStartIndex);
+    expect(
+      browserAcceptance.slice(directRevealStartIndex, directRevealEndIndex),
+    ).not.toContain("allowedLastFour");
+    expect(
+      browserAcceptance.match(
+        /expect\(response\.allowedLastFour\)\.toEqual\(\[\]\)/gu,
+      ),
+    ).toHaveLength(2);
     expect(browserAcceptance).toContain(
       "expect(capabilityRequests).toEqual([])",
     );
