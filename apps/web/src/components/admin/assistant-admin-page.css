@@ -527,7 +527,7 @@
 
 .assistant-model-config__key-status button,
 .assistant-model-config__reveal button {
-  min-height: 32px;
+  min-height: 44px;
   border: 1px solid var(--color-primary);
   border-radius: 3px;
   padding: 0 10px;

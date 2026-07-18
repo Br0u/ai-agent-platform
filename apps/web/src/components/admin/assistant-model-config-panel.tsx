@@ -440,6 +440,8 @@ export function AssistantModelConfigPanel({
 
   const selectProvider = (provider: AdminModelProvider) => {
     if (provider === selectedProvider) return;
+    keyReveal.hide();
+    setCopyStatus("");
     if (
       pendingActionRef.current === "save" ||
       pendingActionRef.current === "activate"
@@ -456,7 +458,6 @@ export function AssistantModelConfigPanel({
       nextConfig.endpointId ?? snapshot.endpoints[provider][0]?.id ?? "",
     );
     setValidation("");
-    setCopyStatus("");
     if (!syncRequiredRef.current) setAnnouncement("");
     selectedProviderRef.current = provider;
     setSelectedProvider(provider);

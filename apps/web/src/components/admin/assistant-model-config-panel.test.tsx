@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   act,
   cleanup,
@@ -7,6 +8,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { Profiler } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -135,6 +137,42 @@ function listResponse(value: AdminModelConfigSnapshot) {
   return {
     ...value,
     requestId: "22222222-2222-4222-8222-222222222222",
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function revealResponse(key: string) {
+  return Response.json({
+    version: "1",
+    requestId: "55555555-5555-4555-8555-555555555555",
+    key,
+  });
+}
+
+function watchBrowserPersistence() {
+  const spies = [
+    vi.spyOn(Storage.prototype, "getItem"),
+    vi.spyOn(Storage.prototype, "setItem"),
+    vi.spyOn(Storage.prototype, "removeItem"),
+    vi.spyOn(Storage.prototype, "clear"),
+  ];
+  const indexedDbOpen = vi.fn();
+  const cacheOpen = vi.fn();
+  const cacheMatch = vi.fn();
+  vi.stubGlobal("indexedDB", { open: indexedDbOpen });
+  vi.stubGlobal("caches", { open: cacheOpen, match: cacheMatch });
+  return () => {
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    expect(indexedDbOpen).not.toHaveBeenCalled();
+    expect(cacheOpen).not.toHaveBeenCalled();
+    expect(cacheMatch).not.toHaveBeenCalled();
   };
 }
 
@@ -306,9 +344,22 @@ describe("AssistantModelConfigPanel", () => {
     ).toBeEnabled();
   });
 
+  it("keeps every reveal, copy and hide control at least 44 pixels high", () => {
+    const stylesheet = readFileSync(
+      "src/components/admin/assistant-admin-page.css",
+      "utf8",
+    );
+
+    expect(stylesheet).toMatch(
+      /\.assistant-model-config__key-status button,\s*\.assistant-model-config__reveal button\s*\{[^}]*min-height:\s*44px;/su,
+    );
+  });
+
   it("reveals ordinary selectable plaintext for exactly 30 seconds and clears it on Provider change", async () => {
     vi.useFakeTimers();
     const key = "PANEL-SECRET-SENTINEL";
+    const commits: string[] = [];
+    const expectNoPersistence = watchBrowserPersistence();
     vi.stubGlobal(
       "fetch",
       vi.fn().mockImplementation(async () =>
@@ -320,9 +371,14 @@ describe("AssistantModelConfigPanel", () => {
       ),
     );
     render(
-      <AssistantModelConfigPanel
-        initialSnapshot={{ ...withSavedOpenAi(), canReveal: true }}
-      />,
+      <Profiler
+        id="assistant-model-config"
+        onRender={() => commits.push(document.body.textContent ?? "")}
+      >
+        <AssistantModelConfigPanel
+          initialSnapshot={{ ...withSavedOpenAi(), canReveal: true }}
+        />
+      </Profiler>,
     );
 
     await act(async () => {
@@ -335,8 +391,14 @@ describe("AssistantModelConfigPanel", () => {
     ).not.toBeInTheDocument();
     expect(document.documentElement.outerHTML).not.toContain(`value="${key}"`);
 
+    commits.length = 0;
     fireEvent.click(screen.getByRole("tab", { name: /Claude/u }));
     expect(screen.queryByText(key)).not.toBeInTheDocument();
+    expect(
+      commits
+        .filter((commit) => commit.includes("Claude"))
+        .every((commit) => !commit.includes(key)),
+    ).toBe(true);
 
     fireEvent.click(screen.getByRole("tab", { name: /OpenAI/u }));
     await act(async () => {
@@ -346,6 +408,103 @@ describe("AssistantModelConfigPanel", () => {
     expect(screen.getByText(key)).toBeVisible();
     await act(async () => vi.advanceTimersByTimeAsync(1));
     expect(screen.queryByText(key)).not.toBeInTheDocument();
+    expectNoPersistence();
+  });
+
+  it.each([
+    [
+      "manual hide",
+      () => {
+        fireEvent.click(screen.getByRole("button", { name: "隐藏 Key" }));
+      },
+    ],
+    [
+      "pagehide",
+      () => {
+        window.dispatchEvent(new PageTransitionEvent("pagehide"));
+      },
+    ],
+    [
+      "hidden visibility",
+      () => {
+        vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+        document.dispatchEvent(new Event("visibilitychange"));
+      },
+    ],
+  ] as const)(
+    "removes the secret sentinel from the DOM on %s",
+    async (_path, trigger) => {
+      const key = "DOM-CLEANUP-SECRET-SENTINEL";
+      const expectNoPersistence = watchBrowserPersistence();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation(async () => revealResponse(key)),
+      );
+      render(
+        <AssistantModelConfigPanel
+          initialSnapshot={{ ...withSavedOpenAi(), canReveal: true }}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
+      expect(await screen.findByText(key)).toBeVisible();
+      act(trigger);
+
+      expect(screen.queryByText(key)).not.toBeInTheDocument();
+      expect(document.body.textContent).not.toContain(key);
+      expectNoPersistence();
+    },
+  );
+
+  it("removes the secret sentinel from the DOM on unmount", async () => {
+    const key = "UNMOUNT-SECRET-SENTINEL";
+    const expectNoPersistence = watchBrowserPersistence();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async () => revealResponse(key)),
+    );
+    const view = render(
+      <AssistantModelConfigPanel
+        initialSnapshot={{ ...withSavedOpenAi(), canReveal: true }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
+    expect(await screen.findByText(key)).toBeVisible();
+    view.unmount();
+
+    expect(document.body.textContent).not.toContain(key);
+    expectNoPersistence();
+  });
+
+  it("does not restore a late secret response after lifecycle abort", async () => {
+    const key = "LATE-SECRET-SENTINEL";
+    const pending = deferred<Response>();
+    const expectNoPersistence = watchBrowserPersistence();
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((_input, init) => {
+        signal = init?.signal as AbortSignal;
+        return pending.promise;
+      }),
+    );
+    render(
+      <AssistantModelConfigPanel
+        initialSnapshot={{ ...withSavedOpenAi(), canReveal: true }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
+    expect(signal?.aborted).toBe(false);
+    act(() => window.dispatchEvent(new PageTransitionEvent("pagehide")));
+    expect(signal?.aborted).toBe(true);
+    pending.resolve(revealResponse(key));
+    await act(async () => Promise.resolve());
+
+    expect(screen.queryByText(key)).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(key);
+    expectNoPersistence();
   });
 
   it.each([
