@@ -101,8 +101,9 @@ class ModelControlAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
+        action, provider = _control_target(scope)
+        private = action == "reveal"
         try:
-            action, provider = _control_target(scope)
             assertion = self._authenticator.authenticate(
                 headers=scope.get("headers", ()),
                 action=action,
@@ -113,7 +114,7 @@ class ModelControlAuthMiddleware:
             response = JSONResponse(
                 status_code=401,
                 content={"error": "authentication_failed"},
-                headers={"Cache-Control": "no-store"},
+                headers=(_PRIVATE_NO_STORE_HEADERS if private else _NO_STORE_HEADERS),
             )
             await response(scope, receive, send)
             return
@@ -121,7 +122,7 @@ class ModelControlAuthMiddleware:
             response = JSONResponse(
                 status_code=403,
                 content={"error": "authorization_failed"},
-                headers={"Cache-Control": "no-store"},
+                headers=(_PRIVATE_NO_STORE_HEADERS if private else _NO_STORE_HEADERS),
             )
             await response(scope, receive, send)
             return
@@ -200,12 +201,18 @@ def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 async def _read_json_object(request: Request) -> dict[str, object] | None:
-    if request.headers.get("content-type") != "application/json":
+    raw_headers = request.scope.get("headers", ())
+    content_types = [
+        value
+        for name, value in raw_headers
+        if type(name) is bytes and name.lower() == b"content-type"
+    ]
+    if content_types != [b"application/json"]:
         return None
     content_lengths = [
         value
-        for name, value in request.scope.get("headers", ())
-        if name.lower() == b"content-length"
+        for name, value in raw_headers
+        if type(name) is bytes and name.lower() == b"content-length"
     ]
     if len(content_lengths) > 1:
         return None
@@ -297,6 +304,9 @@ def build_model_control_router(
             "expectedRevision",
         }:
             return _validation_response()
+        api_key = payload.get("apiKey")
+        if api_key is not None and type(api_key) is not str:
+            return _validation_response()
         draft: ModelConfigDraft | None = None
         try:
             draft = ModelConfigDraft.model_validate(
@@ -304,11 +314,7 @@ def build_model_control_router(
                     "provider": provider,
                     "model_id": payload.get("modelId"),
                     "endpoint_id": payload.get("endpointId"),
-                    "api_key": (
-                        None
-                        if payload.get("apiKey") is None
-                        else SecretStr(cast(str, payload.get("apiKey")))
-                    ),
+                    "api_key": None if api_key is None else SecretStr(api_key),
                     "expected_revision": payload.get("expectedRevision"),
                 }
             )

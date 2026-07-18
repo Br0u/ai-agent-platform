@@ -589,6 +589,43 @@ def test_save_accepts_one_strict_draft_and_passes_the_verified_assertion() -> No
     assert "secret-api-key-cdef" not in response.text
 
 
+@pytest.mark.parametrize(
+    "invalid_api_key",
+    (
+        ["a", "b", "c", "d", "e", "f", "g", "h"],
+        {f"key-{index}": "value" for index in range(8)},
+        12345678,
+        True,
+        False,
+    ),
+)
+def test_save_rejects_every_non_string_api_key_before_service_dispatch(
+    invalid_api_key: object,
+) -> None:
+    service = RecordingService()
+    application = control_route_app(service)
+
+    with TestClient(application, raise_server_exceptions=False) as client:
+        response = client.put(
+            "/internal/control/model-configs/openai",
+            headers=mutation_headers(
+                action="save",
+                permission="admin:assistant:configure",
+            ),
+            json={
+                "modelId": "gpt-5-mini",
+                "endpointId": "openai-official",
+                "apiKey": invalid_api_key,
+                "expectedRevision": 2,
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "validation_error"}
+    assert response.headers["cache-control"] == "no-store"
+    assert service.saved == []
+
+
 def test_test_and_activate_passes_only_revision_and_verified_assertion() -> None:
     service = RecordingService()
     application = control_route_app(service)
@@ -682,6 +719,75 @@ def test_reveal_domain_failure_keeps_private_no_cache_headers() -> None:
     assert response.headers["cache-control"] == "no-store, private"
     assert response.headers["pragma"] == "no-cache"
     assert str(failure) not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("request_headers", "status_code", "error_code"),
+    (
+        (
+            [],
+            401,
+            "authentication_failed",
+        ),
+        (
+            [(b"authorization", f"Bearer {CONTROL_KEY}".encode())],
+            403,
+            "authorization_failed",
+        ),
+    ),
+)
+async def test_reveal_auth_failure_is_private_and_precedes_body_receive(
+    request_headers: list[tuple[bytes, bytes]],
+    status_code: int,
+    error_code: str,
+) -> None:
+    service = RecordingService()
+    application = control_route_app(service)
+    path = "/internal/control/model-configs/openai/reveal-key"
+    headers = [
+        *request_headers,
+        (b"content-type", b"application/json"),
+        (b"content-length", b"14"),
+    ]
+    scope = cast(
+        Scope,
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": headers,
+            "client": ("test", 123),
+            "server": ("test", 80),
+            "state": {},
+        },
+    )
+    received = 0
+    sent: list[Message] = []
+
+    async def receive() -> Message:
+        nonlocal received
+        received += 1
+        raise AssertionError("reveal auth failure must not receive a body")
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    await application(scope, receive, send)
+
+    assert received == 0
+    assert sent[0]["status"] == status_code
+    response_headers = dict(sent[0]["headers"])
+    assert response_headers[b"cache-control"] == b"no-store, private"
+    assert response_headers[b"pragma"] == b"no-cache"
+    assert sent[1]["body"] == f'{{"error":"{error_code}"}}'.encode()
+    assert service.revealed == []
 
 
 @pytest.mark.parametrize(
@@ -844,6 +950,79 @@ def test_every_mutation_requires_exact_json_content_type(
     assert service.saved == []
     assert service.activated == []
     assert service.revealed == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content_type_values",
+    (
+        (b"application/json", b"application/json"),
+        (b"application/json", b"text/plain"),
+        (b"application/json\x00",),
+    ),
+    ids=("duplicate", "conflicting", "malformed"),
+)
+async def test_save_requires_one_exact_raw_content_type_header(
+    content_type_values: tuple[bytes, ...],
+) -> None:
+    service = RecordingService()
+    application = control_route_app(service)
+    path = "/internal/control/model-configs/openai"
+    body = (
+        b'{"modelId":"gpt-5-mini","endpointId":"openai-official","expectedRevision":2}'
+    )
+    headers = [
+        (b"authorization", f"Bearer {CONTROL_KEY}".encode()),
+        (
+            b"x-agent-control-assertion",
+            signed_assertion(
+                action="save",
+                permission="admin:assistant:configure",
+            ).encode(),
+        ),
+        *((b"content-type", value) for value in content_type_values),
+        (b"content-length", str(len(body)).encode()),
+    ]
+    scope = cast(
+        Scope,
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "PUT",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": headers,
+            "client": ("test", 123),
+            "server": ("test", 80),
+            "state": {},
+        },
+    )
+    received = 0
+    sent: list[Message] = []
+
+    async def receive() -> Message:
+        nonlocal received
+        received += 1
+        if received > 1:
+            raise AssertionError("invalid Content-Type read past one body message")
+        return cast(
+            Message,
+            {"type": "http.request", "body": body, "more_body": False},
+        )
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    await application(scope, receive, send)
+
+    assert received == 0
+    assert sent[0]["status"] == 400
+    assert sent[1]["body"] == b'{"error":"validation_error"}'
+    assert service.saved == []
 
 
 @pytest.mark.parametrize(
