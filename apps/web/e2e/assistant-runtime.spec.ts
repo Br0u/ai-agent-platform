@@ -1962,19 +1962,21 @@ test.describe("@control deterministic model control", () => {
       "SELECT c.provider || ':' || a.config_revision || ':' || a.activation_version FROM agent_control.active_model_config a JOIN agent_control.model_configs c ON c.id = a.model_config_id",
     );
     expect(activePointer).toMatch(/^dashscope:1:[1-9][0-9]*$/u);
-    const auditText = databaseQuery(
-      "SELECT coalesce(string_agg(action || ':' || metadata::text, E'\\n'), '') FROM audit_logs WHERE action LIKE 'assistant.model_config%';",
+    const webAuditText = databaseQuery(
+      "SELECT coalesce(string_agg(action || ':' || metadata::text, E'\\n'), '') FROM audit_logs WHERE action LIKE 'assistant.model_config%' OR action IN ('assistant.model_key_reveal_requested', 'assistant.model_key_revealed');",
     );
+    expect(webAuditText).toContain("assistant.model_key_reveal_requested:");
+    expect(webAuditText).toContain("assistant.model_key_revealed:");
     const controlEventText = databaseQuery(
       "SELECT coalesce(string_agg(action || ':' || provider || ':' || model_id || ':' || endpoint_id || ':' || result, E'\\n'), '') FROM agent_control.control_events;",
     );
     for (const key of Object.values(submittedKeys)) {
       expect(controlRows).not.toContain(key);
-      expect(auditText).not.toContain(key);
+      expect(webAuditText).not.toContain(key);
       expect(controlEventText).not.toContain(key);
     }
     for (const lastFour of Object.values(submittedLastFour)) {
-      expect(auditText).not.toContain(lastFour);
+      expect(webAuditText).not.toContain(lastFour);
       expect(controlEventText).not.toContain(lastFour);
       expect(JSON.stringify(cumulativeConsoleMessages)).not.toContain(lastFour);
     }

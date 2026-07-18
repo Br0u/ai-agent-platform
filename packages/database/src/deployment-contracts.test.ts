@@ -885,6 +885,21 @@ describe("production deployment security contracts", () => {
     expect(browserAcceptance).toContain(
       "await context.request.delete(SESSION_PATH)",
     );
+    expect(browserAcceptance).toContain(
+      "action IN ('assistant.model_key_reveal_requested', 'assistant.model_key_revealed')",
+    );
+    expect(browserAcceptance).toContain(
+      'expect(webAuditText).toContain("assistant.model_key_reveal_requested:")',
+    );
+    expect(browserAcceptance).toContain(
+      'expect(webAuditText).toContain("assistant.model_key_revealed:")',
+    );
+    expect(browserAcceptance).toContain(
+      "expect(webAuditText).not.toContain(key)",
+    );
+    expect(browserAcceptance).toContain(
+      "expect(webAuditText).not.toContain(lastFour)",
+    );
   });
 
   it("owns and cleans only the isolated assistant runtime project it locked", () => {
