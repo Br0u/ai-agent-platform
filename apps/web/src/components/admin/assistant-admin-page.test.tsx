@@ -181,7 +181,7 @@ describe("AssistantAdminPage", () => {
     expect(container.textContent).not.toMatch(/timestamp|openedAt|raw error/iu);
   });
 
-  it("places cloud model configuration after runtime and before the test console", () => {
+  it("keeps the approved section order on the existing admin page", () => {
     render(
       <AssistantAdminPage
         modelConfigs={modelConfigs}
@@ -190,17 +190,43 @@ describe("AssistantAdminPage", () => {
       />,
     );
 
+    const services = screen.getByRole("list", { name: "AI 助理服务状态" });
     const runtime = screen.getByRole("heading", { name: "运行时状态" });
     const models = screen.getByRole("heading", { name: "云模型配置" });
+    const roadmap = screen.getByRole("heading", { name: "后续能力入口" });
     const consoleHeading = screen.getByRole("heading", {
       name: "受保护的助手测试控制台",
     });
+    const configuration = screen.getByRole("heading", { name: "只读配置" });
+    const sessionsHeading = screen.getByRole("heading", {
+      name: "会话持久化",
+    });
+    expect(
+      services.compareDocumentPosition(runtime) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(
       runtime.compareDocumentPosition(models) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
       models.compareDocumentPosition(consoleHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      models.compareDocumentPosition(roadmap) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      roadmap.compareDocumentPosition(consoleHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      consoleHeading.compareDocumentPosition(configuration) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      configuration.compareDocumentPosition(sessionsHeading) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
@@ -221,7 +247,7 @@ describe("AssistantAdminPage", () => {
     expect(css).toContain(".assistant-admin__status-grid");
   });
 
-  it("keeps future audit and Skill capabilities visibly disabled", () => {
+  it("keeps session audit disabled without a duplicate Skill management action", () => {
     render(
       <AssistantAdminPage
         modelConfigs={modelConfigs}
@@ -231,9 +257,74 @@ describe("AssistantAdminPage", () => {
     );
 
     expect(screen.getByRole("button", { name: "会话审计" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Skill 管理" })).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /暂不可用$/u })).toHaveLength(
+      4,
+    );
+    for (const action of screen.getAllByRole("button", {
+      name: /暂不可用$/u,
+    })) {
+      expect(action).toBeDisabled();
+    }
+    expect(
+      screen.queryByRole("button", { name: "Skill 管理" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText(sessions.message)).toBeVisible();
     expect(screen.queryByText(/客户消息|消息原文/u)).not.toBeInTheDocument();
+  });
+
+  it("preserves page-level headings, form names, live regions and tab order", () => {
+    const { container } = render(
+      <AssistantAdminPage
+        modelConfigs={modelConfigs}
+        sessions={sessions}
+        status={status}
+      />,
+    );
+
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    const h2Names = screen
+      .getAllByRole("heading", { level: 2 })
+      .map((heading) => heading.textContent);
+    expect(new Set(h2Names).size).toBe(h2Names.length);
+
+    const providerTab = screen.getByRole("tab", { name: /OpenAI/u });
+    const modelId = screen.getByRole("textbox", { name: "Model ID" });
+    const endpoint = screen.getByRole("combobox", { name: "Endpoint" });
+    const apiKey = screen.getByLabelText("新 API Key（必填）");
+    const question = screen.getByRole("textbox", { name: "测试问题" });
+    expect(
+      providerTab.compareDocumentPosition(modelId) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      modelId.compareDocumentPosition(endpoint) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      endpoint.compareDocumentPosition(apiKey) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      apiKey.compareDocumentPosition(question) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      container.querySelectorAll(
+        "[tabindex]:not([tabindex='0']):not([tabindex='-1'])",
+      ),
+    ).toHaveLength(0);
+    expect(
+      container.querySelectorAll("[aria-live='polite']").length,
+    ).toBeGreaterThanOrEqual(2);
+
+    const explicitAccessibleNames = Array.from(
+      container.querySelectorAll<HTMLElement>("[aria-label], [title]"),
+      (element) =>
+        `${element.getAttribute("aria-label") ?? ""} ${element.getAttribute("title") ?? ""}`,
+    ).join(" ");
+    expect(explicitAccessibleNames).not.toMatch(
+      /(?:sk-[a-z0-9]|ciphertext|nonce|secret|https?:\/\/)/iu,
+    );
   });
 
   it("shows persistence and unavailable listing without a fake zero count", () => {

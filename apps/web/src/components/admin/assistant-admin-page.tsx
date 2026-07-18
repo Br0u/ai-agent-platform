@@ -7,6 +7,7 @@ import type {
 import { isAdminAssistantChatResponse } from "@/features/assistant/admin-assistant-contract";
 import { useAssistantSession } from "@/components/assistant/use-assistant-session";
 import { AssistantModelConfigPanel } from "@/components/admin/assistant-model-config-panel";
+import { AssistantCapabilityRoadmap } from "@/components/admin/assistant-capability-roadmap";
 import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
 import type { FormEvent } from "react";
 import "./assistant-admin-page.css";
@@ -130,6 +131,8 @@ export function AssistantAdminPage({
 
       <AssistantModelConfigPanel initialSnapshot={modelConfigs} />
 
+      <AssistantCapabilityRoadmap />
+
       <div className="assistant-admin__workspace">
         <section
           aria-labelledby="assistant-test-title"
@@ -213,9 +216,6 @@ export function AssistantAdminPage({
         >
           <button disabled type="button">
             会话审计
-          </button>
-          <button disabled type="button">
-            Skill 管理
           </button>
         </nav>
       </div>

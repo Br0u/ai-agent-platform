@@ -14,6 +14,7 @@
 .assistant-admin__heading p,
 .assistant-admin__runtime p,
 .assistant-model-config__heading p,
+.assistant-capability-roadmap__heading p,
 .assistant-admin__console p,
 .assistant-admin__configuration > p,
 .assistant-admin__sessions p {
@@ -336,6 +337,103 @@
   color: var(--color-muted);
   background: var(--color-canvas);
   font-weight: 700;
+}
+
+.assistant-capability-roadmap {
+  margin-top: 16px;
+  border: 1px solid var(--color-workspace-line);
+  background: var(--color-surface);
+}
+
+.assistant-capability-roadmap__heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 24px;
+  border-bottom: 1px solid var(--color-workspace-line);
+}
+
+.assistant-capability-roadmap__heading h2 {
+  margin: 0;
+  font: 730 22px/1.2 var(--font-display);
+}
+
+.assistant-capability-roadmap__heading span {
+  display: block;
+  margin-top: 8px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.assistant-capability-roadmap__heading > strong {
+  color: var(--color-ai-accent);
+  font: 700 10px/1.2 var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.assistant-capability-roadmap__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.assistant-capability-roadmap__grid > li {
+  min-width: 0;
+  border-right: 1px solid var(--color-workspace-line);
+}
+
+.assistant-capability-roadmap__grid > li:last-child {
+  border-right: 0;
+}
+
+.assistant-capability-roadmap__grid article {
+  display: flex;
+  min-height: 210px;
+  flex-direction: column;
+  padding: 20px;
+}
+
+.assistant-capability-roadmap__grid article > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assistant-capability-roadmap__grid h3 {
+  margin: 0;
+  font: 730 17px/1.3 var(--font-display);
+}
+
+.assistant-capability-roadmap__grid article > header span {
+  flex: none;
+  color: #a45734;
+  font: 700 9px/1.35 var(--font-mono);
+}
+
+.assistant-capability-roadmap__grid p {
+  margin: 18px 0 24px;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.assistant-capability-roadmap__grid button {
+  min-height: 44px;
+  margin-top: auto;
+  border: 1px solid var(--color-workspace-line);
+  border-radius: 3px;
+  color: var(--color-muted);
+  background: var(--color-canvas);
+  font-weight: 700;
+}
+
+.assistant-capability-roadmap__grid button:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 
 .assistant-model-config {
@@ -677,6 +775,18 @@
     justify-content: flex-start;
   }
 
+  .assistant-capability-roadmap__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .assistant-capability-roadmap__grid > li:nth-child(2) {
+    border-right: 0;
+  }
+
+  .assistant-capability-roadmap__grid > li:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--color-workspace-line);
+  }
+
   .assistant-model-config__layout {
     grid-template-columns: 1fr;
   }
@@ -723,6 +833,7 @@
   }
 
   .assistant-model-config__heading,
+  .assistant-capability-roadmap__heading,
   .assistant-model-config__editor > header,
   .assistant-model-config__editor > footer {
     align-items: flex-start;
@@ -730,8 +841,18 @@
   }
 
   .assistant-model-config__providers,
-  .assistant-model-config__fields {
+  .assistant-model-config__fields,
+  .assistant-capability-roadmap__grid {
     grid-template-columns: 1fr;
+  }
+
+  .assistant-capability-roadmap__grid > li {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-workspace-line);
+  }
+
+  .assistant-capability-roadmap__grid > li:last-child {
+    border-bottom: 0;
   }
 
   .assistant-model-config__editor dl {
