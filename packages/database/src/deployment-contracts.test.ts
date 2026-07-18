@@ -55,12 +55,14 @@ type RenderedVolumeAttachment =
 
 type RenderedService = {
   build?: { target?: string };
+  cap_add?: string[];
   cap_drop?: string[];
   command?: string[];
   cpus?: number | string;
   depends_on?: Record<string, { condition?: string }>;
   entrypoint?: string[];
   environment?: Record<string, string | null>;
+  healthcheck?: { test?: string[] };
   mem_limit?: number | string;
   networks?: Record<string, RenderedNetworkAttachment>;
   pids_limit?: number;
@@ -1121,16 +1123,15 @@ exit 0
     expect(agentService).toContain("7777");
     expect(agentService).toContain('expose:\n      - "7777"');
     expect(agentService).not.toMatch(/^\s{4}ports:/mu);
-    expect(agentService).toContain("user: agent");
+    expect(agentService).toContain("user: root");
     expect(agentService).toContain("read_only: true");
     expect(agentService).toContain("/tmp:rw,noexec,nosuid,size=32m");
     expect(agentService).toContain("no-new-privileges:true");
     expect(agentService).toContain("cap_drop:\n      - ALL");
     expect(agentService).toContain("/internal/health/ready");
     expect(agentService).toContain("Authorization");
-    expect(agentService).toContain(
-      "pathlib.Path('/run/secrets/os_security_key').read_text().strip()",
-    );
+    expect(agentService).toContain("os.environ['OS_SECURITY_KEY']");
+    expect(agentService).not.toContain("/run/secrets/os_security_key').read");
     expect(agentService).toContain("mem_limit:");
     expect(agentService).toContain("cpus:");
     expect(agentService).toContain("pids_limit:");
@@ -1619,12 +1620,124 @@ exit 0
   it("keeps every production credential out of rendered Compose config", () => {
     const runner = read("infra/docker/run-with-secret-env.sh");
     expect(runner).toContain("/run/secrets/*");
-    expect(runner).toContain('exec "$@"');
+    expect(runner).toContain('exec "$gosu_path" "$run_as" "$@"');
     expect(runner).not.toMatch(/set\s+-[^\n]*x/u);
     expect(read(".gitignore")).toContain(".secrets/");
     const rendered = renderComposeFixture();
     expect(Object.keys(rendered.services).length).toBeGreaterThan(0);
   });
+
+  it("reads file-backed secrets as root and drops every command to its runtime user", () => {
+    const rendered = renderComposeFixture();
+    const runAs = {
+      migrate: "node",
+      "agno-bootstrap": "postgres",
+      "agent-migrate": "agent",
+      "agent-control-bootstrap": "postgres",
+      "agent-control-migrate": "agent",
+      agent: "agent",
+      web: "node",
+    } as const;
+
+    for (const [serviceName, runtimeUser] of Object.entries(runAs)) {
+      const service = rendered.services[serviceName];
+      expect(service?.user, serviceName).toBe("root");
+      expect(service?.environment?.SECRET_RUN_AS, serviceName).toBe(
+        runtimeUser,
+      );
+      expect(new Set(service?.cap_drop), serviceName).toEqual(new Set(["ALL"]));
+      expect(new Set(service?.cap_add), serviceName).toEqual(
+        new Set(["DAC_OVERRIDE", "SETGID", "SETUID"]),
+      );
+      expect(service?.security_opt, serviceName).toContain(
+        "no-new-privileges:true",
+      );
+    }
+
+    const runner = read("infra/docker/run-with-secret-env.sh");
+    expect(runner).toContain('case "$SECRET_RUN_AS" in');
+    expect(runner).toContain("postgres|agent|node");
+    expect(runner).toContain('[ "$(id -u)" -eq 0 ]');
+    expect(runner).toContain("/usr/local/bin/gosu");
+    expect(runner).toContain("/usr/sbin/gosu");
+    expect(runner).toContain("/usr/bin/gosu");
+    expect(runner).toContain('exec "$gosu_path" "$run_as" "$@"');
+    expect(runner).not.toContain('exec "$@"');
+    expect(read("apps/agent/Dockerfile")).toContain(
+      "apt-get install -y --no-install-recommends gosu=1.17-3+b4",
+    );
+    expect(read("apps/web/Dockerfile").match(/gosu=1\.19-r4/gu)).toHaveLength(
+      2,
+    );
+
+    const agentHealthcheck =
+      rendered.services.agent?.healthcheck?.test?.join(" ");
+    const webHealthcheck = rendered.services.web?.healthcheck?.test?.join(" ");
+    expect(agentHealthcheck).toContain("/opt/aap/run-with-secret-env.sh");
+    expect(agentHealthcheck).toContain("OS_SECURITY_KEY");
+    expect(agentHealthcheck).not.toContain("/run/secrets/os_security_key");
+    expect(webHealthcheck).toContain("gosu node");
+  });
+
+  const dockerAvailable =
+    spawnSync("docker", ["info", "--format", "{{.ServerVersion}}"], {
+      stdio: "ignore",
+    }).status === 0;
+
+  it.skipIf(!dockerAvailable)(
+    "loads a deployment-user-owned 0600 secret then executes as postgres",
+    () => {
+      const sandbox = mkdtempSync(path.join(tmpdir(), "aap-secret-drop-"));
+      const secretFile = path.join(sandbox, "container-secret");
+      const secret = "container-secret-that-must-not-leak";
+      writeFileSync(secretFile, `${secret}\n`, { mode: 0o600 });
+      chmodSync(secretFile, 0o600);
+
+      try {
+        expect(statSync(secretFile).mode & 0o777).toBe(0o600);
+        const execution = spawnSync(
+          "docker",
+          [
+            "run",
+            "--rm",
+            "--user",
+            "root",
+            "--cap-drop",
+            "ALL",
+            "--cap-add",
+            "DAC_OVERRIDE",
+            "--cap-add",
+            "SETGID",
+            "--cap-add",
+            "SETUID",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--env",
+            "SECRET_RUN_AS=postgres",
+            "--env",
+            "SECRET_ENV_SPECS=CONTAINER_TEST_SECRET=/run/secrets/container_test_secret",
+            "--mount",
+            `type=bind,src=${secretFile},dst=/run/secrets/container_test_secret,readonly`,
+            "--mount",
+            `type=bind,src=${path.join(root, "infra/docker/run-with-secret-env.sh")},dst=/opt/aap/run-with-secret-env.sh,readonly`,
+            "--entrypoint",
+            "/opt/aap/run-with-secret-env.sh",
+            "postgres:18.3-alpine3.23",
+            "sh",
+            "-ceu",
+            'test "$(id -u)" = 70; test "$(id -g)" = 70; test -n "$CONTAINER_TEST_SECRET"; test "$(awk \'/^CapEff:/{print $2}\' /proc/self/status)" = 0000000000000000; test "$(awk \'/^NoNewPrivs:/{print $2}\' /proc/self/status)" = 1; printf "%s\\n" "postgres:70:70:nnp=1:caps=0"',
+          ],
+          { encoding: "utf8" },
+        );
+        const output = `${execution.stdout}${execution.stderr}`;
+        expect(execution.status, output).toBe(0);
+        expect(execution.stdout.trim()).toBe("postgres:70:70:nnp=1:caps=0");
+        expect(output).not.toContain(secret);
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("enforces the rendered Compose model across every service", () => {
     const rendered = renderComposeFixture();
@@ -1685,7 +1798,7 @@ exit 0
     expect(rendered.networks.backend?.internal).toBe(true);
     expect(rendered.networks.model_egress?.internal ?? false).toBe(false);
 
-    expect(agent?.user).toBe("agent");
+    expect(agent?.user).toBe("root");
     expect(agent?.read_only).toBe(true);
     expect(new Set(agent?.cap_drop)).toEqual(new Set(["ALL"]));
     expect(agent?.security_opt).toContain("no-new-privileges:true");
@@ -2945,9 +3058,12 @@ test -n "$output"
     expect(service?.build?.target).toBe("runtime");
     expect(service?.ports ?? []).toEqual([]);
     expect(service?.read_only).toBe(true);
-    expect(service?.user).toBe("agent");
+    expect(service?.user).toBe("root");
     expect(service?.tmpfs).toEqual(["/tmp:rw,noexec,nosuid,size=32m"]);
     expect(service?.cap_drop).toEqual(["ALL"]);
+    expect(new Set(service?.cap_add)).toEqual(
+      new Set(["DAC_OVERRIDE", "SETGID", "SETUID"]),
+    );
     expect(service?.security_opt).toEqual(["no-new-privileges:true"]);
     expect(service?.cpus).toBe(1);
     expect(service?.mem_limit).toBe("536870912");
@@ -2970,6 +3086,7 @@ test -n "$output"
       MODEL_PROVIDER: "openai",
       MODEL_RUN_TIMEOUT_SECONDS: "25",
       SECRET_ENV_SPECS: "MODEL_API_KEY=/run/secrets/model_api_key",
+      SECRET_RUN_AS: "agent",
     });
     expect(JSON.stringify(rendered)).not.toMatch(
       /AGNO_DATABASE|OS_SECURITY|BETTER_AUTH|ASSISTANT_|postgres|agentos|web/iu,

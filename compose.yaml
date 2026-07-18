@@ -37,10 +37,12 @@ services:
       args:
         PNPM_REGISTRY: ${PNPM_REGISTRY:-https://registry.npmmirror.com}
     restart: "no"
+    user: root
     entrypoint: ["/opt/aap/run-with-secret-env.sh"]
     command: ["pnpm", "db:prepare"]
     environment:
       SECRET_ENV_SPECS: DATABASE_URL=/run/secrets/migrator_database_url
+      SECRET_RUN_AS: node
     secrets:
       - migrator_database_url
     volumes:
@@ -48,13 +50,21 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
     networks:
       - backend
 
   agno-bootstrap:
     image: postgres:18.3-alpine3.23
     restart: "no"
-    user: postgres
+    user: root
     entrypoint: ["/opt/aap/run-with-secret-env.sh"]
     environment:
       POSTGRES_HOST: db
@@ -65,6 +75,7 @@ services:
         POSTGRES_PASSWORD=/run/secrets/postgres_password
         AGNO_MIGRATOR_DATABASE_PASSWORD=/run/secrets/agno_migrator_database_password
         AGNO_DATABASE_PASSWORD=/run/secrets/agno_database_password
+      SECRET_RUN_AS: postgres
     secrets:
       - postgres_password
       - agno_migrator_database_password
@@ -84,6 +95,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
     networks:
       - backend
 
@@ -92,10 +107,12 @@ services:
       context: .
       dockerfile: apps/agent/Dockerfile
     restart: "no"
+    user: root
     entrypoint: ["/opt/aap/run-with-secret-env.sh"]
     command: ["python", "-m", "agent_service.migrate"]
     environment:
       SECRET_ENV_SPECS: AGNO_MIGRATOR_DATABASE_URL=/run/secrets/agno_migrator_database_url
+      SECRET_RUN_AS: agent
     secrets:
       - agno_migrator_database_url
     volumes:
@@ -110,13 +127,17 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
     networks:
       - backend
 
   agent-control-bootstrap:
     image: postgres:18.3-alpine3.23
     restart: "no"
-    user: postgres
+    user: root
     entrypoint: ["/opt/aap/run-with-secret-env.sh"]
     environment:
       POSTGRES_HOST: db
@@ -127,6 +148,7 @@ services:
         POSTGRES_PASSWORD=/run/secrets/postgres_password
         AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD=/run/secrets/agent_control_migrator_database_password
         AGENT_CONTROL_DATABASE_PASSWORD=/run/secrets/agent_control_database_password
+      SECRET_RUN_AS: postgres
     secrets:
       - postgres_password
       - agent_control_migrator_database_password
@@ -148,6 +170,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
     networks:
       - backend
 
@@ -156,10 +182,12 @@ services:
       context: .
       dockerfile: apps/agent/Dockerfile
     restart: "no"
+    user: root
     entrypoint: ["/opt/aap/run-with-secret-env.sh"]
     command: ["python", "-m", "agent_service.model_config_migrate"]
     environment:
       SECRET_ENV_SPECS: AGENT_CONTROL_MIGRATOR_DATABASE_URL=/run/secrets/agent_control_migrator_database_url
+      SECRET_RUN_AS: agent
     secrets:
       - agent_control_migrator_database_url
     volumes:
@@ -174,6 +202,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
     networks:
       - backend
 
@@ -182,7 +214,7 @@ services:
       context: .
       dockerfile: apps/agent/Dockerfile
     restart: unless-stopped
-    user: agent
+    user: root
     entrypoint:
       [
         "/bin/sh",
@@ -210,6 +242,7 @@ services:
         MODEL_CONFIG_ENCRYPTION_KEY=/run/secrets/model_config_encryption_key
         AGENT_CONFIG_CONTROL_KEY=/run/secrets/agent_config_control_key
         MODEL_API_KEY=/run/secrets/model_api_key
+      SECRET_RUN_AS: agent
       AGENT_ENABLED: ${AGENT_ENABLED:-false}
       MODEL_PROVIDER: ${MODEL_PROVIDER:-}
       MODEL_ID: ${MODEL_ID:-}
@@ -236,9 +269,10 @@ services:
       test:
         [
           "CMD",
+          "/opt/aap/run-with-secret-env.sh",
           "python",
           "-c",
-          "import pathlib,urllib.request; key=pathlib.Path('/run/secrets/os_security_key').read_text().strip(); request=urllib.request.Request('http://127.0.0.1:7777/internal/health/ready',headers={'Authorization':'Bearer '+key}); urllib.request.urlopen(request,timeout=3).close()",
+          "import os,urllib.request; key=os.environ['OS_SECURITY_KEY']; request=urllib.request.Request('http://127.0.0.1:7777/internal/health/ready',headers={'Authorization':'Bearer '+key}); urllib.request.urlopen(request,timeout=3).close()",
         ]
       interval: 10s
       timeout: 5s
@@ -251,6 +285,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
     mem_limit: 512m
     cpus: "1.0"
     pids_limit: 256
@@ -266,6 +304,7 @@ services:
       args:
         PNPM_REGISTRY: ${PNPM_REGISTRY:-https://registry.npmmirror.com}
     restart: unless-stopped
+    user: root
     entrypoint: ["/opt/aap/run-with-secret-env.sh"]
     command: ["node", "server.js"]
     environment:
@@ -276,6 +315,7 @@ services:
         AGENT_CONFIG_CONTROL_KEY=/run/secrets/agent_config_control_key
         ASSISTANT_SESSION_SECRET=/run/secrets/assistant_session_secret
         ASSISTANT_RATE_LIMIT_SECRET=/run/secrets/assistant_rate_limit_secret
+      SECRET_RUN_AS: node
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:?Set BETTER_AUTH_URL in .env}
       BETTER_AUTH_TRUSTED_ORIGINS: ${BETTER_AUTH_TRUSTED_ORIGINS:?Set BETTER_AUTH_TRUSTED_ORIGINS in .env}
       FEATURE_EMAIL_VERIFICATION: ${FEATURE_EMAIL_VERIFICATION:-false}
@@ -306,6 +346,8 @@ services:
       test:
         [
           "CMD",
+          "/usr/bin/gosu",
+          "node",
           "node",
           "-e",
           "fetch('http://127.0.0.1:3000/api/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
@@ -321,6 +363,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
     networks:
       - frontend
       - backend

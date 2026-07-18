@@ -1,6 +1,41 @@
 #!/bin/sh
 
 set -eu
+umask 077
+
+if ! [ "$(id -u)" -eq 0 ]; then
+  printf '%s\n' "secret environment loader must start as root" >&2
+  exit 1
+fi
+
+if [ -z "${SECRET_RUN_AS-}" ]; then
+  printf '%s\n' "SECRET_RUN_AS is required" >&2
+  exit 1
+fi
+case "$SECRET_RUN_AS" in
+  postgres|agent|node) run_as=$SECRET_RUN_AS ;;
+  *)
+    printf '%s\n' "invalid SECRET_RUN_AS target" >&2
+    exit 1
+    ;;
+esac
+
+if [ "$#" -eq 0 ]; then
+  printf '%s\n' "command is required" >&2
+  exit 1
+fi
+
+gosu_path=
+for candidate in /usr/local/bin/gosu /usr/sbin/gosu /usr/bin/gosu; do
+  if [ -x "$candidate" ]; then
+    gosu_path=$candidate
+    break
+  fi
+done
+if [ -z "$gosu_path" ] || ! id "$run_as" >/dev/null 2>&1; then
+  printf '%s\n' "runtime privilege drop is unavailable" >&2
+  exit 1
+fi
 
 if [ -z "${SECRET_ENV_SPECS-}" ]; then
   printf '%s\n' "SECRET_ENV_SPECS is required" >&2
@@ -49,4 +84,5 @@ for specification in $SECRET_ENV_SPECS; do
 done
 
 unset SECRET_ENV_SPECS
-exec "$@"
+unset SECRET_RUN_AS
+exec "$gosu_path" "$run_as" "$@"

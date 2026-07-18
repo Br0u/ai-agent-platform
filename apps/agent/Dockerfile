@@ -20,7 +20,10 @@ ENV PATH=/app/apps/agent/.venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-RUN groupadd --system --gid 10001 agent \
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gosu=1.17-3+b4 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 agent \
     && useradd --system --uid 10001 --gid agent --home-dir /nonexistent agent
 
 WORKDIR /app/apps/agent
