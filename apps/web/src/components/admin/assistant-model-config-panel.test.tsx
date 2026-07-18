@@ -142,10 +142,12 @@ function listResponse(value: AdminModelConfigSnapshot) {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function revealResponse(key: string) {
@@ -154,6 +156,26 @@ function revealResponse(key: string) {
     requestId: "55555555-5555-4555-8555-555555555555",
     key,
   });
+}
+
+function withSavedOpenAiAndClaude(): AdminModelConfigSnapshot {
+  const value = withSavedOpenAi();
+  return {
+    ...value,
+    canReveal: true,
+    configs: value.configs.map((config) =>
+      config.provider === "anthropic"
+        ? {
+            ...savedOpenAi(),
+            provider: "anthropic",
+            displayName: "Claude",
+            modelId: "claude-sonnet-4-5",
+            endpointId: "anthropic-default",
+            activeRevision: null,
+          }
+        : config,
+    ),
+  };
 }
 
 function watchBrowserPersistence() {
@@ -612,6 +634,121 @@ describe("AssistantModelConfigPanel", () => {
     expect(screen.getByText("密钥已复制。")).toBeVisible();
     expect(screen.getByText("密钥已复制。")).not.toHaveTextContent(key);
   });
+
+  it.each(["resolve", "reject"] as const)(
+    "does not apply a stale copy %s after switching Provider and revealing its Key",
+    async (outcome) => {
+      const firstKey = "COPY-A-SECRET-SENTINEL";
+      const secondKey = "COPY-B-SECRET-SENTINEL";
+      const clipboard = deferred<void>();
+      const writeText = vi.fn().mockReturnValue(clipboard.promise);
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText },
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(revealResponse(firstKey))
+          .mockResolvedValueOnce(revealResponse(secondKey)),
+      );
+      render(
+        <AssistantModelConfigPanel
+          initialSnapshot={withSavedOpenAiAndClaude()}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
+      expect(await screen.findByText(firstKey)).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "复制 Key" }));
+      expect(writeText).toHaveBeenCalledExactlyOnceWith(firstKey);
+
+      fireEvent.click(screen.getByRole("tab", { name: /Claude/u }));
+      fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
+      expect(await screen.findByText(secondKey)).toBeVisible();
+      await act(async () => {
+        if (outcome === "resolve") clipboard.resolve(undefined);
+        else clipboard.reject(new Error("clipboard failure"));
+        await clipboard.promise.catch(() => undefined);
+      });
+
+      expect(screen.getByText(secondKey)).toBeVisible();
+      expect(screen.queryByText("密钥已复制。")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("复制失败，请手动选择密钥。"),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it.each([
+    ["manual hide", "resolve"],
+    ["manual hide", "reject"],
+    ["pagehide", "resolve"],
+    ["pagehide", "reject"],
+    ["hidden visibility", "resolve"],
+    ["hidden visibility", "reject"],
+    ["unmount", "resolve"],
+    ["unmount", "reject"],
+    ["re-reveal", "resolve"],
+    ["re-reveal", "reject"],
+  ] as const)(
+    "invalidates a pending copy on %s before clipboard %s",
+    async (path, outcome) => {
+      const firstKey = "COPY-LIFECYCLE-A-SECRET";
+      const secondKey = "COPY-LIFECYCLE-B-SECRET";
+      const clipboard = deferred<void>();
+      const writeText = vi.fn().mockReturnValue(clipboard.promise);
+      const expectNoPersistence = watchBrowserPersistence();
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText },
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(revealResponse(firstKey))
+          .mockResolvedValueOnce(revealResponse(secondKey)),
+      );
+      const view = render(
+        <AssistantModelConfigPanel
+          initialSnapshot={{ ...withSavedOpenAi(), canReveal: true }}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
+      expect(await screen.findByText(firstKey)).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "复制 Key" }));
+      expect(writeText).toHaveBeenCalledExactlyOnceWith(firstKey);
+
+      if (path === "manual hide") {
+        fireEvent.click(screen.getByRole("button", { name: "隐藏 Key" }));
+      } else if (path === "pagehide") {
+        act(() => window.dispatchEvent(new PageTransitionEvent("pagehide")));
+      } else if (path === "hidden visibility") {
+        vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+        act(() => document.dispatchEvent(new Event("visibilitychange")));
+      } else if (path === "unmount") {
+        view.unmount();
+      } else {
+        fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
+        expect(await screen.findByText(secondKey)).toBeVisible();
+      }
+
+      await act(async () => {
+        if (outcome === "resolve") clipboard.resolve(undefined);
+        else clipboard.reject(new Error("clipboard failure"));
+        await clipboard.promise.catch(() => undefined);
+      });
+
+      expect(screen.queryByText("密钥已复制。")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("复制失败，请手动选择密钥。"),
+      ).not.toBeInTheDocument();
+      expectNoPersistence();
+    },
+  );
 
   it("keeps Provider and revision read-only while controlling only allowlisted inputs", () => {
     render(

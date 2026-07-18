@@ -116,8 +116,9 @@ export function useModelKeyReveal(
   const [status, setStatus] = useState<ModelKeyRevealState["status"]>("idle");
   const [error, setError] = useState<ModelKeyRevealError | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
-  const timerRef = useRef<number | null>(null);
-  const deadlineRef = useRef<number | null>(null);
+  const hardTimeoutRef = useRef<number | null>(null);
+  const countdownIntervalRef = useRef<number | null>(null);
+  const countdownTicksRef = useRef(0);
   const generationRef = useRef(0);
   const providerRef = useRef(currentProvider);
 
@@ -125,9 +126,15 @@ export function useModelKeyReveal(
     generationRef.current += 1;
     controllerRef.current?.abort();
     controllerRef.current = null;
-    if (timerRef.current !== null) window.clearInterval(timerRef.current);
-    timerRef.current = null;
-    deadlineRef.current = null;
+    if (hardTimeoutRef.current !== null) {
+      window.clearTimeout(hardTimeoutRef.current);
+    }
+    if (countdownIntervalRef.current !== null) {
+      window.clearInterval(countdownIntervalRef.current);
+    }
+    hardTimeoutRef.current = null;
+    countdownIntervalRef.current = null;
+    countdownTicksRef.current = 0;
     setPlaintext(null);
     setSecondsRemaining(0);
     setStatus("idle");
@@ -135,15 +142,9 @@ export function useModelKeyReveal(
   }, []);
 
   const updateCountdown = useCallback(() => {
-    const deadline = deadlineRef.current;
-    if (deadline === null) return;
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) {
-      clearSensitiveState();
-      return;
-    }
-    setSecondsRemaining(Math.ceil(remaining / 1_000));
-  }, [clearSensitiveState]);
+    countdownTicksRef.current = Math.max(0, countdownTicksRef.current - 1);
+    setSecondsRemaining(countdownTicksRef.current);
+  }, []);
 
   const reveal = useCallback(
     async (provider: AdminModelProvider, revision: number) => {
@@ -186,9 +187,16 @@ export function useModelKeyReveal(
         }
         setPlaintext(key);
         setStatus("revealed");
-        deadlineRef.current = Date.now() + REVEAL_DURATION_MS;
-        setSecondsRemaining(REVEAL_DURATION_MS / 1_000);
-        timerRef.current = window.setInterval(updateCountdown, 1_000);
+        countdownTicksRef.current = REVEAL_DURATION_MS / 1_000;
+        setSecondsRemaining(countdownTicksRef.current);
+        hardTimeoutRef.current = window.setTimeout(
+          clearSensitiveState,
+          REVEAL_DURATION_MS,
+        );
+        countdownIntervalRef.current = window.setInterval(
+          updateCountdown,
+          1_000,
+        );
       } catch {
         if (
           generationRef.current === generation &&

@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -341,6 +342,9 @@ export function AssistantModelConfigPanel({
   const [pending, setPending] = useState<PendingAction>(null);
   const [syncRequired, setSyncRequired] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
+  const copyGenerationRef = useRef(0);
+  const copyMountedRef = useRef(true);
+  const copyPlaintextRef = useRef<string | null>(null);
   const activeController = useRef<AbortController | null>(null);
   const operationGeneration = useRef(0);
   const pendingRef = useRef(false);
@@ -369,6 +373,16 @@ export function AssistantModelConfigPanel({
     selectedConfig.apiKey?.configured === true;
   const canRevealSelectedKey =
     snapshot.canReveal && snapshot.controlEnabled && hasDynamicSavedKey;
+
+  const invalidateCopyFeedback = useCallback(() => {
+    copyGenerationRef.current += 1;
+    copyPlaintextRef.current = null;
+    if (copyMountedRef.current) setCopyStatus("");
+  }, []);
+
+  useLayoutEffect(() => {
+    copyPlaintextRef.current = keyReveal.plaintext;
+  }, [keyReveal.plaintext]);
 
   const requireSync = useCallback(
     (
@@ -440,8 +454,8 @@ export function AssistantModelConfigPanel({
 
   const selectProvider = (provider: AdminModelProvider) => {
     if (provider === selectedProvider) return;
+    invalidateCopyFeedback();
     keyReveal.hide();
-    setCopyStatus("");
     if (
       pendingActionRef.current === "save" ||
       pendingActionRef.current === "activate"
@@ -554,8 +568,8 @@ export function AssistantModelConfigPanel({
     if (!writable || syncRequiredRef.current || pendingRef.current) return;
     const input = validateDraft();
     if (input === null) return;
+    invalidateCopyFeedback();
     keyReveal.hide();
-    setCopyStatus("");
     const operation = startOperation("save");
     if (operation === null) return;
     const provider = selectedProvider;
@@ -682,6 +696,7 @@ export function AssistantModelConfigPanel({
   useEffect(() => {
     const handlePageHide = () => {
       pageSuspendedRef.current = true;
+      invalidateCopyFeedback();
       abortForLifecycle();
     };
     const handlePageShow = () => {
@@ -690,11 +705,13 @@ export function AssistantModelConfigPanel({
     };
     const handleVisibility = () => {
       if (document.visibilityState === "hidden") {
+        invalidateCopyFeedback();
         abortForLifecycle();
       } else if (syncRequiredRef.current) {
         void refresh();
       }
     };
+    copyMountedRef.current = true;
     window.addEventListener("pagehide", handlePageHide);
     window.addEventListener("pageshow", handlePageShow);
     document.addEventListener("visibilitychange", handleVisibility);
@@ -702,6 +719,8 @@ export function AssistantModelConfigPanel({
       window.removeEventListener("pagehide", handlePageHide);
       window.removeEventListener("pageshow", handlePageShow);
       document.removeEventListener("visibilitychange", handleVisibility);
+      copyMountedRef.current = false;
+      invalidateCopyFeedback();
       operationGeneration.current += 1;
       activeController.current?.abort();
       activeController.current = null;
@@ -709,7 +728,7 @@ export function AssistantModelConfigPanel({
       pendingActionRef.current = null;
       pendingMutationRef.current = null;
     };
-  }, [abortForLifecycle, refresh]);
+  }, [abortForLifecycle, invalidateCopyFeedback, refresh]);
 
   useEffect(() => {
     if (keyReveal.error?.redirectTo === "/staff/re-auth") {
@@ -728,8 +747,8 @@ export function AssistantModelConfigPanel({
     }
     const operation = startOperation("activate");
     if (operation === null) return;
+    invalidateCopyFeedback();
     keyReveal.hide();
-    setCopyStatus("");
     const provider = selectedProvider;
     const revision = selectedConfig.revision;
     const enteredAt = Date.now();
@@ -818,16 +837,42 @@ export function AssistantModelConfigPanel({
     ) {
       return;
     }
-    setCopyStatus("");
+    invalidateCopyFeedback();
     void keyReveal.reveal(selectedProvider, selectedConfig.revision);
   };
 
+  const hideRevealedKey = () => {
+    invalidateCopyFeedback();
+    keyReveal.hide();
+  };
+
   const copyKey = async () => {
-    if (keyReveal.plaintext === null) return;
+    const plaintext = keyReveal.plaintext;
+    if (plaintext === null) return;
+    const provider = selectedProvider;
+    const generation = ++copyGenerationRef.current;
+    copyPlaintextRef.current = plaintext;
+    setCopyStatus("");
     try {
-      await navigator.clipboard.writeText(keyReveal.plaintext);
+      await navigator.clipboard.writeText(plaintext);
+      if (
+        !copyMountedRef.current ||
+        copyGenerationRef.current !== generation ||
+        selectedProviderRef.current !== provider ||
+        copyPlaintextRef.current !== plaintext
+      ) {
+        return;
+      }
       setCopyStatus("密钥已复制。");
     } catch {
+      if (
+        !copyMountedRef.current ||
+        copyGenerationRef.current !== generation ||
+        selectedProviderRef.current !== provider ||
+        copyPlaintextRef.current !== plaintext
+      ) {
+        return;
+      }
       setCopyStatus("复制失败，请手动选择密钥。");
     }
   };
@@ -1021,7 +1066,7 @@ export function AssistantModelConfigPanel({
                 <button onClick={() => void copyKey()} type="button">
                   复制 Key
                 </button>
-                <button onClick={keyReveal.hide} type="button">
+                <button onClick={hideRevealedKey} type="button">
                   隐藏 Key
                 </button>
                 {copyStatus.length === 0 ? null : (

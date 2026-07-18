@@ -89,6 +89,26 @@ describe("useModelKeyReveal", () => {
     expect(result.current.secondsRemaining).toBe(0);
   });
 
+  it.each([
+    ["forward", new Date("2036-07-18T00:00:00.000Z")],
+    ["backward", new Date("2016-07-18T00:00:00.000Z")],
+  ] as const)(
+    "uses a hard 30-second timeout when Date.now jumps %s",
+    async (_direction, changedSystemTime) => {
+      vi.mocked(fetch).mockResolvedValue(revealResponse(FIRST_KEY));
+      const { result } = renderHook(() => useModelKeyReveal("openai"));
+
+      await act(async () => result.current.reveal("openai", 4));
+      vi.setSystemTime(changedSystemTime);
+      await act(async () => vi.advanceTimersByTimeAsync(29_999));
+      expect(result.current.plaintext).toBe(FIRST_KEY);
+
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      expect(result.current.plaintext).toBeNull();
+      expect(result.current.secondsRemaining).toBe(0);
+    },
+  );
+
   it("clears and aborts on Provider change and discards a late response", async () => {
     const pending = deferred<Response>();
     let signal: AbortSignal | undefined;
