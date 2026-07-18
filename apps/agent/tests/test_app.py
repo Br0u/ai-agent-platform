@@ -36,6 +36,7 @@ from agent_service.model_endpoint_catalog import (
     load_model_endpoint_catalog,
 )
 from agent_service.model_runtime_slot import (
+    ModelRuntimeCleanupError,
     ModelRuntimeSlot,
     RuntimeModelMetadata,
     RuntimeModelStatus,
@@ -1039,6 +1040,140 @@ def test_lifespan_reconciles_before_requests_and_closes_model_before_repository(
         assert events == ["reconciled", "request"]
 
     assert events == ["reconciled", "request", "active-rev1", "repository"]
+
+
+@pytest.mark.asyncio
+async def test_lifespan_cancellation_waits_for_ordered_runtime_cleanup() -> None:
+    settings = dynamic_settings()
+    cipher = ModelConfigCipher(
+        master_key=settings.model_config_encryption_key  # type: ignore[arg-type]
+    )
+    events: list[str] = []
+    close_entered = asyncio.Event()
+    close_release = asyncio.Event()
+    repository = ActiveRepository(
+        stored_active(cipher=cipher),
+        close_events=events,
+    )
+    slot = ModelRuntimeSlot()
+    catalog = AgentCatalog(
+        agents=[Agent(id="maduoduo", name="码多多", model=slot)],
+        slot=slot,
+        runtime_status_provider=slot.runtime_status,
+    )
+
+    class BaseAppAgentOS:
+        def __init__(self, **kwargs: Any) -> None:
+            self.app = cast(FastAPI, kwargs["base_app"])
+
+        def get_app(self) -> FastAPI:
+            return self.app
+
+    def build_model(model_settings: ActiveModelSettings) -> ManagedModel:
+        return managed_model(
+            model_settings.model_id,
+            events,
+            close_entered=close_entered,
+            close_release=close_release,
+        )
+
+    app = create_app(
+        settings=settings,
+        agent_os_factory=BaseAppAgentOS,
+        catalog_builder=lambda _settings, _database: catalog,
+        repository_builder=lambda _: repository,
+        cipher_builder=lambda _: cipher,
+        model_builder=build_model,
+    )
+    lifespan = app.router.lifespan_context(app)
+    await lifespan.__aenter__()
+    assert slot.runtime_status().capability == "available"
+
+    exit_task = asyncio.create_task(lifespan.__aexit__(None, None, None))
+    await asyncio.wait_for(close_entered.wait(), timeout=5)
+    exit_task.cancel()
+    await asyncio.sleep(0)
+    exit_task.cancel()
+    await asyncio.sleep(0)
+    repository_closed_before_model = "repository" in events
+    exit_finished_before_model = exit_task.done()
+
+    close_release.set()
+    cancellation_propagated = False
+    try:
+        await exit_task
+    except asyncio.CancelledError:
+        cancellation_propagated = True
+    async with asyncio.timeout(5):
+        while not slot.reaper_stopped:
+            await asyncio.sleep(0)
+
+    assert repository_closed_before_model is False
+    assert exit_finished_before_model is False
+    assert events == ["active-rev1", "repository"]
+    assert slot.reaper_stopped is True
+    assert cancellation_propagated is True
+
+
+@pytest.mark.asyncio
+async def test_lifespan_preserves_fixed_cleanup_failure_after_repository_close() -> (
+    None
+):
+    settings = dynamic_settings()
+    cipher = ModelConfigCipher(
+        master_key=settings.model_config_encryption_key  # type: ignore[arg-type]
+    )
+    events: list[str] = []
+    repository = ActiveRepository(
+        stored_active(cipher=cipher),
+        close_events=events,
+    )
+    slot = ModelRuntimeSlot()
+    catalog = AgentCatalog(
+        agents=[Agent(id="maduoduo", name="码多多", model=slot)],
+        slot=slot,
+        runtime_status_provider=slot.runtime_status,
+    )
+
+    class BaseAppAgentOS:
+        def __init__(self, **kwargs: Any) -> None:
+            self.app = cast(FastAPI, kwargs["base_app"])
+
+        def get_app(self) -> FastAPI:
+            return self.app
+
+    def build_model(model_settings: ActiveModelSettings) -> ManagedModel:
+        async def failing_close() -> None:
+            events.append(model_settings.model_id)
+            raise RuntimeError("private model cleanup failure")
+
+        return ManagedModel(
+            model=OpenAIResponses(
+                id=model_settings.model_id,
+                api_key="test-api-key",
+            ),
+            close_callback=failing_close,
+        )
+
+    app = create_app(
+        settings=settings,
+        agent_os_factory=BaseAppAgentOS,
+        catalog_builder=lambda _settings, _database: catalog,
+        repository_builder=lambda _: repository,
+        cipher_builder=lambda _: cipher,
+        model_builder=build_model,
+    )
+    lifespan = app.router.lifespan_context(app)
+    await lifespan.__aenter__()
+
+    with pytest.raises(
+        ModelRuntimeCleanupError,
+        match="^model runtime cleanup failed$",
+    ):
+        await lifespan.__aexit__(None, None, None)
+
+    assert events == ["active-rev1", "repository"]
+    assert slot.reaper_stopped is True
 
 
 @pytest.mark.parametrize("failing_dependency", ["cipher", "endpoint"])

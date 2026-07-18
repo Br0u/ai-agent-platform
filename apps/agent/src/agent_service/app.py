@@ -96,6 +96,39 @@ async def _close_repository(repository: ActiveConfigRepository | None) -> None:
         pass
 
 
+async def _ordered_runtime_cleanup(
+    slot: ModelRuntimeSlot,
+    repository: ActiveConfigRepository | None,
+) -> None:
+    """Drain every model handle before releasing control repository resources."""
+    try:
+        await slot.shutdown()
+    finally:
+        await _close_repository(repository)
+
+
+async def _finish_runtime_cleanup(
+    slot: ModelRuntimeSlot,
+    repository: ActiveConfigRepository | None,
+) -> None:
+    """Finish ordered cleanup despite outer cancellation, then re-propagate it."""
+    cleanup_task = asyncio.create_task(
+        _ordered_runtime_cleanup(slot, repository),
+        name="agent-runtime-ordered-cleanup",
+    )
+    cancellation_received = False
+    while True:
+        try:
+            await asyncio.shield(cleanup_task)
+            break
+        except asyncio.CancelledError:
+            if cleanup_task.cancelled():
+                raise
+            cancellation_received = True
+    if cancellation_received:
+        raise asyncio.CancelledError
+
+
 async def reconcile_runtime_model(
     *,
     settings: RuntimeSettings,
@@ -339,10 +372,7 @@ def create_app(
                 slot.deactivate(capability="degraded")
             yield
         finally:
-            try:
-                await slot.shutdown()
-            finally:
-                await _close_repository(repository)
+            await _finish_runtime_cleanup(slot, repository)
 
     base_app = FastAPI(
         title="AI Agent Platform AgentOS",
