@@ -30,6 +30,7 @@ const MODEL_EDITOR_ID = "assistant-model-editor";
 const MODEL_ID_MAX_LENGTH = 128;
 const API_KEY_MIN_LENGTH = 8;
 const API_KEY_MAX_LENGTH = 4_096;
+const UNKNOWN_RESULT_MESSAGE = "操作结果未知，必须刷新配置后才能继续。";
 const TEST_FAILURE_CODES = new Set([
   "credential_rejected",
   "model_not_found",
@@ -226,7 +227,11 @@ function statusText(
     }
     return "未配置";
   }
-  if (config.activeRevision === config.revision) return "已启用";
+  if (config.activeRevision === config.revision) {
+    return config.testStatus === "failed"
+      ? `当前启用配置测试失败 · 仍运行 rev ${config.activeRevision}`
+      : "已启用";
+  }
   if (config.activeRevision !== null) {
     return config.testStatus === "failed"
       ? `当前草稿测试失败 · 仍运行 rev ${config.activeRevision}`
@@ -271,9 +276,13 @@ export function AssistantModelConfigPanel({
   const [validation, setValidation] = useState("");
   const [announcement, setAnnouncement] = useState("");
   const [pending, setPending] = useState<PendingAction>(null);
+  const [syncRequired, setSyncRequired] = useState(false);
   const activeController = useRef<AbortController | null>(null);
   const operationGeneration = useRef(0);
   const pendingRef = useRef(false);
+  const pendingActionRef = useRef<PendingAction>(null);
+  const syncRequiredRef = useRef(false);
+  const selectedProviderRef = useRef<AdminModelProvider>("openai");
   const providerTabs = useRef<
     Partial<Record<AdminModelProvider, HTMLButtonElement>>
   >({});
@@ -285,37 +294,35 @@ export function AssistantModelConfigPanel({
   );
   const endpointOptions = snapshot.endpoints[selectedProvider];
   const writable = snapshot.canConfigure && snapshot.controlEnabled;
+  const canMutate = writable && !syncRequired;
   const keyRequired = selectedConfig.apiKey === null;
 
+  const requireSync = useCallback(() => {
+    syncRequiredRef.current = true;
+    setSyncRequired(true);
+    setAnnouncement(UNKNOWN_RESULT_MESSAGE);
+    setApiKey("");
+  }, []);
+
   const abortForLifecycle = useCallback(() => {
+    const resultBecameUnknown =
+      pendingActionRef.current === "save" ||
+      pendingActionRef.current === "activate";
     operationGeneration.current += 1;
     activeController.current?.abort();
     activeController.current = null;
     pendingRef.current = false;
+    pendingActionRef.current = null;
     setPending(null);
     setApiKey("");
-  }, []);
-
-  useEffect(() => {
-    const handlePageHide = () => abortForLifecycle();
-    const handleVisibility = () => {
-      if (document.visibilityState === "hidden") abortForLifecycle();
-    };
-    window.addEventListener("pagehide", handlePageHide);
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => {
-      window.removeEventListener("pagehide", handlePageHide);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      operationGeneration.current += 1;
-      activeController.current?.abort();
-      activeController.current = null;
-      pendingRef.current = false;
-    };
-  }, [abortForLifecycle]);
+    if (resultBecameUnknown) requireSync();
+    return resultBecameUnknown;
+  }, [requireSync]);
 
   const startOperation = useCallback((action: Exclude<PendingAction, null>) => {
     if (pendingRef.current) return null;
     pendingRef.current = true;
+    pendingActionRef.current = action;
     setPending(action);
     const controller = new AbortController();
     activeController.current = controller;
@@ -329,6 +336,7 @@ export function AssistantModelConfigPanel({
     if (operationGeneration.current !== generation) return false;
     activeController.current = null;
     pendingRef.current = false;
+    pendingActionRef.current = null;
     setPending(null);
     setApiKey("");
     return true;
@@ -359,7 +367,8 @@ export function AssistantModelConfigPanel({
       nextConfig.endpointId ?? snapshot.endpoints[provider][0]?.id ?? "",
     );
     setValidation("");
-    setAnnouncement("");
+    if (!syncRequiredRef.current) setAnnouncement("");
+    selectedProviderRef.current = provider;
     setSelectedProvider(provider);
   };
 
@@ -387,17 +396,18 @@ export function AssistantModelConfigPanel({
     providerTabs.current[nextProvider]?.focus();
   };
 
-  const replaceSnapshot = (next: AdminModelConfigSnapshot) => {
+  const replaceSnapshot = useCallback((next: AdminModelConfigSnapshot) => {
+    const provider = selectedProviderRef.current;
     const nextConfig = next.configs.find(
-      (config) => config.provider === selectedProvider,
+      (config) => config.provider === provider,
     )!;
     setSnapshot(next);
     setModelId(nextConfig.modelId ?? "");
     setEndpointId(
-      nextConfig.endpointId ?? next.endpoints[selectedProvider][0]?.id ?? "",
+      nextConfig.endpointId ?? next.endpoints[provider][0]?.id ?? "",
     );
     setValidation("");
-  };
+  }, []);
 
   const validateDraft = () => {
     const normalizedModelId = modelId.trim();
@@ -450,7 +460,7 @@ export function AssistantModelConfigPanel({
 
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!writable || pendingRef.current) return;
+    if (!writable || syncRequiredRef.current || pendingRef.current) return;
     const input = validateDraft();
     if (input === null) return;
     const operation = startOperation("save");
@@ -468,55 +478,107 @@ export function AssistantModelConfigPanel({
       const body = await readJson(response);
       if (operationGeneration.current !== operation.generation) return;
       if (!response.ok) {
-        handleFailure(parseSafeError(body));
+        const error = parseSafeError(body);
+        if (error === null) {
+          requireSync();
+        } else {
+          handleFailure(error);
+        }
         return;
       }
       const saved = parseSavedSnapshot(body, provider, snapshot);
       if (saved === null) {
-        setAnnouncement("模型配置响应无效，请刷新后重试。");
+        requireSync();
         return;
       }
       replaceSnapshot(saved);
       const refreshed = await refreshSnapshot(operation.controller.signal);
       if (operationGeneration.current !== operation.generation) return;
       if (refreshed === null) {
-        setAnnouncement("保存成功，但配置状态刷新失败，请手动刷新。");
+        requireSync();
       } else {
         replaceSnapshot(refreshed);
         setAnnouncement("保存成功，配置状态已刷新。");
       }
     } catch {
       if (operationGeneration.current === operation.generation) {
-        setAnnouncement("模型配置操作失败，请稍后重试。");
+        requireSync();
       }
     } finally {
       settleOperation(operation.generation);
     }
   };
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
+    const wasSyncRequired = syncRequiredRef.current;
     const operation = startOperation("refresh");
     if (operation === null) return;
     try {
       const refreshed = await refreshSnapshot(operation.controller.signal);
       if (operationGeneration.current !== operation.generation) return;
       if (refreshed === null) {
-        setAnnouncement("配置状态刷新失败，请稍后重试。");
+        setAnnouncement(
+          wasSyncRequired
+            ? UNKNOWN_RESULT_MESSAGE
+            : "配置状态刷新失败，请稍后重试。",
+        );
       } else {
         replaceSnapshot(refreshed);
-        setAnnouncement("配置状态已刷新。");
+        syncRequiredRef.current = false;
+        setSyncRequired(false);
+        setAnnouncement(
+          wasSyncRequired
+            ? "配置状态已刷新，可以继续操作。"
+            : "配置状态已刷新。",
+        );
       }
     } catch {
       if (operationGeneration.current === operation.generation) {
-        setAnnouncement("配置状态刷新失败，请稍后重试。");
+        setAnnouncement(
+          wasSyncRequired
+            ? UNKNOWN_RESULT_MESSAGE
+            : "配置状态刷新失败，请稍后重试。",
+        );
       }
     } finally {
       settleOperation(operation.generation);
     }
-  };
+  }, [refreshSnapshot, replaceSnapshot, settleOperation, startOperation]);
+
+  useEffect(() => {
+    const handlePageHide = () => abortForLifecycle();
+    const handlePageShow = () => {
+      if (syncRequiredRef.current) void refresh();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        abortForLifecycle();
+      } else if (syncRequiredRef.current) {
+        void refresh();
+      }
+    };
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("pageshow", handlePageShow);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("pageshow", handlePageShow);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      operationGeneration.current += 1;
+      activeController.current?.abort();
+      activeController.current = null;
+      pendingRef.current = false;
+      pendingActionRef.current = null;
+    };
+  }, [abortForLifecycle, refresh]);
 
   const testAndActivate = async () => {
-    if (!writable || selectedConfig.revision === null || pendingRef.current) {
+    if (
+      !writable ||
+      syncRequiredRef.current ||
+      selectedConfig.revision === null ||
+      pendingRef.current
+    ) {
       return;
     }
     const operation = startOperation("activate");
@@ -539,20 +601,23 @@ export function AssistantModelConfigPanel({
       if (operationGeneration.current !== operation.generation) return;
       if (!response.ok) {
         const error = parseSafeError(body);
+        if (error === null) {
+          requireSync();
+          return;
+        }
+        const refreshed = await refreshSnapshot(operation.controller.signal);
+        if (operationGeneration.current !== operation.generation) return;
+        if (refreshed === null) {
+          requireSync();
+          return;
+        }
+        replaceSnapshot(refreshed);
         if (error?.redirectTo === "/staff/re-auth") {
           handleFailure(error);
         } else if (error?.code === "configuration_conflict") {
-          setAnnouncement("配置已发生变化，请刷新后重试。");
+          setAnnouncement("配置已发生变化，配置状态已刷新。");
         } else if (error !== null && TEST_FAILURE_CODES.has(error.code)) {
-          setSnapshot((current) => ({
-            ...current,
-            configs: current.configs.map((config) =>
-              config.provider === provider && config.revision === revision
-                ? { ...config, testStatus: "failed" }
-                : config,
-            ),
-          }));
-          setAnnouncement("模型测试失败，旧的启用配置继续运行。");
+          setAnnouncement("模型测试失败，配置状态已刷新。");
         } else {
           handleFailure(error);
         }
@@ -560,40 +625,30 @@ export function AssistantModelConfigPanel({
       }
       const activation = parseActivation(body, provider, revision);
       if (activation === null) {
-        setAnnouncement("模型测试响应无效，请刷新后重试。");
+        requireSync();
         return;
       }
-      setSnapshot((current) => ({
-        ...current,
-        configs: current.configs.map((config) => ({
-          ...config,
-          activeRevision:
-            config.provider === provider ? activation.configRevision : null,
-          testStatus:
-            config.provider === provider ? "passed" : config.testStatus,
-        })),
-        runtime: {
-          capability: "available",
-          source: "dynamic",
-          provider,
-          modelId: selectedConfig.modelId,
-          configRevision: activation.configRevision,
-          activationVersion: activation.activationVersion,
-        },
-      }));
+      const refreshed = await refreshSnapshot(operation.controller.signal);
+      if (operationGeneration.current !== operation.generation) return;
+      if (refreshed === null) {
+        requireSync();
+        return;
+      }
+      replaceSnapshot(refreshed);
       setAnnouncement(
         `测试通过，已启用 ${selectedConfig.displayName} rev ${revision}。`,
       );
     } catch {
       if (operationGeneration.current === operation.generation) {
-        setAnnouncement("模型测试失败，旧的启用配置继续运行。");
+        requireSync();
       }
     } finally {
       settleOperation(operation.generation);
     }
   };
 
-  const showRefresh = announcement === "配置已发生变化，请刷新后重试。";
+  const showRefresh =
+    syncRequired || announcement === "配置已发生变化，请刷新后重试。";
 
   return (
     <section
@@ -769,12 +824,12 @@ export function AssistantModelConfigPanel({
               ) : null}
             </div>
             <div>
-              <button disabled={!writable || pending !== null} type="submit">
+              <button disabled={!canMutate || pending !== null} type="submit">
                 {pending === "save" ? "保存中…" : "保存草稿"}
               </button>
               <button
                 disabled={
-                  !writable ||
+                  !canMutate ||
                   selectedConfig.revision === null ||
                   pending !== null
                 }
