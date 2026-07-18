@@ -55,11 +55,10 @@ _PRIVATE_NO_STORE_HEADERS: Final = {
 }
 
 
-def _control_target(scope: Scope) -> tuple[ModelControlAction | None, str | None]:
-    method = scope.get("method")
-    path = scope.get("path")
-    if type(method) is not str or type(path) is not str:
-        return None, None
+def _match_control_target(
+    method: str,
+    path: str,
+) -> tuple[ModelControlAction | None, str | None]:
     parts = path.split("/")
     if (
         method == "PUT"
@@ -78,6 +77,24 @@ def _control_target(scope: Scope) -> tuple[ModelControlAction | None, str | None
         }
         return actions.get(parts[5]), parts[4]
     return None, None
+
+
+def _control_target(
+    scope: Scope,
+) -> tuple[ModelControlAction | None, str | None, bool]:
+    method = scope.get("method")
+    path = scope.get("path")
+    if type(method) is not str or type(path) is not str:
+        return None, None, True
+    action, provider = _match_control_target(method, path)
+    if action is not None:
+        return action, provider, True
+    normalized_path = path.rstrip("/")
+    if normalized_path != path:
+        action, provider = _match_control_target(method, normalized_path)
+        if action is not None:
+            return action, provider, False
+    return None, None, True
 
 
 class ModelControlAuthMiddleware:
@@ -101,7 +118,7 @@ class ModelControlAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        action, provider = _control_target(scope)
+        action, provider, canonical = _control_target(scope)
         private = action == "reveal"
         try:
             assertion = self._authenticator.authenticate(
@@ -119,6 +136,15 @@ class ModelControlAuthMiddleware:
             await response(scope, receive, send)
             return
         except ModelControlAssertionError:
+            response = JSONResponse(
+                status_code=403,
+                content={"error": "authorization_failed"},
+                headers=(_PRIVATE_NO_STORE_HEADERS if private else _NO_STORE_HEADERS),
+            )
+            await response(scope, receive, send)
+            return
+
+        if not canonical:
             response = JSONResponse(
                 status_code=403,
                 content={"error": "authorization_failed"},
@@ -294,41 +320,56 @@ def build_model_control_router(
         include_in_schema=False,
     )
     async def save_model_config(provider: str, request: Request) -> JSONResponse:
-        payload = await _read_json_object(request)
-        if payload is None:
-            return _validation_response()
-        if set(payload) - {
-            "modelId",
-            "endpointId",
-            "apiKey",
-            "expectedRevision",
-        }:
-            return _validation_response()
-        api_key = payload.get("apiKey")
-        if api_key is not None and type(api_key) is not str:
-            return _validation_response()
-        draft: ModelConfigDraft | None = None
-        try:
-            draft = ModelConfigDraft.model_validate(
-                {
-                    "provider": provider,
-                    "model_id": payload.get("modelId"),
-                    "endpoint_id": payload.get("endpointId"),
-                    "api_key": None if api_key is None else SecretStr(api_key),
-                    "expected_revision": payload.get("expectedRevision"),
-                }
-            )
-        except (TypeError, ValidationError):
-            pass
-        if draft is None:
-            return _validation_response()
         assertion = request.scope.get("state", {}).get(_ASSERTION_STATE_KEY)
         if type(assertion) is not ModelControlAssertion:
             return _validation_response()
+        payload = await _read_json_object(request)
+        if payload is None:
+            return _validation_response()
+        api_key: object | None = None
+        draft: ModelConfigDraft | None = None
         try:
-            result = await service_provider().save_model_config(draft, assertion)
-        except ModelControlServiceError as error:
-            return _service_error_response(error)
+            if set(payload) - {
+                "modelId",
+                "endpointId",
+                "apiKey",
+                "expectedRevision",
+            }:
+                return _validation_response()
+            api_key = payload.get("apiKey")
+            if api_key is not None and type(api_key) is not str:
+                return _validation_response()
+            try:
+                draft = ModelConfigDraft.model_validate(
+                    {
+                        "provider": provider,
+                        "model_id": payload.get("modelId"),
+                        "endpoint_id": payload.get("endpointId"),
+                        "api_key": (
+                            None if api_key is None else SecretStr(cast(str, api_key))
+                        ),
+                        "expected_revision": payload.get("expectedRevision"),
+                    }
+                )
+            except (TypeError, ValidationError):
+                pass
+        finally:
+            payload.clear()
+            api_key = None
+            del request
+        if draft is None:
+            return _validation_response()
+        try:
+            try:
+                result = await service_provider().save_model_config(draft, assertion)
+            except ModelControlServiceError as error:
+                return _service_error_response(error)
+            except Exception:
+                return _service_error_response(
+                    ModelControlAssistantError("assistant_unavailable")
+                )
+        finally:
+            draft = None
         return _bounded_response({"version": "1", "config": _metadata_content(result)})
 
     @router.post(
@@ -336,14 +377,14 @@ def build_model_control_router(
         include_in_schema=False,
     )
     async def test_and_activate(provider: str, request: Request) -> JSONResponse:
+        assertion = request.scope.get("state", {}).get(_ASSERTION_STATE_KEY)
+        if type(assertion) is not ModelControlAssertion:
+            return _validation_response()
         payload = await _read_json_object(request)
         if payload is None or set(payload) != {"revision"}:
             return _validation_response()
         revision = payload["revision"]
         if type(revision) is not int or revision < 1:
-            return _validation_response()
-        assertion = request.scope.get("state", {}).get(_ASSERTION_STATE_KEY)
-        if type(assertion) is not ModelControlAssertion:
             return _validation_response()
         try:
             result = await service_provider().test_and_activate(
@@ -367,14 +408,14 @@ def build_model_control_router(
         include_in_schema=False,
     )
     async def reveal_key(provider: str, request: Request) -> JSONResponse:
+        assertion = request.scope.get("state", {}).get(_ASSERTION_STATE_KEY)
+        if type(assertion) is not ModelControlAssertion:
+            return _validation_response(private=True)
         payload = await _read_json_object(request)
         if payload is None or set(payload) != {"revision"}:
             return _validation_response(private=True)
         revision = payload["revision"]
         if type(revision) is not int or revision < 1:
-            return _validation_response(private=True)
-        assertion = request.scope.get("state", {}).get(_ASSERTION_STATE_KEY)
-        if type(assertion) is not ModelControlAssertion:
             return _validation_response(private=True)
         try:
             secret: SecretStr | None = await service_provider().reveal_key(

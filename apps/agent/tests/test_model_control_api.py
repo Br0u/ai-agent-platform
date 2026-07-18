@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -37,7 +38,9 @@ from agent_service.model_control_service import (
     ModelControlServiceError,
     ModelControlStorageError,
     ModelControlValidationError,
+    ModelConfigListResult,
 )
+from agent_service.model_endpoint_catalog import EndpointOption
 from agent_service.model_config_repository import (
     ActiveConfigPointer,
     StoredActiveConfig,
@@ -87,12 +90,6 @@ class MetadataRepository:
         raise AssertionError("disabled control must reject before repository mutation")
 
 
-class OversizedMetadataRepository(MetadataRepository):
-    async def list_metadata(self) -> tuple[StoredModelConfigMetadata, ...]:
-        metadata = await super().list_metadata()
-        return metadata * 1000
-
-
 class RecordingService:
     def __init__(self) -> None:
         self.saved: list[tuple[ModelConfigDraft, ModelControlAssertion]] = []
@@ -137,6 +134,65 @@ class RecordingService:
     ) -> SecretStr:
         self.revealed.append((provider, revision, assertion))
         return SecretStr("single-use-secret-key")
+
+
+class OversizedListService(RecordingService):
+    async def list_model_configs(self) -> ModelConfigListResult:
+        return ModelConfigListResult(
+            configs=(
+                StoredModelConfigMetadata(
+                    provider="openai",
+                    model_id="gpt-5-mini",
+                    endpoint_id="openai-official",
+                    api_key_last_four="cdef",
+                    revision=3,
+                    test_status="passed",
+                ),
+            ),
+            endpoints=tuple(
+                EndpointOption(
+                    id=f"custom-endpoint-{index}",
+                    label="x" * 80,
+                    provider="openai",
+                )
+                for index in range(800)
+            ),
+            bootstrap=None,
+            control_enabled=True,
+        )
+
+
+class UnexpectedSaveFailureService(RecordingService):
+    def __init__(self, raw_key: str) -> None:
+        super().__init__()
+        self.raw_key = raw_key
+        self.failure: RuntimeError | None = None
+
+    async def save_model_config(
+        self,
+        draft: ModelConfigDraft,
+        assertion: ModelControlAssertion,
+    ) -> StoredModelConfigMetadata:
+        del draft, assertion
+        failure = RuntimeError(f"unclassified provider failure: {self.raw_key}")
+        self.failure = failure
+        raise failure
+
+
+class CancellingSaveService(RecordingService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.failure: asyncio.CancelledError | None = None
+
+    async def save_model_config(
+        self,
+        draft: ModelConfigDraft,
+        assertion: ModelControlAssertion,
+    ) -> StoredModelConfigMetadata:
+        del draft, assertion
+        failure = asyncio.CancelledError()
+        self.failure = failure
+        raise failure
 
 
 class FailingService(RecordingService):
@@ -345,11 +401,9 @@ def test_runtime_status_returns_only_the_safe_slot_snapshot() -> None:
     }
 
 
-def test_oversized_metadata_response_fails_closed_with_one_bounded_error() -> None:
-    application = create_app(
-        settings=control_settings(),
-        repository_builder=lambda _: OversizedMetadataRepository(),
-    )
+def test_oversized_endpoint_response_hits_the_bounded_serializer_branch() -> None:
+    service = OversizedListService()
+    application = control_route_app(service)
 
     with TestClient(application) as client:
         response = client.get(
@@ -362,6 +416,130 @@ def test_oversized_metadata_response_fails_closed_with_one_bounded_error() -> No
     assert len(response.content) <= 64 * 1024
     assert response.headers["cache-control"] == "no-store"
     assert "cdef" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "method",
+        "canonical_path",
+        "action",
+        "permission",
+        "trailing_slashes",
+        "auth_mode",
+        "status_code",
+    ),
+    tuple(
+        (
+            method,
+            path,
+            action,
+            permission,
+            trailing_slashes,
+            auth_mode,
+            401 if auth_mode == "wrong_bearer" else 403,
+        )
+        for method, path, action, permission in (
+            (
+                "PUT",
+                "/internal/control/model-configs/openai",
+                "save",
+                "admin:assistant:configure",
+            ),
+            (
+                "POST",
+                "/internal/control/model-configs/openai/test-and-activate",
+                "test_and_activate",
+                "admin:assistant:configure",
+            ),
+            (
+                "POST",
+                "/internal/control/model-configs/openai/reveal-key",
+                "reveal",
+                "admin:assistant:secret:reveal",
+            ),
+        )
+        for trailing_slashes in ("/", "//")
+        for auth_mode in ("valid_assertion", "missing_assertion", "wrong_bearer")
+    ),
+)
+async def test_create_app_rejects_noncanonical_mutation_before_body_receive(
+    method: str,
+    canonical_path: str,
+    action: str,
+    permission: str,
+    trailing_slashes: str,
+    auth_mode: str,
+    status_code: int,
+) -> None:
+    application = create_app(
+        settings=control_settings(),
+        control_clock=lambda: NOW,
+    )
+    path = canonical_path + trailing_slashes
+    headers = [
+        (
+            b"authorization",
+            (
+                b"Bearer wrong-control-key"
+                if auth_mode == "wrong_bearer"
+                else f"Bearer {CONTROL_KEY}".encode()
+            ),
+        ),
+        (b"content-type", b"application/json"),
+        (b"content-length", b"999999"),
+    ]
+    if auth_mode != "missing_assertion":
+        headers.append(
+            (
+                b"x-agent-control-assertion",
+                signed_assertion(action=action, permission=permission).encode(),
+            )
+        )
+    scope = cast(
+        Scope,
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": method,
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": headers,
+            "client": ("test", 123),
+            "server": ("test", 80),
+            "state": {},
+        },
+    )
+    received = 0
+    sent: list[Message] = []
+
+    async def receive() -> Message:
+        nonlocal received
+        received += 1
+        raise AssertionError("noncanonical mutation must not receive a body")
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    await application(scope, receive, send)
+
+    assert received == 0
+    assert sent[0]["status"] == status_code
+    response_headers = dict(sent[0]["headers"])
+    if action == "reveal":
+        assert response_headers[b"cache-control"] == b"no-store, private"
+        assert response_headers[b"pragma"] == b"no-cache"
+    else:
+        assert response_headers[b"cache-control"] == b"no-store"
+    assert sent[1]["body"] == (
+        b'{"error":"authentication_failed"}'
+        if status_code == 401
+        else b'{"error":"authorization_failed"}'
+    )
 
 
 @pytest.mark.parametrize(
@@ -624,6 +802,140 @@ def test_save_rejects_every_non_string_api_key_before_service_dispatch(
     assert response.json() == {"error": "validation_error"}
     assert response.headers["cache-control"] == "no-store"
     assert service.saved == []
+
+
+def _route_traceback_locals(error: BaseException) -> list[dict[str, object]]:
+    frames: list[dict[str, object]] = []
+    traceback = error.__traceback__
+    while traceback is not None:
+        frame = traceback.tb_frame
+        if (
+            frame.f_code.co_name == "save_model_config"
+            and frame.f_code.co_filename.endswith("model_control_api.py")
+        ):
+            frames.append(dict(frame.f_locals))
+        traceback = traceback.tb_next
+    return frames
+
+
+def _assert_route_frames_have_no_key_material(
+    frames: list[dict[str, object]],
+    raw_key: str,
+) -> None:
+    for local_values in frames:
+        for value in local_values.values():
+            assert type(value) is not SecretStr
+            if isinstance(value, str):
+                assert value != raw_key
+            if isinstance(value, dict):
+                assert raw_key not in repr(value)
+
+
+def test_unknown_save_exception_is_fixed_and_clears_key_traceback_locals(
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    raw_key = "traceback-raw-api-key-cdef"
+    service = UnexpectedSaveFailureService(raw_key)
+    application = control_route_app(service)
+
+    with caplog.at_level("DEBUG"):
+        with TestClient(application, raise_server_exceptions=False) as client:
+            response = client.put(
+                "/internal/control/model-configs/openai",
+                headers=mutation_headers(
+                    action="save",
+                    permission="admin:assistant:configure",
+                ),
+                json={
+                    "modelId": "gpt-5-mini",
+                    "endpointId": "openai-official",
+                    "apiKey": raw_key,
+                    "expectedRevision": 2,
+                },
+            )
+
+    captured = capsys.readouterr()
+    assert response.status_code == 503
+    assert response.json() == {"error": "assistant_unavailable"}
+    assert raw_key not in response.text
+    assert raw_key not in captured.out
+    assert raw_key not in captured.err
+    assert raw_key not in caplog.text
+    assert service.failure is not None
+    _assert_route_frames_have_no_key_material(
+        _route_traceback_locals(service.failure),
+        raw_key,
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_cancellation_propagates_after_clearing_route_key_locals() -> None:
+    raw_key = "cancelled-raw-api-key-cdef"
+    service = CancellingSaveService()
+    application = control_route_app(service)
+    path = "/internal/control/model-configs/openai"
+    body = json.dumps(
+        {
+            "modelId": "gpt-5-mini",
+            "endpointId": "openai-official",
+            "apiKey": raw_key,
+            "expectedRevision": 2,
+        },
+        separators=(",", ":"),
+    ).encode()
+    headers = [
+        (b"authorization", f"Bearer {CONTROL_KEY}".encode()),
+        (
+            b"x-agent-control-assertion",
+            signed_assertion(
+                action="save",
+                permission="admin:assistant:configure",
+            ).encode(),
+        ),
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(body)).encode()),
+    ]
+    scope = cast(
+        Scope,
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "PUT",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": headers,
+            "client": ("test", 123),
+            "server": ("test", 80),
+            "state": {},
+        },
+    )
+    received = 0
+
+    async def receive() -> Message:
+        nonlocal received
+        received += 1
+        if received > 1:
+            raise AssertionError("save body read more than once")
+        return cast(
+            Message,
+            {"type": "http.request", "body": body, "more_body": False},
+        )
+
+    async def send(_: Message) -> None:
+        raise AssertionError("cancelled save must not send a response")
+
+    with pytest.raises(asyncio.CancelledError):
+        await application(scope, receive, send)
+
+    assert service.failure is not None
+    route_frames = _route_traceback_locals(service.failure)
+    assert route_frames
+    _assert_route_frames_have_no_key_material(route_frames, raw_key)
 
 
 def test_test_and_activate_passes_only_revision_and_verified_assertion() -> None:

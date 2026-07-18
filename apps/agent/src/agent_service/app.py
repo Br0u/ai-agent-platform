@@ -144,6 +144,27 @@ async def _finish_runtime_cleanup(
         raise asyncio.CancelledError
 
 
+async def _finish_repository_cleanup(
+    repository: ActiveConfigRepository | None,
+) -> None:
+    """Finish repository cleanup despite outer cancellation, then re-propagate it."""
+    cleanup_task = asyncio.create_task(
+        _close_repository(repository),
+        name="agent-control-repository-cleanup",
+    )
+    cancellation_received = False
+    while True:
+        try:
+            await asyncio.shield(cleanup_task)
+            break
+        except asyncio.CancelledError:
+            if cleanup_task.cancelled():
+                raise
+            cancellation_received = True
+    if cancellation_received:
+        raise asyncio.CancelledError
+
+
 async def reconcile_runtime_model(
     *,
     settings: RuntimeSettings,
@@ -468,7 +489,7 @@ def create_app(
             if slot is not None:
                 await _finish_runtime_cleanup(slot, repository)
             else:
-                await _close_repository(repository)
+                await _finish_repository_cleanup(repository)
 
     base_app = FastAPI(
         title="AI Agent Platform AgentOS",

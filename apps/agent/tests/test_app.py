@@ -1271,6 +1271,56 @@ async def test_lifespan_cancellation_waits_for_ordered_runtime_cleanup() -> None
 
 
 @pytest.mark.asyncio
+async def test_disabled_lifespan_cancellation_waits_for_one_repository_close() -> None:
+    settings = RuntimeSettings.model_validate(
+        {
+            "OS_SECURITY_KEY": SECURITY_KEY,
+            "AGNO_DATABASE_URL": DATABASE_URL,
+            "AGENT_CONTROL_DATABASE_URL": CONTROL_DATABASE_URL,
+            "MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY,
+            "AGENT_CONFIG_CONTROL_KEY": CONTROL_KEY,
+            "AGENT_ENABLED": False,
+        }
+    )
+    close_entered = asyncio.Event()
+    close_release = asyncio.Event()
+    close_calls = 0
+    close_finished = False
+
+    class BlockingRepository(ActiveRepository):
+        async def aclose(self) -> None:
+            nonlocal close_calls, close_finished
+            close_calls += 1
+            close_entered.set()
+            await close_release.wait()
+            close_finished = True
+
+    repository = BlockingRepository()
+    app = create_app(
+        settings=settings,
+        repository_builder=lambda _: repository,
+    )
+    lifespan = app.router.lifespan_context(app)
+    await lifespan.__aenter__()
+
+    exit_task = asyncio.create_task(lifespan.__aexit__(None, None, None))
+    await asyncio.wait_for(close_entered.wait(), timeout=5)
+    exit_task.cancel()
+    await asyncio.sleep(0)
+    assert exit_task.done() is False
+    exit_task.cancel()
+    await asyncio.sleep(0)
+    assert exit_task.done() is False
+
+    close_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await exit_task
+
+    assert close_calls == 1
+    assert close_finished is True
+
+
+@pytest.mark.asyncio
 async def test_lifespan_preserves_fixed_cleanup_failure_after_repository_close() -> (
     None
 ):
