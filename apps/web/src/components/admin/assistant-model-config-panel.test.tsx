@@ -715,17 +715,27 @@ describe("AssistantModelConfigPanel", () => {
     expect(screen.getByRole("button", { name: "测试并启用" })).toBeEnabled();
   });
 
-  it("unlocks an unknown test early only when lastTestedAt changes on the submitted revision", async () => {
+  it("does not let another administrator's test and activation unlock an unknown request before its deadline", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-18T11:30:00.000Z"));
-    const refreshed = withSavedOpenAi({
-      testStatus: "failed",
+    const concurrentChange = withSavedOpenAi({
+      activeRevision: 2,
+      testStatus: "passed",
       lastTestedAt: "2026-07-18T11:30:01.000Z",
     });
+    concurrentChange.runtime = {
+      capability: "available",
+      source: "dynamic",
+      provider: "openai",
+      modelId: "gpt-5",
+      configRevision: 2,
+      activationVersion: 8,
+    };
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new DOMException("aborted", "AbortError"))
-      .mockResolvedValueOnce(Response.json(listResponse(refreshed)));
+      .mockResolvedValueOnce(Response.json(listResponse(concurrentChange)))
+      .mockResolvedValueOnce(Response.json(listResponse(concurrentChange)));
     vi.stubGlobal("fetch", fetchMock);
     render(<AssistantModelConfigPanel initialSnapshot={withSavedOpenAi()} />);
 
@@ -735,11 +745,21 @@ describe("AssistantModelConfigPanel", () => {
     await act(async () => Promise.resolve());
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("tab", { name: /OpenAI/u })).toHaveTextContent(
+      "已启用",
+    );
+    expect(
+      screen.getByText("操作结果未知，必须刷新配置后才能继续。"),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "测试并启用" })).toBeDisabled();
+
+    await act(async () => vi.advanceTimersByTimeAsync(59_999));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(screen.getByRole("button", { name: "测试并启用" })).toBeEnabled();
     expect(screen.getByText("配置状态已刷新，可以继续操作。")).toBeVisible();
-
-    await act(async () => vi.advanceTimersByTimeAsync(60_000));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("treats assistant_unavailable during test activation as unknown without retrying", async () => {

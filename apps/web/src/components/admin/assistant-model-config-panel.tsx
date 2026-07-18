@@ -40,7 +40,6 @@ type UnknownMutationDescriptor =
       action: "activate";
       provider: AdminModelProvider;
       submittedRevision: number;
-      previousLastTestedAt: string | null;
       enteredAt: number;
       deadline: number;
     };
@@ -287,21 +286,15 @@ function snapshotProvesMutation(
   snapshot: AdminModelConfigSnapshot,
   descriptor: UnknownMutationDescriptor,
 ): boolean {
+  if (descriptor.action !== "save") return false;
   const config = snapshot.configs.find(
     (candidate) => candidate.provider === descriptor.provider,
   );
   if (config === undefined) return false;
-  if (descriptor.action === "save") {
-    return (
-      config.revision === descriptor.expectedNextRevision &&
-      config.modelId === descriptor.modelId &&
-      config.endpointId === descriptor.endpointId
-    );
-  }
   return (
-    config.revision === descriptor.submittedRevision &&
-    config.lastTestedAt !== null &&
-    config.lastTestedAt !== descriptor.previousLastTestedAt
+    config.revision === descriptor.expectedNextRevision &&
+    config.modelId === descriptor.modelId &&
+    config.endpointId === descriptor.endpointId
   );
 }
 
@@ -703,7 +696,6 @@ export function AssistantModelConfigPanel({
       action: "activate",
       provider,
       submittedRevision: revision,
-      previousLastTestedAt: selectedConfig.lastTestedAt,
       enteredAt,
       deadline: enteredAt + TEST_RECONCILIATION_WINDOW_MS,
     };
