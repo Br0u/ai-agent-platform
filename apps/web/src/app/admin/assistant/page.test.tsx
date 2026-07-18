@@ -1,11 +1,12 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
 
 const mocks = vi.hoisted(() => ({
   requirePermission: vi.fn(),
   loadStatus: vi.fn(),
-  getAssistantRuntime: vi.fn(),
-  inspect: vi.fn(),
+  loadSessions: vi.fn(),
+  loadModelConfigs: vi.fn(),
 }));
 
 vi.mock("@/server/auth/access", () => ({
@@ -14,11 +15,11 @@ vi.mock("@/server/auth/access", () => ({
 vi.mock("@/app/api/v1/admin/assistant/status/handler", () => ({
   loadAdminAssistantStatus: mocks.loadStatus,
 }));
-vi.mock("@/server/assistant/assistant-runtime", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/server/assistant/assistant-runtime")
-  >()),
-  getAssistantRuntime: mocks.getAssistantRuntime,
+vi.mock("@/app/api/v1/admin/assistant/sessions/handler", () => ({
+  loadAdminAssistantSessions: mocks.loadSessions,
+}));
+vi.mock("@/app/api/v1/admin/assistant/model-configs/handler", () => ({
+  loadAdminModelConfigSnapshot: mocks.loadModelConfigs,
 }));
 
 import AdminAssistantPage from "./page";
@@ -41,6 +42,12 @@ const status = {
       probeTimeoutMs: 1500,
       failureThreshold: 3,
     },
+    source: "none" as const,
+    provider: null,
+    modelId: null,
+    configRevision: null,
+    activationVersion: null,
+    testStatus: "not_configured" as const,
   },
   services: [
     {
@@ -78,6 +85,65 @@ const sessions = {
   message: "占位模式未持久化会话；管理列表不可用。",
 };
 
+const actor = {
+  userId: "11111111-1111-4111-8111-111111111111",
+  realm: "workforce" as const,
+  status: "active" as const,
+  displayName: "Admin",
+  mustChangePassword: false,
+  twoFactorEnabled: true,
+  permissions: ["admin:assistant", "admin:assistant:configure"],
+};
+
+const modelConfigs = {
+  version: "1" as const,
+  configs: (
+    [
+      ["openai", "OpenAI"],
+      ["anthropic", "Claude"],
+      ["google", "Gemini"],
+      ["dashscope", "Qwen / DashScope"],
+      ["deepseek", "DeepSeek"],
+      ["minimax", "MiniMax"],
+    ] as const
+  ).map(([provider, displayName]) => ({
+    provider,
+    displayName,
+    modelId: null,
+    endpointId: null,
+    revision: null,
+    testStatus: "not_configured" as const,
+    lastTestedAt: null,
+    apiKey: null,
+    activeRevision: null,
+  })),
+  endpoints: {
+    openai: [{ id: "openai-default", label: "OpenAI 官方" }],
+    anthropic: [{ id: "anthropic-default", label: "Claude 官方" }],
+    google: [{ id: "google-default", label: "Gemini 官方" }],
+    dashscope: [{ id: "dashscope-default", label: "Qwen 官方" }],
+    deepseek: [{ id: "deepseek-default", label: "DeepSeek 官方" }],
+    minimax: [{ id: "minimax-default", label: "MiniMax 官方" }],
+  },
+  runtime: {
+    capability: "placeholder" as const,
+    source: null,
+    provider: null,
+    modelId: null,
+    configRevision: null,
+    activationVersion: null,
+  },
+  canConfigure: true,
+  canReveal: false,
+  controlEnabled: true,
+} satisfies AdminModelConfigSnapshot;
+
+const unavailableSessions = {
+  persistence: "unavailable" as const,
+  listing: "not_available" as const,
+  message: "持久化状态不可用；管理列表不可用。",
+};
+
 const unavailableStatus = {
   ...status,
   runtime: {
@@ -110,21 +176,26 @@ afterEach(cleanup);
 describe("AdminAssistantPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.requirePermission.mockResolvedValue({ realm: "workforce" });
+    mocks.requirePermission.mockResolvedValue(actor);
     mocks.loadStatus.mockResolvedValue(status);
-    mocks.inspect.mockReturnValue({ persistence: sessions.persistence });
-    mocks.getAssistantRuntime.mockReturnValue({ inspect: mocks.inspect });
+    mocks.loadSessions.mockResolvedValue(sessions);
+    mocks.loadModelConfigs.mockResolvedValue(modelConfigs);
   });
 
   it("requires the exact assistant permission before loading protected data", async () => {
-    render(await AdminAssistantPage());
+    const page = await AdminAssistantPage();
+    const serializedProps = JSON.stringify(page);
+    render(page);
 
     expect(mocks.requirePermission).toHaveBeenCalledExactlyOnceWith(
       "admin:assistant",
     );
     expect(mocks.loadStatus).toHaveBeenCalledOnce();
-    expect(mocks.getAssistantRuntime).toHaveBeenCalledOnce();
-    expect(mocks.inspect).toHaveBeenCalledOnce();
+    expect(mocks.loadSessions).toHaveBeenCalledOnce();
+    expect(mocks.loadModelConfigs).toHaveBeenCalledExactlyOnceWith(actor);
+    expect(serializedProps).not.toMatch(
+      /sk-fixture-secret|ciphertext|nonce|https?:\/\/|assertion/iu,
+    );
     expect(screen.getByRole("heading", { name: "AI 助理运营" })).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "受保护的助手测试控制台" }),
@@ -136,14 +207,13 @@ describe("AdminAssistantPage", () => {
 
     await expect(AdminAssistantPage()).rejects.toThrow("denied");
     expect(mocks.loadStatus).not.toHaveBeenCalled();
-    expect(mocks.getAssistantRuntime).not.toHaveBeenCalled();
+    expect(mocks.loadSessions).not.toHaveBeenCalled();
+    expect(mocks.loadModelConfigs).not.toHaveBeenCalled();
   });
 
   it("renders one consistent unavailable persistence truth table when runtime resolution fails", async () => {
     mocks.loadStatus.mockResolvedValueOnce(unavailableStatus);
-    mocks.getAssistantRuntime.mockImplementationOnce(() => {
-      throw new Error("raw http://agent:7777 OS_SECURITY_KEY=secret");
-    });
+    mocks.loadSessions.mockResolvedValueOnce(unavailableSessions);
 
     render(await AdminAssistantPage());
 

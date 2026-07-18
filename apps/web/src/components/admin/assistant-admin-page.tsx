@@ -6,10 +6,13 @@ import type {
 } from "@/features/assistant/admin-assistant-contract";
 import { isAdminAssistantChatResponse } from "@/features/assistant/admin-assistant-contract";
 import { useAssistantSession } from "@/components/assistant/use-assistant-session";
+import { AssistantModelConfigPanel } from "@/components/admin/assistant-model-config-panel";
+import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
 import type { FormEvent } from "react";
 import "./assistant-admin-page.css";
 
 type AssistantAdminPageProps = {
+  modelConfigs: AdminModelConfigSnapshot;
   sessions: AdminAssistantSessionsSnapshot;
   status: AdminAssistantStatusSnapshot;
 };
@@ -25,6 +28,7 @@ const configurationLabels: Record<
 };
 
 export function AssistantAdminPage({
+  modelConfigs,
   sessions,
   status,
 }: AssistantAdminPageProps) {
@@ -123,6 +127,8 @@ export function AssistantAdminPage({
           </div>
         </dl>
       </section>
+
+      <AssistantModelConfigPanel initialSnapshot={modelConfigs} />
 
       <div className="assistant-admin__workspace">
         <section
