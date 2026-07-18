@@ -36,6 +36,7 @@ function client(): AgentModelControlClient {
           apiKeyLastFour: "1234",
           revision: 2,
           testStatus: "untested" as const,
+          lastTestedAt: null,
         },
         {
           provider: "deepseek" as const,
@@ -44,6 +45,7 @@ function client(): AgentModelControlClient {
           apiKeyLastFour: "5678",
           revision: 3,
           testStatus: "passed" as const,
+          lastTestedAt: "2026-07-18T01:02:03.000Z",
         },
       ],
       endpoints: [
@@ -145,7 +147,7 @@ describe("GET /api/v1/admin/assistant/model-configs", () => {
           endpointId: "deepseek-default",
           revision: 3,
           testStatus: "passed",
-          lastTestedAt: null,
+          lastTestedAt: "2026-07-18T01:02:03.000Z",
           apiKey: { configured: true, lastFour: "5678" },
           activeRevision: 3,
         },

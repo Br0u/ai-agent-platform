@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError, fields
+from datetime import UTC, datetime
 from typing import get_args
 
 from pydantic import SecretStr, ValidationError
@@ -107,7 +108,8 @@ def test_metadata_is_frozen_validated_and_has_no_secret_field() -> None:
         endpoint_id="deepseek-official",
         api_key_last_four="alue",
         revision=1,
-        test_status="untested",
+        test_status="passed",
+        last_tested_at=datetime(2026, 7, 18, 1, 2, 3, tzinfo=UTC),
     )
 
     assert {field.name for field in fields(metadata)} == {
@@ -117,10 +119,30 @@ def test_metadata_is_frozen_validated_and_has_no_secret_field() -> None:
         "api_key_last_four",
         "revision",
         "test_status",
+        "last_tested_at",
     }
     assert RAW_API_KEY not in repr(metadata)
     with pytest.raises(FrozenInstanceError):
         metadata.revision = 2  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    "last_tested_at",
+    (datetime(2026, 7, 18, 1, 2, 3), "2026-07-18T01:02:03.000Z", 123),
+)
+def test_metadata_rejects_non_aware_last_tested_timestamp(
+    last_tested_at: object,
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        StoredModelConfigMetadata(
+            provider="openai",
+            model_id="gpt-5",
+            endpoint_id="openai-official",
+            api_key_last_four="last",
+            revision=1,
+            test_status="passed",
+            last_tested_at=last_tested_at,  # type: ignore[arg-type]
+        )
 
 
 @pytest.mark.parametrize(

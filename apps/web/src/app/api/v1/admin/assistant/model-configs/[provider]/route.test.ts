@@ -39,6 +39,7 @@ function dependencies() {
       apiKeyLastFour: "CRET",
       revision: 1,
       testStatus: "untested" as const,
+      lastTestedAt: null,
     },
   }));
   return {

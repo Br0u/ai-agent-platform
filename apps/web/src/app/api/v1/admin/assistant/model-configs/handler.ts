@@ -294,7 +294,7 @@ export async function loadAdminModelConfigSnapshot(
         endpointId: config.endpointId,
         revision: config.revision,
         testStatus: config.testStatus,
-        lastTestedAt: null,
+        lastTestedAt: config.lastTestedAt,
         apiKey: { configured: true, lastFour: config.apiKeyLastFour },
         activeRevision:
           runtime.source === "dynamic" && runtime.provider === provider
@@ -471,7 +471,7 @@ export function createAdminModelConfigSaveHandler(
             endpointId: config.endpointId,
             revision: config.revision,
             testStatus: config.testStatus,
-            lastTestedAt: null,
+            lastTestedAt: config.lastTestedAt,
             apiKey: {
               configured: true,
               lastFour: config.apiKeyLastFour,

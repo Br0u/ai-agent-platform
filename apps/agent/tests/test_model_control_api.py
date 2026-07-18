@@ -79,6 +79,7 @@ class MetadataRepository:
                 api_key_last_four="cdef",
                 revision=3,
                 test_status="passed",
+                last_tested_at=datetime(2026, 7, 18, 1, 2, 3, tzinfo=UTC),
             ),
         )
 
@@ -332,6 +333,7 @@ def test_list_returns_only_bounded_safe_metadata_with_the_control_bearer() -> No
                 "apiKeyLastFour": "cdef",
                 "revision": 3,
                 "testStatus": "passed",
+                "lastTestedAt": "2026-07-18T01:02:03.000Z",
             }
         ],
         "endpoints": [
@@ -748,6 +750,7 @@ def test_save_accepts_one_strict_draft_and_passes_the_verified_assertion() -> No
             "apiKeyLastFour": "cdef",
             "revision": 3,
             "testStatus": "untested",
+            "lastTestedAt": None,
         },
     }
     assert len(service.saved) == 1

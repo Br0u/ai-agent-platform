@@ -47,6 +47,7 @@ export type AgentModelConfigMetadata = {
   apiKeyLastFour: string;
   revision: number;
   testStatus: "untested" | "passed" | "failed";
+  lastTestedAt: string | null;
 };
 
 export type AgentModelConfigListResponse = {
@@ -432,6 +433,15 @@ function isSecret(value: unknown): value is string {
   );
 }
 
+function isCanonicalTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    return new Date(value).toISOString() === value;
+  } catch {
+    return false;
+  }
+}
+
 function readMetadata(value: unknown): AgentModelConfigMetadata | null {
   const snapshot = readExactDataRecord(value, [
     [
@@ -441,6 +451,7 @@ function readMetadata(value: unknown): AgentModelConfigMetadata | null {
       "apiKeyLastFour",
       "revision",
       "testStatus",
+      "lastTestedAt",
     ],
   ]);
   if (
@@ -455,7 +466,11 @@ function readMetadata(value: unknown): AgentModelConfigMetadata | null {
     !hasOnlyPairedSurrogates(snapshot.apiKeyLastFour) ||
     !isPositiveInteger(snapshot.revision) ||
     typeof snapshot.testStatus !== "string" ||
-    !["untested", "passed", "failed"].includes(snapshot.testStatus)
+    !["untested", "passed", "failed"].includes(snapshot.testStatus) ||
+    !(
+      snapshot.lastTestedAt === null ||
+      isCanonicalTimestamp(snapshot.lastTestedAt)
+    )
   ) {
     return null;
   }
@@ -466,6 +481,7 @@ function readMetadata(value: unknown): AgentModelConfigMetadata | null {
     apiKeyLastFour: snapshot.apiKeyLastFour,
     revision: snapshot.revision,
     testStatus: snapshot.testStatus as AgentModelConfigMetadata["testStatus"],
+    lastTestedAt: snapshot.lastTestedAt as string | null,
   };
 }
 

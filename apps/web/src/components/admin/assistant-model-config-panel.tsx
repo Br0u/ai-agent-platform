@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type KeyboardEvent,
 } from "react";
 
 import {
@@ -25,6 +26,7 @@ type AssistantModelConfigPanelProps = {
 type PendingAction = "save" | "activate" | "refresh" | null;
 
 const LIST_ENDPOINT = "/api/v1/admin/assistant/model-configs";
+const MODEL_EDITOR_ID = "assistant-model-editor";
 const MODEL_ID_MAX_LENGTH = 128;
 const API_KEY_MIN_LENGTH = 8;
 const API_KEY_MAX_LENGTH = 4_096;
@@ -272,6 +274,9 @@ export function AssistantModelConfigPanel({
   const activeController = useRef<AbortController | null>(null);
   const operationGeneration = useRef(0);
   const pendingRef = useRef(false);
+  const providerTabs = useRef<
+    Partial<Record<AdminModelProvider, HTMLButtonElement>>
+  >({});
 
   const selectedConfig = useMemo(
     () =>
@@ -280,6 +285,7 @@ export function AssistantModelConfigPanel({
   );
   const endpointOptions = snapshot.endpoints[selectedProvider];
   const writable = snapshot.canConfigure && snapshot.controlEnabled;
+  const keyRequired = selectedConfig.apiKey === null;
 
   const abortForLifecycle = useCallback(() => {
     operationGeneration.current += 1;
@@ -355,6 +361,30 @@ export function AssistantModelConfigPanel({
     setValidation("");
     setAnnouncement("");
     setSelectedProvider(provider);
+  };
+
+  const handleProviderKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    provider: AdminModelProvider,
+  ) => {
+    const currentIndex = ADMIN_MODEL_PROVIDERS.indexOf(provider);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      nextIndex = (currentIndex + 1) % ADMIN_MODEL_PROVIDERS.length;
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      nextIndex =
+        (currentIndex - 1 + ADMIN_MODEL_PROVIDERS.length) %
+        ADMIN_MODEL_PROVIDERS.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = ADMIN_MODEL_PROVIDERS.length - 1;
+    }
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextProvider = ADMIN_MODEL_PROVIDERS[nextIndex]!;
+    selectProvider(nextProvider);
+    providerTabs.current[nextProvider]?.focus();
   };
 
   const replaceSnapshot = (next: AdminModelConfigSnapshot) => {
@@ -597,11 +627,21 @@ export function AssistantModelConfigPanel({
             const running = config.activeRevision !== null || deploymentRunning;
             return (
               <button
-                aria-controls="assistant-model-editor"
+                aria-controls={MODEL_EDITOR_ID}
                 aria-selected={provider === selectedProvider}
+                id={`assistant-model-provider-tab-${provider}`}
                 key={provider}
                 onClick={() => selectProvider(provider)}
+                onKeyDown={(event) => handleProviderKeyDown(event, provider)}
+                ref={(element) => {
+                  if (element === null) {
+                    delete providerTabs.current[provider];
+                  } else {
+                    providerTabs.current[provider] = element;
+                  }
+                }}
                 role="tab"
+                tabIndex={provider === selectedProvider ? 0 : -1}
                 type="button"
               >
                 <span>
@@ -620,9 +660,9 @@ export function AssistantModelConfigPanel({
         </div>
 
         <form
-          aria-labelledby="assistant-model-editor-title"
+          aria-labelledby={`assistant-model-provider-tab-${selectedProvider}`}
           className="assistant-model-config__editor"
-          id="assistant-model-editor"
+          id={MODEL_EDITOR_ID}
           onSubmit={save}
           role="tabpanel"
         >
@@ -683,12 +723,16 @@ export function AssistantModelConfigPanel({
               </select>
             </label>
             <label>
-              <span>新 API Key（可选）</span>
+              <span>
+                {keyRequired ? "新 API Key（必填）" : "新 API Key（可选）"}
+              </span>
               <input
+                aria-required={keyRequired}
                 autoComplete="new-password"
                 disabled={!writable}
                 maxLength={API_KEY_MAX_LENGTH}
                 onChange={(event) => setApiKey(event.target.value)}
+                required={keyRequired}
                 type="password"
                 value={apiKey}
               />

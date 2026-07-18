@@ -39,6 +39,7 @@ const savedConfig: AgentModelConfigMetadata = {
   apiKeyLastFour: "udit",
   revision: 4,
   testStatus: "untested",
+  lastTestedAt: null,
 };
 const saveInput: AdminModelConfigSaveInput = {
   modelId: savedConfig.modelId,

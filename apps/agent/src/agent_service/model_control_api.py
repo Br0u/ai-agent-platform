@@ -1,6 +1,7 @@
 """Thin private HTTP boundary for administrator-managed model configuration."""
 
 from collections.abc import Callable
+from datetime import UTC
 import json
 import re
 import time
@@ -292,6 +293,13 @@ def _metadata_content(config: StoredModelConfigMetadata) -> dict[str, object]:
         "apiKeyLastFour": config.api_key_last_four,
         "revision": config.revision,
         "testStatus": config.test_status,
+        "lastTestedAt": (
+            None
+            if config.last_tested_at is None
+            else config.last_tested_at.astimezone(UTC)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z")
+        ),
     }
 
 

@@ -412,6 +412,7 @@ async def test_list_metadata_selects_only_current_safe_projection() -> None:
                         "s3cr",
                         1,
                         "untested",
+                        ACTIVATED_AT,
                     )
                 ],
             )
@@ -428,12 +429,14 @@ async def test_list_metadata_selects_only_current_safe_projection() -> None:
             api_key_last_four="s3cr",
             revision=1,
             test_status="untested",
+            last_tested_at=ACTIVATED_AT,
         )
     ]
     query, params = cursor.executions[0]
     assert params is None
     assert "api_key_ciphertext" not in query
     assert "api_key_nonce" not in query
+    assert "last_tested_at" in query
     assert events == ["connect", "transaction:begin", "transaction:commit"]
 
 

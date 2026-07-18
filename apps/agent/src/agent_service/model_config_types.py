@@ -1,6 +1,7 @@
 """Immutable domain contracts for administrator-managed model configuration."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Final, Literal, cast
 
 from pydantic import (
@@ -47,8 +48,7 @@ def _validate_model_id(value: str) -> str:
     if len(value) > MODEL_ID_MAX_CODE_POINTS:
         raise ValueError("invalid model ID")
     if any(
-        ord(character) <= 0x1F or 0x7F <= ord(character) <= 0x9F
-        for character in value
+        ord(character) <= 0x1F or 0x7F <= ord(character) <= 0x9F for character in value
     ):
         raise ValueError("invalid model ID")
     return value
@@ -73,11 +73,10 @@ def _validate_api_key(value: SecretStr | None) -> SecretStr | None:
     if value is None:
         return None
     secret = value.get_secret_value()
-    if (
-        not MODEL_API_KEY_MIN_CODE_POINTS
-        <= len(secret)
-        <= MODEL_API_KEY_MAX_CODE_POINTS
-        or any(character.isspace() for character in secret)
+    if not MODEL_API_KEY_MIN_CODE_POINTS <= len(
+        secret
+    ) <= MODEL_API_KEY_MAX_CODE_POINTS or any(
+        character.isspace() for character in secret
     ):
         raise ValueError("invalid model API key")
     return value
@@ -128,15 +127,15 @@ class StoredModelConfigMetadata:
     api_key_last_four: str
     revision: int
     test_status: TestStatus
+    last_tested_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if self.provider not in MODEL_PROVIDERS:
             raise ValueError("invalid model provider")
         _validate_model_id(self.model_id)
         _validate_endpoint_id(self.endpoint_id)
-        if (
-            len(self.api_key_last_four) != 4
-            or any(character.isspace() for character in self.api_key_last_four)
+        if len(self.api_key_last_four) != 4 or any(
+            character.isspace() for character in self.api_key_last_four
         ):
             raise ValueError("invalid API key suffix")
         if (
@@ -147,6 +146,12 @@ class StoredModelConfigMetadata:
             raise ValueError("invalid model config revision")
         if self.test_status not in TEST_STATUSES:
             raise ValueError("invalid test status")
+        if self.last_tested_at is not None and (
+            type(self.last_tested_at) is not datetime
+            or self.last_tested_at.tzinfo is None
+            or self.last_tested_at.utcoffset() is None
+        ):
+            raise ValueError("invalid last tested timestamp")
 
         object.__setattr__(self, "provider", cast(ModelProvider, self.provider))
         object.__setattr__(

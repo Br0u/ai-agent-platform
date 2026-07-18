@@ -177,7 +177,7 @@ describe("AssistantAdminPage", () => {
     expect(container.querySelectorAll("input[type='password']")).toHaveLength(
       1,
     );
-    expect(screen.getByLabelText("新 API Key（可选）")).toHaveValue("");
+    expect(screen.getByLabelText("新 API Key（必填）")).toHaveValue("");
     expect(container.textContent).not.toMatch(/timestamp|openedAt|raw error/iu);
   });
 

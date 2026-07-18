@@ -32,7 +32,8 @@ _LIST_METADATA_SQL = """SELECT
   endpoint_id,
   api_key_last_four,
   revision,
-  test_status
+  test_status,
+  last_tested_at
 FROM agent_control.model_configs
 WHERE is_current = true
 ORDER BY provider
@@ -643,7 +644,7 @@ def _stored_sealed_from_row(row: tuple[Any, ...]) -> StoredSealedConfig:
 
 
 def _metadata_from_row(row: tuple[Any, ...]) -> StoredModelConfigMetadata:
-    if len(row) != 6:
+    if len(row) != 7:
         _storage()
     metadata: StoredModelConfigMetadata | None = None
     try:
@@ -654,6 +655,7 @@ def _metadata_from_row(row: tuple[Any, ...]) -> StoredModelConfigMetadata:
             api_key_last_four=row[3],
             revision=row[4],
             test_status=row[5],
+            last_tested_at=row[6],
         )
     except (TypeError, ValueError):
         pass
@@ -1253,6 +1255,7 @@ class PostgresModelConfigRepository:
                         api_key_last_four=command.sealed.last_four,
                         revision=command.revision,
                         test_status="untested",
+                        last_tested_at=None,
                     )
         except ModelConfigRepositoryError:
             raise

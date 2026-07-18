@@ -46,6 +46,7 @@ function listResponse() {
         apiKeyLastFour: "cdef",
         revision: 3,
         testStatus: "passed",
+        lastTestedAt: "2026-07-18T01:02:03.000Z",
       },
     ],
     endpoints: [
@@ -87,6 +88,7 @@ function saveResponse() {
       apiKeyLastFour: "cdef",
       revision: 3,
       testStatus: "untested",
+      lastTestedAt: null,
     },
   };
 }
@@ -906,6 +908,18 @@ describe("private Agent model control client", () => {
       {
         ...listResponse(),
         configs: [{ ...listResponse().configs[0], nonce: "private" }],
+      },
+    ],
+    [
+      "list",
+      {
+        ...listResponse(),
+        configs: [
+          {
+            ...listResponse().configs[0],
+            lastTestedAt: "2026-07-18T01:02:03+00:00",
+          },
+        ],
       },
     ],
     [

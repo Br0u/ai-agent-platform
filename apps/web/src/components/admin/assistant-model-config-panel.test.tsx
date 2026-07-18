@@ -234,7 +234,12 @@ describe("AssistantModelConfigPanel", () => {
     expect(screen.getAllByRole("tab")[0]).toHaveTextContent(
       "部署配置正在运行 · 后台 Key 不可查看",
     );
-    expect(screen.getByLabelText("新 API Key（可选）")).toHaveValue("");
+    expect(screen.getByLabelText("新 API Key（必填）")).toHaveValue("");
+    expect(screen.getByLabelText("新 API Key（必填）")).toBeRequired();
+    expect(screen.getByLabelText("新 API Key（必填）")).toHaveAttribute(
+      "aria-required",
+      "true",
+    );
     expect(screen.getByLabelText("Model ID")).toBeEnabled();
     expect(
       screen.queryByRole("button", { name: /查看/u }),
@@ -263,6 +268,11 @@ describe("AssistantModelConfigPanel", () => {
       "password",
     );
     expect(screen.getByLabelText("新 API Key（可选）")).toHaveValue("");
+    expect(screen.getByLabelText("新 API Key（可选）")).not.toBeRequired();
+    expect(screen.getByLabelText("新 API Key（可选）")).toHaveAttribute(
+      "aria-required",
+      "false",
+    );
     expect(
       screen.getByText("当前配置版本").nextElementSibling,
     ).toHaveTextContent("rev 2");
@@ -281,6 +291,9 @@ describe("AssistantModelConfigPanel", () => {
     fireEvent.change(screen.getByLabelText("Model ID"), {
       target: { value: "https://provider.example/model" },
     });
+    fireEvent.change(screen.getByLabelText("新 API Key（必填）"), {
+      target: { value: "sk-valid-new" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Model ID 必须是 1–128 个安全字符。",
@@ -289,11 +302,46 @@ describe("AssistantModelConfigPanel", () => {
     fireEvent.change(screen.getByLabelText("Model ID"), {
       target: { value: "gpt-5" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+    fireEvent.change(screen.getByLabelText("新 API Key（必填）"), {
+      target: { value: "" },
+    });
+    fireEvent.submit(screen.getByRole("tabpanel"));
     expect(screen.getByRole("alert")).toHaveTextContent(
       "首次配置必须填写 API Key。",
     );
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("implements roving tab focus and complete keyboard navigation", () => {
+    render(<AssistantModelConfigPanel initialSnapshot={snapshot()} />);
+    const tabs = screen.getAllByRole("tab");
+    const panel = screen.getByRole("tabpanel");
+
+    expect(new Set(tabs.map((tab) => tab.id)).size).toBe(6);
+    expect(tabs[0]).toHaveAttribute("tabindex", "0");
+    expect(tabs.slice(1).every((tab) => tab.tabIndex === -1)).toBe(true);
+    expect(tabs[0]).toHaveAttribute("aria-controls", panel.id);
+    expect(panel).toHaveAttribute("aria-labelledby", tabs[0]!.id);
+
+    tabs[0]!.focus();
+    fireEvent.keyDown(tabs[0]!, { key: "ArrowRight" });
+    expect(tabs[1]).toHaveFocus();
+    expect(tabs[1]).toHaveAttribute("aria-selected", "true");
+    expect(tabs[1]).toHaveAttribute("tabindex", "0");
+    expect(panel).toHaveAttribute("aria-labelledby", tabs[1]!.id);
+
+    fireEvent.keyDown(tabs[1]!, { key: "End" });
+    expect(tabs[5]).toHaveFocus();
+    fireEvent.keyDown(tabs[5]!, { key: "ArrowRight" });
+    expect(tabs[0]).toHaveFocus();
+    fireEvent.keyDown(tabs[0]!, { key: "ArrowLeft" });
+    expect(tabs[5]).toHaveFocus();
+    fireEvent.keyDown(tabs[5]!, { key: "Home" });
+    expect(tabs[0]).toHaveFocus();
+    fireEvent.keyDown(tabs[0]!, { key: "ArrowDown" });
+    expect(tabs[1]).toHaveFocus();
+    fireEvent.keyDown(tabs[1]!, { key: "ArrowUp" });
+    expect(tabs[0]).toHaveFocus();
   });
 
   it("saves through the exact PUT boundary, prevents doubles, replaces metadata and refreshes once", async () => {
@@ -435,11 +483,11 @@ describe("AssistantModelConfigPanel", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: /Claude/u }));
     expect(signal.aborted).toBe(true);
-    expect(screen.getByLabelText("新 API Key（可选）")).toHaveValue("");
+    expect(screen.getByLabelText("新 API Key（必填）")).toHaveValue("");
     fireEvent.change(screen.getByLabelText("Model ID"), {
       target: { value: "claude-sonnet-4-5" },
     });
-    fireEvent.change(screen.getByLabelText("新 API Key（可选）"), {
+    fireEvent.change(screen.getByLabelText("新 API Key（必填）"), {
       target: { value: "sk-new-provider" },
     });
 
@@ -455,7 +503,7 @@ describe("AssistantModelConfigPanel", () => {
 
     expect(screen.getByLabelText("Provider")).toHaveTextContent("Claude");
     expect(screen.getByLabelText("Model ID")).toHaveValue("claude-sonnet-4-5");
-    expect(screen.getByLabelText("新 API Key（可选）")).toHaveValue(
+    expect(screen.getByLabelText("新 API Key（必填）")).toHaveValue(
       "sk-new-provider",
     );
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -602,7 +650,7 @@ describe("AssistantModelConfigPanel", () => {
 
       expect(screen.getByLabelText("Model ID")).toBeDisabled();
       expect(screen.getByLabelText("Endpoint")).toBeDisabled();
-      expect(screen.getByLabelText("新 API Key（可选）")).toBeDisabled();
+      expect(screen.getByLabelText("新 API Key（必填）")).toBeDisabled();
       expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
       expect(screen.getByRole("button", { name: "测试并启用" })).toBeDisabled();
     },
