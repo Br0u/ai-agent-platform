@@ -14,6 +14,7 @@ from agno.os import AgentOS
 from agno.os.settings import AgnoAPISettings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from starlette.types import Message, Receive, Scope, Send
 from starlette.websockets import WebSocketDisconnect
 
@@ -30,7 +31,10 @@ from agent_service.database import build_database
 from agent_service.model_config_crypto import ModelConfigCipher
 from agent_service.model_config_repository import StoredActiveConfig
 from agent_service.model_config_types import ModelProvider
-from agent_service.model_endpoint_catalog import load_model_endpoint_catalog
+from agent_service.model_endpoint_catalog import (
+    ModelEndpointCatalog,
+    load_model_endpoint_catalog,
+)
 from agent_service.model_runtime_slot import (
     ModelRuntimeSlot,
     RuntimeModelMetadata,
@@ -1035,6 +1039,52 @@ def test_lifespan_reconciles_before_requests_and_closes_model_before_repository(
         assert events == ["reconciled", "request"]
 
     assert events == ["reconciled", "request", "active-rev1", "repository"]
+
+
+@pytest.mark.parametrize("failing_dependency", ["cipher", "endpoint"])
+def test_lifespan_skips_dynamic_dependencies_when_no_active_pointer(
+    failing_dependency: str,
+) -> None:
+    settings = dynamic_settings(bootstrap=True)
+    repository = ActiveRepository()
+    built: list[ActiveModelSettings] = []
+    closes: list[str] = []
+
+    def unexpected_cipher(_: SecretStr) -> ModelConfigCipher:
+        if failing_dependency == "cipher":
+            raise AssertionError("cipher is dynamic-only")
+        return ModelConfigCipher(
+            master_key=settings.model_config_encryption_key  # type: ignore[arg-type]
+        )
+
+    def unexpected_endpoint(_: str | None) -> ModelEndpointCatalog:
+        if failing_dependency == "endpoint":
+            raise AssertionError("endpoint catalog is dynamic-only")
+        return load_model_endpoint_catalog()
+
+    def build_model(model_settings: ActiveModelSettings) -> ManagedModel:
+        built.append(model_settings)
+        return managed_model(model_settings.model_id, closes)
+
+    app = create_app(
+        settings=settings,
+        readiness_probe=ready_probe,
+        repository_builder=lambda _: repository,
+        cipher_builder=unexpected_cipher,
+        endpoint_catalog_builder=unexpected_endpoint,
+        model_builder=build_model,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/internal/health/ready", headers=AUTHORIZATION)
+        status = app.state.model_runtime_status()
+
+    assert repository.loads == 1
+    assert response.json() == {"ready": True, "capability": "available"}
+    assert [item.model_id for item in built] == ["bootstrap-model"]
+    assert status.source == "deployment"
+    assert status.activation_version is None
+    assert closes == ["bootstrap-model"]
 
 
 def test_lifespan_turns_control_failure_into_degraded_safe_runtime_status() -> None:

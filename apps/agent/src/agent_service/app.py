@@ -59,6 +59,10 @@ RepositoryBuilder = Callable[[SecretStr], ActiveConfigRepository]
 CipherBuilder = Callable[[SecretStr], ModelConfigCipher]
 EndpointCatalogBuilder = Callable[[str | None], ModelEndpointCatalog]
 ManagedModelBuilder = Callable[[ActiveModelSettings], ManagedModel]
+DynamicDependenciesBuilder = Callable[
+    [],
+    tuple[ModelConfigCipher | None, ModelEndpointCatalog | None],
+]
 
 
 def _build_repository(database_url: SecretStr) -> ActiveConfigRepository:
@@ -100,6 +104,7 @@ async def reconcile_runtime_model(
     cipher: ModelConfigCipher | None,
     endpoint_catalog: ModelEndpointCatalog | None,
     model_builder: ManagedModelBuilder = build_managed_model,
+    dynamic_dependencies_builder: DynamicDependenciesBuilder | None = None,
 ) -> None:
     """Restore one dynamic pointer, or the deployment bootstrap when none exists."""
     active = None
@@ -113,6 +118,8 @@ async def reconcile_runtime_model(
     managed: ManagedModel | None = None
     if active is not None:
         try:
+            if dynamic_dependencies_builder is not None:
+                cipher, endpoint_catalog = dynamic_dependencies_builder()
             if cipher is None or endpoint_catalog is None:
                 raise RuntimeError("dynamic model dependencies unavailable")
             api_key = cipher.open(
@@ -302,21 +309,31 @@ def create_app(
                     repository = repository_builder(
                         runtime_settings.agent_control_database_url
                     )
-                cipher = (
-                    None
-                    if runtime_settings.model_config_encryption_key is None
-                    else cipher_builder(runtime_settings.model_config_encryption_key)
-                )
-                endpoints = endpoint_catalog_builder(
-                    runtime_settings.model_endpoints_file
-                )
+
+                def build_dynamic_dependencies() -> tuple[
+                    ModelConfigCipher | None,
+                    ModelEndpointCatalog | None,
+                ]:
+                    cipher = (
+                        None
+                        if runtime_settings.model_config_encryption_key is None
+                        else cipher_builder(
+                            runtime_settings.model_config_encryption_key
+                        )
+                    )
+                    endpoints = endpoint_catalog_builder(
+                        runtime_settings.model_endpoints_file
+                    )
+                    return cipher, endpoints
+
                 await reconcile_runtime_model(
                     settings=runtime_settings,
                     slot=slot,
                     repository=repository,
-                    cipher=cipher,
-                    endpoint_catalog=endpoints,
+                    cipher=None,
+                    endpoint_catalog=None,
                     model_builder=model_builder,
+                    dynamic_dependencies_builder=build_dynamic_dependencies,
                 )
             except Exception:
                 slot.deactivate(capability="degraded")
