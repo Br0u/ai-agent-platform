@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -139,6 +140,7 @@ function listResponse(value: AdminModelConfigSnapshot) {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -490,7 +492,9 @@ describe("AssistantModelConfigPanel", () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockImplementationOnce(() => request)
-      .mockResolvedValueOnce(Response.json(listResponse(withSavedOpenAi())));
+      .mockResolvedValueOnce(
+        Response.json(listResponse(withSavedOpenAi({ revision: 3 }))),
+      );
     vi.stubGlobal("fetch", fetchMock);
     render(<AssistantModelConfigPanel initialSnapshot={withSavedOpenAi()} />);
 
@@ -558,6 +562,41 @@ describe("AssistantModelConfigPanel", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("keeps an unknown save locked on an old early snapshot and reconciles after its 10 second deadline", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-18T10:00:00.000Z"));
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("offline"))
+      .mockResolvedValueOnce(
+        Response.json(listResponse(withSavedOpenAi({ revision: 2 }))),
+      )
+      .mockResolvedValueOnce(
+        Response.json(listResponse(withSavedOpenAi({ revision: 2 }))),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistantModelConfigPanel initialSnapshot={withSavedOpenAi()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+    await act(async () => Promise.resolve());
+    fireEvent.click(screen.getByRole("button", { name: "刷新配置" }));
+    await act(async () => Promise.resolve());
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(
+      screen.getByText("操作结果未知，必须刷新配置后才能继续。"),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
+
+    await act(async () => vi.advanceTimersByTimeAsync(9_999));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(screen.getByRole("button", { name: "保存草稿" })).toBeEnabled();
+    expect(screen.getByText("配置状态已刷新，可以继续操作。")).toBeVisible();
+  });
+
   it("requires sync when the authoritative GET after a successful save fails", async () => {
     const fetchMock = vi
       .fn()
@@ -606,6 +645,24 @@ describe("AssistantModelConfigPanel", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("treats storage_unavailable after save as an unknown mutation result", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(safeError("storage_unavailable"), { status: 503 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistantModelConfigPanel initialSnapshot={withSavedOpenAi()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+
+    expect(
+      await screen.findByText("操作结果未知，必须刷新配置后才能继续。"),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("does not claim an old runtime survived when a test request aborts without a response", async () => {
     const fetchMock = vi
       .fn()
@@ -622,6 +679,114 @@ describe("AssistantModelConfigPanel", () => {
     expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "测试并启用" })).toBeDisabled();
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("does not treat an old test status as proof and reconciles after the 60 second test deadline", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-18T11:00:00.000Z"));
+    const staleFailure = withSavedOpenAi({
+      testStatus: "failed",
+      lastTestedAt: "2026-07-18T09:00:00.000Z",
+    });
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new DOMException("aborted", "AbortError"))
+      .mockResolvedValueOnce(Response.json(listResponse(staleFailure)))
+      .mockResolvedValueOnce(Response.json(listResponse(staleFailure)));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistantModelConfigPanel initialSnapshot={staleFailure} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "测试并启用" }));
+    await act(async () => Promise.resolve());
+    fireEvent.click(screen.getByRole("button", { name: "刷新配置" }));
+    await act(async () => Promise.resolve());
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(
+      screen.getByText("操作结果未知，必须刷新配置后才能继续。"),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "测试并启用" })).toBeDisabled();
+
+    await act(async () => vi.advanceTimersByTimeAsync(59_999));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(screen.getByRole("button", { name: "测试并启用" })).toBeEnabled();
+  });
+
+  it("unlocks an unknown test early only when lastTestedAt changes on the submitted revision", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-18T11:30:00.000Z"));
+    const refreshed = withSavedOpenAi({
+      testStatus: "failed",
+      lastTestedAt: "2026-07-18T11:30:01.000Z",
+    });
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new DOMException("aborted", "AbortError"))
+      .mockResolvedValueOnce(Response.json(listResponse(refreshed)));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistantModelConfigPanel initialSnapshot={withSavedOpenAi()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "测试并启用" }));
+    await act(async () => Promise.resolve());
+    fireEvent.click(screen.getByRole("button", { name: "刷新配置" }));
+    await act(async () => Promise.resolve());
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "测试并启用" })).toBeEnabled();
+    expect(screen.getByText("配置状态已刷新，可以继续操作。")).toBeVisible();
+
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats assistant_unavailable during test activation as unknown without retrying", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(safeError("assistant_unavailable"), { status: 503 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistantModelConfigPanel initialSnapshot={withSavedOpenAi()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "测试并启用" }));
+
+    expect(
+      await screen.findByText("操作结果未知，必须刷新配置后才能继续。"),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "测试并启用" })).toBeDisabled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("navigates immediately on exact test re-auth without issuing a reconciliation GET", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          safeError("reauth_required", { redirectTo: "/staff/re-auth" }),
+          { status: 401 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AssistantModelConfigPanel
+        initialSnapshot={withSavedOpenAi()}
+        navigateToReauth={navigation.push}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "测试并启用" }));
+
+    await waitFor(() =>
+      expect(navigation.push).toHaveBeenCalledExactlyOnceWith("/staff/re-auth"),
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByText("操作结果未知，必须刷新配置后才能继续。"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "测试并启用" })).toBeEnabled();
   });
 
   it("keeps unknown state across a failed refresh and prevents concurrent refreshes", async () => {
@@ -665,6 +830,93 @@ describe("AssistantModelConfigPanel", () => {
     expect(screen.getByRole("button", { name: "保存草稿" })).toBeEnabled();
   });
 
+  it("keeps a deadline reconciliation safe across a Provider switch", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-18T12:00:00.000Z"));
+    let resolveRefresh!: (response: Response) => void;
+    const pendingRefresh = new Promise<Response>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError("offline"))
+      .mockImplementationOnce(() => pendingRefresh);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistantModelConfigPanel initialSnapshot={withSavedOpenAi()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+    await act(async () => Promise.resolve());
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    const signal = fetchMock.mock.calls[1]![1]?.signal as AbortSignal;
+
+    fireEvent.click(screen.getByRole("tab", { name: /Claude/u }));
+    expect(signal.aborted).toBe(false);
+    resolveRefresh(
+      Response.json(listResponse(withSavedOpenAi({ revision: 3 }))),
+    );
+    await act(async () => Promise.resolve());
+
+    expect(screen.getByLabelText("Provider")).toHaveTextContent("Claude");
+    expect(screen.getByLabelText("Model ID")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "保存草稿" })).toBeEnabled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("defers the deadline reconciliation while hidden and retries when visible", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-18T12:30:00.000Z"));
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("offline"))
+      .mockResolvedValueOnce(
+        Response.json(listResponse(withSavedOpenAi({ revision: 2 }))),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistantModelConfigPanel initialSnapshot={withSavedOpenAi()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+    await act(async () => Promise.resolve());
+    const visibility = vi
+      .spyOn(document, "visibilityState", "get")
+      .mockReturnValue("hidden");
+
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
+
+    await act(async () => {
+      visibility.mockReturnValue("visible");
+      fireEvent(document, new Event("visibilitychange"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "保存草稿" })).toBeEnabled();
+  });
+
+  it("clears a scheduled reconciliation when unknown state is unmounted", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-18T12:45:00.000Z"));
+    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError("offline"));
+    vi.stubGlobal("fetch", fetchMock);
+    const rendered = render(
+      <AssistantModelConfigPanel initialSnapshot={withSavedOpenAi()} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+    await act(async () => Promise.resolve());
+    expect(
+      screen.getByText("操作结果未知，必须刷新配置后才能继续。"),
+    ).toBeVisible();
+
+    rendered.unmount();
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it.each(["pagehide", "hidden"] as const)(
     "clears Key, marks unknown on %s and recovers only after the return GET",
     async (lifecycle) => {
@@ -684,6 +936,9 @@ describe("AssistantModelConfigPanel", () => {
       vi.stubGlobal("fetch", fetchMock);
       render(<AssistantModelConfigPanel initialSnapshot={withSavedOpenAi()} />);
 
+      fireEvent.change(screen.getByLabelText("Model ID"), {
+        target: { value: "gpt-5.1" },
+      });
       fireEvent.change(screen.getByLabelText("新 API Key（可选）"), {
         target: { value: "sk-lifecycle-secret" },
       });
@@ -876,28 +1131,26 @@ describe("AssistantModelConfigPanel", () => {
     ).toHaveLength(1);
   });
 
-  it("refreshes once after an activation conflict and preserves authoritative truth", async () => {
+  it("keeps an activation conflict explicit without entering unknown or auto-refreshing", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
         Response.json(safeError("configuration_conflict"), { status: 409 }),
-      )
-      .mockResolvedValueOnce(Response.json(listResponse(withSavedOpenAi())));
+      );
     vi.stubGlobal("fetch", fetchMock);
     render(<AssistantModelConfigPanel initialSnapshot={withSavedOpenAi()} />);
 
     fireEvent.click(screen.getByRole("button", { name: "测试并启用" }));
 
     expect(
-      await screen.findByText("配置已发生变化，配置状态已刷新。"),
+      await screen.findByText("配置已发生变化，请刷新后重试。"),
     ).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: "刷新配置" }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "刷新配置" })).toBeVisible();
     expect(screen.getByRole("tab", { name: /OpenAI/u })).toHaveTextContent(
       "当前草稿未启用 · 运行 rev 1",
     );
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "保存草稿" })).toBeEnabled();
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it.each([

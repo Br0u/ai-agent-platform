@@ -25,17 +25,43 @@ type AssistantModelConfigPanelProps = {
 
 type PendingAction = "save" | "activate" | "refresh" | null;
 
+type UnknownMutationDescriptor =
+  | {
+      action: "save";
+      provider: AdminModelProvider;
+      submittedRevision: number;
+      expectedNextRevision: number;
+      modelId: string;
+      endpointId: string;
+      enteredAt: number;
+      deadline: number;
+    }
+  | {
+      action: "activate";
+      provider: AdminModelProvider;
+      submittedRevision: number;
+      previousLastTestedAt: string | null;
+      enteredAt: number;
+      deadline: number;
+    };
+
 const LIST_ENDPOINT = "/api/v1/admin/assistant/model-configs";
 const MODEL_EDITOR_ID = "assistant-model-editor";
 const MODEL_ID_MAX_LENGTH = 128;
 const API_KEY_MIN_LENGTH = 8;
 const API_KEY_MAX_LENGTH = 4_096;
+const SAVE_RECONCILIATION_WINDOW_MS = 10_000;
+const TEST_RECONCILIATION_WINDOW_MS = 60_000;
 const UNKNOWN_RESULT_MESSAGE = "操作结果未知，必须刷新配置后才能继续。";
 const TEST_FAILURE_CODES = new Set([
   "credential_rejected",
   "model_not_found",
   "provider_unreachable",
   "provider_timeout",
+]);
+const UNCERTAIN_MUTATION_ERROR_CODES = new Set([
+  "storage_unavailable",
+  "assistant_unavailable",
 ]);
 
 function hasExactKeys(value: unknown, expected: readonly string[]) {
@@ -257,6 +283,28 @@ function safeFailureMessage(error: SafeError | null): string {
   }
 }
 
+function snapshotProvesMutation(
+  snapshot: AdminModelConfigSnapshot,
+  descriptor: UnknownMutationDescriptor,
+): boolean {
+  const config = snapshot.configs.find(
+    (candidate) => candidate.provider === descriptor.provider,
+  );
+  if (config === undefined) return false;
+  if (descriptor.action === "save") {
+    return (
+      config.revision === descriptor.expectedNextRevision &&
+      config.modelId === descriptor.modelId &&
+      config.endpointId === descriptor.endpointId
+    );
+  }
+  return (
+    config.revision === descriptor.submittedRevision &&
+    config.lastTestedAt !== null &&
+    config.lastTestedAt !== descriptor.previousLastTestedAt
+  );
+}
+
 export function AssistantModelConfigPanel({
   initialSnapshot,
   navigateToReauth = (path) => window.location.assign(path),
@@ -281,7 +329,10 @@ export function AssistantModelConfigPanel({
   const operationGeneration = useRef(0);
   const pendingRef = useRef(false);
   const pendingActionRef = useRef<PendingAction>(null);
+  const pendingMutationRef = useRef<UnknownMutationDescriptor | null>(null);
+  const unknownDescriptorRef = useRef<UnknownMutationDescriptor | null>(null);
   const syncRequiredRef = useRef(false);
+  const pageSuspendedRef = useRef(false);
   const selectedProviderRef = useRef<AdminModelProvider>("openai");
   const providerTabs = useRef<
     Partial<Record<AdminModelProvider, HTMLButtonElement>>
@@ -297,14 +348,21 @@ export function AssistantModelConfigPanel({
   const canMutate = writable && !syncRequired;
   const keyRequired = selectedConfig.apiKey === null;
 
-  const requireSync = useCallback(() => {
-    syncRequiredRef.current = true;
-    setSyncRequired(true);
-    setAnnouncement(UNKNOWN_RESULT_MESSAGE);
-    setApiKey("");
-  }, []);
+  const requireSync = useCallback(
+    (
+      descriptor: UnknownMutationDescriptor | null = pendingMutationRef.current,
+    ) => {
+      if (descriptor !== null) unknownDescriptorRef.current = descriptor;
+      syncRequiredRef.current = true;
+      setSyncRequired(true);
+      setAnnouncement(UNKNOWN_RESULT_MESSAGE);
+      setApiKey("");
+    },
+    [],
+  );
 
   const abortForLifecycle = useCallback(() => {
+    const mutation = pendingMutationRef.current;
     const resultBecameUnknown =
       pendingActionRef.current === "save" ||
       pendingActionRef.current === "activate";
@@ -313,9 +371,10 @@ export function AssistantModelConfigPanel({
     activeController.current = null;
     pendingRef.current = false;
     pendingActionRef.current = null;
+    pendingMutationRef.current = null;
     setPending(null);
     setApiKey("");
-    if (resultBecameUnknown) requireSync();
+    if (resultBecameUnknown) requireSync(mutation);
     return resultBecameUnknown;
   }, [requireSync]);
 
@@ -337,6 +396,7 @@ export function AssistantModelConfigPanel({
     activeController.current = null;
     pendingRef.current = false;
     pendingActionRef.current = null;
+    pendingMutationRef.current = null;
     setPending(null);
     setApiKey("");
     return true;
@@ -358,7 +418,14 @@ export function AssistantModelConfigPanel({
 
   const selectProvider = (provider: AdminModelProvider) => {
     if (provider === selectedProvider) return;
-    abortForLifecycle();
+    if (
+      pendingActionRef.current === "save" ||
+      pendingActionRef.current === "activate"
+    ) {
+      abortForLifecycle();
+    } else {
+      setApiKey("");
+    }
     const nextConfig = snapshot.configs.find(
       (config) => config.provider === provider,
     )!;
@@ -466,6 +533,17 @@ export function AssistantModelConfigPanel({
     const operation = startOperation("save");
     if (operation === null) return;
     const provider = selectedProvider;
+    const enteredAt = Date.now();
+    pendingMutationRef.current = {
+      action: "save",
+      provider,
+      submittedRevision: input.expectedRevision,
+      expectedNextRevision: input.expectedRevision + 1,
+      modelId: input.modelId,
+      endpointId: input.endpointId,
+      enteredAt,
+      deadline: enteredAt + SAVE_RECONCILIATION_WINDOW_MS,
+    };
     try {
       const response = await fetch(`${LIST_ENDPOINT}/${provider}`, {
         method: "PUT",
@@ -480,6 +558,10 @@ export function AssistantModelConfigPanel({
       if (!response.ok) {
         const error = parseSafeError(body);
         if (error === null) {
+          requireSync();
+        } else if (error.redirectTo === "/staff/re-auth") {
+          handleFailure(error);
+        } else if (UNCERTAIN_MUTATION_ERROR_CODES.has(error.code)) {
           requireSync();
         } else {
           handleFailure(error);
@@ -511,6 +593,7 @@ export function AssistantModelConfigPanel({
 
   const refresh = useCallback(async () => {
     const wasSyncRequired = syncRequiredRef.current;
+    const descriptor = unknownDescriptorRef.current;
     const operation = startOperation("refresh");
     if (operation === null) return;
     try {
@@ -524,13 +607,22 @@ export function AssistantModelConfigPanel({
         );
       } else {
         replaceSnapshot(refreshed);
-        syncRequiredRef.current = false;
-        setSyncRequired(false);
-        setAnnouncement(
-          wasSyncRequired
-            ? "配置状态已刷新，可以继续操作。"
-            : "配置状态已刷新。",
-        );
+        const canResolveUnknown =
+          wasSyncRequired &&
+          descriptor !== null &&
+          descriptor === unknownDescriptorRef.current &&
+          (Date.now() >= descriptor.deadline ||
+            snapshotProvesMutation(refreshed, descriptor));
+        if (canResolveUnknown) {
+          unknownDescriptorRef.current = null;
+          syncRequiredRef.current = false;
+          setSyncRequired(false);
+          setAnnouncement("配置状态已刷新，可以继续操作。");
+        } else {
+          setAnnouncement(
+            wasSyncRequired ? UNKNOWN_RESULT_MESSAGE : "配置状态已刷新。",
+          );
+        }
       }
     } catch {
       if (operationGeneration.current === operation.generation) {
@@ -546,8 +638,28 @@ export function AssistantModelConfigPanel({
   }, [refreshSnapshot, replaceSnapshot, settleOperation, startOperation]);
 
   useEffect(() => {
-    const handlePageHide = () => abortForLifecycle();
+    if (!syncRequired) return;
+    const descriptor = unknownDescriptorRef.current;
+    if (descriptor === null) return;
+    const timer = window.setTimeout(
+      () => {
+        if (pageSuspendedRef.current || document.visibilityState === "hidden") {
+          return;
+        }
+        void refresh();
+      },
+      Math.max(0, descriptor.deadline - Date.now()),
+    );
+    return () => window.clearTimeout(timer);
+  }, [refresh, syncRequired]);
+
+  useEffect(() => {
+    const handlePageHide = () => {
+      pageSuspendedRef.current = true;
+      abortForLifecycle();
+    };
     const handlePageShow = () => {
+      pageSuspendedRef.current = false;
       if (syncRequiredRef.current) void refresh();
     };
     const handleVisibility = () => {
@@ -569,6 +681,7 @@ export function AssistantModelConfigPanel({
       activeController.current = null;
       pendingRef.current = false;
       pendingActionRef.current = null;
+      pendingMutationRef.current = null;
     };
   }, [abortForLifecycle, refresh]);
 
@@ -585,6 +698,15 @@ export function AssistantModelConfigPanel({
     if (operation === null) return;
     const provider = selectedProvider;
     const revision = selectedConfig.revision;
+    const enteredAt = Date.now();
+    pendingMutationRef.current = {
+      action: "activate",
+      provider,
+      submittedRevision: revision,
+      previousLastTestedAt: selectedConfig.lastTestedAt,
+      enteredAt,
+      deadline: enteredAt + TEST_RECONCILIATION_WINDOW_MS,
+    };
     try {
       const response = await fetch(
         `${LIST_ENDPOINT}/${provider}/test-and-activate`,
@@ -605,6 +727,18 @@ export function AssistantModelConfigPanel({
           requireSync();
           return;
         }
+        if (error.redirectTo === "/staff/re-auth") {
+          handleFailure(error);
+          return;
+        }
+        if (UNCERTAIN_MUTATION_ERROR_CODES.has(error.code)) {
+          requireSync();
+          return;
+        }
+        if (!TEST_FAILURE_CODES.has(error.code)) {
+          handleFailure(error);
+          return;
+        }
         const refreshed = await refreshSnapshot(operation.controller.signal);
         if (operationGeneration.current !== operation.generation) return;
         if (refreshed === null) {
@@ -612,15 +746,7 @@ export function AssistantModelConfigPanel({
           return;
         }
         replaceSnapshot(refreshed);
-        if (error?.redirectTo === "/staff/re-auth") {
-          handleFailure(error);
-        } else if (error?.code === "configuration_conflict") {
-          setAnnouncement("配置已发生变化，配置状态已刷新。");
-        } else if (error !== null && TEST_FAILURE_CODES.has(error.code)) {
-          setAnnouncement("模型测试失败，配置状态已刷新。");
-        } else {
-          handleFailure(error);
-        }
+        setAnnouncement("模型测试失败，配置状态已刷新。");
         return;
       }
       const activation = parseActivation(body, provider, revision);
