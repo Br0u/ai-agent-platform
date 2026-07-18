@@ -1683,6 +1683,22 @@ test.describe("@control deterministic model control", () => {
       deepseek: "e2e-deepseek-rev1",
       minimax: "e2e-minimax-rev1",
     };
+    type ControlResponseExposure =
+      | "strict"
+      | "model-config-list"
+      | "model-config-page"
+      | "model-key-reveal";
+    const controlResponseLedger: Array<{
+      exposure: ControlResponseExposure;
+      rawJson: string;
+      allowedPlaintext?: string;
+      allowedLastFour: string[];
+      method: string;
+      pathname: string;
+      status: number;
+    }> = [];
+    const pendingControlResponses: Array<Promise<void>> = [];
+    const controlResponseCaptureFailures: string[] = [];
 
     const registerKey = (provider: string, suffix: string) => {
       const key = `e2e-acceptance-${provider}-${randomUUID()}-${suffix}`;
@@ -1692,23 +1708,160 @@ test.describe("@control deterministic model control", () => {
       appendProtectedLedger("AAP_RUNTIME_MODEL_KEY_LAST4_FILE", suffix);
       return key;
     };
-    const currentProtectedValues = () => runtimeProtectedValues();
+    const currentProtectedValues = ({
+      allowedLastFour = [],
+      allowedPlaintext,
+    }: {
+      allowedLastFour?: string[];
+      allowedPlaintext?: string;
+    } = {}) => {
+      const allowedValues = new Set(
+        allowedPlaintext === undefined
+          ? allowedLastFour
+          : [...allowedLastFour, allowedPlaintext],
+      );
+      return [
+        ...runtimeProtectedValues(),
+        credentials.modelAdminSessionToken,
+        credentials.modelAdminStaleSessionToken,
+        ...Object.values(submittedLastFour),
+      ].filter((value) => !allowedValues.has(value));
+    };
+    const readControlJson = async (
+      response: APIResponse,
+      {
+        exposure = "strict",
+        method = "DIRECT",
+        allowedPlaintext,
+        allowedLastFour = [],
+      }: {
+        exposure?: ControlResponseExposure;
+        method?: string;
+        allowedPlaintext?: string;
+        allowedLastFour?: string[];
+      } = {},
+    ): Promise<unknown> => {
+      const setCookie = response.headers()["set-cookie"];
+      if (setCookie?.includes("aap_assistant_sid_dev=")) {
+        cookieCredential(setCookie);
+      }
+      const rawJson = await response.text();
+      controlResponseLedger.push({
+        exposure,
+        rawJson,
+        allowedPlaintext,
+        allowedLastFour,
+        method,
+        pathname: new URL(response.url()).pathname,
+        status: response.status(),
+      });
+      return parseSafeJson(
+        rawJson,
+        currentProtectedValues({
+          allowedLastFour,
+          allowedPlaintext,
+        }),
+      );
+    };
+    async function trackControlResponses(
+      context: BrowserContext,
+    ): Promise<void> {
+      await context.route("**/api/v1/**", async (route) => {
+        const request = route.request();
+        const pathname = new URL(request.url()).pathname;
+        const method = request.method();
+        const capture = (async () => {
+          try {
+            const upstream = await route.fetch();
+            const status = upstream.status();
+            const isApiError = status >= 400;
+            const isAssistantApi =
+              pathname.startsWith("/api/v1/admin/assistant/") ||
+              pathname.startsWith("/api/v1/assistant/");
+            if (!isApiError && !isAssistantApi) {
+              await route.fulfill({ response: upstream });
+              return;
+            }
+
+            const rawJson = await upstream.text();
+            let exposure: ControlResponseExposure = "strict";
+            let allowedPlaintext: string | undefined;
+            let allowedLastFour: string[] = [];
+            if (
+              status === 200 &&
+              method === "GET" &&
+              pathname === MODEL_CONFIG_PATH
+            ) {
+              exposure = "model-config-list";
+              allowedLastFour = CONTROL_PROVIDERS.flatMap((fixture) => {
+                const value = submittedLastFour[fixture.provider];
+                return value === undefined ? [] : [value];
+              });
+            } else if (status === 200 && method === "PUT") {
+              const fixture = CONTROL_PROVIDERS.find(
+                (candidate) =>
+                  pathname === `${MODEL_CONFIG_PATH}/${candidate.provider}`,
+              );
+              if (fixture !== undefined) {
+                exposure = "model-config-page";
+                const value = submittedLastFour[fixture.provider];
+                allowedLastFour = value === undefined ? [] : [value];
+              }
+            } else if (status === 200 && method === "POST") {
+              const fixture = CONTROL_PROVIDERS.find(
+                (candidate) =>
+                  pathname ===
+                  `${MODEL_CONFIG_PATH}/${candidate.provider}/reveal-key`,
+              );
+              if (fixture !== undefined) {
+                exposure = "model-key-reveal";
+                allowedPlaintext = submittedKeys[fixture.provider];
+                const value = submittedLastFour[fixture.provider];
+                allowedLastFour = value === undefined ? [] : [value];
+              }
+            }
+
+            controlResponseLedger.push({
+              exposure,
+              rawJson,
+              allowedPlaintext,
+              allowedLastFour,
+              method,
+              pathname,
+              status,
+            });
+            await route.fulfill({ response: upstream, body: rawJson });
+          } catch {
+            controlResponseCaptureFailures.push(`${method} ${pathname}`);
+            await route.abort().catch(() => undefined);
+          }
+        })();
+        pendingControlResponses.push(capture);
+        await capture;
+      });
+    }
+    async function drainControlResponses(): Promise<void> {
+      await Promise.all(pendingControlResponses);
+    }
     const ask = async (expectedMarker: string) => {
       const context = await browser.newContext({ baseURL });
       collectBrowserDiagnostics(context);
+      await trackControlResponses(context);
       const response = await context.request.post(CHAT_PATH, {
         data: CHAT_BODY,
       });
       expect(response.status()).toBe(200);
-      const body = await readSafeJson(response, currentProtectedValues());
+      const body = await readControlJson(response);
       expect(JSON.stringify(body)).toContain(expectedMarker);
       const deletion = await context.request.delete(SESSION_PATH);
       expect(deletion.status()).toBe(204);
+      await drainControlResponses();
       await context.close();
     };
 
     const admin = await browser.newContext({ baseURL });
     collectBrowserDiagnostics(admin);
+    await trackControlResponses(admin);
     await addSignedSession(
       admin,
       baseURL,
@@ -1742,21 +1895,20 @@ test.describe("@control deterministic model control", () => {
       },
     );
     expect(forbiddenSave.status()).toBe(403);
-    const forbiddenSaveBody = await readSafeJson(
-      forbiddenSave,
-      currentProtectedValues(),
-    );
+    const forbiddenSaveBody = await readControlJson(forbiddenSave);
     expect(JSON.stringify(forbiddenSaveBody)).toContain("permission_denied");
     const forbiddenReveal = await admin.request.post(
       `${MODEL_CONFIG_PATH}/openai/reveal-key`,
       { headers: originHeaders, data: { revision: 1 } },
     );
     expect(forbiddenReveal.status()).toBe(403);
-    await readSafeJson(forbiddenReveal, currentProtectedValues());
+    await readControlJson(forbiddenReveal);
+    await drainControlResponses();
     await admin.close();
 
     const stale = await browser.newContext({ baseURL });
     collectBrowserDiagnostics(stale);
+    await trackControlResponses(stale);
     await addSignedSession(
       stale,
       baseURL,
@@ -1783,16 +1935,18 @@ test.describe("@control deterministic model control", () => {
       },
     );
     expect(staleResponse.status()).toBe(401);
-    const staleBody = await readSafeJson(
-      staleResponse,
-      currentProtectedValues(),
-    );
+    const staleBody = await readControlJson(staleResponse);
     expect(JSON.stringify(staleBody)).toContain("reauth_required");
     expect(JSON.stringify(staleBody)).toContain("/staff/re-auth");
+    await drainControlResponses();
     await stale.close();
 
+    for (const [index, fixture] of CONTROL_PROVIDERS.entries()) {
+      registerKey(fixture.provider, `K${String(index + 1).padStart(3, "0")}`);
+    }
     const modelAdmin = await browser.newContext({ baseURL });
     collectBrowserDiagnostics(modelAdmin);
+    await trackControlResponses(modelAdmin);
     await addSignedSession(
       modelAdmin,
       baseURL,
@@ -1805,13 +1959,14 @@ test.describe("@control deterministic model control", () => {
 
     for (const [index, fixture] of CONTROL_PROVIDERS.entries()) {
       const suffix = `K${String(index + 1).padStart(3, "0")}`;
-      const key = registerKey(fixture.provider, suffix);
       await page
         .getByRole("tab", { name: new RegExp(fixture.label, "u") })
         .click();
       await page.getByLabel("Model ID").fill(modelIds[fixture.provider]!);
       await expect(page.getByLabel("Endpoint")).toHaveValue(fixture.endpoint);
-      await page.getByLabel(/新 API Key/u).fill(key);
+      await page
+        .getByLabel(/新 API Key/u)
+        .fill(submittedKeys[fixture.provider]!);
       await page.getByRole("button", { name: "保存草稿" }).click();
       await expect(
         page.getByText("保存成功，配置状态已刷新。", { exact: true }),
@@ -1821,7 +1976,13 @@ test.describe("@control deterministic model control", () => {
 
     const listedResponse = await modelAdmin.request.get(MODEL_CONFIG_PATH);
     expect(listedResponse.status()).toBe(200);
-    const listed = await readSafeJson(listedResponse, currentProtectedValues());
+    const listed = await readControlJson(listedResponse, {
+      exposure: "model-config-list",
+      method: "GET",
+      allowedLastFour: CONTROL_PROVIDERS.map(
+        (fixture) => submittedLastFour[fixture.provider]!,
+      ),
+    });
     const listedText = JSON.stringify(listed);
     for (const fixture of CONTROL_PROVIDERS) {
       expect(listedText).toContain(modelIds[fixture.provider]!);
@@ -1875,10 +2036,7 @@ test.describe("@control deterministic model control", () => {
       { headers: originHeaders, data: { revision: 1 } },
     );
     expect(staleRevision.status()).toBe(409);
-    const conflictBody = await readSafeJson(
-      staleRevision,
-      currentProtectedValues(),
-    );
+    const conflictBody = await readControlJson(staleRevision);
     expect(JSON.stringify(conflictBody)).toContain("configuration_conflict");
     for (const lastFour of Object.values(submittedLastFour)) {
       expect(JSON.stringify(conflictBody)).not.toContain(lastFour);
@@ -1903,14 +2061,19 @@ test.describe("@control deterministic model control", () => {
     expect(revealResponse.status()).toBe(200);
     expect(revealResponse.headers()["cache-control"]).toContain("no-store");
     expect(revealResponse.headers()["cache-control"]).toContain("private");
-    const revealBody = parseSafeJson(await revealResponse.text(), []);
+    const revealBody = await readControlJson(revealResponse, {
+      exposure: "model-key-reveal",
+      method: "POST",
+      allowedPlaintext: submittedKeys.dashscope!,
+      allowedLastFour: [submittedLastFour.dashscope!],
+    });
     expect(JSON.stringify(revealBody)).toContain(submittedKeys.dashscope!);
     const bootstrapReveal = await modelAdmin.request.post(
       `${MODEL_CONFIG_PATH}/openai/reveal-key`,
       { headers: originHeaders, data: { revision: 0 } },
     );
     expect(bootstrapReveal.status()).toBe(400);
-    await readSafeJson(bootstrapReveal, currentProtectedValues());
+    await readControlJson(bootstrapReveal);
 
     const capabilityRequests: string[] = [];
     page.on("request", (request) => capabilityRequests.push(request.url()));
@@ -1926,11 +2089,7 @@ test.describe("@control deterministic model control", () => {
         (element as HTMLButtonElement).click(),
       );
     }
-    expect(
-      capabilityRequests.some((url) =>
-        /(?:skill|knowledge|tools?|localhost|health)/iu.test(url),
-      ),
-    ).toBe(false);
+    expect(capabilityRequests).toEqual([]);
     for (const [title, status] of [
       ["本地算力", "预留 / 未连接"],
       ["Skill 加载", "未接入"],
@@ -1978,10 +2137,10 @@ test.describe("@control deterministic model control", () => {
     for (const lastFour of Object.values(submittedLastFour)) {
       expect(webAuditText).not.toContain(lastFour);
       expect(controlEventText).not.toContain(lastFour);
-      expect(JSON.stringify(cumulativeConsoleMessages)).not.toContain(lastFour);
     }
 
     recreateAgent(false);
+    await drainControlResponses();
     await page.close();
     const disabledPage = await modelAdmin.newPage();
     await disabledPage.goto("/admin/assistant");
@@ -2001,11 +2160,9 @@ test.describe("@control deterministic model control", () => {
       },
     );
     expect(disabledSave.status()).toBe(503);
-    const disabledBody = await readSafeJson(
-      disabledSave,
-      currentProtectedValues(),
-    );
+    const disabledBody = await readControlJson(disabledSave);
     expect(JSON.stringify(disabledBody)).toContain("control_disabled");
+    await drainControlResponses();
     await disabledPage.close();
     recreateAgent(true);
     await ask("deterministic-model:e2e-qwen-rev1:turn:1");
@@ -2014,17 +2171,84 @@ test.describe("@control deterministic model control", () => {
       { data: CHAT_BODY },
     );
     expect(finalAuditChatResponse.status()).toBe(200);
-    const finalAuditChat = await readSafeJson(
-      finalAuditChatResponse,
-      currentProtectedValues(),
-    );
+    const finalAuditChat = await readControlJson(finalAuditChatResponse);
     expect(JSON.stringify(finalAuditChat)).toContain(
       "deterministic-model:e2e-qwen-rev1:turn:1",
     );
     collectAgentSessionIdentityAudit();
 
-    for (const key of Object.values(submittedKeys)) {
-      expect(JSON.stringify(cumulativeConsoleMessages)).not.toContain(key);
+    await Promise.all(pendingControlResponses);
+    expect(controlResponseCaptureFailures).toEqual([]);
+    const expectedListLastFour = CONTROL_PROVIDERS.map(
+      (fixture) => submittedLastFour[fixture.provider]!,
+    ).sort();
+    for (const response of controlResponseLedger) {
+      if (response.exposure === "strict") {
+        expect(response.allowedPlaintext).toBeUndefined();
+        expect(response.allowedLastFour).toEqual([]);
+      } else {
+        expect(response.status).toBe(200);
+        if (response.exposure === "model-config-list") {
+          expect(response.method).toBe("GET");
+          expect(response.pathname).toBe(MODEL_CONFIG_PATH);
+          expect(response.allowedPlaintext).toBeUndefined();
+          expect([...response.allowedLastFour].sort()).toEqual(
+            expectedListLastFour,
+          );
+        } else {
+          const suffix =
+            response.exposure === "model-config-page" ? "" : "/reveal-key";
+          const fixture = CONTROL_PROVIDERS.find(
+            (candidate) =>
+              response.pathname ===
+              `${MODEL_CONFIG_PATH}/${candidate.provider}${suffix}`,
+          );
+          expect(fixture).toBeDefined();
+          if (fixture !== undefined) {
+            expect(response.allowedLastFour).toEqual([
+              submittedLastFour[fixture.provider],
+            ]);
+            if (response.exposure === "model-config-page") {
+              expect(response.method).toBe("PUT");
+              expect(response.allowedPlaintext).toBeUndefined();
+            } else {
+              expect(response.method).toBe("POST");
+              expect(response.allowedPlaintext).toBe(
+                submittedKeys[fixture.provider],
+              );
+            }
+          }
+        }
+      }
+      let scanText = response.rawJson;
+      if (response.exposure === "model-key-reveal") {
+        expect(response.allowedPlaintext).toBeTruthy();
+        scanText = scanText.replaceAll(response.allowedPlaintext!, "");
+      }
+      for (const allowedLastFour of response.allowedLastFour) {
+        scanText = scanText.replaceAll(allowedLastFour, "");
+      }
+      for (const token of [
+        credentials.modelAdminSessionToken,
+        credentials.modelAdminStaleSessionToken,
+      ]) {
+        expect(response.rawJson).not.toContain(token);
+      }
+      for (const key of Object.values(submittedKeys)) {
+        expect(scanText).not.toContain(key);
+      }
+      for (const lastFour of Object.values(submittedLastFour)) {
+        expect(scanText).not.toContain(lastFour);
+      }
+    }
+    const terminalConsoleText = JSON.stringify(cumulativeConsoleMessages);
+    for (const protectedValue of [
+      credentials.modelAdminSessionToken,
+      credentials.modelAdminStaleSessionToken,
+      ...Object.values(submittedKeys),
+      ...Object.values(submittedLastFour),
+    ]) {
+      expect(terminalConsoleText).not.toContain(protectedValue);
     }
     await modelAdmin.close();
   });

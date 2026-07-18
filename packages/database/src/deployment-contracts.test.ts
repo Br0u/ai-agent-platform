@@ -567,9 +567,38 @@ describe("production deployment security contracts", () => {
       expect(script).toContain(`build_service ${serviceName}`);
     }
     expect(script).toContain('compose build "$service"');
-    expect(script.match(/run --rm migrate/g)).toHaveLength(2);
-    expect(script.match(/run --rm agno-bootstrap/g)).toHaveLength(2);
-    expect(script.match(/run --rm --no-deps agent-migrate/g)).toHaveLength(2);
+    expect(script).toContain('run_compose_job "migrate-1" migrate');
+    expect(script).toContain('run_compose_job "migrate-2" migrate');
+    expect(script).toContain(
+      'run_compose_job "agno-bootstrap-1" agno-bootstrap',
+    );
+    expect(script).toContain(
+      'run_compose_job "agno-bootstrap-2" agno-bootstrap',
+    );
+    expect(script).toContain(
+      'run_compose_job "agent-migrate-1" --no-deps agent-migrate',
+    );
+    expect(script).toContain(
+      'run_compose_job "agent-migrate-2" --no-deps agent-migrate',
+    );
+    expect(script.match(/compose run --rm/g)).toHaveLength(1);
+    expect(script).toContain("run_compose_job() {");
+    expect(script).toContain(
+      'if compose run --rm "$@" >"$transcript_file" 2>&1; then',
+    );
+    expect(script).toContain('chmod 600 "$transcript_file"');
+    for (const patternsFile of [
+      "protected_patterns_file",
+      "placeholder_dynamic_patterns_file",
+      "agentos_dynamic_patterns_file",
+      "model_keys_file",
+      "model_key_last4_file",
+    ]) {
+      expect(script).toContain(
+        `scan_pattern_file "$${patternsFile}" "$transcript_file"`,
+      );
+    }
+    expect(script).not.toMatch(/(?:cat|sed|tail|head)[^\n]*transcript_file/u);
     expect(script).toContain("HostConfig.PortBindings");
     expect(script).toContain("e2e/assistant-runtime.spec.ts");
     expect(script).toContain("--workers=1");
@@ -866,8 +895,12 @@ describe("production deployment security contracts", () => {
     expect(script).toContain(
       'export AAP_RUNTIME_MODEL_KEY_LAST4_FILE="$model_key_last4_file"',
     );
-    expect(script).toContain("run --rm agent-control-bootstrap");
-    expect(script).toContain("run --rm --no-deps agent-control-migrate");
+    expect(script).toContain(
+      'run_compose_job "agent-control-bootstrap-1" agent-control-bootstrap',
+    );
+    expect(script).toContain(
+      'run_compose_job "agent-control-migrate-1" --no-deps agent-control-migrate',
+    );
     expect(script).toContain("--grep @control");
     expect(script).toContain("assert_zero_residue");
     expect(browserAcceptance).toContain("@control deterministic model control");
@@ -900,6 +933,65 @@ describe("production deployment security contracts", () => {
     expect(browserAcceptance).toContain(
       "expect(webAuditText).not.toContain(lastFour)",
     );
+    expect(browserAcceptance).toContain("credentials.modelAdminSessionToken");
+    expect(browserAcceptance).toContain(
+      "credentials.modelAdminStaleSessionToken",
+    );
+    expect(browserAcceptance).toContain("const controlResponseLedger:");
+    expect(browserAcceptance).toContain("const pendingControlResponses:");
+    expect(browserAcceptance).toContain("function trackControlResponses(");
+    expect(browserAcceptance).toContain(
+      "async function drainControlResponses(",
+    );
+    expect(
+      browserAcceptance.match(/await drainControlResponses\(\)/gu),
+    ).toHaveLength(5);
+    expect(browserAcceptance).toContain('context.route("**/api/v1/**"');
+    expect(browserAcceptance).toContain("await route.fetch()");
+    expect(browserAcceptance).toContain(
+      "await route.fulfill({ response: upstream, body: rawJson })",
+    );
+    expect(browserAcceptance).not.toContain('page.on("response"');
+    expect(browserAcceptance).not.toContain('context.on("response"');
+    expect(browserAcceptance).toContain('exposure = "model-config-list"');
+    expect(browserAcceptance).toContain('exposure = "model-config-page"');
+    expect(browserAcceptance).toContain('exposure = "model-key-reveal"');
+    expect(browserAcceptance).toContain(
+      "pathname: new URL(response.url()).pathname",
+    );
+    expect(browserAcceptance).toContain(
+      "expect(response.pathname).toBe(MODEL_CONFIG_PATH)",
+    );
+    expect(browserAcceptance).toContain('expect(response.method).toBe("PUT")');
+    expect(browserAcceptance).toContain('expect(response.method).toBe("POST")');
+    expect(browserAcceptance).toContain("expect(response.status).toBe(200)");
+    expect(browserAcceptance).not.toContain(
+      "expect(response.status).toBeLessThan(400)",
+    );
+    expect(browserAcceptance).toContain("const expectedListLastFour =");
+    expect(browserAcceptance).toContain(
+      "expect([...response.allowedLastFour].sort()).toEqual(",
+    );
+    expect(browserAcceptance).toContain(
+      "expect(capabilityRequests).toEqual([])",
+    );
+    expect(browserAcceptance).not.toContain("capabilityRequests.some");
+    const finalChatIndex = browserAcceptance.indexOf(
+      "const finalAuditChatResponse",
+    );
+    const terminalResponseScanIndex = browserAcceptance.indexOf(
+      "for (const response of controlResponseLedger)",
+    );
+    const pendingResponseWaitIndex = browserAcceptance.lastIndexOf(
+      "await Promise.all(pendingControlResponses)",
+    );
+    const terminalConsoleScanIndex = browserAcceptance.indexOf(
+      "const terminalConsoleText",
+    );
+    expect(finalChatIndex).toBeGreaterThan(-1);
+    expect(pendingResponseWaitIndex).toBeGreaterThan(finalChatIndex);
+    expect(terminalResponseScanIndex).toBeGreaterThan(pendingResponseWaitIndex);
+    expect(terminalConsoleScanIndex).toBeGreaterThan(finalChatIndex);
   });
 
   it("owns and cleans only the isolated assistant runtime project it locked", () => {

@@ -460,6 +460,40 @@ scan_logs() {
     "sanitized container logs contain model credential metadata"
 }
 
+run_compose_job() {
+  job_name=$1
+  shift
+  case "$job_name" in
+    ''|*[!A-Za-z0-9_.-]*)
+      echo "compose job name is invalid" >&2
+      return 1
+      ;;
+  esac
+  transcript_file="$temp_dir/compose-run-$job_name.log"
+  (umask 077 && : >"$transcript_file")
+  chmod 600 "$transcript_file"
+  if compose run --rm "$@" >"$transcript_file" 2>&1; then
+    job_status=0
+  else
+    job_status=$?
+  fi
+  scan_pattern_file "$protected_patterns_file" "$transcript_file" \
+    "compose job transcript contains protected runtime data"
+  scan_pattern_file "$placeholder_dynamic_patterns_file" "$transcript_file" \
+    "compose job transcript contains placeholder protected data"
+  scan_pattern_file "$agentos_dynamic_patterns_file" "$transcript_file" \
+    "compose job transcript contains AgentOS protected data"
+  scan_pattern_file "$model_keys_file" "$transcript_file" \
+    "compose job transcript contains a model credential"
+  scan_pattern_file "$model_key_last4_file" "$transcript_file" \
+    "compose job transcript contains model credential metadata"
+  if [ "$job_status" -ne 0 ]; then
+    echo "compose job failed: $job_name" >&2
+    return "$job_status"
+  fi
+  echo "Assistant runtime E2E job passed: $job_name"
+}
+
 identity_audit_collector=$(cat <<'PY'
 import os
 import re
@@ -610,22 +644,22 @@ build_service backup
 build_service web
 echo "Assistant runtime E2E phase: provision databases"
 compose up -d --wait db
-compose run --rm migrate
-compose run --rm migrate
-compose run --rm agno-bootstrap
-compose run --rm agno-bootstrap
-compose run --rm --no-deps agent-migrate
-compose run --rm --no-deps agent-migrate
-compose run --rm agent-control-bootstrap
-compose run --rm agent-control-bootstrap
-compose run --rm --no-deps agent-control-migrate
-compose run --rm --no-deps agent-control-migrate
+run_compose_job "migrate-1" migrate
+run_compose_job "migrate-2" migrate
+run_compose_job "agno-bootstrap-1" agno-bootstrap
+run_compose_job "agno-bootstrap-2" agno-bootstrap
+run_compose_job "agent-migrate-1" --no-deps agent-migrate
+run_compose_job "agent-migrate-2" --no-deps agent-migrate
+run_compose_job "agent-control-bootstrap-1" agent-control-bootstrap
+run_compose_job "agent-control-bootstrap-2" agent-control-bootstrap
+run_compose_job "agent-control-migrate-1" --no-deps agent-control-migrate
+run_compose_job "agent-control-migrate-2" --no-deps agent-control-migrate
 compose up -d --no-deps --wait agent
 assert_control_preflight
-compose run --rm -e NODE_ENV=test migrate pnpm db:seed-auth-e2e
+run_compose_job "seed-auth-placeholder" -e NODE_ENV=test migrate pnpm db:seed-auth-e2e
 compose up -d --no-deps --wait web
 compose up -d --no-deps --wait proxy
-compose run --rm --no-deps -e BACKUP_RUN_ONCE=true backup
+run_compose_job "backup-once" --no-deps -e BACKUP_RUN_ONCE=true backup
 
 web_port_bindings=$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$(compose ps -q web)")
 agent_port_bindings=$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$(compose ps -q agent)")
@@ -681,7 +715,7 @@ export ASSISTANT_AGENTOS_CIRCUIT_RESET_MS=30000
 
 compose config --quiet
 compose up -d --no-deps --force-recreate --wait agent
-compose run --rm -e NODE_ENV=test migrate pnpm db:seed-auth-e2e
+run_compose_job "seed-auth-agentos" -e NODE_ENV=test migrate pnpm db:seed-auth-e2e
 compose up -d --no-deps --force-recreate --wait web
 compose up -d --no-deps --force-recreate --wait proxy
 
@@ -697,7 +731,7 @@ scan_logs "agentos-bootstrap" "$agentos_dynamic_patterns_file"
 # The AgentOS invalid-response check intentionally opens the execution circuit.
 # Recreate both runtime sides before exercising the dynamic-control path.
 compose up -d --no-deps --force-recreate --wait agent
-compose run --rm -e NODE_ENV=test migrate pnpm db:seed-auth-e2e
+run_compose_job "seed-auth-control" -e NODE_ENV=test migrate pnpm db:seed-auth-e2e
 compose up -d --no-deps --force-recreate --wait web
 compose up -d --no-deps --force-recreate --wait proxy
 
