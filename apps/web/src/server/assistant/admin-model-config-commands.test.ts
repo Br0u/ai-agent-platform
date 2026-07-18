@@ -59,7 +59,7 @@ function mutationRequest(): Request {
   });
 }
 
-function fixture() {
+function fixture(options: { now?: () => number } = {}) {
   const operations: string[] = [];
   const requireTrustedMutation = vi.fn(() => {
     operations.push("trusted");
@@ -121,6 +121,7 @@ function fixture() {
     limiter,
     client,
     requestIdFactory,
+    now: options.now,
   });
   return {
     operations,
@@ -224,6 +225,134 @@ describe("admin model command authorization", () => {
     ).rejects.toEqual(new AdminModelConfigCommandError("authorization_failed"));
     expect(current.audit.write).not.toHaveBeenCalled();
     expect(current.client.saveModelConfig).not.toHaveBeenCalled();
+  });
+
+  it("consumes a successful authorization exactly once", async () => {
+    let now = 1_000;
+    const current = fixture({ now: () => now });
+    const context = await authorize(current.commands);
+
+    await current.commands.save(context, "openai", saveInput);
+    now += 1;
+
+    await expect(
+      current.commands.save(context, "openai", saveInput),
+    ).rejects.toEqual(new AdminModelConfigCommandError("authorization_failed"));
+    expect(current.client.saveModelConfig).toHaveBeenCalledOnce();
+    expect(current.audit.write).toHaveBeenCalledTimes(2);
+  });
+
+  it("consumes authorization before input validation so a failed attempt cannot retry", async () => {
+    const current = fixture({ now: () => 1_000 });
+    const context = await authorize(current.commands);
+
+    await expect(
+      current.commands.save(context, "openai", {
+        ...saveInput,
+        expectedRevision: -1,
+      }),
+    ).rejects.toEqual(new AdminModelConfigCommandError("validation_error"));
+    await expect(
+      current.commands.save(context, "openai", saveInput),
+    ).rejects.toEqual(new AdminModelConfigCommandError("authorization_failed"));
+    expect(current.audit.write).not.toHaveBeenCalled();
+    expect(current.client.saveModelConfig).not.toHaveBeenCalled();
+  });
+
+  it("rejects and consumes an expired first use before audit or Agent work", async () => {
+    let now = 1_000;
+    const current = fixture({ now: () => now });
+    const context = await authorize(current.commands);
+    now = 31_001;
+
+    await expect(
+      current.commands.save(context, "openai", saveInput),
+    ).rejects.toEqual(new AdminModelConfigCommandError("authorization_failed"));
+    await expect(
+      current.commands.save(context, "openai", saveInput),
+    ).rejects.toEqual(new AdminModelConfigCommandError("authorization_failed"));
+    expect(current.audit.write).not.toHaveBeenCalled();
+    expect(current.client.saveModelConfig).not.toHaveBeenCalled();
+  });
+
+  it("allows first use exactly at the 30-second authorization boundary", async () => {
+    let now = 1_000;
+    const current = fixture({ now: () => now });
+    const context = await authorize(current.commands);
+    now = 31_000;
+
+    await expect(
+      current.commands.save(context, "openai", saveInput),
+    ).resolves.toMatchObject({ requestId: REQUEST_ID });
+    expect(current.client.saveModelConfig).toHaveBeenCalledOnce();
+  });
+
+  it("keeps expiry private and rejects an invalid authorization clock", async () => {
+    const current = fixture({ now: () => Number.NaN });
+
+    await expect(authorize(current.commands)).rejects.toEqual(
+      new AdminModelConfigCommandError("assistant_unavailable"),
+    );
+    expect(current.requestIdFactory).not.toHaveBeenCalled();
+
+    const valid = fixture({ now: () => 1_000 });
+    const context = await authorize(valid.commands);
+    expect(Object.keys(context).sort()).toEqual([
+      "action",
+      "actor",
+      "requestId",
+    ]);
+    expect(context).not.toHaveProperty("expiresAt");
+  });
+
+  it("consumes authorization before reporting an invalid use-time clock", async () => {
+    let now = 1_000;
+    const current = fixture({ now: () => now });
+    const context = await authorize(current.commands);
+    now = Number.MAX_SAFE_INTEGER + 1;
+
+    await expect(
+      current.commands.save(context, "openai", saveInput),
+    ).rejects.toEqual(
+      new AdminModelConfigCommandError("assistant_unavailable"),
+    );
+    now = 1_001;
+    await expect(
+      current.commands.save(context, "openai", saveInput),
+    ).rejects.toEqual(new AdminModelConfigCommandError("authorization_failed"));
+    expect(current.audit.write).not.toHaveBeenCalled();
+    expect(current.client.saveModelConfig).not.toHaveBeenCalled();
+  });
+
+  it("normalizes a throwing clock and still consumes an issued authorization", async () => {
+    const authorizeFailure = fixture({
+      now: () => {
+        throw new Error("clock secret");
+      },
+    });
+    await expect(authorize(authorizeFailure.commands)).rejects.toEqual(
+      new AdminModelConfigCommandError("assistant_unavailable"),
+    );
+
+    let reads = 0;
+    const useFailure = fixture({
+      now: () => {
+        reads += 1;
+        if (reads === 1) return 1_000;
+        throw new Error("clock secret");
+      },
+    });
+    const context = await authorize(useFailure.commands);
+    await expect(
+      useFailure.commands.save(context, "openai", saveInput),
+    ).rejects.toEqual(
+      new AdminModelConfigCommandError("assistant_unavailable"),
+    );
+    await expect(
+      useFailure.commands.save(context, "openai", saveInput),
+    ).rejects.toEqual(new AdminModelConfigCommandError("authorization_failed"));
+    expect(useFailure.audit.write).not.toHaveBeenCalled();
+    expect(useFailure.client.saveModelConfig).not.toHaveBeenCalled();
   });
 });
 
@@ -416,6 +545,11 @@ describe("admin model test-and-activate command", () => {
     expect(JSON.stringify(auditPayloads(current.audit))).not.toMatch(
       /apiKey|lastFour|udit|https?:|assertion|raw error/iu,
     );
+    await expect(
+      current.commands.testAndActivate(context, "openai", { revision: 4 }),
+    ).rejects.toEqual(new AdminModelConfigCommandError("authorization_failed"));
+    expect(current.client.listModelConfigs).toHaveBeenCalledOnce();
+    expect(current.client.testAndActivate).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -566,30 +700,29 @@ describe("admin model test-and-activate command", () => {
 });
 
 describe("admin model Key reveal command", () => {
-  it("executes limiter, preflight, dual audit, one reveal and final delivery in exact order", async () => {
+  it("returns one exact private JSON response after limiter, preflight, audit and one reveal", async () => {
     const current = fixture();
     const context = await authorize(current.commands, "reveal");
     current.operations.length = 0;
-    const deliver = vi.fn((value: { requestId: string; key: string }) => {
-      current.operations.push("deliver");
-      return value;
+
+    const response = await current.commands.reveal(context, "openai", {
+      revision: 4,
     });
 
-    const result = await current.commands.reveal(
-      context,
-      "openai",
-      { revision: 4 },
-      deliver,
-    );
-
-    expect(result).toEqual({ requestId: REQUEST_ID, key: API_KEY });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      version: "1",
+      requestId: REQUEST_ID,
+      key: API_KEY,
+    });
+    expect(response.headers.get("cache-control")).toBe("no-store, private");
+    expect(response.headers.get("pragma")).toBe("no-cache");
     expect(current.operations).toEqual([
       "limit",
       "agent:list",
       "audit:assistant.model_key_reveal_requested",
       "agent:reveal",
       "audit:assistant.model_key_revealed",
-      "deliver",
     ]);
     expect(current.limiter.consume).toHaveBeenCalledWith({
       scope: "admin-key-reveal",
@@ -632,23 +765,25 @@ describe("admin model Key reveal command", () => {
       },
     ]);
     expect(JSON.stringify(auditPayloads(current.audit))).not.toContain(API_KEY);
+    await expect(
+      current.commands.reveal(context, "openai", { revision: 4 }),
+    ).rejects.toEqual(new AdminModelConfigCommandError("authorization_failed"));
+    expect(current.client.revealKey).toHaveBeenCalledOnce();
   });
 
   it("stops at limiter failure before preflight, audit or decrypt", async () => {
     const current = fixture();
     const context = await authorize(current.commands, "reveal");
     current.limiter.consume.mockRejectedValueOnce(new Error("rate DB secret"));
-    const deliver = vi.fn();
 
     await expect(
-      current.commands.reveal(context, "openai", { revision: 4 }, deliver),
+      current.commands.reveal(context, "openai", { revision: 4 }),
     ).rejects.toEqual(
       new AdminModelConfigCommandError("assistant_unavailable"),
     );
     expect(current.client.listModelConfigs).not.toHaveBeenCalled();
     expect(current.audit.write).not.toHaveBeenCalled();
     expect(current.client.revealKey).not.toHaveBeenCalled();
-    expect(deliver).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -660,7 +795,7 @@ describe("admin model Key reveal command", () => {
     current.limiter.consume.mockRejectedValueOnce(limiterError);
 
     await expect(
-      current.commands.reveal(context, "openai", { revision: 4 }, vi.fn()),
+      current.commands.reveal(context, "openai", { revision: 4 }),
     ).rejects.toBe(limiterError);
     if (limiterError instanceof AssistantRateLimitExceededError) {
       expect(limiterError.retryAfterSeconds).toBe(37);
@@ -690,14 +825,12 @@ describe("admin model Key reveal command", () => {
         bootstrap: null,
         controlEnabled: true,
       });
-      const deliver = vi.fn();
 
       await expect(
-        current.commands.reveal(context, "openai", { revision }, deliver),
+        current.commands.reveal(context, "openai", { revision }),
       ).rejects.toEqual(new AdminModelConfigCommandError(code));
       expect(current.audit.write).not.toHaveBeenCalled();
       expect(current.client.revealKey).not.toHaveBeenCalled();
-      expect(deliver).not.toHaveBeenCalled();
     },
   );
 
@@ -705,13 +838,11 @@ describe("admin model Key reveal command", () => {
     const current = fixture();
     const context = await authorize(current.commands, "reveal");
     current.audit.write.mockRejectedValueOnce(new Error("audit unavailable"));
-    const deliver = vi.fn();
 
     await expect(
-      current.commands.reveal(context, "openai", { revision: 4 }, deliver),
+      current.commands.reveal(context, "openai", { revision: 4 }),
     ).rejects.toEqual(new AdminModelConfigCommandError("storage_unavailable"));
     expect(current.client.revealKey).not.toHaveBeenCalled();
-    expect(deliver).not.toHaveBeenCalled();
   });
 
   it("audits a fixed failure after one reveal error without leaking raw detail", async () => {
@@ -721,13 +852,12 @@ describe("admin model Key reveal command", () => {
       current.operations.push("agent:reveal");
       throw new Error(`provider echoed ${API_KEY}`);
     });
-    const deliver = vi.fn();
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
 
     const caught = await current.commands
-      .reveal(context, "openai", { revision: 4 }, deliver)
+      .reveal(context, "openai", { revision: 4 })
       .catch((error: unknown) => error);
 
     expect(caught).toEqual(
@@ -741,7 +871,6 @@ describe("admin model Key reveal command", () => {
     expect(JSON.stringify(auditPayloads(current.audit))).not.toContain(API_KEY);
     expect(consoleError).not.toHaveBeenCalled();
     expect(current.client.revealKey).toHaveBeenCalledOnce();
-    expect(deliver).not.toHaveBeenCalled();
     consoleError.mockRestore();
   });
 
@@ -751,10 +880,9 @@ describe("admin model Key reveal command", () => {
     current.audit.write
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error("audit unavailable"));
-    const deliver = vi.fn();
 
     const caught = await current.commands
-      .reveal(context, "openai", { revision: 4 }, deliver)
+      .reveal(context, "openai", { revision: 4 })
       .catch((error: unknown) => error);
 
     expect(caught).toEqual(
@@ -762,26 +890,31 @@ describe("admin model Key reveal command", () => {
     );
     expect(JSON.stringify(caught)).not.toContain(API_KEY);
     expect(current.client.revealKey).toHaveBeenCalledOnce();
-    expect(deliver).not.toHaveBeenCalled();
   });
 
-  it("discards plaintext and returns a fixed error when final serialization fails", async () => {
+  it("discards plaintext when fixed Response.json serialization throws", async () => {
     const current = fixture();
     const context = await authorize(current.commands, "reveal");
-    const deliver = vi.fn(() => {
+    const nativeResponseJson = Response.json;
+    Response.json = (() => {
       throw new Error("serializer unavailable");
-    });
+    }) as typeof Response.json;
 
-    const caught = await current.commands
-      .reveal(context, "openai", { revision: 4 }, deliver)
-      .catch((error: unknown) => error);
+    let caught: unknown;
+    try {
+      caught = await current.commands
+        .reveal(context, "openai", { revision: 4 })
+        .catch((error: unknown) => error);
+    } finally {
+      Response.json = nativeResponseJson;
+    }
 
     expect(caught).toEqual(
       new AdminModelConfigCommandError("assistant_unavailable"),
     );
+    expect(caught).not.toBeInstanceOf(Response);
     expect(JSON.stringify(caught)).not.toContain(API_KEY);
     expect(current.client.revealKey).toHaveBeenCalledOnce();
-    expect(deliver).toHaveBeenCalledOnce();
     expect(JSON.stringify(auditPayloads(current.audit))).not.toContain(API_KEY);
   });
 
@@ -790,7 +923,7 @@ describe("admin model Key reveal command", () => {
     const context = await authorize(current.commands, "save");
 
     await expect(
-      current.commands.reveal(context, "openai", { revision: 4 }, vi.fn()),
+      current.commands.reveal(context, "openai", { revision: 4 }),
     ).rejects.toEqual(new AdminModelConfigCommandError("authorization_failed"));
     expect(current.limiter.consume).not.toHaveBeenCalled();
     expect(current.client.revealKey).not.toHaveBeenCalled();

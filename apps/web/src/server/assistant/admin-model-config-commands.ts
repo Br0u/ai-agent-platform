@@ -26,6 +26,7 @@ import {
 const AUTHORIZED_MODEL_COMMAND = Symbol("AuthorizedModelCommand");
 const CANONICAL_UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const AUTHORIZATION_TTL_MS = 30_000;
 
 export type ModelCommandAction = "save" | "test_and_activate" | "reveal";
 
@@ -61,6 +62,7 @@ type CommandDependencies = {
   limiter: AssistantRateLimiter;
   client: AgentModelControlClient;
   requestIdFactory?: () => string;
+  now?: () => number;
 };
 
 const ACTION_PERMISSION: Readonly<Record<ModelCommandAction, PermissionKey>> = {
@@ -90,19 +92,40 @@ function commandFailure(error: unknown): AdminModelConfigCommandErrorCode {
 export function createAdminModelConfigCommands(
   dependencies: CommandDependencies,
 ) {
-  const authorized = new WeakSet<object>();
+  const authorized = new WeakMap<
+    object,
+    { action: ModelCommandAction; expiresAt: number }
+  >();
   const requestIdFactory = dependencies.requestIdFactory ?? randomUUID;
+  const now = dependencies.now ?? Date.now;
 
-  function assertAuthorized(
+  function readNow(): number {
+    let value: number;
+    try {
+      value = now();
+    } catch {
+      throw new AdminModelConfigCommandError("assistant_unavailable");
+    }
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new AdminModelConfigCommandError("assistant_unavailable");
+    }
+    return value;
+  }
+
+  function consumeAuthorization(
     context: AuthorizedModelCommand,
     action: ModelCommandAction,
   ): void {
-    if (
-      typeof context !== "object" ||
-      context === null ||
-      !authorized.has(context) ||
-      context.action !== action
-    ) {
+    if (typeof context !== "object" || context === null) {
+      throw new AdminModelConfigCommandError("authorization_failed");
+    }
+    const grant = authorized.get(context);
+    authorized.delete(context);
+    if (grant === undefined) {
+      throw new AdminModelConfigCommandError("authorization_failed");
+    }
+    const currentTime = readNow();
+    if (grant.action !== action || currentTime > grant.expiresAt) {
       throw new AdminModelConfigCommandError("authorization_failed");
     }
   }
@@ -162,6 +185,10 @@ export function createAdminModelConfigCommands(
         ACTION_PERMISSION[action],
         { recentWithinSeconds: 600, mfaRequired: true },
       );
+      const issuedAt = readNow();
+      if (issuedAt > Number.MAX_SAFE_INTEGER - AUTHORIZATION_TTL_MS) {
+        throw new AdminModelConfigCommandError("assistant_unavailable");
+      }
       const requestId = requestIdFactory();
       if (!CANONICAL_UUID.test(requestId)) {
         throw new AdminModelConfigCommandError("assistant_unavailable");
@@ -172,7 +199,10 @@ export function createAdminModelConfigCommands(
         requestId,
         action,
       });
-      authorized.add(context);
+      authorized.set(context, {
+        action,
+        expiresAt: issuedAt + AUTHORIZATION_TTL_MS,
+      });
       return context;
     },
 
@@ -181,7 +211,7 @@ export function createAdminModelConfigCommands(
       provider: AdminModelProvider,
       rawInput: AdminModelConfigSaveInput,
     ) {
-      assertAuthorized(context, "save");
+      consumeAuthorization(context, "save");
       if (!isProvider(provider)) {
         throw new AdminModelConfigCommandError("validation_error");
       }
@@ -260,7 +290,7 @@ export function createAdminModelConfigCommands(
       provider: AdminModelProvider,
       rawInput: AdminModelConfigRevisionInput,
     ) {
-      assertAuthorized(context, "test_and_activate");
+      consumeAuthorization(context, "test_and_activate");
       if (!isProvider(provider)) {
         throw new AdminModelConfigCommandError("validation_error");
       }
@@ -339,17 +369,13 @@ export function createAdminModelConfigCommands(
       }
     },
 
-    async reveal<Result>(
+    async reveal(
       context: AuthorizedModelCommand,
       provider: AdminModelProvider,
       rawInput: AdminModelConfigRevisionInput,
-      deliver: (value: {
-        requestId: string;
-        key: string;
-      }) => Result | Promise<Result>,
-    ): Promise<Result> {
-      assertAuthorized(context, "reveal");
-      if (!isProvider(provider) || typeof deliver !== "function") {
+    ): Promise<Response> {
+      consumeAuthorization(context, "reveal");
+      if (!isProvider(provider)) {
         throw new AdminModelConfigCommandError("validation_error");
       }
       let input: AdminModelConfigRevisionInput | null =
@@ -422,7 +448,15 @@ export function createAdminModelConfigCommands(
           );
         }
         try {
-          return await deliver({ requestId: context.requestId, key });
+          return Response.json(
+            { version: "1", requestId: context.requestId, key },
+            {
+              headers: {
+                "Cache-Control": "no-store, private",
+                Pragma: "no-cache",
+              },
+            },
+          );
         } catch {
           throw new AdminModelConfigCommandError("assistant_unavailable");
         }
@@ -430,7 +464,6 @@ export function createAdminModelConfigCommands(
         key = null;
         input = null;
         rawInput = undefined as never;
-        deliver = undefined as never;
       }
     },
   };
