@@ -116,33 +116,61 @@ class _SyncSlotIterator(Iterator[ModelResponse]):
     ) -> None:
         self._iterator = iterator
         self._release = release
-        self._closed = False
+        self._condition = threading.Condition()
+        self._operation_active = False
+        self._close_requested = False
+        self._closing = False
+        self._released = False
 
     def __iter__(self) -> Iterator[ModelResponse]:
         return self
 
     def __next__(self) -> ModelResponse:
-        if self._closed:
-            raise StopIteration
+        with self._condition:
+            if self._close_requested:
+                raise StopIteration
+            if self._operation_active:
+                raise RuntimeError("stream iteration already in progress")
+            self._operation_active = True
         try:
-            return next(self._iterator)
+            response = next(self._iterator)
         except BaseException:
+            self._finish_operation()
             try:
                 self.close()
             except BaseException:
                 pass
             raise
+        self._finish_operation()
+        return response
+
+    def _finish_operation(self) -> None:
+        with self._condition:
+            self._operation_active = False
+            self._condition.notify_all()
 
     def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
+        with self._condition:
+            self._close_requested = True
+            while self._operation_active:
+                self._condition.wait()
+            while self._closing and not self._released:
+                self._condition.wait()
+            if self._released:
+                return
+            self._closing = True
         try:
             close = getattr(self._iterator, "close", None)
             if callable(close):
                 close()
         finally:
-            self._release()
+            try:
+                self._release()
+            finally:
+                with self._condition:
+                    self._released = True
+                    self._closing = False
+                    self._condition.notify_all()
 
 
 class _AsyncSlotIterator(AsyncIterator[ModelResponse]):
@@ -153,33 +181,66 @@ class _AsyncSlotIterator(AsyncIterator[ModelResponse]):
     ) -> None:
         self._iterator = iterator
         self._release = release
-        self._closed = False
+        self._condition = asyncio.Condition()
+        self._operation_active = False
+        self._close_requested = False
+        self._released = False
+        self._close_task: asyncio.Task[None] | None = None
 
     def __aiter__(self) -> AsyncIterator[ModelResponse]:
         return self
 
     async def __anext__(self) -> ModelResponse:
-        if self._closed:
-            raise StopAsyncIteration
+        async with self._condition:
+            if self._close_requested:
+                raise StopAsyncIteration
+            if self._operation_active:
+                raise RuntimeError("stream iteration already in progress")
+            self._operation_active = True
         try:
-            return await anext(self._iterator)
+            response = await anext(self._iterator)
         except BaseException:
+            await self._finish_operation()
             try:
                 await self.aclose()
             except BaseException:
                 pass
             raise
+        await self._finish_operation()
+        return response
+
+    async def _finish_operation(self) -> None:
+        async with self._condition:
+            self._operation_active = False
+            self._condition.notify_all()
 
     async def aclose(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
+        async with self._condition:
+            self._close_requested = True
+            close_task = self._close_task
+            if close_task is None:
+                close_task = asyncio.create_task(
+                    self._close_once(),
+                    name="model-runtime-slot-stream-close",
+                )
+                self._close_task = close_task
+        await asyncio.shield(close_task)
+
+    async def _close_once(self) -> None:
+        async with self._condition:
+            while self._operation_active:
+                await self._condition.wait()
         try:
             close = getattr(self._iterator, "aclose", None)
             if callable(close):
                 await close()
         finally:
-            self._release()
+            try:
+                self._release()
+            finally:
+                async with self._condition:
+                    self._released = True
+                    self._condition.notify_all()
 
 
 class ModelRuntimeSlot(Model):
@@ -208,6 +269,7 @@ class ModelRuntimeSlot(Model):
         self._cleanup_queue: asyncio.Queue[_SlotEntry | object] | None = None
         self._drained_event: asyncio.Event | None = None
         self._reaper_task: asyncio.Task[None] | None = None
+        self._shutdown_task: asyncio.Task[None] | None = None
         self._started = False
         self._shutting_down = False
         self._stopped = False
@@ -422,15 +484,25 @@ class ModelRuntimeSlot(Model):
             pass
 
     async def shutdown(self) -> None:
-        """Retire all delegates, drain owned clients and stop the reaper."""
+        """Await the one shielded drain shared by every shutdown caller."""
         loop = asyncio.get_running_loop()
-        retired: _SlotEntry | None = None
         with self._lock:
-            if self._stopped:
-                return
             if not self._started or self._loop is not loop:
                 raise ModelRuntimeCleanupError("model runtime cleanup failed") from None
-            self._shutting_down = True
+            shutdown_task = self._shutdown_task
+            if shutdown_task is None:
+                self._shutting_down = True
+                shutdown_task = asyncio.create_task(
+                    self._shutdown_once(),
+                    name="model-runtime-slot-shutdown",
+                )
+                self._shutdown_task = shutdown_task
+        await asyncio.shield(shutdown_task)
+
+    async def _shutdown_once(self) -> None:
+        """Retire delegates, drain owned clients and stop the reaper once."""
+        retired: _SlotEntry | None = None
+        with self._lock:
             previous = self._active
             self._active = None
             self._capability = "placeholder"
@@ -458,6 +530,9 @@ class ModelRuntimeSlot(Model):
         except TimeoutError:
             timed_out = True
             await self._cancel_reaper()
+        except asyncio.CancelledError:
+            await self._cancel_reaper()
+            raise
         finally:
             with self._lock:
                 self._stopped = True
@@ -498,7 +573,7 @@ class ModelRuntimeSlot(Model):
         try:
             iterator = aiter(entry.managed.model.ainvoke_stream(*args, **kwargs))
         except BaseException:
-            self._release_from_async(entry)
+            self._release_from_sync(entry)
             raise
         return _AsyncSlotIterator(
             iterator,

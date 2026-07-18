@@ -127,6 +127,47 @@ class StreamConstructionFailureModel(RuntimeProbeModel):
         raise RuntimeError(self.private_failure)
 
 
+@dataclass
+class BlockingSyncStreamModel(RuntimeProbeModel):
+    next_entered: threading.Event = field(default_factory=threading.Event)
+    next_release: threading.Event = field(default_factory=threading.Event)
+
+    def invoke_stream(
+        self, *_args: object, **_kwargs: object
+    ) -> Iterator[ModelResponse]:
+        self.next_entered.set()
+        assert self.next_release.wait(timeout=5)
+        yield ModelResponse(role="assistant", content=f"{self.id}:released")
+
+
+@dataclass
+class BlockingAsyncNextModel(RuntimeProbeModel):
+    next_entered: asyncio.Event = field(default_factory=asyncio.Event)
+    next_release: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def ainvoke_stream(
+        self, *_args: object, **_kwargs: object
+    ) -> AsyncIterator[ModelResponse]:
+        yield ModelResponse(role="assistant", content=f"{self.id}:first")
+        self.next_entered.set()
+        await self.next_release.wait()
+        yield ModelResponse(role="assistant", content=f"{self.id}:released")
+
+
+@dataclass
+class ThreadBlockingAsyncConstructionModel(RuntimeProbeModel):
+    construction_entered: threading.Event = field(default_factory=threading.Event)
+    construction_release: threading.Event = field(default_factory=threading.Event)
+    private_failure: str = "private thread construction failure"
+
+    def ainvoke_stream(  # type: ignore[override]
+        self, *_args: object, **_kwargs: object
+    ) -> AsyncIterator[ModelResponse]:
+        self.construction_entered.set()
+        assert self.construction_release.wait(timeout=5)
+        raise RuntimeError(self.private_failure)
+
+
 def metadata(
     provider: str,
     *,
@@ -484,6 +525,95 @@ def test_stream_iteration_exceptions_preserve_error_and_release_once() -> None:
     asyncio.run(scenario())
 
 
+def test_sync_close_waits_for_concurrent_next_before_releasing_retired_entry() -> None:
+    async def scenario() -> None:
+        closes: list[str] = []
+        old = BlockingSyncStreamModel(id="old")
+        slot = ModelRuntimeSlot()
+        await slot.start()
+        slot.activate(managed(old, closes), 1, metadata("openai"))
+        stream = slot.invoke_stream()
+        next_call = asyncio.create_task(asyncio.to_thread(next, stream))
+        assert await asyncio.to_thread(old.next_entered.wait, 5)
+        slot.activate(
+            managed(RuntimeProbeModel(id="new"), closes),
+            2,
+            metadata("anthropic"),
+        )
+
+        close_call = asyncio.create_task(
+            asyncio.to_thread(stream.close)  # type: ignore[attr-defined]
+        )
+        await asyncio.sleep(0.02)
+        assert not close_call.done()
+        assert closes == []
+        old.next_release.set()
+        assert content(await next_call) == "old:released"
+        await close_call
+        await slot.shutdown()
+        assert closes == ["old", "new"]
+
+    asyncio.run(scenario())
+
+
+def test_async_aclose_waits_for_concurrent_anext_before_releasing_retired_entry() -> (
+    None
+):
+    async def scenario() -> None:
+        closes: list[str] = []
+        old = BlockingAsyncNextModel(id="old")
+        slot = ModelRuntimeSlot()
+        await slot.start()
+        slot.activate(managed(old, closes), 1, metadata("openai"))
+        stream = slot.ainvoke_stream()
+        assert content(await anext(stream)) == "old:first"
+        next_call = asyncio.create_task(anext(stream))
+        await old.next_entered.wait()
+        slot.activate(
+            managed(RuntimeProbeModel(id="new"), closes),
+            2,
+            metadata("anthropic"),
+        )
+
+        close_call = asyncio.create_task(
+            stream.aclose()  # type: ignore[attr-defined]
+        )
+        await asyncio.sleep(0)
+        assert not close_call.done()
+        assert closes == []
+        old.next_release.set()
+        assert content(await next_call) == "old:released"
+        await close_call
+        await slot.shutdown()
+        assert closes == ["old", "new"]
+
+    asyncio.run(scenario())
+
+
+def test_threaded_async_stream_construction_failure_preserves_original_error() -> None:
+    async def scenario() -> None:
+        closes: list[str] = []
+        old = ThreadBlockingAsyncConstructionModel(id="old")
+        slot = ModelRuntimeSlot()
+        await slot.start()
+        slot.activate(managed(old, closes), 1, metadata("openai"))
+        construction = asyncio.create_task(asyncio.to_thread(slot.ainvoke_stream))
+        assert await asyncio.to_thread(old.construction_entered.wait, 5)
+        slot.activate(
+            managed(RuntimeProbeModel(id="new"), closes),
+            2,
+            metadata("anthropic"),
+        )
+        old.construction_release.set()
+
+        with pytest.raises(RuntimeError, match="private thread construction failure"):
+            await construction
+        await slot.shutdown()
+        assert closes == ["old", "new"]
+
+    asyncio.run(scenario())
+
+
 def test_async_in_flight_snapshot_survives_activation_and_exception() -> None:
     async def scenario() -> None:
         closes: list[str] = []
@@ -706,6 +836,71 @@ def test_immediate_retirement_and_shutdown_never_misses_drain_signal() -> None:
             )
             await slot.shutdown()
             assert sorted(closes) == [f"new-{attempt}", f"old-{attempt}"]
+
+    asyncio.run(scenario())
+
+
+def test_cancelled_shutdown_keeps_shared_cleanup_alive_for_retry() -> None:
+    async def scenario() -> None:
+        closes: list[str] = []
+        close_entered = asyncio.Event()
+        close_release = asyncio.Event()
+        slot = ModelRuntimeSlot(cleanup_timeout_seconds=2)
+        await slot.start()
+        slot.activate(
+            managed(
+                RuntimeProbeModel(id="active"),
+                closes,
+                close_entered=close_entered,
+                close_release=close_release,
+            ),
+            1,
+            metadata("openai"),
+        )
+
+        first = asyncio.create_task(slot.shutdown())
+        await close_entered.wait()
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        assert not slot.reaper_stopped
+        close_release.set()
+        await slot.shutdown()
+        assert closes == ["active"]
+        assert slot.reaper_stopped
+
+    asyncio.run(scenario())
+
+
+def test_concurrent_shutdown_shares_one_drain_and_leaves_no_queue_item() -> None:
+    async def scenario() -> None:
+        closes: list[str] = []
+        close_entered = asyncio.Event()
+        close_release = asyncio.Event()
+        slot = ModelRuntimeSlot(cleanup_timeout_seconds=2)
+        await slot.start()
+        slot.activate(
+            managed(
+                RuntimeProbeModel(id="active"),
+                closes,
+                close_entered=close_entered,
+                close_release=close_release,
+            ),
+            1,
+            metadata("openai"),
+        )
+
+        first = asyncio.create_task(slot.shutdown())
+        second = asyncio.create_task(slot.shutdown())
+        await close_entered.wait()
+        close_release.set()
+        await asyncio.gather(first, second)
+        queue = slot._cleanup_queue
+        assert queue is not None
+        await asyncio.wait_for(queue.join(), timeout=0.1)
+        assert queue.empty()
+        assert closes == ["active"]
+        assert slot.reaper_stopped
 
     asyncio.run(scenario())
 
