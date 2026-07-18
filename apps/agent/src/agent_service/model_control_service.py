@@ -632,6 +632,7 @@ class ModelControlService:
                         expected_current_version = 0
                     expected_next_version = expected_current_version + 1
                     committed: object | None = None
+                    commit_result_observed = False
                     if failure is None:
                         try:
                             (
@@ -649,10 +650,14 @@ class ModelControlService:
                                 ),
                                 event,
                             )
+                            commit_result_observed = True
                         except asyncio.CancelledError:
                             raise
                         except Exception:
                             failure = "storage"
+
+                    if commit_result_observed and failure == "storage":
+                        _degrade_slot(self._slot)
 
                     pointer_is_valid = (
                         failure is None

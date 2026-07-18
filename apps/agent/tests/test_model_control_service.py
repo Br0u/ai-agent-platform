@@ -774,6 +774,7 @@ async def test_failed_verification_records_only_failed_test_and_closes_candidate
     assert event.result == "credential_rejected"
     assert repository.activation_commands == []
     assert slot.activated == []
+    assert slot.deactivations == []
     assert candidate.close_count == 1
 
 
@@ -1222,6 +1223,76 @@ async def test_malformed_active_pointer_read_fails_before_commit() -> None:
 
     assert repository.activation_commands == []
     assert slot.activated == []
+    assert slot.deactivations == []
+    assert candidate.close_count == 1
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_uncertain_commit_failure_degrades_old_slot_and_closes_candidate() -> (
+    None
+):
+    class CommitThenLoseConfirmationRepository(ControlRepository):
+        async def commit_test_and_activation(
+            self,
+            command: CommitVerifiedActivation,
+            event: ControlEvent,
+        ) -> ActiveConfigPointer:
+            assert command.expected_activation_version == 1
+            self.activation_version = 2
+            self.active_provider = command.provider
+            self.activation_commands.append((command, event))
+            raise ModelConfigStorageError("storage_unavailable")
+
+    repository = CommitThenLoseConfirmationRepository(
+        sealed_by_provider={
+            "openai": stored_candidate("openai"),
+            "anthropic": stored_candidate("anthropic"),
+        },
+        activation_version=1,
+        active_provider="anthropic",
+    )
+    candidate = make_candidate("openai")
+    slot = CapturingSlot(
+        status=RuntimeModelStatus(
+            capability="available",
+            source="dynamic",
+            provider="anthropic",
+            model_id="claude-sonnet-4-5",
+            config_revision=1,
+            activation_version=1,
+        )
+    )
+
+    async def verifier(
+        _managed: ManagedModel,
+        *,
+        timeout_seconds: int,
+    ) -> ModelVerificationResult:
+        return ModelVerificationResult(True, "success")
+
+    with pytest.raises(
+        ModelControlStorageError,
+        match="^storage_unavailable$",
+    ) as error:
+        await service(
+            repository,
+            slot=slot,
+            model_builder=lambda _settings: candidate.managed,
+            verifier=verifier,
+            uuid_values=(EVENT_ID,),
+        ).test_and_activate(
+            "openai",
+            1,
+            assertion(action="test_and_activate"),
+        )
+
+    assert repository.activation_version == 2
+    assert repository.active_provider == "openai"
+    assert slot.status.capability == "degraded"
+    assert slot.status.provider is None
+    assert slot.deactivations == ["degraded"]
     assert candidate.close_count == 1
     assert error.value.__cause__ is None
     assert error.value.__context__ is None
