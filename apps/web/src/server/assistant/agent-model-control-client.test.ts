@@ -633,6 +633,8 @@ describe("private Agent model control client", () => {
   });
 
   it.each([
+    [401, "authentication_failed"],
+    [403, "authorization_failed"],
     [400, "validation_error"],
     [400, "endpoint_not_allowed"],
     [409, "configuration_conflict"],
