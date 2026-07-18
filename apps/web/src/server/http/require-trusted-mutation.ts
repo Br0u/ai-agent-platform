@@ -25,11 +25,10 @@ export function requireTrustedJsonMutation(
   request: Request,
   environment: AuthEnvironment = process.env,
 ): void {
-  const trustedOrigins = new Set(
-    resolveAuthEnvironment(environment).trustedOrigins,
-  );
-
   try {
+    const trustedOrigins = new Set(
+      resolveAuthEnvironment(environment).trustedOrigins,
+    );
     const origin = request.headers.get("origin");
     const fetchSite = request.headers.get("sec-fetch-site");
     const contentType = request.headers.get("content-type");

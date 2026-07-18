@@ -164,4 +164,44 @@ describe("trusted JSON mutation guard", () => {
       }),
     );
   });
+
+  it.each([
+    { environment: {}, privateField: "BETTER_AUTH_SECRET" },
+    {
+      environment: {
+        ...AUTH_ENVIRONMENT,
+        BETTER_AUTH_TRUSTED_ORIGINS:
+          "https://admin.example.test/private-config-path",
+      },
+      privateField: "BETTER_AUTH_TRUSTED_ORIGINS",
+    },
+  ] as const)(
+    "maps auth environment resolution failure without leaking $privateField",
+    ({ environment, privateField }) => {
+      const headers = new Headers({
+        origin: "https://admin.example.test",
+        "sec-fetch-site": "same-origin",
+        "content-type": "application/json",
+      });
+
+      let caught: unknown;
+      try {
+        requireTrustedJsonMutation(
+          unreadableRequest(headers),
+          environment as AuthEnvironment,
+        );
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(MutationRequestError);
+      expect(caught).toMatchObject({
+        code: "MUTATION_REQUEST_REJECTED",
+        message: "Mutation request rejected",
+      });
+      expect(
+        `${String(caught)}\n${caught instanceof Error ? caught.stack : ""}`,
+      ).not.toContain(privateField);
+    },
+  );
 });
