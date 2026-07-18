@@ -1,0 +1,101 @@
+"""One bounded, content-discarding Provider verification invocation."""
+
+import asyncio
+from contextvars import ContextVar
+import logging
+from typing import Literal, NamedTuple
+
+from agno.exceptions import ModelAuthenticationError, ModelProviderError
+from agno.models.message import Message
+from agno.models.response import ModelResponse
+from agno.utils import log as agno_log
+
+from agent_service.model_runtime_types import ManagedModel
+
+
+_VERIFICATION_PROMPT = "Reply with one short confirmation word."
+_suppress_adapter_logs: ContextVar[bool] = ContextVar(
+    "suppress_model_verification_adapter_logs",
+    default=False,
+)
+
+
+class _VerificationLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        del record
+        return not _suppress_adapter_logs.get()
+
+
+_VERIFICATION_LOG_FILTER = _VerificationLogFilter()
+
+VerificationCategory = Literal[
+    "success",
+    "credential_rejected",
+    "model_not_found",
+    "provider_unreachable",
+    "provider_timeout",
+]
+
+
+class ModelVerificationResult(NamedTuple):
+    ok: bool
+    category: VerificationCategory
+
+
+def _failure_category(error: Exception) -> VerificationCategory:
+    if isinstance(error, ModelAuthenticationError):
+        return "credential_rejected"
+    if isinstance(error, ModelProviderError):
+        if error.status_code in {401, 403}:
+            return "credential_rejected"
+        if error.status_code == 404:
+            return "model_not_found"
+        if error.status_code in {408, 504}:
+            return "provider_timeout"
+    return "provider_unreachable"
+
+
+def _install_verification_log_filter() -> None:
+    logger = agno_log.logger
+    if isinstance(logger, logging.Logger):
+        logger.addFilter(_VERIFICATION_LOG_FILTER)
+
+
+async def verify_model(
+    managed: ManagedModel,
+    *,
+    timeout_seconds: int,
+) -> ModelVerificationResult:
+    """Execute one fixed probe and discard all model content."""
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, int)
+        or not 1 <= timeout_seconds <= 50
+    ):
+        raise ValueError("timeout_seconds must be an integer from 1 to 50")
+    _install_verification_log_filter()
+    suppression_token = _suppress_adapter_logs.set(True)
+    try:
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                response = await managed.model.ainvoke(
+                    [Message(role="user", content=_VERIFICATION_PROMPT)],
+                    Message(role="assistant"),
+                    tools=None,
+                )
+        except TimeoutError:
+            return ModelVerificationResult(ok=False, category="provider_timeout")
+        except Exception as error:
+            return ModelVerificationResult(ok=False, category=_failure_category(error))
+        valid = (
+            isinstance(response, ModelResponse)
+            and isinstance(response.content, str)
+            and bool(response.content.strip())
+        )
+        del response
+        return ModelVerificationResult(
+            ok=valid,
+            category="success" if valid else "provider_unreachable",
+        )
+    finally:
+        _suppress_adapter_logs.reset(suppression_token)

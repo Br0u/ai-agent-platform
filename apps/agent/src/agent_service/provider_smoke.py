@@ -1,17 +1,15 @@
 """One-shot, process-isolated verification for an explicitly selected model."""
 
+import asyncio
 from collections.abc import Callable, Sequence
-import gc
 import os
 import re
 import signal
 import stat
 import subprocess
 import sys
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
-from agno.agent import Agent
-from agno.models.base import Model
 from pydantic import Field, SecretStr, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -24,25 +22,36 @@ from agent_service.config import (
     _validate_model_timeout_input_value,
     resolve_active_model_settings,
 )
-from agent_service.default_agent import MADUODUO_INSTRUCTIONS
-from agent_service.model_registry import build_model
+from agent_service.model_registry import build_managed_model
+from agent_service.model_runtime_types import ManagedModel
+from agent_service.model_verifier import verify_model
 
 
-PROVIDER_SMOKE_PROMPT = "仅回复一个简短的确认词。"
-MAX_RESPONSE_CODE_POINTS = 32_768
 _STATUS_FD_ENV = "AAP_PROVIDER_SMOKE_STATUS_FD"
 _WORKER_GRACE_SECONDS = 5.0
 _REAP_TIMEOUT_SECONDS = 1.0
 SmokeStatus = Literal[
     "verified",
     "configuration",
-    "response",
+    "credential_rejected",
+    "model_not_found",
+    "provider_unreachable",
+    "provider_timeout",
     "invocation",
     "timeout",
     "signal",
 ]
 _FAILURE_STATUSES: frozenset[SmokeStatus] = frozenset(
-    {"configuration", "response", "invocation", "timeout", "signal"}
+    {
+        "configuration",
+        "credential_rejected",
+        "model_not_found",
+        "provider_unreachable",
+        "provider_timeout",
+        "invocation",
+        "timeout",
+        "signal",
+    }
 )
 
 
@@ -129,70 +138,33 @@ class ProviderSmokeSettings(BaseSettings):
         )
 
 
-def build_smoke_agent(
-    model: Model,
-    *,
-    agent_factory: Callable[..., Any] = Agent,
-) -> Any:
-    """Build an isolated Agent without persistence, history, tools, or telemetry."""
-    return agent_factory(
-        model=model,
-        instructions=list(MADUODUO_INSTRUCTIONS),
-        add_history_to_context=False,
-        tools=None,
-        telemetry=False,
-    )
-
-
-def _close_resource(resource: object | None) -> bool:
-    if resource is None:
-        return True
-    close = getattr(resource, "close", None)
-    if not callable(close):
-        return True
-    try:
-        close()
-    except BaseException:
-        return False
-    return True
-
-
-def _invoke_provider(
+async def _invoke_provider(
     settings: ProviderSmokeSettings,
     *,
-    model_builder: Callable[[ActiveModelSettings], object] = build_model,
-    agent_factory: Callable[..., Any] = Agent,
+    model_builder: Callable[[ActiveModelSettings], ManagedModel] = build_managed_model,
 ) -> SmokeStatus:
     """Run the injectable one-shot core; production calls this only in the worker."""
-    model: object | None = None
-    agent: Any = None
-    result: object | None = None
+    managed: ManagedModel | None = None
     status: SmokeStatus = "invocation"
     try:
-        model = model_builder(settings.active_model)
-        agent = build_smoke_agent(cast(Model, model), agent_factory=agent_factory)
-        result = agent.run(PROVIDER_SMOKE_PROMPT)
-        content = getattr(result, "content", None)
-        status = (
-            "verified"
-            if isinstance(content, str)
-            and bool(content.strip())
-            and len(content) <= MAX_RESPONSE_CODE_POINTS
-            else "response"
+        active_model = settings.active_model
+        managed = model_builder(active_model)
+        result = await verify_model(
+            managed,
+            timeout_seconds=active_model.timeout_seconds,
         )
+        if result.ok and result.category == "success":
+            status = "verified"
+        elif not result.ok and result.category != "success":
+            status = cast(SmokeStatus, result.category)
     except BaseException:
         status = "invocation"
     finally:
-        resources_closed = True
-        for resource in (result, agent, model):
-            if not _close_resource(resource):
-                resources_closed = False
-        if not resources_closed:
-            status = "invocation"
-        result = None
-        agent = None
-        model = None
-        gc.collect()
+        if managed is not None:
+            try:
+                await managed.aclose()
+            except BaseException:
+                status = "invocation"
     return status
 
 
@@ -200,7 +172,9 @@ def _worker_command() -> tuple[str, ...]:
     return (sys.executable, "-m", "agent_service.provider_smoke", "--worker")
 
 
-def _worker_environment(settings: ProviderSmokeSettings, status_fd: int) -> dict[str, str]:
+def _worker_environment(
+    settings: ProviderSmokeSettings, status_fd: int
+) -> dict[str, str]:
     active_model = settings.active_model
     environment = dict(os.environ)
     environment.update(
@@ -229,7 +203,10 @@ def _read_worker_status(status_fd: int) -> SmokeStatus | None:
     valid_statuses: tuple[SmokeStatus, ...] = (
         "verified",
         "configuration",
-        "response",
+        "credential_rejected",
+        "model_not_found",
+        "provider_unreachable",
+        "provider_timeout",
         "invocation",
         "timeout",
         "signal",
@@ -281,7 +258,9 @@ def run_isolated_smoke(
         return "invocation"
     process: subprocess.Popen[bytes] | None = None
     try:
-        command = tuple(worker_command) if worker_command is not None else _worker_command()
+        command = (
+            tuple(worker_command) if worker_command is not None else _worker_command()
+        )
         process = subprocess.Popen(
             command,
             stdin=subprocess.DEVNULL,
@@ -358,18 +337,18 @@ def _write_worker_status(status: SmokeStatus) -> bool:
 def _worker_main(
     *,
     settings_factory: Callable[..., ProviderSmokeSettings] = ProviderSmokeSettings,
-    model_builder: Callable[[ActiveModelSettings], object] = build_model,
-    agent_factory: Callable[..., Any] = Agent,
+    model_builder: Callable[[ActiveModelSettings], ManagedModel] = build_managed_model,
 ) -> int:
     try:
         settings = settings_factory(_env_file=None)
     except BaseException:
         status: SmokeStatus = "configuration"
     else:
-        status = _invoke_provider(
-            settings,
-            model_builder=model_builder,
-            agent_factory=agent_factory,
+        status = asyncio.run(
+            _invoke_provider(
+                settings,
+                model_builder=model_builder,
+            )
         )
     if not _write_worker_status(status):
         return 1
