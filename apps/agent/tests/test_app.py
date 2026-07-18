@@ -1,7 +1,10 @@
+import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
+from datetime import UTC, datetime
 import inspect
 from typing import Any, cast
+from uuid import uuid4
 
 import pytest
 from agno.agent import Agent
@@ -15,20 +18,134 @@ from starlette.types import Message, Receive, Scope, Send
 from starlette.websockets import WebSocketDisconnect
 
 import agent_service.app as app_module
-from agent_service.app import BearerAuthMiddleware, create_app, probe_database
+from agent_service.app import (
+    BearerAuthMiddleware,
+    create_app,
+    probe_database,
+    reconcile_runtime_model,
+)
 from agent_service.catalog import AgentCapability, AgentCatalog, build_catalog
-from agent_service.config import RuntimeSettings
+from agent_service.config import ActiveModelSettings, RuntimeSettings
 from agent_service.database import build_database
+from agent_service.model_config_crypto import ModelConfigCipher
+from agent_service.model_config_repository import StoredActiveConfig
+from agent_service.model_config_types import ModelProvider
+from agent_service.model_endpoint_catalog import load_model_endpoint_catalog
+from agent_service.model_runtime_slot import (
+    ModelRuntimeSlot,
+    RuntimeModelMetadata,
+    RuntimeModelStatus,
+)
+from agent_service.model_runtime_types import ManagedModel
 
 
 DATABASE_URL = "postgresql+psycopg_async://runtime:private-password@db:5432/platform"
 SECURITY_KEY = "internal-security-key-0123456789abcdef"
 MODEL_ID = "health-must-not-expose-model-id"
 MODEL_API_KEY = "health-must-not-expose-model-api-key"
+CONTROL_DATABASE_URL = (
+    "postgresql+psycopg_async://control:private-password@db:5432/platform"
+)
+ENCRYPTION_KEY = "11" * 32
 AUTHORIZATION = {"Authorization": f"Bearer {SECURITY_KEY}"}
 LIVE_SAFE_KEYS = {"live", "ready", "capability", "message"}
 READY_SAFE_KEYS = {"ready", "capability"}
 Probe = Callable[[AsyncPostgresDb], Awaitable[bool]]
+
+
+def managed_model(
+    model_id: str,
+    closes: list[str],
+    *,
+    close_entered: asyncio.Event | None = None,
+    close_release: asyncio.Event | None = None,
+) -> ManagedModel:
+    async def close() -> None:
+        closes.append(model_id)
+        if close_entered is not None:
+            close_entered.set()
+        if close_release is not None:
+            await close_release.wait()
+
+    return ManagedModel(
+        model=OpenAIResponses(id=model_id, api_key="test-api-key"),
+        close_callback=close,
+    )
+
+
+def dynamic_settings(*, bootstrap: bool = False) -> RuntimeSettings:
+    values: dict[str, object] = {
+        "OS_SECURITY_KEY": SECURITY_KEY,
+        "AGNO_DATABASE_URL": DATABASE_URL,
+        "AGENT_CONTROL_DATABASE_URL": CONTROL_DATABASE_URL,
+        "MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY,
+        "AGENT_ENABLED": True,
+    }
+    if bootstrap:
+        values.update(
+            {
+                "MODEL_PROVIDER": "anthropic",
+                "MODEL_ID": "bootstrap-model",
+                "MODEL_API_KEY": "bootstrap-api-key",
+            }
+        )
+    return RuntimeSettings.model_validate(values)
+
+
+def stored_active(
+    *,
+    provider: ModelProvider = "openai",
+    model_id: str = "active-rev1",
+    revision: int = 1,
+    activation_version: int = 7,
+    cipher: ModelConfigCipher | None = None,
+) -> StoredActiveConfig:
+    config_id = uuid4()
+    active_cipher = cipher or ModelConfigCipher(
+        master_key=dynamic_settings().model_config_encryption_key  # type: ignore[arg-type]
+    )
+    sealed = active_cipher.seal(
+        config_id=config_id,
+        provider=provider,
+        revision=revision,
+        secret=dynamic_settings(bootstrap=True).model_api_key,  # type: ignore[arg-type]
+    )
+    return StoredActiveConfig(
+        config_id=config_id,
+        provider=provider,
+        model_id=model_id,
+        endpoint_id=f"{provider}-official",
+        revision=revision,
+        test_status="passed",
+        sealed=sealed,
+        activation_version=activation_version,
+        activated_at=datetime.now(UTC),
+    )
+
+
+class ActiveRepository:
+    def __init__(
+        self,
+        active: StoredActiveConfig | None = None,
+        *,
+        failure: Exception | None = None,
+        close_events: list[str] | None = None,
+    ) -> None:
+        self.active = active
+        self.failure = failure
+        self.loads = 0
+        self.close_events = close_events
+        self.current_head: tuple[str, int, str] | None = None
+
+    async def load_active(self) -> StoredActiveConfig | None:
+        self.loads += 1
+        if self.failure is not None:
+            raise self.failure
+        return self.active
+
+    async def aclose(self) -> None:
+        if self.close_events is not None:
+            self.close_events.append("repository")
 
 
 @pytest.fixture
@@ -610,3 +727,383 @@ async def test_sqlalchemy_async_greenlet_bridge_is_available() -> None:
     result = await greenlet_spawn(lambda: "available")
 
     assert result == "available"
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_prefers_exact_dynamic_active_revision() -> None:
+    settings = dynamic_settings(bootstrap=True)
+    cipher = ModelConfigCipher(
+        master_key=settings.model_config_encryption_key  # type: ignore[arg-type]
+    )
+    active = stored_active(cipher=cipher, revision=3, activation_version=11)
+    repository = ActiveRepository(active)
+    built: list[ActiveModelSettings] = []
+    closes: list[str] = []
+    slot = ModelRuntimeSlot()
+    await slot.start()
+
+    def build_model(model_settings: ActiveModelSettings) -> ManagedModel:
+        built.append(model_settings)
+        return managed_model(model_settings.model_id, closes)
+
+    await reconcile_runtime_model(
+        settings=settings,
+        slot=slot,
+        repository=repository,
+        cipher=cipher,
+        endpoint_catalog=load_model_endpoint_catalog(),
+        model_builder=build_model,
+    )
+
+    assert repository.loads == 1
+    assert [item.model_id for item in built] == ["active-rev1"]
+    assert built[0].provider == "openai"
+    assert built[0].base_url == "https://api.openai.com/v1"
+    assert slot.runtime_status() == RuntimeModelStatus(
+        capability="available",
+        source="dynamic",
+        provider="openai",
+        model_id="active-rev1",
+        config_revision=3,
+        activation_version=11,
+    )
+    await slot.shutdown()
+    assert closes == ["active-rev1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "expected_base_url"),
+    [
+        ("openai", "https://api.openai.com/v1"),
+        ("anthropic", "https://api.anthropic.com"),
+        ("google", "https://generativelanguage.googleapis.com"),
+        (
+            "dashscope",
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        ),
+        ("deepseek", "https://api.deepseek.com"),
+        ("minimax", "https://api.minimax.io/v1"),
+    ],
+)
+async def test_dynamic_reconciliation_supports_every_catalog_provider(
+    provider: ModelProvider,
+    expected_base_url: str,
+) -> None:
+    settings = dynamic_settings()
+    cipher = ModelConfigCipher(
+        master_key=settings.model_config_encryption_key  # type: ignore[arg-type]
+    )
+    active = stored_active(
+        cipher=cipher,
+        provider=provider,
+        model_id=f"{provider}-dynamic",
+    )
+    built: list[ActiveModelSettings] = []
+    closes: list[str] = []
+    slot = ModelRuntimeSlot()
+    await slot.start()
+
+    def build_model(model_settings: ActiveModelSettings) -> ManagedModel:
+        built.append(model_settings)
+        return managed_model(model_settings.model_id, closes)
+
+    await reconcile_runtime_model(
+        settings=settings,
+        slot=slot,
+        repository=ActiveRepository(active),
+        cipher=cipher,
+        endpoint_catalog=load_model_endpoint_catalog(),
+        model_builder=build_model,
+    )
+
+    assert len(built) == 1
+    assert built[0].provider == provider
+    assert built[0].model_id == f"{provider}-dynamic"
+    assert built[0].base_url == expected_base_url
+    assert slot.runtime_status().capability == "available"
+    assert slot.runtime_status().provider == provider
+    await slot.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_corrupt_dynamic_active_degrades_and_never_falls_back_to_bootstrap() -> (
+    None
+):
+    settings = dynamic_settings(bootstrap=True)
+    active = stored_active()
+    wrong_cipher = ModelConfigCipher(
+        master_key=RuntimeSettings.model_validate(
+            {
+                "OS_SECURITY_KEY": SECURITY_KEY,
+                "AGNO_DATABASE_URL": DATABASE_URL,
+                "MODEL_CONFIG_ENCRYPTION_KEY": "22" * 32,
+            }
+        ).model_config_encryption_key  # type: ignore[arg-type]
+    )
+    slot = ModelRuntimeSlot()
+    await slot.start()
+
+    def unexpected_builder(_: ActiveModelSettings) -> ManagedModel:
+        raise AssertionError("dynamic corruption must suppress bootstrap")
+
+    await reconcile_runtime_model(
+        settings=settings,
+        slot=slot,
+        repository=ActiveRepository(active),
+        cipher=wrong_cipher,
+        endpoint_catalog=load_model_endpoint_catalog(),
+        model_builder=unexpected_builder,
+    )
+
+    assert slot.runtime_status().capability == "degraded"
+    assert slot.runtime_status().source is None
+    await slot.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_dynamic_builder_failure_degrades_without_bootstrap_fallback() -> None:
+    settings = dynamic_settings(bootstrap=True)
+    cipher = ModelConfigCipher(
+        master_key=settings.model_config_encryption_key  # type: ignore[arg-type]
+    )
+    built: list[str] = []
+    slot = ModelRuntimeSlot()
+    await slot.start()
+
+    def failing_builder(model_settings: ActiveModelSettings) -> ManagedModel:
+        built.append(model_settings.model_id)
+        raise RuntimeError("private provider construction details")
+
+    await reconcile_runtime_model(
+        settings=settings,
+        slot=slot,
+        repository=ActiveRepository(stored_active(cipher=cipher)),
+        cipher=cipher,
+        endpoint_catalog=load_model_endpoint_catalog(),
+        model_builder=failing_builder,
+    )
+
+    assert built == ["active-rev1"]
+    assert slot.runtime_status().capability == "degraded"
+    assert slot.runtime_status().source is None
+    await slot.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("bootstrap", "repository_failure", "expected_capability", "expected_source"),
+    [
+        (True, None, "available", "deployment"),
+        (False, None, "placeholder", None),
+        (True, RuntimeError("control unavailable"), "degraded", None),
+    ],
+)
+async def test_reconciliation_bootstrap_placeholder_and_unavailable_precedence(
+    bootstrap: bool,
+    repository_failure: Exception | None,
+    expected_capability: AgentCapability,
+    expected_source: str | None,
+) -> None:
+    settings = dynamic_settings(bootstrap=bootstrap)
+    slot = ModelRuntimeSlot()
+    closes: list[str] = []
+    built: list[ActiveModelSettings] = []
+    await slot.start()
+
+    def build_model(model_settings: ActiveModelSettings) -> ManagedModel:
+        built.append(model_settings)
+        return managed_model(model_settings.model_id, closes)
+
+    await reconcile_runtime_model(
+        settings=settings,
+        slot=slot,
+        repository=ActiveRepository(failure=repository_failure),
+        cipher=ModelConfigCipher(
+            master_key=settings.model_config_encryption_key  # type: ignore[arg-type]
+        ),
+        endpoint_catalog=load_model_endpoint_catalog(),
+        model_builder=build_model,
+    )
+
+    assert slot.runtime_status().capability == expected_capability
+    assert slot.runtime_status().source == expected_source
+    assert [item.model_id for item in built] == (
+        ["bootstrap-model"] if expected_source == "deployment" else []
+    )
+    await slot.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_closes_constructed_handle_when_activation_fails() -> None:
+    settings = dynamic_settings()
+    cipher = ModelConfigCipher(
+        master_key=settings.model_config_encryption_key  # type: ignore[arg-type]
+    )
+    closes: list[str] = []
+    slot = ModelRuntimeSlot()
+
+    await reconcile_runtime_model(
+        settings=settings,
+        slot=slot,
+        repository=ActiveRepository(stored_active(cipher=cipher)),
+        cipher=cipher,
+        endpoint_catalog=load_model_endpoint_catalog(),
+        model_builder=lambda model_settings: managed_model(
+            model_settings.model_id,
+            closes,
+        ),
+    )
+
+    assert closes == ["active-rev1"]
+    assert slot.runtime_status().capability == "degraded"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("new_head_status", ["untested", "failed"])
+async def test_restart_recovers_pointer_revision_not_new_current_head(
+    new_head_status: str,
+) -> None:
+    settings = dynamic_settings()
+    cipher = ModelConfigCipher(
+        master_key=settings.model_config_encryption_key  # type: ignore[arg-type]
+    )
+    active_rev1 = stored_active(
+        cipher=cipher,
+        model_id="provider-rev1",
+        revision=1,
+        activation_version=4,
+    )
+    repository = ActiveRepository(active_rev1)
+    repository.current_head = ("provider-rev2", 2, new_head_status)
+    built: list[str] = []
+    closes: list[str] = []
+
+    def build_model(model_settings: ActiveModelSettings) -> ManagedModel:
+        built.append(model_settings.model_id)
+        return managed_model(model_settings.model_id, closes)
+
+    slot = ModelRuntimeSlot()
+    await slot.start()
+    await reconcile_runtime_model(
+        settings=settings,
+        slot=slot,
+        repository=repository,
+        cipher=cipher,
+        endpoint_catalog=load_model_endpoint_catalog(),
+        model_builder=build_model,
+    )
+
+    assert built == ["provider-rev1"]
+    assert slot.runtime_status().config_revision == 1
+    assert slot.runtime_status().activation_version == 4
+    await slot.shutdown()
+
+
+def test_lifespan_reconciles_before_requests_and_closes_model_before_repository() -> (
+    None
+):
+    settings = dynamic_settings()
+    cipher = ModelConfigCipher(
+        master_key=settings.model_config_encryption_key  # type: ignore[arg-type]
+    )
+    events: list[str] = []
+    repository = ActiveRepository(
+        stored_active(cipher=cipher),
+        close_events=events,
+    )
+
+    async def probe(_: AsyncPostgresDb) -> bool:
+        events.append("request")
+        return True
+
+    def build_model(model_settings: ActiveModelSettings) -> ManagedModel:
+        events.append("reconciled")
+        return managed_model(model_settings.model_id, events)
+
+    app = create_app(
+        settings=settings,
+        readiness_probe=probe,
+        repository_builder=lambda _: repository,
+        cipher_builder=lambda _: cipher,
+        model_builder=build_model,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/internal/health/ready", headers=AUTHORIZATION)
+        assert response.json() == {"ready": True, "capability": "available"}
+        assert events == ["reconciled", "request"]
+
+    assert events == ["reconciled", "request", "active-rev1", "repository"]
+
+
+def test_lifespan_turns_control_failure_into_degraded_safe_runtime_status() -> None:
+    settings = dynamic_settings(bootstrap=True)
+    repository = ActiveRepository(failure=RuntimeError("private DB URL and key"))
+    app = create_app(
+        settings=settings,
+        readiness_probe=ready_probe,
+        repository_builder=lambda _: repository,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/internal/health/ready", headers=AUTHORIZATION)
+        status = app.state.model_runtime_status()
+
+    assert response.json() == {"ready": True, "capability": "degraded"}
+    assert status == RuntimeModelStatus(
+        capability="degraded",
+        source=None,
+        provider=None,
+        model_id=None,
+        config_revision=None,
+        activation_version=None,
+    )
+    assert "private" not in response.text
+
+
+def test_health_reads_live_slot_capability_on_every_request() -> None:
+    settings = dynamic_settings()
+    slot = ModelRuntimeSlot()
+    catalog = AgentCatalog(
+        agents=[Agent(id="maduoduo", name="码多多", model=slot)],
+        slot=slot,
+        runtime_status_provider=slot.runtime_status,
+    )
+    closes: list[str] = []
+    app = create_app(
+        settings=settings,
+        readiness_probe=ready_probe,
+        catalog_builder=lambda _settings, _database: catalog,
+        repository_builder=lambda _: ActiveRepository(),
+    )
+
+    with TestClient(app) as client:
+        placeholder = client.get(
+            "/internal/health/ready",
+            headers=AUTHORIZATION,
+        )
+        slot.activate(
+            managed_model("runtime", closes),
+            1,
+            RuntimeModelMetadata(
+                source="dynamic",
+                provider="openai",
+                model_id="runtime-model",
+                config_revision=1,
+            ),
+        )
+        available = client.get(
+            "/internal/health/ready",
+            headers=AUTHORIZATION,
+        )
+        slot.deactivate(capability="degraded")
+        degraded = client.get(
+            "/internal/health/ready",
+            headers=AUTHORIZATION,
+        )
+
+    assert placeholder.json()["capability"] == "placeholder"
+    assert available.json()["capability"] == "available"
+    assert degraded.json()["capability"] == "degraded"
+    assert closes == ["runtime"]

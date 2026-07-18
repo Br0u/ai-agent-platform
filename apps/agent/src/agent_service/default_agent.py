@@ -2,7 +2,8 @@
 
 from agno.agent import Agent
 from agno.db.postgres import AsyncPostgresDb
-from agno.models.base import Model
+
+from agent_service.model_runtime_slot import ModelRuntimeSlot
 
 
 MADUODUO_INSTRUCTIONS = (
@@ -18,7 +19,7 @@ MADUODUO_INSTRUCTIONS = (
 )
 
 
-def build_default_agent(model: Model, database: AsyncPostgresDb) -> Agent:
+def build_default_agent(model: ModelRuntimeSlot, database: AsyncPostgresDb) -> Agent:
     """Build 码多多 against the shared AgentOS runtime database."""
     return Agent(
         id="maduoduo",

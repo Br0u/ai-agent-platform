@@ -1,9 +1,9 @@
 from agno.db.postgres import AsyncPostgresDb
-from agno.models.openai import OpenAIResponses
 
 from agent_service.config import RuntimeSettings
 from agent_service.database import build_database
 from agent_service.default_agent import MADUODUO_INSTRUCTIONS, build_default_agent
+from agent_service.model_runtime_slot import ModelRuntimeSlot
 
 
 DATABASE_URL = "postgresql+psycopg_async://runtime:password@db:5432/platform"
@@ -17,13 +17,13 @@ def test_build_default_agent_has_exact_runtime_identity_and_safe_contract() -> N
         }
     )
     database = build_database(settings)
-    model = OpenAIResponses(id="test-model", api_key="test-api-key")
+    slot = ModelRuntimeSlot()
 
-    agent = build_default_agent(model, database)
+    agent = build_default_agent(slot, database)
 
     assert agent.id == "maduoduo"
     assert agent.name == "码多多"
-    assert agent.model is model
+    assert agent.model is slot
     assert agent.db is database
     assert agent.add_history_to_context is True
     assert agent.num_history_runs == 6
@@ -55,7 +55,7 @@ def test_build_default_agent_accepts_the_agentos_runtime_database_type() -> None
     database = build_database(settings)
 
     agent = build_default_agent(
-        OpenAIResponses(id="test-model", api_key="test-api-key"),
+        ModelRuntimeSlot(),
         database,
     )
 
