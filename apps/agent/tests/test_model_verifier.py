@@ -107,6 +107,25 @@ class LoggingFailureProbeModel(ProbeModel):
         raise RuntimeError(self.private_failure)
 
 
+class ExplosiveStatusProviderError(ModelProviderError):
+    def __getattribute__(self, name: str) -> Any:
+        if name == "status_code":
+            raise RuntimeError("private status property secret")
+        return super().__getattribute__(name)
+
+
+class ExplosiveStrip(str):
+    def strip(self, *_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("private response strip secret")
+
+
+class ExplosiveContentResponse(ModelResponse):
+    def __getattribute__(self, name: str) -> Any:
+        if name == "content":
+            raise RuntimeError("private response content secret")
+        return super().__getattribute__(name)
+
+
 def _managed(model: Model, closed: list[bool] | None = None) -> ManagedModel:
     async def close_callback() -> None:
         if closed is not None:
@@ -167,6 +186,36 @@ def test_invalid_provider_responses_map_to_unreachable(response: object) -> None
         )
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        ModelResponse(role="assistant", content=ExplosiveStrip("looks valid")),
+        ExplosiveContentResponse(role="assistant", content="looks valid"),
+    ],
+    ids=["str-subclass-strip", "model-response-subclass-content"],
+)
+def test_response_validation_never_executes_untrusted_object_magic(
+    response: object,
+    caplog: pytest.LogCaptureFixture,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    caplog.set_level(logging.DEBUG)
+
+    try:
+        result = asyncio.run(
+            verify_model(
+                _managed(ProbeModel(responses=[response])),
+                timeout_seconds=5,
+            )
+        )
+    except BaseException as error:  # pragma: no cover - RED safety assertion
+        pytest.fail(f"response validation escaped {type(error).__name__}")
+
+    assert result == ModelVerificationResult(False, "provider_unreachable")
+    assert "private response" not in caplog.text
+    assert capfd.readouterr() == ("", "")
 
 
 def test_provider_response_body_is_discarded_without_output_or_logs(
@@ -268,6 +317,59 @@ def test_provider_failures_map_without_retry_or_raw_details(
     assert capfd.readouterr() == ("", "")
 
 
+@pytest.mark.parametrize(
+    "status_code",
+    [[], True, "401", object()],
+    ids=["unhashable", "bool", "string", "object"],
+)
+def test_malformed_provider_status_is_always_unreachable_and_sanitized(
+    status_code: object,
+    caplog: pytest.LogCaptureFixture,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    failure = ModelProviderError(
+        "private malformed status secret",
+        status_code=cast(Any, status_code),
+    )
+
+    try:
+        result = asyncio.run(
+            verify_model(
+                _managed(ProbeModel(responses=[failure])),
+                timeout_seconds=5,
+            )
+        )
+    except BaseException as error:  # pragma: no cover - RED safety assertion
+        pytest.fail(f"status classification escaped {type(error).__name__}")
+
+    assert result == ModelVerificationResult(False, "provider_unreachable")
+    assert "private malformed status secret" not in caplog.text
+    assert capfd.readouterr() == ("", "")
+
+
+def test_throwing_provider_status_accessor_is_unreachable_and_sanitized(
+    caplog: pytest.LogCaptureFixture,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    failure = ExplosiveStatusProviderError("private provider error secret")
+
+    try:
+        result = asyncio.run(
+            verify_model(
+                _managed(ProbeModel(responses=[failure])),
+                timeout_seconds=5,
+            )
+        )
+    except BaseException as error:  # pragma: no cover - RED safety assertion
+        pytest.fail(f"status accessor escaped {type(error).__name__}")
+
+    assert result == ModelVerificationResult(False, "provider_unreachable")
+    assert "private" not in caplog.text
+    assert capfd.readouterr() == ("", "")
+
+
 def test_verification_suppresses_raw_adapter_error_logs(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -353,7 +455,11 @@ def test_caller_cancellation_propagates_and_cancels_provider_invocation() -> Non
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("timeout_seconds", [True, 0, 51])
+class IntSubclass(int):
+    pass
+
+
+@pytest.mark.parametrize("timeout_seconds", [True, 1.0, IntSubclass(5), 0, 51])
 def test_verifier_rejects_timeouts_outside_integer_one_to_fifty(
     timeout_seconds: object,
 ) -> None:

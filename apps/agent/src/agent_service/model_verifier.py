@@ -46,11 +46,17 @@ def _failure_category(error: Exception) -> VerificationCategory:
     if isinstance(error, ModelAuthenticationError):
         return "credential_rejected"
     if isinstance(error, ModelProviderError):
-        if error.status_code in {401, 403}:
+        try:
+            status_code = error.status_code
+        except BaseException:
+            return "provider_unreachable"
+        if type(status_code) is not int:
+            return "provider_unreachable"
+        if status_code == 401 or status_code == 403:
             return "credential_rejected"
-        if error.status_code == 404:
+        if status_code == 404:
             return "model_not_found"
-        if error.status_code in {408, 504}:
+        if status_code == 408 or status_code == 504:
             return "provider_timeout"
     return "provider_unreachable"
 
@@ -67,11 +73,7 @@ async def verify_model(
     timeout_seconds: int,
 ) -> ModelVerificationResult:
     """Execute one fixed probe and discard all model content."""
-    if (
-        isinstance(timeout_seconds, bool)
-        or not isinstance(timeout_seconds, int)
-        or not 1 <= timeout_seconds <= 50
-    ):
+    if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 50:
         raise ValueError("timeout_seconds must be an integer from 1 to 50")
     _install_verification_log_filter()
     suppression_token = _suppress_adapter_logs.set(True)
@@ -88,8 +90,8 @@ async def verify_model(
         except Exception as error:
             return ModelVerificationResult(ok=False, category=_failure_category(error))
         valid = (
-            isinstance(response, ModelResponse)
-            and isinstance(response.content, str)
+            type(response) is ModelResponse
+            and type(response.content) is str
             and bool(response.content.strip())
         )
         del response
