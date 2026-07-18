@@ -558,6 +558,69 @@ describe("GET /api/v1/admin/assistant/status", () => {
     expect(result.message).toBe("助手基础服务暂不可用。");
   });
 
+  it.each(["open", "half-open"] as const)(
+    "fails closed when readiness probe is available but its circuit is %s",
+    async (readinessCircuitState) => {
+      const result = await loadAdminAssistantStatus({
+        runtime: {
+          readinessStatus: async () => ({
+            probed: true,
+            live: true,
+            ready: true,
+            capability: "available" as const,
+          }),
+          inspect: () => ({
+            providerMode: "agentos" as const,
+            persistence: "agentos" as const,
+            circuits: {
+              readiness: {
+                state: readinessCircuitState,
+                consecutiveFailures: 3,
+              },
+              execution: {
+                state: "closed" as const,
+                consecutiveFailures: 0,
+              },
+            },
+            readiness: {
+              cacheTtlMs: 5_000,
+              probeTimeoutMs: 1_500,
+              failureThreshold: 3,
+            },
+          }),
+        },
+        controlClient: controlClient(),
+        requestIdFactory: () => CONTROL_REQUEST_ID,
+      });
+
+      expect(result.runtime).toMatchObject({
+        live: true,
+        ready: false,
+        capability: "degraded",
+        selectedProvider: "unavailable",
+        circuits: {
+          readiness: {
+            state: readinessCircuitState,
+            consecutiveFailures: 3,
+          },
+        },
+      });
+      expect(result.services.find(({ id }) => id === "agentos")).toMatchObject({
+        state: "degraded",
+        detail: "依赖尚未就绪",
+      });
+      expect(result.services.find(({ id }) => id === "model")).toMatchObject({
+        state: "degraded",
+        detail: "模型状态不可用",
+      });
+      expect(
+        result.services.find(({ id }) => id === "public_entry"),
+      ).toMatchObject({ state: "degraded", detail: "降级模式" });
+      expect(result.configuration.model).toBe("状态不可用");
+      expect(result.message).toBe("助手基础服务暂不可用。");
+    },
+  );
+
   it("normalizes an impossible sourced placeholder before returning from the loader", async () => {
     const result = await loadAdminAssistantStatus({
       runtime: {

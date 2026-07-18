@@ -463,6 +463,9 @@ export async function loadAdminAssistantStatus(
       : runtime.readiness.capability;
   const capabilityMismatch =
     runtime.valid && slotCapability !== control.capability;
+  const readinessCircuitUnavailable =
+    runtime.inspection.providerMode === "agentos" &&
+    runtime.inspection.circuits.readiness.state !== "closed";
   const baseStatus = runtime.valid
     ? deriveAssistantRuntimeStatus(runtime.readiness, {
         providerMode: runtime.inspection.providerMode,
@@ -475,6 +478,7 @@ export async function loadAdminAssistantStatus(
   const degraded =
     !runtime.valid ||
     capabilityMismatch ||
+    readinessCircuitUnavailable ||
     baseStatus.capability === "degraded" ||
     control.capability === "degraded";
   const status: AssistantRuntimeStatus = degraded
@@ -501,6 +505,7 @@ export async function loadAdminAssistantStatus(
     runtime.valid,
     !runtime.valid ||
       capabilityMismatch ||
+      readinessCircuitUnavailable ||
       control.capability === "degraded" ||
       slotCapability === "degraded",
   );
