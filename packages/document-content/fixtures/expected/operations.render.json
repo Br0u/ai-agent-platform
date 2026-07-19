@@ -1,0 +1,294 @@
+{
+  "version": 1,
+  "root": {
+    "type": "root",
+    "children": [
+      {
+        "type": "element",
+        "tagName": "h2",
+        "properties": {
+          "id": "doc-content-日常检查"
+        },
+        "children": [
+          {
+            "type": "text",
+            "value": "日常检查"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "ul",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "li",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "查看 Web、数据库和模型网关的健康状态。"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "li",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "检查管理员操作审计和异常登录记录。"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "li",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "观察请求延迟、错误率、队列积压和磁盘使用量。"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "li",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "定期验证备份可恢复，而不是只验证备份任务成功。"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "h2",
+        "properties": {
+          "id": "doc-content-故障处理顺序"
+        },
+        "children": [
+          {
+            "type": "text",
+            "value": "故障处理顺序"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "ol",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "li",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "记录发生时间、影响范围和最近一次发布。"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "li",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "先确认健康接口、容器日志和数据库连接。"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "li",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "对外部模型或资源依赖使用降级或占位策略。"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "li",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "恢复服务后补齐事件记录和复盘结论。"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "document-callout",
+        "properties": {
+          "dataCalloutType": "warning"
+        },
+        "children": [
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "生产环境排障时不要直接删除容器或数据库数据；先保留日志和现场，再执行可回滚操作。"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "document-cards",
+        "properties": {},
+        "children": [
+          {
+            "type": "element",
+            "tagName": "ul",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "\n"
+              },
+              {
+                "type": "element",
+                "tagName": "li",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "element",
+                    "tagName": "a",
+                    "properties": {
+                      "href": "/compatibility"
+                    },
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "环境兼容矩阵"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "\n"
+              },
+              {
+                "type": "element",
+                "tagName": "li",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "element",
+                    "tagName": "a",
+                    "properties": {
+                      "href": "/support"
+                    },
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "支持与工单"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "\n"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "toc": [
+    {
+      "id": "doc-content-日常检查",
+      "title": "日常检查",
+      "depth": 2
+    },
+    {
+      "id": "doc-content-故障处理顺序",
+      "title": "故障处理顺序",
+      "depth": 2
+    }
+  ]
+}

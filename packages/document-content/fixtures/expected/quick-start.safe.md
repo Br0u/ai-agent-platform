@@ -1,0 +1,32 @@
+用一套最小流程验证平台、模型网关和知识库是否已经可以协同工作。
+
+:::callout{type="info"}
+当前文档示例以本地 Docker
+环境为主，生产环境请结合企业网络、硬件和安全策略调整配置。
+:::
+
+## 上手路径
+
+:::steps
+
+### 准备环境
+
+准备 Docker、Docker Compose、PostgreSQL，并确认服务器可以访问所需镜像仓库。
+
+### 启动平台
+
+复制环境变量模板，填写数据库连接和公开访问地址，然后执行 `docker compose up -d`。
+
+### 创建第一个 Agent
+
+在 Agent Studio 中选择模型、工具和知识库，保存后用测试会话验证响应链路。
+
+:::
+
+## 接下来做什么
+
+:::cards
+- [部署指南](/docs/deployment)
+- [API 文档](/docs/api)
+- [常见问题 FAQ](/docs/faq)
+:::

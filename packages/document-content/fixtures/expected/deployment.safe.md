@@ -1,0 +1,127 @@
+本页描述开发验证和服务器部署共用的目录、配置、模型控制面迁移和回滚边界。
+
+## 推荐目录
+
+```filetree
+ai-agent-platform/
+  .env
+  compose.yaml
+  .secrets/
+  apps/agent/
+  apps/web/
+  packages/database/
+```
+
+`.secrets/` 已被 Git 忽略，但生产环境仍应优先使用宿主机受控目录或密钥管理服务。所有 Secret 文件必须只有一个非空行、权限为 `0600`，目录权限为 `0700`。
+
+## 部署步骤
+
+:::steps
+
+### 准备基础配置和独立 Secret
+
+复制 `.env.example` 为 `.env`，至少配置数据库、Better Auth、外部 HTTPS Origin 和助理运行模式。动态模型控制面还需要两组独立数据库角色、一个 AES-256-GCM 主密钥和一个 Web/Agent 内部控制凭据。
+
+```text
+install -d -m 700 .secrets
+umask 077
+openssl rand -hex 32 > .secrets/agent_control_migrator_database_password
+openssl rand -hex 32 > .secrets/agent_control_database_password
+openssl rand -hex 32 > .secrets/model_config_encryption_key
+openssl rand -hex 32 > .secrets/agent_config_control_key
+chmod 600 .secrets/*
+```
+
+控制角色密码使用上面的十六进制值时，可直接生成对应 DSN 文件：
+
+```text
+control_migrator_password=$(tr -d '\n' < .secrets/agent_control_migrator_database_password)
+control_runtime_password=$(tr -d '\n' < .secrets/agent_control_database_password)
+printf 'postgresql+psycopg_async://ai_agent_control_migrator:%s@db:5432/ai_agent_platform\n' "$control_migrator_password" > .secrets/agent_control_migrator_database_url
+printf 'postgresql+psycopg_async://ai_agent_control:%s@db:5432/ai_agent_platform\n' "$control_runtime_password" > .secrets/agent_control_database_url
+unset control_migrator_password control_runtime_password
+chmod 600 .secrets/agent_control_*_database_url
+```
+
+两条 DSN 分别使用 `ai_agent_control_migrator` 和 `ai_agent_control`，密码必须与对应密码文件一致。`MODEL_CONFIG_ENCRYPTION_KEY`、`AGENT_CONFIG_CONTROL_KEY`、`OS_SECURITY_KEY`、认证密钥和会话密钥不得复用。
+
+### 初始化平台、AgentOS 和模型控制数据库
+
+```text
+docker compose build migrate agent-migrate agent-control-migrate agent web backup
+docker compose up -d --wait db
+docker compose run --rm migrate
+docker compose run --rm agno-bootstrap
+docker compose run --rm agent-control-bootstrap
+docker compose run --rm --no-deps agent-migrate
+docker compose run --rm --no-deps agent-control-migrate
+```
+
+`agent-control-bootstrap` 只创建最小权限角色；`agent-control-migrate` 使用 migrator DSN 创建并校验 `agent_control` schema。迁移失败时不要启动 Agent，也不要把 migrator DSN 挂载给常驻 Agent 或 Web。
+
+### 选择部署级开关
+
+要启用码多多和后台模型控制面，设置：
+
+```text
+AGENT_ENABLED=true
+ASSISTANT_PROVIDER_MODE=agentos
+```
+
+`AGENT_ENABLED=false` 是紧急 kill switch：Agent 不注册可运行的码多多，后台控制面只读且 mutation 返回固定不可用错误。`ASSISTANT_PROVIDER_MODE=placeholder` 让 Web 保持安全占位响应。
+
+### 启动服务并检查健康状态
+
+```text
+docker compose up -d --no-deps --wait agent
+docker compose up -d --wait web
+docker compose up -d --wait proxy backup
+```
+
+检查 `/api/health/live` 和 `/api/health/ready`，再用普通客户、员工、只读管理员和模型管理员账号验证访问边界。
+
+### 完成第一次后台激活
+
+使用具有 `admin:assistant:configure` 权限且最近 10 分钟内同时完成密码再认证和 TOTP 验证的账号访问 `/admin/assistant`。选择 Provider 和部署允许的 Endpoint，填写 Model ID 与 Key，先“保存草稿”，再“测试并启用”。测试成功后活动指针和运行时才会切换；保存本身不会影响当前模型。
+
+:::
+
+## 启动与恢复语义
+
+| 状态                                                                         | 行为                                                                  |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `AGENT_ENABLED=false`                                                        | 部署级关闭，码多多和模型 mutation 不可用。                            |
+| 已启用，但没有动态活动配置，也没有完整 bootstrap                             | 码多多已注册，控制面可配置；执行保持不可用，等待第一次激活。          |
+| 没有动态活动配置，但 `MODEL_PROVIDER`、`MODEL_ID`、`MODEL_API_KEY_FILE` 完整 | 使用只读部署 bootstrap；bootstrap Key 不可在后台查看。                |
+| 存在动态活动配置                                                             | 动态配置优先；Agent 重启后从活动指针恢复。                            |
+| 动态配置解密、构建或恢复失败                                                 | fail closed，不静默回退 bootstrap。先修复根因或关闭 `AGENT_ENABLED`。 |
+
+候选模型测试失败时，失败 revision 会保留为内部记录，旧活动模型和活动指针不变。正常重启会恢复最近一次成功激活的动态配置，无需重新测试。
+
+## 回滚
+
+后台不提供选择旧 revision 的入口，旧 revision 是不可变的内部恢复记录，不是可直接回滚的 UI 选项。运维回滚只有两种正常路径：
+
+1. 测试并启用另一家 Provider 当前已保存且可测试通过的 head；
+2. 把希望恢复的参数重新保存为新 revision，再测试并启用。
+
+发生控制面或存储故障时，可先设置 `AGENT_ENABLED=false` 停止执行和 mutation，保留数据库证据后再修复。不要直接更新 `agent_control` 表或手工改活动指针。
+
+## Key 与 Endpoint 运维
+
+- `MODEL_CONFIG_ENCRYPTION_KEY` 是现有密文的 AES 主密钥。当前没有密钥轮换迁移工具；直接替换会导致已有动态配置无法解密，因此禁止原地更换。
+- 查看明文 Key 需要独立权限，并在最近 10 分钟内同时完成密码再认证和 TOTP 验证。浏览器只显示 30 秒；隐藏 DOM 不能撤回已复制到操作系统剪贴板的内容。
+- 自定义云 Endpoint 只能通过部署文件 `infra/agent/model-endpoints.json` 加入 allowlist，随后重建/重启 Agent 并完成启动 reconciliation。后台不能任意输入 URL。
+- Loopback、私网、link-local 和其他本地地址继续被拒绝。本地算力未来通过独立正式入口接入，不伪装成自定义云 Endpoint。
+
+:::callout{type="warning"}
+不要把 `.env`、数据库密码、模型
+Key、`MODEL_CONFIG_ENCRYPTION_KEY`、`AGENT_CONFIG_CONTROL_KEY`、初始管理员密码或
+TOTP 恢复码提交到 Git，也不要写入日志或工单。
+:::
+
+## 当前能力边界
+
+后台已经支持 OpenAI、Anthropic、Google、Qwen / DashScope、DeepSeek 和 MiniMax 的云模型配置。Skill、Knowledge、Tools/网页操作和本地算力卡片目前只是诚实的 roadmap 入口，不会加载能力、探测本地服务或发起安装请求。
+
+设计参考 Agno 官方 [AgentOS Configuration](https://docs.agno.com/agent-os/config)、[Skills](https://docs.agno.com/skills/overview)、[Loading Skills](https://docs.agno.com/skills/loading-skills)、[Tools](https://docs.agno.com/tools/agent)、[Knowledge](https://docs.agno.com/agent-os/features/knowledge-management)、[Ollama](https://docs.agno.com/models/providers/local/ollama/overview)、[vLLM](https://docs.agno.com/models/providers/local/vllm/overview) 和 [OpenAI-compatible Models](https://docs.agno.com/models/providers/openai-like)。本仓库行为以 `apps/agent/uv.lock` 锁定的 Agno `2.7.2` 和本地测试为准，不假设最新版文档 API 已存在。

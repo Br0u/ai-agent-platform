@@ -1,0 +1,296 @@
+{
+  "version": 1,
+  "root": {
+    "type": "root",
+    "children": [
+      {
+        "type": "element",
+        "tagName": "p",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "用一套最小流程验证平台、模型网关和知识库是否已经可以协同工作。"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "document-callout",
+        "properties": {
+          "dataCalloutType": "info"
+        },
+        "children": [
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "当前文档示例以本地 Docker\n环境为主，生产环境请结合企业网络、硬件和安全策略调整配置。"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "h2",
+        "properties": {
+          "id": "doc-content-上手路径"
+        },
+        "children": [
+          {
+            "type": "text",
+            "value": "上手路径"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "document-steps",
+        "properties": {},
+        "children": [
+          {
+            "type": "element",
+            "tagName": "h3",
+            "properties": {
+              "id": "doc-content-准备环境"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "准备环境"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "准备 Docker、Docker Compose、PostgreSQL，并确认服务器可以访问所需镜像仓库。"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "h3",
+            "properties": {
+              "id": "doc-content-启动平台"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "启动平台"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "复制环境变量模板，填写数据库连接和公开访问地址，然后执行 "
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "docker compose up -d"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "。"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "h3",
+            "properties": {
+              "id": "doc-content-创建第一个-agent"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "创建第一个 Agent"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "在 Agent Studio 中选择模型、工具和知识库，保存后用测试会话验证响应链路。"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "h2",
+        "properties": {
+          "id": "doc-content-接下来做什么"
+        },
+        "children": [
+          {
+            "type": "text",
+            "value": "接下来做什么"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "document-cards",
+        "properties": {},
+        "children": [
+          {
+            "type": "element",
+            "tagName": "ul",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "\n"
+              },
+              {
+                "type": "element",
+                "tagName": "li",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "element",
+                    "tagName": "a",
+                    "properties": {
+                      "href": "/docs/deployment"
+                    },
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "部署指南"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "\n"
+              },
+              {
+                "type": "element",
+                "tagName": "li",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "element",
+                    "tagName": "a",
+                    "properties": {
+                      "href": "/docs/api"
+                    },
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "API 文档"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "\n"
+              },
+              {
+                "type": "element",
+                "tagName": "li",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "element",
+                    "tagName": "a",
+                    "properties": {
+                      "href": "/docs/faq"
+                    },
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "常见问题 FAQ"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "\n"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "toc": [
+    {
+      "id": "doc-content-上手路径",
+      "title": "上手路径",
+      "depth": 2
+    },
+    {
+      "id": "doc-content-准备环境",
+      "title": "准备环境",
+      "depth": 3
+    },
+    {
+      "id": "doc-content-启动平台",
+      "title": "启动平台",
+      "depth": 3
+    },
+    {
+      "id": "doc-content-创建第一个-agent",
+      "title": "创建第一个 Agent",
+      "depth": 3
+    },
+    {
+      "id": "doc-content-接下来做什么",
+      "title": "接下来做什么",
+      "depth": 2
+    }
+  ]
+}
