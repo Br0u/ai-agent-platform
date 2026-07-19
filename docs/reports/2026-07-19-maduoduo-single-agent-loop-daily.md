@@ -46,15 +46,13 @@
 4. 后续再实施模型 ID 下拉和在线模型目录同步；本轮没有把未验证的模型列表写死到界面。
 5. 本地模型仓库只保留扩展边界，正式接入前必须单独定义 Provider、内网 Endpoint、鉴权、资源状态和模型能力发现协议。
 
-## 合并前验证
+## 验证
 
-- `pnpm test`：1868 passed，66 skipped。
-- `pnpm agent:test`：932 passed，5 skipped，1 个第三方弃用 warning。
-- `pnpm typecheck`：Web、database、integrations、UI 全部通过。
-- `pnpm agent:typecheck`：51 个 Agent 源文件无 mypy 问题。
-- `pnpm lint` 与 `pnpm agent:lint`：全部通过。
-- `pnpm build`：Next 生产构建完成，39 个静态页面生成成功。
-- `docker compose config --quiet`：Compose 配置可解析。
+- 合并后的 JS/TS 套件：1877 passed，66 skipped；其中 Web 129 个测试文件分批完成，1641 passed、43 skipped。
+- 合并后的已跟踪 Agent 套件：931 passed，5 skipped，1 个第三方弃用 warning。
+- 精确合并提交在干净 detached worktree 中完成 Web typecheck 和 Next 生产 build，39 个静态页面生成成功。
+- 合并前功能分支的 Web、database、integrations、UI typecheck、ESLint、Agent mypy 和 Ruff 全部通过。
+- 功能工作树的 `docker compose config --quiet` 可解析；主工作树仍需迁移本地 `.env`，当前首先缺少 `ASSISTANT_PUBLIC_ORIGIN`，不能冒充主工作树 Compose 已验收。
 
 ## 未完成/未冒充完成
 
