@@ -1,7 +1,4 @@
-import type {
-  AssistantPresetQuestion,
-  AssistantRequest,
-} from "@/features/assistant/assistant-contract";
+import type { AssistantPresetQuestion } from "@/features/assistant/assistant-contract";
 import { isAssistantPresetQuestion } from "@/features/assistant/assistant-contract";
 import type {
   AssistantProvider,
@@ -32,7 +29,11 @@ const GENERIC_REPLY: AssistantProviderReply = {
 };
 
 export class PlaceholderAssistantProvider implements AssistantProvider {
-  async reply(request: AssistantRequest): Promise<AssistantProviderReply> {
+  async reply({
+    request,
+  }: Parameters<
+    AssistantProvider["reply"]
+  >[0]): Promise<AssistantProviderReply> {
     const reply = isAssistantPresetQuestion(request.message)
       ? REPLIES[request.message]
       : GENERIC_REPLY;

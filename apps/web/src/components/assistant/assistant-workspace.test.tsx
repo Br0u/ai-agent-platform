@@ -167,7 +167,7 @@ describe("AssistantWorkspace", () => {
   });
 
   it("uses the approved spatial direction and states the real placeholder capability", () => {
-    renderWorkspace();
+    const { container } = renderWorkspace();
 
     expect(
       screen.getByRole("heading", {
@@ -176,12 +176,19 @@ describe("AssistantWorkspace", () => {
       }),
     ).toBeVisible();
     expect(
-      screen.getByRole("link", { name: "缩小 AI 助理并返回主页面" }),
+      screen.getByRole("link", { name: "缩小码多多并返回主页面" }),
     ).toHaveAttribute("href", "/");
     expect(screen.queryByRole("img")).toBeNull();
     expect(screen.getByText("CONVERSATIONS")).toBeVisible();
     expect(screen.getByText(placeholderStatus.message)).toBeVisible();
-    expect(screen.getByText("公开咨询 · 匿名临时会话")).toBeVisible();
+    expect(
+      container.querySelector(".assistant-workspace__identity"),
+    ).toHaveTextContent("码多多");
+    expect(screen.getByText("公开网页助手 · 匿名会话")).toBeVisible();
+    expect(screen.getByText("安全占位模式，不创建服务端会话。")).toBeVisible();
+    expect(
+      screen.getByText("尚未接入 Skill、知识库或网页正文读取。"),
+    ).toBeVisible();
     expect(screen.getByTestId("assistant-service-state")).toHaveAttribute(
       "data-capability",
       "placeholder",
@@ -190,7 +197,7 @@ describe("AssistantWorkspace", () => {
       "data-variant",
       "workspace",
     );
-    expect(screen.getByRole("log", { name: "AI 助理对话" })).toHaveAttribute(
+    expect(screen.getByRole("log", { name: "码多多对话" })).toHaveAttribute(
       "data-testid",
       "assistant-message-history",
     );
@@ -217,13 +224,43 @@ describe("AssistantWorkspace", () => {
       }),
     ).toBeDisabled();
     const newSession = screen.getByRole("button", { name: "新建会话" });
-    const availability = screen.getByText("模型接入后开放");
+    const availability = screen.getByText("暂不支持创建多个会话");
     expect(newSession).toBeDisabled();
     expect(newSession).toHaveAttribute("aria-describedby", availability.id);
     expect(
       screen.getByRole("button", { name: "如何开始了解平台？" }),
     ).toBeEnabled();
   });
+
+  it.each([
+    availableStatus,
+    {
+      ...availableStatus,
+      requestId: "workspace-degraded-status",
+      ready: false,
+      capability: "degraded" as const,
+      message: "助手基础服务暂不可用。",
+    },
+  ])(
+    "states the real anonymous multi-turn boundary for $capability capability",
+    (status) => {
+      render(
+        <AssistantExperienceProvider pathname="/assistant">
+          <AssistantWorkspace initialServiceState={status} />
+        </AssistantExperienceProvider>,
+      );
+
+      expect(
+        screen.getByText(
+          "已接入码多多，支持匿名多轮对话；同一浏览器会保留最近上下文。",
+        ),
+      ).toBeVisible();
+      expect(
+        screen.getByText("尚未接入 Skill、知识库或网页正文读取。"),
+      ).toBeVisible();
+      expect(screen.queryByText("安全占位模式，不创建服务端会话。")).toBeNull();
+    },
+  );
 
   it("distinguishes degraded infrastructure from a healthy placeholder", () => {
     render(

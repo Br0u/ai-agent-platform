@@ -20,6 +20,165 @@ import { describe, expect, it } from "vitest";
 const root = path.resolve(import.meta.dirname, "../../..");
 const read = (file: string) => readFileSync(path.join(root, file), "utf8");
 
+const composeSecretKeys = [
+  "POSTGRES_PASSWORD",
+  "MIGRATOR_DATABASE_PASSWORD",
+  "RUNTIME_DATABASE_PASSWORD",
+  "BACKUP_DATABASE_PASSWORD",
+  "BACKUP_ENCRYPTION_KEY",
+  "AGNO_MIGRATOR_DATABASE_PASSWORD",
+  "AGNO_DATABASE_PASSWORD",
+  "MIGRATOR_DATABASE_URL",
+  "RUNTIME_DATABASE_URL",
+  "BACKUP_DATABASE_URL",
+  "AGNO_MIGRATOR_DATABASE_URL",
+  "AGNO_DATABASE_URL",
+  "BETTER_AUTH_SECRET",
+  "OS_SECURITY_KEY",
+  "ASSISTANT_SESSION_SECRET",
+  "ASSISTANT_RATE_LIMIT_SECRET",
+  "MODEL_API_KEY",
+  "AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD",
+  "AGENT_CONTROL_DATABASE_PASSWORD",
+  "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+  "AGENT_CONTROL_DATABASE_URL",
+  "MODEL_CONFIG_ENCRYPTION_KEY",
+  "AGENT_CONFIG_CONTROL_KEY",
+] as const;
+
+type RenderedSecretAttachment = string | { source?: string; target?: string };
+
+type RenderedNetworkAttachment = null | { gw_priority?: number };
+type RenderedVolumeAttachment =
+  | string
+  | { source?: string; target?: string; read_only?: boolean };
+
+type RenderedService = {
+  build?: { target?: string };
+  cap_add?: string[];
+  cap_drop?: string[];
+  command?: string[];
+  cpus?: number | string;
+  depends_on?: Record<string, { condition?: string }>;
+  entrypoint?: string[];
+  environment?: Record<string, string | null>;
+  healthcheck?: { test?: string[] };
+  mem_limit?: number | string;
+  networks?: Record<string, RenderedNetworkAttachment>;
+  pids_limit?: number;
+  ports?: unknown[];
+  read_only?: boolean;
+  secrets?: RenderedSecretAttachment[];
+  security_opt?: string[];
+  tmpfs?: string[];
+  user?: string;
+  volumes?: RenderedVolumeAttachment[];
+};
+
+type RenderedCompose = {
+  networks: Record<string, { internal?: boolean }>;
+  services: Record<string, RenderedService>;
+};
+
+const renderComposeFixture = (
+  composeFiles = ["compose.yaml"],
+): RenderedCompose => {
+  const sentinels = Object.fromEntries(
+    composeSecretKeys.map((key, index) => [
+      key,
+      `compose-secret-${index}-sentinel`,
+    ]),
+  );
+  sentinels.MODEL_API_KEY =
+    "protected-model-api-key-sentinel:/credential/path-content";
+  const sandbox = mkdtempSync(path.join(tmpdir(), "compose-secrets-"));
+  const secretFileEnv: Record<string, string> = {};
+
+  try {
+    for (const key of composeSecretKeys) {
+      const secretFile = path.join(sandbox, key.toLowerCase());
+      writeFileSync(secretFile, sentinels[key], { mode: 0o600 });
+      chmodSync(secretFile, 0o600);
+      secretFileEnv[`${key}_FILE`] = secretFile;
+    }
+
+    const execution = spawnSync(
+      "docker",
+      [
+        "compose",
+        ...composeFiles.flatMap((file) => ["-f", file]),
+        "config",
+        "--format",
+        "json",
+      ],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ...secretFileEnv,
+          E2E_CUSTOMER_PASSWORD: "compose-e2e-customer",
+          E2E_STAFF_PASSWORD: "compose-e2e-staff",
+          E2E_ADMIN_PASSWORD: "compose-e2e-admin",
+          E2E_PENDING_CUSTOMER_SESSION_TOKEN: "compose-e2e-pending",
+          E2E_DISABLED_CUSTOMER_SESSION_TOKEN: "compose-e2e-disabled",
+          E2E_STAFF_SESSION_TOKEN: "compose-e2e-staff-session",
+          E2E_ROLE_TARGET_SESSION_TOKEN: "compose-e2e-role-target",
+          E2E_ADMIN_SESSION_TOKEN: "compose-e2e-admin-session",
+          E2E_NO_TOTP_ADMIN_SESSION_TOKEN: "compose-e2e-no-totp",
+          E2E_MODEL_ADMIN_SESSION_TOKEN: "compose-e2e-model-admin",
+          E2E_MODEL_ADMIN_STALE_SESSION_TOKEN: "compose-e2e-model-admin-stale",
+          E2E_REVOKED_SESSION_TOKEN: "compose-e2e-revoked",
+          E2E_REPLACEMENT_PASSWORD: "compose-e2e-replacement",
+          BETTER_AUTH_URL: "http://127.0.0.1:3000",
+          BETTER_AUTH_TRUSTED_ORIGINS: "http://127.0.0.1:3000",
+          ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
+          PUBLIC_HOST: "127.0.0.1",
+          MODEL_PROVIDER: "openai",
+          MODEL_ID: "provider-smoke-model",
+          MODEL_BASE_URL: "",
+          MODEL_RUN_TIMEOUT_SECONDS: "25",
+        },
+      },
+    );
+
+    const exposedProtectedFixture = Object.values(sentinels).some(
+      (sentinel) =>
+        execution.stdout.includes(sentinel) ||
+        execution.stderr.includes(sentinel),
+    );
+    if (exposedProtectedFixture) {
+      throw new Error("rendered Compose output exposed protected fixture data");
+    }
+    if (execution.status !== 0) {
+      throw new Error("fixture-backed Docker Compose rendering failed");
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(execution.stdout);
+    } catch {
+      throw new Error("rendered Docker Compose output was not valid JSON");
+    }
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !("services" in parsed) ||
+      !("networks" in parsed)
+    ) {
+      throw new Error("rendered Docker Compose model was incomplete");
+    }
+    return parsed as RenderedCompose;
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
+};
+
+const secretSource = (
+  attachment: RenderedSecretAttachment,
+): string | undefined =>
+  typeof attachment === "string" ? attachment : attachment.source;
+
 describe("production deployment security contracts", () => {
   it("keeps runtime and backup roles on separate least-privilege matrices", () => {
     const sql = `${read("infra/postgres/01-roles.sql")}\n${read("infra/postgres/02-runtime-grants.sql")}`;
@@ -311,7 +470,7 @@ describe("production deployment security contracts", () => {
     expect(webService).toContain('TRUST_NGINX_PROXY: "true"');
     for (const name of [
       "ASSISTANT_PROVIDER_MODE",
-      "ASSISTANT_AGENTOS_DEFAULT_AGENT_ID",
+      "ASSISTANT_AGENTOS_RUN_TIMEOUT_MS",
       "ASSISTANT_AGENTOS_READINESS_TTL_MS",
       "ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS",
       "ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD",
@@ -319,6 +478,8 @@ describe("production deployment security contracts", () => {
     ]) {
       expect(webService).toContain(`${name}:`);
     }
+    expect(webService).not.toContain("ASSISTANT_AGENTOS_DEFAULT_AGENT_ID");
+    expect(webService).not.toContain("MODEL_API_KEY");
     expect(webService).not.toMatch(/agent:[\s\S]*condition: service_healthy/u);
     expect(webService).not.toMatch(/^\s{4}ports:/mu);
     expect(agentService).not.toMatch(/^\s{4}ports:/mu);
@@ -373,7 +534,12 @@ describe("production deployment security contracts", () => {
 
   it("defines a failure-safe isolated assistant runtime acceptance", () => {
     const script = read("docs/testing/run-assistant-runtime-e2e.sh");
+    const browserAcceptance = read("apps/web/e2e/assistant-runtime.spec.ts");
+    const acceptanceCompose = read("compose.e2e.yaml");
+    const productionCompose = read("compose.yaml");
+    const acceptanceAgentApp = read("apps/agent/tests/e2e_agent/app.py");
 
+    expect(script).toContain('[ "${RUN_ASSISTANT_RUNTIME_E2E:-}" = true ]');
     expect(script).toContain(
       "project=${AAP_ASSISTANT_RUNTIME_E2E_PROJECT:-aap-assistant-runtime-e2e}",
     );
@@ -390,12 +556,49 @@ describe("production deployment security contracts", () => {
     expect(script).toContain('stat -c %a "$env_file"');
     expect(script).toContain('[ "$env_permissions" = "600" ]');
     expect(script).toContain("config --quiet");
-    expect(script).toMatch(
-      /build[^\n]*migrate[^\n]*web[^\n]*agent[^\n]*backup/u,
+    for (const serviceName of [
+      "migrate",
+      "agent-migrate",
+      "agent-control-migrate",
+      "agent",
+      "backup",
+      "web",
+    ]) {
+      expect(script).toContain(`build_service ${serviceName}`);
+    }
+    expect(script).toContain('compose build "$service"');
+    expect(script).toContain('run_compose_job "migrate-1" migrate');
+    expect(script).toContain('run_compose_job "migrate-2" migrate');
+    expect(script).toContain(
+      'run_compose_job "agno-bootstrap-1" agno-bootstrap',
     );
-    expect(script.match(/run --rm migrate/g)).toHaveLength(2);
-    expect(script.match(/run --rm agno-bootstrap/g)).toHaveLength(2);
-    expect(script.match(/run --rm --no-deps agent-migrate/g)).toHaveLength(2);
+    expect(script).toContain(
+      'run_compose_job "agno-bootstrap-2" agno-bootstrap',
+    );
+    expect(script).toContain(
+      'run_compose_job "agent-migrate-1" --no-deps agent-migrate',
+    );
+    expect(script).toContain(
+      'run_compose_job "agent-migrate-2" --no-deps agent-migrate',
+    );
+    expect(script.match(/compose run --rm/g)).toHaveLength(1);
+    expect(script).toContain("run_compose_job() {");
+    expect(script).toContain(
+      'if compose run --rm "$@" >"$transcript_file" 2>&1; then',
+    );
+    expect(script).toContain('chmod 600 "$transcript_file"');
+    for (const patternsFile of [
+      "protected_patterns_file",
+      "placeholder_dynamic_patterns_file",
+      "agentos_dynamic_patterns_file",
+      "model_keys_file",
+      "model_key_last4_file",
+    ]) {
+      expect(script).toContain(
+        `scan_pattern_file "$${patternsFile}" "$transcript_file"`,
+      );
+    }
+    expect(script).not.toMatch(/(?:cat|sed|tail|head)[^\n]*transcript_file/u);
     expect(script).toContain("HostConfig.PortBindings");
     expect(script).toContain("e2e/assistant-runtime.spec.ts");
     expect(script).toContain("--workers=1");
@@ -416,8 +619,461 @@ describe("production deployment security contracts", () => {
     expect(script).toContain('docker image ls -q "$project-*"');
     expect(script).toContain('[ "$owns_project" = true ]');
     expect(script.indexOf("owns_project=true")).toBeLessThan(
-      script.indexOf("compose build"),
+      script.indexOf("build_service migrate"),
     );
+    expect(script).toContain('--grep-invert "@agentos|@guard|@control"');
+    expect(script).toContain("--grep @guard");
+    expect(script).toContain("--grep @agentos");
+    expect(
+      script.indexOf('--grep-invert "@agentos|@guard|@control"'),
+    ).toBeLessThan(script.indexOf("--grep @agentos"));
+    expect(script).toContain("export AGENT_ENABLED=false");
+    expect(script).toContain("export ASSISTANT_PROVIDER_MODE=placeholder");
+    expect(script).toContain("export AGENT_ENABLED=true");
+    expect(script).toContain("export MODEL_PROVIDER=openai");
+    expect(script).toContain("export MODEL_ID=e2e-deterministic");
+    expect(script).toContain("unset MODEL_BASE_URL");
+    expect(script).toContain("export MODEL_RUN_TIMEOUT_SECONDS=1");
+    expect(script).toContain("export ASSISTANT_PROVIDER_MODE=agentos");
+    expect(script).toContain("export ASSISTANT_AGENTOS_RUN_TIMEOUT_MS=51000");
+    expect(script).toContain(
+      "export ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD=1",
+    );
+    expect(script).toContain("--force-recreate --wait proxy");
+    expect(script).toContain('scan_logs "placeholder"');
+    expect(script).toContain('scan_logs "agentos-bootstrap"');
+    expect(script).toContain('scan_logs "dynamic-control"');
+    expect(script).toContain('compose logs --no-color >"$logs_file" 2>&1');
+    expect(script).not.toContain("compose logs --no-color web agent proxy");
+    const controlReset = script.slice(
+      script.indexOf('scan_logs "agentos-bootstrap"'),
+      script.indexOf("--grep @control"),
+    );
+    expect(controlReset).toContain(
+      "compose up -d --no-deps --force-recreate --wait agent",
+    );
+    expect(controlReset).toContain(
+      "compose up -d --no-deps --force-recreate --wait web",
+    );
+    expect(controlReset).toContain(
+      "compose up -d --no-deps --force-recreate --wait proxy",
+    );
+    expect(script.indexOf('scan_logs "placeholder"')).toBeLessThan(
+      script.indexOf("export AGENT_ENABLED=true"),
+    );
+    expect(script).toContain(
+      'scan_pattern_file "$protected_patterns_file" "$logs_file"',
+    );
+    expect(script).toContain('chmod 600 "$protected_patterns_file"');
+    expect(script).not.toContain('grep -F "$protected_value"');
+    expect(script).toContain("scan_pattern_file() {");
+    expect(script).toContain(
+      'if grep -F -f "$patterns_file" "$logs_file" >/dev/null 2>&1; then',
+    );
+    expect(script).toContain("scan_status=$?");
+    expect(script).toContain('case "$scan_status" in');
+    expect(script).toContain("1) ;;");
+    expect(script).toContain('echo "runtime log scanner failed" >&2');
+    expect(script).toContain(
+      'placeholder_dynamic_patterns_file="$temp_dir/placeholder-dynamic-patterns"',
+    );
+    expect(script).toContain(
+      'agentos_dynamic_patterns_file="$temp_dir/agentos-dynamic-patterns"',
+    );
+    expect(script).toContain(
+      'create_dynamic_patterns_file "$placeholder_dynamic_patterns_file"',
+    );
+    expect(script).toContain(
+      'create_dynamic_patterns_file "$agentos_dynamic_patterns_file"',
+    );
+    expect(script.match(/AAP_RUNTIME_DYNAMIC_PATTERNS_FILE=/gu)).toHaveLength(
+      2,
+    );
+    expect(script).toContain(
+      'export AAP_RUNTIME_DYNAMIC_PATTERNS_FILE="$placeholder_dynamic_patterns_file"',
+    );
+    expect(script).toContain(
+      'export AAP_RUNTIME_DYNAMIC_PATTERNS_FILE="$agentos_dynamic_patterns_file"',
+    );
+    expect(script).toContain(
+      'scan_logs "placeholder" "$placeholder_dynamic_patterns_file"',
+    );
+    expect(script).toContain(
+      'scan_logs "agentos-bootstrap" "$agentos_dynamic_patterns_file"',
+    );
+    expect(script).toContain(
+      'scan_logs "dynamic-control" "$agentos_dynamic_patterns_file"',
+    );
+    expect(acceptanceCompose).toContain(
+      "AAP_SESSION_IDENTITY_AUDIT_FILE: /tmp/aap-session-identity-audit",
+    );
+    expect(productionCompose).not.toContain("AAP_SESSION_IDENTITY_AUDIT_FILE");
+    expect(acceptanceAgentApp).toContain(
+      'os.environ.get("AAP_SESSION_IDENTITY_AUDIT_FILE")',
+    );
+    expect(script).toContain("collect_agent_session_identities() {");
+    expect(script).toContain(
+      'compose exec -T agent python -c "$identity_audit_collector" >>"$agentos_dynamic_patterns_file"',
+    );
+    expect(script).toContain(
+      'identity_audit_path = "/tmp/aap-session-identity-audit"',
+    );
+    const collectorMatch = script.match(
+      /identity_audit_collector=\$\(cat <<'PY'\n(?<source>[\s\S]*?)\nPY\n\)/u,
+    );
+    expect(collectorMatch?.groups?.source).toBeDefined();
+    const collectorSandbox = mkdtempSync(
+      path.join(tmpdir(), "identity-audit-collector-"),
+    );
+    try {
+      const fifo = path.join(collectorSandbox, "fifo");
+      const makeFifo = spawnSync(
+        "python3",
+        ["-c", "import os, sys; os.mkfifo(sys.argv[1])", fifo],
+        { encoding: "utf8" },
+      );
+      expect(makeFifo.status).toBe(0);
+      const collector = (collectorMatch?.groups?.source ?? "").replace(
+        'identity_audit_path = "/tmp/aap-session-identity-audit"',
+        `identity_audit_path = ${JSON.stringify(fifo)}`,
+      );
+      const execution = spawnSync("python3", ["-c", collector], {
+        encoding: "utf8",
+        timeout: 500,
+      });
+      expect(execution.error).toBeUndefined();
+      expect(execution.status).toBe(1);
+      expect(execution.stdout).toBe("");
+      expect(execution.stderr).toBe("identity audit collection failed\n");
+    } finally {
+      rmSync(collectorSandbox, { recursive: true, force: true });
+    }
+    expect(script).toContain('getattr(os, "O_NOFOLLOW", 0)');
+    expect(script).toContain('getattr(os, "O_NONBLOCK", 0)');
+    expect(script).toContain("stat.S_ISREG(metadata.st_mode)");
+    expect(script).toContain("stat.S_IMODE(metadata.st_mode) != 0o600");
+    expect(script).toContain("if not identities:");
+    expect(script).toContain("identity_pattern.fullmatch(identity)");
+    expect(script).toContain(
+      'raise SystemExit("identity audit collection failed")',
+    );
+    expect(script).not.toContain('echo "$identity"');
+    const agentosRunIndex = script.indexOf("--grep @agentos");
+    const identityCollectionIndex = script.indexOf(
+      "collect_agent_session_identities",
+      agentosRunIndex,
+    );
+    const agentosScanIndex = script.indexOf(
+      'scan_logs "agentos-bootstrap"',
+      identityCollectionIndex,
+    );
+    expect(identityCollectionIndex).toBeGreaterThan(agentosRunIndex);
+    expect(agentosScanIndex).toBeGreaterThan(identityCollectionIndex);
+    expect(browserAcceptance).toContain('"AAP_RUNTIME_DYNAMIC_PATTERNS_FILE"');
+    expect(browserAcceptance).toContain("appendFileSync(");
+    expect(browserAcceptance).toContain("(stats.mode & 0o777) !== 0o600");
+    expect(browserAcceptance).toContain('value.includes("\\n")');
+    expect(browserAcceptance).toContain('value.includes("\\r")');
+    expect(browserAcceptance).toContain('totp.searchParams.get("secret")');
+    expect(browserAcceptance).toContain("appendDynamicProtectedValue(uri)");
+    expect(browserAcceptance).toContain(
+      "appendDynamicProtectedValue(totpSecret)",
+    );
+    expect(browserAcceptance).toContain(
+      "appendDynamicProtectedValue(sessionId)",
+    );
+    expect(browserAcceptance).toContain(
+      "appendDynamicProtectedValue(cookieValue)",
+    );
+    expect(browserAcceptance).toContain(
+      "appendDynamicProtectedValue(parsed.credential)",
+    );
+    expect(browserAcceptance).toContain(
+      "expectNoProtectedValue(first, [firstSessionId])",
+    );
+    expect(browserAcceptance).toContain(
+      "const newSessionId = replacementCandidates[0]",
+    );
+    expect(browserAcceptance).toContain(
+      "expectNoProtectedValue(third, [newSessionId])",
+    );
+    const invalidResponseIndex = browserAcceptance.indexOf(
+      "const invalidResponse =",
+    );
+    const blockedResponseIndex = browserAcceptance.indexOf(
+      "const blockedResponse =",
+      invalidResponseIndex,
+    );
+    const circuitAdminAuthIndex = browserAcceptance.indexOf(
+      "const credentials = fixtureCredentials();",
+      invalidResponseIndex,
+    );
+    expect(invalidResponseIndex).toBeGreaterThanOrEqual(0);
+    expect(blockedResponseIndex).toBeGreaterThan(invalidResponseIndex);
+    expect(blockedResponseIndex).toBeLessThan(circuitAdminAuthIndex);
+    const degradedStatusIndex = browserAcceptance.indexOf(
+      "const status = await readSafeJson",
+      invalidResponseIndex,
+    );
+    const finalSessionSnapshotIndex = browserAcceptance.indexOf(
+      "agentSessionIds();",
+      degradedStatusIndex,
+    );
+    const finalContextCloseIndex = browserAcceptance.indexOf(
+      "await context.close();",
+      degradedStatusIndex,
+    );
+    expect(finalSessionSnapshotIndex).toBeGreaterThan(degradedStatusIndex);
+    expect(finalSessionSnapshotIndex).toBeLessThan(finalContextCloseIndex);
+    for (const variable of [
+      "POSTGRES_PASSWORD",
+      "MIGRATOR_DATABASE_PASSWORD",
+      "RUNTIME_DATABASE_PASSWORD",
+      "BACKUP_DATABASE_PASSWORD",
+      "BETTER_AUTH_SECRET",
+      "E2E_CUSTOMER_PASSWORD",
+      "E2E_STAFF_PASSWORD",
+      "E2E_ADMIN_PASSWORD",
+      "E2E_PENDING_CUSTOMER_SESSION_TOKEN",
+      "E2E_DISABLED_CUSTOMER_SESSION_TOKEN",
+      "E2E_STAFF_SESSION_TOKEN",
+      "E2E_ROLE_TARGET_SESSION_TOKEN",
+      "E2E_ADMIN_SESSION_TOKEN",
+      "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
+      "E2E_MODEL_ADMIN_SESSION_TOKEN",
+      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
+      "E2E_REVOKED_SESSION_TOKEN",
+      "E2E_REPLACEMENT_PASSWORD",
+    ]) {
+      expect(script).toContain(`\"$${variable}\"`);
+    }
+    expect(script).toContain(
+      "guard, placeholder, AgentOS bootstrap, dynamic control, recovery, reveal and zero-residue cleanup",
+    );
+    expect(script).toContain("db_port_bindings=");
+  });
+
+  it("injects only the offline managed-model builder into the real acceptance control plane", () => {
+    const acceptanceAgent = read("apps/agent/tests/e2e_agent/app.py");
+    const deterministicModel = read(
+      "apps/agent/tests/e2e_agent/deterministic_model.py",
+    );
+
+    expect(acceptanceAgent).toContain(
+      "create_app(model_builder=build_acceptance_managed_model)",
+    );
+    expect(acceptanceAgent).not.toContain("catalog_builder=");
+    expect(acceptanceAgent).not.toContain("build_acceptance_catalog");
+    expect(deterministicModel).toContain("ManagedModel");
+    expect(deterministicModel).toContain('self.id.startswith("e2e-fail-")');
+    expect(deterministicModel).toContain("build_acceptance_managed_model");
+    expect(deterministicModel).toContain("async def close_model() -> None:");
+  });
+
+  it("wires isolated model control secrets, protected ledgers, phases and cleanup", () => {
+    const script = read("docs/testing/run-assistant-runtime-e2e.sh");
+    const browserAcceptance = read("apps/web/e2e/assistant-runtime.spec.ts");
+
+    for (const materialized of [
+      "AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD_FILE",
+      "AGENT_CONTROL_DATABASE_PASSWORD_FILE",
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE",
+      "AGENT_CONTROL_DATABASE_URL_FILE",
+      "MODEL_CONFIG_ENCRYPTION_KEY_FILE",
+      "AGENT_CONFIG_CONTROL_KEY_FILE",
+    ]) {
+      expect(script).toContain(`materialize_secret ${materialized}`);
+      expect(script).toContain(`"$${materialized}"`);
+    }
+    expect(script).toContain("model_config_encryption_key=$(secret)");
+    expect(script).toContain("agent_config_control_key=$(secret)");
+    expect(script).toContain("model-key-full-patterns");
+    expect(script).toContain("model-key-last4-patterns");
+    expect(script).toContain(
+      'export AAP_RUNTIME_MODEL_KEYS_FILE="$model_keys_file"',
+    );
+    expect(script).toContain(
+      'export AAP_RUNTIME_MODEL_KEY_LAST4_FILE="$model_key_last4_file"',
+    );
+    expect(script).toContain(
+      'run_compose_job "agent-control-bootstrap-1" agent-control-bootstrap',
+    );
+    expect(script).toContain(
+      'run_compose_job "agent-control-migrate-1" --no-deps agent-control-migrate',
+    );
+    expect(script).toContain("--grep @control");
+    expect(script).toContain("assert_zero_residue");
+    expect(browserAcceptance).toContain("@control deterministic model control");
+    expect(browserAcceptance).toContain("AAP_RUNTIME_MODEL_KEYS_FILE");
+    expect(browserAcceptance).toContain("AAP_RUNTIME_MODEL_KEY_LAST4_FILE");
+    expect(browserAcceptance).toContain("e2e-fail-openai-rev2");
+    expect(browserAcceptance).toContain("page.clock.fastForward(30_000)");
+    expect(browserAcceptance).toContain("recreateAgent(false)");
+    expect(browserAcceptance).toContain(
+      "function collectAgentSessionIdentityAudit(): void",
+    );
+    expect(browserAcceptance).toMatch(
+      /function recreateAgent\(enabled: boolean\): void \{\s*collectAgentSessionIdentityAudit\(\);/u,
+    );
+    expect(browserAcceptance).toContain(
+      "await context.request.delete(SESSION_PATH)",
+    );
+    expect(browserAcceptance).toContain(
+      "action IN ('assistant.model_key_reveal_requested', 'assistant.model_key_revealed')",
+    );
+    expect(browserAcceptance).toContain(
+      'expect(webAuditText).toContain("assistant.model_key_reveal_requested:")',
+    );
+    expect(browserAcceptance).toContain(
+      'expect(webAuditText).toContain("assistant.model_key_revealed:")',
+    );
+    expect(browserAcceptance).toContain(
+      "expect(webAuditText).not.toContain(key)",
+    );
+    expect(browserAcceptance).toContain(
+      "expect(webAuditText).not.toContain(lastFour)",
+    );
+    expect(browserAcceptance).toContain("credentials.modelAdminSessionToken");
+    expect(browserAcceptance).toContain(
+      "credentials.modelAdminStaleSessionToken",
+    );
+    expect(browserAcceptance).toContain("const controlResponseLedger:");
+    expect(browserAcceptance).toContain("const pendingControlResponses:");
+    expect(browserAcceptance).toContain("function trackControlResponses(");
+    expect(browserAcceptance).toContain(
+      "async function drainControlResponses(",
+    );
+    expect(
+      browserAcceptance.match(/await drainControlResponses\(\)/gu),
+    ).toHaveLength(5);
+    expect(browserAcceptance).toContain('context.route("**/api/v1/**"');
+    expect(browserAcceptance).toContain("await route.fetch()");
+    expect(browserAcceptance).toContain(
+      "await route.fulfill({ response: upstream, body: rawJson })",
+    );
+    expect(browserAcceptance).not.toContain('page.on("response"');
+    expect(browserAcceptance).not.toContain('context.on("response"');
+    expect(browserAcceptance).toContain('exposure = "model-config-list"');
+    expect(browserAcceptance).toContain('exposure = "model-config-page"');
+    expect(browserAcceptance).toContain('exposure = "model-key-reveal"');
+    expect(browserAcceptance).toContain(
+      "pathname: new URL(response.url()).pathname",
+    );
+    expect(browserAcceptance).toContain(
+      "expect(response.pathname).toBe(MODEL_CONFIG_PATH)",
+    );
+    expect(browserAcceptance).toContain('expect(response.method).toBe("PUT")');
+    expect(browserAcceptance).toContain('expect(response.method).toBe("POST")');
+    expect(browserAcceptance).toContain("expect(response.status).toBe(200)");
+    expect(browserAcceptance).not.toContain(
+      "expect(response.status).toBeLessThan(400)",
+    );
+    expect(browserAcceptance).toContain("const expectedListLastFour =");
+    expect(browserAcceptance).toContain(
+      "expect([...response.allowedLastFour].sort()).toEqual(",
+    );
+    const routeCaptureStartIndex = browserAcceptance.indexOf(
+      'await context.route("**/api/v1/**"',
+    );
+    const routeCaptureEndIndex = browserAcceptance.indexOf(
+      "async function drainControlResponses(",
+      routeCaptureStartIndex,
+    );
+    const routeCaptureSource = browserAcceptance.slice(
+      routeCaptureStartIndex,
+      routeCaptureEndIndex,
+    );
+    const routeFetchIndex = routeCaptureSource.indexOf("await route.fetch()");
+    const routeBodyIndex = routeCaptureSource.indexOf("await upstream.text()");
+    const routeLedgerIndex = routeCaptureSource.indexOf(
+      "controlResponseLedger.push(",
+    );
+    const routeFulfillIndex = routeCaptureSource.indexOf(
+      "await route.fulfill({ response: upstream, body: rawJson })",
+    );
+    expect(routeCaptureStartIndex).toBeGreaterThan(-1);
+    expect(routeCaptureEndIndex).toBeGreaterThan(routeCaptureStartIndex);
+    expect(routeCaptureSource).not.toContain("const isApiError");
+    expect(routeCaptureSource).not.toContain("const isAssistantApi");
+    expect(routeCaptureSource).not.toContain("return;");
+    expect(routeCaptureSource.match(/status === 200/gu)).toHaveLength(3);
+    expect(routeBodyIndex).toBeGreaterThan(routeFetchIndex);
+    expect(routeLedgerIndex).toBeGreaterThan(routeBodyIndex);
+    expect(routeFulfillIndex).toBeGreaterThan(routeLedgerIndex);
+    const routeRevealIndex = routeCaptureSource.indexOf(
+      'exposure = "model-key-reveal"',
+    );
+    expect(routeRevealIndex).toBeGreaterThan(-1);
+    expect(
+      routeCaptureSource.slice(routeRevealIndex, routeLedgerIndex),
+    ).not.toContain("allowedLastFour =");
+    const directRevealStartIndex = browserAcceptance.indexOf(
+      "const revealBody = await readControlJson(revealResponse",
+    );
+    const directRevealEndIndex = browserAcceptance.indexOf(
+      "const bootstrapReveal",
+      directRevealStartIndex,
+    );
+    expect(directRevealStartIndex).toBeGreaterThan(-1);
+    expect(directRevealEndIndex).toBeGreaterThan(directRevealStartIndex);
+    expect(
+      browserAcceptance.slice(directRevealStartIndex, directRevealEndIndex),
+    ).not.toContain("allowedLastFour");
+    expect(
+      browserAcceptance.match(
+        /expect\(response\.allowedLastFour\)\.toEqual\(\[\]\)/gu,
+      ),
+    ).toHaveLength(2);
+    expect(browserAcceptance).toContain(
+      "expect(capabilityRequests).toEqual([])",
+    );
+    expect(browserAcceptance).not.toContain("capabilityRequests.some");
+    const finalChatIndex = browserAcceptance.indexOf(
+      "const finalAuditChatResponse",
+    );
+    const terminalResponseScanIndex = browserAcceptance.indexOf(
+      "for (const response of controlResponseLedger)",
+    );
+    const pendingResponseWaitIndex = browserAcceptance.lastIndexOf(
+      "await Promise.all(pendingControlResponses)",
+    );
+    const terminalConsoleScanIndex = browserAcceptance.indexOf(
+      "const terminalConsoleText",
+    );
+    const fullKeyScanTextIndex = browserAcceptance.indexOf(
+      "let fullKeyScanText = response.rawJson",
+      terminalResponseScanIndex,
+    );
+    const revealPlaintextRemovalIndex = browserAcceptance.indexOf(
+      "fullKeyScanText = fullKeyScanText.replaceAll(",
+      terminalResponseScanIndex,
+    );
+    const fullKeyScanIndex = browserAcceptance.indexOf(
+      "for (const key of Object.values(submittedKeys))",
+      terminalResponseScanIndex,
+    );
+    const lastFourScanTextIndex = browserAcceptance.indexOf(
+      "let lastFourScanText = fullKeyScanText",
+      terminalResponseScanIndex,
+    );
+    const allowedLastFourRemovalIndex = browserAcceptance.indexOf(
+      "lastFourScanText = lastFourScanText.replaceAll(",
+      terminalResponseScanIndex,
+    );
+    const lastFourScanIndex = browserAcceptance.indexOf(
+      "for (const lastFour of Object.values(submittedLastFour))",
+      terminalResponseScanIndex,
+    );
+    expect(finalChatIndex).toBeGreaterThan(-1);
+    expect(pendingResponseWaitIndex).toBeGreaterThan(finalChatIndex);
+    expect(terminalResponseScanIndex).toBeGreaterThan(pendingResponseWaitIndex);
+    expect(fullKeyScanTextIndex).toBeGreaterThan(terminalResponseScanIndex);
+    expect(revealPlaintextRemovalIndex).toBeGreaterThan(fullKeyScanTextIndex);
+    expect(fullKeyScanIndex).toBeGreaterThan(revealPlaintextRemovalIndex);
+    expect(lastFourScanTextIndex).toBeGreaterThan(fullKeyScanIndex);
+    expect(allowedLastFourRemovalIndex).toBeGreaterThan(lastFourScanTextIndex);
+    expect(lastFourScanIndex).toBeGreaterThan(allowedLastFourRemovalIndex);
+    expect(terminalConsoleScanIndex).toBeGreaterThan(finalChatIndex);
   });
 
   it("owns and cleans only the isolated assistant runtime project it locked", () => {
@@ -463,6 +1119,8 @@ describe("production deployment security contracts", () => {
         "E2E_ROLE_TARGET_SESSION_TOKEN=test-role-target",
         "E2E_ADMIN_SESSION_TOKEN=test-admin-session",
         "E2E_NO_TOTP_ADMIN_SESSION_TOKEN=test-no-totp",
+        "E2E_MODEL_ADMIN_SESSION_TOKEN=test-model-admin",
+        "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN=test-model-admin-stale",
         "E2E_REVOKED_SESSION_TOKEN=test-revoked",
         "E2E_REPLACEMENT_PASSWORD=test-replacement",
       ].join("\n"),
@@ -491,13 +1149,12 @@ esac
 case " $* " in
   *" compose "*" down --rmi local -v --remove-orphans "*) exit 0 ;;
   *" compose "*" config --quiet "*) exit 0 ;;
-  *" compose "*" build migrate web agent backup "*) exit 42 ;;
+  *" compose "*" build migrate "*) exit 42 ;;
 esac
 exit 0
 `,
       { mode: 0o755 },
     );
-
     const run = (name: string, extra: NodeJS.ProcessEnv = {}) => {
       const log = path.join(sandbox, `${name}.log`);
       writeFileSync(log, "");
@@ -511,6 +1168,7 @@ exit 0
             ...process.env,
             PATH: `${bin}:${process.env.PATH ?? ""}`,
             TMPDIR: temp,
+            RUN_ASSISTANT_RUNTIME_E2E: "true",
             AAP_ASSISTANT_RUNTIME_E2E_PROJECT: project,
             FAKE_DOCKER_LOG: log,
             ...extra,
@@ -522,6 +1180,12 @@ exit 0
     };
 
     try {
+      const disabled = run("disabled", {
+        RUN_ASSISTANT_RUNTIME_E2E: "false",
+      });
+      expect(disabled.result.status).not.toBe(0);
+      expect(disabled.calls).toBe("");
+
       mkdirSync(lock, { recursive: true, mode: 0o700 });
       writeFileSync(path.join(lock, "token"), "another-run\n", { mode: 0o600 });
       const locked = run("locked");
@@ -691,7 +1355,7 @@ exit 0
       ?.split("\n  agent-migrate:\n")[0];
     const migrationService = compose
       .split("\n  agent-migrate:\n")[1]
-      ?.split("\n  agent:\n")[0];
+      ?.split("\n  agent-control-bootstrap:\n")[0];
     const agentService = compose
       .split("\n  agent:\n")[1]
       ?.split("\n  web:\n")[0];
@@ -746,20 +1410,19 @@ exit 0
     expect(agentService).toContain("7777");
     expect(agentService).toContain('expose:\n      - "7777"');
     expect(agentService).not.toMatch(/^\s{4}ports:/mu);
-    expect(agentService).toContain("user: agent");
+    expect(agentService).toContain("user: root");
     expect(agentService).toContain("read_only: true");
     expect(agentService).toContain("/tmp:rw,noexec,nosuid,size=32m");
     expect(agentService).toContain("no-new-privileges:true");
     expect(agentService).toContain("cap_drop:\n      - ALL");
     expect(agentService).toContain("/internal/health/ready");
     expect(agentService).toContain("Authorization");
-    expect(agentService).toContain(
-      "pathlib.Path('/run/secrets/os_security_key').read_text().strip()",
-    );
+    expect(agentService).toContain("os.environ['OS_SECURITY_KEY']");
+    expect(agentService).not.toContain("/run/secrets/os_security_key').read");
     expect(agentService).toContain("mem_limit:");
     expect(agentService).toContain("cpus:");
     expect(agentService).toContain("pids_limit:");
-    expect(agentService).toContain("networks:\n      - backend");
+    expect(agentService).toContain("networks:\n      backend:");
     expect(agentService).not.toMatch(/OS_SECURITY_KEY:\s*[A-Za-z0-9_-]{20,}/u);
 
     expect(backupService).toMatch(
@@ -770,17 +1433,379 @@ exit 0
     );
   });
 
+  it("isolates model-control credentials by deployment role", () => {
+    const rendered = renderComposeFixture();
+    const services = rendered.services;
+    const sources = (name: string) =>
+      new Set(
+        (services[name]?.secrets ?? [])
+          .map(secretSource)
+          .filter((source): source is string => source !== undefined),
+      );
+    const controlSources = new Set([
+      "agent_control_migrator_database_password",
+      "agent_control_database_password",
+      "agent_control_migrator_database_url",
+      "agent_control_database_url",
+      "model_config_encryption_key",
+      "agent_config_control_key",
+    ]);
+    const visibleControlSources = (name: string) =>
+      new Set(
+        [...sources(name)].filter((source) => controlSources.has(source)),
+      );
+
+    expect(sources("agent-control-bootstrap")).toEqual(
+      new Set([
+        "postgres_password",
+        "agent_control_migrator_database_password",
+        "agent_control_database_password",
+      ]),
+    );
+    expect(sources("agent-control-migrate")).toEqual(
+      new Set(["agent_control_migrator_database_url"]),
+    );
+    expect(visibleControlSources("agent")).toEqual(
+      new Set([
+        "agent_control_database_url",
+        "model_config_encryption_key",
+        "agent_config_control_key",
+      ]),
+    );
+    expect(visibleControlSources("web")).toEqual(
+      new Set(["agent_config_control_key"]),
+    );
+    for (const serviceName of [
+      "db",
+      "migrate",
+      "agno-bootstrap",
+      "agent-migrate",
+      "backup",
+      "proxy",
+    ]) {
+      expect(visibleControlSources(serviceName)).toEqual(new Set());
+    }
+
+    expect(services.agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "AGNO_DATABASE_URL=/run/secrets/agno_database_url",
+    );
+    expect(services.agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "OS_SECURITY_KEY=/run/secrets/os_security_key",
+    );
+    expect(services.agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "AGENT_CONTROL_DATABASE_URL=/run/secrets/agent_control_database_url",
+    );
+    expect(services.agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "MODEL_CONFIG_ENCRYPTION_KEY=/run/secrets/model_config_encryption_key",
+    );
+    expect(services.agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "AGENT_CONFIG_CONTROL_KEY=/run/secrets/agent_config_control_key",
+    );
+    expect(services.web?.environment?.SECRET_ENV_SPECS).toContain(
+      "OS_SECURITY_KEY=/run/secrets/os_security_key",
+    );
+    expect(services.web?.environment?.SECRET_ENV_SPECS).toContain(
+      "AGENT_CONFIG_CONTROL_KEY=/run/secrets/agent_config_control_key",
+    );
+    expect(
+      services["agent-control-migrate"]?.environment?.SECRET_ENV_SPECS,
+    ).toBe(
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL=/run/secrets/agent_control_migrator_database_url",
+    );
+
+    expect(sources("agent")).toContain("os_security_key");
+    expect(sources("agent")).toContain("agno_database_url");
+    expect(sources("web")).toContain("os_security_key");
+    const controlKeySource = services.agent?.secrets?.find(
+      (attachment) =>
+        typeof attachment !== "string" &&
+        attachment.target === "/run/secrets/agent_config_control_key",
+    );
+    const osKeySource = services.agent?.secrets?.find(
+      (attachment) =>
+        typeof attachment !== "string" &&
+        attachment.target === "/run/secrets/os_security_key",
+    );
+    expect(secretSource(controlKeySource as RenderedSecretAttachment)).toBe(
+      "agent_config_control_key",
+    );
+    expect(secretSource(osKeySource as RenderedSecretAttachment)).toBe(
+      "os_security_key",
+    );
+    expect(secretSource(controlKeySource as RenderedSecretAttachment)).not.toBe(
+      secretSource(osKeySource as RenderedSecretAttachment),
+    );
+    expect(services.agent?.environment).not.toHaveProperty(
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+    );
+    expect(services.agent?.environment?.SECRET_ENV_SPECS).not.toContain(
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+    );
+    expect(services.web?.environment).not.toHaveProperty(
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+    );
+    expect(services.web?.environment?.SECRET_ENV_SPECS).not.toContain(
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+    );
+  });
+
+  it("orders isolated control bootstrap and migration before Agent runtime", () => {
+    const rendered = renderComposeFixture();
+    const bootstrap = rendered.services["agent-control-bootstrap"];
+    const migration = rendered.services["agent-control-migrate"];
+    const agent = rendered.services.agent;
+
+    expect(bootstrap?.depends_on?.db?.condition).toBe("service_healthy");
+    expect(bootstrap?.depends_on?.["agno-bootstrap"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(migration?.depends_on?.["agent-control-bootstrap"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(agent?.depends_on?.["agent-control-migrate"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(agent?.depends_on?.["agent-migrate"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(migration?.command).toEqual([
+      "python",
+      "-m",
+      "agent_service.model_config_migrate",
+    ]);
+    expect(Object.keys(bootstrap?.networks ?? {})).toEqual(["backend"]);
+    expect(Object.keys(migration?.networks ?? {})).toEqual(["backend"]);
+    expect(migration?.read_only).toBe(true);
+    expect(new Set(migration?.cap_drop)).toEqual(new Set(["ALL"]));
+    expect(migration?.security_opt).toContain("no-new-privileges:true");
+  });
+
+  it("ships an immutable deployment endpoint catalog only in the Agent image", () => {
+    const endpointFile = JSON.parse(
+      read("infra/agent/model-endpoints.json"),
+    ) as unknown;
+    const dockerfile = read("apps/agent/Dockerfile");
+    const webDockerfile = read("apps/web/Dockerfile");
+    const rendered = renderComposeFixture();
+    const agent = rendered.services.agent;
+    const web = rendered.services.web;
+
+    expect(endpointFile).toEqual({ version: "1", endpoints: [] });
+    expect(JSON.stringify(endpointFile)).not.toMatch(
+      /localhost|127\.0\.0\.1|10\.0\.0\.1|192\.168\.|api[_-]?key|secret|password/iu,
+    );
+    expect(dockerfile).toContain("install -d -o root -g root -m 0755 /etc/aap");
+    expect(dockerfile).toContain(
+      "COPY --chown=root:root --chmod=0644 infra/agent/model-endpoints.json /etc/aap/model-endpoints.json",
+    );
+    expect(webDockerfile).not.toContain("model-endpoints.json");
+    expect(agent?.environment?.MODEL_ENDPOINTS_FILE).toBe(
+      "/etc/aap/model-endpoints.json",
+    );
+    expect(web?.environment).not.toHaveProperty("MODEL_ENDPOINTS_FILE");
+    expect(agent?.read_only).toBe(true);
+    expect(agent?.ports ?? []).toEqual([]);
+    expect(Object.keys(agent?.networks ?? {})).toEqual([
+      "backend",
+      "model_egress",
+    ]);
+    expect(agent?.volumes ?? []).not.toContainEqual(
+      expect.objectContaining({ target: "/etc/aap/model-endpoints.json" }),
+    );
+    expect(web?.volumes ?? []).not.toContainEqual(
+      expect.objectContaining({ target: "/etc/aap/model-endpoints.json" }),
+    );
+  });
+
+  it("documents control-role secrets, migrations, and dynamic precedence", () => {
+    const example = read(".env.example");
+    const dockerReadme = read("infra/docker/README.md");
+
+    for (const key of [
+      "AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD",
+      "AGENT_CONTROL_DATABASE_PASSWORD",
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+      "AGENT_CONTROL_DATABASE_URL",
+      "AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD_FILE",
+      "AGENT_CONTROL_DATABASE_PASSWORD_FILE",
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE",
+      "AGENT_CONTROL_DATABASE_URL_FILE",
+      "MODEL_CONFIG_ENCRYPTION_KEY_FILE",
+      "AGENT_CONFIG_CONTROL_KEY_FILE",
+    ]) {
+      expect(example).toContain(`${key}=`);
+    }
+    expect(example).toContain("openssl rand -hex 32");
+    expect(example).toContain("control Key different from OS_SECURITY_KEY");
+    expect(example).toContain(
+      "AGENT_ENABLED=true 仅注册码多多并启用动态模型控制面；启动时不要求 Provider、Model ID 或模型 Key。",
+    );
+    expect(example).toContain(
+      "MODEL_PROVIDER、MODEL_ID、MODEL_API_KEY_FILE 仅是可选、只读的部署 bootstrap source。",
+    );
+    expect(example).toContain(
+      "动态活动配置一旦存在即优先；加载失败时 fail closed，不静默回退部署 bootstrap。",
+    );
+    expect(example).not.toContain("bootstrap/fallback");
+    expect(example).not.toMatch(/^MODEL_CONFIG_ENCRYPTION_KEY=/mu);
+    expect(example).not.toMatch(/^AGENT_CONFIG_CONTROL_KEY=/mu);
+
+    for (const migration of [
+      "migrate",
+      "agno-bootstrap",
+      "agent-migrate",
+      "agent-control-bootstrap",
+      "agent-control-migrate",
+    ]) {
+      expect(dockerReadme).toContain(migration);
+    }
+    expect(dockerReadme).toContain("动态配置优先");
+    expect(dockerReadme).toContain(
+      "加载失败时 fail closed，不静默回退部署 bootstrap",
+    );
+    expect(dockerReadme).not.toContain("bootstrap/fallback");
+    expect(dockerReadme).toContain(
+      "`AGENT_ENABLED=true`只负责注册码多多并启用动态模型控制面",
+    );
+    expect(dockerReadme).toContain("不持有 migrator 凭据");
+    expect(dockerReadme).toContain("不挂载任何`agent_control`");
+  });
+
+  it("gives only AgentOS the model credential and controlled egress", () => {
+    const compose = read("compose.yaml");
+    const serviceNames = [
+      "db",
+      "migrate",
+      "agno-bootstrap",
+      "agent-migrate",
+      "agent-control-bootstrap",
+      "agent-control-migrate",
+      "agent",
+      "web",
+      "proxy",
+      "backup",
+    ] as const;
+    const serviceSections = Object.fromEntries(
+      serviceNames.map((name, index) => {
+        const nextName = serviceNames[index + 1];
+        const start = `\n  ${name}:\n`;
+        const end = nextName ? `\n  ${nextName}:\n` : "\nnetworks:\n";
+        return [name, compose.split(start)[1]?.split(end)[0]];
+      }),
+    ) as Record<(typeof serviceNames)[number], string | undefined>;
+    const agentService = serviceSections.agent;
+    const healthcheck = agentService
+      ?.split("\n    healthcheck:\n")[1]
+      ?.split("\n    read_only: true\n")[0];
+    const networkDefinitions = compose
+      .split("\nnetworks:\n")[1]
+      ?.split("\nvolumes:\n")[0];
+    const secretDefinitions = compose.split("\nsecrets:\n")[1];
+
+    expect(agentService).toBeDefined();
+    expect(agentService).toContain("MODEL_API_KEY=/run/secrets/model_api_key");
+    expect(agentService).toContain("- model_api_key");
+    expect(agentService).toContain(
+      '[ -z "$${MODEL_BASE_URL-}" ]; then unset MODEL_BASE_URL; fi',
+    );
+    expect(agentService).toContain(
+      'if [ -z "$${MODEL_PROVIDER-}" ] && [ -z "$${MODEL_ID-}" ]; then unset MODEL_PROVIDER MODEL_ID MODEL_BASE_URL;',
+    );
+    expect(agentService).toContain(
+      "SECRET_ENV_SPECS=$${SECRET_ENV_SPECS%MODEL_API_KEY=/run/secrets/model_api_key}",
+    );
+    expect(agentService).toContain(
+      'exec /opt/aap/run-with-secret-env.sh "$$@"',
+    );
+    for (const [name, expected] of [
+      ["AGENT_ENABLED", "${AGENT_ENABLED:-false}"],
+      ["MODEL_PROVIDER", "${MODEL_PROVIDER:-}"],
+      ["MODEL_ID", "${MODEL_ID:-}"],
+      ["MODEL_BASE_URL", "${MODEL_BASE_URL:-}"],
+      ["MODEL_RUN_TIMEOUT_SECONDS", "${MODEL_RUN_TIMEOUT_SECONDS:-50}"],
+    ] as const) {
+      expect(agentService).toContain(`${name}: ${expected}`);
+    }
+    expect(agentService).toContain(
+      "networks:\n      backend:\n      model_egress:\n        gw_priority: 1",
+    );
+    expect(agentService).not.toMatch(/^\s{4}ports:/mu);
+    expect(agentService).toContain("read_only: true");
+    expect(agentService).toContain("no-new-privileges:true");
+    expect(agentService).toContain("cap_drop:\n      - ALL");
+    expect(agentService).toContain("mem_limit: 512m");
+    expect(agentService).toContain('cpus: "1.0"');
+    expect(agentService).toContain("pids_limit: 256");
+
+    expect(healthcheck).toContain("/internal/health/ready");
+    expect(healthcheck).not.toMatch(/MODEL_|model_api_key|\/v1\/|\/runs/iu);
+
+    expect(networkDefinitions).toContain("  backend:\n    internal: true");
+    expect(networkDefinitions).toMatch(/^  model_egress:\s*$/mu);
+    expect(networkDefinitions).not.toMatch(
+      /model_egress:\s*\n\s+internal:\s*true/u,
+    );
+    expect(secretDefinitions).toContain(
+      "model_api_key:\n    file: ${MODEL_API_KEY_FILE:-.secrets/model_api_key}",
+    );
+
+    for (const name of serviceNames.filter((name) => name !== "agent")) {
+      expect(serviceSections[name]).toBeDefined();
+      expect(serviceSections[name]).not.toContain("model_api_key");
+      expect(serviceSections[name]).not.toContain("MODEL_API_KEY");
+      expect(serviceSections[name]).not.toContain("model_egress");
+    }
+  });
+
+  it("documents bounded model and AgentOS run timeout defaults", () => {
+    const example = read(".env.example");
+    const compose = read("compose.yaml");
+    const agentSettings = read("apps/agent/src/agent_service/config.py");
+    const runClient = read(
+      "apps/web/src/server/assistant/agentos-run-client.ts",
+    );
+
+    for (const line of [
+      "AGENT_ENABLED=false",
+      "MODEL_PROVIDER=",
+      "MODEL_ID=",
+      "MODEL_BASE_URL=",
+      "MODEL_RUN_TIMEOUT_SECONDS=50",
+      "MODEL_API_KEY_FILE=.secrets/model_api_key",
+      "ASSISTANT_AGENTOS_RUN_TIMEOUT_MS=55000",
+    ]) {
+      expect(example.split("\n")).toContain(line);
+    }
+    expect(example).not.toMatch(/^MODEL_API_KEY=/mu);
+    expect(example).not.toContain("ASSISTANT_AGENTOS_DEFAULT_AGENT_ID");
+    expect(compose).not.toContain("ASSISTANT_AGENTOS_DEFAULT_AGENT_ID");
+    expect(compose).toContain(
+      "ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: ${ASSISTANT_AGENTOS_RUN_TIMEOUT_MS:-55000}",
+    );
+    expect(agentSettings).toMatch(
+      /timeout_seconds:\s*int\s*=\s*Field\(default=50,\s*ge=1,\s*le=50\)/u,
+    );
+    expect(agentSettings).toContain(
+      "timeout_seconds=self.model_run_timeout_seconds",
+    );
+    expect(runClient).toContain("const DEFAULT_RUN_TIMEOUT_MS = 55_000;");
+    expect(runClient).toContain("const MIN_RUN_TIMEOUT_MS = 51_000;");
+    expect(runClient).toContain("const MAX_RUN_TIMEOUT_MS = 55_000;");
+    expect(runClient).toMatch(
+      /runTimeoutMs < MIN_RUN_TIMEOUT_MS\s*\|\|\s*runTimeoutMs > MAX_RUN_TIMEOUT_MS/u,
+    );
+  });
+
   it("builds AgentOS from a pinned, locked, non-root multi-stage image", () => {
     const dockerfile = read("apps/agent/Dockerfile");
     const dockerIgnore = read("apps/agent/.dockerignore");
     const rootDockerIgnore = read(".dockerignore");
 
-    expect(dockerfile).toMatch(
-      /^FROM python:3\.13\.13-slim-trixie@sha256:[a-f0-9]{64} AS builder/mu,
-    );
-    expect(dockerfile).toMatch(
-      /^FROM python:3\.13\.13-slim-trixie@sha256:[a-f0-9]{64} AS runtime/mu,
-    );
+    const pinnedBase =
+      "python:3.13.13-slim-trixie@sha256:aa938a849bcb82dce8f49480f056ab82bf5c1c3ebc294f0430f37b6820e7f286";
+    expect(dockerfile).toContain(`FROM ${pinnedBase} AS builder`);
+    expect(dockerfile).toContain(`FROM ${pinnedBase} AS runtime-base`);
+    expect(dockerfile).toMatch(/^FROM runtime-base AS runtime$/mu);
     expect(dockerfile).toContain("uv sync --frozen --no-dev");
     expect(dockerfile).toContain("COPY apps/agent/pyproject.toml");
     expect(dockerfile).toContain("COPY apps/agent/uv.lock");
@@ -803,64 +1828,278 @@ exit 0
     expect(rootDockerIgnore).toContain("**/dist");
   });
 
-  it("keeps every production credential out of rendered Compose config", () => {
-    const secretKeys = [
-      "POSTGRES_PASSWORD",
-      "MIGRATOR_DATABASE_PASSWORD",
-      "RUNTIME_DATABASE_PASSWORD",
-      "BACKUP_DATABASE_PASSWORD",
-      "AGNO_MIGRATOR_DATABASE_PASSWORD",
-      "AGNO_DATABASE_PASSWORD",
-      "MIGRATOR_DATABASE_URL",
-      "RUNTIME_DATABASE_URL",
-      "BACKUP_DATABASE_URL",
-      "AGNO_MIGRATOR_DATABASE_URL",
-      "AGNO_DATABASE_URL",
-      "BETTER_AUTH_SECRET",
-      "OS_SECURITY_KEY",
-      "ASSISTANT_SESSION_SECRET",
-      "ASSISTANT_RATE_LIMIT_SECRET",
-    ] as const;
-    const sentinels = Object.fromEntries(
-      secretKeys.map((key, index) => [key, `compose-secret-${index}-sentinel`]),
+  it("isolates the deterministic Agent in an acceptance-only image target", () => {
+    const dockerfile = read("apps/agent/Dockerfile");
+    const productionCompose = read("compose.yaml");
+    const acceptanceCompose = read("compose.e2e.yaml");
+    const acceptanceTarget = dockerfile
+      .split(" AS acceptance\n")[1]
+      ?.split(" AS runtime\n")[0];
+    const runtimeTarget = dockerfile.split(" AS runtime\n")[1];
+    const productionAgent = productionCompose
+      .split("\n  agent:\n")[1]
+      ?.split("\n  web:\n")[0];
+    const acceptanceAgent = acceptanceCompose
+      .split("\n  agent:\n")[1]
+      ?.split("\n  migrate:\n")[0];
+
+    expect(acceptanceTarget).toBeDefined();
+    expect(acceptanceTarget).toContain("tests/e2e_agent");
+    expect(acceptanceTarget).toContain(
+      'CMD ["uvicorn", "e2e_agent.app:app_factory", "--factory", "--host", "0.0.0.0", "--port", "7777", "--no-access-log"]',
     );
-    const sandbox = mkdtempSync(path.join(tmpdir(), "compose-secrets-"));
-    const secretFileEnv: Record<string, string> = {};
+    expect(runtimeTarget).toBeDefined();
+    expect(runtimeTarget).not.toContain("tests/e2e_agent");
+    expect(runtimeTarget).toContain(
+      'CMD ["uvicorn", "agent_service.app:app_factory", "--factory", "--host", "0.0.0.0", "--port", "7777", "--no-access-log"]',
+    );
+    expect(dockerfile.indexOf(" AS acceptance\n")).toBeLessThan(
+      dockerfile.indexOf(" AS runtime\n"),
+    );
+    expect(dockerfile.trimEnd()).toMatch(/CMD \[[^\n]+\]$/u);
+    expect(productionAgent).toBeDefined();
+    expect(productionAgent).not.toContain("target: acceptance");
+    expect(productionAgent).toContain("agent_service.app:app_factory");
+    expect(productionAgent).toContain('"--no-access-log"');
+    expect(productionAgent).not.toContain("AAP_SESSION_IDENTITY_AUDIT_FILE");
+    expect(acceptanceAgent).toBeDefined();
+    expect(acceptanceAgent).toContain("target: acceptance");
+    expect(acceptanceAgent).toContain("e2e_agent.app:app_factory");
+    expect(acceptanceAgent).toContain('"--no-access-log"');
+    expect(acceptanceAgent).toContain(
+      "AAP_SESSION_IDENTITY_AUDIT_FILE: /tmp/aap-session-identity-audit",
+    );
+    expect(acceptanceCompose.match(/target: acceptance/gu)).toHaveLength(1);
+
+    const productionRendered = renderComposeFixture();
+    expect(productionRendered.services.agent?.command).toEqual([
+      "uvicorn",
+      "agent_service.app:app_factory",
+      "--factory",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "7777",
+      "--no-access-log",
+    ]);
+    expect(productionRendered.services.agent?.environment).not.toHaveProperty(
+      "AAP_SESSION_IDENTITY_AUDIT_FILE",
+    );
+
+    const rendered = renderComposeFixture(["compose.yaml", "compose.e2e.yaml"]);
+    expect(rendered.services.agent?.build?.target).toBe("acceptance");
+    expect(rendered.services.agent?.command).toEqual([
+      "uvicorn",
+      "e2e_agent.app:app_factory",
+      "--factory",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "7777",
+      "--no-access-log",
+    ]);
+    expect(
+      rendered.services.agent?.environment?.AAP_SESSION_IDENTITY_AUDIT_FILE,
+    ).toBe("/tmp/aap-session-identity-audit");
+    expect(Object.keys(rendered.services.agent?.networks ?? {})).toEqual([
+      "backend",
+    ]);
+    expect(
+      Object.entries(rendered.services)
+        .filter(([, service]) => service.build?.target === "acceptance")
+        .map(([name]) => name),
+    ).toEqual(["agent"]);
+  });
+
+  it("keeps every production credential out of rendered Compose config", () => {
     const runner = read("infra/docker/run-with-secret-env.sh");
     expect(runner).toContain("/run/secrets/*");
-    expect(runner).toContain('exec "$@"');
+    expect(runner).toContain('exec "$gosu_path" "$run_as" "$@"');
     expect(runner).not.toMatch(/set\s+-[^\n]*x/u);
     expect(read(".gitignore")).toContain(".secrets/");
-    try {
-      for (const key of secretKeys) {
-        const secretFile = path.join(sandbox, key.toLowerCase());
-        writeFileSync(secretFile, sentinels[key], { mode: 0o600 });
-        chmodSync(secretFile, 0o600);
-        secretFileEnv[`${key}_FILE`] = secretFile;
-      }
-      const rendered = spawnSync("docker", ["compose", "config"], {
-        cwd: root,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          ...secretFileEnv,
-          BETTER_AUTH_URL: "http://127.0.0.1:3000",
-          BETTER_AUTH_TRUSTED_ORIGINS: "http://127.0.0.1:3000",
-          ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
-          PUBLIC_HOST: "127.0.0.1",
-        },
-      });
+    const rendered = renderComposeFixture();
+    expect(Object.keys(rendered.services).length).toBeGreaterThan(0);
+  });
 
-      expect(rendered.status, rendered.stderr).toBe(0);
-      for (const sentinel of Object.values(sentinels)) {
-        expect(rendered.stdout).not.toContain(sentinel);
-        expect(rendered.stderr).not.toContain(sentinel);
-      }
-      expect(rendered.stdout).toContain("source: postgres_password");
-      expect(rendered.stdout).toContain("source: os_security_key");
-    } finally {
-      rmSync(sandbox, { recursive: true, force: true });
+  it("reads file-backed secrets as root and drops every command to its runtime user", () => {
+    const rendered = renderComposeFixture();
+    const runAs = {
+      migrate: "node",
+      "agno-bootstrap": "postgres",
+      "agent-migrate": "agent",
+      "agent-control-bootstrap": "postgres",
+      "agent-control-migrate": "agent",
+      agent: "agent",
+      web: "node",
+    } as const;
+
+    for (const [serviceName, runtimeUser] of Object.entries(runAs)) {
+      const service = rendered.services[serviceName];
+      expect(service?.user, serviceName).toBe("root");
+      expect(service?.environment?.SECRET_RUN_AS, serviceName).toBe(
+        runtimeUser,
+      );
+      expect(new Set(service?.cap_drop), serviceName).toEqual(new Set(["ALL"]));
+      expect(new Set(service?.cap_add), serviceName).toEqual(
+        new Set(["DAC_OVERRIDE", "SETGID", "SETUID"]),
+      );
+      expect(service?.security_opt, serviceName).toContain(
+        "no-new-privileges:true",
+      );
     }
+
+    const runner = read("infra/docker/run-with-secret-env.sh");
+    expect(runner).toContain('case "$SECRET_RUN_AS" in');
+    expect(runner).toContain("postgres|agent|node");
+    expect(runner).toContain('[ "$(id -u)" -eq 0 ]');
+    expect(runner).toContain("/usr/local/bin/gosu");
+    expect(runner).toContain("/usr/sbin/gosu");
+    expect(runner).toContain("/usr/bin/gosu");
+    expect(runner).toContain('exec "$gosu_path" "$run_as" "$@"');
+    expect(runner).not.toContain('exec "$@"');
+    expect(read("apps/agent/Dockerfile")).toContain(
+      "apt-get install -y --no-install-recommends gosu=1.17-3+b4",
+    );
+    expect(read("apps/web/Dockerfile").match(/gosu=1\.19-r4/gu)).toHaveLength(
+      2,
+    );
+
+    const agentHealthcheck =
+      rendered.services.agent?.healthcheck?.test?.join(" ");
+    const webHealthcheck = rendered.services.web?.healthcheck?.test?.join(" ");
+    expect(agentHealthcheck).toContain("/opt/aap/run-with-secret-env.sh");
+    expect(agentHealthcheck).toContain("OS_SECURITY_KEY");
+    expect(agentHealthcheck).not.toContain("/run/secrets/os_security_key");
+    expect(webHealthcheck).toContain("gosu node");
+  });
+
+  const dockerAvailable =
+    spawnSync("docker", ["info", "--format", "{{.ServerVersion}}"], {
+      stdio: "ignore",
+    }).status === 0;
+
+  it.skipIf(!dockerAvailable)(
+    "loads a deployment-user-owned 0600 secret then executes as postgres",
+    () => {
+      const sandbox = mkdtempSync(path.join(tmpdir(), "aap-secret-drop-"));
+      const secretFile = path.join(sandbox, "container-secret");
+      const secret = "container-secret-that-must-not-leak";
+      writeFileSync(secretFile, `${secret}\n`, { mode: 0o600 });
+      chmodSync(secretFile, 0o600);
+
+      try {
+        expect(statSync(secretFile).mode & 0o777).toBe(0o600);
+        const execution = spawnSync(
+          "docker",
+          [
+            "run",
+            "--rm",
+            "--user",
+            "root",
+            "--cap-drop",
+            "ALL",
+            "--cap-add",
+            "DAC_OVERRIDE",
+            "--cap-add",
+            "SETGID",
+            "--cap-add",
+            "SETUID",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--env",
+            "SECRET_RUN_AS=postgres",
+            "--env",
+            "SECRET_ENV_SPECS=CONTAINER_TEST_SECRET=/run/secrets/container_test_secret",
+            "--mount",
+            `type=bind,src=${secretFile},dst=/run/secrets/container_test_secret,readonly`,
+            "--mount",
+            `type=bind,src=${path.join(root, "infra/docker/run-with-secret-env.sh")},dst=/opt/aap/run-with-secret-env.sh,readonly`,
+            "--entrypoint",
+            "/opt/aap/run-with-secret-env.sh",
+            "postgres:18.3-alpine3.23",
+            "sh",
+            "-ceu",
+            'test "$(id -u)" = 70; test "$(id -g)" = 70; test -n "$CONTAINER_TEST_SECRET"; test "$(awk \'/^CapEff:/{print $2}\' /proc/self/status)" = 0000000000000000; test "$(awk \'/^NoNewPrivs:/{print $2}\' /proc/self/status)" = 1; printf "%s\\n" "postgres:70:70:nnp=1:caps=0"',
+          ],
+          { encoding: "utf8" },
+        );
+        const output = `${execution.stdout}${execution.stderr}`;
+        expect(execution.status, output).toBe(0);
+        expect(execution.stdout.trim()).toBe("postgres:70:70:nnp=1:caps=0");
+        expect(output).not.toContain(secret);
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("enforces the rendered Compose model across every service", () => {
+    const rendered = renderComposeFixture();
+    const services = Object.entries(rendered.services);
+    const agent = rendered.services.agent;
+    const modelSecretHolders = services
+      .filter(([, service]) =>
+        service.secrets?.some(
+          (attachment) => secretSource(attachment) === "model_api_key",
+        ),
+      )
+      .map(([name]) => name);
+    const modelEgressMembers = services
+      .filter(([, service]) =>
+        Object.hasOwn(service.networks ?? {}, "model_egress"),
+      )
+      .map(([name]) => name);
+    const rawModelKeyEnvironmentHolders = services
+      .filter(([, service]) =>
+        Object.hasOwn(service.environment ?? {}, "MODEL_API_KEY"),
+      )
+      .map(([name]) => name);
+    const publishedPortServices = services
+      .filter(([, service]) => (service.ports?.length ?? 0) > 0)
+      .map(([name]) => name);
+    const modelSecret = agent?.secrets?.find(
+      (attachment) => secretSource(attachment) === "model_api_key",
+    );
+    const backendAttachment = agent?.networks?.backend;
+    const modelEgressAttachment = agent?.networks?.model_egress;
+
+    expect(new Set(modelSecretHolders)).toEqual(new Set(["agent"]));
+    expect(new Set(modelEgressMembers)).toEqual(new Set(["agent"]));
+    expect(new Set(rawModelKeyEnvironmentHolders)).toEqual(new Set());
+    expect(new Set(publishedPortServices)).toEqual(new Set(["proxy"]));
+
+    expect(agent).toBeDefined();
+    expect(agent?.ports ?? []).toHaveLength(0);
+    expect(secretSource(modelSecret as RenderedSecretAttachment)).toBe(
+      "model_api_key",
+    );
+    expect(
+      typeof modelSecret === "string" ? undefined : modelSecret?.target,
+    ).toBe("/run/secrets/model_api_key");
+    expect(agent?.entrypoint).toEqual([
+      "/bin/sh",
+      "-eu",
+      "-c",
+      expect.stringContaining("/opt/aap/run-with-secret-env.sh"),
+      "--",
+    ]);
+    expect(agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "MODEL_API_KEY=/run/secrets/model_api_key",
+    );
+    expect(Object.hasOwn(agent?.networks ?? {}, "backend")).toBe(true);
+    expect(backendAttachment?.gw_priority ?? 0).toBe(0);
+    expect(modelEgressAttachment?.gw_priority).toBe(1);
+    expect(rendered.networks.backend?.internal).toBe(true);
+    expect(rendered.networks.model_egress?.internal ?? false).toBe(false);
+
+    expect(agent?.user).toBe("root");
+    expect(agent?.read_only).toBe(true);
+    expect(new Set(agent?.cap_drop)).toEqual(new Set(["ALL"]));
+    expect(agent?.security_opt).toContain("no-new-privileges:true");
+    expect(agent?.tmpfs).toContain("/tmp:rw,noexec,nosuid,size=32m");
+    expect(Number(agent?.mem_limit)).toBe(512 * 1_024 * 1_024);
+    expect(Number(agent?.cpus)).toBe(1);
+    expect(agent?.pids_limit).toBe(256);
   });
 
   it("runs the ordered, pinned AgentOS CI gates with masked fixtures", () => {
@@ -927,6 +2166,8 @@ exit 0
       "E2E_ROLE_TARGET_SESSION_TOKEN",
       "E2E_ADMIN_SESSION_TOKEN",
       "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
+      "E2E_MODEL_ADMIN_SESSION_TOKEN",
+      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
       "E2E_REVOKED_SESSION_TOKEN",
       "E2E_REPLACEMENT_PASSWORD",
     ];
@@ -1016,6 +2257,34 @@ exit 0
     expect(runner.indexOf("config --quiet")).toBeLessThan(
       runner.indexOf("owns_project=true"),
     );
+  });
+
+  it("materializes an isolated model credential in every Compose runner", () => {
+    for (const file of [
+      "docs/testing/run-assistant-runtime-e2e.sh",
+      "docs/testing/run-assistant-experience-e2e.sh",
+      "docs/testing/run-agentos-backup-restore.sh",
+    ]) {
+      const runner = read(file);
+      const secretDirectory = runner.indexOf('secret_dir="$temp_dir/secrets"');
+      const generated = runner.indexOf("model_api_key=$(secret)");
+      const materialized = runner.indexOf(
+        'materialize_secret MODEL_API_KEY_FILE model_api_key "$model_api_key"',
+      );
+      const composeConfig = runner.indexOf("config --quiet");
+
+      expect(secretDirectory, file).toBeGreaterThan(-1);
+      expect(generated, file).toBeGreaterThan(secretDirectory);
+      expect(materialized, file).toBeGreaterThan(generated);
+      expect(composeConfig, file).toBeGreaterThan(materialized);
+      expect(runner).toMatch(/chmod 700 [^\n]*"\$secret_dir"/u);
+      expect(runner).toContain('chmod 600 "$secret_path"');
+      expect(runner).toContain("umask 077");
+      expect(runner).toContain("trap cleanup EXIT");
+      expect(runner).not.toContain('echo "$model_api_key"');
+      expect(runner).not.toContain('cat "$MODEL_API_KEY_FILE"');
+      expect(runner).not.toMatch(/set\s+-[^\n]*x/u);
+    }
   });
 
   it("executes the assistant experience runner with fail-closed ownership and cleanup", () => {
@@ -2072,5 +3341,453 @@ test -n "$output"
     expect(read("apps/web/src/app/staff/layout.tsx")).toContain(
       'export const dynamic = "force-dynamic"',
     );
+  });
+
+  it("renders a standalone hardened provider smoke service with only model egress", () => {
+    const rendered = renderComposeFixture(["compose.provider-smoke.yaml"]);
+    const service = rendered.services.smoke;
+
+    expect(Object.keys(rendered.services)).toEqual(["smoke"]);
+    expect(Object.keys(rendered.networks)).toEqual(["default"]);
+    expect(rendered.networks.default?.internal).not.toBe(true);
+    expect(service).toBeDefined();
+    expect(service?.build?.target).toBe("runtime");
+    expect(service?.ports ?? []).toEqual([]);
+    expect(service?.read_only).toBe(true);
+    expect(service?.user).toBe("root");
+    expect(service?.tmpfs).toEqual(["/tmp:rw,noexec,nosuid,size=32m"]);
+    expect(service?.cap_drop).toEqual(["ALL"]);
+    expect(new Set(service?.cap_add)).toEqual(
+      new Set(["DAC_OVERRIDE", "SETGID", "SETUID"]),
+    );
+    expect(service?.security_opt).toEqual(["no-new-privileges:true"]);
+    expect(service?.cpus).toBe(1);
+    expect(service?.mem_limit).toBe("536870912");
+    expect(service?.pids_limit).toBe(128);
+    expect(service?.networks).toEqual({ default: null });
+    expect((service?.secrets ?? []).map(secretSource)).toEqual([
+      "model_api_key",
+    ]);
+    expect(service?.entrypoint?.join(" ")).toContain(
+      "/opt/aap/run-with-secret-env.sh",
+    );
+    expect(service?.command).toEqual([
+      "python",
+      "-m",
+      "agent_service.provider_smoke",
+    ]);
+    expect(service?.environment).toEqual({
+      MODEL_BASE_URL: "",
+      MODEL_ID: "provider-smoke-model",
+      MODEL_PROVIDER: "openai",
+      MODEL_RUN_TIMEOUT_SECONDS: "25",
+      SECRET_ENV_SPECS: "MODEL_API_KEY=/run/secrets/model_api_key",
+      SECRET_RUN_AS: "agent",
+    });
+    expect(JSON.stringify(rendered)).not.toMatch(
+      /AGNO_DATABASE|OS_SECURITY|BETTER_AUTH|ASSISTANT_|postgres|agentos|web/iu,
+    );
+    expect(service?.volumes).toHaveLength(1);
+    expect(service?.volumes?.[0]).toMatchObject({
+      target: "/opt/aap/run-with-secret-env.sh",
+      read_only: true,
+    });
+    expect(JSON.stringify(service?.volumes?.[0])).toContain(
+      "/infra/docker/run-with-secret-env.sh",
+    );
+  });
+
+  it("runs provider smoke fail-closed and cleans its disposable project silently", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "provider-smoke-owner-"));
+    const repo = path.join(sandbox, "repo");
+    const bin = path.join(sandbox, "bin");
+    const temp = path.join(sandbox, "tmp");
+    const keyFile = path.join(sandbox, "model-api-key");
+    const symlinkKeyFile = path.join(sandbox, "model-api-key-symlink");
+    const dockerLog = path.join(sandbox, "docker.log");
+    const dockerState = path.join(sandbox, "docker.state");
+    const snapshotCapture = path.join(sandbox, "snapshot.capture");
+    const secret = "provider-smoke-secret-that-must-not-leak";
+    const replacementSecret = "replacement-secret-that-must-not-be-used";
+    mkdirSync(path.join(repo, "docs/testing"), { recursive: true });
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(temp, { recursive: true });
+    copyFileSync(
+      path.join(root, "docs/testing/run-model-provider-smoke.sh"),
+      path.join(repo, "docs/testing/run-model-provider-smoke.sh"),
+    );
+    copyFileSync(
+      path.join(root, "compose.provider-smoke.yaml"),
+      path.join(repo, "compose.provider-smoke.yaml"),
+    );
+    writeFileSync(keyFile, `${secret}\n`, { mode: 0o600 });
+    chmodSync(keyFile, 0o600);
+    symlinkSync(keyFile, symlinkKeyFile);
+    writeFileSync(
+      path.join(bin, "docker"),
+      `#!/bin/sh
+primary_mode=\${FAKE_PRIMARY_MODE:-\${FAKE_MODE-}}
+cleanup_mode=\${FAKE_CLEANUP_MODE:-\${FAKE_MODE-}}
+printf '%s\n' "$*" >>"$FAKE_DOCKER_LOG"
+printf '%s\n' "hidden compose warning" >&2
+case " $* " in
+  *" ps -aq "*|*" volume ls "*|*" network ls "*|*" image ls "*)
+    if [ "$primary_mode" = replace-source ] && [ ! -f "$FAKE_DOCKER_STATE.replaced" ]; then
+      printf '%s\n' "$FAKE_REPLACEMENT_SECRET" >"$FAKE_SOURCE_KEY"
+      chmod 600 "$FAKE_SOURCE_KEY"
+      : >"$FAKE_DOCKER_STATE.replaced"
+    fi
+    if [ -s "$FAKE_DOCKER_STATE" ]; then
+      [ "$cleanup_mode" = cleanup-query-fail ] && exit 75
+      [ "$cleanup_mode" = cleanup-residual ] && printf '%s\n' "residual-resource"
+    fi
+    exit 0
+    ;;
+  *" compose "*" config --quiet "*)
+    if [ -n "\${FAKE_SNAPSHOT_CAPTURE-}" ]; then
+      /bin/cat "$MODEL_API_KEY_FILE" >"$FAKE_SNAPSHOT_CAPTURE"
+    fi
+    exit 0
+    ;;
+  *" compose "*" build --pull smoke "*)
+    [ "$primary_mode" = build-fail ] && exit 42
+    if [ "$primary_mode" = signal-exit ]; then
+      exit 143
+    fi
+    exit 0
+    ;;
+  *" compose "*" create smoke "*) exit 0 ;;
+  *" compose "*" run --rm smoke python -m agent_service.provider_smoke --validate-only "*) exit 0 ;;
+  *" compose "*" run --rm smoke "*)
+    [ "$primary_mode" = provider-fail ] && exit 43
+    if [ "$primary_mode" = unsafe-output ]; then
+      printf '%s\n' "unsafe provider answer"
+    else
+      printf '%s\n' "openai/provider-smoke-model: verified"
+    fi
+    exit 0
+    ;;
+  *" compose "*" down --rmi local -v --remove-orphans "*)
+    printf '%s\n' "down" >"$FAKE_DOCKER_STATE"
+    [ "$cleanup_mode" = cleanup-down-fail ] && exit 77
+    exit 0
+    ;;
+esac
+exit 0
+`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      path.join(bin, "mktemp"),
+      `#!/bin/sh
+if [ -n "\${FAKE_MKTEMP_LOG-}" ]; then
+  printf '%s\n' called >"$FAKE_MKTEMP_LOG"
+fi
+if [ "\${FAKE_MODE-}" = mktemp-fail ]; then
+  printf '%s\n' "raw allocation detail must stay hidden" >&2
+  exit 71
+fi
+exec /usr/bin/mktemp "$@"
+`,
+      { mode: 0o755 },
+    );
+    symlinkSync("/usr/bin/dirname", path.join(bin, "dirname"));
+
+    const run = (extra: NodeJS.ProcessEnv = {}) => {
+      writeFileSync(dockerLog, "");
+      writeFileSync(dockerState, "");
+      rmSync(`${dockerState}.replaced`, { force: true });
+      rmSync(snapshotCapture, { force: true });
+      return spawnSync(
+        "/bin/sh",
+        [path.join(repo, "docs/testing/run-model-provider-smoke.sh")],
+        {
+          cwd: repo,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${bin}:/usr/bin:/bin`,
+            TMPDIR: temp,
+            MODEL_PROVIDER: "openai",
+            MODEL_ID: "provider-smoke-model",
+            MODEL_API_KEY_FILE: keyFile,
+            MODEL_RUN_TIMEOUT_SECONDS: "25",
+            FAKE_DOCKER_LOG: dockerLog,
+            FAKE_DOCKER_STATE: dockerState,
+            FAKE_SNAPSHOT_CAPTURE: snapshotCapture,
+            FAKE_SOURCE_KEY: keyFile,
+            FAKE_REPLACEMENT_SECRET: replacementSecret,
+            ...extra,
+          },
+        },
+      );
+    };
+
+    try {
+      const success = run();
+      const successCalls = readFileSync(dockerLog, "utf8");
+      expect(success.status).toBe(0);
+      expect(success.stdout).toBe("openai/provider-smoke-model: verified\n");
+      expect(success.stderr).toBe("");
+      expect(successCalls).toContain("config --quiet");
+      expect(successCalls).toContain("build --pull smoke");
+      expect(successCalls).toContain("create smoke");
+      expect(successCalls).toContain(
+        "run --rm smoke python -m agent_service.provider_smoke --validate-only",
+      );
+      expect(successCalls).toContain("run --rm smoke");
+      expect(successCalls).toContain("down --rmi local -v --remove-orphans");
+      expect(successCalls).not.toContain(secret);
+      expect(successCalls).not.toContain(replacementSecret);
+      expect(readdirSync(temp)).toEqual([]);
+
+      const secondSuccess = run();
+      expect(secondSuccess.status).toBe(0);
+      const firstProject = successCalls.match(
+        /compose -p (aap-provider-smoke-[^ ]+)/u,
+      )?.[1];
+      const secondProject = readFileSync(dockerLog, "utf8").match(
+        /compose -p (aap-provider-smoke-[^ ]+)/u,
+      )?.[1];
+      expect(firstProject).toBeDefined();
+      expect(secondProject).toBeDefined();
+      expect(secondProject).not.toBe(firstProject);
+      expect(firstProject?.replace("aap-provider-smoke-", "")).not.toMatch(
+        /^\d+$/u,
+      );
+
+      const preexistingSharedPath = path.join(temp, "aap-provider-smoke-locks");
+      writeFileSync(preexistingSharedPath, "preexisting path");
+      const ignoresPreexistingSharedPath = run();
+      expect(ignoresPreexistingSharedPath.status).toBe(0);
+      expect(ignoresPreexistingSharedPath.stdout).toBe(
+        "openai/provider-smoke-model: verified\n",
+      );
+      rmSync(preexistingSharedPath);
+
+      const symlinkKey = run({ MODEL_API_KEY_FILE: symlinkKeyFile });
+      expect(symlinkKey.status).not.toBe(0);
+      expect(symlinkKey.stdout).toBe("");
+      expect(symlinkKey.stderr).toBe(
+        "provider smoke wrapper failed: configuration\n",
+      );
+      expect(readFileSync(dockerLog, "utf8")).toBe("");
+
+      const fifoKeyFile = path.join(sandbox, "model-api-key-fifo");
+      const makeFifo = spawnSync(
+        "python3",
+        ["-c", "import os,sys; os.mkfifo(sys.argv[1])", fifoKeyFile],
+        { encoding: "utf8" },
+      );
+      expect(makeFifo.status).toBe(0);
+      const fifoKey = run({ MODEL_API_KEY_FILE: fifoKeyFile });
+      expect(fifoKey.status).not.toBe(0);
+      expect(fifoKey.stdout).toBe("");
+      expect(fifoKey.stderr).toBe(
+        "provider smoke wrapper failed: configuration\n",
+      );
+      expect(`${fifoKey.stdout}${fifoKey.stderr}`).not.toContain(fifoKeyFile);
+      expect(`${fifoKey.stdout}${fifoKey.stderr}`).not.toContain(secret);
+      expect(readFileSync(dockerLog, "utf8")).toBe("");
+
+      writeFileSync(keyFile, `${secret}\n`, { mode: 0o600 });
+      chmodSync(keyFile, 0o600);
+      const replacedSource = run({ FAKE_MODE: "replace-source" });
+      expect(replacedSource.status).toBe(0);
+      expect(replacedSource.stdout).toBe(
+        "openai/provider-smoke-model: verified\n",
+      );
+      expect(readFileSync(snapshotCapture, "utf8")).toBe(`${secret}\n`);
+      expect(readFileSync(keyFile, "utf8")).toBe(`${replacementSecret}\n`);
+
+      for (const mode of [
+        "cleanup-down-fail",
+        "cleanup-query-fail",
+        "cleanup-residual",
+      ]) {
+        const cleanupFailure = run({ FAKE_MODE: mode });
+        expect(cleanupFailure.status, mode).not.toBe(0);
+        expect(cleanupFailure.stdout, mode).toBe("");
+        expect(cleanupFailure.stderr, mode).toBe(
+          "provider smoke wrapper failed: cleanup\n",
+        );
+        expect(cleanupFailure.stderr, mode).not.toContain(
+          "hidden compose warning",
+        );
+        expect(readdirSync(temp), mode).toEqual([]);
+      }
+
+      const primaryFailures = [
+        ["build-fail", "lifecycle"],
+        ["provider-fail", "provider"],
+        ["unsafe-output", "output"],
+        ["signal-exit", "lifecycle"],
+      ] as const;
+      const cleanupFailures = [
+        "cleanup-down-fail",
+        "cleanup-query-fail",
+        "cleanup-residual",
+      ] as const;
+      for (const [primaryMode, primaryCategory] of primaryFailures) {
+        const primaryFailure = run({ FAKE_PRIMARY_MODE: primaryMode });
+        expect(primaryFailure.status, primaryMode).not.toBe(0);
+        expect(primaryFailure.stdout, primaryMode).toBe("");
+        expect(primaryFailure.stderr, primaryMode).toBe(
+          `provider smoke wrapper failed: ${primaryCategory}\n`,
+        );
+        expect(primaryFailure.stderr, primaryMode).not.toContain(
+          "hidden compose warning",
+        );
+        expect(readFileSync(dockerLog, "utf8"), primaryMode).toContain(
+          "down --rmi local -v --remove-orphans",
+        );
+        expect(readdirSync(temp), primaryMode).toEqual([]);
+
+        for (const cleanupMode of cleanupFailures) {
+          const combinedFailure = run({
+            FAKE_PRIMARY_MODE: primaryMode,
+            FAKE_CLEANUP_MODE: cleanupMode,
+          });
+          expect(
+            combinedFailure.status,
+            `${primaryMode}/${cleanupMode}`,
+          ).not.toBe(0);
+          expect(combinedFailure.stdout, `${primaryMode}/${cleanupMode}`).toBe(
+            "",
+          );
+          expect(combinedFailure.stderr, `${primaryMode}/${cleanupMode}`).toBe(
+            "provider smoke wrapper failed: cleanup\n",
+          );
+          expect(
+            combinedFailure.stderr,
+            `${primaryMode}/${cleanupMode}`,
+          ).not.toContain("hidden compose warning");
+          expect(readdirSync(temp), `${primaryMode}/${cleanupMode}`).toEqual(
+            [],
+          );
+        }
+      }
+
+      const missingPythonMktempLog = path.join(
+        sandbox,
+        "missing-python-mktemp",
+      );
+      const missingPython = run({
+        PATH: bin,
+        FAKE_MKTEMP_LOG: missingPythonMktempLog,
+      });
+      expect(missingPython.status).not.toBe(0);
+      expect(missingPython.stdout).toBe("");
+      expect(missingPython.stderr).toBe(
+        "provider smoke wrapper failed: configuration\n",
+      );
+      expect(`${missingPython.stdout}${missingPython.stderr}`).not.toContain(
+        "python3",
+      );
+      expect(() => readFileSync(missingPythonMktempLog)).toThrow();
+      expect(readFileSync(dockerLog, "utf8")).toBe("");
+      expect(readdirSync(temp)).toEqual([]);
+
+      const allocationFailure = run({ FAKE_MODE: "mktemp-fail" });
+      expect(allocationFailure.status).not.toBe(0);
+      expect(allocationFailure.stdout).toBe("");
+      expect(allocationFailure.stderr).toBe(
+        "provider smoke wrapper failed: ownership\n",
+      );
+      expect(readFileSync(dockerLog, "utf8")).toBe("");
+      expect(readdirSync(temp)).toEqual([]);
+
+      writeFileSync(keyFile, `${secret}\n`, { mode: 0o600 });
+      chmodSync(keyFile, 0o644);
+      const unsafeKey = run();
+      expect(unsafeKey.status).not.toBe(0);
+      expect(unsafeKey.stdout).toBe("");
+      expect(unsafeKey.stderr).toBe(
+        "provider smoke wrapper failed: configuration\n",
+      );
+      expect(readFileSync(dockerLog, "utf8")).toBe("");
+      expect(readdirSync(temp)).toEqual([]);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it("snapshots provider keys without blocking on FIFOs or zero-byte writes", () => {
+    const runner = read("docs/testing/run-model-provider-smoke.sh");
+    expect(runner).toContain("command -v python3");
+    const helperMatch = runner.match(
+      /snapshot_helper='(?<source>[\s\S]*?)'\nexport AAP_PROVIDER_SMOKE_KEY_SOURCE=/u,
+    );
+    expect(helperMatch?.groups?.source).toBeDefined();
+    const helper = helperMatch?.groups?.source ?? "";
+    const sandbox = mkdtempSync(path.join(tmpdir(), "provider-key-snapshot-"));
+    const source = path.join(sandbox, "source-key");
+    const fifo = path.join(sandbox, "source-fifo");
+    const secret = "snapshot-secret-that-must-not-leak";
+    writeFileSync(source, secret, { mode: 0o600 });
+    chmodSync(source, 0o600);
+    const makeFifo = spawnSync(
+      "python3",
+      ["-c", "import os,sys; os.mkfifo(sys.argv[1])", fifo],
+      { encoding: "utf8" },
+    );
+    expect(makeFifo.status).toBe(0);
+
+    const execute = (helperSource: string, input: string, output: string) =>
+      spawnSync("python3", ["-c", helperSource], {
+        encoding: "utf8",
+        timeout: 500,
+        env: {
+          ...process.env,
+          AAP_PROVIDER_SMOKE_KEY_SOURCE: input,
+          AAP_PROVIDER_SMOKE_KEY_SNAPSHOT: output,
+        },
+      });
+
+    try {
+      const fifoResult = execute(
+        helper,
+        fifo,
+        path.join(sandbox, "fifo-snapshot"),
+      );
+      expect(fifoResult.error).toBeUndefined();
+      expect(fifoResult.status).not.toBe(0);
+      expect(fifoResult.stdout).toBe("");
+      expect(`${fifoResult.stdout}${fifoResult.stderr}`).not.toContain(fifo);
+      expect(`${fifoResult.stdout}${fifoResult.stderr}`).not.toContain(secret);
+
+      const zeroWriteResult = execute(
+        `import os\nos.write = lambda *_args: 0\n${helper}`,
+        source,
+        path.join(sandbox, "zero-write-snapshot"),
+      );
+      expect(zeroWriteResult.error).toBeUndefined();
+      expect(zeroWriteResult.status).not.toBe(0);
+      expect(zeroWriteResult.stdout).toBe("");
+      expect(
+        `${zeroWriteResult.stdout}${zeroWriteResult.stderr}`,
+      ).not.toContain(source);
+      expect(
+        `${zeroWriteResult.stdout}${zeroWriteResult.stderr}`,
+      ).not.toContain(secret);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("documents provider verification honestly without claiming an unrun matrix", () => {
+    const guide = read("docs/testing/model-provider-smoke.md");
+    const index = read("docs/testing/README.md");
+
+    expect(guide).toContain("adapter-tested");
+    expect(guide).toContain("real-API verified");
+    expect(guide).toContain("单独");
+    expect(guide).toContain("不提交未实际运行的验证矩阵");
+    expect(guide).toContain("本地模型仓库");
+    expect(guide).toContain("MODEL_API_KEY_FILE");
+    expect(guide).toContain("宿主机");
+    expect(guide).toContain("python3");
+    expect(index).toContain("model-provider-smoke.md");
+    expect(index).toContain("run-model-provider-smoke.sh");
   });
 });

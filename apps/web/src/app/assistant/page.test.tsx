@@ -31,10 +31,11 @@ describe("AssistantPage", () => {
 
     expect(runtime.readSafeAssistantRuntimeStatus).toHaveBeenCalledOnce();
     expect(metadata).toMatchObject({
-      title: "AI 助理 · AI Agent Platform",
+      title: "码多多 · AI Agent Platform",
+      description: "通过码多多获得公开、匿名的网页端通用 AI 助手服务。",
     });
-    expect(screen.getByRole("main", { name: "AI 助理工作区" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "打开 M 助手" })).toBeNull();
+    expect(screen.getByRole("main", { name: "码多多工作区" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "打开码多多" })).toBeNull();
     expect(screen.getByText("模型尚未配置")).toBeVisible();
   });
 });

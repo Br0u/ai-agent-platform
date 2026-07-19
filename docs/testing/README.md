@@ -1,5 +1,7 @@
 # 导航浏览器回归
 
+模型供应商的可选真实 API 验证见 [model-provider-smoke.md](./model-provider-smoke.md)，入口为 `run-model-provider-smoke.sh`。该入口不属于常规 CI，必须显式提供单个供应商的真实凭据。
+
 该回归由 Playwright CLI 驱动。`navigation-browser-regression.js` 是注入浏览器会话的函数，不是独立 Node.js 脚本，不应使用 `node navigation-browser-regression.js` 执行。
 
 ## 运行

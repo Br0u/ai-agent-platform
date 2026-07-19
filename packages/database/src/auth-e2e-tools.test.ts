@@ -22,6 +22,8 @@ describe("test-only auth E2E tools", () => {
         "E2E_ROLE_TARGET_SESSION_TOKEN",
         "E2E_ADMIN_SESSION_TOKEN",
         "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
+        "E2E_MODEL_ADMIN_SESSION_TOKEN",
+        "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
         "E2E_REVOKED_SESSION_TOKEN",
         "E2E_REPLACEMENT_PASSWORD",
       ].map((name) => [name, randomBytes(32).toString("base64url")]),
@@ -56,6 +58,8 @@ describe("test-only auth E2E tools", () => {
       "E2E_ROLE_TARGET_SESSION_TOKEN",
       "E2E_ADMIN_SESSION_TOKEN",
       "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
+      "E2E_MODEL_ADMIN_SESSION_TOKEN",
+      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
       "E2E_REVOKED_SESSION_TOKEN",
       "E2E_REPLACEMENT_PASSWORD",
     ]) {
@@ -97,6 +101,11 @@ describe("test-only auth E2E tools", () => {
         realm: "workforce",
         status: "active",
       },
+      modelAdmin: {
+        realm: "workforce",
+        status: "active",
+        role: "super_admin",
+      },
     });
     expect(JSON.stringify(fixtureIdentities)).not.toContain(
       credentials.customerPassword,
@@ -126,6 +135,16 @@ describe("test-only auth E2E tools", () => {
     expect(source).toContain("credentials.revokedSessionToken");
     expect(source).not.toMatch(/['"]e2e-[^'"]*session[^'"]*['"]/u);
     expect(source).toContain("support_operator");
+    expect(source).toContain("credentials.modelAdminSessionToken");
+    expect(source).toContain("credentials.modelAdminStaleSessionToken");
+    expect(source).toContain("now() - interval '11 minutes'");
+    expect(source).toContain("fixtureIdentities.modelAdmin");
+    expect(source).toContain(
+      `"UPDATE users SET two_factor_enabled = true WHERE id = $1",\n      [fixtureIdentities.modelAdmin.id],`,
+    );
+    expect(source).not.toMatch(
+      /fixtureIdentities\.admin[\s\S]{0,500}super_admin/u,
+    );
     expect(source).toContain(
       "UPDATE users SET status = 'active' WHERE id = $1",
     );

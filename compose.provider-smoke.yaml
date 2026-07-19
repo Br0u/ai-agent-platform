@@ -1,0 +1,50 @@
+services:
+  smoke:
+    build:
+      context: .
+      dockerfile: apps/agent/Dockerfile
+      target: runtime
+    user: root
+    entrypoint:
+      [
+        "/bin/sh",
+        "-eu",
+        "-c",
+        'if [ -z "$${MODEL_BASE_URL-}" ]; then unset MODEL_BASE_URL; fi; exec /opt/aap/run-with-secret-env.sh "$$@"',
+        "--",
+      ]
+    command: ["python", "-m", "agent_service.provider_smoke"]
+    environment:
+      SECRET_ENV_SPECS: MODEL_API_KEY=/run/secrets/model_api_key
+      SECRET_RUN_AS: agent
+      MODEL_PROVIDER: ${MODEL_PROVIDER:?Set MODEL_PROVIDER}
+      MODEL_ID: ${MODEL_ID:?Set MODEL_ID}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-}
+      MODEL_RUN_TIMEOUT_SECONDS: ${MODEL_RUN_TIMEOUT_SECONDS:-50}
+    secrets:
+      - model_api_key
+    volumes:
+      - ./infra/docker/run-with-secret-env.sh:/opt/aap/run-with-secret-env.sh:ro
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    mem_limit: 512m
+    cpus: "1.0"
+    pids_limit: 128
+    networks:
+      - default
+
+secrets:
+  model_api_key:
+    file: ${MODEL_API_KEY_FILE:?Set MODEL_API_KEY_FILE}
+
+networks:
+  default: {}

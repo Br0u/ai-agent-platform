@@ -1,3 +1,5 @@
+import "server-only";
+
 import type {
   AssistantProviderReply,
   AssistantRequest,
@@ -5,6 +7,16 @@ import type {
 
 export type { AssistantProviderReply } from "@/features/assistant/assistant-contract";
 
+export type AssistantProviderInvocation = {
+  request: AssistantRequest;
+  session:
+    | { kind: "persistent"; internalSessionId: string }
+    | { kind: "ephemeral" };
+  signal?: AbortSignal;
+};
+
 export interface AssistantProvider {
-  reply(request: AssistantRequest): Promise<AssistantProviderReply>;
+  reply(
+    invocation: AssistantProviderInvocation,
+  ): Promise<AssistantProviderReply>;
 }

@@ -8,7 +8,11 @@ import { getDatabase, rateLimits } from "@ai-agent-platform/database";
 
 type Database = ReturnType<typeof getDatabase>;
 
-export type AssistantRateLimitScope = "anonymous" | "customer" | "admin-test";
+export type AssistantRateLimitScope =
+  | "anonymous"
+  | "customer"
+  | "admin-test"
+  | "admin-key-reveal";
 export type AssistantRateLimitInput =
   | {
       scope: "anonymous";
@@ -16,7 +20,7 @@ export type AssistantRateLimitInput =
       ipAddress?: string;
     }
   | {
-      scope: "customer" | "admin-test";
+      scope: "customer" | "admin-test" | "admin-key-reveal";
       actorId: string;
     };
 
@@ -35,6 +39,7 @@ export const ASSISTANT_RATE_LIMIT_QUOTAS: Readonly<
   anonymous: { maximumAttempts: 20, windowMs: 60_000 },
   customer: { maximumAttempts: 60, windowMs: 60_000 },
   "admin-test": { maximumAttempts: 20, windowMs: 60_000 },
+  "admin-key-reveal": { maximumAttempts: 5, windowMs: 10 * 60_000 },
 };
 
 export const ASSISTANT_RATE_LIMIT_CLEANUP_BATCH_SIZE = 100;

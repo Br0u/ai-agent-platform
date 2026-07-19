@@ -11,6 +11,7 @@ import type {
   AdminAssistantSessionsSnapshot,
   AdminAssistantStatusSnapshot,
 } from "@/features/assistant/admin-assistant-contract";
+import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
 import { AssistantAdminPage } from "./assistant-admin-page";
 
 const status = {
@@ -22,12 +23,21 @@ const status = {
     providerMode: "placeholder" as const,
     selectedProvider: "placeholder" as const,
     persistence: "disabled" as const,
-    circuit: { state: "closed" as const, consecutiveFailures: 2 },
+    circuits: {
+      readiness: { state: "closed" as const, consecutiveFailures: 2 },
+      execution: { state: "open" as const, consecutiveFailures: 3 },
+    },
     readiness: {
       cacheTtlMs: 5000,
       probeTimeoutMs: 1500,
       failureThreshold: 3,
     },
+    source: "none" as const,
+    provider: null,
+    modelId: null,
+    configRevision: null,
+    activationVersion: null,
+    testStatus: "not_configured" as const,
   },
   services: [
     {
@@ -51,7 +61,7 @@ const status = {
     },
   ],
   configuration: {
-    defaultAgent: "M 企业助理（占位）",
+    defaultAgent: "码多多（占位）",
     model: "未配置",
     skills: "未接入",
     sessionStorage: "未启用",
@@ -61,10 +71,64 @@ const status = {
 
 const sessions = {
   persistence: "disabled" as const,
-  capability: "placeholder" as const,
-  items: [],
-  message: "占位模式不持久化会话；会话审计将在存储接入后开放。",
+  listing: "not_available" as const,
+  message: "占位模式未持久化会话；管理列表不可用。",
 } satisfies AdminAssistantSessionsSnapshot;
+
+const agentosSessions = {
+  persistence: "agentos" as const,
+  listing: "not_available" as const,
+  message: "AgentOS 持久化已启用，但管理列表不在本阶段范围。",
+} satisfies AdminAssistantSessionsSnapshot;
+
+const unavailableSessions = {
+  persistence: "unavailable" as const,
+  listing: "not_available" as const,
+  message: "持久化状态不可用；管理列表不可用。",
+} satisfies AdminAssistantSessionsSnapshot;
+
+const modelConfigs = {
+  version: "1",
+  configs: (
+    [
+      ["openai", "OpenAI"],
+      ["anthropic", "Claude"],
+      ["google", "Gemini"],
+      ["dashscope", "Qwen / DashScope"],
+      ["deepseek", "DeepSeek"],
+      ["minimax", "MiniMax"],
+    ] as const
+  ).map(([provider, displayName]) => ({
+    provider,
+    displayName,
+    modelId: null,
+    endpointId: null,
+    revision: null,
+    testStatus: "not_configured" as const,
+    lastTestedAt: null,
+    apiKey: null,
+    activeRevision: null,
+  })),
+  endpoints: {
+    openai: [{ id: "openai-default", label: "OpenAI 官方" }],
+    anthropic: [{ id: "anthropic-default", label: "Claude 官方" }],
+    google: [{ id: "google-default", label: "Gemini 官方" }],
+    dashscope: [{ id: "dashscope-default", label: "Qwen 官方" }],
+    deepseek: [{ id: "deepseek-default", label: "DeepSeek 官方" }],
+    minimax: [{ id: "minimax-default", label: "MiniMax 官方" }],
+  },
+  runtime: {
+    capability: "placeholder",
+    source: null,
+    provider: null,
+    modelId: null,
+    configRevision: null,
+    activationVersion: null,
+  },
+  canConfigure: true,
+  canReveal: false,
+  controlEnabled: true,
+} satisfies AdminModelConfigSnapshot;
 
 afterEach(() => {
   cleanup();
@@ -74,7 +138,11 @@ afterEach(() => {
 describe("AssistantAdminPage", () => {
   it("shows four honest status cells and read-only configuration", () => {
     const { container } = render(
-      <AssistantAdminPage sessions={sessions} status={status} />,
+      <AssistantAdminPage
+        modelConfigs={modelConfigs}
+        sessions={sessions}
+        status={status}
+      />,
     );
 
     expect(screen.getAllByTestId("assistant-status-cell")).toHaveLength(4);
@@ -83,14 +151,20 @@ describe("AssistantAdminPage", () => {
     expect(screen.getAllByText("模型")).toHaveLength(2);
     expect(screen.getByText("公开入口")).toBeVisible();
     expect(screen.getByRole("heading", { name: "只读配置" })).toBeVisible();
-    expect(screen.getByText("M 企业助理（占位）")).toBeVisible();
+    expect(screen.getByText("码多多（占位）")).toBeVisible();
     expect(screen.getByRole("heading", { name: "运行时状态" })).toBeVisible();
-    expect(screen.getByText("Circuit").nextElementSibling).toHaveTextContent(
-      "closed",
-    );
-    expect(screen.getByText("Failures").nextElementSibling).toHaveTextContent(
-      "2",
-    );
+    expect(
+      screen.getByText("Readiness Circuit").nextElementSibling,
+    ).toHaveTextContent("closed");
+    expect(
+      screen.getByText("Readiness Failures").nextElementSibling,
+    ).toHaveTextContent("2");
+    expect(
+      screen.getByText("Execution Circuit").nextElementSibling,
+    ).toHaveTextContent("open");
+    expect(
+      screen.getByText("Execution Failures").nextElementSibling,
+    ).toHaveTextContent("3");
     expect(screen.getByText("Health TTL").nextElementSibling).toHaveTextContent(
       "5000 ms",
     );
@@ -101,11 +175,61 @@ describe("AssistantAdminPage", () => {
       screen.getByText("Failure Threshold").nextElementSibling,
     ).toHaveTextContent("3");
     expect(container.querySelectorAll("input[type='password']")).toHaveLength(
-      0,
+      1,
     );
+    expect(screen.getByLabelText("新 API Key（必填）")).toHaveValue("");
+    expect(container.textContent).not.toMatch(/timestamp|openedAt|raw error/iu);
+  });
+
+  it("keeps the approved section order on the existing admin page", () => {
+    render(
+      <AssistantAdminPage
+        modelConfigs={modelConfigs}
+        sessions={sessions}
+        status={status}
+      />,
+    );
+
+    const services = screen.getByRole("list", { name: "AI 助理服务状态" });
+    const runtime = screen.getByRole("heading", { name: "运行时状态" });
+    const models = screen.getByRole("heading", { name: "云模型配置" });
+    const roadmap = screen.getByRole("heading", { name: "后续能力入口" });
+    const consoleHeading = screen.getByRole("heading", {
+      name: "受保护的助手测试控制台",
+    });
+    const configuration = screen.getByRole("heading", { name: "只读配置" });
+    const sessionsHeading = screen.getByRole("heading", {
+      name: "会话持久化",
+    });
     expect(
-      screen.queryByLabelText(/model.*key|api.*key/iu),
-    ).not.toBeInTheDocument();
+      services.compareDocumentPosition(runtime) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      runtime.compareDocumentPosition(models) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      models.compareDocumentPosition(consoleHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      models.compareDocumentPosition(roadmap) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      roadmap.compareDocumentPosition(consoleHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      consoleHeading.compareDocumentPosition(configuration) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      configuration.compareDocumentPosition(sessionsHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   });
 
   it("loads page styling from a dedicated stylesheet instead of inline CSS", () => {
@@ -123,13 +247,160 @@ describe("AssistantAdminPage", () => {
     expect(css).toContain(".assistant-admin__status-grid");
   });
 
-  it("keeps future audit and Skill capabilities visibly disabled", () => {
-    render(<AssistantAdminPage sessions={sessions} status={status} />);
+  it("keeps session audit disabled without a duplicate Skill management action", () => {
+    render(
+      <AssistantAdminPage
+        modelConfigs={modelConfigs}
+        sessions={sessions}
+        status={status}
+      />,
+    );
 
     expect(screen.getByRole("button", { name: "会话审计" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Skill 管理" })).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /暂不可用$/u })).toHaveLength(
+      4,
+    );
+    for (const action of screen.getAllByRole("button", {
+      name: /暂不可用$/u,
+    })) {
+      expect(action).toBeDisabled();
+    }
+    expect(
+      screen.queryByRole("button", { name: "Skill 管理" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText(sessions.message)).toBeVisible();
     expect(screen.queryByText(/客户消息|消息原文/u)).not.toBeInTheDocument();
+  });
+
+  it("preserves page-level headings, form names, live regions and tab order", () => {
+    const { container } = render(
+      <AssistantAdminPage
+        modelConfigs={modelConfigs}
+        sessions={sessions}
+        status={status}
+      />,
+    );
+
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    const h2Names = screen
+      .getAllByRole("heading", { level: 2 })
+      .map((heading) => heading.textContent);
+    expect(new Set(h2Names).size).toBe(h2Names.length);
+
+    const providerTab = screen.getByRole("tab", { name: /OpenAI/u });
+    const modelId = screen.getByRole("textbox", { name: "Model ID" });
+    const endpoint = screen.getByRole("combobox", { name: "Endpoint" });
+    const apiKey = screen.getByLabelText("新 API Key（必填）");
+    const question = screen.getByRole("textbox", { name: "测试问题" });
+    expect(
+      providerTab.compareDocumentPosition(modelId) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      modelId.compareDocumentPosition(endpoint) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      endpoint.compareDocumentPosition(apiKey) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      apiKey.compareDocumentPosition(question) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      container.querySelectorAll(
+        "[tabindex]:not([tabindex='0']):not([tabindex='-1'])",
+      ),
+    ).toHaveLength(0);
+    expect(
+      container.querySelectorAll("[aria-live='polite']").length,
+    ).toBeGreaterThanOrEqual(2);
+
+    const explicitAccessibleNames = Array.from(
+      container.querySelectorAll<HTMLElement>("[aria-label], [title]"),
+      (element) =>
+        `${element.getAttribute("aria-label") ?? ""} ${element.getAttribute("title") ?? ""}`,
+    ).join(" ");
+    expect(explicitAccessibleNames).not.toMatch(
+      /(?:sk-[a-z0-9]|ciphertext|nonce|secret|https?:\/\/)/iu,
+    );
+  });
+
+  it("shows persistence and unavailable listing without a fake zero count", () => {
+    render(
+      <AssistantAdminPage
+        modelConfigs={modelConfigs}
+        sessions={sessions}
+        status={status}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "会话持久化" })).toBeVisible();
+    expect(screen.getByText("列表不可用")).toBeVisible();
+    expect(screen.getByText(/disabled.*not_available/iu)).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "最近会话" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("00")).not.toBeInTheDocument();
+  });
+
+  it("states that AgentOS persistence is enabled while listing remains unavailable", () => {
+    render(
+      <AssistantAdminPage
+        modelConfigs={modelConfigs}
+        sessions={agentosSessions}
+        status={status}
+      />,
+    );
+
+    expect(screen.getByText(agentosSessions.message)).toBeVisible();
+    expect(screen.getByText(/agentos.*not_available/iu)).toBeVisible();
+    expect(screen.getByText("列表不可用")).toBeVisible();
+    expect(
+      screen.queryByText(/可审计|可列出|最近会话/u),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a safe unavailable persistence state without fabricated sessions", () => {
+    render(
+      <AssistantAdminPage
+        modelConfigs={modelConfigs}
+        sessions={unavailableSessions}
+        status={status}
+      />,
+    );
+
+    expect(screen.getByText(unavailableSessions.message)).toBeVisible();
+    expect(screen.getByText(/unavailable.*not_available/iu)).toBeVisible();
+    expect(screen.getByText("列表不可用")).toBeVisible();
+    expect(
+      screen.queryByText(/raw|secret|最近会话|可审计/iu),
+    ).not.toBeInTheDocument();
+  });
+
+  it("describes the protected test session truthfully for both provider modes", () => {
+    render(
+      <AssistantAdminPage
+        modelConfigs={modelConfigs}
+        sessions={sessions}
+        status={status}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "受保护的助手测试控制台" }),
+    ).toBeVisible();
+    expect(screen.getByText("临时会话，结束后清理")).toBeVisible();
+    expect(
+      screen.getByText(
+        "AgentOS 模式会调用已配置模型；占位模式返回安全占位回答。",
+      ),
+    ).toBeVisible();
+    expect(screen.getByPlaceholderText("输入助手测试问题")).toBeVisible();
+    expect(
+      screen.queryByText(/占位测试控制台|不调用真实模型|不会写入会话/iu),
+    ).not.toBeInTheDocument();
   });
 
   it("sends an administrator test through the protected admin endpoint", async () => {
@@ -150,10 +421,16 @@ describe("AssistantAdminPage", () => {
       ),
     );
     vi.stubGlobal("fetch", fetchMock);
-    render(<AssistantAdminPage sessions={sessions} status={status} />);
+    render(
+      <AssistantAdminPage
+        modelConfigs={modelConfigs}
+        sessions={sessions}
+        status={status}
+      />,
+    );
 
     fireEvent.change(screen.getByLabelText("测试问题"), {
-      target: { value: "检查占位合同" },
+      target: { value: "检查助手回答" },
     });
     fireEvent.click(screen.getByRole("button", { name: "发送测试" }));
 
@@ -170,7 +447,13 @@ describe("AssistantAdminPage", () => {
       "fetch",
       vi.fn().mockResolvedValue(new Response(null, { status: 503 })),
     );
-    render(<AssistantAdminPage sessions={sessions} status={status} />);
+    render(
+      <AssistantAdminPage
+        modelConfigs={modelConfigs}
+        sessions={sessions}
+        status={status}
+      />,
+    );
 
     fireEvent.change(screen.getByLabelText("测试问题"), {
       target: { value: "检查失败状态" },
@@ -213,7 +496,13 @@ describe("AssistantAdminPage", () => {
         ),
       );
     vi.stubGlobal("fetch", fetchMock);
-    render(<AssistantAdminPage sessions={sessions} status={status} />);
+    render(
+      <AssistantAdminPage
+        modelConfigs={modelConfigs}
+        sessions={sessions}
+        status={status}
+      />,
+    );
     const input = screen.getByLabelText("测试问题");
 
     fireEvent.change(input, { target: { value: "第一次测试" } });

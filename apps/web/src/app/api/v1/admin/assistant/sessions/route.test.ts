@@ -13,15 +13,28 @@ const auth = vi.hoisted(() => {
   return { AuthAccessError, requirePermission: vi.fn() };
 });
 
+const runtime = vi.hoisted(() => ({
+  getAssistantRuntime: vi.fn(),
+  inspect: vi.fn(),
+}));
+
 vi.mock("@/server/auth/access", () => ({
   AuthAccessError: auth.AuthAccessError,
   requirePermission: auth.requirePermission,
 }));
 
+vi.mock("@/server/assistant/assistant-runtime", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/server/assistant/assistant-runtime")
+  >()),
+  getAssistantRuntime: runtime.getAssistantRuntime,
+}));
+
 import {
   createAdminAssistantSessionsHandler,
-  loadPlaceholderAdminAssistantSessions,
+  loadAdminAssistantSessions,
 } from "./handler";
+import { createAssistantRuntime } from "@/server/assistant/assistant-runtime";
 
 function request(requestId?: string) {
   return new Request("http://localhost/api/v1/admin/assistant/sessions", {
@@ -34,6 +47,10 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     auth.requirePermission.mockResolvedValue({ realm: "workforce" });
+    runtime.inspect.mockReturnValue({
+      persistence: "disabled",
+    });
+    runtime.getAssistantRuntime.mockReturnValue({ inspect: runtime.inspect });
   });
 
   it("exports only GET and requires exactly admin:assistant", async () => {
@@ -45,6 +62,8 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
     expect(auth.requirePermission).toHaveBeenCalledExactlyOnceWith(
       "admin:assistant",
     );
+    expect(runtime.getAssistantRuntime).toHaveBeenCalledOnce();
+    expect(runtime.inspect).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -130,13 +149,138 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
     });
   });
 
+  it.each([
+    {
+      persistence: "disabled" as const,
+      expected: {
+        persistence: "disabled",
+        listing: "not_available",
+        message: "占位模式未持久化会话；管理列表不可用。",
+      },
+    },
+    {
+      persistence: "agentos" as const,
+      expected: {
+        persistence: "agentos",
+        listing: "not_available",
+        message: "AgentOS 持久化已启用，但管理列表不在本阶段范围。",
+      },
+    },
+    {
+      persistence: "unavailable" as const,
+      expected: {
+        persistence: "unavailable",
+        listing: "not_available",
+        message: "持久化状态不可用；管理列表不可用。",
+      },
+    },
+  ])(
+    "reports $persistence persistence without fabricating a session list",
+    async ({ persistence, expected }) => {
+      const inspect = vi.fn(() => ({ persistence }));
+
+      await expect(loadAdminAssistantSessions({ inspect })).resolves.toEqual(
+        expected,
+      );
+      expect(inspect).toHaveBeenCalledOnce();
+      expect(JSON.stringify(expected)).not.toMatch(
+        /items|capability|session.?id|messageText|prompt|answer|reply|ip|user.?agent/iu,
+      );
+    },
+  );
+
+  it("returns a sanitized unavailable snapshot when runtime resolution fails", async () => {
+    runtime.getAssistantRuntime.mockImplementationOnce(() => {
+      throw new Error(
+        "raw AGENTOS_INTERNAL_URL=http://agent:7777 OS_SECURITY_KEY=secret",
+      );
+    });
+
+    const sessions = await loadAdminAssistantSessions();
+
+    expect(sessions).toEqual({
+      persistence: "unavailable",
+      listing: "not_available",
+      message: "持久化状态不可用；管理列表不可用。",
+    });
+    expect(JSON.stringify(sessions)).not.toMatch(
+      /raw|agent:7777|security|key|secret/iu,
+    );
+    expect(runtime.inspect).not.toHaveBeenCalled();
+  });
+
+  it("returns the default unavailable snapshot with 200 when runtime resolution fails", async () => {
+    runtime.getAssistantRuntime.mockImplementationOnce(() => {
+      throw new Error("raw OS_SECURITY_KEY=secret");
+    });
+    const route = await import("./route");
+
+    const response = await route.GET(request("runtime-unavailable"));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    await expect(response.json()).resolves.toEqual({
+      version: "1",
+      requestId: "runtime-unavailable",
+      sessions: {
+        persistence: "unavailable",
+        listing: "not_available",
+        message: "持久化状态不可用；管理列表不可用。",
+      },
+    });
+    expect(auth.requirePermission).toHaveBeenCalledExactlyOnceWith(
+      "admin:assistant",
+    );
+  });
+
+  it("returns a sanitized unavailable snapshot when inspection fails", async () => {
+    const inspect = vi.fn(() => {
+      throw new Error("raw private session config");
+    });
+
+    const sessions = await loadAdminAssistantSessions({ inspect });
+
+    expect(sessions).toEqual({
+      persistence: "unavailable",
+      listing: "not_available",
+      message: "持久化状态不可用；管理列表不可用。",
+    });
+    expect(JSON.stringify(sessions)).not.toMatch(
+      /raw|private|session config/iu,
+    );
+    expect(runtime.getAssistantRuntime).not.toHaveBeenCalled();
+  });
+
+  it("does not probe the network when invalid AgentOS composition is inspected", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const realRuntime = createAssistantRuntime({
+      environment: {
+        ASSISTANT_PROVIDER_MODE: "agentos",
+        TRUST_NGINX_PROXY: "false",
+        AGENTOS_INTERNAL_URL: "not a URL",
+        OS_SECURITY_KEY: "private-invalid-key",
+      },
+      fetcher,
+    });
+
+    await expect(loadAdminAssistantSessions(realRuntime)).resolves.toEqual({
+      persistence: "unavailable",
+      listing: "not_available",
+      message: "持久化状态不可用；管理列表不可用。",
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("returns a correlated versioned non-persisted snapshot", async () => {
     const requestIdFactory = vi.fn(() => "unused-fallback");
     const GET = createAdminAssistantSessionsHandler({
       access: {
         requirePermission: vi.fn().mockResolvedValue({ realm: "workforce" }),
       },
-      loadSessions: loadPlaceholderAdminAssistantSessions,
+      loadSessions: () =>
+        loadAdminAssistantSessions({
+          inspect: () => ({ persistence: "disabled" }),
+        }),
       requestIdFactory,
     });
 
@@ -151,13 +295,12 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
       requestId: "sessions-correlation",
       sessions: {
         persistence: "disabled",
-        capability: "placeholder",
-        items: [],
-        message: "占位模式不持久化会话；会话审计将在存储接入后开放。",
+        listing: "not_available",
+        message: "占位模式未持久化会话；管理列表不可用。",
       },
     });
     expect(JSON.stringify(body)).not.toMatch(
-      /customer|messageText|secret|token|cookie|session.?id|ip|user.?agent/iu,
+      /customer|messageText|secret|token|cookie|session.?id|prompt|answer|reply|ip|user.?agent/iu,
     );
   });
 
@@ -167,7 +310,10 @@ describe("GET /api/v1/admin/assistant/sessions", () => {
       access: {
         requirePermission: vi.fn().mockResolvedValue({ realm: "workforce" }),
       },
-      loadSessions: loadPlaceholderAdminAssistantSessions,
+      loadSessions: () =>
+        loadAdminAssistantSessions({
+          inspect: () => ({ persistence: "disabled" }),
+        }),
       requestIdFactory,
     });
 

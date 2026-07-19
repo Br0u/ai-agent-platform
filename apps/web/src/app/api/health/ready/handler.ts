@@ -5,6 +5,9 @@ export function createReadinessHandler(probe: DatabaseProbe) {
     const result = await getReadiness(probe);
     const status = result.status === "ready" ? 200 : 503;
 
-    return Response.json(result, { status });
+    return Response.json(result, {
+      status,
+      headers: { "Cache-Control": "no-store" },
+    });
   };
 }

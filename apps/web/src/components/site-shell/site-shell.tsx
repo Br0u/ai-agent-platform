@@ -24,13 +24,15 @@ import { PortalNavigationLink } from "./portal-navigation-link";
 import { classifyShellRoute, type ShellRoute } from "./shell-route";
 import "./site-shell.css";
 
-const ADMIN_PERMISSION_KEYS = new Set(
-  adminNavigation.groups.flatMap((group) =>
+const ADMIN_PERMISSION_KEYS = new Set([
+  ...adminNavigation.groups.flatMap((group) =>
     group.items.flatMap((item) =>
       item.permission === undefined ? [] : [item.permission],
     ),
   ),
-);
+  "admin:assistant:configure",
+  "admin:assistant:secret:reveal",
+]);
 const CUSTOMER_STATUSES = new Set(["pending_review", "active", "rejected"]);
 const EMAIL_VERIFICATION_STATUSES = new Set([
   "unverified",

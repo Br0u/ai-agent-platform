@@ -30,7 +30,10 @@ async function within<T>(promise: Promise<T>, timeoutMs = 250) {
   }
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("AgentOS client settings", () => {
   it.each([
@@ -185,29 +188,45 @@ describe("AgentOS protected transport", () => {
   );
 
   it.each([
-    new Response("", {
-      status: 302,
-      headers: { location: "https://evil.test" },
-    }),
-    new Response("not-json", {
-      status: 200,
-      headers: { "content-type": "text/plain" },
-    }),
-    jsonResponse({ ready: true, capability: "placeholder", extra: "unsafe" }),
-    jsonResponse({ ready: true, capability: "future" }),
-    new Response("x".repeat(20_000), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    }),
+    [
+      new Response("", {
+        status: 302,
+        headers: { location: "https://evil.test" },
+      }),
+      "redirect_rejected",
+    ],
+    [
+      new Response("not-json", {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      }),
+      "invalid_content_type",
+    ],
+    [
+      jsonResponse({
+        ready: true,
+        capability: "placeholder",
+        extra: "unsafe",
+      }),
+      "invalid_response",
+    ],
+    [jsonResponse({ ready: true, capability: "future" }), "invalid_response"],
+    [
+      new Response("x".repeat(20_000), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+      "response_too_large",
+    ],
   ])(
     "rejects redirects, unsafe types, schemas, and oversized bodies",
-    async (response) => {
+    async (response, code) => {
       const client = createAgentOSClient({
         settings: { baseUrl: INTERNAL_URL, securityKey: SECURITY_KEY },
-        fetcher: vi.fn<typeof fetch>().mockResolvedValue(response),
+        fetcher: vi.fn<typeof fetch>().mockResolvedValue(response as Response),
       });
 
-      await expect(client.ready()).rejects.toBeInstanceOf(AgentOSClientError);
+      await expect(client.ready()).rejects.toMatchObject({ code });
     },
   );
 
@@ -269,6 +288,51 @@ describe("AgentOS protected transport", () => {
     });
   });
 
+  it("rejects and cancels a stalled wrong media type before its deadline", async () => {
+    vi.useFakeTimers();
+    let cancelled = false;
+    const stalledHtml = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("private raw body"));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/html; charset=utf-8" } },
+    );
+    const client = createAgentOSClient({
+      settings: { baseUrl: INTERNAL_URL, securityKey: SECURITY_KEY },
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(stalledHtml),
+      timeoutMs: 1_000,
+    });
+    const result = client.ready().catch((value: unknown) => value);
+    let settled = false;
+    void result.then(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    const settledBeforeDeadline = settled;
+    if (!settled) await vi.advanceTimersByTimeAsync(1_000);
+    const error = await result;
+
+    expect(settledBeforeDeadline).toBe(true);
+    expect(error).toBeInstanceOf(AgentOSClientError);
+    expect(error).toMatchObject({ code: "invalid_content_type" });
+    expect(cancelled).toBe(true);
+    const serialized = JSON.stringify(error);
+    for (const sensitive of [
+      INTERNAL_URL,
+      SECURITY_KEY,
+      "text/html",
+      "private raw body",
+    ]) {
+      expect(serialized).not.toContain(sensitive);
+    }
+  });
+
   it("honors the deadline even when an abnormal reader ignores abort and cancel", async () => {
     const cancel = vi.fn(() => new Promise<void>(() => undefined));
     const stuckResponse = {
@@ -326,6 +390,7 @@ describe("AgentOS protected transport", () => {
 
     const error = await client.live().catch((value: unknown) => value);
     expect(error).toBeInstanceOf(AgentOSClientError);
+    expect(error).toMatchObject({ code: "unexpected_status" });
     const serialized = JSON.stringify(error);
     for (const sensitive of [INTERNAL_URL, SECURITY_KEY, secretBody]) {
       expect(serialized).not.toContain(sensitive);

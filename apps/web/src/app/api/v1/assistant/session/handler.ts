@@ -8,6 +8,14 @@ import {
   resolveAssistantActor,
   type AssistantActor,
 } from "@/server/assistant/assistant-actor";
+import {
+  getAssistantRuntime,
+  type AssistantRuntime,
+} from "@/server/assistant/assistant-runtime";
+import {
+  defaultAgentOSCleanupRecorder,
+  type AgentOSCleanupRecorder,
+} from "@/server/assistant/agentos-assistant-provider";
 
 export type DeleteInternalAssistantSession = (
   internalSessionId: string,
@@ -22,11 +30,27 @@ type AssistantSessionDeleteDependencies = {
   manager?: AnonymousSessionManager;
   resolveActor?: (request: Request) => Promise<AssistantActor>;
   deleteInternalSession?: DeleteInternalAssistantSession;
+  getRuntime?: () => Pick<AssistantRuntime, "deleteSession">;
+  recordCleanupFailure?: AgentOSCleanupRecorder;
 };
 
 export function createAssistantSessionDeleteHandler(
   dependencies: AssistantSessionDeleteDependencies = {},
 ) {
+  let cleanupFailureCount = 0;
+
+  function recordCleanupFailure(): void {
+    cleanupFailureCount += 1;
+    try {
+      (dependencies.recordCleanupFailure ?? defaultAgentOSCleanupRecorder)({
+        category: "persistent_session_cleanup_failed",
+        count: cleanupFailureCount,
+      });
+    } catch {
+      // Observability must never replace the safe Cookie-clearing response.
+    }
+  }
+
   return async function DELETE(request: Request): Promise<Response> {
     const manager = dependencies.manager ?? getAnonymousSessionManager();
     const clearCookie = manager.clearCookie();
@@ -50,11 +74,13 @@ export function createAssistantSessionDeleteHandler(
       try {
         await (
           dependencies.deleteInternalSession ??
-          placeholderAssistantSessionDeletion
+          ((internalSessionId) =>
+            (
+              dependencies.getRuntime?.() ?? getAssistantRuntime()
+            ).deleteSession(internalSessionId))
         )(inspected.internalSessionId);
       } catch {
-        // Clearing the browser credential remains safe even if a future
-        // internal persistence adapter is temporarily unavailable.
+        recordCleanupFailure();
       }
     }
 
