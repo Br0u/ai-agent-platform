@@ -1,8 +1,3 @@
-"use client";
-
-import React from "react";
-import { useDocReader } from "./doc-reader-layout";
-
 type SubCategory = {
   id: string;
   title: string;
@@ -14,26 +9,11 @@ export function DocCategoryCards({
 }: {
   subCategories: readonly SubCategory[];
 }) {
-  const { setExpandedLevel2, expandedLevel2 } = useDocReader();
-
-  const handleCardClick = (e: React.MouseEvent, id: string) => {
-    e.preventDefault();
-    // 切换展开状态
-    if (expandedLevel2 !== id) {
-      setExpandedLevel2(id);
-    }
-  };
-
   return (
     <div className="doc-cards-grid">
-      {subCategories.map((sub, i) => {
+      {subCategories.map((sub) => {
         return (
-          <a
-            href={`#${sub.id}`}
-            key={i}
-            className="doc-card"
-            onClick={(e) => handleCardClick(e, sub.id)}
-          >
+          <a href={`#${sub.id}`} key={sub.id} className="doc-card">
             <div className="doc-card__icon">
               <svg
                 viewBox="0 0 24 24"
