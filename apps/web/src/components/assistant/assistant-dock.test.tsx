@@ -418,7 +418,7 @@ describe("AssistantDock", () => {
       }),
     );
     await waitFor(() => expect(reopenedDialog).not.toBeInTheDocument());
-    expect(secondTrigger).toHaveFocus();
+    await waitFor(() => expect(secondTrigger).toHaveFocus());
     expect(trigger).not.toHaveFocus();
   });
 

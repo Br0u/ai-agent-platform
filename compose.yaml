@@ -215,14 +215,7 @@ services:
       dockerfile: apps/agent/Dockerfile
     restart: unless-stopped
     user: root
-    entrypoint:
-      [
-        "/bin/sh",
-        "-eu",
-        "-c",
-        'if [ -z "$${MODEL_PROVIDER-}" ] && [ -z "$${MODEL_ID-}" ]; then unset MODEL_PROVIDER MODEL_ID MODEL_BASE_URL; SECRET_ENV_SPECS=$${SECRET_ENV_SPECS%MODEL_API_KEY=/run/secrets/model_api_key}; export SECRET_ENV_SPECS; elif [ -z "$${MODEL_BASE_URL-}" ]; then unset MODEL_BASE_URL; fi; exec /opt/aap/run-with-secret-env.sh "$$@"',
-        "--",
-      ]
+    entrypoint: ["/opt/aap/run-agent-with-secret-env.sh"]
     command:
       [
         "uvicorn",
@@ -257,6 +250,7 @@ services:
       - agent_config_control_key
       - model_api_key
     volumes:
+      - ./infra/docker/run-agent-with-secret-env.sh:/opt/aap/run-agent-with-secret-env.sh:ro
       - ./infra/docker/run-with-secret-env.sh:/opt/aap/run-with-secret-env.sh:ro
     depends_on:
       agent-migrate:
@@ -269,7 +263,7 @@ services:
       test:
         [
           "CMD",
-          "/opt/aap/run-with-secret-env.sh",
+          "/opt/aap/run-agent-with-secret-env.sh",
           "python",
           "-c",
           "import os,urllib.request; key=os.environ['OS_SECURITY_KEY']; request=urllib.request.Request('http://127.0.0.1:7777/internal/health/ready',headers={'Authorization':'Bearer '+key}); urllib.request.urlopen(request,timeout=3).close()",
@@ -484,7 +478,7 @@ secrets:
   assistant_rate_limit_secret:
     file: ${ASSISTANT_RATE_LIMIT_SECRET_FILE:-.secrets/assistant_rate_limit_secret}
   model_api_key:
-    file: ${MODEL_API_KEY_FILE:-.secrets/model_api_key}
+    file: ${MODEL_API_KEY_FILE:-/dev/null}
   agent_control_migrator_database_password:
     file: ${AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD_FILE:-.secrets/agent_control_migrator_database_password}
   agent_control_database_password:

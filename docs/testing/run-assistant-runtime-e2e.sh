@@ -276,7 +276,7 @@ export ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080
   exit 1
 }
 export ASSISTANT_PROVIDER_MODE=placeholder
-export AGENT_ENABLED=false
+export AGENT_ENABLED=true
 export ASSISTANT_AGENTOS_READINESS_TTL_MS=1000
 export ASSISTANT_AGENTOS_PROBE_TIMEOUT_MS=500
 export ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD=1
@@ -419,6 +419,16 @@ create_dynamic_patterns_file "$model_keys_file"
 create_dynamic_patterns_file "$model_key_last4_file"
 printf '%s\n' "$model_keys_file" "$model_key_last4_file" >>"$protected_patterns_file"
 
+# Prove the fresh Agent can start with administrator-managed configuration only.
+# Preserve the deterministic bootstrap credential for the later AgentOS phase.
+bootstrap_model_api_key_file=$MODEL_API_KEY_FILE
+unset MODEL_API_KEY_FILE
+unset MODEL_PROVIDER MODEL_ID MODEL_BASE_URL
+export MODEL_API_KEY_FILE=
+export MODEL_PROVIDER=
+export MODEL_ID=
+export MODEL_BASE_URL=
+
 compose() {
   docker compose -p "$project" --env-file "$env_file" $compose_files "$@"
 }
@@ -492,6 +502,15 @@ run_compose_job() {
     return "$job_status"
   fi
   echo "Assistant runtime E2E job passed: $job_name"
+}
+
+reset_assistant_rate_limits() {
+  compose exec -T db psql \
+    --username="$POSTGRES_USER" \
+    --dbname="$POSTGRES_DB" \
+    --set=ON_ERROR_STOP=1 \
+    --command="DELETE FROM public.rate_limits WHERE key LIKE 'assistant:%'" \
+    >/dev/null
 }
 
 identity_audit_collector=$(cat <<'PY'
@@ -623,7 +642,7 @@ PY
 )
 
 assert_control_preflight() {
-  compose exec -T agent /opt/aap/run-with-secret-env.sh \
+  compose exec -T agent /opt/aap/run-agent-with-secret-env.sh \
     python -c "$control_preflight"
 }
 
@@ -702,8 +721,10 @@ BASE_URL=http://127.0.0.1:8080 \
   --grep-invert "@agentos|@guard|@control"
 
 scan_logs "placeholder" "$placeholder_dynamic_patterns_file"
+reset_assistant_rate_limits
 
 export AGENT_ENABLED=true
+export MODEL_API_KEY_FILE="$bootstrap_model_api_key_file"
 export MODEL_PROVIDER=openai
 export MODEL_ID=e2e-deterministic
 unset MODEL_BASE_URL
@@ -727,6 +748,7 @@ BASE_URL=http://127.0.0.1:8080 \
 
 collect_agent_session_identities
 scan_logs "agentos-bootstrap" "$agentos_dynamic_patterns_file"
+reset_assistant_rate_limits
 
 # The AgentOS invalid-response check intentionally opens the execution circuit.
 # Recreate both runtime sides before exercising the dynamic-control path.

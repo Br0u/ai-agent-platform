@@ -172,6 +172,7 @@ def _service_error_response(
     error: ModelControlServiceError,
     *,
     private: bool = False,
+    include_test_result: bool = False,
 ) -> JSONResponse:
     status_code = 503
     code = "assistant_unavailable"
@@ -194,9 +195,12 @@ def _service_error_response(
         status_code, code = 503, "encryption_unavailable"
     elif isinstance(error, ModelControlAssistantError):
         status_code, code = 503, "assistant_unavailable"
+    content = {"error": code}
+    if include_test_result and error.test_succeeded is True:
+        content["testResult"] = "success"
     return JSONResponse(
         status_code=status_code,
-        content={"error": code},
+        content=content,
         headers=_PRIVATE_NO_STORE_HEADERS if private else _NO_STORE_HEADERS,
     )
 
@@ -422,7 +426,7 @@ def build_model_control_router(
                 assertion,
             )
         except ModelControlServiceError as error:
-            return _service_error_response(error)
+            return _service_error_response(error, include_test_result=True)
         return _bounded_response(
             {
                 "version": "1",

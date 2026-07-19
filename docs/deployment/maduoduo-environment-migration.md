@@ -120,12 +120,12 @@ URL 使用 `postgresql+psycopg_async://`，示例角色分别为：
 MODEL_PROVIDER=
 MODEL_ID=
 MODEL_BASE_URL=
-MODEL_API_KEY_FILE=.secrets/model_api_key
+MODEL_API_KEY_FILE=
 ```
 
 规则：
 
-- `MODEL_PROVIDER`、`MODEL_ID`、`MODEL_API_KEY` 必须全部提供或全部省略。
+- `MODEL_PROVIDER`、`MODEL_ID`、`MODEL_API_KEY_FILE` 必须全部提供或全部省略；纯动态控制部署保持三者为空，不需要创建 bootstrap Key 文件。
 - 支持 `openai`、`anthropic`、`google`、`dashscope`、`deepseek`、`minimax`。
 - 数据库中存在动态活动配置时，动态配置优先。
 - 动态配置加载失败时 fail closed，不静默回退 bootstrap。

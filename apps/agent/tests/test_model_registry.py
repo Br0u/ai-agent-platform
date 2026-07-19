@@ -847,6 +847,85 @@ def test_model_construction_failure_never_attaches_injected_hooks(
     asyncio.run(async_client.aclose())
 
 
+@pytest.mark.parametrize(
+    ("provider", "module_name", "model_type_name"),
+    (
+        ("openai", "agno.models.openai", "OpenAIResponses"),
+        ("anthropic", "agno.models.anthropic", "Claude"),
+        ("google", "agno.models.google", "Gemini"),
+    ),
+)
+def test_model_construction_failure_closes_owned_http_clients(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: ModelProvider,
+    module_name: str,
+    model_type_name: str,
+) -> None:
+    created_sync_clients: list[httpx.Client] = []
+    created_async_clients: list[httpx.AsyncClient] = []
+
+    class TrackingClient(httpx.Client):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+            created_sync_clients.append(self)
+
+    class TrackingAsyncClient(httpx.AsyncClient):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+            created_async_clients.append(self)
+
+    provider_models = import_module(module_name)
+
+    def fail_model_construction(**_kwargs: object) -> Model:
+        raise RuntimeError("model construction failed")
+
+    monkeypatch.setattr(httpx, "Client", TrackingClient)
+    monkeypatch.setattr(httpx, "AsyncClient", TrackingAsyncClient)
+    monkeypatch.setattr(
+        provider_models,
+        model_type_name,
+        fail_model_construction,
+    )
+
+    with pytest.raises(RuntimeError, match="^model construction failed$"):
+        model_registry.build_managed_model(make_settings(provider))
+
+    assert len(created_sync_clients) == 1
+    assert len(created_async_clients) == 1
+    assert created_sync_clients[0].is_closed
+    assert created_async_clients[0].is_closed
+
+
+@pytest.mark.asyncio
+async def test_model_construction_failure_closes_owned_async_client_before_raising_in_running_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_async_clients: list[httpx.AsyncClient] = []
+
+    class TrackingAsyncClient(httpx.AsyncClient):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+            created_async_clients.append(self)
+
+    openai_models = import_module("agno.models.openai")
+
+    def fail_model_construction(**_kwargs: object) -> Model:
+        raise RuntimeError("model construction failed")
+
+    monkeypatch.setattr(httpx, "AsyncClient", TrackingAsyncClient)
+    monkeypatch.setattr(
+        openai_models,
+        "OpenAIResponses",
+        fail_model_construction,
+    )
+
+    with pytest.raises(RuntimeError, match="^model construction failed$"):
+        model_registry.build_managed_model(make_settings("openai"))
+
+    assert len(created_async_clients) == 1
+    assert created_async_clients[0].is_closed
+
+
 def test_openai_redirect_is_not_followed_and_surfaces_only_fixed_failure() -> None:
     requests: list[httpx.Request] = []
     redirect_target = "http://127.0.0.1/provider-secret"

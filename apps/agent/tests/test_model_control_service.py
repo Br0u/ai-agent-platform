@@ -921,7 +921,7 @@ async def test_slot_failure_after_database_commit_degrades_and_closes_candidate(
     with pytest.raises(
         ModelControlAssistantError,
         match="^assistant_unavailable$",
-    ):
+    ) as error:
         await service(
             repository,
             slot=slot,
@@ -935,6 +935,7 @@ async def test_slot_failure_after_database_commit_degrades_and_closes_candidate(
         )
 
     assert repository.activation_version == 1
+    assert error.value.test_succeeded is True
     assert slot.deactivations == ["degraded"]
     assert slot.status.capability == "degraded"
     assert candidate.close_count == 1

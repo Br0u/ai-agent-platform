@@ -77,12 +77,15 @@ type RenderedService = {
 
 type RenderedCompose = {
   networks: Record<string, { internal?: boolean }>;
+  secrets?: Record<string, { file?: string }>;
   services: Record<string, RenderedService>;
 };
 
 const renderComposeFixture = (
   composeFiles = ["compose.yaml"],
+  options: { bootstrapModel?: boolean } = {},
 ): RenderedCompose => {
+  const bootstrapModel = options.bootstrapModel ?? true;
   const sentinels = Object.fromEntries(
     composeSecretKeys.map((key, index) => [
       key,
@@ -99,7 +102,8 @@ const renderComposeFixture = (
       const secretFile = path.join(sandbox, key.toLowerCase());
       writeFileSync(secretFile, sentinels[key], { mode: 0o600 });
       chmodSync(secretFile, 0o600);
-      secretFileEnv[`${key}_FILE`] = secretFile;
+      secretFileEnv[`${key}_FILE`] =
+        key === "MODEL_API_KEY" && !bootstrapModel ? "" : secretFile;
     }
 
     const execution = spawnSync(
@@ -134,8 +138,8 @@ const renderComposeFixture = (
           BETTER_AUTH_TRUSTED_ORIGINS: "http://127.0.0.1:3000",
           ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
           PUBLIC_HOST: "127.0.0.1",
-          MODEL_PROVIDER: "openai",
-          MODEL_ID: "provider-smoke-model",
+          MODEL_PROVIDER: bootstrapModel ? "openai" : "",
+          MODEL_ID: bootstrapModel ? "provider-smoke-model" : "",
           MODEL_BASE_URL: "",
           MODEL_RUN_TIMEOUT_SECONDS: "25",
         },
@@ -288,6 +292,10 @@ describe("production deployment security contracts", () => {
       "AGNO_DATABASE_PASSWORD",
       "AGNO_MIGRATOR_DATABASE_URL",
       "AGNO_DATABASE_URL",
+      "AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD",
+      "AGENT_CONTROL_DATABASE_PASSWORD",
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+      "AGENT_CONTROL_DATABASE_URL",
     ]) {
       expect(env).toContain(`${key}=`);
     }
@@ -627,9 +635,16 @@ describe("production deployment security contracts", () => {
     expect(
       script.indexOf('--grep-invert "@agentos|@guard|@control"'),
     ).toBeLessThan(script.indexOf("--grep @agentos"));
-    expect(script).toContain("export AGENT_ENABLED=false");
     expect(script).toContain("export ASSISTANT_PROVIDER_MODE=placeholder");
     expect(script).toContain("export AGENT_ENABLED=true");
+    expect(script).toContain(
+      "bootstrap_model_api_key_file=$MODEL_API_KEY_FILE",
+    );
+    expect(script).toContain("unset MODEL_API_KEY_FILE");
+    expect(script).toContain("unset MODEL_PROVIDER MODEL_ID MODEL_BASE_URL");
+    expect(script).toContain(
+      'export MODEL_API_KEY_FILE="$bootstrap_model_api_key_file"',
+    );
     expect(script).toContain("export MODEL_PROVIDER=openai");
     expect(script).toContain("export MODEL_ID=e2e-deterministic");
     expect(script).toContain("unset MODEL_BASE_URL");
@@ -658,8 +673,16 @@ describe("production deployment security contracts", () => {
     expect(controlReset).toContain(
       "compose up -d --no-deps --force-recreate --wait proxy",
     );
+    expect(script.indexOf("export AGENT_ENABLED=true")).toBeLessThan(
+      script.indexOf('echo "Assistant runtime E2E phase: validate compose"'),
+    );
+    expect(script.indexOf("unset MODEL_API_KEY_FILE")).toBeLessThan(
+      script.indexOf('echo "Assistant runtime E2E phase: validate compose"'),
+    );
     expect(script.indexOf('scan_logs "placeholder"')).toBeLessThan(
-      script.indexOf("export AGENT_ENABLED=true"),
+      script.indexOf(
+        'export MODEL_API_KEY_FILE="$bootstrap_model_api_key_file"',
+      ),
     );
     expect(script).toContain(
       'scan_pattern_file "$protected_patterns_file" "$logs_file"',
@@ -714,6 +737,16 @@ describe("production deployment security contracts", () => {
     expect(script).toContain("collect_agent_session_identities() {");
     expect(script).toContain(
       'compose exec -T agent python -c "$identity_audit_collector" >>"$agentos_dynamic_patterns_file"',
+    );
+    expect(script).toContain(
+      "compose exec -T agent /opt/aap/run-agent-with-secret-env.sh",
+    );
+    expect(script).not.toContain(
+      "compose exec -T agent /opt/aap/run-with-secret-env.sh",
+    );
+    expect(script.match(/reset_assistant_rate_limits/gu)?.length).toBe(3);
+    expect(script).toContain(
+      `--command="DELETE FROM public.rate_limits WHERE key LIKE 'assistant:%'"`,
     );
     expect(script).toContain(
       'identity_audit_path = "/tmp/aap-session-identity-audit"',
@@ -1705,17 +1738,21 @@ exit 0
     expect(agentService).toBeDefined();
     expect(agentService).toContain("MODEL_API_KEY=/run/secrets/model_api_key");
     expect(agentService).toContain("- model_api_key");
+    const agentSecretRunner = read("infra/docker/run-agent-with-secret-env.sh");
     expect(agentService).toContain(
-      '[ -z "$${MODEL_BASE_URL-}" ]; then unset MODEL_BASE_URL; fi',
+      'entrypoint: ["/opt/aap/run-agent-with-secret-env.sh"]',
     );
     expect(agentService).toContain(
-      'if [ -z "$${MODEL_PROVIDER-}" ] && [ -z "$${MODEL_ID-}" ]; then unset MODEL_PROVIDER MODEL_ID MODEL_BASE_URL;',
+      "./infra/docker/run-agent-with-secret-env.sh:/opt/aap/run-agent-with-secret-env.sh:ro",
     );
-    expect(agentService).toContain(
-      "SECRET_ENV_SPECS=$${SECRET_ENV_SPECS%MODEL_API_KEY=/run/secrets/model_api_key}",
+    expect(agentSecretRunner).toContain(
+      'if [ -z "${MODEL_PROVIDER-}" ] && [ -z "${MODEL_ID-}" ]; then',
     );
-    expect(agentService).toContain(
-      'exec /opt/aap/run-with-secret-env.sh "$$@"',
+    expect(agentSecretRunner).toContain(
+      "SECRET_ENV_SPECS=${SECRET_ENV_SPECS%MODEL_API_KEY=/run/secrets/model_api_key}",
+    );
+    expect(agentSecretRunner).toContain(
+      'exec /opt/aap/run-with-secret-env.sh "$@"',
     );
     for (const [name, expected] of [
       ["AGENT_ENABLED", "${AGENT_ENABLED:-false}"],
@@ -1746,7 +1783,7 @@ exit 0
       /model_egress:\s*\n\s+internal:\s*true/u,
     );
     expect(secretDefinitions).toContain(
-      "model_api_key:\n    file: ${MODEL_API_KEY_FILE:-.secrets/model_api_key}",
+      "model_api_key:\n    file: ${MODEL_API_KEY_FILE:-/dev/null}",
     );
 
     for (const name of serviceNames.filter((name) => name !== "agent")) {
@@ -1755,6 +1792,16 @@ exit 0
       expect(serviceSections[name]).not.toContain("MODEL_API_KEY");
       expect(serviceSections[name]).not.toContain("model_egress");
     }
+  });
+
+  it("renders dynamic-only Agent startup without a bootstrap model key file", () => {
+    const rendered = renderComposeFixture(["compose.yaml"], {
+      bootstrapModel: false,
+    });
+
+    expect(rendered.services.agent?.environment?.MODEL_PROVIDER).toBe("");
+    expect(rendered.services.agent?.environment?.MODEL_ID).toBe("");
+    expect(rendered.secrets?.model_api_key?.file).toBe("/dev/null");
   });
 
   it("documents bounded model and AgentOS run timeout defaults", () => {
@@ -1771,7 +1818,7 @@ exit 0
       "MODEL_ID=",
       "MODEL_BASE_URL=",
       "MODEL_RUN_TIMEOUT_SECONDS=50",
-      "MODEL_API_KEY_FILE=.secrets/model_api_key",
+      "MODEL_API_KEY_FILE=",
       "ASSISTANT_AGENTOS_RUN_TIMEOUT_MS=55000",
     ]) {
       expect(example.split("\n")).toContain(line);
@@ -1967,7 +2014,7 @@ exit 0
     const agentHealthcheck =
       rendered.services.agent?.healthcheck?.test?.join(" ");
     const webHealthcheck = rendered.services.web?.healthcheck?.test?.join(" ");
-    expect(agentHealthcheck).toContain("/opt/aap/run-with-secret-env.sh");
+    expect(agentHealthcheck).toContain("/opt/aap/run-agent-with-secret-env.sh");
     expect(agentHealthcheck).toContain("OS_SECURITY_KEY");
     expect(agentHealthcheck).not.toContain("/run/secrets/os_security_key");
     expect(webHealthcheck).toContain("gosu node");
@@ -2077,11 +2124,7 @@ exit 0
       typeof modelSecret === "string" ? undefined : modelSecret?.target,
     ).toBe("/run/secrets/model_api_key");
     expect(agent?.entrypoint).toEqual([
-      "/bin/sh",
-      "-eu",
-      "-c",
-      expect.stringContaining("/opt/aap/run-with-secret-env.sh"),
-      "--",
+      "/opt/aap/run-agent-with-secret-env.sh",
     ]);
     expect(agent?.environment?.SECRET_ENV_SPECS).toContain(
       "MODEL_API_KEY=/run/secrets/model_api_key",
@@ -2129,8 +2172,10 @@ exit 0
       "Initialize least-privilege database roles",
       "db:prepare",
       "Bootstrap Agno roles twice",
+      "Bootstrap Agent control roles twice",
       "uv --directory apps/agent sync --frozen",
       "Run Agno migration twice",
+      "Run Agent control migration twice",
       "agno-role-boundary.integration.test.ts",
       "uv --directory apps/agent run pytest",
       "uv --directory apps/agent run ruff check",
@@ -2150,6 +2195,12 @@ exit 0
       workflow.match(/sh infra\/postgres\/03-agno-roles\.sh/g),
     ).toHaveLength(2);
     expect(workflow.match(/python -m agent_service\.migrate/g)).toHaveLength(2);
+    expect(
+      workflow.match(/sh infra\/postgres\/04-agent-control-roles\.sh/g),
+    ).toHaveLength(2);
+    expect(
+      workflow.match(/python -m agent_service\.model_config_migrate/g),
+    ).toHaveLength(2);
   });
 
   it("limits isolated assistant E2E credentials to the seed migrator", () => {

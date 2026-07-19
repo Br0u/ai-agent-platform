@@ -12,6 +12,11 @@ from pydantic import (
     field_validator,
 )
 
+from agent_service.model_id import (
+    MODEL_ID_MAX_CODE_POINTS as MODEL_ID_MAX_CODE_POINTS,
+    validate_model_id,
+)
+
 
 ModelProvider = Literal[
     "openai",
@@ -36,22 +41,13 @@ TEST_STATUSES: Final[tuple[TestStatus, ...]] = (
     "passed",
     "failed",
 )
-MODEL_ID_MAX_CODE_POINTS: Final = 128
 ENDPOINT_ID_MAX_CODE_POINTS: Final = 64
 MODEL_API_KEY_MIN_CODE_POINTS: Final = 8
 MODEL_API_KEY_MAX_CODE_POINTS: Final = 4096
 
 
 def _validate_model_id(value: str) -> str:
-    if not value or value != value.strip():
-        raise ValueError("invalid model ID")
-    if len(value) > MODEL_ID_MAX_CODE_POINTS:
-        raise ValueError("invalid model ID")
-    if any(
-        ord(character) <= 0x1F or 0x7F <= ord(character) <= 0x9F for character in value
-    ):
-        raise ValueError("invalid model ID")
-    return value
+    return validate_model_id(value)
 
 
 def _validate_endpoint_id(value: str) -> str:

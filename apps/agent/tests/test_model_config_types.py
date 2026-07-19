@@ -48,9 +48,18 @@ def test_provider_contract_is_exactly_the_six_supported_values() -> None:
 
 @pytest.mark.parametrize(
     "model_id",
-    ("", " ", " leading", "trailing ", "bad\x00id", "bad\x85id"),
+    (
+        "",
+        " ",
+        " leading",
+        "trailing ",
+        "bad\x00id",
+        "bad\x85id",
+        "https://private.example/model",
+        "vendor//model",
+    ),
 )
-def test_model_id_rejects_blank_whitespace_and_controls(model_id: str) -> None:
+def test_model_id_rejects_unsafe_values(model_id: str) -> None:
     with pytest.raises(ValidationError):
         make_draft(model_id=model_id)
 

@@ -208,7 +208,7 @@ function isSafeText(value: unknown, maximum: number): value is string {
   );
 }
 
-function isModelId(value: unknown): value is string {
+export function isAdminModelId(value: unknown): value is string {
   return isSafeText(value, MODEL_ID_MAX_CODE_POINTS);
 }
 
@@ -307,7 +307,7 @@ function readConfigItem(
   }
   const apiKey = readMaskedApiKey(snapshot.apiKey);
   if (
-    !isModelId(snapshot.modelId) ||
+    !isAdminModelId(snapshot.modelId) ||
     !isEndpointId(snapshot.endpointId) ||
     !isPositiveInteger(snapshot.revision) ||
     apiKey === null
@@ -404,7 +404,7 @@ function readRuntimeMetadata(value: unknown): AdminModelRuntimeMetadata | null {
       activationVersion: null,
     };
   }
-  if (!isProvider(snapshot.provider) || !isModelId(snapshot.modelId))
+  if (!isProvider(snapshot.provider) || !isAdminModelId(snapshot.modelId))
     return null;
   if (snapshot.source === "deployment") {
     if (
@@ -519,7 +519,7 @@ export function parseAdminModelConfigSaveInput(
     }
   }
   if (
-    !isModelId(snapshot.modelId) ||
+    !isAdminModelId(snapshot.modelId) ||
     !isEndpointId(snapshot.endpointId) ||
     !isNonNegativeInteger(snapshot.expectedRevision)
   ) {

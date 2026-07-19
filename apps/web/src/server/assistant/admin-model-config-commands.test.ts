@@ -654,6 +654,33 @@ describe("admin model test-and-activate command", () => {
     expect(current.client.saveModelConfig).not.toHaveBeenCalled();
   });
 
+  it("keeps a successful model test when activation fails after verification", async () => {
+    const current = fixture();
+    const context = await authorize(current.commands, "test_and_activate");
+    current.client.testAndActivate = vi.fn(async () => {
+      current.operations.push("agent:activate");
+      throw new AgentModelControlClientError("storage_unavailable", "success");
+    });
+
+    await expect(
+      current.commands.testAndActivate(context, "openai", { revision: 4 }),
+    ).rejects.toEqual(new AdminModelConfigCommandError("storage_unavailable"));
+    const completed = auditPayloads(current.audit).slice(-2) as Array<{
+      event: string;
+      metadata: { result: string };
+    }>;
+    expect(completed).toEqual([
+      expect.objectContaining({
+        event: "assistant.model_config_tested",
+        metadata: expect.objectContaining({ result: "success" }),
+      }),
+      expect.objectContaining({
+        event: "assistant.model_config_activated",
+        metadata: expect.objectContaining({ result: "failure" }),
+      }),
+    ]);
+  });
+
   it("fails closed on completed audit loss without rollback or fallback", async () => {
     const current = fixture();
     const context = await authorize(current.commands, "test_and_activate");
