@@ -49,7 +49,7 @@ const REQUEST_TIMEOUT = Symbol("assistant-request-timeout");
 
 class SafeAssistantRequestFailure extends Error {}
 
-export const ASSISTANT_REQUEST_TIMEOUT_MS = 15_000;
+export const ASSISTANT_REQUEST_TIMEOUT_MS = 60_000;
 
 export type AssistantSessionOptions = {
   endpoint?: string;

@@ -12,59 +12,62 @@ const placeholder = {
 const agentos = { reply: async () => ({ content: "a", suggestedActions: [] }) };
 
 describe("assistant provider selector", () => {
-  it.each([
-    {
-      mode: "placeholder" as const,
-      ready: true,
-      defaultAgentId: "support-agent",
-      capability: "available" as const,
-    },
-    {
-      mode: "agentos" as const,
-      ready: false,
-      defaultAgentId: "support-agent",
-      capability: "available" as const,
-    },
-    {
-      mode: "agentos" as const,
-      ready: true,
-      defaultAgentId: undefined,
-      capability: "available" as const,
-    },
-    {
-      mode: "agentos" as const,
-      ready: true,
-      defaultAgentId: " ",
-      capability: "available" as const,
-    },
-    {
-      mode: "agentos" as const,
-      ready: true,
-      defaultAgentId: "support-agent",
-      capability: "placeholder" as const,
-    },
-    {
-      mode: "agentos" as const,
-      ready: true,
-      defaultAgentId: "support-agent",
-      capability: "degraded" as const,
-    },
-  ])("returns placeholder unless every non-secret gate is true", (state) => {
+  it("returns placeholder only when placeholder mode is explicit", () => {
     expect(
       selectAssistantProvider({
-        ...state,
+        mode: "placeholder",
+        ready: true,
+        capability: "available",
         placeholder: placeholder as AssistantProvider,
         agentos: agentos as AssistantProvider,
       }),
     ).toBe(placeholder);
   });
 
-  it("selects AgentOS only when explicit mode, readiness, agent ID and capability agree", () => {
+  it.each([
+    {
+      mode: "agentos" as const,
+      ready: false,
+      capability: "available" as const,
+    },
+    {
+      mode: "agentos" as const,
+      ready: true,
+      capability: "placeholder" as const,
+    },
+    {
+      mode: "agentos" as const,
+      ready: true,
+      capability: "degraded" as const,
+    },
+  ])("fails closed when explicit AgentOS mode is unavailable", (state) => {
+    const error = (() => {
+      try {
+        return selectAssistantProvider({
+          ...state,
+          placeholder: placeholder as AssistantProvider,
+          agentos: agentos as AssistantProvider,
+        });
+      } catch (value) {
+        return value;
+      }
+    })();
+
+    expect(error).toMatchObject({
+      name: "AssistantProviderSelectionUnavailableError",
+      code: "ASSISTANT_PROVIDER_SELECTION_UNAVAILABLE",
+      message: "Assistant provider selection unavailable",
+    });
+    expect(JSON.stringify(error)).toBe(
+      '{"code":"ASSISTANT_PROVIDER_SELECTION_UNAVAILABLE"}',
+    );
+  });
+
+  it("selects AgentOS only when explicit mode, readiness, and capability agree", () => {
     expect(
       selectAssistantProvider({
         mode: "agentos",
         ready: true,
-        defaultAgentId: "support-agent",
         capability: "available",
         placeholder: placeholder as AssistantProvider,
         agentos: agentos as AssistantProvider,
@@ -76,41 +79,19 @@ describe("assistant provider selector", () => {
     expect(
       resolveAssistantProviderSettings({
         ASSISTANT_PROVIDER_MODE: "placeholder",
-        ASSISTANT_AGENTOS_DEFAULT_AGENT_ID: "support-agent",
       }),
     ).toEqual({ mode: "placeholder" });
     expect(() =>
       resolveAssistantProviderSettings({ ASSISTANT_PROVIDER_MODE: "auto" }),
     ).toThrow("ASSISTANT_PROVIDER_MODE");
-    expect(() =>
-      resolveAssistantProviderSettings({
-        ASSISTANT_PROVIDER_MODE: "agentos",
-        ASSISTANT_AGENTOS_DEFAULT_AGENT_ID: " Support Agent ",
-      }),
-    ).toThrow("ASSISTANT_AGENTOS_DEFAULT_AGENT_ID");
+    expect(
+      resolveAssistantProviderSettings({ ASSISTANT_PROVIDER_MODE: "agentos" }),
+    ).toEqual({ mode: "agentos" });
   });
 
-  it.each([undefined, null, "", " invalid placeholder id "])(
-    "does not require or validate an Agent ID in placeholder mode (%s)",
-    (defaultAgentId) => {
-      expect(
-        resolveAssistantProviderSettings({
-          ASSISTANT_PROVIDER_MODE: "placeholder",
-          ASSISTANT_AGENTOS_DEFAULT_AGENT_ID: defaultAgentId,
-        }),
-      ).toEqual({ mode: "placeholder" });
-    },
-  );
-
-  it.each([undefined, null, "", " "])(
-    "requires a strict non-empty Agent ID in AgentOS mode (%s)",
-    (defaultAgentId) => {
-      expect(() =>
-        resolveAssistantProviderSettings({
-          ASSISTANT_PROVIDER_MODE: "agentos",
-          ASSISTANT_AGENTOS_DEFAULT_AGENT_ID: defaultAgentId,
-        }),
-      ).toThrow("ASSISTANT_AGENTOS_DEFAULT_AGENT_ID");
-    },
-  );
+  it("has no environment-controlled Agent ID in its server contract", () => {
+    expect(
+      resolveAssistantProviderSettings({ ASSISTANT_PROVIDER_MODE: "agentos" }),
+    ).toEqual({ mode: "agentos" });
+  });
 });

@@ -282,6 +282,36 @@ describe("SiteShell", () => {
     expect(mocks.appShellProps?.logoutAction).toEqual(expect.any(Function));
   });
 
+  it("accepts known assistant action permissions without a navigation item", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          realm: "workforce",
+          status: "active",
+          permissions: [
+            "admin:assistant",
+            "admin:assistant:configure",
+            "admin:assistant:secret:reveal",
+          ],
+          displayName: "Model administrator",
+          mustChangePassword: false,
+          twoFactorEnabled: true,
+        }),
+        { status: 200 },
+      ),
+    );
+
+    renderAt("/admin/assistant");
+
+    await waitFor(() => expect(screen.getByTestId("app-shell")).toBeVisible());
+    expect(mocks.replace).not.toHaveBeenCalled();
+    expect(mocks.appShellProps?.grantedPermissions).toEqual([
+      "admin:assistant",
+      "admin:assistant:configure",
+      "admin:assistant:secret:reveal",
+    ]);
+  });
+
   it("fails closed while a new admin access cycle validates a different actor", async () => {
     const workforceResponse = (displayName: string, permission: string) =>
       new Response(
@@ -490,7 +520,7 @@ describe("SiteShell", () => {
         );
       }
       expect(useAssistantSession).not.toHaveBeenCalled();
-      expect(screen.queryByRole("button", { name: "打开 M 助手" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "打开码多多" })).toBeNull();
       expect(screen.queryByRole("button", { name: "打开 AI 助理" })).toBeNull();
     },
   );
@@ -500,7 +530,7 @@ describe("SiteShell", () => {
 
     expect(useAssistantSession).toHaveBeenCalledOnce();
     expect(screen.getByRole("button", { name: "打开 AI 助理" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "打开 M 助手" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "打开码多多" })).toBeVisible();
     expect(
       screen.getByRole("button", { name: "打开 AI 助理" }),
     ).toHaveAttribute("data-open", "false");
@@ -508,8 +538,8 @@ describe("SiteShell", () => {
     fireEvent.click(screen.getByRole("button", { name: "打开 AI 助理" }));
     expect(mocks.push).toHaveBeenCalledWith("/assistant");
 
-    fireEvent.click(screen.getByRole("button", { name: "打开 M 助手" }));
-    expect(screen.getByRole("dialog", { name: "M 助手" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "打开码多多" }));
+    expect(screen.getByRole("dialog", { name: "码多多" })).toBeInTheDocument();
   });
 
   it("does not mount a side assistant surface from the portal entry", () => {
@@ -533,7 +563,7 @@ describe("SiteShell", () => {
       screen.getByRole("button", { name: "聚焦 AI 助理提问框" }),
     ).toHaveAttribute("data-open", "false");
     expect(mocks.assistantEntryMode).toBe("workspace");
-    expect(screen.queryByRole("button", { name: "打开 M 助手" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "打开码多多" })).toBeNull();
     const composer = screen.getByRole("textbox", {
       name: "全页工作区输入框",
     });

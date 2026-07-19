@@ -44,6 +44,10 @@ export function AssistantWorkspace({
     hasResolvedServiceState: true,
     refreshingServiceState: refreshingStatus,
   });
+  const sessionBoundary =
+    displayedServiceState.capability === "placeholder"
+      ? "安全占位模式，不创建服务端会话。"
+      : "已接入码多多，支持匿名多轮对话；同一浏览器会保留最近上下文。";
 
   useLayoutEffect(() => {
     adoptServiceState(initialServiceState);
@@ -63,7 +67,7 @@ export function AssistantWorkspace({
   }, []);
 
   return (
-    <main aria-label="AI 助理工作区" className="assistant-workspace">
+    <main aria-label="码多多工作区" className="assistant-workspace">
       <aside
         aria-label="临时会话"
         className="assistant-workspace__rail"
@@ -95,8 +99,7 @@ export function AssistantWorkspace({
           >
             ＋ 新建会话
           </button>
-          <p id={NEW_SESSION_HELP_ID}>模型接入后开放</p>
-          <p>当前为匿名临时会话，不保存历史记录。</p>
+          <p id={NEW_SESSION_HELP_ID}>暂不支持创建多个会话</p>
           <div className="assistant-workspace__session-list">
             <button
               aria-label="私有化部署咨询（历史会话不可用）"
@@ -122,8 +125,8 @@ export function AssistantWorkspace({
         <header className="assistant-workspace__header">
           <div className="assistant-workspace__identity">
             <span>
-              <strong>M 企业助理</strong>
-              <small>公开咨询 · 匿名临时会话</small>
+              <strong>码多多</strong>
+              <small>公开网页助手 · 匿名会话</small>
             </span>
           </div>
           <div className="assistant-workspace__header-actions">
@@ -151,7 +154,7 @@ export function AssistantWorkspace({
               </button>
             </div>
             <Link
-              aria-label="缩小 AI 助理并返回主页面"
+              aria-label="缩小码多多并返回主页面"
               className="assistant-workspace__minimize"
               href="/"
             >
@@ -162,13 +165,12 @@ export function AssistantWorkspace({
 
         <div className="assistant-workspace__conversation">
           <section className="assistant-workspace__welcome">
-            <p className="assistant-workspace__kicker">
-              ENTERPRISE ASSISTANT / 01
-            </p>
+            <p className="assistant-workspace__kicker">MADUODUO / 01</p>
             <h1>从一个问题开始，找到适合企业的 AI 路径。</h1>
             <p className="assistant-workspace__disclosure">
-              <span>{displayedServiceState.message}</span> 后续将通过 Agno
-              AgentOS 接入 Agent、Skill、知识与会话能力。
+              <span>{displayedServiceState.message}</span>
+              <span>{sessionBoundary}</span>
+              <span>尚未接入 Skill、知识库或网页正文读取。</span>
             </p>
             <div aria-label="常见问题" className="assistant-workspace__presets">
               {ASSISTANT_PRESET_QUESTIONS.map((question) => (
@@ -185,7 +187,7 @@ export function AssistantWorkspace({
           </section>
 
           <AssistantConversation
-            ariaLabel="AI 助理对话"
+            ariaLabel="码多多对话"
             registerComposer={registerComposer}
             session={session}
             variant="workspace"

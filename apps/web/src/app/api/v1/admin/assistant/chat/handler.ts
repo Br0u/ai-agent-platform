@@ -111,8 +111,10 @@ export function createAdminAssistantChatHandler(
         const selected = dependencies.provider
           ? { provider: dependencies.provider, mode: "placeholder" as const }
           : await dependencies.resolveProvider();
-        const providerResponse =
-          await selected.provider.reply(assistantRequest);
+        const providerResponse = await selected.provider.reply({
+          request: assistantRequest,
+          session: { kind: "ephemeral" },
+        });
         if (!isAssistantProviderReply(providerResponse)) {
           throw new TypeError("Invalid assistant provider response");
         }

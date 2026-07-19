@@ -1,4 +1,23 @@
 services:
+  agent:
+    build:
+      target: acceptance
+    command:
+      [
+        "uvicorn",
+        "e2e_agent.app:app_factory",
+        "--factory",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "7777",
+        "--no-access-log",
+      ]
+    environment:
+      AAP_SESSION_IDENTITY_AUDIT_FILE: /tmp/aap-session-identity-audit
+    networks: !override
+      backend:
+
   migrate:
     environment:
       E2E_CUSTOMER_PASSWORD: ${E2E_CUSTOMER_PASSWORD:?Set E2E_CUSTOMER_PASSWORD in .env.e2e}
@@ -10,5 +29,7 @@ services:
       E2E_ROLE_TARGET_SESSION_TOKEN: ${E2E_ROLE_TARGET_SESSION_TOKEN:?Set E2E_ROLE_TARGET_SESSION_TOKEN in .env.e2e}
       E2E_ADMIN_SESSION_TOKEN: ${E2E_ADMIN_SESSION_TOKEN:?Set E2E_ADMIN_SESSION_TOKEN in .env.e2e}
       E2E_NO_TOTP_ADMIN_SESSION_TOKEN: ${E2E_NO_TOTP_ADMIN_SESSION_TOKEN:?Set E2E_NO_TOTP_ADMIN_SESSION_TOKEN in .env.e2e}
+      E2E_MODEL_ADMIN_SESSION_TOKEN: ${E2E_MODEL_ADMIN_SESSION_TOKEN:?Set E2E_MODEL_ADMIN_SESSION_TOKEN in .env.e2e}
+      E2E_MODEL_ADMIN_STALE_SESSION_TOKEN: ${E2E_MODEL_ADMIN_STALE_SESSION_TOKEN:?Set E2E_MODEL_ADMIN_STALE_SESSION_TOKEN in .env.e2e}
       E2E_REVOKED_SESSION_TOKEN: ${E2E_REVOKED_SESSION_TOKEN:?Set E2E_REVOKED_SESSION_TOKEN in .env.e2e}
       E2E_REPLACEMENT_PASSWORD: ${E2E_REPLACEMENT_PASSWORD:?Set E2E_REPLACEMENT_PASSWORD in .env.e2e}

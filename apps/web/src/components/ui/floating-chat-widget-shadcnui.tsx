@@ -156,7 +156,7 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
             <Sparkles size={20} strokeWidth={2} />
           </span>
           <div>
-            <h2 id={titleId}>M 助手</h2>
+            <h2 id={titleId}>码多多</h2>
             <p
               aria-atomic="true"
               aria-busy={refreshingServiceState}
@@ -172,7 +172,7 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
         </div>
         <div className="floating-assistant__header-actions">
           <button
-            aria-label="展开 AI 助理工作区"
+            aria-label="展开码多多工作区"
             className="floating-assistant__icon-button"
             onClick={() => router.push("/assistant")}
             type="button"
@@ -180,7 +180,7 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
             <PanelRightOpen aria-hidden="true" size={18} />
           </button>
           <button
-            aria-label="关闭 M 助手"
+            aria-label="关闭码多多"
             className="floating-assistant__icon-button"
             onClick={close}
             ref={closeRef}
@@ -192,7 +192,7 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
       </header>
 
       <div
-        aria-label="AI 助理对话"
+        aria-label="码多多对话"
         aria-live="polite"
         className="floating-assistant__messages"
         data-testid="assistant-history"
@@ -206,9 +206,7 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
             M
           </span>
           <div className="floating-assistant__message-content">
-            <p>
-              你好，我是 M 助手。可以帮你查找平台文档、部署支持和产品问题入口。
-            </p>
+            <p>你好，我是码多多。当前尚未接入 Skill、知识库或网页正文读取。</p>
           </div>
         </article>
 
@@ -246,7 +244,7 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
 
         {sending ? (
           <div
-            aria-label="M 助手正在回复"
+            aria-label="码多多正在回复"
             className="floating-assistant__typing"
           >
             <span />
@@ -285,9 +283,9 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
 
       <footer className="floating-assistant__footer">
         <AssistantPromptInput
-          ariaLabel="AI 助理对话"
+          ariaLabel="码多多对话"
           disabled={sending}
-          inputLabel="向 M 助手提问"
+          inputLabel="向码多多提问"
           onChange={session.setDraft}
           onSubmit={handlePromptSubmit}
           registerComposer={registerComposer}
@@ -296,7 +294,7 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
           variant="quick"
         />
         <div className="floating-assistant__meta">
-          <nav aria-label="M 助手兜底链接">
+          <nav aria-label="码多多兜底链接">
             <Link href="/help">
               <LifeBuoy size={14} />
               帮助中心
@@ -337,7 +335,7 @@ export function FloatingChatWidget({
       {showLauncher ? (
         <motion.button
           aria-expanded={quickOpen}
-          aria-label={quickOpen ? "关闭 M 助手入口" : "打开 M 助手"}
+          aria-label={quickOpen ? "关闭码多多入口" : "打开码多多"}
           className={`floating-assistant__launcher${quickOpen ? " is-open" : ""}`}
           onClick={() => {
             if (quickOpen) {

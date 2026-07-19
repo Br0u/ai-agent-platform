@@ -18,7 +18,7 @@ function renderPrompt(
     return (
       <AssistantPromptInput
         {...overrides}
-        ariaLabel={overrides.ariaLabel ?? "AI 助理对话"}
+        ariaLabel={overrides.ariaLabel ?? "码多多对话"}
         disabled={overrides.disabled ?? false}
         inputLabel={overrides.inputLabel ?? "输入问题"}
         onChange={setValue}
@@ -125,7 +125,7 @@ describe("AssistantPromptInput", () => {
     renderPrompt();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "选择模型，当前 AI 助理" }),
+      screen.getByRole("button", { name: "选择模型，当前码多多" }),
     );
     expect(screen.getByRole("menu", { name: "模型选择" })).toBeInTheDocument();
     expect(

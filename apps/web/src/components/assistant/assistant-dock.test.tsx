@@ -85,13 +85,13 @@ function DockHarness({ originalAriaHidden }: { originalAriaHidden?: "false" }) {
           onClick={(event) => experience.openDockFrom(event.currentTarget)}
           type="button"
         >
-          打开 AI 助理工作区
+          打开码多多工作区
         </button>
         <button
           onClick={(event) => experience.openDockFrom(event.currentTarget)}
           type="button"
         >
-          从第二入口打开 AI 助理工作区
+          从第二入口打开码多多工作区
         </button>
         <button
           onClick={(event) => experience.openQuickFrom(event.currentTarget)}
@@ -114,7 +114,7 @@ function DockHarness({ originalAriaHidden }: { originalAriaHidden?: "false" }) {
           }}
           type="button"
         >
-          发送中打开 AI 助理工作区
+          发送中打开码多多工作区
         </button>
       </div>
       <AssistantDock />
@@ -132,9 +132,9 @@ function renderDock(options: { originalAriaHidden?: "false" } = {}) {
 }
 
 async function openDock() {
-  fireEvent.click(screen.getByRole("button", { name: "打开 AI 助理工作区" }));
+  fireEvent.click(screen.getByRole("button", { name: "打开码多多工作区" }));
   const dialog = await screen.findByRole("dialog", {
-    name: "AI 助理工作区",
+    name: "码多多工作区",
   });
   await waitFor(() => expect(dialog.style.opacity).toBe("1"));
   return dialog;
@@ -232,7 +232,7 @@ describe("AssistantDock", () => {
     expect(backdrop).toHaveAttribute("data-motion-part", "backdrop");
     expect(dialog).toHaveAttribute("data-motion-part", "panel");
     expect(
-      within(dialog).getByRole("heading", { name: "M 企业助理" }),
+      within(dialog).getByRole("heading", { name: "码多多" }),
     ).toBeInTheDocument();
     expect(
       within(dialog).getByTestId("assistant-dock-service-state"),
@@ -244,7 +244,7 @@ describe("AssistantDock", () => {
       within(dialog).getByRole("link", { name: "进入完整工作区" }),
     ).toHaveAttribute("href", "/assistant");
     expect(
-      within(dialog).getByRole("button", { name: "关闭 AI 助理工作区" }),
+      within(dialog).getByRole("button", { name: "关闭码多多工作区" }),
     ).toBeInTheDocument();
     expect(
       within(dialog).getByRole("button", { name: "如何开始了解平台？" }),
@@ -258,7 +258,7 @@ describe("AssistantDock", () => {
     renderDock({ originalAriaHidden: "false" });
     const background = screen.getByTestId("assistant-background");
     const trigger = screen.getByRole("button", {
-      name: "打开 AI 助理工作区",
+      name: "打开码多多工作区",
     });
     await openDock();
 
@@ -269,7 +269,7 @@ describe("AssistantDock", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() =>
       expect(
-        screen.queryByRole("dialog", { name: "AI 助理工作区" }),
+        screen.queryByRole("dialog", { name: "码多多工作区" }),
       ).not.toBeInTheDocument(),
     );
     await waitFor(() => {
@@ -288,14 +288,14 @@ describe("AssistantDock", () => {
     fireEvent.pointerDown(dialog, { pointerId: 4 });
     fireEvent.pointerUp(backdrop, { pointerId: 4 });
     expect(
-      screen.getByRole("dialog", { name: "AI 助理工作区" }),
+      screen.getByRole("dialog", { name: "码多多工作区" }),
     ).toBeInTheDocument();
 
     fireEvent.pointerDown(backdrop, { pointerId: 5 });
     fireEvent.pointerUp(backdrop, { pointerId: 5 });
     await waitFor(() =>
       expect(
-        screen.queryByRole("dialog", { name: "AI 助理工作区" }),
+        screen.queryByRole("dialog", { name: "码多多工作区" }),
       ).not.toBeInTheDocument(),
     );
   });
@@ -303,7 +303,7 @@ describe("AssistantDock", () => {
   it("traps focus inside the dock while leaving restoration to the provider", async () => {
     renderDock();
     const trigger = screen.getByRole("button", {
-      name: "打开 AI 助理工作区",
+      name: "打开码多多工作区",
     });
     const dialog = await openDock();
     const focusable = Array.from(
@@ -327,7 +327,7 @@ describe("AssistantDock", () => {
     expect(document.activeElement).toBe(last);
 
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "关闭 AI 助理工作区" }),
+      within(dialog).getByRole("button", { name: "关闭码多多工作区" }),
     );
     expect(document.activeElement).not.toBe(trigger);
     await waitFor(() => expect(dialog).not.toBeInTheDocument());
@@ -338,12 +338,12 @@ describe("AssistantDock", () => {
     renderDock({ originalAriaHidden: "false" });
     const background = screen.getByTestId("assistant-background");
     const trigger = screen.getByRole("button", {
-      name: "打开 AI 助理工作区",
+      name: "打开码多多工作区",
     });
     const dialog = await openDock();
 
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "关闭 AI 助理工作区" }),
+      within(dialog).getByRole("button", { name: "关闭码多多工作区" }),
     );
 
     expect(dialog).toBeInTheDocument();
@@ -368,12 +368,12 @@ describe("AssistantDock", () => {
     renderDock();
     const background = screen.getByTestId("assistant-background");
     const trigger = screen.getByRole("button", {
-      name: "打开 AI 助理工作区",
+      name: "打开码多多工作区",
     });
     const dialog = await openDock();
 
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "关闭 AI 助理工作区" }),
+      within(dialog).getByRole("button", { name: "关闭码多多工作区" }),
     );
     expect(dialog).toHaveAttribute("inert");
     expect(dialog).toHaveAttribute("aria-hidden", "true");
@@ -386,13 +386,13 @@ describe("AssistantDock", () => {
     );
     expect(screen.queryByRole("dialog")).toBeNull();
     const secondTrigger = screen.getByRole("button", {
-      name: "从第二入口打开 AI 助理工作区",
+      name: "从第二入口打开码多多工作区",
       hidden: true,
     });
     fireEvent.click(secondTrigger);
 
     const reopenedDialog = screen.getByRole("dialog", {
-      name: "AI 助理工作区",
+      name: "码多多工作区",
     });
     expect(reopenedDialog).not.toBe(dialog);
     expect(reopenedDialog).not.toHaveAttribute("inert");
@@ -405,7 +405,7 @@ describe("AssistantDock", () => {
       await new Promise((resolve) => setTimeout(resolve, 240));
     });
     expect(
-      screen.getByRole("dialog", { name: "AI 助理工作区" }),
+      screen.getByRole("dialog", { name: "码多多工作区" }),
     ).toBeInTheDocument();
     expect(background).toHaveAttribute("inert");
     expect(document.body.style.overflow).toBe("hidden");
@@ -414,7 +414,7 @@ describe("AssistantDock", () => {
 
     fireEvent.click(
       within(reopenedDialog).getByRole("button", {
-        name: "关闭 AI 助理工作区",
+        name: "关闭码多多工作区",
       }),
     );
     await waitFor(() => expect(reopenedDialog).not.toBeInTheDocument());
@@ -430,10 +430,10 @@ describe("AssistantDock", () => {
       }),
     );
 
-    const quickDialog = await screen.findByRole("dialog", { name: "M 助手" });
+    const quickDialog = await screen.findByRole("dialog", { name: "码多多" });
     expect(quickDialog).toBeInTheDocument();
     expect(
-      screen.queryByRole("dialog", { name: "AI 助理工作区" }),
+      screen.queryByRole("dialog", { name: "码多多工作区" }),
     ).not.toBeInTheDocument();
   });
 
@@ -444,17 +444,17 @@ describe("AssistantDock", () => {
         name: "打开快速助手后进入工作区",
       }),
     );
-    const quickDialog = await screen.findByRole("dialog", { name: "M 助手" });
+    const quickDialog = await screen.findByRole("dialog", { name: "码多多" });
 
     fireEvent.click(
       within(quickDialog).getByRole("button", {
-        name: "展开 AI 助理工作区",
+        name: "展开码多多工作区",
       }),
     );
 
     expect(router.push).toHaveBeenCalledWith("/assistant");
     expect(
-      screen.queryByRole("dialog", { name: "AI 助理工作区" }),
+      screen.queryByRole("dialog", { name: "码多多工作区" }),
     ).not.toBeInTheDocument();
   });
 
@@ -469,11 +469,11 @@ describe("AssistantDock", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: "发送中打开 AI 助理工作区",
+        name: "发送中打开码多多工作区",
       }),
     );
     const dialog = await screen.findByRole("dialog", {
-      name: "AI 助理工作区",
+      name: "码多多工作区",
     });
     const composer = within(dialog).getByRole("textbox", { name: "输入问题" });
     await waitFor(() => expect(composer).toBeDisabled());
@@ -489,7 +489,7 @@ describe("AssistantDock", () => {
     const desktop = renderDock();
     const desktopDialog = await openDock();
     const separator = within(desktopDialog).getByRole("separator", {
-      name: "调整 AI 助理工作区宽度",
+      name: "调整码多多工作区宽度",
     });
 
     expect(separator).toHaveAttribute("aria-orientation", "vertical");
@@ -606,7 +606,7 @@ describe("AssistantDock", () => {
     const dialog = await openDock();
 
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "关闭 AI 助理工作区" }),
+      within(dialog).getByRole("button", { name: "关闭码多多工作区" }),
     );
     expect(dialog).toBeInTheDocument();
     expect(dialog).toHaveAttribute("inert");

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { createAssistantStatusHandler } from "./handler";
+import { deriveAssistantRuntimeStatus } from "@/server/assistant/assistant-runtime";
 import * as route from "./route";
 
 describe("GET /api/v1/assistant/status", () => {
@@ -107,6 +108,87 @@ describe("GET /api/v1/assistant/status", () => {
       version: "1",
       requestId: "req-invariant",
       live: false,
+      ready: false,
+      capability: "degraded",
+      message: "助手基础服务暂不可用。",
+    });
+  });
+
+  it("returns only the public degraded envelope when model execution is unavailable", async () => {
+    const GET = createAssistantStatusHandler({
+      requestIdFactory: () => "execution-open",
+      getStatus: async () => ({
+        live: true,
+        ready: false,
+        capability: "degraded",
+        message: "助手基础服务暂不可用。",
+      }),
+    });
+
+    const response = await GET(
+      new Request("http://localhost/api/v1/assistant/status"),
+    );
+    const body = await response.json();
+
+    expect(body).toEqual({
+      version: "1",
+      requestId: "execution-open",
+      live: true,
+      ready: false,
+      capability: "degraded",
+      message: "助手基础服务暂不可用。",
+    });
+    expect(JSON.stringify(body)).not.toMatch(
+      /circuit|timestamp|error|session|prompt|reply|url|key/iu,
+    );
+  });
+
+  it.each([
+    {
+      name: "readiness is unhealthy",
+      snapshot: {
+        live: true,
+        ready: false,
+        capability: "degraded" as const,
+      },
+      executionState: "closed" as const,
+    },
+    {
+      name: "execution circuit is open",
+      snapshot: {
+        live: true,
+        ready: true,
+        capability: "available" as const,
+      },
+      executionState: "open" as const,
+    },
+    {
+      name: "execution circuit is half-open",
+      snapshot: {
+        live: true,
+        ready: true,
+        capability: "available" as const,
+      },
+      executionState: "half-open" as const,
+    },
+  ])("keeps the public status degraded when $name", async (scenario) => {
+    const GET = createAssistantStatusHandler({
+      requestIdFactory: () => "degraded-request",
+      getStatus: async () =>
+        deriveAssistantRuntimeStatus(scenario.snapshot, {
+          providerMode: "agentos",
+          executionState: scenario.executionState,
+        }),
+    });
+
+    const response = await GET(
+      new Request("http://localhost/api/v1/assistant/status"),
+    );
+
+    await expect(response.json()).resolves.toEqual({
+      version: "1",
+      requestId: "degraded-request",
+      live: true,
       ready: false,
       capability: "degraded",
       message: "助手基础服务暂不可用。",

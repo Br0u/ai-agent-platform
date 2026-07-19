@@ -1,15 +1,225 @@
 """Strict, role-separated configuration for the internal agent service."""
 
+from dataclasses import dataclass
 import re
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, FiniteFloat, SecretStr, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    HttpUrl,
+    SecretStr,
+    TypeAdapter,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
 
 AsyncPostgresUrl = SecretStr
 PositiveFiniteFloat = Annotated[FiniteFloat, Field(gt=0)]
+ModelProvider = Literal[
+    "openai",
+    "anthropic",
+    "google",
+    "dashscope",
+    "deepseek",
+    "minimax",
+]
+
+MODEL_ID_MAX_CODE_POINTS = 128
+_BASE_URL_PROVIDERS: frozenset[ModelProvider] = frozenset(
+    {"openai", "dashscope", "deepseek", "minimax"}
+)
+_BOOLEAN_ADAPTER = TypeAdapter(bool)
+_HTTP_URL_ADAPTER = TypeAdapter(HttpUrl)
+_DIRECT_MODEL_SETTING_ALIASES = {
+    "agent_enabled": "AGENT_ENABLED",
+    "model_provider": "MODEL_PROVIDER",
+    "model_id": "MODEL_ID",
+    "model_api_key": "MODEL_API_KEY",
+    "model_base_url": "MODEL_BASE_URL",
+    "model_run_timeout_seconds": "MODEL_RUN_TIMEOUT_SECONDS",
+    "openai_custom_headers": "OPENAI_CUSTOM_HEADERS",
+    "anthropic_custom_headers": "ANTHROPIC_CUSTOM_HEADERS",
+}
+_MODEL_SETTING_INPUT_KEYS = frozenset(
+    {
+        "MODEL_PROVIDER",
+        "MODEL_ID",
+        "MODEL_API_KEY",
+        "MODEL_BASE_URL",
+        "MODEL_RUN_TIMEOUT_SECONDS",
+        "OPENAI_CUSTOM_HEADERS",
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "model_provider",
+        "model_id",
+        "model_api_key",
+        "model_base_url",
+        "model_run_timeout_seconds",
+        "openai_custom_headers",
+        "anthropic_custom_headers",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveModelSettings:
+    """Validated model configuration consumed by the runtime model registry."""
+
+    provider: ModelProvider
+    model_id: str
+    api_key: SecretStr
+    base_url: str | None
+    timeout_seconds: int
+
+
+def _validate_model_id_value(value: str) -> str:
+    if not value.strip() or value != value.strip():
+        raise ValueError("model ID must not be blank or have surrounding whitespace")
+    if len(value) > MODEL_ID_MAX_CODE_POINTS:
+        raise ValueError(
+            f"model ID must contain at most {MODEL_ID_MAX_CODE_POINTS} code points"
+        )
+    if any(
+        ord(character) <= 0x1F or 0x7F <= ord(character) <= 0x9F
+        for character in value
+    ):
+        raise ValueError("model ID must not contain C0 or C1 control characters")
+    return value
+
+
+def _validate_model_api_key_value(value: SecretStr) -> SecretStr:
+    secret = value.get_secret_value()
+    if not secret or secret != secret.strip():
+        raise ValueError(
+            "model API key must not be blank or have surrounding whitespace"
+        )
+    return value
+
+
+def _validate_model_base_url_value(
+    value: str | None,
+    provider: ModelProvider | None,
+) -> str | None:
+    if value is None:
+        return value
+
+    if provider is not None and provider not in _BASE_URL_PROVIDERS:
+        raise ValueError("MODEL_BASE_URL is not supported for the selected provider")
+    if any(
+        character.isspace()
+        or ord(character) <= 0x1F
+        or 0x7F <= ord(character) <= 0x9F
+        for character in value
+    ) or "\\" in value:
+        raise ValueError(
+            "MODEL_BASE_URL must not contain whitespace, controls, or backslashes"
+        )
+    authority = value[8:].split("/", maxsplit=1)[0]
+    if "@" in authority:
+        raise ValueError("MODEL_BASE_URL must not contain userinfo")
+    try:
+        parsed = _HTTP_URL_ADAPTER.validate_python(value)
+    except ValidationError:
+        raise ValueError("MODEL_BASE_URL must be a valid HTTPS URL") from None
+    if (
+        parsed.scheme != "https"
+        or not value.lower().startswith("https://")
+        or value[8:9] in {"", "/"}
+        or not parsed.host
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query is not None
+        or parsed.fragment is not None
+        or "?" in value
+        or "#" in value
+    ):
+        raise ValueError(
+            "MODEL_BASE_URL must use HTTPS with a host and without "
+            "credentials, query, or fragment"
+        )
+    return str(parsed)
+
+
+def _validate_model_timeout_input_value(value: object) -> int:
+    if isinstance(value, bool):
+        raise ValueError("model run timeout must be an integer")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value):
+        return int(value)
+    raise ValueError("model run timeout must be an integer")
+
+
+class _ActiveModelInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        hide_input_in_errors=True,
+        validate_default=True,
+    )
+
+    provider: ModelProvider
+    model_id: str
+    api_key: SecretStr
+    base_url: str | None = None
+    timeout_seconds: int = Field(default=50, ge=1, le=50)
+
+    @field_validator("model_id", mode="after")
+    @classmethod
+    def _validate_model_id(cls, value: str) -> str:
+        return _validate_model_id_value(value)
+
+    @field_validator("api_key", mode="after")
+    @classmethod
+    def _validate_model_api_key(cls, value: SecretStr) -> SecretStr:
+        return _validate_model_api_key_value(value)
+
+    @field_validator("base_url", mode="after")
+    @classmethod
+    def _validate_model_base_url(
+        cls,
+        value: str | None,
+        info: ValidationInfo,
+    ) -> str | None:
+        return _validate_model_base_url_value(value, info.data.get("provider"))
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def _validate_model_timeout_input(cls, value: object) -> int:
+        return _validate_model_timeout_input_value(value)
+
+
+def resolve_active_model_settings(
+    *,
+    provider: object,
+    model_id: object,
+    api_key: object,
+    base_url: object,
+    timeout_seconds: object,
+) -> ActiveModelSettings:
+    """Resolve the one model contract shared by runtime and provider smoke."""
+    validated = _ActiveModelInput.model_validate(
+        {
+            "provider": provider,
+            "model_id": model_id,
+            "api_key": api_key,
+            "base_url": base_url,
+            "timeout_seconds": timeout_seconds,
+        }
+    )
+    return ActiveModelSettings(
+        provider=validated.provider,
+        model_id=validated.model_id,
+        api_key=validated.api_key,
+        base_url=validated.base_url,
+        timeout_seconds=validated.timeout_seconds,
+    )
 
 
 def _validate_async_postgres_url(value: SecretStr) -> SecretStr:
@@ -40,6 +250,7 @@ class _AgentSettings(BaseSettings):
         case_sensitive=True,
         extra="ignore",
         hide_input_in_errors=True,
+        validate_default=True,
     )
 
 
@@ -50,11 +261,71 @@ class RuntimeSettings(_AgentSettings):
         default="agno",
         validation_alias="AGNO_SCHEMA",
     )
-    os_security_key: SecretStr = Field(validation_alias="OS_SECURITY_KEY")
-    agno_database_url: AsyncPostgresUrl = Field(validation_alias="AGNO_DATABASE_URL")
+    os_security_key: SecretStr = Field(
+        validation_alias="OS_SECURITY_KEY",
+        repr=False,
+    )
+    agno_database_url: AsyncPostgresUrl = Field(
+        validation_alias="AGNO_DATABASE_URL",
+        repr=False,
+    )
+    agent_control_database_url: AsyncPostgresUrl | None = Field(
+        default=None,
+        validation_alias="AGENT_CONTROL_DATABASE_URL",
+        repr=False,
+    )
+    model_config_encryption_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="MODEL_CONFIG_ENCRYPTION_KEY",
+        repr=False,
+    )
+    agent_config_control_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="AGENT_CONFIG_CONTROL_KEY",
+        repr=False,
+    )
+    model_endpoints_file: str | None = Field(
+        default=None,
+        validation_alias="MODEL_ENDPOINTS_FILE",
+    )
     agent_enabled: bool = Field(
         default=False,
         validation_alias="AGENT_ENABLED",
+    )
+    model_provider: ModelProvider | None = Field(
+        default=None,
+        validation_alias="MODEL_PROVIDER",
+    )
+    model_id: str | None = Field(
+        default=None,
+        validation_alias="MODEL_ID",
+    )
+    model_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="MODEL_API_KEY",
+        repr=False,
+    )
+    model_base_url: str | None = Field(
+        default=None,
+        validation_alias="MODEL_BASE_URL",
+    )
+    model_run_timeout_seconds: int = Field(
+        default=50,
+        ge=1,
+        le=50,
+        validation_alias="MODEL_RUN_TIMEOUT_SECONDS",
+    )
+    openai_custom_headers: SecretStr | None = Field(
+        default=None,
+        validation_alias="OPENAI_CUSTOM_HEADERS",
+        exclude=True,
+        repr=False,
+    )
+    anthropic_custom_headers: SecretStr | None = Field(
+        default=None,
+        validation_alias="ANTHROPIC_CUSTOM_HEADERS",
+        exclude=True,
+        repr=False,
     )
     health_ready_cache_ttl_seconds: PositiveFiniteFloat = Field(
         default=5.0,
@@ -69,6 +340,53 @@ class RuntimeSettings(_AgentSettings):
         _validate_async_postgres_url
     )
 
+    @field_validator("agent_control_database_url", mode="after")
+    @classmethod
+    def _validate_control_database_url(
+        cls,
+        value: SecretStr | None,
+    ) -> SecretStr | None:
+        if value is None:
+            return None
+        return _validate_async_postgres_url(value)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _ignore_disabled_model_configuration(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+        normalized_values = dict(values)
+        for field_name, validation_alias in _DIRECT_MODEL_SETTING_ALIASES.items():
+            if (
+                validation_alias not in normalized_values
+                and field_name in normalized_values
+            ):
+                normalized_values[validation_alias] = normalized_values[field_name]
+            normalized_values.pop(field_name, None)
+        try:
+            agent_enabled = _BOOLEAN_ADAPTER.validate_python(
+                normalized_values.get("AGENT_ENABLED", False)
+            )
+        except ValidationError:
+            agent_enabled = None
+        if agent_enabled is False:
+            return {
+                key: value
+                for key, value in normalized_values.items()
+                if key not in _MODEL_SETTING_INPUT_KEYS
+            }
+        raw_api_key = normalized_values.get("MODEL_API_KEY")
+        if isinstance(raw_api_key, str):
+            normalized_values["MODEL_API_KEY"] = SecretStr(raw_api_key)
+        for environment_name in (
+            "OPENAI_CUSTOM_HEADERS",
+            "ANTHROPIC_CUSTOM_HEADERS",
+        ):
+            raw_headers = normalized_values.get(environment_name)
+            if isinstance(raw_headers, str):
+                normalized_values[environment_name] = SecretStr(raw_headers)
+        return normalized_values
+
     @field_validator("os_security_key", mode="after")
     @classmethod
     def _validate_security_key(cls, value: SecretStr) -> SecretStr:
@@ -79,17 +397,153 @@ class RuntimeSettings(_AgentSettings):
             raise ValueError("OS security key must be a valid Bearer token")
         return value
 
-    @field_validator("agent_enabled", mode="after")
+    @field_validator("model_config_encryption_key", mode="after")
     @classmethod
-    def _reject_enabled_agent(cls, value: bool) -> bool:
-        if value:
-            raise ValueError("agent capability is not configured")
+    def _validate_model_config_encryption_key(
+        cls,
+        value: SecretStr | None,
+    ) -> SecretStr | None:
+        if value is None:
+            return None
+        secret = value.get_secret_value()
+        if re.fullmatch(r"[0-9a-f]{64}", secret) is None:
+            raise ValueError(
+                "model config encryption key must be 64 lowercase hexadecimal "
+                "characters"
+            )
+        if len(bytes.fromhex(secret)) != 32:
+            raise ValueError(
+                "model config encryption key must decode to exactly 32 bytes"
+            )
         return value
 
-    @property
-    def capability(self) -> Literal["placeholder"]:
-        return "placeholder"
+    @field_validator("agent_config_control_key", mode="after")
+    @classmethod
+    def _validate_agent_config_control_key(
+        cls,
+        value: SecretStr | None,
+        info: ValidationInfo,
+    ) -> SecretStr | None:
+        if value is None:
+            return None
+        secret = value.get_secret_value()
+        if len(secret.encode("utf-8")) < 32:
+            raise ValueError("agent config control key must contain at least 32 bytes")
+        if re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", secret) is None:
+            raise ValueError("agent config control key must be a valid Bearer token")
+        os_security_key = info.data.get("os_security_key")
+        if (
+            isinstance(os_security_key, SecretStr)
+            and secret == os_security_key.get_secret_value()
+        ):
+            raise ValueError("AgentOS and control bearer keys must be different")
+        return value
 
+    @field_validator("model_id", mode="after")
+    @classmethod
+    def _validate_model_id(
+        cls,
+        value: str | None,
+        info: ValidationInfo,
+    ) -> str | None:
+        if value is None:
+            return value
+        return _validate_model_id_value(value)
+
+    @field_validator("model_api_key", mode="after")
+    @classmethod
+    def _validate_model_api_key(
+        cls,
+        value: SecretStr | None,
+        info: ValidationInfo,
+    ) -> SecretStr | None:
+        if value is None:
+            return value
+        return _validate_model_api_key_value(value)
+
+    @field_validator("model_base_url", mode="after")
+    @classmethod
+    def _validate_model_base_url(
+        cls,
+        value: str | None,
+        info: ValidationInfo,
+    ) -> str | None:
+        return _validate_model_base_url_value(
+            value,
+            info.data.get("model_provider"),
+        )
+
+    @field_validator("model_run_timeout_seconds", mode="before")
+    @classmethod
+    def _validate_model_timeout_input(cls, value: object) -> int:
+        return _validate_model_timeout_input_value(value)
+
+    @field_validator("openai_custom_headers", mode="after")
+    @classmethod
+    def _reject_openai_custom_headers(
+        cls,
+        value: SecretStr | None,
+        info: ValidationInfo,
+    ) -> None:
+        if (
+            value is not None
+            and info.data.get("agent_enabled")
+            and info.data.get("model_provider") in _BASE_URL_PROVIDERS
+        ):
+            raise ValueError("OPENAI_CUSTOM_HEADERS")
+        return None
+
+    @field_validator("anthropic_custom_headers", mode="after")
+    @classmethod
+    def _reject_anthropic_custom_headers(
+        cls,
+        value: SecretStr | None,
+        info: ValidationInfo,
+    ) -> None:
+        if (
+            value is not None
+            and info.data.get("agent_enabled")
+            and info.data.get("model_provider") == "anthropic"
+        ):
+            raise ValueError("ANTHROPIC_CUSTOM_HEADERS")
+        return None
+
+    @model_validator(mode="after")
+    def _reject_partial_bootstrap_model(self) -> "RuntimeSettings":
+        bootstrap_fields = (
+            self.model_provider,
+            self.model_id,
+            self.model_api_key,
+        )
+        if self.agent_enabled and any(value is not None for value in bootstrap_fields):
+            if not all(value is not None for value in bootstrap_fields):
+                raise ValueError(
+                    "bootstrap model configuration requires MODEL_PROVIDER, MODEL_ID, "
+                    "and MODEL_API_KEY together"
+                )
+        return self
+
+    @property
+    def bootstrap_model(self) -> ActiveModelSettings | None:
+        if (
+            not self.agent_enabled
+            or self.model_provider is None
+            or self.model_id is None
+            or self.model_api_key is None
+        ):
+            return None
+        return resolve_active_model_settings(
+            provider=self.model_provider,
+            model_id=self.model_id,
+            api_key=self.model_api_key,
+            base_url=self.model_base_url,
+            timeout_seconds=self.model_run_timeout_seconds,
+        )
+
+    @property
+    def active_model(self) -> ActiveModelSettings | None:
+        """Backward-compatible alias for the deployment bootstrap model."""
+        return self.bootstrap_model
 
 class MigrationSettings(_AgentSettings):
     """Credentials available only to the one-shot migration role."""
@@ -99,5 +553,18 @@ class MigrationSettings(_AgentSettings):
     )
 
     _validate_database_url = field_validator("agno_migrator_database_url")(
+        _validate_async_postgres_url
+    )
+
+
+class ControlMigrationSettings(_AgentSettings):
+    """Credentials available only to the Agent control schema migrator."""
+
+    database_url: AsyncPostgresUrl = Field(
+        validation_alias="AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+        repr=False,
+    )
+
+    _validate_database_url = field_validator("database_url")(
         _validate_async_postgres_url
     )

@@ -7,12 +7,21 @@ export type AssistantProviderMode = "placeholder" | "agentos";
 
 export type AssistantProviderEnvironment = {
   ASSISTANT_PROVIDER_MODE?: string;
-  ASSISTANT_AGENTOS_DEFAULT_AGENT_ID?: string | null;
 };
 
-export type AssistantProviderSettings =
-  | { mode: "placeholder"; defaultAgentId?: never }
-  | { mode: "agentos"; defaultAgentId: string };
+export type AssistantProviderSettings = { mode: AssistantProviderMode };
+
+export class AssistantProviderSelectionUnavailableError extends Error {
+  readonly code = "ASSISTANT_PROVIDER_SELECTION_UNAVAILABLE";
+
+  constructor() {
+    super("Assistant provider selection unavailable");
+    Object.defineProperty(this, "name", {
+      value: "AssistantProviderSelectionUnavailableError",
+      configurable: true,
+    });
+  }
+}
 
 export function resolveAssistantProviderSettings(
   environment: AssistantProviderEnvironment,
@@ -21,32 +30,17 @@ export function resolveAssistantProviderSettings(
   if (mode !== "placeholder" && mode !== "agentos") {
     throw new Error("ASSISTANT_PROVIDER_MODE must be placeholder or agentos");
   }
-  if (mode === "placeholder") return { mode };
-
-  const rawAgentId = environment.ASSISTANT_AGENTOS_DEFAULT_AGENT_ID;
-  if (
-    typeof rawAgentId !== "string" ||
-    rawAgentId !== rawAgentId.trim() ||
-    !/^[a-z0-9][a-z0-9_-]{0,127}$/u.test(rawAgentId)
-  ) {
-    throw new Error("ASSISTANT_AGENTOS_DEFAULT_AGENT_ID is invalid");
-  }
-  return { mode, defaultAgentId: rawAgentId };
+  return { mode };
 }
 
 export function selectAssistantProvider(input: {
   mode: AssistantProviderMode;
   ready: boolean;
-  defaultAgentId?: string;
   capability: AgentOSCapability;
   placeholder: AssistantProvider;
   agentos: AssistantProvider;
 }): AssistantProvider {
-  return input.mode === "agentos" &&
-    input.ready &&
-    typeof input.defaultAgentId === "string" &&
-    /^[a-z0-9][a-z0-9_-]{0,127}$/u.test(input.defaultAgentId) &&
-    input.capability === "available"
-    ? input.agentos
-    : input.placeholder;
+  if (input.mode === "placeholder") return input.placeholder;
+  if (input.ready && input.capability === "available") return input.agentos;
+  throw new AssistantProviderSelectionUnavailableError();
 }

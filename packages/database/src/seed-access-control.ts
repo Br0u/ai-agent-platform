@@ -47,6 +47,16 @@ const permissions: readonly PermissionSeed[] = [
   { key: "console:team", name: "管理客户团队" },
   { key: "admin:site", name: "管理站点" },
   { key: "admin:assistant", name: "管理 AI 助理" },
+  {
+    key: "admin:assistant:configure",
+    name: "配置 AI 助理模型",
+    description: "保存、替换 Key、测试和启用 AI 助理模型配置",
+  },
+  {
+    key: "admin:assistant:secret:reveal",
+    name: "查看 AI 助理模型密钥",
+    description: "查看已保存的 AI 助理模型 Key",
+  },
   { key: "admin:navigation", name: "管理导航" },
   { key: "admin:products", name: "管理产品" },
   { key: "admin:releases", name: "管理版本" },
@@ -63,7 +73,18 @@ const permissions: readonly PermissionSeed[] = [
   { key: "admin:audit", name: "查看审计日志" },
 ];
 
+const superAdminOnlyPermissionKeys = new Set([
+  "admin:assistant:configure",
+  "admin:assistant:secret:reveal",
+]);
+
 const adminPermissionKeys = permissions
+  .map(({ key }) => key)
+  .filter(
+    (key) => key.startsWith("admin:") && !superAdminOnlyPermissionKeys.has(key),
+  );
+
+const superAdminPermissionKeys = permissions
   .map(({ key }) => key)
   .filter((key) => key.startsWith("admin:"));
 
@@ -116,7 +137,7 @@ const roles: readonly (RoleSeed & {
   {
     name: "super_admin",
     realmScope: "workforce",
-    permissionKeys: adminPermissionKeys,
+    permissionKeys: superAdminPermissionKeys,
   },
 ];
 

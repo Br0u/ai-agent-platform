@@ -469,7 +469,7 @@ function AssistantDockPanel({ instanceVersion }: { instanceVersion: number }) {
       <motion.section
         animate="visible"
         aria-describedby={descriptionId}
-        aria-label="AI 助理工作区"
+        aria-label="码多多工作区"
         aria-modal="true"
         className="assistant-dock"
         data-mobile={isMobile ? "true" : undefined}
@@ -496,7 +496,7 @@ function AssistantDockPanel({ instanceVersion }: { instanceVersion: number }) {
         <header className="assistant-dock__header">
           <div className="assistant-dock__title-block">
             <p>AI ASSISTANT</p>
-            <h2>M 企业助理</h2>
+            <h2>码多多</h2>
           </div>
           <div className="assistant-dock__actions">
             <button
@@ -510,7 +510,7 @@ function AssistantDockPanel({ instanceVersion }: { instanceVersion: number }) {
               <ArrowUpRight aria-hidden="true" size={17} />
             </Link>
             <button
-              aria-label="关闭 AI 助理工作区"
+              aria-label="关闭码多多工作区"
               onClick={requestClose}
               type="button"
             >
@@ -576,7 +576,7 @@ function AssistantDockPanel({ instanceVersion }: { instanceVersion: number }) {
             </section>
           ) : null}
           <AssistantConversation
-            ariaLabel="AI 助理对话"
+            ariaLabel="码多多对话"
             registerComposer={registerComposer}
             session={session}
             variant="dock"

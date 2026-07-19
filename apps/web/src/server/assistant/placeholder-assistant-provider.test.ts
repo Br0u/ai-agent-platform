@@ -25,7 +25,11 @@ describe("PlaceholderAssistantProvider", () => {
     "returns the exact mapped response for %s",
     async (message, reply, actions) => {
       await expect(
-        provider.reply({ message, context: { pathname: "/pricing" } }),
+        provider.reply({
+          request: { message, context: { pathname: "/pricing" } },
+          session: { kind: "persistent", internalSessionId: "ignored-session" },
+          signal: AbortSignal.abort(),
+        }),
       ).resolves.toEqual({
         content: reply,
         suggestedActions: actions,
@@ -36,8 +40,11 @@ describe("PlaceholderAssistantProvider", () => {
   it("returns the generic placeholder response for other questions", async () => {
     await expect(
       provider.reply({
-        message: "这个功能什么时候上线？",
-        context: { pathname: "/product" },
+        request: {
+          message: "这个功能什么时候上线？",
+          context: { pathname: "/product" },
+        },
+        session: { kind: "ephemeral" },
       }),
     ).resolves.toEqual({
       content: "AI 服务尚未接入。你可以先查看帮助中心或联系商务顾问。",

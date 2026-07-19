@@ -4,7 +4,8 @@ ENV PNPM_HOME=/pnpm
 ENV COREPACK_HOME=/corepack
 ENV PATH=$PNPM_HOME:$PATH
 
-RUN mkdir -p $COREPACK_HOME \
+RUN apk add --no-cache gosu=1.19-r4 \
+  && mkdir -p $COREPACK_HOME \
   && corepack enable \
   && corepack prepare pnpm@11.5.2 --activate \
   && chmod -R a+rX $COREPACK_HOME
@@ -54,6 +55,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm --filter @ai-agent-platform/web build
 
 FROM node:24-alpine3.24 AS runner
+
+RUN apk add --no-cache gosu=1.19-r4
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1

@@ -6,10 +6,14 @@ import type {
 } from "@/features/assistant/admin-assistant-contract";
 import { isAdminAssistantChatResponse } from "@/features/assistant/admin-assistant-contract";
 import { useAssistantSession } from "@/components/assistant/use-assistant-session";
+import { AssistantModelConfigPanel } from "@/components/admin/assistant-model-config-panel";
+import { AssistantCapabilityRoadmap } from "@/components/admin/assistant-capability-roadmap";
+import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
 import type { FormEvent } from "react";
 import "./assistant-admin-page.css";
 
 type AssistantAdminPageProps = {
+  modelConfigs: AdminModelConfigSnapshot;
   sessions: AdminAssistantSessionsSnapshot;
   status: AdminAssistantStatusSnapshot;
 };
@@ -25,6 +29,7 @@ const configurationLabels: Record<
 };
 
 export function AssistantAdminPage({
+  modelConfigs,
   sessions,
   status,
 }: AssistantAdminPageProps) {
@@ -90,12 +95,20 @@ export function AssistantAdminPage({
             <dd>{status.runtime.capability}</dd>
           </div>
           <div>
-            <dt>Circuit</dt>
-            <dd>{status.runtime.circuit.state}</dd>
+            <dt>Readiness Circuit</dt>
+            <dd>{status.runtime.circuits.readiness.state}</dd>
           </div>
           <div>
-            <dt>Failures</dt>
-            <dd>{status.runtime.circuit.consecutiveFailures}</dd>
+            <dt>Readiness Failures</dt>
+            <dd>{status.runtime.circuits.readiness.consecutiveFailures}</dd>
+          </div>
+          <div>
+            <dt>Execution Circuit</dt>
+            <dd>{status.runtime.circuits.execution.state}</dd>
+          </div>
+          <div>
+            <dt>Execution Failures</dt>
+            <dd>{status.runtime.circuits.execution.consecutiveFailures}</dd>
           </div>
           <div>
             <dt>Health TTL</dt>
@@ -116,6 +129,10 @@ export function AssistantAdminPage({
         </dl>
       </section>
 
+      <AssistantModelConfigPanel initialSnapshot={modelConfigs} />
+
+      <AssistantCapabilityRoadmap />
+
       <div className="assistant-admin__workspace">
         <section
           aria-labelledby="assistant-test-title"
@@ -124,9 +141,9 @@ export function AssistantAdminPage({
           <header>
             <div>
               <p>PROTECTED TEST CONSOLE</p>
-              <h2 id="assistant-test-title">受保护的占位测试控制台</h2>
+              <h2 id="assistant-test-title">受保护的助手测试控制台</h2>
             </div>
-            <span>不会写入会话</span>
+            <span>临时会话，结束后清理</span>
           </header>
           <form onSubmit={submitTest}>
             <label htmlFor="assistant-admin-question">测试问题</label>
@@ -134,12 +151,14 @@ export function AssistantAdminPage({
               id="assistant-admin-question"
               maxLength={500}
               onChange={(event) => assistant.setDraft(event.target.value)}
-              placeholder="输入用于验证占位合同的问题"
+              placeholder="输入助手测试问题"
               rows={4}
               value={assistant.draft}
             />
             <div>
-              <small>仅验证当前受保护的响应合同，不调用真实模型。</small>
+              <small>
+                AgentOS 模式会调用已配置模型；占位模式返回安全占位回答。
+              </small>
               <button
                 disabled={assistant.requestStatus === "sending"}
                 type="submit"
@@ -182,13 +201,13 @@ export function AssistantAdminPage({
         >
           <div>
             <p>SESSION STORAGE</p>
-            <h2 id="assistant-sessions-title">最近会话</h2>
+            <h2 id="assistant-sessions-title">会话持久化</h2>
             <span>{sessions.message}</span>
             <small>
-              {sessions.capability} / {sessions.persistence}
+              {sessions.persistence} / {sessions.listing}
             </small>
           </div>
-          <strong>{sessions.items.length.toString().padStart(2, "0")}</strong>
+          <strong>列表不可用</strong>
         </section>
 
         <nav
@@ -197,9 +216,6 @@ export function AssistantAdminPage({
         >
           <button disabled type="button">
             会话审计
-          </button>
-          <button disabled type="button">
-            Skill 管理
           </button>
         </nav>
       </div>

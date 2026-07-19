@@ -39,7 +39,7 @@ function renderConversation(
 ) {
   return render(
     <AssistantConversation
-      ariaLabel={options.ariaLabel ?? "AI 助理对话"}
+      ariaLabel={options.ariaLabel ?? "码多多对话"}
       registerComposer={options.registerComposer ?? (() => () => undefined)}
       session={session}
       variant={options.variant ?? "dock"}
@@ -65,14 +65,14 @@ describe("AssistantConversation", () => {
 
     renderConversation(session, { variant: "workspace" });
 
-    const log = screen.getByRole("log", { name: "AI 助理对话" });
+    const log = screen.getByRole("log", { name: "码多多对话" });
     expect(log).toHaveAttribute("data-testid", "assistant-message-history");
     expect(log).toHaveAttribute("aria-live", "off");
     expect(
       within(log).getByRole("article", { name: "你的消息" }),
     ).toHaveTextContent("如何部署？");
     expect(
-      within(log).getByRole("article", { name: "M 企业助理的消息" }),
+      within(log).getByRole("article", { name: "码多多的消息" }),
     ).toHaveTextContent("请先查看部署指南。");
     expect(
       within(log).getByRole("navigation", { name: "建议操作" }),
@@ -169,7 +169,7 @@ describe("AssistantConversation", () => {
     });
     view.rerender(
       <AssistantConversation
-        ariaLabel="AI 助理对话"
+        ariaLabel="码多多对话"
         registerComposer={() => () => undefined}
         session={failedSession}
         variant="dock"
@@ -193,7 +193,7 @@ describe("AssistantConversation", () => {
       }),
     );
 
-    const log = screen.getByRole("log", { name: "AI 助理对话" });
+    const log = screen.getByRole("log", { name: "码多多对话" });
     const alert = screen.getByRole("alert");
     const feedback = within(
       screen

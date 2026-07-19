@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import {
   AUDIT_EVENT_SCHEMAS,
   createAuditWriter,
+  type AuditEvent,
   type AuditRepository,
+  type AuditWriteInput,
 } from "./audit";
 
 function fixture() {
@@ -13,9 +15,105 @@ function fixture() {
   return { repository, writer: createAuditWriter(repository) };
 }
 
+function runtimeAuditInput(input: unknown): AuditWriteInput {
+  return input as AuditWriteInput;
+}
+
+const requestedAssistantModelAuditEvents = [
+  "assistant.model_config_save_requested",
+  "assistant.model_config_test_requested",
+  "assistant.model_config_activation_requested",
+  "assistant.model_key_reveal_requested",
+] as const satisfies readonly AuditEvent[];
+
+const completedAssistantModelAuditEvents = [
+  "assistant.model_config_saved",
+  "assistant.model_config_tested",
+  "assistant.model_config_activated",
+  "assistant.model_key_revealed",
+] as const satisfies readonly AuditEvent[];
+
+const assistantModelAuditMetadataBase = {
+  provider: "openai",
+  modelId: "gpt-5-mini",
+  endpointId: "openai-primary",
+  revision: 1,
+  requestId: "request-1",
+} as const;
+
+const completedAssistantModelAuditMetadata = {
+  ...assistantModelAuditMetadataBase,
+  result: "success",
+} as const;
+
+const assistantModelAuditInputs = [
+  ...requestedAssistantModelAuditEvents.map((event) => ({
+    event,
+    actor: { realm: "workforce" as const, userId: "super-1" },
+    target: {
+      type: "assistant_model_config" as const,
+      id: "openai:1",
+    },
+    metadata: {
+      ...assistantModelAuditMetadataBase,
+      result: "requested" as const,
+    },
+  })),
+  ...completedAssistantModelAuditEvents.map((event) => ({
+    event,
+    actor: { realm: "workforce" as const, userId: "super-1" },
+    target: {
+      type: "assistant_model_config" as const,
+      id: "openai:1",
+    },
+    metadata: completedAssistantModelAuditMetadata,
+  })),
+] satisfies readonly AuditWriteInput[];
+
+const administrationAuditInputs = [
+  {
+    event: "session.revoked",
+    actor: { realm: "workforce", userId: "admin-1" },
+    target: { type: "session", id: "target-1" },
+    metadata: { revokedCount: 2 },
+  },
+  {
+    event: "role.permissions_changed",
+    actor: { realm: "workforce", userId: "admin-1" },
+    target: { type: "role", id: "target-1" },
+    metadata: { permissionCount: 3 },
+  },
+  {
+    event: "site.config_changed",
+    actor: { realm: "workforce", userId: "admin-1" },
+    target: { type: "system", id: "target-1" },
+    metadata: { field: "supportMessage" },
+  },
+] as const satisfies readonly AuditWriteInput[];
+
+function expectInvalidAssistantModelAuditMetadata(
+  metadata: Record<string, unknown>,
+): void {
+  try {
+    AUDIT_EVENT_SCHEMAS["assistant.model_config_saved"](metadata);
+  } catch (error) {
+    expect(error).toMatchObject({ code: "AUDIT_INPUT_INVALID" });
+    return;
+  }
+  throw new Error("Expected assistant model audit metadata to be rejected");
+}
+
 describe("audit writer", () => {
   it("exports the complete current event schema and stores valid typed values", async () => {
     expect(Object.keys(AUDIT_EVENT_SCHEMAS).sort()).toEqual([
+      "assistant.model_config_activated",
+      "assistant.model_config_activation_requested",
+      "assistant.model_config_save_requested",
+      "assistant.model_config_saved",
+      "assistant.model_config_test_requested",
+      "assistant.model_config_tested",
+      "assistant.model_key_reveal_requested",
+      "assistant.model_key_revealed",
       "auth.login_failure",
       "auth.login_success",
       "auth.logout",
@@ -56,22 +154,205 @@ describe("audit writer", () => {
     });
   });
 
-  it.each([
-    ["session.revoked", { revokedCount: 2 }, "session"],
-    ["role.permissions_changed", { permissionCount: 3 }, "role"],
-    ["site.config_changed", { field: "supportMessage" }, "system"],
-  ] as const)(
-    "accepts required administration event %s",
-    async (event, metadata, targetType) => {
+  it.each(assistantModelAuditInputs)(
+    "stores exact bounded model metadata for $event",
+    async (input) => {
       const { repository, writer } = fixture();
-      await writer.write({
-        event,
-        actor: { realm: "workforce", userId: "admin-1" },
-        target: { type: targetType, id: "target-1" },
-        metadata,
-      } as never);
+
+      await writer.write(input);
+
+      expect(repository.insert).toHaveBeenCalledWith({
+        action: input.event,
+        actorRealm: "workforce",
+        actorUserId: "super-1",
+        targetType: "assistant_model_config",
+        targetId: "openai:1",
+        metadata: input.metadata,
+        ipAddress: null,
+        userAgent: null,
+      });
+    },
+  );
+
+  it("exposes phase-specific model audit result types", () => {
+    type RequestedInput = Extract<
+      AuditWriteInput,
+      { event: "assistant.model_config_save_requested" }
+    >;
+    type CompletedInput = Extract<
+      AuditWriteInput,
+      { event: "assistant.model_config_saved" }
+    >;
+
+    expectTypeOf<
+      RequestedInput["metadata"]["result"]
+    >().toEqualTypeOf<"requested">();
+    expectTypeOf<CompletedInput["metadata"]["result"]>().toEqualTypeOf<
+      "success" | "failure"
+    >();
+  });
+
+  it.each(requestedAssistantModelAuditEvents)(
+    "rejects completed results for requested event %s",
+    (event) => {
+      for (const result of ["success", "failure"] as const) {
+        expect(() =>
+          AUDIT_EVENT_SCHEMAS[event]({
+            ...assistantModelAuditMetadataBase,
+            result,
+          }),
+        ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
+      }
+    },
+  );
+
+  it.each(completedAssistantModelAuditEvents)(
+    "rejects requested result for completed event %s",
+    (event) => {
+      expect(() =>
+        AUDIT_EVENT_SCHEMAS[event]({
+          ...assistantModelAuditMetadataBase,
+          result: "requested",
+        }),
+      ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
+    },
+  );
+
+  it.each([
+    "openai",
+    "anthropic",
+    "google",
+    "dashscope",
+    "deepseek",
+    "minimax",
+  ] as const)("accepts model audit provider %s", async (provider) => {
+    const { repository, writer } = fixture();
+    const input = {
+      event: "assistant.model_config_saved",
+      target: { type: "assistant_model_config" },
+      metadata: { ...completedAssistantModelAuditMetadata, provider },
+    } satisfies AuditWriteInput;
+    await writer.write(input);
+    expect(repository.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: { ...completedAssistantModelAuditMetadata, provider },
+      }),
+    );
+  });
+
+  it.each(["success", "failure"] as const)(
+    "accepts completed model audit result %s",
+    async (result) => {
+      const { repository, writer } = fixture();
+      const input = {
+        event: "assistant.model_config_tested",
+        target: { type: "assistant_model_config" },
+        metadata: { ...completedAssistantModelAuditMetadata, result },
+      } satisfies AuditWriteInput;
+      await writer.write(input);
       expect(repository.insert).toHaveBeenCalledWith(
-        expect.objectContaining({ action: event, metadata }),
+        expect.objectContaining({
+          metadata: { ...completedAssistantModelAuditMetadata, result },
+        }),
+      );
+    },
+  );
+
+  it.each([
+    "apiKey",
+    "lastFour",
+    "ciphertext",
+    "baseUrl",
+    "prompt",
+    "response",
+    "nonce",
+    "assertion",
+    "error",
+    "rawError",
+    "errorMessage",
+    "errorBody",
+  ])("rejects model audit metadata field %s", (field) => {
+    expectInvalidAssistantModelAuditMetadata({
+      ...completedAssistantModelAuditMetadata,
+      [field]: "must-not-be-stored",
+    });
+  });
+
+  it.each([
+    [
+      "provider",
+      { ...completedAssistantModelAuditMetadata, provider: "other" },
+    ],
+    ["modelId", { ...completedAssistantModelAuditMetadata, modelId: "" }],
+    [
+      "modelId",
+      { ...completedAssistantModelAuditMetadata, modelId: "x".repeat(129) },
+    ],
+    [
+      "modelId",
+      { ...completedAssistantModelAuditMetadata, modelId: "bad\nmodel" },
+    ],
+    ["endpointId", { ...completedAssistantModelAuditMetadata, endpointId: "" }],
+    [
+      "endpointId",
+      { ...completedAssistantModelAuditMetadata, endpointId: "x".repeat(65) },
+    ],
+    [
+      "endpointId",
+      {
+        ...completedAssistantModelAuditMetadata,
+        endpointId: "bad\u0000endpoint",
+      },
+    ],
+    ["revision", { ...completedAssistantModelAuditMetadata, revision: -1 }],
+    ["revision", { ...completedAssistantModelAuditMetadata, revision: 1.5 }],
+    [
+      "revision",
+      { ...completedAssistantModelAuditMetadata, revision: Infinity },
+    ],
+    ["requestId", { ...completedAssistantModelAuditMetadata, requestId: "" }],
+    [
+      "requestId",
+      { ...completedAssistantModelAuditMetadata, requestId: "x".repeat(129) },
+    ],
+    [
+      "requestId",
+      {
+        ...completedAssistantModelAuditMetadata,
+        requestId: "bad\u007frequest",
+      },
+    ],
+    ["result", { ...completedAssistantModelAuditMetadata, result: "unknown" }],
+  ])("rejects invalid model audit metadata %s", (_field, metadata) => {
+    expectInvalidAssistantModelAuditMetadata(metadata);
+  });
+
+  it.each([
+    "provider",
+    "modelId",
+    "endpointId",
+    "revision",
+    "requestId",
+    "result",
+  ])("rejects model audit metadata missing %s", (field) => {
+    const metadata: Record<string, unknown> = {
+      ...completedAssistantModelAuditMetadata,
+    };
+    delete metadata[field];
+
+    expectInvalidAssistantModelAuditMetadata(metadata);
+  });
+
+  it.each(administrationAuditInputs)(
+    "accepts required administration event $event",
+    async (input) => {
+      const { repository, writer } = fixture();
+      await writer.write(input);
+      expect(repository.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: input.event,
+          metadata: input.metadata,
+        }),
       );
     },
   );
@@ -102,7 +383,9 @@ describe("audit writer", () => {
     async (input) => {
       const { repository, writer } = fixture();
 
-      await expect(writer.write(input as never)).rejects.toMatchObject({
+      await expect(
+        writer.write(runtimeAuditInput(input)),
+      ).rejects.toMatchObject({
         code: "AUDIT_INPUT_INVALID",
       });
       expect(repository.insert).not.toHaveBeenCalled();
@@ -112,20 +395,22 @@ describe("audit writer", () => {
   it("drops unknown, sensitive, and nested unknown keys while keeping the allowed value", async () => {
     const { repository, writer } = fixture();
 
-    await writer.write({
-      event: "auth.login_failure",
-      target: { type: "user" },
-      metadata: {
-        reason: "invalid_credentials",
-        password: "secret",
-        passwordHash: "hash",
-        sessionToken: "session-token",
-        tokenHash: "token-hash",
-        totpSecret: "totp-secret",
-        unknown: "drop",
-        nested: { token: "hidden" },
-      },
-    } as never);
+    await writer.write(
+      runtimeAuditInput({
+        event: "auth.login_failure",
+        target: { type: "user" },
+        metadata: {
+          reason: "invalid_credentials",
+          password: "secret",
+          passwordHash: "hash",
+          sessionToken: "session-token",
+          tokenHash: "token-hash",
+          totpSecret: "totp-secret",
+          unknown: "drop",
+          nested: { token: "hidden" },
+        },
+      }),
+    );
 
     expect(repository.insert).toHaveBeenCalledWith(
       expect.objectContaining({ metadata: { reason: "invalid_credentials" } }),
@@ -141,11 +426,13 @@ describe("audit writer", () => {
     metadata.password = "secret";
 
     await expect(
-      writer.write({
-        event: "auth.login_failure",
-        target: { type: "user" },
-        metadata,
-      } as never),
+      writer.write(
+        runtimeAuditInput({
+          event: "auth.login_failure",
+          target: { type: "user" },
+          metadata,
+        }),
+      ),
     ).rejects.toMatchObject({ code: "AUDIT_INPUT_INVALID" });
     expect(repository.insert).not.toHaveBeenCalled();
   });
@@ -162,11 +449,13 @@ describe("audit writer", () => {
       enumerable: true,
     });
 
-    await writer.write({
-      event: "auth.login_failure",
-      target: { type: "user" },
-      metadata,
-    } as never);
+    await writer.write(
+      runtimeAuditInput({
+        event: "auth.login_failure",
+        target: { type: "user" },
+        metadata,
+      }),
+    );
 
     expect(repository.insert).toHaveBeenCalledWith(
       expect.objectContaining({ metadata: { reason: "invalid_credentials" } }),
@@ -208,10 +497,12 @@ describe("audit writer", () => {
   ])("rejects invalid envelope values %#", async (overrides) => {
     const { repository, writer } = fixture();
     await expect(
-      writer.write({
-        event: "auth.logout",
-        ...overrides,
-      } as never),
+      writer.write(
+        runtimeAuditInput({
+          event: "auth.logout",
+          ...overrides,
+        }),
+      ),
     ).rejects.toMatchObject({ code: "AUDIT_INPUT_INVALID" });
     expect(repository.insert).not.toHaveBeenCalled();
   });
@@ -221,11 +512,13 @@ describe("audit writer", () => {
     async (event) => {
       const { repository, writer } = fixture();
       await expect(
-        writer.write({
-          event,
-          target: { type: "user" },
-          metadata: { password: "secret", nested: { token: "hidden" } },
-        } as never),
+        writer.write(
+          runtimeAuditInput({
+            event,
+            target: { type: "user" },
+            metadata: { password: "secret", nested: { token: "hidden" } },
+          }),
+        ),
       ).rejects.toMatchObject({ code: "AUDIT_INPUT_INVALID" });
       expect(repository.insert).not.toHaveBeenCalled();
     },
@@ -290,11 +583,13 @@ describe("audit writer", () => {
   it("rejects role add/remove audit events without an exact role", async () => {
     const { repository, writer } = fixture();
     await expect(
-      writer.write({
-        event: "workforce.user_updated",
-        target: { type: "user", id: "staff-1" },
-        metadata: { change: "role_added" },
-      } as never),
+      writer.write(
+        runtimeAuditInput({
+          event: "workforce.user_updated",
+          target: { type: "user", id: "staff-1" },
+          metadata: { change: "role_added" },
+        }),
+      ),
     ).rejects.toMatchObject({ code: "AUDIT_INPUT_INVALID" });
     expect(repository.insert).not.toHaveBeenCalled();
   });
