@@ -47,7 +47,7 @@ AI Agent Platform 企业级统一客户门户（Customer Portal）。
 - 企业开发工程师：查看 API 文档和开发能力。
 - 企业管理员：进入客户控制台查看企业相关入口。
 - 潜在客户：了解产品并找到试用与商务联系入口。
-- 平台运营人员：维护门户内容、导航、版本和文档元数据。
+- 平台运营人员：维护门户内容、导航、版本和文档正文。
 
 ### 2.2 一期角色
 
@@ -56,7 +56,7 @@ AI Agent Platform 企业级统一客户门户（Customer Portal）。
 | 游客 | 浏览公开门户、文档、兼容矩阵、博客和公开市场内容 |
 | 客户用户 | 自助注册后等待审核，审核通过后登录客户控制台 |
 | 内部员工 | 由管理员创建，在授权范围内进入运营后台 |
-| 内容运营 | 管理页面配置、产品、版本、博客、案例、FAQ 和导航 |
+| 内容运营 | 管理页面配置、产品、版本、文档、博客、案例、FAQ 和导航 |
 | 超级管理员 | 用户、角色、权限、站点配置和全部 CMS 权限 |
 
 ### 2.3 一期账号规则
@@ -157,6 +157,7 @@ AI Agent Platform 企业级统一客户门户（Customer Portal）。
 | `/admin/navigation` | 导航管理 |
 | `/admin/products` | 产品内容 |
 | `/admin/releases` | 版本与Release Note |
+| `/admin/docs` | 文档管理 |
 | `/admin/blog` | 博客和动态 |
 | `/admin/cases` | 客户案例 |
 | `/admin/faq` | FAQ |
@@ -197,9 +198,10 @@ AI Agent Platform 企业级统一客户门户（Customer Portal）。
 
 ### 5.4 文档中心
 
-- 基于 Nextra 和 MDX。
+- 基于 Nextra 展示组件和受控 Markdown AST 渲染，不执行 CMS 提交的 JavaScript、任意 MDX 或原始 HTML。
 - 支持左侧目录、正文目录、代码复制、上一篇/下一篇、全文搜索入口。
-- 文档内容存储在代码仓库中，CMS只管理文档元数据和导航引用。
+- 文档正文、元数据、导航和不可变发布修订存储在 PostgreSQL，由 CMS 管理；公开页面只读取明确发布的修订。
+- 文档 slug 改名只在发布时切换，旧公开 slug 永久重定向到新的 canonical slug，草稿不能改变线上 URL。
 - PDF导出、OpenAPI渲染和多产品版本切换作为后续增强，不计入一期原生能力。
 
 ### 5.5 兼容矩阵
@@ -228,7 +230,7 @@ AI Agent Platform 企业级统一客户门户（Customer Portal）。
 - 发布和下线必须记录操作者、时间和内容版本。
 - 列表支持搜索、筛选、排序和分页。
 - 删除默认采用软删除；超级管理员可恢复。
-- 富文本和MDX内容必须执行服务端校验与安全过滤。
+- 文档使用标准 Markdown 和白名单指令，必须执行服务端 AST 校验和安全渲染；不得执行动态代码或原始 HTML。
 
 ## 6. 占位模块规范
 
@@ -263,6 +265,7 @@ AI Agent Platform 企业级统一客户门户（Customer Portal）。
 - `navigation_items`：导航树。
 - `products`、`product_modules`：产品和模块。
 - `releases`、`release_notes`：版本与更新内容。
+- `content`、`content_revisions`、`content_routes`：CMS 当前草稿、不可变文档修订和公开 slug 注册。
 - `posts`、`categories`、`tags`：博客和动态。
 - `cases`：客户案例元数据。
 - `faqs`：帮助内容。
@@ -276,6 +279,7 @@ AI Agent Platform 企业级统一客户门户（Customer Portal）。
 - 所有业务实体使用稳定ID、创建时间、更新时间和状态字段。
 - URL slug必须唯一。
 - 发布内容保留操作者和发布时间。
+- 文档公开读取通过发布修订指针完成，草稿和发布内容不得共用可变正文。
 - 软删除内容不能出现在公开查询中。
 - 外部占位模块一期不创建完整业务表，只保留接口类型和必要配置。
 
@@ -324,7 +328,7 @@ AI Agent Platform 企业级统一客户门户（Customer Portal）。
 ### 9.1 技术基线
 
 - Next.js App Router、TypeScript、Tailwind CSS、shadcn/ui。
-- Nextra用于文档中心。
+- Nextra展示组件用于文档中心；动态正文通过受控 Markdown AST 渲染。
 - PostgreSQL自建数据库。
 - 数据库迁移、种子数据和服务端数据访问层。
 - 单仓库模块化单体，不在一期拆微服务。
