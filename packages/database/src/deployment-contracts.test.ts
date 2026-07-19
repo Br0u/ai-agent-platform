@@ -1706,7 +1706,13 @@ exit 0
     expect(agentService).toContain("MODEL_API_KEY=/run/secrets/model_api_key");
     expect(agentService).toContain("- model_api_key");
     expect(agentService).toContain(
-      'if [ -z "$${MODEL_BASE_URL-}" ]; then unset MODEL_BASE_URL; fi',
+      '[ -z "$${MODEL_BASE_URL-}" ]; then unset MODEL_BASE_URL; fi',
+    );
+    expect(agentService).toContain(
+      'if [ -z "$${MODEL_PROVIDER-}" ] && [ -z "$${MODEL_ID-}" ]; then unset MODEL_PROVIDER MODEL_ID MODEL_BASE_URL;',
+    );
+    expect(agentService).toContain(
+      "SECRET_ENV_SPECS=$${SECRET_ENV_SPECS%MODEL_API_KEY=/run/secrets/model_api_key}",
     );
     expect(agentService).toContain(
       'exec /opt/aap/run-with-secret-env.sh "$$@"',
