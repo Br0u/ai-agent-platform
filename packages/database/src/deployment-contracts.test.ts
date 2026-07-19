@@ -2736,6 +2736,16 @@ exit 0
     );
   });
 
+  it("generates model-admin session fixtures before seeding auth E2E data", () => {
+    const workflow = read(".github/workflows/ci.yml");
+    const loopStart = workflow.indexOf("for name in ");
+    const loopEnd = workflow.indexOf("; do", loopStart);
+    const fixtureLoop = workflow.slice(loopStart, loopEnd);
+
+    expect(fixtureLoop).toContain("E2E_MODEL_ADMIN_SESSION_TOKEN");
+    expect(fixtureLoop).toContain("E2E_MODEL_ADMIN_STALE_SESSION_TOKEN");
+  });
+
   it("keeps browser output ignored and documents every production variable", () => {
     const ignored = read(".gitignore");
     expect(ignored).toContain("artifacts/playwright/");
