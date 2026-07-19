@@ -366,6 +366,8 @@ export function AssistantModelConfigPanel({
   );
   const endpointOptions = snapshot.endpoints[selectedProvider];
   const writable = snapshot.canConfigure && snapshot.controlEnabled;
+  const controlUnavailable =
+    !snapshot.controlEnabled && snapshot.runtime.capability === "degraded";
   const canMutate = writable && !syncRequired && keyReveal.status !== "loading";
   const keyRequired = selectedConfig.apiKey === null;
   const hasDynamicSavedKey =
@@ -889,7 +891,11 @@ export function AssistantModelConfigPanel({
           <span>保存草稿后测试并启用；测试失败不会切换当前模型。</span>
         </div>
         <strong>
-          {snapshot.controlEnabled ? "控制面已启用" : "部署已关闭控制面"}
+          {snapshot.controlEnabled
+            ? "控制面已启用"
+            : controlUnavailable
+              ? "控制面暂不可用"
+              : "部署已关闭控制面"}
         </strong>
       </header>
 
@@ -1088,7 +1094,9 @@ export function AssistantModelConfigPanel({
                 (!snapshot.canConfigure
                   ? "仅可查看脱敏配置。"
                   : !snapshot.controlEnabled
-                    ? "部署级控制开关已关闭。"
+                    ? controlUnavailable
+                      ? "模型配置控制面暂不可用。"
+                      : "部署级控制开关已关闭。"
                     : "等待配置操作。")}
               {showRefresh ? (
                 <button

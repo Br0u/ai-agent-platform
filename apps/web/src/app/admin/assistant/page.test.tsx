@@ -256,4 +256,23 @@ describe("AdminAssistantPage", () => {
       /agent:7777|security|secret/iu,
     );
   });
+
+  it("renders a disabled model control panel when its internal transport is unavailable", async () => {
+    mocks.loadModelConfigs.mockRejectedValueOnce(
+      new Error(
+        "raw AGENTOS_INTERNAL_URL=http://agent:7777 OS_SECURITY_KEY=secret",
+      ),
+    );
+
+    const pagePromise = AdminAssistantPage();
+    await expect(pagePromise).resolves.toBeDefined();
+    render(await pagePromise);
+
+    expect(screen.getByText("控制面暂不可用")).toBeVisible();
+    expect(screen.getByText("模型配置控制面暂不可用。")).toBeVisible();
+    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
+    expect(document.body.textContent).not.toMatch(
+      /raw|agent:7777|security|secret/iu,
+    );
+  });
 });
