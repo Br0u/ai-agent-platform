@@ -9,6 +9,7 @@ import {
   documentDtoSchema,
   mutateDocumentInputSchema,
   parseAdminDocumentQuery,
+  selectedDocumentDtoSchema,
 } from "./contracts";
 
 describe("document contracts", () => {
@@ -126,6 +127,19 @@ describe("document contracts", () => {
       deletedAt: null,
     };
     expect(documentDtoSchema.safeParse(dto).success).toBe(true);
+    expect(
+      selectedDocumentDtoSchema.safeParse({
+        ...dto,
+        revisionId: "00000000-0000-4000-8000-000000000099",
+      }).success,
+    ).toBe(true);
+    expect(selectedDocumentDtoSchema.safeParse(dto).success).toBe(false);
+    expect(
+      selectedDocumentDtoSchema.safeParse({
+        ...dto,
+        revisionId: "derived-or-guessed",
+      }).success,
+    ).toBe(false);
     expect(
       documentDtoSchema.safeParse({
         ...dto,

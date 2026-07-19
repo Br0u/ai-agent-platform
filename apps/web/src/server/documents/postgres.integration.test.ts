@@ -434,6 +434,38 @@ describePostgres("document PostgreSQL repository", () => {
     expect(result.items[0]).not.toHaveProperty("renderModel");
   });
 
+  it("selects the real UUID for the document current revision", async () => {
+    const created = await service.create(draft(`selected-${randomUUID()}`), {
+      userId: adminId,
+    });
+    const saved = await service.save(
+      {
+        ...draft(`selected-current-${randomUUID()}`),
+        id: created.id,
+        expectedRevision: created.revision,
+        expectedRowVersion: created.rowVersion,
+      },
+      { userId: adminId },
+    );
+    const revisions = await pool.query<{ id: string; revision: number }>(
+      `SELECT id::text, revision
+       FROM content_revisions
+       WHERE content_id = $1
+       ORDER BY revision`,
+      [created.id],
+    );
+
+    const selected = await service.getById(created.id, { userId: adminId });
+
+    expect(revisions.rows).toHaveLength(2);
+    expect(selected).toMatchObject({
+      id: created.id,
+      revision: saved.revision,
+      revisionId: revisions.rows[1]?.id,
+    });
+    expect(selected?.revisionId).not.toBe(revisions.rows[0]?.id);
+  });
+
   it("keeps paginated items and total in one repeatable-read snapshot", async () => {
     await service.create(draft(`snapshot-a-${randomUUID()}`), {
       userId: adminId,

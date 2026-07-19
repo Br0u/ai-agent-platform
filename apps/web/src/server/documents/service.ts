@@ -14,6 +14,7 @@ import {
   mutateDocumentInputSchema,
   parseAdminDocumentQuery,
   saveDocumentInputSchema,
+  selectedDocumentDtoSchema,
   type AdminDocumentQuery,
   type CreateDocumentInput,
   type DocumentDto,
@@ -21,6 +22,7 @@ import {
   type DocumentPageDto,
   type DocumentStatus,
   type MutateDocumentInput,
+  type SelectedDocumentDto,
   type SaveDocumentInput,
 } from "./contracts";
 
@@ -120,7 +122,7 @@ export interface DocumentRepository {
     query: AdminDocumentQuery,
     actorUserId: string,
   ): Promise<{ items: DocumentListItemDto[]; total: number }>;
-  getById(id: string, actorUserId: string): Promise<DocumentDto | null>;
+  getById(id: string, actorUserId: string): Promise<SelectedDocumentDto | null>;
 }
 
 const SOURCE_SAFETY_ERROR_PREFIXES = [
@@ -287,13 +289,13 @@ export function createDocumentService(repository: DocumentRepository) {
     async getById(
       id: unknown,
       actor: DocumentActor,
-    ): Promise<DocumentDto | null> {
+    ): Promise<SelectedDocumentDto | null> {
       const parsed = mutateDocumentInputSchema.shape.id.safeParse(id);
       if (!parsed.success)
         throw new DocumentError("DOCUMENT_INPUT_INVALID", "id");
       const result = await repository.getById(parsed.data, actor.userId);
       if (!result) return null;
-      const safeResult = documentDtoSchema.safeParse(result);
+      const safeResult = selectedDocumentDtoSchema.safeParse(result);
       if (!safeResult.success)
         throw new Error("Document DTO invariant violated");
       return safeResult.data;

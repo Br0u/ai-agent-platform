@@ -1,6 +1,16 @@
 import "server-only";
 
-import { and, asc, count, desc, eq, ilike, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  getTableColumns,
+  ilike,
+  or,
+  sql,
+} from "drizzle-orm";
 
 import {
   content,
@@ -18,9 +28,9 @@ import { matchesPostgresConstraint } from "../registration/database-errors";
 import {
   DocumentError,
   type AdminDocumentQuery,
-  type DocumentDto,
   type DocumentListItemDto,
   type DocumentStatus,
+  type SelectedDocumentDto,
 } from "./contracts";
 import type {
   DocumentRepository,
@@ -33,6 +43,7 @@ type DatabaseTransaction = Parameters<
   Parameters<Database["transaction"]>[0]
 >[0];
 type ContentRow = typeof content.$inferSelect;
+type SelectedDocumentRow = ContentRow & { revisionId: string };
 type DocumentListRow = Pick<
   ContentRow,
   | "id"
@@ -105,9 +116,10 @@ function listItem(row: DocumentListRow): DocumentListItemDto {
   };
 }
 
-function dto(row: ContentRow): DocumentDto {
+function selectedDto(row: SelectedDocumentRow): SelectedDocumentDto {
   return {
     ...listItem(row),
+    revisionId: row.revisionId,
     body: row.body as SafeDocumentBodyV1,
     publishedAt: row.publishedAt?.toISOString() ?? null,
     archivedAt: row.archivedAt?.toISOString() ?? null,
@@ -462,10 +474,23 @@ export function createDatabaseDocumentRepository(
           actorUserId,
           "admin:docs",
         );
-        const row = await databaseTx.query.content.findFirst({
-          where: and(eq(content.id, id), eq(content.type, "document")),
-        });
-        return row ? dto(row) : null;
+        const rows = await databaseTx
+          .select({
+            ...getTableColumns(content),
+            revisionId: contentRevisions.id,
+          })
+          .from(content)
+          .innerJoin(
+            contentRevisions,
+            and(
+              eq(contentRevisions.contentId, content.id),
+              eq(contentRevisions.revision, content.revision),
+            ),
+          )
+          .where(and(eq(content.id, id), eq(content.type, "document")))
+          .limit(1);
+        const row = rows[0];
+        return row ? selectedDto(row) : null;
       });
     },
   };

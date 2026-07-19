@@ -66,4 +66,11 @@ describe("document database repository contract", () => {
     expect(source).toContain(".select(documentListProjection)");
     expect(source).toContain('{ isolationLevel: "repeatable read" }');
   });
+
+  it("loads a selected document by joining its exact current immutable revision", () => {
+    expect(source).toContain("revisionId: contentRevisions.id");
+    expect(source).toMatch(
+      /innerJoin\([\s\S]*contentRevisions[\s\S]*eq\(contentRevisions\.contentId, content\.id\)[\s\S]*eq\(contentRevisions\.revision, content\.revision\)[\s\S]*\)/u,
+    );
+  });
 });

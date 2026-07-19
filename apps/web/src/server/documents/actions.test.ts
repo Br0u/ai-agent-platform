@@ -41,9 +41,8 @@ vi.mock("./service", () => ({
 import { AuthAccessError } from "../auth/access";
 import { SensitiveActionError } from "../auth/sensitive-action";
 import {
-  createDocumentAction,
+  createDefaultDocumentActions,
   createDocumentActions,
-  publishDocumentAction,
   type DocumentActionState,
 } from "./actions";
 import {
@@ -690,8 +689,9 @@ describe("document action cache invalidation", () => {
 
 describe("default document action wiring", () => {
   it("connects exported create to normal access, service and admin cache", async () => {
+    const actions = createDefaultDocumentActions();
     await expect(
-      createDocumentAction(initialState, createForm()),
+      actions.createDocumentAction(initialState, createForm()),
     ).resolves.toEqual({ kind: "success" });
 
     expect(defaultWiring.createRepository).toHaveBeenCalledOnce();
@@ -707,8 +707,9 @@ describe("default document action wiring", () => {
   });
 
   it("connects exported publish to sensitive access and public cache", async () => {
+    const actions = createDefaultDocumentActions();
     await expect(
-      publishDocumentAction(initialState, mutationForm()),
+      actions.publishDocumentAction(initialState, mutationForm()),
     ).resolves.toEqual({ kind: "success" });
 
     expect(defaultWiring.createRepository).toHaveBeenCalledOnce();

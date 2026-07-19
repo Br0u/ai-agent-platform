@@ -120,9 +120,14 @@ export const documentDtoSchema = documentListItemDtoSchema
   })
   .strict();
 
+export const selectedDocumentDtoSchema = documentDtoSchema
+  .extend({ revisionId: documentIdSchema })
+  .strict();
+
 export type DocumentListItemDto = z.infer<typeof documentListItemDtoSchema>;
 export type DocumentPageDto = z.infer<typeof documentPageDtoSchema>;
 export type DocumentDto = z.infer<typeof documentDtoSchema>;
+export type SelectedDocumentDto = z.infer<typeof selectedDocumentDtoSchema>;
 
 export const DOCUMENT_ERROR_CODES = [
   "DOCUMENT_INPUT_INVALID",

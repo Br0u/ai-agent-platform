@@ -431,20 +431,31 @@ git commit -m "feat(cms): add guarded document actions"
 - Create: `apps/web/src/components/admin/document-manager.css`
 - Modify: `apps/web/src/config/routes.ts`
 - Modify: `apps/web/src/config/routes.test.ts`
+- Modify: `apps/web/src/server/documents/contracts.ts`
+- Modify: `apps/web/src/server/documents/contracts.test.ts`
+- Modify: `apps/web/src/server/documents/repository.ts`
+- Modify: `apps/web/src/server/documents/repository.test.ts`
+- Modify: `apps/web/src/server/documents/postgres.integration.test.ts`
+- Modify: `apps/web/src/server/documents/service.ts`
+- Modify: `apps/web/src/server/documents/service.test.ts`
+- Modify: `apps/web/src/server/documents/actions.ts`
+- Modify: `apps/web/src/server/documents/actions.test.ts`
+- Create: `apps/web/src/server/documents/server-actions.ts`
+- Create: `apps/web/src/server/documents/server-actions.test.ts`
 
-- [ ] **Step 1: Write failing page and editor tests**
+- [ ] **Step 1: Write failing selected-revision, page and editor tests**
 
-Require `requirePermission("admin:docs")` before any document repository/service read and prove denial performs no read. Cover safe defaults for invalid/duplicate search params, search, status filters, deterministic sort, pagination, empty/error states, selected document fields, revision/publication status, labels, validation messages, pending buttons, preview link, publish/archive controls and super-admin-only delete/restore controls. Delete/restore visibility comes from the authoritative actor permission list containing `admin:docs:delete`, never a browser-provided role label. All controls require accessible names and status announcements.
+Add a strict `SelectedDocumentDto` that extends the mutation `DocumentDto` with the real immutable `revisionId` UUID. Require `repository.getById` to join `content` to `content_revisions` on both `content_id` and the current integer `revision`; never derive or guess a revision UUID. Require `requirePermission("admin:docs")` before any document repository/service read and prove denial performs no read. Cover safe defaults for invalid/duplicate search params, search, status filters, deterministic sort, pagination, empty/error states, selected document fields, revision/publication status, labels, validation messages, pending buttons, the exact `/admin/docs/preview/[revisionId]` link without a revision query, publish/archive controls and super-admin-only delete/restore controls. Delete/restore visibility comes from the authoritative actor permission list containing `admin:docs:delete`, never a browser-provided role label. Prove a real editor remounts from document A to B without retaining A's uncontrolled field values. Prove client code imports only a dedicated top-level `"use server"` action module and exercise all six wrappers through that boundary. All controls require accessible names and status announcements.
 
 - [ ] **Step 2: Run CMS UI tests and verify RED**
 
-Run: `pnpm --filter @ai-agent-platform/web test -- src/app/admin/docs/page.test.tsx src/components/admin/document-editor.test.tsx src/config/routes.test.ts`
+Run: `pnpm --filter @ai-agent-platform/web test -- src/server/documents/contracts.test.ts src/server/documents/repository.test.ts src/server/documents/service.test.ts src/server/documents/actions.test.ts src/server/documents/server-actions.test.ts src/server/documents/postgres.integration.test.ts src/app/admin/docs/page.test.tsx src/components/admin/document-editor.test.tsx src/config/routes.test.ts`
 
-Expected: FAIL because `/admin/docs` remains scaffold.
+Expected: FAIL because the selected-revision contract/join do not exist and `/admin/docs` remains scaffold.
 
 - [ ] **Step 3: Implement the server page and focused client editor**
 
-Keep search, status, sort, page, page size and selection in validated URL search params. Use `useActionState` for mutations, `useFormStatus` for pending states, hidden expected revision/row version fields, and a plain textarea with a short syntax guide. Do not add a WYSIWYG editor.
+Keep search, status, sort, page, page size and selection in validated URL search params. Pass only `SelectedDocumentDto` to the editor, key the editor by document identity plus optimistic-concurrency values, and build preview URLs from its database-selected `revisionId`. Use `useActionState` for mutations, `useFormStatus` for pending states, hidden expected revision/row version fields, and a plain textarea with a short syntax guide. Put the six async client-callable wrappers in `server-actions.ts` with a top-level `"use server"`; keep action factories and state types in the server-only implementation module. Do not add a WYSIWYG editor.
 
 - [ ] **Step 4: Add restrained responsive CMS styling**
 
@@ -455,8 +466,9 @@ Desktop uses list + editor columns; mobile stacks them. Reuse design tokens and 
 Run:
 
 ```bash
-pnpm --filter @ai-agent-platform/web test -- src/app/admin/docs/page.test.tsx src/components/admin/document-editor.test.tsx src/config/routes.test.ts
+pnpm --filter @ai-agent-platform/web test -- src/server/documents/contracts.test.ts src/server/documents/repository.test.ts src/server/documents/service.test.ts src/server/documents/actions.test.ts src/server/documents/server-actions.test.ts src/server/documents/postgres.integration.test.ts src/app/admin/docs/page.test.tsx src/components/admin/document-editor.test.tsx src/config/routes.test.ts
 pnpm --filter @ai-agent-platform/web typecheck
+env -u DATABASE_URL -u RUNTIME_DATABASE_URL_FILE DATABASE_URL=postgresql://invalid:invalid@127.0.0.1:1/invalid pnpm --filter @ai-agent-platform/web build
 ```
 
 Expected: PASS.
@@ -464,6 +476,26 @@ Expected: PASS.
 - [ ] **Step 6: Commit CMS UI**
 
 ```bash
+git add -- \
+  apps/web/src/app/admin/docs/page.tsx \
+  apps/web/src/app/admin/docs/page.test.tsx \
+  apps/web/src/components/admin/document-editor.tsx \
+  apps/web/src/components/admin/document-editor.test.tsx \
+  apps/web/src/components/admin/document-manager.css \
+  apps/web/src/config/routes.ts \
+  apps/web/src/config/routes.test.ts \
+  apps/web/src/server/documents/contracts.ts \
+  apps/web/src/server/documents/contracts.test.ts \
+  apps/web/src/server/documents/repository.ts \
+  apps/web/src/server/documents/repository.test.ts \
+  apps/web/src/server/documents/postgres.integration.test.ts \
+  apps/web/src/server/documents/service.ts \
+  apps/web/src/server/documents/service.test.ts \
+  apps/web/src/server/documents/actions.ts \
+  apps/web/src/server/documents/actions.test.ts \
+  apps/web/src/server/documents/server-actions.ts \
+  apps/web/src/server/documents/server-actions.test.ts \
+  docs/superpowers/plans/2026-07-19-cms-managed-nextra-documents.md
 git commit -m "feat(cms): implement document management workspace"
 ```
 

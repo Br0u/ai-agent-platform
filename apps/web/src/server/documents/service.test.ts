@@ -15,6 +15,7 @@ import {
 
 const actor = { userId: "00000000-0000-4000-8000-000000000001" };
 const id = "00000000-0000-4000-8000-000000000010";
+const revisionId = "00000000-0000-4000-8000-000000000099";
 
 function draft(slug = "quick-start") {
   return {
@@ -241,6 +242,31 @@ function cas(document: LockedDocument) {
 }
 
 describe("document service", () => {
+  it("returns the repository-selected immutable revision UUID unchanged", async () => {
+    const value = fixture();
+    const selected = {
+      id,
+      revisionId,
+      slug: "quick-start",
+      title: "Quick start",
+      summary: "Summary",
+      body: compileSafeDocument(draft()),
+      status: "draft" as const,
+      revision: 1,
+      rowVersion: 1,
+      publishedRevision: null,
+      publishedAt: null,
+      archivedAt: null,
+      deletedAt: null,
+      deleted: false,
+      updatedAt: "2026-07-20T00:00:00.000Z",
+    };
+    vi.mocked(value.repository.getById).mockResolvedValueOnce(selected);
+
+    await expect(value.service.getById(id, actor)).resolves.toEqual(selected);
+    expect(value.repository.getById).toHaveBeenCalledWith(id, actor.userId);
+  });
+
   it("creates one immutable revision, reserves the slug and audits in one transaction", async () => {
     const value = fixture(null);
     const result = await value.service.create(draft(), actor);

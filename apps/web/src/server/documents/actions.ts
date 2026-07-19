@@ -516,7 +516,7 @@ function reportDocumentInternalError(incident: DocumentActionIncident): void {
   }
 }
 
-function createDefaultDocumentActions() {
+export function createDefaultDocumentActions() {
   return createDocumentActions({
     service: createDocumentService(createDatabaseDocumentRepository()),
     access: {
@@ -526,67 +526,4 @@ function createDefaultDocumentActions() {
     cache: { revalidatePath, updateTag },
     reportInternalError: reportDocumentInternalError,
   });
-}
-
-export async function createDocumentAction(
-  previous: DocumentActionState,
-  formData: FormData,
-): Promise<DocumentActionState> {
-  "use server";
-  return createDefaultDocumentActions().createDocumentAction(
-    previous,
-    formData,
-  );
-}
-
-export async function saveDocumentAction(
-  previous: DocumentActionState,
-  formData: FormData,
-): Promise<DocumentActionState> {
-  "use server";
-  return createDefaultDocumentActions().saveDocumentAction(previous, formData);
-}
-
-export async function publishDocumentAction(
-  previous: DocumentActionState,
-  formData: FormData,
-): Promise<DocumentActionState> {
-  "use server";
-  return createDefaultDocumentActions().publishDocumentAction(
-    previous,
-    formData,
-  );
-}
-
-export async function archiveDocumentAction(
-  previous: DocumentActionState,
-  formData: FormData,
-): Promise<DocumentActionState> {
-  "use server";
-  return createDefaultDocumentActions().archiveDocumentAction(
-    previous,
-    formData,
-  );
-}
-
-export async function deleteDocumentAction(
-  previous: DocumentActionState,
-  formData: FormData,
-): Promise<DocumentActionState> {
-  "use server";
-  return createDefaultDocumentActions().deleteDocumentAction(
-    previous,
-    formData,
-  );
-}
-
-export async function restoreDocumentAction(
-  previous: DocumentActionState,
-  formData: FormData,
-): Promise<DocumentActionState> {
-  "use server";
-  return createDefaultDocumentActions().restoreDocumentAction(
-    previous,
-    formData,
-  );
 }
