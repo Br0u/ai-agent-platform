@@ -121,14 +121,28 @@ describe("role administration", () => {
 
   it("guards and transactionally rechecks permission and realm before replacing permissions", async () => {
     const operations: string[] = [];
-    const tx: RolePermissionRepository = {
-      hasPermission: vi.fn(async () => true),
-      findActorRole: vi.fn(async () => "super_admin" as const),
-      findRole: vi.fn(async () => ({
-        id: "role-1",
-        name: "support_operator",
-        realmScope: "workforce" as const,
-      })),
+    const tx: RolePermissionRepository & {
+      acquirePermissionMutationLock(): Promise<void>;
+    } = {
+      acquirePermissionMutationLock: vi.fn(async () => {
+        operations.push("mutation-lock");
+      }),
+      hasPermission: vi.fn(async () => {
+        operations.push("authorize");
+        return true;
+      }),
+      findActorRole: vi.fn(async () => {
+        operations.push("actor-role");
+        return "super_admin" as const;
+      }),
+      lockRole: vi.fn(async () => {
+        operations.push("lock");
+        return {
+          id: "role-1",
+          name: "support_operator",
+          realmScope: "workforce" as const,
+        };
+      }),
       replacePermissions: vi.fn(async () => {
         operations.push("replace");
       }),
@@ -148,7 +162,15 @@ describe("role administration", () => {
     });
     await service.replacePermissions("role-1", ["admin:tickets"]);
     expect(requireSensitiveAction).toHaveBeenCalledWith("admin:roles");
-    expect(operations).toEqual(["tx", "replace", "audit"]);
+    expect(operations).toEqual([
+      "tx",
+      "mutation-lock",
+      "authorize",
+      "actor-role",
+      "lock",
+      "replace",
+      "audit",
+    ]);
     expect(tx.writeAudit).toHaveBeenCalledWith({
       actorId: "super-1",
       targetId: "role-1",
@@ -158,9 +180,10 @@ describe("role administration", () => {
 
   it("rejects cross-realm permission mutation inside the authoritative transaction", async () => {
     const tx: RolePermissionRepository = {
+      acquirePermissionMutationLock: vi.fn(),
       hasPermission: vi.fn(async () => true),
       findActorRole: vi.fn(async () => "super_admin" as const),
-      findRole: vi.fn(async () => ({
+      lockRole: vi.fn(async () => ({
         id: "role-customer",
         name: "customer_admin",
         realmScope: "customer" as const,
@@ -180,9 +203,10 @@ describe("role administration", () => {
 
   it("requires an authoritative super admin for permission changes", async () => {
     const tx: RolePermissionRepository = {
+      acquirePermissionMutationLock: vi.fn(),
       hasPermission: vi.fn(async () => true),
       findActorRole: vi.fn(async () => "admin" as const),
-      findRole: vi.fn(async () => ({
+      lockRole: vi.fn(async () => ({
         id: "role-1",
         name: "employee",
         realmScope: "workforce" as const,
@@ -202,9 +226,10 @@ describe("role administration", () => {
 
   it("keeps admin:roles in the immutable super_admin permission baseline", async () => {
     const tx: RolePermissionRepository = {
+      acquirePermissionMutationLock: vi.fn(),
       hasPermission: vi.fn(async () => true),
       findActorRole: vi.fn(async () => "super_admin" as const),
-      findRole: vi.fn(async () => ({
+      lockRole: vi.fn(async () => ({
         id: "super-role",
         name: "super_admin",
         realmScope: "workforce" as const,
@@ -219,6 +244,59 @@ describe("role administration", () => {
 
     await expect(
       service.replacePermissions("super-role", ["admin:users"]),
+    ).rejects.toMatchObject({ code: "ROLE_SUPER_ADMIN_BASELINE_REQUIRED" });
+    expect(tx.replacePermissions).not.toHaveBeenCalled();
+    expect(tx.writeAudit).not.toHaveBeenCalled();
+  });
+
+  it("rejects delegating admin:docs:delete to a non-super-admin role", async () => {
+    const tx: RolePermissionRepository = {
+      acquirePermissionMutationLock: vi.fn(),
+      hasPermission: vi.fn(async () => true),
+      findActorRole: vi.fn(async () => "super_admin" as const),
+      lockRole: vi.fn(async () => ({
+        id: "admin-role",
+        name: "admin",
+        realmScope: "workforce" as const,
+      })),
+      replacePermissions: vi.fn(),
+      writeAudit: vi.fn(),
+    };
+    const service = createRolePermissionService({
+      requireSensitiveAction: vi.fn(async () => actor),
+      repository: { transaction: (work) => work(tx) },
+    });
+
+    await expect(
+      service.replacePermissions("admin-role", [
+        "admin:roles",
+        "admin:docs:delete",
+      ]),
+    ).rejects.toMatchObject({ code: "ROLE_PERMISSION_NON_DELEGABLE" });
+    expect(tx.replacePermissions).not.toHaveBeenCalled();
+    expect(tx.writeAudit).not.toHaveBeenCalled();
+  });
+
+  it("keeps admin:docs:delete in the immutable super_admin permission baseline", async () => {
+    const tx: RolePermissionRepository = {
+      acquirePermissionMutationLock: vi.fn(),
+      hasPermission: vi.fn(async () => true),
+      findActorRole: vi.fn(async () => "super_admin" as const),
+      lockRole: vi.fn(async () => ({
+        id: "super-role",
+        name: "super_admin",
+        realmScope: "workforce" as const,
+      })),
+      replacePermissions: vi.fn(),
+      writeAudit: vi.fn(),
+    };
+    const service = createRolePermissionService({
+      requireSensitiveAction: vi.fn(async () => actor),
+      repository: { transaction: (work) => work(tx) },
+    });
+
+    await expect(
+      service.replacePermissions("super-role", ["admin:roles"]),
     ).rejects.toMatchObject({ code: "ROLE_SUPER_ADMIN_BASELINE_REQUIRED" });
     expect(tx.replacePermissions).not.toHaveBeenCalled();
     expect(tx.writeAudit).not.toHaveBeenCalled();

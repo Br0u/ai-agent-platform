@@ -1,11 +1,21 @@
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNotNull,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
 import * as schema from "./schema";
+import { ACCESS_CONTROL_PERMISSION_MUTATION_LOCK_KEY } from "./access-control-locks";
 import {
   permissions as permissionTable,
   rolePermissions,
@@ -32,6 +42,7 @@ export interface AccessControlSeedRepository {
   ): Promise<T>;
   upsertPermission(permission: PermissionSeed): Promise<void>;
   upsertRole(role: RoleSeed): Promise<void>;
+  lockRoles(roles: readonly RoleSeed[]): Promise<void>;
   replaceRolePermissions(
     roleName: string,
     realmScope: RoleRealm,
@@ -61,6 +72,11 @@ const permissions: readonly PermissionSeed[] = [
   { key: "admin:products", name: "管理产品" },
   { key: "admin:releases", name: "管理版本" },
   { key: "admin:docs", name: "管理文档" },
+  {
+    key: "admin:docs:delete",
+    name: "删除和恢复文档",
+    description: "软删除和恢复文档，仅限超级管理员",
+  },
   { key: "admin:blog", name: "管理资讯" },
   { key: "admin:cases", name: "管理案例" },
   { key: "admin:faq", name: "管理常见问题" },
@@ -76,6 +92,7 @@ const permissions: readonly PermissionSeed[] = [
 const superAdminOnlyPermissionKeys = new Set([
   "admin:assistant:configure",
   "admin:assistant:secret:reveal",
+  "admin:docs:delete",
 ]);
 
 const adminPermissionKeys = permissions
@@ -146,12 +163,28 @@ export async function seedAccessControl(
 ): Promise<void> {
   await repository.transaction(async (transaction) => {
     await transaction.acquireSeedLock();
-    for (const permission of permissions) {
+    const orderedRoles = [...roles].sort((left, right) => {
+      const leftKey = `${left.realmScope}:${left.name}`;
+      const rightKey = `${right.realmScope}:${right.name}`;
+      return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+    });
+
+    for (const role of orderedRoles) {
+      await transaction.upsertRole({
+        name: role.name,
+        realmScope: role.realmScope,
+        description: role.description,
+      });
+    }
+    await transaction.lockRoles(orderedRoles);
+
+    for (const permission of [...permissions].sort((left, right) =>
+      left.key < right.key ? -1 : left.key > right.key ? 1 : 0,
+    )) {
       await transaction.upsertPermission(permission);
     }
 
-    for (const { permissionKeys, ...role } of roles) {
-      await transaction.upsertRole(role);
+    for (const { permissionKeys, ...role } of orderedRoles) {
       await transaction.replaceRolePermissions(
         role.name,
         role.realmScope,
@@ -214,6 +247,28 @@ function createRepository(
         });
     },
 
+    async lockRoles(roles: readonly RoleSeed[]): Promise<void> {
+      if (!roles.length) return;
+      const locked = await executor
+        .select({ id: roleTable.id })
+        .from(roleTable)
+        .where(
+          or(
+            ...roles.map((role) =>
+              and(
+                eq(roleTable.name, role.name),
+                eq(roleTable.realmScope, role.realmScope),
+              ),
+            ),
+          ),
+        )
+        .orderBy(asc(roleTable.realmScope), asc(roleTable.name))
+        .for("update");
+      if (locked.length !== roles.length) {
+        throw new Error("Seed target role lock set is incomplete");
+      }
+    },
+
     async replaceRolePermissions(
       roleName: string,
       realmScope: RoleRealm,
@@ -227,24 +282,37 @@ function createRepository(
             eq(roleTable.name, roleName),
             eq(roleTable.realmScope, realmScope),
           ),
-        );
+        )
+        .for("update");
 
       if (!role) {
         throw new Error(`Seed role not found: ${realmScope}:${roleName}`);
       }
 
-      await executor
-        .delete(rolePermissions)
-        .where(eq(rolePermissions.roleId, role.id));
-
-      if (permissionKeys.length === 0) {
-        return;
-      }
-
-      const seededPermissions = await executor
+      const lockedPermissions = await executor
         .select({ id: permissionTable.id, key: permissionTable.key })
         .from(permissionTable)
-        .where(inArray(permissionTable.key, [...permissionKeys]));
+        .leftJoin(
+          rolePermissions,
+          and(
+            eq(rolePermissions.permissionId, permissionTable.id),
+            eq(rolePermissions.roleId, role.id),
+          ),
+        )
+        .where(
+          permissionKeys.length
+            ? or(
+                inArray(permissionTable.key, [...permissionKeys]),
+                isNotNull(rolePermissions.id),
+              )
+            : isNotNull(rolePermissions.id),
+        )
+        .orderBy(asc(permissionTable.id))
+        .for("share", { of: permissionTable });
+      const requestedKeys = new Set(permissionKeys);
+      const seededPermissions = lockedPermissions.filter(({ key }) =>
+        requestedKeys.has(key),
+      );
 
       if (seededPermissions.length !== permissionKeys.length) {
         const found = new Set(seededPermissions.map(({ key }) => key));
@@ -252,16 +320,39 @@ function createRepository(
         throw new Error(`Seed permissions not found: ${missing.join(", ")}`);
       }
 
-      await executor.insert(rolePermissions).values(
-        seededPermissions.map(({ id }) => ({
-          roleId: role.id,
-          permissionId: id,
-        })),
+      await executor.delete(rolePermissions).where(
+        seededPermissions.length
+          ? and(
+              eq(rolePermissions.roleId, role.id),
+              notInArray(
+                rolePermissions.permissionId,
+                seededPermissions.map(({ id }) => id),
+              ),
+            )
+          : eq(rolePermissions.roleId, role.id),
       );
+
+      if (seededPermissions.length) {
+        await executor
+          .insert(rolePermissions)
+          .values(
+            seededPermissions.map(({ id }) => ({
+              roleId: role.id,
+              permissionId: id,
+            })),
+          )
+          .onConflictDoNothing({
+            target: [rolePermissions.roleId, rolePermissions.permissionId],
+          });
+      }
     },
 
     async acquireSeedLock(): Promise<void> {
-      await executor.execute(sql`select pg_advisory_xact_lock(72134878)`);
+      await executor.execute(
+        sql`select pg_advisory_xact_lock(${sql.raw(
+          String(ACCESS_CONTROL_PERMISSION_MUTATION_LOCK_KEY),
+        )})`,
+      );
     },
   };
 }

@@ -21,7 +21,11 @@ const describePostgres = safeTestDatabaseUrl
 
 describePostgres("PostgreSQL access-control seed", () => {
   const pool = new Pool({ connectionString: safeTestDatabaseUrl });
-  const database = drizzle(pool, { schema });
+  const queries: string[] = [];
+  const database = drizzle(pool, {
+    schema,
+    logger: { logQuery: (query) => queries.push(query) },
+  });
 
   beforeAll(async () => {
     await pool.query("DROP SCHEMA IF EXISTS public CASCADE");
@@ -33,6 +37,7 @@ describePostgres("PostgreSQL access-control seed", () => {
   });
 
   beforeEach(async () => {
+    queries.length = 0;
     await pool.query(
       "TRUNCATE role_permissions, user_roles, permissions, roles CASCADE",
     );
@@ -61,8 +66,26 @@ describePostgres("PostgreSQL access-control seed", () => {
         (SELECT count(*)::text FROM role_permissions) AS grants`,
     );
     expect(counts.rows).toEqual([
-      { roles: "7", permissions: "20", grants: "48" },
+      { roles: "7", permissions: "21", grants: "49" },
     ]);
+    const explicitRoleLock = queries.findIndex(
+      (query) => /from "roles"/u.test(query) && /for update/u.test(query),
+    );
+    const firstPermissionUpsert = queries.findIndex((query) =>
+      /insert into "permissions"/u.test(query),
+    );
+    const permissionLock = queries.findIndex(
+      (query) =>
+        /from "permissions" left join "role_permissions"/u.test(query) &&
+        /for share of "permissions"/u.test(query),
+    );
+    const childMutation = queries.findIndex((query) =>
+      /delete from "role_permissions"/u.test(query),
+    );
+    expect(explicitRoleLock).toBeGreaterThan(-1);
+    expect(firstPermissionUpsert).toBeGreaterThan(explicitRoleLock);
+    expect(permissionLock).toBeGreaterThan(firstPermissionUpsert);
+    expect(childMutation).toBeGreaterThan(permissionLock);
 
     const modelPermissions = await pool.query<{
       description: string;
@@ -155,6 +178,7 @@ describePostgres("PostgreSQL access-control seed", () => {
           "admin:cases",
           "admin:compatibility",
           "admin:docs",
+          "admin:docs:delete",
           "admin:faq",
           "admin:marketplace",
           "admin:navigation",

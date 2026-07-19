@@ -196,6 +196,18 @@ describe("production deployment security contracts", () => {
     expect(sql).toMatch(
       /REVOKE UPDATE, DELETE ON TABLE public\.audit_logs FROM ai_agent_runtime/,
     );
+    expect(sql).toMatch(
+      /REVOKE DELETE, TRUNCATE ON TABLE public\.content FROM ai_agent_runtime/,
+    );
+    expect(sql).toMatch(
+      /REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public\.content_revisions FROM ai_agent_runtime/,
+    );
+    expect(sql).toMatch(
+      /REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public\.content_routes FROM ai_agent_runtime/,
+    );
+    expect(sql).toMatch(
+      /GRANT UPDATE \(state\) ON TABLE public\.content_routes TO ai_agent_runtime/,
+    );
     expect(sql).not.toMatch(/GRANT (CREATE|ALL).*ai_agent_runtime/);
     expect(sql).toMatch(
       /GRANT SELECT ON ALL TABLES IN SCHEMA public TO ai_agent_backup/,
@@ -216,6 +228,82 @@ describe("production deployment security contracts", () => {
     expect(sql).not.toMatch(
       /GRANT (?:CREATE|INSERT|UPDATE|DELETE|ALL)[^;]*ai_agent_backup/,
     );
+  });
+
+  it("enforces immutable document revisions and permanent route transitions", () => {
+    const migration = read("packages/database/drizzle/0006_cms_documents.sql");
+    const permissionMutationLock = read(
+      "packages/database/src/access-control-locks.ts",
+    );
+    const adminRoles = read("apps/web/src/server/admin/roles.ts");
+    const accessSeed = read("packages/database/src/seed-access-control.ts");
+    const childGrantGuard = migration.match(
+      /CREATE FUNCTION "enforce_admin_docs_delete_grant"\(\)[\s\S]*?\$\$ LANGUAGE plpgsql/u,
+    )?.[0];
+    const permissionIdentityGuard = migration.match(
+      /CREATE FUNCTION "guard_admin_docs_delete_permission_key"\(\)[\s\S]*?\$\$ LANGUAGE plpgsql/u,
+    )?.[0];
+    const roleIdentityGuard = migration.match(
+      /CREATE FUNCTION "guard_admin_docs_delete_role_identity"\(\)[\s\S]*?\$\$ LANGUAGE plpgsql/u,
+    )?.[0];
+
+    expect(migration).toContain(
+      'LOCK TABLE "permissions", "roles", "role_permissions" IN SHARE ROW EXCLUSIVE MODE',
+    );
+    expect(migration).toContain("existing admin:docs:delete grant is invalid");
+    expect(migration).toContain("FOR SHARE OF");
+    expect(migration).toContain('CREATE TRIGGER "content_revisions_immutable"');
+    expect(migration).toMatch(
+      /BEFORE UPDATE OR DELETE ON "content_revisions"/u,
+    );
+    expect(migration).toContain(
+      'CREATE TRIGGER "content_routes_state_machine"',
+    );
+    expect(migration).toMatch(
+      /BEFORE INSERT OR UPDATE OR DELETE ON "content_routes"/u,
+    );
+    expect(migration).toContain("NEW.state <> 'reserved'");
+    expect(migration).toContain(
+      "OLD.state = 'reserved' AND NEW.state = 'canonical'",
+    );
+    expect(migration).toContain(
+      "OLD.state = 'canonical' AND NEW.state = 'alias'",
+    );
+    expect(migration).not.toContain("NEW.state = OLD.state");
+    expect(migration).toContain(
+      "NEW.content_id IS DISTINCT FROM OLD.content_id",
+    );
+    expect(migration).toContain(
+      'CREATE TRIGGER "role_permissions_admin_docs_delete_guard"',
+    );
+    expect(migration).toContain(
+      'CREATE TRIGGER "permissions_admin_docs_delete_key_guard"',
+    );
+    expect(migration).toContain(
+      'CREATE TRIGGER "roles_admin_docs_delete_grant_guard"',
+    );
+    expect(migration).toContain(
+      'CREATE TRIGGER "roles_super_admin_delete_guard"',
+    );
+    expect(migration).toContain(
+      'CREATE TRIGGER "permissions_admin_docs_delete_delete_guard"',
+    );
+    expect(migration).toMatch(
+      /BEFORE INSERT OR UPDATE OR DELETE ON "role_permissions"/u,
+    );
+    expect(permissionIdentityGuard).not.toContain('FROM "role_permissions"');
+    expect(roleIdentityGuard).not.toContain('FROM "role_permissions"');
+    expect(childGrantGuard?.indexOf('FROM "roles"')).toBeGreaterThan(-1);
+    expect(childGrantGuard?.indexOf('FROM "permissions"')).toBeGreaterThan(
+      childGrantGuard?.indexOf('FROM "roles"') ?? Number.MAX_SAFE_INTEGER,
+    );
+    expect(permissionMutationLock).toContain(
+      "ACCESS_CONTROL_PERMISSION_MUTATION_LOCK_KEY = 72_134_878",
+    );
+    expect(adminRoles).toContain("ACCESS_CONTROL_PERMISSION_MUTATION_LOCK_KEY");
+    expect(accessSeed).toContain("ACCESS_CONTROL_PERMISSION_MUTATION_LOCK_KEY");
+    expect(adminRoles).not.toContain("72134878");
+    expect(accessSeed).not.toContain("72134878");
   });
 
   it("runs role bootstrap as the configured PostgreSQL owner", () => {
@@ -3023,11 +3111,25 @@ exit 0
     expect(script).toContain("--env-file");
     expect(script).not.toMatch(/docker run[^\n]*-e\s+POSTGRES_/u);
     expect(script).not.toContain("POSTGRES_PASSWORD=");
-    expect(script).toContain('expected_migrations="6"');
+    expect(script).toContain('expected_migrations="7"');
+    expect(script).toContain('expected_latest_migration="1784480751831"');
     expect(script).toContain("migration_count");
     expect(script).toContain("latest_migration");
     expect(script).toContain("users_email_lower_unique");
     expect(script).toContain("sessions_identity_boundary_guard");
+    expect(script).toContain("content_revisions_immutable");
+    expect(script).toContain("content_routes_state_machine");
+    expect(script).toContain("role_permissions_admin_docs_delete_guard");
+    expect(script).toContain("permissions_admin_docs_delete_key_guard");
+    expect(script).toContain("roles_admin_docs_delete_grant_guard");
+    expect(script).toContain("roles_super_admin_delete_guard");
+    expect(script).toContain("permissions_admin_docs_delete_delete_guard");
+    expect(script).toContain(
+      "to_regclass('public.content_revisions') IS NOT NULL",
+    );
+    expect(script).toContain(
+      "to_regclass('public.content_routes') IS NOT NULL",
+    );
     expect(script).toContain("audit_logs_created_id_desc_idx");
     expect(script).toContain("rate_limits_key_unique");
     expect(script).toContain("--clean --if-exists");

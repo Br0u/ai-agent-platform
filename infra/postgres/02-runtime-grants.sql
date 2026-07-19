@@ -30,6 +30,10 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA drizzle
 ALTER DEFAULT PRIVILEGES IN SCHEMA drizzle
   GRANT SELECT ON SEQUENCES TO ai_agent_backup;
 REVOKE UPDATE, DELETE ON TABLE public.audit_logs FROM ai_agent_runtime;
+REVOKE DELETE, TRUNCATE ON TABLE public.content FROM ai_agent_runtime;
+REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public.content_revisions FROM ai_agent_runtime;
+REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public.content_routes FROM ai_agent_runtime;
+GRANT UPDATE (state) ON TABLE public.content_routes TO ai_agent_runtime;
 
 DO $$
 BEGIN

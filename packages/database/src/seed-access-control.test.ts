@@ -13,6 +13,8 @@ class InMemoryRepository implements AccessControlSeedRepository {
   readonly permissions = new Map<string, PermissionSeed>();
   readonly roles = new Map<string, RoleSeed>();
   readonly grants = new Map<string, Set<string>>();
+  readonly lockCalls: string[][] = [];
+  readonly operations: string[] = [];
   transactions = 0;
 
   async transaction<T>(
@@ -23,11 +25,19 @@ class InMemoryRepository implements AccessControlSeedRepository {
   }
 
   async upsertPermission(permission: PermissionSeed): Promise<void> {
+    this.operations.push(`permission:${permission.key}`);
     this.permissions.set(permission.key, permission);
   }
 
   async upsertRole(role: RoleSeed): Promise<void> {
+    this.operations.push(`role:${roleKey(role.name, role.realmScope)}`);
     this.roles.set(roleKey(role.name, role.realmScope), role);
+  }
+
+  async lockRoles(roles: readonly RoleSeed[]): Promise<void> {
+    const keys = roles.map((role) => roleKey(role.name, role.realmScope));
+    this.operations.push("lock-roles");
+    this.lockCalls.push(keys);
   }
 
   async replaceRolePermissions(
@@ -35,6 +45,7 @@ class InMemoryRepository implements AccessControlSeedRepository {
     realmScope: RoleRealm,
     permissionKeys: readonly string[],
   ): Promise<void> {
+    this.operations.push(`replace:${roleKey(roleName, realmScope)}`);
     this.grants.set(roleKey(roleName, realmScope), new Set(permissionKeys));
   }
 
@@ -52,6 +63,7 @@ const permissionKeys = [
   "admin:products",
   "admin:releases",
   "admin:docs",
+  "admin:docs:delete",
   "admin:blog",
   "admin:cases",
   "admin:faq",
@@ -69,11 +81,16 @@ const assistantModelPermissions = [
   "admin:assistant:secret:reveal",
 ] as const;
 
+const superAdminOnlyPermissions = [
+  ...assistantModelPermissions,
+  "admin:docs:delete",
+] as const;
+
 const adminPermissions = permissionKeys.filter(
   (key) =>
     key.startsWith("admin:") &&
-    !assistantModelPermissions.includes(
-      key as (typeof assistantModelPermissions)[number],
+    !superAdminOnlyPermissions.includes(
+      key as (typeof superAdminOnlyPermissions)[number],
     ),
 );
 
@@ -103,12 +120,47 @@ function sorted(values: Iterable<string>): string[] {
 }
 
 describe("seedAccessControl", () => {
+  it("locks all target roles in deterministic order before permissions and grants", async () => {
+    const repository = new InMemoryRepository();
+
+    await seedAccessControl(repository);
+
+    expect(repository.lockCalls).toEqual([
+      [
+        "customer:customer_admin",
+        "customer:customer_member",
+        "workforce:admin",
+        "workforce:content_operator",
+        "workforce:employee",
+        "workforce:super_admin",
+        "workforce:support_operator",
+      ],
+    ]);
+    const lockIndex = repository.operations.indexOf("lock-roles");
+    expect(lockIndex).toBeGreaterThan(-1);
+    expect(
+      repository.operations
+        .slice(0, lockIndex)
+        .every((operation) => operation.startsWith("role:")),
+    ).toBe(true);
+    expect(
+      repository.operations
+        .slice(lockIndex + 1)
+        .findIndex((operation) => operation.startsWith("permission:")),
+    ).toBe(0);
+    expect(
+      repository.operations
+        .slice(lockIndex + 1)
+        .findIndex((operation) => operation.startsWith("replace:")),
+    ).toBeGreaterThan(0);
+  });
+
   it("upserts the exact role, permission, and grant matrix", async () => {
     const repository = new InMemoryRepository();
 
     await seedAccessControl(repository);
 
-    expect([...repository.permissions.keys()]).toEqual(permissionKeys);
+    expect([...repository.permissions.keys()]).toEqual(sorted(permissionKeys));
     expect(repository.permissions.get("admin:assistant")).toEqual({
       key: "admin:assistant",
       name: "管理 AI 助理",
@@ -126,13 +178,13 @@ describe("seedAccessControl", () => {
       },
     );
     expect([...repository.roles.keys()]).toEqual([
-      "customer:customer_member",
       "customer:customer_admin",
-      "workforce:employee",
-      "workforce:content_operator",
-      "workforce:support_operator",
+      "customer:customer_member",
       "workforce:admin",
+      "workforce:content_operator",
+      "workforce:employee",
       "workforce:super_admin",
+      "workforce:support_operator",
     ]);
     expect(
       sorted(repository.grants.get("customer:customer_member") ?? []),
@@ -167,6 +219,15 @@ describe("seedAccessControl", () => {
     expect(
       repository.grants.get("workforce:super_admin")?.has("admin:assistant"),
     ).toBe(true);
+    for (const role of ["content_operator", "admin"]) {
+      expect(
+        repository.grants.get(`workforce:${role}`)?.has("admin:docs:delete") ??
+          false,
+      ).toBe(false);
+    }
+    expect(
+      repository.grants.get("workforce:super_admin")?.has("admin:docs:delete"),
+    ).toBe(true);
     for (const permission of assistantModelPermissions) {
       expect(repository.grants.get("workforce:admin")?.has(permission)).toBe(
         false,
@@ -200,7 +261,7 @@ describe("seedAccessControl", () => {
     await seedAccessControl(repository);
 
     expect(repository.transactions).toBe(2);
-    expect(repository.permissions.size).toBe(20);
+    expect(repository.permissions.size).toBe(21);
     expect(repository.roles.size).toBe(7);
     expect(repository.grants.size).toBe(7);
     expect(
