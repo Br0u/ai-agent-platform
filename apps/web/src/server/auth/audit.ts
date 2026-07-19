@@ -47,6 +47,7 @@ const ASSISTANT_MODEL_PROVIDERS = [
 ] as const;
 const REQUESTED_ASSISTANT_MODEL_AUDIT_RESULTS = ["requested"] as const;
 const COMPLETED_ASSISTANT_MODEL_AUDIT_RESULTS = ["success", "failure"] as const;
+const DOCUMENT_AUDIT_RESULTS = ["success"] as const;
 const TARGET_TYPES = [
   "user",
   "session",
@@ -56,6 +57,7 @@ const TARGET_TYPES = [
   "permission",
   "system",
   "assistant_model_config",
+  "document",
 ] as const;
 
 type LoginMethod = (typeof LOGIN_METHODS)[number];
@@ -128,6 +130,18 @@ export type AuditMetadataByEvent = {
   "assistant.model_key_revealed": AssistantModelAuditMetadata<
     "success" | "failure"
   >;
+  "document.created": DocumentAuditMetadata;
+  "document.draft_saved": DocumentAuditMetadata;
+  "document.published": DocumentAuditMetadata;
+  "document.archived": DocumentAuditMetadata;
+  "document.deleted": DocumentAuditMetadata;
+  "document.restored": DocumentAuditMetadata;
+};
+
+export type DocumentAuditMetadata = {
+  slug: string;
+  revision: number;
+  result: (typeof DOCUMENT_AUDIT_RESULTS)[number];
 };
 
 export type AuditEvent = keyof AuditMetadataByEvent;
@@ -333,6 +347,32 @@ function assistantModelAuditMetadata<const Results extends readonly string[]>(
   };
 }
 
+function documentAuditMetadata(value: unknown): SanitizedMetadata {
+  const metadata = assertExactKeys(
+    value,
+    ["slug", "revision", "result"],
+    "metadata",
+  );
+  const revision = metadata.revision;
+  if (
+    typeof revision !== "number" ||
+    !Number.isSafeInteger(revision) ||
+    revision < 1 ||
+    revision > 2_147_483_647
+  ) {
+    throw new AuditInputError("metadata.revision");
+  }
+  return {
+    slug: boundedString(metadata.slug, "metadata.slug", 96),
+    revision,
+    result: enumValue(
+      metadata.result,
+      DOCUMENT_AUDIT_RESULTS,
+      "metadata.result",
+    ),
+  };
+}
+
 type AuditMetadataSchema = (value: unknown) => SanitizedMetadata;
 
 export const AUDIT_EVENT_SCHEMAS: Readonly<
@@ -377,6 +417,12 @@ export const AUDIT_EVENT_SCHEMAS: Readonly<
     assistantModelAuditMetadata(value, REQUESTED_ASSISTANT_MODEL_AUDIT_RESULTS),
   "assistant.model_key_revealed": (value) =>
     assistantModelAuditMetadata(value, COMPLETED_ASSISTANT_MODEL_AUDIT_RESULTS),
+  "document.created": documentAuditMetadata,
+  "document.draft_saved": documentAuditMetadata,
+  "document.published": documentAuditMetadata,
+  "document.archived": documentAuditMetadata,
+  "document.deleted": documentAuditMetadata,
+  "document.restored": documentAuditMetadata,
 });
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/u;
@@ -455,8 +501,11 @@ function validateInput(input: AuditWriteInput): AuditRecord {
   };
 }
 
-export function createDatabaseAuditRepository(): AuditRepository {
-  const database = getDatabase();
+type AuditDatabase = Pick<ReturnType<typeof getDatabase>, "insert">;
+
+export function createDatabaseAuditRepository(
+  database: AuditDatabase = getDatabase(),
+): AuditRepository {
   return {
     async insert(record) {
       await database.insert(auditLogs).values(record);

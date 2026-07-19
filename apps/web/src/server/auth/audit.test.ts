@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import {
   AUDIT_EVENT_SCHEMAS,
+  createDatabaseAuditRepository,
   createAuditWriter,
   type AuditEvent,
   type AuditRepository,
@@ -122,6 +123,12 @@ describe("audit writer", () => {
       "auth.totp_disabled",
       "auth.totp_enabled",
       "bootstrap.super_admin_created",
+      "document.archived",
+      "document.created",
+      "document.deleted",
+      "document.draft_saved",
+      "document.published",
+      "document.restored",
       "registration.approved",
       "registration.rejected",
       "registration.submitted",
@@ -152,6 +159,83 @@ describe("audit writer", () => {
       userAgent: "browser",
       metadata: { reason: "invalid_credentials" },
     });
+  });
+
+  it("writes database audit records through the supplied transaction", async () => {
+    const values = vi.fn().mockResolvedValue(undefined);
+    const insert = vi.fn().mockReturnValue({ values });
+    const transaction = { insert } as unknown as Parameters<
+      typeof createDatabaseAuditRepository
+    >[0];
+
+    await createDatabaseAuditRepository(transaction).insert({
+      action: "document.created",
+      actorRealm: "workforce",
+      actorUserId: "admin-1",
+      targetType: "document",
+      targetId: "doc-1",
+      metadata: { slug: "quick-start", revision: 1, result: "success" },
+      ipAddress: null,
+      userAgent: null,
+    });
+
+    expect(insert).toHaveBeenCalledOnce();
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "document.created" }),
+    );
+  });
+
+  it.each([
+    "document.created",
+    "document.draft_saved",
+    "document.published",
+    "document.archived",
+    "document.deleted",
+    "document.restored",
+  ] as const)("stores exact bounded metadata for %s", async (event) => {
+    const { repository, writer } = fixture();
+
+    await writer.write({
+      event,
+      actor: { realm: "workforce", userId: "admin-1" },
+      target: { type: "document", id: "doc-1" },
+      metadata: { slug: "quick-start", revision: 2, result: "success" },
+    });
+
+    expect(repository.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: event,
+        targetType: "document",
+        metadata: { slug: "quick-start", revision: 2, result: "success" },
+      }),
+    );
+  });
+
+  it.each(["source", "renderModel", "title", "summary"])(
+    "rejects document metadata field %s",
+    (field) => {
+      expect(() =>
+        AUDIT_EVENT_SCHEMAS["document.created"]({
+          slug: "quick-start",
+          revision: 1,
+          result: "success",
+          [field]: "must-not-be-stored",
+        }),
+      ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
+    },
+  );
+
+  it.each([
+    { slug: "x".repeat(97), revision: 1, result: "success" },
+    { slug: "bad\nslug", revision: 1, result: "success" },
+    { slug: "quick-start", revision: 0, result: "success" },
+    { slug: "quick-start", revision: 1.5, result: "success" },
+    { slug: "quick-start", revision: 1, result: "failure" },
+    { slug: "quick-start", revision: { value: 1 }, result: "success" },
+  ])("rejects unbounded document metadata %#", (metadata) => {
+    expect(() => AUDIT_EVENT_SCHEMAS["document.created"](metadata)).toThrow(
+      expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }),
+    );
   });
 
   it.each(assistantModelAuditInputs)(

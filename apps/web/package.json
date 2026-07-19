@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@ai-agent-platform/database": "workspace:*",
+    "@ai-agent-platform/document-content": "workspace:*",
     "@ai-agent-platform/integrations": "workspace:*",
     "@ai-agent-platform/ui": "workspace:*",
     "@better-auth/drizzle-adapter": "1.6.23",
