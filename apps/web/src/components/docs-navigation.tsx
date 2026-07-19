@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { docsCategories } from "./docs-content";
+import type { PublicDocument } from "./docs-content";
 
 type DocsNavigationProps = {
+  documents: readonly PublicDocument[];
   currentSlug?: string;
 };
 
@@ -9,21 +10,10 @@ type DocsMobileNavigationProps = DocsNavigationProps & {
   currentTitle: string;
 };
 
-const staticDocumentSlugs: Readonly<Record<string, string>> = {
-  D1: "quick-start",
-  D2: "deployment",
-  D3: "upgrade",
-  D4: "operations",
-  D5: "api",
-  D6: "hardware",
-  D7: "faq",
-};
-
-export function staticDocumentSlug(code: string): string {
-  return staticDocumentSlugs[code] ?? code.toLowerCase();
-}
-
-export function DocsNavigation({ currentSlug }: DocsNavigationProps) {
+export function DocsNavigation({
+  documents,
+  currentSlug,
+}: DocsNavigationProps) {
   return (
     <div className="docs-navigation">
       <div className="docs-navigation__heading">
@@ -42,17 +32,18 @@ export function DocsNavigation({ currentSlug }: DocsNavigationProps) {
         </Link>
 
         <div className="docs-navigation__label">主题</div>
-        {docsCategories.map((category) => {
-          const slug = staticDocumentSlug(category.code);
+        {documents.map((document) => {
           return (
             <Link
-              href={`/docs/${slug}`}
-              key={category.code}
+              href={`/docs/${document.slug}`}
+              key={document.id}
               className="docs-navigation__link"
-              aria-current={currentSlug === slug ? "page" : undefined}
+              aria-current={currentSlug === document.slug ? "page" : undefined}
             >
-              <span className="docs-navigation__code">{category.code}</span>
-              <span>{category.title}</span>
+              <span className="docs-navigation__code">
+                {document.navigation.code}
+              </span>
+              <span>{document.navigation.label}</span>
             </Link>
           );
         })}
@@ -62,6 +53,7 @@ export function DocsNavigation({ currentSlug }: DocsNavigationProps) {
 }
 
 export function DocsMobileNavigation({
+  documents,
   currentSlug,
   currentTitle,
 }: DocsMobileNavigationProps) {
@@ -71,7 +63,7 @@ export function DocsMobileNavigation({
         <span>浏览文档</span>
         <strong>{currentTitle}</strong>
       </summary>
-      <DocsNavigation currentSlug={currentSlug} />
+      <DocsNavigation documents={documents} currentSlug={currentSlug} />
     </details>
   );
 }

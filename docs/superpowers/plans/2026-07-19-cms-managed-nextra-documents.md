@@ -595,7 +595,11 @@ The allowlist deliberately excludes `.gitignore`, `apps/web/next-env.d.ts` and `
 - Modify: `apps/web/src/app/docs/[category]/page.tsx`
 - Modify/create: `apps/web/src/app/docs/[category]/page.test.tsx`
 - Modify: `apps/web/src/app/docs/layout.tsx`
+- Modify: `apps/web/src/app/docs/docs-search.tsx`
+- Modify: `apps/web/src/app/docs/docs-nextra.css`
 - Modify: `apps/web/src/components/docs-content.ts`
+- Create: `apps/web/src/components/docs-static-content.ts`
+- Modify: `apps/web/src/components/docs-sections.tsx`
 - Modify: `apps/web/src/components/docs-navigation.tsx`
 - Modify: `apps/web/src/components/doc-category-cards.tsx`
 - Modify: `apps/web/src/components/doc-reader-layout.tsx`
@@ -605,17 +609,17 @@ The allowlist deliberately excludes `.gitignore`, `apps/web/next-env.d.ts` and `
 
 - [ ] **Step 1: Write failing public route tests**
 
-Cover published list, database failure state, current slug, alias permanent redirect, reserved/missing/deleted/archive 404, metadata from published revision, exact renderer model, and previous/next order. Prove a database failure is not cached by making the next invocation succeed. Exercise both page rendering and `generateMetadata`: metadata converts only a typed database-availability failure into safe fallback title/robots metadata, while `notFound()` and `permanentRedirect()` control-flow exceptions escape unchanged and are never converted into the generic database-unavailable state. In the same RED step, require `documents` props across `DocReaderLayout`, `DocsDetailLayout`, `DocsNavigation`, `DocsMobileNavigation` and `DocCategoryCards`, and assert overview, sidebar, mobile navigation and pager receive the same ordered publication DTOs.
+Cover published list, database failure state, current slug, alias permanent redirect, reserved/missing/deleted/archive 404, metadata from published revision, exact renderer model, and previous/next order. Prove the one bounded catalog cache reuses fulfilled results across many valid missing slugs while a rejected read is not cached and the next invocation succeeds. Prove published rows with missing canonical/all-route joins fail closed instead of disappearing. Exercise both page rendering and `generateMetadata`: metadata converts only a typed database-availability failure into safe fallback title/robots metadata, while `notFound()` and `permanentRedirect()` control-flow exceptions escape unchanged and are never converted into the generic database-unavailable state. In the same RED step, require `documents` props across `DocReaderLayout`, `DocsDetailLayout`, `DocsNavigation`, `DocsMobileNavigation` and `DocCategoryCards`, assert overview, sidebar, mobile navigation and pager receive the same ordered publication DTOs, and cover the CMS-backed lightweight search plus unavailable-route chrome.
 
 - [ ] **Step 2: Run public route tests and verify RED**
 
 Run: `pnpm --filter @ai-agent-platform/web test -- src/app/docs/page.test.tsx 'src/app/docs/[category]/page.test.tsx' src/components/doc-reader-layout.test.tsx src/components/docs-detail-layout.test.tsx`
 
-Expected: FAIL because pages still use static content/importPage.
+Expected: FAIL until the single bounded catalog cache, fail-closed route joins, client/server content split, CMS runtime search and unavailable-state chrome are implemented.
 
 - [ ] **Step 3: Implement cached public queries**
 
-Use one `unstable_cache` boundary tagged `documents`; arguments remain in cache keys. The cached repository callback must throw typed database-read failures so a transient failure is never stored as a DTO, empty list or `null`. Catch that typed availability error only outside the cache and render the documented generic unavailable state.
+Use one `unstable_cache` boundary tagged `documents` and one constant catalog cache scope; no user-controlled slug or route key may reach the cache API. The cached repository callback must throw typed database-read failures so a transient failure is never stored as a DTO, empty list or `null`. Join both all routes and the canonical route with `LEFT JOIN`, then reject missing/inconsistent routes during DTO parsing. Catch the typed availability error only outside the cache and render the documented generic unavailable state inside the shared public docs chrome.
 
 After a successful cached lookup, invoke `permanentRedirect` for aliases and `notFound` for missing/unpublished documents outside every generic availability catch. Never broadly catch Next control-flow exceptions.
 
@@ -623,7 +627,7 @@ Mark both database-backed docs routes force-dynamic so production builds never r
 
 - [ ] **Step 4: Switch overview/detail routes and metadata**
 
-Replace the layouts' static `docsCategories` imports with required `documents` props in the same atomic task that updates both public route callers. Pass the same ordered publication DTOs to overview, navigation and pager. Render only the selected published revision model.
+Replace the layouts' static `docsCategories` imports with required `documents` props in the same atomic task that updates both public route callers. Pass the same ordered publication DTOs to overview, navigation and pager. Restore Navbar/search/footer through a shared public docs chrome. Search only a lightweight client projection of slug, title, summary, navigation label and code; never serialize the body to the client. Move legacy client marketing claims into `docs-static-content.ts`, leaving `docs-content.ts` server-only. Render only the selected published revision model.
 
 - [ ] **Step 5: Stop runtime file-content routing but retain rollback payloads**
 
@@ -651,18 +655,23 @@ git add -- \
   'apps/web/src/app/docs/[category]/page.tsx' \
   'apps/web/src/app/docs/[category]/page.test.tsx' \
   apps/web/src/app/docs/layout.tsx \
+  apps/web/src/app/docs/docs-search.tsx \
+  apps/web/src/app/docs/docs-nextra.css \
   apps/web/src/components/docs-content.ts \
+  apps/web/src/components/docs-static-content.ts \
+  apps/web/src/components/docs-sections.tsx \
   apps/web/src/components/docs-navigation.tsx \
   apps/web/src/components/doc-category-cards.tsx \
   apps/web/src/components/doc-reader-layout.tsx \
   apps/web/src/components/doc-reader-layout.test.tsx \
   apps/web/src/components/docs-detail-layout.tsx \
-  apps/web/src/components/docs-detail-layout.test.tsx
+  apps/web/src/components/docs-detail-layout.test.tsx \
+  docs/superpowers/plans/2026-07-19-cms-managed-nextra-documents.md
 git diff --cached --name-only
 git commit -m "feat(docs): read public documents from CMS publications"
 ```
 
-The cached name list must equal the twelve paths above exactly before committing. If another staged file exists, stop without unstaging or overwriting the user's index.
+The cached name list must equal the sixteen implementation paths above plus this plan file exactly before committing. If another staged file exists, stop without unstaging or overwriting the user's index.
 
 ### Task 9: Add rollout documentation and full acceptance
 

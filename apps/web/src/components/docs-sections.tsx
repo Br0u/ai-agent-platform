@@ -6,7 +6,7 @@ import {
   docsTechCapabilities,
   docsCategories,
   docsLayoutSpec,
-} from "./docs-content";
+} from "./docs-static-content";
 
 /* ========================================================================
    文档中心主页组件
