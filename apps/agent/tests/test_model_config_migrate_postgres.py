@@ -186,7 +186,7 @@ async def test_real_control_migration_is_idempotent_owned_and_enforces_boundarie
                   p.prosecdef,
                   p.proretset,
                   p.proconfig IS NULL,
-                  regexp_replace(btrim(p.prosrc), '[[:space:]]+', ' ', 'g')
+                  btrim(regexp_replace(p.prosrc, '[[:space:]]+', ' ', 'g'))
                 FROM pg_proc AS p
                 JOIN pg_namespace AS n ON n.oid = p.pronamespace
                 JOIN pg_language AS l ON l.oid = p.prolang
