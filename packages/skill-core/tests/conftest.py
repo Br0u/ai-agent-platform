@@ -82,6 +82,53 @@ def corrupt_first_member_data(archive: bytes) -> bytes:
     return bytes(patched)
 
 
+def forge_member_uncompressed_metadata(
+    archive: bytes, member_name: str, *, uncompressed_size: int, crc: int
+) -> bytes:
+    encoded_name = member_name.encode("utf-8")
+    positions: list[int] = []
+    offset = -1
+    while True:
+        offset = archive.find(encoded_name, offset + 1)
+        if offset < 0:
+            break
+        positions.append(offset)
+    assert len(positions) == 2
+
+    patched = bytearray(archive)
+    local = archive.rfind(b"PK\x03\x04", 0, positions[0])
+    central = archive.rfind(b"PK\x01\x02", 0, positions[1])
+    assert local >= 0 and central >= 0
+    struct.pack_into("<I", patched, local + 14, crc)
+    struct.pack_into("<I", patched, local + 22, uncompressed_size)
+    struct.pack_into("<I", patched, central + 16, crc)
+    struct.pack_into("<I", patched, central + 24, uncompressed_size)
+    return bytes(patched)
+
+
+def forge_member_compressed_size(archive: bytes, member_name: str, compressed_size: int) -> bytes:
+    encoded_name = member_name.encode("utf-8")
+    first = archive.find(encoded_name)
+    second = archive.find(encoded_name, first + 1)
+    assert first >= 0 and second >= 0
+    patched = bytearray(archive)
+    local = archive.rfind(b"PK\x03\x04", 0, first)
+    central = archive.rfind(b"PK\x01\x02", 0, second)
+    struct.pack_into("<I", patched, local + 18, compressed_size)
+    struct.pack_into("<I", patched, central + 20, compressed_size)
+    return bytes(patched)
+
+
+def zero_local_member_metadata(archive: bytes, member_name: str) -> bytes:
+    encoded_name = member_name.encode("utf-8")
+    name_offset = archive.find(encoded_name)
+    local = archive.rfind(b"PK\x03\x04", 0, name_offset)
+    assert local >= 0
+    patched = bytearray(archive)
+    struct.pack_into("<III", patched, local + 14, 0, 0, 0)
+    return bytes(patched)
+
+
 @pytest.fixture
 def zip_builder():
     return build_zip

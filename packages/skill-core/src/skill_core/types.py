@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 MAX_ARCHIVE_BYTES = 5 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 20 * 1024 * 1024
@@ -30,6 +30,7 @@ class FrozenJsonArray:
 
 
 FrozenJson: TypeAlias = FrozenJsonScalar | FrozenJsonObject | FrozenJsonArray
+SkillDiffStatus: TypeAlias = Literal["added", "deleted", "modified"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +88,8 @@ class SkillFileDiff:
     """Review-only change summary for one canonical path."""
 
     path: str
-    status: str
+    status: SkillDiffStatus
+    binary: bool
     diff: str
 
 

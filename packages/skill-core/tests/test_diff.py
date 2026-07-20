@@ -35,7 +35,7 @@ def test_marks_added_deleted_modified_and_binary_in_canonical_path_order(zip_bui
 
     assert [(file.path, file.status) for file in result.files] == [
         ("add.txt", "added"),
-        ("binary.dat", "binary"),
+        ("binary.dat", "modified"),
         ("delete.txt", "deleted"),
         ("modify.txt", "modified"),
     ]
@@ -47,6 +47,8 @@ def test_marks_added_deleted_modified_and_binary_in_canonical_path_order(zip_bui
     assert "--- a/modify.txt" in by_path["modify.txt"].diff
     assert "+++ b/modify.txt" in by_path["modify.txt"].diff
     assert by_path["binary.dat"].diff == ""
+    assert by_path["binary.dat"].binary is True
+    assert all(by_path[path].binary is False for path in ("add.txt", "delete.txt", "modify.txt"))
     assert result.truncated is False
 
 
@@ -54,8 +56,20 @@ def test_non_utf8_content_is_marked_binary_and_never_decoded(zip_builder) -> Non
     before = package_from(zip_builder, {"data.bin": b"\xff\xfe"})
     after = package_from(zip_builder, {"data.bin": b"\xfe\xff"})
     result = diff_packages(before, after)
-    assert [(file.path, file.status, file.diff) for file in result.files] == [
-        ("data.bin", "binary", "")
+    assert [(file.path, file.status, file.binary, file.diff) for file in result.files] == [
+        ("data.bin", "modified", True, "")
+    ]
+
+
+def test_binary_changes_keep_added_and_deleted_direction(zip_builder) -> None:
+    before = package_from(zip_builder, {"removed.bin": b"old\x00binary"})
+    after = package_from(zip_builder, {"added.bin": b"new\x00binary"})
+
+    result = diff_packages(before, after)
+
+    assert [(file.path, file.status, file.binary) for file in result.files] == [
+        ("added.bin", "added", True),
+        ("removed.bin", "deleted", True),
     ]
 
 

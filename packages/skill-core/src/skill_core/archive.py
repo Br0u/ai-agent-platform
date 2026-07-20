@@ -7,6 +7,7 @@ import io
 import ntpath
 import stat
 import struct
+import tarfile
 import unicodedata
 import zipfile
 import zlib
@@ -113,21 +114,23 @@ def _read_validated_files(
         raise SkillPackageError("ARCHIVE_TOO_MANY_FILES", "ZIP contains too many members")
     normalized_paths: dict[str, str] = {}
     folded_paths: dict[str, str] = {}
-    file_infos: list[tuple[str, zipfile.ZipInfo]] = []
-    _validate_raw_central_names(raw_archive, len(infos), source.start_dir)
+    member_infos: list[tuple[str, zipfile.ZipInfo, int, int, bool]] = []
+    central_names = _read_raw_central_names(raw_archive, len(infos), source.start_dir)
+    entry_bounds = _entry_bounds(infos, source.start_dir)
 
-    for info in infos:
-        _validate_raw_local_name(raw_archive, info)
+    for info, central_name in zip(infos, central_names, strict=True):
+        data_offset = _validate_raw_local_header(raw_archive, info, central_name)
         normalized = _normalize_path(info.filename)
-        folded = normalized.casefold()
-        if normalized in normalized_paths or folded in folded_paths:
+        collision_path = normalized.rstrip("/")
+        folded = collision_path.casefold()
+        if collision_path in normalized_paths or folded in folded_paths:
             raise SkillPackageError(
                 "ARCHIVE_PATH_CONFLICT",
                 "ZIP contains colliding canonical paths",
                 path=normalized,
             )
-        normalized_paths[normalized] = info.filename
-        folded_paths[folded] = normalized
+        normalized_paths[collision_path] = info.filename
+        folded_paths[folded] = collision_path
 
         is_directory = info.is_dir()
         _validate_member_type(info, is_directory)
@@ -139,12 +142,14 @@ def _read_validated_files(
                 "Unsupported ZIP compression method",
                 path=normalized,
             )
-        if not is_directory:
-            file_infos.append((normalized, info))
+        member_infos.append(
+            (normalized, info, data_offset, entry_bounds[info.header_offset], is_directory)
+        )
 
-    _reject_ancestor_file_conflicts(path for path, _ in file_infos)
-    slug = _find_skill_root(path for path, _ in file_infos)
-    if any(path.split("/", 1)[0] != slug for path, _ in file_infos):
+    file_paths = tuple(path for path, _, _, _, is_directory in member_infos if not is_directory)
+    _reject_ancestor_file_conflicts(file_paths)
+    slug = _find_skill_root(file_paths)
+    if any(path.split("/", 1)[0] != slug for path in file_paths):
         raise SkillPackageError(
             "ARCHIVE_MULTIPLE_SKILL_ROOTS",
             "Every file must belong to the single skill root",
@@ -152,10 +157,22 @@ def _read_validated_files(
 
     extracted_size = 0
     result: list[SkillFile] = []
-    for full_path, info in file_infos:
-        relative_path = full_path[len(slug) + 1 :]
-        content, actual_size = _read_member(source, info, extracted_size)
+    for full_path, info, data_offset, entry_bound, is_directory in member_infos:
+        content, actual_size = _read_member(
+            raw_archive,
+            info,
+            data_offset,
+            entry_bound,
+            extracted_size,
+        )
         extracted_size += actual_size
+        if is_directory:
+            if content:
+                raise SkillPackageError(
+                    "ARCHIVE_INVALID", "ZIP directory members must have empty content"
+                )
+            continue
+        relative_path = full_path[len(slug) + 1 :]
         _reject_nested_archive(relative_path, content)
         result.append(
             SkillFile(
@@ -170,23 +187,49 @@ def _read_validated_files(
     return tuple(result), slug, extracted_size
 
 
-def _validate_raw_local_name(raw_archive: bytes, info: zipfile.ZipInfo) -> None:
+def _validate_raw_local_header(
+    raw_archive: bytes, info: zipfile.ZipInfo, central_name: bytes
+) -> int:
     offset = info.header_offset
     if raw_archive[offset : offset + 4] != b"PK\x03\x04" or offset + 30 > len(raw_archive):
         raise SkillPackageError("ARCHIVE_INVALID", "Malformed ZIP local header")
     local_flags = struct.unpack_from("<H", raw_archive, offset + 6)[0]
     if local_flags & 0x1:
         raise SkillPackageError("ARCHIVE_ENCRYPTED", "Encrypted ZIP members are not allowed")
-    name_length = struct.unpack_from("<H", raw_archive, offset + 26)[0]
+    if local_flags != info.flag_bits:
+        raise SkillPackageError("ARCHIVE_INVALID", "ZIP header flags do not match")
+    local_compression = struct.unpack_from("<H", raw_archive, offset + 8)[0]
+    if local_compression != info.compress_type:
+        raise SkillPackageError("ARCHIVE_INVALID", "ZIP compression methods do not match")
+    local_crc, local_compressed_size, local_file_size = struct.unpack_from(
+        "<III", raw_archive, offset + 14
+    )
+    if not local_flags & 0x8 and (
+        local_crc != info.CRC
+        or local_compressed_size != info.compress_size
+        or local_file_size != info.file_size
+    ):
+        raise SkillPackageError(
+            "ARCHIVE_INVALID", "ZIP local metadata does not match central metadata"
+        )
+    name_length, extra_length = struct.unpack_from("<HH", raw_archive, offset + 26)
     name_start = offset + 30
     name_end = name_start + name_length
-    if name_end > len(raw_archive):
+    data_offset = name_end + extra_length
+    if data_offset > len(raw_archive):
         raise SkillPackageError("ARCHIVE_INVALID", "Malformed ZIP local header")
-    if b"\x00" in raw_archive[name_start:name_end]:
+    local_name = raw_archive[name_start:name_end]
+    if b"\x00" in local_name:
         raise SkillPackageError("ARCHIVE_UNSAFE_PATH", "Unsafe ZIP member path")
+    decoded_local_name = _decode_zip_name(local_name, local_flags)
+    _normalize_path(decoded_local_name)
+    if local_name != central_name:
+        raise SkillPackageError("ARCHIVE_INVALID", "ZIP local and central paths do not match")
+    return int(data_offset)
 
 
-def _validate_raw_central_names(raw_archive: bytes, count: int, offset: int) -> None:
+def _read_raw_central_names(raw_archive: bytes, count: int, offset: int) -> tuple[bytes, ...]:
+    names: list[bytes] = []
     for _ in range(count):
         if raw_archive[offset : offset + 4] != b"PK\x01\x02" or offset + 46 > len(raw_archive):
             raise SkillPackageError("ARCHIVE_INVALID", "Malformed ZIP central directory")
@@ -198,9 +241,30 @@ def _validate_raw_central_names(raw_archive: bytes, count: int, offset: int) -> 
         next_offset = name_end + extra_length + comment_length
         if next_offset > len(raw_archive):
             raise SkillPackageError("ARCHIVE_INVALID", "Malformed ZIP central directory")
-        if b"\x00" in raw_archive[name_start:name_end]:
+        name = raw_archive[name_start:name_end]
+        if b"\x00" in name:
             raise SkillPackageError("ARCHIVE_UNSAFE_PATH", "Unsafe ZIP member path")
+        names.append(name)
         offset = next_offset
+    return tuple(names)
+
+
+def _decode_zip_name(raw_name: bytes, flags: int) -> str:
+    encoding = "utf-8" if flags & 0x800 else "cp437"
+    try:
+        return raw_name.decode(encoding)
+    except UnicodeDecodeError as error:
+        raise SkillPackageError(
+            "ARCHIVE_UNSAFE_PATH", "Invalid ZIP member path encoding"
+        ) from error
+
+
+def _entry_bounds(infos: list[zipfile.ZipInfo], central_offset: int) -> dict[int, int]:
+    offsets = sorted(info.header_offset for info in infos)
+    return {
+        offset: offsets[index + 1] if index + 1 < len(offsets) else central_offset
+        for index, offset in enumerate(offsets)
+    }
 
 
 def _reject_ancestor_file_conflicts(paths: Iterable[str]) -> None:
@@ -282,43 +346,116 @@ def _find_skill_root(paths: Iterable[str]) -> str:
 
 
 def _read_member(
-    source: zipfile.ZipFile, info: zipfile.ZipInfo, extracted_before: int
+    raw_archive: bytes,
+    info: zipfile.ZipInfo,
+    data_offset: int,
+    entry_bound: int,
+    extracted_before: int,
 ) -> tuple[bytes, int]:
-    if info.file_size > MAX_FILE_BYTES:
-        raise SkillPackageError(
-            "ARCHIVE_FILE_TOO_LARGE", "ZIP member exceeds file size limit", path=info.filename
-        )
-    if extracted_before + info.file_size > MAX_EXTRACTED_BYTES:
-        raise SkillPackageError("ARCHIVE_EXTRACTED_TOO_LARGE", "ZIP exceeds extracted size limit")
+    if data_offset > entry_bound or entry_bound > len(raw_archive):
+        raise SkillPackageError("ARCHIVE_INVALID", "Invalid ZIP compressed data bounds")
 
     content = bytearray()
     actual_size = 0
-    with source.open(info, "r") as member:
-        while True:
-            chunk = member.read(_READ_CHUNK_BYTES)
+    if info.compress_type == zipfile.ZIP_STORED:
+        data_end = data_offset + info.compress_size
+        if info.compress_size < 0 or data_end > entry_bound:
+            raise SkillPackageError("ARCHIVE_INVALID", "Invalid ZIP compressed data bounds")
+        compressed = memoryview(raw_archive)[data_offset:data_end]
+        for offset in range(0, len(compressed), _READ_CHUNK_BYTES):
+            chunk = bytes(compressed[offset : offset + _READ_CHUNK_BYTES])
+            actual_size = _append_extracted_chunk(
+                content, chunk, actual_size, extracted_before, info.filename
+            )
+        _validate_data_descriptor(raw_archive[data_end:entry_bound], info)
+    else:
+        compressed = memoryview(raw_archive)[data_offset:entry_bound]
+        decompressor = zlib.decompressobj(-zlib.MAX_WBITS)
+        cursor = 0
+        actual_compressed_size: int | None = None
+        trailing = b""
+        while cursor < len(compressed) and not decompressor.eof:
+            pending = bytes(compressed[cursor : cursor + _READ_CHUNK_BYTES])
+            cursor += len(pending)
+            while pending and not decompressor.eof:
+                chunk = decompressor.decompress(pending, _READ_CHUNK_BYTES)
+                actual_size = _append_extracted_chunk(
+                    content, chunk, actual_size, extracted_before, info.filename
+                )
+                if decompressor.eof:
+                    actual_compressed_size = cursor - len(decompressor.unused_data)
+                    trailing = decompressor.unused_data + bytes(compressed[cursor:])
+                    break
+                pending = decompressor.unconsumed_tail
+        while not decompressor.eof:
+            chunk = decompressor.decompress(b"", _READ_CHUNK_BYTES)
             if not chunk:
                 break
-            actual_size += len(chunk)
-            if actual_size > MAX_FILE_BYTES:
-                raise SkillPackageError(
-                    "ARCHIVE_FILE_TOO_LARGE",
-                    "ZIP member exceeds file size limit",
-                    path=info.filename,
-                )
-            if extracted_before + actual_size > MAX_EXTRACTED_BYTES:
-                raise SkillPackageError(
-                    "ARCHIVE_EXTRACTED_TOO_LARGE", "ZIP exceeds extracted size limit"
-                )
-            content.extend(chunk)
+            actual_size = _append_extracted_chunk(
+                content, chunk, actual_size, extracted_before, info.filename
+            )
+        if not decompressor.eof:
+            raise SkillPackageError("ARCHIVE_INVALID", "Truncated DEFLATE member")
+        if actual_compressed_size is None:
+            actual_compressed_size = cursor
+            trailing = bytes(compressed[cursor:])
+        _validate_data_descriptor(trailing, info)
+        if actual_compressed_size != info.compress_size:
+            raise SkillPackageError("ARCHIVE_INVALID", "ZIP compressed size mismatch")
+
+    if actual_size != info.file_size or zlib.crc32(content) != info.CRC:
+        raise SkillPackageError("ARCHIVE_INVALID", "ZIP member size or checksum mismatch")
     return bytes(content), actual_size
+
+
+def _validate_data_descriptor(trailing: bytes, info: zipfile.ZipInfo) -> None:
+    if not info.flag_bits & 0x8:
+        if trailing:
+            raise SkillPackageError("ARCHIVE_INVALID", "Unexpected data after ZIP member")
+        return
+    descriptor = trailing[4:] if trailing.startswith(b"PK\x07\x08") else trailing
+    if len(descriptor) != 12:
+        raise SkillPackageError("ARCHIVE_INVALID", "Malformed ZIP data descriptor")
+    crc, compressed_size, file_size = struct.unpack("<III", descriptor)
+    if (crc, compressed_size, file_size) != (info.CRC, info.compress_size, info.file_size):
+        raise SkillPackageError("ARCHIVE_INVALID", "ZIP data descriptor mismatch")
+
+
+def _append_extracted_chunk(
+    content: bytearray,
+    chunk: bytes,
+    actual_size: int,
+    extracted_before: int,
+    path: str,
+) -> int:
+    actual_size += len(chunk)
+    if actual_size > MAX_FILE_BYTES:
+        raise SkillPackageError(
+            "ARCHIVE_FILE_TOO_LARGE", "ZIP member exceeds file size limit", path=path
+        )
+    if extracted_before + actual_size > MAX_EXTRACTED_BYTES:
+        raise SkillPackageError("ARCHIVE_EXTRACTED_TOO_LARGE", "ZIP exceeds extracted size limit")
+    content.extend(chunk)
+    return actual_size
 
 
 def _reject_nested_archive(path: str, content: bytes) -> None:
     lower_path = path.casefold()
-    if lower_path.endswith(_NESTED_SUFFIXES) or any(
-        content.startswith(signature) for signature in _NESTED_SIGNATURES
+    if (
+        lower_path.endswith(_NESTED_SUFFIXES)
+        or any(content.startswith(signature) for signature in _NESTED_SIGNATURES)
+        or _is_tar_archive(content)
     ):
         raise SkillPackageError("ARCHIVE_NESTED", "Nested archives are not allowed", path=path)
+
+
+def _is_tar_archive(content: bytes) -> bool:
+    try:
+        with tarfile.open(fileobj=io.BytesIO(content), mode="r:") as archive:
+            archive.getmembers()
+    except (EOFError, OSError, tarfile.TarError):
+        return False
+    return True
 
 
 def _write_canonical_zip(slug: str, files: tuple[SkillFile, ...]) -> bytes:

@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import difflib
 
-from .types import CanonicalSkillPackage, SkillFile, SkillFileDiff, SkillPackageDiff
+from .types import (
+    CanonicalSkillPackage,
+    SkillDiffStatus,
+    SkillFile,
+    SkillFileDiff,
+    SkillPackageDiff,
+)
 
 MAX_DIFF_BYTES = 512 * 1024
 
@@ -27,18 +33,20 @@ def diff_packages(before: CanonicalSkillPackage, after: CanonicalSkillPackage) -
 
         old_text = _text(old_file)
         new_text = _text(new_file)
+        status: SkillDiffStatus = (
+            "added" if old_file is None else "deleted" if new_file is None else "modified"
+        )
         if (old_file is not None and old_text is None) or (
             new_file is not None and new_text is None
         ):
-            results.append(SkillFileDiff(path=path, status="binary", diff=""))
+            results.append(SkillFileDiff(path=path, status=status, binary=True, diff=""))
             continue
 
-        status = "added" if old_file is None else "deleted" if new_file is None else "modified"
         full_diff = _unified_diff(path, old_text or "", new_text or "", status)
         bounded, was_truncated = _take_bounded_diff(full_diff, remaining)
         remaining -= len(bounded.encode("utf-8"))
         truncated = truncated or was_truncated
-        results.append(SkillFileDiff(path=path, status=status, diff=bounded))
+        results.append(SkillFileDiff(path=path, status=status, binary=False, diff=bounded))
 
     return SkillPackageDiff(files=tuple(results), truncated=truncated)
 

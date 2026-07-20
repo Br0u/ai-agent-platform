@@ -3,17 +3,22 @@ from __future__ import annotations
 import io
 import stat
 import struct
+import tarfile
 import zipfile
+import zlib
 
 import pytest
 
 from conftest import (
     DEFAULT_SKILL_MD,
     corrupt_first_member_data,
+    forge_member_compressed_size,
+    forge_member_uncompressed_metadata,
     mark_first_entry_encrypted,
     mark_first_local_entry_encrypted,
     replace_zip_name_byte,
     replace_zip_name_occurrence,
+    zero_local_member_metadata,
 )
 from skill_core.archive import SkillPackageError, canonicalize_skill_archive
 from skill_core.types import (
@@ -79,6 +84,19 @@ def test_rejects_unicode_normalization_duplicates_and_case_collisions(
     assert_archive_error(archive, "ARCHIVE_PATH_CONFLICT")
 
 
+def test_rejects_file_and_directory_with_same_canonical_path(zip_builder) -> None:
+    directory = "demo-skill/conflict/"
+    archive = zip_builder(
+        {
+            "demo-skill/SKILL.md": DEFAULT_SKILL_MD,
+            "demo-skill/conflict": b"file",
+            directory: b"",
+        },
+        modes={directory: stat.S_IFDIR | 0o755},
+    )
+    assert_archive_error(archive, "ARCHIVE_PATH_CONFLICT")
+
+
 def test_rejects_file_and_descendant_path_conflicts(zip_builder) -> None:
     archive = zip_builder(
         {
@@ -136,6 +154,81 @@ def test_rejects_nested_archive_by_content_not_only_suffix(zip_builder) -> None:
     assert_archive_error(archive, "ARCHIVE_NESTED")
 
 
+def test_rejects_valid_tar_renamed_without_archive_suffix(zip_builder) -> None:
+    nested = io.BytesIO()
+    with tarfile.open(fileobj=nested, mode="w") as archive:
+        info = tarfile.TarInfo("inside.txt")
+        content = b"nested tar content"
+        info.size = len(content)
+        archive.addfile(info, io.BytesIO(content))
+    outer = zip_builder(
+        {
+            "demo-skill/SKILL.md": DEFAULT_SKILL_MD,
+            "demo-skill/reference.bin": nested.getvalue(),
+        }
+    )
+    assert_archive_error(outer, "ARCHIVE_NESTED")
+
+
+def test_does_not_treat_plain_bytes_with_ustar_text_as_tar(zip_builder) -> None:
+    ordinary = bytearray(b"x" * 512)
+    ordinary[257:263] = b"ustar\x00"
+    package = canonicalize_skill_archive(
+        zip_builder(
+            {
+                "demo-skill/SKILL.md": DEFAULT_SKILL_MD,
+                "demo-skill/reference.bin": bytes(ordinary),
+            }
+        )
+    )
+    assert next(file for file in package.files if file.path == "reference.bin").size == 512
+
+
+def test_rejects_valid_v7_tar_without_ustar_magic(zip_builder) -> None:
+    nested = io.BytesIO()
+    with tarfile.open(fileobj=nested, mode="w") as archive:
+        content = b"v7 tar content"
+        info = tarfile.TarInfo("inside.txt")
+        info.size = len(content)
+        archive.addfile(info, io.BytesIO(content))
+    v7 = bytearray(nested.getvalue())
+    v7[257:265] = b"\x00" * 8
+    v7[148:156] = b" " * 8
+    checksum = sum(v7[:512])
+    v7[148:156] = f"{checksum:06o}\0 ".encode()
+    outer = zip_builder(
+        {
+            "demo-skill/SKILL.md": DEFAULT_SKILL_MD,
+            "demo-skill/reference.bin": bytes(v7),
+        }
+    )
+    assert_archive_error(outer, "ARCHIVE_NESTED")
+
+
+def test_does_not_treat_truncated_tar_like_header_as_tar(zip_builder) -> None:
+    header = bytearray(512)
+    header[:10] = b"inside.txt"
+    header[100:108] = b"0000644\0"
+    header[108:116] = b"0000000\0"
+    header[116:124] = b"0000000\0"
+    header[124:136] = b"00000004000\0"
+    header[136:148] = b"00000000000\0"
+    header[156:157] = b"0"
+    header[257:263] = b"ustar\x00"
+    header[148:156] = b" " * 8
+    checksum = sum(header)
+    header[148:156] = f"{checksum:06o}\0 ".encode()
+    package = canonicalize_skill_archive(
+        zip_builder(
+            {
+                "demo-skill/SKILL.md": DEFAULT_SKILL_MD,
+                "demo-skill/reference.bin": bytes(header),
+            }
+        )
+    )
+    assert next(file for file in package.files if file.path == "reference.bin").size == 512
+
+
 def test_rejects_archive_larger_than_five_mib(zip_builder) -> None:
     archive = zip_builder() + b"padding" * ((MAX_ARCHIVE_BYTES // 7) + 1)
     assert len(archive) > MAX_ARCHIVE_BYTES
@@ -176,6 +269,52 @@ def test_streaming_rejects_single_file_over_two_mib(zip_builder) -> None:
         }
     )
     assert_archive_error(archive, "ARCHIVE_FILE_TOO_LARGE")
+
+
+def test_streams_past_forged_uncompressed_size_and_crc_until_real_eof(zip_builder) -> None:
+    member_name = "demo-skill/references/bomb.txt"
+    actual_content = b"x" * (MAX_FILE_BYTES + 1024 * 1024)
+    archive = zip_builder(
+        {
+            "demo-skill/SKILL.md": DEFAULT_SKILL_MD,
+            member_name: actual_content,
+        }
+    )
+    forged = forge_member_uncompressed_metadata(
+        archive,
+        member_name,
+        uncompressed_size=1,
+        crc=zlib.crc32(actual_content[:1]),
+    )
+    assert len(forged) < MAX_ARCHIVE_BYTES
+    assert_archive_error(forged, "ARCHIVE_FILE_TOO_LARGE")
+
+
+def test_streams_deflate_to_eof_when_compressed_size_is_forged_small(zip_builder) -> None:
+    member_name = "demo-skill/references/bomb.txt"
+    actual_content = b"x" * (MAX_FILE_BYTES + 1024 * 1024)
+    archive = zip_builder({"demo-skill/SKILL.md": DEFAULT_SKILL_MD, member_name: actual_content})
+    forged = forge_member_compressed_size(archive, member_name, 1)
+    assert_archive_error(forged, "ARCHIVE_FILE_TOO_LARGE")
+
+
+def test_streams_directory_members_so_they_cannot_hide_a_zip_bomb(zip_builder) -> None:
+    member_name = "demo-skill/empty/"
+    actual_content = b"x" * (MAX_FILE_BYTES + 1024 * 1024)
+    archive = zip_builder(
+        {
+            "demo-skill/SKILL.md": DEFAULT_SKILL_MD,
+            member_name: actual_content,
+        },
+        modes={member_name: stat.S_IFDIR | 0o755},
+    )
+    forged = forge_member_uncompressed_metadata(
+        archive,
+        member_name,
+        uncompressed_size=0,
+        crc=0,
+    )
+    assert_archive_error(forged, "ARCHIVE_FILE_TOO_LARGE")
 
 
 def test_rejects_paths_deeper_than_eight_components(zip_builder) -> None:
@@ -263,3 +402,41 @@ def test_rejects_metadata_that_lies_about_uncompressed_size(zip_builder) -> None
     struct.pack_into("<I", archive, central + 24, 1)
     error = assert_archive_error(bytes(archive), "ARCHIVE_INVALID")
     assert "x" * 20 not in str(error)
+
+
+def test_rejects_absolute_path_present_only_in_local_directory_header(zip_builder) -> None:
+    central_name = "demo-skill/empty/"
+    local_name = "/" + ("x" * (len(central_name) - 2)) + "/"
+    archive = zip_builder(
+        {"demo-skill/SKILL.md": DEFAULT_SKILL_MD, central_name: b""},
+        modes={central_name: stat.S_IFDIR | 0o755},
+    )
+    forged = replace_zip_name_occurrence(
+        archive,
+        central_name.encode(),
+        local_name.encode(),
+        0,
+    )
+    assert_archive_error(forged, "ARCHIVE_UNSAFE_PATH")
+
+
+def test_rejects_safe_but_different_local_and_central_names(zip_builder) -> None:
+    central_name = "demo-skill/empty/"
+    local_name = "demo-skill/other/"
+    archive = zip_builder(
+        {"demo-skill/SKILL.md": DEFAULT_SKILL_MD, central_name: b""},
+        modes={central_name: stat.S_IFDIR | 0o755},
+    )
+    forged = replace_zip_name_occurrence(
+        archive,
+        central_name.encode(),
+        local_name.encode(),
+        0,
+    )
+    assert_archive_error(forged, "ARCHIVE_INVALID")
+
+
+def test_rejects_local_metadata_mismatch_without_data_descriptor(zip_builder) -> None:
+    member_name = "demo-skill/SKILL.md"
+    forged = zero_local_member_metadata(zip_builder(), member_name)
+    assert_archive_error(forged, "ARCHIVE_INVALID")
