@@ -18,7 +18,7 @@
 - 单台 Linux 服务器
 - Docker Compose 部署
 - 至少 4 核、8 GB 内存、100 GB 可用磁盘
-- `proxy`、`web`、`agent`、`migrate`、`agno-bootstrap`、`agent-migrate`、`db`、`backup` 八个服务
+- `proxy`、`web`、`agent`、`migrate`、`agno-bootstrap`、`agent-migrate`、`agent-control-bootstrap`、`agent-control-migrate`、`db`、`backup` 十个服务
 - PostgreSQL 数据卷、上传文件卷与应用镜像分离
 - 每日数据库备份，保留 7 至 30 天，并复制到另一台机器或备份存储
 
@@ -30,9 +30,11 @@
 - `migrate`：只使用 `ai_agent_migrator` 连接，完成迁移、权限种子和运行时授权后退出。
 - `agno-bootstrap`：用数据库 owner 幂等建立/升级 Agno 角色与`agno`schema；新卷和既有卷都走同一路径。
 - `agent-migrate`：只使用`ai_agent_agno_migrator`执行 Agno 官方迁移，成功后退出。
-- `agent`：内部 AgentOS 服务，不发布主机端口；只使用`ai_agent_agno`运行时账号和独立 Bearer 密钥。
+- `agent-control-bootstrap`：在 Agno 角色就绪后，用数据库 owner 幂等建立动态模型控制面的独立 migrator/runtime 角色。
+- `agent-control-migrate`：只使用`ai_agent_control_migrator`迁移`agent_control`schema，成功后退出。
+- `agent`：内部 AgentOS 服务，不发布主机端口；只使用 Agno 与控制面的 runtime 账号和独立 Bearer 密钥。
 - `backup`：只使用独立的`ai_agent_backup`只读账号执行`pg_dump`，单个 dump 覆盖`public`、`drizzle`、`agno`，写入独立备份卷并清理过期文件。
-- 固定顺序为`db → migrate → agno-bootstrap → agent-migrate → agent → web → proxy/backup`；`backup`等待平台和 Agno 迁移都成功，`proxy`等待`web`健康。
+- 固定顺序为`db → migrate → agno-bootstrap → agent-control-bootstrap → agent-migrate → agent-control-migrate → agent → web → proxy/backup`；`agent`等待 Agno 与控制面迁移都成功，`backup`等待平台和 Agno 迁移都成功，`proxy`等待`web`健康。
 
 ## 反向代理信任边界
 
@@ -61,11 +63,13 @@ export ASSISTANT_SESSION_SECRET_FILE=/secure/secrets/assistant_session_secret
 export ASSISTANT_RATE_LIMIT_SECRET_FILE=/secure/secrets/assistant_rate_limit_secret
 # 生产 PUBLIC_HOST 必须改为对外域名
 docker compose config
-docker compose build web agent migrate agent-migrate backup
+docker compose build migrate agent-migrate agent-control-migrate agent web backup
 docker compose up -d --wait db
 docker compose run --rm migrate
 docker compose run --rm agno-bootstrap
+docker compose run --rm agent-control-bootstrap
 docker compose run --rm --no-deps agent-migrate
+docker compose run --rm --no-deps agent-control-migrate
 docker compose up -d --no-deps --wait agent
 docker compose up -d --wait web
 docker compose up -d --wait proxy backup
@@ -93,14 +97,16 @@ curl -f -H "Host: ${PUBLIC_HOST}" http://127.0.0.1:8080/api/health/live
 curl -f -H "Host: ${PUBLIC_HOST}" http://127.0.0.1:8080/api/health/ready
 ```
 
-新数据库卷会初始化平台角色；后续平台 schema 由一次性`migrate`处理。Agno 角色/schema 不依赖`docker-entrypoint-initdb.d`，新卷和已有卷都运行以下幂等升级命令，再执行固定版本镜像中的 Agno 迁移：
+新数据库卷会初始化平台角色；后续平台 schema 由一次性`migrate`处理。Agno 与动态模型控制面角色/schema 不依赖`docker-entrypoint-initdb.d`，新卷和已有卷都运行以下幂等升级命令，再执行固定版本镜像中的迁移：
 
 ```bash
 docker compose run --rm agno-bootstrap
+docker compose run --rm agent-control-bootstrap
 docker compose run --rm --no-deps agent-migrate
+docker compose run --rm --no-deps agent-control-migrate
 ```
 
-执行后验证平台 runtime 无`CREATE`及 audit 更新/删除权限、Agno runtime 无 DDL/跨 schema 权限、backup 只能读取三个 schema。生产部署固定顺序是`db → migrate → agno-bootstrap → agent-migrate → agent → web → proxy/backup`。
+执行后验证平台 runtime 无`CREATE`及 audit 更新/删除权限、Agno runtime 与控制面 runtime 无 DDL/跨 schema 权限、backup 只能读取三个 schema。生产部署固定顺序是`db → migrate → agno-bootstrap → agent-control-bootstrap → agent-migrate → agent-control-migrate → agent → web → proxy/backup`。
 
 ## 认证入口限流
 

@@ -12,7 +12,7 @@
 | `MODEL_RUN_TIMEOUT_SECONDS` | `50`                            | Agent 调用模型超时，允许 1～50 秒                                         |
 | `MODEL_ENDPOINTS_FILE`      | `/etc/aap/model-endpoints.json` | Agent 读取受控 Endpoint catalog；Compose 已内置，不交给浏览器             |
 
-本地开发使用 `AGENTOS_INTERNAL_URL=http://127.0.0.1:7777`。生产不得把 7777 发布到公网。
+直接运行 Web 与 Agent 的本地开发模式使用 `AGENTOS_INTERNAL_URL=http://127.0.0.1:7777`。Docker Compose 模式固定使用内部地址`http://agent:7777`，且不得把 7777 发布到宿主机或公网。
 
 ## 2. Web 运行时与熔断参数
 
@@ -39,7 +39,7 @@ ASSISTANT_PUBLIC_ORIGIN=https://ai-agent.example.com
 TRUST_NGINX_PROXY=true
 ```
 
-本地同时使用两个地址时：
+直接运行`pnpm dev`、浏览器访问 Web 端口`3000`时：
 
 ```dotenv
 BETTER_AUTH_URL=http://127.0.0.1:3000
@@ -47,6 +47,18 @@ BETTER_AUTH_TRUSTED_ORIGINS=http://127.0.0.1:3000,http://localhost:3000
 ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:3000
 TRUST_NGINX_PROXY=false
 ```
+
+本地 Docker Compose 经过 Nginx 代理，只访问端口`8080`，必须改为：
+
+```dotenv
+BETTER_AUTH_URL=http://127.0.0.1:8080
+BETTER_AUTH_TRUSTED_ORIGINS=http://127.0.0.1:8080
+ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080
+PUBLIC_HOST=127.0.0.1
+ALLOW_LOCAL_VALIDATION_HOSTS=true
+```
+
+Compose 已在隔离的 Web 服务中固定`TRUST_NGINX_PROXY=true`，不要通过宿主机发布 Web 的`3000`端口。
 
 要求：
 
