@@ -10,20 +10,25 @@ import Page from "./page";
 afterEach(cleanup);
 
 describe("customer login page", () => {
-  it("uses the shared auth shell with customer context and preserves returnTo", async () => {
+  it("uses the customer login page and preserves returnTo", async () => {
     const { container } = render(
       await Page({
         searchParams: Promise.resolve({ returnTo: "/console/licenses" }),
       }),
     );
 
-    expect(screen.getByText("Customer Access")).toBeVisible();
+    expect(screen.getByText("华鲲元启 · AI Agent Platform")).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "登录客户控制台" }),
     ).toBeVisible();
+    expect(screen.getByText("使用已注册的客户账号继续访问。")).toBeVisible();
     expect(
-      screen.getByText(/管理企业授权、资源、团队与服务记录/),
-    ).toBeVisible();
+      screen.getByRole("button", { name: "手机号登录，即将开放" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("link", { name: "员工登录" })).toHaveAttribute(
+      "href",
+      "/staff/login",
+    );
     expect(container.querySelector('input[name="returnTo"]')).toHaveValue(
       "/console/licenses",
     );
