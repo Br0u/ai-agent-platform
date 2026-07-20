@@ -601,6 +601,40 @@ describe("production deployment security contracts", () => {
     );
   });
 
+  it("separates direct Web development from local Compose and gives agents safe instructions", () => {
+    const rootReadme = read("README.md");
+    const environmentMigration = read(
+      "docs/deployment/maduoduo-environment-migration.md",
+    );
+    const example = read(".env.example");
+
+    expect(rootReadme).toContain("## 本地开发（直接运行 Web，端口 3000）");
+    expect(rootReadme).toContain(
+      "## 本地 Docker Compose（完整环境，端口 8080）",
+    );
+    expect(rootReadme).toContain("BETTER_AUTH_URL=http://127.0.0.1:8080");
+    expect(rootReadme).toContain(
+      "ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080",
+    );
+    expect(rootReadme).toContain("PUBLIC_HOST=127.0.0.1");
+    expect(rootReadme).toContain("ALLOW_LOCAL_VALIDATION_HOSTS=true");
+    expect(rootReadme).toContain("Docker Compose 2.33.1");
+    expect(rootReadme).toContain("## 交给 Agent 的本地 Docker 部署 Prompt");
+    expect(rootReadme).toContain("不得执行 docker compose down -v");
+    expect(rootReadme).toContain(
+      "不能遗漏 agent-control-bootstrap 或 agent-control-migrate",
+    );
+    expect(rootReadme).toContain("不得把“容器启动”冒充成“模型已经可用”");
+    expect(environmentMigration).toContain(
+      "直接运行`pnpm dev`、浏览器访问 Web 端口`3000`时",
+    );
+    expect(environmentMigration).toContain(
+      "本地 Docker Compose 经过 Nginx 代理，只访问端口`8080`",
+    );
+    expect(example).toContain("生产部署模板");
+    expect(example).toContain("127.0.0.1:8080");
+  });
+
   it("documents assistant secret files and current images in first deployment", () => {
     const runbook = read("docs/deployment/server-readiness.md");
     const firstDeployment = runbook
@@ -626,7 +660,7 @@ describe("production deployment security contracts", () => {
     expect(firstDeployment).toContain("不得复用 Better Auth 或 AgentOS 密钥");
     expect(firstDeployment).toContain("不要提交");
     expect(firstDeployment).toContain(
-      "docker compose build web agent migrate agent-migrate backup",
+      "docker compose build migrate agent-migrate agent-control-migrate agent web backup",
     );
   });
 
@@ -2944,7 +2978,9 @@ exit 0
       "docker compose up -d --wait db",
       "docker compose run --rm migrate",
       "docker compose run --rm agno-bootstrap",
+      "docker compose run --rm agent-control-bootstrap",
       "docker compose run --rm --no-deps agent-migrate",
+      "docker compose run --rm --no-deps agent-control-migrate",
       "docker compose up -d --no-deps --wait agent",
       "docker compose up -d --wait web",
       "docker compose up -d --wait proxy backup",
@@ -2964,8 +3000,10 @@ exit 0
       );
     }
     expect(runbook).toContain(
-      "db → migrate → agno-bootstrap → agent-migrate → agent → web → proxy/backup",
+      "db → migrate → agno-bootstrap → agent-control-bootstrap → agent-migrate → agent-control-migrate → agent → web → proxy/backup",
     );
+    expect(runbook).toContain("十个服务");
+    expect(runbook).toContain("`agent`等待 Agno 与控制面迁移都成功");
     expect(runbook).toContain("`backup`等待平台和 Agno 迁移都成功");
     expect(runbook).toContain("`proxy`等待`web`健康");
     expect(runbook).not.toContain("后续服务按`service_healthy`顺序启动");
