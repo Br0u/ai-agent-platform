@@ -326,7 +326,7 @@ def _normalize_path(raw_path: str) -> str:
         or path.is_absolute()
     ):
         raise SkillPackageError("ARCHIVE_UNSAFE_PATH", "Unsafe ZIP member path")
-    if any(part.casefold() == ".git" for part in parts):
+    if any(part.casefold() in {".git", ".gitmodules"} for part in parts):
         raise SkillPackageError(
             "ARCHIVE_GIT_METADATA", "Git metadata paths are not allowed", path=normalized
         )

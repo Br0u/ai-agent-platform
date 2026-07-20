@@ -10,6 +10,7 @@ import zlib
 
 import pytest
 
+from skill_core import canonicalize_skill_zip
 from conftest import (
     DEFAULT_SKILL_MD,
     corrupt_first_member_data,
@@ -82,6 +83,17 @@ def test_rejects_ascii_and_unicode_control_characters_in_paths(zip_builder, path
 def test_rejects_git_metadata_path_components(zip_builder, path: str) -> None:
     archive = zip_builder({"demo-skill/SKILL.md": DEFAULT_SKILL_MD, path: b"x"})
     assert_archive_error(archive, "ARCHIVE_GIT_METADATA")
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["demo-skill/.gitmodules", "demo-skill/vendor/nested/.GITMODULES"],
+)
+def test_public_canonicalizer_rejects_gitmodules_at_any_depth(zip_builder, path: str) -> None:
+    archive = zip_builder({"demo-skill/SKILL.md": DEFAULT_SKILL_MD, path: b"[submodule]\n"})
+    with pytest.raises(SkillPackageError) as caught:
+        canonicalize_skill_zip(archive)
+    assert caught.value.code == "ARCHIVE_GIT_METADATA"
 
 
 @pytest.mark.parametrize(
