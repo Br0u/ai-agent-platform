@@ -638,6 +638,26 @@ describe("AssistantWorkspace", () => {
     ).not.toHaveAttribute("hidden");
   });
 
+  it("maps workspace service capabilities to semantic status-light colors", () => {
+    const css = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/components/assistant/assistant-workspace.css",
+      ),
+      "utf8",
+    );
+
+    expect(css).toMatch(
+      /\.assistant-workspace__service-state > span \{[\s\S]*?background: #b38225;[\s\S]*?rgb\(179 130 37 \/ 15%\);[\s\S]*?\}/u,
+    );
+    expect(css).toMatch(
+      /\[data-capability="available"\] > span \{[\s\S]*?background: #27826b;[\s\S]*?rgb\(39 130 107 \/ 15%\);[\s\S]*?\}/u,
+    );
+    expect(css).toMatch(
+      /\[data-capability="degraded"\] > span \{[\s\S]*?background: #b94b5a;[\s\S]*?rgb\(185 75 90 \/ 15%\);[\s\S]*?\}/u,
+    );
+  });
+
   it("keeps workspace CSS free of viewport-width fixed children", () => {
     const css = readFileSync(
       resolve(
