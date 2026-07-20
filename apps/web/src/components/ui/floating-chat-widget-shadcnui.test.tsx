@@ -447,6 +447,20 @@ describe("FloatingChatWidget", () => {
     );
   });
 
+  it("anchors quick-assistant bubbles by role", () => {
+    const stylesheet = readFileSync(
+      "src/components/ui/floating-chat-widget-shadcnui.css",
+      "utf8",
+    );
+
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__message\s*\{[\s\S]*?width:\s*fit-content;[\s\S]*?align-self:\s*flex-start;/u,
+    );
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__message--user\s*\{[\s\S]*?align-self:\s*flex-end;[\s\S]*?margin-inline-start:\s*auto;/u,
+    );
+  });
+
   it("keeps every mobile quick-assistant control at least 44 pixels", () => {
     const stylesheet = readFileSync(
       "src/components/ui/floating-chat-widget-shadcnui.css",

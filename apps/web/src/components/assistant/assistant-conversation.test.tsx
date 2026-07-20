@@ -263,4 +263,21 @@ describe("AssistantConversation", () => {
       /\.assistant-conversation\[data-variant="dock"\][^{]*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto;/s,
     );
   });
+
+  it("anchors assistant bubbles left and user bubbles right", () => {
+    const css = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/components/assistant/assistant-conversation.css",
+      ),
+      "utf8",
+    );
+
+    expect(css).toMatch(
+      /\.assistant-conversation__message\s*\{[\s\S]*?width:\s*fit-content;[\s\S]*?justify-self:\s*start;/u,
+    );
+    expect(css).toMatch(
+      /\.assistant-conversation__message--user\s*\{[\s\S]*?justify-self:\s*end;[\s\S]*?margin-inline-start:\s*auto;/u,
+    );
+  });
 });

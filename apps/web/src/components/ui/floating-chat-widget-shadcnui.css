@@ -178,13 +178,16 @@
 
 .floating-assistant__message {
   display: flex;
+  width: fit-content;
   max-width: 88%;
   align-items: flex-start;
+  align-self: flex-start;
   gap: 9px;
 }
 
 .floating-assistant__message--user {
   align-self: flex-end;
+  margin-inline-start: auto;
 }
 
 .floating-assistant__message-avatar {
