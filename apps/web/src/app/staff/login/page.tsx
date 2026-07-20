@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { AuthPage } from "@/components/auth/auth-page";
+import { LoginPage } from "@/components/auth/login-page";
 import { StaffLoginForm } from "@/components/auth/staff-login-form";
 
 export const metadata: Metadata = {
@@ -15,12 +15,12 @@ export default async function Page({
 }) {
   const { returnTo } = await searchParams;
   return (
-    <AuthPage
-      intro="仅限已由企业管理员开通的内部员工账号。"
-      realmLabel="Workforce Access"
-      title="员工安全登录"
+    <LoginPage
+      intro="使用企业管理员分配的内部账号。"
+      title="登录运营后台"
+      variant="staff"
     >
       <StaffLoginForm returnTo={returnTo} />
-    </AuthPage>
+    </LoginPage>
   );
 }
