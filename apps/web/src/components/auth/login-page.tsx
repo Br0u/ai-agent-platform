@@ -19,7 +19,16 @@ const LOGIN_PAGE_CONTENT = {
     asideTitle: "欢迎登录",
     brand: "华鲲元启 · AI Agent Platform",
     description: "一站式管理企业授权、智能应用、团队与服务资源。",
-    futureMethods: ["手机号", "扫码"],
+    futureMethods: [
+      {
+        accessibleName: "手机号登录，即将开放",
+        method: "手机号",
+      },
+      {
+        accessibleName: "扫码登录，即将开放",
+        method: "扫码",
+      },
+    ],
   },
   staff: {
     alternate: {
@@ -30,16 +39,31 @@ const LOGIN_PAGE_CONTENT = {
     asideTitle: "员工安全登录",
     brand: "华鲲元启 · 运营工作台",
     description: "仅限企业管理员开通的内部账号，登录行为将纳入安全审计。",
-    futureMethods: ["动态口令", "企业 SSO"],
+    futureMethods: [
+      {
+        accessibleName: "动态口令登录，即将开放",
+        method: "动态口令",
+      },
+      {
+        accessibleName: "企业 SSO 登录，即将开放",
+        method: "企业 SSO",
+      },
+    ],
   },
 } as const;
 
 const CUSTOMER_PROVIDERS = ["支付宝", "微信", "钉钉"] as const;
 
-function FutureLoginButton({ method }: { method: string }) {
+function FutureLoginButton({
+  accessibleName,
+  method,
+}: {
+  accessibleName: string;
+  method: string;
+}) {
   return (
     <button
-      aria-label={`${method}登录，即将开放`}
+      aria-label={accessibleName}
       className="enterprise-login-page__method"
       disabled
       type="button"
@@ -50,18 +74,11 @@ function FutureLoginButton({ method }: { method: string }) {
   );
 }
 
-export function LoginPage({
-  children,
-  intro,
-  title,
-  variant,
-}: LoginPageProps) {
+export function LoginPage({ children, intro, title, variant }: LoginPageProps) {
   const content = LOGIN_PAGE_CONTENT[variant];
 
   return (
-    <div
-      className={`enterprise-login-page enterprise-login-page--${variant}`}
-    >
+    <div className={`enterprise-login-page enterprise-login-page--${variant}`}>
       <aside
         aria-label={content.asideLabel}
         className="enterprise-login-page__aside"
@@ -88,7 +105,11 @@ export function LoginPage({
 
             <div className="enterprise-login-page__providers">
               {CUSTOMER_PROVIDERS.map((provider) => (
-                <FutureLoginButton key={provider} method={provider} />
+                <FutureLoginButton
+                  accessibleName={`${provider}登录，即将开放`}
+                  key={provider}
+                  method={provider}
+                />
               ))}
             </div>
           </>
@@ -120,11 +141,18 @@ export function LoginPage({
           className="enterprise-login-page__methods"
           role="group"
         >
-          <span className="enterprise-login-page__method enterprise-login-page__method--active">
+          <span
+            aria-current="true"
+            className="enterprise-login-page__method enterprise-login-page__method--active"
+          >
             账号登录
           </span>
           {content.futureMethods.map((method) => (
-            <FutureLoginButton key={method} method={method} />
+            <FutureLoginButton
+              accessibleName={method.accessibleName}
+              key={method.method}
+              method={method.method}
+            />
           ))}
         </div>
 

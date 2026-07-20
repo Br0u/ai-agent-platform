@@ -21,6 +21,10 @@ describe("LoginPage", () => {
     expect(
       screen.getByRole("heading", { level: 2, name: "欢迎登录" }),
     ).toBeVisible();
+    expect(screen.getByText("账号登录")).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
 
     const qrPlaceholder = screen.getByLabelText("扫码登录即将开放");
     expect(qrPlaceholder).toBeVisible();
@@ -62,9 +66,18 @@ describe("LoginPage", () => {
     expect(within(aside).getByText("风险控制")).toBeVisible();
     expect(screen.queryByText("支付宝")).not.toBeInTheDocument();
 
-    for (const method of ["动态口令", "企业 SSO"]) {
+    for (const { accessibleName, method } of [
+      {
+        accessibleName: "动态口令登录，即将开放",
+        method: "动态口令",
+      },
+      {
+        accessibleName: "企业 SSO 登录，即将开放",
+        method: "企业 SSO",
+      },
+    ]) {
       const button = screen.getByRole("button", {
-        name: `${method}登录，即将开放`,
+        name: accessibleName,
       });
 
       expect(button).toBeDisabled();
@@ -72,9 +85,10 @@ describe("LoginPage", () => {
       expect(within(button).getByText("即将开放")).toBeVisible();
     }
 
-    expect(
-      screen.getByRole("link", { name: "返回客户登录" }),
-    ).toHaveAttribute("href", "/login");
+    expect(screen.getByRole("link", { name: "返回客户登录" })).toHaveAttribute(
+      "href",
+      "/login",
+    );
     expect(screen.getByRole("form", { name: "员工登录表单" })).toBeVisible();
   });
 });
