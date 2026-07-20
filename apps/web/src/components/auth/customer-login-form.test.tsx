@@ -16,14 +16,30 @@ describe("CustomerLoginForm", () => {
     render(<CustomerLoginForm />);
 
     expect(screen.getByLabelText("邮箱")).toHaveAttribute("type", "email");
+    expect(screen.getByLabelText("邮箱")).toHaveAttribute(
+      "autocomplete",
+      "email",
+    );
+    expect(screen.getByLabelText("邮箱")).toHaveAttribute("name", "email");
+    expect(screen.getByLabelText("邮箱")).toHaveAttribute(
+      "placeholder",
+      "请输入邮箱地址",
+    );
     expect(screen.getByLabelText("密码")).toHaveAttribute("type", "password");
+    expect(screen.getByLabelText("密码")).toHaveAttribute(
+      "autocomplete",
+      "current-password",
+    );
+    expect(screen.getByLabelText("密码")).toHaveAttribute("name", "password");
+    expect(screen.getByLabelText("密码")).toHaveAttribute(
+      "placeholder",
+      "请输入登录密码",
+    );
     expect(screen.getByRole("link", { name: "注册客户账号" })).toHaveAttribute(
       "href",
       "/register",
     );
-    expect(
-      screen.getByRole("button", { name: "登录客户控制台" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "立即登录" })).toBeEnabled();
     expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
   });
 
