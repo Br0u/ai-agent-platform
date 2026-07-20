@@ -201,7 +201,7 @@ describe("compileSafeDocument", () => {
   });
 
   it.each([
-    ["nodes", `- item\n`.repeat(DOCUMENT_LIMITS.astNodes + 1)],
+    ["nodes", `item\n\n`.repeat(Math.floor(DOCUMENT_LIMITS.astNodes / 2) + 1)],
     ["depth", `${"> ".repeat(DOCUMENT_LIMITS.nestingDepth + 1)}deep`],
     ["headings", "# h\n".repeat(DOCUMENT_LIMITS.headings + 1)],
     [
