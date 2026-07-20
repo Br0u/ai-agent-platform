@@ -14,7 +14,6 @@ export function DocCategoryCards({
           key={document.id}
           className="doc-card doc-card--category"
         >
-          <span className="doc-card__code">{document.navigation.code}</span>
           <h3 className="doc-card__title">{document.title}</h3>
           <p className="doc-card__desc">{document.summary}</p>
           <span className="doc-card__arrow" aria-hidden="true">

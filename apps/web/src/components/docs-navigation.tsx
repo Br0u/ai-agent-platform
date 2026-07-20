@@ -27,7 +27,6 @@ export function DocsNavigation({
           className="docs-navigation__link"
           aria-current={currentSlug ? undefined : "page"}
         >
-          <span className="docs-navigation__code">D0</span>
           <span>文档总览</span>
         </Link>
 
@@ -40,9 +39,6 @@ export function DocsNavigation({
               className="docs-navigation__link"
               aria-current={currentSlug === document.slug ? "page" : undefined}
             >
-              <span className="docs-navigation__code">
-                {document.navigation.code}
-              </span>
               <span>{document.navigation.label}</span>
             </Link>
           );

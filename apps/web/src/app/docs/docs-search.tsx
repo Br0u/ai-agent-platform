@@ -9,7 +9,6 @@ export type PublicDocsSearchItem = {
   summary: string;
   navigation: {
     label: string;
-    code: string;
   };
 };
 
@@ -31,12 +30,7 @@ export function DocsSearch({
     if (!normalizedQuery) return [];
     return documents.filter((document) =>
       normalized(
-        [
-          document.title,
-          document.summary,
-          document.navigation.label,
-          document.navigation.code,
-        ].join(" "),
+        [document.title, document.summary, document.navigation.label].join(" "),
       ).includes(normalizedQuery),
     );
   }, [documents, normalizedQuery]);
@@ -74,7 +68,6 @@ export function DocsSearch({
               {results.map((document) => (
                 <li key={document.slug}>
                   <Link href={`/docs/${document.slug}`}>
-                    <span>{document.navigation.code}</span>
                     <strong>{document.title}</strong>
                     <small>{document.summary}</small>
                   </Link>

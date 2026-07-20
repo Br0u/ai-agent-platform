@@ -36,7 +36,6 @@ export function PublicDocsChrome({
     summary: document.summary,
     navigation: {
       label: document.navigation.label,
-      code: document.navigation.code,
     },
   }));
 
@@ -77,7 +76,6 @@ export function DocReaderLayout({
           </div>
 
           <header className="doc-reader__header">
-            <span className="doc-reader__header-kicker">overview</span>
             <h1 className="doc-reader__title">文档中心</h1>
             <p className="doc-reader__desc">
               从首次部署到生产运维，按清晰路径查找平台概念、操作指南、API

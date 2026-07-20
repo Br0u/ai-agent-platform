@@ -85,6 +85,11 @@ describe("DocReaderLayout", () => {
     expect(
       within(searchResults).getByRole("link", { name: /第二篇/u }),
     ).toHaveAttribute("href", "/docs/second");
+    expect(within(searchResults).queryByText("D2")).toBeNull();
+    fireEvent.change(search, { target: { value: "D2" } });
+    expect(within(banner).getByRole("status")).toHaveTextContent(
+      "没有匹配的文档",
+    );
     fireEvent.change(search, { target: { value: "PRIVATE_BODY_TOKEN" } });
     expect(within(banner).getByRole("status")).toHaveTextContent(
       "没有匹配的文档",
@@ -101,9 +106,10 @@ describe("DocReaderLayout", () => {
     for (const navigation of navigations) {
       expect(
         within(navigation).getByRole("link", {
-          name: /D0\s*文档总览/,
+          name: "文档总览",
         }),
       ).toHaveAttribute("aria-current", "page");
+      expect(within(navigation).queryByText("D0")).toBeNull();
     }
 
     expect(screen.getByText("文档总览", { selector: "strong" })).toBeVisible();
@@ -118,20 +124,21 @@ describe("DocReaderLayout", () => {
         name: accessibleName,
       });
       expect(within(card).getByText(document.title)).toBeVisible();
+      expect(within(card).queryByText(document.navigation.code)).toBeNull();
       expect(card).toHaveAttribute("href", expectedHref);
 
       const desktopLink = within(navigations[0]!).getByRole("link", {
-        name: new RegExp(
-          `${document.navigation.code}\\s*${document.title}`,
-          "u",
-        ),
+        name: document.title,
       });
       const mobileLink = within(navigations[1]!).getByRole("link", {
-        name: new RegExp(
-          `${document.navigation.code}\\s*${document.title}`,
-          "u",
-        ),
+        name: document.title,
       });
+      expect(
+        within(navigations[0]!).queryByText(document.navigation.code),
+      ).toBeNull();
+      expect(
+        within(navigations[1]!).queryByText(document.navigation.code),
+      ).toBeNull();
       expect(desktopLink).toHaveAttribute("href", expectedHref);
       expect(mobileLink).toHaveAttribute("href", expectedHref);
       expect(mobileLink).toHaveAttribute(
@@ -139,6 +146,8 @@ describe("DocReaderLayout", () => {
         desktopLink.getAttribute("href"),
       );
     }
+
+    expect(container.querySelector(".doc-reader__header-kicker")).toBeNull();
   });
 
   it("limits broad CMS search results to eight links", () => {

@@ -89,13 +89,18 @@ describe("DocsDetailLayout", () => {
       within(banner).getByRole("searchbox", { name: "搜索文档" }),
     ).toBeVisible();
     const search = within(banner).getByRole("searchbox", { name: "搜索文档" });
-    fireEvent.change(search, { target: { value: "d3" } });
+    fireEvent.change(search, { target: { value: "gamma摘要" } });
     const searchResults = within(banner).getByRole("list", {
       name: "搜索结果",
     });
     expect(
       within(searchResults).getByRole("link", { name: /GAMMA/u }),
     ).toHaveAttribute("href", "/docs/gamma");
+    expect(within(searchResults).queryByText("D3")).toBeNull();
+    fireEvent.change(search, { target: { value: "d3" } });
+    expect(within(banner).getByRole("status")).toHaveTextContent(
+      "没有匹配的文档",
+    );
     fireEvent.change(search, { target: { value: "不存在的文档" } });
     expect(within(banner).getByRole("status")).toHaveTextContent(
       "没有匹配的文档",
@@ -117,11 +122,11 @@ describe("DocsDetailLayout", () => {
     for (const navigation of navigations) {
       for (const document of documents) {
         const link = within(navigation).getByRole("link", {
-          name: new RegExp(
-            `${document.navigation.code}\\s*${document.title}`,
-            "u",
-          ),
+          name: document.title,
         });
+        expect(
+          within(navigation).queryByText(document.navigation.code),
+        ).toBeNull();
         expect(link).toHaveAttribute("href", `/docs/${document.slug}`);
         if (document.slug === current.slug) {
           expect(link).toHaveAttribute("aria-current", "page");
@@ -130,6 +135,7 @@ describe("DocsDetailLayout", () => {
         }
       }
     }
+    expect(container.querySelector(".docs-detail__eyebrow")).toBeNull();
 
     const outline = screen.getByRole("navigation", { name: "本页目录" });
     expect(

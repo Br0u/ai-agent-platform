@@ -53,7 +53,6 @@ export function DocsDetailLayout({
 
           <article className="docs-detail__article">
             <header className="docs-detail__header">
-              <span className="docs-detail__eyebrow">{currentSlug}</span>
               <h1>{title}</h1>
               {description ? <p>{description}</p> : null}
             </header>
