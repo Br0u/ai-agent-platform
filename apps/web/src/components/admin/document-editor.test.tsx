@@ -91,6 +91,13 @@ describe("DocumentEditor", () => {
     );
     expect(screen.getByLabelText("导航名称")).toHaveValue("快速开始");
     expect(screen.getByLabelText("导航代码")).toHaveValue("QUICK_START");
+    expect(
+      () =>
+        new RegExp(
+          screen.getByLabelText("导航代码").getAttribute("pattern")!,
+          "v",
+        ),
+    ).not.toThrow();
     expect(screen.getByLabelText("导航顺序")).toHaveValue(10);
     expect(screen.getByText("当前修订 r3")).toBeVisible();
     expect(screen.getByText("已发布 r2")).toBeVisible();

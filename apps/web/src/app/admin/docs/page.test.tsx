@@ -9,6 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   requirePermission: vi.fn(),
+  notFound: vi.fn(() => {
+    throw new Error("NEXT_NOT_FOUND");
+  }),
   createRepository: vi.fn(),
   createService: vi.fn(),
   list: vi.fn(),
@@ -21,9 +24,11 @@ const mocks = vi.hoisted(() => ({
   restoreDocumentAction: vi.fn(),
 }));
 
-vi.mock("@/server/auth/access", () => ({
+vi.mock("@/server/auth/access", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/auth/access")>()),
   requirePermission: mocks.requirePermission,
 }));
+vi.mock("next/navigation", () => ({ notFound: mocks.notFound }));
 vi.mock("@/server/documents/repository", () => ({
   createDatabaseDocumentRepository: mocks.createRepository,
 }));
@@ -38,6 +43,8 @@ vi.mock("@/server/documents/server-actions", () => ({
   deleteDocumentAction: mocks.deleteDocumentAction,
   restoreDocumentAction: mocks.restoreDocumentAction,
 }));
+
+import { AuthAccessError } from "@/server/auth/access";
 
 import AdminDocsPage from "./page";
 
@@ -98,6 +105,20 @@ describe("AdminDocsPage", () => {
     expect(mocks.createService).not.toHaveBeenCalled();
     expect(mocks.list).not.toHaveBeenCalled();
     expect(mocks.getById).not.toHaveBeenCalled();
+  });
+
+  it("returns a controlled not-found response for a known permission denial", async () => {
+    mocks.requirePermission.mockRejectedValue(
+      new AuthAccessError("AUTH_PERMISSION_DENIED", 403),
+    );
+
+    await expect(
+      AdminDocsPage({ searchParams: Promise.resolve({}) }),
+    ).rejects.toThrow("NEXT_NOT_FOUND");
+
+    expect(mocks.notFound).toHaveBeenCalledOnce();
+    expect(mocks.createRepository).not.toHaveBeenCalled();
+    expect(mocks.createService).not.toHaveBeenCalled();
   });
 
   it("uses strict safe query defaults when URL parameters are invalid or repeated", async () => {

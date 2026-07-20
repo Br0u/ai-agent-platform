@@ -1,8 +1,9 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 
 import { DocumentEditor } from "@/components/admin/document-editor";
 import { metadataForRegisteredRoute } from "@/components/route-scaffold/registered-route-page";
-import { requirePermission } from "@/server/auth/access";
+import { AuthAccessError, requirePermission } from "@/server/auth/access";
 import {
   DOCUMENT_SORTS,
   DOCUMENT_STATUSES,
@@ -76,7 +77,18 @@ export default async function AdminDocsPage({
 }: {
   searchParams: Promise<RawSearchParams>;
 }) {
-  const actor = await requirePermission("admin:docs");
+  let actor;
+  try {
+    actor = await requirePermission("admin:docs");
+  } catch (error) {
+    if (
+      error instanceof AuthAccessError &&
+      error.code === "AUTH_PERMISSION_DENIED"
+    ) {
+      notFound();
+    }
+    throw error;
+  }
   const raw = await searchParams;
   const query = queryFrom(raw);
   const selection = selectionFrom(raw);

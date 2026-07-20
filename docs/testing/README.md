@@ -40,3 +40,17 @@ kill "$(lsof -tiTCP:3100 -sTCP:LISTEN)"
 - 390×844：抽屉覆盖完整高度、内容发生真实滚动、背景滚动被锁定、所有可见导航与页脚目标至少44×44px、底部登录可见、页脚单列、无横向溢出，并在关闭后恢复overflow和页面滚动位置。
 - Console/CMS：在1440和390验证账号资料、License占位、产品内容、OpenLab占位和Analytics空状态；后台布局不得出现公开Mega Menu或页脚。
 - 全程收集console error/warning、page error、request failure和HTTP 404；任何诊断记录都会使回归失败。
+
+## CMS 文档完整验收
+
+`run-cms-documents-e2e.sh` 是 CMS 文档迁移的强制隔离门禁。它创建唯一 Compose 项目和单次临时 secrets，构建当前 migrator/Web 镜像，启动隔离 PostgreSQL，运行全部 migration、权限 seed、runtime grant 和测试专用 workforce fixture，然后校验七篇种子文档与 `DOCUMENT_SEED_MANIFEST`。
+
+运行：
+
+```bash
+bash docs/testing/run-cms-documents-e2e.sh
+```
+
+脚本会在 desktop 1440×900 和 mobile 390×844 下串行执行创建、保存、预览、发布、草稿隔离、slug alias、归档 404、重新发布和拒绝权限用例，再每 15 秒检查公开页、published checksum 与容器重启次数，持续 10 分钟。成功或失败都会删除 Compose 容器、volume、network 和临时 secrets。
+
+只有清理完成后输出固定标记 `CMS documents E2E passed.` 才算通过。Docker、镜像构建、迁移、PostgreSQL 校验、fixture、浏览器、10 分钟观察或清理任一边界失败都返回非零；不存在缩短或替代该门禁的路径。真实目标环境的 Phase 2/3 步骤见 [CMS 文档迁移与回滚手册](../deployment/cms-document-migration.md)。

@@ -286,7 +286,7 @@ export function DocumentEditor({
               defaultValue={body?.navigation.code ?? ""}
               maxLength={80}
               name="navigationCode"
-              pattern="[A-Z0-9][A-Z0-9_-]*"
+              pattern={"[A-Z0-9][A-Z0-9_\\-]*"}
               required
               type="text"
             />

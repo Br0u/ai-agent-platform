@@ -1441,6 +1441,20 @@ exit 0
       "ARG PNPM_REGISTRY=https://registry.npmmirror.com",
     );
     expect(dockerfile).toContain('PNPM_CONFIG_REGISTRY="$PNPM_REGISTRY"');
+    expect(dockerfile).toContain(
+      "COPY packages/document-content/package.json packages/document-content/package.json",
+    );
+    const builder = dockerfile
+      .split("FROM base AS builder")[1]
+      ?.split("FROM node:24-alpine3.24 AS runner")[0];
+    expect(builder).toBeDefined();
+    expect(builder).toContain(
+      "ARG PNPM_REGISTRY=https://registry.npmmirror.com",
+    );
+    expect(builder).toContain("ENV PNPM_CONFIG_REGISTRY=$PNPM_REGISTRY");
+    expect(builder).toContain(
+      "ENV PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false",
+    );
     expect(dockerfile).toContain("pnpm install --frozen-lockfile");
     expect(read("docs/testing/run-assistant-runtime-e2e.sh")).toContain(
       "PNPM_REGISTRY=${PNPM_REGISTRY:-https://registry.npmjs.org}",
@@ -3954,5 +3968,110 @@ exec /usr/bin/mktemp "$@"
     expect(guide).toContain("python3");
     expect(index).toContain("model-provider-smoke.md");
     expect(index).toContain("run-model-provider-smoke.sh");
+  });
+
+  it("defines the CMS document migration and rollback runbook", () => {
+    const runbook = read("docs/deployment/cms-document-migration.md");
+
+    for (const requirement of [
+      "备份",
+      "DOCUMENT_SEED_MANIFEST",
+      "7 篇 `content`",
+      "7 个 revision-1 `content_revisions`",
+      "7 个 canonical `content_routes`",
+      "migration/backfill",
+      "先于 Web 镜像",
+      "不回滚数据库",
+      "上一 Web 镜像",
+      "CMS 生命周期 smoke",
+      "alias 永久重定向",
+      "archive 后",
+      "返回 404",
+    ]) {
+      expect(runbook).toContain(requirement);
+    }
+
+    const migration = runbook.indexOf("migration/backfill");
+    const web = runbook.indexOf("Web 镜像", migration);
+    expect(migration).toBeGreaterThanOrEqual(0);
+    expect(web).toBeGreaterThan(migration);
+
+    for (const field of [
+      "目标环境",
+      "公开 origin",
+      "镜像 registry/repository",
+      "Phase 2 digest",
+      "Phase 3 digest",
+      "备份命令",
+      "部署命令",
+      "回滚命令",
+      "证据存储位置",
+    ]) {
+      expect(runbook).toContain(field);
+    }
+  });
+
+  it("defines a no-fallback isolated CMS document acceptance gate", () => {
+    const runner = read("docs/testing/run-cms-documents-e2e.sh");
+    const browser = read("apps/web/e2e/cms-documents.spec.ts");
+    const index = read("docs/testing/README.md");
+    const dockerIgnore = read(".dockerignore");
+
+    expect(runner).toContain("aap-cms-documents-e2e-");
+    expect(runner).toContain("mktemp -d");
+    expect(runner).toContain("trap on_exit EXIT");
+    expect(runner.indexOf("trap on_exit EXIT")).toBeLessThan(
+      runner.indexOf("mktemp -d"),
+    );
+    expect(runner).toContain("down -v --remove-orphans");
+    expect(runner).toContain("build migrate web");
+    expect(runner).toContain("up -d --wait db");
+    expect(runner).toContain("run --rm migrate");
+    expect(runner).toContain("db:seed-auth-e2e");
+    expect(runner).toContain("DOCUMENT_SEED_MANIFEST");
+    expect(runner).toContain("E2E_MODEL_ADMIN_SESSION_TOKEN");
+    expect(runner).toContain("E2E_STAFF_SESSION_TOKEN");
+    expect(runner).toContain("content_revisions");
+    expect(runner).toContain("content_routes");
+    expect(runner).toContain("(SELECT count FROM manifest_mismatches)");
+    expect(runner).not.toContain(
+      "(SELECT count(*) FROM manifest_mismatches)",
+    );
+    expect(runner).toContain("--project=desktop --project=mobile --workers=1");
+    expect(runner).toContain("e2e/cms-documents.spec.ts");
+    expect(runner).toContain("SOAK_SECONDS=${CMS_DOCUMENTS_SOAK_SECONDS:-600}");
+    expect(runner).toContain("SOAK_INTERVAL_SECONDS=15");
+    expect(runner).toContain("RestartCount");
+    expect(runner).toContain("CMS documents E2E passed.");
+    expect(runner).not.toMatch(/fallback|skip[^\n]*e2e/iu);
+
+    expect(browser).toContain("{ width: 1440, height: 900 }");
+    expect(browser).toContain("{ width: 390, height: 844 }");
+    expect(browser).toContain("admin:docs denied fixture");
+    expect(browser).toContain("capturedProtocolRequest.body");
+    expect(browser).toContain('"Next-Action": capturedProtocolRequest.nextAction');
+    expect(browser).toContain("await route.abort()");
+    expect(browser).toContain("AUTH_PERMISSION_DENIED");
+    expect(browser).toContain("发布当前修订");
+    expect(browser).toContain("归档文档");
+    expect(browser).toContain("预览当前修订");
+    expect(browser).toContain("response.status() === 404");
+    expect(browser).toContain("requestfailed");
+    expect(browser).toContain('failure === "net::ERR_ABORTED"');
+    expect(browser).toContain('request.resourceType() === "fetch"');
+    expect(browser).toContain('url.searchParams.has("_rsc")');
+    expect(browser).toContain(
+      'typeof request.headers()["next-action"] === "string"',
+    );
+    expect(browser).toContain("console");
+
+    expect(dockerIgnore).toContain("apps/web/e2e");
+    expect(dockerIgnore).toContain("artifacts");
+    expect(dockerIgnore).toContain("output");
+    expect(dockerIgnore).toContain("**/*.test.ts");
+    expect(dockerIgnore).toContain(".secrets");
+
+    expect(index).toContain("run-cms-documents-e2e.sh");
+    expect(index).toContain("CMS documents E2E passed.");
   });
 });
