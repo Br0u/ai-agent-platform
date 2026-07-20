@@ -35,6 +35,7 @@ export type AgentOSRunInput = {
 
 export type AgentOSRunClient = {
   runAgent(input: AgentOSRunInput): Promise<{ content: string }>;
+  runAgentStream(input: AgentOSRunInput): AsyncIterable<string>;
   deleteSession(sessionId: string): Promise<void>;
 };
 
@@ -118,6 +119,85 @@ function sanitized(error: unknown): AgentOSRunClientError {
   return new AgentOSRunClientError("transport_error");
 }
 
+function parseAgentOSEvent(frame: string): Record<string, unknown> {
+  const lines = frame.replaceAll("\r\n", "\n").split("\n");
+  if (lines.length !== 2) {
+    throw new AgentOSRunClientError("invalid_response");
+  }
+  const [eventLine, dataLine] = lines;
+  if (!eventLine?.startsWith("event: ") || !dataLine?.startsWith("data: ")) {
+    throw new AgentOSRunClientError("invalid_response");
+  }
+  try {
+    const body = JSON.parse(dataLine.slice(6));
+    if (
+      !isRecord(body) ||
+      typeof body.event !== "string" ||
+      body.event !== eventLine.slice(7)
+    ) {
+      throw new Error();
+    }
+    return body;
+  } catch {
+    throw new AgentOSRunClientError("invalid_response");
+  }
+}
+
+async function* parseAgentOSRunStream(
+  source: AsyncIterable<Uint8Array>,
+): AsyncIterable<string> {
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let buffer = "";
+  let completed = false;
+  let contentCodePoints = 0;
+  let hasNonWhitespaceContent = false;
+
+  const consumeFrame = function* (frame: string): Iterable<string> {
+    const event = parseAgentOSEvent(frame);
+    if (completed) throw new AgentOSRunClientError("invalid_response");
+    if (event.event === "RunError") {
+      throw new AgentOSRunClientError("invalid_response");
+    }
+    if (event.event === "RunCompleted") {
+      completed = true;
+      return;
+    }
+    if (event.event !== "RunContent") return;
+    if (typeof event.content !== "string") {
+      if (typeof event.reasoning_content === "string") return;
+      throw new AgentOSRunClientError("invalid_response");
+    }
+    if (event.content.length === 0) return;
+    contentCodePoints += Array.from(event.content).length;
+    if (contentCodePoints > ASSISTANT_CONTENT_MAX_CODE_POINTS) {
+      throw new AgentOSRunClientError("invalid_response");
+    }
+    hasNonWhitespaceContent ||= event.content.trim().length > 0;
+    yield event.content;
+  };
+
+  try {
+    for await (const chunk of source) {
+      buffer += decoder.decode(chunk, { stream: true });
+      buffer = buffer.replaceAll("\r\n", "\n");
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary !== -1) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        if (frame.length > 0) yield* consumeFrame(frame);
+        boundary = buffer.indexOf("\n\n");
+      }
+    }
+    buffer += decoder.decode();
+    buffer = buffer.replaceAll("\r\n", "\n");
+    if (buffer.trim().length > 0 || !completed || !hasNonWhitespaceContent) {
+      throw new AgentOSRunClientError("invalid_response");
+    }
+  } catch (error) {
+    throw sanitized(error);
+  }
+}
+
 export function createAgentOSRunClient(options: {
   settings: AgentOSRunSettings;
   fetcher?: typeof fetch;
@@ -128,6 +208,28 @@ export function createAgentOSRunClient(options: {
   });
 
   return {
+    runAgentStream(input) {
+      const form = new FormData();
+      form.set("message", input.message);
+      form.set("stream", "true");
+      if (input.sessionId !== undefined) {
+        form.set("session_id", input.sessionId);
+      }
+
+      return parseAgentOSRunStream(
+        transport.stream({
+          method: "POST",
+          path: "/agents/maduoduo/runs",
+          body: form,
+          acceptedStatuses: [200],
+          acceptedMediaTypes: ["text/event-stream"],
+          timeoutMs: options.settings.runTimeoutMs,
+          maxResponseBytes: AGENTOS_RUN_MAX_RESPONSE_BYTES,
+          signal: input.signal,
+        }),
+      );
+    },
+
     async runAgent(input) {
       const form = new FormData();
       form.set("message", input.message);

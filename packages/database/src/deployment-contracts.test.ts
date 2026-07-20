@@ -505,6 +505,8 @@ describe("production deployment security contracts", () => {
     expect(assistantLocation).toContain(
       "limit_req zone=assistant_chat_per_ip burst=10 nodelay;",
     );
+    expect(assistantLocation).toContain("proxy_buffering off;");
+    expect(assistantLocation).toContain("proxy_cache off;");
     for (const location of [pricingLocation, assistantLocation]) {
       expect(location).toContain("limit_req_status 429;");
       expect(location).toContain("error_page 429 = @public_api_rate_limited;");

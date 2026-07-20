@@ -78,6 +78,153 @@ describe("AgentOS run settings", () => {
 });
 
 describe("AgentOS run client", () => {
+  it("requests streaming mode and yields content deltas before completion", async () => {
+    const encoder = new TextEncoder();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(streamController) {
+            controller = streamController;
+          },
+        }),
+        { headers: { "content-type": "text/event-stream; charset=utf-8" } },
+      ),
+    );
+    const client = createAgentOSRunClient({ settings: settings(), fetcher });
+    const stream = client.runAgentStream({
+      message: "private prompt",
+      sessionId: "private-session",
+    });
+    const iterator = stream[Symbol.asyncIterator]();
+
+    controller.enqueue(
+      encoder.encode(
+        'event: RunStarted\ndata: {"event":"RunStarted"}\n\n' +
+          'event: RunContent\ndata: {"event":"RunContent","reasoning_content":"内部思考片段"}\n\n' +
+          'event: RunContent\ndata: {"event":"RunContent","content":"第一段"}\n\n',
+      ),
+    );
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: "第一段",
+    });
+
+    const form = fetcher.mock.calls[0]?.[1]?.body as FormData;
+    expect(form.get("stream")).toBe("true");
+    expect(fetcher.mock.calls[0]?.[1]?.headers).toEqual({
+      Accept: "text/event-stream",
+      Authorization: `Bearer ${SECURITY_KEY}`,
+    });
+
+    controller.enqueue(
+      encoder.encode(
+        'event: RunContent\ndata: {"event":"RunContent","content":"第二段"}\n\n' +
+          'event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n',
+      ),
+    );
+    controller.close();
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: "第二段",
+    });
+    await expect(iterator.next()).resolves.toEqual({
+      done: true,
+      value: undefined,
+    });
+  });
+
+  it.each([
+    [
+      "an upstream error event",
+      'event: RunError\ndata: {"event":"RunError","content":"private upstream detail"}\n\n',
+    ],
+    [
+      "a stream without completion",
+      'event: RunContent\ndata: {"event":"RunContent","content":"partial private answer"}\n\n',
+    ],
+    [
+      "malformed SSE JSON",
+      'event: RunContent\ndata: {"event":"RunContent","content":}\n\n',
+    ],
+    [
+      "a RunContent event without content or reasoning",
+      'event: RunContent\ndata: {"event":"RunContent"}\n\n',
+    ],
+  ])("sanitizes %s", async (_name, rawStream) => {
+    const client = createAgentOSRunClient({
+      settings: settings(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(rawStream, {
+          headers: { "content-type": "text/event-stream" },
+        }),
+      ),
+    });
+    const consume = async () => {
+      for await (const chunk of client.runAgentStream({
+        message: "private prompt",
+        sessionId: "private-session",
+      })) {
+        void chunk;
+        // Consume the complete stream so terminal validation runs.
+      }
+    };
+
+    const error = await consume().catch((value: unknown) => value);
+
+    expect(error).toBeInstanceOf(AgentOSRunClientError);
+    expect(error).toMatchObject({ code: "invalid_response" });
+    expect(JSON.stringify(error)).not.toMatch(
+      /private|upstream|detail|answer|prompt|session/iu,
+    );
+  });
+
+  it("enforces the run deadline while waiting for the first stream event", async () => {
+    vi.useFakeTimers();
+    const client = createAgentOSRunClient({
+      settings: settings("51000"),
+      fetcher: abortAwareFetcher(),
+    });
+    const consume = async () => {
+      for await (const chunk of client.runAgentStream({ message: "hello" })) {
+        void chunk;
+        // The fixture never produces a chunk.
+      }
+    };
+    const assertion = expect(consume()).rejects.toMatchObject({
+      code: "timeout",
+    });
+
+    await vi.advanceTimersByTimeAsync(51_000);
+
+    await assertion;
+  });
+
+  it("cancels an active stream when the public request aborts", async () => {
+    const external = new AbortController();
+    const client = createAgentOSRunClient({
+      settings: settings(),
+      fetcher: abortAwareFetcher(),
+    });
+    const consume = async () => {
+      for await (const chunk of client.runAgentStream({
+        message: "private prompt",
+        signal: external.signal,
+      })) {
+        void chunk;
+        // The fixture never produces a chunk.
+      }
+    };
+    const running = consume();
+
+    external.abort("private abort reason");
+
+    const error = await running.catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(AgentOSRunClientError);
+    expect(error).toMatchObject({ code: "external_abort" });
+    expect(JSON.stringify(error)).not.toContain("private abort reason");
+  });
+
   it("posts the exact multipart run contract without putting the session in URL or headers", async () => {
     const internalSessionId = "opaque/internal?session#id";
     const fetcher = vi

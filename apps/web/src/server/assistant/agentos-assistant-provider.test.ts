@@ -12,6 +12,7 @@ import {
 function fixture(
   options: {
     runAgent?: AgentOSRunClient["runAgent"];
+    runAgentStream?: AgentOSRunClient["runAgentStream"];
     deleteSession?: AgentOSRunClient["deleteSession"];
     randomUUID?: () => string;
     cleanupRecorder?: AgentOSCleanupRecorder;
@@ -21,6 +22,12 @@ function fixture(
   const runClient: AgentOSRunClient = {
     runAgent: vi.fn(
       options.runAgent ?? (async () => ({ content: "真实模型回答" })),
+    ),
+    runAgentStream: vi.fn(
+      options.runAgentStream ??
+        async function* () {
+          yield "真实模型回答";
+        },
     ),
     deleteSession: vi.fn(options.deleteSession ?? (async () => undefined)),
   };
@@ -85,7 +92,7 @@ describe("AgentOSAssistantProvider", () => {
     ).resolves.toEqual({ content: "真实模型回答", suggestedActions: [] });
 
     expect(circuit.execute).toHaveBeenCalledOnce();
-    expect(runClient.runAgent).toHaveBeenCalledExactlyOnceWith({
+    expect(runClient.runAgentStream).toHaveBeenCalledExactlyOnceWith({
       message:
         "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/产品/码多多\n\n用户问题：不要改写我的问题 ✅",
       sessionId: "server-derived-session",
@@ -105,7 +112,7 @@ describe("AgentOSAssistantProvider", () => {
       }),
     ).resolves.toEqual({ content: "真实模型回答", suggestedActions: [] });
 
-    expect(runClient.runAgent).toHaveBeenCalledExactlyOnceWith({
+    expect(runClient.runAgentStream).toHaveBeenCalledExactlyOnceWith({
       message:
         "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/产品/码多多\n\n用户问题：不要改写我的问题 ✅",
       sessionId: "ephemeral-internal-id",
@@ -120,7 +127,9 @@ describe("AgentOSAssistantProvider", () => {
     async (code) => {
       const runError = Object.assign(new Error("safe run failure"), { code });
       const { provider, runClient } = fixture({
-        runAgent: vi.fn().mockRejectedValue(runError),
+        runAgentStream: vi.fn(async function* () {
+          throw runError;
+        }),
       });
 
       await expect(
@@ -164,7 +173,9 @@ describe("AgentOSAssistantProvider", () => {
       code: "timeout",
     });
     const { provider, cleanupRecorder } = fixture({
-      runAgent: vi.fn().mockRejectedValue(runError),
+      runAgentStream: vi.fn(async function* () {
+        throw runError;
+      }),
       deleteSession: vi.fn().mockRejectedValue(new Error("raw cleanup cause")),
     });
 
@@ -217,7 +228,9 @@ describe("AgentOSAssistantProvider", () => {
     });
     const { provider } = fixture({
       useDefaultCleanupRecorder: true,
-      runAgent: vi.fn().mockRejectedValue(runError),
+      runAgentStream: vi.fn(async function* () {
+        throw runError;
+      }),
       deleteSession: vi.fn().mockRejectedValue(new Error("raw cleanup cause")),
     });
 

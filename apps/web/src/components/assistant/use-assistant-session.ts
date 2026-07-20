@@ -1,11 +1,16 @@
 "use client";
 
 import {
+  ASSISTANT_CONTENT_MAX_CODE_POINTS,
   isAssistantSuccessResponse,
   safeAssistantSuggestedActions,
   type AssistantSuccessResponse,
   type AssistantSuggestedAction,
 } from "@/features/assistant/assistant-contract";
+import {
+  ASSISTANT_STREAM_MEDIA_TYPE,
+  parseAssistantStreamFrame,
+} from "@/features/assistant/assistant-stream";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type UserAssistantMessage = {
@@ -145,6 +150,16 @@ function safeFailureAnnouncement(
   return fallback;
 }
 
+function responseMediaType(response: Response): string | null {
+  return (
+    response.headers
+      .get("content-type")
+      ?.split(";", 1)[0]
+      ?.trim()
+      .toLowerCase() ?? null
+  );
+}
+
 export function useAssistantSession(
   pathname: string,
   options: AssistantSessionOptions = {},
@@ -232,23 +247,26 @@ export function useAssistantSession(
       };
       updateRequestStatus("sending");
       setLatestAnnouncement("");
+      let streamedMessageIds: { user: number; assistant: number } | null = null;
       try {
-        const { response, body } = await Promise.race([
+        const response = await Promise.race([
           fetch(endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
             signal: controller.signal,
-          }).then(async (response) => ({
-            response,
-            body: await response.json().catch(() => null),
-          })),
+          }),
           control,
         ]);
         if (token !== requestToken.current) return;
         if (timedOut) throw REQUEST_TIMEOUT;
         if (controller.signal.aborted) return;
-        if (!response.ok || !successResponseGuard(body)) {
+
+        if (!response.ok) {
+          const body = await Promise.race([
+            response.json().catch(() => null),
+            control,
+          ]);
           throw new SafeAssistantRequestFailure(
             safeFailureAnnouncement(
               response.status,
@@ -259,36 +277,186 @@ export function useAssistantSession(
           );
         }
 
-        setMessages((current) => [
-          ...current,
-          { id: nextMessageId.current++, role: "user", content: message },
-          {
-            id: nextMessageId.current++,
-            role: "assistant",
-            content: body.message.content,
-            suggestedActions: safeAssistantSuggestedActions(
-              body.suggestedActions,
-            ),
-          },
-        ]);
-        setDraftState((current) => (current.trim() === message ? "" : current));
-        setLatestAnnouncement(body.message.content);
-        setLastFailedRequest(null);
-        if (body.session) setSessionExpiresAt(body.session.expiresAt);
-        updateRequestStatus("idle");
+        if (responseMediaType(response) === ASSISTANT_STREAM_MEDIA_TYPE) {
+          const reader = response.body?.getReader();
+          if (reader === undefined) {
+            throw new SafeAssistantRequestFailure(failureAnnouncement);
+          }
+          const decoder = new TextDecoder("utf-8", { fatal: true });
+          let buffer = "";
+          let started = false;
+          let assistantInserted = false;
+          let done = false;
+          let content = "";
+          let contentCodePoints = 0;
+          let suggestedActions: AssistantSuggestedAction[] = [];
+
+          const consumeFrame = (rawFrame: string) => {
+            const event = parseAssistantStreamFrame(rawFrame);
+            if (event === null || done) {
+              throw new SafeAssistantRequestFailure(failureAnnouncement);
+            }
+            if (event.event === "start") {
+              if (started) {
+                throw new SafeAssistantRequestFailure(failureAnnouncement);
+              }
+              started = true;
+              streamedMessageIds = {
+                user: nextMessageId.current++,
+                assistant: nextMessageId.current++,
+              };
+              suggestedActions = safeAssistantSuggestedActions(
+                event.data.suggestedActions,
+              );
+              setMessages((current) => [
+                ...current,
+                {
+                  id: streamedMessageIds!.user,
+                  role: "user",
+                  content: message,
+                },
+              ]);
+              setSessionExpiresAt(event.data.session.expiresAt);
+              return;
+            }
+            if (!started || streamedMessageIds === null) {
+              throw new SafeAssistantRequestFailure(failureAnnouncement);
+            }
+            if (event.event === "error") {
+              throw new SafeAssistantRequestFailure(failureAnnouncement);
+            }
+            if (event.event === "delta") {
+              contentCodePoints += Array.from(event.data.content).length;
+              if (contentCodePoints > ASSISTANT_CONTENT_MAX_CODE_POINTS) {
+                throw new SafeAssistantRequestFailure(failureAnnouncement);
+              }
+              content += event.data.content;
+              if (!assistantInserted) {
+                assistantInserted = true;
+                setMessages((current) => [
+                  ...current,
+                  {
+                    id: streamedMessageIds!.assistant,
+                    role: "assistant",
+                    content,
+                    suggestedActions,
+                  },
+                ]);
+              } else {
+                setMessages((current) =>
+                  current.map((item) =>
+                    item.id === streamedMessageIds!.assistant
+                      ? { ...item, content }
+                      : item,
+                  ),
+                );
+              }
+              return;
+            }
+            if (!assistantInserted || content.trim().length === 0) {
+              throw new SafeAssistantRequestFailure(failureAnnouncement);
+            }
+            done = true;
+          };
+
+          let streamCompleted = false;
+          try {
+            while (true) {
+              const chunk = await Promise.race([reader.read(), control]);
+              if (token !== requestToken.current) throw REQUEST_CANCELLED;
+              if (timedOut) throw REQUEST_TIMEOUT;
+              if (chunk.done) {
+                streamCompleted = true;
+                break;
+              }
+              buffer += decoder.decode(chunk.value, { stream: true });
+              buffer = buffer.replaceAll("\r\n", "\n");
+              let boundary = buffer.indexOf("\n\n");
+              while (boundary !== -1) {
+                const frame = buffer.slice(0, boundary);
+                buffer = buffer.slice(boundary + 2);
+                if (frame.length > 0) consumeFrame(frame);
+                boundary = buffer.indexOf("\n\n");
+              }
+            }
+            buffer += decoder.decode();
+            buffer = buffer.replaceAll("\r\n", "\n");
+            if (buffer.trim().length > 0 || !done) {
+              throw new SafeAssistantRequestFailure(failureAnnouncement);
+            }
+          } finally {
+            if (!streamCompleted) {
+              await reader.cancel().catch(() => undefined);
+            }
+            reader.releaseLock();
+          }
+
+          setDraftState((current) =>
+            current.trim() === message ? "" : current,
+          );
+          setLatestAnnouncement(content);
+          setLastFailedRequest(null);
+          updateRequestStatus("idle");
+        } else {
+          const body = await Promise.race([
+            response.json().catch(() => null),
+            control,
+          ]);
+          if (!successResponseGuard(body)) {
+            throw new SafeAssistantRequestFailure(failureAnnouncement);
+          }
+          setMessages((current) => [
+            ...current,
+            { id: nextMessageId.current++, role: "user", content: message },
+            {
+              id: nextMessageId.current++,
+              role: "assistant",
+              content: body.message.content,
+              suggestedActions: safeAssistantSuggestedActions(
+                body.suggestedActions,
+              ),
+            },
+          ]);
+          setDraftState((current) =>
+            current.trim() === message ? "" : current,
+          );
+          setLatestAnnouncement(body.message.content);
+          setLastFailedRequest(null);
+          if (body.session) setSessionExpiresAt(body.session.expiresAt);
+          updateRequestStatus("idle");
+        }
       } catch (error) {
+        const discardStreamedMessages = () => {
+          if (streamedMessageIds === null) return;
+          const ids = streamedMessageIds;
+          setMessages((current) =>
+            current.filter(
+              (item) => item.id !== ids.user && item.id !== ids.assistant,
+            ),
+          );
+        };
         if (token !== requestToken.current || error === REQUEST_CANCELLED) {
+          discardStreamedMessages();
           return;
         }
-        if (!timedOut && error !== REQUEST_TIMEOUT && controller.signal.aborted)
+        if (
+          !timedOut &&
+          error !== REQUEST_TIMEOUT &&
+          controller.signal.aborted
+        ) {
+          discardStreamedMessages();
           return;
+        }
         if (
           !timedOut &&
           error !== REQUEST_TIMEOUT &&
           error instanceof DOMException &&
           error.name === "AbortError"
-        )
+        ) {
+          discardStreamedMessages();
           return;
+        }
+        discardStreamedMessages();
         setLastFailedRequest(payload);
         setLatestAnnouncement(
           error instanceof SafeAssistantRequestFailure

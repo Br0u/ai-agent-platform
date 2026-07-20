@@ -89,8 +89,15 @@ function availableHealthClient(): AgentOSClient {
 }
 
 function runClient(runAgent?: AgentOSRunClient["runAgent"]): AgentOSRunClient {
+  const runAgentMock = vi.fn(
+    runAgent ?? (async () => ({ content: "真实模型回答" })),
+  );
   return {
-    runAgent: vi.fn(runAgent ?? (async () => ({ content: "真实模型回答" }))),
+    runAgent: runAgentMock,
+    runAgentStream: vi.fn(async function* (request) {
+      const result = await runAgentMock(request);
+      yield result.content;
+    }),
     deleteSession: vi.fn(async () => undefined),
   };
 }

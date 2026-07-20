@@ -61,8 +61,15 @@ function availableHealthClient(): AgentOSClient {
 }
 
 function runClient(): AgentOSRunClient {
+  const runAgent = vi.fn<AgentOSRunClient["runAgent"]>(async () => ({
+    content: "码多多回答",
+  }));
   return {
-    runAgent: vi.fn(async () => ({ content: "码多多回答" })),
+    runAgent,
+    runAgentStream: vi.fn(async function* (request) {
+      const result = await runAgent(request);
+      yield result.content;
+    }),
     deleteSession: vi.fn(async () => undefined),
   };
 }

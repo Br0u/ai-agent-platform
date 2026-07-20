@@ -135,7 +135,7 @@ function dependencies(options?: {
     provider,
     resolveProvider: vi.fn(async () => ({
       provider,
-      mode: "placeholder" as const,
+      mode: "placeholder" as "placeholder" | "agentos",
     })),
     logger,
     records,
@@ -195,6 +195,80 @@ describe("POST /api/v1/assistant/chat", () => {
     });
     expect(deps.records).toEqual([
       { requestId: "incoming-request-id", statusCode: 200, durationMs: 7 },
+    ]);
+  });
+
+  it("streams AgentOS deltas through the public route as SSE", async () => {
+    const deps = dependencies();
+    const streamingProvider = {
+      reply: vi.fn(async () => providerSuccess),
+      async *streamReply() {
+        yield "第一段";
+        yield "第二段";
+      },
+    };
+    deps.resolveProvider.mockResolvedValue({
+      provider: streamingProvider,
+      mode: "agentos",
+    });
+    const POST = createAssistantChatHandler(deps);
+
+    const response = await POST(
+      request(
+        JSON.stringify({
+          message: "流式问题",
+          context: { pathname: "/assistant" },
+        }),
+        "stream-request-id",
+      ),
+    );
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(response.headers.get("x-accel-buffering")).toBe("no");
+    expect(body).toContain("event: start\n");
+    expect(body).toContain('event: delta\ndata: {"content":"第一段"}\n\n');
+    expect(body).toContain('event: delta\ndata: {"content":"第二段"}\n\n');
+    expect(body).toContain("event: done\ndata: {}\n\n");
+    expect(streamingProvider.reply).not.toHaveBeenCalled();
+  });
+
+  it("terminates a failed AgentOS stream without exposing the provider error", async () => {
+    const deps = dependencies({ times: [100, 109] });
+    const streamingProvider = {
+      reply: vi.fn(async () => providerSuccess),
+      async *streamReply() {
+        yield "可见片段";
+        throw new Error("private URL key prompt and answer");
+      },
+    };
+    deps.resolveProvider.mockResolvedValue({
+      provider: streamingProvider,
+      mode: "agentos",
+    });
+    const POST = createAssistantChatHandler(deps);
+
+    const response = await POST(
+      request(
+        JSON.stringify({
+          message: "触发失败",
+          context: { pathname: "/assistant" },
+        }),
+        "failed-stream-request",
+      ),
+    );
+    const body = await response.text();
+
+    expect(body).toContain('event: delta\ndata: {"content":"可见片段"}\n\n');
+    expect(body).toContain("event: error\ndata: {}\n\n");
+    expect(body).not.toMatch(/private|url|key|prompt|answer/iu);
+    expect(deps.records).toEqual([
+      {
+        requestId: "failed-stream-request",
+        statusCode: 503,
+        durationMs: 9,
+      },
     ]);
   });
 
