@@ -77,12 +77,15 @@ type RenderedService = {
 
 type RenderedCompose = {
   networks: Record<string, { internal?: boolean }>;
+  secrets?: Record<string, { file?: string }>;
   services: Record<string, RenderedService>;
 };
 
 const renderComposeFixture = (
   composeFiles = ["compose.yaml"],
+  options: { bootstrapModel?: boolean } = {},
 ): RenderedCompose => {
+  const bootstrapModel = options.bootstrapModel ?? true;
   const sentinels = Object.fromEntries(
     composeSecretKeys.map((key, index) => [
       key,
@@ -99,7 +102,8 @@ const renderComposeFixture = (
       const secretFile = path.join(sandbox, key.toLowerCase());
       writeFileSync(secretFile, sentinels[key], { mode: 0o600 });
       chmodSync(secretFile, 0o600);
-      secretFileEnv[`${key}_FILE`] = secretFile;
+      secretFileEnv[`${key}_FILE`] =
+        key === "MODEL_API_KEY" && !bootstrapModel ? "" : secretFile;
     }
 
     const execution = spawnSync(
@@ -134,8 +138,8 @@ const renderComposeFixture = (
           BETTER_AUTH_TRUSTED_ORIGINS: "http://127.0.0.1:3000",
           ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
           PUBLIC_HOST: "127.0.0.1",
-          MODEL_PROVIDER: "openai",
-          MODEL_ID: "provider-smoke-model",
+          MODEL_PROVIDER: bootstrapModel ? "openai" : "",
+          MODEL_ID: bootstrapModel ? "provider-smoke-model" : "",
           MODEL_BASE_URL: "",
           MODEL_RUN_TIMEOUT_SECONDS: "25",
         },
@@ -192,6 +196,18 @@ describe("production deployment security contracts", () => {
     expect(sql).toMatch(
       /REVOKE UPDATE, DELETE ON TABLE public\.audit_logs FROM ai_agent_runtime/,
     );
+    expect(sql).toMatch(
+      /REVOKE DELETE, TRUNCATE ON TABLE public\.content FROM ai_agent_runtime/,
+    );
+    expect(sql).toMatch(
+      /REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public\.content_revisions FROM ai_agent_runtime/,
+    );
+    expect(sql).toMatch(
+      /REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public\.content_routes FROM ai_agent_runtime/,
+    );
+    expect(sql).toMatch(
+      /GRANT UPDATE \(state\) ON TABLE public\.content_routes TO ai_agent_runtime/,
+    );
     expect(sql).not.toMatch(/GRANT (CREATE|ALL).*ai_agent_runtime/);
     expect(sql).toMatch(
       /GRANT SELECT ON ALL TABLES IN SCHEMA public TO ai_agent_backup/,
@@ -212,6 +228,82 @@ describe("production deployment security contracts", () => {
     expect(sql).not.toMatch(
       /GRANT (?:CREATE|INSERT|UPDATE|DELETE|ALL)[^;]*ai_agent_backup/,
     );
+  });
+
+  it("enforces immutable document revisions and permanent route transitions", () => {
+    const migration = read("packages/database/drizzle/0006_cms_documents.sql");
+    const permissionMutationLock = read(
+      "packages/database/src/access-control-locks.ts",
+    );
+    const adminRoles = read("apps/web/src/server/admin/roles.ts");
+    const accessSeed = read("packages/database/src/seed-access-control.ts");
+    const childGrantGuard = migration.match(
+      /CREATE FUNCTION "enforce_admin_docs_delete_grant"\(\)[\s\S]*?\$\$ LANGUAGE plpgsql/u,
+    )?.[0];
+    const permissionIdentityGuard = migration.match(
+      /CREATE FUNCTION "guard_admin_docs_delete_permission_key"\(\)[\s\S]*?\$\$ LANGUAGE plpgsql/u,
+    )?.[0];
+    const roleIdentityGuard = migration.match(
+      /CREATE FUNCTION "guard_admin_docs_delete_role_identity"\(\)[\s\S]*?\$\$ LANGUAGE plpgsql/u,
+    )?.[0];
+
+    expect(migration).toContain(
+      'LOCK TABLE "permissions", "roles", "role_permissions" IN SHARE ROW EXCLUSIVE MODE',
+    );
+    expect(migration).toContain("existing admin:docs:delete grant is invalid");
+    expect(migration).toContain("FOR SHARE OF");
+    expect(migration).toContain('CREATE TRIGGER "content_revisions_immutable"');
+    expect(migration).toMatch(
+      /BEFORE UPDATE OR DELETE ON "content_revisions"/u,
+    );
+    expect(migration).toContain(
+      'CREATE TRIGGER "content_routes_state_machine"',
+    );
+    expect(migration).toMatch(
+      /BEFORE INSERT OR UPDATE OR DELETE ON "content_routes"/u,
+    );
+    expect(migration).toContain("NEW.state <> 'reserved'");
+    expect(migration).toContain(
+      "OLD.state = 'reserved' AND NEW.state = 'canonical'",
+    );
+    expect(migration).toContain(
+      "OLD.state = 'canonical' AND NEW.state = 'alias'",
+    );
+    expect(migration).not.toContain("NEW.state = OLD.state");
+    expect(migration).toContain(
+      "NEW.content_id IS DISTINCT FROM OLD.content_id",
+    );
+    expect(migration).toContain(
+      'CREATE TRIGGER "role_permissions_admin_docs_delete_guard"',
+    );
+    expect(migration).toContain(
+      'CREATE TRIGGER "permissions_admin_docs_delete_key_guard"',
+    );
+    expect(migration).toContain(
+      'CREATE TRIGGER "roles_admin_docs_delete_grant_guard"',
+    );
+    expect(migration).toContain(
+      'CREATE TRIGGER "roles_super_admin_delete_guard"',
+    );
+    expect(migration).toContain(
+      'CREATE TRIGGER "permissions_admin_docs_delete_delete_guard"',
+    );
+    expect(migration).toMatch(
+      /BEFORE INSERT OR UPDATE OR DELETE ON "role_permissions"/u,
+    );
+    expect(permissionIdentityGuard).not.toContain('FROM "role_permissions"');
+    expect(roleIdentityGuard).not.toContain('FROM "role_permissions"');
+    expect(childGrantGuard?.indexOf('FROM "roles"')).toBeGreaterThan(-1);
+    expect(childGrantGuard?.indexOf('FROM "permissions"')).toBeGreaterThan(
+      childGrantGuard?.indexOf('FROM "roles"') ?? Number.MAX_SAFE_INTEGER,
+    );
+    expect(permissionMutationLock).toContain(
+      "ACCESS_CONTROL_PERMISSION_MUTATION_LOCK_KEY = 72_134_878",
+    );
+    expect(adminRoles).toContain("ACCESS_CONTROL_PERMISSION_MUTATION_LOCK_KEY");
+    expect(accessSeed).toContain("ACCESS_CONTROL_PERMISSION_MUTATION_LOCK_KEY");
+    expect(adminRoles).not.toContain("72134878");
+    expect(accessSeed).not.toContain("72134878");
   });
 
   it("runs role bootstrap as the configured PostgreSQL owner", () => {
@@ -288,6 +380,10 @@ describe("production deployment security contracts", () => {
       "AGNO_DATABASE_PASSWORD",
       "AGNO_MIGRATOR_DATABASE_URL",
       "AGNO_DATABASE_URL",
+      "AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD",
+      "AGENT_CONTROL_DATABASE_PASSWORD",
+      "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
+      "AGENT_CONTROL_DATABASE_URL",
     ]) {
       expect(env).toContain(`${key}=`);
     }
@@ -409,6 +505,8 @@ describe("production deployment security contracts", () => {
     expect(assistantLocation).toContain(
       "limit_req zone=assistant_chat_per_ip burst=10 nodelay;",
     );
+    expect(assistantLocation).toContain("proxy_buffering off;");
+    expect(assistantLocation).toContain("proxy_cache off;");
     for (const location of [pricingLocation, assistantLocation]) {
       expect(location).toContain("limit_req_status 429;");
       expect(location).toContain("error_page 429 = @public_api_rate_limited;");
@@ -627,9 +725,16 @@ describe("production deployment security contracts", () => {
     expect(
       script.indexOf('--grep-invert "@agentos|@guard|@control"'),
     ).toBeLessThan(script.indexOf("--grep @agentos"));
-    expect(script).toContain("export AGENT_ENABLED=false");
     expect(script).toContain("export ASSISTANT_PROVIDER_MODE=placeholder");
     expect(script).toContain("export AGENT_ENABLED=true");
+    expect(script).toContain(
+      "bootstrap_model_api_key_file=$MODEL_API_KEY_FILE",
+    );
+    expect(script).toContain("unset MODEL_API_KEY_FILE");
+    expect(script).toContain("unset MODEL_PROVIDER MODEL_ID MODEL_BASE_URL");
+    expect(script).toContain(
+      'export MODEL_API_KEY_FILE="$bootstrap_model_api_key_file"',
+    );
     expect(script).toContain("export MODEL_PROVIDER=openai");
     expect(script).toContain("export MODEL_ID=e2e-deterministic");
     expect(script).toContain("unset MODEL_BASE_URL");
@@ -658,8 +763,16 @@ describe("production deployment security contracts", () => {
     expect(controlReset).toContain(
       "compose up -d --no-deps --force-recreate --wait proxy",
     );
+    expect(script.indexOf("export AGENT_ENABLED=true")).toBeLessThan(
+      script.indexOf('echo "Assistant runtime E2E phase: validate compose"'),
+    );
+    expect(script.indexOf("unset MODEL_API_KEY_FILE")).toBeLessThan(
+      script.indexOf('echo "Assistant runtime E2E phase: validate compose"'),
+    );
     expect(script.indexOf('scan_logs "placeholder"')).toBeLessThan(
-      script.indexOf("export AGENT_ENABLED=true"),
+      script.indexOf(
+        'export MODEL_API_KEY_FILE="$bootstrap_model_api_key_file"',
+      ),
     );
     expect(script).toContain(
       'scan_pattern_file "$protected_patterns_file" "$logs_file"',
@@ -714,6 +827,16 @@ describe("production deployment security contracts", () => {
     expect(script).toContain("collect_agent_session_identities() {");
     expect(script).toContain(
       'compose exec -T agent python -c "$identity_audit_collector" >>"$agentos_dynamic_patterns_file"',
+    );
+    expect(script).toContain(
+      "compose exec -T agent /opt/aap/run-agent-with-secret-env.sh",
+    );
+    expect(script).not.toContain(
+      "compose exec -T agent /opt/aap/run-with-secret-env.sh",
+    );
+    expect(script.match(/reset_assistant_rate_limits/gu)?.length).toBe(3);
+    expect(script).toContain(
+      `--command="DELETE FROM public.rate_limits WHERE key LIKE 'assistant:%'"`,
     );
     expect(script).toContain(
       'identity_audit_path = "/tmp/aap-session-identity-audit"',
@@ -1318,6 +1441,18 @@ exit 0
       "ARG PNPM_REGISTRY=https://registry.npmmirror.com",
     );
     expect(dockerfile).toContain('PNPM_CONFIG_REGISTRY="$PNPM_REGISTRY"');
+    expect(dockerfile).toContain(
+      "COPY packages/document-content/package.json packages/document-content/package.json",
+    );
+    const builder = dockerfile
+      .split("FROM base AS builder")[1]
+      ?.split("FROM node:24-alpine3.24 AS runner")[0];
+    expect(builder).toBeDefined();
+    expect(builder).toContain(
+      "ARG PNPM_REGISTRY=https://registry.npmmirror.com",
+    );
+    expect(builder).toContain("ENV PNPM_CONFIG_REGISTRY=$PNPM_REGISTRY");
+    expect(builder).toContain("ENV PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false");
     expect(dockerfile).toContain("pnpm install --frozen-lockfile");
     expect(read("docs/testing/run-assistant-runtime-e2e.sh")).toContain(
       "PNPM_REGISTRY=${PNPM_REGISTRY:-https://registry.npmjs.org}",
@@ -1705,17 +1840,21 @@ exit 0
     expect(agentService).toBeDefined();
     expect(agentService).toContain("MODEL_API_KEY=/run/secrets/model_api_key");
     expect(agentService).toContain("- model_api_key");
+    const agentSecretRunner = read("infra/docker/run-agent-with-secret-env.sh");
     expect(agentService).toContain(
-      '[ -z "$${MODEL_BASE_URL-}" ]; then unset MODEL_BASE_URL; fi',
+      'entrypoint: ["/opt/aap/run-agent-with-secret-env.sh"]',
     );
     expect(agentService).toContain(
-      'if [ -z "$${MODEL_PROVIDER-}" ] && [ -z "$${MODEL_ID-}" ]; then unset MODEL_PROVIDER MODEL_ID MODEL_BASE_URL;',
+      "./infra/docker/run-agent-with-secret-env.sh:/opt/aap/run-agent-with-secret-env.sh:ro",
     );
-    expect(agentService).toContain(
-      "SECRET_ENV_SPECS=$${SECRET_ENV_SPECS%MODEL_API_KEY=/run/secrets/model_api_key}",
+    expect(agentSecretRunner).toContain(
+      'if [ -z "${MODEL_PROVIDER-}" ] && [ -z "${MODEL_ID-}" ]; then',
     );
-    expect(agentService).toContain(
-      'exec /opt/aap/run-with-secret-env.sh "$$@"',
+    expect(agentSecretRunner).toContain(
+      "SECRET_ENV_SPECS=${SECRET_ENV_SPECS%MODEL_API_KEY=/run/secrets/model_api_key}",
+    );
+    expect(agentSecretRunner).toContain(
+      'exec /opt/aap/run-with-secret-env.sh "$@"',
     );
     for (const [name, expected] of [
       ["AGENT_ENABLED", "${AGENT_ENABLED:-false}"],
@@ -1746,7 +1885,7 @@ exit 0
       /model_egress:\s*\n\s+internal:\s*true/u,
     );
     expect(secretDefinitions).toContain(
-      "model_api_key:\n    file: ${MODEL_API_KEY_FILE:-.secrets/model_api_key}",
+      "model_api_key:\n    file: ${MODEL_API_KEY_FILE:-/dev/null}",
     );
 
     for (const name of serviceNames.filter((name) => name !== "agent")) {
@@ -1755,6 +1894,16 @@ exit 0
       expect(serviceSections[name]).not.toContain("MODEL_API_KEY");
       expect(serviceSections[name]).not.toContain("model_egress");
     }
+  });
+
+  it("renders dynamic-only Agent startup without a bootstrap model key file", () => {
+    const rendered = renderComposeFixture(["compose.yaml"], {
+      bootstrapModel: false,
+    });
+
+    expect(rendered.services.agent?.environment?.MODEL_PROVIDER).toBe("");
+    expect(rendered.services.agent?.environment?.MODEL_ID).toBe("");
+    expect(rendered.secrets?.model_api_key?.file).toBe("/dev/null");
   });
 
   it("documents bounded model and AgentOS run timeout defaults", () => {
@@ -1771,7 +1920,7 @@ exit 0
       "MODEL_ID=",
       "MODEL_BASE_URL=",
       "MODEL_RUN_TIMEOUT_SECONDS=50",
-      "MODEL_API_KEY_FILE=.secrets/model_api_key",
+      "MODEL_API_KEY_FILE=",
       "ASSISTANT_AGENTOS_RUN_TIMEOUT_MS=55000",
     ]) {
       expect(example.split("\n")).toContain(line);
@@ -1967,7 +2116,7 @@ exit 0
     const agentHealthcheck =
       rendered.services.agent?.healthcheck?.test?.join(" ");
     const webHealthcheck = rendered.services.web?.healthcheck?.test?.join(" ");
-    expect(agentHealthcheck).toContain("/opt/aap/run-with-secret-env.sh");
+    expect(agentHealthcheck).toContain("/opt/aap/run-agent-with-secret-env.sh");
     expect(agentHealthcheck).toContain("OS_SECURITY_KEY");
     expect(agentHealthcheck).not.toContain("/run/secrets/os_security_key");
     expect(webHealthcheck).toContain("gosu node");
@@ -2077,11 +2226,7 @@ exit 0
       typeof modelSecret === "string" ? undefined : modelSecret?.target,
     ).toBe("/run/secrets/model_api_key");
     expect(agent?.entrypoint).toEqual([
-      "/bin/sh",
-      "-eu",
-      "-c",
-      expect.stringContaining("/opt/aap/run-with-secret-env.sh"),
-      "--",
+      "/opt/aap/run-agent-with-secret-env.sh",
     ]);
     expect(agent?.environment?.SECRET_ENV_SPECS).toContain(
       "MODEL_API_KEY=/run/secrets/model_api_key",
@@ -2129,8 +2274,10 @@ exit 0
       "Initialize least-privilege database roles",
       "db:prepare",
       "Bootstrap Agno roles twice",
+      "Bootstrap Agent control roles twice",
       "uv --directory apps/agent sync --frozen",
       "Run Agno migration twice",
+      "Run Agent control migration twice",
       "agno-role-boundary.integration.test.ts",
       "uv --directory apps/agent run pytest",
       "uv --directory apps/agent run ruff check",
@@ -2150,6 +2297,12 @@ exit 0
       workflow.match(/sh infra\/postgres\/03-agno-roles\.sh/g),
     ).toHaveLength(2);
     expect(workflow.match(/python -m agent_service\.migrate/g)).toHaveLength(2);
+    expect(
+      workflow.match(/sh infra\/postgres\/04-agent-control-roles\.sh/g),
+    ).toHaveLength(2);
+    expect(
+      workflow.match(/python -m agent_service\.model_config_migrate/g),
+    ).toHaveLength(2);
   });
 
   it("limits isolated assistant E2E credentials to the seed migrator", () => {
@@ -2972,11 +3125,25 @@ exit 0
     expect(script).toContain("--env-file");
     expect(script).not.toMatch(/docker run[^\n]*-e\s+POSTGRES_/u);
     expect(script).not.toContain("POSTGRES_PASSWORD=");
-    expect(script).toContain('expected_migrations="6"');
+    expect(script).toContain('expected_migrations="7"');
+    expect(script).toContain('expected_latest_migration="1784480751831"');
     expect(script).toContain("migration_count");
     expect(script).toContain("latest_migration");
     expect(script).toContain("users_email_lower_unique");
     expect(script).toContain("sessions_identity_boundary_guard");
+    expect(script).toContain("content_revisions_immutable");
+    expect(script).toContain("content_routes_state_machine");
+    expect(script).toContain("role_permissions_admin_docs_delete_guard");
+    expect(script).toContain("permissions_admin_docs_delete_key_guard");
+    expect(script).toContain("roles_admin_docs_delete_grant_guard");
+    expect(script).toContain("roles_super_admin_delete_guard");
+    expect(script).toContain("permissions_admin_docs_delete_delete_guard");
+    expect(script).toContain(
+      "to_regclass('public.content_revisions') IS NOT NULL",
+    );
+    expect(script).toContain(
+      "to_regclass('public.content_routes') IS NOT NULL",
+    );
     expect(script).toContain("audit_logs_created_id_desc_idx");
     expect(script).toContain("rate_limits_key_unique");
     expect(script).toContain("--clean --if-exists");
@@ -3799,5 +3966,110 @@ exec /usr/bin/mktemp "$@"
     expect(guide).toContain("python3");
     expect(index).toContain("model-provider-smoke.md");
     expect(index).toContain("run-model-provider-smoke.sh");
+  });
+
+  it("defines the CMS document migration and rollback runbook", () => {
+    const runbook = read("docs/deployment/cms-document-migration.md");
+
+    for (const requirement of [
+      "备份",
+      "DOCUMENT_SEED_MANIFEST",
+      "7 篇 `content`",
+      "7 个 revision-1 `content_revisions`",
+      "7 个 canonical `content_routes`",
+      "migration/backfill",
+      "先于 Web 镜像",
+      "不回滚数据库",
+      "上一 Web 镜像",
+      "CMS 生命周期 smoke",
+      "alias 永久重定向",
+      "archive 后",
+      "返回 404",
+    ]) {
+      expect(runbook).toContain(requirement);
+    }
+
+    const migration = runbook.indexOf("migration/backfill");
+    const web = runbook.indexOf("Web 镜像", migration);
+    expect(migration).toBeGreaterThanOrEqual(0);
+    expect(web).toBeGreaterThan(migration);
+
+    for (const field of [
+      "目标环境",
+      "公开 origin",
+      "镜像 registry/repository",
+      "Phase 2 digest",
+      "Phase 3 digest",
+      "备份命令",
+      "部署命令",
+      "回滚命令",
+      "证据存储位置",
+    ]) {
+      expect(runbook).toContain(field);
+    }
+  });
+
+  it("defines a no-fallback isolated CMS document acceptance gate", () => {
+    const runner = read("docs/testing/run-cms-documents-e2e.sh");
+    const browser = read("apps/web/e2e/cms-documents.spec.ts");
+    const index = read("docs/testing/README.md");
+    const dockerIgnore = read(".dockerignore");
+
+    expect(runner).toContain("aap-cms-documents-e2e-");
+    expect(runner).toContain("mktemp -d");
+    expect(runner).toContain("trap on_exit EXIT");
+    expect(runner.indexOf("trap on_exit EXIT")).toBeLessThan(
+      runner.indexOf("mktemp -d"),
+    );
+    expect(runner).toContain("down -v --remove-orphans");
+    expect(runner).toContain("build migrate web");
+    expect(runner).toContain("up -d --wait db");
+    expect(runner).toContain("run --rm migrate");
+    expect(runner).toContain("db:seed-auth-e2e");
+    expect(runner).toContain("DOCUMENT_SEED_MANIFEST");
+    expect(runner).toContain("E2E_MODEL_ADMIN_SESSION_TOKEN");
+    expect(runner).toContain("E2E_STAFF_SESSION_TOKEN");
+    expect(runner).toContain("content_revisions");
+    expect(runner).toContain("content_routes");
+    expect(runner).toContain("(SELECT count FROM manifest_mismatches)");
+    expect(runner).not.toContain("(SELECT count(*) FROM manifest_mismatches)");
+    expect(runner).toContain("--project=desktop --project=mobile --workers=1");
+    expect(runner).toContain("e2e/cms-documents.spec.ts");
+    expect(runner).toContain("SOAK_SECONDS=${CMS_DOCUMENTS_SOAK_SECONDS:-600}");
+    expect(runner).toContain("SOAK_INTERVAL_SECONDS=15");
+    expect(runner).toContain("RestartCount");
+    expect(runner).toContain("CMS documents E2E passed.");
+    expect(runner).not.toMatch(/fallback|skip[^\n]*e2e/iu);
+
+    expect(browser).toContain("{ width: 1440, height: 900 }");
+    expect(browser).toContain("{ width: 390, height: 844 }");
+    expect(browser).toContain("admin:docs denied fixture");
+    expect(browser).toContain("capturedProtocolRequest.body");
+    expect(browser).toContain(
+      '"Next-Action": capturedProtocolRequest.nextAction',
+    );
+    expect(browser).toContain("await route.abort()");
+    expect(browser).toContain("AUTH_PERMISSION_DENIED");
+    expect(browser).toContain("发布当前修订");
+    expect(browser).toContain("归档文档");
+    expect(browser).toContain("预览当前修订");
+    expect(browser).toContain("response.status() === 404");
+    expect(browser).toContain("requestfailed");
+    expect(browser).toContain('failure === "net::ERR_ABORTED"');
+    expect(browser).toContain('request.resourceType() === "fetch"');
+    expect(browser).toContain('url.searchParams.has("_rsc")');
+    expect(browser).toContain(
+      'typeof request.headers()["next-action"] === "string"',
+    );
+    expect(browser).toContain("console");
+
+    expect(dockerIgnore).toContain("apps/web/e2e");
+    expect(dockerIgnore).toContain("artifacts");
+    expect(dockerIgnore).toContain("output");
+    expect(dockerIgnore).toContain("**/*.test.ts");
+    expect(dockerIgnore).toContain(".secrets");
+
+    expect(index).toContain("run-cms-documents-e2e.sh");
+    expect(index).toContain("CMS documents E2E passed.");
   });
 });

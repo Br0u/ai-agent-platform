@@ -19,4 +19,5 @@ export interface AssistantProvider {
   reply(
     invocation: AssistantProviderInvocation,
   ): Promise<AssistantProviderReply>;
+  streamReply?(invocation: AssistantProviderInvocation): AsyncIterable<string>;
 }

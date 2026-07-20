@@ -770,6 +770,38 @@ describe("private Agent model control client", () => {
     },
   );
 
+  it("preserves a safe successful-test result on activation failure", async () => {
+    const client = createAgentModelControlClient({
+      settings: settings(),
+      fetcher: vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          jsonResponse(
+            { error: "storage_unavailable", testResult: "success" },
+            503,
+          ),
+        ),
+    });
+
+    const error = await client
+      .testAndActivate({
+        actor: ACTOR,
+        provider: "openai",
+        requestId: REQUEST_ID,
+        input: { revision: 3 },
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AgentModelControlClientError);
+    expect(error).toMatchObject({
+      code: "storage_unavailable",
+      testResult: "success",
+    });
+    expect(JSON.stringify(error)).toBe(
+      '{"code":"storage_unavailable","testResult":"success"}',
+    );
+  });
+
   it.each([
     [400, "configuration_conflict"],
     [409, "validation_error"],

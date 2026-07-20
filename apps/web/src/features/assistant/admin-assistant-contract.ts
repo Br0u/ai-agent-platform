@@ -11,6 +11,7 @@ import {
 } from "./assistant-contract";
 import {
   ADMIN_MODEL_PROVIDERS,
+  isAdminModelId,
   type AdminModelProvider,
 } from "./admin-model-config-contract";
 
@@ -220,32 +221,6 @@ function isPositiveSafeInteger(value: unknown): value is number {
   return isNonNegativeSafeInteger(value) && value >= 1;
 }
 
-function hasOnlyPairedSurrogates(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const codeUnit = value.charCodeAt(index);
-    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
-      index += 1;
-    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function isSafeModelId(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value === value.trim() &&
-    Array.from(value).length <= 128 &&
-    hasOnlyPairedSurrogates(value) &&
-    !/[\u0000-\u001f\u007f-\u009f]/u.test(value) &&
-    !/(?:[a-z][a-z0-9+.-]*:\/\/|\/\/)/iu.test(value)
-  );
-}
-
 function isProvider(value: unknown): value is AdminModelProvider {
   return (
     typeof value === "string" &&
@@ -415,7 +390,7 @@ function readAdminRuntimeMetadata(
   }
   if (
     !isProvider(snapshot.provider) ||
-    !isSafeModelId(snapshot.modelId) ||
+    !isAdminModelId(snapshot.modelId) ||
     snapshot.capability === "placeholder"
   ) {
     return null;

@@ -45,6 +45,23 @@ export interface AssistantSuccessResponse {
   suggestedActions: AssistantSuggestedAction[];
 }
 
+export interface AssistantStreamStartEvent {
+  version: "1";
+  requestId: string;
+  mode: "agentos";
+  session: { temporary: true; expiresAt: string };
+  message: Omit<AssistantResponseMessage, "content">;
+  suggestedActions: AssistantSuggestedAction[];
+}
+
+export interface AssistantStreamDeltaEvent {
+  content: string;
+}
+
+export type AssistantStreamDoneEvent = Record<string, never>;
+
+export type AssistantStreamErrorEvent = Record<string, never>;
+
 export type AssistantErrorCode =
   | "validation_error"
   | "rate_limited"
@@ -292,6 +309,61 @@ export function isAssistantSuccessResponse(
   }
 
   return input.suggestedActions.every(isAssistantSuggestedAction);
+}
+
+export function isAssistantStreamStartEvent(
+  input: unknown,
+): input is AssistantStreamStartEvent {
+  return (
+    isRecord(input) &&
+    hasExactKeys(input, [
+      "version",
+      "requestId",
+      "mode",
+      "session",
+      "message",
+      "suggestedActions",
+    ]) &&
+    input.version === "1" &&
+    isAssistantRequestId(input.requestId) &&
+    input.mode === "agentos" &&
+    isRecord(input.session) &&
+    hasExactKeys(input.session, ["expiresAt", "temporary"]) &&
+    input.session.temporary === true &&
+    typeof input.session.expiresAt === "string" &&
+    isCanonicalIsoDate(input.session.expiresAt) &&
+    isRecord(input.message) &&
+    hasExactKeys(input.message, ["id", "role"]) &&
+    isAssistantMessageId(input.message.id) &&
+    input.message.role === "assistant" &&
+    Array.isArray(input.suggestedActions) &&
+    input.suggestedActions.length <= ASSISTANT_MAX_SUGGESTED_ACTIONS &&
+    input.suggestedActions.every(isAssistantSuggestedAction)
+  );
+}
+
+export function isAssistantStreamDeltaEvent(
+  input: unknown,
+): input is AssistantStreamDeltaEvent {
+  return (
+    isRecord(input) &&
+    hasExactKeys(input, ["content"]) &&
+    typeof input.content === "string" &&
+    input.content.length > 0 &&
+    hasAtMostCodePoints(input.content, ASSISTANT_CONTENT_MAX_CODE_POINTS)
+  );
+}
+
+export function isAssistantStreamDoneEvent(
+  input: unknown,
+): input is AssistantStreamDoneEvent {
+  return isRecord(input) && hasExactKeys(input, []);
+}
+
+export function isAssistantStreamErrorEvent(
+  input: unknown,
+): input is AssistantStreamErrorEvent {
+  return isRecord(input) && hasExactKeys(input, []);
 }
 
 function isCanonicalIsoDate(value: string): boolean {

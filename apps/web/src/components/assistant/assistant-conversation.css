@@ -52,10 +52,12 @@
 
 .assistant-conversation__message {
   display: grid;
+  width: fit-content;
   max-width: min(100%, 720px);
   grid-template-columns: 12px minmax(0, 1fr);
   gap: var(--space-3);
   align-items: start;
+  justify-self: start;
   padding: 14px 16px;
   border: 1px solid rgb(157 173 213 / 22%);
   border-radius: 22px 22px 22px 8px;
@@ -68,6 +70,7 @@
 .assistant-conversation__message--user {
   grid-template-columns: minmax(0, 1fr) 12px;
   justify-self: end;
+  margin-inline-start: auto;
   border-radius: 22px 22px 8px 22px;
   color: var(--color-surface);
   background: linear-gradient(

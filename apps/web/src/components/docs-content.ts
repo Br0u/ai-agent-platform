@@ -1,270 +1,241 @@
-/**
- * 文档中心结构化数据
- * 基于 PRD 第 8 章（文档中心）的核心目录体系，面向企业落地导向。
- * 技术底座概念基于 Nextra，支持多版本管理、全文检索、Markdown/Mermaid/OpenAPI 渲染。
- */
+import "server-only";
 
-/* ---------- 技术底座能力标签 ---------- */
-export const docsTechCapabilities = [
-  {
-    icon: "📄",
-    title: "Markdown / MDX",
-    description: "原生支持 Markdown 与 MDX，可在文档中嵌入 React 交互组件。",
-  },
-  {
-    icon: "🔀",
-    title: "多版本管理",
-    description: "支持按产品版本切换文档快照，历史版本永久可回溯。",
-  },
-  {
-    icon: "🔍",
-    title: "全文检索",
-    description: "基于 FlexSearch 的客户端即时搜索，毫秒级响应。",
-  },
-  {
-    icon: "📊",
-    title: "Mermaid 架构图",
-    description: "内嵌 Mermaid 语法渲染流程图、时序图、架构图。",
-  },
-  {
-    icon: "🔌",
-    title: "OpenAPI 渲染",
-    description: "自动解析 OpenAPI/Swagger 规范，生成可交互的接口文档。",
-  },
-  {
-    icon: "🎨",
-    title: "代码高亮",
-    description: "支持 100+ 编程语言语法高亮，含行号、差异对比、一键复制。",
-  },
-  {
-    icon: "📥",
-    title: "PDF 导出",
-    description: "一键将当前页面或整章内容导出为离线 PDF 文档。",
-  },
-  {
-    icon: "🏗️",
-    title: "企业级部署",
-    description: "支持 SSG 静态生成与 SSR 服务端渲染，适配内网离线部署。",
-  },
-] as const;
+import { getDatabase } from "@ai-agent-platform/database";
+import {
+  safeDocumentBodyV1Schema,
+  type SafeDocumentBodyV1,
+} from "@ai-agent-platform/document-content";
+import { sql } from "drizzle-orm";
+import { unstable_cache } from "next/cache";
 
-/* ---------- 文档核心目录体系 ---------- */
-export const docsCategories = [
-  {
-    code: "D1",
-    title: "快速开始",
-    icon: "🚀",
-    description: "从零到一的新手入门路径，快速完成平台部署与首次体验。",
-    subCategories: [
-      {
-        id: "intro",
-        title: "新手入门",
-        description: "平台概览与核心概念说明，帮助您建立整体认知。",
-        docs: [],
-      },
-      {
-        id: "quick-deploy",
-        title: "快速部署",
-        description: "基于 Docker Compose 的单机最简部署，15 分钟内完成。",
-        docs: [],
-      },
-      {
-        id: "quick-experience",
-        title: "快速体验",
-        description: "创建第一个智能体并完成一次对话，验证平台核心能力。",
-        docs: [],
-      },
-    ],
-  },
-  {
-    code: "D2",
-    title: "部署指南",
-    icon: "🖥️",
-    description: "覆盖单机到集群的全场景企业级部署方案，含离线与高可用架构。",
-    subCategories: [
-      {
-        id: "standalone",
-        title: "单机部署",
-        description: "适用于 PoC 验证与小规模团队使用的单节点部署方案。",
-        docs: [],
-      },
-      {
-        id: "cluster",
-        title: "集群部署",
-        description: "基于 Kubernetes 的分布式集群部署，适用于生产环境。",
-        docs: [],
-      },
-      {
-        id: "offline",
-        title: "离线部署",
-        description: "无外网环境下的完整离线安装包与镜像导入指南。",
-        docs: [],
-      },
-      {
-        id: "ha",
-        title: "HA 高可用部署",
-        description: "多副本 + 负载均衡架构，保障 99.9% 可用性目标。",
-        docs: [],
-      },
-    ],
-  },
-  {
-    code: "D3",
-    title: "升级手册",
-    icon: "⬆️",
-    description: "版本迭代的安全升级路径，包含数据迁移与跨版本兼容性说明。",
-    subCategories: [
-      {
-        id: "upgrade-steps",
-        title: "版本升级步骤",
-        description: "标准化的版本升级操作流程与检查清单。",
-        docs: [],
-      },
-      {
-        id: "data-migration",
-        title: "数据迁移",
-        description: "数据库 Schema 变更与数据迁移脚本使用说明。",
-        docs: [],
-      },
-      {
-        id: "version-compat",
-        title: "跨版本兼容",
-        description: "跨大版本升级的兼容性矩阵与已知问题说明。",
-        docs: [],
-      },
-    ],
-  },
-  {
-    code: "D4",
-    title: "运维手册",
-    icon: "🔧",
-    description: "生产环境日常运维操作指南，覆盖日志、故障排查与性能调优。",
-    subCategories: [
-      {
-        id: "daily-ops",
-        title: "日常运维",
-        description: "备份恢复、证书续期、磁盘清理等常规维护操作。",
-        docs: [],
-      },
-      {
-        id: "logs",
-        title: "日志查看",
-        description: "各组件日志路径、日志级别调整与日志聚合方案。",
-        docs: [],
-      },
-      {
-        id: "troubleshooting",
-        title: "故障排查",
-        description: "常见故障现象、排查思路与应急恢复步骤。",
-        docs: [],
-      },
-      {
-        id: "performance",
-        title: "性能调优",
-        description: "推理吞吐、检索延迟、并发连接数等关键指标调优。",
-        docs: [],
-      },
-    ],
-  },
-  {
-    code: "D5",
-    title: "API 文档",
-    icon: "🔌",
-    description: "全量 RESTful API 接口说明，含在线调试示例与错误码大全。",
-    subCategories: [
-      {
-        id: "api-reference",
-        title: "全量接口说明",
-        description: "按模块分组的 API 端点列表，含请求/响应 Schema。",
-        docs: [],
-      },
-      {
-        id: "api-examples",
-        title: "调试示例",
-        description: "基于 cURL / Python SDK 的接口调用示例与最佳实践。",
-        docs: [],
-      },
-      {
-        id: "error-codes",
-        title: "错误码",
-        description: "全局错误码定义、HTTP 状态码映射与排障建议。",
-        docs: [],
-      },
-    ],
-  },
-  {
-    code: "D6",
-    title: "硬件与 GPU 适配",
-    icon: "🎮",
-    description: "GPU 显卡适配列表、算力调优与驱动安装的完整参考。",
-    subCategories: [
-      {
-        id: "gpu-compat",
-        title: "显卡适配",
-        description: "支持的 NVIDIA / AMD / 昇腾 GPU 型号与推荐配置。",
-        docs: [],
-      },
-      {
-        id: "compute-tuning",
-        title: "算力调优",
-        description: "GPU 显存分配、推理并发数与混合精度配置建议。",
-        docs: [],
-      },
-      {
-        id: "driver-install",
-        title: "驱动安装",
-        description: "CUDA、ROCm 等 GPU 驱动与运行时环境安装指南。",
-        docs: [],
-      },
-    ],
-  },
-  {
-    code: "D7",
-    title: "常见问题 FAQ",
-    icon: "❓",
-    description: "高频问题索引、典型报错解决方案与兼容性问题汇总。",
-    subCategories: [
-      {
-        id: "faq-common",
-        title: "高频问题",
-        description: "安装部署、模型推理、知识库检索等场景的常见疑问解答。",
-        docs: [],
-      },
-      {
-        id: "error-solutions",
-        title: "报错解决方案",
-        description: "典型错误信息的原因分析与修复步骤索引。",
-        docs: [],
-      },
-      {
-        id: "compat-issues",
-        title: "兼容问题汇总",
-        description: "操作系统、浏览器、依赖组件的已知兼容性问题记录。",
-        docs: [],
-      },
-    ],
-  },
-] as const;
+export type PublicDocument = {
+  id: string;
+  revision: number;
+  slug: string;
+  title: string;
+  summary: string;
+  body: SafeDocumentBodyV1;
+  navigation: SafeDocumentBodyV1["navigation"];
+};
 
-/* ---------- 页面布局规范说明 ---------- */
-export const docsLayoutSpec = {
-  top: {
-    title: "顶部全局区",
-    features: ["全局搜索框", "文档版本切换", "语言切换"],
+export type PublicDocumentRoute =
+  | { kind: "canonical"; canonicalSlug: string }
+  | { kind: "alias"; canonicalSlug: string }
+  | { kind: "reserved"; canonicalSlug: string };
+
+export type PublishedDocumentCatalog = {
+  documents: PublicDocument[];
+  routes: Record<string, PublicDocumentRoute>;
+};
+
+type PublicationRow = {
+  id: unknown;
+  revision: unknown;
+  revisionSlug: unknown;
+  canonicalSlug: unknown;
+  title: unknown;
+  summary: unknown;
+  body: unknown;
+  routeSlug: unknown;
+  routeState: unknown;
+};
+
+type PublicationDraft = {
+  document: PublicDocument;
+  routes: Array<{
+    slug: string;
+    state: "reserved" | "canonical" | "alias";
+  }>;
+};
+
+export class PublicDocumentsAvailabilityError extends Error {
+  readonly code = "PUBLIC_DOCUMENTS_UNAVAILABLE";
+
+  constructor(options?: ErrorOptions) {
+    super("Published documents are unavailable", options);
+    this.name = "PublicDocumentsAvailabilityError";
+  }
+}
+
+export function isPublicDocumentsAvailabilityError(
+  error: unknown,
+): error is PublicDocumentsAvailabilityError {
+  return error instanceof PublicDocumentsAvailabilityError;
+}
+
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`Invalid publication row: ${field}`);
+  }
+  return value;
+}
+
+function requiredSlug(value: unknown, field: string): string {
+  const slug = requiredString(value, field);
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(slug)) {
+    throw new Error(`Invalid publication row: ${field}`);
+  }
+  return slug;
+}
+
+function requiredRevision(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    throw new Error("Invalid publication row: revision");
+  }
+  return value;
+}
+
+function routeState(value: unknown): "reserved" | "canonical" | "alias" {
+  if (value !== "reserved" && value !== "canonical" && value !== "alias") {
+    throw new Error("Invalid publication row: route state");
+  }
+  return value;
+}
+
+function samePublication(left: PublicDocument, right: PublicDocument): boolean {
+  return (
+    left.revision === right.revision &&
+    left.slug === right.slug &&
+    left.title === right.title &&
+    left.summary === right.summary &&
+    left.body.checksum === right.body.checksum
+  );
+}
+
+function catalogFromRows(
+  rows: readonly PublicationRow[],
+): PublishedDocumentCatalog {
+  const byId = new Map<string, PublicationDraft>();
+  const seenRouteSlugs = new Set<string>();
+
+  for (const row of rows) {
+    const id = requiredString(row.id, "id");
+    const revision = requiredRevision(row.revision);
+    const revisionSlug = requiredSlug(row.revisionSlug, "revision slug");
+    const canonicalSlug = requiredSlug(row.canonicalSlug, "canonical slug");
+    if (revisionSlug !== canonicalSlug) {
+      throw new Error("Published revision does not match its canonical route");
+    }
+    const title = requiredString(row.title, "title");
+    const summary =
+      row.summary === null ? "" : requiredString(row.summary, "summary");
+    const parsedBody = safeDocumentBodyV1Schema.safeParse(row.body);
+    if (!parsedBody.success) {
+      throw new Error("Invalid published document body");
+    }
+    const document: PublicDocument = {
+      id,
+      revision,
+      slug: canonicalSlug,
+      title,
+      summary,
+      body: parsedBody.data,
+      navigation: parsedBody.data.navigation,
+    };
+    const route = {
+      slug: requiredSlug(row.routeSlug, "route slug"),
+      state: routeState(row.routeState),
+    };
+
+    if (seenRouteSlugs.has(route.slug)) {
+      throw new Error("Duplicate published document route");
+    }
+    seenRouteSlugs.add(route.slug);
+
+    const existing = byId.get(id);
+    if (existing) {
+      if (!samePublication(existing.document, document)) {
+        throw new Error("Inconsistent published revision rows");
+      }
+      existing.routes.push(route);
+    } else {
+      byId.set(id, { document, routes: [route] });
+    }
+  }
+
+  const documents: PublicDocument[] = [];
+  const routes: Record<string, PublicDocumentRoute> = Object.create(
+    null,
+  ) as Record<string, PublicDocumentRoute>;
+
+  for (const draft of byId.values()) {
+    const canonicalRoutes = draft.routes.filter(
+      (route) => route.state === "canonical",
+    );
+    if (
+      canonicalRoutes.length !== 1 ||
+      canonicalRoutes[0]?.slug !== draft.document.slug
+    ) {
+      throw new Error("Invalid canonical publication route");
+    }
+
+    const canonicalSlug = canonicalRoutes[0].slug;
+    documents.push(draft.document);
+    for (const route of draft.routes) {
+      routes[route.slug] = { kind: route.state, canonicalSlug };
+    }
+  }
+
+  documents.sort(
+    (left, right) =>
+      left.navigation.position - right.navigation.position ||
+      (left.slug < right.slug ? -1 : left.slug > right.slug ? 1 : 0),
+  );
+
+  return { documents, routes };
+}
+
+async function queryPublishedDocumentCatalog(): Promise<PublishedDocumentCatalog> {
+  const result = await getDatabase().execute(sql`
+    SELECT
+      c.id AS "id",
+      cr.revision AS "revision",
+      cr.slug AS "revisionSlug",
+      canonical_route.slug AS "canonicalSlug",
+      cr.title AS "title",
+      cr.summary AS "summary",
+      cr.body AS "body",
+      route.slug AS "routeSlug",
+      route.state::text AS "routeState"
+    FROM content AS c
+    INNER JOIN content_revisions AS cr
+      ON cr.content_id = c.id
+     AND cr.revision = c.published_revision
+    LEFT JOIN content_routes AS route
+      ON route.content_id = c.id
+    LEFT JOIN content_routes AS canonical_route
+      ON canonical_route.content_id = c.id
+     AND canonical_route.state = 'canonical'
+    WHERE c.type = 'document'
+      AND c.status = 'published'
+      AND c.deleted_at IS NULL
+      AND c.published_revision IS NOT NULL
+    ORDER BY c.id, route.slug
+  `);
+
+  return catalogFromRows(result.rows as PublicationRow[]);
+}
+
+const CATALOG_CACHE_SCOPE = "catalog" as const;
+
+const readPublishedDocumentCatalogCached = unstable_cache(
+  async (
+    scope: typeof CATALOG_CACHE_SCOPE,
+  ): Promise<PublishedDocumentCatalog> => {
+    if (scope !== CATALOG_CACHE_SCOPE) {
+      throw new PublicDocumentsAvailabilityError();
+    }
+    try {
+      return await queryPublishedDocumentCatalog();
+    } catch (error) {
+      if (isPublicDocumentsAvailabilityError(error)) throw error;
+      throw new PublicDocumentsAvailabilityError({ cause: error });
+    }
   },
-  left: {
-    title: "左侧导航区",
-    features: ["树形目录导航（固定悬浮）"],
-  },
-  right: {
-    title: "右侧正文区",
-    features: [
-      "正文渲染区",
-      "目录锚点",
-      "上一篇 / 下一篇",
-      "代码复制",
-      "PDF 导出",
-      "问题反馈",
-    ],
-  },
-} as const;
+  ["published-document-catalog-v1"],
+  { tags: ["documents"] },
+);
+
+export function readPublishedDocumentCatalog(): Promise<PublishedDocumentCatalog> {
+  return readPublishedDocumentCatalogCached(CATALOG_CACHE_SCOPE);
+}

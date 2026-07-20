@@ -1,60 +1,26 @@
-"use client";
-
-import React from "react";
-import { useDocReader } from "./doc-reader-layout";
-
-type SubCategory = {
-  id: string;
-  title: string;
-  description: string;
-};
+import Link from "next/link";
+import type { PublicDocument } from "./docs-content";
 
 export function DocCategoryCards({
-  subCategories,
+  documents,
 }: {
-  subCategories: readonly SubCategory[];
+  documents: readonly PublicDocument[];
 }) {
-  const { setExpandedLevel2, expandedLevel2 } = useDocReader();
-
-  const handleCardClick = (e: React.MouseEvent, id: string) => {
-    e.preventDefault();
-    // 切换展开状态
-    if (expandedLevel2 !== id) {
-      setExpandedLevel2(id);
-    }
-  };
-
   return (
     <div className="doc-cards-grid">
-      {subCategories.map((sub, i) => {
-        return (
-          <a
-            href={`#${sub.id}`}
-            key={i}
-            className="doc-card"
-            onClick={(e) => handleCardClick(e, sub.id)}
-          >
-            <div className="doc-card__icon">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-                <line x1="16" y1="13" x2="8" y2="13"></line>
-                <line x1="16" y1="17" x2="8" y2="17"></line>
-                <polyline points="10 9 9 9 8 9"></polyline>
-              </svg>
-            </div>
-            <h3 className="doc-card__title">{sub.title}</h3>
-            <p className="doc-card__desc">{sub.description}</p>
-          </a>
-        );
-      })}
+      {documents.map((document) => (
+        <Link
+          href={`/docs/${document.slug}`}
+          key={document.id}
+          className="doc-card doc-card--category"
+        >
+          <h3 className="doc-card__title">{document.title}</h3>
+          <p className="doc-card__desc">{document.summary}</p>
+          <span className="doc-card__arrow" aria-hidden="true">
+            →
+          </span>
+        </Link>
+      ))}
     </div>
   );
 }

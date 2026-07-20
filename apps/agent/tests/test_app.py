@@ -57,6 +57,11 @@ ENCRYPTION_KEY = "11" * 32
 CONTROL_KEY = "model-control-key-0123456789abcdef"
 AUTHORIZATION = {"Authorization": f"Bearer {SECURITY_KEY}"}
 CONTROL_AUTHORIZATION = {"Authorization": f"Bearer {CONTROL_KEY}"}
+DISABLED_MODEL_CONTROL_SETTINGS: dict[str, object] = {
+    "AGENT_CONTROL_DATABASE_URL": None,
+    "MODEL_CONFIG_ENCRYPTION_KEY": None,
+    "AGENT_CONFIG_CONTROL_KEY": None,
+}
 LIVE_SAFE_KEYS = {"live", "ready", "capability", "message"}
 READY_SAFE_KEYS = {"ready", "capability"}
 Probe = Callable[[AsyncPostgresDb], Awaitable[bool]]
@@ -169,6 +174,7 @@ def settings() -> RuntimeSettings:
         {
             "OS_SECURITY_KEY": SECURITY_KEY,
             "AGNO_DATABASE_URL": DATABASE_URL,
+            **DISABLED_MODEL_CONTROL_SETTINGS,
         }
     )
 
@@ -183,6 +189,7 @@ def enabled_settings() -> RuntimeSettings:
             "MODEL_PROVIDER": "openai",
             "MODEL_ID": MODEL_ID,
             "MODEL_API_KEY": MODEL_API_KEY,
+            **DISABLED_MODEL_CONTROL_SETTINGS,
         }
     )
 
@@ -361,6 +368,7 @@ def test_partial_model_control_configuration_fails_app_construction(
         {
             "OS_SECURITY_KEY": SECURITY_KEY,
             "AGNO_DATABASE_URL": DATABASE_URL,
+            **DISABLED_MODEL_CONTROL_SETTINGS,
             **control_values,
         }
     )
@@ -732,6 +740,8 @@ def test_real_agentos_route_accepts_runtime_credentials_from_environment(
 ) -> None:
     monkeypatch.setenv("OS_SECURITY_KEY", SECURITY_KEY)
     monkeypatch.setenv("AGNO_DATABASE_URL", DATABASE_URL)
+    for variable in DISABLED_MODEL_CONTROL_SETTINGS:
+        monkeypatch.delenv(variable, raising=False)
 
     app = create_app()
     schema = app.openapi()

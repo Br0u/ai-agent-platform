@@ -178,6 +178,109 @@ describe("useAssistantSession", () => {
     expect(result.current.latestAnnouncement).toBe("回答");
   });
 
+  it("renders SSE deltas before the assistant response completes", async () => {
+    const encoder = new TextEncoder();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(streamController) {
+            controller = streamController;
+          },
+        }),
+        { headers: { "content-type": "text/event-stream; charset=utf-8" } },
+      ),
+    );
+    const { result } = renderHook(() => useAssistantSession("/assistant"));
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = result.current.submit("流式问题");
+    });
+    await act(async () => {
+      controller.enqueue(
+        encoder.encode(
+          'event: start\ndata: {"version":"1","requestId":"stream-1","mode":"agentos","session":{"temporary":true,"expiresAt":"2026-07-13T12:00:00.000Z"},"message":{"id":"message-1","role":"assistant"},"suggestedActions":[]}\n\n' +
+            'event: delta\ndata: {"content":"第一段"}\n\n',
+        ),
+      );
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(
+        result.current.messages.map(({ role, content }) => [role, content]),
+      ).toEqual([
+        ["user", "流式问题"],
+        ["assistant", "第一段"],
+      ]),
+    );
+    expect(result.current.requestStatus).toBe("sending");
+
+    await act(async () => {
+      controller.enqueue(
+        encoder.encode(
+          'event: delta\ndata: {"content":"第二段"}\n\n' +
+            "event: done\ndata: {}\n\n",
+        ),
+      );
+      controller.close();
+      await pending;
+    });
+
+    expect(result.current.requestStatus).toBe("idle");
+    expect(result.current.messages.at(-1)?.content).toBe("第一段第二段");
+    expect(result.current.latestAnnouncement).toBe("第一段第二段");
+  });
+
+  it("removes partial SSE messages and retains the draft when the stream fails", async () => {
+    const encoder = new TextEncoder();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(streamController) {
+            controller = streamController;
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+    );
+    const { result } = renderHook(() => useAssistantSession("/assistant"));
+    act(() => result.current.setDraft("保留这个问题"));
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = result.current.submit();
+    });
+    await act(async () => {
+      controller.enqueue(
+        encoder.encode(
+          'event: start\ndata: {"version":"1","requestId":"stream-2","mode":"agentos","session":{"temporary":true,"expiresAt":"2026-07-13T12:00:00.000Z"},"message":{"id":"message-2","role":"assistant"},"suggestedActions":[]}\n\n' +
+            'event: delta\ndata: {"content":"不完整回答"}\n\n',
+        ),
+      );
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(result.current.messages.at(-1)?.content).toBe("不完整回答"),
+    );
+
+    await act(async () => {
+      controller.enqueue(encoder.encode("event: error\ndata: {}\n\n"));
+      controller.close();
+      await pending;
+    });
+
+    expect(result.current.requestStatus).toBe("failed");
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.draft).toBe("保留这个问题");
+    expect(result.current.latestAnnouncement).toBe(
+      "发送失败，请重试或使用帮助中心或商务咨询。",
+    );
+    expect(result.current.latestAnnouncement).not.toContain("private");
+  });
+
   it("stores only internal single-slash suggested actions", async () => {
     vi.mocked(fetch).mockResolvedValue(
       success("可用入口", [

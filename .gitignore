@@ -23,6 +23,7 @@ data/
 backups/
 uploads/
 .worktrees/
+/.superpowers/
 .playwright-cli/
 artifacts/playwright/
 playwright-report/

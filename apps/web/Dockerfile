@@ -19,6 +19,7 @@ ARG PNPM_REGISTRY=https://registry.npmmirror.com
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/web/package.json apps/web/package.json
 COPY packages/database/package.json packages/database/package.json
+COPY packages/document-content/package.json packages/document-content/package.json
 COPY packages/integrations/package.json packages/integrations/package.json
 COPY packages/ui/package.json packages/ui/package.json
 
@@ -47,10 +48,14 @@ CMD ["pnpm", "db:prepare"]
 
 FROM base AS builder
 
+ARG PNPM_REGISTRY=https://registry.npmmirror.com
+
 COPY --from=dependencies /app/ ./
 COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV PNPM_CONFIG_REGISTRY=$PNPM_REGISTRY
+ENV PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false
 
 RUN pnpm --filter @ai-agent-platform/web build
 

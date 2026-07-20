@@ -1,0 +1,420 @@
+{
+  "api": {
+    "title": "API 文档",
+    "toc": [
+      {
+        "id": "doc-content-接口约定",
+        "title": "接口约定",
+        "depth": 2
+      },
+      {
+        "id": "doc-content-鉴权和权限",
+        "title": "鉴权和权限",
+        "depth": 2
+      }
+    ],
+    "codeBlocks": [],
+    "links": [],
+    "callouts": [
+      {
+        "type": "info",
+        "text": "Agent、知识库和模型网关接口的详细 schema\n会随对应模块稳定后补齐；当前页面先作为统一入口和契约索引。"
+      }
+    ],
+    "steps": [],
+    "cards": [],
+    "filetrees": []
+  },
+  "deployment": {
+    "title": "部署指南",
+    "toc": [
+      {
+        "id": "doc-content-推荐目录",
+        "title": "推荐目录",
+        "depth": 2
+      },
+      {
+        "id": "doc-content-部署步骤",
+        "title": "部署步骤",
+        "depth": 2
+      },
+      {
+        "id": "doc-content-准备基础配置和独立-secret",
+        "title": "准备基础配置和独立 Secret",
+        "depth": 3
+      },
+      {
+        "id": "doc-content-初始化平台agentos-和模型控制数据库",
+        "title": "初始化平台、AgentOS 和模型控制数据库",
+        "depth": 3
+      },
+      {
+        "id": "doc-content-选择部署级开关",
+        "title": "选择部署级开关",
+        "depth": 3
+      },
+      {
+        "id": "doc-content-启动服务并检查健康状态",
+        "title": "启动服务并检查健康状态",
+        "depth": 3
+      },
+      {
+        "id": "doc-content-完成第一次后台激活",
+        "title": "完成第一次后台激活",
+        "depth": 3
+      },
+      {
+        "id": "doc-content-启动与恢复语义",
+        "title": "启动与恢复语义",
+        "depth": 2
+      },
+      {
+        "id": "doc-content-回滚",
+        "title": "回滚",
+        "depth": 2
+      },
+      {
+        "id": "doc-content-key-与-endpoint-运维",
+        "title": "Key 与 Endpoint 运维",
+        "depth": 2
+      },
+      {
+        "id": "doc-content-当前能力边界",
+        "title": "当前能力边界",
+        "depth": 2
+      }
+    ],
+    "codeBlocks": [
+      {
+        "language": "text",
+        "text": "install -d -m 700 .secrets\numask 077\nopenssl rand -hex 32 > .secrets/agent_control_migrator_database_password\nopenssl rand -hex 32 > .secrets/agent_control_database_password\nopenssl rand -hex 32 > .secrets/model_config_encryption_key\nopenssl rand -hex 32 > .secrets/agent_config_control_key\nchmod 600 .secrets/*\n"
+      },
+      {
+        "language": "text",
+        "text": "control_migrator_password=$(tr -d '\\n' < .secrets/agent_control_migrator_database_password)\ncontrol_runtime_password=$(tr -d '\\n' < .secrets/agent_control_database_password)\nprintf 'postgresql+psycopg_async://ai_agent_control_migrator:%s@db:5432/ai_agent_platform\\n' \"$control_migrator_password\" > .secrets/agent_control_migrator_database_url\nprintf 'postgresql+psycopg_async://ai_agent_control:%s@db:5432/ai_agent_platform\\n' \"$control_runtime_password\" > .secrets/agent_control_database_url\nunset control_migrator_password control_runtime_password\nchmod 600 .secrets/agent_control_*_database_url\n"
+      },
+      {
+        "language": "text",
+        "text": "docker compose build migrate agent-migrate agent-control-migrate agent web backup\ndocker compose up -d --wait db\ndocker compose run --rm migrate\ndocker compose run --rm agno-bootstrap\ndocker compose run --rm agent-control-bootstrap\ndocker compose run --rm --no-deps agent-migrate\ndocker compose run --rm --no-deps agent-control-migrate\n"
+      },
+      {
+        "language": "text",
+        "text": "AGENT_ENABLED=true\nASSISTANT_PROVIDER_MODE=agentos\n"
+      },
+      {
+        "language": "text",
+        "text": "docker compose up -d --no-deps --wait agent\ndocker compose up -d --wait web\ndocker compose up -d --wait proxy backup\n"
+      }
+    ],
+    "links": [
+      {
+        "href": "https://docs.agno.com/agent-os/config",
+        "text": "AgentOS Configuration"
+      },
+      {
+        "href": "https://docs.agno.com/skills/overview",
+        "text": "Skills"
+      },
+      {
+        "href": "https://docs.agno.com/skills/loading-skills",
+        "text": "Loading Skills"
+      },
+      {
+        "href": "https://docs.agno.com/tools/agent",
+        "text": "Tools"
+      },
+      {
+        "href": "https://docs.agno.com/agent-os/features/knowledge-management",
+        "text": "Knowledge"
+      },
+      {
+        "href": "https://docs.agno.com/models/providers/local/ollama/overview",
+        "text": "Ollama"
+      },
+      {
+        "href": "https://docs.agno.com/models/providers/local/vllm/overview",
+        "text": "vLLM"
+      },
+      {
+        "href": "https://docs.agno.com/models/providers/openai-like",
+        "text": "OpenAI-compatible Models"
+      }
+    ],
+    "callouts": [
+      {
+        "type": "warning",
+        "text": "不要把 .env、数据库密码、模型\nKey、MODEL_CONFIG_ENCRYPTION_KEY、AGENT_CONFIG_CONTROL_KEY、初始管理员密码或\nTOTP 恢复码提交到 Git，也不要写入日志或工单。"
+      }
+    ],
+    "steps": [
+      {
+        "headings": [
+          "准备基础配置和独立 Secret",
+          "初始化平台、AgentOS 和模型控制数据库",
+          "选择部署级开关",
+          "启动服务并检查健康状态",
+          "完成第一次后台激活"
+        ],
+        "childTags": [
+          "h3",
+          "p",
+          "pre",
+          "p",
+          "pre",
+          "p",
+          "h3",
+          "pre",
+          "p",
+          "h3",
+          "p",
+          "pre",
+          "p",
+          "h3",
+          "pre",
+          "p",
+          "h3",
+          "p"
+        ]
+      }
+    ],
+    "cards": [],
+    "filetrees": [
+      "ai-agent-platform/\n  .env\n  compose.yaml\n  .secrets/\n  apps/agent/\n  apps/web/\n  packages/database/"
+    ]
+  },
+  "faq": {
+    "title": "常见问题 FAQ",
+    "toc": [
+      {
+        "id": "doc-content-为什么本地打开页面提示-database_url-is-required",
+        "title": "为什么本地打开页面提示 DATABASE_URL is required？",
+        "depth": 2
+      },
+      {
+        "id": "doc-content-客户注册后能直接进入平台吗",
+        "title": "客户注册后能直接进入平台吗？",
+        "depth": 2
+      },
+      {
+        "id": "doc-content-管理员为什么看不到-ai-助理运营页",
+        "title": "管理员为什么看不到 AI 助理运营页？",
+        "depth": 2
+      },
+      {
+        "id": "doc-content-文档页面可以独立部署吗",
+        "title": "文档页面可以独立部署吗？",
+        "depth": 2
+      }
+    ],
+    "codeBlocks": [],
+    "links": [],
+    "callouts": [],
+    "steps": [],
+    "cards": [],
+    "filetrees": []
+  },
+  "hardware": {
+    "title": "GPU / 硬件适配",
+    "toc": [
+      {
+        "id": "doc-content-适配维度",
+        "title": "适配维度",
+        "depth": 2
+      }
+    ],
+    "codeBlocks": [],
+    "links": [],
+    "callouts": [
+      {
+        "type": "warning",
+        "text": "具体 GPU\n型号、驱动版本和性能数据需要以交付环境的实测结果为准，不能仅凭型号名称判断兼容性。"
+      }
+    ],
+    "steps": [],
+    "cards": [],
+    "filetrees": []
+  },
+  "operations": {
+    "title": "运维手册",
+    "toc": [
+      {
+        "id": "doc-content-日常检查",
+        "title": "日常检查",
+        "depth": 2
+      },
+      {
+        "id": "doc-content-故障处理顺序",
+        "title": "故障处理顺序",
+        "depth": 2
+      }
+    ],
+    "codeBlocks": [],
+    "links": [
+      {
+        "href": "/compatibility",
+        "text": "环境兼容矩阵"
+      },
+      {
+        "href": "/support",
+        "text": "支持与工单"
+      }
+    ],
+    "callouts": [
+      {
+        "type": "warning",
+        "text": "生产环境排障时不要直接删除容器或数据库数据；先保留日志和现场，再执行可回滚操作。"
+      }
+    ],
+    "steps": [],
+    "cards": [
+      [
+        {
+          "href": "/compatibility",
+          "text": "环境兼容矩阵"
+        },
+        {
+          "href": "/support",
+          "text": "支持与工单"
+        }
+      ]
+    ],
+    "filetrees": []
+  },
+  "quick-start": {
+    "title": "快速开始",
+    "toc": [
+      {
+        "id": "doc-content-上手路径",
+        "title": "上手路径",
+        "depth": 2
+      },
+      {
+        "id": "doc-content-准备环境",
+        "title": "准备环境",
+        "depth": 3
+      },
+      {
+        "id": "doc-content-启动平台",
+        "title": "启动平台",
+        "depth": 3
+      },
+      {
+        "id": "doc-content-创建第一个-agent",
+        "title": "创建第一个 Agent",
+        "depth": 3
+      },
+      {
+        "id": "doc-content-接下来做什么",
+        "title": "接下来做什么",
+        "depth": 2
+      }
+    ],
+    "codeBlocks": [],
+    "links": [
+      {
+        "href": "/docs/deployment",
+        "text": "部署指南"
+      },
+      {
+        "href": "/docs/api",
+        "text": "API 文档"
+      },
+      {
+        "href": "/docs/faq",
+        "text": "常见问题 FAQ"
+      }
+    ],
+    "callouts": [
+      {
+        "type": "info",
+        "text": "当前文档示例以本地 Docker\n环境为主，生产环境请结合企业网络、硬件和安全策略调整配置。"
+      }
+    ],
+    "steps": [
+      {
+        "headings": [
+          "准备环境",
+          "启动平台",
+          "创建第一个 Agent"
+        ],
+        "childTags": [
+          "h3",
+          "p",
+          "h3",
+          "p",
+          "h3",
+          "p"
+        ]
+      }
+    ],
+    "cards": [
+      [
+        {
+          "href": "/docs/deployment",
+          "text": "部署指南"
+        },
+        {
+          "href": "/docs/api",
+          "text": "API 文档"
+        },
+        {
+          "href": "/docs/faq",
+          "text": "常见问题 FAQ"
+        }
+      ]
+    ],
+    "filetrees": []
+  },
+  "upgrade": {
+    "title": "升级手册",
+    "toc": [
+      {
+        "id": "doc-content-升级原则",
+        "title": "升级原则",
+        "depth": 2
+      },
+      {
+        "id": "doc-content-阅读-release-note",
+        "title": "阅读 Release Note",
+        "depth": 3
+      },
+      {
+        "id": "doc-content-备份并执行迁移",
+        "title": "备份并执行迁移",
+        "depth": 3
+      },
+      {
+        "id": "doc-content-灰度验证",
+        "title": "灰度验证",
+        "depth": 3
+      }
+    ],
+    "codeBlocks": [],
+    "links": [],
+    "callouts": [
+      {
+        "type": "important",
+        "text": "升级前应明确回滚条件和负责人；不要只依赖容器重启作为回滚方案。"
+      }
+    ],
+    "steps": [
+      {
+        "headings": [
+          "阅读 Release Note",
+          "备份并执行迁移",
+          "灰度验证"
+        ],
+        "childTags": [
+          "h3",
+          "p",
+          "h3",
+          "p",
+          "h3",
+          "p"
+        ]
+      }
+    ],
+    "cards": [],
+    "filetrees": []
+  }
+}

@@ -1,7 +1,9 @@
 """Deterministic registry for owned native Agno model adapters."""
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from threading import Thread
 from types import MappingProxyType
 from typing import Final, Protocol, cast
 
@@ -179,6 +181,41 @@ async def _close_resources(
         raise RuntimeError("owned provider client close failed")
 
 
+def _discard_failed_http_clients(clients: _HttpClients) -> None:
+    if clients.owns_sync:
+        try:
+            clients.sync.close()
+        except BaseException:
+            pass
+    if not clients.owns_asynchronous:
+        return
+
+    async def close_async_client() -> None:
+        try:
+            await clients.asynchronous.aclose()
+        except BaseException:
+            pass
+
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(close_async_client())
+        return
+
+    def close_in_dedicated_loop() -> None:
+        asyncio.run(close_async_client())
+
+    try:
+        cleanup_thread = Thread(
+            target=close_in_dedicated_loop,
+            name="aap-provider-client-cleanup",
+        )
+        cleanup_thread.start()
+        cleanup_thread.join()
+    except BaseException:
+        running_loop.create_task(close_async_client())
+
+
 def _openai_compatible_managed_model(
     settings: ActiveModelSettings,
     *,
@@ -194,60 +231,67 @@ def _openai_compatible_managed_model(
         http_client=http_client,
         http_async_client=http_async_client,
     )
-    api_key = _api_key(settings)
-    base_url = settings.base_url or default_base_url
-    default_headers = _openai_default_headers(api_key)
-    sync_sdk = OpenAI(
-        api_key=api_key,
-        admin_api_key="",
-        organization="",
-        project="",
-        webhook_secret="",
-        base_url=base_url,
-        timeout=settings.timeout_seconds,
-        max_retries=0,
-        default_headers=default_headers,
-        http_client=clients.sync,
-    )
-    async_sdk = AsyncOpenAI(
-        api_key=api_key,
-        admin_api_key="",
-        organization="",
-        project="",
-        webhook_secret="",
-        base_url=base_url,
-        timeout=settings.timeout_seconds,
-        max_retries=0,
-        default_headers=default_headers,
-        http_client=clients.asynchronous,
-    )
-    model = model_type(
-        id=settings.model_id,
-        retries=0,
-        api_key=api_key,
-        organization="",
-        base_url=base_url,
-        timeout=settings.timeout_seconds,
-        max_retries=0,
-        default_headers=default_headers,
-        client_params=_openai_client_params(),
-        client=sync_sdk,
-        async_client=async_sdk,
-    )
-    redirect_hooks = _attach_redirect_hooks(clients)
+    redirect_hooks: _RedirectHookRegistration | None = None
+    try:
+        api_key = _api_key(settings)
+        base_url = settings.base_url or default_base_url
+        default_headers = _openai_default_headers(api_key)
+        sync_sdk = OpenAI(
+            api_key=api_key,
+            admin_api_key="",
+            organization="",
+            project="",
+            webhook_secret="",
+            base_url=base_url,
+            timeout=settings.timeout_seconds,
+            max_retries=0,
+            default_headers=default_headers,
+            http_client=clients.sync,
+        )
+        async_sdk = AsyncOpenAI(
+            api_key=api_key,
+            admin_api_key="",
+            organization="",
+            project="",
+            webhook_secret="",
+            base_url=base_url,
+            timeout=settings.timeout_seconds,
+            max_retries=0,
+            default_headers=default_headers,
+            http_client=clients.asynchronous,
+        )
+        model = model_type(
+            id=settings.model_id,
+            retries=0,
+            api_key=api_key,
+            organization="",
+            base_url=base_url,
+            timeout=settings.timeout_seconds,
+            max_retries=0,
+            default_headers=default_headers,
+            client_params=_openai_client_params(),
+            client=sync_sdk,
+            async_client=async_sdk,
+        )
+        redirect_hooks = _attach_redirect_hooks(clients)
 
-    async def close_callback() -> None:
-        try:
-            await _close_resources(
-                sync_closers=(sync_sdk.close,) if clients.owns_sync else (),
-                async_closers=(async_sdk.close,)
-                if clients.owns_asynchronous
-                else (),
-            )
-        finally:
+        async def close_callback() -> None:
+            try:
+                await _close_resources(
+                    sync_closers=(sync_sdk.close,) if clients.owns_sync else (),
+                    async_closers=(async_sdk.close,)
+                    if clients.owns_asynchronous
+                    else (),
+                )
+            finally:
+                redirect_hooks.detach()
+
+        return ManagedModel(model=model, close_callback=close_callback)
+    except BaseException:
+        if redirect_hooks is not None:
             redirect_hooks.detach()
-
-    return ManagedModel(model=model, close_callback=close_callback)
+        _discard_failed_http_clients(clients)
+        raise
 
 
 def _build_openai_model(
@@ -283,51 +327,58 @@ def _build_anthropic_model(
         http_client=http_client,
         http_async_client=http_async_client,
     )
-    api_key = _api_key(settings)
-    base_url = settings.base_url or _ANTHROPIC_BASE_URL
-    default_headers = _anthropic_default_headers(api_key)
-    sync_sdk = Anthropic(
-        api_key=api_key,
-        auth_token=None,
-        webhook_key="",
-        base_url=base_url,
-        timeout=settings.timeout_seconds,
-        max_retries=0,
-        default_headers=default_headers,
-        http_client=clients.sync,
-    )
-    async_sdk = AsyncAnthropic(
-        api_key=api_key,
-        auth_token=None,
-        webhook_key="",
-        base_url=base_url,
-        timeout=settings.timeout_seconds,
-        max_retries=0,
-        default_headers=default_headers,
-        http_client=clients.asynchronous,
-    )
-    model = Claude(
-        id=settings.model_id,
-        retries=0,
-        api_key=api_key,
-        timeout=settings.timeout_seconds,
-        client=sync_sdk,
-        async_client=async_sdk,
-    )
-    redirect_hooks = _attach_redirect_hooks(clients)
+    redirect_hooks: _RedirectHookRegistration | None = None
+    try:
+        api_key = _api_key(settings)
+        base_url = settings.base_url or _ANTHROPIC_BASE_URL
+        default_headers = _anthropic_default_headers(api_key)
+        sync_sdk = Anthropic(
+            api_key=api_key,
+            auth_token=None,
+            webhook_key="",
+            base_url=base_url,
+            timeout=settings.timeout_seconds,
+            max_retries=0,
+            default_headers=default_headers,
+            http_client=clients.sync,
+        )
+        async_sdk = AsyncAnthropic(
+            api_key=api_key,
+            auth_token=None,
+            webhook_key="",
+            base_url=base_url,
+            timeout=settings.timeout_seconds,
+            max_retries=0,
+            default_headers=default_headers,
+            http_client=clients.asynchronous,
+        )
+        model = Claude(
+            id=settings.model_id,
+            retries=0,
+            api_key=api_key,
+            timeout=settings.timeout_seconds,
+            client=sync_sdk,
+            async_client=async_sdk,
+        )
+        redirect_hooks = _attach_redirect_hooks(clients)
 
-    async def close_callback() -> None:
-        try:
-            await _close_resources(
-                sync_closers=(sync_sdk.close,) if clients.owns_sync else (),
-                async_closers=(async_sdk.close,)
-                if clients.owns_asynchronous
-                else (),
-            )
-        finally:
+        async def close_callback() -> None:
+            try:
+                await _close_resources(
+                    sync_closers=(sync_sdk.close,) if clients.owns_sync else (),
+                    async_closers=(async_sdk.close,)
+                    if clients.owns_asynchronous
+                    else (),
+                )
+            finally:
+                redirect_hooks.detach()
+
+        return ManagedModel(model=model, close_callback=close_callback)
+    except BaseException:
+        if redirect_hooks is not None:
             redirect_hooks.detach()
-
-    return ManagedModel(model=model, close_callback=close_callback)
+        _discard_failed_http_clients(clients)
+        raise
 
 
 def _build_google_model(
@@ -347,55 +398,62 @@ def _build_google_model(
         http_client=http_client,
         http_async_client=http_async_client,
     )
-    api_key = _api_key(settings)
-    base_url = settings.base_url or _GEMINI_BASE_URL
-    http_options = HttpOptions(
-        base_url=base_url,
-        timeout=settings.timeout_seconds * 1000,
-        retry_options=HttpRetryOptions(attempts=1),
-        httpx_client=clients.sync,
-        httpx_async_client=clients.asynchronous,
-    )
-    sdk_client = genai.Client(
-        vertexai=False,
-        api_key=api_key,
-        debug_config=DebugConfig(
-            client_mode=None,
-            replays_directory=None,
-            replay_id=None,
-        ),
-        http_options=http_options,
-    )
-    model = Gemini(
-        id=settings.model_id,
-        retries=0,
-        api_key=api_key,
-        timeout=settings.timeout_seconds,
-        vertexai=False,
-        project_id=None,
-        location=None,
-        client=sdk_client,
-    )
-    redirect_hooks = _attach_redirect_hooks(clients)
+    redirect_hooks: _RedirectHookRegistration | None = None
+    try:
+        api_key = _api_key(settings)
+        base_url = settings.base_url or _GEMINI_BASE_URL
+        http_options = HttpOptions(
+            base_url=base_url,
+            timeout=settings.timeout_seconds * 1000,
+            retry_options=HttpRetryOptions(attempts=1),
+            httpx_client=clients.sync,
+            httpx_async_client=clients.asynchronous,
+        )
+        sdk_client = genai.Client(
+            vertexai=False,
+            api_key=api_key,
+            debug_config=DebugConfig(
+                client_mode=None,
+                replays_directory=None,
+                replay_id=None,
+            ),
+            http_options=http_options,
+        )
+        model = Gemini(
+            id=settings.model_id,
+            retries=0,
+            api_key=api_key,
+            timeout=settings.timeout_seconds,
+            vertexai=False,
+            project_id=None,
+            location=None,
+            client=sdk_client,
+        )
+        redirect_hooks = _attach_redirect_hooks(clients)
 
-    async def close_callback() -> None:
-        try:
-            await _close_resources(
-                sync_closers=(
-                    sdk_client.close,
-                    *((clients.sync.close,) if clients.owns_sync else ()),
-                ),
-                async_closers=(
-                    sdk_client.aio.aclose,
-                    *((clients.asynchronous.aclose,)
-                      if clients.owns_asynchronous
-                      else ()),
-                ),
-            )
-        finally:
+        async def close_callback() -> None:
+            try:
+                await _close_resources(
+                    sync_closers=(
+                        sdk_client.close,
+                        *((clients.sync.close,) if clients.owns_sync else ()),
+                    ),
+                    async_closers=(
+                        sdk_client.aio.aclose,
+                        *((clients.asynchronous.aclose,)
+                          if clients.owns_asynchronous
+                          else ()),
+                    ),
+                )
+            finally:
+                redirect_hooks.detach()
+
+        return ManagedModel(model=model, close_callback=close_callback)
+    except BaseException:
+        if redirect_hooks is not None:
             redirect_hooks.detach()
-
-    return ManagedModel(model=model, close_callback=close_callback)
+        _discard_failed_http_clients(clients)
+        raise
 
 
 def _build_dashscope_model(

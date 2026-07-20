@@ -42,6 +42,12 @@ function checkConstraintNames(name: string) {
   return config(name).checks.map((constraint) => constraint.name);
 }
 
+function column(name: string, columnName: string) {
+  return config(name).columns.find(
+    (candidate) => candidate.name === columnName,
+  );
+}
+
 function foreignKeys(name: string) {
   return config(name).foreignKeys.map((foreignKey) => {
     const reference = foreignKey.reference();
@@ -298,6 +304,99 @@ describe("authorization schema", () => {
       "permissions",
       "cascade",
     );
+  });
+});
+
+describe("content publication schema", () => {
+  it("stores draft, publication, archive, and soft-delete state", () => {
+    expect(columnNames("content")).toEqual(
+      expect.arrayContaining([
+        "revision",
+        "row_version",
+        "published_revision",
+        "published_by",
+        "archived_at",
+        "archived_by",
+        "deleted_at",
+        "deleted_by",
+      ]),
+    );
+    expect(column("content", "revision")?.default).toBe(1);
+    expect(column("content", "row_version")?.default).toBe(1);
+    expect(column("content", "published_revision")?.notNull).toBe(false);
+    expect(checkConstraintNames("content")).toEqual(
+      expect.arrayContaining([
+        "content_revision_positive_check",
+        "content_row_version_positive_check",
+        "content_published_revision_check",
+      ]),
+    );
+  });
+
+  it("exports immutable revision snapshots and permanent route registrations", () => {
+    expect(columnNames("contentRevisions")).toEqual(
+      expect.arrayContaining([
+        "id",
+        "content_id",
+        "revision",
+        "slug",
+        "title",
+        "summary",
+        "body",
+        "created_by",
+        "created_at",
+      ]),
+    );
+    expect(uniqueConstraintNames("contentRevisions")).toContain(
+      "content_revisions_content_id_revision_unique",
+    );
+    expect(checkConstraintNames("contentRevisions")).toContain(
+      "content_revisions_revision_positive_check",
+    );
+    expect(foreignKeys("contentRevisions")).toContainEqual({
+      columns: ["content_id"],
+      foreignColumns: ["id"],
+      foreignTable: "content",
+      onDelete: "restrict",
+    });
+    expect(foreignKeys("contentRevisions")).toContainEqual({
+      columns: ["created_by"],
+      foreignColumns: ["id"],
+      foreignTable: "users",
+      onDelete: "restrict",
+    });
+
+    expect(columnNames("contentRoutes")).toEqual(
+      expect.arrayContaining(["slug", "content_id", "state", "created_at"]),
+    );
+    expect(column("contentRoutes", "slug")?.primary).toBe(true);
+    expect(column("contentRoutes", "state")?.enumValues).toEqual([
+      "reserved",
+      "canonical",
+      "alias",
+    ]);
+    const canonicalIndex = config("contentRoutes").indexes.find(
+      (candidate) =>
+        candidate.config.name ===
+        "content_routes_one_canonical_per_content_unique",
+    );
+    expect(canonicalIndex?.config.unique).toBe(true);
+    expect(canonicalIndex?.config.where).toBeDefined();
+    expect(foreignKeys("contentRoutes")).toContainEqual({
+      columns: ["content_id"],
+      foreignColumns: ["id"],
+      foreignTable: "content",
+      onDelete: "restrict",
+    });
+  });
+
+  it("pins the published pointer to a revision of the same content record", () => {
+    expect(foreignKeys("content")).toContainEqual({
+      columns: ["id", "published_revision"],
+      foreignColumns: ["content_id", "revision"],
+      foreignTable: "content_revisions",
+      onDelete: "restrict",
+    });
   });
 });
 

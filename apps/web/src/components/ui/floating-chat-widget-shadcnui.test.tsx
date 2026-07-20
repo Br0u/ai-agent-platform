@@ -117,11 +117,12 @@ beforeEach(() => {
   });
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(successfulReply), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+    vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify(successfulReply), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
     ),
   );
 });
@@ -142,6 +143,23 @@ describe("FloatingChatWidget", () => {
     expect(
       screen.getByTestId("assistant-quick-service-state"),
     ).toHaveTextContent(expectedLabel);
+  });
+
+  it("maps service capabilities to semantic status-light colors", () => {
+    const stylesheet = readFileSync(
+      "src/components/ui/floating-chat-widget-shadcnui.css",
+      "utf8",
+    );
+
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__identity p > span \{[\s\S]*?background: #b38225;[\s\S]*?rgb\(179 130 37 \/ 15%\);[\s\S]*?\}/u,
+    );
+    expect(stylesheet).toMatch(
+      /p\[data-capability="available"\] > span \{[\s\S]*?background: #27826b;[\s\S]*?rgb\(39 130 107 \/ 15%\);[\s\S]*?\}/u,
+    );
+    expect(stylesheet).toMatch(
+      /p\[data-capability="degraded"\] > span \{[\s\S]*?background: #b94b5a;[\s\S]*?rgb\(185 75 90 \/ 15%\);[\s\S]*?\}/u,
+    );
   });
 
   it("shows the shared refreshing service meaning without starting another status source", async () => {
@@ -413,7 +431,7 @@ describe("FloatingChatWidget", () => {
     expect(quickDialog).toHaveClass("is-exiting");
     expect(screen.queryByRole("dialog", { name: "码多多" })).toBeNull();
     await waitFor(() => expect(quickDialog).not.toBeInTheDocument());
-    expect(launcher).toHaveFocus();
+    await waitFor(() => expect(launcher).toHaveFocus());
   });
 
   it("hides the duplicate launcher while the mobile drawer is open", () => {
@@ -427,6 +445,37 @@ describe("FloatingChatWidget", () => {
     );
     expect(stylesheet).toMatch(
       /\.floating-assistant__panel\.is-exiting\s*\{[\s\S]*?pointer-events:\s*none;/u,
+    );
+  });
+
+  it("keeps the composer inside the panel when viewport height compresses the grid", () => {
+    const stylesheet = readFileSync(
+      "src/components/ui/floating-chat-widget-shadcnui.css",
+      "utf8",
+    );
+
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__panel\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0, 1fr\) auto auto;/u,
+    );
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__panel\s*\{[\s\S]*?height:\s*min\(620px, calc\(100dvh - 104px\)\);/u,
+    );
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__messages\s*\{[\s\S]*?min-height:\s*0;/u,
+    );
+  });
+
+  it("anchors quick-assistant bubbles by role", () => {
+    const stylesheet = readFileSync(
+      "src/components/ui/floating-chat-widget-shadcnui.css",
+      "utf8",
+    );
+
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__message\s*\{[\s\S]*?width:\s*fit-content;[\s\S]*?align-self:\s*flex-start;/u,
+    );
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__message--user\s*\{[\s\S]*?align-self:\s*flex-end;[\s\S]*?margin-inline-start:\s*auto;/u,
     );
   });
 

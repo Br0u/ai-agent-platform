@@ -96,6 +96,6 @@ describePostgres("registration company name upgrade", () => {
     const migrationJournal = await pool.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations",
     );
-    expect(migrationJournal.rows).toEqual([{ count: "6" }]);
+    expect(migrationJournal.rows).toEqual([{ count: "8" }]);
   });
 });

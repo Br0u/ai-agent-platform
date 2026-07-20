@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "root": {
+    "type": "root",
+    "children": [
+      {
+        "type": "element",
+        "tagName": "h2",
+        "properties": {
+          "id": "doc-content-升级原则"
+        },
+        "children": [
+          {
+            "type": "text",
+            "value": "升级原则"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "p",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "先备份，再迁移；先验证，再切流。应用版本和数据库迁移必须能够对应到同一个发布版本。"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "document-steps",
+        "properties": {},
+        "children": [
+          {
+            "type": "element",
+            "tagName": "h3",
+            "properties": {
+              "id": "doc-content-阅读-release-note"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "阅读 Release Note"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "确认破坏性变更、环境要求、权限变化和需要手动处理的数据迁移。"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "h3",
+            "properties": {
+              "id": "doc-content-备份并执行迁移"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "备份并执行迁移"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "在维护窗口创建数据库备份和当前镜像快照，执行迁移后记录迁移版本。"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "h3",
+            "properties": {
+              "id": "doc-content-灰度验证"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "灰度验证"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "优先验证登录、文档、Agent 会话、管理员后台和健康检查，再扩大流量。"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "document-callout",
+        "properties": {
+          "dataCalloutType": "important"
+        },
+        "children": [
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "升级前应明确回滚条件和负责人；不要只依赖容器重启作为回滚方案。"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "toc": [
+    {
+      "id": "doc-content-升级原则",
+      "title": "升级原则",
+      "depth": 2
+    },
+    {
+      "id": "doc-content-阅读-release-note",
+      "title": "阅读 Release Note",
+      "depth": 3
+    },
+    {
+      "id": "doc-content-备份并执行迁移",
+      "title": "备份并执行迁移",
+      "depth": 3
+    },
+    {
+      "id": "doc-content-灰度验证",
+      "title": "灰度验证",
+      "depth": 3
+    }
+  ]
+}

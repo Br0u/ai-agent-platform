@@ -32,6 +32,7 @@ describePostgres("identity migration from the legacy database", () => {
   const pool = new Pool({ connectionString: safeTestDatabaseUrl });
   const database = drizzle(pool);
   let legacyMigrationsFolder: string;
+  let preCmsMigrationsFolder: string;
 
   beforeAll(async () => {
     legacyMigrationsFolder = mkdtempSync(
@@ -49,6 +50,25 @@ describePostgres("identity migration from the legacy database", () => {
     writeFileSync(
       join(legacyMigrationsFolder, "meta/_journal.json"),
       JSON.stringify({ ...journal, entries: journal.entries.slice(0, 1) }),
+    );
+
+    preCmsMigrationsFolder = mkdtempSync(
+      join(tmpdir(), "ai-agent-platform-pre-cms-migrations-"),
+    );
+    mkdirSync(join(preCmsMigrationsFolder, "meta"));
+    for (const name of [
+      "0000_tired_cardiac.sql",
+      "0001_identity_access_control.sql",
+      "0002_session_realm_guard.sql",
+      "0003_registration_company_name.sql",
+      "0004_registration_query_indexes.sql",
+      "0005_identity_pagination_indexes.sql",
+    ]) {
+      cpSync(join(migrationsFolder, name), join(preCmsMigrationsFolder, name));
+    }
+    writeFileSync(
+      join(preCmsMigrationsFolder, "meta/_journal.json"),
+      JSON.stringify({ ...journal, entries: journal.entries.slice(0, 6) }),
     );
 
     await pool.query("DROP SCHEMA IF EXISTS public CASCADE");
@@ -83,10 +103,12 @@ describePostgres("identity migration from the legacy database", () => {
     await pool.end();
     if (legacyMigrationsFolder)
       rmSync(legacyMigrationsFolder, { recursive: true });
+    if (preCmsMigrationsFolder)
+      rmSync(preCmsMigrationsFolder, { recursive: true });
   });
 
-  it("upgrades through the Drizzle migrator without losing legacy data", async () => {
-    await migrate(database, { migrationsFolder });
+  it("upgrades legacy identity data through populated migration 0005", async () => {
+    await migrate(database, { migrationsFolder: preCmsMigrationsFolder });
 
     const users = await pool.query<{
       email: string;
@@ -117,17 +139,153 @@ describePostgres("identity migration from the legacy database", () => {
       },
     ]);
 
-    const content = await pool.query<{ author_id: string }>(
-      "SELECT author_id FROM content WHERE slug = 'legacy-content'",
+    const content = await pool.query<{
+      author_id: string;
+      body: Record<string, unknown>;
+      title: string;
+    }>(
+      `SELECT author_id, body, title
+       FROM content WHERE slug = 'legacy-content'`,
     );
     expect(content.rows).toEqual([
-      { author_id: "00000000-0000-4000-8000-000000000001" },
+      {
+        author_id: "00000000-0000-4000-8000-000000000001",
+        body: {},
+        title: "Legacy content",
+      },
     ]);
+
+    const journal = await pool.query<{ latest: string }>(
+      "SELECT max(created_at)::text AS latest FROM drizzle.__drizzle_migrations",
+    );
+    expect(journal.rows).toEqual([{ latest: "1783854600000" }]);
+  });
+
+  it("rejects a populated 0005 non-super admin document-delete grant", async () => {
+    const collisionRole = await pool.query<{ id: string }>(
+      `INSERT INTO roles (name, realm_scope)
+       VALUES ('collision_operator', 'workforce') RETURNING id`,
+    );
+    const collisionPermission = await pool.query<{ id: string }>(
+      `INSERT INTO permissions (key, name)
+       VALUES ('admin:docs:delete', 'Collision') RETURNING id`,
+    );
+    await pool.query(
+      `INSERT INTO role_permissions (role_id, permission_id)
+       VALUES ($1, $2)`,
+      [collisionRole.rows[0]?.id, collisionPermission.rows[0]?.id],
+    );
+
+    await expect(migrate(database, { migrationsFolder })).rejects.toMatchObject(
+      {
+        cause: expect.objectContaining({ code: "23514" }),
+      },
+    );
+
+    const state = await pool.query<{
+      collision_grants: string;
+      latest: string;
+      revision_column: string | null;
+    }>(`SELECT
+        (SELECT max(created_at)::text FROM drizzle.__drizzle_migrations) AS latest,
+        (SELECT count(*)::text FROM role_permissions rp
+           JOIN permissions p ON p.id = rp.permission_id
+          WHERE p.key = 'admin:docs:delete') AS collision_grants,
+        (SELECT column_name FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'content'
+            AND column_name = 'revision') AS revision_column`);
+    expect(state.rows).toEqual([
+      {
+        collision_grants: "1",
+        latest: "1783854600000",
+        revision_column: null,
+      },
+    ]);
+
+    await pool.query("DELETE FROM role_permissions WHERE permission_id = $1", [
+      collisionPermission.rows[0]?.id,
+    ]);
+    await pool.query("DELETE FROM permissions WHERE id = $1", [
+      collisionPermission.rows[0]?.id,
+    ]);
+    await pool.query("DELETE FROM roles WHERE id = $1", [
+      collisionRole.rows[0]?.id,
+    ]);
+  });
+
+  it("upgrades populated 0005 content through 0006 without losing data", async () => {
+    await migrate(database, { migrationsFolder });
+
+    const content = await pool.query<{
+      author_id: string;
+      body: Record<string, unknown>;
+      published_revision: number | null;
+      revision: number;
+      row_version: number;
+      title: string;
+    }>(
+      `SELECT author_id, body, title, revision, row_version, published_revision
+       FROM content WHERE slug = 'legacy-content'`,
+    );
+    expect(content.rows).toEqual([
+      {
+        author_id: "00000000-0000-4000-8000-000000000001",
+        body: {},
+        title: "Legacy content",
+        revision: 1,
+        row_version: 1,
+        published_revision: null,
+      },
+    ]);
+
+    const constraints = await pool.query<{ conname: string; contype: string }>(
+      `SELECT conname, contype
+       FROM pg_constraint
+       WHERE conname IN (
+         'content_revision_positive_check',
+         'content_row_version_positive_check',
+         'content_published_revision_check',
+         'content_published_revision_fk',
+         'content_revisions_content_id_content_id_fk',
+         'content_revisions_created_by_users_id_fk',
+         'content_revisions_revision_positive_check'
+       )
+       ORDER BY conname`,
+    );
+    expect(constraints.rows).toEqual([
+      { conname: "content_published_revision_check", contype: "c" },
+      { conname: "content_published_revision_fk", contype: "f" },
+      { conname: "content_revision_positive_check", contype: "c" },
+      {
+        conname: "content_revisions_content_id_content_id_fk",
+        contype: "f",
+      },
+      {
+        conname: "content_revisions_created_by_users_id_fk",
+        contype: "f",
+      },
+      {
+        conname: "content_revisions_revision_positive_check",
+        contype: "c",
+      },
+      { conname: "content_row_version_positive_check", contype: "c" },
+    ]);
+
+    await expect(
+      pool.query(
+        "UPDATE content SET revision = 0 WHERE slug = 'legacy-content'",
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      pool.query(
+        "UPDATE content SET published_revision = 1 WHERE slug = 'legacy-content'",
+      ),
+    ).rejects.toMatchObject({ code: "23503" });
 
     const journal = await pool.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations",
     );
-    expect(journal.rows).toEqual([{ count: "6" }]);
+    expect(journal.rows).toEqual([{ count: "8" }]);
   });
 
   it("enforces case-insensitive identities and legal-name key shape", async () => {

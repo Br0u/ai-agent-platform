@@ -329,6 +329,7 @@ export function createAdminModelConfigCommands(
           ReturnType<AgentModelControlClient["testAndActivate"]>
         > | null = null;
         let failure: AdminModelConfigCommandErrorCode | null = null;
+        let testSucceeded = false;
         try {
           activation = await dependencies.client.testAndActivate({
             actor: context.actor.userId,
@@ -336,11 +337,20 @@ export function createAdminModelConfigCommands(
             requestId: context.requestId,
             input,
           });
+          testSucceeded = true;
         } catch (error) {
           failure = commandFailure(error);
+          testSucceeded =
+            error instanceof AgentModelControlClientError &&
+            error.testResult === "success";
         }
 
-        const completedMetadata = {
+        const completedTestMetadata = {
+          ...metadata,
+          requestId: context.requestId,
+          result: testSucceeded ? ("success" as const) : ("failure" as const),
+        };
+        const completedActivationMetadata = {
           ...metadata,
           requestId: context.requestId,
           result:
@@ -349,12 +359,12 @@ export function createAdminModelConfigCommands(
         await writeAudit({
           event: "assistant.model_config_tested",
           ...auditEnvelope,
-          metadata: completedMetadata,
+          metadata: completedTestMetadata,
         });
         await writeAudit({
           event: "assistant.model_config_activated",
           ...auditEnvelope,
-          metadata: completedMetadata,
+          metadata: completedActivationMetadata,
         });
         if (failure !== null) {
           throw new AdminModelConfigCommandError(failure);

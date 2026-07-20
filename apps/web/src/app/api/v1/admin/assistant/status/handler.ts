@@ -10,6 +10,7 @@ import {
 } from "@/features/assistant/admin-assistant-contract";
 import {
   ADMIN_MODEL_PROVIDERS,
+  isAdminModelId,
   type AdminModelProvider,
 } from "@/features/assistant/admin-model-config-contract";
 import {
@@ -113,32 +114,6 @@ function isProvider(value: unknown): value is AdminModelProvider {
   );
 }
 
-function hasOnlyPairedSurrogates(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const codeUnit = value.charCodeAt(index);
-    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
-      index += 1;
-    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function isSafeModelId(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value === value.trim() &&
-    Array.from(value).length <= 128 &&
-    hasOnlyPairedSurrogates(value) &&
-    !/[\u0000-\u001f\u007f-\u009f]/u.test(value) &&
-    !/(?:[a-z][a-z0-9+.-]*:\/\/|\/\/)/iu.test(value)
-  );
-}
-
 function isPositiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
 }
@@ -175,7 +150,7 @@ function safeControlRuntime(
       : SAFE_CONTROL_UNAVAILABLE;
   }
   if (value.capability === "placeholder") return SAFE_CONTROL_UNAVAILABLE;
-  if (!isProvider(value.provider) || !isSafeModelId(value.modelId)) {
+  if (!isProvider(value.provider) || !isAdminModelId(value.modelId)) {
     return SAFE_CONTROL_UNAVAILABLE;
   }
   if (value.source === "deployment") {

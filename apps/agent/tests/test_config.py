@@ -943,6 +943,18 @@ def test_model_id_rejects_c0_and_c1_control_characters(
         RuntimeSettings(_env_file=None, MODEL_ID=f"model{control_character}id")
 
 
+@pytest.mark.parametrize(
+    "model_id",
+    ["https://private.example/model", "vendor//model"],
+)
+def test_model_id_rejects_url_like_values(
+    model_id: str,
+    valid_enabled_runtime_env: None,
+) -> None:
+    with pytest.raises(ValidationError):
+        RuntimeSettings(_env_file=None, MODEL_ID=model_id)
+
+
 def test_model_id_accepts_128_unicode_code_points_and_safe_separators(
     valid_enabled_runtime_env: None,
     monkeypatch: pytest.MonkeyPatch,

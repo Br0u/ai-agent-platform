@@ -1,0 +1,1630 @@
+{
+  "version": 1,
+  "root": {
+    "type": "root",
+    "children": [
+      {
+        "type": "element",
+        "tagName": "p",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "本页描述开发验证和服务器部署共用的目录、配置、模型控制面迁移和回滚边界。"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "h2",
+        "properties": {
+          "id": "doc-content-推荐目录"
+        },
+        "children": [
+          {
+            "type": "text",
+            "value": "推荐目录"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "pre",
+        "properties": {},
+        "children": [
+          {
+            "type": "element",
+            "tagName": "document-filetree",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "ai-agent-platform/\n  .env\n  compose.yaml\n  .secrets/\n  apps/agent/\n  apps/web/\n  packages/database/"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "p",
+        "properties": {},
+        "children": [
+          {
+            "type": "element",
+            "tagName": "code",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": ".secrets/"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " 已被 Git 忽略，但生产环境仍应优先使用宿主机受控目录或密钥管理服务。所有 Secret 文件必须只有一个非空行、权限为 "
+          },
+          {
+            "type": "element",
+            "tagName": "code",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "0600"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "，目录权限为 "
+          },
+          {
+            "type": "element",
+            "tagName": "code",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "0700"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "。"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "h2",
+        "properties": {
+          "id": "doc-content-部署步骤"
+        },
+        "children": [
+          {
+            "type": "text",
+            "value": "部署步骤"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "document-steps",
+        "properties": {},
+        "children": [
+          {
+            "type": "element",
+            "tagName": "h3",
+            "properties": {
+              "id": "doc-content-准备基础配置和独立-secret"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "准备基础配置和独立 Secret"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "复制 "
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": ".env.example"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": " 为 "
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": ".env"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "，至少配置数据库、Better Auth、外部 HTTPS Origin 和助理运行模式。动态模型控制面还需要两组独立数据库角色、一个 AES-256-GCM 主密钥和一个 Web/Agent 内部控制凭据。"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "pre",
+            "properties": {},
+            "children": [
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {
+                  "className": [
+                    "language-text"
+                  ]
+                },
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "install -d -m 700 .secrets\numask 077\nopenssl rand -hex 32 > .secrets/agent_control_migrator_database_password\nopenssl rand -hex 32 > .secrets/agent_control_database_password\nopenssl rand -hex 32 > .secrets/model_config_encryption_key\nopenssl rand -hex 32 > .secrets/agent_config_control_key\nchmod 600 .secrets/*\n"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "控制角色密码使用上面的十六进制值时，可直接生成对应 DSN 文件："
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "pre",
+            "properties": {},
+            "children": [
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {
+                  "className": [
+                    "language-text"
+                  ]
+                },
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "control_migrator_password=$(tr -d '\\n' < .secrets/agent_control_migrator_database_password)\ncontrol_runtime_password=$(tr -d '\\n' < .secrets/agent_control_database_password)\nprintf 'postgresql+psycopg_async://ai_agent_control_migrator:%s@db:5432/ai_agent_platform\\n' \"$control_migrator_password\" > .secrets/agent_control_migrator_database_url\nprintf 'postgresql+psycopg_async://ai_agent_control:%s@db:5432/ai_agent_platform\\n' \"$control_runtime_password\" > .secrets/agent_control_database_url\nunset control_migrator_password control_runtime_password\nchmod 600 .secrets/agent_control_*_database_url\n"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "两条 DSN 分别使用 "
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "ai_agent_control_migrator"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": " 和 "
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "ai_agent_control"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "，密码必须与对应密码文件一致。"
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "MODEL_CONFIG_ENCRYPTION_KEY"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "、"
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "AGENT_CONFIG_CONTROL_KEY"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "、"
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "OS_SECURITY_KEY"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "、认证密钥和会话密钥不得复用。"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "h3",
+            "properties": {
+              "id": "doc-content-初始化平台agentos-和模型控制数据库"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "初始化平台、AgentOS 和模型控制数据库"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "pre",
+            "properties": {},
+            "children": [
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {
+                  "className": [
+                    "language-text"
+                  ]
+                },
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "docker compose build migrate agent-migrate agent-control-migrate agent web backup\ndocker compose up -d --wait db\ndocker compose run --rm migrate\ndocker compose run --rm agno-bootstrap\ndocker compose run --rm agent-control-bootstrap\ndocker compose run --rm --no-deps agent-migrate\ndocker compose run --rm --no-deps agent-control-migrate\n"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "agent-control-bootstrap"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": " 只创建最小权限角色；"
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "agent-control-migrate"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": " 使用 migrator DSN 创建并校验 "
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "agent_control"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": " schema。迁移失败时不要启动 Agent，也不要把 migrator DSN 挂载给常驻 Agent 或 Web。"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "h3",
+            "properties": {
+              "id": "doc-content-选择部署级开关"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "选择部署级开关"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "要启用码多多和后台模型控制面，设置："
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "pre",
+            "properties": {},
+            "children": [
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {
+                  "className": [
+                    "language-text"
+                  ]
+                },
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "AGENT_ENABLED=true\nASSISTANT_PROVIDER_MODE=agentos\n"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "AGENT_ENABLED=false"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": " 是紧急 kill switch：Agent 不注册可运行的码多多，后台控制面只读且 mutation 返回固定不可用错误。"
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "ASSISTANT_PROVIDER_MODE=placeholder"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": " 让 Web 保持安全占位响应。"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "h3",
+            "properties": {
+              "id": "doc-content-启动服务并检查健康状态"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "启动服务并检查健康状态"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "pre",
+            "properties": {},
+            "children": [
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {
+                  "className": [
+                    "language-text"
+                  ]
+                },
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "docker compose up -d --no-deps --wait agent\ndocker compose up -d --wait web\ndocker compose up -d --wait proxy backup\n"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "检查 "
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "/api/health/live"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": " 和 "
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "/api/health/ready"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "，再用普通客户、员工、只读管理员和模型管理员账号验证访问边界。"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "h3",
+            "properties": {
+              "id": "doc-content-完成第一次后台激活"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "完成第一次后台激活"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "使用具有 "
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "admin:assistant:configure"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": " 权限且最近 10 分钟内同时完成密码再认证和 TOTP 验证的账号访问 "
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "/admin/assistant"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "。选择 Provider 和部署允许的 Endpoint，填写 Model ID 与 Key，先“保存草稿”，再“测试并启用”。测试成功后活动指针和运行时才会切换；保存本身不会影响当前模型。"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "h2",
+        "properties": {
+          "id": "doc-content-启动与恢复语义"
+        },
+        "children": [
+          {
+            "type": "text",
+            "value": "启动与恢复语义"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "table",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "thead",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "\n"
+              },
+              {
+                "type": "element",
+                "tagName": "tr",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  },
+                  {
+                    "type": "element",
+                    "tagName": "th",
+                    "properties": {},
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "状态"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  },
+                  {
+                    "type": "element",
+                    "tagName": "th",
+                    "properties": {},
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "行为"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "\n"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "tbody",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "\n"
+              },
+              {
+                "type": "element",
+                "tagName": "tr",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  },
+                  {
+                    "type": "element",
+                    "tagName": "td",
+                    "properties": {},
+                    "children": [
+                      {
+                        "type": "element",
+                        "tagName": "code",
+                        "properties": {},
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "AGENT_ENABLED=false"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  },
+                  {
+                    "type": "element",
+                    "tagName": "td",
+                    "properties": {},
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "部署级关闭，码多多和模型 mutation 不可用。"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "\n"
+              },
+              {
+                "type": "element",
+                "tagName": "tr",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  },
+                  {
+                    "type": "element",
+                    "tagName": "td",
+                    "properties": {},
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "已启用，但没有动态活动配置，也没有完整 bootstrap"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  },
+                  {
+                    "type": "element",
+                    "tagName": "td",
+                    "properties": {},
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "码多多已注册，控制面可配置；执行保持不可用，等待第一次激活。"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "\n"
+              },
+              {
+                "type": "element",
+                "tagName": "tr",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  },
+                  {
+                    "type": "element",
+                    "tagName": "td",
+                    "properties": {},
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "没有动态活动配置，但 "
+                      },
+                      {
+                        "type": "element",
+                        "tagName": "code",
+                        "properties": {},
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "MODEL_PROVIDER"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "text",
+                        "value": "、"
+                      },
+                      {
+                        "type": "element",
+                        "tagName": "code",
+                        "properties": {},
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "MODEL_ID"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "text",
+                        "value": "、"
+                      },
+                      {
+                        "type": "element",
+                        "tagName": "code",
+                        "properties": {},
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "MODEL_API_KEY_FILE"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "text",
+                        "value": " 完整"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  },
+                  {
+                    "type": "element",
+                    "tagName": "td",
+                    "properties": {},
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "使用只读部署 bootstrap；bootstrap Key 不可在后台查看。"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "\n"
+              },
+              {
+                "type": "element",
+                "tagName": "tr",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  },
+                  {
+                    "type": "element",
+                    "tagName": "td",
+                    "properties": {},
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "存在动态活动配置"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  },
+                  {
+                    "type": "element",
+                    "tagName": "td",
+                    "properties": {},
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "动态配置优先；Agent 重启后从活动指针恢复。"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "\n"
+              },
+              {
+                "type": "element",
+                "tagName": "tr",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  },
+                  {
+                    "type": "element",
+                    "tagName": "td",
+                    "properties": {},
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "动态配置解密、构建或恢复失败"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  },
+                  {
+                    "type": "element",
+                    "tagName": "td",
+                    "properties": {},
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "fail closed，不静默回退 bootstrap。先修复根因或关闭 "
+                      },
+                      {
+                        "type": "element",
+                        "tagName": "code",
+                        "properties": {},
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "AGENT_ENABLED"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "text",
+                        "value": "。"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "value": "\n"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "\n"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "p",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "候选模型测试失败时，失败 revision 会保留为内部记录，旧活动模型和活动指针不变。正常重启会恢复最近一次成功激活的动态配置，无需重新测试。"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "h2",
+        "properties": {
+          "id": "doc-content-回滚"
+        },
+        "children": [
+          {
+            "type": "text",
+            "value": "回滚"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "p",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "后台不提供选择旧 revision 的入口，旧 revision 是不可变的内部恢复记录，不是可直接回滚的 UI 选项。运维回滚只有两种正常路径："
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "ol",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "li",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "测试并启用另一家 Provider 当前已保存且可测试通过的 head；"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "li",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "把希望恢复的参数重新保存为新 revision，再测试并启用。"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "p",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "发生控制面或存储故障时，可先设置 "
+          },
+          {
+            "type": "element",
+            "tagName": "code",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "AGENT_ENABLED=false"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " 停止执行和 mutation，保留数据库证据后再修复。不要直接更新 "
+          },
+          {
+            "type": "element",
+            "tagName": "code",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "agent_control"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " 表或手工改活动指针。"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "h2",
+        "properties": {
+          "id": "doc-content-key-与-endpoint-运维"
+        },
+        "children": [
+          {
+            "type": "text",
+            "value": "Key 与 Endpoint 运维"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "ul",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "li",
+            "properties": {},
+            "children": [
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "MODEL_CONFIG_ENCRYPTION_KEY"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": " 是现有密文的 AES 主密钥。当前没有密钥轮换迁移工具；直接替换会导致已有动态配置无法解密，因此禁止原地更换。"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "li",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "查看明文 Key 需要独立权限，并在最近 10 分钟内同时完成密码再认证和 TOTP 验证。浏览器只显示 30 秒；隐藏 DOM 不能撤回已复制到操作系统剪贴板的内容。"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "li",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "自定义云 Endpoint 只能通过部署文件 "
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "infra/agent/model-endpoints.json"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": " 加入 allowlist，随后重建/重启 Agent 并完成启动 reconciliation。后台不能任意输入 URL。"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          },
+          {
+            "type": "element",
+            "tagName": "li",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "Loopback、私网、link-local 和其他本地地址继续被拒绝。本地算力未来通过独立正式入口接入，不伪装成自定义云 Endpoint。"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "\n"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "document-callout",
+        "properties": {
+          "dataCalloutType": "warning"
+        },
+        "children": [
+          {
+            "type": "element",
+            "tagName": "p",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "不要把 "
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": ".env"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "、数据库密码、模型\nKey、"
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "MODEL_CONFIG_ENCRYPTION_KEY"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "、"
+              },
+              {
+                "type": "element",
+                "tagName": "code",
+                "properties": {},
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "AGENT_CONFIG_CONTROL_KEY"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": "、初始管理员密码或\nTOTP 恢复码提交到 Git，也不要写入日志或工单。"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "h2",
+        "properties": {
+          "id": "doc-content-当前能力边界"
+        },
+        "children": [
+          {
+            "type": "text",
+            "value": "当前能力边界"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "p",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "后台已经支持 OpenAI、Anthropic、Google、Qwen / DashScope、DeepSeek 和 MiniMax 的云模型配置。Skill、Knowledge、Tools/网页操作和本地算力卡片目前只是诚实的 roadmap 入口，不会加载能力、探测本地服务或发起安装请求。"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "p",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "设计参考 Agno 官方 "
+          },
+          {
+            "type": "element",
+            "tagName": "a",
+            "properties": {
+              "href": "https://docs.agno.com/agent-os/config"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "AgentOS Configuration"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "、"
+          },
+          {
+            "type": "element",
+            "tagName": "a",
+            "properties": {
+              "href": "https://docs.agno.com/skills/overview"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "Skills"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "、"
+          },
+          {
+            "type": "element",
+            "tagName": "a",
+            "properties": {
+              "href": "https://docs.agno.com/skills/loading-skills"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "Loading Skills"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "、"
+          },
+          {
+            "type": "element",
+            "tagName": "a",
+            "properties": {
+              "href": "https://docs.agno.com/tools/agent"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "Tools"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "、"
+          },
+          {
+            "type": "element",
+            "tagName": "a",
+            "properties": {
+              "href": "https://docs.agno.com/agent-os/features/knowledge-management"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "Knowledge"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "、"
+          },
+          {
+            "type": "element",
+            "tagName": "a",
+            "properties": {
+              "href": "https://docs.agno.com/models/providers/local/ollama/overview"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "Ollama"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "、"
+          },
+          {
+            "type": "element",
+            "tagName": "a",
+            "properties": {
+              "href": "https://docs.agno.com/models/providers/local/vllm/overview"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "vLLM"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " 和 "
+          },
+          {
+            "type": "element",
+            "tagName": "a",
+            "properties": {
+              "href": "https://docs.agno.com/models/providers/openai-like"
+            },
+            "children": [
+              {
+                "type": "text",
+                "value": "OpenAI-compatible Models"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "。本仓库行为以 "
+          },
+          {
+            "type": "element",
+            "tagName": "code",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "apps/agent/uv.lock"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " 锁定的 Agno "
+          },
+          {
+            "type": "element",
+            "tagName": "code",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "2.7.2"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " 和本地测试为准，不假设最新版文档 API 已存在。"
+          }
+        ]
+      }
+    ]
+  },
+  "toc": [
+    {
+      "id": "doc-content-推荐目录",
+      "title": "推荐目录",
+      "depth": 2
+    },
+    {
+      "id": "doc-content-部署步骤",
+      "title": "部署步骤",
+      "depth": 2
+    },
+    {
+      "id": "doc-content-准备基础配置和独立-secret",
+      "title": "准备基础配置和独立 Secret",
+      "depth": 3
+    },
+    {
+      "id": "doc-content-初始化平台agentos-和模型控制数据库",
+      "title": "初始化平台、AgentOS 和模型控制数据库",
+      "depth": 3
+    },
+    {
+      "id": "doc-content-选择部署级开关",
+      "title": "选择部署级开关",
+      "depth": 3
+    },
+    {
+      "id": "doc-content-启动服务并检查健康状态",
+      "title": "启动服务并检查健康状态",
+      "depth": 3
+    },
+    {
+      "id": "doc-content-完成第一次后台激活",
+      "title": "完成第一次后台激活",
+      "depth": 3
+    },
+    {
+      "id": "doc-content-启动与恢复语义",
+      "title": "启动与恢复语义",
+      "depth": 2
+    },
+    {
+      "id": "doc-content-回滚",
+      "title": "回滚",
+      "depth": 2
+    },
+    {
+      "id": "doc-content-key-与-endpoint-运维",
+      "title": "Key 与 Endpoint 运维",
+      "depth": 2
+    },
+    {
+      "id": "doc-content-当前能力边界",
+      "title": "当前能力边界",
+      "depth": 2
+    }
+  ]
+}

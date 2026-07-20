@@ -2,11 +2,17 @@ import {
   createAssistantErrorResponse,
   isAssistantMessageId,
   isAssistantProviderReply,
+  isAssistantStreamDeltaEvent,
   parseAssistantRequest,
   safeAssistantSuggestedActions,
+  ASSISTANT_CONTENT_MAX_CODE_POINTS,
   type AssistantErrorResponse,
   type AssistantSuccessResponse,
 } from "@/features/assistant/assistant-contract";
+import {
+  ASSISTANT_STREAM_MEDIA_TYPE,
+  formatAssistantStreamEvent,
+} from "@/features/assistant/assistant-stream";
 import type { AssistantProvider } from "@/server/assistant/assistant-provider";
 import {
   assistantRequestLogger,
@@ -115,9 +121,10 @@ export function createAssistantChatHandler(
     } else {
       try {
         session = await dependencies.resolveSession(request);
+        const resolvedSession = session;
         const ipAddress = dependencies.resolveTrustedClientIp(request);
         await dependencies.rateLimiter.consume(
-          rateLimitInput(session, ipAddress),
+          rateLimitInput(resolvedSession, ipAddress),
         );
         const selected = dependencies.resolveProvider
           ? await dependencies.resolveProvider()
@@ -125,13 +132,147 @@ export function createAssistantChatHandler(
               provider: dependencies.provider ?? placeholderAssistantProvider,
               mode: "placeholder" as const,
             };
-        const providerResponse = await selected.provider.reply({
+        const invocation = {
           request: assistantRequest,
           session: {
-            kind: "persistent",
-            internalSessionId: session.internalSessionId,
+            kind: "persistent" as const,
+            internalSessionId: resolvedSession.internalSessionId,
           },
           signal: request.signal,
+        };
+        if (
+          selected.mode === "agentos" &&
+          selected.provider.streamReply !== undefined
+        ) {
+          const messageId = dependencies.messageIdFactory();
+          if (!isAssistantMessageId(messageId)) {
+            throw new TypeError("Invalid assistant message id");
+          }
+          const encoder = new TextEncoder();
+          const streamAbortController = new AbortController();
+          const iterator = selected.provider
+            .streamReply({
+              ...invocation,
+              signal: streamAbortController.signal,
+            })
+            [Symbol.asyncIterator]();
+          const abortStream = () => streamAbortController.abort();
+          request.signal.addEventListener("abort", abortStream, { once: true });
+          if (request.signal.aborted) abortStream();
+          let cancelled = false;
+          let logged = false;
+          const logStream = (streamStatusCode: number) => {
+            if (logged) return;
+            logged = true;
+            try {
+              dependencies.logger.log({
+                requestId,
+                statusCode: streamStatusCode,
+                durationMs: Math.max(0, dependencies.clock() - startedAt),
+              });
+            } catch {
+              // Logging must not change the public stream.
+            }
+          };
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  formatAssistantStreamEvent({
+                    event: "start",
+                    data: {
+                      version: "1",
+                      requestId,
+                      mode: "agentos",
+                      session: resolvedSession.publicSession,
+                      message: {
+                        id: messageId,
+                        role: "assistant",
+                      },
+                      suggestedActions: [],
+                    },
+                  }),
+                ),
+              );
+              void (async () => {
+                let contentCodePoints = 0;
+                let hasNonWhitespaceContent = false;
+                try {
+                  while (true) {
+                    const next = await iterator.next();
+                    if (next.done) break;
+                    const delta = { content: next.value };
+                    if (!isAssistantStreamDeltaEvent(delta)) {
+                      throw new TypeError("Invalid assistant stream delta");
+                    }
+                    contentCodePoints += Array.from(delta.content).length;
+                    if (contentCodePoints > ASSISTANT_CONTENT_MAX_CODE_POINTS) {
+                      throw new TypeError("Assistant stream is too large");
+                    }
+                    hasNonWhitespaceContent ||= delta.content.trim().length > 0;
+                    controller.enqueue(
+                      encoder.encode(
+                        formatAssistantStreamEvent({
+                          event: "delta",
+                          data: delta,
+                        }),
+                      ),
+                    );
+                  }
+                  if (!hasNonWhitespaceContent) {
+                    throw new TypeError("Assistant stream is empty");
+                  }
+                  controller.enqueue(
+                    encoder.encode(
+                      formatAssistantStreamEvent({ event: "done", data: {} }),
+                    ),
+                  );
+                  controller.close();
+                  logStream(200);
+                } catch {
+                  if (!cancelled) {
+                    try {
+                      controller.enqueue(
+                        encoder.encode(
+                          formatAssistantStreamEvent({
+                            event: "error",
+                            data: {},
+                          }),
+                        ),
+                      );
+                      controller.close();
+                    } catch {
+                      // The browser may have disconnected during failure cleanup.
+                    }
+                    logStream(503);
+                  }
+                } finally {
+                  request.signal.removeEventListener("abort", abortStream);
+                  await iterator.return?.();
+                }
+              })();
+            },
+            async cancel() {
+              cancelled = true;
+              logStream(499);
+              streamAbortController.abort();
+              await iterator.return?.();
+            },
+          });
+          return new Response(stream, {
+            status: 200,
+            headers: {
+              "Cache-Control": "no-store, no-transform",
+              "Content-Type": `${ASSISTANT_STREAM_MEDIA_TYPE}; charset=utf-8`,
+              "X-Accel-Buffering": "no",
+              ...(resolvedSession.setCookie
+                ? { "Set-Cookie": resolvedSession.setCookie }
+                : {}),
+            },
+          });
+        }
+        const providerResponse = await selected.provider.reply({
+          ...invocation,
         });
         if (!isAssistantProviderReply(providerResponse)) {
           throw new TypeError("Invalid assistant provider response");

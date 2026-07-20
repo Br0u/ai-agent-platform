@@ -1,204 +1,91 @@
-"use client";
-
-import React, { useState, createContext, useContext } from "react";
-import Link from "next/link";
+import type { PageMapItem } from "nextra";
+import { Footer, Navbar } from "nextra-theme-blog";
+import type { ReactNode } from "react";
+import { DocsSearch, type PublicDocsSearchItem } from "@/app/docs/docs-search";
 import "./doc-reader-layout.css";
-import { docsCategories } from "./docs-content";
+import type { PublicDocument } from "./docs-content";
+import { DocsMobileNavigation, DocsNavigation } from "./docs-navigation";
 
-interface DocContextType {
-  expandedLevel1: string | null;
-  expandedLevel2: string | null;
-  setExpandedLevel1: (code: string | null) => void;
-  setExpandedLevel2: (id: string | null) => void;
+function publicDocsPageMap(
+  documents: readonly PublicDocument[],
+): PageMapItem[] {
+  return [
+    {
+      name: "index",
+      route: "/docs",
+      frontMatter: { title: "文档总览", type: "page" },
+    },
+    ...documents.map((document) => ({
+      name: document.slug,
+      route: `/docs/${document.slug}`,
+      frontMatter: { title: document.navigation.label, type: "page" },
+    })),
+  ];
 }
 
-export const DocReaderContext = createContext<DocContextType>({
-  expandedLevel1: null,
-  expandedLevel2: null,
-  setExpandedLevel1: () => {},
-  setExpandedLevel2: () => {},
-});
+export function PublicDocsChrome({
+  children,
+  documents,
+}: {
+  children: ReactNode;
+  documents: readonly PublicDocument[];
+}) {
+  const searchDocuments: PublicDocsSearchItem[] = documents.map((document) => ({
+    slug: document.slug,
+    title: document.title,
+    summary: document.summary,
+    navigation: {
+      label: document.navigation.label,
+    },
+  }));
 
-export function useDocReader() {
-  return useContext(DocReaderContext);
+  return (
+    <>
+      <div className="public-docs-chrome__navbar">
+        <Navbar pageMap={publicDocsPageMap(documents)}>
+          <DocsSearch documents={searchDocuments} />
+        </Navbar>
+      </div>
+      {children}
+      <Footer>AI Agent Platform · 企业级 AI 开发文档</Footer>
+    </>
+  );
 }
 
 export function DocReaderLayout({
-  currentCategoryCode,
   children,
+  documents,
 }: {
-  currentCategoryCode?: string;
-  children: React.ReactNode;
+  children: ReactNode;
+  documents: readonly PublicDocument[];
 }) {
-  const [expandedLevel1, setExpandedLevel1] = useState<string | null>(
-    currentCategoryCode || null,
-  );
-  const [expandedLevel2, setExpandedLevel2] = useState<string | null>(null);
-
-  const currentIndex = docsCategories.findIndex(
-    (c) => c.code === currentCategoryCode,
-  );
-  const currentCategory =
-    currentIndex !== -1 ? docsCategories[currentIndex] : null;
-  const headerTitle = currentCategory?.title || "欢迎来到官方文档";
-  const headerDescription =
-    currentCategory?.description ||
-    "覆盖产品介绍、操作指南、场景化用例、开发参考等信息，帮助您更好地上手平台、用好 AI 智能体。";
-
-  const toggleLevel1 = (code: string) => {
-    setExpandedLevel1((prev) => (prev === code ? null : code));
-  };
-
-  const toggleLevel2 = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setExpandedLevel2((prev) => (prev === id ? null : id));
-  };
-
   return (
-    <DocReaderContext.Provider
-      value={{
-        expandedLevel1,
-        expandedLevel2,
-        setExpandedLevel1,
-        setExpandedLevel2,
-      }}
-    >
+    <PublicDocsChrome documents={documents}>
       <div className="doc-reader">
-        {/* 左侧边栏导航 */}
         <aside className="doc-reader__sidebar">
-          <div className="doc-reader__sidebar-header">
-            <h2 className="doc-reader__sidebar-title">全部产品文档</h2>
-            <div className="doc-reader__search">
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <circle cx="11" cy="11" r="8"></circle>
-                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-              </svg>
-              <span>搜索相关词</span>
-            </div>
-          </div>
-
-          <div className="doc-reader__nav-group">
-            <Link href="/docs" className="doc-reader__nav-overview">
-              <span>全部产品文档</span>
-              <span className="doc-reader__nav-overview-arrow">→</span>
-            </Link>
-          </div>
-
-          {docsCategories.map((cat) => {
-            const isExpanded1 = expandedLevel1 === cat.code;
-            return (
-              <div
-                className={`doc-reader__nav-group ${isExpanded1 ? "is-expanded" : ""}`}
-                key={cat.code}
-              >
-                <h4
-                  onClick={() => toggleLevel1(cat.code)}
-                  className="doc-reader__nav-group-title"
-                >
-                  <span>{cat.title}</span>
-                  <span
-                    className={`doc-reader__nav-arrow ${isExpanded1 ? "is-open" : ""}`}
-                  >
-                    ›
-                  </span>
-                </h4>
-                <div
-                  className={`doc-reader__nav-tree-wrapper ${isExpanded1 ? "is-open" : ""}`}
-                >
-                  <nav
-                    aria-label={`${cat.title} 导航`}
-                    className="doc-reader__nav-tree"
-                  >
-                    {cat.subCategories.map((sub) => {
-                      const isExpanded2 = expandedLevel2 === sub.id;
-                      return (
-                        <div key={sub.id} className="doc-reader__nav-sub">
-                          <div
-                            className={`doc-reader__nav-sub-title ${isExpanded2 ? "is-open" : ""}`}
-                            onClick={(e) => toggleLevel2(sub.id, e)}
-                          >
-                            <span>
-                              {sub.title} ({sub.docs.length})
-                            </span>
-                            <span
-                              className={`doc-reader__nav-arrow-small ${isExpanded2 ? "is-open" : ""}`}
-                            >
-                              ›
-                            </span>
-                          </div>
-
-                          {/* 真正的第三级：由于目前为空，这里渲染出来也会是空的 */}
-                          <div
-                            className={`doc-reader__nav-docs-wrapper ${isExpanded2 ? "is-open" : ""}`}
-                          >
-                            <div className="doc-reader__nav-docs">
-                              {sub.docs.map(
-                                (doc: { href: string; title: string }, i) => (
-                                  <Link
-                                    key={i}
-                                    href={doc.href}
-                                    className="doc-reader__nav-doc-link"
-                                  >
-                                    {doc.title}
-                                  </Link>
-                                ),
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </nav>
-                </div>
-              </div>
-            );
-          })}
+          <DocsNavigation documents={documents} />
         </aside>
 
-        {/* 中侧正文区域 */}
-        <main
-          className={`doc-reader__main ${currentCategory ? "has-toc" : ""}`}
-        >
+        <main className="doc-reader__main">
+          <DocsMobileNavigation documents={documents} currentTitle="文档总览" />
+
+          <div className="doc-reader__breadcrumb" aria-label="面包屑导航">
+            <span>文档中心</span>
+            <span aria-hidden="true">/</span>
+            <span>总览</span>
+          </div>
+
           <header className="doc-reader__header">
-            <div className="doc-reader__header-inner">
-              <span className="doc-reader__header-kicker">
-                AI AGENT PLATFORM / DOCUMENTATION
-              </span>
-              <h1 className="doc-reader__title">{headerTitle}</h1>
-              <p className="doc-reader__desc">{headerDescription}</p>
-            </div>
+            <h1 className="doc-reader__title">文档中心</h1>
+            <p className="doc-reader__desc">
+              从首次部署到生产运维，按清晰路径查找平台概念、操作指南、API
+              参考与硬件适配说明。
+            </p>
           </header>
 
           <div className="doc-content">{children}</div>
         </main>
-
-        {/* 右侧目录 (TOC) */}
-        {currentCategory && (
-          <aside className="doc-reader__toc">
-            <h4 className="doc-reader__toc-title">本页目录</h4>
-            <ul className="doc-reader__toc-list">
-              {currentCategory.subCategories.map((sub, i) => (
-                <li key={i}>
-                  <a href={`#${sub.id}`}>{sub.title}</a>
-                </li>
-              ))}
-            </ul>
-
-            <Link href="/support#bug" className="doc-reader__feedback">
-              <span aria-hidden="true">💬</span> 意见反馈
-            </Link>
-          </aside>
-        )}
       </div>
-    </DocReaderContext.Provider>
+    </PublicDocsChrome>
   );
 }

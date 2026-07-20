@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Footer 浅灰柔光渐变设计</title>
+<style>
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    padding: 40px 24px;
+    background: #eef1f6;
+  }
+
+  :root {
+    --r-primary: #3a67b1;
+    --r-signal: #56c0f8;
+    --r-accent: #9277dc;
+    --r-ink: #101838;
+    --r-muted: #566078;
+    --r-line: #dce3ef;
+    --r-display: "DIN Alternate", "Arial Narrow", "PingFang SC", sans-serif;
+    --r-body: "PingFang SC", "Microsoft YaHei", sans-serif;
+    --r-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  }
+
+  .r-page {
+    display: grid;
+    width: min(100%, 1280px);
+    margin: 0 auto;
+    gap: 26px;
+    padding-bottom: 36px;
+    color: var(--r-ink);
+    font-family: var(--r-body);
+  }
+
+  .r-heading {
+    display: grid;
+    gap: 8px;
+  }
+
+  .r-heading h2,
+  .r-heading p {
+    margin: 0;
+  }
+
+  .r-heading h2 {
+    font: 700 clamp(28px, 4vw, 42px) / 1.08 var(--r-display);
+    letter-spacing: -0.025em;
+  }
+
+  .r-heading p {
+    max-width: 880px;
+    color: var(--r-muted);
+    line-height: 1.7;
+  }
+
+  .r-spec {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    overflow: hidden;
+    border: 1px solid var(--r-line);
+    border-radius: 12px;
+    background: #fff;
+  }
+
+  .r-spec div {
+    min-width: 0;
+    padding: 13px 15px;
+    border-right: 1px solid var(--r-line);
+  }
+
+  .r-spec div:last-child {
+    border-right: 0;
+  }
+
+  .r-spec strong,
+  .r-spec span {
+    display: block;
+  }
+
+  .r-spec strong {
+    color: var(--r-primary);
+    font: 700 11px/1.4 var(--r-mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .r-spec span {
+    margin-top: 4px;
+    color: var(--r-muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .r-canvas {
+    display: grid;
+    gap: 18px;
+  }
+
+  .r-label {
+    margin: 0;
+    color: var(--r-muted);
+    font: 700 11px/1.4 var(--r-mono);
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+
+  .r-desktop-shell {
+    overflow: hidden;
+    border: 1px solid rgb(16 24 56 / 18%);
+    border-radius: 14px;
+    box-shadow: 0 20px 56px rgb(16 24 56 / 15%);
+  }
+
+  .r-browser-bar {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    height: 30px;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--r-line);
+    background: #fff;
+  }
+
+  .r-browser-bar span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #cbd2df;
+  }
+
+  .r-close {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(220px, 0.6fr);
+    gap: 54px;
+    align-items: end;
+    min-height: 240px;
+    padding: 46px 50px;
+    color: #fff;
+    background:
+      radial-gradient(circle at 50% 0%, rgb(84 113 229 / 20%), transparent 34%),
+      var(--r-ink);
+  }
+
+  .r-close-copy {
+    display: grid;
+    gap: 13px;
+  }
+
+  .r-close-kicker {
+    margin: 0;
+    color: #9dbdff;
+    font: 700 10px/1.3 var(--r-mono);
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+
+  .r-close h3,
+  .r-close p {
+    margin: 0;
+  }
+
+  .r-close h3 {
+    max-width: 670px;
+    color: #fff;
+    font: 700 clamp(25px, 3.2vw, 40px) / 1.12 var(--r-display);
+    letter-spacing: -0.025em;
+    text-wrap: balance;
+  }
+
+  .r-close-copy > p:last-child {
+    max-width: 600px;
+    color: #b7c2d7;
+    font-size: 12px;
+    line-height: 1.7;
+  }
+
+  .r-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+  }
+
+  .r-action {
+    display: inline-flex;
+    min-height: 38px;
+    align-items: center;
+    padding: 0 15px;
+    border: 1px solid rgb(255 255 255 / 32%);
+    border-radius: 7px;
+    color: #fff;
+    font-size: 11px;
+  }
+
+  .r-action-primary {
+    border-color: var(--r-primary);
+    background: var(--r-primary);
+  }
+
+  .r-footer {
+    position: relative;
+    display: grid;
+    grid-template-rows: 1fr auto;
+    min-height: 330px;
+    color: var(--r-ink);
+    background:
+      radial-gradient(
+        90% 110% at 8% -18%,
+        rgb(255 255 255 / 96%) 0%,
+        rgb(255 255 255 / 42%) 44%,
+        transparent 70%
+      ),
+      radial-gradient(
+        76% 110% at 100% 18%,
+        rgb(58 103 177 / 9%) 0%,
+        rgb(58 103 177 / 3%) 48%,
+        transparent 72%
+      ),
+      linear-gradient(148deg, #fbfcfd 0%, #f3f5f8 48%, #e9eef5 100%);
+    font-size: 12px;
+  }
+
+  .r-footer::before {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 1px;
+    background: var(--r-line);
+    content: "";
+  }
+
+  .r-footer-main {
+    display: grid;
+    grid-template-columns: minmax(230px, 1fr) minmax(0, 2.8fr);
+    gap: 54px;
+    padding: 48px 50px 38px;
+  }
+
+  .r-brand {
+    align-self: start;
+    padding-right: 26px;
+    border-right: 1px solid var(--r-line);
+  }
+
+  .r-signal {
+    width: 38px;
+    height: 3px;
+    margin-bottom: 22px;
+    background: var(--r-signal);
+  }
+
+  .r-brand strong,
+  .r-brand span {
+    display: block;
+  }
+
+  .r-brand strong {
+    color: var(--r-ink);
+    font: 700 24px/1.12 var(--r-display);
+  }
+
+  .r-brand span {
+    max-width: 210px;
+    margin-top: 9px;
+    color: var(--r-muted);
+    font-size: 11px;
+    line-height: 1.55;
+  }
+
+  .r-nav {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 24px;
+  }
+
+  .r-group h4 {
+    margin: 0 0 14px;
+    color: var(--r-ink);
+    font: 700 13px/1.4 var(--r-display);
+  }
+
+  .r-group ul {
+    display: grid;
+    gap: 1px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .r-group li {
+    display: flex;
+    min-height: 30px;
+    align-items: center;
+    color: var(--r-muted);
+    line-height: 1.5;
+  }
+
+  .r-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    padding: 15px 50px;
+    border-top: 1px solid var(--r-line);
+    color: #6a748a;
+    background: rgb(238 242 247 / 74%);
+    backdrop-filter: blur(12px);
+    font-size: 10px;
+    line-height: 1.5;
+  }
+
+  .r-mobile-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 390px;
+    gap: 24px;
+    align-items: start;
+  }
+
+  .r-mobile-notes {
+    display: grid;
+    gap: 13px;
+    padding: 20px 22px;
+    border: 1px solid var(--r-line);
+    border-radius: 12px;
+    background: #fff;
+  }
+
+  .r-mobile-notes h3,
+  .r-mobile-notes p {
+    margin: 0;
+  }
+
+  .r-mobile-notes h3 {
+    font: 700 18px/1.3 var(--r-display);
+  }
+
+  .r-mobile-notes p,
+  .r-mobile-notes li {
+    color: var(--r-muted);
+    font-size: 12px;
+    line-height: 1.65;
+  }
+
+  .r-mobile-notes ul {
+    margin: 0;
+    padding-left: 18px;
+  }
+
+  .r-phone {
+    overflow: hidden;
+    border: 8px solid #080e24;
+    border-radius: 30px;
+    background: #eef2f7;
+    box-shadow: 0 20px 54px rgb(16 24 56 / 19%);
+  }
+
+  .r-phone-top {
+    height: 22px;
+    background: #080e24;
+  }
+
+  .r-phone .r-footer {
+    min-height: auto;
+  }
+
+  .r-phone .r-footer-main {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    padding: 30px 24px 24px;
+  }
+
+  .r-phone .r-brand {
+    padding: 0 0 22px;
+    border-right: 0;
+    border-bottom: 1px solid var(--r-line);
+  }
+
+  .r-phone .r-signal {
+    margin-bottom: 18px;
+  }
+
+  .r-phone .r-nav {
+    grid-template-columns: 1fr;
+    gap: 21px;
+  }
+
+  .r-phone .r-group {
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--r-line);
+  }
+
+  .r-phone .r-group:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  .r-phone .r-group h4 {
+    margin-bottom: 7px;
+  }
+
+  .r-phone .r-group li {
+    min-height: 44px;
+  }
+
+  .r-phone .r-meta {
+    display: grid;
+    gap: 5px;
+    padding: 17px 24px 20px;
+  }
+
+  .r-decision {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .r-choice {
+    padding: 16px 18px;
+    border: 2px solid var(--r-line);
+    border-radius: 10px;
+    color: var(--r-ink);
+    background: #fff;
+    cursor: pointer;
+    text-align: center;
+    transition: border-color 160ms ease, background-color 160ms ease;
+  }
+
+  .r-choice:hover,
+  .r-choice.selected {
+    border-color: var(--r-primary);
+    background: rgb(58 103 177 / 6%);
+  }
+
+  .r-choice strong,
+  .r-choice span {
+    display: block;
+  }
+
+  .r-choice strong {
+    font: 700 14px/1.4 var(--r-display);
+  }
+
+  .r-choice span {
+    margin-top: 4px;
+    color: var(--r-muted);
+    font-size: 11px;
+  }
+
+  @media (max-width: 980px) {
+    .r-spec {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .r-spec div:nth-child(2) {
+      border-right: 0;
+    }
+
+    .r-spec div:nth-child(-n + 2) {
+      border-bottom: 1px solid var(--r-line);
+    }
+
+    .r-close,
+    .r-footer-main {
+      grid-template-columns: 1fr;
+    }
+
+    .r-close {
+      gap: 28px;
+    }
+
+    .r-actions {
+      justify-content: flex-start;
+    }
+
+    .r-brand {
+      padding: 0 0 24px;
+      border-right: 0;
+      border-bottom: 1px solid var(--r-line);
+    }
+
+    .r-mobile-row {
+      grid-template-columns: 1fr;
+    }
+
+    .r-phone {
+      width: min(100%, 390px);
+      justify-self: center;
+    }
+  }
+
+  @media (max-width: 680px) {
+    .r-nav {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .r-close,
+    .r-footer-main {
+      padding-inline: 26px;
+    }
+
+    .r-meta {
+      padding-inline: 26px;
+    }
+
+    .r-decision {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+</head>
+<body>
+<main class="r-page">
+  <header class="r-heading">
+    <h2>B · 浅灰柔光基座</h2>
+    <p>调整稿：亮灰画布叠加极低对比的白色柔光与冷灰蓝过渡。渐变只制造空间感，不抢导航内容；整体仍保持企业站需要的克制和可读性。</p>
+  </header>
+
+  <section class="r-spec" aria-label="设计系统">
+    <div><strong>Color</strong><span>#FBFCFD → #E9EEF5</span></div>
+    <div><strong>Type</strong><span>24 / 13 / 12 / 10</span></div>
+    <div><strong>Rhythm</strong><span>8px 基线，48px 主留白</span></div>
+    <div><strong>Behavior</strong><span>无新增 JS，链接触点 ≥ 44px</span></div>
+  </section>
+
+  <section class="r-canvas">
+    <p class="r-label">Desktop · 深色收口后的浅灰柔光分区</p>
+    <div class="r-desktop-shell">
+      <div class="r-browser-bar"><span></span><span></span><span></span></div>
+      <section class="r-close">
+        <div class="r-close-copy">
+          <p class="r-close-kicker">Private Deployment</p>
+          <h3>把企业数据、算力与 AI 应用，留在可控边界内。</h3>
+          <p>面向企业私有化场景，了解华鲲元启的部署路径、平台能力与支持方式。</p>
+        </div>
+        <div class="r-actions"><span class="r-action r-action-primary">联系商务</span><span class="r-action">查看部署文档</span></div>
+      </section>
+      <footer class="r-footer">
+        <div class="r-footer-main">
+          <div class="r-brand"><div class="r-signal"></div><strong>AI Agent Platform</strong><span>Build Enterprise AI Faster</span></div>
+          <nav class="r-nav" aria-label="桌面 Footer 导航">
+            <section class="r-group"><h4>产品与版本</h4><ul><li>产品</li><li>版本列表</li><li>Roadmap</li></ul></section>
+            <section class="r-group"><h4>文档与部署</h4><ul><li>文档</li><li>部署指南</li><li>兼容性</li></ul></section>
+            <section class="r-group"><h4>Marketplace 与资讯</h4><ul><li>Marketplace</li><li>资讯</li><li>客户案例</li></ul></section>
+            <section class="r-group"><h4>支持与商务联系</h4><ul><li>支持</li><li>帮助中心</li><li>价格计算</li><li>商务咨询</li></ul></section>
+          </nav>
+        </div>
+        <div class="r-meta"><span>公司信息待补充</span><span>隐私政策（占位）</span><span>备案信息（占位）</span></div>
+      </footer>
+    </div>
+  </section>
+
+  <section class="r-mobile-row">
+    <div class="r-mobile-notes">
+      <p class="r-label">Mobile · 390px</p>
+      <h3>移动端不做折叠菜单</h3>
+      <p>四组导航直接纵向展开，避免引入额外交互和隐藏链接。每个链接保持至少 44px 高，法务占位降到最末层。</p>
+      <ul>
+        <li>品牌区与导航之间保留明确分隔</li>
+        <li>组间用细线而不是卡片</li>
+        <li>完整兼容当前一列 Footer 测试契约</li>
+      </ul>
+    </div>
+    <div class="r-phone">
+      <div class="r-phone-top"></div>
+      <footer class="r-footer">
+        <div class="r-footer-main">
+          <div class="r-brand"><div class="r-signal"></div><strong>AI Agent Platform</strong><span>Build Enterprise AI Faster</span></div>
+          <nav class="r-nav" aria-label="移动 Footer 导航">
+            <section class="r-group"><h4>产品与版本</h4><ul><li>产品</li><li>版本列表</li><li>Roadmap</li></ul></section>
+            <section class="r-group"><h4>文档与部署</h4><ul><li>文档</li><li>部署指南</li><li>兼容性</li></ul></section>
+            <section class="r-group"><h4>Marketplace 与资讯</h4><ul><li>Marketplace</li><li>资讯</li><li>客户案例</li></ul></section>
+            <section class="r-group"><h4>支持与商务联系</h4><ul><li>支持</li><li>帮助中心</li><li>价格计算</li><li>商务咨询</li></ul></section>
+          </nav>
+        </div>
+        <div class="r-meta"><span>公司信息待补充</span><span>隐私政策（占位）</span><span>备案信息（占位）</span></div>
+      </footer>
+    </div>
+  </section>
+
+  <section class="r-decision" aria-label="确认设计">
+    <div class="r-choice" data-choice="approve-soft-light-gradient" onclick="toggleSelect(this)"><strong>确认这个设计</strong><span>进入设计说明与实现计划</span></div>
+    <div class="r-choice" data-choice="adjust-soft-light-gradient" onclick="toggleSelect(this)"><strong>需要调整</strong><span>告诉我渐变要更明显还是更克制</span></div>
+  </section>
+</main>
+<script>
+  function toggleSelect(element) {
+    document.querySelectorAll("[data-choice]").forEach((choice) => {
+      choice.classList.remove("selected");
+    });
+    element.classList.add("selected");
+  }
+</script>
+</body>
+</html>

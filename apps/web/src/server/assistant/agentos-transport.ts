@@ -196,9 +196,10 @@ const HEADER_CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
 function resolveRequestHeaders(
   securityKey: string,
   input: Readonly<Record<string, string>> | undefined,
+  acceptedMediaTypes: readonly string[] | undefined,
 ): Record<string, string> {
   const resolved: Record<string, string> = {
-    Accept: "application/json",
+    Accept: acceptedMediaTypes?.join(", ") ?? "application/json",
     Authorization: `Bearer ${securityKey}`,
   };
   if (input === undefined) return resolved;
@@ -285,6 +286,7 @@ export function createAgentOSTransport(options: {
   fetcher?: typeof fetch;
 }): {
   request(request: AgentOSTransportRequest): Promise<AgentOSTransportResponse>;
+  stream(request: AgentOSTransportRequest): AsyncIterable<Uint8Array>;
 } {
   const fetcher = options.fetcher ?? fetch;
 
@@ -294,6 +296,7 @@ export function createAgentOSTransport(options: {
       const headers = resolveRequestHeaders(
         options.settings.securityKey,
         request.headers,
+        request.acceptedMediaTypes,
       );
       const controller = new AbortController();
       let response: Response | null = null;
@@ -386,6 +389,125 @@ export function createAgentOSTransport(options: {
       } finally {
         if (timer) clearTimeout(timer);
         request.signal?.removeEventListener("abort", onExternalAbort);
+      }
+    },
+
+    async *stream(request) {
+      const requestUrl = resolveRequestUrl(options.settings, request.path);
+      const headers = resolveRequestHeaders(
+        options.settings.securityKey,
+        request.headers,
+        request.acceptedMediaTypes,
+      );
+      const controller = new AbortController();
+      let response: Response | null = null;
+      let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+      let abortedBy: "timeout" | "external_abort" | null = null;
+      let rejectExternalAbort: ((error: AgentOSTransportError) => void) | null =
+        null;
+      const externalAbort = new Promise<never>((_resolve, reject) => {
+        rejectExternalAbort = reject;
+      });
+      const onExternalAbort = () => {
+        if (abortedBy !== null) return;
+        abortedBy = "external_abort";
+        controller.abort();
+        cancelBody(reader, response);
+        rejectExternalAbort?.(new AgentOSTransportError("external_abort"));
+      };
+      request.signal?.addEventListener("abort", onExternalAbort, {
+        once: true,
+      });
+      if (request.signal?.aborted) onExternalAbort();
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          if (abortedBy !== null) return;
+          abortedBy = "timeout";
+          controller.abort();
+          cancelBody(reader, response);
+          reject(new AgentOSTransportError("timeout"));
+        }, request.timeoutMs);
+      });
+
+      let completed = false;
+      try {
+        const beforeFetch = abortError(abortedBy);
+        if (beforeFetch) throw beforeFetch;
+        response = await Promise.race([
+          fetcher(requestUrl, {
+            method: request.method,
+            headers,
+            body: request.body,
+            signal: controller.signal,
+            redirect: "manual",
+            cache: "no-store",
+            credentials: "omit",
+          }),
+          deadline,
+          externalAbort,
+        ]);
+        const afterFetch = abortError(abortedBy);
+        if (afterFetch) throw afterFetch;
+        if (response.status >= 300 && response.status < 400) {
+          throw new AgentOSTransportError("redirect_rejected");
+        }
+        if (!request.acceptedStatuses.includes(response.status)) {
+          throw new AgentOSTransportError(
+            "unexpected_status",
+            classifyUnexpectedStatus(response.status),
+          );
+        }
+        validateMediaType(
+          response.headers.get("content-type"),
+          request.acceptedMediaTypes,
+        );
+        const length = declaredLength(response);
+        if (length !== null && length > request.maxResponseBytes) {
+          throw new AgentOSTransportError("response_too_large");
+        }
+
+        reader = response.body?.getReader() ?? null;
+        if (reader === null) {
+          completed = true;
+          return;
+        }
+        let total = 0;
+        while (true) {
+          const beforeRead = abortError(abortedBy);
+          if (beforeRead) throw beforeRead;
+          const chunk = await Promise.race([
+            reader.read(),
+            deadline,
+            externalAbort,
+          ]);
+          const afterRead = abortError(abortedBy);
+          if (afterRead) throw afterRead;
+          if (chunk.done) {
+            completed = true;
+            break;
+          }
+          total += chunk.value.byteLength;
+          if (total > request.maxResponseBytes) {
+            throw new AgentOSTransportError("response_too_large");
+          }
+          yield chunk.value;
+        }
+      } catch (error) {
+        if (error instanceof AgentOSTransportError) throw error;
+        throw new AgentOSTransportError(abortedBy ?? "transport_error");
+      } finally {
+        if (timer) clearTimeout(timer);
+        request.signal?.removeEventListener("abort", onExternalAbort);
+        if (!completed) cancelBody(reader, response);
+        if (reader !== null) {
+          try {
+            reader.releaseLock();
+          } catch {
+            // An aborted reader may stay locked until cancellation completes.
+          }
+        }
       }
     },
   };

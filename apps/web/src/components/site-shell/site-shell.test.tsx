@@ -312,6 +312,31 @@ describe("SiteShell", () => {
     ]);
   });
 
+  it("accepts the protected document delete permission without a navigation item", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          realm: "workforce",
+          status: "active",
+          permissions: ["admin:docs", "admin:docs:delete"],
+          displayName: "Document administrator",
+          mustChangePassword: false,
+          twoFactorEnabled: true,
+        }),
+        { status: 200 },
+      ),
+    );
+
+    renderAt("/admin/docs");
+
+    await waitFor(() => expect(screen.getByTestId("app-shell")).toBeVisible());
+    expect(mocks.replace).not.toHaveBeenCalled();
+    expect(mocks.appShellProps?.grantedPermissions).toEqual([
+      "admin:docs",
+      "admin:docs:delete",
+    ]);
+  });
+
   it("fails closed while a new admin access cycle validates a different actor", async () => {
     const workforceResponse = (displayName: string, permission: string) =>
       new Response(

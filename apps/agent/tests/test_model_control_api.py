@@ -225,6 +225,21 @@ class FailingRevealService(RecordingService):
         raise self.failure
 
 
+class FailingActivationService(RecordingService):
+    def __init__(self, failure: ModelControlServiceError) -> None:
+        super().__init__()
+        self.failure = failure
+
+    async def test_and_activate(
+        self,
+        provider: str,
+        revision: int,
+        assertion: ModelControlAssertion,
+    ) -> ActiveConfigPointer:
+        del provider, revision, assertion
+        raise self.failure
+
+
 def signed_assertion(
     *,
     action: str,
@@ -1078,6 +1093,33 @@ def test_test_and_activate_passes_only_revision_and_verified_assertion() -> None
     assert (provider, revision) == ("openai", 3)
     assert assertion.action == "test_and_activate"
     assert assertion.permission == "admin:assistant:configure"
+
+
+def test_test_and_activate_reports_safe_successful_test_before_activation_failure() -> (
+    None
+):
+    failure = ModelControlStorageError(
+        "private activation persistence detail",
+        test_succeeded=True,
+    )
+    application = control_route_app(FailingActivationService(failure))
+
+    with TestClient(application, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/internal/control/model-configs/openai/test-and-activate",
+            headers=mutation_headers(
+                action="test_and_activate",
+                permission="admin:assistant:configure",
+            ),
+            json={"revision": 3},
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": "storage_unavailable",
+        "testResult": "success",
+    }
+    assert "private" not in response.text
 
 
 def test_reveal_returns_the_one_plaintext_field_with_private_no_cache_headers() -> None:

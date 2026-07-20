@@ -20,6 +20,11 @@ from pydantic import (
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
+from agent_service.model_id import (
+    MODEL_ID_MAX_CODE_POINTS as MODEL_ID_MAX_CODE_POINTS,
+    validate_model_id,
+)
+
 
 AsyncPostgresUrl = SecretStr
 PositiveFiniteFloat = Annotated[FiniteFloat, Field(gt=0)]
@@ -32,7 +37,6 @@ ModelProvider = Literal[
     "minimax",
 ]
 
-MODEL_ID_MAX_CODE_POINTS = 128
 _BASE_URL_PROVIDERS: frozenset[ModelProvider] = frozenset(
     {"openai", "dashscope", "deepseek", "minimax"}
 )
@@ -80,18 +84,7 @@ class ActiveModelSettings:
 
 
 def _validate_model_id_value(value: str) -> str:
-    if not value.strip() or value != value.strip():
-        raise ValueError("model ID must not be blank or have surrounding whitespace")
-    if len(value) > MODEL_ID_MAX_CODE_POINTS:
-        raise ValueError(
-            f"model ID must contain at most {MODEL_ID_MAX_CODE_POINTS} code points"
-        )
-    if any(
-        ord(character) <= 0x1F or 0x7F <= ord(character) <= 0x9F
-        for character in value
-    ):
-        raise ValueError("model ID must not contain C0 or C1 control characters")
-    return value
+    return validate_model_id(value)
 
 
 def _validate_model_api_key_value(value: SecretStr) -> SecretStr:

@@ -54,8 +54,8 @@ volume="aap-restore-drill-$run_id"
 database="restore_drill"
 owner="restore_owner"
 crypto_image="${BACKUP_CRYPTO_IMAGE:-ai-agent-platform-backup:latest}"
-expected_migrations="6"
-expected_latest_migration="1783854600000"
+expected_migrations="7"
+expected_latest_migration="1784480751831"
 temporary_directory=
 postgres_env_file=
 decrypted_candidate=
@@ -147,12 +147,21 @@ schema_contract="$(docker exec "$container" psql -U "$owner" -d "$database" -Atq
      AND to_regclass('public.sessions') IS NOT NULL
      AND to_regclass('public.audit_logs') IS NOT NULL
      AND to_regclass('public.roles') IS NOT NULL
+     AND to_regclass('public.content_revisions') IS NOT NULL
+     AND to_regclass('public.content_routes') IS NOT NULL
      AND to_regclass('agno.agno_sessions') IS NOT NULL
      AND to_regclass('agno.agno_schema_versions') IS NOT NULL
      AND to_regclass('public.users_email_lower_unique') IS NOT NULL
      AND to_regclass('public.audit_logs_created_id_desc_idx') IS NOT NULL
      AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'rate_limits_key_unique')
-     AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'sessions_identity_boundary_guard' AND NOT tgisinternal)")"
+     AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'sessions_identity_boundary_guard' AND NOT tgisinternal)
+     AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'content_revisions_immutable' AND NOT tgisinternal)
+     AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'content_routes_state_machine' AND NOT tgisinternal)
+     AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'role_permissions_admin_docs_delete_guard' AND NOT tgisinternal)
+     AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'permissions_admin_docs_delete_key_guard' AND NOT tgisinternal)
+     AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'permissions_admin_docs_delete_delete_guard' AND NOT tgisinternal)
+     AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'roles_admin_docs_delete_grant_guard' AND NOT tgisinternal)
+     AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'roles_super_admin_delete_guard' AND NOT tgisinternal)")"
 user_count="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \
   "SELECT count(*) FROM public.users")"
 agno_session_count="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \

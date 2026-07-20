@@ -1,0 +1,214 @@
+{
+  "version": 1,
+  "root": {
+    "type": "root",
+    "children": [
+      {
+        "type": "element",
+        "tagName": "h2",
+        "properties": {
+          "id": "doc-content-为什么本地打开页面提示-database_url-is-required"
+        },
+        "children": [
+          {
+            "type": "text",
+            "value": "为什么本地打开页面提示 "
+          },
+          {
+            "type": "element",
+            "tagName": "code",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "DATABASE_URL is required"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "？"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "p",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "开发环境需要先启动 PostgreSQL，并在 "
+          },
+          {
+            "type": "element",
+            "tagName": "code",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "apps/web/.env.local"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " 或工作区环境中配置 "
+          },
+          {
+            "type": "element",
+            "tagName": "code",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "DATABASE_URL"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "。"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "h2",
+        "properties": {
+          "id": "doc-content-客户注册后能直接进入平台吗"
+        },
+        "children": [
+          {
+            "type": "text",
+            "value": "客户注册后能直接进入平台吗？"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "p",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "当前流程保留注册入口，客户账号需要经过企业审核后才能获得对应能力。邮箱验证接口可以在后续接入。"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "h2",
+        "properties": {
+          "id": "doc-content-管理员为什么看不到-ai-助理运营页"
+        },
+        "children": [
+          {
+            "type": "text",
+            "value": "管理员为什么看不到 AI 助理运营页？"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "p",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "该页面受 "
+          },
+          {
+            "type": "element",
+            "tagName": "code",
+            "properties": {},
+            "children": [
+              {
+                "type": "text",
+                "value": "admin:assistant"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " 权限保护。请确认当前员工账号的角色、权限和二次认证状态。"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "h2",
+        "properties": {
+          "id": "doc-content-文档页面可以独立部署吗"
+        },
+        "children": [
+          {
+            "type": "text",
+            "value": "文档页面可以独立部署吗？"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "value": "\n"
+      },
+      {
+        "type": "element",
+        "tagName": "p",
+        "properties": {},
+        "children": [
+          {
+            "type": "text",
+            "value": "可以。文档内容使用 Nextra App Router + MDX 组织，后续可拆分为独立文档站点；当前先与门户共用身份、导航和部署链路。"
+          }
+        ]
+      }
+    ]
+  },
+  "toc": [
+    {
+      "id": "doc-content-为什么本地打开页面提示-database_url-is-required",
+      "title": "为什么本地打开页面提示 DATABASE_URL is required？",
+      "depth": 2
+    },
+    {
+      "id": "doc-content-客户注册后能直接进入平台吗",
+      "title": "客户注册后能直接进入平台吗？",
+      "depth": 2
+    },
+    {
+      "id": "doc-content-管理员为什么看不到-ai-助理运营页",
+      "title": "管理员为什么看不到 AI 助理运营页？",
+      "depth": 2
+    },
+    {
+      "id": "doc-content-文档页面可以独立部署吗",
+      "title": "文档页面可以独立部署吗？",
+      "depth": 2
+    }
+  ]
+}

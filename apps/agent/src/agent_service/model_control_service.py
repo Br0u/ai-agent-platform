@@ -48,6 +48,10 @@ from agent_service.model_verifier import ModelVerificationResult, verify_model
 class ModelControlServiceError(RuntimeError):
     """Base class for fixed, response-safe control service failures."""
 
+    def __init__(self, message: str, *, test_succeeded: bool = False) -> None:
+        super().__init__(message)
+        self.test_succeeded = test_succeeded
+
 
 class ModelControlValidationError(ModelControlServiceError):
     """One caller command failed strict domain validation."""
@@ -93,12 +97,18 @@ def _validation_error() -> NoReturn:
     raise ModelControlValidationError("validation_error") from None
 
 
-def _conflict() -> NoReturn:
-    raise ModelControlConflictError("configuration_conflict") from None
+def _conflict(*, test_succeeded: bool = False) -> NoReturn:
+    raise ModelControlConflictError(
+        "configuration_conflict",
+        test_succeeded=test_succeeded,
+    ) from None
 
 
-def _storage_unavailable() -> NoReturn:
-    raise ModelControlStorageError("storage_unavailable") from None
+def _storage_unavailable(*, test_succeeded: bool = False) -> NoReturn:
+    raise ModelControlStorageError(
+        "storage_unavailable",
+        test_succeeded=test_succeeded,
+    ) from None
 
 
 def _encryption_unavailable() -> NoReturn:
@@ -116,8 +126,11 @@ def _provider_failure(category: str) -> NoReturn:
     raise ModelControlProviderError(category) from None
 
 
-def _assistant_unavailable() -> NoReturn:
-    raise ModelControlAssistantError("assistant_unavailable") from None
+def _assistant_unavailable(*, test_succeeded: bool = False) -> NoReturn:
+    raise ModelControlAssistantError(
+        "assistant_unavailable",
+        test_succeeded=test_succeeded,
+    ) from None
 
 
 def _valid_assertion(
@@ -536,6 +549,7 @@ class ModelControlService:
         transferred = False
         outcome: ActiveConfigPointer | None = None
         failure: str | None = None
+        test_succeeded = False
         cancellation_received = False
         close_succeeded = True
         try:
@@ -559,6 +573,7 @@ class ModelControlService:
                 and verification.ok is True
                 and verification.category == "success"
             )
+            test_succeeded = exact_success
             if not exact_success:
                 category = "provider_unreachable"
                 if (
@@ -700,17 +715,17 @@ class ModelControlService:
         if cancellation_received:
             raise asyncio.CancelledError
         if not close_succeeded:
-            _assistant_unavailable()
+            _assistant_unavailable(test_succeeded=test_succeeded)
         if failure == "conflict":
-            _conflict()
+            _conflict(test_succeeded=test_succeeded)
         if failure == "storage":
-            _storage_unavailable()
+            _storage_unavailable(test_succeeded=test_succeeded)
         if failure == "assistant" or outcome is None and failure is None:
-            _assistant_unavailable()
+            _assistant_unavailable(test_succeeded=test_succeeded)
         if failure is not None:
             _provider_failure(failure)
         if outcome is None:
-            _assistant_unavailable()
+            _assistant_unavailable(test_succeeded=test_succeeded)
         return outcome
 
     async def reveal_key(

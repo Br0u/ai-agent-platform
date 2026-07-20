@@ -80,9 +80,7 @@ describe("routeRegistry", () => {
   });
 
   it("distinguishes CMS scaffolds from unavailable external capabilities", () => {
-    for (const path of ["/admin/docs", "/admin/analytics"]) {
-      expect(matchRoute(path)?.status).toBe("scaffold");
-    }
+    expect(matchRoute("/admin/analytics")?.status).toBe("scaffold");
 
     for (const path of [
       "/admin/openlab",
@@ -91,6 +89,15 @@ describe("routeRegistry", () => {
     ]) {
       expect(matchRoute(path)?.status).toBe("placeholder");
     }
+  });
+
+  it("registers the document management workspace as live", () => {
+    expect(matchRoute("/admin/docs")).toEqual({
+      path: "/admin/docs",
+      title: "文档管理",
+      group: "admin",
+      status: "live",
+    });
   });
 
   it("registers the pricing calculator as a live public route", () => {

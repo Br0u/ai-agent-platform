@@ -48,7 +48,8 @@ jobs:
         shell: bash
         run: |
           for name in POSTGRES_PASSWORD MIGRATOR_DATABASE_PASSWORD RUNTIME_DATABASE_PASSWORD BACKUP_DATABASE_PASSWORD \
-            AGNO_MIGRATOR_DATABASE_PASSWORD AGNO_DATABASE_PASSWORD OS_SECURITY_KEY \
+            AGNO_MIGRATOR_DATABASE_PASSWORD AGNO_DATABASE_PASSWORD \
+            AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD AGENT_CONTROL_DATABASE_PASSWORD OS_SECURITY_KEY \
             ASSISTANT_SESSION_SECRET ASSISTANT_RATE_LIMIT_SECRET \
             BETTER_AUTH_SECRET E2E_CUSTOMER_PASSWORD E2E_STAFF_PASSWORD E2E_ADMIN_PASSWORD \
             E2E_PENDING_CUSTOMER_SESSION_TOKEN E2E_DISABLED_CUSTOMER_SESSION_TOKEN \
@@ -72,10 +73,16 @@ jobs:
           echo "BACKUP_DATABASE_URL=postgresql://ai_agent_backup:${BACKUP_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci" >> "$GITHUB_ENV"
           agno_migrator_url="postgresql+psycopg_async://ai_agent_agno_migrator:${AGNO_MIGRATOR_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
           agno_runtime_url="postgresql+psycopg_async://ai_agent_agno:${AGNO_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
+          agent_control_migrator_url="postgresql+psycopg_async://ai_agent_control_migrator:${AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
+          agent_control_runtime_url="postgresql+psycopg_async://ai_agent_control:${AGENT_CONTROL_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
           echo "::add-mask::$agno_migrator_url"
           echo "::add-mask::$agno_runtime_url"
+          echo "::add-mask::$agent_control_migrator_url"
+          echo "::add-mask::$agent_control_runtime_url"
           echo "AGNO_MIGRATOR_DATABASE_URL=$agno_migrator_url" >> "$GITHUB_ENV"
           echo "AGNO_DATABASE_URL=$agno_runtime_url" >> "$GITHUB_ENV"
+          echo "AGENT_CONTROL_MIGRATOR_DATABASE_URL=$agent_control_migrator_url" >> "$GITHUB_ENV"
+          echo "AGENT_CONTROL_DATABASE_URL=$agent_control_runtime_url" >> "$GITHUB_ENV"
       - name: Create isolated CI databases
         shell: bash
         env:
@@ -104,6 +111,16 @@ jobs:
         run: |
           sh infra/postgres/03-agno-roles.sh
           sh infra/postgres/03-agno-roles.sh
+      - name: Bootstrap Agent control roles twice
+        shell: bash
+        env:
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_USER: ai_agent_owner
+          POSTGRES_DB: ai_agent_platform_identity_test_ci
+          AGENT_CONTROL_ROLE_SQL_FILE: infra/postgres/04-agent-control-roles.sql
+        run: |
+          sh infra/postgres/04-agent-control-roles.sh
+          sh infra/postgres/04-agent-control-roles.sh
       - name: Sync locked AgentOS dependencies
         run: uv --directory apps/agent sync --frozen
       - name: Run Agno migration twice
@@ -111,6 +128,11 @@ jobs:
         run: |
           uv --directory apps/agent run python -m agent_service.migrate
           uv --directory apps/agent run python -m agent_service.migrate
+      - name: Run Agent control migration twice
+        shell: bash
+        run: |
+          uv --directory apps/agent run python -m agent_service.model_config_migrate
+          uv --directory apps/agent run python -m agent_service.model_config_migrate
       - name: Verify Agno role-boundary and backup grants
         run: pnpm --filter @ai-agent-platform/database exec vitest run src/agno-role-boundary.integration.test.ts
       - name: Run AgentOS Python gates

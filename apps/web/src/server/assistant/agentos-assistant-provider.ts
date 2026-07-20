@@ -46,20 +46,60 @@ export class AgentOSAssistantProvider implements AssistantProvider {
     },
   ) {}
 
-  private async run(
+  private async *runStream(
     invocation: AssistantProviderInvocation,
     sessionId: string,
     includeSignal: boolean,
-  ): Promise<AssistantProviderReply> {
+  ): AsyncIterable<string> {
     const message = `当前页面路径（仅作位置上下文，不代表已读取页面内容）：${invocation.request.context.pathname}\n\n用户问题：${invocation.request.message}`;
-    const reply = await this.options.circuit.execute(() =>
-      this.options.runClient.runAgent({
+    const iterator = this.options.runClient
+      .runAgentStream({
         message,
         sessionId,
         ...(includeSignal ? { signal: invocation.signal } : {}),
-      }),
+      })
+      [Symbol.asyncIterator]();
+    type QueueItem =
+      | { kind: "chunk"; value: string }
+      | { kind: "done" }
+      | { kind: "error"; error: unknown };
+    const queue: QueueItem[] = [];
+    let wake: (() => void) | null = null;
+    const push = (item: QueueItem) => {
+      queue.push(item);
+      wake?.();
+      wake = null;
+    };
+    const take = async (): Promise<QueueItem> => {
+      while (queue.length === 0) {
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+      }
+      return queue.shift()!;
+    };
+    const execution = this.options.circuit.execute(async () => {
+      while (true) {
+        const next = await iterator.next();
+        if (next.done) return;
+        push({ kind: "chunk", value: next.value });
+      }
+    });
+    void execution.then(
+      () => push({ kind: "done" }),
+      (error: unknown) => push({ kind: "error", error }),
     );
-    return { content: reply.content, suggestedActions: [] };
+    try {
+      while (true) {
+        const item = await take();
+        if (item.kind === "done") return;
+        if (item.kind === "error") throw item.error;
+        yield item.value;
+      }
+    } finally {
+      await iterator.return?.();
+      await execution.catch(() => undefined);
+    }
   }
 
   private recordCleanupFailure(): void {
@@ -74,16 +114,21 @@ export class AgentOSAssistantProvider implements AssistantProvider {
     }
   }
 
-  async reply(
+  async *streamReply(
     invocation: AssistantProviderInvocation,
-  ): Promise<AssistantProviderReply> {
+  ): AsyncIterable<string> {
     if (invocation.session.kind === "persistent") {
-      return this.run(invocation, invocation.session.internalSessionId, true);
+      yield* this.runStream(
+        invocation,
+        invocation.session.internalSessionId,
+        true,
+      );
+      return;
     }
 
     const sessionId = (this.options.randomUUID ?? crypto.randomUUID)();
     try {
-      return await this.run(invocation, sessionId, false);
+      yield* this.runStream(invocation, sessionId, false);
     } finally {
       try {
         await this.options.runClient.deleteSession(sessionId);
@@ -91,5 +136,13 @@ export class AgentOSAssistantProvider implements AssistantProvider {
         this.recordCleanupFailure();
       }
     }
+  }
+
+  async reply(
+    invocation: AssistantProviderInvocation,
+  ): Promise<AssistantProviderReply> {
+    let content = "";
+    for await (const chunk of this.streamReply(invocation)) content += chunk;
+    return { content, suggestedActions: [] };
   }
 }

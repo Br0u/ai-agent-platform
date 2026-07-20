@@ -4,6 +4,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 import {
   ADMIN_MODEL_PROVIDERS,
+  isAdminModelId,
   parseAdminModelConfigRevisionInput,
   parseAdminModelConfigSaveInput,
   type AdminModelConfigRevisionInput,
@@ -137,7 +138,10 @@ export type AgentModelControlClientErrorCode =
   | AgentOSTransportErrorCode;
 
 export class AgentModelControlClientError extends Error {
-  constructor(readonly code: AgentModelControlClientErrorCode) {
+  constructor(
+    readonly code: AgentModelControlClientErrorCode,
+    readonly testResult?: "success",
+  ) {
     super("Agent model control request failed");
     Object.defineProperty(this, "name", {
       value: "AgentModelControlClientError",
@@ -414,10 +418,6 @@ function isSafeText(value: unknown, maximum: number): value is string {
   );
 }
 
-function isModelId(value: unknown): value is string {
-  return isSafeText(value, 128);
-}
-
 function isEndpointId(value: unknown): value is string {
   return typeof value === "string" && ENDPOINT_ID.test(value);
 }
@@ -457,7 +457,7 @@ function readMetadata(value: unknown): AgentModelConfigMetadata | null {
   if (
     snapshot === null ||
     !isProvider(snapshot.provider) ||
-    !isModelId(snapshot.modelId) ||
+    !isAdminModelId(snapshot.modelId) ||
     !isEndpointId(snapshot.endpointId) ||
     typeof snapshot.apiKeyLastFour !== "string" ||
     Array.from(snapshot.apiKeyLastFour).length !== 4 ||
@@ -515,7 +515,7 @@ function readBootstrap(
   if (
     snapshot === null ||
     !isProvider(snapshot.provider) ||
-    !isModelId(snapshot.modelId) ||
+    !isAdminModelId(snapshot.modelId) ||
     snapshot.readOnly !== true
   ) {
     return null;
@@ -618,7 +618,7 @@ function readRuntimeResponse(value: unknown): AgentModelRuntimeResponse | null {
       activationVersion: null,
     };
   }
-  if (!isProvider(snapshot.provider) || !isModelId(snapshot.modelId))
+  if (!isProvider(snapshot.provider) || !isAdminModelId(snapshot.modelId))
     return null;
   if (snapshot.source === "deployment") {
     if (
@@ -670,6 +670,25 @@ function readErrorResponse(
     return null;
   }
   return snapshot.error as AgentModelControlDomainErrorCode;
+}
+
+function readActivationErrorResponse(
+  status: number,
+  value: unknown,
+): AgentModelControlClientError | null {
+  const snapshot = readExactDataRecord(value, [
+    ["error"],
+    ["error", "testResult"],
+  ]);
+  if (snapshot === null) return null;
+  const code = readErrorResponse(status, { error: snapshot.error });
+  if (code === null) return null;
+  if (snapshot.testResult === undefined) {
+    return new AgentModelControlClientError(code);
+  }
+  return snapshot.testResult === "success"
+    ? new AgentModelControlClientError(code, "success")
+    : null;
 }
 
 function parseJson(bytes: Uint8Array): unknown {
@@ -736,6 +755,10 @@ export function createAgentModelControlClient(options: {
     body?: string;
     timeoutMs: number;
     privateNoStore?: boolean;
+    readError?(
+      status: number,
+      value: unknown,
+    ): AgentModelControlClientError | null;
     read(value: unknown): T | null;
   }): Promise<T> {
     try {
@@ -757,6 +780,11 @@ export function createAgentModelControlClient(options: {
       }
       const parsed = parseJson(response.body);
       if (response.status !== 200) {
+        if (requestOptions.readError !== undefined) {
+          const error = requestOptions.readError(response.status, parsed);
+          if (error === null) invalidResponse();
+          throw error;
+        }
         const errorCode = readErrorResponse(response.status, parsed);
         if (errorCode === null) invalidResponse();
         throw new AgentModelControlClientError(errorCode);
@@ -936,6 +964,7 @@ export function createAgentModelControlClient(options: {
           }),
           body: mutationBody({ revision: input.revision }),
           timeoutMs: ACTIVATION_TIMEOUT_MS,
+          readError: readActivationErrorResponse,
           read(value): AgentModelActivationResponse | null {
             const snapshot = readExactDataRecord(value, [
               ["version", "provider", "configRevision", "activationVersion"],

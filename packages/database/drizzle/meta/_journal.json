@@ -43,6 +43,20 @@
       "when": 1783854600000,
       "tag": "0005_identity_pagination_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784480751831,
+      "tag": "0006_cms_documents",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784480751832,
+      "tag": "0007_cms_document_seed",
+      "breakpoints": true
     }
   ]
 }

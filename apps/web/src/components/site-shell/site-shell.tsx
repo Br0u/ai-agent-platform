@@ -32,6 +32,7 @@ const ADMIN_PERMISSION_KEYS = new Set([
   ),
   "admin:assistant:configure",
   "admin:assistant:secret:reveal",
+  "admin:docs:delete",
 ]);
 const CUSTOMER_STATUSES = new Set(["pending_review", "active", "rejected"]);
 const EMAIL_VERIFICATION_STATUSES = new Set([

@@ -27,8 +27,9 @@
 
 .floating-assistant__panel {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   width: min(380px, calc(100vw - 32px));
-  max-height: min(620px, calc(100dvh - 104px));
+  height: min(620px, calc(100dvh - 104px));
   overflow: hidden;
   border: 1px solid rgb(196 207 237 / 54%);
   border-radius: 28px;
@@ -114,12 +115,22 @@
   font-size: 11px;
 }
 
-.floating-assistant__identity p span {
+.floating-assistant__identity p > span {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #95a0b4;
-  box-shadow: 0 0 0 3px rgb(149 160 180 / 15%);
+  background: #b38225;
+  box-shadow: 0 0 0 3px rgb(179 130 37 / 15%);
+}
+
+.floating-assistant__identity p[data-capability="available"] > span {
+  background: #27826b;
+  box-shadow: 0 0 0 3px rgb(39 130 107 / 15%);
+}
+
+.floating-assistant__identity p[data-capability="degraded"] > span {
+  background: #b94b5a;
+  box-shadow: 0 0 0 3px rgb(185 75 90 / 15%);
 }
 
 .floating-assistant__header-actions {
@@ -151,7 +162,7 @@
 
 .floating-assistant__messages {
   display: flex;
-  min-height: 190px;
+  min-height: 0;
   max-height: 286px;
   flex-direction: column;
   gap: 12px;
@@ -168,13 +179,16 @@
 
 .floating-assistant__message {
   display: flex;
+  width: fit-content;
   max-width: 88%;
   align-items: flex-start;
+  align-self: flex-start;
   gap: 9px;
 }
 
 .floating-assistant__message--user {
   align-self: flex-end;
+  margin-inline-start: auto;
 }
 
 .floating-assistant__message-avatar {
@@ -403,7 +417,7 @@
     bottom: 0;
     left: 0;
     width: 100vw;
-    max-height: 75dvh;
+    height: 75dvh;
     border-right: 0;
     border-bottom: 0;
     border-left: 0;

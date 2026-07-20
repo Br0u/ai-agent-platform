@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   ADMIN_MODEL_PROVIDERS,
+  isAdminModelId,
   isAdminModelConfigRevisionInput,
   isAdminModelConfigSaveInput,
   isAdminModelConfigSnapshot,
@@ -139,6 +140,14 @@ const invalidSnapshotMutations: Array<
 ];
 
 describe("admin model configuration metadata contract", () => {
+  it("exports the canonical Model ID safety contract", () => {
+    expect(isAdminModelId("org/model.v1:chat_test-prod")).toBe(true);
+    expect(isAdminModelId("model-😀")).toBe(true);
+    expect(isAdminModelId("https://private.example/model")).toBe(false);
+    expect(isAdminModelId("vendor//model")).toBe(false);
+    expect(isAdminModelId(`bad-${String.fromCharCode(0xd800)}`)).toBe(false);
+  });
+
   it("exports exactly the six supported Providers in display order", () => {
     expect(ADMIN_MODEL_PROVIDERS).toEqual(PROVIDERS);
     expectTypeOf<AdminModelProvider>().toEqualTypeOf<

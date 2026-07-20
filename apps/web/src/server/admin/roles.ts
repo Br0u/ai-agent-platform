@@ -1,9 +1,21 @@
 import "server-only";
 
-import { and, asc, count, eq, ilike, inArray } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  eq,
+  ilike,
+  inArray,
+  isNotNull,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 
 import {
   auditLogs,
+  ACCESS_CONTROL_PERMISSION_MUTATION_LOCK_KEY,
   getDatabase,
   permissions,
   rolePermissions,
@@ -39,6 +51,7 @@ export class AdminRoleError extends Error {
       | "AUTH_PERMISSION_DENIED"
       | "ROLE_REALM_INVALID"
       | "ROLE_NOT_FOUND"
+      | "ROLE_PERMISSION_NON_DELEGABLE"
       | "ROLE_SUPER_ADMIN_REQUIRED"
       | "ROLE_SUPER_ADMIN_BASELINE_REQUIRED",
   ) {
@@ -61,9 +74,10 @@ export function createRoleQueryService(repository: RoleQueryRepository) {
 }
 
 export type RolePermissionRepository = {
+  acquirePermissionMutationLock(): Promise<void>;
   hasPermission(userId: string, permission: string): Promise<boolean>;
   findActorRole(userId: string): Promise<"admin" | "super_admin" | null>;
-  findRole(id: string): Promise<{
+  lockRole(id: string): Promise<{
     id: string;
     name: string;
     realmScope: "customer" | "workforce" | "global";
@@ -94,15 +108,26 @@ export function createRolePermissionService(dependencies: {
         .filter(Boolean)
         .sort();
       await dependencies.repository.transaction(async (repository) => {
+        await repository.acquirePermissionMutationLock();
         if (!(await repository.hasPermission(actor.userId, "admin:roles")))
           throw new AdminRoleError("AUTH_PERMISSION_DENIED");
         if ((await repository.findActorRole(actor.userId)) !== "super_admin")
           throw new AdminRoleError("ROLE_SUPER_ADMIN_REQUIRED");
-        const role = await repository.findRole(roleId);
+        const role = await repository.lockRole(roleId);
         if (!role) throw new AdminRoleError("ROLE_NOT_FOUND");
         if (role.realmScope !== "workforce")
           throw new AdminRoleError("ROLE_REALM_INVALID");
-        if (role.name === "super_admin" && !normalized.includes("admin:roles"))
+        if (
+          role.name !== "super_admin" &&
+          normalized.includes("admin:docs:delete")
+        )
+          throw new AdminRoleError("ROLE_PERMISSION_NON_DELEGABLE");
+        if (
+          role.name === "super_admin" &&
+          !["admin:roles", "admin:docs:delete"].every((permission) =>
+            normalized.includes(permission),
+          )
+        )
           throw new AdminRoleError("ROLE_SUPER_ADMIN_BASELINE_REQUIRED");
         await repository.replacePermissions(roleId, normalized);
         await repository.writeAudit({
@@ -123,10 +148,17 @@ export function resolvePrivilegedActorRole(
   return null;
 }
 
-function createRolePermissionRepository(
+export function createDatabaseRolePermissionRepository(
   executor: ReturnType<typeof getDatabase>,
 ): RolePermissionRepository {
   return {
+    async acquirePermissionMutationLock() {
+      await executor.execute(
+        sql`select pg_advisory_xact_lock(${sql.raw(
+          String(ACCESS_CONTROL_PERMISSION_MUTATION_LOCK_KEY),
+        )})`,
+      );
+    },
     async hasPermission(userId, permission) {
       const rows = await executor
         .select({ id: userRoles.id })
@@ -158,7 +190,7 @@ function createRolePermissionRepository(
         .limit(1);
       return rows.length === 1;
     },
-    async findRole(id) {
+    async lockRole(id) {
       const [row] = await executor
         .select({
           id: roles.id,
@@ -167,7 +199,8 @@ function createRolePermissionRepository(
         })
         .from(roles)
         .where(eq(roles.id, id))
-        .limit(1);
+        .limit(1)
+        .for("update");
       return row ?? null;
     },
     async findActorRole(userId) {
@@ -193,21 +226,50 @@ function createRolePermissionRepository(
       return resolvePrivilegedActorRole(rows.map(({ name }) => name));
     },
     async replacePermissions(roleId, permissionKeys) {
-      const found = permissionKeys.length
-        ? await executor
-            .select({ id: permissions.id })
-            .from(permissions)
-            .where(inArray(permissions.key, permissionKeys))
-        : [];
+      const lockedPermissions = await executor
+        .select({ id: permissions.id, key: permissions.key })
+        .from(permissions)
+        .leftJoin(
+          rolePermissions,
+          and(
+            eq(rolePermissions.permissionId, permissions.id),
+            eq(rolePermissions.roleId, roleId),
+          ),
+        )
+        .where(
+          permissionKeys.length
+            ? or(
+                inArray(permissions.key, permissionKeys),
+                isNotNull(rolePermissions.id),
+              )
+            : isNotNull(rolePermissions.id),
+        )
+        .orderBy(asc(permissions.id))
+        .for("share", { of: permissions });
+      const requestedKeys = new Set(permissionKeys);
+      const found = lockedPermissions.filter(({ key }) =>
+        requestedKeys.has(key),
+      );
       if (found.length !== permissionKeys.length)
         throw new AdminRoleError("AUTH_PERMISSION_DENIED");
-      await executor
-        .delete(rolePermissions)
-        .where(eq(rolePermissions.roleId, roleId));
+      await executor.delete(rolePermissions).where(
+        found.length
+          ? and(
+              eq(rolePermissions.roleId, roleId),
+              notInArray(
+                rolePermissions.permissionId,
+                found.map(({ id }) => id),
+              ),
+            )
+          : eq(rolePermissions.roleId, roleId),
+      );
       if (found.length)
         await executor
           .insert(rolePermissions)
-          .values(found.map(({ id }) => ({ roleId, permissionId: id })));
+          .values(found.map(({ id }) => ({ roleId, permissionId: id })))
+          .onConflictDoNothing({
+            target: [rolePermissions.roleId, rolePermissions.permissionId],
+          });
     },
     async writeAudit(input) {
       await executor.insert(auditLogs).values({
@@ -317,7 +379,7 @@ export function createDefaultRolePermissionService() {
       transaction: (work) =>
         database.transaction((tx) =>
           work(
-            createRolePermissionRepository(
+            createDatabaseRolePermissionRepository(
               tx as unknown as ReturnType<typeof getDatabase>,
             ),
           ),
