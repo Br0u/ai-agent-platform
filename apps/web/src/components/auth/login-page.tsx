@@ -2,6 +2,8 @@ import Link from "next/link";
 import { QrCode, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 
+import "./login-page.css";
+
 export type LoginPageProps = {
   children: ReactNode;
   intro: string;
