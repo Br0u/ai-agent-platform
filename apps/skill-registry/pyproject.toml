@@ -1,0 +1,43 @@
+[project]
+name = "skill-registry"
+version = "0.1.0"
+description = "Reviewed skill registry service"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.139.0",
+    "psycopg[binary]>=3.3.4",
+    "pydantic-settings>=2.14.2",
+    "skill-core",
+    "uvicorn>=0.51.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.19,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.15.21",
+]
+
+[tool.uv.sources]
+skill-core = { path = "../../packages/skill-core" }
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["test_config", "test_schema", "test_migrate", "test_migrate_postgres"]
+disallow_incomplete_defs = false
+disallow_untyped_defs = false

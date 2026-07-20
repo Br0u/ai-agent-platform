@@ -1,0 +1,403 @@
+"""Literal schema version one for the isolated reviewed-skill registry."""
+
+SKILL_REGISTRY_SCHEMA_VERSION = 1
+
+REQUIRED_TABLE_NAMES = frozenset(
+    {
+        "skills",
+        "skill_revisions",
+        "skill_revision_artifacts",
+        "skill_revision_files",
+        "skill_control_events",
+    }
+)
+
+EXPECTED_TABLE_OWNERS = frozenset(
+    (table_name, "ai_agent_skill_registry_migrator")
+    for table_name in REQUIRED_TABLE_NAMES | {"schema_versions"}
+)
+
+EXPECTED_MANAGER_TABLE_GRANTS = frozenset(
+    (table_name, privilege, False)
+    for table_name in REQUIRED_TABLE_NAMES
+    for privilege in ("INSERT", "SELECT")
+)
+
+EXPECTED_MANAGER_COLUMN_GRANTS = frozenset(
+    {
+        ("skills", "archived_at", "UPDATE", False),
+        ("skill_revisions", "state", "UPDATE", False),
+        ("skill_revisions", "reviewed_by", "UPDATE", False),
+        ("skill_revisions", "reviewed_at", "UPDATE", False),
+    }
+)
+
+EXPECTED_BACKUP_GRANTS = frozenset(
+    (table_name, "SELECT", False) for table_name in REQUIRED_TABLE_NAMES | {"schema_versions"}
+)
+
+EXPECTED_SCHEMA_GRANTS = frozenset(
+    {
+        ("ai_agent_backup", "USAGE", False),
+        ("ai_agent_skill_registry_manager", "USAGE", False),
+        ("ai_agent_skill_registry_migrator", "CREATE", False),
+        ("ai_agent_skill_registry_migrator", "USAGE", False),
+    }
+)
+
+VERIFY_SCHEMA_OWNER_SQL = """SELECT pg_get_userbyid(n.nspowner)::text
+FROM pg_namespace AS n
+WHERE n.nspname = 'skill_registry'
+"""
+
+PREPARE_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS skill_registry.schema_versions (
+  version smallint PRIMARY KEY CHECK (version >= 1),
+  applied_at timestamptz NOT NULL DEFAULT now()
+);
+"""
+
+SELECT_SCHEMA_VERSION_SQL = """
+SELECT version
+FROM skill_registry.schema_versions
+WHERE version = 1
+"""
+
+SCHEMA_VERSION_1_SQL = """
+CREATE TABLE skill_registry.skills (
+  id uuid PRIMARY KEY,
+  slug varchar(128) NOT NULL UNIQUE
+    CHECK (slug ~ '^[a-z0-9][a-z0-9-]{0,127}$'),
+  created_by uuid NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  archived_at timestamptz
+);
+
+CREATE TABLE skill_registry.skill_revisions (
+  id uuid PRIMARY KEY,
+  skill_id uuid NOT NULL REFERENCES skill_registry.skills(id) ON DELETE RESTRICT,
+  revision_no bigint NOT NULL CHECK (revision_no >= 1),
+  state varchar(24) NOT NULL
+    CHECK (state IN ('pending_review','published','rejected','archived')),
+  source_type varchar(16) NOT NULL
+    CHECK (source_type IN ('upload','github','gitlab','gitcode')),
+  source_url text,
+  source_ref varchar(255),
+  source_commit varchar(128),
+  manifest jsonb NOT NULL,
+  created_by uuid NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  reviewed_by uuid,
+  reviewed_at timestamptz,
+  UNIQUE (skill_id, revision_no),
+  UNIQUE (id, skill_id),
+  CHECK (
+    (state = 'pending_review' AND reviewed_by IS NULL AND reviewed_at IS NULL)
+    OR (state <> 'pending_review' AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL)
+  ),
+  CHECK (
+    (source_type = 'upload' AND source_url IS NULL)
+    OR (source_type <> 'upload' AND source_url IS NOT NULL)
+  )
+);
+
+CREATE TABLE skill_registry.skill_revision_artifacts (
+  revision_id uuid PRIMARY KEY,
+  skill_id uuid NOT NULL,
+  artifact_sha256 char(64) NOT NULL
+    CHECK (artifact_sha256 ~ '^[0-9a-f]{64}$'),
+  compressed_size integer NOT NULL
+    CHECK (compressed_size BETWEEN 1 AND 5242880),
+  extracted_size integer NOT NULL
+    CHECK (extracted_size BETWEEN 1 AND 20971520),
+  file_count smallint NOT NULL
+    CHECK (file_count BETWEEN 1 AND 128),
+  archive_bytes bytea NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (revision_id, skill_id)
+    REFERENCES skill_registry.skill_revisions(id, skill_id) ON DELETE RESTRICT,
+  UNIQUE (skill_id, artifact_sha256),
+  CHECK (octet_length(archive_bytes) = compressed_size)
+);
+
+CREATE TABLE skill_registry.skill_revision_files (
+  revision_id uuid NOT NULL
+    REFERENCES skill_registry.skill_revisions(id) ON DELETE RESTRICT,
+  path varchar(512) NOT NULL,
+  file_sha256 char(64) NOT NULL
+    CHECK (file_sha256 ~ '^[0-9a-f]{64}$'),
+  size integer NOT NULL CHECK (size BETWEEN 0 AND 2097152),
+  media_type varchar(255),
+  PRIMARY KEY (revision_id, path),
+  CHECK (path <> '' AND path !~ '(^|/)\\.\\.?(/|$)')
+);
+
+CREATE TABLE skill_registry.skill_control_events (
+  id uuid PRIMARY KEY,
+  request_id uuid NOT NULL,
+  assertion_nonce uuid UNIQUE,
+  actor varchar(255) NOT NULL,
+  event_type varchar(64) NOT NULL
+    CHECK (event_type IN (
+      'skill_created',
+      'revision_created',
+      'revision_published',
+      'revision_rejected',
+      'skill_archived',
+      'skill_read',
+      'revision_read'
+    )),
+  target_id uuid NOT NULL,
+  result_code varchar(32) NOT NULL
+    CHECK (result_code IN ('ok','replay','error')),
+  error_code varchar(64)
+    CHECK (error_code IS NULL OR error_code ~ '^[a-z0-9][a-z0-9_]{0,63}$'),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (event_type IN ('skill_read','revision_read') OR assertion_nonce IS NOT NULL),
+  CHECK (
+    (result_code = 'error' AND error_code IS NOT NULL)
+    OR (result_code <> 'error' AND error_code IS NULL)
+  )
+);
+
+ALTER TABLE skill_registry.skills OWNER TO ai_agent_skill_registry_migrator;
+ALTER TABLE skill_registry.skill_revisions OWNER TO ai_agent_skill_registry_migrator;
+ALTER TABLE skill_registry.skill_revision_artifacts
+  OWNER TO ai_agent_skill_registry_migrator;
+ALTER TABLE skill_registry.skill_revision_files
+  OWNER TO ai_agent_skill_registry_migrator;
+ALTER TABLE skill_registry.skill_control_events
+  OWNER TO ai_agent_skill_registry_migrator;
+
+CREATE OR REPLACE FUNCTION skill_registry.guard_skill_update()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id
+    OR NEW.slug IS DISTINCT FROM OLD.slug
+    OR NEW.created_by IS DISTINCT FROM OLD.created_by
+    OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'skill identity fields are immutable'
+      USING ERRCODE = '42501';
+  END IF;
+  IF OLD.archived_at IS NOT NULL OR NEW.archived_at IS NULL THEN
+    RAISE EXCEPTION 'skill may be archived only once'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION skill_registry.guard_revision_update()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id
+    OR NEW.skill_id IS DISTINCT FROM OLD.skill_id
+    OR NEW.revision_no IS DISTINCT FROM OLD.revision_no
+    OR NEW.source_type IS DISTINCT FROM OLD.source_type
+    OR NEW.source_url IS DISTINCT FROM OLD.source_url
+    OR NEW.source_ref IS DISTINCT FROM OLD.source_ref
+    OR NEW.source_commit IS DISTINCT FROM OLD.source_commit
+    OR NEW.manifest IS DISTINCT FROM OLD.manifest
+    OR NEW.created_by IS DISTINCT FROM OLD.created_by
+    OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'skill revision body is immutable'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF OLD.state = 'pending_review' AND NEW.state IN ('published', 'rejected') THEN
+    IF NEW.reviewed_by IS NULL OR NEW.reviewed_at IS NULL THEN
+      RAISE EXCEPTION 'review actor and timestamp are required'
+        USING ERRCODE = '23514';
+    END IF;
+  ELSIF OLD.state = 'published' AND NEW.state = 'archived' THEN
+    IF NEW.reviewed_by IS DISTINCT FROM OLD.reviewed_by
+      OR NEW.reviewed_at IS DISTINCT FROM OLD.reviewed_at THEN
+      RAISE EXCEPTION 'review metadata is immutable after review'
+        USING ERRCODE = '42501';
+    END IF;
+  ELSE
+    RAISE EXCEPTION 'invalid skill revision state transition'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION skill_registry.deny_append_only_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION '% is append-only', TG_TABLE_NAME
+    USING ERRCODE = '42501';
+END;
+$$;
+
+ALTER FUNCTION skill_registry.guard_skill_update()
+  OWNER TO ai_agent_skill_registry_migrator;
+ALTER FUNCTION skill_registry.guard_revision_update()
+  OWNER TO ai_agent_skill_registry_migrator;
+ALTER FUNCTION skill_registry.deny_append_only_mutation()
+  OWNER TO ai_agent_skill_registry_migrator;
+REVOKE ALL ON FUNCTION skill_registry.guard_skill_update() FROM PUBLIC;
+REVOKE ALL ON FUNCTION skill_registry.guard_revision_update() FROM PUBLIC;
+REVOKE ALL ON FUNCTION skill_registry.deny_append_only_mutation() FROM PUBLIC;
+
+CREATE TRIGGER skills_guard_update
+BEFORE UPDATE ON skill_registry.skills
+FOR EACH ROW EXECUTE FUNCTION skill_registry.guard_skill_update();
+
+CREATE TRIGGER skill_revisions_guard_update
+BEFORE UPDATE ON skill_registry.skill_revisions
+FOR EACH ROW EXECUTE FUNCTION skill_registry.guard_revision_update();
+
+CREATE TRIGGER skill_revision_artifacts_append_only
+BEFORE UPDATE OR DELETE ON skill_registry.skill_revision_artifacts
+FOR EACH ROW EXECUTE FUNCTION skill_registry.deny_append_only_mutation();
+
+CREATE TRIGGER skill_revision_files_append_only
+BEFORE UPDATE OR DELETE ON skill_registry.skill_revision_files
+FOR EACH ROW EXECUTE FUNCTION skill_registry.deny_append_only_mutation();
+
+CREATE TRIGGER skill_control_events_append_only
+BEFORE UPDATE OR DELETE ON skill_registry.skill_control_events
+FOR EACH ROW EXECUTE FUNCTION skill_registry.deny_append_only_mutation();
+
+REVOKE ALL ON SCHEMA skill_registry FROM PUBLIC;
+REVOKE ALL ON SCHEMA skill_registry
+  FROM ai_agent_skill_registry_manager,
+       ai_agent_skill_registry_runtime,
+       ai_agent_backup,
+       ai_agent_migrator,
+       ai_agent_runtime,
+       ai_agent_agno_migrator,
+       ai_agent_agno,
+       ai_agent_control_migrator,
+       ai_agent_control;
+REVOKE ALL ON ALL TABLES IN SCHEMA skill_registry FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA skill_registry
+  FROM ai_agent_skill_registry_manager,
+       ai_agent_skill_registry_runtime,
+       ai_agent_backup,
+       ai_agent_migrator,
+       ai_agent_runtime,
+       ai_agent_agno_migrator,
+       ai_agent_agno,
+       ai_agent_control_migrator,
+       ai_agent_control;
+
+GRANT USAGE ON SCHEMA skill_registry TO ai_agent_skill_registry_manager;
+GRANT SELECT ON
+  skill_registry.skills,
+  skill_registry.skill_revisions,
+  skill_registry.skill_revision_artifacts,
+  skill_registry.skill_revision_files,
+  skill_registry.skill_control_events
+TO ai_agent_skill_registry_manager;
+GRANT INSERT ON
+  skill_registry.skills,
+  skill_registry.skill_revisions,
+  skill_registry.skill_revision_artifacts,
+  skill_registry.skill_revision_files,
+  skill_registry.skill_control_events
+TO ai_agent_skill_registry_manager;
+GRANT UPDATE (archived_at) ON skill_registry.skills
+  TO ai_agent_skill_registry_manager;
+GRANT UPDATE (state, reviewed_by, reviewed_at)
+  ON skill_registry.skill_revisions
+  TO ai_agent_skill_registry_manager;
+
+GRANT USAGE ON SCHEMA skill_registry TO ai_agent_backup;
+GRANT SELECT ON ALL TABLES IN SCHEMA skill_registry TO ai_agent_backup;
+
+INSERT INTO skill_registry.schema_versions (version)
+VALUES (1)
+ON CONFLICT (version) DO NOTHING;
+"""
+
+VERIFY_TABLES_SQL = """SELECT
+  c.relname::text,
+  pg_get_userbyid(c.relowner)::text
+FROM pg_class AS c
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+WHERE n.nspname = 'skill_registry'
+  AND c.relkind IN ('r', 'p')
+ORDER BY c.relname
+"""
+
+VERIFY_MANAGER_TABLE_GRANTS_SQL = """SELECT
+  table_name::text,
+  privilege_type::text,
+  is_grantable = 'YES'
+FROM information_schema.role_table_grants
+WHERE table_schema = 'skill_registry'
+  AND grantee = 'ai_agent_skill_registry_manager'
+ORDER BY table_name, privilege_type
+"""
+
+VERIFY_MANAGER_COLUMN_GRANTS_SQL = """SELECT
+  table_name::text,
+  column_name::text,
+  privilege_type::text,
+  is_grantable = 'YES'
+FROM information_schema.role_column_grants
+WHERE table_schema = 'skill_registry'
+  AND grantee = 'ai_agent_skill_registry_manager'
+  AND privilege_type = 'UPDATE'
+ORDER BY table_name, column_name
+"""
+
+VERIFY_BACKUP_GRANTS_SQL = """SELECT
+  table_name::text,
+  privilege_type::text,
+  is_grantable = 'YES'
+FROM information_schema.role_table_grants
+WHERE table_schema = 'skill_registry'
+  AND grantee = 'ai_agent_backup'
+ORDER BY table_name, privilege_type
+"""
+
+VERIFY_FORBIDDEN_GRANTS_SQL = """SELECT
+  c.relname::text,
+  CASE WHEN acl.grantee = 0 THEN 'PUBLIC'
+       ELSE pg_get_userbyid(acl.grantee)::text END,
+  acl.privilege_type::text,
+  acl.is_grantable
+FROM pg_class AS c
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+CROSS JOIN LATERAL aclexplode(
+  COALESCE(c.relacl, acldefault('r', c.relowner))
+) AS acl
+WHERE n.nspname = 'skill_registry'
+  AND c.relkind IN ('r', 'p')
+  AND (
+    acl.grantee = 0
+    OR pg_get_userbyid(acl.grantee)::text IN (
+      'ai_agent_skill_registry_runtime',
+      'ai_agent_migrator',
+      'ai_agent_runtime',
+      'ai_agent_agno_migrator',
+      'ai_agent_agno',
+      'ai_agent_control_migrator',
+      'ai_agent_control'
+    )
+  )
+ORDER BY c.relname, 2, acl.privilege_type
+"""
+
+VERIFY_SCHEMA_GRANTS_SQL = """SELECT
+  CASE WHEN acl.grantee = 0 THEN 'PUBLIC'
+       ELSE pg_get_userbyid(acl.grantee)::text END,
+  acl.privilege_type::text,
+  acl.is_grantable
+FROM pg_namespace AS n
+CROSS JOIN LATERAL aclexplode(
+  COALESCE(n.nspacl, acldefault('n', n.nspowner))
+) AS acl
+WHERE n.nspname = 'skill_registry'
+ORDER BY 1, acl.privilege_type
+"""
