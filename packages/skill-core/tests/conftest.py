@@ -129,6 +129,14 @@ def zero_local_member_metadata(archive: bytes, member_name: str) -> bytes:
     return bytes(patched)
 
 
+def set_unsupported_extract_version(archive: bytes, version: int = 255) -> bytes:
+    patched = bytearray(archive)
+    central = patched.find(b"PK\x01\x02")
+    assert central >= 0
+    struct.pack_into("<H", patched, central + 6, version)
+    return bytes(patched)
+
+
 @pytest.fixture
 def zip_builder():
     return build_zip

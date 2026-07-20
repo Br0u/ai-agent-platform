@@ -70,8 +70,8 @@ class SkillFinding:
 
 
 @dataclass(frozen=True, slots=True)
-class CanonicalSkillPackage:
-    """Canonical bytes plus immutable data derived from one skill ZIP."""
+class CanonicalSkillArchive:
+    """Canonical bytes derived from one skill ZIP before manifest validation."""
 
     slug: str
     archive: bytes
@@ -79,8 +79,23 @@ class CanonicalSkillPackage:
     compressed_size: int
     extracted_size: int
     files: tuple[SkillFile, ...]
-    manifest: SkillManifest | None
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalSkillPackage:
+    """Canonical bytes plus validated immutable skill metadata."""
+
+    slug: str
+    archive: bytes
+    sha256: str
+    compressed_size: int
+    extracted_size: int
+    files: tuple[SkillFile, ...]
+    manifest: SkillManifest
     findings: tuple[SkillFinding, ...]
+
+
+SkillPackageView: TypeAlias = CanonicalSkillArchive | CanonicalSkillPackage
 
 
 @dataclass(frozen=True, slots=True)

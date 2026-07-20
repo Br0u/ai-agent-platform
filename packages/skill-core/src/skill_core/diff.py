@@ -5,17 +5,17 @@ from __future__ import annotations
 import difflib
 
 from .types import (
-    CanonicalSkillPackage,
     SkillDiffStatus,
     SkillFile,
     SkillFileDiff,
     SkillPackageDiff,
+    SkillPackageView,
 )
 
 MAX_DIFF_BYTES = 512 * 1024
 
 
-def diff_packages(before: CanonicalSkillPackage, after: CanonicalSkillPackage) -> SkillPackageDiff:
+def diff_packages(before: SkillPackageView, after: SkillPackageView) -> SkillPackageDiff:
     """Compare package files without mutating either revision."""
 
     before_files = {file.path: file for file in before.files}

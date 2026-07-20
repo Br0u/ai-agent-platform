@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import FrozenInstanceError, replace
+from typing import get_type_hints
 
 import pytest
 
+import skill_core
 from skill_core.archive import SkillPackageError, canonicalize_skill_archive
 from skill_core.manifest import parse_skill_manifest
-from skill_core.types import FrozenJsonArray, FrozenJsonObject, SkillFile
+from skill_core.types import (
+    CanonicalSkillPackage,
+    FrozenJsonArray,
+    FrozenJsonObject,
+    SkillFile,
+    SkillManifest,
+)
 
 
 def package_from(zip_builder, files: dict[str, bytes]):
@@ -58,6 +66,25 @@ Use the references.
     assert manifest.metadata == FrozenJsonObject((("stable", True), ("version", "1.0")))
     with pytest.raises(FrozenInstanceError):
         manifest.name = "changed"  # type: ignore[misc]
+
+
+def test_public_canonicalize_skill_zip_returns_package_with_manifest(zip_builder) -> None:
+    package = skill_core.canonicalize_skill_zip(zip_builder())
+    assert package.manifest.name == "demo-skill"
+    assert package.manifest.description == "A demo skill."
+
+
+def test_public_canonicalize_skill_zip_rejects_invalid_manifest(zip_builder) -> None:
+    archive = zip_builder(
+        {"demo-skill/SKILL.md": (b"---\nname: wrong-name\ndescription: Invalid.\n---\n# Invalid\n")}
+    )
+    with pytest.raises(SkillPackageError) as caught:
+        skill_core.canonicalize_skill_zip(archive)
+    assert caught.value.code == "MANIFEST_INVALID"
+
+
+def test_canonical_package_manifest_type_is_not_optional() -> None:
+    assert get_type_hints(CanonicalSkillPackage)["manifest"] is SkillManifest
 
 
 def test_frozen_metadata_preserves_empty_object_and_array_shapes(zip_builder) -> None:

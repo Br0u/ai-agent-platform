@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import random
 import stat
 import struct
 import tarfile
@@ -18,6 +19,7 @@ from conftest import (
     mark_first_local_entry_encrypted,
     replace_zip_name_byte,
     replace_zip_name_occurrence,
+    set_unsupported_extract_version,
     zero_local_member_metadata,
 )
 from skill_core.archive import SkillPackageError, canonicalize_skill_archive
@@ -62,6 +64,24 @@ def test_rejects_nul_in_central_directory_path(zip_builder) -> None:
     archive = zip_builder({"demo-skill/SKILLXmd": DEFAULT_SKILL_MD})
     archive = replace_zip_name_occurrence(archive, b"SKILLXmd", b"SKILL\x00md", 1)
     assert_archive_error(archive, "ARCHIVE_UNSAFE_PATH")
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["demo-skill/control-\x1f.txt", "demo-skill/control-\u202e.txt"],
+)
+def test_rejects_ascii_and_unicode_control_characters_in_paths(zip_builder, path: str) -> None:
+    archive = zip_builder({"demo-skill/SKILL.md": DEFAULT_SKILL_MD, path: b"x"})
+    assert_archive_error(archive, "ARCHIVE_UNSAFE_PATH")
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["demo-skill/.git/config", "demo-skill/vendor/nested/.GIT/hooks/pre-commit"],
+)
+def test_rejects_git_metadata_path_components(zip_builder, path: str) -> None:
+    archive = zip_builder({"demo-skill/SKILL.md": DEFAULT_SKILL_MD, path: b"x"})
+    assert_archive_error(archive, "ARCHIVE_GIT_METADATA")
 
 
 @pytest.mark.parametrize(
@@ -133,6 +153,16 @@ def test_rejects_links_and_special_files(zip_builder, mode: int, extra: bytes) -
     assert_archive_error(archive, "ARCHIVE_UNSUPPORTED_FILE")
 
 
+@pytest.mark.parametrize("permission", [stat.S_ISUID, stat.S_ISGID, stat.S_ISVTX])
+def test_rejects_setuid_setgid_and_sticky_permission_bits(zip_builder, permission: int) -> None:
+    path = "demo-skill/script.py"
+    archive = zip_builder(
+        {"demo-skill/SKILL.md": DEFAULT_SKILL_MD, path: b"print('x')\n"},
+        modes={path: stat.S_IFREG | 0o644 | permission},
+    )
+    assert_archive_error(archive, "ARCHIVE_UNSUPPORTED_FILE")
+
+
 def test_rejects_encrypted_zip(zip_builder) -> None:
     archive = mark_first_entry_encrypted(zip_builder())
     assert_archive_error(archive, "ARCHIVE_ENCRYPTED")
@@ -152,6 +182,20 @@ def test_rejects_nested_archive_by_content_not_only_suffix(zip_builder) -> None:
         }
     )
     assert_archive_error(archive, "ARCHIVE_NESTED")
+
+
+def test_rejects_git_lfs_pointer_files(zip_builder) -> None:
+    pointer = b"""version https://git-lfs.github.com/spec/v1
+oid sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+size 1234
+"""
+    archive = zip_builder(
+        {
+            "demo-skill/SKILL.md": DEFAULT_SKILL_MD,
+            "demo-skill/references/model.bin": pointer,
+        }
+    )
+    assert_archive_error(archive, "ARCHIVE_GIT_LFS_POINTER")
 
 
 def test_rejects_valid_tar_renamed_without_archive_suffix(zip_builder) -> None:
@@ -232,6 +276,24 @@ def test_does_not_treat_truncated_tar_like_header_as_tar(zip_builder) -> None:
 def test_rejects_archive_larger_than_five_mib(zip_builder) -> None:
     archive = zip_builder() + b"padding" * ((MAX_ARCHIVE_BYTES // 7) + 1)
     assert len(archive) > MAX_ARCHIVE_BYTES
+    assert_archive_error(archive, "ARCHIVE_TOO_LARGE")
+
+
+def test_rejects_when_canonical_recompression_exceeds_five_mib(zip_builder) -> None:
+    total_payload_bytes = MAX_ARCHIVE_BYTES - 2100
+    payload = random.Random(42).randbytes(total_payload_bytes)
+    first_size = 2 * 1024 * 1024
+    second_size = 2 * 1024 * 1024
+    archive = zip_builder(
+        {
+            "demo-skill/SKILL.md": DEFAULT_SKILL_MD,
+            "demo-skill/references/0.bin": payload[:first_size],
+            "demo-skill/references/1.bin": payload[first_size : first_size + second_size],
+            "demo-skill/references/2.bin": payload[first_size + second_size :],
+        },
+        compression=zipfile.ZIP_STORED,
+    )
+    assert len(archive) < MAX_ARCHIVE_BYTES
     assert_archive_error(archive, "ARCHIVE_TOO_LARGE")
 
 
@@ -340,6 +402,15 @@ def test_rejects_multiple_skill_roots(zip_builder) -> None:
     assert_archive_error(archive, "ARCHIVE_MULTIPLE_SKILL_ROOTS")
 
 
+def test_rejects_an_extra_top_level_empty_directory_as_another_root(zip_builder) -> None:
+    directory = "other/"
+    archive = zip_builder(
+        {"demo-skill/SKILL.md": DEFAULT_SKILL_MD, directory: b""},
+        modes={directory: stat.S_IFDIR | 0o755},
+    )
+    assert_archive_error(archive, "ARCHIVE_MULTIPLE_SKILL_ROOTS")
+
+
 def test_rejects_archive_without_skill_manifest(zip_builder) -> None:
     archive = zip_builder({"demo-skill/README.md": b"missing"})
     assert_archive_error(archive, "ARCHIVE_SKILL_ROOT_REQUIRED")
@@ -375,6 +446,11 @@ def test_canonical_zip_is_reproducible_sorted_and_has_fixed_metadata(zip_builder
 
 def test_rejects_bad_zip_bytes() -> None:
     assert_archive_error(b"not a zip", "ARCHIVE_INVALID")
+
+
+def test_wraps_unsupported_zip_extract_version_as_stable_archive_error(zip_builder) -> None:
+    archive = set_unsupported_extract_version(zip_builder())
+    assert_archive_error(archive, "ARCHIVE_INVALID")
 
 
 def test_wraps_corrupt_deflate_stream_as_stable_archive_error(zip_builder) -> None:

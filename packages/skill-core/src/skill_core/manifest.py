@@ -10,10 +10,10 @@ from agno.skills import LocalSkills, validate_skill_directory
 
 from .archive import SkillPackageError
 from .types import (
-    CanonicalSkillPackage,
     FrozenJson,
     FrozenJsonArray,
     FrozenJsonObject,
+    SkillPackageView,
     SkillManifest,
 )
 
@@ -27,7 +27,7 @@ _ALLOWED_SCRIPT_SHEBANGS = frozenset(
 )
 
 
-def parse_skill_manifest(package: CanonicalSkillPackage) -> SkillManifest:
+def parse_skill_manifest(package: SkillPackageView) -> SkillManifest:
     """Validate one canonical package with Agno and return a frozen DTO."""
 
     decoded_files = _validate_text_files(package)
@@ -65,7 +65,7 @@ def parse_skill_manifest(package: CanonicalSkillPackage) -> SkillManifest:
         raise SkillPackageError("MANIFEST_INVALID", "Skill manifest processing failed") from error
 
 
-def _validate_text_files(package: CanonicalSkillPackage) -> dict[str, str]:
+def _validate_text_files(package: SkillPackageView) -> dict[str, str]:
     decoded: dict[str, str] = {}
     for file in package.files:
         if b"\x00" in file.content:

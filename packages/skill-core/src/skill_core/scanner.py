@@ -10,7 +10,7 @@ import re
 import sys
 from collections.abc import Iterable
 
-from .types import CanonicalSkillPackage, SkillFinding
+from .types import SkillFinding, SkillPackageView
 
 _POSSIBLE_SECRET = re.compile(
     r"(?i)\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|password|passwd|secret|token)\b"
@@ -44,7 +44,7 @@ _LINE_PATTERNS: tuple[tuple[str, re.Pattern[str], str], ...] = (
 
 
 def scan(
-    package: CanonicalSkillPackage,
+    package: SkillPackageView,
     allowed_python_modules: Iterable[str] = (),
 ) -> tuple[SkillFinding, ...]:
     """Return sorted static hints without ever returning matched source text."""

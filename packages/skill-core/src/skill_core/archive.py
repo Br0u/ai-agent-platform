@@ -21,6 +21,7 @@ from .types import (
     MAX_FILES,
     MAX_PATH_BYTES,
     MAX_PATH_DEPTH,
+    CanonicalSkillArchive,
     CanonicalSkillPackage,
     SkillFile,
 )
@@ -63,7 +64,7 @@ class SkillPackageError(ValueError):
         super().__init__(message if path is None else f"{message}: {path}")
 
 
-def canonicalize_skill_archive(archive: bytes) -> CanonicalSkillPackage:
+def canonicalize_skill_archive(archive: bytes) -> CanonicalSkillArchive:
     """Validate untrusted ZIP bytes and return one deterministic skill package.
 
     Member contents are streamed and counted. Nothing is extracted to the filesystem.
@@ -74,7 +75,13 @@ def canonicalize_skill_archive(archive: bytes) -> CanonicalSkillPackage:
 
     try:
         source = zipfile.ZipFile(io.BytesIO(archive), "r")
-    except (OSError, ValueError, zipfile.BadZipFile, zipfile.LargeZipFile) as error:
+    except (
+        NotImplementedError,
+        OSError,
+        ValueError,
+        zipfile.BadZipFile,
+        zipfile.LargeZipFile,
+    ) as error:
         raise SkillPackageError("ARCHIVE_INVALID", "Invalid ZIP archive") from error
 
     try:
@@ -83,6 +90,7 @@ def canonicalize_skill_archive(archive: bytes) -> CanonicalSkillPackage:
         raise
     except (
         EOFError,
+        NotImplementedError,
         OSError,
         RuntimeError,
         ValueError,
@@ -94,14 +102,33 @@ def canonicalize_skill_archive(archive: bytes) -> CanonicalSkillPackage:
         source.close()
 
     canonical_archive = _write_canonical_zip(slug, files)
-    return CanonicalSkillPackage(
+    if len(canonical_archive) > MAX_ARCHIVE_BYTES:
+        raise SkillPackageError("ARCHIVE_TOO_LARGE", "Canonical ZIP exceeds compressed size limit")
+    return CanonicalSkillArchive(
         slug=slug,
         archive=canonical_archive,
         sha256=hashlib.sha256(canonical_archive).hexdigest(),
         compressed_size=len(canonical_archive),
         extracted_size=extracted_size,
         files=files,
-        manifest=None,
+    )
+
+
+def canonicalize_skill_zip(archive: bytes) -> CanonicalSkillPackage:
+    """Canonicalize one ZIP and validate its Agno skill manifest."""
+
+    from .manifest import parse_skill_manifest
+
+    canonical = canonicalize_skill_archive(archive)
+    manifest = parse_skill_manifest(canonical)
+    return CanonicalSkillPackage(
+        slug=canonical.slug,
+        archive=canonical.archive,
+        sha256=canonical.sha256,
+        compressed_size=canonical.compressed_size,
+        extracted_size=canonical.extracted_size,
+        files=canonical.files,
+        manifest=manifest,
         findings=(),
     )
 
@@ -149,7 +176,8 @@ def _read_validated_files(
     file_paths = tuple(path for path, _, _, _, is_directory in member_infos if not is_directory)
     _reject_ancestor_file_conflicts(file_paths)
     slug = _find_skill_root(file_paths)
-    if any(path.split("/", 1)[0] != slug for path in file_paths):
+    member_roots = {path.rstrip("/").split("/", 1)[0] for path, *_ in member_infos}
+    if member_roots != {slug}:
         raise SkillPackageError(
             "ARCHIVE_MULTIPLE_SKILL_ROOTS",
             "Every file must belong to the single skill root",
@@ -173,6 +201,7 @@ def _read_validated_files(
                 )
             continue
         relative_path = full_path[len(slug) + 1 :]
+        _reject_git_lfs_pointer(relative_path, content)
         _reject_nested_archive(relative_path, content)
         result.append(
             SkillFile(
@@ -287,6 +316,8 @@ def _normalize_path(raw_path: str) -> str:
     drive, _ = ntpath.splitdrive(normalized)
     path = PurePosixPath(normalized)
     parts = normalized.rstrip("/").split("/")
+    if any(unicodedata.category(character) in {"Cc", "Cf"} for character in normalized):
+        raise SkillPackageError("ARCHIVE_UNSAFE_PATH", "Unsafe ZIP member path")
     if (
         not normalized
         or normalized.startswith("/")
@@ -295,6 +326,10 @@ def _normalize_path(raw_path: str) -> str:
         or path.is_absolute()
     ):
         raise SkillPackageError("ARCHIVE_UNSAFE_PATH", "Unsafe ZIP member path")
+    if any(part.casefold() == ".git" for part in parts):
+        raise SkillPackageError(
+            "ARCHIVE_GIT_METADATA", "Git metadata paths are not allowed", path=normalized
+        )
     if len(parts) > MAX_PATH_DEPTH:
         raise SkillPackageError("ARCHIVE_PATH_TOO_DEEP", "ZIP member path is too deep")
     if len(normalized.rstrip("/").encode("utf-8")) > MAX_PATH_BYTES:
@@ -306,7 +341,12 @@ def _validate_member_type(info: zipfile.ZipInfo, is_directory: bool) -> None:
     mode = (info.external_attr >> 16) & 0xFFFF if info.create_system == 3 else 0
     file_type = stat.S_IFMT(mode)
     allowed_types = (0, stat.S_IFDIR) if is_directory else (0, stat.S_IFREG)
-    if file_type not in allowed_types or (not is_directory and _has_unix_link_target(info.extra)):
+    unsafe_permissions = mode & (stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX)
+    if (
+        file_type not in allowed_types
+        or unsafe_permissions
+        or (not is_directory and _has_unix_link_target(info.extra))
+    ):
         raise SkillPackageError(
             "ARCHIVE_UNSUPPORTED_FILE",
             "Links and special files are not allowed",
@@ -447,6 +487,14 @@ def _reject_nested_archive(path: str, content: bytes) -> None:
         or _is_tar_archive(content)
     ):
         raise SkillPackageError("ARCHIVE_NESTED", "Nested archives are not allowed", path=path)
+
+
+def _reject_git_lfs_pointer(path: str, content: bytes) -> None:
+    lines = content.replace(b"\r\n", b"\n").splitlines()
+    if lines and lines[0] == b"version https://git-lfs.github.com/spec/v1":
+        raise SkillPackageError(
+            "ARCHIVE_GIT_LFS_POINTER", "Git LFS pointer files are not allowed", path=path
+        )
 
 
 def _is_tar_archive(content: bytes) -> bool:
