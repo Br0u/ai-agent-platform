@@ -20,7 +20,7 @@ function SubmitButton() {
   const { pending } = useFormStatus();
   return (
     <button className="auth-form__submit" disabled={pending} type="submit">
-      {pending ? "正在验证…" : "安全登录"}
+      {pending ? "正在验证…" : "登录运营后台"}
     </button>
   );
 }
@@ -47,7 +47,6 @@ export function StaffLoginForm({
           autoComplete="username"
           maxLength={320}
           name="identifier"
-          placeholder="请输入用户名或企业邮箱"
           required
           spellCheck={false}
           type="text"
@@ -59,7 +58,6 @@ export function StaffLoginForm({
           autoComplete="current-password"
           maxLength={128}
           name="password"
-          placeholder="请输入登录密码"
           required
           type="password"
         />

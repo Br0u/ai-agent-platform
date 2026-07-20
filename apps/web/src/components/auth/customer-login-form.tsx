@@ -21,7 +21,7 @@ function SubmitButton() {
   const { pending } = useFormStatus();
   return (
     <button className="auth-form__submit" disabled={pending} type="submit">
-      {pending ? "正在登录…" : "立即登录"}
+      {pending ? "正在登录…" : "登录客户控制台"}
     </button>
   );
 }
@@ -48,7 +48,6 @@ export function CustomerLoginForm({
           inputMode="email"
           maxLength={320}
           name="email"
-          placeholder="请输入邮箱地址"
           required
           type="email"
         />
@@ -59,7 +58,6 @@ export function CustomerLoginForm({
           autoComplete="current-password"
           maxLength={128}
           name="password"
-          placeholder="请输入登录密码"
           required
           type="password"
         />

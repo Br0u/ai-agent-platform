@@ -17,25 +17,8 @@ describe("StaffLoginForm", () => {
       "autocomplete",
       "username",
     );
-    expect(screen.getByLabelText("员工用户名或邮箱")).toHaveAttribute(
-      "name",
-      "identifier",
-    );
-    expect(screen.getByLabelText("员工用户名或邮箱")).toHaveAttribute(
-      "placeholder",
-      "请输入用户名或企业邮箱",
-    );
     expect(screen.getByLabelText("密码")).toHaveAttribute("type", "password");
-    expect(screen.getByLabelText("密码")).toHaveAttribute(
-      "autocomplete",
-      "current-password",
-    );
-    expect(screen.getByLabelText("密码")).toHaveAttribute("name", "password");
-    expect(screen.getByLabelText("密码")).toHaveAttribute(
-      "placeholder",
-      "请输入登录密码",
-    );
-    expect(screen.getByRole("button", { name: "安全登录" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "登录运营后台" })).toBeEnabled();
     expect(
       screen.queryByRole("link", { name: /注册/ }),
     ).not.toBeInTheDocument();

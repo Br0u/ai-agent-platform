@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
+import { AuthPage } from "@/components/auth/auth-page";
 import { CustomerLoginForm } from "@/components/auth/customer-login-form";
-import { LoginPage } from "@/components/auth/login-page";
 
 export const metadata: Metadata = {
   title: "客户登录 · AI Agent Platform",
@@ -15,12 +15,12 @@ export default async function Page({
 }) {
   const { returnTo } = await searchParams;
   return (
-    <LoginPage
-      intro="使用已注册的客户账号继续访问。"
+    <AuthPage
+      intro="管理企业授权、资源、团队与服务记录。"
+      realmLabel="Customer Access"
       title="登录客户控制台"
-      variant="customer"
     >
       <CustomerLoginForm returnTo={returnTo} />
-    </LoginPage>
+    </AuthPage>
   );
 }
