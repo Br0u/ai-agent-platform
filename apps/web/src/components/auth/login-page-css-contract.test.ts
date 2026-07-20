@@ -31,6 +31,10 @@ describe("enterprise login page CSS contract", () => {
     expect(ruleBlock(css, ".enterprise-login-page__brand-link")).toMatch(
       /min-height:\s*44px/u,
     );
+    expect(css).not.toContain("::first-letter");
+    expect(
+      ruleBlock(css, ".enterprise-login-page__brand-link::before"),
+    ).toMatch(/content:\s*"AI"/u);
     expect(ruleBlock(css, ".enterprise-login-page__alternate-link")).toMatch(
       /min-height:\s*44px/u,
     );

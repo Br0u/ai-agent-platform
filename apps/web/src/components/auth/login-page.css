@@ -58,8 +58,19 @@
   text-underline-offset: 4px;
 }
 
-.enterprise-login-page__brand-link::first-letter {
-  color: var(--color-primary);
+.enterprise-login-page__brand-link::before {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  place-items: center;
+  margin-right: 10px;
+  border-radius: 5px;
+  color: var(--color-surface);
+  background: var(--color-primary);
+  content: "AI";
+  font: 750 12px/1 var(--font-body);
+  letter-spacing: 0.02em;
 }
 
 .enterprise-login-page__brand-link:focus-visible,
