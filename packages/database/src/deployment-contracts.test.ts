@@ -1452,9 +1452,7 @@ exit 0
       "ARG PNPM_REGISTRY=https://registry.npmmirror.com",
     );
     expect(builder).toContain("ENV PNPM_CONFIG_REGISTRY=$PNPM_REGISTRY");
-    expect(builder).toContain(
-      "ENV PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false",
-    );
+    expect(builder).toContain("ENV PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false");
     expect(dockerfile).toContain("pnpm install --frozen-lockfile");
     expect(read("docs/testing/run-assistant-runtime-e2e.sh")).toContain(
       "PNPM_REGISTRY=${PNPM_REGISTRY:-https://registry.npmjs.org}",
@@ -4034,9 +4032,7 @@ exec /usr/bin/mktemp "$@"
     expect(runner).toContain("content_revisions");
     expect(runner).toContain("content_routes");
     expect(runner).toContain("(SELECT count FROM manifest_mismatches)");
-    expect(runner).not.toContain(
-      "(SELECT count(*) FROM manifest_mismatches)",
-    );
+    expect(runner).not.toContain("(SELECT count(*) FROM manifest_mismatches)");
     expect(runner).toContain("--project=desktop --project=mobile --workers=1");
     expect(runner).toContain("e2e/cms-documents.spec.ts");
     expect(runner).toContain("SOAK_SECONDS=${CMS_DOCUMENTS_SOAK_SECONDS:-600}");
@@ -4049,7 +4045,9 @@ exec /usr/bin/mktemp "$@"
     expect(browser).toContain("{ width: 390, height: 844 }");
     expect(browser).toContain("admin:docs denied fixture");
     expect(browser).toContain("capturedProtocolRequest.body");
-    expect(browser).toContain('"Next-Action": capturedProtocolRequest.nextAction');
+    expect(browser).toContain(
+      '"Next-Action": capturedProtocolRequest.nextAction',
+    );
     expect(browser).toContain("await route.abort()");
     expect(browser).toContain("AUTH_PERMISSION_DENIED");
     expect(browser).toContain("发布当前修订");
