@@ -117,11 +117,12 @@ beforeEach(() => {
   });
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(successfulReply), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+    vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify(successfulReply), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
     ),
   );
 });
@@ -430,7 +431,7 @@ describe("FloatingChatWidget", () => {
     expect(quickDialog).toHaveClass("is-exiting");
     expect(screen.queryByRole("dialog", { name: "码多多" })).toBeNull();
     await waitFor(() => expect(quickDialog).not.toBeInTheDocument());
-    expect(launcher).toHaveFocus();
+    await waitFor(() => expect(launcher).toHaveFocus());
   });
 
   it("hides the duplicate launcher while the mobile drawer is open", () => {
@@ -444,6 +445,23 @@ describe("FloatingChatWidget", () => {
     );
     expect(stylesheet).toMatch(
       /\.floating-assistant__panel\.is-exiting\s*\{[\s\S]*?pointer-events:\s*none;/u,
+    );
+  });
+
+  it("keeps the composer inside the panel when viewport height compresses the grid", () => {
+    const stylesheet = readFileSync(
+      "src/components/ui/floating-chat-widget-shadcnui.css",
+      "utf8",
+    );
+
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__panel\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0, 1fr\) auto auto;/u,
+    );
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__panel\s*\{[\s\S]*?height:\s*min\(620px, calc\(100dvh - 104px\)\);/u,
+    );
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__messages\s*\{[\s\S]*?min-height:\s*0;/u,
     );
   });
 

@@ -27,8 +27,9 @@
 
 .floating-assistant__panel {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   width: min(380px, calc(100vw - 32px));
-  max-height: min(620px, calc(100dvh - 104px));
+  height: min(620px, calc(100dvh - 104px));
   overflow: hidden;
   border: 1px solid rgb(196 207 237 / 54%);
   border-radius: 28px;
@@ -161,7 +162,7 @@
 
 .floating-assistant__messages {
   display: flex;
-  min-height: 190px;
+  min-height: 0;
   max-height: 286px;
   flex-direction: column;
   gap: 12px;
@@ -416,7 +417,7 @@
     bottom: 0;
     left: 0;
     width: 100vw;
-    max-height: 75dvh;
+    height: 75dvh;
     border-right: 0;
     border-bottom: 0;
     border-left: 0;

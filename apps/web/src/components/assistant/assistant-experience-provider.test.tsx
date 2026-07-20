@@ -461,7 +461,7 @@ describe("AssistantExperienceProvider", () => {
   it("closes synchronously on ordinary pathname changes without clearing the session or restoring old focus", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
+      vi.fn().mockImplementation(async () =>
         Response.json({
           version: "1",
           requestId: "request-route-change",
