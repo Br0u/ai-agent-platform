@@ -114,12 +114,22 @@
   font-size: 11px;
 }
 
-.floating-assistant__identity p span {
+.floating-assistant__identity p > span {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #95a0b4;
-  box-shadow: 0 0 0 3px rgb(149 160 180 / 15%);
+  background: #b38225;
+  box-shadow: 0 0 0 3px rgb(179 130 37 / 15%);
+}
+
+.floating-assistant__identity p[data-capability="available"] > span {
+  background: #27826b;
+  box-shadow: 0 0 0 3px rgb(39 130 107 / 15%);
+}
+
+.floating-assistant__identity p[data-capability="degraded"] > span {
+  background: #b94b5a;
+  box-shadow: 0 0 0 3px rgb(185 75 90 / 15%);
 }
 
 .floating-assistant__header-actions {

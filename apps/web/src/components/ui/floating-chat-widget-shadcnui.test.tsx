@@ -144,6 +144,23 @@ describe("FloatingChatWidget", () => {
     ).toHaveTextContent(expectedLabel);
   });
 
+  it("maps service capabilities to semantic status-light colors", () => {
+    const stylesheet = readFileSync(
+      "src/components/ui/floating-chat-widget-shadcnui.css",
+      "utf8",
+    );
+
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__identity p > span \{[\s\S]*?background: #b38225;[\s\S]*?rgb\(179 130 37 \/ 15%\);[\s\S]*?\}/u,
+    );
+    expect(stylesheet).toMatch(
+      /p\[data-capability="available"\] > span \{[\s\S]*?background: #27826b;[\s\S]*?rgb\(39 130 107 \/ 15%\);[\s\S]*?\}/u,
+    );
+    expect(stylesheet).toMatch(
+      /p\[data-capability="degraded"\] > span \{[\s\S]*?background: #b94b5a;[\s\S]*?rgb\(185 75 90 \/ 15%\);[\s\S]*?\}/u,
+    );
+  });
+
   it("shows the shared refreshing service meaning without starting another status source", async () => {
     vi.stubGlobal(
       "fetch",
