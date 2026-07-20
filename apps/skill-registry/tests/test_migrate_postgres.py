@@ -205,6 +205,31 @@ async def test_real_registry_migration_and_role_boundary() -> None:
                 slug=f"manager-{uuid4()}",
                 nonce=uuid4(),
             )
+        for forbidden_initial_state in ("published", "rejected", "archived"):
+            await _expect_database_error(
+                manager,
+                psycopg.errors.CheckViolation,
+                """INSERT INTO skill_registry.skill_revisions (
+                  id, skill_id, revision_no, state, source_type, manifest,
+                  created_by, reviewed_by, reviewed_at
+                ) VALUES (%s, %s, 2, %s, 'upload', '{}'::jsonb, %s, %s, now())""",
+                (
+                    uuid4(),
+                    skill_id,
+                    forbidden_initial_state,
+                    actor_id,
+                    actor_id,
+                ),
+            )
+        await _expect_database_error(
+            manager,
+            psycopg.errors.CheckViolation,
+            """INSERT INTO skill_registry.skill_revisions (
+              id, skill_id, revision_no, state, source_type, manifest,
+              created_by, reviewed_by, reviewed_at
+            ) VALUES (%s, %s, 2, 'pending_review', 'upload', '{}'::jsonb, %s, %s, now())""",
+            (uuid4(), skill_id, actor_id, actor_id),
+        )
         async with manager.transaction():
             await manager.execute(
                 """UPDATE skill_registry.skill_revisions

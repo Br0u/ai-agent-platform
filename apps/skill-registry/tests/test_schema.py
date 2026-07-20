@@ -170,6 +170,19 @@ def test_update_triggers_enforce_immutable_identity_and_forward_only_state() -> 
         assert f"BEFORE UPDATE OR DELETE ON skill_registry.{table_name}" in sql
 
 
+def test_revision_insert_trigger_requires_clean_pending_review_state() -> None:
+    sql = normalize_sql(SCHEMA_VERSION_1_SQL)
+
+    assert "CREATE OR REPLACE FUNCTION skill_registry.guard_revision_insert()" in sql
+    assert "NEW.state <> 'pending_review'" in sql
+    assert "NEW.reviewed_by IS NOT NULL" in sql
+    assert "NEW.reviewed_at IS NOT NULL" in sql
+    assert "new skill revisions must start pending review" in sql
+    assert "USING ERRCODE = '23514'" in sql
+    assert "BEFORE INSERT ON skill_registry.skill_revisions" in sql
+    assert "EXECUTE FUNCTION skill_registry.guard_revision_insert()" in sql
+
+
 def test_manager_backup_runtime_and_foreign_role_grants_are_narrow() -> None:
     sql = normalize_sql(SCHEMA_VERSION_1_SQL)
 

@@ -227,6 +227,21 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION skill_registry.guard_revision_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.state <> 'pending_review'
+    OR NEW.reviewed_by IS NOT NULL
+    OR NEW.reviewed_at IS NOT NULL THEN
+    RAISE EXCEPTION 'new skill revisions must start pending review'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION skill_registry.deny_append_only_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -241,10 +256,13 @@ ALTER FUNCTION skill_registry.guard_skill_update()
   OWNER TO ai_agent_skill_registry_migrator;
 ALTER FUNCTION skill_registry.guard_revision_update()
   OWNER TO ai_agent_skill_registry_migrator;
+ALTER FUNCTION skill_registry.guard_revision_insert()
+  OWNER TO ai_agent_skill_registry_migrator;
 ALTER FUNCTION skill_registry.deny_append_only_mutation()
   OWNER TO ai_agent_skill_registry_migrator;
 REVOKE ALL ON FUNCTION skill_registry.guard_skill_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION skill_registry.guard_revision_update() FROM PUBLIC;
+REVOKE ALL ON FUNCTION skill_registry.guard_revision_insert() FROM PUBLIC;
 REVOKE ALL ON FUNCTION skill_registry.deny_append_only_mutation() FROM PUBLIC;
 
 CREATE TRIGGER skills_guard_update
@@ -254,6 +272,10 @@ FOR EACH ROW EXECUTE FUNCTION skill_registry.guard_skill_update();
 CREATE TRIGGER skill_revisions_guard_update
 BEFORE UPDATE ON skill_registry.skill_revisions
 FOR EACH ROW EXECUTE FUNCTION skill_registry.guard_revision_update();
+
+CREATE TRIGGER skill_revisions_guard_insert
+BEFORE INSERT ON skill_registry.skill_revisions
+FOR EACH ROW EXECUTE FUNCTION skill_registry.guard_revision_insert();
 
 CREATE TRIGGER skill_revision_artifacts_append_only
 BEFORE UPDATE OR DELETE ON skill_registry.skill_revision_artifacts

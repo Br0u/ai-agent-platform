@@ -90,6 +90,32 @@ describePostgres(
            VALUES ($1, $2, $3)`,
           [skillId, `ts-boundary-${randomUUID()}`, actorId],
         );
+        await expectDatabaseError(
+          client,
+          () =>
+            client.query(
+              `INSERT INTO skill_registry.skill_revisions (
+                 id, skill_id, revision_no, state, source_type, manifest,
+                 created_by, reviewed_by, reviewed_at
+               ) VALUES ($1, $2, 2, 'published', 'upload', '{}'::jsonb,
+                 $3, $3, now())`,
+              [randomUUID(), skillId, actorId],
+            ),
+          "23514",
+        );
+        await expectDatabaseError(
+          client,
+          () =>
+            client.query(
+              `INSERT INTO skill_registry.skill_revisions (
+                 id, skill_id, revision_no, state, source_type, manifest,
+                 created_by, reviewed_by, reviewed_at
+               ) VALUES ($1, $2, 2, 'pending_review', 'upload', '{}'::jsonb,
+                 $3, $3, now())`,
+              [randomUUID(), skillId, actorId],
+            ),
+          "23514",
+        );
         await client.query(
           `INSERT INTO skill_registry.skill_revisions (
              id, skill_id, revision_no, state, source_type, manifest, created_by
