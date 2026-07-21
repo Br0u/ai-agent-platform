@@ -388,6 +388,78 @@ async def test_migration_rejects_version_one_missing_review_storage_contract() -
         await run_migration(settings, connector=connector)
 
 
+_ORIGINAL_REVIEW_EVENT_CAST = (
+    "ARRAY['revision_published'::character varying, 'revision_rejected'::character varying]::text[]"
+)
+_RESTORED_REVIEW_EVENT_CAST = (
+    "ARRAY['revision_published'::character varying::text, "
+    "'revision_rejected'::character varying::text]"
+)
+
+
+def _restored_review_constraint_rows() -> list[tuple[Any, ...]]:
+    return [
+        (*row[:4], row[4].replace(_ORIGINAL_REVIEW_EVENT_CAST, _RESTORED_REVIEW_EVENT_CAST))
+        for row in sorted(EXPECTED_REVIEW_CONSTRAINTS)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_migration_accepts_only_the_known_pg_restore_review_cast_deparse() -> None:
+    class RestoredCursor(FakeCursor):
+        async def fetchall(self) -> list[tuple[Any, ...]]:
+            if self._query == VERIFY_REVIEW_CONSTRAINTS_SQL:
+                return _restored_review_constraint_rows()
+            return await super().fetchall()
+
+    async def connector(database_url: str) -> MigrationConnection:
+        return FakeConnection(RestoredCursor(versions=(1,)))
+
+    settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
+    await run_migration(settings, connector=connector)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda row: ("renamed_constraint", *row[1:]),
+        lambda row: (row[0], "skills", *row[2:]),
+        lambda row: (*row[:3], False, row[4]),
+        lambda row: (*row[:4], row[4].replace("revision_rejected", "revision_deleted")),
+        lambda row: (
+            *row[:4],
+            row[4].replace(
+                _RESTORED_REVIEW_EVENT_CAST,
+                "ARRAY['revision_rejected'::character varying::text, "
+                "'revision_published'::character varying::text]",
+            ),
+        ),
+        lambda row: (
+            *row[:4],
+            row[4].replace("content_reviewed IS TRUE", "content_reviewed IS FALSE"),
+        ),
+    ],
+)
+async def test_migration_rejects_other_restored_review_constraint_drift(
+    mutate: Any,
+) -> None:
+    class DriftedRestoredCursor(FakeCursor):
+        async def fetchall(self) -> list[tuple[Any, ...]]:
+            if self._query == VERIFY_REVIEW_CONSTRAINTS_SQL:
+                rows = _restored_review_constraint_rows()
+                rows[0] = mutate(rows[0])
+                return rows
+            return await super().fetchall()
+
+    async def connector(database_url: str) -> MigrationConnection:
+        return FakeConnection(DriftedRestoredCursor(versions=(1,)))
+
+    settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
+    with pytest.raises(RuntimeError, match="verification failed"):
+        await run_migration(settings, connector=connector)
+
+
 def test_review_drift_verifiers_compare_normalized_complete_definitions() -> None:
     normalized_constraint_query = " ".join(VERIFY_REVIEW_CONSTRAINTS_SQL.split())
     normalized_function_query = " ".join(VERIFY_REVIEW_TRIGGER_GUARDS_SQL.split())

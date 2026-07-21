@@ -240,6 +240,8 @@ services:
         condition: service_healthy
       agno-bootstrap:
         condition: service_completed_successfully
+      agent-control-bootstrap:
+        condition: service_completed_successfully
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m
@@ -562,6 +564,10 @@ services:
       BACKUP_DUMP_TIMEOUT_SECONDS: ${BACKUP_DUMP_TIMEOUT_SECONDS:-3600}
       BACKUP_DUMP_KILL_AFTER_SECONDS: ${BACKUP_DUMP_KILL_AFTER_SECONDS:-5}
       BACKUP_SNAPSHOT_TIMEOUT_SECONDS: ${BACKUP_SNAPSHOT_TIMEOUT_SECONDS:-3665}
+      BACKUP_PROCESS_KILL_AFTER_SECONDS: ${BACKUP_PROCESS_KILL_AFTER_SECONDS:-5}
+      BACKUP_ENCRYPT_TIMEOUT_SECONDS: ${BACKUP_ENCRYPT_TIMEOUT_SECONDS:-3600}
+      BACKUP_ENCRYPT_KILL_AFTER_SECONDS: ${BACKUP_ENCRYPT_KILL_AFTER_SECONDS:-5}
+      BACKUP_SPACE_SAFETY_BYTES: ${BACKUP_SPACE_SAFETY_BYTES:-67108864}
     secrets:
       - backup_database_password
       - backup_encryption_key
@@ -578,7 +584,7 @@ services:
       - no-new-privileges:true
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=32m
+      - /tmp:rw,noexec,nosuid,size=${BACKUP_TMPFS_SIZE:-1g}
     cap_drop:
       - ALL
     networks:

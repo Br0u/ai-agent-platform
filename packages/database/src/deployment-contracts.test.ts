@@ -1420,6 +1420,7 @@ exit 0
     expect(backupService).not.toMatch(/user:\s*(?:root|0)/u);
     const backupImage = read("infra/docker/backup.Dockerfile");
     expect(backupImage).toContain("apk add --no-cache gnupg");
+    expect(backupImage).toContain("coreutils");
     expect(backupImage).toContain("USER postgres");
     expect(backupImage).toContain("ENTRYPOINT");
     const workflow = read(".github/workflows/ci.yml");
@@ -1849,6 +1850,9 @@ exit 0
 
     expect(bootstrap?.depends_on?.db?.condition).toBe("service_healthy");
     expect(bootstrap?.depends_on?.["agno-bootstrap"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(bootstrap?.depends_on?.["agent-control-bootstrap"]?.condition).toBe(
       "service_completed_successfully",
     );
     expect(migration?.depends_on?.["skill-registry-bootstrap"]?.condition).toBe(
@@ -3829,6 +3833,22 @@ exit 0
     expect(script).toContain("--decrypt");
     expect(script).toContain("--pinentry-mode loopback");
     expect(script).toContain("--passphrase-file");
+    expect(script).toContain("RESTORE_MAX_ENCRYPTED_BYTES");
+    expect(script).toContain("RESTORE_MAX_DECRYPTED_BYTES");
+    expect(script).toContain("RESTORE_DECRYPT_TIMEOUT_SECONDS");
+    expect(script).toContain("RESTORE_DECRYPT_KILL_AFTER_SECONDS");
+    expect(script).toContain('decrypt_container="aap-restore-decrypt-$run_id"');
+    expect(script).toContain('head -c "$((max_decrypted_bytes + 1))"');
+    expect(script).toContain(
+      'docker stop --time "$decrypt_kill_after_seconds"',
+    );
+    expect(script).toContain(
+      "restore drill rejected oversized encrypted backup",
+    );
+    expect(script).toContain(
+      "restore drill rejected oversized decrypted bundle",
+    );
+    expect(script).toContain("restore drill decryption timed out");
     expect(script).toContain("decrypted_bundle_candidate");
     expect(script).toContain(
       'mv "$decrypted_bundle_candidate" "$decrypted_bundle"',
@@ -3854,8 +3874,8 @@ exit 0
     expect(script).toContain("--env-file");
     expect(script).not.toMatch(/docker run[^\n]*-e\s+POSTGRES_/u);
     expect(script).not.toContain("POSTGRES_PASSWORD=");
-    expect(script).toContain('expected_migrations="7"');
-    expect(script).toContain('expected_latest_migration="1784480751831"');
+    expect(script).toContain('expected_migrations="8"');
+    expect(script).toContain('expected_latest_migration="1784480751832"');
     expect(script).toContain("migration_count");
     expect(script).toContain("latest_migration");
     expect(script).toContain("users_email_lower_unique");
@@ -3876,6 +3896,25 @@ exit 0
     expect(script).toContain("audit_logs_created_id_desc_idx");
     expect(script).toContain("rate_limits_key_unique");
     expect(script).toContain("--clean --if-exists");
+    expect(script).not.toContain("--no-owner");
+    expect(script).not.toContain("--no-acl");
+    expect(script).toContain("/bootstrap/01-roles.sh");
+    expect(script).toContain("/bootstrap/03-agno-roles.sh");
+    expect(script).toContain("/bootstrap/04-agent-control-roles.sh");
+    expect(script).toContain("/bootstrap/05-skill-registry-roles.sh");
+    expect(script).toContain("RESTORE_SKILL_REGISTRY_IMAGE");
+    expect(script).toContain("python -m skill_registry.migrate");
+    expect(script).toContain("ai_agent_skill_registry_manager");
+    expect(script).toContain("ai_agent_backup");
+    expect(script).toContain("ai_agent_skill_registry_runtime");
+    expect(script).toContain("manager_insert_check_file");
+    expect(script).toContain("backup_insert_denied_file");
+    expect(script).toContain("--file=/restore/manager-insert-check.sql");
+    expect(script).toContain("--file=/restore/backup-insert-denied.sql");
+    expect(script).toContain("--set=VERBOSITY=verbose");
+    expect(script).toContain('grep -q "42501"');
+    expect(script).toContain('grep -q "permission denied"');
+    expect(script).toContain("restore drill failed registry role checks");
     expect(script).toContain("to_regclass('agno.agno_sessions') IS NOT NULL");
     expect(script).toContain(
       "to_regclass('agno.agno_schema_versions') IS NOT NULL",
@@ -3947,15 +3986,30 @@ exit 0
     expect(script).toContain("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     expect(script).toContain("pg_export_snapshot()");
     expect(script).toContain('--snapshot="$snapshot_id"');
-    expect(script).toContain("snapshot_pid");
+    expect(script).toContain("snapshot_group_pid");
     expect(script).toContain("mkfifo");
     expect(script).toContain("timeout");
     expect(script).toContain("BACKUP_DUMP_TIMEOUT_SECONDS");
     expect(script).toContain("BACKUP_DUMP_KILL_AFTER_SECONDS");
+    expect(script).toContain("BACKUP_PROCESS_KILL_AFTER_SECONDS");
+    expect(script).toContain("BACKUP_ENCRYPT_TIMEOUT_SECONDS");
+    expect(script).toContain("BACKUP_ENCRYPT_KILL_AFTER_SECONDS");
+    expect(script).toContain("BACKUP_SPACE_SAFETY_BYTES");
+    expect(script).toContain("pg_database_size(current_database())");
+    expect(script).toContain("backup temporary space budget is insufficient");
     expect(script).toContain("backup database dump failed");
+    expect(script).toContain("terminate_process_group");
+    expect(script).toContain(
+      'timeout_command="${BACKUP_TIMEOUT_COMMAND:-/usr/bin/timeout}"',
+    );
+    expect(script.match(/setsid "\$timeout_command"/g)).toHaveLength(3);
+    expect(script).not.toContain("timeout --foreground");
     expect(backup?.environment?.BACKUP_DUMP_TIMEOUT_SECONDS).toBe("3600");
     expect(backup?.environment?.BACKUP_DUMP_KILL_AFTER_SECONDS).toBe("5");
     expect(backup?.environment?.BACKUP_SNAPSHOT_TIMEOUT_SECONDS).toBe("3665");
+    expect(backup?.environment?.BACKUP_SPACE_SAFETY_BYTES).toBe("67108864");
+    expect(backup?.tmpfs).toContain("/tmp:rw,noexec,nosuid,size=1g");
+    expect(read(".env.example")).toContain("BACKUP_TMPFS_SIZE=1g");
     expect(script).toContain("format_version=1");
     expect(script).toContain("dump_sha256=");
     expect(script).toContain("skill_registry_schema_version=");
@@ -3966,6 +4020,8 @@ exit 0
     expect(script).toContain("database.dump");
     expect(script).toContain("tar -cf");
     expect(script).toContain("--format=custom");
+    expect(script).not.toContain("--no-owner");
+    expect(script).not.toContain("--no-acl");
     expect(script).toContain("PGPASSFILE");
     expect(script).not.toContain("BACKUP_DATABASE_URL");
     expect(script).toContain("--symmetric");
@@ -3993,6 +4049,137 @@ exit 0
       "service_completed_successfully",
     );
   });
+
+  it("bounds restore decrypt input, expansion, and hangs before plaintext can fill disk", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "restore-decrypt-bounds-"));
+    const bin = path.join(sandbox, "bin");
+    const captures = path.join(sandbox, "captures");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+    const args = [
+      script,
+      backupFile,
+      "1",
+      "1",
+      "11111111-1111-1111-1111-111111111111",
+      "fixture-session",
+    ];
+
+    try {
+      mkdirSync(bin);
+      mkdirSync(captures);
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(backupFile, "x".repeat(64), { mode: 0o600 });
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+case "\${1:-}" in
+  run)
+    case "\${RESTORE_FAKE_MODE:-}" in
+      expansion)
+        count=0
+        while [ "$count" -lt 64 ]; do
+          printf x
+          count=$((count + 1))
+        done
+        ;;
+      hang)
+        : >"$CAPTURE_DIR/decrypt.ready"
+        trap '' TERM
+        while [ ! -f "$CAPTURE_DIR/decrypt.stop" ]; do sleep 1; done
+        exit 143
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  stop)
+    : >"$CAPTURE_DIR/decrypt.stop"
+    ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const commonEnv = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        CAPTURE_DIR: captures,
+        BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+        BACKUP_CRYPTO_IMAGE: "fake-crypto",
+        RESTORE_MAX_ENCRYPTED_BYTES: "128",
+        RESTORE_MAX_DECRYPTED_BYTES: "32",
+        RESTORE_DECRYPT_TIMEOUT_SECONDS: "5",
+        RESTORE_DECRYPT_KILL_AFTER_SECONDS: "1",
+      };
+
+      const oversized = spawnSync("sh", args, {
+        encoding: "utf8",
+        env: {
+          ...commonEnv,
+          RESTORE_MAX_ENCRYPTED_BYTES: "32",
+          RESTORE_TMP_ROOT: path.join(sandbox, "oversized-tmp"),
+        },
+      });
+      expect(`${oversized.stdout}${oversized.stderr}`.trim()).toBe(
+        "restore drill rejected oversized encrypted backup",
+      );
+      expect(oversized.status).toBe(1);
+      expect(readdirSync(captures)).toEqual([]);
+
+      writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      const expansionTmp = path.join(sandbox, "expansion-tmp");
+      mkdirSync(expansionTmp);
+      const expansion = spawnSync("sh", args, {
+        encoding: "utf8",
+        env: {
+          ...commonEnv,
+          RESTORE_FAKE_MODE: "expansion",
+          RESTORE_TMP_ROOT: expansionTmp,
+        },
+      });
+      expect(`${expansion.stdout}${expansion.stderr}`.trim()).toBe(
+        "restore drill rejected oversized decrypted bundle",
+      );
+      expect(expansion.status).toBe(1);
+      expect(readdirSync(expansionTmp)).toEqual([]);
+      expect(
+        readFileSync(path.join(captures, "docker.calls"), "utf8"),
+      ).toContain("run --name aap-restore-decrypt-");
+
+      rmSync(path.join(captures, "docker.calls"));
+      rmSync(path.join(captures, "decrypt.stop"), { force: true });
+      const hangTmp = path.join(sandbox, "hang-tmp");
+      mkdirSync(hangTmp);
+      const hangStartedAt = Date.now();
+      const hang = spawnSync("sh", args, {
+        encoding: "utf8",
+        timeout: 6_000,
+        env: {
+          ...commonEnv,
+          RESTORE_FAKE_MODE: "hang",
+          RESTORE_DECRYPT_TIMEOUT_SECONDS: "1",
+          RESTORE_TMP_ROOT: hangTmp,
+        },
+      });
+      const hangElapsedMs = Date.now() - hangStartedAt;
+      const hangOutput = `${hang.stdout}${hang.stderr}`;
+      expect(hang.error, hangOutput).toBeUndefined();
+      expect(hang.status, hangOutput).toBe(1);
+      expect(hangOutput.trim()).toBe("restore drill decryption timed out");
+      expect(hangElapsedMs).toBeLessThan(4_000);
+      expect(readdirSync(hangTmp)).toEqual([]);
+      expect(
+        readFileSync(path.join(captures, "docker.calls"), "utf8"),
+      ).toContain("stop --time 1 aap-restore-decrypt-");
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 10_000);
 
   it("documents immutable registry recovery without weakening secret preflights", () => {
     const runbook = read("infra/docker/README.md");
@@ -4062,11 +4249,19 @@ set -eu
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -s|-k|--signal|--kill-after) shift 2 ;;
-    --signal=*|--kill-after=*) shift ;;
+    --signal=*|--kill-after=*|--foreground) shift ;;
     --) shift; break ;;
     *) shift; break ;;
   esac
 done
+exec "$@"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "setsid"),
+        `#!/bin/sh
+set -eu
 exec "$@"
 `,
         { mode: 0o700 },
@@ -4079,7 +4274,7 @@ printf '%s\\n' "$@" >"$CAPTURE_DIR/psql.argv"
 while IFS= read -r command; do
   printf '%s\\n' "$command" >>"$CAPTURE_DIR/psql.commands"
   case "$command" in
-    *pg_export_snapshot*) printf '%s\\n' '00000003-0000001B-1|1|2|2|3' ;;
+    *pg_export_snapshot*) printf '%s\\n' '00000003-0000001B-1|1|2|2|3|1024' ;;
     '\\q') exit 0 ;;
   esac
 done
@@ -4116,20 +4311,24 @@ printf '%s  %s\\n' '${fakeDumpSha256}' "$1"
         `#!/bin/sh
 set -eu
 printf '%s\\n' "$@" >"$CAPTURE_DIR/gpg.argv"
-input=
 output=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --output) shift; output=$1 ;;
-    --*) ;;
-    *) input=$1 ;;
   esac
   shift
 done
-test -n "$input"
 test -n "$output"
-cp "$input" "$CAPTURE_DIR/plaintext.bundle"
-{ printf 'fake-openpgp'; cat "$input"; } >"$output"
+cat >"$CAPTURE_DIR/plaintext.bundle"
+{ printf 'fake-openpgp'; cat "$CAPTURE_DIR/plaintext.bundle"; } >"$output"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "fsync"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$1" >>"$CAPTURE_DIR/fsync.paths"
 `,
         { mode: 0o700 },
       );
@@ -4152,6 +4351,7 @@ cp "$input" "$CAPTURE_DIR/plaintext.bundle"
             BACKUP_DIRECTORY: backups,
             BACKUP_TMP_DIRECTORY: temporary,
             BACKUP_RUN_ONCE: "true",
+            BACKUP_TIMEOUT_COMMAND: path.join(bin, "timeout"),
           },
         },
       );
@@ -4224,6 +4424,77 @@ skill_file_count=3
       expect(statSync(path.join(backups, backupFiles[0])).mode & 0o777).toBe(
         0o600,
       );
+      expect(
+        readFileSync(path.join(captures, "fsync.paths"), "utf8")
+          .trim()
+          .split("\n"),
+      ).toEqual([expect.stringMatching(/\.dump\.gpg\.tmp$/u), backups]);
+
+      const capacityBin = path.join(sandbox, "capacity-bin");
+      const capacityCaptures = path.join(sandbox, "capacity-captures");
+      const capacityBackups = path.join(sandbox, "capacity-backups");
+      const capacityTemporary = path.join(sandbox, "capacity-temporary");
+      for (const directory of [
+        capacityBin,
+        capacityCaptures,
+        capacityBackups,
+        capacityTemporary,
+      ]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      for (const executable of [
+        "timeout",
+        "setsid",
+        "psql",
+        "pg_dump",
+        "sha256sum",
+        "gpg",
+        "fsync",
+      ]) {
+        const target = path.join(capacityBin, executable);
+        copyFileSync(path.join(bin, executable), target);
+        chmodSync(target, 0o700);
+      }
+      writeFileSync(
+        path.join(capacityBin, "df"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf '%s\n' 'test 1 0 1 0% /work'
+`,
+        { mode: 0o700 },
+      );
+      const insufficientCapacity = spawnSync(
+        "sh",
+        [path.join(root, "infra/docker/backup.sh")],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${capacityBin}:${process.env.PATH ?? ""}`,
+            CAPTURE_DIR: capacityCaptures,
+            PGHOST: "db",
+            PGPORT: "5432",
+            PGDATABASE: "ai_agent_platform",
+            PGUSER: "ai_agent_backup",
+            BACKUP_DATABASE_PASSWORD_FILE: passwordFile,
+            BACKUP_ENCRYPTION_KEY_FILE: encryptionKeyFile,
+            BACKUP_DIRECTORY: capacityBackups,
+            BACKUP_TMP_DIRECTORY: capacityTemporary,
+            BACKUP_RUN_ONCE: "true",
+            BACKUP_TIMEOUT_COMMAND: path.join(capacityBin, "timeout"),
+            BACKUP_PROCESS_KILL_AFTER_SECONDS: "1",
+          },
+        },
+      );
+      const capacityOutput = `${insufficientCapacity.stdout}${insufficientCapacity.stderr}`;
+      expect(insufficientCapacity.status, capacityOutput).toBe(1);
+      expect(capacityOutput.trim()).toBe(
+        "backup temporary space budget is insufficient",
+      );
+      expect(readdirSync(capacityCaptures)).not.toContain("pg_dump.argv");
+      expect(readdirSync(capacityBackups)).toEqual([]);
+      expect(readdirSync(capacityTemporary)).toEqual([]);
 
       const hangBin = path.join(sandbox, "hang-bin");
       const hangCaptures = path.join(sandbox, "hang-captures");
@@ -4249,6 +4520,7 @@ while [ "$#" -gt 0 ]; do
     -k|--kill-after) kill_after=$2; shift 2 ;;
     --signal=*) signal=\${1#*=}; shift ;;
     --kill-after=*) kill_after=\${1#*=}; shift ;;
+    --foreground) shift ;;
     --) shift; break ;;
     *) duration=$1; shift; break ;;
   esac
@@ -4289,6 +4561,14 @@ exit "$status"
         { mode: 0o700 },
       );
       writeFileSync(
+        path.join(hangBin, "setsid"),
+        `#!/bin/sh
+set -eu
+exec "$@"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
         path.join(hangBin, "psql"),
         `#!/bin/sh
 set -eu
@@ -4303,7 +4583,7 @@ while IFS= read -r command; do
   case "$command" in
     *pg_export_snapshot*)
       : >"$CAPTURE_DIR/idle-transaction"
-      printf '%s\n' '00000003-0000001B-1|1|2|2|3'
+      printf '%s\n' '00000003-0000001B-1|1|2|2|3|1024'
       ;;
     COMMIT*) rm -f "$CAPTURE_DIR/idle-transaction" ;;
     '\\q') exit 0 ;;
@@ -4355,9 +4635,11 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
             BACKUP_DIRECTORY: hangBackups,
             BACKUP_TMP_DIRECTORY: hangTemporary,
             BACKUP_RUN_ONCE: "true",
+            BACKUP_TIMEOUT_COMMAND: path.join(hangBin, "timeout"),
             BACKUP_DUMP_TIMEOUT_SECONDS: "1",
             BACKUP_DUMP_KILL_AFTER_SECONDS: "1",
             BACKUP_SNAPSHOT_TIMEOUT_SECONDS: "62",
+            BACKUP_PROCESS_KILL_AFTER_SECONDS: "1",
           },
         },
       );
@@ -4417,7 +4699,7 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
       }
       rmSync(sandbox, { recursive: true, force: true });
     }
-  }, 10_000);
+  }, 15_000);
 
   it("validates exactly the single passphrase line consumed by GnuPG", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "backup-key-format-"));

@@ -66,6 +66,14 @@ class MigrationConnection(Protocol):
 ConnectionFactory = Callable[[str], Awaitable[MigrationConnection]]
 MigrationCommand = Callable[[], Awaitable[None]]
 
+_ORIGINAL_REVIEW_EVENT_CAST = (
+    "ARRAY['revision_published'::character varying, 'revision_rejected'::character varying]::text[]"
+)
+_RESTORED_REVIEW_EVENT_CAST = (
+    "ARRAY['revision_published'::character varying::text, "
+    "'revision_rejected'::character varying::text]"
+)
+
 
 def _psycopg_url(database_url: str) -> str:
     return database_url.replace("postgresql+psycopg_async://", "postgresql://", 1)
@@ -87,6 +95,32 @@ async def _verify_rows(
         raise RuntimeError("Skill registry migration verification failed")
 
 
+def _canonicalize_restored_review_constraint(
+    row: tuple[object, ...],
+) -> tuple[object, ...]:
+    expected_identity = (
+        "skill_control_events_review_evidence",
+        "skill_control_events",
+        "c",
+        True,
+    )
+    if row[:4] != expected_identity or len(row) != 5 or not isinstance(row[4], str):
+        return row
+    return (
+        *row[:4],
+        row[4].replace(_RESTORED_REVIEW_EVENT_CAST, _ORIGINAL_REVIEW_EVENT_CAST),
+    )
+
+
+async def _verify_review_constraints(cursor: MigrationCursor) -> None:
+    await cursor.execute(VERIFY_REVIEW_CONSTRAINTS_SQL)
+    actual = {
+        _canonicalize_restored_review_constraint(tuple(row)) for row in await cursor.fetchall()
+    }
+    if actual != EXPECTED_REVIEW_CONSTRAINTS:
+        raise RuntimeError("Skill registry migration verification failed")
+
+
 async def _verify_migration(cursor: MigrationCursor) -> None:
     await _verify_rows(cursor, VERIFY_TABLES_SQL, EXPECTED_TABLE_OWNERS)
     await _verify_rows(
@@ -99,7 +133,7 @@ async def _verify_migration(cursor: MigrationCursor) -> None:
         VERIFY_REVIEW_STORAGE_COLUMNS_SQL,
         EXPECTED_REVIEW_STORAGE_COLUMNS,
     )
-    await _verify_rows(cursor, VERIFY_REVIEW_CONSTRAINTS_SQL, EXPECTED_REVIEW_CONSTRAINTS)
+    await _verify_review_constraints(cursor)
     await _verify_rows(
         cursor,
         VERIFY_REVIEW_TRIGGER_GUARDS_SQL,
