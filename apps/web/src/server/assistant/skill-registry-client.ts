@@ -136,9 +136,12 @@ export type SkillRegistryClientErrorCode =
   | "timeout"
   | "transport_error";
 
+const SKILL_REGISTRY_CLIENT_ERROR_BRAND = new WeakSet<object>();
+
 export class SkillRegistryClientError extends Error {
   constructor(readonly code: SkillRegistryClientErrorCode) {
     super("Skill Registry request failed");
+    SKILL_REGISTRY_CLIENT_ERROR_BRAND.add(this);
     Object.defineProperty(this, "name", {
       value: "SkillRegistryClientError",
       configurable: true,
@@ -454,7 +457,7 @@ function cleanErrorCode(error: unknown): SkillRegistryClientErrorCode {
     if (
       typeof error !== "object" ||
       error === null ||
-      Reflect.getPrototypeOf(error) !== SkillRegistryClientError.prototype
+      !SKILL_REGISTRY_CLIENT_ERROR_BRAND.has(error)
     ) {
       return "transport_error";
     }

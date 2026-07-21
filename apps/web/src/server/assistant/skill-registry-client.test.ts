@@ -763,7 +763,7 @@ describe("private Skill Registry client", () => {
     ).not.toMatch(/private|skill-registry-control|http:\/\/skill-registry/iu);
   });
 
-  it("reads only an own data allowlisted code without invoking getters", async () => {
+  it("brands trusted errors before reading code and never touches Proxy traps", async () => {
     const codeGetter = vi.fn(() => "REGISTRY_UNAVAILABLE");
     const accessor = new SkillRegistryClientError("transport_error");
     Object.defineProperty(accessor, "code", {
@@ -774,33 +774,49 @@ describe("private Skill Registry client", () => {
     const invalid = new SkillRegistryClientError(
       "PRIVATE_INVALID_CODE" as "transport_error",
     );
-    const proxyGet = vi.fn();
-    const proxied = new Proxy(new SkillRegistryClientError("timeout"), {
+    const traps = {
+      get: vi.fn(),
+      getPrototypeOf: vi.fn(),
+      getOwnPropertyDescriptor: vi.fn(),
+      has: vi.fn(),
+      ownKeys: vi.fn(),
+    };
+    const proxyTarget = new SkillRegistryClientError("timeout");
+    const proxied = new Proxy(proxyTarget, {
       get(target, key, receiver) {
-        if (key === "code") proxyGet();
+        traps.get();
         return Reflect.get(target, key, receiver);
       },
-    });
-    const trapped = new Proxy(
-      new SkillRegistryClientError("REGISTRY_UNAVAILABLE"),
-      {
-        getOwnPropertyDescriptor() {
-          throw new Error(`${CONTROL_KEY} private proxy trap`);
-        },
+      getPrototypeOf(target) {
+        traps.getPrototypeOf();
+        return Reflect.getPrototypeOf(target);
       },
-    );
+      getOwnPropertyDescriptor(target, key) {
+        traps.getOwnPropertyDescriptor();
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+      has(target, key) {
+        traps.has();
+        return Reflect.has(target, key);
+      },
+      ownKeys(target) {
+        traps.ownKeys();
+        return Reflect.ownKeys(target);
+      },
+    });
+    const fake = { code: "timeout", cause: `${CONTROL_KEY} private fake` };
 
     for (const [error, code] of [
       [accessor, "transport_error"],
       [invalid, "transport_error"],
-      [proxied, "timeout"],
-      [trapped, "transport_error"],
+      [proxied, "transport_error"],
+      [fake, "transport_error"],
     ] as const) {
       const client = createSkillRegistryClient({
         settings: settings(),
-        fetcher: vi.fn<typeof fetch>(() => {
+        fetcher: (() => {
           throw error;
-        }),
+        }) as typeof fetch,
         clock: () => NOW,
         nonceFactory: () => NONCE,
       });
@@ -821,7 +837,20 @@ describe("private Skill Registry client", () => {
       expect((caught as Error).cause).toBeUndefined();
     }
     expect(codeGetter).not.toHaveBeenCalled();
-    expect(proxyGet).not.toHaveBeenCalled();
+    expect(
+      Object.fromEntries(
+        Object.entries(traps).map(([name, trap]) => [
+          name,
+          trap.mock.calls.length,
+        ]),
+      ),
+    ).toEqual({
+      get: 0,
+      getPrototypeOf: 0,
+      getOwnPropertyDescriptor: 0,
+      has: 0,
+      ownKeys: 0,
+    });
   });
 
   it.each(["clock", "nonce"] as const)(
