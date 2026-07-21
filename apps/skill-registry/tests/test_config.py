@@ -96,3 +96,26 @@ def test_settings_load_only_their_role_specific_environment_variable(
     settings = settings_type(_env_file=None)  # type: ignore[call-arg]
 
     assert settings.database_url.get_secret_value() == valid_url
+
+
+@pytest.mark.parametrize(
+    ("settings_type", "wrong_role_url"),
+    [
+        (MigrationSettings, MANAGER_URL),
+        (MigrationSettings, RUNTIME_URL),
+        (ManagerSettings, MIGRATOR_URL),
+        (ManagerSettings, RUNTIME_URL),
+        (RuntimeSettings, MIGRATOR_URL),
+        (RuntimeSettings, MANAGER_URL),
+    ],
+)
+def test_database_settings_reject_another_registry_roles_credentials_without_leaking(
+    settings_type: type[MigrationSettings] | type[ManagerSettings] | type[RuntimeSettings],
+    wrong_role_url: str,
+) -> None:
+    with pytest.raises(ValidationError) as error:
+        settings_type.model_validate({"database_url": wrong_role_url})
+
+    rendered = repr(error.value)
+    assert wrong_role_url not in rendered
+    assert "private-" not in rendered

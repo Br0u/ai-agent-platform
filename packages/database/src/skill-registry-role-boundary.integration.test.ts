@@ -81,6 +81,7 @@ describePostgres(
     it("allows only reviewed manager writes and keeps runtime isolated", async () => {
       const client = await manager.connect();
       const actorId = randomUUID();
+      const reviewerId = randomUUID();
       const skillId = randomUUID();
       const revisionId = randomUUID();
       await client.query("BEGIN");
@@ -122,12 +123,32 @@ describePostgres(
            ) VALUES ($1, $2, 1, 'pending_review', 'upload', '{}'::jsonb, $3)`,
           [revisionId, skillId, actorId],
         );
+        await expectDatabaseError(
+          client,
+          () =>
+            client.query(
+              `UPDATE skill_registry.skill_revisions
+               SET state = 'published', reviewed_by = $1, reviewed_at = now()
+               WHERE id = $2`,
+              [actorId, revisionId],
+            ),
+          "23514",
+        );
         await client.query(
           `UPDATE skill_registry.skill_revisions
            SET state = 'published', reviewed_by = $1, reviewed_at = now()
            WHERE id = $2`,
-          [actorId, revisionId],
+          [reviewerId, revisionId],
         );
+        await client.query(
+          `INSERT INTO skill_registry.skill_control_events (
+             id, request_id, assertion_nonce, actor, event_type,
+             target_id, result_code
+           ) VALUES ($1, $2, $3, $4, 'revision_published', $5, 'ok')`,
+          [randomUUID(), randomUUID(), randomUUID(), reviewerId, revisionId],
+        );
+        await client.query("SET CONSTRAINTS ALL IMMEDIATE");
+        await client.query("SET CONSTRAINTS ALL DEFERRED");
         await expectDatabaseError(
           client,
           () =>

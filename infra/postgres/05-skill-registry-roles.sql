@@ -25,6 +25,30 @@ BEGIN
 END
 $$;
 
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_auth_members AS membership
+    JOIN pg_roles AS granted_role ON granted_role.oid = membership.roleid
+    JOIN pg_roles AS member_role ON member_role.oid = membership.member
+    WHERE granted_role.rolname IN (
+      'ai_agent_skill_registry_migrator',
+      'ai_agent_skill_registry_manager',
+      'ai_agent_skill_registry_runtime'
+    )
+    OR member_role.rolname IN (
+      'ai_agent_skill_registry_migrator',
+      'ai_agent_skill_registry_manager',
+      'ai_agent_skill_registry_runtime'
+    )
+  ) THEN
+    RAISE EXCEPTION 'skill registry roles must not have role memberships'
+      USING ERRCODE = '42501';
+  END IF;
+END
+$$;
+
 ALTER ROLE ai_agent_skill_registry_migrator
   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS
   PASSWORD :'skill_registry_migrator_password';

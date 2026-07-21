@@ -45,6 +45,106 @@ EXPECTED_SCHEMA_GRANTS = frozenset(
     }
 )
 
+EXPECTED_CONTROL_EVENT_TRANSACTION_COLUMN = frozenset({("transaction_id", "bigint", True, "")})
+
+EXPECTED_FUNCTION_BOUNDARY = frozenset(
+    (
+        function_name,
+        "ai_agent_skill_registry_migrator",
+        0,
+        "trigger",
+        "plpgsql",
+        False,
+        True,
+        True,
+    )
+    for function_name in {
+        "deny_append_only_mutation",
+        "guard_revision_insert",
+        "guard_revision_update",
+        "guard_skill_update",
+        "require_revision_review_event",
+        "stamp_control_event_transaction",
+    }
+)
+
+EXPECTED_SECURITY_TRIGGERS = frozenset(
+    {
+        (
+            "skill_control_events_append_only",
+            "skill_control_events",
+            "deny_append_only_mutation",
+            27,
+            False,
+            False,
+            "O",
+        ),
+        (
+            "skill_control_events_stamp_transaction",
+            "skill_control_events",
+            "stamp_control_event_transaction",
+            7,
+            False,
+            False,
+            "O",
+        ),
+        (
+            "skill_revision_artifacts_append_only",
+            "skill_revision_artifacts",
+            "deny_append_only_mutation",
+            27,
+            False,
+            False,
+            "O",
+        ),
+        (
+            "skill_revision_files_append_only",
+            "skill_revision_files",
+            "deny_append_only_mutation",
+            27,
+            False,
+            False,
+            "O",
+        ),
+        (
+            "skill_revisions_guard_insert",
+            "skill_revisions",
+            "guard_revision_insert",
+            7,
+            False,
+            False,
+            "O",
+        ),
+        (
+            "skill_revisions_guard_update",
+            "skill_revisions",
+            "guard_revision_update",
+            19,
+            False,
+            False,
+            "O",
+        ),
+        (
+            "skill_revisions_require_review_event",
+            "skill_revisions",
+            "require_revision_review_event",
+            17,
+            True,
+            True,
+            "O",
+        ),
+        (
+            "skills_guard_update",
+            "skills",
+            "guard_skill_update",
+            19,
+            False,
+            False,
+            "O",
+        ),
+    }
+)
+
 VERIFY_SCHEMA_OWNER_SQL = """SELECT pg_get_userbyid(n.nspowner)::text
 FROM pg_namespace AS n
 WHERE n.nspname = 'skill_registry'
@@ -58,9 +158,12 @@ CREATE TABLE IF NOT EXISTS skill_registry.schema_versions (
 """
 
 SELECT_SCHEMA_VERSION_SQL = """
-SELECT version
+SELECT MAX(version), COUNT(*)
 FROM skill_registry.schema_versions
-WHERE version = 1
+"""
+
+LOCK_SCHEMA_VERSION_SQL = """
+LOCK TABLE skill_registry.schema_versions IN EXCLUSIVE MODE
 """
 
 SCHEMA_VERSION_1_SQL = """
@@ -136,6 +239,7 @@ CREATE TABLE skill_registry.skill_control_events (
   id uuid PRIMARY KEY,
   request_id uuid NOT NULL,
   assertion_nonce uuid UNIQUE,
+  transaction_id bigint NOT NULL,
   actor varchar(255) NOT NULL,
   event_type varchar(64) NOT NULL
     CHECK (event_type IN (
@@ -213,6 +317,10 @@ BEGIN
       RAISE EXCEPTION 'review actor and timestamp are required'
         USING ERRCODE = '23514';
     END IF;
+    IF NEW.reviewed_by = OLD.created_by THEN
+      RAISE EXCEPTION 'skill revision review requires a second actor'
+        USING ERRCODE = '23514';
+    END IF;
   ELSIF OLD.state = 'published' AND NEW.state = 'archived' THEN
     IF NEW.reviewed_by IS DISTINCT FROM OLD.reviewed_by
       OR NEW.reviewed_at IS DISTINCT FROM OLD.reviewed_at THEN
@@ -242,6 +350,49 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION skill_registry.stamp_control_event_transaction()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.transaction_id := txid_current();
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION skill_registry.require_revision_review_event()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  expected_event_type varchar(64);
+BEGIN
+  IF OLD.state <> 'pending_review'
+    OR NEW.state NOT IN ('published', 'rejected') THEN
+    RETURN NEW;
+  END IF;
+
+  expected_event_type := CASE
+    WHEN NEW.state = 'published' THEN 'revision_published'
+    WHEN NEW.state = 'rejected' THEN 'revision_rejected'
+  END;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM skill_registry.skill_control_events AS event
+    WHERE event.transaction_id = txid_current()
+      AND event.target_id = NEW.id
+      AND event.event_type = expected_event_type
+      AND event.actor = NEW.reviewed_by::text
+      AND event.result_code = 'ok'
+  ) THEN
+    RAISE EXCEPTION 'skill revision review event is required in the same transaction'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION skill_registry.deny_append_only_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -258,11 +409,17 @@ ALTER FUNCTION skill_registry.guard_revision_update()
   OWNER TO ai_agent_skill_registry_migrator;
 ALTER FUNCTION skill_registry.guard_revision_insert()
   OWNER TO ai_agent_skill_registry_migrator;
+ALTER FUNCTION skill_registry.stamp_control_event_transaction()
+  OWNER TO ai_agent_skill_registry_migrator;
+ALTER FUNCTION skill_registry.require_revision_review_event()
+  OWNER TO ai_agent_skill_registry_migrator;
 ALTER FUNCTION skill_registry.deny_append_only_mutation()
   OWNER TO ai_agent_skill_registry_migrator;
 REVOKE ALL ON FUNCTION skill_registry.guard_skill_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION skill_registry.guard_revision_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION skill_registry.guard_revision_insert() FROM PUBLIC;
+REVOKE ALL ON FUNCTION skill_registry.stamp_control_event_transaction() FROM PUBLIC;
+REVOKE ALL ON FUNCTION skill_registry.require_revision_review_event() FROM PUBLIC;
 REVOKE ALL ON FUNCTION skill_registry.deny_append_only_mutation() FROM PUBLIC;
 
 CREATE TRIGGER skills_guard_update
@@ -276,6 +433,15 @@ FOR EACH ROW EXECUTE FUNCTION skill_registry.guard_revision_update();
 CREATE TRIGGER skill_revisions_guard_insert
 BEFORE INSERT ON skill_registry.skill_revisions
 FOR EACH ROW EXECUTE FUNCTION skill_registry.guard_revision_insert();
+
+CREATE CONSTRAINT TRIGGER skill_revisions_require_review_event
+AFTER UPDATE ON skill_registry.skill_revisions
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION skill_registry.require_revision_review_event();
+
+CREATE TRIGGER skill_control_events_stamp_transaction
+BEFORE INSERT ON skill_registry.skill_control_events
+FOR EACH ROW EXECUTE FUNCTION skill_registry.stamp_control_event_transaction();
 
 CREATE TRIGGER skill_revision_artifacts_append_only
 BEFORE UPDATE OR DELETE ON skill_registry.skill_revision_artifacts
@@ -422,4 +588,57 @@ CROSS JOIN LATERAL aclexplode(
 ) AS acl
 WHERE n.nspname = 'skill_registry'
 ORDER BY 1, acl.privilege_type
+"""
+
+VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL = """SELECT
+  a.attname::text,
+  format_type(a.atttypid, a.atttypmod)::text,
+  a.attnotnull,
+  COALESCE(pg_get_expr(d.adbin, d.adrelid), '')::text
+FROM pg_class AS c
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+JOIN pg_attribute AS a ON a.attrelid = c.oid
+LEFT JOIN pg_attrdef AS d
+  ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+WHERE n.nspname = 'skill_registry'
+  AND c.relname = 'skill_control_events'
+  AND a.attname = 'transaction_id'
+  AND NOT a.attisdropped
+"""
+
+VERIFY_FUNCTION_BOUNDARY_SQL = """SELECT
+  p.proname::text,
+  pg_get_userbyid(p.proowner)::text,
+  p.pronargs::integer,
+  p.prorettype::regtype::text,
+  l.lanname::text,
+  p.prosecdef,
+  p.proconfig IS NULL,
+  NOT EXISTS (
+    SELECT 1
+    FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) AS acl
+    WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'
+  )
+FROM pg_proc AS p
+JOIN pg_namespace AS n ON n.oid = p.pronamespace
+JOIN pg_language AS l ON l.oid = p.prolang
+WHERE n.nspname = 'skill_registry'
+ORDER BY p.proname
+"""
+
+VERIFY_SECURITY_TRIGGERS_SQL = """SELECT
+  trigger.tgname::text,
+  relation.relname::text,
+  function.proname::text,
+  trigger.tgtype::integer,
+  trigger.tgdeferrable,
+  trigger.tginitdeferred,
+  trigger.tgenabled::text
+FROM pg_trigger AS trigger
+JOIN pg_class AS relation ON relation.oid = trigger.tgrelid
+JOIN pg_namespace AS relation_schema ON relation_schema.oid = relation.relnamespace
+JOIN pg_proc AS function ON function.oid = trigger.tgfoid
+WHERE relation_schema.nspname = 'skill_registry'
+  AND NOT trigger.tgisinternal
+ORDER BY trigger.tgname
 """

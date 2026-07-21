@@ -1,6 +1,7 @@
 """Role-separated database configuration for the skill registry."""
 
-from urllib.parse import urlsplit
+from typing import ClassVar
+from urllib.parse import unquote, urlsplit
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,13 +38,24 @@ class _DatabaseSettings(BaseSettings):
         populate_by_name=True,
     )
 
+    _expected_username: ClassVar[str]
     database_url: SecretStr = Field(repr=False)
-    _validate_database_url = field_validator("database_url")(_validate_async_psycopg_url)
+
+    @field_validator("database_url")
+    @classmethod
+    def _validate_database_url(cls, value: SecretStr) -> SecretStr:
+        validated = _validate_async_psycopg_url(value)
+        raw_value = validated.get_secret_value()
+        parsed = urlsplit(f"postgresql://{raw_value.removeprefix('postgresql+psycopg_async://')}")
+        if unquote(parsed.username or "") != cls._expected_username:
+            raise ValueError("database URL username does not match its registry role")
+        return validated
 
 
 class MigrationSettings(_DatabaseSettings):
     """Credentials available only to the schema migrator."""
 
+    _expected_username = "ai_agent_skill_registry_migrator"
     database_url: SecretStr = Field(
         validation_alias="SKILL_REGISTRY_MIGRATOR_DATABASE_URL",
         repr=False,
@@ -53,6 +65,7 @@ class MigrationSettings(_DatabaseSettings):
 class ManagerSettings(_DatabaseSettings):
     """Credentials available only to the review/control manager."""
 
+    _expected_username = "ai_agent_skill_registry_manager"
     database_url: SecretStr = Field(
         validation_alias="SKILL_REGISTRY_DATABASE_URL",
         repr=False,
@@ -62,6 +75,7 @@ class ManagerSettings(_DatabaseSettings):
 class RuntimeSettings(_DatabaseSettings):
     """Credentials reserved for a future isolated skill runtime."""
 
+    _expected_username = "ai_agent_skill_registry_runtime"
     database_url: SecretStr = Field(
         validation_alias="SKILL_REGISTRY_RUNTIME_DATABASE_URL",
         repr=False,

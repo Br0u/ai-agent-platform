@@ -1,5 +1,6 @@
 import asyncio
 import os
+from pathlib import Path
 import re
 from urllib.parse import unquote, urlsplit
 from uuid import UUID, uuid4
@@ -37,6 +38,7 @@ FOREIGN_ROLES = (
     "ai_agent_control_migrator",
     "ai_agent_control",
 )
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _assert_safe_url(database_url: str, *, require_async: bool) -> str:
@@ -138,6 +140,33 @@ async def _insert_skill_revision(
     )
 
 
+async def _insert_review_event(
+    connection: psycopg.AsyncConnection[tuple[object, ...]],
+    *,
+    revision_id: UUID,
+    reviewer_id: UUID,
+    event_type: str,
+    result_code: str = "ok",
+    error_code: str | None = None,
+) -> None:
+    await connection.execute(
+        """INSERT INTO skill_registry.skill_control_events (
+          id, request_id, assertion_nonce, actor, event_type,
+          target_id, result_code, error_code
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+        (
+            uuid4(),
+            uuid4(),
+            uuid4(),
+            str(reviewer_id),
+            event_type,
+            revision_id,
+            result_code,
+            error_code,
+        ),
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(
     bool(MISSING_ENVIRONMENT),
@@ -181,6 +210,20 @@ async def test_real_registry_migration_and_role_boundary() -> None:
             ("ai_agent_skill_registry_runtime", True, False, False, False, False, False, False),
         ]
 
+        role_sql = (REPO_ROOT / "infra/postgres/05-skill-registry-roles.sql").read_text()
+        membership_blocks = re.findall(r"DO \$\$.*?\$\$;", role_sql, flags=re.DOTALL)
+        assert len(membership_blocks) >= 2
+        await owner.execute(
+            "GRANT ai_agent_skill_registry_manager TO ai_agent_skill_registry_runtime"
+        )
+        try:
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                await owner.execute(membership_blocks[1])
+        finally:
+            await owner.execute(
+                "REVOKE ai_agent_skill_registry_manager FROM ai_agent_skill_registry_runtime"
+            )
+
         await owner.execute("DROP SCHEMA IF EXISTS skill_registry CASCADE")
         await owner.execute(
             "CREATE SCHEMA skill_registry AUTHORIZATION ai_agent_skill_registry_migrator"
@@ -194,6 +237,7 @@ async def test_real_registry_migration_and_role_boundary() -> None:
         assert await version_rows.fetchall() == [(1,)]
 
         actor_id = uuid4()
+        reviewer_id = uuid4()
         skill_id = uuid4()
         revision_id = uuid4()
         async with manager.transaction():
@@ -230,19 +274,108 @@ async def test_real_registry_migration_and_role_boundary() -> None:
             ) VALUES (%s, %s, 2, 'pending_review', 'upload', '{}'::jsonb, %s, %s, now())""",
             (uuid4(), skill_id, actor_id, actor_id),
         )
+
+        for self_review_state, self_review_event in (
+            ("published", "revision_published"),
+            ("rejected", "revision_rejected"),
+        ):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                async with manager.transaction():
+                    await _insert_review_event(
+                        manager,
+                        revision_id=revision_id,
+                        reviewer_id=actor_id,
+                        event_type=self_review_event,
+                    )
+                    await manager.execute(
+                        """UPDATE skill_registry.skill_revisions
+                        SET state = %s, reviewed_by = %s, reviewed_at = now()
+                        WHERE id = %s""",
+                        (self_review_state, actor_id, revision_id),
+                    )
+
+        with pytest.raises(psycopg.errors.CheckViolation):
+            async with manager.transaction():
+                await manager.execute(
+                    """UPDATE skill_registry.skill_revisions
+                    SET state = 'published', reviewed_by = %s, reviewed_at = now()
+                    WHERE id = %s""",
+                    (reviewer_id, revision_id),
+                )
+
+        async with manager.transaction():
+            await _insert_review_event(
+                manager,
+                revision_id=revision_id,
+                reviewer_id=reviewer_id,
+                event_type="revision_published",
+            )
+        with pytest.raises(psycopg.errors.CheckViolation):
+            async with manager.transaction():
+                await manager.execute(
+                    """UPDATE skill_registry.skill_revisions
+                    SET state = 'published', reviewed_by = %s, reviewed_at = now()
+                    WHERE id = %s""",
+                    (reviewer_id, revision_id),
+                )
+
+        for wrong_target, wrong_type, wrong_actor, wrong_result, error_code in (
+            (uuid4(), "revision_published", reviewer_id, "ok", None),
+            (revision_id, "revision_rejected", reviewer_id, "ok", None),
+            (revision_id, "revision_published", actor_id, "ok", None),
+            (revision_id, "revision_published", reviewer_id, "error", "review_failed"),
+        ):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                async with manager.transaction():
+                    await _insert_review_event(
+                        manager,
+                        revision_id=wrong_target,
+                        reviewer_id=wrong_actor,
+                        event_type=wrong_type,
+                        result_code=wrong_result,
+                        error_code=error_code,
+                    )
+                    await manager.execute(
+                        """UPDATE skill_registry.skill_revisions
+                        SET state = 'published', reviewed_by = %s, reviewed_at = now()
+                        WHERE id = %s""",
+                        (reviewer_id, revision_id),
+                    )
+
         async with manager.transaction():
             await manager.execute(
                 """UPDATE skill_registry.skill_revisions
                 SET state = 'published', reviewed_by = %s, reviewed_at = now()
                 WHERE id = %s""",
-                (actor_id, revision_id),
+                (reviewer_id, revision_id),
+            )
+            await _insert_review_event(
+                manager,
+                revision_id=revision_id,
+                reviewer_id=reviewer_id,
+                event_type="revision_published",
+            )
+
+        before_event_revision_id = uuid4()
+        async with manager.transaction():
+            await manager.execute(
+                """INSERT INTO skill_registry.skill_revisions (
+                  id, skill_id, revision_no, state, source_type, manifest, created_by
+                ) VALUES (%s, %s, 2, 'pending_review', 'upload', '{}'::jsonb, %s)""",
+                (before_event_revision_id, skill_id, actor_id),
+            )
+        async with manager.transaction():
+            await _insert_review_event(
+                manager,
+                revision_id=before_event_revision_id,
+                reviewer_id=reviewer_id,
+                event_type="revision_rejected",
             )
             await manager.execute(
-                """INSERT INTO skill_registry.skill_control_events (
-                  id, request_id, assertion_nonce, actor, event_type,
-                  target_id, result_code
-                ) VALUES (%s, %s, %s, %s, 'revision_published', %s, 'ok')""",
-                (uuid4(), uuid4(), uuid4(), str(actor_id), revision_id),
+                """UPDATE skill_registry.skill_revisions
+                SET state = 'rejected', reviewed_by = %s, reviewed_at = now()
+                WHERE id = %s""",
+                (reviewer_id, before_event_revision_id),
             )
 
         await _expect_database_error(

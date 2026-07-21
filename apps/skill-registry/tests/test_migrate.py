@@ -5,15 +5,19 @@ import pytest
 from skill_registry.config import MigrationSettings
 from skill_registry.migrate import MigrationConnection, main, run_migration
 from skill_registry.schema import (
+    LOCK_SCHEMA_VERSION_SQL,
     PREPARE_SCHEMA_SQL,
     SCHEMA_VERSION_1_SQL,
     SELECT_SCHEMA_VERSION_SQL,
     VERIFY_BACKUP_GRANTS_SQL,
+    VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL,
     VERIFY_FORBIDDEN_GRANTS_SQL,
+    VERIFY_FUNCTION_BOUNDARY_SQL,
     VERIFY_MANAGER_COLUMN_GRANTS_SQL,
     VERIFY_MANAGER_TABLE_GRANTS_SQL,
     VERIFY_SCHEMA_GRANTS_SQL,
     VERIFY_SCHEMA_OWNER_SQL,
+    VERIFY_SECURITY_TRIGGERS_SQL,
     VERIFY_TABLES_SQL,
 )
 
@@ -25,8 +29,8 @@ PSYCOPG_URL = MIGRATOR_URL.replace("postgresql+psycopg_async://", "postgresql://
 
 
 class FakeCursor:
-    def __init__(self, *, applied: bool = False) -> None:
-        self.applied = applied
+    def __init__(self, *, versions: tuple[int, ...] = ()) -> None:
+        self.versions = versions
         self.executed: list[str] = []
         self._query = ""
 
@@ -40,13 +44,16 @@ class FakeCursor:
         self._query = query
         self.executed.append(query)
         if query == SCHEMA_VERSION_1_SQL:
-            self.applied = True
+            self.versions = (1,)
 
     async def fetchone(self) -> tuple[Any, ...] | None:
         if self._query == VERIFY_SCHEMA_OWNER_SQL:
             return ("ai_agent_skill_registry_migrator",)
         if self._query == SELECT_SCHEMA_VERSION_SQL:
-            return (1,) if self.applied else None
+            return (
+                max(self.versions) if self.versions else None,
+                len(self.versions),
+            )
         raise AssertionError(f"unexpected fetchone for {self._query}")
 
     async def fetchall(self) -> list[tuple[Any, ...]]:
@@ -84,6 +91,145 @@ class FakeCursor:
                 ("skill_revision_files", "SELECT", False),
                 ("skill_revisions", "SELECT", False),
                 ("skills", "SELECT", False),
+            ],
+            VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL: [
+                ("transaction_id", "bigint", True, ""),
+            ],
+            VERIFY_FUNCTION_BOUNDARY_SQL: [
+                (
+                    "deny_append_only_mutation",
+                    "ai_agent_skill_registry_migrator",
+                    0,
+                    "trigger",
+                    "plpgsql",
+                    False,
+                    True,
+                    True,
+                ),
+                (
+                    "guard_revision_insert",
+                    "ai_agent_skill_registry_migrator",
+                    0,
+                    "trigger",
+                    "plpgsql",
+                    False,
+                    True,
+                    True,
+                ),
+                (
+                    "guard_revision_update",
+                    "ai_agent_skill_registry_migrator",
+                    0,
+                    "trigger",
+                    "plpgsql",
+                    False,
+                    True,
+                    True,
+                ),
+                (
+                    "guard_skill_update",
+                    "ai_agent_skill_registry_migrator",
+                    0,
+                    "trigger",
+                    "plpgsql",
+                    False,
+                    True,
+                    True,
+                ),
+                (
+                    "require_revision_review_event",
+                    "ai_agent_skill_registry_migrator",
+                    0,
+                    "trigger",
+                    "plpgsql",
+                    False,
+                    True,
+                    True,
+                ),
+                (
+                    "stamp_control_event_transaction",
+                    "ai_agent_skill_registry_migrator",
+                    0,
+                    "trigger",
+                    "plpgsql",
+                    False,
+                    True,
+                    True,
+                ),
+            ],
+            VERIFY_SECURITY_TRIGGERS_SQL: [
+                (
+                    "skill_control_events_append_only",
+                    "skill_control_events",
+                    "deny_append_only_mutation",
+                    27,
+                    False,
+                    False,
+                    "O",
+                ),
+                (
+                    "skill_control_events_stamp_transaction",
+                    "skill_control_events",
+                    "stamp_control_event_transaction",
+                    7,
+                    False,
+                    False,
+                    "O",
+                ),
+                (
+                    "skill_revision_artifacts_append_only",
+                    "skill_revision_artifacts",
+                    "deny_append_only_mutation",
+                    27,
+                    False,
+                    False,
+                    "O",
+                ),
+                (
+                    "skill_revision_files_append_only",
+                    "skill_revision_files",
+                    "deny_append_only_mutation",
+                    27,
+                    False,
+                    False,
+                    "O",
+                ),
+                (
+                    "skill_revisions_guard_insert",
+                    "skill_revisions",
+                    "guard_revision_insert",
+                    7,
+                    False,
+                    False,
+                    "O",
+                ),
+                (
+                    "skill_revisions_guard_update",
+                    "skill_revisions",
+                    "guard_revision_update",
+                    19,
+                    False,
+                    False,
+                    "O",
+                ),
+                (
+                    "skill_revisions_require_review_event",
+                    "skill_revisions",
+                    "require_revision_review_event",
+                    17,
+                    True,
+                    True,
+                    "O",
+                ),
+                (
+                    "skills_guard_update",
+                    "skills",
+                    "guard_skill_update",
+                    19,
+                    False,
+                    False,
+                    "O",
+                ),
             ],
             VERIFY_FORBIDDEN_GRANTS_SQL: [],
             VERIFY_SCHEMA_GRANTS_SQL: [
@@ -126,8 +272,31 @@ async def test_migration_applies_version_one_once_and_keeps_repeat_at_version_on
 
     assert urls == [PSYCOPG_URL, PSYCOPG_URL]
     assert cursor.executed.count(PREPARE_SCHEMA_SQL) == 2
+    assert cursor.executed.count(LOCK_SCHEMA_VERSION_SQL) == 2
     assert cursor.executed.count(SCHEMA_VERSION_1_SQL) == 1
     assert cursor.executed.count(SELECT_SCHEMA_VERSION_SQL) == 2
+    assert cursor.executed.count(VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL) == 2
+    assert cursor.executed.count(VERIFY_FUNCTION_BOUNDARY_SQL) == 2
+    assert cursor.executed.count(VERIFY_SECURITY_TRIGGERS_SQL) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("versions", [(1, 2), (2,)])
+async def test_migration_rejects_newer_or_anomalous_version_sets_without_reapplying_v1(
+    versions: tuple[int, ...],
+) -> None:
+    cursor = FakeCursor(versions=versions)
+
+    async def connector(database_url: str) -> MigrationConnection:
+        return FakeConnection(cursor)
+
+    settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
+    with pytest.raises(RuntimeError, match="verification failed"):
+        await run_migration(settings, connector=connector)
+
+    assert LOCK_SCHEMA_VERSION_SQL in cursor.executed
+    assert SELECT_SCHEMA_VERSION_SQL in cursor.executed
+    assert SCHEMA_VERSION_1_SQL not in cursor.executed
 
 
 @pytest.mark.asyncio

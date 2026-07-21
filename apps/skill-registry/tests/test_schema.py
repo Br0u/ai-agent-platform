@@ -81,6 +81,20 @@ def test_role_bootstrap_fails_closed_when_any_registry_password_is_missing() -> 
         assert "private-password" not in result.stderr
 
 
+def test_role_bootstrap_rejects_any_registry_role_membership_before_alter_or_grant() -> None:
+    role_sql = (REPO_ROOT / "infra/postgres/05-skill-registry-roles.sql").read_text()
+    normalized = normalize_sql(role_sql)
+    membership_guard_offset = normalized.index("FROM pg_auth_members")
+
+    assert "JOIN pg_roles AS granted_role ON granted_role.oid = membership.roleid" in normalized
+    assert "JOIN pg_roles AS member_role ON member_role.oid = membership.member" in normalized
+    assert "granted_role.rolname IN" in normalized
+    assert "member_role.rolname IN" in normalized
+    assert "skill registry roles must not have role memberships" in normalized
+    assert membership_guard_offset < normalized.index("ALTER ROLE ai_agent_skill_registry_migrator")
+    assert membership_guard_offset < normalized.index("GRANT CONNECT ON DATABASE")
+
+
 def test_schema_version_one_creates_the_exact_registry_tables() -> None:
     sql = normalize_sql(SCHEMA_VERSION_1_SQL)
 
@@ -181,6 +195,25 @@ def test_revision_insert_trigger_requires_clean_pending_review_state() -> None:
     assert "USING ERRCODE = '23514'" in sql
     assert "BEFORE INSERT ON skill_registry.skill_revisions" in sql
     assert "EXECUTE FUNCTION skill_registry.guard_revision_insert()" in sql
+
+
+def test_review_transition_requires_a_second_actor_and_same_transaction_event() -> None:
+    sql = normalize_sql(SCHEMA_VERSION_1_SQL)
+
+    assert "NEW.reviewed_by = OLD.created_by" in sql
+    assert "skill revision review requires a second actor" in sql
+    assert "transaction_id bigint NOT NULL" in sql
+    assert "NEW.transaction_id := txid_current()" in sql
+    assert "BEFORE INSERT ON skill_registry.skill_control_events" in sql
+    assert "CREATE OR REPLACE FUNCTION skill_registry.require_revision_review_event()" in sql
+    assert "event.transaction_id = txid_current()" in sql
+    assert "event.target_id = NEW.id" in sql
+    assert "event.actor = NEW.reviewed_by::text" in sql
+    assert "event.result_code = 'ok'" in sql
+    assert "WHEN NEW.state = 'published' THEN 'revision_published'" in sql
+    assert "WHEN NEW.state = 'rejected' THEN 'revision_rejected'" in sql
+    assert "CREATE CONSTRAINT TRIGGER skill_revisions_require_review_event" in sql
+    assert "DEFERRABLE INITIALLY DEFERRED" in sql
 
 
 def test_manager_backup_runtime_and_foreign_role_grants_are_narrow() -> None:
