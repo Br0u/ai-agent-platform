@@ -188,6 +188,7 @@ CREATE TABLE skill_registry.skill_revisions (
   source_ref varchar(255),
   source_commit varchar(128),
   manifest jsonb NOT NULL,
+  findings jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_by uuid NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   reviewed_by uuid,
@@ -256,11 +257,19 @@ CREATE TABLE skill_registry.skill_control_events (
     CHECK (result_code IN ('ok','replay','error')),
   error_code varchar(64)
     CHECK (error_code IS NULL OR error_code ~ '^[a-z0-9][a-z0-9_]{0,63}$'),
+  review_reason varchar(500),
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (event_type IN ('skill_read','revision_read') OR assertion_nonce IS NOT NULL),
   CHECK (
     (result_code = 'error' AND error_code IS NOT NULL)
     OR (result_code <> 'error' AND error_code IS NULL)
+  ),
+  CHECK (
+    review_reason IS NULL
+    OR (
+      event_type = 'revision_rejected'
+      AND char_length(btrim(review_reason)) BETWEEN 1 AND 500
+    )
   )
 );
 
@@ -308,6 +317,7 @@ BEGIN
     OR NEW.source_ref IS DISTINCT FROM OLD.source_ref
     OR NEW.source_commit IS DISTINCT FROM OLD.source_commit
     OR NEW.manifest IS DISTINCT FROM OLD.manifest
+    OR NEW.findings IS DISTINCT FROM OLD.findings
     OR NEW.created_by IS DISTINCT FROM OLD.created_by
     OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
     RAISE EXCEPTION 'skill revision body is immutable'
