@@ -60,6 +60,7 @@ chmod 600 /secure/secrets/assistant_session_secret /secure/secrets/assistant_rat
 export ASSISTANT_SESSION_SECRET_FILE=/secure/secrets/assistant_session_secret
 export ASSISTANT_RATE_LIMIT_SECRET_FILE=/secure/secrets/assistant_rate_limit_secret
 # 生产 PUBLIC_HOST 必须改为对外域名
+pnpm secrets:preflight
 docker compose config
 docker compose build web agent migrate agent-migrate backup
 docker compose up -d --wait db

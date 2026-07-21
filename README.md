@@ -43,6 +43,7 @@ pnpm dev
 cp .env.example .env
 # 编辑.env并替换测试密码
 # 按 .env.example 创建所有独立的 0600 单行 Secret；不要复用数据库、认证、控制面或模型加密密钥
+pnpm secrets:preflight
 docker compose build migrate agent-migrate agent-control-migrate agent web backup
 docker compose up -d --wait db
 docker compose run --rm migrate

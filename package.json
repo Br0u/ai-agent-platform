@@ -19,6 +19,7 @@
     "agent:typecheck": "uv --directory apps/agent run mypy src tests",
     "skill-core:test": "uv --directory packages/skill-core run pytest -q",
     "skill-core:lint": "uv --directory packages/skill-core run ruff check .",
-    "skill-core:typecheck": "uv --directory packages/skill-core run mypy src tests"
+    "skill-core:typecheck": "uv --directory packages/skill-core run mypy src tests",
+    "secrets:preflight": "python3 infra/docker/validate-compose-secret-files.py"
   }
 }

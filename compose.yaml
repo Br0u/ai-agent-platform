@@ -324,7 +324,7 @@ services:
           "skill-registry",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7788/internal/health/ready',timeout=3).close()",
+          "import json,sys,urllib.request; sys.tracebacklimit=0; response=urllib.request.urlopen('http://127.0.0.1:7788/internal/health/ready',timeout=3); raw=response.read(129); response.close(); payload=json.loads(raw) if len(raw)<=128 else None; raise SystemExit(0 if type(payload) is dict and set(payload)=={'live','ready'} and payload['live'] is True and payload['ready'] is True else 1)",
         ]
       interval: 10s
       timeout: 5s

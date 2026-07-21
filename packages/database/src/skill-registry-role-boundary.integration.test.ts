@@ -143,8 +143,12 @@ describePostgres(
         await client.query(
           `INSERT INTO skill_registry.skill_control_events (
              id, request_id, assertion_nonce, actor, event_type,
-             target_id, result_code
-           ) VALUES ($1, $2, $3, $4, 'revision_published', $5, 'ok')`,
+             target_id, result_code, content_reviewed, usage_rights_confirmed,
+             execution_risk_accepted, independent_reviewer_confirmed
+           ) VALUES (
+             $1, $2, $3, $4, 'revision_published', $5, 'ok',
+             true, true, true, true
+           )`,
           [randomUUID(), randomUUID(), randomUUID(), reviewerId, revisionId],
         );
         await client.query("SET CONSTRAINTS ALL IMMEDIATE");

@@ -1765,6 +1765,11 @@ exit 0
     );
   });
 
+  const dockerAvailable =
+    spawnSync("docker", ["info", "--format", "{{.ServerVersion}}"], {
+      stdio: "ignore",
+    }).status === 0;
+
   it("deploys the Skill Registry behind ordered least-privilege boundaries", () => {
     const rendered = renderComposeFixture();
     const bootstrap = rendered.services["skill-registry-bootstrap"];
@@ -1930,7 +1935,7 @@ exit 0
       "skill-registry",
       "python",
       "-c",
-      "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7788/internal/health/ready',timeout=3).close()",
+      "import json,sys,urllib.request; sys.tracebacklimit=0; response=urllib.request.urlopen('http://127.0.0.1:7788/internal/health/ready',timeout=3); raw=response.read(129); response.close(); payload=json.loads(raw) if len(raw)<=128 else None; raise SystemExit(0 if type(payload) is dict and set(payload)=={'live','ready'} and payload['live'] is True and payload['ready'] is True else 1)",
     ]);
     for (const service of [bootstrap, migration]) {
       expect(service?.read_only).toBe(true);
@@ -1982,6 +1987,293 @@ exit 0
     );
     expect(example).not.toMatch(/^SKILL_REGISTRY_CONTROL_KEY=/mu);
   });
+
+  it("executes a bounded Skill Registry readiness response contract", () => {
+    const healthcheck =
+      renderComposeFixture().services["skill-registry"]?.healthcheck?.test;
+    const probe = healthcheck?.at(-1);
+    expect(healthcheck?.slice(0, -1)).toEqual([
+      "CMD",
+      "/usr/sbin/gosu",
+      "skill-registry",
+      "python",
+      "-c",
+    ]);
+    expect(probe).toBeDefined();
+    const server = `
+import http.server
+import os
+import threading
+
+body = os.environ["HEALTH_BODY"].encode("utf-8")
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        pass
+
+httpd = http.server.HTTPServer(("127.0.0.1", 7788), Handler)
+threading.Thread(target=httpd.handle_request, daemon=True).start()
+exec(os.environ["HEALTH_PROBE"], {})
+`;
+    const run = (body: string) =>
+      spawnSync("python3", ["-c", server], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HEALTH_BODY: body,
+          HEALTH_PROBE: probe,
+        },
+        timeout: 5_000,
+      });
+    const valid = run('{"live":true,"ready":true}');
+    expect(valid.status, `${valid.stdout}${valid.stderr}`).toBe(0);
+
+    for (const body of [
+      '{"live":true,"ready":false}',
+      "not-json",
+      `${'{"live":true,"ready":true}'}${" ".repeat(200)}`,
+    ]) {
+      const invalid = run(body);
+      const output = `${invalid.stdout}${invalid.stderr}`;
+      expect(invalid.error, output).toBeUndefined();
+      expect(invalid.status, output).not.toBe(0);
+      expect(output).not.toContain(body);
+    }
+  });
+
+  it("preflights every resolved host secret before Compose startup", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "compose-preflight-"));
+    const bin = path.join(sandbox, "bin");
+    const docker = path.join(bin, "docker");
+    const secret = path.join(sandbox, "secret");
+    const insecure = path.join(sandbox, "insecure");
+    const linked = path.join(sandbox, "linked");
+    const fifo = path.join(sandbox, "fifo");
+    const privateValue = "preflight-private-value";
+    mkdirSync(bin, { mode: 0o700 });
+    writeFileSync(docker, '#!/bin/sh\nprintf "%s" "$FAKE_COMPOSE_CONFIG"\n', {
+      mode: 0o700,
+    });
+    writeFileSync(secret, privateValue, { mode: 0o600 });
+    chmodSync(secret, 0o600);
+    writeFileSync(insecure, privateValue, { mode: 0o644 });
+    chmodSync(insecure, 0o644);
+    symlinkSync(secret, linked);
+    expect(spawnSync("mkfifo", [fifo]).status).toBe(0);
+    chmodSync(fifo, 0o600);
+
+    const preflight = path.join(
+      root,
+      "infra/docker/validate-compose-secret-files.py",
+    );
+    const run = (config: object) =>
+      spawnSync("python3", [preflight], {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          FAKE_COMPOSE_CONFIG: JSON.stringify(config),
+        },
+        timeout: 5_000,
+      });
+    const config = (name: string, file: string, services: object = {}) => ({
+      secrets: { [name]: { file } },
+      services,
+    });
+
+    try {
+      const valid = run(config("valid", secret));
+      expect(valid.status, `${valid.stdout}${valid.stderr}`).toBe(0);
+
+      for (const [name, source] of [
+        ["insecure", insecure],
+        ["linked", linked],
+        ["fifo", fifo],
+        ["not_model_api_key", "/dev/null"],
+        ["model_api_key", fifo],
+        ["embedded_nul", "\0secret-path"],
+      ] as const) {
+        const invalid = run(config(name, source));
+        const output = `${invalid.stdout}${invalid.stderr}`;
+        expect(invalid.error, `${name}: ${output}`).toBeUndefined();
+        expect(invalid.status, `${name}: ${output}`).not.toBe(0);
+        expect(invalid.stdout).toBe("");
+        expect(invalid.stderr).toBe("Compose secret preflight failed.\n");
+        expect(output).not.toContain(privateValue);
+        expect(output).not.toContain(source);
+      }
+
+      const disabledModelService = {
+        agent: {
+          entrypoint: ["/opt/aap/run-agent-with-secret-env.sh"],
+          environment: {
+            MODEL_PROVIDER: "",
+            MODEL_ID: "",
+            SECRET_ENV_SPECS:
+              "AGNO_DATABASE_URL=/run/secrets/agno_database_url MODEL_API_KEY=/run/secrets/model_api_key",
+          },
+          secrets: [
+            {
+              source: "model_api_key",
+              target: "/run/secrets/model_api_key",
+            },
+          ],
+        },
+      };
+      const disabledModel = run(
+        config("model_api_key", "/dev/null", disabledModelService),
+      );
+      expect(
+        disabledModel.status,
+        `${disabledModel.stdout}${disabledModel.stderr}`,
+      ).toBe(0);
+
+      for (const services of [
+        {
+          ...disabledModelService,
+          agent: {
+            ...disabledModelService.agent,
+            environment: {
+              ...disabledModelService.agent.environment,
+              MODEL_PROVIDER: "openai",
+              MODEL_ID: "model",
+            },
+          },
+        },
+        {
+          ...disabledModelService,
+          agent: {
+            ...disabledModelService.agent,
+            entrypoint: ["/opt/aap/run-with-secret-env.sh"],
+          },
+        },
+        {
+          ...disabledModelService,
+          agent: {
+            ...disabledModelService.agent,
+            secrets: null,
+          },
+        },
+      ]) {
+        const invalidException = run(
+          config("model_api_key", "/dev/null", services),
+        );
+        expect(invalidException.stdout).toBe("");
+        expect(invalidException.stderr).toBe(
+          "Compose secret preflight failed.\n",
+        );
+        expect(invalidException.status).not.toBe(0);
+      }
+
+      const scripts = JSON.parse(read("package.json")) as {
+        scripts?: Record<string, string>;
+      };
+      expect(scripts.scripts?.["secrets:preflight"]).toBe(
+        "python3 infra/docker/validate-compose-secret-files.py",
+      );
+      expect(read(".env.example")).toContain(
+        "pnpm secrets:preflight && docker compose up",
+      );
+      expect(read("README.md")).toContain(
+        "pnpm secrets:preflight\ndocker compose build",
+      );
+      expect(read("docs/deployment/server-readiness.md")).toContain(
+        "pnpm secrets:preflight\ndocker compose config",
+      );
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!dockerAvailable)(
+    "rejects a host symlink before Compose resolves it into a regular secret mount",
+    () => {
+      const sandbox = mkdtempSync(path.join(tmpdir(), "compose-secret-link-"));
+      const secret = path.join(sandbox, "secret");
+      const linked = path.join(sandbox, "linked");
+      const composeFile = path.join(sandbox, "compose.yaml");
+      const project = `aap-secret-link-${process.pid}`;
+      writeFileSync(secret, "private-compose-value", { mode: 0o600 });
+      chmodSync(secret, 0o600);
+      symlinkSync(secret, linked);
+      writeFileSync(
+        composeFile,
+        `services:
+  probe:
+    image: postgres:18.3-alpine3.23
+    command:
+      - sh
+      - -ceu
+      - >-
+        test "$(stat -c '%a' -- /run/secrets/direct)" = 600;
+        test "$(stat -c '%a' -- /run/secrets/linked)" = 600;
+        test ! -L /run/secrets/linked;
+        test -f /run/secrets/linked
+    secrets:
+      - direct
+      - linked
+secrets:
+  direct:
+    file: ${secret}
+  linked:
+    file: ${linked}
+`,
+        { mode: 0o600 },
+      );
+      chmodSync(composeFile, 0o600);
+
+      try {
+        const mounted = spawnSync(
+          "docker",
+          ["compose", "-p", project, "-f", composeFile, "run", "--rm", "probe"],
+          { encoding: "utf8", timeout: 10_000 },
+        );
+        expect(mounted.status, `${mounted.stdout}${mounted.stderr}`).toBe(0);
+
+        const preflight = spawnSync(
+          "python3",
+          [
+            path.join(root, "infra/docker/validate-compose-secret-files.py"),
+            "-p",
+            project,
+            "-f",
+            composeFile,
+          ],
+          { cwd: root, encoding: "utf8", timeout: 5_000 },
+        );
+        const output = `${preflight.stdout}${preflight.stderr}`;
+        expect(preflight.error, output).toBeUndefined();
+        expect(preflight.status, output).not.toBe(0);
+        expect(output).not.toContain(secret);
+        expect(output).not.toContain(linked);
+        expect(output).not.toContain("private-compose-value");
+      } finally {
+        spawnSync(
+          "docker",
+          [
+            "compose",
+            "-p",
+            project,
+            "-f",
+            composeFile,
+            "down",
+            "-v",
+            "--remove-orphans",
+          ],
+          { stdio: "ignore", timeout: 5_000 },
+        );
+        rmSync(sandbox, { recursive: true, force: true });
+      }
+    },
+    20_000,
+  );
 
   it("documents control-role secrets, migrations, and dynamic precedence", () => {
     const example = read(".env.example");
@@ -2356,11 +2648,6 @@ exit 0
     expect(webHealthcheck).toContain("gosu node");
   });
 
-  const dockerAvailable =
-    spawnSync("docker", ["info", "--format", "{{.ServerVersion}}"], {
-      stdio: "ignore",
-    }).status === 0;
-
   it.skipIf(!dockerAvailable)(
     "loads a deployment-user-owned 0600 secret then executes as postgres",
     () => {
@@ -2415,6 +2702,121 @@ exit 0
       }
     },
   );
+
+  for (const invalidType of ["insecure", "linked", "fifo"] as const) {
+    it.skipIf(!dockerAvailable)(
+      `rejects ${invalidType} container secrets without blocking or starting the child`,
+      () => {
+        const sandbox = mkdtempSync(path.join(tmpdir(), "aap-secret-types-"));
+        const insecure = path.join(sandbox, "insecure");
+        const target = path.join(sandbox, "target");
+        const linked = path.join(sandbox, "linked");
+        const fifo = path.join(sandbox, "fifo");
+        const secret = "container-private-value";
+        if (invalidType === "insecure") {
+          writeFileSync(insecure, secret, { mode: 0o644 });
+          chmodSync(insecure, 0o644);
+        } else if (invalidType === "linked") {
+          writeFileSync(target, secret, { mode: 0o600 });
+          chmodSync(target, 0o600);
+          symlinkSync("target", linked);
+        } else {
+          expect(spawnSync("mkfifo", [fifo]).status).toBe(0);
+          chmodSync(fifo, 0o600);
+        }
+        const runner = path.join(root, "infra/docker/run-with-secret-env.sh");
+        const containerName = `aap-secret-type-${invalidType}-${process.pid}`;
+
+        spawnSync("docker", ["rm", "-f", containerName], {
+          stdio: "ignore",
+          timeout: 3_000,
+        });
+        try {
+          const started = spawnSync(
+            "docker",
+            [
+              "run",
+              "-d",
+              "--name",
+              containerName,
+              "--user",
+              "root",
+              "--cap-drop",
+              "ALL",
+              "--cap-add",
+              "DAC_OVERRIDE",
+              "--cap-add",
+              "SETGID",
+              "--cap-add",
+              "SETUID",
+              "--security-opt",
+              "no-new-privileges:true",
+              "--env",
+              "SECRET_RUN_AS=postgres",
+              "--env",
+              `SECRET_ENV_SPECS=CONTAINER_TEST_SECRET=/run/secrets/${invalidType}`,
+              "--mount",
+              `type=bind,src=${sandbox},dst=/run/secrets,readonly`,
+              "--mount",
+              `type=bind,src=${runner},dst=/opt/aap/run-with-secret-env.sh,readonly`,
+              "--entrypoint",
+              "sh",
+              "postgres:18.3-alpine3.23",
+              "-ceu",
+              'exec timeout -s KILL 2 /opt/aap/run-with-secret-env.sh sh -ceu \'printf "%s" "CHILD_STARTED"\'',
+            ],
+            { encoding: "utf8", timeout: 3_000 },
+          );
+          expect(started.status, `${started.stdout}${started.stderr}`).toBe(0);
+
+          let running = true;
+          let exitCode: number | null = null;
+          const deadline = Date.now() + 3_000;
+          while (Date.now() < deadline) {
+            const inspected = spawnSync(
+              "docker",
+              [
+                "inspect",
+                "--format",
+                "{{.State.Running}} {{.State.ExitCode}}",
+                containerName,
+              ],
+              { encoding: "utf8", timeout: 1_000 },
+            );
+            expect(
+              inspected.status,
+              `${inspected.stdout}${inspected.stderr}`,
+            ).toBe(0);
+            const [runningValue, exitValue] = inspected.stdout
+              .trim()
+              .split(" ");
+            running = runningValue === "true";
+            exitCode = Number(exitValue);
+            if (!running) break;
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+          }
+
+          const logged = spawnSync("docker", ["logs", containerName], {
+            encoding: "utf8",
+            timeout: 1_000,
+          });
+          const output = `${logged.stdout}${logged.stderr}`;
+          expect(running, output).toBe(false);
+          expect([124, 137, 143], output).not.toContain(exitCode);
+          expect(exitCode, output).not.toBe(0);
+          expect(output).not.toContain("CHILD_STARTED");
+          expect(output).not.toContain(secret);
+        } finally {
+          spawnSync("docker", ["rm", "-f", containerName], {
+            stdio: "ignore",
+            timeout: 3_000,
+          });
+          rmSync(sandbox, { recursive: true, force: true });
+        }
+      },
+      10_000,
+    );
+  }
 
   it("enforces the rendered Compose model across every service", () => {
     const rendered = renderComposeFixture();

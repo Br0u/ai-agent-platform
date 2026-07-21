@@ -66,8 +66,16 @@ for specification in $SECRET_ENV_SPECS; do
       exit 1
       ;;
   esac
-  if [ ! -r "$secret_file" ]; then
-    printf '%s\n' "$variable_name secret is unavailable" >&2
+  if [ -L "$secret_file" ] || [ ! -f "$secret_file" ]; then
+    printf '%s\n' "$variable_name secret file is invalid" >&2
+    exit 1
+  fi
+  if ! secret_mode=$(stat -c '%a' -- "$secret_file" 2>/dev/null); then
+    printf '%s\n' "$variable_name secret file is invalid" >&2
+    exit 1
+  fi
+  if [ "$secret_mode" != 600 ] || [ ! -r "$secret_file" ]; then
+    printf '%s\n' "$variable_name secret file is invalid" >&2
     exit 1
   fi
 
