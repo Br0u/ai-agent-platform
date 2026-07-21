@@ -6,6 +6,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 import { AssistantSkillUploadDialog } from "./assistant-skill-upload-dialog";
 
@@ -57,11 +58,22 @@ describe("AssistantSkillUploadDialog", () => {
 
     await waitFor(() => expect(onUploaded).toHaveBeenCalledOnce());
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
-      "/api/v1/admin/assistant/skills",
+      "/api/v1/admin/assistant/skills/uploads",
       expect.objectContaining({ method: "POST", body: expect.any(FormData) }),
     );
     expect(screen.getByRole("status")).toHaveTextContent("pending_review");
     expect(document.body.textContent).not.toContain("已启用");
+  });
+
+  it("keeps the exact UI POST target aligned with the upload route export", () => {
+    const route = readFileSync(
+      "src/app/api/v1/admin/assistant/skills/uploads/route.ts",
+      "utf8",
+    );
+
+    expect(route.trim()).toBe(
+      'export { adminSkillUploadHandler as POST } from "../handler";',
+    );
   });
 
   it("rejects a non-ZIP selection without making a request", () => {

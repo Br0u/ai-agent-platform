@@ -89,7 +89,7 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
     if (target.length > 0) body.append("targetSkillId", target);
     setSubmitting(true);
     try {
-      const response = await fetch("/api/v1/admin/assistant/skills", {
+      const response = await fetch("/api/v1/admin/assistant/skills/uploads", {
         method: "POST",
         body,
       });

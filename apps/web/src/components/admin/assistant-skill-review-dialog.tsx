@@ -123,6 +123,7 @@ export function AssistantSkillReviewDialog({
       return;
     }
     setSubmitting(true);
+    let result: AdminSkillRevision;
     try {
       const response = await fetch(
         `/api/v1/admin/assistant/skills/${encodeURIComponent(revision.skillId)}/revisions/${encodeURIComponent(revision.id)}/review`,
@@ -143,23 +144,25 @@ export function AssistantSkillReviewDialog({
         },
       );
       if (!response.ok) throw new Error("review failed");
-      const result = parseReviewResponse(await response.json());
+      const parsed = parseReviewResponse(await response.json());
       const expectedState = decision === "approve" ? "published" : "rejected";
       if (
-        result === null ||
-        result.id !== revision.id ||
-        result.skillId !== revision.skillId ||
-        result.state !== expectedState
+        parsed === null ||
+        parsed.id !== revision.id ||
+        parsed.skillId !== revision.skillId ||
+        parsed.state !== expectedState
       ) {
         throw new Error("invalid review response");
       }
-      onReviewed(result);
-      setAnnouncement(`审核完成，状态：${result.state}。`);
+      result = parsed;
     } catch {
       setError("审核失败；旧状态已保留，请重新认证或稍后重试。");
-    } finally {
       setSubmitting(false);
+      return;
     }
+    setSubmitting(false);
+    setAnnouncement(`审核完成，状态：${result.state}。`);
+    onReviewed(result);
   };
 
   return (
@@ -180,7 +183,7 @@ export function AssistantSkillReviewDialog({
               审核 revision #{revision.number}
             </h3>
           </div>
-          <button onClick={onClose} type="button">
+          <button disabled={submitting} onClick={onClose} type="button">
             关闭
           </button>
         </header>

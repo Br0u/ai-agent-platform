@@ -7,7 +7,7 @@ import {
   type AdminSkillRevision,
   type AdminSkillRevisionDetailResponse,
 } from "@/features/assistant/admin-skill-contract";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AssistantSkillReviewDialog } from "./assistant-skill-review-dialog";
 
 type Props = {
@@ -110,6 +110,8 @@ export function AssistantSkillRevisionDetail({
   const [announcement, setAnnouncement] = useState("");
   const [error, setError] = useState("");
   const [reviewOpen, setReviewOpen] = useState(false);
+  const reviewTrigger = useRef<HTMLButtonElement>(null);
+  const restoreReviewFocus = useRef(false);
 
   const loadDetail = useCallback(
     async (signal?: AbortSignal) => {
@@ -153,6 +155,13 @@ export function AssistantSkillRevisionDetail({
     return () => controller.abort();
   }, [loadDetail]);
 
+  useEffect(() => {
+    if (!reviewOpen && restoreReviewFocus.current) {
+      restoreReviewFocus.current = false;
+      reviewTrigger.current?.focus();
+    }
+  }, [reviewOpen]);
+
   const loadFile = async (path: string) => {
     setError("");
     try {
@@ -170,8 +179,24 @@ export function AssistantSkillRevisionDetail({
     }
   };
 
-  const reviewed = (revision: AdminSkillRevision) => {
+  const closeReview = () => {
+    restoreReviewFocus.current = true;
     setReviewOpen(false);
+    setAnnouncement("审核操作已关闭，revision 状态未变更。");
+  };
+
+  const openReview = () => {
+    if (detail?.revision.state !== "pending_review") return;
+    setError("");
+    setAnnouncement("");
+    setReviewOpen(true);
+  };
+
+  const reviewed = (revision: AdminSkillRevision) => {
+    restoreReviewFocus.current = true;
+    setReviewOpen(false);
+    setError("");
+    setAnnouncement(`审核完成，状态：${revision.state}。`);
     setDetail((current) =>
       current === null
         ? null
@@ -309,17 +334,21 @@ export function AssistantSkillRevisionDetail({
               </>
             )}
           </section>
-          {detail.revision.state === "pending_review" ? (
-            <button onClick={() => setReviewOpen(true)} type="button">
-              打开审核操作
-            </button>
-          ) : (
+          <button
+            aria-disabled={detail.revision.state !== "pending_review"}
+            onClick={openReview}
+            ref={reviewTrigger}
+            type="button"
+          >
+            打开审核操作
+          </button>
+          {detail.revision.state !== "pending_review" ? (
             <p>该 revision 已完成审核，当前状态：{detail.revision.state}。</p>
-          )}
+          ) : null}
           {reviewOpen ? (
             <AssistantSkillReviewDialog
               actorUserId={actorUserId}
-              onClose={() => setReviewOpen(false)}
+              onClose={closeReview}
               onReviewed={reviewed}
               revision={detail.revision}
             />

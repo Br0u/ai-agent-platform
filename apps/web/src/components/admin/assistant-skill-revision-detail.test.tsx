@@ -198,7 +198,8 @@ describe("AssistantSkillRevisionDetail", () => {
     );
 
     expect(await screen.findByText("Apache-2.0")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "打开审核操作" }));
+    const reviewTrigger = screen.getByRole("button", { name: "打开审核操作" });
+    fireEvent.click(reviewTrigger);
     for (const label of [
       "已逐项审阅内容和文件",
       "已确认使用权和许可证",
@@ -212,5 +213,86 @@ describe("AssistantSkillRevisionDetail", () => {
     await waitFor(() => expect(onRevisionChanged).toHaveBeenCalledOnce());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByText(/当前状态：published/u)).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "审核完成，状态：published。",
+    );
+    await waitFor(() => expect(reviewTrigger).toHaveFocus());
+  });
+
+  it.each([
+    [
+      "Escape",
+      (dialog: HTMLElement) => fireEvent.keyDown(dialog, { key: "Escape" }),
+    ],
+    [
+      "取消按钮",
+      () => fireEvent.click(screen.getByRole("button", { name: "关闭" })),
+    ],
+  ])("restores focus to the review trigger after %s", async (_name, close) => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json({ ...detail, requestId: "detail-close" }),
+        ),
+    );
+    render(
+      <AssistantSkillRevisionDetail
+        actorUserId="22222222-2222-4222-8222-222222222222"
+        onRevisionChanged={vi.fn()}
+        revisionId={REVISION_ID}
+        skillId={SKILL_ID}
+      />,
+    );
+
+    expect(await screen.findByText("Apache-2.0")).toBeVisible();
+    const reviewTrigger = screen.getByRole("button", { name: "打开审核操作" });
+    fireEvent.click(reviewTrigger);
+    const dialog = screen.getByRole("dialog");
+    close(dialog);
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(reviewTrigger).toHaveFocus());
+  });
+
+  it("keeps a failed review dialog open without moving focus back to the trigger", async () => {
+    const onRevisionChanged = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({ ...detail, requestId: "detail-failed-review" }),
+        )
+        .mockResolvedValueOnce(new Response(null, { status: 503 })),
+    );
+    render(
+      <AssistantSkillRevisionDetail
+        actorUserId="22222222-2222-4222-8222-222222222222"
+        onRevisionChanged={onRevisionChanged}
+        revisionId={REVISION_ID}
+        skillId={SKILL_ID}
+      />,
+    );
+
+    expect(await screen.findByText("Apache-2.0")).toBeVisible();
+    const reviewTrigger = screen.getByRole("button", { name: "打开审核操作" });
+    fireEvent.click(reviewTrigger);
+    for (const label of [
+      "已逐项审阅内容和文件",
+      "已确认使用权和许可证",
+      "已评估并接受执行风险",
+      "确认审核人与创建者相互独立",
+    ]) {
+      fireEvent.click(screen.getByLabelText(label));
+    }
+    fireEvent.click(screen.getByRole("button", { name: "批准发布" }));
+
+    expect(await screen.findByText(/审核失败；旧状态已保留/u)).toBeVisible();
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    expect(reviewTrigger).not.toHaveFocus();
+    expect(onRevisionChanged).not.toHaveBeenCalled();
   });
 });

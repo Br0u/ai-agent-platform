@@ -392,7 +392,8 @@
 }
 
 .assistant-skill-registry button:disabled,
-.assistant-skill-dialog button:disabled {
+.assistant-skill-dialog button:disabled,
+.assistant-skill-detail button[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.55;
 }
