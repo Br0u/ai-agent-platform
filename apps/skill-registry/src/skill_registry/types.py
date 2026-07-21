@@ -53,14 +53,13 @@ class ReviewAttestations:
 
     @property
     def complete(self) -> bool:
-        return all(
-            (
-                self.content_reviewed,
-                self.usage_rights_confirmed,
-                self.execution_risk_accepted,
-                self.independent_reviewer_confirmed,
-            )
+        values = (
+            self.content_reviewed,
+            self.usage_rights_confirmed,
+            self.execution_risk_accepted,
+            self.independent_reviewer_confirmed,
         )
+        return all(type(value) is bool and value is True for value in values)
 
 
 @dataclass(frozen=True, slots=True)

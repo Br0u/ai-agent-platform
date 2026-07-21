@@ -90,11 +90,12 @@ def create_command(
     *,
     actor: UUID,
     target_skill_id: UUID | None = None,
+    assertion_nonce: UUID | None = None,
 ) -> CreateUploadRevision:
     return CreateUploadRevision(
         actor=actor,
         request_id=uuid4(),
-        assertion_nonce=uuid4(),
+        assertion_nonce=assertion_nonce or uuid4(),
         package=package,
         target_skill_id=target_skill_id,
     )
@@ -151,16 +152,26 @@ async def test_real_postgres_upload_is_atomic_canonical_and_idempotent() -> None
 
     repeated = await repository.create_upload_revision(create_command(package, actor=actor))
     assert repeated.id == created.id
-    assert await table_counts_for_slug(slug) == (1, 1, 1, 1, 1)
+    assert await table_counts_for_slug(slug) == (1, 1, 1, 1, 2)
+
+    assert OWNER_URL is not None
+    async with await connect(OWNER_URL) as connection:
+        events = await connection.execute(
+            """SELECT result_code FROM skill_registry.skill_control_events
+            WHERE target_id = %s AND event_type = 'revision_created'
+            ORDER BY created_at, id""",
+            (created.id,),
+        )
+        assert [row[0] for row in await events.fetchall()] == ["ok", "replay"]
 
     different = canonicalize_skill_zip(build_zip(slug, instructions="# Changed\n"))
     with pytest.raises(RegistryError) as caught:
         await repository.create_upload_revision(create_command(different, actor=actor))
     assert caught.value.code == "SKILL_NAME_CONFLICT"
-    assert await table_counts_for_slug(slug) == (1, 1, 1, 1, 1)
+    assert await table_counts_for_slug(slug) == (1, 1, 1, 1, 2)
 
 
-async def test_real_postgres_upload_rolls_back_all_rows_after_late_file_failure() -> None:
+async def test_real_postgres_rejects_forged_package_before_any_database_write() -> None:
     slug = f"pg-rollback-{uuid4().hex[:12]}"
     package = canonicalize_skill_zip(build_zip(slug))
     invalid_file = replace(package.files[0], sha256="not-a-digest")
@@ -170,8 +181,104 @@ async def test_real_postgres_upload_rolls_back_all_rows_after_late_file_failure(
     with pytest.raises(RegistryError) as caught:
         await repository.create_upload_revision(create_command(invalid_package, actor=uuid4()))
 
-    assert caught.value.code == "REGISTRY_STORAGE_ERROR"
+    assert caught.value.code == "ARTIFACT_DIGEST_MISMATCH"
     assert await table_counts_for_slug(slug) == (0, 0, 0, 0, 0)
+
+
+async def test_real_postgres_nonce_replay_precedes_business_logic_across_mutations() -> None:
+    slug = f"pg-nonce-{uuid4().hex[:12]}"
+    actor = uuid4()
+    package = canonicalize_skill_zip(build_zip(slug))
+    repository = PostgresSkillRegistryRepository(manager_repository_connection)
+    upload_nonce = uuid4()
+
+    created = await repository.create_upload_revision(
+        create_command(package, actor=actor, assertion_nonce=upload_nonce)
+    )
+
+    for replay_package in (
+        package,
+        canonicalize_skill_zip(build_zip(slug, instructions="# Different\n")),
+    ):
+        with pytest.raises(RegistryError) as caught:
+            await repository.create_upload_revision(
+                create_command(
+                    replay_package,
+                    actor=actor,
+                    assertion_nonce=upload_nonce,
+                )
+            )
+        assert caught.value.code == "ASSERTION_REPLAY"
+
+    fresh_replay = await repository.create_upload_revision(
+        create_command(package, actor=actor, assertion_nonce=uuid4())
+    )
+    assert fresh_replay.id == created.id
+
+    with pytest.raises(RegistryError) as caught:
+        await repository.review_revision(
+            ReviewRevision(
+                revision_id=created.id,
+                reviewer=uuid4(),
+                request_id=uuid4(),
+                assertion_nonce=upload_nonce,
+                decision="approve",
+                expected_state="pending_review",
+                reason=None,
+                attestations=ReviewAttestations(True, True, True, True),
+            )
+        )
+    assert caught.value.code == "ASSERTION_REPLAY"
+
+    review_nonce = uuid4()
+    reviewed = await repository.review_revision(
+        ReviewRevision(
+            revision_id=created.id,
+            reviewer=uuid4(),
+            request_id=uuid4(),
+            assertion_nonce=review_nonce,
+            decision="approve",
+            expected_state="pending_review",
+            reason=None,
+            attestations=ReviewAttestations(True, True, True, True),
+        )
+    )
+    assert reviewed.state == "published"
+
+    other_slug = f"pg-cross-nonce-{uuid4().hex[:12]}"
+    with pytest.raises(RegistryError) as caught:
+        await repository.create_upload_revision(
+            create_command(
+                canonicalize_skill_zip(build_zip(other_slug)),
+                actor=actor,
+                assertion_nonce=review_nonce,
+            )
+        )
+    assert caught.value.code == "ASSERTION_REPLAY"
+    assert await table_counts_for_slug(other_slug) == (0, 0, 0, 0, 0)
+    assert await table_counts_for_slug(slug) == (1, 1, 1, 1, 3)
+
+
+async def test_real_postgres_concurrent_nonce_replay_rolls_back_loser() -> None:
+    slug = f"pg-concurrent-nonce-{uuid4().hex[:12]}"
+    actor = uuid4()
+    package = canonicalize_skill_zip(build_zip(slug))
+    shared_nonce = uuid4()
+
+    async def upload() -> StoredRevision:
+        repository = PostgresSkillRegistryRepository(manager_repository_connection)
+        return await repository.create_upload_revision(
+            create_command(package, actor=actor, assertion_nonce=shared_nonce)
+        )
+
+    results = await asyncio.gather(upload(), upload(), return_exceptions=True)
+    successes = [result for result in results if isinstance(result, StoredRevision)]
+    failures = [result for result in results if isinstance(result, RegistryError)]
+
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert failures[0].code == "ASSERTION_REPLAY"
+    assert await table_counts_for_slug(slug) == (1, 1, 1, 1, 1)
 
 
 async def test_real_postgres_artifact_store_put_and_digest_verification() -> None:
@@ -319,8 +426,10 @@ async def test_real_postgres_rejection_persists_reason_in_append_only_event() ->
     assert OWNER_URL is not None
     async with await connect(OWNER_URL) as connection:
         cursor = await connection.execute(
-            """SELECT review_reason FROM skill_registry.skill_control_events
+            """SELECT review_reason, content_reviewed, usage_rights_confirmed,
+              execution_risk_accepted, independent_reviewer_confirmed
+            FROM skill_registry.skill_control_events
             WHERE target_id = %s AND event_type = 'revision_rejected'""",
             (created.id,),
         )
-        assert await cursor.fetchone() == (reason,)
+        assert await cursor.fetchone() == (reason, True, True, True, True)

@@ -162,6 +162,26 @@ def service(
     return SkillRegistryService(repository, store, ScanPolicy(allowed)), repository, store
 
 
+def assert_exception_is_scrubbed(error: BaseException, secret: bytes) -> None:
+    seen: set[int] = set()
+    pending: list[BaseException] = [error]
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        assert secret not in repr(current.args).encode("utf-8", errors="replace")
+        error_object = getattr(current, "object", None)
+        if isinstance(error_object, bytes):
+            assert secret not in error_object
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
 @pytest.mark.asyncio
 async def test_upload_uses_explicit_frozen_allowlist_and_stores_canonical_only() -> None:
     registry, repository, store = service()
@@ -198,6 +218,18 @@ async def test_upload_uses_explicit_frozen_allowlist_and_stores_canonical_only()
 def test_scan_policy_rejects_mutable_or_implicit_allowlist() -> None:
     with pytest.raises(TypeError):
         ScanPolicy({"third_party"})  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("invalid", [1, "true", object(), [True]])
+def test_attestations_require_exact_boolean_true(invalid: object) -> None:
+    attestations = ReviewAttestations(
+        content_reviewed=invalid,  # type: ignore[arg-type]
+        usage_rights_confirmed=True,
+        execution_risk_accepted=True,
+        independent_reviewer_confirmed=True,
+    )
+
+    assert attestations.complete is False
 
 
 @pytest.mark.asyncio
@@ -296,6 +328,7 @@ async def test_file_read_allows_only_verified_indexed_utf8_content() -> None:
     with pytest.raises(RegistryError) as caught:
         await registry.get_file_text(SKILL_ID, binary_revision.id, "references/guide.md")
     assert caught.value.code == "SKILL_FILE_NOT_UTF8"
+    assert_exception_is_scrubbed(caught.value, b"\xff\xfe")
 
 
 @pytest.mark.asyncio
@@ -331,6 +364,39 @@ async def test_review_service_preserves_exact_attestation_command() -> None:
 
 
 @pytest.mark.asyncio
+async def test_review_service_rejects_truthy_non_boolean_attestation() -> None:
+    registry, repository, _ = service(frozenset({"third_party"}))
+    detail = await registry.upload_zip(
+        actor=ACTOR,
+        request_id=uuid4(),
+        assertion_nonce=uuid4(),
+        archive=build_zip(),
+        target_skill_id=None,
+    )
+    command = ReviewRevision(
+        revision_id=detail.revision.id,
+        reviewer=REVIEWER,
+        request_id=uuid4(),
+        assertion_nonce=uuid4(),
+        decision="approve",
+        expected_state="pending_review",
+        reason=None,
+        attestations=ReviewAttestations(
+            content_reviewed=1,  # type: ignore[arg-type]
+            usage_rights_confirmed=True,
+            execution_risk_accepted=True,
+            independent_reviewer_confirmed=True,
+        ),
+    )
+
+    with pytest.raises(RegistryError) as caught:
+        await registry.review_revision(command)
+
+    assert caught.value.code == "VALIDATION_ERROR"
+    assert repository.reviews == []
+
+
+@pytest.mark.asyncio
 async def test_detail_rejects_file_index_that_does_not_exactly_match_artifact() -> None:
     registry, repository, _ = service(frozenset({"third_party"}))
     detail = await registry.upload_zip(
@@ -346,3 +412,47 @@ async def test_detail_rejects_file_index_that_does_not_exactly_match_artifact() 
         await registry.get_revision_detail(SKILL_ID, detail.revision.id)
 
     assert caught.value.code == "ARTIFACT_DIGEST_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_upload_scrubs_archive_bytes_from_validation_exception_chain() -> None:
+    registry, _, _ = service()
+    secret = b"secret-archive-body"
+
+    with pytest.raises(RegistryError) as caught:
+        await registry.upload_zip(
+            actor=ACTOR,
+            request_id=uuid4(),
+            assertion_nonce=uuid4(),
+            archive=build_zip(reference=b"\xff" + secret),
+            target_skill_id=None,
+        )
+
+    assert caught.value.code == "SKILL_FILE_NOT_UTF8"
+    assert_exception_is_scrubbed(caught.value, secret)
+
+
+@pytest.mark.asyncio
+async def test_detail_scrubs_invalid_stored_archive_from_exception_chain() -> None:
+    registry, repository, store = service(frozenset({"third_party"}))
+    detail = await registry.upload_zip(
+        actor=ACTOR,
+        request_id=uuid4(),
+        assertion_nonce=uuid4(),
+        archive=build_zip(),
+        target_skill_id=None,
+    )
+    secret = b"secret-stored-archive"
+    invalid = b"not-a-zip:" + secret
+    repository.revisions[0] = replace(
+        repository.revisions[0],
+        artifact_sha256=hashlib.sha256(invalid).hexdigest(),
+        compressed_size=len(invalid),
+    )
+    store.artifacts[detail.revision.id] = invalid
+
+    with pytest.raises(RegistryError) as caught:
+        await registry.get_revision_detail(SKILL_ID, detail.revision.id)
+
+    assert caught.value.code == "ARTIFACT_DIGEST_MISMATCH"
+    assert_exception_is_scrubbed(caught.value, secret)

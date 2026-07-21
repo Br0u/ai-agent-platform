@@ -8,9 +8,10 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
 from datetime import datetime
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, TypeVar, cast
 from uuid import UUID, uuid4
 
+import psycopg
 from psycopg.types.json import Jsonb
 
 from skill_core.types import (
@@ -28,6 +29,7 @@ from skill_registry.types import (
     StoredFile,
     StoredRevision,
 )
+from skill_registry.artifact_store import ArtifactStoreError, validate_artifact_for_storage
 
 
 _REVISION_COLUMNS = """revision.id, revision.skill_id, skill.slug,
@@ -61,6 +63,7 @@ class RepositoryConnection(Protocol):
 
 RepositoryConnectionFactory = Callable[[], RepositoryConnection | Awaitable[RepositoryConnection]]
 IdFactory = Callable[[], UUID]
+MappedValue = TypeVar("MappedValue")
 
 
 class PostgresSkillRegistryRepository:
@@ -82,16 +85,33 @@ class PostgresSkillRegistryRepository:
         return connection
 
     async def create_upload_revision(self, command: CreateUploadRevision) -> StoredRevision:
+        artifact_error_code: str | None = None
+        try:
+            validate_artifact_for_storage(command.package)
+        except ArtifactStoreError as error:
+            artifact_error_code = error.code
+        if artifact_error_code is not None:
+            raise RegistryError(
+                artifact_error_code, "Skill artifact package verification failed"
+            ) from None
+        failure: tuple[str, str] | None = None
         try:
             connection = await self._connect()
             async with connection:
                 async with connection.transaction():
                     async with connection.cursor() as cursor:
+                        await self._assert_nonce_unused(cursor, command.assertion_nonce)
                         skill_id, is_new = await self._resolve_upload_skill(cursor, command)
                         duplicate = await self._find_digest_revision(
                             cursor, skill_id, command.package.sha256
                         )
                         if duplicate is not None:
+                            await self._insert_upload_event(
+                                cursor,
+                                command=command,
+                                revision_id=duplicate.id,
+                                result_code="replay",
+                            )
                             return duplicate
                         if not is_new and command.target_skill_id is None:
                             raise RegistryError(
@@ -162,18 +182,11 @@ class PostgresSkillRegistryRepository:
                                 ) VALUES (%s, %s, %s, %s, %s)""",
                                 (revision_id, file.path, file.sha256, file.size, media_type),
                             )
-                        await cursor.execute(
-                            """INSERT INTO skill_registry.skill_control_events (
-                              id, request_id, assertion_nonce, actor, event_type,
-                              target_id, result_code
-                            ) VALUES (%s, %s, %s, %s, 'revision_created', %s, 'ok')""",
-                            (
-                                self._id_factory(),
-                                command.request_id,
-                                command.assertion_nonce,
-                                str(command.actor),
-                                revision_id,
-                            ),
+                        await self._insert_upload_event(
+                            cursor,
+                            command=command,
+                            revision_id=revision_id,
+                            result_code="ok",
                         )
                         return StoredRevision(
                             id=revision_id,
@@ -196,9 +209,41 @@ class PostgresSkillRegistryRepository:
         except RegistryError:
             raise
         except Exception as error:
-            raise RegistryError(
-                "REGISTRY_STORAGE_ERROR", "Skill registry operation failed"
-            ) from error
+            failure = _database_failure(error)
+        assert failure is not None
+        raise RegistryError(*failure) from None
+
+    async def _assert_nonce_unused(self, cursor: RepositoryCursor, assertion_nonce: UUID) -> None:
+        await cursor.execute(
+            """SELECT target_id FROM skill_registry.skill_control_events
+            WHERE assertion_nonce = %s""",
+            (assertion_nonce,),
+        )
+        if await cursor.fetchone() is not None:
+            raise RegistryError("ASSERTION_REPLAY", "Mutation assertion was already used")
+
+    async def _insert_upload_event(
+        self,
+        cursor: RepositoryCursor,
+        *,
+        command: CreateUploadRevision,
+        revision_id: UUID,
+        result_code: str,
+    ) -> None:
+        await cursor.execute(
+            """INSERT INTO skill_registry.skill_control_events (
+              id, request_id, assertion_nonce, actor, event_type,
+              target_id, result_code
+            ) VALUES (%s, %s, %s, %s, 'revision_created', %s, %s)""",
+            (
+                self._id_factory(),
+                command.request_id,
+                command.assertion_nonce,
+                str(command.actor),
+                revision_id,
+                result_code,
+            ),
+        )
 
     async def _resolve_upload_skill(
         self, cursor: RepositoryCursor, command: CreateUploadRevision
@@ -255,11 +300,13 @@ class PostgresSkillRegistryRepository:
         return None if row is None else _stored_revision(row)
 
     async def review_revision(self, command: ReviewRevision) -> StoredRevision:
+        failure: tuple[str, str] | None = None
         try:
             connection = await self._connect()
             async with connection:
                 async with connection.transaction():
                     async with connection.cursor() as cursor:
+                        await self._assert_nonce_unused(cursor, command.assertion_nonce)
                         await cursor.execute(
                             f"""SELECT {_REVISION_COLUMNS}
                             FROM skill_registry.skill_revisions AS revision
@@ -285,8 +332,13 @@ class PostgresSkillRegistryRepository:
                         await cursor.execute(
                             """INSERT INTO skill_registry.skill_control_events (
                               id, request_id, assertion_nonce, actor, event_type,
-                              target_id, result_code, review_reason
-                            ) VALUES (%s, %s, %s, %s, %s, %s, 'ok', %s)""",
+                              target_id, result_code, review_reason,
+                              content_reviewed, usage_rights_confirmed,
+                              execution_risk_accepted, independent_reviewer_confirmed
+                            ) VALUES (
+                              %s, %s, %s, %s, %s, %s, 'ok', %s,
+                              %s, %s, %s, %s
+                            )""",
                             (
                                 self._id_factory(),
                                 command.request_id,
@@ -295,6 +347,10 @@ class PostgresSkillRegistryRepository:
                                 event_type,
                                 command.revision_id,
                                 command.reason,
+                                command.attestations.content_reviewed,
+                                command.attestations.usage_rights_confirmed,
+                                command.attestations.execution_risk_accepted,
+                                command.attestations.independent_reviewer_confirmed,
                             ),
                         )
                         await cursor.execute(
@@ -322,9 +378,9 @@ class PostgresSkillRegistryRepository:
         except RegistryError:
             raise
         except Exception as error:
-            raise RegistryError(
-                "REGISTRY_STORAGE_ERROR", "Skill registry operation failed"
-            ) from error
+            failure = _database_failure(error)
+        assert failure is not None
+        raise RegistryError(*failure) from None
 
     @staticmethod
     def _validate_review(command: ReviewRevision, revision: StoredRevision) -> None:
@@ -370,16 +426,18 @@ class PostgresSkillRegistryRepository:
             WHERE skill.archived_at IS NULL
             ORDER BY skill.slug"""
         )
-        return tuple(
-            SkillSummary(
-                id=UUID(str(row[0])),
-                slug=str(row[1]),
-                latest_revision_no=None if row[2] is None else int(row[2]),
-                latest_revision_id=None if row[3] is None else UUID(str(row[3])),
-                latest_state=cast(Any, row[4]),
-                created_at=cast(datetime, row[5]),
+        return _map_storage_value(
+            lambda: tuple(
+                SkillSummary(
+                    id=UUID(str(row[0])),
+                    slug=str(row[1]),
+                    latest_revision_no=None if row[2] is None else int(row[2]),
+                    latest_revision_id=None if row[3] is None else UUID(str(row[3])),
+                    latest_state=cast(Any, row[4]),
+                    created_at=cast(datetime, row[5]),
+                )
+                for row in rows
             )
-            for row in rows
         )
 
     async def get_revision(self, skill_id: UUID, revision_id: UUID) -> StoredRevision:
@@ -394,7 +452,7 @@ class PostgresSkillRegistryRepository:
         )
         if row is None:
             raise RegistryError("REVISION_NOT_FOUND", "Skill revision does not exist")
-        return _stored_revision(row)
+        return _map_storage_value(lambda: _stored_revision(row))
 
     async def list_revision_files(self, revision_id: UUID) -> tuple[StoredFile, ...]:
         rows = await self._query_all(
@@ -404,14 +462,16 @@ class PostgresSkillRegistryRepository:
             ORDER BY path""",
             (revision_id,),
         )
-        return tuple(
-            StoredFile(
-                path=str(row[0]),
-                sha256=str(row[1]),
-                size=int(row[2]),
-                media_type=None if row[3] is None else str(row[3]),
+        return _map_storage_value(
+            lambda: tuple(
+                StoredFile(
+                    path=str(row[0]),
+                    sha256=str(row[1]),
+                    size=int(row[2]),
+                    media_type=None if row[3] is None else str(row[3]),
+                )
+                for row in rows
             )
-            for row in rows
         )
 
     async def find_previous_published(self, revision: StoredRevision) -> StoredRevision | None:
@@ -428,11 +488,12 @@ class PostgresSkillRegistryRepository:
             LIMIT 1""",
             (revision.skill_id, revision.revision_no),
         )
-        return None if row is None else _stored_revision(row)
+        return None if row is None else _map_storage_value(lambda: _stored_revision(row))
 
     async def _query_one(
         self, query: str, parameters: tuple[object, ...]
     ) -> tuple[Any, ...] | None:
+        failure = False
         try:
             connection = await self._connect()
             async with connection:
@@ -441,14 +502,18 @@ class PostgresSkillRegistryRepository:
                     return await cursor.fetchone()
         except RegistryError:
             raise
-        except Exception as error:
+        except Exception:
+            failure = True
+        if failure:
             raise RegistryError(
                 "REGISTRY_STORAGE_ERROR", "Skill registry operation failed"
-            ) from error
+            ) from None
+        raise AssertionError("unreachable")
 
     async def _query_all(
         self, query: str, parameters: tuple[object, ...] = ()
     ) -> list[tuple[Any, ...]]:
+        failure = False
         try:
             connection = await self._connect()
             async with connection:
@@ -457,10 +522,34 @@ class PostgresSkillRegistryRepository:
                     return await cursor.fetchall()
         except RegistryError:
             raise
-        except Exception as error:
+        except Exception:
+            failure = True
+        if failure:
             raise RegistryError(
                 "REGISTRY_STORAGE_ERROR", "Skill registry operation failed"
-            ) from error
+            ) from None
+        raise AssertionError("unreachable")
+
+
+def _database_failure(error: Exception) -> tuple[str, str]:
+    if (
+        isinstance(error, psycopg.errors.UniqueViolation)
+        and error.diag.constraint_name == "skill_control_events_assertion_nonce_key"
+    ):
+        return "ASSERTION_REPLAY", "Mutation assertion was already used"
+    return "REGISTRY_STORAGE_ERROR", "Skill registry operation failed"
+
+
+def _map_storage_value(mapper: Callable[[], MappedValue]) -> MappedValue:
+    mapping_failed = False
+    value: MappedValue | None = None
+    try:
+        value = mapper()
+    except Exception:
+        mapping_failed = True
+    if mapping_failed:
+        raise RegistryError("REGISTRY_STORAGE_ERROR", "Skill registry operation failed") from None
+    return cast(MappedValue, value)
 
 
 def _stored_revision(row: tuple[Any, ...]) -> StoredRevision:

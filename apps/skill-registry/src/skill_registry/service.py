@@ -49,11 +49,30 @@ class SkillRegistryService:
         archive: bytes,
         target_skill_id: UUID | None,
     ) -> RevisionDetail:
-        package = canonicalize_skill_zip(archive)
-        findings = scan(
-            package,
-            allowed_python_modules=self._scan_policy.allowed_python_modules,
-        )
+        package_error_code: str | None = None
+        package = None
+        try:
+            package = canonicalize_skill_zip(archive)
+        except SkillPackageError as error:
+            package_error_code = error.code
+        except Exception:
+            package_error_code = "ARCHIVE_INVALID"
+        if package_error_code is not None or package is None:
+            raise RegistryError(
+                package_error_code or "ARCHIVE_INVALID",
+                "Skill package validation failed",
+            ) from None
+        scan_failed = False
+        try:
+            findings = scan(
+                package,
+                allowed_python_modules=self._scan_policy.allowed_python_modules,
+            )
+        except Exception:
+            scan_failed = True
+            findings = ()
+        if scan_failed:
+            raise RegistryError("SKILL_SCAN_FAILED", "Skill package scan failed") from None
         package = replace(package, findings=findings)
         revision = await self._repository.create_upload_revision(
             CreateUploadRevision(
@@ -97,29 +116,46 @@ class SkillRegistryService:
             raise RegistryError("FILE_NOT_FOUND", "Skill file is not available")
         package = await self._load_verified_package(revision, files)
         file = next(item for item in package.files if item.path == indexed.path)
+        decode_failed = False
         try:
-            return file.content.decode("utf-8")
-        except UnicodeDecodeError as error:
+            text = file.content.decode("utf-8")
+        except UnicodeDecodeError:
+            decode_failed = True
+            text = ""
+        if decode_failed:
             raise RegistryError(
                 "SKILL_FILE_NOT_UTF8", "Skill file is not valid UTF-8 text"
-            ) from error
+            ) from None
+        return text
 
     async def review_revision(self, command: ReviewRevision) -> StoredRevision:
+        if not command.attestations.complete:
+            raise RegistryError("VALIDATION_ERROR", "All review attestations are required")
         return await self._repository.review_revision(command)
 
     async def _load_verified_package(
         self, revision: StoredRevision, files: tuple[StoredFile, ...]
     ) -> CanonicalSkillPackage:
+        artifact_error: tuple[str, str] | None = None
+        artifact = b""
         try:
             artifact = await self._artifact_store.get(revision.id, revision.artifact_sha256)
         except ArtifactStoreError as error:
-            raise RegistryError(error.code, str(error)) from error
+            artifact_error = (error.code, "Skill artifact retrieval failed")
+        except Exception:
+            artifact_error = ("ARTIFACT_STORAGE_ERROR", "Skill artifact retrieval failed")
+        if artifact_error is not None:
+            raise RegistryError(*artifact_error) from None
+        canonicalization_failed = False
         try:
             canonical = canonicalize_skill_archive(artifact)
-        except SkillPackageError as error:
+        except Exception:
+            canonicalization_failed = True
+            canonical = None
+        if canonicalization_failed or canonical is None:
             raise RegistryError(
                 "ARTIFACT_DIGEST_MISMATCH", "Stored skill artifact is invalid"
-            ) from error
+            ) from None
         if (
             canonical.sha256 != revision.artifact_sha256
             or canonical.compressed_size != revision.compressed_size

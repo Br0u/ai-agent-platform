@@ -18,6 +18,9 @@ from skill_registry.schema import (
     VERIFY_REGISTRY_ROLE_MEMBERSHIPS_SQL,
     VERIFY_REGISTRY_ROLE_SETTINGS_SQL,
     VERIFY_REPLICATION_PARAMETER_PRIVILEGES_SQL,
+    VERIFY_REVIEW_CONSTRAINTS_SQL,
+    VERIFY_REVIEW_STORAGE_COLUMNS_SQL,
+    VERIFY_REVIEW_TRIGGER_GUARDS_SQL,
     VERIFY_SCHEMA_GRANTS_SQL,
     VERIFY_SCHEMA_OWNER_SQL,
     VERIFY_SECURITY_TRIGGERS_SQL,
@@ -98,6 +101,42 @@ class FakeCursor:
             VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL: [
                 ("transaction_id", "bigint", True, ""),
             ],
+            VERIFY_REVIEW_STORAGE_COLUMNS_SQL: [
+                ("skill_control_events", "content_reviewed", "boolean", False, ""),
+                ("skill_control_events", "execution_risk_accepted", "boolean", False, ""),
+                (
+                    "skill_control_events",
+                    "independent_reviewer_confirmed",
+                    "boolean",
+                    False,
+                    "",
+                ),
+                (
+                    "skill_control_events",
+                    "review_reason",
+                    "character varying(500)",
+                    False,
+                    "",
+                ),
+                ("skill_control_events", "usage_rights_confirmed", "boolean", False, ""),
+                ("skill_revisions", "findings", "jsonb", True, "'[]'::jsonb"),
+            ],
+            VERIFY_REVIEW_CONSTRAINTS_SQL: [
+                (
+                    "skill_control_events_review_evidence",
+                    "skill_control_events",
+                    "c",
+                    True,
+                ),
+                (
+                    "skill_control_events_review_reason",
+                    "skill_control_events",
+                    "c",
+                    True,
+                ),
+                ("skill_revisions_findings_array", "skill_revisions", "c", True),
+            ],
+            VERIFY_REVIEW_TRIGGER_GUARDS_SQL: [(True, True, True)],
             VERIFY_FUNCTION_BOUNDARY_SQL: [
                 (
                     "deny_append_only_mutation",
@@ -282,6 +321,9 @@ async def test_migration_applies_version_one_once_and_keeps_repeat_at_version_on
     assert cursor.executed.count(SCHEMA_VERSION_1_SQL) == 1
     assert cursor.executed.count(SELECT_SCHEMA_VERSION_SQL) == 2
     assert cursor.executed.count(VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL) == 2
+    assert cursor.executed.count(VERIFY_REVIEW_STORAGE_COLUMNS_SQL) == 2
+    assert cursor.executed.count(VERIFY_REVIEW_CONSTRAINTS_SQL) == 2
+    assert cursor.executed.count(VERIFY_REVIEW_TRIGGER_GUARDS_SQL) == 2
     assert cursor.executed.count(VERIFY_FUNCTION_BOUNDARY_SQL) == 2
     assert cursor.executed.count(VERIFY_SECURITY_TRIGGERS_SQL) == 2
     assert cursor.executed.count(VERIFY_REGISTRY_ROLE_MEMBERSHIPS_SQL) == 2
@@ -318,6 +360,23 @@ async def test_migration_rejects_wrong_schema_owner() -> None:
 
     async def connector(database_url: str) -> MigrationConnection:
         return FakeConnection(WrongOwnerCursor())
+
+    settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
+    with pytest.raises(RuntimeError, match="verification failed"):
+        await run_migration(settings, connector=connector)
+
+
+@pytest.mark.asyncio
+async def test_migration_rejects_version_one_missing_review_storage_contract() -> None:
+    class DriftedCursor(FakeCursor):
+        async def fetchall(self) -> list[tuple[Any, ...]]:
+            rows = await super().fetchall()
+            if self._query == VERIFY_REVIEW_STORAGE_COLUMNS_SQL:
+                return [row for row in rows if row[1] != "findings"]
+            return rows
+
+    async def connector(database_url: str) -> MigrationConnection:
+        return FakeConnection(DriftedCursor(versions=(1,)))
 
     settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
     with pytest.raises(RuntimeError, match="verification failed"):

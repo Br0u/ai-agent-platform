@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 from uuid import uuid4
 
 import pytest
 
 from skill_core import canonicalize_skill_zip
+from skill_core.types import CanonicalSkillPackage
 from skill_registry.artifact_store import (
     ArtifactStoreError,
     PostgresSkillArtifactStore,
@@ -145,3 +148,35 @@ async def test_store_sanitizes_database_failures(operation: str) -> None:
 
     assert caught.value.code == "ARTIFACT_STORAGE_ERROR"
     assert "secret-source" not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda package: replace(package, sha256="0" * 64),
+        lambda package: replace(package, compressed_size=package.compressed_size + 1),
+        lambda package: replace(
+            package,
+            files=(replace(package.files[0], sha256="f" * 64),),
+        ),
+        lambda package: replace(
+            package,
+            manifest=replace(package.manifest, description="Forged description."),
+        ),
+    ],
+)
+async def test_put_rejects_forged_canonical_package_before_database_write(
+    mutation: Callable[[CanonicalSkillPackage], CanonicalSkillPackage],
+) -> None:
+    cursor = FakeCursor()
+    store = PostgresSkillArtifactStore(lambda: FakeConnection(cursor))
+    forged = mutation(canonicalize_skill_zip(build_zip()))
+
+    with pytest.raises(ArtifactStoreError) as caught:
+        await store.put(uuid4(), forged)
+
+    assert caught.value.code == "ARTIFACT_DIGEST_MISMATCH"
+    assert cursor.executions == []

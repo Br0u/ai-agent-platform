@@ -107,6 +107,7 @@ async def _insert_skill_revision(
     actor_id: UUID,
     slug: str,
     nonce: UUID,
+    findings: str = "[]",
 ) -> None:
     await connection.execute(
         "INSERT INTO skill_registry.skills (id, slug, created_by) VALUES (%s, %s, %s)",
@@ -114,9 +115,9 @@ async def _insert_skill_revision(
     )
     await connection.execute(
         """INSERT INTO skill_registry.skill_revisions (
-          id, skill_id, revision_no, state, source_type, manifest, created_by
-        ) VALUES (%s, %s, 1, 'pending_review', 'upload', '{}'::jsonb, %s)""",
-        (revision_id, skill_id, actor_id),
+          id, skill_id, revision_no, state, source_type, manifest, findings, created_by
+        ) VALUES (%s, %s, 1, 'pending_review', 'upload', '{}'::jsonb, %s::jsonb, %s)""",
+        (revision_id, skill_id, findings, actor_id),
     )
     await connection.execute(
         """INSERT INTO skill_registry.skill_revision_artifacts (
@@ -148,13 +149,26 @@ async def _insert_review_event(
     event_type: str,
     result_code: str = "ok",
     error_code: str | None = None,
+    review_reason: str | None = None,
+    attestations: tuple[bool | None, bool | None, bool | None, bool | None] = (
+        True,
+        True,
+        True,
+        True,
+    ),
 ) -> UUID:
     event_id = uuid4()
+    if event_type == "revision_rejected" and review_reason is None:
+        review_reason = "Rejected by the integration test reviewer."
     await connection.execute(
         """INSERT INTO skill_registry.skill_control_events (
           id, request_id, assertion_nonce, actor, event_type,
-          target_id, result_code, error_code
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+          target_id, result_code, error_code, review_reason,
+          content_reviewed, usage_rights_confirmed,
+          execution_risk_accepted, independent_reviewer_confirmed
+        ) VALUES (
+          %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+        )""",
         (
             event_id,
             uuid4(),
@@ -164,6 +178,8 @@ async def _insert_review_event(
             revision_id,
             result_code,
             error_code,
+            review_reason,
+            *attestations,
         ),
     )
     return event_id
@@ -282,6 +298,120 @@ async def test_real_registry_migration_and_role_boundary() -> None:
                 slug=f"manager-{uuid4()}",
                 nonce=uuid4(),
             )
+
+        await _expect_database_error(
+            manager,
+            psycopg.errors.CheckViolation,
+            """INSERT INTO skill_registry.skill_control_events (
+              id, request_id, assertion_nonce, actor, event_type,
+              target_id, result_code
+            ) VALUES (%s, %s, %s, %s, 'revision_published', %s, 'ok')""",
+            (uuid4(), uuid4(), uuid4(), str(reviewer_id), revision_id),
+        )
+        for false_index in range(4):
+            evidence = [True, True, True, True]
+            evidence[false_index] = False
+            with pytest.raises(psycopg.errors.CheckViolation):
+                async with manager.transaction():
+                    await _insert_review_event(
+                        manager,
+                        revision_id=revision_id,
+                        reviewer_id=reviewer_id,
+                        event_type="revision_published",
+                        attestations=(
+                            evidence[0],
+                            evidence[1],
+                            evidence[2],
+                            evidence[3],
+                        ),
+                    )
+
+        for invalid_reason in (None, "", "   "):
+            await _expect_database_error(
+                manager,
+                psycopg.errors.CheckViolation,
+                """INSERT INTO skill_registry.skill_control_events (
+                  id, request_id, assertion_nonce, actor, event_type,
+                  target_id, result_code, review_reason,
+                  content_reviewed, usage_rights_confirmed,
+                  execution_risk_accepted, independent_reviewer_confirmed
+                ) VALUES (
+                  %s, %s, %s, %s, 'revision_rejected', %s, 'ok', %s,
+                  true, true, true, true
+                )""",
+                (
+                    uuid4(),
+                    uuid4(),
+                    uuid4(),
+                    str(reviewer_id),
+                    revision_id,
+                    invalid_reason,
+                ),
+            )
+
+        await _expect_database_error(
+            manager,
+            psycopg.errors.CheckViolation,
+            """INSERT INTO skill_registry.skill_control_events (
+              id, request_id, assertion_nonce, actor, event_type,
+              target_id, result_code, review_reason
+            ) VALUES (%s, %s, %s, %s, 'revision_created', %s, 'ok', %s)""",
+            (
+                uuid4(),
+                uuid4(),
+                uuid4(),
+                str(actor_id),
+                revision_id,
+                "Review-only reason",
+            ),
+        )
+        await _expect_database_error(
+            manager,
+            psycopg.errors.CheckViolation,
+            """INSERT INTO skill_registry.skill_control_events (
+              id, request_id, assertion_nonce, actor, event_type,
+              target_id, result_code, content_reviewed
+            ) VALUES (%s, %s, %s, %s, 'revision_created', %s, 'ok', true)""",
+            (uuid4(), uuid4(), uuid4(), str(actor_id), revision_id),
+        )
+
+        for blocking_code in ("unsupported_import", "private_key"):
+            blocked_skill_id = uuid4()
+            blocked_revision_id = uuid4()
+            async with manager.transaction():
+                await _insert_skill_revision(
+                    manager,
+                    skill_id=blocked_skill_id,
+                    revision_id=blocked_revision_id,
+                    actor_id=actor_id,
+                    slug=f"blocked-{blocking_code.replace('_', '-')}-{uuid4().hex[:12]}",
+                    nonce=uuid4(),
+                    findings=(
+                        '[{"path":"SKILL.md","line":1,"code":"'
+                        + blocking_code
+                        + '","message":"blocked","blocking":true}]'
+                    ),
+                )
+            with pytest.raises(psycopg.errors.CheckViolation):
+                async with manager.transaction():
+                    await _insert_review_event(
+                        manager,
+                        revision_id=blocked_revision_id,
+                        reviewer_id=reviewer_id,
+                        event_type="revision_published",
+                    )
+                    await manager.execute(
+                        """UPDATE skill_registry.skill_revisions
+                        SET state = 'published', reviewed_by = %s, reviewed_at = now()
+                        WHERE id = %s""",
+                        (reviewer_id, blocked_revision_id),
+                    )
+            blocked_state = await manager.execute(
+                "SELECT state FROM skill_registry.skill_revisions WHERE id = %s",
+                (blocked_revision_id,),
+            )
+            assert await blocked_state.fetchone() == ("pending_review",)
+
         for forbidden_initial_state in ("published", "rejected", "archived"):
             await _expect_database_error(
                 manager,
@@ -623,3 +753,48 @@ async def test_real_registry_migration_and_role_boundary() -> None:
         await runtime.close()
         await manager.close()
         await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_real_registry_migration_rejects_v1_review_contract_drift() -> None:
+    urls = _validated_urls()
+    owner = await _connect(urls["test"])
+    settings = MigrationSettings.model_validate({"database_url": urls["migrator"]})
+    try:
+        await run_migration(settings)
+        await owner.execute(
+            """ALTER TABLE skill_registry.skill_control_events
+            DROP CONSTRAINT skill_control_events_review_evidence"""
+        )
+        with pytest.raises(RuntimeError, match="verification failed"):
+            await run_migration(settings)
+    finally:
+        await owner.execute(
+            """ALTER TABLE skill_registry.skill_control_events
+            DROP CONSTRAINT IF EXISTS skill_control_events_review_evidence"""
+        )
+        await owner.execute(
+            """ALTER TABLE skill_registry.skill_control_events
+            ADD CONSTRAINT skill_control_events_review_evidence CHECK (
+              (
+                event_type IN ('revision_published', 'revision_rejected')
+                AND content_reviewed IS TRUE
+                AND usage_rights_confirmed IS TRUE
+                AND execution_risk_accepted IS TRUE
+                AND independent_reviewer_confirmed IS TRUE
+              )
+              OR (
+                event_type NOT IN ('revision_published', 'revision_rejected')
+                AND content_reviewed IS NULL
+                AND usage_rights_confirmed IS NULL
+                AND execution_risk_accepted IS NULL
+                AND independent_reviewer_confirmed IS NULL
+              )
+            )"""
+        )
+        await owner.close()
+    await run_migration(settings)

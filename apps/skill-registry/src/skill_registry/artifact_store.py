@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 from uuid import UUID
 
+from skill_core import canonicalize_skill_zip
 from skill_core.types import CanonicalSkillPackage
 
 
@@ -59,6 +60,8 @@ class PostgresSkillArtifactStore:
         return connection
 
     async def put(self, revision_id: UUID, artifact: CanonicalSkillPackage) -> None:
+        validate_artifact_for_storage(artifact)
+        storage_failed = False
         try:
             connection = await self._connect()
             async with connection:
@@ -82,12 +85,15 @@ class PostgresSkillArtifactStore:
                             artifact.archive,
                         ),
                     )
-        except Exception as error:
+        except Exception:
+            storage_failed = True
+        if storage_failed:
             raise ArtifactStoreError(
                 "ARTIFACT_STORAGE_ERROR", "Skill artifact storage failed"
-            ) from error
+            ) from None
 
     async def get(self, revision_id: UUID, expected_sha256: str) -> bytes:
+        storage_failed = False
         try:
             connection = await self._connect()
             async with connection:
@@ -99,20 +105,70 @@ class PostgresSkillArtifactStore:
                         (revision_id,),
                     )
                     row = await cursor.fetchone()
-            if row is None:
-                raise ArtifactStoreError("ARTIFACT_NOT_FOUND", "Skill artifact is unavailable")
-            artifact = bytes(row[0])
-            stored_sha256 = str(row[1])
-            actual_sha256 = hashlib.sha256(artifact).hexdigest()
-            if stored_sha256 != expected_sha256 or actual_sha256 != expected_sha256:
-                raise ArtifactStoreError(
-                    "ARTIFACT_DIGEST_MISMATCH",
-                    "Skill artifact digest verification failed",
-                )
-            return artifact
-        except ArtifactStoreError:
-            raise
-        except Exception as error:
+        except Exception:
+            storage_failed = True
+            row = None
+        if storage_failed:
             raise ArtifactStoreError(
                 "ARTIFACT_STORAGE_ERROR", "Skill artifact storage failed"
-            ) from error
+            ) from None
+        if row is None:
+            raise ArtifactStoreError("ARTIFACT_NOT_FOUND", "Skill artifact is unavailable")
+        conversion_failed = False
+        try:
+            artifact = bytes(row[0])
+            stored_sha256 = str(row[1])
+        except Exception:
+            conversion_failed = True
+            artifact = b""
+            stored_sha256 = ""
+        if conversion_failed:
+            raise ArtifactStoreError(
+                "ARTIFACT_STORAGE_ERROR", "Skill artifact storage failed"
+            ) from None
+        actual_sha256 = hashlib.sha256(artifact).hexdigest()
+        if stored_sha256 != expected_sha256 or actual_sha256 != expected_sha256:
+            raise ArtifactStoreError(
+                "ARTIFACT_DIGEST_MISMATCH",
+                "Skill artifact digest verification failed",
+            )
+        return artifact
+
+
+def validate_artifact_for_storage(artifact: CanonicalSkillPackage) -> None:
+    """Reject forged package DTOs before opening a database transaction."""
+
+    validation_failed = False
+    canonical = None
+    try:
+        invalid = (
+            hashlib.sha256(artifact.archive).hexdigest() != artifact.sha256
+            or len(artifact.archive) != artifact.compressed_size
+            or sum(file.size for file in artifact.files) != artifact.extracted_size
+            or len(artifact.files) == 0
+            or artifact.manifest.name != artifact.slug
+            or any(
+                file.size != len(file.content)
+                or hashlib.sha256(file.content).hexdigest() != file.sha256
+                for file in artifact.files
+            )
+        )
+        if not invalid:
+            canonical = canonicalize_skill_zip(artifact.archive)
+    except Exception:
+        validation_failed = True
+        invalid = True
+    if canonical is not None:
+        invalid = invalid or (
+            canonical.archive != artifact.archive
+            or canonical.slug != artifact.slug
+            or canonical.sha256 != artifact.sha256
+            or canonical.compressed_size != artifact.compressed_size
+            or canonical.extracted_size != artifact.extracted_size
+            or canonical.files != artifact.files
+            or canonical.manifest != artifact.manifest
+        )
+    if validation_failed or invalid:
+        raise ArtifactStoreError(
+            "ARTIFACT_DIGEST_MISMATCH", "Skill artifact package verification failed"
+        ) from None

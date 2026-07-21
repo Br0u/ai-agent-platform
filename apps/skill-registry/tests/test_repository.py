@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import io
+import stat
+import zipfile
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, NoReturn
@@ -7,11 +10,10 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from skill_core import canonicalize_skill_zip
 from skill_core.types import (
     CanonicalSkillPackage,
-    SkillFile,
     SkillFinding,
-    SkillManifest,
 )
 from skill_registry.repository import PostgresSkillRegistryRepository
 from skill_registry.schema import SCHEMA_VERSION_1_SQL
@@ -30,23 +32,20 @@ SKILL_ID = UUID("10000000-0000-4000-8000-000000000001")
 REVISION_ID = UUID("20000000-0000-4000-8000-000000000001")
 
 
-def package(*, digest: str = "a" * 64) -> CanonicalSkillPackage:
-    skill_file = SkillFile("SKILL.md", b"# Demo\n", "b" * 64, 7)
-    return CanonicalSkillPackage(
-        slug="demo-skill",
-        archive=b"canonical",
-        sha256=digest,
-        compressed_size=9,
-        extracted_size=7,
-        files=(skill_file,),
-        manifest=SkillManifest(
-            name="demo-skill",
-            description="Demo.",
-            instructions="# Demo",
-            scripts=(),
-            references=(),
-            license="MIT",
-        ),
+def package() -> CanonicalSkillPackage:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        info = zipfile.ZipInfo("demo-skill/SKILL.md", (2026, 7, 21, 12, 0, 0))
+        info.create_system = 3
+        info.external_attr = (stat.S_IFREG | 0o600) << 16
+        info.compress_type = zipfile.ZIP_DEFLATED
+        archive.writestr(
+            info,
+            b"---\nname: demo-skill\ndescription: Demo.\nlicense: MIT\n---\n# Demo\n",
+        )
+    canonical = canonicalize_skill_zip(output.getvalue())
+    return replace(
+        canonical,
         findings=(
             SkillFinding(
                 path="scripts/run.py",
@@ -147,8 +146,16 @@ class ScriptedCursor:
 
     async def execute(self, query: str, parameters: tuple[object, ...] = ()) -> None:
         assert self.replies, f"unexpected SQL: {query}"
+        normalized = " ".join(query.split())
+        if (
+            "WHERE assertion_nonce = %s" in normalized
+            and "WHERE assertion_nonce = %s" not in self.replies[0].contains
+        ):
+            self.current = Reply("WHERE assertion_nonce = %s", one=None)
+            self.executions.append((query, parameters))
+            return
         reply = self.replies.pop(0)
-        assert reply.contains in " ".join(query.split()), query
+        assert reply.contains in normalized, query
         self.current = reply
         self.executions.append((query, parameters))
         if reply.error is not None:
@@ -233,10 +240,10 @@ async def test_create_upload_revision_writes_complete_bundle_in_one_transaction(
     assert connection.committed is True
     assert connection.rolled_back is False
     queries = [query for query, _ in connection.script.executions]
-    assert "ON CONFLICT (slug) DO NOTHING" in queries[0]
+    assert "ON CONFLICT (slug) DO NOTHING" in queries[1]
     assert queries[-1].find("skill_control_events") >= 0
-    artifact_parameters = connection.script.executions[3][1]
-    assert artifact_parameters[-1] == b"canonical"
+    artifact_parameters = connection.script.executions[4][1]
+    assert artifact_parameters[-1] == package().archive
     assert all(b"raw" not in value for value in artifact_parameters if isinstance(value, bytes))
 
 
@@ -277,18 +284,20 @@ async def test_new_upload_uses_unique_slug_as_source_for_conflict_or_idempotence
     with pytest.raises(RegistryError) as caught:
         await conflicting.create_upload_revision(create_command())
     assert caught.value.code == "SKILL_NAME_CONFLICT"
-    assert "ON CONFLICT (slug) DO NOTHING" in conflict_connection.script.executions[0][0]
+    assert "ON CONFLICT (slug) DO NOTHING" in conflict_connection.script.executions[1][0]
 
     idempotent, idempotent_connection = repository_with(
         [
             Reply("INSERT INTO skill_registry.skills", one=None),
             Reply("SELECT id FROM skill_registry.skills WHERE slug", one=(SKILL_ID,)),
             Reply("artifact_sha256 = %s", one=stored_row()),
+            Reply("INSERT INTO skill_registry.skill_control_events"),
         ]
     )
     existing = await idempotent.create_upload_revision(create_command())
     assert existing.id == REVISION_ID
-    assert len(idempotent_connection.script.executions) == 3
+    assert len(idempotent_connection.script.executions) == 5
+    assert idempotent_connection.script.executions[-1][1][-1] == "replay"
 
 
 @pytest.mark.asyncio
@@ -304,11 +313,13 @@ async def test_target_revision_requires_locked_matching_slug_and_is_digest_idemp
         [
             Reply("FROM skill_registry.skills WHERE id = %s FOR UPDATE", one=("demo-skill",)),
             Reply("artifact_sha256 = %s", one=stored_row()),
+            Reply("INSERT INTO skill_registry.skill_control_events"),
         ]
     )
     revision = await repository.create_upload_revision(create_command(target_skill_id=SKILL_ID))
     assert revision.id == REVISION_ID
-    assert len(connection.script.executions) == 2
+    assert len(connection.script.executions) == 4
+    assert connection.script.executions[-1][1][-1] == "replay"
 
 
 def review_command(**changes: object) -> ReviewRevision:
@@ -341,10 +352,10 @@ async def test_review_locks_then_writes_matching_event_before_state_update() -> 
     assert revision.state == "published"
     assert revision.reviewed_by == REVIEWER
     queries = [" ".join(query.split()) for query, _ in connection.script.executions]
-    assert "FOR UPDATE" in queries[0]
-    assert "revision_published" in connection.script.executions[1][1]
-    assert queries[1].startswith("INSERT INTO skill_registry.skill_control_events")
-    assert queries[2].startswith("UPDATE skill_registry.skill_revisions")
+    assert "FOR UPDATE" in queries[1]
+    assert "revision_published" in connection.script.executions[2][1]
+    assert queries[2].startswith("INSERT INTO skill_registry.skill_control_events")
+    assert queries[3].startswith("UPDATE skill_registry.skill_revisions")
     assert connection.committed is True
 
 
@@ -444,9 +455,10 @@ async def test_reject_writes_bounded_reason_to_event_and_state_transition() -> N
     )
 
     assert result.state == "rejected"
-    event_parameters = connection.script.executions[1][1]
+    event_parameters = connection.script.executions[2][1]
     assert "revision_rejected" in event_parameters
-    assert event_parameters[-1] == "Usage rights were not demonstrated."
+    assert event_parameters[6] == "Usage rights were not demonstrated."
+    assert event_parameters[7:] == (True, True, True, True)
 
 
 @pytest.mark.asyncio
@@ -487,6 +499,27 @@ def test_schema_persists_findings_and_rejection_reason_with_immutable_boundaries
     assert "GRANT UPDATE (review_reason)" not in sql
 
 
+def test_schema_requires_exact_review_evidence_and_blocks_findings_in_trigger() -> None:
+    sql = " ".join(SCHEMA_VERSION_1_SQL.split())
+
+    for column in (
+        "content_reviewed boolean",
+        "usage_rights_confirmed boolean",
+        "execution_risk_accepted boolean",
+        "independent_reviewer_confirmed boolean",
+    ):
+        assert column in sql
+    assert "CONSTRAINT skill_revisions_findings_array" in sql
+    assert "CONSTRAINT skill_control_events_review_evidence" in sql
+    assert "CONSTRAINT skill_control_events_review_reason" in sql
+    assert "content_reviewed IS TRUE" in sql
+    assert "content_reviewed IS NULL" in sql
+    assert "event_type = 'revision_rejected' AND review_reason IS NOT NULL" in sql
+    assert "event_type <> 'revision_rejected' AND review_reason IS NULL" in sql
+    assert "jsonb_array_elements(OLD.findings)" in sql
+    assert "finding ->> 'code' IN ('unsupported_import', 'private_key')" in sql
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["create", "review", "list"])
 async def test_repository_sanitizes_connection_failures(operation: str) -> None:
@@ -505,3 +538,50 @@ async def test_repository_sanitizes_connection_failures(operation: str) -> None:
 
     assert caught.value.code == "REGISTRY_STORAGE_ERROR"
     assert "secret-source" not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["upload", "review"])
+async def test_repeated_mutation_nonce_is_rejected_before_business_work(operation: str) -> None:
+    repository, connection = repository_with(
+        [Reply("WHERE assertion_nonce = %s", one=(REVISION_ID,))]
+    )
+
+    with pytest.raises(RegistryError) as caught:
+        if operation == "upload":
+            await repository.create_upload_revision(create_command())
+        else:
+            await repository.review_revision(review_command())
+
+    assert caught.value.code == "ASSERTION_REPLAY"
+    assert len(connection.script.executions) == 1
+
+
+@pytest.mark.asyncio
+async def test_repository_rejects_forged_package_before_database_write() -> None:
+    repository, connection = repository_with([])
+    forged = replace(package(), extracted_size=99)
+
+    with pytest.raises(RegistryError) as caught:
+        await repository.create_upload_revision(create_command(package=forged))
+
+    assert caught.value.code == "ARTIFACT_DIGEST_MISMATCH"
+    assert connection.script.executions == []
+
+
+@pytest.mark.asyncio
+async def test_repository_scrubs_invalid_database_values_during_mapping() -> None:
+    secret = "secret-database-value"
+    repository, _ = repository_with(
+        [Reply("SELECT skill.id", all_rows=[(secret, "demo-skill", None, None, None, NOW)])]
+    )
+
+    with pytest.raises(RegistryError) as caught:
+        await repository.list_skills()
+
+    assert caught.value.code == "REGISTRY_STORAGE_ERROR"
+    assert secret not in repr(caught.value.args)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None

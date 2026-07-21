@@ -47,6 +47,49 @@ EXPECTED_SCHEMA_GRANTS = frozenset(
 
 EXPECTED_CONTROL_EVENT_TRANSACTION_COLUMN = frozenset({("transaction_id", "bigint", True, "")})
 
+EXPECTED_REVIEW_STORAGE_COLUMNS = frozenset(
+    {
+        ("skill_control_events", "content_reviewed", "boolean", False, ""),
+        ("skill_control_events", "execution_risk_accepted", "boolean", False, ""),
+        (
+            "skill_control_events",
+            "independent_reviewer_confirmed",
+            "boolean",
+            False,
+            "",
+        ),
+        (
+            "skill_control_events",
+            "review_reason",
+            "character varying(500)",
+            False,
+            "",
+        ),
+        ("skill_control_events", "usage_rights_confirmed", "boolean", False, ""),
+        ("skill_revisions", "findings", "jsonb", True, "'[]'::jsonb"),
+    }
+)
+
+EXPECTED_REVIEW_CONSTRAINTS = frozenset(
+    {
+        (
+            "skill_control_events_review_evidence",
+            "skill_control_events",
+            "c",
+            True,
+        ),
+        (
+            "skill_control_events_review_reason",
+            "skill_control_events",
+            "c",
+            True,
+        ),
+        ("skill_revisions_findings_array", "skill_revisions", "c", True),
+    }
+)
+
+EXPECTED_REVIEW_TRIGGER_GUARDS = frozenset({(True, True, True)})
+
 EXPECTED_FUNCTION_BOUNDARY = frozenset(
     (
         function_name,
@@ -202,7 +245,9 @@ CREATE TABLE skill_registry.skill_revisions (
   CHECK (
     (source_type = 'upload' AND source_url IS NULL)
     OR (source_type <> 'upload' AND source_url IS NOT NULL)
-  )
+  ),
+  CONSTRAINT skill_revisions_findings_array
+    CHECK (jsonb_typeof(findings) = 'array')
 );
 
 CREATE TABLE skill_registry.skill_revision_artifacts (
@@ -258,17 +303,38 @@ CREATE TABLE skill_registry.skill_control_events (
   error_code varchar(64)
     CHECK (error_code IS NULL OR error_code ~ '^[a-z0-9][a-z0-9_]{0,63}$'),
   review_reason varchar(500),
+  content_reviewed boolean,
+  usage_rights_confirmed boolean,
+  execution_risk_accepted boolean,
+  independent_reviewer_confirmed boolean,
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (event_type IN ('skill_read','revision_read') OR assertion_nonce IS NOT NULL),
   CHECK (
     (result_code = 'error' AND error_code IS NOT NULL)
     OR (result_code <> 'error' AND error_code IS NULL)
   ),
-  CHECK (
-    review_reason IS NULL
-    OR (
+  CONSTRAINT skill_control_events_review_reason CHECK (
+    (
       event_type = 'revision_rejected'
+      AND review_reason IS NOT NULL
       AND char_length(btrim(review_reason)) BETWEEN 1 AND 500
+    )
+    OR (event_type <> 'revision_rejected' AND review_reason IS NULL)
+  ),
+  CONSTRAINT skill_control_events_review_evidence CHECK (
+    (
+      event_type IN ('revision_published', 'revision_rejected')
+      AND content_reviewed IS TRUE
+      AND usage_rights_confirmed IS TRUE
+      AND execution_risk_accepted IS TRUE
+      AND independent_reviewer_confirmed IS TRUE
+    )
+    OR (
+      event_type NOT IN ('revision_published', 'revision_rejected')
+      AND content_reviewed IS NULL
+      AND usage_rights_confirmed IS NULL
+      AND execution_risk_accepted IS NULL
+      AND independent_reviewer_confirmed IS NULL
     )
   )
 );
@@ -391,6 +457,15 @@ BEGIN
     WHEN NEW.state = 'published' THEN 'revision_published'
     WHEN NEW.state = 'rejected' THEN 'revision_rejected'
   END;
+
+  IF NEW.state = 'published' AND EXISTS (
+    SELECT 1
+    FROM pg_catalog.jsonb_array_elements(OLD.findings) AS finding
+    WHERE finding ->> 'code' IN ('unsupported_import', 'private_key')
+  ) THEN
+    RAISE EXCEPTION 'blocking skill findings prevent publication'
+      USING ERRCODE = '23514';
+  END IF;
 
   IF NOT EXISTS (
     SELECT 1
@@ -636,6 +711,62 @@ WHERE n.nspname = 'skill_registry'
   AND c.relname = 'skill_control_events'
   AND a.attname = 'transaction_id'
   AND NOT a.attisdropped
+"""
+
+VERIFY_REVIEW_STORAGE_COLUMNS_SQL = """SELECT
+  c.relname::text,
+  a.attname::text,
+  format_type(a.atttypid, a.atttypmod)::text,
+  a.attnotnull,
+  COALESCE(pg_get_expr(d.adbin, d.adrelid), '')::text
+FROM pg_class AS c
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+JOIN pg_attribute AS a ON a.attrelid = c.oid
+LEFT JOIN pg_attrdef AS d
+  ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+WHERE n.nspname = 'skill_registry'
+  AND (
+    (c.relname = 'skill_revisions' AND a.attname = 'findings')
+    OR (
+      c.relname = 'skill_control_events'
+      AND a.attname IN (
+        'review_reason',
+        'content_reviewed',
+        'usage_rights_confirmed',
+        'execution_risk_accepted',
+        'independent_reviewer_confirmed'
+      )
+    )
+  )
+  AND NOT a.attisdropped
+ORDER BY c.relname, a.attname
+"""
+
+VERIFY_REVIEW_CONSTRAINTS_SQL = """SELECT
+  constraint_row.conname::text,
+  relation.relname::text,
+  constraint_row.contype::text,
+  constraint_row.convalidated
+FROM pg_constraint AS constraint_row
+JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid
+JOIN pg_namespace AS relation_schema ON relation_schema.oid = relation.relnamespace
+WHERE relation_schema.nspname = 'skill_registry'
+  AND constraint_row.conname IN (
+    'skill_revisions_findings_array',
+    'skill_control_events_review_reason',
+    'skill_control_events_review_evidence'
+  )
+ORDER BY constraint_row.conname
+"""
+
+VERIFY_REVIEW_TRIGGER_GUARDS_SQL = """SELECT
+  strpos(pg_get_functiondef(function.oid), 'jsonb_array_elements(OLD.findings)') > 0,
+  strpos(pg_get_functiondef(function.oid), 'unsupported_import') > 0,
+  strpos(pg_get_functiondef(function.oid), 'private_key') > 0
+FROM pg_proc AS function
+JOIN pg_namespace AS function_schema ON function_schema.oid = function.pronamespace
+WHERE function_schema.nspname = 'skill_registry'
+  AND function.proname = 'require_revision_review_event'
 """
 
 VERIFY_FUNCTION_BOUNDARY_SQL = """SELECT
