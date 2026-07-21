@@ -228,6 +228,25 @@ def test_list_is_bounded_metadata_only() -> None:
         assert forbidden not in rendered
 
 
+def test_extreme_pagination_numbers_are_stable_validation_errors() -> None:
+    headers = assertion_headers(
+        "list",
+        "admin:assistant:skills",
+        "skills",
+        nonce=UUID("40000000-0000-4000-8000-000000000010"),
+    )
+    for parameter in ("limit", "offset"):
+        service = StubService()
+        response = TestClient(app_for(service)).get(
+            f"/internal/skills?{parameter}={'9' * 5000}", headers=headers
+        )
+
+        assert response.status_code == 400
+        assert response.json() == {"error": "VALIDATION_ERROR"}
+        assert response.headers["cache-control"] == "no-store"
+        assert service.list_bounds is None
+
+
 def test_detail_contains_review_metadata_without_source_content() -> None:
     service = StubService()
     target = f"{SKILL_ID}/{REVISION_ID}"
@@ -384,6 +403,60 @@ def test_upload_content_length_is_rejected_without_receiving_body() -> None:
     )
     assert received is False
     assert sent[0]["status"] == 413
+
+
+def test_upload_extreme_content_length_is_stable_413_before_body() -> None:
+    service = StubService()
+    app = app_for(service)
+    received = False
+    sent: list[Message] = []
+    raw_headers = [
+        (name.lower().encode(), value.encode())
+        for name, value in assertion_headers(
+            "upload",
+            "admin:assistant:skills:upload",
+            "new",
+            nonce=UUID("40000000-0000-4000-8000-000000000009"),
+        ).items()
+    ]
+    raw_headers.extend([(b"content-type", b"application/zip"), (b"content-length", b"9" * 5000)])
+
+    async def receive() -> Message:
+        nonlocal received
+        received = True
+        raise AssertionError("extreme Content-Length must be rejected pre-body")
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    import asyncio
+
+    asyncio.run(
+        app(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "http",
+                "path": "/internal/skills/uploads",
+                "raw_path": b"/internal/skills/uploads",
+                "query_string": b"",
+                "headers": raw_headers,
+                "client": ("127.0.0.1", 1),
+                "server": ("test", 80),
+                "root_path": "",
+            },
+            receive,
+            send,
+        )
+    )
+    assert received is False
+    assert sent[0]["status"] == 413
+    body = b"".join(
+        message.get("body", b"") for message in sent if message["type"] == "http.response.body"
+    )
+    assert json.loads(body) == {"error": "ARCHIVE_TOO_LARGE"}
 
 
 def test_upload_without_content_length_stops_at_actual_five_mib_limit() -> None:

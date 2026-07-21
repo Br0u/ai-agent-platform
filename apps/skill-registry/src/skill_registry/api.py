@@ -59,6 +59,8 @@ _NO_STORE_HEADERS: Final = {"Cache-Control": "no-store"}
 _ASSERTION_STATE_KEY: Final = "skill_registry_assertion"
 _REVIEW_BODY_MAX_BYTES: Final = 8 * 1024
 _RESPONSE_BODY_MAX_BYTES: Final = 3 * 1024 * 1024
+_CONTENT_LENGTH_MAX_DIGITS: Final = 20
+_PAGE_NUMBER_MAX_DIGITS: Final = 7
 _CONTENT_LENGTH_PATTERN: Final = re.compile(rb"0|[1-9][0-9]*\Z")
 _REVIEW_FIELDS: Final = frozenset({"decision", "expectedState", "reason", "attestations"})
 _ATTESTATION_FIELDS: Final = frozenset(
@@ -291,9 +293,13 @@ def _content_length(request: Request) -> tuple[bool, int | None]:
         return False, None
     if not values:
         return True, None
-    if _CONTENT_LENGTH_PATTERN.fullmatch(values[0]) is None:
+    raw = values[0]
+    if len(raw) > _CONTENT_LENGTH_MAX_DIGITS or _CONTENT_LENGTH_PATTERN.fullmatch(raw) is None:
         return False, None
-    return True, int(values[0])
+    try:
+        return True, int(raw)
+    except ValueError:
+        return False, None
 
 
 async def _read_body(request: Request, maximum: int) -> bytes | None:
@@ -409,11 +415,16 @@ def _parse_page(request: Request) -> tuple[int, int] | None:
     raw_limit = request.query_params.get("limit", "50")
     raw_offset = request.query_params.get("offset", "0")
     if (
-        re.fullmatch(r"0|[1-9][0-9]*", raw_limit) is None
+        len(raw_limit) > _PAGE_NUMBER_MAX_DIGITS
+        or len(raw_offset) > _PAGE_NUMBER_MAX_DIGITS
+        or re.fullmatch(r"0|[1-9][0-9]*", raw_limit) is None
         or re.fullmatch(r"0|[1-9][0-9]*", raw_offset) is None
     ):
         return None
-    limit, offset = int(raw_limit), int(raw_offset)
+    try:
+        limit, offset = int(raw_limit), int(raw_offset)
+    except ValueError:
+        return None
     return (limit, offset) if 1 <= limit <= 100 and 0 <= offset <= 1_000_000 else None
 
 

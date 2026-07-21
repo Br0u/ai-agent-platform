@@ -7,19 +7,27 @@ import hashlib
 import hmac
 import io
 import json
+import logging
 import os
 from pathlib import Path
 import stat
 import time
+from typing import cast
 from uuid import uuid4
 import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
-from starlette.types import Message, Scope
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from skill_registry.app import RegistryStartupError, create_app
+from skill_registry.app import (
+    RegistryHttpBoundary,
+    RegistryResponseAborted,
+    RegistryStartupError,
+    RegistryTransportError,
+    create_app,
+)
 from skill_registry.auth import ASSERTION_KEY_DERIVATION_DOMAIN
 from skill_registry.config import RegistrySettings
 from skill_registry.types import ScanPolicy
@@ -33,11 +41,17 @@ INTEGRATION_MANAGER_URL = os.getenv("SKILL_REGISTRY_DATABASE_URL")
 
 
 class FakePool:
-    def __init__(self, *, open_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        open_error: Exception | None = None,
+        close_error: Exception | None = None,
+    ) -> None:
         self.opened = 0
         self.closed = 0
         self.connections = 0
         self.open_error = open_error
+        self.close_error = close_error
 
     async def open(self, *, wait: bool) -> None:
         assert wait is True
@@ -47,6 +61,8 @@ class FakePool:
 
     async def close(self) -> None:
         self.closed += 1
+        if self.close_error is not None:
+            raise self.close_error
 
     @asynccontextmanager
     async def connection(self):  # type: ignore[no-untyped-def]
@@ -80,6 +96,176 @@ def _assert_exception_tree_scrubbed(error: BaseException, *secrets: str) -> None
             pending.append(current.__cause__)
         if current.__context__ is not None:
             pending.append(current.__context__)
+
+
+def _http_scope(path: str = "/boundary") -> Scope:
+    return {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "server": ("testserver", 80),
+        "client": ("testclient", 50000),
+        "scheme": "http",
+        "method": "GET",
+        "root_path": "",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "headers": [],
+        "state": {},
+    }
+
+
+def test_http_boundary_reports_partial_response_as_stable_abort() -> None:
+    sent: list[Message] = []
+
+    async def partial_then_fail(_: Scope, __: Receive, send: Send) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 503,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b'{"error":',
+                "more_body": True,
+            }
+        )
+        raise RuntimeError("private-partial-response")
+
+    async def receive() -> Message:
+        raise AssertionError("boundary must not read the request")
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    boundary = RegistryHttpBoundary(cast(ASGIApp, partial_then_fail))
+    with pytest.raises(RegistryResponseAborted) as caught:
+        asyncio.run(boundary(_http_scope(), receive, send))
+
+    assert [message["type"] for message in sent] == [
+        "http.response.start",
+        "http.response.body",
+    ]
+    assert sent[1]["more_body"] is True
+    assert caught.value.args == ("Skill registry response aborted",)
+    _assert_exception_tree_scrubbed(caught.value, "private-partial-response")
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_http_boundary_sends_stable_error_when_response_never_started() -> None:
+    sent: list[Message] = []
+
+    async def fail_before_start(_: Scope, __: Receive, ___: Send) -> None:
+        raise RuntimeError("private-before-start")
+
+    async def receive() -> Message:
+        raise AssertionError("boundary must not read the request")
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    boundary = RegistryHttpBoundary(cast(ASGIApp, fail_before_start))
+    asyncio.run(boundary(_http_scope(), receive, send))
+
+    assert [message["type"] for message in sent] == [
+        "http.response.start",
+        "http.response.body",
+    ]
+    assert sent[0]["status"] == 503
+    assert dict(sent[0]["headers"])[b"cache-control"] == b"no-store"
+    assert sent[1]["body"] == b'{"error":"REGISTRY_UNAVAILABLE"}'
+    assert sent[1].get("more_body", False) is False
+
+
+def test_http_boundary_swallows_only_complete_stable_error_rethrow() -> None:
+    sent: list[Message] = []
+
+    async def complete_then_rethrow(_: Scope, __: Receive, send: Send) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 503,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b'{"error":"REGISTRY_UNAVAILABLE"}',
+            }
+        )
+        raise RuntimeError("private-after-complete")
+
+    async def receive() -> Message:
+        raise AssertionError("boundary must not read the request")
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    boundary = RegistryHttpBoundary(cast(ASGIApp, complete_then_rethrow))
+    asyncio.run(boundary(_http_scope(), receive, send))
+
+    assert [message["type"] for message in sent] == [
+        "http.response.start",
+        "http.response.body",
+    ]
+    assert sent[0]["status"] == 503
+    assert dict(sent[0]["headers"])[b"cache-control"] == b"no-store"
+    assert sent[1]["body"] == b'{"error":"REGISTRY_UNAVAILABLE"}'
+
+
+def test_http_boundary_reports_send_failure_as_stable_transport_error() -> None:
+    attempted: list[Message] = []
+
+    async def start_response(_: Scope, __: Receive, send: Send) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [],
+            }
+        )
+
+    async def receive() -> Message:
+        raise AssertionError("boundary must not read the request")
+
+    async def fail_send(message: Message) -> None:
+        attempted.append(message)
+        raise RuntimeError("private-transport-detail")
+
+    boundary = RegistryHttpBoundary(cast(ASGIApp, start_response))
+    with pytest.raises(RegistryTransportError) as caught:
+        asyncio.run(boundary(_http_scope(), receive, fail_send))
+
+    assert [message["type"] for message in attempted] == ["http.response.start"]
+    assert caught.value.args == ("Skill registry transport failed",)
+    _assert_exception_tree_scrubbed(caught.value, "private-transport-detail")
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_http_boundary_does_not_swallow_base_exceptions() -> None:
+    async def receive() -> Message:
+        raise AssertionError("boundary must not read the request")
+
+    async def send(_: Message) -> None:
+        raise AssertionError("boundary must not send a fallback for BaseException")
+
+    for failure in (asyncio.CancelledError("cancelled"), SystemExit("stopped")):
+
+        async def fail(_: Scope, __: Receive, ___: Send) -> None:
+            raise failure
+
+        boundary = RegistryHttpBoundary(cast(ASGIApp, fail))
+        with pytest.raises(type(failure)) as caught:
+            asyncio.run(boundary(_http_scope(), receive, send))
+
+        assert caught.value is failure
 
 
 def test_pool_factory_receives_secretstr_and_constructor_failure_is_scrubbed(
@@ -173,6 +359,34 @@ def test_lifespan_reads_policy_once_builds_one_service_and_closes_pool(tmp_path:
     assert loads == [manifest]
     assert len(services) == 1
     assert pool.closed == 1
+
+
+def test_pool_close_failure_is_logged_after_state_cleanup_without_secret(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    pool = FakePool(close_error=RuntimeError(MANAGER_URL))
+    app = create_app(
+        settings=settings(tmp_path / "imports.json"),
+        pool_factory=lambda _: pool,
+        policy_loader=lambda _: ScanPolicy(frozenset()),
+        service_factory=lambda *_: StubService(),  # type: ignore[arg-type]
+    )
+
+    with caplog.at_level(logging.ERROR, logger="skill_registry.app"):
+        with TestClient(app):
+            assert app.state.skill_registry_service is not None
+
+    assert app.state.skill_registry_service is None
+    assert pool.closed == 1
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "skill_registry.app" and record.levelno == logging.ERROR
+    ]
+    assert [record.getMessage() for record in records] == ["Skill registry pool close failed"]
+    assert all(record.exc_info is None for record in records)
+    assert MANAGER_URL not in caplog.text
+    assert "private-manager" not in caplog.text
 
 
 async def _ready(value: bool) -> bool:

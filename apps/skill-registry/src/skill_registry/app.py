@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+import logging
 from pathlib import Path
 from types import TracebackType
 from typing import Protocol, cast
@@ -24,6 +25,9 @@ from skill_registry.config import RegistryConfigError, RegistrySettings, load_sc
 from skill_registry.repository import PostgresSkillRegistryRepository, RepositoryCursor
 from skill_registry.service import SkillRegistryService
 from skill_registry.types import ScanPolicy
+
+
+logger = logging.getLogger(__name__)
 
 
 class RegistryPoolConnection(Protocol):
@@ -54,6 +58,14 @@ class RegistryStartupError(RuntimeError):
     """Stable startup failure without database or key material."""
 
 
+class RegistryResponseAborted(RuntimeError):
+    """Stable signal that an HTTP response ended before its final body."""
+
+
+class RegistryTransportError(RuntimeError):
+    """Stable signal that the ASGI server rejected an outbound message."""
+
+
 class RegistryHttpBoundary:
     """Enforce stable failures and non-cacheable responses outside Starlette."""
 
@@ -65,12 +77,20 @@ class RegistryHttpBoundary:
             await self.app(scope, receive, send)
             return
 
+        stable_body = b'{"error":"REGISTRY_UNAVAILABLE"}'
         response_started = False
+        response_completed = False
+        send_failed = False
+        stable_error_candidate = False
+        stable_body_matched = 0
 
         async def send_no_store(message: Message) -> None:
+            nonlocal response_completed
             nonlocal response_started
+            nonlocal send_failed
+            nonlocal stable_body_matched
+            nonlocal stable_error_candidate
             if message["type"] == "http.response.start":
-                response_started = True
                 headers = [
                     (name, value)
                     for name, value in message.get("headers", [])
@@ -78,20 +98,64 @@ class RegistryHttpBoundary:
                 ]
                 headers.append((b"cache-control", b"no-store"))
                 message["headers"] = headers
-            await send(message)
+            try:
+                await send(message)
+            except Exception:
+                send_failed = True
+                raise
+            if message["type"] == "http.response.start":
+                response_started = True
+                content_types = [
+                    value.lower()
+                    for name, value in message.get("headers", [])
+                    if name.lower() == b"content-type"
+                ]
+                stable_error_candidate = message["status"] in {500, 503} and any(
+                    value.startswith(b"application/json") for value in content_types
+                )
+            elif message["type"] == "http.response.body":
+                chunk = message.get("body", b"")
+                if stable_error_candidate:
+                    end = stable_body_matched + len(chunk)
+                    if end > len(stable_body) or stable_body[stable_body_matched:end] != chunk:
+                        stable_error_candidate = False
+                    else:
+                        stable_body_matched = end
+                if message.get("more_body", False) is False:
+                    response_completed = True
 
-        failed = False
+        app_failed = False
         try:
             await self.app(scope, receive, send_no_store)
         except Exception:
-            failed = True
-        if failed and not response_started:
+            app_failed = True
+        if send_failed:
+            raise RegistryTransportError("Skill registry transport failed") from None
+        if not app_failed:
+            return
+        if not response_started:
             response = JSONResponse(
                 {"error": "REGISTRY_UNAVAILABLE"},
                 status_code=503,
                 headers={"Cache-Control": "no-store"},
             )
-            await response(scope, receive, send_no_store)
+            fallback_failed = False
+            try:
+                await response(scope, receive, send_no_store)
+            except Exception:
+                fallback_failed = True
+            if send_failed:
+                raise RegistryTransportError("Skill registry transport failed") from None
+            if fallback_failed:
+                raise RegistryResponseAborted("Skill registry response aborted") from None
+            return
+        if (
+            response_completed
+            and stable_error_candidate
+            and stable_body_matched == len(stable_body)
+        ):
+            return
+        raise RegistryResponseAborted("Skill registry response aborted") from None
 
 
 class RegistryFastAPI(FastAPI):
@@ -212,7 +276,7 @@ def create_app(
                 try:
                     await candidate_pool.close()
                 except Exception:
-                    pass
+                    logger.error("Skill registry pool close failed")
 
     app = RegistryFastAPI(
         title="AI Agent Platform Skill Registry",
