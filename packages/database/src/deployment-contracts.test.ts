@@ -3801,15 +3801,41 @@ exit 0
     );
     expect(script).toContain("restored_user_fixture_count");
     expect(script).toContain("restored_agno_session_fixture_count");
+    expect(script).toContain("expected_skill_registry_schema_version");
+    expect(script).toContain("expected_skill_revision_count");
+    expect(script).toContain("expected_skill_artifact_count");
+    expect(script).toContain("expected_skill_file_count");
+    expect(script).toContain("skill_registry.schema_versions");
+    expect(script).toContain("skill_registry.skill_revisions");
+    expect(script).toContain("skill_registry.skill_revision_artifacts");
+    expect(script).toContain("skill_registry.skill_revision_files");
+    expect(script).toContain("skill_registry_schema_version");
+    expect(script).toContain("skill_revision_count");
+    expect(script).toContain("skill_artifact_count");
+    expect(script).toContain("skill_file_count");
+    expect(script).toContain("skill_artifact_digest_mismatch_count");
+    expect(script).toContain("sha256(artifact.archive_bytes)");
+    expect(script).toContain("skill_registry_integrity_mismatch_count");
+    expect(script).toContain("skill_revision_artifacts_append_only");
+    expect(script).toContain("skill_revision_files_append_only");
+    expect(script).toContain("BEGIN TRANSACTION READ ONLY");
+    expect(script).toContain("SET LOCAL search_path = pg_catalog");
+    expect(script).not.toMatch(/SELECT\s+archive_bytes/iu);
+    expect(script).not.toMatch(/encode\s*\(\s*artifact\.archive_bytes/iu);
+    expect(script).not.toMatch(
+      /(?:echo|printf)[^\n]*(?:archive_bytes|review_reason)/iu,
+    );
     expect(script).not.toMatch(/SELECT\s+(?:message|messages|content|runs?)/iu);
     expect(script).not.toContain('[ "$migration_count" -lt 1 ]');
   });
 
   it("backs up all platform and AgentOS schemas through one protected dump", () => {
     const script = read("infra/docker/backup.sh");
-    for (const schema of ["public", "drizzle", "agno"]) {
+    const backup = renderComposeFixture().services.backup;
+    for (const schema of ["public", "drizzle", "agno", "skill_registry"]) {
       expect(script).toContain(`--schema=${schema}`);
     }
+    expect(script).not.toContain("--schema=agent_control");
     expect(script.match(/pg_dump/g)).toHaveLength(1);
     expect(script).toContain("--format=custom");
     expect(script).toContain("PGPASSFILE");
@@ -3829,6 +3855,43 @@ exit 0
     expect(script).toContain("trap cleanup EXIT");
     expect(script).toContain("trap 'exit 130' INT");
     expect(script).toContain("trap 'exit 143' TERM");
+    expect(backup?.depends_on?.migrate?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(backup?.depends_on?.["agent-migrate"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(backup?.depends_on?.["skill-registry-migrate"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+  });
+
+  it("documents immutable registry recovery without weakening secret preflights", () => {
+    const runbook = read("infra/docker/README.md");
+
+    expect(runbook).toContain("skill-registry-bootstrap");
+    expect(runbook).toContain("skill-registry-migrate");
+    expect(runbook).toContain("agent / skill-registry → web → proxy/backup");
+    expect(runbook).toContain(
+      "`skill_registry`保存长期、不可变的 Skill 审核证据",
+    );
+    expect(runbook).toContain(
+      "`agent_control`仍是短生命周期控制面，不进入备份",
+    );
+    expect(runbook).toContain(
+      "schema version、revision/artifact/file 的源端计数",
+    );
+    expect(runbook).toContain("PostgreSQL 内验证每个 archive 的 SHA-256");
+    expect(runbook).toContain("空 Registry 使用显式计数`0/0/0`");
+    expect(runbook).toContain("BACKUP_DATABASE_PASSWORD_FILE");
+    expect(runbook).toContain("BACKUP_ENCRYPTION_KEY_FILE");
+    expect(runbook).toContain("BACKUP_CRYPTO_IMAGE");
+    expect(runbook).toContain("RESTORE_TMP_ROOT");
+    expect(runbook).toContain("`pnpm secrets:preflight`");
+    expect(runbook).toContain("不得绕过`run-with-secret-env.sh`");
+    expect(runbook).toContain("宽于`0600`的宿主 Secret");
+    expect(runbook).toContain("密钥轮换");
+    expect(runbook).toContain("README 和测试配置中禁止放真实凭据");
   });
 
   it("keeps backup secrets out of command argv and removes plaintext work files", () => {

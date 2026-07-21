@@ -569,6 +569,8 @@ services:
         condition: service_completed_successfully
       agent-migrate:
         condition: service_completed_successfully
+      skill-registry-migrate:
+        condition: service_completed_successfully
     security_opt:
       - no-new-privileges:true
     read_only: true

@@ -83,6 +83,7 @@ while true; do
     --schema=public \
     --schema=drizzle \
     --schema=agno \
+    --schema=skill_registry \
     --file="$plaintext_temporary_file"
 
   gpg --homedir "$gpg_home" \
