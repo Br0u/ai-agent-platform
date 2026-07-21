@@ -328,22 +328,23 @@ WITH version_state AS (
        ))
   )::bigint AS mismatch_count
 ), expected_security_triggers(
-  trigger_name, table_name, function_name, trigger_type,
+  trigger_name, table_name, function_name, function_schema, trigger_type,
   is_deferrable, is_initially_deferred, enabled
 ) AS (
   VALUES
-    ('skills_guard_update', 'skills', 'guard_skill_update', 19, false, false, 'A'),
-    ('skill_revisions_guard_insert', 'skill_revisions', 'guard_revision_insert', 7, false, false, 'A'),
-    ('skill_revisions_guard_update', 'skill_revisions', 'guard_revision_update', 19, false, false, 'A'),
-    ('skill_revisions_require_review_event', 'skill_revisions', 'require_revision_review_event', 17, true, true, 'A'),
-    ('skill_control_events_stamp_transaction', 'skill_control_events', 'stamp_control_event_transaction', 7, false, false, 'A'),
-    ('skill_control_events_append_only', 'skill_control_events', 'deny_append_only_mutation', 27, false, false, 'A'),
-    ('skill_revision_artifacts_append_only', 'skill_revision_artifacts', 'deny_append_only_mutation', 27, false, false, 'A'),
-    ('skill_revision_files_append_only', 'skill_revision_files', 'deny_append_only_mutation', 27, false, false, 'A')
+    ('skills_guard_update', 'skills', 'guard_skill_update', 'skill_registry', 19, false, false, 'A'),
+    ('skill_revisions_guard_insert', 'skill_revisions', 'guard_revision_insert', 'skill_registry', 7, false, false, 'A'),
+    ('skill_revisions_guard_update', 'skill_revisions', 'guard_revision_update', 'skill_registry', 19, false, false, 'A'),
+    ('skill_revisions_require_review_event', 'skill_revisions', 'require_revision_review_event', 'skill_registry', 17, true, true, 'A'),
+    ('skill_control_events_stamp_transaction', 'skill_control_events', 'stamp_control_event_transaction', 'skill_registry', 7, false, false, 'A'),
+    ('skill_control_events_append_only', 'skill_control_events', 'deny_append_only_mutation', 'skill_registry', 27, false, false, 'A'),
+    ('skill_revision_artifacts_append_only', 'skill_revision_artifacts', 'deny_append_only_mutation', 'skill_registry', 27, false, false, 'A'),
+    ('skill_revision_files_append_only', 'skill_revision_files', 'deny_append_only_mutation', 'skill_registry', 27, false, false, 'A')
 ), actual_security_triggers AS (
   SELECT trigger.tgname::text,
          relation.relname::text,
          function.proname::text,
+         function_namespace.nspname::text,
          trigger.tgtype::integer,
          trigger.tgdeferrable,
          trigger.tginitdeferred,
@@ -353,6 +354,8 @@ WITH version_state AS (
   JOIN pg_namespace AS relation_namespace
     ON relation_namespace.oid = relation.relnamespace
   JOIN pg_proc AS function ON function.oid = trigger.tgfoid
+  JOIN pg_namespace AS function_namespace
+    ON function_namespace.oid = function.pronamespace
   WHERE relation_namespace.nspname = 'skill_registry'
     AND NOT trigger.tgisinternal
 ), security_trigger_state AS (

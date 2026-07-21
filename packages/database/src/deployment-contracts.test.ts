@@ -3752,11 +3752,20 @@ exit 0
   it("requires restore drills to verify the exact migration and schema contract", () => {
     const script = read("infra/docker/restore-drill.sh");
     const expectedRegistryTriggers = [
-      ["skills_guard_update", "skills", "guard_skill_update", 19, false, false],
+      [
+        "skills_guard_update",
+        "skills",
+        "guard_skill_update",
+        "skill_registry",
+        19,
+        false,
+        false,
+      ],
       [
         "skill_revisions_guard_insert",
         "skill_revisions",
         "guard_revision_insert",
+        "skill_registry",
         7,
         false,
         false,
@@ -3765,6 +3774,7 @@ exit 0
         "skill_revisions_guard_update",
         "skill_revisions",
         "guard_revision_update",
+        "skill_registry",
         19,
         false,
         false,
@@ -3773,6 +3783,7 @@ exit 0
         "skill_revisions_require_review_event",
         "skill_revisions",
         "require_revision_review_event",
+        "skill_registry",
         17,
         true,
         true,
@@ -3781,6 +3792,7 @@ exit 0
         "skill_control_events_stamp_transaction",
         "skill_control_events",
         "stamp_control_event_transaction",
+        "skill_registry",
         7,
         false,
         false,
@@ -3789,6 +3801,7 @@ exit 0
         "skill_control_events_append_only",
         "skill_control_events",
         "deny_append_only_mutation",
+        "skill_registry",
         27,
         false,
         false,
@@ -3797,6 +3810,7 @@ exit 0
         "skill_revision_artifacts_append_only",
         "skill_revision_artifacts",
         "deny_append_only_mutation",
+        "skill_registry",
         27,
         false,
         false,
@@ -3805,6 +3819,7 @@ exit 0
         "skill_revision_files_append_only",
         "skill_revision_files",
         "deny_append_only_mutation",
+        "skill_registry",
         27,
         false,
         false,
@@ -3895,19 +3910,19 @@ exit 0
     expect(script).toContain("trigger.tgdeferrable");
     expect(script).toContain("trigger.tginitdeferred");
     expect(script).toContain("trigger.tgenabled");
-    expect(script).not.toContain(
-      "function_namespace.nspname = 'skill_registry'",
-    );
+    expect(script).toContain("function_namespace.nspname::text");
+    expect(script).toContain("function_namespace.oid = function.pronamespace");
     for (const [
       name,
       table,
       fn,
+      functionSchema,
       type,
       deferrable,
       initiallyDeferred,
     ] of expectedRegistryTriggers) {
       expect(script).toContain(
-        `('${name}', '${table}', '${fn}', ${type}, ${deferrable}, ${initiallyDeferred}, 'A')`,
+        `('${name}', '${table}', '${fn}', '${functionSchema}', ${type}, ${deferrable}, ${initiallyDeferred}, 'A')`,
       );
     }
     expect(script).toContain("BEGIN TRANSACTION READ ONLY");
@@ -3935,6 +3950,12 @@ exit 0
     expect(script).toContain("snapshot_pid");
     expect(script).toContain("mkfifo");
     expect(script).toContain("timeout");
+    expect(script).toContain("BACKUP_DUMP_TIMEOUT_SECONDS");
+    expect(script).toContain("BACKUP_DUMP_KILL_AFTER_SECONDS");
+    expect(script).toContain("backup database dump failed");
+    expect(backup?.environment?.BACKUP_DUMP_TIMEOUT_SECONDS).toBe("3600");
+    expect(backup?.environment?.BACKUP_DUMP_KILL_AFTER_SECONDS).toBe("5");
+    expect(backup?.environment?.BACKUP_SNAPSHOT_TIMEOUT_SECONDS).toBe("3665");
     expect(script).toContain("format_version=1");
     expect(script).toContain("dump_sha256=");
     expect(script).toContain("skill_registry_schema_version=");
@@ -3994,6 +4015,9 @@ exit 0
     expect(runbook).toContain("BACKUP_ENCRYPTION_KEY_FILE");
     expect(runbook).toContain("BACKUP_CRYPTO_IMAGE");
     expect(runbook).toContain("RESTORE_TMP_ROOT");
+    expect(runbook).toContain("BACKUP_DUMP_TIMEOUT_SECONDS=3600");
+    expect(runbook).toContain("BACKUP_DUMP_KILL_AFTER_SECONDS=5");
+    expect(runbook).toContain("BACKUP_SNAPSHOT_TIMEOUT_SECONDS=3665");
     expect(runbook).toContain(
       "Registry 计数来自加密 bundle 内、与 dump 同一导出 snapshot 的 manifest",
     );
@@ -4010,7 +4034,7 @@ exit 0
     expect(runbook).toContain("README 和测试配置中禁止放真实凭据");
   });
 
-  it("keeps backup secrets out of command argv and removes plaintext work files", () => {
+  it("keeps backup secrets out of command argv, bounds hung dumps, and removes plaintext work files", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "backup-secret-boundary-"));
     const bin = path.join(sandbox, "bin");
     const captures = path.join(sandbox, "captures");
@@ -4022,6 +4046,8 @@ exit 0
     const encryptionKey = "encryption-key-sentinel-0123456789abcdef";
     const fakeDump = "fake-custom-dump";
     const fakeDumpSha256 = createHash("sha256").update(fakeDump).digest("hex");
+    const hungProcessIds: number[] = [];
+    let hungFallbackWatchdogPid: number | undefined;
 
     try {
       for (const directory of [bin, captures, backups, temporary]) {
@@ -4033,7 +4059,14 @@ exit 0
         path.join(bin, "timeout"),
         `#!/bin/sh
 set -eu
-shift
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -s|-k|--signal|--kill-after) shift 2 ;;
+    --signal=*|--kill-after=*) shift ;;
+    --) shift; break ;;
+    *) shift; break ;;
+  esac
+done
 exec "$@"
 `,
         { mode: 0o700 },
@@ -4191,10 +4224,200 @@ skill_file_count=3
       expect(statSync(path.join(backups, backupFiles[0])).mode & 0o777).toBe(
         0o600,
       );
+
+      const hangBin = path.join(sandbox, "hang-bin");
+      const hangCaptures = path.join(sandbox, "hang-captures");
+      const hangBackups = path.join(sandbox, "hang-backups");
+      const hangTemporary = path.join(sandbox, "hang-temporary");
+      for (const directory of [
+        hangBin,
+        hangCaptures,
+        hangBackups,
+        hangTemporary,
+      ]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeFileSync(
+        path.join(hangBin, "timeout"),
+        `#!/bin/sh
+set -eu
+signal=TERM
+kill_after=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -s|--signal) signal=$2; shift 2 ;;
+    -k|--kill-after) kill_after=$2; shift 2 ;;
+    --signal=*) signal=\${1#*=}; shift ;;
+    --kill-after=*) kill_after=\${1#*=}; shift ;;
+    --) shift; break ;;
+    *) duration=$1; shift; break ;;
+  esac
+done
+test -n "\${duration:-}"
+test "$#" -gt 0
+if [ "$1" = "psql" ]; then
+  exec "$@"
+fi
+child=
+watchdog=
+terminate() {
+  [ -z "$watchdog" ] || kill "$watchdog" >/dev/null 2>&1 || true
+  [ -z "$child" ] || kill -TERM "$child" >/dev/null 2>&1 || true
+  [ -z "$child" ] || wait "$child" >/dev/null 2>&1 || true
+  exit 143
+}
+trap terminate TERM INT HUP
+"$@" &
+child=$!
+(
+  sleep "$duration"
+  kill -"$signal" "$child" >/dev/null 2>&1 || exit 0
+  if [ -n "$kill_after" ]; then
+    sleep "$kill_after"
+    kill -KILL "$child" >/dev/null 2>&1 || true
+  fi
+) &
+watchdog=$!
+set +e
+wait "$child"
+status=$?
+set -e
+kill "$watchdog" >/dev/null 2>&1 || true
+wait "$watchdog" >/dev/null 2>&1 || true
+exit "$status"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(hangBin, "psql"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' "$$" >"$CAPTURE_DIR/snapshot.pid"
+cleanup_snapshot() {
+  rm -f "$CAPTURE_DIR/idle-transaction"
+  printf 'exited\n' >"$CAPTURE_DIR/snapshot.exited"
+}
+trap 'cleanup_snapshot; exit 143' TERM INT HUP
+trap cleanup_snapshot EXIT
+while IFS= read -r command; do
+  case "$command" in
+    *pg_export_snapshot*)
+      : >"$CAPTURE_DIR/idle-transaction"
+      printf '%s\n' '00000003-0000001B-1|1|2|2|3'
+      ;;
+    COMMIT*) rm -f "$CAPTURE_DIR/idle-transaction" ;;
+    '\\q') exit 0 ;;
+  esac
+done
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(hangBin, "pg_dump"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' "$$" >"$CAPTURE_DIR/pg_dump.pid"
+output=
+for argument in "$@"; do
+  case "$argument" in
+    --file=*) output=\${argument#--file=} ;;
+  esac
+done
+test -n "$output"
+printf 'partial-dump' >"$output"
+trap '' TERM
+mkfifo "$CAPTURE_DIR/pg-dump-block.fifo"
+blocked_pid=$$
+(sleep 5; kill -KILL "$blocked_pid" >/dev/null 2>&1 || true) >/dev/null 2>&1 &
+printf '%s\n' "$!" >"$CAPTURE_DIR/pg_dump.watchdog.pid"
+IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
+`,
+        { mode: 0o700 },
+      );
+
+      const hangStartedAt = Date.now();
+      const hung = spawnSync(
+        "sh",
+        [path.join(root, "infra/docker/backup.sh")],
+        {
+          encoding: "utf8",
+          timeout: 7_000,
+          env: {
+            ...process.env,
+            PATH: `${hangBin}:${process.env.PATH ?? ""}`,
+            CAPTURE_DIR: hangCaptures,
+            PGHOST: "db",
+            PGPORT: "5432",
+            PGDATABASE: "ai_agent_platform",
+            PGUSER: "ai_agent_backup",
+            BACKUP_DATABASE_PASSWORD_FILE: passwordFile,
+            BACKUP_ENCRYPTION_KEY_FILE: encryptionKeyFile,
+            BACKUP_DIRECTORY: hangBackups,
+            BACKUP_TMP_DIRECTORY: hangTemporary,
+            BACKUP_RUN_ONCE: "true",
+            BACKUP_DUMP_TIMEOUT_SECONDS: "1",
+            BACKUP_DUMP_KILL_AFTER_SECONDS: "1",
+            BACKUP_SNAPSHOT_TIMEOUT_SECONDS: "62",
+          },
+        },
+      );
+      const hangElapsedMs = Date.now() - hangStartedAt;
+      for (const pidFile of ["snapshot.pid", "pg_dump.pid"]) {
+        hungProcessIds.push(
+          Number(readFileSync(path.join(hangCaptures, pidFile), "utf8").trim()),
+        );
+      }
+      hungFallbackWatchdogPid = Number(
+        readFileSync(
+          path.join(hangCaptures, "pg_dump.watchdog.pid"),
+          "utf8",
+        ).trim(),
+      );
+      try {
+        process.kill(hungFallbackWatchdogPid, "SIGKILL");
+      } catch {
+        // The fallback already fired on the pre-timeout RED path.
+      }
+      const hungOutput = `${hung.stdout}${hung.stderr}`;
+      expect(hung.error, hungOutput).toBeUndefined();
+      expect(hung.status, hungOutput).not.toBe(0);
+      expect(hung.signal, hungOutput).toBeNull();
+      expect(hangElapsedMs).toBeLessThan(4_500);
+      expect(hungOutput.trim()).toBe("backup database dump failed");
+      for (const protectedValue of [
+        databasePassword,
+        encryptionKey,
+        hangTemporary,
+      ]) {
+        expect(hungOutput).not.toContain(protectedValue);
+      }
+      expect(readdirSync(hangTemporary)).toEqual([]);
+      expect(readdirSync(hangBackups)).toEqual([]);
+      expect(readdirSync(hangCaptures)).not.toContain("idle-transaction");
+      expect(
+        readFileSync(path.join(hangCaptures, "snapshot.exited"), "utf8"),
+      ).toBe("exited\n");
+      for (const pid of hungProcessIds) {
+        expect(() => process.kill(pid, 0)).toThrow();
+      }
     } finally {
+      if (hungFallbackWatchdogPid !== undefined) {
+        try {
+          process.kill(hungFallbackWatchdogPid, "SIGKILL");
+        } catch {
+          // Watchdog already exited.
+        }
+      }
+      for (const pid of hungProcessIds) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // Process already exited and was reaped by the backup script.
+        }
+      }
       rmSync(sandbox, { recursive: true, force: true });
     }
-  });
+  }, 10_000);
 
   it("validates exactly the single passphrase line consumed by GnuPG", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "backup-key-format-"));

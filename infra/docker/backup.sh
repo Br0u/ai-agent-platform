@@ -9,7 +9,9 @@ retention_days="${BACKUP_RETENTION_DAYS:-14}"
 backup_directory="${BACKUP_DIRECTORY:-/backups}"
 temporary_directory="${BACKUP_TMP_DIRECTORY:-/tmp}"
 run_once="${BACKUP_RUN_ONCE:-false}"
-snapshot_timeout_seconds="${BACKUP_SNAPSHOT_TIMEOUT_SECONDS:-3600}"
+dump_timeout_seconds="${BACKUP_DUMP_TIMEOUT_SECONDS:-3600}"
+dump_kill_after_seconds="${BACKUP_DUMP_KILL_AFTER_SECONDS:-5}"
+snapshot_timeout_seconds="${BACKUP_SNAPSHOT_TIMEOUT_SECONDS:-3665}"
 PGHOST="${PGHOST:-db}"
 PGPORT="${PGPORT:-5432}"
 PGDATABASE="${PGDATABASE:-ai_agent_platform}"
@@ -27,16 +29,20 @@ done
 
 "$script_directory/validate-backup-key.sh" "$BACKUP_ENCRYPTION_KEY_FILE"
 
-case "$snapshot_timeout_seconds" in
-  ''|*[!0-9]*)
-    echo "backup snapshot timeout must be a positive integer" >&2
-    exit 64
-    ;;
-esac
-if [ "${#snapshot_timeout_seconds}" -gt 5 ] || \
-   [ "$snapshot_timeout_seconds" -le 0 ] || \
-   [ "$snapshot_timeout_seconds" -gt 86400 ]; then
-  echo "backup snapshot timeout must be a positive integer" >&2
+valid_positive_integer() {
+  value=$1
+  maximum=$2
+  case "$value" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "${#value}" -le 6 ] && [ "$value" -gt 0 ] && [ "$value" -le "$maximum" ]
+}
+
+if ! valid_positive_integer "$dump_timeout_seconds" 86400 || \
+   ! valid_positive_integer "$dump_kill_after_seconds" 300 || \
+   ! valid_positive_integer "$snapshot_timeout_seconds" 172800 || \
+   [ "$snapshot_timeout_seconds" -lt "$((dump_timeout_seconds + dump_kill_after_seconds + 60))" ]; then
+  echo "backup timeout configuration is invalid" >&2
   exit 64
 fi
 
@@ -168,20 +174,27 @@ while true; do
     exit 1
   fi
 
-  PGPASSFILE="$pgpass_file" pg_dump \
-    --host="$PGHOST" \
-    --port="$PGPORT" \
-    --username="$PGUSER" \
-    --dbname="$PGDATABASE" \
-    --format=custom \
-    --snapshot="$snapshot_id" \
-    --no-owner \
-    --no-acl \
-    --schema=public \
-    --schema=drizzle \
-    --schema=agno \
-    --schema=skill_registry \
-    --file="$plaintext_temporary_file"
+  if ! PGPASSFILE="$pgpass_file" timeout \
+    -s TERM \
+    -k "$dump_kill_after_seconds" \
+    "$dump_timeout_seconds" \
+    pg_dump \
+      --host="$PGHOST" \
+      --port="$PGPORT" \
+      --username="$PGUSER" \
+      --dbname="$PGDATABASE" \
+      --format=custom \
+      --snapshot="$snapshot_id" \
+      --no-owner \
+      --no-acl \
+      --schema=public \
+      --schema=drizzle \
+      --schema=agno \
+      --schema=skill_registry \
+      --file="$plaintext_temporary_file" 2>/dev/null; then
+    echo "backup database dump failed" >&2
+    exit 1
+  fi
 
   printf '%s\n' 'COMMIT;' '\q' >&3
   exec 3>&-
