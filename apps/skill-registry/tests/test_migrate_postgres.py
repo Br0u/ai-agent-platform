@@ -760,7 +760,148 @@ async def test_real_registry_migration_and_role_boundary() -> None:
     bool(MISSING_ENVIRONMENT),
     reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
 )
-async def test_real_registry_migration_rejects_v1_review_contract_drift() -> None:
+async def test_real_registry_rejects_noncanonical_findings_from_manager_sql() -> None:
+    urls = _validated_urls()
+    manager = await _connect(urls["manager"])
+    actor_id = uuid4()
+    try:
+        invalid_findings = (
+            '["unsupported_import"]',
+            '[{"path":"SKILL.md","line":1,"code":["unsupported_import"],'
+            '"message":"bad","blocking":true}]',
+            '[{"path":"SKILL.md","line":1,"message":"missing code","blocking":true}]',
+            '[{"path":"SKILL.md","line":1,"code":"unknown_code","message":"bad","blocking":true}]',
+            "[null]",
+            '[{"path":"SKILL.md","line":1,"code":"possible_secret",'
+            '"message":"bad","blocking":false,"extra":true}]',
+            '[{"path":"SKILL.md","line":0,"code":"possible_secret",'
+            '"message":"bad","blocking":false}]',
+            '[{"path":null,"line":1,"code":"possible_secret","message":"bad","blocking":false}]',
+            '[{"path":"SKILL.md","line":1,"code":"possible_secret",'
+            '"message":"bad","blocking":"false"}]',
+        )
+        for index, findings in enumerate(invalid_findings):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                async with manager.transaction():
+                    await _insert_skill_revision(
+                        manager,
+                        skill_id=uuid4(),
+                        revision_id=uuid4(),
+                        actor_id=actor_id,
+                        slug=f"invalid-findings-{index}-{uuid4().hex[:8]}",
+                        nonce=uuid4(),
+                        findings=findings,
+                    )
+
+        valid_skill_id = uuid4()
+        valid_revision_id = uuid4()
+        reviewer_id = uuid4()
+        async with manager.transaction():
+            await _insert_skill_revision(
+                manager,
+                skill_id=valid_skill_id,
+                revision_id=valid_revision_id,
+                actor_id=actor_id,
+                slug=f"valid-findings-{uuid4().hex[:12]}",
+                nonce=uuid4(),
+                findings=(
+                    '[{"path":"SKILL.md","line":1,"code":"possible_secret",'
+                    '"message":"reviewed","blocking":false}]'
+                ),
+            )
+        async with manager.transaction():
+            await _insert_review_event(
+                manager,
+                revision_id=valid_revision_id,
+                reviewer_id=reviewer_id,
+                event_type="revision_published",
+            )
+            await manager.execute(
+                """UPDATE skill_registry.skill_revisions
+                SET state = 'published', reviewed_by = %s, reviewed_at = now()
+                WHERE id = %s""",
+                (reviewer_id, valid_revision_id),
+            )
+        valid_state = await manager.execute(
+            "SELECT state FROM skill_registry.skill_revisions WHERE id = %s",
+            (valid_revision_id,),
+        )
+        assert await valid_state.fetchone() == ("published",)
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_real_registry_publish_trigger_fails_closed_for_seeded_invalid_findings() -> None:
+    urls = _validated_urls()
+    owner = await _connect(urls["test"])
+    manager = await _connect(urls["manager"])
+    settings = MigrationSettings.model_validate({"database_url": urls["migrator"]})
+    revision_id = uuid4()
+    reviewer_id = uuid4()
+    try:
+        await owner.execute(
+            """ALTER TABLE skill_registry.skill_revisions
+            DROP CONSTRAINT skill_revisions_findings_array"""
+        )
+        async with manager.transaction():
+            await _insert_skill_revision(
+                manager,
+                skill_id=uuid4(),
+                revision_id=revision_id,
+                actor_id=uuid4(),
+                slug=f"seeded-invalid-{uuid4().hex[:12]}",
+                nonce=uuid4(),
+                findings='["unsupported_import"]',
+            )
+        with pytest.raises(psycopg.errors.CheckViolation) as caught:
+            async with manager.transaction():
+                await _insert_review_event(
+                    manager,
+                    revision_id=revision_id,
+                    reviewer_id=reviewer_id,
+                    event_type="revision_published",
+                )
+                await manager.execute(
+                    """UPDATE skill_registry.skill_revisions
+                    SET state = 'published', reviewed_by = %s, reviewed_at = now()
+                    WHERE id = %s""",
+                    (reviewer_id, revision_id),
+                )
+        assert caught.value.diag.message_primary == "skill findings schema is invalid"
+    finally:
+        await owner.execute(
+            """TRUNCATE TABLE
+              skill_registry.skill_control_events,
+              skill_registry.skill_revision_files,
+              skill_registry.skill_revision_artifacts,
+              skill_registry.skill_revisions,
+              skill_registry.skills"""
+        )
+        await owner.execute(
+            """ALTER TABLE skill_registry.skill_revisions
+            DROP CONSTRAINT IF EXISTS skill_revisions_findings_array"""
+        )
+        await owner.execute(
+            """ALTER TABLE skill_registry.skill_revisions
+            ADD CONSTRAINT skill_revisions_findings_array
+            CHECK (skill_registry.validate_skill_findings(findings))"""
+        )
+        await manager.close()
+        await owner.close()
+    await run_migration(settings)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_real_registry_migration_rejects_same_name_true_constraint_drift() -> None:
     urls = _validated_urls()
     owner = await _connect(urls["test"])
     settings = MigrationSettings.model_validate({"database_url": urls["migrator"]})
@@ -769,6 +910,10 @@ async def test_real_registry_migration_rejects_v1_review_contract_drift() -> Non
         await owner.execute(
             """ALTER TABLE skill_registry.skill_control_events
             DROP CONSTRAINT skill_control_events_review_evidence"""
+        )
+        await owner.execute(
+            """ALTER TABLE skill_registry.skill_control_events
+            ADD CONSTRAINT skill_control_events_review_evidence CHECK (true)"""
         )
         with pytest.raises(RuntimeError, match="verification failed"):
             await run_migration(settings)
@@ -796,5 +941,46 @@ async def test_real_registry_migration_rejects_v1_review_contract_drift() -> Non
               )
             )"""
         )
+        await owner.close()
+    await run_migration(settings)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_real_registry_migration_rejects_keyword_only_review_function_drift() -> None:
+    urls = _validated_urls()
+    owner = await _connect(urls["test"])
+    settings = MigrationSettings.model_validate({"database_url": urls["migrator"]})
+    definition_cursor = await owner.execute(
+        """SELECT pg_get_functiondef(function.oid)
+        FROM pg_proc AS function
+        JOIN pg_namespace AS function_schema ON function_schema.oid = function.pronamespace
+        WHERE function_schema.nspname = 'skill_registry'
+          AND function.proname = 'require_revision_review_event'"""
+    )
+    definition_row = await definition_cursor.fetchone()
+    assert definition_row is not None
+    correct_definition = str(definition_row[0])
+    try:
+        await run_migration(settings)
+        await owner.execute(
+            """CREATE OR REPLACE FUNCTION skill_registry.require_revision_review_event()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            SET search_path = pg_catalog, skill_registry
+            AS $function$
+            BEGIN
+              /* jsonb_array_elements(OLD.findings) unsupported_import private_key */
+              RETURN NEW;
+            END;
+            $function$"""
+        )
+        with pytest.raises(RuntimeError, match="verification failed"):
+            await run_migration(settings)
+    finally:
+        await owner.execute(correct_definition)
         await owner.close()
     await run_migration(settings)

@@ -5,6 +5,8 @@ import pytest
 from skill_registry.config import MigrationSettings
 from skill_registry.migrate import MigrationConnection, main, run_migration
 from skill_registry.schema import (
+    EXPECTED_REVIEW_CONSTRAINTS,
+    EXPECTED_REVIEW_TRIGGER_GUARDS,
     LOCK_SCHEMA_VERSION_SQL,
     PREPARE_SCHEMA_SQL,
     SCHEMA_VERSION_1_SQL,
@@ -121,22 +123,8 @@ class FakeCursor:
                 ("skill_control_events", "usage_rights_confirmed", "boolean", False, ""),
                 ("skill_revisions", "findings", "jsonb", True, "'[]'::jsonb"),
             ],
-            VERIFY_REVIEW_CONSTRAINTS_SQL: [
-                (
-                    "skill_control_events_review_evidence",
-                    "skill_control_events",
-                    "c",
-                    True,
-                ),
-                (
-                    "skill_control_events_review_reason",
-                    "skill_control_events",
-                    "c",
-                    True,
-                ),
-                ("skill_revisions_findings_array", "skill_revisions", "c", True),
-            ],
-            VERIFY_REVIEW_TRIGGER_GUARDS_SQL: [(True, True, True)],
+            VERIFY_REVIEW_CONSTRAINTS_SQL: sorted(EXPECTED_REVIEW_CONSTRAINTS),
+            VERIFY_REVIEW_TRIGGER_GUARDS_SQL: sorted(EXPECTED_REVIEW_TRIGGER_GUARDS),
             VERIFY_FUNCTION_BOUNDARY_SQL: [
                 (
                     "deny_append_only_mutation",
@@ -147,6 +135,7 @@ class FakeCursor:
                     False,
                     "search_path=pg_catalog, skill_registry",
                     True,
+                    False,
                 ),
                 (
                     "guard_revision_insert",
@@ -157,6 +146,7 @@ class FakeCursor:
                     False,
                     "search_path=pg_catalog, skill_registry",
                     True,
+                    False,
                 ),
                 (
                     "guard_revision_update",
@@ -167,6 +157,7 @@ class FakeCursor:
                     False,
                     "search_path=pg_catalog, skill_registry",
                     True,
+                    False,
                 ),
                 (
                     "guard_skill_update",
@@ -177,6 +168,7 @@ class FakeCursor:
                     False,
                     "search_path=pg_catalog, skill_registry",
                     True,
+                    False,
                 ),
                 (
                     "require_revision_review_event",
@@ -187,6 +179,7 @@ class FakeCursor:
                     False,
                     "search_path=pg_catalog, skill_registry",
                     True,
+                    False,
                 ),
                 (
                     "stamp_control_event_transaction",
@@ -196,6 +189,18 @@ class FakeCursor:
                     "plpgsql",
                     False,
                     "search_path=pg_catalog, skill_registry",
+                    True,
+                    False,
+                ),
+                (
+                    "validate_skill_findings",
+                    "ai_agent_skill_registry_migrator",
+                    1,
+                    "boolean",
+                    "sql",
+                    False,
+                    "search_path=pg_catalog, skill_registry",
+                    True,
                     True,
                 ),
             ],
@@ -381,6 +386,31 @@ async def test_migration_rejects_version_one_missing_review_storage_contract() -
     settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
     with pytest.raises(RuntimeError, match="verification failed"):
         await run_migration(settings, connector=connector)
+
+
+def test_review_drift_verifiers_compare_normalized_complete_definitions() -> None:
+    normalized_constraint_query = " ".join(VERIFY_REVIEW_CONSTRAINTS_SQL.split())
+    normalized_function_query = " ".join(VERIFY_REVIEW_TRIGGER_GUARDS_SQL.split())
+
+    assert "pg_get_constraintdef(constraint_row.oid, true)" in normalized_constraint_query
+    assert "regexp_replace" in normalized_constraint_query
+    assert all(
+        len(row) == 5 and isinstance(row[4], str) and row[4].startswith("CHECK (")
+        for row in EXPECTED_REVIEW_CONSTRAINTS
+    )
+    assert "pg_get_functiondef(function.oid)" in normalized_function_query
+    assert "regexp_replace" in normalized_function_query
+    assert len(EXPECTED_REVIEW_TRIGGER_GUARDS) == 2
+    function_definition = dict(EXPECTED_REVIEW_TRIGGER_GUARDS)["require_revision_review_event"]
+    assert isinstance(function_definition, str)
+    assert function_definition.startswith(
+        "CREATE OR REPLACE FUNCTION skill_registry.require_revision_review_event()"
+    )
+    assert "blocking skill findings prevent publication" in function_definition
+    findings_definition = dict(EXPECTED_REVIEW_TRIGGER_GUARDS)["validate_skill_findings"]
+    assert findings_definition.startswith(
+        "CREATE OR REPLACE FUNCTION skill_registry.validate_skill_findings(candidate jsonb)"
+    )
 
 
 @pytest.mark.asyncio

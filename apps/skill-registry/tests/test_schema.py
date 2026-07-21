@@ -138,7 +138,7 @@ def test_schema_has_permanent_identity_revision_and_nonce_uniqueness() -> None:
     assert "UNIQUE (skill_id, revision_no)" in sql
     assert "UNIQUE (skill_id, artifact_sha256)" in sql
     assert "assertion_nonce uuid UNIQUE" in sql
-    assert "SELECT" not in sql.split("CREATE TABLE skill_registry.skills", 1)[0]
+    assert "FROM skill_registry.skills" not in sql.split("CREATE TABLE skill_registry.skills", 1)[0]
 
 
 def test_schema_enforces_registry_enums_digests_and_archive_limits() -> None:
@@ -234,10 +234,51 @@ def test_review_transition_requires_a_second_actor_and_same_transaction_event() 
     assert "DEFERRABLE INITIALLY DEFERRED" in sql
 
 
+def test_findings_schema_is_closed_and_rechecked_before_publication() -> None:
+    sql = normalize_sql(SCHEMA_VERSION_1_SQL)
+
+    assert "CREATE OR REPLACE FUNCTION skill_registry.validate_skill_findings" in sql
+    assert "RETURNS boolean" in sql
+    assert "LANGUAGE sql" in sql
+    assert "IMMUTABLE STRICT PARALLEL SAFE" in sql
+    assert "jsonb_typeof(candidate) <> 'array'" in sql
+    assert "jsonb_typeof(finding) <> 'object'" in sql
+    assert "SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(finding)" in sql
+    assert "finding ?& ARRAY['path', 'line', 'code', 'message', 'blocking']" in sql
+    assert "jsonb_typeof(finding -> 'line') <> 'number'" in sql
+    assert "finding ->> 'line' !~ '^[1-9][0-9]*$'" in sql
+    for finding_code in (
+        "possible_secret",
+        "private_key",
+        "network_access",
+        "subprocess",
+        "environment_read",
+        "dynamic_code",
+        "filesystem_write",
+        "unsupported_import",
+        "external_url",
+    ):
+        assert f"'{finding_code}'" in sql
+    assert (
+        "CONSTRAINT skill_revisions_findings_array "
+        "CHECK (skill_registry.validate_skill_findings(findings))"
+    ) in sql
+    assert (
+        "IF skill_registry.validate_skill_findings(OLD.findings) IS DISTINCT FROM TRUE THEN" in sql
+    )
+    assert "skill findings schema is invalid" in sql
+    assert "OWNER TO ai_agent_skill_registry_migrator" in sql
+    assert "REVOKE ALL ON FUNCTION skill_registry.validate_skill_findings(jsonb) FROM PUBLIC" in sql
+    assert (
+        "GRANT EXECUTE ON FUNCTION skill_registry.validate_skill_findings(jsonb) "
+        "TO ai_agent_skill_registry_manager"
+    ) in sql
+
+
 def test_security_functions_pin_search_path_and_triggers_are_always_enabled() -> None:
     sql = normalize_sql(SCHEMA_VERSION_1_SQL)
 
-    assert sql.count("SET search_path = pg_catalog, skill_registry") == 6
+    assert sql.count("SET search_path = pg_catalog, skill_registry") == 7
     assert sql.count("pg_catalog.txid_current()") == 2
     for trigger_name in (
         "skills_guard_update",

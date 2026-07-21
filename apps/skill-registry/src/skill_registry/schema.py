@@ -70,6 +70,60 @@ EXPECTED_REVIEW_STORAGE_COLUMNS = frozenset(
     }
 )
 
+_PG18_REVIEW_EVIDENCE_CONSTRAINT = (
+    "CHECK ((event_type::text = ANY (ARRAY['revision_published'::character varying, "
+    "'revision_rejected'::character varying]::text[])) AND content_reviewed IS TRUE AND "
+    "usage_rights_confirmed IS TRUE AND execution_risk_accepted IS TRUE AND "
+    "independent_reviewer_confirmed IS TRUE OR (event_type::text <> ALL "
+    "(ARRAY['revision_published'::character varying, 'revision_rejected'::character "
+    "varying]::text[])) AND content_reviewed IS NULL AND usage_rights_confirmed IS NULL "
+    "AND execution_risk_accepted IS NULL AND independent_reviewer_confirmed IS NULL)"
+)
+_PG18_REVIEW_REASON_CONSTRAINT = (
+    "CHECK (event_type::text = 'revision_rejected'::text AND review_reason IS NOT NULL "
+    "AND char_length(btrim(review_reason::text)) >= 1 AND "
+    "char_length(btrim(review_reason::text)) <= 500 OR event_type::text <> "
+    "'revision_rejected'::text AND review_reason IS NULL)"
+)
+_PG18_FINDINGS_CONSTRAINT = "CHECK (skill_registry.validate_skill_findings(findings))"
+_PG18_REVIEW_FUNCTION = (
+    "CREATE OR REPLACE FUNCTION skill_registry.require_revision_review_event() RETURNS "
+    "trigger LANGUAGE plpgsql SET search_path TO 'pg_catalog', 'skill_registry' AS "
+    "$function$ DECLARE expected_event_type varchar(64); BEGIN IF OLD.state <> "
+    "'pending_review' OR NEW.state NOT IN ('published', 'rejected') THEN RETURN NEW; END "
+    "IF; expected_event_type := CASE WHEN NEW.state = 'published' THEN "
+    "'revision_published' WHEN NEW.state = 'rejected' THEN 'revision_rejected' END; IF "
+    "skill_registry.validate_skill_findings(OLD.findings) IS DISTINCT FROM TRUE THEN "
+    "RAISE EXCEPTION 'skill findings schema is invalid' USING ERRCODE = '23514'; END IF; "
+    "IF NEW.state = 'published' AND EXISTS ( SELECT 1 FROM "
+    "pg_catalog.jsonb_array_elements(OLD.findings) AS finding WHERE finding ->> 'code' IN "
+    "('unsupported_import', 'private_key') ) THEN RAISE EXCEPTION 'blocking skill "
+    "findings prevent publication' USING ERRCODE = '23514'; END IF; IF NOT EXISTS ( "
+    "SELECT 1 FROM skill_registry.skill_control_events AS event WHERE event.transaction_id "
+    "= pg_catalog.txid_current() AND event.target_id = NEW.id AND event.event_type = "
+    "expected_event_type AND event.actor = NEW.reviewed_by::text AND event.result_code = "
+    "'ok' ) THEN RAISE EXCEPTION 'skill revision review event is required in the same "
+    "transaction' USING ERRCODE = '23514'; END IF; RETURN NEW; END; $function$"
+)
+_PG18_FINDINGS_FUNCTION = (
+    "CREATE OR REPLACE FUNCTION skill_registry.validate_skill_findings(candidate jsonb) "
+    "RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT SET search_path TO "
+    "'pg_catalog', 'skill_registry' AS $function$ SELECT CASE WHEN "
+    "pg_catalog.jsonb_typeof(candidate) <> 'array' THEN false ELSE NOT EXISTS ( SELECT 1 "
+    "FROM pg_catalog.jsonb_array_elements(candidate) AS finding WHERE CASE WHEN "
+    "pg_catalog.jsonb_typeof(finding) <> 'object' THEN true ELSE (SELECT "
+    "pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(finding)) <> 5 OR NOT (finding "
+    "?& ARRAY['path', 'line', 'code', 'message', 'blocking']) OR "
+    "pg_catalog.jsonb_typeof(finding -> 'path') <> 'string' OR "
+    "pg_catalog.jsonb_typeof(finding -> 'line') <> 'number' OR "
+    "pg_catalog.jsonb_typeof(finding -> 'code') <> 'string' OR "
+    "pg_catalog.jsonb_typeof(finding -> 'message') <> 'string' OR "
+    "pg_catalog.jsonb_typeof(finding -> 'blocking') <> 'boolean' OR finding ->> 'line' !~ "
+    "'^[1-9][0-9]*$' OR NOT ( finding ->> 'code' = ANY (ARRAY[ 'possible_secret', "
+    "'private_key', 'network_access', 'subprocess', 'environment_read', 'dynamic_code', "
+    "'filesystem_write', 'unsupported_import', 'external_url' ]) ) END ) END $function$"
+)
+
 EXPECTED_REVIEW_CONSTRAINTS = frozenset(
     {
         (
@@ -77,18 +131,31 @@ EXPECTED_REVIEW_CONSTRAINTS = frozenset(
             "skill_control_events",
             "c",
             True,
+            _PG18_REVIEW_EVIDENCE_CONSTRAINT,
         ),
         (
             "skill_control_events_review_reason",
             "skill_control_events",
             "c",
             True,
+            _PG18_REVIEW_REASON_CONSTRAINT,
         ),
-        ("skill_revisions_findings_array", "skill_revisions", "c", True),
+        (
+            "skill_revisions_findings_array",
+            "skill_revisions",
+            "c",
+            True,
+            _PG18_FINDINGS_CONSTRAINT,
+        ),
     }
 )
 
-EXPECTED_REVIEW_TRIGGER_GUARDS = frozenset({(True, True, True)})
+EXPECTED_REVIEW_TRIGGER_GUARDS = frozenset(
+    {
+        ("require_revision_review_event", _PG18_REVIEW_FUNCTION),
+        ("validate_skill_findings", _PG18_FINDINGS_FUNCTION),
+    }
+)
 
 EXPECTED_FUNCTION_BOUNDARY = frozenset(
     (
@@ -100,6 +167,7 @@ EXPECTED_FUNCTION_BOUNDARY = frozenset(
         False,
         "search_path=pg_catalog, skill_registry",
         True,
+        False,
     )
     for function_name in {
         "deny_append_only_mutation",
@@ -109,7 +177,19 @@ EXPECTED_FUNCTION_BOUNDARY = frozenset(
         "require_revision_review_event",
         "stamp_control_event_transaction",
     }
-)
+) | {
+    (
+        "validate_skill_findings",
+        "ai_agent_skill_registry_migrator",
+        1,
+        "boolean",
+        "sql",
+        False,
+        "search_path=pg_catalog, skill_registry",
+        True,
+        True,
+    )
+}
 
 EXPECTED_SECURITY_TRIGGERS = frozenset(
     {
@@ -210,6 +290,48 @@ LOCK TABLE skill_registry.schema_versions IN EXCLUSIVE MODE
 """
 
 SCHEMA_VERSION_1_SQL = """
+CREATE OR REPLACE FUNCTION skill_registry.validate_skill_findings(candidate jsonb)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+SET search_path = pg_catalog, skill_registry
+AS $$
+  SELECT CASE
+    WHEN pg_catalog.jsonb_typeof(candidate) <> 'array' THEN false
+    ELSE NOT EXISTS (
+      SELECT 1
+      FROM pg_catalog.jsonb_array_elements(candidate) AS finding
+      WHERE CASE
+        WHEN pg_catalog.jsonb_typeof(finding) <> 'object' THEN true
+        ELSE
+          (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(finding)) <> 5
+          OR NOT (finding ?& ARRAY['path', 'line', 'code', 'message', 'blocking'])
+          OR pg_catalog.jsonb_typeof(finding -> 'path') <> 'string'
+          OR pg_catalog.jsonb_typeof(finding -> 'line') <> 'number'
+          OR pg_catalog.jsonb_typeof(finding -> 'code') <> 'string'
+          OR pg_catalog.jsonb_typeof(finding -> 'message') <> 'string'
+          OR pg_catalog.jsonb_typeof(finding -> 'blocking') <> 'boolean'
+          OR finding ->> 'line' !~ '^[1-9][0-9]*$'
+          OR NOT (
+            finding ->> 'code' = ANY (ARRAY[
+              'possible_secret',
+              'private_key',
+              'network_access',
+              'subprocess',
+              'environment_read',
+              'dynamic_code',
+              'filesystem_write',
+              'unsupported_import',
+              'external_url'
+            ])
+          )
+      END
+    )
+  END
+$$;
+
 CREATE TABLE skill_registry.skills (
   id uuid PRIMARY KEY,
   slug varchar(128) NOT NULL UNIQUE
@@ -247,7 +369,7 @@ CREATE TABLE skill_registry.skill_revisions (
     OR (source_type <> 'upload' AND source_url IS NOT NULL)
   ),
   CONSTRAINT skill_revisions_findings_array
-    CHECK (jsonb_typeof(findings) = 'array')
+    CHECK (skill_registry.validate_skill_findings(findings))
 );
 
 CREATE TABLE skill_registry.skill_revision_artifacts (
@@ -458,6 +580,11 @@ BEGIN
     WHEN NEW.state = 'rejected' THEN 'revision_rejected'
   END;
 
+  IF skill_registry.validate_skill_findings(OLD.findings) IS DISTINCT FROM TRUE THEN
+    RAISE EXCEPTION 'skill findings schema is invalid'
+      USING ERRCODE = '23514';
+  END IF;
+
   IF NEW.state = 'published' AND EXISTS (
     SELECT 1
     FROM pg_catalog.jsonb_array_elements(OLD.findings) AS finding
@@ -506,12 +633,17 @@ ALTER FUNCTION skill_registry.require_revision_review_event()
   OWNER TO ai_agent_skill_registry_migrator;
 ALTER FUNCTION skill_registry.deny_append_only_mutation()
   OWNER TO ai_agent_skill_registry_migrator;
+ALTER FUNCTION skill_registry.validate_skill_findings(jsonb)
+  OWNER TO ai_agent_skill_registry_migrator;
 REVOKE ALL ON FUNCTION skill_registry.guard_skill_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION skill_registry.guard_revision_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION skill_registry.guard_revision_insert() FROM PUBLIC;
 REVOKE ALL ON FUNCTION skill_registry.stamp_control_event_transaction() FROM PUBLIC;
 REVOKE ALL ON FUNCTION skill_registry.require_revision_review_event() FROM PUBLIC;
 REVOKE ALL ON FUNCTION skill_registry.deny_append_only_mutation() FROM PUBLIC;
+REVOKE ALL ON FUNCTION skill_registry.validate_skill_findings(jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION skill_registry.validate_skill_findings(jsonb)
+  TO ai_agent_skill_registry_manager;
 
 CREATE TRIGGER skills_guard_update
 BEFORE UPDATE ON skill_registry.skills
@@ -746,7 +878,11 @@ VERIFY_REVIEW_CONSTRAINTS_SQL = """SELECT
   constraint_row.conname::text,
   relation.relname::text,
   constraint_row.contype::text,
-  constraint_row.convalidated
+  constraint_row.convalidated,
+  btrim(regexp_replace(
+    pg_get_constraintdef(constraint_row.oid, true),
+    '[[:space:]]+', ' ', 'g'
+  ))::text
 FROM pg_constraint AS constraint_row
 JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid
 JOIN pg_namespace AS relation_schema ON relation_schema.oid = relation.relnamespace
@@ -760,13 +896,19 @@ ORDER BY constraint_row.conname
 """
 
 VERIFY_REVIEW_TRIGGER_GUARDS_SQL = """SELECT
-  strpos(pg_get_functiondef(function.oid), 'jsonb_array_elements(OLD.findings)') > 0,
-  strpos(pg_get_functiondef(function.oid), 'unsupported_import') > 0,
-  strpos(pg_get_functiondef(function.oid), 'private_key') > 0
+  function.proname::text,
+  btrim(regexp_replace(
+    pg_get_functiondef(function.oid),
+    '[[:space:]]+', ' ', 'g'
+  ))::text
 FROM pg_proc AS function
 JOIN pg_namespace AS function_schema ON function_schema.oid = function.pronamespace
 WHERE function_schema.nspname = 'skill_registry'
-  AND function.proname = 'require_revision_review_event'
+  AND function.proname IN (
+    'require_revision_review_event',
+    'validate_skill_findings'
+  )
+ORDER BY function.proname
 """
 
 VERIFY_FUNCTION_BOUNDARY_SQL = """SELECT
@@ -781,6 +923,9 @@ VERIFY_FUNCTION_BOUNDARY_SQL = """SELECT
     SELECT 1
     FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) AS acl
     WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'
+  ),
+  pg_catalog.has_function_privilege(
+    'ai_agent_skill_registry_manager', p.oid, 'EXECUTE'
   )
 FROM pg_proc AS p
 JOIN pg_namespace AS n ON n.oid = p.pronamespace
