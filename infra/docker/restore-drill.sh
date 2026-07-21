@@ -19,6 +19,11 @@ max_encrypted_bytes="${RESTORE_MAX_ENCRYPTED_BYTES:-2147483648}"
 max_decrypted_bytes="${RESTORE_MAX_DECRYPTED_BYTES:-4294967296}"
 decrypt_timeout_seconds="${RESTORE_DECRYPT_TIMEOUT_SECONDS:-3600}"
 decrypt_kill_after_seconds="${RESTORE_DECRYPT_KILL_AFTER_SECONDS:-5}"
+docker_create_timeout_seconds="${RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS:-30}"
+docker_cli_timeout_seconds="${RESTORE_DOCKER_CLI_TIMEOUT_SECONDS:-10}"
+docker_cli_kill_after_seconds="${RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS:-2}"
+decrypt_reconcile_attempts="${RESTORE_DECRYPT_RECONCILE_ATTEMPTS:-3}"
+restore_space_safety_bytes="${RESTORE_SPACE_SAFETY_BYTES:-67108864}"
 for byte_limit in "$max_encrypted_bytes" "$max_decrypted_bytes"; do
   case "$byte_limit" in
     ''|*[!0-9]*)
@@ -31,7 +36,22 @@ for byte_limit in "$max_encrypted_bytes" "$max_decrypted_bytes"; do
     exit 64
   fi
 done
-for timeout_limit in "$decrypt_timeout_seconds" "$decrypt_kill_after_seconds"; do
+case "$restore_space_safety_bytes" in
+  ''|*[!0-9]*)
+    echo "restore drill space budget configuration is invalid" >&2
+    exit 64
+    ;;
+esac
+if [ "${#restore_space_safety_bytes}" -gt 13 ]; then
+  echo "restore drill space budget configuration is invalid" >&2
+  exit 64
+fi
+for timeout_limit in \
+  "$decrypt_timeout_seconds" \
+  "$decrypt_kill_after_seconds" \
+  "$docker_create_timeout_seconds" \
+  "$docker_cli_timeout_seconds" \
+  "$docker_cli_kill_after_seconds"; do
   case "$timeout_limit" in
     ''|*[!0-9]*)
       echo "restore drill timeout configuration is invalid" >&2
@@ -44,6 +64,21 @@ for timeout_limit in "$decrypt_timeout_seconds" "$decrypt_kill_after_seconds"; d
     exit 64
   fi
 done
+case "$decrypt_reconcile_attempts" in
+  ''|*[!0-9]*)
+    echo "restore drill timeout configuration is invalid" >&2
+    exit 64
+    ;;
+esac
+if [ "$decrypt_reconcile_attempts" -le 0 ] || \
+   [ "$decrypt_reconcile_attempts" -gt 10 ]; then
+  echo "restore drill timeout configuration is invalid" >&2
+  exit 64
+fi
+if ! sleep 0.1 2>/dev/null; then
+  echo "restore drill host timing support is unavailable" >&2
+  exit 1
+fi
 encrypted_size_bytes="$(wc -c <"$backup_file" | tr -d ' ')"
 case "$encrypted_size_bytes" in
   ''|*[!0-9]*)
@@ -104,6 +139,7 @@ temporary_directory=
 postgres_env_file=
 decrypted_bundle_candidate=
 decrypted_bundle=
+decrypt_work_directory=
 extraction_directory=
 roles_env_file=
 skill_registry_migrator_url_file=
@@ -111,40 +147,126 @@ owner_password_file=
 manager_insert_check_file=
 backup_insert_denied_file=
 database_restore_output_file=
+decrypt_cli_output_file=
 manager_delete_error_file=
 backup_insert_error_file=
 runtime_select_error_file=
-decrypt_pipeline_pid=
-decrypt_timeout_pid=
+decrypt_container_may_exist=false
+decrypt_container_started=false
+restore_container_may_exist=false
+restore_volume_may_exist=false
+active_docker_pid=
+active_docker_phase=
+bounded_docker_timed_out=false
+cleanup_running=false
 
-stop_decrypt_container() {
-  [ -n "$decrypt_container" ] || return 0
-  docker stop --time "$decrypt_kill_after_seconds" "$decrypt_container" \
-    >/dev/null 2>&1 || true
-  docker rm -f "$decrypt_container" >/dev/null 2>&1 || true
+terminate_active_docker() {
+  [ -n "$active_docker_pid" ] || return 0
+  docker_pid=$active_docker_pid
+  kill -TERM "$docker_pid" >/dev/null 2>&1 || true
+  docker_grace_ticks=0
+  docker_grace_limit=$((docker_cli_kill_after_seconds * 10))
+  while kill -0 "$docker_pid" >/dev/null 2>&1 && \
+        [ "$docker_grace_ticks" -lt "$docker_grace_limit" ]; do
+    sleep 0.1
+    docker_grace_ticks=$((docker_grace_ticks + 1))
+  done
+  if kill -0 "$docker_pid" >/dev/null 2>&1; then
+    kill -KILL "$docker_pid" >/dev/null 2>&1 || true
+  fi
+  wait "$docker_pid" >/dev/null 2>&1 || true
+  active_docker_pid=
+  active_docker_phase=
+}
+
+run_bounded_docker() {
+  docker_timeout=$1
+  docker_phase=$2
+  shift 2
+  bounded_docker_timed_out=false
+  "$@" >"$decrypt_cli_output_file" 2>&1 &
+  active_docker_pid=$!
+  active_docker_phase=$docker_phase
+  docker_elapsed_ticks=0
+  docker_timeout_limit=$((docker_timeout * 10))
+  while kill -0 "$active_docker_pid" >/dev/null 2>&1; do
+    if [ "$docker_elapsed_ticks" -ge "$docker_timeout_limit" ]; then
+      bounded_docker_timed_out=true
+      terminate_active_docker
+      return 124
+    fi
+    sleep 0.1
+    docker_elapsed_ticks=$((docker_elapsed_ticks + 1))
+  done
+  completed_docker_pid=$active_docker_pid
+  if wait "$completed_docker_pid"; then
+    docker_status=0
+  else
+    docker_status=$?
+  fi
+  active_docker_pid=
+  active_docker_phase=
+  return "$docker_status"
+}
+
+reconcile_decrypt_container() {
+  [ "$decrypt_container_may_exist" = "true" ] || return 0
+  reconcile_attempt=0
+  absent_checks=0
+  while [ "$reconcile_attempt" -lt "$decrypt_reconcile_attempts" ]; do
+    reconcile_attempt=$((reconcile_attempt + 1))
+    if [ "$decrypt_container_started" = "true" ]; then
+      run_bounded_docker \
+        "$docker_cli_timeout_seconds" decrypt_stop \
+        docker stop --time "$decrypt_kill_after_seconds" "$decrypt_container" || true
+    fi
+    if run_bounded_docker \
+      "$docker_cli_timeout_seconds" decrypt_rm \
+      docker rm -f "$decrypt_container"; then
+      decrypt_container_may_exist=false
+      decrypt_container_started=false
+      return 0
+    fi
+    if run_bounded_docker \
+      "$docker_cli_timeout_seconds" decrypt_inspect \
+      docker container inspect "$decrypt_container"; then
+      absent_checks=0
+    elif [ "$bounded_docker_timed_out" = "false" ]; then
+      absent_checks=$((absent_checks + 1))
+      if [ "$absent_checks" -ge 2 ]; then
+        decrypt_container_may_exist=false
+        decrypt_container_started=false
+        return 0
+      fi
+    else
+      absent_checks=0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 cleanup() {
-  if [ -n "$decrypt_timeout_pid" ]; then
-    kill "$decrypt_timeout_pid" >/dev/null 2>&1 || true
-    wait "$decrypt_timeout_pid" >/dev/null 2>&1 || true
-    decrypt_timeout_pid=
+  [ "$cleanup_running" = "false" ] || return 0
+  cleanup_running=true
+  terminate_active_docker
+  reconcile_decrypt_container || true
+  if [ "$restore_container_may_exist" = "true" ]; then
+    docker rm -f "$container" >/dev/null 2>&1 || true
   fi
-  stop_decrypt_container
-  if [ -n "$decrypt_pipeline_pid" ]; then
-    kill -TERM "$decrypt_pipeline_pid" >/dev/null 2>&1 || true
-    wait "$decrypt_pipeline_pid" >/dev/null 2>&1 || true
-    decrypt_pipeline_pid=
+  if [ "$restore_volume_may_exist" = "true" ]; then
+    docker volume rm "$volume" >/dev/null 2>&1 || true
   fi
-  docker rm -f "$container" >/dev/null 2>&1 || true
-  docker volume rm "$volume" >/dev/null 2>&1 || true
   if [ -n "$temporary_directory" ]; then
     rm -rf "$temporary_directory"
   fi
+  cleanup_running=false
 }
 
 on_signal() {
   code=$1
+  trap '' INT TERM
+  echo "restore drill interrupted" >&2
   cleanup
   trap - EXIT
   exit "$code"
@@ -157,6 +279,25 @@ trap 'on_signal 143' TERM
 umask 077
 restore_tmp_root="${RESTORE_TMP_ROOT:-${TMPDIR:-/tmp}}"
 mkdir -p "$restore_tmp_root"
+available_kib="$(df -Pk "$restore_tmp_root" | awk 'NR == 2 { print $4; exit }')"
+case "$available_kib" in
+  ''|*[!0-9]*)
+    echo "restore drill temporary space budget check failed" >&2
+    exit 1
+    ;;
+esac
+if [ "${#available_kib}" -gt 15 ]; then
+  echo "restore drill temporary space budget check failed" >&2
+  exit 1
+fi
+required_peak_bytes=$((
+  encrypted_size_bytes + (max_decrypted_bytes * 2) + restore_space_safety_bytes
+))
+available_bytes=$((available_kib * 1024))
+if [ "$available_bytes" -lt "$required_peak_bytes" ]; then
+  echo "restore drill temporary space budget is insufficient" >&2
+  exit 1
+fi
 temporary_directory="$(mktemp -d "$restore_tmp_root/aap-restore-drill.XXXXXX")"
 postgres_env_file="$temporary_directory/postgres.env"
 roles_env_file="$temporary_directory/roles.env"
@@ -165,12 +306,16 @@ owner_password_file="$temporary_directory/owner-password"
 manager_insert_check_file="$temporary_directory/manager-insert-check.sql"
 backup_insert_denied_file="$temporary_directory/backup-insert-denied.sql"
 database_restore_output_file="$temporary_directory/database-restore.output"
+decrypt_cli_output_file="$temporary_directory/decrypt-docker.output"
 manager_delete_error_file="$temporary_directory/manager-delete.stderr"
 backup_insert_error_file="$temporary_directory/backup-insert.stderr"
 runtime_select_error_file="$temporary_directory/runtime-select.stderr"
-decrypted_bundle_candidate="$temporary_directory/restored.bundle.partial"
+decrypt_work_directory="$temporary_directory/decrypt"
+decrypted_bundle_candidate="$decrypt_work_directory/restored.bundle.partial"
 decrypted_bundle="$temporary_directory/restored.bundle"
 extraction_directory="$temporary_directory/extracted"
+mkdir -p "$decrypt_work_directory"
+chmod 700 "$decrypt_work_directory"
 cat >"$postgres_env_file" <<EOF
 POSTGRES_DB=$database
 POSTGRES_USER=$owner
@@ -215,6 +360,7 @@ VALUES (
 );
 SQL
 : >"$database_restore_output_file"
+: >"$decrypt_cli_output_file"
 chmod 600 \
   "$postgres_env_file" \
   "$roles_env_file" \
@@ -222,67 +368,81 @@ chmod 600 \
   "$owner_password_file" \
   "$manager_insert_check_file" \
   "$backup_insert_denied_file" \
-  "$database_restore_output_file"
+  "$database_restore_output_file" \
+  "$decrypt_cli_output_file"
 
-decrypt_timeout_marker="$temporary_directory/decrypt.timed-out"
-decrypt_status_file="$temporary_directory/decrypt.status"
-(
-  (
-    set +e
-    docker run --name "$decrypt_container" \
-      --user "$(id -u):$(id -g)" \
-      --read-only \
-      --tmpfs /tmp:rw,noexec,nosuid,size=16m \
-      --entrypoint sh \
-      -v "$(dirname "$backup_file"):/input:ro" \
-      -v "$BACKUP_ENCRYPTION_KEY_FILE:/run/secrets/backup_encryption_key:ro" \
-      "$crypto_image" -ceu '
-        mkdir -m 700 /tmp/gnupg
-        exec gpg --homedir /tmp/gnupg \
-          --batch \
-          --yes \
-          --no-tty \
-          --pinentry-mode loopback \
-          --no-symkey-cache \
-          --passphrase-file /run/secrets/backup_encryption_key \
-          --output - \
-          --decrypt "/input/$1"
-      ' sh "$(basename "$backup_file")"
-    printf '%s\n' "$?" >"$decrypt_status_file"
-  ) |
-    head -c "$((max_decrypted_bytes + 1))" >"$decrypted_bundle_candidate"
-) &
-decrypt_pipeline_pid=$!
-(
-  decrypt_sleep_pid=
-  cancel_decrypt_timer() {
-    [ -z "$decrypt_sleep_pid" ] || kill "$decrypt_sleep_pid" >/dev/null 2>&1 || true
-    [ -z "$decrypt_sleep_pid" ] || wait "$decrypt_sleep_pid" >/dev/null 2>&1 || true
-    exit 0
-  }
-  trap cancel_decrypt_timer TERM INT HUP
-  sleep "$decrypt_timeout_seconds" &
-  decrypt_sleep_pid=$!
-  wait "$decrypt_sleep_pid" || exit 0
-  decrypt_sleep_pid=
-  if kill -0 "$decrypt_pipeline_pid" >/dev/null 2>&1; then
-    : >"$decrypt_timeout_marker"
-    docker stop --time "$decrypt_kill_after_seconds" "$decrypt_container" \
-      >/dev/null 2>&1 || true
-    docker rm -f "$decrypt_container" >/dev/null 2>&1 || true
-  fi
-) &
-decrypt_timeout_pid=$!
-wait "$decrypt_pipeline_pid" || true
-decrypt_pipeline_pid=
-kill "$decrypt_timeout_pid" >/dev/null 2>&1 || true
-wait "$decrypt_timeout_pid" >/dev/null 2>&1 || true
-decrypt_timeout_pid=
-docker rm -f "$decrypt_container" >/dev/null 2>&1 || true
+decrypt_container_may_exist=true
+if ! run_bounded_docker \
+  "$docker_create_timeout_seconds" decrypt_create \
+  docker create --name "$decrypt_container" \
+    --user "$(id -u):$(id -g)" \
+    --read-only \
+    --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+    --entrypoint sh \
+    -v "$(dirname "$backup_file"):/input:ro" \
+    -v "$decrypt_work_directory:/work" \
+    -v "$BACKUP_ENCRYPTION_KEY_FILE:/run/secrets/backup_encryption_key:ro" \
+    "$crypto_image" -ceu '
+      mkdir -m 700 /tmp/gnupg
+      mkfifo /tmp/decrypted
+      gpg_pid=
+      head_pid=
+      stop_children() {
+        [ -z "$gpg_pid" ] || kill -TERM "$gpg_pid" >/dev/null 2>&1 || true
+        [ -z "$head_pid" ] || kill -TERM "$head_pid" >/dev/null 2>&1 || true
+        [ -z "$gpg_pid" ] || wait "$gpg_pid" >/dev/null 2>&1 || true
+        [ -z "$head_pid" ] || wait "$head_pid" >/dev/null 2>&1 || true
+        rm -f /tmp/decrypted
+      }
+      trap "stop_children; exit 143" TERM INT HUP
+      gpg --homedir /tmp/gnupg \
+        --batch \
+        --yes \
+        --no-tty \
+        --pinentry-mode loopback \
+        --no-symkey-cache \
+        --passphrase-file /run/secrets/backup_encryption_key \
+        --output /tmp/decrypted \
+        --decrypt "/input/$1" &
+      gpg_pid=$!
+      head -c "$2" </tmp/decrypted >/work/restored.bundle.partial &
+      head_pid=$!
+      if wait "$head_pid"; then head_status=0; else head_status=$?; fi
+      head_pid=
+      if wait "$gpg_pid"; then gpg_status=0; else gpg_status=$?; fi
+      gpg_pid=
+      rm -f /tmp/decrypted
+      [ "$head_status" -eq 0 ] && [ "$gpg_status" -eq 0 ]
+    ' sh "$(basename "$backup_file")" "$((max_decrypted_bytes + 1))"; then
+  reconcile_decrypt_container || true
+  echo "restore drill decryption failed" >&2
+  exit 1
+fi
+if ! run_bounded_docker \
+  "$docker_cli_timeout_seconds" decrypt_inspect \
+  docker container inspect "$decrypt_container"; then
+  reconcile_decrypt_container || true
+  echo "restore drill decryption failed" >&2
+  exit 1
+fi
 
-decrypted_size_bytes="$(wc -c <"$decrypted_bundle_candidate" | tr -d ' ')"
-decrypt_status="$(cat "$decrypt_status_file" 2>/dev/null || printf '1')"
-if [ -f "$decrypt_timeout_marker" ]; then
+decrypt_container_started=true
+if run_bounded_docker \
+  "$decrypt_timeout_seconds" decrypt_start \
+  docker start --attach "$decrypt_container"; then
+  decrypt_status=0
+else
+  decrypt_status=$?
+fi
+decrypt_timed_out=$bounded_docker_timed_out
+reconcile_decrypt_container || true
+
+if [ -f "$decrypted_bundle_candidate" ]; then
+  decrypted_size_bytes="$(wc -c <"$decrypted_bundle_candidate" | tr -d ' ')"
+else
+  decrypted_size_bytes=0
+fi
+if [ "$decrypt_timed_out" = "true" ]; then
   echo "restore drill decryption timed out" >&2
   exit 1
 fi
@@ -290,7 +450,7 @@ if [ "$decrypted_size_bytes" -gt "$max_decrypted_bytes" ]; then
   echo "restore drill rejected oversized decrypted bundle" >&2
   exit 1
 fi
-if [ "$decrypt_status" -ne 0 ]; then
+if [ "$decrypt_status" -ne 0 ] || [ ! -f "$decrypted_bundle_candidate" ]; then
   echo "restore drill decryption failed" >&2
   exit 1
 fi
@@ -403,7 +563,9 @@ if [ "$actual_dump_sha256" != "$manifest_dump_sha256" ]; then
   exit 1
 fi
 
+restore_volume_may_exist=true
 docker volume create "$volume" >/dev/null
+restore_container_may_exist=true
 docker run -d --name "$container" \
   --env-file "$postgres_env_file" \
   -v "$volume:/var/lib/postgresql" \

@@ -3837,8 +3837,20 @@ exit 0
     expect(script).toContain("RESTORE_MAX_DECRYPTED_BYTES");
     expect(script).toContain("RESTORE_DECRYPT_TIMEOUT_SECONDS");
     expect(script).toContain("RESTORE_DECRYPT_KILL_AFTER_SECONDS");
+    expect(script).toContain("RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS");
+    expect(script).toContain("RESTORE_DOCKER_CLI_TIMEOUT_SECONDS");
+    expect(script).toContain("RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS");
+    expect(script).toContain("RESTORE_DECRYPT_RECONCILE_ATTEMPTS");
+    expect(script).toContain("RESTORE_SPACE_SAFETY_BYTES");
     expect(script).toContain('decrypt_container="aap-restore-decrypt-$run_id"');
-    expect(script).toContain('head -c "$((max_decrypted_bytes + 1))"');
+    expect(script).toContain('head -c "$2"');
+    expect(script).toContain('docker create --name "$decrypt_container"');
+    expect(script).toContain('docker start --attach "$decrypt_container"');
+    expect(script).not.toContain('docker run --name "$decrypt_container"');
+    expect(script).toContain("run_bounded_docker");
+    expect(script).toContain("terminate_active_docker");
+    expect(script).toContain("reconcile_decrypt_container");
+    expect(script).toContain("sleep 0.1");
     expect(script).toContain(
       'docker stop --time "$decrypt_kill_after_seconds"',
     );
@@ -3849,6 +3861,9 @@ exit 0
       "restore drill rejected oversized decrypted bundle",
     );
     expect(script).toContain("restore drill decryption timed out");
+    expect(script).toContain(
+      "restore drill temporary space budget is insufficient",
+    );
     expect(script).toContain("decrypted_bundle_candidate");
     expect(script).toContain(
       'mv "$decrypted_bundle_candidate" "$decrypted_bundle"',
@@ -4033,11 +4048,25 @@ printf '%s\n' "$*" >>"$CAPTURE_DIR/docker.calls"
 command=$1
 shift
 case "$command" in
+  create)
+    for argument in "$@"; do
+      case "$argument" in
+        *:/work) printf '%s\n' "\${argument%:/work}" >"$CAPTURE_DIR/decrypt-work" ;;
+      esac
+    done
+    : >"$CAPTURE_DIR/decrypt-container.exists"
+    printf '%s\n' fake-decrypt-container-id
+    ;;
+  start)
+    work=$(cat "$CAPTURE_DIR/decrypt-work")
+    cp "$FAKE_BACKUP_FILE" "$work/restored.bundle.partial"
+    ;;
+  container)
+    [ "\${1:-}" = inspect ]
+    [ -f "$CAPTURE_DIR/decrypt-container.exists" ]
+    ;;
   run)
     case " $* " in
-      *" --name aap-restore-decrypt-"*)
-        cat "$FAKE_BACKUP_FILE"
-        ;;
       *" --entrypoint sha256sum "*)
         input=
         for argument in "$@"; do
@@ -4079,7 +4108,10 @@ case "$command" in
       *) exit 1 ;;
     esac
     ;;
-  volume|rm|stop) exit 0 ;;
+  rm)
+    rm -f "$CAPTURE_DIR/decrypt-container.exists"
+    ;;
+  volume|stop) exit 0 ;;
   *) exit 1 ;;
 esac
 `,
@@ -4107,6 +4139,8 @@ esac
             BACKUP_CRYPTO_IMAGE: "fake-crypto",
             RESTORE_SKILL_REGISTRY_IMAGE: "fake-skill-registry",
             RESTORE_TMP_ROOT: restoreTmp,
+            RESTORE_MAX_DECRYPTED_BYTES: "1048576",
+            RESTORE_SPACE_SAFETY_BYTES: "0",
           },
         },
       );
@@ -4205,7 +4239,7 @@ esac
     );
   });
 
-  it("bounds restore decrypt input, expansion, and hangs before plaintext can fill disk", () => {
+  it("bounds restore decrypt input and expansion before plaintext can fill disk", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "restore-decrypt-bounds-"));
     const bin = path.join(sandbox, "bin");
     const captures = path.join(sandbox, "captures");
@@ -4234,28 +4268,49 @@ esac
 set -eu
 printf '%s\n' "$*" >>"$CAPTURE_DIR/docker.calls"
 case "\${1:-}" in
-  run)
+  create)
+    for argument in "$@"; do
+      case "$argument" in
+        *:/work) printf '%s\n' "\${argument%:/work}" >"$CAPTURE_DIR/work" ;;
+      esac
+    done
+    : >"$CAPTURE_DIR/container.exists"
+    printf '%s\n' fake-decrypt-container-id
+    ;;
+  start)
     case "\${RESTORE_FAKE_MODE:-}" in
       expansion)
+        work=$(cat "$CAPTURE_DIR/work")
         count=0
         while [ "$count" -lt 64 ]; do
           printf x
           count=$((count + 1))
-        done
-        ;;
-      hang)
-        : >"$CAPTURE_DIR/decrypt.ready"
-        trap '' TERM
-        while [ ! -f "$CAPTURE_DIR/decrypt.stop" ]; do sleep 1; done
-        exit 143
+        done >"$work/restored.bundle.partial"
+        exit 1
         ;;
       *) exit 1 ;;
     esac
     ;;
   stop)
-    : >"$CAPTURE_DIR/decrypt.stop"
+    exit 0
+    ;;
+  rm)
+    rm -f "$CAPTURE_DIR/container.exists"
+    ;;
+  container)
+    [ "\${2:-}" = inspect ]
+    [ -f "$CAPTURE_DIR/container.exists" ]
     ;;
 esac
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "df"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf 'test 1048576 0 %s 0%% /restore\n' "\${RESTORE_FAKE_AVAILABLE_KIB:-1048576}"
 `,
         { mode: 0o700 },
       );
@@ -4270,6 +4325,7 @@ esac
         RESTORE_MAX_DECRYPTED_BYTES: "32",
         RESTORE_DECRYPT_TIMEOUT_SECONDS: "5",
         RESTORE_DECRYPT_KILL_AFTER_SECONDS: "1",
+        RESTORE_SPACE_SAFETY_BYTES: "16",
       };
 
       const oversized = spawnSync("sh", args, {
@@ -4287,6 +4343,38 @@ esac
       expect(readdirSync(captures)).toEqual([]);
 
       writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      const invalidBudget = spawnSync("sh", args, {
+        encoding: "utf8",
+        env: {
+          ...commonEnv,
+          RESTORE_SPACE_SAFETY_BYTES: "-1",
+          RESTORE_TMP_ROOT: path.join(sandbox, "invalid-budget-tmp"),
+        },
+      });
+      expect(`${invalidBudget.stdout}${invalidBudget.stderr}`.trim()).toBe(
+        "restore drill space budget configuration is invalid",
+      );
+      expect(invalidBudget.status).toBe(64);
+      expect(readdirSync(captures)).toEqual([]);
+
+      const insufficientTmp = path.join(sandbox, "insufficient-tmp");
+      mkdirSync(insufficientTmp);
+      const insufficient = spawnSync("sh", args, {
+        encoding: "utf8",
+        env: {
+          ...commonEnv,
+          RESTORE_MAX_DECRYPTED_BYTES: "2048",
+          RESTORE_FAKE_AVAILABLE_KIB: "1",
+          RESTORE_TMP_ROOT: insufficientTmp,
+        },
+      });
+      expect(`${insufficient.stdout}${insufficient.stderr}`.trim()).toBe(
+        "restore drill temporary space budget is insufficient",
+      );
+      expect(insufficient.status).toBe(1);
+      expect(readdirSync(captures)).toEqual([]);
+      expect(readdirSync(insufficientTmp)).toEqual([]);
+
       const expansionTmp = path.join(sandbox, "expansion-tmp");
       mkdirSync(expansionTmp);
       const expansion = spawnSync("sh", args, {
@@ -4304,37 +4392,242 @@ esac
       expect(readdirSync(expansionTmp)).toEqual([]);
       expect(
         readFileSync(path.join(captures, "docker.calls"), "utf8"),
-      ).toContain("run --name aap-restore-decrypt-");
-
-      rmSync(path.join(captures, "docker.calls"));
-      rmSync(path.join(captures, "decrypt.stop"), { force: true });
-      const hangTmp = path.join(sandbox, "hang-tmp");
-      mkdirSync(hangTmp);
-      const hangStartedAt = Date.now();
-      const hang = spawnSync("sh", args, {
-        encoding: "utf8",
-        timeout: 6_000,
-        env: {
-          ...commonEnv,
-          RESTORE_FAKE_MODE: "hang",
-          RESTORE_DECRYPT_TIMEOUT_SECONDS: "1",
-          RESTORE_TMP_ROOT: hangTmp,
-        },
-      });
-      const hangElapsedMs = Date.now() - hangStartedAt;
-      const hangOutput = `${hang.stdout}${hang.stderr}`;
-      expect(hang.error, hangOutput).toBeUndefined();
-      expect(hang.status, hangOutput).toBe(1);
-      expect(hangOutput.trim()).toBe("restore drill decryption timed out");
-      expect(hangElapsedMs).toBeLessThan(4_000);
-      expect(readdirSync(hangTmp)).toEqual([]);
-      expect(
-        readFileSync(path.join(captures, "docker.calls"), "utf8"),
-      ).toContain("stop --time 1 aap-restore-decrypt-");
+      ).toContain("create --name aap-restore-decrypt-");
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
   }, 10_000);
+
+  it("bounds and reconciles every decrypt Docker CLI phase", () => {
+    const sandbox = mkdtempSync(
+      path.join(tmpdir(), "restore-docker-lifecycle-"),
+    );
+    const bin = path.join(sandbox, "bin");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+    const args = [
+      script,
+      backupFile,
+      "1",
+      "1",
+      "11111111-1111-1111-1111-111111111111",
+      "fixture-session",
+    ];
+
+    try {
+      mkdirSync(bin);
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      writeFileSync(
+        path.join(bin, "df"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf '%s\n' 'test 1048576 0 1048576 0% /restore'
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "signal-driver"),
+        `#!/bin/sh
+set -u
+"$@" &
+child=$!
+attempt=0
+until [ -f "$SIGNAL_PHASE_MARKER" ]; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 100 ]; then
+    kill -KILL "$child" >/dev/null 2>&1 || true
+    wait "$child" >/dev/null 2>&1 || true
+    exit 88
+  fi
+  sleep 0.1
+done
+kill -TERM "$child"
+wait "$child"
+exit $?
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+
+hang_phase() {
+  phase=$1
+  printf '%s\n' "$$" >>"$CAPTURE_DIR/$phase.pids"
+  : >"$CAPTURE_DIR/$phase.started"
+  trap '' TERM INT HUP
+  exec sleep 1000
+}
+
+command=$1
+shift
+case "$command" in
+  create)
+    case "$FAKE_DOCKER_MODE" in
+      create_hang|signal_create) hang_phase create ;;
+    esac
+    : >"$CAPTURE_DIR/container.exists"
+    printf '%s\n' fake-decrypt-container-id
+    ;;
+  start)
+    case "$FAKE_DOCKER_MODE" in
+      start_hang|stop_hang|rm_hang|signal_start|signal_stop|signal_rm)
+        hang_phase start
+        ;;
+    esac
+    exit 1
+    ;;
+  stop)
+    : >"$CAPTURE_DIR/stop.started"
+    [ -f "$CAPTURE_DIR/container.exists" ] || exit 1
+    case "$FAKE_DOCKER_MODE" in
+      stop_hang|signal_stop) hang_phase stop ;;
+    esac
+    ;;
+  rm)
+    : >"$CAPTURE_DIR/rm.started"
+    case "$FAKE_DOCKER_MODE" in
+      rm_hang|signal_rm)
+        if [ ! -f "$CAPTURE_DIR/rm.hung-once" ]; then
+          : >"$CAPTURE_DIR/rm.hung-once"
+          hang_phase rm
+        fi
+        ;;
+    esac
+    [ -f "$CAPTURE_DIR/container.exists" ] || exit 1
+    rm -f "$CAPTURE_DIR/container.exists"
+    ;;
+  container)
+    [ "\${1:-}" = inspect ] || exit 1
+    [ -f "$CAPTURE_DIR/container.exists" ]
+    ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const baseEnv = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+        BACKUP_CRYPTO_IMAGE: "fake-crypto",
+        RESTORE_MAX_ENCRYPTED_BYTES: "128",
+        RESTORE_MAX_DECRYPTED_BYTES: "32",
+        RESTORE_SPACE_SAFETY_BYTES: "0",
+        RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
+        RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+        RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
+        RESTORE_DECRYPT_TIMEOUT_SECONDS: "1",
+        RESTORE_DECRYPT_KILL_AFTER_SECONDS: "1",
+        RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "3",
+      };
+      const cases = [
+        ["create_hang", "restore drill decryption failed", "create"],
+        ["start_hang", "restore drill decryption timed out", "start"],
+        ["stop_hang", "restore drill decryption timed out", "stop"],
+        ["rm_hang", "restore drill decryption timed out", "rm"],
+      ] as const;
+
+      for (const [mode, expectedOutput, expectedPhase] of cases) {
+        const caseRoot = path.join(sandbox, mode);
+        const captures = path.join(caseRoot, "captures");
+        const restoreTmp = path.join(caseRoot, "restore-tmp");
+        mkdirSync(captures, { recursive: true });
+        mkdirSync(restoreTmp);
+        const startedAt = Date.now();
+        const result = spawnSync("sh", args, {
+          encoding: "utf8",
+          timeout: 10_000,
+          env: {
+            ...baseEnv,
+            CAPTURE_DIR: captures,
+            FAKE_DOCKER_MODE: mode,
+            RESTORE_TMP_ROOT: restoreTmp,
+          },
+        });
+        const elapsedMs = Date.now() - startedAt;
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.error, `${mode}: ${output}`).toBeUndefined();
+        expect(result.status, `${mode}: ${output}`).toBe(1);
+        expect(output.trim(), mode).toBe(expectedOutput);
+        expect(elapsedMs, mode).toBeLessThan(8_000);
+        expect(readdirSync(restoreTmp), mode).toEqual([]);
+        expect(
+          statSync(path.join(captures, "container.exists"), {
+            throwIfNoEntry: false,
+          }),
+          mode,
+        ).toBeUndefined();
+        const calls = readFileSync(path.join(captures, "docker.calls"), "utf8");
+        expect(calls, mode).toContain("create --name aap-restore-decrypt-");
+        expect(calls, mode).toContain(`${expectedPhase}`);
+        for (const pidFile of readdirSync(captures).filter((name) =>
+          name.endsWith(".pids"),
+        )) {
+          for (const pid of readFileSync(path.join(captures, pidFile), "utf8")
+            .trim()
+            .split("\n")) {
+            const live = spawnSync("sh", ["-c", 'kill -0 "$1"', "sh", pid]);
+            expect(live.status, `${mode}: live pid ${pid}`).not.toBe(0);
+          }
+        }
+      }
+
+      for (const phase of ["create", "start", "stop", "rm"] as const) {
+        const mode = `signal_${phase}`;
+        const caseRoot = path.join(sandbox, mode);
+        const captures = path.join(caseRoot, "captures");
+        const restoreTmp = path.join(caseRoot, "restore-tmp");
+        mkdirSync(captures, { recursive: true });
+        mkdirSync(restoreTmp);
+        const startedAt = Date.now();
+        const result = spawnSync(path.join(bin, "signal-driver"), args, {
+          encoding: "utf8",
+          timeout: 10_000,
+          env: {
+            ...baseEnv,
+            CAPTURE_DIR: captures,
+            FAKE_DOCKER_MODE: mode,
+            RESTORE_TMP_ROOT: restoreTmp,
+            SIGNAL_PHASE_MARKER: path.join(captures, `${phase}.started`),
+          },
+        });
+        const elapsedMs = Date.now() - startedAt;
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.error, `${mode}: ${output}`).toBeUndefined();
+        expect(result.status, `${mode}: ${output}`).toBe(143);
+        expect(output.trim(), mode).toBe("restore drill interrupted");
+        expect(elapsedMs, mode).toBeLessThan(8_000);
+        expect(readdirSync(restoreTmp), mode).toEqual([]);
+        expect(
+          statSync(path.join(captures, "container.exists"), {
+            throwIfNoEntry: false,
+          }),
+          mode,
+        ).toBeUndefined();
+        for (const pidFile of readdirSync(captures).filter((name) =>
+          name.endsWith(".pids"),
+        )) {
+          for (const pid of readFileSync(path.join(captures, pidFile), "utf8")
+            .trim()
+            .split("\n")) {
+            const live = spawnSync("sh", ["-c", 'kill -0 "$1"', "sh", pid]);
+            expect(live.status, `${mode}: live pid ${pid}`).not.toBe(0);
+          }
+        }
+      }
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 80_000);
 
   it("documents immutable registry recovery without weakening secret preflights", () => {
     const runbook = read("infra/docker/README.md");
