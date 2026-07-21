@@ -3975,6 +3975,161 @@ exit 0
     expect(script).not.toContain('[ "$migration_count" -lt 1 ]');
   });
 
+  it("contains pg_restore output when a database restore fails", () => {
+    const sandbox = mkdtempSync(
+      path.join(tmpdir(), "restore-output-boundary-"),
+    );
+    const bin = path.join(sandbox, "bin");
+    const captures = path.join(sandbox, "captures");
+    const fixture = path.join(sandbox, "fixture");
+    const restoreTmp = path.join(sandbox, "restore-tmp");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const dumpFile = path.join(fixture, "database.dump");
+    const manifestFile = path.join(fixture, "skill-backup.manifest");
+    const sentinel = "skill-registry-archive-bytes-sentinel-deadbeef";
+
+    try {
+      for (const directory of [bin, captures, fixture, restoreTmp]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(dumpFile, "fake-custom-database-dump", { mode: 0o600 });
+      const dumpSha256 = createHash("sha256")
+        .update(readFileSync(dumpFile))
+        .digest("hex");
+      writeFileSync(
+        manifestFile,
+        `format_version=1
+dump_sha256=${dumpSha256}
+skill_registry_schema_version=1
+skill_revision_count=1
+skill_artifact_count=1
+skill_file_count=1
+`,
+        { mode: 0o600 },
+      );
+      const archive = spawnSync(
+        "tar",
+        [
+          "-cf",
+          backupFile,
+          "-C",
+          fixture,
+          "skill-backup.manifest",
+          "database.dump",
+        ],
+        { encoding: "utf8" },
+      );
+      expect(archive.status, `${archive.stdout}${archive.stderr}`).toBe(0);
+
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+command=$1
+shift
+case "$command" in
+  run)
+    case " $* " in
+      *" --name aap-restore-decrypt-"*)
+        cat "$FAKE_BACKUP_FILE"
+        ;;
+      *" --entrypoint sha256sum "*)
+        input=
+        for argument in "$@"; do
+          case "$argument" in
+            *:/input:ro) input=\${argument%:/input:ro} ;;
+          esac
+        done
+        test -n "$input"
+        sha256sum "$input/database.dump"
+        ;;
+      *" -d "*)
+        printf '%s\n' fake-container-id
+        ;;
+      *)
+        work=
+        for argument in "$@"; do
+          case "$argument" in
+            *:/work) work=\${argument%:/work} ;;
+          esac
+        done
+        test -n "$work"
+        mkdir "$work/extracted"
+        chmod 700 "$work/extracted"
+        tar -xf "$work/restored.bundle" -C "$work/extracted"
+        ;;
+    esac
+    ;;
+  exec)
+    container=$1
+    shift
+    case "\${1:-}" in
+      pg_isready) exit 0 ;;
+      sh) exit 0 ;;
+      pg_restore)
+        printf '%s\n' 'pg_restore raw stdout: ${sentinel}'
+        printf '%s\n' 'pg_restore: error: COPY skill_registry.skill_revision_artifacts: ${sentinel}' >&2
+        exit 1
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  volume|rm|stop) exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync(
+        "sh",
+        [
+          path.join(root, "infra/docker/restore-drill.sh"),
+          backupFile,
+          "1",
+          "1",
+          "11111111-1111-1111-1111-111111111111",
+          "fixture-session",
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
+            CAPTURE_DIR: captures,
+            FAKE_BACKUP_FILE: backupFile,
+            BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+            BACKUP_CRYPTO_IMAGE: "fake-crypto",
+            RESTORE_SKILL_REGISTRY_IMAGE: "fake-skill-registry",
+            RESTORE_TMP_ROOT: restoreTmp,
+          },
+        },
+      );
+
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status, output).toBe(1);
+      expect(output.trim()).toBe("restore drill failed database restore");
+      expect(output).not.toContain(sentinel);
+      expect(output).not.toContain("pg_restore:");
+      expect(readdirSync(restoreTmp)).toEqual([]);
+      const dockerCalls = readFileSync(
+        path.join(captures, "docker.calls"),
+        "utf8",
+      );
+      expect(dockerCalls).toContain("exec aap-restore-drill-");
+      expect(dockerCalls).toContain("pg_restore");
+      expect(dockerCalls).toContain("rm -f aap-restore-drill-");
+      expect(dockerCalls).toContain("volume rm aap-restore-drill-");
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
   it("backs up all platform and AgentOS schemas through one protected dump", () => {
     const script = read("infra/docker/backup.sh");
     const backup = renderComposeFixture().services.backup;

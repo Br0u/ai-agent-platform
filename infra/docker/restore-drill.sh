@@ -110,6 +110,7 @@ skill_registry_migrator_url_file=
 owner_password_file=
 manager_insert_check_file=
 backup_insert_denied_file=
+database_restore_output_file=
 manager_delete_error_file=
 backup_insert_error_file=
 runtime_select_error_file=
@@ -163,6 +164,7 @@ skill_registry_migrator_url_file="$temporary_directory/skill-registry-migrator-u
 owner_password_file="$temporary_directory/owner-password"
 manager_insert_check_file="$temporary_directory/manager-insert-check.sql"
 backup_insert_denied_file="$temporary_directory/backup-insert-denied.sql"
+database_restore_output_file="$temporary_directory/database-restore.output"
 manager_delete_error_file="$temporary_directory/manager-delete.stderr"
 backup_insert_error_file="$temporary_directory/backup-insert.stderr"
 runtime_select_error_file="$temporary_directory/runtime-select.stderr"
@@ -212,13 +214,15 @@ VALUES (
   '00000000-0000-0000-0000-000000000094'
 );
 SQL
+: >"$database_restore_output_file"
 chmod 600 \
   "$postgres_env_file" \
   "$roles_env_file" \
   "$skill_registry_migrator_url_file" \
   "$owner_password_file" \
   "$manager_insert_check_file" \
-  "$backup_insert_denied_file"
+  "$backup_insert_denied_file" \
+  "$database_restore_output_file"
 
 decrypt_timeout_marker="$temporary_directory/decrypt.timed-out"
 decrypt_status_file="$temporary_directory/decrypt.status"
@@ -436,9 +440,14 @@ if ! run_role_bootstraps; then
   exit 1
 fi
 
-docker exec "$container" pg_restore \
+if ! docker exec "$container" pg_restore \
   --username="$owner" --dbname="$database" --clean --if-exists \
-  /restore/extracted/database.dump
+  /restore/extracted/database.dump >"$database_restore_output_file" 2>&1; then
+  echo "restore drill failed database restore" >&2
+  exit 1
+fi
+rm -f "$database_restore_output_file"
+database_restore_output_file=
 
 if ! run_role_bootstraps; then
   echo "restore drill failed role repair" >&2
