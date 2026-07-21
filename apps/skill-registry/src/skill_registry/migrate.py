@@ -27,6 +27,9 @@ from skill_registry.schema import (
     VERIFY_FUNCTION_BOUNDARY_SQL,
     VERIFY_MANAGER_COLUMN_GRANTS_SQL,
     VERIFY_MANAGER_TABLE_GRANTS_SQL,
+    VERIFY_REGISTRY_ROLE_MEMBERSHIPS_SQL,
+    VERIFY_REGISTRY_ROLE_SETTINGS_SQL,
+    VERIFY_REPLICATION_PARAMETER_PRIVILEGES_SQL,
     VERIFY_SCHEMA_GRANTS_SQL,
     VERIFY_SCHEMA_OWNER_SQL,
     VERIFY_SECURITY_TRIGGERS_SQL,
@@ -87,6 +90,14 @@ async def _verify_migration(cursor: MigrationCursor) -> None:
     )
     await _verify_rows(cursor, VERIFY_FUNCTION_BOUNDARY_SQL, EXPECTED_FUNCTION_BOUNDARY)
     await _verify_rows(cursor, VERIFY_SECURITY_TRIGGERS_SQL, EXPECTED_SECURITY_TRIGGERS)
+    for forbidden_query in (
+        VERIFY_REGISTRY_ROLE_MEMBERSHIPS_SQL,
+        VERIFY_REGISTRY_ROLE_SETTINGS_SQL,
+        VERIFY_REPLICATION_PARAMETER_PRIVILEGES_SQL,
+    ):
+        await cursor.execute(forbidden_query)
+        if await cursor.fetchall():
+            raise RuntimeError("Skill registry migration verification failed")
     await _verify_rows(
         cursor,
         VERIFY_MANAGER_TABLE_GRANTS_SQL,

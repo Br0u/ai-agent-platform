@@ -49,6 +49,13 @@ BEGIN
 END
 $$;
 
+ALTER ROLE ai_agent_skill_registry_migrator RESET ALL;
+ALTER ROLE ai_agent_skill_registry_manager RESET ALL;
+ALTER ROLE ai_agent_skill_registry_runtime RESET ALL;
+ALTER ROLE ai_agent_skill_registry_migrator IN DATABASE :"DBNAME" RESET ALL;
+ALTER ROLE ai_agent_skill_registry_manager IN DATABASE :"DBNAME" RESET ALL;
+ALTER ROLE ai_agent_skill_registry_runtime IN DATABASE :"DBNAME" RESET ALL;
+
 ALTER ROLE ai_agent_skill_registry_migrator
   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS
   PASSWORD :'skill_registry_migrator_password';
@@ -58,6 +65,47 @@ ALTER ROLE ai_agent_skill_registry_manager
 ALTER ROLE ai_agent_skill_registry_runtime
   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS
   PASSWORD :'skill_registry_runtime_password';
+
+REVOKE SET ON PARAMETER session_replication_role
+  FROM ai_agent_skill_registry_migrator,
+       ai_agent_skill_registry_manager,
+       ai_agent_skill_registry_runtime;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_db_role_setting AS role_setting
+    JOIN pg_roles AS role ON role.oid = role_setting.setrole
+    WHERE role.rolname IN (
+      'ai_agent_skill_registry_migrator',
+      'ai_agent_skill_registry_manager',
+      'ai_agent_skill_registry_runtime'
+    )
+    AND cardinality(role_setting.setconfig) > 0
+  ) THEN
+    RAISE EXCEPTION 'skill registry roles must not retain role settings'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM (VALUES
+      ('ai_agent_skill_registry_migrator'),
+      ('ai_agent_skill_registry_manager'),
+      ('ai_agent_skill_registry_runtime')
+    ) AS registry_role(role_name)
+    WHERE pg_catalog.has_parameter_privilege(
+      role_name,
+      'session_replication_role',
+      'SET'
+    )
+  ) THEN
+    RAISE EXCEPTION 'registry roles must not set session_replication_role'
+      USING ERRCODE = '42501';
+  END IF;
+END
+$$;
 
 CREATE SCHEMA IF NOT EXISTS skill_registry
   AUTHORIZATION ai_agent_skill_registry_migrator;

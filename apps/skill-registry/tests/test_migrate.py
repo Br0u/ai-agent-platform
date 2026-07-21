@@ -15,6 +15,9 @@ from skill_registry.schema import (
     VERIFY_FUNCTION_BOUNDARY_SQL,
     VERIFY_MANAGER_COLUMN_GRANTS_SQL,
     VERIFY_MANAGER_TABLE_GRANTS_SQL,
+    VERIFY_REGISTRY_ROLE_MEMBERSHIPS_SQL,
+    VERIFY_REGISTRY_ROLE_SETTINGS_SQL,
+    VERIFY_REPLICATION_PARAMETER_PRIVILEGES_SQL,
     VERIFY_SCHEMA_GRANTS_SQL,
     VERIFY_SCHEMA_OWNER_SQL,
     VERIFY_SECURITY_TRIGGERS_SQL,
@@ -103,7 +106,7 @@ class FakeCursor:
                     "trigger",
                     "plpgsql",
                     False,
-                    True,
+                    "search_path=pg_catalog, skill_registry",
                     True,
                 ),
                 (
@@ -113,7 +116,7 @@ class FakeCursor:
                     "trigger",
                     "plpgsql",
                     False,
-                    True,
+                    "search_path=pg_catalog, skill_registry",
                     True,
                 ),
                 (
@@ -123,7 +126,7 @@ class FakeCursor:
                     "trigger",
                     "plpgsql",
                     False,
-                    True,
+                    "search_path=pg_catalog, skill_registry",
                     True,
                 ),
                 (
@@ -133,7 +136,7 @@ class FakeCursor:
                     "trigger",
                     "plpgsql",
                     False,
-                    True,
+                    "search_path=pg_catalog, skill_registry",
                     True,
                 ),
                 (
@@ -143,7 +146,7 @@ class FakeCursor:
                     "trigger",
                     "plpgsql",
                     False,
-                    True,
+                    "search_path=pg_catalog, skill_registry",
                     True,
                 ),
                 (
@@ -153,7 +156,7 @@ class FakeCursor:
                     "trigger",
                     "plpgsql",
                     False,
-                    True,
+                    "search_path=pg_catalog, skill_registry",
                     True,
                 ),
             ],
@@ -165,7 +168,7 @@ class FakeCursor:
                     27,
                     False,
                     False,
-                    "O",
+                    "A",
                 ),
                 (
                     "skill_control_events_stamp_transaction",
@@ -174,7 +177,7 @@ class FakeCursor:
                     7,
                     False,
                     False,
-                    "O",
+                    "A",
                 ),
                 (
                     "skill_revision_artifacts_append_only",
@@ -183,7 +186,7 @@ class FakeCursor:
                     27,
                     False,
                     False,
-                    "O",
+                    "A",
                 ),
                 (
                     "skill_revision_files_append_only",
@@ -192,7 +195,7 @@ class FakeCursor:
                     27,
                     False,
                     False,
-                    "O",
+                    "A",
                 ),
                 (
                     "skill_revisions_guard_insert",
@@ -201,7 +204,7 @@ class FakeCursor:
                     7,
                     False,
                     False,
-                    "O",
+                    "A",
                 ),
                 (
                     "skill_revisions_guard_update",
@@ -210,7 +213,7 @@ class FakeCursor:
                     19,
                     False,
                     False,
-                    "O",
+                    "A",
                 ),
                 (
                     "skill_revisions_require_review_event",
@@ -219,7 +222,7 @@ class FakeCursor:
                     17,
                     True,
                     True,
-                    "O",
+                    "A",
                 ),
                 (
                     "skills_guard_update",
@@ -228,10 +231,13 @@ class FakeCursor:
                     19,
                     False,
                     False,
-                    "O",
+                    "A",
                 ),
             ],
             VERIFY_FORBIDDEN_GRANTS_SQL: [],
+            VERIFY_REGISTRY_ROLE_MEMBERSHIPS_SQL: [],
+            VERIFY_REGISTRY_ROLE_SETTINGS_SQL: [],
+            VERIFY_REPLICATION_PARAMETER_PRIVILEGES_SQL: [],
             VERIFY_SCHEMA_GRANTS_SQL: [
                 ("ai_agent_backup", "USAGE", False),
                 ("ai_agent_skill_registry_manager", "USAGE", False),
@@ -278,6 +284,9 @@ async def test_migration_applies_version_one_once_and_keeps_repeat_at_version_on
     assert cursor.executed.count(VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL) == 2
     assert cursor.executed.count(VERIFY_FUNCTION_BOUNDARY_SQL) == 2
     assert cursor.executed.count(VERIFY_SECURITY_TRIGGERS_SQL) == 2
+    assert cursor.executed.count(VERIFY_REGISTRY_ROLE_MEMBERSHIPS_SQL) == 2
+    assert cursor.executed.count(VERIFY_REGISTRY_ROLE_SETTINGS_SQL) == 2
+    assert cursor.executed.count(VERIFY_REPLICATION_PARAMETER_PRIVILEGES_SQL) == 2
 
 
 @pytest.mark.asyncio
@@ -309,6 +318,42 @@ async def test_migration_rejects_wrong_schema_owner() -> None:
 
     async def connector(database_url: str) -> MigrationConnection:
         return FakeConnection(WrongOwnerCursor())
+
+    settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
+    with pytest.raises(RuntimeError, match="verification failed"):
+        await run_migration(settings, connector=connector)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("verification_query", "forbidden_row"),
+    [
+        (
+            VERIFY_REGISTRY_ROLE_MEMBERSHIPS_SQL,
+            ("ai_agent_skill_registry_manager", "ai_agent_skill_registry_migrator"),
+        ),
+        (
+            VERIFY_REGISTRY_ROLE_SETTINGS_SQL,
+            ("ai_agent_skill_registry_manager", 0, "search_path=evil"),
+        ),
+        (
+            VERIFY_REPLICATION_PARAMETER_PRIVILEGES_SQL,
+            ("ai_agent_skill_registry_manager",),
+        ),
+    ],
+)
+async def test_migration_rejects_registry_role_bypass_state(
+    verification_query: str,
+    forbidden_row: tuple[object, ...],
+) -> None:
+    class UnsafeRoleStateCursor(FakeCursor):
+        async def fetchall(self) -> list[tuple[Any, ...]]:
+            if self._query == verification_query:
+                return [forbidden_row]
+            return await super().fetchall()
+
+    async def connector(database_url: str) -> MigrationConnection:
+        return FakeConnection(UnsafeRoleStateCursor(versions=(1,)))
 
     settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
     with pytest.raises(RuntimeError, match="verification failed"):

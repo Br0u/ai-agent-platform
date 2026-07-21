@@ -148,14 +148,15 @@ async def _insert_review_event(
     event_type: str,
     result_code: str = "ok",
     error_code: str | None = None,
-) -> None:
+) -> UUID:
+    event_id = uuid4()
     await connection.execute(
         """INSERT INTO skill_registry.skill_control_events (
           id, request_id, assertion_nonce, actor, event_type,
           target_id, result_code, error_code
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
         (
-            uuid4(),
+            event_id,
             uuid4(),
             uuid4(),
             str(reviewer_id),
@@ -165,6 +166,7 @@ async def _insert_review_event(
             error_code,
         ),
     )
+    return event_id
 
 
 @pytest.mark.asyncio
@@ -236,6 +238,37 @@ async def test_real_registry_migration_and_role_boundary() -> None:
         )
         assert await version_rows.fetchall() == [(1,)]
 
+        await owner.execute(
+            "GRANT ai_agent_skill_registry_manager TO ai_agent_skill_registry_migrator"
+        )
+        try:
+            with pytest.raises(RuntimeError, match="verification failed"):
+                await run_migration(settings)
+        finally:
+            await owner.execute(
+                "REVOKE ai_agent_skill_registry_manager FROM ai_agent_skill_registry_migrator"
+            )
+
+        await owner.execute("ALTER ROLE ai_agent_skill_registry_manager SET search_path = evil")
+        try:
+            with pytest.raises(RuntimeError, match="verification failed"):
+                await run_migration(settings)
+        finally:
+            await owner.execute("ALTER ROLE ai_agent_skill_registry_manager RESET ALL")
+
+        await owner.execute(
+            "GRANT SET ON PARAMETER session_replication_role TO ai_agent_skill_registry_manager"
+        )
+        try:
+            with pytest.raises(RuntimeError, match="verification failed"):
+                await run_migration(settings)
+        finally:
+            await owner.execute(
+                "REVOKE SET ON PARAMETER session_replication_role "
+                "FROM ai_agent_skill_registry_manager"
+            )
+        await run_migration(settings)
+
         actor_id = uuid4()
         reviewer_id = uuid4()
         skill_id = uuid4()
@@ -304,12 +337,34 @@ async def test_real_registry_migration_and_role_boundary() -> None:
                 )
 
         async with manager.transaction():
-            await _insert_review_event(
+            historical_event_id = await _insert_review_event(
                 manager,
                 revision_id=revision_id,
                 reviewer_id=reviewer_id,
                 event_type="revision_published",
             )
+        historical_transaction = await manager.execute(
+            """SELECT transaction_id
+            FROM skill_registry.skill_control_events
+            WHERE id = %s""",
+            (historical_event_id,),
+        )
+        historical_transaction_row = await historical_transaction.fetchone()
+        assert historical_transaction_row is not None
+        historical_transaction_id = historical_transaction_row[0]
+        assert isinstance(historical_transaction_id, int)
+        await owner.execute("DROP SCHEMA IF EXISTS evil CASCADE")
+        await owner.execute("CREATE SCHEMA evil")
+        await owner.execute("GRANT USAGE ON SCHEMA evil TO ai_agent_skill_registry_manager")
+        await owner.execute(
+            """CREATE FUNCTION evil.txid_current()
+            RETURNS bigint
+            LANGUAGE sql
+            IMMUTABLE
+            AS $$ SELECT %s::bigint $$"""
+            % historical_transaction_id
+        )
+        await manager.execute("SET search_path = evil, pg_catalog")
         with pytest.raises(psycopg.errors.CheckViolation):
             async with manager.transaction():
                 await manager.execute(
@@ -529,6 +584,13 @@ async def test_real_registry_migration_and_role_boundary() -> None:
             psycopg.errors.InsufficientPrivilege,
             "SELECT * FROM skill_registry.skills LIMIT 0",
         )
+        await _expect_database_error(
+            manager,
+            psycopg.errors.InsufficientPrivilege,
+            "SET session_replication_role = replica",
+        )
+        await manager.execute("RESET search_path")
+        await owner.execute("DROP SCHEMA evil CASCADE")
 
         async with owner.transaction():
             await owner.execute("SET LOCAL ROLE ai_agent_backup")

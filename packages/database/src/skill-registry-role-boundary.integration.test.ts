@@ -178,6 +178,11 @@ describePostgres(
             client.query("CREATE TABLE skill_registry.forbidden(id integer)"),
           "42501",
         );
+        await expectDatabaseError(
+          client,
+          () => client.query("SET session_replication_role = replica"),
+          "42501",
+        );
       } finally {
         await client.query("ROLLBACK");
         client.release();

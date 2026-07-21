@@ -55,7 +55,7 @@ EXPECTED_FUNCTION_BOUNDARY = frozenset(
         "trigger",
         "plpgsql",
         False,
-        True,
+        "search_path=pg_catalog, skill_registry",
         True,
     )
     for function_name in {
@@ -77,7 +77,7 @@ EXPECTED_SECURITY_TRIGGERS = frozenset(
             27,
             False,
             False,
-            "O",
+            "A",
         ),
         (
             "skill_control_events_stamp_transaction",
@@ -86,7 +86,7 @@ EXPECTED_SECURITY_TRIGGERS = frozenset(
             7,
             False,
             False,
-            "O",
+            "A",
         ),
         (
             "skill_revision_artifacts_append_only",
@@ -95,7 +95,7 @@ EXPECTED_SECURITY_TRIGGERS = frozenset(
             27,
             False,
             False,
-            "O",
+            "A",
         ),
         (
             "skill_revision_files_append_only",
@@ -104,7 +104,7 @@ EXPECTED_SECURITY_TRIGGERS = frozenset(
             27,
             False,
             False,
-            "O",
+            "A",
         ),
         (
             "skill_revisions_guard_insert",
@@ -113,7 +113,7 @@ EXPECTED_SECURITY_TRIGGERS = frozenset(
             7,
             False,
             False,
-            "O",
+            "A",
         ),
         (
             "skill_revisions_guard_update",
@@ -122,7 +122,7 @@ EXPECTED_SECURITY_TRIGGERS = frozenset(
             19,
             False,
             False,
-            "O",
+            "A",
         ),
         (
             "skill_revisions_require_review_event",
@@ -131,7 +131,7 @@ EXPECTED_SECURITY_TRIGGERS = frozenset(
             17,
             True,
             True,
-            "O",
+            "A",
         ),
         (
             "skills_guard_update",
@@ -140,7 +140,7 @@ EXPECTED_SECURITY_TRIGGERS = frozenset(
             19,
             False,
             False,
-            "O",
+            "A",
         ),
     }
 )
@@ -276,6 +276,7 @@ ALTER TABLE skill_registry.skill_control_events
 CREATE OR REPLACE FUNCTION skill_registry.guard_skill_update()
 RETURNS trigger
 LANGUAGE plpgsql
+SET search_path = pg_catalog, skill_registry
 AS $$
 BEGIN
   IF NEW.id IS DISTINCT FROM OLD.id
@@ -296,6 +297,7 @@ $$;
 CREATE OR REPLACE FUNCTION skill_registry.guard_revision_update()
 RETURNS trigger
 LANGUAGE plpgsql
+SET search_path = pg_catalog, skill_registry
 AS $$
 BEGIN
   IF NEW.id IS DISTINCT FROM OLD.id
@@ -338,6 +340,7 @@ $$;
 CREATE OR REPLACE FUNCTION skill_registry.guard_revision_insert()
 RETURNS trigger
 LANGUAGE plpgsql
+SET search_path = pg_catalog, skill_registry
 AS $$
 BEGIN
   IF NEW.state <> 'pending_review'
@@ -353,9 +356,10 @@ $$;
 CREATE OR REPLACE FUNCTION skill_registry.stamp_control_event_transaction()
 RETURNS trigger
 LANGUAGE plpgsql
+SET search_path = pg_catalog, skill_registry
 AS $$
 BEGIN
-  NEW.transaction_id := txid_current();
+  NEW.transaction_id := pg_catalog.txid_current();
   RETURN NEW;
 END;
 $$;
@@ -363,6 +367,7 @@ $$;
 CREATE OR REPLACE FUNCTION skill_registry.require_revision_review_event()
 RETURNS trigger
 LANGUAGE plpgsql
+SET search_path = pg_catalog, skill_registry
 AS $$
 DECLARE
   expected_event_type varchar(64);
@@ -380,7 +385,7 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1
     FROM skill_registry.skill_control_events AS event
-    WHERE event.transaction_id = txid_current()
+    WHERE event.transaction_id = pg_catalog.txid_current()
       AND event.target_id = NEW.id
       AND event.event_type = expected_event_type
       AND event.actor = NEW.reviewed_by::text
@@ -396,6 +401,7 @@ $$;
 CREATE OR REPLACE FUNCTION skill_registry.deny_append_only_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
+SET search_path = pg_catalog, skill_registry
 AS $$
 BEGIN
   RAISE EXCEPTION '% is append-only', TG_TABLE_NAME
@@ -425,35 +431,51 @@ REVOKE ALL ON FUNCTION skill_registry.deny_append_only_mutation() FROM PUBLIC;
 CREATE TRIGGER skills_guard_update
 BEFORE UPDATE ON skill_registry.skills
 FOR EACH ROW EXECUTE FUNCTION skill_registry.guard_skill_update();
+ALTER TABLE skill_registry.skills
+  ENABLE ALWAYS TRIGGER skills_guard_update;
 
 CREATE TRIGGER skill_revisions_guard_update
 BEFORE UPDATE ON skill_registry.skill_revisions
 FOR EACH ROW EXECUTE FUNCTION skill_registry.guard_revision_update();
+ALTER TABLE skill_registry.skill_revisions
+  ENABLE ALWAYS TRIGGER skill_revisions_guard_update;
 
 CREATE TRIGGER skill_revisions_guard_insert
 BEFORE INSERT ON skill_registry.skill_revisions
 FOR EACH ROW EXECUTE FUNCTION skill_registry.guard_revision_insert();
+ALTER TABLE skill_registry.skill_revisions
+  ENABLE ALWAYS TRIGGER skill_revisions_guard_insert;
 
 CREATE CONSTRAINT TRIGGER skill_revisions_require_review_event
 AFTER UPDATE ON skill_registry.skill_revisions
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION skill_registry.require_revision_review_event();
+ALTER TABLE skill_registry.skill_revisions
+  ENABLE ALWAYS TRIGGER skill_revisions_require_review_event;
 
 CREATE TRIGGER skill_control_events_stamp_transaction
 BEFORE INSERT ON skill_registry.skill_control_events
 FOR EACH ROW EXECUTE FUNCTION skill_registry.stamp_control_event_transaction();
+ALTER TABLE skill_registry.skill_control_events
+  ENABLE ALWAYS TRIGGER skill_control_events_stamp_transaction;
 
 CREATE TRIGGER skill_revision_artifacts_append_only
 BEFORE UPDATE OR DELETE ON skill_registry.skill_revision_artifacts
 FOR EACH ROW EXECUTE FUNCTION skill_registry.deny_append_only_mutation();
+ALTER TABLE skill_registry.skill_revision_artifacts
+  ENABLE ALWAYS TRIGGER skill_revision_artifacts_append_only;
 
 CREATE TRIGGER skill_revision_files_append_only
 BEFORE UPDATE OR DELETE ON skill_registry.skill_revision_files
 FOR EACH ROW EXECUTE FUNCTION skill_registry.deny_append_only_mutation();
+ALTER TABLE skill_registry.skill_revision_files
+  ENABLE ALWAYS TRIGGER skill_revision_files_append_only;
 
 CREATE TRIGGER skill_control_events_append_only
 BEFORE UPDATE OR DELETE ON skill_registry.skill_control_events
 FOR EACH ROW EXECUTE FUNCTION skill_registry.deny_append_only_mutation();
+ALTER TABLE skill_registry.skill_control_events
+  ENABLE ALWAYS TRIGGER skill_control_events_append_only;
 
 REVOKE ALL ON SCHEMA skill_registry FROM PUBLIC;
 REVOKE ALL ON SCHEMA skill_registry
@@ -613,7 +635,7 @@ VERIFY_FUNCTION_BOUNDARY_SQL = """SELECT
   p.prorettype::regtype::text,
   l.lanname::text,
   p.prosecdef,
-  p.proconfig IS NULL,
+  COALESCE(array_to_string(p.proconfig, ','), '')::text,
   NOT EXISTS (
     SELECT 1
     FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) AS acl
@@ -641,4 +663,52 @@ JOIN pg_proc AS function ON function.oid = trigger.tgfoid
 WHERE relation_schema.nspname = 'skill_registry'
   AND NOT trigger.tgisinternal
 ORDER BY trigger.tgname
+"""
+
+VERIFY_REGISTRY_ROLE_MEMBERSHIPS_SQL = """SELECT
+  granted_role.rolname::text,
+  member_role.rolname::text
+FROM pg_auth_members AS membership
+JOIN pg_roles AS granted_role ON granted_role.oid = membership.roleid
+JOIN pg_roles AS member_role ON member_role.oid = membership.member
+WHERE granted_role.rolname IN (
+    'ai_agent_skill_registry_migrator',
+    'ai_agent_skill_registry_manager',
+    'ai_agent_skill_registry_runtime'
+  )
+  OR member_role.rolname IN (
+    'ai_agent_skill_registry_migrator',
+    'ai_agent_skill_registry_manager',
+    'ai_agent_skill_registry_runtime'
+  )
+ORDER BY granted_role.rolname, member_role.rolname
+"""
+
+VERIFY_REGISTRY_ROLE_SETTINGS_SQL = """SELECT
+  role.rolname::text,
+  role_setting.setdatabase::oid::bigint,
+  array_to_string(role_setting.setconfig, ',')::text
+FROM pg_db_role_setting AS role_setting
+JOIN pg_roles AS role ON role.oid = role_setting.setrole
+WHERE role.rolname IN (
+  'ai_agent_skill_registry_migrator',
+  'ai_agent_skill_registry_manager',
+  'ai_agent_skill_registry_runtime'
+)
+  AND cardinality(role_setting.setconfig) > 0
+ORDER BY role.rolname, role_setting.setdatabase
+"""
+
+VERIFY_REPLICATION_PARAMETER_PRIVILEGES_SQL = """SELECT role_name::text
+FROM (VALUES
+  ('ai_agent_skill_registry_migrator'),
+  ('ai_agent_skill_registry_manager'),
+  ('ai_agent_skill_registry_runtime')
+) AS registry_role(role_name)
+WHERE pg_catalog.has_parameter_privilege(
+  role_name,
+  'session_replication_role',
+  'SET'
+)
+ORDER BY role_name
 """
