@@ -1,10 +1,16 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+import * as skillRegistryClientModule from "./skill-registry-client";
 
 import {
   SkillRegistryClientError,
   createSkillRegistryAssertionSigner,
   createSkillRegistryClient as createRawSkillRegistryClient,
   resolveSkillRegistrySettings,
+  type SkillRegistryTransport,
 } from "./skill-registry-client";
 
 const INTERNAL_URL = "http://skill-registry:7780";
@@ -23,8 +29,13 @@ const PRIVATE_ADDRESS = "10.42.0.7";
 type AddressResolver = (
   hostname: string,
 ) => Promise<readonly { address: string; family: 4 | 6 }[]>;
-type ClientOptions = Parameters<typeof createRawSkillRegistryClient>[0] & {
+type ClientOptions = Omit<
+  Parameters<typeof createRawSkillRegistryClient>[0],
+  "transport"
+> & {
   resolver?: AddressResolver;
+  fetcher?: typeof fetch;
+  transport?: SkillRegistryTransport;
 };
 
 const privateResolver: AddressResolver = async () => [
@@ -32,10 +43,29 @@ const privateResolver: AddressResolver = async () => [
 ];
 
 function createSkillRegistryClient(options: ClientOptions) {
+  const { fetcher, ...clientOptions } = options;
   return createRawSkillRegistryClient({
-    ...options,
+    ...clientOptions,
     resolver: options.resolver ?? privateResolver,
-  } as Parameters<typeof createRawSkillRegistryClient>[0]);
+    transport:
+      options.transport ??
+      (fetcher === undefined
+        ? undefined
+        : (input) => {
+            const host =
+              input.family === 6 ? `[${input.address}]` : input.address;
+            const origin = `http://${host}${input.port === 80 ? "" : `:${input.port}`}`;
+            return fetcher(`${origin}${input.path}`, {
+              method: input.method,
+              headers: { ...input.headers, Host: input.hostHeader },
+              body: input.body as BodyInit | undefined,
+              signal: input.signal,
+              redirect: "manual",
+              cache: "no-store",
+              credentials: "omit",
+            });
+          }),
+  });
 }
 
 const GOLDEN_REVIEW_ASSERTION =
@@ -296,24 +326,20 @@ describe("Skill Registry assertion signer", () => {
 });
 
 describe("private Skill Registry client", () => {
-  it("revalidates and snapshots mutable settings before any request", async () => {
-    const mutable = {
-      baseUrl: INTERNAL_URL,
-      controlKey: CONTROL_KEY,
-    };
+  it("accepts only the frozen branded settings object", async () => {
+    const resolved = settings();
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValue(jsonResponse(listResponse()));
     const client = createSkillRegistryClient({
-      settings: mutable,
+      settings: resolved,
       fetcher,
       clock: () => NOW,
       nonceFactory: () => NONCE,
     });
 
-    mutable.baseUrl = "http://8.8.8.8:7780";
-    mutable.controlKey = "mutated-control-key-that-must-never-be-used";
-
+    expect(Object.isFrozen(resolved)).toBe(true);
+    expect(Reflect.set(resolved, "baseUrl", "http://8.8.8.8:7780")).toBe(false);
     await expect(
       client.listSkills({
         actor: ACTOR,
@@ -334,6 +360,62 @@ describe("private Skill Registry client", () => {
     );
   });
 
+  it("rejects cloned, direct and proxied settings without touching dangerous properties", () => {
+    const resolved = settings();
+    const getter = vi.fn(() => CONTROL_KEY);
+    const direct = { baseUrl: INTERNAL_URL } as Record<string, unknown>;
+    Object.defineProperty(direct, "controlKey", {
+      get: getter,
+      enumerable: true,
+    });
+    const traps = {
+      get: vi.fn(),
+      getPrototypeOf: vi.fn(),
+      getOwnPropertyDescriptor: vi.fn(),
+      ownKeys: vi.fn(),
+    };
+    const proxied = new Proxy(resolved, {
+      get() {
+        traps.get();
+        throw new Error("private settings trap");
+      },
+      getPrototypeOf() {
+        traps.getPrototypeOf();
+        throw new Error("private settings trap");
+      },
+      getOwnPropertyDescriptor() {
+        traps.getOwnPropertyDescriptor();
+        throw new Error("private settings trap");
+      },
+      ownKeys() {
+        traps.ownKeys();
+        throw new Error("private settings trap");
+      },
+    });
+
+    for (const invalid of [{ ...resolved }, direct, proxied]) {
+      expect(() =>
+        createRawSkillRegistryClient({
+          settings: invalid as ReturnType<typeof settings>,
+        }),
+      ).toThrow("Skill Registry configuration is invalid");
+    }
+    expect(getter).not.toHaveBeenCalled();
+    expect(
+      Object.fromEntries(
+        Object.entries(traps).map(([name, trap]) => [
+          name,
+          trap.mock.calls.length,
+        ]),
+      ),
+    ).toEqual({
+      get: 0,
+      getPrototypeOf: 0,
+      getOwnPropertyDescriptor: 0,
+      ownKeys: 0,
+    });
+  });
+
   it.each([
     { baseUrl: "http://8.8.8.8:7780", controlKey: CONTROL_KEY },
     { baseUrl: `${INTERNAL_URL}/path`, controlKey: CONTROL_KEY },
@@ -342,7 +424,6 @@ describe("private Skill Registry client", () => {
     expect(() =>
       createRawSkillRegistryClient({
         settings: invalid,
-        fetcher: vi.fn<typeof fetch>(),
       }),
     ).toThrow("Skill Registry configuration is invalid");
   });
@@ -416,10 +497,12 @@ describe("private Skill Registry client", () => {
       .fn<typeof fetch>()
       .mockResolvedValue(jsonResponse(listResponse()));
     const client = createSkillRegistryClient({
-      settings: {
-        baseUrl: "http://[fd00::1]:7780",
-        controlKey: CONTROL_KEY,
-      },
+      settings: resolveSkillRegistrySettings({
+        SKILL_REGISTRY_INTERNAL_URL: "http://[fd00::1]:7780",
+        SKILL_REGISTRY_CONTROL_KEY: CONTROL_KEY,
+        OS_SECURITY_KEY: OS_KEY,
+        AGENT_CONFIG_CONTROL_KEY: AGENT_CONTROL_KEY,
+      }),
       resolver,
       fetcher,
       clock: () => NOW,
@@ -448,11 +531,20 @@ describe("private Skill Registry client", () => {
       .fn<typeof fetch>()
       .mockResolvedValue(jsonResponse(listResponse()));
     const client = createRawSkillRegistryClient({
-      settings: {
-        baseUrl: `http://${PRIVATE_ADDRESS}:7780`,
-        controlKey: CONTROL_KEY,
+      settings: resolveSkillRegistrySettings({
+        SKILL_REGISTRY_INTERNAL_URL: `http://${PRIVATE_ADDRESS}:7780`,
+        SKILL_REGISTRY_CONTROL_KEY: CONTROL_KEY,
+        OS_SECURITY_KEY: OS_KEY,
+        AGENT_CONFIG_CONTROL_KEY: AGENT_CONTROL_KEY,
+      }),
+      transport: (input) => {
+        const host = input.family === 6 ? `[${input.address}]` : input.address;
+        return fetcher(`http://${host}:${input.port}${input.path}`, {
+          method: input.method,
+          headers: { ...input.headers, Host: input.hostHeader },
+          signal: input.signal,
+        });
       },
-      fetcher,
       clock: () => NOW,
       nonceFactory: () => NONCE,
     });
@@ -472,6 +564,100 @@ describe("private Skill Registry client", () => {
           Host: `${PRIVATE_ADDRESS}:7780`,
         }),
       }),
+    );
+  });
+
+  it("sends a real pinned request with the original Host and exact path", async () => {
+    const candidate = Reflect.get(
+      skillRegistryClientModule,
+      "sendPinnedSkillRegistryHttpRequest",
+    ) as unknown;
+    expect(typeof candidate).toBe("function");
+    if (typeof candidate !== "function") return;
+    const transport = candidate as (input: {
+      address: string;
+      family: 4 | 6;
+      port: number;
+      hostHeader: string;
+      method: "GET" | "POST";
+      path: string;
+      headers: Readonly<Record<string, string>>;
+      body?: string | Uint8Array;
+      signal: AbortSignal;
+    }) => Promise<Response>;
+    let received:
+      | { host: string | undefined; path: string | undefined; remote: string }
+      | undefined;
+    const server = createServer((request, response) => {
+      received = {
+        host: request.headers.host,
+        path: request.url,
+        remote: request.socket.remoteAddress ?? "",
+      };
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "cache-control": "no-store",
+      });
+      response.end('{"version":"1"}');
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const port = (server.address() as AddressInfo).port;
+      const response = await transport({
+        address: "127.0.0.1",
+        family: 4,
+        port,
+        hostHeader: "skill-registry:7780",
+        method: "GET",
+        path: "/internal/skills?limit=1&offset=7",
+        headers: { Accept: "application/json" },
+        signal: new AbortController().signal,
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.text()).toBe('{"version":"1"}');
+      expect(received).toEqual({
+        host: "skill-registry:7780",
+        path: "/internal/skills?limit=1&offset=7",
+        remote: "127.0.0.1",
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it("clean-room sanitizes errors from the injected transport seam", async () => {
+    const secret = `${INTERNAL_URL} ${CONTROL_KEY} private transport body`;
+    const transport = vi.fn().mockRejectedValue(new Error(secret));
+    const client = createRawSkillRegistryClient({
+      settings: settings(),
+      resolver: privateResolver,
+      transport,
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+
+    let caught: unknown;
+    try {
+      await client.listSkills({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        limit: 50,
+        offset: 0,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(transport).toHaveBeenCalledOnce();
+    expect(caught).toMatchObject({ code: "transport_error" });
+    expect(`${String(caught)} ${JSON.stringify(caught)}`).not.toMatch(
+      /private|skill-registry|control-key/iu,
     );
   });
 

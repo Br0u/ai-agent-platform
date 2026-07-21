@@ -2,7 +2,9 @@ import "server-only";
 
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { lookup } from "node:dns/promises";
+import { request as nodeHttpRequest } from "node:http";
 import { isIP } from "node:net";
+import { Readable } from "node:stream";
 
 import {
   isCanonicalAdminSkillPath,
@@ -24,6 +26,7 @@ export type SkillRegistryEnvironment = {
 };
 
 export type SkillRegistrySettings = { baseUrl: string; controlKey: string };
+const SKILL_REGISTRY_SETTINGS_BRAND = new WeakSet<object>();
 export type SkillRegistryResolvedAddress = {
   address: string;
   family: 4 | 6;
@@ -31,6 +34,20 @@ export type SkillRegistryResolvedAddress = {
 export type SkillRegistryAddressResolver = (
   hostname: string,
 ) => Promise<readonly SkillRegistryResolvedAddress[]>;
+export type SkillRegistryTransportInput = Readonly<{
+  address: string;
+  family: 4 | 6;
+  port: number;
+  hostHeader: string;
+  method: "GET" | "POST";
+  path: string;
+  headers: Readonly<Record<string, string>>;
+  body?: string | Uint8Array;
+  signal: AbortSignal;
+}>;
+export type SkillRegistryTransport = (
+  input: SkillRegistryTransportInput,
+) => Promise<Response>;
 export type SkillRegistryAction =
   | "list"
   | "detail"
@@ -306,7 +323,12 @@ export function resolveSkillRegistrySettings(
       configurationError();
     }
   }
-  return Object.freeze({ baseUrl: url.origin, controlKey });
+  const settings: SkillRegistrySettings = {
+    baseUrl: url.origin,
+    controlKey,
+  };
+  SKILL_REGISTRY_SETTINGS_BRAND.add(settings);
+  return Object.freeze(settings);
 }
 
 type InternalSkillRegistrySettings = Readonly<{
@@ -314,10 +336,17 @@ type InternalSkillRegistrySettings = Readonly<{
   controlKey: string;
   hostname: string;
   hostHeader: string;
-  port: string;
+  port: number;
 }>;
 
 function validatedSettings(value: unknown): InternalSkillRegistrySettings {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !SKILL_REGISTRY_SETTINGS_BRAND.has(value)
+  ) {
+    configurationError();
+  }
   const snapshot = exactRecord(value, [["baseUrl", "controlKey"]]);
   if (
     snapshot === null ||
@@ -352,7 +381,7 @@ function validatedSettings(value: unknown): InternalSkillRegistrySettings {
       ? url.hostname.slice(1, -1)
       : url.hostname,
     hostHeader: url.host,
-    port: url.port,
+    port: url.port === "" ? 80 : Number(url.port),
   });
 }
 
@@ -383,10 +412,10 @@ const defaultAddressResolver: SkillRegistryAddressResolver = async (
   }));
 };
 
-async function pinnedOrigin(
+async function pinnedAddress(
   settings: InternalSkillRegistrySettings,
   resolver: SkillRegistryAddressResolver,
-): Promise<string> {
+): Promise<SkillRegistryResolvedAddress> {
   const resolved = await resolver(settings.hostname);
   if (!Array.isArray(resolved) || resolved.length < 1 || resolved.length > 64) {
     clientError("transport_error");
@@ -404,10 +433,65 @@ async function pinnedOrigin(
     }
     addresses.push({ address: address.address, family: address.family });
   }
-  const selected = addresses[0]!;
-  const host =
-    selected.family === 6 ? `[${selected.address}]` : selected.address;
-  return `http://${host}${settings.port === "" ? "" : `:${settings.port}`}`;
+  return addresses[0]!;
+}
+
+export function sendPinnedSkillRegistryHttpRequest(
+  input: SkillRegistryTransportInput,
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const headers: Record<string, string> = Object.create(null);
+    for (const [name, value] of Object.entries(input.headers)) {
+      if (name.toLowerCase() !== "host") headers[name] = value;
+    }
+    headers.Host = input.hostHeader;
+    const request = nodeHttpRequest(
+      {
+        protocol: "http:",
+        hostname: input.address,
+        family: input.family,
+        port: input.port,
+        method: input.method,
+        path: input.path,
+        headers,
+        signal: input.signal,
+        insecureHTTPParser: false,
+      },
+      (incoming) => {
+        const status = incoming.statusCode;
+        if (status === undefined) {
+          incoming.destroy();
+          reject(new Error("Invalid Skill Registry response"));
+          return;
+        }
+        const responseHeaders = new Headers();
+        for (let index = 0; index < incoming.rawHeaders.length; index += 2) {
+          responseHeaders.append(
+            incoming.rawHeaders[index]!,
+            incoming.rawHeaders[index + 1]!,
+          );
+        }
+        const body =
+          status === 204 || status === 205 || status === 304
+            ? null
+            : (Readable.toWeb(incoming) as ReadableStream<Uint8Array>);
+        try {
+          resolve(
+            new Response(body, {
+              status,
+              statusText: incoming.statusMessage,
+              headers: responseHeaders,
+            }),
+          );
+        } catch (error) {
+          incoming.destroy();
+          reject(error);
+        }
+      },
+    );
+    request.once("error", reject);
+    request.end(input.body);
+  });
 }
 
 function canonicalUuid(value: unknown): value is string {
@@ -905,13 +989,13 @@ function copyArchive(value: unknown): Uint8Array<ArrayBuffer> | null {
 
 export function createSkillRegistryClient(options: {
   settings: SkillRegistrySettings;
-  fetcher?: typeof fetch;
+  transport?: SkillRegistryTransport;
   resolver?: SkillRegistryAddressResolver;
   clock?: () => number;
   nonceFactory?: () => string;
 }): SkillRegistryClient {
   const settings = validatedSettings(options.settings);
-  const fetcher = options.fetcher ?? fetch;
+  const transport = options.transport ?? sendPinnedSkillRegistryHttpRequest;
   const resolver = options.resolver ?? defaultAddressResolver;
   const signer = createSkillRegistryAssertionSigner({
     controlKey: settings.controlKey,
@@ -925,7 +1009,7 @@ export function createSkillRegistryClient(options: {
     requestId: string;
     assertion: SkillRegistryAssertionInput;
     contentType?: "application/json" | "application/zip";
-    body?: BodyInit;
+    body?: string | Uint8Array;
     successStatus: 200 | 201;
     read(value: unknown): T | null;
     validate?(value: T): boolean;
@@ -938,7 +1022,6 @@ export function createSkillRegistryClient(options: {
       const headers: Record<string, string> = {
         Accept: "application/json",
         Authorization: `Bearer ${settings.controlKey}`,
-        Host: settings.hostHeader,
         "X-Request-Id": requestOptions.requestId,
         "X-Skill-Registry-Assertion": assertion,
       };
@@ -952,16 +1035,18 @@ export function createSkillRegistryClient(options: {
         }, CONNECT_TIMEOUT_MS);
       });
       const responsePromise = (async () => {
-        const origin = await pinnedOrigin(settings, resolver);
+        const address = await pinnedAddress(settings, resolver);
         if (controller.signal.aborted) clientError("timeout");
-        return fetcher(`${origin}${requestOptions.path}`, {
+        return transport({
+          address: address.address,
+          family: address.family,
+          port: settings.port,
+          hostHeader: settings.hostHeader,
           method: requestOptions.method,
+          path: requestOptions.path,
           headers,
           body: requestOptions.body,
           signal: controller.signal,
-          redirect: "manual",
-          cache: "no-store",
-          credentials: "omit",
         });
       })();
       const response = await Promise.race([responsePromise, connectDeadline]);

@@ -339,12 +339,85 @@ describe("admin Skill contracts", () => {
     collision.revision.fileCount = 4;
     collision.revision.extractedSize = 386;
     expect(parseAdminSkillRevisionDetailResponse(collision)).toBeNull();
+
+    const sigmaCollision = detailResponse();
+    sigmaCollision.files.push(
+      {
+        path: "references/σ.md",
+        sha256: "d".repeat(64),
+        size: 1,
+        mediaType: "text/plain",
+        kind: "reference",
+      },
+      {
+        path: "references/ς.md",
+        sha256: "e".repeat(64),
+        size: 1,
+        mediaType: "text/plain",
+        kind: "reference",
+      },
+    );
+    sigmaCollision.revision.fileCount = 4;
+    sigmaCollision.revision.extractedSize = 386;
+    expect(parseAdminSkillRevisionDetailResponse(sigmaCollision)).toBeNull();
+
+    const accentsRemainDistinct = detailResponse();
+    accentsRemainDistinct.files.push(
+      {
+        path: "references/a.md",
+        sha256: "d".repeat(64),
+        size: 1,
+        mediaType: "text/plain",
+        kind: "reference",
+      },
+      {
+        path: "references/á.md",
+        sha256: "e".repeat(64),
+        size: 1,
+        mediaType: "text/plain",
+        kind: "reference",
+      },
+      {
+        path: "references/e.md",
+        sha256: "f".repeat(64),
+        size: 1,
+        mediaType: "text/plain",
+        kind: "reference",
+      },
+      {
+        path: "references/é.md",
+        sha256: "1".repeat(64),
+        size: 1,
+        mediaType: "text/plain",
+        kind: "reference",
+      },
+    );
+    accentsRemainDistinct.revision.fileCount = 6;
+    accentsRemainDistinct.revision.extractedSize = 388;
+    expect(
+      parseAdminSkillRevisionDetailResponse(accentsRemainDistinct),
+    ).toEqual(accentsRemainDistinct);
   });
 
-  it("binds every diff path to the canonical file index", () => {
-    const value = detailResponse();
-    value.diff!.files[0]!.path = "scripts/deleted.py";
-    expect(parseAdminSkillRevisionDetailResponse(value)).toBeNull();
+  it("enforces current-file membership by diff status", () => {
+    const addedMissing = detailResponse();
+    addedMissing.diff!.files[0]!.path = "scripts/missing.py";
+    expect(parseAdminSkillRevisionDetailResponse(addedMissing)).toBeNull();
+
+    const deletedStillPresent = detailResponse();
+    deletedStillPresent.diff!.files[0]!.status = "deleted";
+    expect(
+      parseAdminSkillRevisionDetailResponse(deletedStillPresent),
+    ).toBeNull();
+
+    const deleted = detailResponse();
+    deleted.diff!.files[0] = {
+      path: "scripts/old.py",
+      status: "deleted",
+      binary: false,
+      diff: "-print('old')\n",
+    };
+    expect(parseAdminSkillRevisionDetailResponse(deleted)).toEqual(deleted);
   });
 
   it("accepts more than 1152 bounded findings when the response is otherwise valid", () => {

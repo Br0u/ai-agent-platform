@@ -148,10 +148,6 @@ const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const MODULE = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const MEDIA_TYPE = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u;
 const UTF8_ENCODER = new TextEncoder();
-const PATH_COLLATOR = new Intl.Collator("und", {
-  usage: "search",
-  sensitivity: "base",
-});
 
 function utf8Length(value: string): number {
   return UTF8_ENCODER.encode(value).byteLength;
@@ -334,12 +330,15 @@ export function isCanonicalAdminSkillPath(value: unknown): value is string {
 }
 
 function uniqueEquivalentPaths(paths: readonly string[]): boolean {
-  for (let left = 0; left < paths.length; left += 1) {
-    for (let right = left + 1; right < paths.length; right += 1) {
-      if (PATH_COLLATOR.compare(paths[left]!, paths[right]!) === 0) {
-        return false;
-      }
-    }
+  const keys = new Set<string>();
+  for (const path of paths) {
+    const key = path
+      .normalize("NFC")
+      .toUpperCase()
+      .toLowerCase()
+      .normalize("NFC");
+    if (keys.has(key)) return false;
+    keys.add(key);
   }
   return true;
 }
@@ -787,11 +786,15 @@ export function parseAdminSkillRevisionDetailResponse(
       let diffBytes = 0;
       for (const raw of rawDiffFiles) {
         const file = exactRecord(raw, ["path", "status", "binary", "diff"]);
+        const inCurrentFiles =
+          file !== null &&
+          typeof file.path === "string" &&
+          filePathIndex.has(file.path);
         if (
           file === null ||
           !isCanonicalAdminSkillPath(file.path) ||
-          !filePathIndex.has(file.path) ||
           !enumValue(file.status, ["added", "deleted", "modified"] as const) ||
+          (file.status === "deleted" ? inCurrentFiles : !inCurrentFiles) ||
           typeof file.binary !== "boolean" ||
           !boundedText(file.diff, MAX_DIFF_BYTES, {
             empty: true,
