@@ -23,6 +23,7 @@ output
 backups
 data
 uploads
+skill-registry-artifacts
 .env
 .env.*
 !.env.example

@@ -175,7 +175,10 @@ def test_load_scan_policy_accepts_only_root_owned_0644_strict_sorted_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manifest = tmp_path / "imports.json"
-    _write_manifest(manifest, b'{"allowedPythonModules":["httpx","yaml"]}\n')
+    _write_manifest(
+        manifest,
+        b'{"version":1,"pythonModules":["httpx","yaml"]}\n',
+    )
     _mock_root_owned(monkeypatch)
 
     policy = load_scan_policy(manifest)
@@ -186,12 +189,15 @@ def test_load_scan_policy_accepts_only_root_owned_0644_strict_sorted_json(
 @pytest.mark.parametrize(
     "raw",
     [
-        b'{"allowedPythonModules":["yaml","httpx"]}',
-        b'{"allowedPythonModules":["httpx","httpx"]}',
-        b'{"allowedPythonModules":["httpx"],"extra":true}',
-        b'{"allowedPythonModules":["httpx"],"allowedPythonModules":[]}',
-        b'{"allowedPythonModules":["httpx.bad"]}',
-        b'{"allowedPythonModules":"httpx"}',
+        b'{"version":1,"pythonModules":["yaml","httpx"]}',
+        b'{"version":1,"pythonModules":["httpx","httpx"]}',
+        b'{"version":1,"pythonModules":["httpx"],"extra":true}',
+        b'{"version":1,"pythonModules":["httpx"],"pythonModules":[]}',
+        b'{"version":1,"pythonModules":["httpx.bad"]}',
+        b'{"version":1,"pythonModules":"httpx"}',
+        b'{"version":2,"pythonModules":["httpx"]}',
+        b'{"version":true,"pythonModules":["httpx"]}',
+        b'{"allowedPythonModules":["httpx"]}',
     ],
 )
 def test_load_scan_policy_rejects_invalid_schema_order_duplicates_or_extra_fields(
@@ -209,7 +215,7 @@ def test_load_scan_policy_rejects_symlink_wrong_mode_and_non_root_owner(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manifest = tmp_path / "imports.json"
-    _write_manifest(manifest, b'{"allowedPythonModules":[]}')
+    _write_manifest(manifest, b'{"version":1,"pythonModules":[]}')
     link = tmp_path / "link.json"
     link.symlink_to(manifest)
 

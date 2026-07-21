@@ -13,7 +13,7 @@ if [ -z "${SECRET_RUN_AS-}" ]; then
   exit 1
 fi
 case "$SECRET_RUN_AS" in
-  postgres|agent|node) run_as=$SECRET_RUN_AS ;;
+  postgres|agent|node|skill-registry) run_as=$SECRET_RUN_AS ;;
   *)
     printf '%s\n' "invalid SECRET_RUN_AS target" >&2
     exit 1

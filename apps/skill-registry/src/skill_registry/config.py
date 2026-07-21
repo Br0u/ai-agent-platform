@@ -16,7 +16,7 @@ from skill_registry.types import ScanPolicy
 
 _IMPORT_MANIFEST_MAX_BYTES = 64 * 1024
 _IMPORT_NAME_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}\Z")
-_IMPORT_FIELDS = frozenset({"allowedPythonModules"})
+_IMPORT_FIELDS = frozenset({"version", "pythonModules"})
 
 
 class RegistryConfigError(RuntimeError):
@@ -70,7 +70,10 @@ def load_scan_policy(path: Path) -> ScanPolicy:
         )
         if type(parsed) is not dict or set(parsed) != _IMPORT_FIELDS:
             raise ValueError("schema")
-        candidate = cast(dict[str, object], parsed)["allowedPythonModules"]
+        manifest = cast(dict[str, object], parsed)
+        if type(manifest["version"]) is not int or manifest["version"] != 1:
+            raise ValueError("version")
+        candidate = manifest["pythonModules"]
         if type(candidate) is not list or len(candidate) > 256:
             raise ValueError("modules")
         if any(

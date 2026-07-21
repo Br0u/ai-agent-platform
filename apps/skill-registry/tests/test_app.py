@@ -321,7 +321,7 @@ def test_pool_open_failure_closes_pool_and_scrubs_exception_tree(tmp_path: Path)
 
 def test_lifespan_reads_policy_once_builds_one_service_and_closes_pool(tmp_path: Path) -> None:
     manifest = tmp_path / "imports.json"
-    manifest.write_text('{"allowedPythonModules":["third_party"]}')
+    manifest.write_text('{"version":1,"pythonModules":["third_party"]}')
     pool = FakePool()
     loads: list[Path] = []
     policies: list[ScanPolicy] = []

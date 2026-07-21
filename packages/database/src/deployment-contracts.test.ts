@@ -44,6 +44,12 @@ const composeSecretKeys = [
   "AGENT_CONTROL_DATABASE_URL",
   "MODEL_CONFIG_ENCRYPTION_KEY",
   "AGENT_CONFIG_CONTROL_KEY",
+  "SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD",
+  "SKILL_REGISTRY_DATABASE_PASSWORD",
+  "SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD",
+  "SKILL_REGISTRY_MIGRATOR_DATABASE_URL",
+  "SKILL_REGISTRY_DATABASE_URL",
+  "SKILL_REGISTRY_CONTROL_KEY",
 ] as const;
 
 type RenderedSecretAttachment = string | { source?: string; target?: string };
@@ -51,7 +57,12 @@ type RenderedSecretAttachment = string | { source?: string; target?: string };
 type RenderedNetworkAttachment = null | { gw_priority?: number };
 type RenderedVolumeAttachment =
   | string
-  | { source?: string; target?: string; read_only?: boolean };
+  | {
+      type?: string;
+      source?: string;
+      target?: string;
+      read_only?: boolean;
+    };
 
 type RenderedService = {
   build?: { target?: string };
@@ -578,7 +589,9 @@ describe("production deployment security contracts", () => {
     }
     expect(webService).not.toContain("ASSISTANT_AGENTOS_DEFAULT_AGENT_ID");
     expect(webService).not.toContain("MODEL_API_KEY");
-    expect(webService).not.toMatch(/agent:[\s\S]*condition: service_healthy/u);
+    expect(webService).not.toContain(
+      "      agent:\n        condition: service_healthy",
+    );
     expect(webService).not.toMatch(/^\s{4}ports:/mu);
     expect(agentService).not.toMatch(/^\s{4}ports:/mu);
     expect(proxyService).toMatch(/^\s{4}ports:/mu);
@@ -1752,6 +1765,209 @@ exit 0
     );
   });
 
+  it("deploys the Skill Registry behind ordered least-privilege boundaries", () => {
+    const rendered = renderComposeFixture();
+    const bootstrap = rendered.services["skill-registry-bootstrap"];
+    const migration = rendered.services["skill-registry-migrate"];
+    const registry = rendered.services["skill-registry"];
+    const web = rendered.services.web;
+    const agent = rendered.services.agent;
+    const registrySecretSources = new Set([
+      "skill_registry_migrator_database_password",
+      "skill_registry_database_password",
+      "skill_registry_runtime_database_password",
+      "skill_registry_migrator_database_url",
+      "skill_registry_database_url",
+      "skill_registry_control_key",
+    ]);
+    const sources = (service: RenderedService | undefined) =>
+      new Set(
+        (service?.secrets ?? [])
+          .map(secretSource)
+          .filter((source): source is string => source !== undefined),
+      );
+    const visibleRegistrySources = (service: RenderedService | undefined) =>
+      new Set(
+        [...sources(service)].filter((source) =>
+          registrySecretSources.has(source),
+        ),
+      );
+    const registrySecretHolders = Object.fromEntries(
+      [...registrySecretSources].map((source) => [
+        source,
+        Object.entries(rendered.services)
+          .filter(([, service]) => sources(service).has(source))
+          .map(([name]) => name),
+      ]),
+    );
+
+    expect(bootstrap).toBeDefined();
+    expect(migration).toBeDefined();
+    expect(registry).toBeDefined();
+
+    const dockerfile = read("apps/skill-registry/Dockerfile");
+    const runtimeImports = read("infra/agent/skill-runtime-imports.json");
+    const runner = read("infra/docker/run-with-secret-env.sh");
+
+    expect(runtimeImports).toBe(
+      '{"version":1,"pythonModules":["agno","cryptography","pydantic"]}\n',
+    );
+    expect(JSON.parse(runtimeImports)).toEqual({
+      version: 1,
+      pythonModules: ["agno", "cryptography", "pydantic"],
+    });
+
+    const pinnedPythonImage =
+      "python:3.13.13-slim-trixie@sha256:aa938a849bcb82dce8f49480f056ab82bf5c1c3ebc294f0430f37b6820e7f286";
+    expect(
+      dockerfile.match(new RegExp(`FROM ${pinnedPythonImage}`, "gu")),
+    ).toHaveLength(2);
+    expect(dockerfile).toContain(
+      'RUN test "$(python --version)" = "Python 3.13.13"',
+    );
+    expect(dockerfile).toContain("uv sync --frozen --no-dev");
+    expect(dockerfile).toContain(
+      "groupadd --system --gid 10002 skill-registry",
+    );
+    expect(dockerfile).toContain(
+      "useradd --system --uid 10002 --gid skill-registry",
+    );
+    expect(dockerfile).toContain(
+      "COPY --chown=root:root --chmod=0644 infra/agent/skill-runtime-imports.json /etc/aap/skill-runtime-imports.json",
+    );
+    expect(dockerfile).toContain(
+      "COPY --chown=root:root --chmod=0755 infra/docker/run-with-secret-env.sh /opt/aap/run-with-secret-env.sh",
+    );
+    expect(dockerfile).not.toContain("COPY . .");
+    expect(runner).toContain("postgres|agent|node|skill-registry");
+
+    expect(bootstrap?.depends_on?.db?.condition).toBe("service_healthy");
+    expect(bootstrap?.depends_on?.["agno-bootstrap"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(migration?.depends_on?.["skill-registry-bootstrap"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(registry?.depends_on?.["skill-registry-migrate"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(web?.depends_on?.["skill-registry"]?.condition).toBe(
+      "service_healthy",
+    );
+    expect(migration?.command).toEqual([
+      "python",
+      "-m",
+      "skill_registry.migrate",
+    ]);
+
+    expect(sources(bootstrap)).toEqual(
+      new Set([
+        "postgres_password",
+        "skill_registry_migrator_database_password",
+        "skill_registry_database_password",
+        "skill_registry_runtime_database_password",
+      ]),
+    );
+    expect(sources(migration)).toEqual(
+      new Set(["skill_registry_migrator_database_url"]),
+    );
+    expect(sources(registry)).toEqual(
+      new Set(["skill_registry_database_url", "skill_registry_control_key"]),
+    );
+    expect(visibleRegistrySources(web)).toEqual(
+      new Set(["skill_registry_control_key"]),
+    );
+    expect(visibleRegistrySources(agent)).toEqual(new Set());
+    expect(registrySecretHolders).toEqual({
+      skill_registry_migrator_database_password: ["skill-registry-bootstrap"],
+      skill_registry_database_password: ["skill-registry-bootstrap"],
+      skill_registry_runtime_database_password: ["skill-registry-bootstrap"],
+      skill_registry_migrator_database_url: ["skill-registry-migrate"],
+      skill_registry_database_url: ["skill-registry"],
+      skill_registry_control_key: ["skill-registry", "web"],
+    });
+    expect(web?.environment?.SECRET_ENV_SPECS).toContain(
+      "SKILL_REGISTRY_CONTROL_KEY=/run/secrets/skill_registry_control_key",
+    );
+    expect(web?.environment?.SKILL_REGISTRY_INTERNAL_URL).toBe(
+      "http://skill-registry:7788",
+    );
+    expect(web?.environment?.SECRET_ENV_SPECS).not.toMatch(
+      /SKILL_REGISTRY_(?:MIGRATOR_)?DATABASE_URL/u,
+    );
+    expect(agent?.environment?.SECRET_ENV_SPECS ?? "").not.toContain(
+      "SKILL_REGISTRY",
+    );
+
+    expect(registry?.user).toBe("root");
+    expect(registry?.entrypoint).toEqual(["/opt/aap/run-with-secret-env.sh"]);
+    expect(registry?.environment?.SECRET_RUN_AS).toBe("skill-registry");
+    expect(registry?.environment?.SECRET_ENV_SPECS).toContain(
+      "SKILL_REGISTRY_DATABASE_URL=/run/secrets/skill_registry_database_url",
+    );
+    expect(registry?.environment?.SECRET_ENV_SPECS).toContain(
+      "SKILL_REGISTRY_CONTROL_KEY=/run/secrets/skill_registry_control_key",
+    );
+    expect(registry?.environment?.SKILL_RUNTIME_IMPORTS_FILE).toBe(
+      "/etc/aap/skill-runtime-imports.json",
+    );
+    expect(registry?.read_only).toBe(true);
+    expect(registry?.tmpfs).toEqual(["/tmp:rw,noexec,nosuid,nodev,size=64m"]);
+    expect(new Set(registry?.cap_drop)).toEqual(new Set(["ALL"]));
+    expect(new Set(registry?.cap_add)).toEqual(
+      new Set(["DAC_OVERRIDE", "SETGID", "SETUID"]),
+    );
+    expect(registry?.security_opt).toContain("no-new-privileges:true");
+    expect(Number(registry?.mem_limit)).toBe(512 * 1_024 * 1_024);
+    expect(Number(registry?.cpus)).toBe(1);
+    expect(registry?.pids_limit).toBe(256);
+    expect(registry?.ports ?? []).toEqual([]);
+    expect(Object.keys(registry?.networks ?? {})).toEqual(["backend"]);
+    expect(registry?.volumes ?? []).toEqual([]);
+    expect(registry?.healthcheck?.test?.join(" ")).toContain(
+      "/internal/health/ready",
+    );
+    for (const service of [bootstrap, migration]) {
+      expect(service?.read_only).toBe(true);
+      expect(new Set(service?.cap_drop)).toEqual(new Set(["ALL"]));
+      expect(new Set(service?.cap_add)).toEqual(
+        new Set(["DAC_OVERRIDE", "SETGID", "SETUID"]),
+      );
+      expect(service?.security_opt).toContain("no-new-privileges:true");
+      expect(Object.keys(service?.networks ?? {})).toEqual(["backend"]);
+      expect(service?.ports ?? []).toEqual([]);
+    }
+
+    const databaseVolumes = rendered.services.db?.volumes ?? [];
+    expect(databaseVolumes).toContainEqual(
+      expect.objectContaining({
+        type: "volume",
+        source: "db_data",
+        target: "/var/lib/postgresql",
+      }),
+    );
+    expect(read(".gitignore")).toContain("/skill-registry-artifacts/");
+    expect(read(".dockerignore")).toContain("skill-registry-artifacts");
+    const example = read(".env.example");
+    expect(example).toContain(
+      "SKILL_REGISTRY_INTERNAL_URL=http://skill-registry:7788",
+    );
+    for (const key of [
+      "SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD_FILE",
+      "SKILL_REGISTRY_DATABASE_PASSWORD_FILE",
+      "SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD_FILE",
+      "SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE",
+      "SKILL_REGISTRY_DATABASE_URL_FILE",
+      "SKILL_REGISTRY_CONTROL_KEY_FILE",
+    ]) {
+      expect(example).toMatch(new RegExp(`^${key}=`, "mu"));
+    }
+    expect(example).not.toMatch(
+      /^SKILL_REGISTRY_(?:MIGRATOR_)?DATABASE_URL=/mu,
+    );
+    expect(example).not.toMatch(/^SKILL_REGISTRY_CONTROL_KEY=/mu);
+  });
+
   it("documents control-role secrets, migrations, and dynamic precedence", () => {
     const example = read(".env.example");
     const dockerReadme = read("infra/docker/README.md");
@@ -2078,6 +2294,9 @@ exit 0
       "agent-migrate": "agent",
       "agent-control-bootstrap": "postgres",
       "agent-control-migrate": "agent",
+      "skill-registry-bootstrap": "postgres",
+      "skill-registry-migrate": "skill-registry",
+      "skill-registry": "skill-registry",
       agent: "agent",
       web: "node",
     } as const;
