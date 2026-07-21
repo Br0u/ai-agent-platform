@@ -173,7 +173,6 @@ runtime_select_error_file=
 active_docker_pid=
 active_docker_phase=
 docker_command_timed_out=false
-docker_command_outcome=definite_failure
 cleanup_running=false
 cleanup_error_reported=false
 docker_query_state=unknown
@@ -210,7 +209,6 @@ run_bounded_docker() {
   : >"$docker_diagnostic_path"
   chmod 600 "$docker_output_path" "$docker_diagnostic_path"
   docker_command_timed_out=false
-  docker_command_outcome=ambiguous
   docker "$@" >"$docker_output_path" 2>"$docker_diagnostic_path" &
   active_docker_pid=$!
   active_docker_phase=$docker_phase
@@ -233,11 +231,6 @@ run_bounded_docker() {
   fi
   active_docker_pid=
   active_docker_phase=
-  if [ "$docker_status" -eq 0 ]; then
-    docker_command_outcome=success
-  else
-    docker_command_outcome=definite_failure
-  fi
   return "$docker_status"
 }
 
@@ -276,9 +269,6 @@ run_registered_create() {
     return 0
   else
     create_status=$?
-  fi
-  if [ "$docker_command_outcome" = definite_failure ]; then
-    set_docker_resource_outcome "$resource_key" definite_failure
   fi
   return "$create_status"
 }
@@ -431,7 +421,6 @@ reconcile_registered_resource() {
   resource_name="$(cat "$resource_path/name")"
   resource_outcome="$(cat "$resource_path/outcome")"
   case "$resource_outcome" in
-    definite_failure) return 0 ;;
     success)
       reconcile_successful_resource \
         "$resource_type" "$resource_name" "$resource_key"

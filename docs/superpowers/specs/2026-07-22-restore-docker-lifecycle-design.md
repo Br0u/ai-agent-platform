@@ -13,20 +13,17 @@ Use one POSIX-sh Docker supervisor and one file-backed resource registry.
 The supervisor is the only function allowed to invoke `docker`. It receives a
 timeout, phase, explicit stdout file, explicit diagnostic file, and Docker
 arguments. It tracks the active PID, terminates it within the configured grace
-period, and reports `SUCCESS`, `DEFINITE_FAILURE`, or `AMBIGUOUS` without
+period, and reports `SUCCESS` or `AMBIGUOUS` without
 printing captured output.
 
 The registry lives below the mode-0700 restore temporary directory. Each
 registered resource has mode-0600 files containing only its controlled key,
 type, exact generated name, and create outcome. A resource is registered as
 `AMBIGUOUS` before its create request. A normal zero exit changes it to
-`SUCCESS`; a normal nonzero exit changes it to `DEFINITE_FAILURE`. Timeout,
-signal, or supervisor termination keeps it `AMBIGUOUS`.
-
-`DEFINITE_FAILURE` is a terminal non-resource outcome. Its registry record is
-retained until final cleanup for auditability, but cleanup does not query or
-remove it. Registry records never contain command arguments, paths, output, or
-diagnostics.
+`SUCCESS`. Once the create request is launched, every nonzero result—including
+connection or response failure, timeout, signal, and supervisor termination—
+keeps it `AMBIGUOUS`; generic Docker CLI status cannot prove non-creation.
+Registry records never contain command arguments, paths, output, or diagnostics.
 
 Every restore container uses an exact unique name and the same lifecycle:
 register, bounded create, bounded start, bounded wait or exec, and one cleanup

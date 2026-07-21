@@ -4231,7 +4231,12 @@ record="$registry/10-decrypt"
     printf '%s|%s|%s\\n' "$field" "$(mode_of "$record/$field")" "$(cat "$record/$field")"
   done
 } >"$CAPTURE_DIR/registry.snapshot"
-exit 1
+case "$1" in
+  create) exit 1 ;;
+  rm) exit 0 ;;
+  ps) exit 0 ;;
+  *) exit 1 ;;
+esac
 `,
         { mode: 0o700 },
       );
@@ -4418,6 +4423,315 @@ esac
       rmSync(sandbox, { recursive: true, force: true });
     }
   }, 20_000);
+
+  it("keeps every nonzero launched create ambiguous until removal is proven", () => {
+    const sandbox = mkdtempSync(
+      path.join(tmpdir(), "restore-create-classification-"),
+    );
+    const bin = path.join(sandbox, "bin");
+    const fixture = path.join(sandbox, "fixture");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const dumpFile = path.join(fixture, "database.dump");
+    const manifestFile = path.join(fixture, "skill-backup.manifest");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+
+    try {
+      for (const directory of [bin, fixture]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(dumpFile, "fake-custom-database-dump", { mode: 0o600 });
+      const dumpSha256 = createHash("sha256")
+        .update(readFileSync(dumpFile))
+        .digest("hex");
+      writeFileSync(
+        manifestFile,
+        `format_version=1
+dump_sha256=${dumpSha256}
+skill_registry_schema_version=1
+skill_revision_count=0
+skill_artifact_count=0
+skill_file_count=0
+`,
+        { mode: 0o600 },
+      );
+      const archive = spawnSync(
+        "tar",
+        [
+          "-cf",
+          backupFile,
+          "-C",
+          fixture,
+          "skill-backup.manifest",
+          "database.dump",
+        ],
+        { encoding: "utf8" },
+      );
+      expect(archive.status, `${archive.stdout}${archive.stderr}`).toBe(0);
+
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+
+container_resource() {
+  resource_name=$1
+  case "$resource_name" in
+    aap-restore-decrypt-*) printf '%s\n' decrypt ;;
+    aap-restore-bundle-*) printf '%s\n' bundle ;;
+    aap-restore-digest-*) printf '%s\n' digest ;;
+    aap-restore-registry-*) printf '%s\n' registry ;;
+    aap-restore-drill-*) printf '%s\n' database ;;
+    *) exit 1 ;;
+  esac
+}
+
+command=$1
+shift
+case "$command" in
+  create)
+    previous=
+    name=
+    work_mount=
+    input_mount=
+    for argument in "$@"; do
+      if [ "$previous" = --name ]; then
+        name=$argument
+      fi
+      case "$argument" in
+        *:/work) work_mount=\${argument%:/work} ;;
+        *:/input:ro) input_mount=\${argument%:/input:ro} ;;
+      esac
+      previous=$argument
+    done
+    resource=$(container_resource "$name")
+    printf '%s\n' "$name" >"$CAPTURE_DIR/$resource.name"
+    [ -z "$work_mount" ] || printf '%s\n' "$work_mount" >"$CAPTURE_DIR/$resource.work"
+    [ -z "$input_mount" ] || printf '%s\n' "$input_mount" >"$CAPTURE_DIR/$resource.input"
+    case "$FAKE_DOCKER_MODE:$resource" in
+      immediate_container:decrypt)
+        : >"$CAPTURE_DIR/decrypt.exists"
+        exit 1
+        ;;
+      absent_container:decrypt)
+        exit 1
+        ;;
+    esac
+    : >"$CAPTURE_DIR/$resource.exists"
+    printf '%s\n' fake-container-id
+    ;;
+  start)
+    target=$1
+    resource=
+    for candidate in decrypt bundle digest database registry; do
+      if [ -f "$CAPTURE_DIR/$candidate.name" ] &&
+         [ "$target" = "$(cat "$CAPTURE_DIR/$candidate.name")" ]; then
+        resource=$candidate
+      fi
+    done
+    case "$resource" in
+      decrypt)
+        work=$(cat "$CAPTURE_DIR/decrypt.work")
+        cp "$FAKE_BACKUP_FILE" "$work/restored.bundle.partial"
+        ;;
+      bundle)
+        work=$(cat "$CAPTURE_DIR/bundle.work")
+        mkdir "$work/extracted"
+        chmod 700 "$work/extracted"
+        tar -xf "$work/restored.bundle" -C "$work/extracted"
+        ;;
+      digest)
+        work=$(cat "$CAPTURE_DIR/digest.work")
+        input=$(cat "$CAPTURE_DIR/digest.input")
+        sha256sum "$input/database.dump" | awk '{ print $1 }' >"$work/dump-digest"
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  wait) printf '%s\n' 0 ;;
+  ps)
+    for resource in decrypt bundle digest database registry; do
+      if [ -f "$CAPTURE_DIR/$resource.exists" ]; then
+        cat "$CAPTURE_DIR/$resource.name"
+      fi
+    done
+    ;;
+  rm)
+    target=
+    for argument in "$@"; do target=$argument; done
+    for resource in decrypt bundle digest database registry; do
+      if [ -f "$CAPTURE_DIR/$resource.name" ] &&
+         [ "$target" = "$(cat "$CAPTURE_DIR/$resource.name")" ]; then
+        if [ "$FAKE_DOCKER_MODE:$resource" = immediate_container:decrypt ]; then
+          count=$(cat "$CAPTURE_DIR/decrypt.rm-count" 2>/dev/null || printf 0)
+          count=$((count + 1))
+          printf '%s\n' "$count" >"$CAPTURE_DIR/decrypt.rm-count"
+          [ "$count" -gt 1 ] || exit 1
+        fi
+        [ -f "$CAPTURE_DIR/$resource.exists" ] || exit 1
+        /bin/rm -f "$CAPTURE_DIR/$resource.exists"
+        exit 0
+      fi
+    done
+    exit 1
+    ;;
+  volume)
+    subcommand=$1
+    shift
+    case "$subcommand" in
+      create)
+        printf '%s\n' "$1" >"$CAPTURE_DIR/volume.name"
+        if [ "$FAKE_DOCKER_MODE" = late_volume ]; then
+          (
+            sleep 0.5
+            : >"$CAPTURE_DIR/volume.exists"
+            : >"$CAPTURE_DIR/late-volume.completed"
+          ) &
+          printf '%s\n' "$!" >"$CAPTURE_DIR/late-volume.pid"
+          exit 1
+        fi
+        exit 1
+        ;;
+      rm)
+        [ -f "$CAPTURE_DIR/volume.exists" ] || exit 1
+        /bin/rm -f "$CAPTURE_DIR/volume.exists"
+        ;;
+      ls)
+        if [ -f "$CAPTURE_DIR/volume.exists" ]; then
+          cat "$CAPTURE_DIR/volume.name"
+        fi
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const cases = [
+        {
+          mode: "immediate_container",
+          expectedOutput: "restore drill decryption failed",
+        },
+        {
+          mode: "late_volume",
+          expectedOutput: "restore drill failed database startup",
+        },
+        {
+          mode: "absent_container",
+          expectedOutput:
+            "restore drill decryption failed\nrestore drill cleanup failed",
+        },
+      ] as const;
+      const failures: string[] = [];
+
+      for (const testCase of cases) {
+        const caseRoot = path.join(sandbox, testCase.mode);
+        const captures = path.join(caseRoot, "captures");
+        const restoreTmp = path.join(caseRoot, "restore-tmp");
+        mkdirSync(captures, { recursive: true });
+        mkdirSync(restoreTmp);
+        const startedAt = Date.now();
+        const result = spawnSync(
+          "sh",
+          [
+            script,
+            backupFile,
+            "1",
+            "1",
+            "11111111-1111-1111-1111-111111111111",
+            "fixture-session",
+          ],
+          {
+            encoding: "utf8",
+            timeout: 10_000,
+            env: {
+              ...process.env,
+              PATH: `${bin}:${process.env.PATH ?? ""}`,
+              CAPTURE_DIR: captures,
+              FAKE_BACKUP_FILE: backupFile,
+              FAKE_DOCKER_MODE: testCase.mode,
+              BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+              BACKUP_CRYPTO_IMAGE: "fake-crypto",
+              RESTORE_TMP_ROOT: restoreTmp,
+              RESTORE_MAX_ENCRYPTED_BYTES: "1048576",
+              RESTORE_MAX_DECRYPTED_BYTES: "1048576",
+              RESTORE_SPACE_SAFETY_BYTES: "0",
+              RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
+              RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+              RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
+              RESTORE_DECRYPT_TIMEOUT_SECONDS: "1",
+              RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "3",
+              RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "2",
+            },
+          },
+        );
+        const elapsedMs = Date.now() - startedAt;
+        const output = `${result.stdout}${result.stderr}`.trim();
+        spawnSync("sleep", ["1"]);
+        const calls = readFileSync(path.join(captures, "docker.calls"), "utf8");
+        const resourceMarkers = readdirSync(captures).filter((name) =>
+          name.endsWith(".exists"),
+        );
+        if (
+          result.error !== undefined ||
+          result.status !== 1 ||
+          output !== testCase.expectedOutput ||
+          elapsedMs >= 6_000 ||
+          readdirSync(restoreTmp).length !== 0 ||
+          resourceMarkers.length !== 0 ||
+          !/(?:^|\n)(?:rm -f|volume rm) /u.test(calls)
+        ) {
+          failures.push(
+            `${testCase.mode}: status=${result.status} error=${result.error?.message ?? "none"} elapsed=${elapsedMs} output=${JSON.stringify(output)} temp=${JSON.stringify(readdirSync(restoreTmp))} markers=${JSON.stringify(resourceMarkers)} calls=${JSON.stringify(calls)}`,
+          );
+        }
+        if (testCase.mode === "immediate_container") {
+          const rmCountPath = path.join(captures, "decrypt.rm-count");
+          const rmCount = statSync(rmCountPath, { throwIfNoEntry: false })
+            ? Number(readFileSync(rmCountPath, "utf8").trim())
+            : 0;
+          if (!calls.includes("ps -a --filter") || rmCount < 2) {
+            failures.push(
+              `${testCase.mode}: missing exact query/remove evidence, rmCount=${rmCount}`,
+            );
+          }
+        }
+        if (testCase.mode === "late_volume") {
+          const completed = statSync(
+            path.join(captures, "late-volume.completed"),
+            { throwIfNoEntry: false },
+          );
+          const pidPath = path.join(captures, "late-volume.pid");
+          if (!completed || !statSync(pidPath, { throwIfNoEntry: false })) {
+            failures.push(`${testCase.mode}: delayed create did not complete`);
+          } else {
+            const latePid = readFileSync(pidPath, "utf8").trim();
+            const live = spawnSync("sh", ["-c", 'kill -0 "$1"', "sh", latePid]);
+            if (live.status === 0) {
+              failures.push(`${testCase.mode}: live pid ${latePid}`);
+            }
+          }
+        }
+        if (testCase.mode === "absent_container") {
+          if (!calls.includes("ps -a --filter") || elapsedMs < 900) {
+            failures.push(
+              `${testCase.mode}: settle was skipped, elapsed=${elapsedMs}`,
+            );
+          }
+        }
+      }
+      expect(failures).toEqual([]);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it("bounds representative late Docker lifecycle phases", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "restore-late-phases-"));

@@ -60,7 +60,7 @@
 - [ ] Validate reconciliation attempts as 2..10. Add `RESTORE_DOCKER_CREATE_SETTLE_SECONDS`, default 5, valid range 1..300, using a wall-clock deadline checked before every Docker call and 0.1-second unsuccessful-cycle cadence.
 - [ ] Create protected shared stdout/diagnostic files and a protected resource registry after temporary allocation.
 - [ ] Implement one supervisor signature: timeout, phase, stdout file, diagnostic file, Docker arguments. Track active PID and distinguish success, definite failure, and timeout/signal ambiguity without replaying output.
-- [ ] Implement resource registration before create, outcome updates, exact-name query, and all outcomes: skip `DEFINITE_FAILURE`, normal two-ABSENT reconciliation for `SUCCESS`, and remove-only settle reconciliation for `AMBIGUOUS`.
+- [ ] Implement resource registration before create, outcome updates, and exact-name query. Only exit 0 becomes `SUCCESS`; every launched-create nonzero remains `AMBIGUOUS`. Use normal two-ABSENT reconciliation for `SUCCESS` and remove-only settle reconciliation for `AMBIGUOUS`.
 - [ ] Make EXIT and signal handlers ignore INT/TERM as their first action. Signal records the first code and exits; EXIT alone performs exactly one cleanup pass, preserving the original status and checking temporary-directory removal.
 - [ ] Run Tasks 1 and 3 tests until green.
 
