@@ -3,11 +3,14 @@
 import {
   parseAdminSkillRevisionResponse,
   type AdminSkillRevision,
+  type AdminSkillRevisionDetailResponse,
 } from "@/features/assistant/admin-skill-contract";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { AssistantSkillModal } from "./assistant-skill-modal";
 
 type Props = {
   actorUserId: string;
+  findings: AdminSkillRevisionDetailResponse["findings"];
   onClose(): void;
   onReviewed(revision: AdminSkillRevision): void;
   revision: AdminSkillRevision;
@@ -83,6 +86,7 @@ function validReason(reason: string): boolean {
 
 export function AssistantSkillReviewDialog({
   actorUserId,
+  findings,
   onClose,
   onReviewed,
   revision,
@@ -99,21 +103,22 @@ export function AssistantSkillReviewDialog({
   const [announcement, setAnnouncement] = useState("");
   const [error, setError] = useState("");
   const isCreator = revision.createdBy === actorUserId;
+  const blockingFindings = findings.filter((finding) => finding.blocking);
   const allChecked = Object.values(checked).every(Boolean);
-
-  useEffect(() => {
-    firstAttestation.current?.focus();
-  }, []);
 
   const decide = async (decision: "approve" | "reject") => {
     setError("");
     setAnnouncement("");
+    if (isCreator) {
+      setError("该 revision 需独立审核人；创建者不能作出任何审核决策。");
+      return;
+    }
     if (!allChecked) {
       setError("必须逐项确认四项审核声明。");
       return;
     }
-    if (decision === "approve" && isCreator) {
-      setError("创建者不能批准自己的 revision。");
+    if (decision === "approve" && blockingFindings.length > 0) {
+      setError("存在阻断 finding，当前 revision 不能批准发布。");
       return;
     }
     if (decision === "reject" && !validReason(reason)) {
@@ -166,14 +171,11 @@ export function AssistantSkillReviewDialog({
   };
 
   return (
-    <div
-      aria-labelledby="assistant-skill-review-title"
-      aria-modal="true"
-      className="assistant-skill-dialog"
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !submitting) onClose();
-      }}
-      role="dialog"
+    <AssistantSkillModal
+      closeDisabled={submitting}
+      initialFocusRef={firstAttestation}
+      labelledBy="assistant-skill-review-title"
+      onClose={onClose}
     >
       <section>
         <header>
@@ -187,60 +189,82 @@ export function AssistantSkillReviewDialog({
             关闭
           </button>
         </header>
-        <fieldset disabled={submitting}>
-          <legend>审核声明（四项均需确认）</legend>
-          {attestations.map(([key, label], index) => (
-            <label key={key}>
-              <input
-                checked={checked[key]}
-                onChange={(event) =>
-                  setChecked((current) => ({
-                    ...current,
-                    [key]: event.target.checked,
-                  }))
-                }
-                ref={index === 0 ? firstAttestation : undefined}
-                type="checkbox"
-              />
-              {label}
-            </label>
-          ))}
-        </fieldset>
-        <label htmlFor="assistant-skill-rejection-reason">拒绝原因</label>
-        <textarea
-          aria-describedby="assistant-skill-rejection-help"
-          id="assistant-skill-rejection-reason"
-          onChange={(event) => setReason(event.target.value)}
-          rows={3}
-          value={reason}
-        />
-        <small id="assistant-skill-rejection-help">
-          拒绝时必填，最多 500 个 Unicode 字符且不能包含首尾空格。
-        </small>
-        {isCreator ? <p>创建者不能批准自己的 revision。</p> : null}
+        {isCreator ? (
+          <p>该 revision 需独立审核人；创建者不能批准或拒绝。</p>
+        ) : (
+          <>
+            <fieldset disabled={submitting}>
+              <legend>审核声明（四项均需确认）</legend>
+              {attestations.map(([key, label], index) => (
+                <label key={key}>
+                  <input
+                    checked={checked[key]}
+                    onChange={(event) =>
+                      setChecked((current) => ({
+                        ...current,
+                        [key]: event.target.checked,
+                      }))
+                    }
+                    ref={index === 0 ? firstAttestation : undefined}
+                    type="checkbox"
+                  />
+                  {label}
+                </label>
+              ))}
+            </fieldset>
+            <label htmlFor="assistant-skill-rejection-reason">拒绝原因</label>
+            <textarea
+              aria-describedby="assistant-skill-rejection-help"
+              id="assistant-skill-rejection-reason"
+              onChange={(event) => setReason(event.target.value)}
+              rows={3}
+              value={reason}
+            />
+            <small id="assistant-skill-rejection-help">
+              拒绝时必填，最多 500 个 Unicode 字符且不能包含首尾空格。
+            </small>
+            {blockingFindings.length > 0 ? (
+              <section aria-labelledby="assistant-skill-blocking-findings-title">
+                <h4 id="assistant-skill-blocking-findings-title">
+                  存在阻断 finding，不能批准发布
+                </h4>
+                <ul>
+                  {blockingFindings.map((finding) => (
+                    <li key={`${finding.path}:${finding.line}:${finding.code}`}>
+                      {finding.path}:{finding.line} · {finding.code} ·{" "}
+                      {finding.message}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </>
+        )}
         {error ? <p role="alert">{error}</p> : null}
         <p aria-live="polite" role="status">
           {announcement}
         </p>
-        <div className="assistant-skill-dialog__actions">
-          {!isCreator ? (
+        {!isCreator ? (
+          <div className="assistant-skill-dialog__actions">
+            {blockingFindings.length === 0 ? (
+              <button
+                disabled={submitting || !allChecked}
+                onClick={() => void decide("approve")}
+                type="button"
+              >
+                批准发布
+              </button>
+            ) : null}
             <button
               disabled={submitting || !allChecked}
-              onClick={() => void decide("approve")}
+              onClick={() => void decide("reject")}
               type="button"
             >
-              批准发布
+              拒绝 revision
             </button>
-          ) : null}
-          <button
-            disabled={submitting || !allChecked}
-            onClick={() => void decide("reject")}
-            type="button"
-          >
-            拒绝 revision
-          </button>
-        </div>
+          </div>
+        ) : null}
       </section>
-    </div>
+    </AssistantSkillModal>
   );
 }

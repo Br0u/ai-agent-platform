@@ -13,6 +13,14 @@ import { AssistantSkillUploadDialog } from "./assistant-skill-upload-dialog";
 const SKILL_ID = "33333333-3333-4333-8333-333333333333";
 const REVISION_ID = "44444444-4444-4444-8444-444444444444";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -96,5 +104,98 @@ describe("AssistantSkillUploadDialog", () => {
 
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("traps focus and blocks background interaction across body levels", () => {
+    const backgroundClick = vi.fn();
+    const externalClick = vi.fn();
+    const external = document.createElement("button");
+    external.textContent = "外层背景操作";
+    external.setAttribute("inert", "legacy");
+    external.setAttribute("aria-hidden", "false");
+    external.addEventListener("click", externalClick);
+    document.body.append(external);
+    const view = render(
+      <>
+        <div>
+          <button onClick={backgroundClick} type="button">
+            内层背景操作
+          </button>
+        </div>
+        <AssistantSkillUploadDialog onClose={vi.fn()} onUploaded={vi.fn()} />
+      </>,
+    );
+
+    const dialog = screen.getByRole("dialog");
+    const first = screen.getByRole("button", { name: "关闭" });
+    const last = screen.getByRole("button", { name: "提交审核" });
+    expect(screen.getByLabelText("Skill ZIP 文件")).toHaveFocus();
+    expect(view.container).toHaveAttribute("inert");
+    expect(view.container).toHaveAttribute("aria-hidden", "true");
+    expect(external).toHaveAttribute("inert");
+
+    last.focus();
+    fireEvent.keyDown(last, { key: "Tab" });
+    expect(first).toHaveFocus();
+    fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+    expect(last).toHaveFocus();
+
+    const nestedBackground = screen.getByRole("button", {
+      name: "内层背景操作",
+      hidden: true,
+    });
+    nestedBackground.focus();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    external.focus();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    fireEvent.click(nestedBackground);
+    fireEvent.click(external);
+    expect(backgroundClick).not.toHaveBeenCalled();
+    expect(externalClick).not.toHaveBeenCalled();
+
+    view.unmount();
+    expect(view.container).not.toHaveAttribute("inert");
+    expect(view.container).not.toHaveAttribute("aria-hidden");
+    expect(external).toHaveAttribute("inert", "legacy");
+    expect(external).toHaveAttribute("aria-hidden", "false");
+    external.remove();
+  });
+
+  it("blocks synchronous duplicate submits and all close paths while uploading", async () => {
+    const upload = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(upload.promise)
+      .mockResolvedValue(new Response(null, { status: 503 }));
+    const onClose = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AssistantSkillUploadDialog onClose={onClose} onUploaded={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: {
+        files: [
+          new File(["zip"], "safe-review.zip", { type: "application/zip" }),
+        ],
+      },
+    });
+    const form = screen
+      .getByRole("button", { name: "提交审核" })
+      .closest("form")!;
+
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "关闭" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+
+    upload.resolve(new Response(null, { status: 503 }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/上传失败/u);
+    expect(screen.getByRole("button", { name: "关闭" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "提交审核" })).toBeEnabled();
+    fireEvent.submit(form);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 });

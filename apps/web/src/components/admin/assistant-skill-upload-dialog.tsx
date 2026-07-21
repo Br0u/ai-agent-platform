@@ -5,6 +5,7 @@ import {
   type AdminSkillRevision,
 } from "@/features/assistant/admin-skill-contract";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { AssistantSkillModal } from "./assistant-skill-modal";
 
 const MAX_ARCHIVE_BYTES = 5 * 1024 * 1024;
 const UUID =
@@ -61,13 +62,25 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const [error, setError] = useState("");
+  const submittingRef = useRef(false);
+  const operation = useRef(0);
+  const mounted = useRef(true);
 
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+      operation.current += 1;
+    },
+    [],
+  );
+
+  const requestClose = () => {
+    if (!submittingRef.current) onClose();
+  };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (submittingRef.current) return;
     setError("");
     setAnnouncement("");
     const target = targetSkillId.trim();
@@ -87,33 +100,40 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
     const body = new FormData();
     body.append("archive", file, file.name);
     if (target.length > 0) body.append("targetSkillId", target);
+    const currentOperation = operation.current + 1;
+    operation.current = currentOperation;
+    submittingRef.current = true;
     setSubmitting(true);
+    let revision: AdminSkillRevision;
     try {
       const response = await fetch("/api/v1/admin/assistant/skills/uploads", {
         method: "POST",
         body,
       });
       if (!response.ok) throw new Error("upload failed");
-      const revision = parseUploadResponse(await response.json());
-      if (revision === null) throw new Error("invalid upload response");
-      onUploaded(revision);
-      setAnnouncement("上传成功，状态：pending_review（待独立审核）。");
+      const parsed = parseUploadResponse(await response.json());
+      if (!mounted.current || currentOperation !== operation.current) return;
+      if (parsed === null) throw new Error("invalid upload response");
+      revision = parsed;
     } catch {
-      setError("上传失败；未改变当前 Skill 列表，请稍后重试。");
-    } finally {
+      if (!mounted.current || currentOperation !== operation.current) return;
+      submittingRef.current = false;
       setSubmitting(false);
+      setError("上传失败；未改变当前 Skill 列表，请稍后重试。");
+      return;
     }
+    submittingRef.current = false;
+    setSubmitting(false);
+    setAnnouncement("上传成功，状态：pending_review（待独立审核）。");
+    onUploaded(revision);
   };
 
   return (
-    <div
-      aria-labelledby="assistant-skill-upload-title"
-      aria-modal="true"
-      className="assistant-skill-dialog"
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !submitting) onClose();
-      }}
-      role="dialog"
+    <AssistantSkillModal
+      closeDisabled={submitting}
+      initialFocusRef={inputRef}
+      labelledBy="assistant-skill-upload-title"
+      onClose={requestClose}
     >
       <form onSubmit={submit}>
         <header>
@@ -121,7 +141,7 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
             <p>IMMUTABLE ARCHIVE</p>
             <h3 id="assistant-skill-upload-title">上传 Skill ZIP</h3>
           </div>
-          <button onClick={onClose} type="button">
+          <button disabled={submitting} onClick={requestClose} type="button">
             关闭
           </button>
         </header>
@@ -152,6 +172,6 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
           {submitting ? "上传中" : "提交审核"}
         </button>
       </form>
-    </div>
+    </AssistantSkillModal>
   );
 }

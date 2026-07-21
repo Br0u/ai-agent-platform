@@ -96,6 +96,15 @@ function fileUrl(skillId: string, revisionId: string, path: string): string {
   return `/api/v1/admin/assistant/skills/${encodeURIComponent(skillId)}/revisions/${encodeURIComponent(revisionId)}/files/${encodedPath}`;
 }
 
+function isAbortError(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "name" in value &&
+    value.name === "AbortError"
+  );
+}
+
 export function AssistantSkillRevisionDetail({
   actorUserId,
   onRevisionChanged,
@@ -112,19 +121,43 @@ export function AssistantSkillRevisionDetail({
   const [reviewOpen, setReviewOpen] = useState(false);
   const reviewTrigger = useRef<HTMLButtonElement>(null);
   const restoreReviewFocus = useRef(false);
+  const detailAbort = useRef<AbortController | null>(null);
+  const detailGeneration = useRef(0);
+  const fileAbort = useRef<AbortController | null>(null);
+  const fileGeneration = useRef(0);
 
   const loadDetail = useCallback(
-    async (signal?: AbortSignal) => {
+    async (reset = false) => {
+      const generation = detailGeneration.current + 1;
+      detailGeneration.current = generation;
+      detailAbort.current?.abort();
+      const controller = new AbortController();
+      detailAbort.current = controller;
+      if (reset) {
+        setDetail(null);
+        setFile(null);
+        setReviewOpen(false);
+      }
       setLoading(true);
       setError("");
       setAnnouncement("");
       try {
         const response = await fetch(
           `/api/v1/admin/assistant/skills/${encodeURIComponent(skillId)}/revisions/${encodeURIComponent(revisionId)}`,
-          { cache: "no-store", signal },
+          { cache: "no-store", signal: controller.signal },
         );
+        if (
+          controller.signal.aborted ||
+          generation !== detailGeneration.current
+        )
+          return;
         if (!response.ok) throw new Error("detail failed");
         const parsed = parseDetailEnvelope(await response.json());
+        if (
+          controller.signal.aborted ||
+          generation !== detailGeneration.current
+        )
+          return;
         if (
           parsed === null ||
           parsed.revision.skillId !== skillId ||
@@ -132,27 +165,44 @@ export function AssistantSkillRevisionDetail({
         ) {
           throw new Error("invalid detail response");
         }
+        fileGeneration.current += 1;
+        fileAbort.current?.abort();
+        fileAbort.current = null;
+        setFile(null);
         setDetail(parsed);
         setAnnouncement("审核详情已加载。");
       } catch (caught) {
-        if (caught instanceof DOMException && caught.name === "AbortError")
+        if (
+          isAbortError(caught) ||
+          controller.signal.aborted ||
+          generation !== detailGeneration.current
+        )
           return;
         const message = "详情加载失败；已保留旧数据，请稍后重试。";
         setError(message);
         setAnnouncement(message);
       } finally {
-        setLoading(false);
+        if (generation === detailGeneration.current) {
+          detailAbort.current = null;
+          setLoading(false);
+        }
       }
     },
     [revisionId, skillId],
   );
 
   useEffect(() => {
-    const controller = new AbortController();
+    let disposed = false;
     queueMicrotask(() => {
-      if (!controller.signal.aborted) void loadDetail(controller.signal);
+      if (!disposed) void loadDetail(true);
     });
-    return () => controller.abort();
+    return () => {
+      disposed = true;
+      detailGeneration.current += 1;
+      detailAbort.current?.abort();
+      fileGeneration.current += 1;
+      fileAbort.current?.abort();
+    };
   }, [loadDetail]);
 
   useEffect(() => {
@@ -163,19 +213,37 @@ export function AssistantSkillRevisionDetail({
   }, [reviewOpen]);
 
   const loadFile = async (path: string) => {
+    const generation = fileGeneration.current + 1;
+    fileGeneration.current = generation;
+    fileAbort.current?.abort();
+    const controller = new AbortController();
+    fileAbort.current = controller;
     setError("");
     try {
       const response = await fetch(fileUrl(skillId, revisionId, path), {
         cache: "no-store",
+        signal: controller.signal,
       });
+      if (controller.signal.aborted || generation !== fileGeneration.current)
+        return;
       if (!response.ok) throw new Error("file failed");
       const parsed = parseFileEnvelope(await response.json());
+      if (controller.signal.aborted || generation !== fileGeneration.current)
+        return;
       if (parsed === null || parsed.path !== path)
         throw new Error("invalid file response");
       setFile(parsed);
       setAnnouncement(`已打开纯文本文件：${path}`);
-    } catch {
+    } catch (caught) {
+      if (
+        isAbortError(caught) ||
+        controller.signal.aborted ||
+        generation !== fileGeneration.current
+      )
+        return;
       setError("文件加载失败；已保留当前详情和文件内容。");
+    } finally {
+      if (generation === fileGeneration.current) fileAbort.current = null;
     }
   };
 
@@ -186,7 +254,11 @@ export function AssistantSkillRevisionDetail({
   };
 
   const openReview = () => {
-    if (detail?.revision.state !== "pending_review") return;
+    if (
+      detail?.revision.state !== "pending_review" ||
+      detail.revision.createdBy === actorUserId
+    )
+      return;
     setError("");
     setAnnouncement("");
     setReviewOpen(true);
@@ -217,7 +289,7 @@ export function AssistantSkillRevisionDetail({
         </div>
         <button
           disabled={loading}
-          onClick={() => void loadDetail()}
+          onClick={() => void loadDetail(false)}
           type="button"
         >
           重新加载审核详情
@@ -334,20 +406,26 @@ export function AssistantSkillRevisionDetail({
               </>
             )}
           </section>
-          <button
-            aria-disabled={detail.revision.state !== "pending_review"}
-            onClick={openReview}
-            ref={reviewTrigger}
-            type="button"
-          >
-            打开审核操作
-          </button>
+          {detail.revision.state === "pending_review" &&
+          detail.revision.createdBy === actorUserId ? (
+            <p>该 revision 需独立审核人；创建者只能查看审核证据。</p>
+          ) : (
+            <button
+              aria-disabled={detail.revision.state !== "pending_review"}
+              onClick={openReview}
+              ref={reviewTrigger}
+              type="button"
+            >
+              打开审核操作
+            </button>
+          )}
           {detail.revision.state !== "pending_review" ? (
             <p>该 revision 已完成审核，当前状态：{detail.revision.state}。</p>
           ) : null}
           {reviewOpen ? (
             <AssistantSkillReviewDialog
               actorUserId={actorUserId}
+              findings={detail.findings}
               onClose={closeReview}
               onReviewed={reviewed}
               revision={detail.revision}

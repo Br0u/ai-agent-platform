@@ -13,6 +13,16 @@ import { AssistantSkillRevisionDetail } from "./assistant-skill-revision-detail"
 const SKILL_ID = "33333333-3333-4333-8333-333333333333";
 const REVISION_ID = "44444444-4444-4444-8444-444444444444";
 const CREATOR_ID = "11111111-1111-4111-8111-111111111111";
+const SKILL_ID_B = "77777777-7777-4777-8777-777777777777";
+const REVISION_ID_B = "88888888-8888-4888-8888-888888888888";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
 
 const detail = {
   version: "1",
@@ -159,6 +169,137 @@ describe("AssistantSkillRevisionDetail", () => {
     expect(screen.getByText("Apache-2.0")).toBeVisible();
   });
 
+  it("aborts an obsolete detail request and ignores its late response", async () => {
+    const detailA = deferred<Response>();
+    const detailB = deferred<Response>();
+    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      void _init;
+      return String(input).includes(REVISION_ID_B)
+        ? detailB.promise
+        : detailA.promise;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(
+      <AssistantSkillRevisionDetail
+        actorUserId="22222222-2222-4222-8222-222222222222"
+        onRevisionChanged={vi.fn()}
+        revisionId={REVISION_ID}
+        skillId={SKILL_ID}
+      />,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    const firstSignal = fetchMock.mock.calls[0]?.[1]?.signal;
+
+    view.rerender(
+      <AssistantSkillRevisionDetail
+        actorUserId="22222222-2222-4222-8222-222222222222"
+        onRevisionChanged={vi.fn()}
+        revisionId={REVISION_ID_B}
+        skillId={SKILL_ID_B}
+      />,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(firstSignal?.aborted).toBe(true);
+    detailB.resolve(
+      Response.json({
+        ...detail,
+        revision: {
+          ...detail.revision,
+          id: REVISION_ID_B,
+          skillId: SKILL_ID_B,
+          name: "new-review",
+          license: "MIT",
+        },
+        requestId: "detail-b",
+      }),
+    );
+    expect(await screen.findByText("MIT")).toBeVisible();
+
+    detailA.resolve(Response.json({ ...detail, requestId: "late-detail-a" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByText("MIT")).toBeVisible();
+    expect(screen.queryByText("Apache-2.0")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("aborts an obsolete file request and ignores its late response", async () => {
+    const fileA = deferred<Response>();
+    const fileB = deferred<Response>();
+    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      void _init;
+      const url = String(input);
+      if (url.endsWith("/files/SKILL.md")) return fileA.promise;
+      if (url.endsWith("/files/scripts/run.py")) return fileB.promise;
+      return Promise.resolve(
+        Response.json({ ...detail, requestId: "detail-files" }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AssistantSkillRevisionDetail
+        actorUserId="22222222-2222-4222-8222-222222222222"
+        onRevisionChanged={vi.fn()}
+        revisionId={REVISION_ID}
+        skillId={SKILL_ID}
+      />,
+    );
+    expect(await screen.findByText("Apache-2.0")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "查看文件 SKILL.md" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const firstFileSignal = fetchMock.mock.calls[1]?.[1]?.signal;
+    fireEvent.click(
+      screen.getByRole("button", { name: "查看文件 scripts/run.py" }),
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(firstFileSignal?.aborted).toBe(true);
+
+    fileB.resolve(
+      Response.json({
+        version: "1",
+        path: "scripts/run.py",
+        content: "new file B",
+        requestId: "file-b",
+      }),
+    );
+    expect(await screen.findByText("new file B")).toBeVisible();
+    fileA.resolve(
+      Response.json({
+        version: "1",
+        path: "SKILL.md",
+        content: "late file A",
+        requestId: "file-a",
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByText("new file B")).toBeVisible();
+    expect(screen.queryByText("late file A")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("shows the creator a read-only independent-review requirement", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json({ ...detail, requestId: "creator-detail" }),
+        ),
+    );
+    render(
+      <AssistantSkillRevisionDetail
+        actorUserId={CREATOR_ID}
+        onRevisionChanged={vi.fn()}
+        revisionId={REVISION_ID}
+        skillId={SKILL_ID}
+      />,
+    );
+
+    expect(await screen.findByText("Apache-2.0")).toBeVisible();
+    expect(screen.getByText(/需独立审核人/u)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "打开审核操作" })).toBeNull();
+  });
+
   it("closes review actions after publication and exposes the new textual state", async () => {
     const onRevisionChanged = vi.fn();
     vi.stubGlobal(
@@ -166,7 +307,11 @@ describe("AssistantSkillRevisionDetail", () => {
       vi
         .fn()
         .mockResolvedValueOnce(
-          Response.json({ ...detail, requestId: "detail-review" }),
+          Response.json({
+            ...detail,
+            findings: [],
+            requestId: "detail-review",
+          }),
         )
         .mockResolvedValueOnce(
           Response.json({
@@ -231,11 +376,13 @@ describe("AssistantSkillRevisionDetail", () => {
   ])("restores focus to the review trigger after %s", async (_name, close) => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(
-          Response.json({ ...detail, requestId: "detail-close" }),
-        ),
+      vi.fn().mockResolvedValue(
+        Response.json({
+          ...detail,
+          findings: [],
+          requestId: "detail-close",
+        }),
+      ),
     );
     render(
       <AssistantSkillRevisionDetail
@@ -263,7 +410,11 @@ describe("AssistantSkillRevisionDetail", () => {
       vi
         .fn()
         .mockResolvedValueOnce(
-          Response.json({ ...detail, requestId: "detail-failed-review" }),
+          Response.json({
+            ...detail,
+            findings: [],
+            requestId: "detail-failed-review",
+          }),
         )
         .mockResolvedValueOnce(new Response(null, { status: 503 })),
     );

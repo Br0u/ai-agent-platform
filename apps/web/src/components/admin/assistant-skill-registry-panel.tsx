@@ -71,6 +71,15 @@ function parseListEnvelope(value: unknown): {
   }
 }
 
+function isAbortError(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "name" in value &&
+    value.name === "AbortError"
+  );
+}
+
 export function AssistantSkillRegistryPanel({
   actorUserId,
   canRead,
@@ -87,6 +96,8 @@ export function AssistantSkillRegistryPanel({
   const [refreshing, setRefreshing] = useState(false);
   const uploadTrigger = useRef<HTMLButtonElement>(null);
   const restoreUploadFocus = useRef(false);
+  const listAbort = useRef<AbortController | null>(null);
+  const listGeneration = useRef(0);
   const [announcement, setAnnouncement] = useState(
     initialSnapshot.capability === "degraded"
       ? "Skill Registry 当前不可用。"
@@ -100,21 +111,45 @@ export function AssistantSkillRegistryPanel({
     }
   }, [uploadOpen]);
 
+  useEffect(
+    () => () => {
+      listGeneration.current += 1;
+      listAbort.current?.abort();
+    },
+    [],
+  );
+
+  const invalidateListRequest = () => {
+    listGeneration.current += 1;
+    listAbort.current?.abort();
+    listAbort.current = null;
+    setRefreshing(false);
+  };
+
   const closeUpload = () => {
     restoreUploadFocus.current = true;
     setUploadOpen(false);
   };
 
   const refresh = async () => {
+    const generation = listGeneration.current + 1;
+    listGeneration.current = generation;
+    listAbort.current?.abort();
+    const controller = new AbortController();
+    listAbort.current = controller;
     setRefreshing(true);
     setAnnouncement("");
     try {
       const response = await fetch(
         "/api/v1/admin/assistant/skills?limit=25&offset=0",
-        { cache: "no-store" },
+        { cache: "no-store", signal: controller.signal },
       );
+      if (controller.signal.aborted || generation !== listGeneration.current)
+        return;
       if (!response.ok) throw new Error("list failed");
       const parsed = parseListEnvelope(await response.json());
+      if (controller.signal.aborted || generation !== listGeneration.current)
+        return;
       if (parsed === null) throw new Error("invalid list response");
       setSnapshot({
         capability: "available",
@@ -122,26 +157,50 @@ export function AssistantSkillRegistryPanel({
         page: parsed.list.page,
       });
       setPermissions(parsed.permissions);
-      setSelection((current) =>
-        current !== null &&
-        parsed.list.skills.some(
-          (skill) =>
-            skill.id === current.skillId &&
-            skill.revision?.id === current.revisionId,
-        )
+      setSelection((current) => {
+        if (current === null) return null;
+        const previousRevision = snapshot.skills.find(
+          (skill) => skill.id === current.skillId,
+        )?.revision;
+        const nextRevision = parsed.list.skills.find(
+          (skill) => skill.id === current.skillId,
+        )?.revision;
+        return previousRevision !== null &&
+          previousRevision !== undefined &&
+          nextRevision !== null &&
+          nextRevision !== undefined &&
+          previousRevision.id === current.revisionId &&
+          nextRevision.id === current.revisionId &&
+          previousRevision.number === nextRevision.number &&
+          previousRevision.state === nextRevision.state &&
+          previousRevision.createdBy === nextRevision.createdBy &&
+          previousRevision.artifactSha256Prefix ===
+            nextRevision.artifactSha256Prefix &&
+          previousRevision.reviewedBy === nextRevision.reviewedBy &&
+          previousRevision.reviewedAt === nextRevision.reviewedAt
           ? current
-          : null,
-      );
+          : null;
+      });
       setAnnouncement("Skill 列表已刷新。");
-    } catch {
+    } catch (caught) {
+      if (
+        isAbortError(caught) ||
+        controller.signal.aborted ||
+        generation !== listGeneration.current
+      )
+        return;
       setSnapshot((current) => ({ ...current, capability: "degraded" }));
       setAnnouncement("刷新失败，Registry 处于 degraded；已保留旧数据。");
     } finally {
-      setRefreshing(false);
+      if (generation === listGeneration.current) {
+        listAbort.current = null;
+        setRefreshing(false);
+      }
     }
   };
 
   const uploaded = (revision: AdminSkillRevision) => {
+    invalidateListRequest();
     setSnapshot((current) => {
       const existing = current.skills.find(
         (skill) => skill.id === revision.skillId,
@@ -183,6 +242,7 @@ export function AssistantSkillRegistryPanel({
   };
 
   const revisionChanged = (revision: AdminSkillRevision) => {
+    invalidateListRequest();
     setSnapshot((current) => ({
       ...current,
       skills: current.skills.map((skill) =>
