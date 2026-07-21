@@ -159,6 +159,8 @@ active_docker_pid=
 active_docker_phase=
 bounded_docker_timed_out=false
 cleanup_running=false
+cleanup_error_reported=false
+docker_query_state=unknown
 
 terminate_active_docker() {
   [ -n "$active_docker_pid" ] || return 0
@@ -209,70 +211,166 @@ run_bounded_docker() {
   return "$docker_status"
 }
 
-reconcile_decrypt_container() {
-  [ "$decrypt_container_may_exist" = "true" ] || return 0
+query_docker_resource() {
+  query_resource_type=$1
+  query_resource_name=$2
+  query_phase=$3
+  docker_query_state=unknown
+  case "$query_resource_type" in
+    container)
+      if ! run_bounded_docker \
+        "$docker_cli_timeout_seconds" "$query_phase" \
+        docker ps -a \
+          --filter "name=^/$query_resource_name$" \
+          --format '{{.Names}}'; then
+        return 0
+      fi
+      ;;
+    volume)
+      if ! run_bounded_docker \
+        "$docker_cli_timeout_seconds" "$query_phase" \
+        docker volume ls \
+          --filter "name=^$query_resource_name$" \
+          --format '{{.Name}}'; then
+        return 0
+      fi
+      ;;
+    *) return 0 ;;
+  esac
+  query_output="$(cat "$decrypt_cli_output_file")"
+  if [ -z "$query_output" ]; then
+    docker_query_state=absent
+  elif [ "$query_output" = "$query_resource_name" ]; then
+    docker_query_state=exists
+  fi
+}
+
+reconcile_docker_resource() {
+  reconcile_resource_type=$1
+  reconcile_resource_name=$2
+  reconcile_phase=$3
+  reconcile_stop_container=$4
   reconcile_attempt=0
   absent_checks=0
   while [ "$reconcile_attempt" -lt "$decrypt_reconcile_attempts" ]; do
     reconcile_attempt=$((reconcile_attempt + 1))
-    if [ "$decrypt_container_started" = "true" ]; then
+    if [ "$reconcile_resource_type" = container ] && \
+       [ "$reconcile_stop_container" = true ]; then
       run_bounded_docker \
-        "$docker_cli_timeout_seconds" decrypt_stop \
-        docker stop --time "$decrypt_kill_after_seconds" "$decrypt_container" || true
+        "$docker_cli_timeout_seconds" "${reconcile_phase}_stop" \
+        docker stop --time "$decrypt_kill_after_seconds" \
+          "$reconcile_resource_name" || true
     fi
-    if run_bounded_docker \
-      "$docker_cli_timeout_seconds" decrypt_rm \
-      docker rm -f "$decrypt_container"; then
-      decrypt_container_may_exist=false
-      decrypt_container_started=false
-      return 0
+    case "$reconcile_resource_type" in
+      container)
+        if run_bounded_docker \
+          "$docker_cli_timeout_seconds" "${reconcile_phase}_rm" \
+          docker rm -f "$reconcile_resource_name"; then
+          return 0
+        fi
+        ;;
+      volume)
+        if run_bounded_docker \
+          "$docker_cli_timeout_seconds" "${reconcile_phase}_rm" \
+          docker volume rm "$reconcile_resource_name"; then
+          return 0
+        fi
+        ;;
+      *) return 1 ;;
+    esac
+    query_docker_resource \
+      "$reconcile_resource_type" \
+      "$reconcile_resource_name" \
+      "${reconcile_phase}_query"
+    case "$docker_query_state" in
+      absent)
+        absent_checks=$((absent_checks + 1))
+        if [ "$absent_checks" -ge 2 ]; then
+          return 0
+        fi
+        ;;
+      exists|unknown) absent_checks=0 ;;
+    esac
+    if [ "$reconcile_attempt" -lt "$decrypt_reconcile_attempts" ]; then
+      sleep 1
     fi
-    if run_bounded_docker \
-      "$docker_cli_timeout_seconds" decrypt_inspect \
-      docker container inspect "$decrypt_container"; then
-      absent_checks=0
-    elif [ "$bounded_docker_timed_out" = "false" ]; then
-      absent_checks=$((absent_checks + 1))
-      if [ "$absent_checks" -ge 2 ]; then
-        decrypt_container_may_exist=false
-        decrypt_container_started=false
-        return 0
-      fi
-    else
-      absent_checks=0
-    fi
-    sleep 1
   done
   return 1
+}
+
+reconcile_decrypt_container() {
+  [ "$decrypt_container_may_exist" = "true" ] || return 0
+  if ! reconcile_docker_resource \
+    container \
+    "$decrypt_container" \
+    decrypt \
+    "$decrypt_container_started"; then
+    return 1
+  fi
+  decrypt_container_may_exist=false
+  decrypt_container_started=false
+}
+
+report_cleanup_failure() {
+  if [ "$cleanup_error_reported" = "false" ]; then
+    echo "restore drill cleanup failed" >&2
+    cleanup_error_reported=true
+  fi
 }
 
 cleanup() {
   [ "$cleanup_running" = "false" ] || return 0
   cleanup_running=true
+  cleanup_failed=false
   terminate_active_docker
-  reconcile_decrypt_container || true
+  if ! reconcile_decrypt_container; then
+    cleanup_failed=true
+  fi
   if [ "$restore_container_may_exist" = "true" ]; then
-    docker rm -f "$container" >/dev/null 2>&1 || true
+    if reconcile_docker_resource container "$container" restore false; then
+      restore_container_may_exist=false
+    else
+      cleanup_failed=true
+    fi
   fi
   if [ "$restore_volume_may_exist" = "true" ]; then
-    docker volume rm "$volume" >/dev/null 2>&1 || true
+    if reconcile_docker_resource volume "$volume" restore_volume false; then
+      restore_volume_may_exist=false
+    else
+      cleanup_failed=true
+    fi
   fi
   if [ -n "$temporary_directory" ]; then
     rm -rf "$temporary_directory"
   fi
   cleanup_running=false
+  if [ "$cleanup_failed" = "true" ]; then
+    report_cleanup_failure
+    return 1
+  fi
+}
+
+on_exit() {
+  exit_code=$?
+  trap - EXIT
+  if ! cleanup && [ "$exit_code" -eq 0 ]; then
+    exit_code=1
+  fi
+  exit "$exit_code"
 }
 
 on_signal() {
   code=$1
   trap '' INT TERM
   echo "restore drill interrupted" >&2
-  cleanup
+  if ! cleanup; then
+    :
+  fi
   trap - EXIT
   exit "$code"
 }
 
-trap cleanup EXIT
+trap on_exit EXIT
 trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
 
@@ -414,14 +512,11 @@ if ! run_bounded_docker \
       rm -f /tmp/decrypted
       [ "$head_status" -eq 0 ] && [ "$gpg_status" -eq 0 ]
     ' sh "$(basename "$backup_file")" "$((max_decrypted_bytes + 1))"; then
-  reconcile_decrypt_container || true
   echo "restore drill decryption failed" >&2
   exit 1
 fi
-if ! run_bounded_docker \
-  "$docker_cli_timeout_seconds" decrypt_inspect \
-  docker container inspect "$decrypt_container"; then
-  reconcile_decrypt_container || true
+query_docker_resource container "$decrypt_container" decrypt_confirm
+if [ "$docker_query_state" != exists ]; then
   echo "restore drill decryption failed" >&2
   exit 1
 fi
@@ -435,7 +530,10 @@ else
   decrypt_status=$?
 fi
 decrypt_timed_out=$bounded_docker_timed_out
-reconcile_decrypt_container || true
+decrypt_cleanup_failed=false
+if ! reconcile_decrypt_container; then
+  decrypt_cleanup_failed=true
+fi
 
 if [ -f "$decrypted_bundle_candidate" ]; then
   decrypted_size_bytes="$(wc -c <"$decrypted_bundle_candidate" | tr -d ' ')"
@@ -444,6 +542,13 @@ else
 fi
 if [ "$decrypt_timed_out" = "true" ]; then
   echo "restore drill decryption timed out" >&2
+  if [ "$decrypt_cleanup_failed" = "true" ]; then
+    report_cleanup_failure
+  fi
+  exit 1
+fi
+if [ "$decrypt_cleanup_failed" = "true" ]; then
+  report_cleanup_failure
   exit 1
 fi
 if [ "$decrypted_size_bytes" -gt "$max_decrypted_bytes" ]; then
