@@ -66,13 +66,13 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
   const operation = useRef(0);
   const mounted = useRef(true);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
       mounted.current = false;
       operation.current += 1;
-    },
-    [],
-  );
+    };
+  }, []);
 
   const requestClose = () => {
     if (!submittingRef.current) onClose();

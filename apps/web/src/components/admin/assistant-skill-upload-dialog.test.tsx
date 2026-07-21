@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { StrictMode } from "react";
 
 import { AssistantSkillUploadDialog } from "./assistant-skill-upload-dialog";
 
@@ -19,6 +20,26 @@ function deferred<T>() {
     resolve = next;
   });
   return { promise, resolve };
+}
+
+function uploadEnvelope() {
+  return {
+    version: "1" as const,
+    revision: {
+      id: REVISION_ID,
+      skillId: SKILL_ID,
+      name: "safe-review",
+      number: 1,
+      state: "pending_review" as const,
+      sourceType: "upload" as const,
+      artifactSha256: "a".repeat(64),
+      createdBy: "11111111-1111-4111-8111-111111111111",
+      createdAt: "2026-07-21T08:00:00.000Z",
+      reviewedBy: null,
+      reviewedAt: null,
+    },
+    requestId: "strict-upload",
+  };
 }
 
 afterEach(() => {
@@ -197,5 +218,30 @@ describe("AssistantSkillUploadDialog", () => {
     expect(screen.getByRole("button", { name: "提交审核" })).toBeEnabled();
     fireEvent.submit(form);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("accepts the current upload response after the StrictMode effect probe", async () => {
+    const onUploaded = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(Response.json(uploadEnvelope(), { status: 201 })),
+    );
+    render(
+      <StrictMode>
+        <AssistantSkillUploadDialog onClose={vi.fn()} onUploaded={onUploaded} />
+      </StrictMode>,
+    );
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: {
+        files: [
+          new File(["zip"], "safe-review.zip", { type: "application/zip" }),
+        ],
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "提交审核" }));
+
+    await waitFor(() => expect(onUploaded).toHaveBeenCalledOnce());
   });
 });
