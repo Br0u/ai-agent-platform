@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +10,7 @@ import {
   createSkillRegistryAssertionSigner,
   createSkillRegistryClient as createRawSkillRegistryClient,
   resolveSkillRegistrySettings,
+  sendPinnedSkillRegistryHttpRequest,
   type SkillRegistryTransport,
 } from "./skill-registry-client";
 
@@ -632,6 +633,171 @@ describe("private Skill Registry client", () => {
     }
   });
 
+  it.each([
+    "wrong-media",
+    "redirect",
+    "oversized-declared",
+    "continuous-chunked",
+  ] as const)(
+    "closes the real node:http response for an early %s failure",
+    async (scenario) => {
+      const sockets = new Set<Socket>();
+      let closeResponse: (() => void) | undefined;
+      const responseClosed = new Promise<void>((resolve) => {
+        closeResponse = resolve;
+      });
+      const server = createServer((_request, response) => {
+        response.once("close", () => closeResponse?.());
+        if (scenario === "wrong-media") {
+          response.writeHead(200, {
+            "content-type": "text/plain",
+            "cache-control": "no-store",
+          });
+          response.flushHeaders();
+          return;
+        }
+        if (scenario === "redirect") {
+          response.writeHead(302, {
+            location: "/private-redirect",
+            "content-type": "application/json",
+            "cache-control": "no-store",
+          });
+          response.flushHeaders();
+          return;
+        }
+        if (scenario === "oversized-declared") {
+          response.writeHead(200, {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "content-length": String(3 * 1024 * 1024 + 1),
+          });
+          response.flushHeaders();
+          return;
+        }
+        response.writeHead(200, {
+          "content-type": "application/json",
+          "cache-control": "no-store",
+        });
+        const interval = setInterval(() => {
+          response.write(Buffer.alloc(128 * 1024, 0x78));
+        }, 1);
+        response.once("close", () => clearInterval(interval));
+      });
+      server.on("connection", (socket) => {
+        sockets.add(socket);
+        socket.once("close", () => sockets.delete(socket));
+      });
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      try {
+        const port = (server.address() as AddressInfo).port;
+        const transport: SkillRegistryTransport = (input) =>
+          sendPinnedSkillRegistryHttpRequest({
+            ...input,
+            address: "127.0.0.1",
+            family: 4,
+            port,
+          });
+        const client = createRawSkillRegistryClient({
+          settings: settings(),
+          resolver: privateResolver,
+          transport,
+          clock: () => NOW,
+          nonceFactory: () => NONCE,
+        });
+
+        await expect(
+          client.listSkills({
+            actor: ACTOR,
+            requestId: REQUEST_ID,
+            limit: 50,
+            offset: 0,
+          }),
+        ).rejects.toMatchObject({
+          code:
+            scenario === "continuous-chunked" ||
+            scenario === "oversized-declared"
+              ? "response_too_large"
+              : "invalid_response",
+        });
+        const observed = await new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => resolve(false), 500);
+          void responseClosed.then(() => {
+            clearTimeout(timer);
+            resolve(true);
+          });
+        });
+        expect(observed).toBe(true);
+      } finally {
+        for (const socket of sockets) socket.destroy();
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    },
+  );
+
+  it("fully consumes a normal real node:http response without aborting it", async () => {
+    let finished = false;
+    let closedAfterFinish = false;
+    let requestSignal: AbortSignal | undefined;
+    const server = createServer((_request, response) => {
+      response.once("finish", () => {
+        finished = true;
+      });
+      response.once("close", () => {
+        closedAfterFinish = finished;
+      });
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "cache-control": "no-store",
+      });
+      response.end(JSON.stringify(listResponse()));
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const port = (server.address() as AddressInfo).port;
+      const transport: SkillRegistryTransport = (input) => {
+        requestSignal = input.signal;
+        return sendPinnedSkillRegistryHttpRequest({
+          ...input,
+          address: "127.0.0.1",
+          family: 4,
+          port,
+        });
+      };
+      const client = createRawSkillRegistryClient({
+        settings: settings(),
+        resolver: privateResolver,
+        transport,
+        clock: () => NOW,
+        nonceFactory: () => NONCE,
+      });
+
+      await expect(
+        client.listSkills({
+          actor: ACTOR,
+          requestId: REQUEST_ID,
+          limit: 50,
+          offset: 0,
+        }),
+      ).resolves.toEqual(listResponse());
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(finished).toBe(true);
+      expect(closedAfterFinish).toBe(true);
+      expect(requestSignal?.aborted).toBe(false);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
   it("clean-room sanitizes errors from the injected transport seam", async () => {
     const secret = `${INTERNAL_URL} ${CONTROL_KEY} private transport body`;
     const transport = vi.fn().mockRejectedValue(new Error(secret));
@@ -1053,6 +1219,168 @@ describe("private Skill Registry client", () => {
     ).rejects.toMatchObject({ code: "invalid_response" });
   });
 
+  it.each([
+    ["redirect", 302, {}, "invalid_response"],
+    [
+      "wrong media type",
+      200,
+      { "content-type": "application/json; charset=utf-8" },
+      "invalid_response",
+    ],
+    [
+      "cacheable response",
+      200,
+      { "cache-control": "max-age=60" },
+      "invalid_response",
+    ],
+    [
+      "non-canonical content length",
+      200,
+      { "content-length": "01" },
+      "invalid_response",
+    ],
+    [
+      "oversized declared content length",
+      200,
+      { "content-length": String(3 * 1024 * 1024 + 1) },
+      "response_too_large",
+    ],
+  ] as const)(
+    "cancels the body exactly once for an early %s failure",
+    async (_name, status, headerOverrides, expectedCode) => {
+      const cancel = vi.fn();
+      const body = new ReadableStream<Uint8Array>({ cancel });
+      const response = new Response(body, {
+        status,
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "no-store",
+          ...headerOverrides,
+        },
+      });
+      const client = createSkillRegistryClient({
+        settings: settings(),
+        fetcher: vi.fn<typeof fetch>().mockResolvedValue(response),
+        clock: () => NOW,
+        nonceFactory: () => NONCE,
+      });
+
+      await expect(
+        client.listSkills({
+          actor: ACTOR,
+          requestId: REQUEST_ID,
+          limit: 50,
+          offset: 0,
+        }),
+      ).rejects.toMatchObject({ code: expectedCode });
+      expect(cancel).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("preserves the primary stable error when body cancellation throws", async () => {
+    const secret = `${CONTROL_KEY} private cancellation failure`;
+    const cancel = vi.fn(() => {
+      throw new Error(secret);
+    });
+    const client = createSkillRegistryClient({
+      settings: settings(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(new ReadableStream<Uint8Array>({ cancel }), {
+          headers: {
+            "content-type": "text/plain",
+            "cache-control": "no-store",
+          },
+        }),
+      ),
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+
+    let caught: unknown;
+    try {
+      await client.listSkills({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        limit: 50,
+        offset: 0,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ code: "invalid_response" });
+    expect(`${String(caught)} ${JSON.stringify(caught)}`).not.toContain(secret);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("cancels a streamed oversized body once and never cancels a fully consumed body", async () => {
+    const oversizedCancel = vi.fn();
+    const oversizedClient = createSkillRegistryClient({
+      settings: settings(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              controller.enqueue(new Uint8Array(1024 * 1024));
+            },
+            cancel: oversizedCancel,
+          }),
+          {
+            headers: {
+              "content-type": "application/json",
+              "cache-control": "no-store",
+            },
+          },
+        ),
+      ),
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+    await expect(
+      oversizedClient.listSkills({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        limit: 50,
+        offset: 0,
+      }),
+    ).rejects.toMatchObject({ code: "response_too_large" });
+    expect(oversizedCancel).toHaveBeenCalledOnce();
+
+    const consumedCancel = vi.fn();
+    const consumedClient = createSkillRegistryClient({
+      settings: settings(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(JSON.stringify(listResponse())),
+              );
+              controller.close();
+            },
+            cancel: consumedCancel,
+          }),
+          {
+            headers: {
+              "content-type": "application/json",
+              "cache-control": "no-store",
+            },
+          },
+        ),
+      ),
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+    await expect(
+      consumedClient.listSkills({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        limit: 50,
+        offset: 0,
+      }),
+    ).resolves.toEqual(listResponse());
+    expect(consumedCancel).not.toHaveBeenCalled();
+  });
+
   it("rejects duplicate JSON fields and contract-invalid responses without echoing them", async () => {
     const privateBody = `{"version":"1","version":"private-secret","skills":[],"page":{"limit":50,"offset":0,"returned":0}}`;
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
@@ -1285,7 +1613,8 @@ describe("private Skill Registry client", () => {
     await vi.advanceTimersByTimeAsync(2_001);
     await connectExpectation;
 
-    const stream = new ReadableStream<Uint8Array>({ start() {} });
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({ start() {}, cancel });
     const responseClient = createSkillRegistryClient({
       settings: settings(),
       fetcher: vi.fn<typeof fetch>().mockResolvedValue(
@@ -1310,6 +1639,7 @@ describe("private Skill Registry client", () => {
     });
     await vi.advanceTimersByTimeAsync(5_001);
     await responseExpectation;
+    expect(cancel).toHaveBeenCalledOnce();
   });
 
   it("removes recursive transport causes, response body, URL and key from errors", async () => {

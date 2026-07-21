@@ -1,4 +1,8 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, expectTypeOf, it } from "vitest";
+
+import * as adminSkillContractModule from "./admin-skill-contract";
 
 import {
   ADMIN_SKILL_FILE_KINDS,
@@ -397,6 +401,118 @@ describe("admin Skill contracts", () => {
     expect(
       parseAdminSkillRevisionDetailResponse(accentsRemainDistinct),
     ).toEqual(accentsRemainDistinct);
+
+    const dotlessIRemainsDistinct = detailResponse();
+    dotlessIRemainsDistinct.files.push(
+      {
+        path: "references/I.md",
+        sha256: "d".repeat(64),
+        size: 1,
+        mediaType: "text/plain",
+        kind: "reference",
+      },
+      {
+        path: "references/ı.md",
+        sha256: "e".repeat(64),
+        size: 1,
+        mediaType: "text/plain",
+        kind: "reference",
+      },
+    );
+    dotlessIRemainsDistinct.revision.fileCount = 4;
+    dotlessIRemainsDistinct.revision.extractedSize = 386;
+    expect(
+      parseAdminSkillRevisionDetailResponse(dotlessIRemainsDistinct),
+    ).toEqual(dotlessIRemainsDistinct);
+
+    const ligatureCollision = detailResponse();
+    ligatureCollision.files.push(
+      {
+        path: "references/ﬀ.md",
+        sha256: "d".repeat(64),
+        size: 1,
+        mediaType: "text/plain",
+        kind: "reference",
+      },
+      {
+        path: "references/ff.md",
+        sha256: "e".repeat(64),
+        size: 1,
+        mediaType: "text/plain",
+        kind: "reference",
+      },
+    );
+    ligatureCollision.revision.fileCount = 4;
+    ligatureCollision.revision.extractedSize = 386;
+    expect(parseAdminSkillRevisionDetailResponse(ligatureCollision)).toBeNull();
+  });
+
+  it("pins exact Python 3.13 Unicode 15.1 casefold semantics", () => {
+    const pythonVersion = Reflect.get(
+      adminSkillContractModule,
+      "ADMIN_SKILL_CASEFOLD_PYTHON_VERSION",
+    ) as unknown;
+    const version = Reflect.get(
+      adminSkillContractModule,
+      "ADMIN_SKILL_CASEFOLD_UNICODE_VERSION",
+    ) as unknown;
+    const entries = Reflect.get(
+      adminSkillContractModule,
+      "ADMIN_SKILL_PYTHON_CASEFOLD_ENTRIES",
+    ) as unknown;
+    const casefold = Reflect.get(
+      adminSkillContractModule,
+      "pythonCasefoldAdminSkillPath",
+    ) as unknown;
+
+    expect(pythonVersion).toBe("3.13.13");
+    expect(version).toBe("15.1.0");
+    expect(entries).toBeInstanceOf(Array);
+    expect(typeof casefold).toBe("function");
+    if (!Array.isArray(entries) || typeof casefold !== "function") return;
+
+    const fold = casefold as (value: string) => string;
+    expect([
+      fold("I"),
+      fold("ı"),
+      fold("ß"),
+      fold("SS"),
+      fold("σ"),
+      fold("ς"),
+      fold("ﬀ"),
+      fold("ff"),
+      fold("İ"),
+      fold("i\u0307"),
+      fold("ſ"),
+      fold("s"),
+    ]).toEqual([
+      "i",
+      "ı",
+      "ss",
+      "ss",
+      "σ",
+      "σ",
+      "ff",
+      "ff",
+      "i\u0307",
+      "i\u0307",
+      "s",
+      "s",
+    ]);
+
+    // Python 3.13.13 / unicodedata 15.1.0: one UTF-8 line per changed code
+    // point, formatted as `CCCCCC;folded_utf8_hex\n` in ascending order.
+    const payload = (entries as readonly (readonly [number, string])[])
+      .map(
+        ([codePoint, value]) =>
+          `${codePoint.toString(16).toUpperCase().padStart(6, "0")};${Buffer.from(value, "utf8").toString("hex")}\n`,
+      )
+      .join("");
+    expect(entries).toHaveLength(1_530);
+    expect(Buffer.byteLength(payload, "utf8")).toBe(21_188);
+    expect(createHash("sha256").update(payload).digest("hex")).toBe(
+      "144934597d1f1320798da1502233becf7ef20b3caf59057c6cdad391460a9712",
+    );
   });
 
   it("enforces current-file membership by diff status", () => {

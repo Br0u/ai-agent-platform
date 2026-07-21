@@ -691,7 +691,6 @@ async function boundedResponseBody(
   const deadline = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
       controller.abort();
-      void reader.cancel().catch(() => undefined);
       reject(new SkillRegistryClientError("timeout"));
     }, RESPONSE_TIMEOUT_MS);
   });
@@ -701,7 +700,6 @@ async function boundedResponseBody(
       if (result.done) break;
       total += result.value.byteLength;
       if (total > maximumBytes) {
-        void reader.cancel().catch(() => undefined);
         clientError("response_too_large");
       }
       chunks.push(result.value);
@@ -724,6 +722,14 @@ async function boundedResponseBody(
     offset += chunk.byteLength;
   }
   return body;
+}
+
+async function cancelResponseBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Cancellation is cleanup only and must never replace the primary error.
+  }
 }
 
 function parseStrictJson(bytes: Uint8Array): unknown {
@@ -1017,6 +1023,8 @@ export function createSkillRegistryClient(options: {
   }): Promise<T> {
     const controller = new AbortController();
     let connectTimer: ReturnType<typeof setTimeout> | undefined;
+    let response: Response | undefined;
+    let responseFullyConsumed = false;
     try {
       const assertion = signer.sign(requestOptions.assertion);
       const headers: Record<string, string> = {
@@ -1049,7 +1057,7 @@ export function createSkillRegistryClient(options: {
           signal: controller.signal,
         });
       })();
-      const response = await Promise.race([responsePromise, connectDeadline]);
+      response = await Promise.race([responsePromise, connectDeadline]);
       if (connectTimer !== undefined) clearTimeout(connectTimer);
       if (response.status >= 300 && response.status < 400) {
         clientError("invalid_response");
@@ -1065,6 +1073,7 @@ export function createSkillRegistryClient(options: {
         controller,
         requestOptions.file ? MAX_FILE_RESPONSE_BYTES : MAX_RESPONSE_BYTES,
       );
+      responseFullyConsumed = true;
       const parsed = parseStrictJson(body);
       if (response.status !== requestOptions.successStatus) {
         const code = readError(response.status, parsed);
@@ -1090,6 +1099,10 @@ export function createSkillRegistryClient(options: {
       }
       return safe;
     } catch (error) {
+      if (response !== undefined && !responseFullyConsumed) {
+        controller.abort();
+        await cancelResponseBody(response);
+      }
       throw sanitized(error);
     } finally {
       if (connectTimer !== undefined) clearTimeout(connectTimer);

@@ -1,3 +1,17 @@
+import {
+  ADMIN_SKILL_CASEFOLD_PYTHON_VERSION,
+  ADMIN_SKILL_CASEFOLD_UNICODE_VERSION,
+  ADMIN_SKILL_PYTHON_CASEFOLD_ENTRIES,
+  pythonCasefoldAdminSkillPath,
+} from "./admin-skill-python-casefold";
+
+export {
+  ADMIN_SKILL_CASEFOLD_PYTHON_VERSION,
+  ADMIN_SKILL_CASEFOLD_UNICODE_VERSION,
+  ADMIN_SKILL_PYTHON_CASEFOLD_ENTRIES,
+  pythonCasefoldAdminSkillPath,
+};
+
 export const ADMIN_SKILL_REVISION_STATES = [
   "pending_review",
   "published",
@@ -332,11 +346,7 @@ export function isCanonicalAdminSkillPath(value: unknown): value is string {
 function uniqueEquivalentPaths(paths: readonly string[]): boolean {
   const keys = new Set<string>();
   for (const path of paths) {
-    const key = path
-      .normalize("NFC")
-      .toUpperCase()
-      .toLowerCase()
-      .normalize("NFC");
+    const key = pythonCasefoldAdminSkillPath(path);
     if (keys.has(key)) return false;
     keys.add(key);
   }
