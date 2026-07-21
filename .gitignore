@@ -21,7 +21,7 @@ coverage/
 *.tsbuildinfo
 data/
 backups/
-uploads/
+/uploads/
 /skill-registry-artifacts/
 .worktrees/
 /.superpowers/

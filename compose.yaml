@@ -320,7 +320,7 @@ services:
       test:
         [
           "CMD",
-          "/usr/local/bin/gosu",
+          "/usr/sbin/gosu",
           "skill-registry",
           "python",
           "-c",

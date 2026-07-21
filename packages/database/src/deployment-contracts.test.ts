@@ -1924,9 +1924,14 @@ exit 0
     expect(registry?.ports ?? []).toEqual([]);
     expect(Object.keys(registry?.networks ?? {})).toEqual(["backend"]);
     expect(registry?.volumes ?? []).toEqual([]);
-    expect(registry?.healthcheck?.test?.join(" ")).toContain(
-      "/internal/health/ready",
-    );
+    expect(registry?.healthcheck?.test).toEqual([
+      "CMD",
+      "/usr/sbin/gosu",
+      "skill-registry",
+      "python",
+      "-c",
+      "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7788/internal/health/ready',timeout=3).close()",
+    ]);
     for (const service of [bootstrap, migration]) {
       expect(service?.read_only).toBe(true);
       expect(new Set(service?.cap_drop)).toEqual(new Set(["ALL"]));
@@ -1946,8 +1951,18 @@ exit 0
         target: "/var/lib/postgresql",
       }),
     );
+    const uploadRoute =
+      "apps/web/src/app/api/v1/admin/assistant/skills/uploads/route.ts";
+    const gitIgnoreProbe = spawnSync(
+      "git",
+      ["check-ignore", "-q", "--no-index", uploadRoute],
+      { cwd: root },
+    );
+    expect(gitIgnoreProbe.status).toBe(1);
+    expect(read(".gitignore")).toContain("/uploads/");
     expect(read(".gitignore")).toContain("/skill-registry-artifacts/");
-    expect(read(".dockerignore")).toContain("skill-registry-artifacts");
+    expect(read(".dockerignore")).toContain("/uploads");
+    expect(read(".dockerignore")).toContain("/skill-registry-artifacts");
     const example = read(".env.example");
     expect(example).toContain(
       "SKILL_REGISTRY_INTERNAL_URL=http://skill-registry:7788",
