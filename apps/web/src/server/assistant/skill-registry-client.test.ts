@@ -864,7 +864,7 @@ describe("private Skill Registry client", () => {
       .mockResolvedValueOnce(
         jsonResponse({
           version: "1",
-          path: "references/安全 100%.md",
+          path: "scripts/run%2Fhidden%5C.py",
           content: "safe text\n",
         }),
       )
@@ -911,11 +911,11 @@ describe("private Skill Registry client", () => {
         requestId: REQUEST_ID,
         skillId: SKILL_ID,
         revisionId: REVISION_ID,
-        path: "references/安全 100%.md",
+        path: "scripts/run%2Fhidden%5C.py",
       }),
     ).resolves.toEqual({
       version: "1",
-      path: "references/安全 100%.md",
+      path: "scripts/run%2Fhidden%5C.py",
       content: "safe text\n",
     });
     await expect(
@@ -958,7 +958,7 @@ describe("private Skill Registry client", () => {
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
       `http://${PRIVATE_ADDRESS}:7780/internal/skills?limit=50&offset=0`,
       `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}`,
-      `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}/files/references/%E5%AE%89%E5%85%A8%20100%25.md`,
+      `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}/files/scripts/run%252Fhidden%255C.py`,
       `http://${PRIVATE_ADDRESS}:7780/internal/skills/uploads?targetSkillId=${SKILL_ID}`,
       `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}/review`,
     ]);
@@ -974,7 +974,7 @@ describe("private Skill Registry client", () => {
       [
         "file",
         "admin:assistant:skills:review",
-        `${SKILL_ID}/${REVISION_ID}/references/安全 100%.md`,
+        `${SKILL_ID}/${REVISION_ID}/scripts/run%2Fhidden%5C.py`,
         "session",
         null,
       ],

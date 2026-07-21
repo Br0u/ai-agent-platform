@@ -31,9 +31,9 @@ import {
   requireTrustedJsonMutation,
   requireTrustedMultipartMutation,
 } from "@/server/http/require-trusted-mutation";
+import { cancelUnreadRequestBody } from "@/server/http/cancel-request-body";
 import {
   BoundedMultipartError,
-  cancelUnreadRequestBody,
   readBoundedSkillUploadMultipart,
   type BoundedSkillUpload,
 } from "@/server/http/read-bounded-multipart";
@@ -462,6 +462,24 @@ const defaultReadDependencies = {
   requestIdFactory: () => crypto.randomUUID(),
 };
 
+function publicRequestId(request: Request, factory: () => string): string {
+  try {
+    return resolveAssistantRequestId(request, factory);
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
+function registryRequestId(factory: () => string): string {
+  try {
+    const requestId = factory();
+    if (!UUID.test(requestId)) throw new Error();
+    return requestId;
+  } catch {
+    throw new AdminSkillCommandError("registry_unavailable");
+  }
+}
+
 export function createAdminSkillListHandler(
   overrides: {
     access?: Pick<AccessService, "requirePermission">;
@@ -471,10 +489,7 @@ export function createAdminSkillListHandler(
 ) {
   const dependencies = { ...defaultReadDependencies, ...overrides };
   return async function GET(request: Request): Promise<Response> {
-    const requestId = resolveAssistantRequestId(
-      request,
-      dependencies.requestIdFactory,
-    );
+    const requestId = publicRequestId(request, dependencies.requestIdFactory);
     let actor: WorkforceActor;
     try {
       actor = await dependencies.access.requirePermission(
@@ -493,7 +508,7 @@ export function createAdminSkillListHandler(
       const client = dependencies.client ?? defaultRegistryClient();
       const response = await client.listSkills({
         actor: actor.userId,
-        requestId,
+        requestId: registryRequestId(dependencies.requestIdFactory),
         ...page,
       });
       return Response.json(
@@ -518,10 +533,7 @@ export function createAdminSkillRevisionHandler(
     request: Request,
     routeContext: DynamicRevisionContext,
   ): Promise<Response> {
-    const requestId = resolveAssistantRequestId(
-      request,
-      dependencies.requestIdFactory,
-    );
+    const requestId = publicRequestId(request, dependencies.requestIdFactory);
     let actor: WorkforceActor;
     try {
       actor = await dependencies.access.requirePermission(
@@ -545,7 +557,7 @@ export function createAdminSkillRevisionHandler(
       const client = dependencies.client ?? defaultRegistryClient();
       const response = await client.getRevision({
         actor: actor.userId,
-        requestId,
+        requestId: registryRequestId(dependencies.requestIdFactory),
         ...params,
       });
       return Response.json(
@@ -570,10 +582,7 @@ export function createAdminSkillFileHandler(
     request: Request,
     routeContext: DynamicFileContext,
   ): Promise<Response> {
-    const requestId = resolveAssistantRequestId(
-      request,
-      dependencies.requestIdFactory,
-    );
+    const requestId = publicRequestId(request, dependencies.requestIdFactory);
     let actor: WorkforceActor;
     try {
       actor = await dependencies.access.requirePermission(
@@ -600,8 +609,7 @@ export function createAdminSkillFileHandler(
           segment === "." ||
           segment === ".." ||
           segment.includes("/") ||
-          segment.includes("\\") ||
-          /%(?:2f|5c)/iu.test(segment),
+          segment.includes("\\"),
       )
     )
       return errorResponse(
@@ -618,7 +626,7 @@ export function createAdminSkillFileHandler(
       const client = dependencies.client ?? defaultRegistryClient();
       const response = await client.getFile({
         actor: actor.userId,
-        requestId,
+        requestId: registryRequestId(dependencies.requestIdFactory),
         skillId: fileParams.skillId,
         revisionId: fileParams.revisionId,
         path,
@@ -645,10 +653,7 @@ export function createAdminSkillUploadHandler(
   const requestIdFactory =
     overrides.requestIdFactory ?? (() => crypto.randomUUID());
   return async function POST(request: Request): Promise<Response> {
-    const fallbackRequestId = resolveAssistantRequestId(
-      request,
-      requestIdFactory,
-    );
+    const fallbackRequestId = publicRequestId(request, requestIdFactory);
     let commands: Pick<SkillCommands, "authorize" | "upload">;
     let context: AuthorizedSkillCommand;
     try {
@@ -691,16 +696,14 @@ export function createAdminSkillReviewHandler(
     request: Request,
     routeContext: DynamicRevisionContext,
   ): Promise<Response> {
-    const fallbackRequestId = resolveAssistantRequestId(
-      request,
-      requestIdFactory,
-    );
+    const fallbackRequestId = publicRequestId(request, requestIdFactory);
     let commands: Pick<SkillCommands, "authorize" | "review">;
     let context: AuthorizedSkillCommand;
     try {
       commands = overrides.commands ?? createDefaultCommands();
       context = await commands.authorize(request, "review");
     } catch (error) {
+      await cancelUnreadRequestBody(request, error);
       return errorResponse(error, fallbackRequestId);
     }
     let params: { skillId: string; revisionId: string } | null = null;
@@ -709,30 +712,37 @@ export function createAdminSkillReviewHandler(
     } catch {
       params = null;
     }
-    if (params === null)
-      return errorResponse(
-        new AdminSkillCommandError("validation_error"),
-        context.requestId,
-      );
+    if (params === null) {
+      const error = new AdminSkillCommandError("validation_error");
+      await cancelUnreadRequestBody(request, error);
+      return errorResponse(error, context.requestId);
+    }
+    const length = request.headers.get("content-length");
+    const oversized =
+      length !== null &&
+      /^\d+$/u.test(length) &&
+      Number(length) > MAX_REVIEW_BODY_BYTES;
+    if (oversized) {
+      await cancelUnreadRequestBody(request);
+      return Response.json(errorBody(context.requestId, "payload_too_large"), {
+        status: 413,
+        headers: NO_STORE_HEADERS,
+      });
+    }
     let read: JsonReadResult;
+    let readFailure: unknown;
     try {
       read = await readJson(request, MAX_REVIEW_BODY_BYTES);
-    } catch {
+    } catch (error) {
+      readFailure = error;
       read = { ok: false };
     }
     if (!read.ok) {
-      const length = request.headers.get("content-length");
-      const oversized =
-        length !== null &&
-        /^\d+$/u.test(length) &&
-        Number(length) > MAX_REVIEW_BODY_BYTES;
-      return Response.json(
-        errorBody(
-          context.requestId,
-          oversized ? "payload_too_large" : "validation_error",
-        ),
-        { status: oversized ? 413 : 400, headers: NO_STORE_HEADERS },
-      );
+      await cancelUnreadRequestBody(request, readFailure);
+      return Response.json(errorBody(context.requestId, "validation_error"), {
+        status: 400,
+        headers: NO_STORE_HEADERS,
+      });
     }
     let input = parseReviewBody(read.value);
     if (input === null)

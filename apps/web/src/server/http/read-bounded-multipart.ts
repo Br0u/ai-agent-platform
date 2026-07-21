@@ -4,6 +4,8 @@ import Busboy, { type BusboyFileStream } from "@fastify/busboy";
 import { once } from "node:events";
 import { Readable } from "node:stream";
 
+import { cancelUnreadRequestBody } from "./cancel-request-body";
+
 const MAX_ARCHIVE_BYTES = 5 * 1024 * 1024;
 const MAX_BODY_BYTES = MAX_ARCHIVE_BYTES + 64 * 1024;
 const MAX_CONTENT_TYPE_BYTES = 256;
@@ -31,19 +33,6 @@ export type BoundedSkillUpload = {
 
 function reject(code: BoundedMultipartErrorCode = "invalid_multipart"): never {
   throw new BoundedMultipartError(code);
-}
-
-export async function cancelUnreadRequestBody(
-  request: Request,
-  reason?: unknown,
-): Promise<void> {
-  try {
-    const body = request.body;
-    if (body === null || body.locked) return;
-    await body.cancel(reason);
-  } catch {
-    // Cleanup must never replace the request's primary error.
-  }
 }
 
 async function rejectBeforeRead(

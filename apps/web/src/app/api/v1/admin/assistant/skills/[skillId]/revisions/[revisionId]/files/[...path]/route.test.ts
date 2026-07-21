@@ -31,6 +31,29 @@ function fixture() {
 }
 
 describe("admin skill file route", () => {
+  it("uses a fresh Registry UUID while preserving a non-UUID correlation ID", async () => {
+    const current = fixture();
+    const response = await current.handler(
+      new Request("https://admin.example.test/file", {
+        headers: { "x-request-id": "trace-123" },
+      }),
+      {
+        params: Promise.resolve({
+          skillId: SKILL_ID,
+          revisionId: REVISION_ID,
+          path: ["SKILL.md"],
+        }),
+      },
+    );
+
+    expect(current.client.getFile).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: REQUEST_ID }),
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      requestId: "trace-123",
+    });
+  });
+
   it("requires review permission and forwards a canonical relative path", async () => {
     const current = fixture();
     const response = await current.handler(
@@ -76,7 +99,29 @@ describe("admin skill file route", () => {
     );
   });
 
-  it.each([[".."], ["a/b"], [""], ["%2Fetc"]])(
+  it.each(["run%2Fhidden.py", "run%5Chidden.py"])(
+    "treats encoded-looking separators as literal file-name text: %s",
+    async (fileName) => {
+      const current = fixture();
+      const response = await current.handler(
+        new Request("https://admin.example.test/file"),
+        {
+          params: Promise.resolve({
+            skillId: SKILL_ID,
+            revisionId: REVISION_ID,
+            path: ["scripts", fileName],
+          }),
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(current.client.getFile).toHaveBeenCalledWith(
+        expect.objectContaining({ path: `scripts/${fileName}` }),
+      );
+    },
+  );
+
+  it.each([[".."], ["a/b"], ["a\\b"], [""]])(
     "rejects an unsafe catch-all segment %s",
     async (segment) => {
       const current = fixture();

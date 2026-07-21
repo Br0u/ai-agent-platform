@@ -37,6 +37,59 @@ function fixture() {
 }
 
 describe("admin skill list route", () => {
+  it("keeps a public correlation ID separate from the Registry UUID", async () => {
+    const current = fixture();
+    const response = await current.handler(
+      new Request("https://admin.example.test/api/v1/admin/assistant/skills", {
+        headers: { "x-request-id": "trace-123" },
+      }),
+    );
+
+    expect(current.client.listSkills).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: REQUEST_ID }),
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      requestId: "trace-123",
+    });
+  });
+
+  it.each([
+    ["non UUID", () => "trace-123"],
+    [
+      "throwing",
+      () => {
+        throw new Error("private factory failure");
+      },
+    ],
+  ])(
+    "fails closed for a %s Registry request ID factory",
+    async (_name, factory) => {
+      const current = fixture();
+      const handler = createAdminSkillListHandler({
+        access: current.access,
+        client: current.client as never,
+        requestIdFactory: factory,
+      });
+
+      const response = await handler(
+        new Request(
+          "https://admin.example.test/api/v1/admin/assistant/skills",
+          {
+            headers: { "x-request-id": "trace-123" },
+          },
+        ),
+      );
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      await expect(response.json()).resolves.toMatchObject({
+        requestId: "trace-123",
+        error: { code: "registry_unavailable" },
+      });
+      expect(current.client.listSkills).not.toHaveBeenCalled();
+    },
+  );
+
   it("requires exact read permission and returns permission flags no-store", async () => {
     const current = fixture();
     const response = await current.handler(

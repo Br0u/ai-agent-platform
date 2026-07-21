@@ -27,6 +27,25 @@ function fixture() {
 }
 
 describe("admin skill revision detail route", () => {
+  it("uses a fresh Registry UUID while preserving a non-UUID correlation ID", async () => {
+    const current = fixture();
+    const response = await current.handler(
+      new Request("https://admin.example.test/detail", {
+        headers: { "x-request-id": "trace-123" },
+      }),
+      {
+        params: Promise.resolve({ skillId: SKILL_ID, revisionId: REVISION_ID }),
+      },
+    );
+
+    expect(current.client.getRevision).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: REQUEST_ID }),
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      requestId: "trace-123",
+    });
+  });
+
   it("requires review permission, not read-only permission", async () => {
     const current = fixture();
     current.access.requirePermission.mockRejectedValueOnce(
