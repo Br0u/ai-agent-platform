@@ -12,6 +12,7 @@ from typing import Protocol, cast
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import SecretStr
 from psycopg_pool import AsyncConnectionPool
 from starlette.exceptions import HTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -43,7 +44,7 @@ class RegistryPool(Protocol):
     def connection(self) -> AbstractAsyncContextManager[RegistryPoolConnection]: ...
 
 
-PoolFactory = Callable[[str], RegistryPool]
+PoolFactory = Callable[[SecretStr], RegistryPool]
 PolicyLoader = Callable[[Path], ScanPolicy]
 ServiceFactory = Callable[[RegistryPool, ScanPolicy], SkillRegistryService]
 ReadinessProbe = Callable[[RegistryPool], Awaitable[bool]]
@@ -53,8 +54,8 @@ class RegistryStartupError(RuntimeError):
     """Stable startup failure without database or key material."""
 
 
-class NoStoreMiddleware:
-    """Apply a non-cacheable response contract to every HTTP outcome."""
+class RegistryHttpBoundary:
+    """Enforce stable failures and non-cacheable responses outside Starlette."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -64,8 +65,12 @@ class NoStoreMiddleware:
             await self.app(scope, receive, send)
             return
 
+        response_started = False
+
         async def send_no_store(message: Message) -> None:
+            nonlocal response_started
             if message["type"] == "http.response.start":
+                response_started = True
                 headers = [
                     (name, value)
                     for name, value in message.get("headers", [])
@@ -75,21 +80,41 @@ class NoStoreMiddleware:
                 message["headers"] = headers
             await send(message)
 
-        await self.app(scope, receive, send_no_store)
+        failed = False
+        try:
+            await self.app(scope, receive, send_no_store)
+        except Exception:
+            failed = True
+        if failed and not response_started:
+            response = JSONResponse(
+                {"error": "REGISTRY_UNAVAILABLE"},
+                status_code=503,
+                headers={"Cache-Control": "no-store"},
+            )
+            await response(scope, receive, send_no_store)
+
+
+class RegistryFastAPI(FastAPI):
+    def build_middleware_stack(self) -> ASGIApp:
+        return RegistryHttpBoundary(super().build_middleware_stack())
 
 
 def _psycopg_url(value: str) -> str:
     return value.replace("postgresql+psycopg_async://", "postgresql://", 1)
 
 
-def _default_pool_factory(database_url: str) -> RegistryPool:
-    pool = AsyncConnectionPool(
-        conninfo=database_url,
-        min_size=1,
-        max_size=10,
-        open=False,
-        timeout=2.0,
-    )
+def _default_pool_factory(database_url: SecretStr) -> RegistryPool:
+    conninfo = _psycopg_url(database_url.get_secret_value())
+    try:
+        pool = AsyncConnectionPool(
+            conninfo=conninfo,
+            min_size=1,
+            max_size=10,
+            open=False,
+            timeout=2.0,
+        )
+    finally:
+        conninfo = ""
     return cast(RegistryPool, pool)
 
 
@@ -150,8 +175,7 @@ def create_app(
 ) -> FastAPI:
     """Compose one lifespan-owned pool, policy, and registry service."""
     runtime_settings = settings or RegistrySettings()  # type: ignore[call-arg]
-    database_url = _psycopg_url(runtime_settings.database_url.get_secret_value())
-    pool = pool_factory(database_url)
+    pool: RegistryPool | None = None
     service: SkillRegistryService | None = None
 
     def get_service() -> SkillRegistryService:
@@ -161,17 +185,18 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        nonlocal service
+        nonlocal pool, service
         pool_touched = False
         try:
             startup_failed = False
             try:
                 policy = policy_loader(runtime_settings.runtime_imports_file)
+                pool = pool_factory(runtime_settings.database_url)
                 pool_touched = True
                 await pool.open(wait=True)
                 service = service_factory(pool, policy)
                 app.state.skill_registry_service = service
-            except (RegistryConfigError, RegistryStartupError):
+            except RegistryConfigError:
                 raise
             except Exception:
                 startup_failed = True
@@ -181,13 +206,15 @@ def create_app(
         finally:
             service = None
             app.state.skill_registry_service = None
-            if pool_touched:
+            candidate_pool = pool
+            pool = None
+            if pool_touched and candidate_pool is not None:
                 try:
-                    await pool.close()
+                    await candidate_pool.close()
                 except Exception:
                     pass
 
-    app = FastAPI(
+    app = RegistryFastAPI(
         title="AI Agent Platform Skill Registry",
         lifespan=lifespan,
         openapi_url=None,
@@ -202,8 +229,11 @@ def create_app(
 
     @app.get("/internal/health/ready", include_in_schema=False)
     async def ready() -> JSONResponse:
+        candidate_pool = pool
         try:
-            available = await asyncio.wait_for(readiness_probe(pool), timeout=2.0)
+            available = candidate_pool is not None and await asyncio.wait_for(
+                readiness_probe(candidate_pool), timeout=2.0
+            )
         except Exception:
             available = False
         available = available is True
@@ -222,9 +252,12 @@ def create_app(
 
     @app.exception_handler(Exception)
     async def unhandled_error(_: Request, __: Exception) -> JSONResponse:
-        return JSONResponse({"error": "REGISTRY_UNAVAILABLE"}, status_code=503)
+        return JSONResponse(
+            {"error": "REGISTRY_UNAVAILABLE"},
+            status_code=503,
+            headers={"Cache-Control": "no-store"},
+        )
 
-    app.add_middleware(NoStoreMiddleware)
     app.add_middleware(
         SkillRegistryAuthMiddleware,
         authenticator=SkillRegistryAuthenticator(control_key=runtime_settings.control_key),

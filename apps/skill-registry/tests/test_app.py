@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 from contextlib import asynccontextmanager
 import hashlib
@@ -16,6 +17,7 @@ import zipfile
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from starlette.types import Message, Scope
 
 from skill_registry.app import RegistryStartupError, create_app
 from skill_registry.auth import ASSERTION_KEY_DERIVATION_DOMAIN
@@ -31,14 +33,17 @@ INTEGRATION_MANAGER_URL = os.getenv("SKILL_REGISTRY_DATABASE_URL")
 
 
 class FakePool:
-    def __init__(self) -> None:
+    def __init__(self, *, open_error: Exception | None = None) -> None:
         self.opened = 0
         self.closed = 0
         self.connections = 0
+        self.open_error = open_error
 
     async def open(self, *, wait: bool) -> None:
         assert wait is True
         self.opened += 1
+        if self.open_error is not None:
+            raise self.open_error
 
     async def close(self) -> None:
         self.closed += 1
@@ -59,6 +64,73 @@ def settings(path: Path) -> RegistrySettings:
         control_key=SecretStr(CONTROL_KEY),
         runtime_imports_file=path,
     )
+
+
+def _assert_exception_tree_scrubbed(error: BaseException, *secrets: str) -> None:
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        rendered = f"{current!s} {current!r} {current.args!r}"
+        assert all(secret not in rendered for secret in secrets)
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+
+
+def test_pool_factory_receives_secretstr_and_constructor_failure_is_scrubbed(
+    tmp_path: Path,
+) -> None:
+    received: list[SecretStr] = []
+
+    def fail_pool_factory(database_url: SecretStr) -> FakePool:
+        received.append(database_url)
+        raise RegistryStartupError(database_url)
+
+    app = create_app(
+        settings=settings(tmp_path / "imports.json"),
+        pool_factory=fail_pool_factory,
+        policy_loader=lambda _: ScanPolicy(frozenset()),
+        service_factory=lambda *_: StubService(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RegistryStartupError) as caught:
+        with TestClient(app):
+            raise AssertionError("startup must not complete")
+
+    assert len(received) == 1
+    assert isinstance(received[0], SecretStr)
+    assert MANAGER_URL not in str(received[0])
+    assert MANAGER_URL not in repr(received[0])
+    assert caught.value.args == ("Skill registry startup failed",)
+    _assert_exception_tree_scrubbed(caught.value, MANAGER_URL, "private-manager")
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_pool_open_failure_closes_pool_and_scrubs_exception_tree(tmp_path: Path) -> None:
+    pool = FakePool(open_error=RuntimeError(MANAGER_URL))
+    app = create_app(
+        settings=settings(tmp_path / "imports.json"),
+        pool_factory=lambda _: pool,
+        policy_loader=lambda _: ScanPolicy(frozenset()),
+        service_factory=lambda *_: StubService(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RegistryStartupError) as caught:
+        with TestClient(app):
+            raise AssertionError("startup must not complete")
+
+    assert pool.opened == 1
+    assert pool.closed == 1
+    assert caught.value.args == ("Skill registry startup failed",)
+    _assert_exception_tree_scrubbed(caught.value, MANAGER_URL, "private-manager")
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 def test_lifespan_reads_policy_once_builds_one_service_and_closes_pool(tmp_path: Path) -> None:
@@ -178,6 +250,83 @@ def test_docs_and_openapi_are_not_exposed_and_errors_are_no_store(tmp_path: Path
             assert response.status_code == 404
             assert response.json() == {"error": "NOT_FOUND"}
             assert response.headers["cache-control"] == "no-store"
+
+
+def test_unhandled_error_is_sanitized_when_test_client_reraises(tmp_path: Path) -> None:
+    app = create_app(
+        settings=settings(tmp_path / "imports.json"),
+        pool_factory=lambda _: FakePool(),
+        policy_loader=lambda _: ScanPolicy(frozenset()),
+        service_factory=lambda *_: StubService(),  # type: ignore[arg-type]
+    )
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise RuntimeError("private-handler-detail")
+
+    with TestClient(app, raise_server_exceptions=True) as client:
+        response = client.get("/boom")
+
+    assert response.status_code == 503
+    assert response.json() == {"error": "REGISTRY_UNAVAILABLE"}
+    assert response.headers["cache-control"] == "no-store"
+    assert "private-handler-detail" not in response.text
+
+
+def test_direct_asgi_error_is_stable_without_reading_request_body(tmp_path: Path) -> None:
+    app = create_app(
+        settings=settings(tmp_path / "imports.json"),
+        pool_factory=lambda _: FakePool(),
+        policy_loader=lambda _: ScanPolicy(frozenset()),
+        service_factory=lambda *_: StubService(),  # type: ignore[arg-type]
+    )
+
+    @app.get("/boom-direct")
+    async def boom_direct() -> None:
+        raise RuntimeError("private-direct-detail")
+
+    async def call_app() -> tuple[list[Message], int]:
+        messages: list[Message] = []
+        receive_calls = 0
+
+        async def receive() -> Message:
+            nonlocal receive_calls
+            receive_calls += 1
+            raise AssertionError("GET without a body must not call receive")
+
+        async def send(message: Message) -> None:
+            messages.append(message)
+
+        scope: Scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "server": ("testserver", 80),
+            "client": ("testclient", 50000),
+            "scheme": "http",
+            "method": "GET",
+            "root_path": "",
+            "path": "/boom-direct",
+            "raw_path": b"/boom-direct",
+            "query_string": b"",
+            "headers": [],
+            "state": {},
+        }
+        await app(scope, receive, send)
+        return messages, receive_calls
+
+    messages, receive_calls = asyncio.run(call_app())
+    start = next(message for message in messages if message["type"] == "http.response.start")
+    body = b"".join(
+        message.get("body", b"") for message in messages if message["type"] == "http.response.body"
+    )
+    headers = dict(start["headers"])
+
+    assert receive_calls == 0
+    assert start["status"] == 503
+    assert headers[b"cache-control"] == b"no-store"
+    assert json.loads(body) == {"error": "REGISTRY_UNAVAILABLE"}
+    assert b"private-direct-detail" not in body
 
 
 def _signed_headers(
