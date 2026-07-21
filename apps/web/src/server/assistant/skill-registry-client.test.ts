@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   SkillRegistryClientError,
   createSkillRegistryAssertionSigner,
-  createSkillRegistryClient,
+  createSkillRegistryClient as createRawSkillRegistryClient,
   resolveSkillRegistrySettings,
 } from "./skill-registry-client";
 
@@ -18,6 +18,25 @@ const SKILL_ID = "44444444-4444-4444-8444-444444444444";
 const REVISION_ID = "55555555-5555-4555-8555-555555555555";
 const NOW = 2_000_000_000;
 const SHA256 = "a".repeat(64);
+const PRIVATE_ADDRESS = "10.42.0.7";
+
+type AddressResolver = (
+  hostname: string,
+) => Promise<readonly { address: string; family: 4 | 6 }[]>;
+type ClientOptions = Parameters<typeof createRawSkillRegistryClient>[0] & {
+  resolver?: AddressResolver;
+};
+
+const privateResolver: AddressResolver = async () => [
+  { address: PRIVATE_ADDRESS, family: 4 },
+];
+
+function createSkillRegistryClient(options: ClientOptions) {
+  return createRawSkillRegistryClient({
+    ...options,
+    resolver: options.resolver ?? privateResolver,
+  } as Parameters<typeof createRawSkillRegistryClient>[0]);
+}
 
 const GOLDEN_REVIEW_ASSERTION =
   "eyJhY3Rpb24iOiJyZXZpZXciLCJhY3RvciI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsImFzc3VyYW5jZSI6InBhc3N3b3JkK21mYSIsImFzc3VyZWRBdCI6MTk5OTk5OTcwMCwiZXhwaXJlc0F0IjoyMDAwMDAwMDA1LCJpc3N1ZWRBdCI6MjAwMDAwMDAwMCwibm9uY2UiOiIzMzMzMzMzMy0zMzMzLTQzMzMtODMzMy0zMzMzMzMzMzMzMzMiLCJwZXJtaXNzaW9uIjoiYWRtaW46YXNzaXN0YW50OnNraWxsczpyZXZpZXciLCJyZXF1ZXN0SWQiOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJ0YXJnZXQiOiI0NDQ0NDQ0NC00NDQ0LTQ0NDQtODQ0NC00NDQ0NDQ0NDQ0NDQvNTU1NTU1NTUtNTU1NS00NTU1LTg1NTUtNTU1NTU1NTU1NTU1In0.Ky7icHs2m8RHPZCHs1aiWNaG_6Aq-8AcQo7oaHMQGZQ";
@@ -277,6 +296,214 @@ describe("Skill Registry assertion signer", () => {
 });
 
 describe("private Skill Registry client", () => {
+  it("revalidates and snapshots mutable settings before any request", async () => {
+    const mutable = {
+      baseUrl: INTERNAL_URL,
+      controlKey: CONTROL_KEY,
+    };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse(listResponse()));
+    const client = createSkillRegistryClient({
+      settings: mutable,
+      fetcher,
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+
+    mutable.baseUrl = "http://8.8.8.8:7780";
+    mutable.controlKey = "mutated-control-key-that-must-never-be-used";
+
+    await expect(
+      client.listSkills({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        limit: 50,
+        offset: 0,
+      }),
+    ).resolves.toEqual(listResponse());
+    expect(fetcher).toHaveBeenCalledWith(
+      `http://${PRIVATE_ADDRESS}:7780/internal/skills?limit=50&offset=0`,
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${CONTROL_KEY}`,
+          Host: "skill-registry:7780",
+        }),
+        redirect: "manual",
+      }),
+    );
+  });
+
+  it.each([
+    { baseUrl: "http://8.8.8.8:7780", controlKey: CONTROL_KEY },
+    { baseUrl: `${INTERNAL_URL}/path`, controlKey: CONTROL_KEY },
+    { baseUrl: INTERNAL_URL, controlKey: "short" },
+  ])("rejects direct invalid settings at client construction", (invalid) => {
+    expect(() =>
+      createRawSkillRegistryClient({
+        settings: invalid,
+        fetcher: vi.fn<typeof fetch>(),
+      }),
+    ).toThrow("Skill Registry configuration is invalid");
+  });
+
+  it.each([
+    [[{ address: "8.8.8.8", family: 4 }]],
+    [
+      [
+        { address: PRIVATE_ADDRESS, family: 4 },
+        { address: "8.8.4.4", family: 4 },
+      ],
+    ],
+    [[{ address: "::ffff:10.42.0.7", family: 6 }]],
+  ] as const)("rejects unsafe resolver result %j", async (addresses) => {
+    const fetcher = vi.fn<typeof fetch>();
+    const client = createSkillRegistryClient({
+      settings: settings(),
+      fetcher,
+      resolver: async () => addresses,
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+
+    await expect(
+      client.listSkills({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        limit: 50,
+        offset: 0,
+      }),
+    ).rejects.toMatchObject({ code: "transport_error" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("resolves every request and pins the connection to the verified address", async () => {
+    const resolver = vi
+      .fn<AddressResolver>()
+      .mockResolvedValueOnce([{ address: PRIVATE_ADDRESS, family: 4 }])
+      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }]);
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse(listResponse()));
+    const client = createSkillRegistryClient({
+      settings: settings(),
+      resolver,
+      fetcher,
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+    const command = {
+      actor: ACTOR,
+      requestId: REQUEST_ID,
+      limit: 50,
+      offset: 0,
+    };
+
+    await expect(client.listSkills(command)).resolves.toEqual(listResponse());
+    await expect(client.listSkills(command)).rejects.toMatchObject({
+      code: "transport_error",
+    });
+    expect(resolver).toHaveBeenCalledTimes(2);
+    expect(resolver).toHaveBeenCalledWith("skill-registry");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves an IPv6 origin without brackets and pins a bracketed IP URL", async () => {
+    const resolver = vi
+      .fn<AddressResolver>()
+      .mockResolvedValue([{ address: "fd00::7", family: 6 }]);
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse(listResponse()));
+    const client = createSkillRegistryClient({
+      settings: {
+        baseUrl: "http://[fd00::1]:7780",
+        controlKey: CONTROL_KEY,
+      },
+      resolver,
+      fetcher,
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+
+    await expect(
+      client.listSkills({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        limit: 50,
+        offset: 0,
+      }),
+    ).resolves.toEqual(listResponse());
+    expect(resolver).toHaveBeenCalledWith("fd00::1");
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://[fd00::7]:7780/internal/skills?limit=50&offset=0",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Host: "[fd00::1]:7780" }),
+      }),
+    );
+  });
+
+  it("uses the default resolver when no test seam is supplied", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse(listResponse()));
+    const client = createRawSkillRegistryClient({
+      settings: {
+        baseUrl: `http://${PRIVATE_ADDRESS}:7780`,
+        controlKey: CONTROL_KEY,
+      },
+      fetcher,
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+
+    await expect(
+      client.listSkills({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        limit: 50,
+        offset: 0,
+      }),
+    ).resolves.toEqual(listResponse());
+    expect(fetcher).toHaveBeenCalledWith(
+      `http://${PRIVATE_ADDRESS}:7780/internal/skills?limit=50&offset=0`,
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Host: `${PRIVATE_ADDRESS}:7780`,
+        }),
+      }),
+    );
+  });
+
+  it("sanitizes resolver failures without leaking URL or keys", async () => {
+    const secret = `${INTERNAL_URL} ${CONTROL_KEY} private resolver body`;
+    const client = createSkillRegistryClient({
+      settings: settings(),
+      resolver: async () => {
+        throw new Error(secret);
+      },
+      fetcher: vi.fn<typeof fetch>(),
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+
+    let caught: unknown;
+    try {
+      await client.listSkills({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        limit: 50,
+        offset: 0,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ code: "transport_error" });
+    expect(`${String(caught)} ${JSON.stringify(caught)}`).not.toMatch(
+      /private|skill-registry|control-key/iu,
+    );
+  });
+
   it("calls list/detail/file/upload/review with exact signed route context", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
@@ -377,11 +604,11 @@ describe("private Skill Registry client", () => {
     });
 
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
-      `${INTERNAL_URL}/internal/skills?limit=50&offset=0`,
-      `${INTERNAL_URL}/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}`,
-      `${INTERNAL_URL}/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}/files/references/%E5%AE%89%E5%85%A8%20note.md`,
-      `${INTERNAL_URL}/internal/skills/uploads?targetSkillId=${SKILL_ID}`,
-      `${INTERNAL_URL}/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}/review`,
+      `http://${PRIVATE_ADDRESS}:7780/internal/skills?limit=50&offset=0`,
+      `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}`,
+      `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}/files/references/%E5%AE%89%E5%85%A8%20note.md`,
+      `http://${PRIVATE_ADDRESS}:7780/internal/skills/uploads?targetSkillId=${SKILL_ID}`,
+      `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}/review`,
     ]);
     const expected = [
       ["list", "admin:assistant:skills", "skills", "session", null],
@@ -415,6 +642,7 @@ describe("private Skill Registry client", () => {
       const init = fetcher.mock.calls[index]![1]!;
       const headers = init.headers as Record<string, string>;
       expect(headers.Authorization).toBe(`Bearer ${CONTROL_KEY}`);
+      expect(headers.Host).toBe("skill-registry:7780");
       expect(headers["X-Request-Id"]).toBe(REQUEST_ID);
       const payload = JSON.parse(
         Buffer.from(
@@ -453,6 +681,155 @@ describe("private Skill Registry client", () => {
       }),
       headers: expect.objectContaining({ "Content-Type": "application/json" }),
     });
+  });
+
+  it("binds upload and review responses to the requested state transition", async () => {
+    const reviewed = (state: "published" | "rejected") => ({
+      ...revision(),
+      state,
+      reviewedBy: ACTOR,
+      reviewedAt: "2026-07-20T01:03:03.000Z",
+    });
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({ version: "1", revision: reviewed("published") }, 201),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ version: "1", revision: reviewed("rejected") }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ version: "1", revision: reviewed("published") }),
+      );
+    const client = createSkillRegistryClient({
+      settings: settings(),
+      fetcher,
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+    const attestations = {
+      contentReviewed: true as const,
+      usageRightsConfirmed: true as const,
+      executionRiskAccepted: true as const,
+      independentReviewerConfirmed: true as const,
+    };
+
+    await expect(
+      client.uploadSkill({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        archive: new Uint8Array([0x50, 0x4b, 3, 4]),
+      }),
+    ).rejects.toMatchObject({ code: "invalid_response" });
+    await expect(
+      client.reviewRevision({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        skillId: SKILL_ID,
+        revisionId: REVISION_ID,
+        assuredAt: NOW - 300,
+        input: {
+          decision: "approve",
+          expectedState: "pending_review",
+          reason: null,
+          attestations,
+        },
+      }),
+    ).rejects.toMatchObject({ code: "invalid_response" });
+    await expect(
+      client.reviewRevision({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        skillId: SKILL_ID,
+        revisionId: REVISION_ID,
+        assuredAt: NOW - 300,
+        input: {
+          decision: "reject",
+          expectedState: "pending_review",
+          reason: "Unsafe behavior.",
+          attestations,
+        },
+      }),
+    ).rejects.toMatchObject({ code: "invalid_response" });
+  });
+
+  it("accepts 500 Unicode code points and rejects a 501-point review reason", async () => {
+    const reason = "😀".repeat(500);
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        version: "1",
+        revision: {
+          ...revision(),
+          state: "rejected",
+          reviewedBy: ACTOR,
+          reviewedAt: "2026-07-20T01:03:03.000Z",
+        },
+      }),
+    );
+    const client = createSkillRegistryClient({
+      settings: settings(),
+      fetcher,
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+    const command = (value: string) => ({
+      actor: ACTOR,
+      requestId: REQUEST_ID,
+      skillId: SKILL_ID,
+      revisionId: REVISION_ID,
+      assuredAt: NOW - 300,
+      input: {
+        decision: "reject" as const,
+        expectedState: "pending_review" as const,
+        reason: value,
+        attestations: {
+          contentReviewed: true as const,
+          usageRightsConfirmed: true as const,
+          executionRiskAccepted: true as const,
+          independentReviewerConfirmed: true as const,
+        },
+      },
+    });
+
+    await expect(client.reviewRevision(command(reason))).resolves.toMatchObject(
+      {
+        revision: { state: "rejected" },
+      },
+    );
+    await expect(
+      client.reviewRevision(command("x".repeat(501))),
+    ).rejects.toMatchObject({ code: "invalid_request" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts a bounded detail response with 1153 findings", async () => {
+    const body = detailResponse();
+    Reflect.set(
+      body,
+      "findings",
+      Array.from({ length: 1_153 }, (_, index) => ({
+        path: "SKILL.md",
+        line: index + 1,
+        code: "subprocess",
+        message: "Review required.",
+        blocking: false,
+      })),
+    );
+    const client = createSkillRegistryClient({
+      settings: settings(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(body)),
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+
+    await expect(
+      client.getRevision({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        skillId: SKILL_ID,
+        revisionId: REVISION_ID,
+      }),
+    ).resolves.toEqual(body);
   });
 
   it.each([
@@ -588,6 +965,55 @@ describe("private Skill Registry client", () => {
       }),
     ).rejects.toMatchObject({ code: "response_too_large" });
 
+    for (const content of [
+      '"'.repeat(2 * 1024 * 1024),
+      "\x01".repeat(2 * 1024 * 1024),
+    ]) {
+      const exactFileClient = createSkillRegistryClient({
+        settings: settings(),
+        fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+          jsonResponse({
+            version: "1",
+            path: "SKILL.md",
+            content,
+          }),
+        ),
+        clock: () => NOW,
+        nonceFactory: () => NONCE,
+      });
+      await expect(
+        exactFileClient.getFile({
+          actor: ACTOR,
+          requestId: REQUEST_ID,
+          skillId: SKILL_ID,
+          revisionId: REVISION_ID,
+          path: "SKILL.md",
+        }),
+      ).resolves.toMatchObject({ content });
+    }
+
+    const oversizedFileClient = createSkillRegistryClient({
+      settings: settings(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse({
+          version: "1",
+          path: "SKILL.md",
+          content: "x".repeat(2 * 1024 * 1024 + 1),
+        }),
+      ),
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+    await expect(
+      oversizedFileClient.getFile({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        skillId: SKILL_ID,
+        revisionId: REVISION_ID,
+        path: "SKILL.md",
+      }),
+    ).rejects.toMatchObject({ code: "response_too_large" });
+
     const declared = createSkillRegistryClient({
       settings: settings(),
       fetcher: vi.fn<typeof fetch>().mockResolvedValue(
@@ -630,6 +1056,17 @@ describe("private Skill Registry client", () => {
         path: `references/bad-${String.fromCharCode(0xd800)}.md`,
       }),
     ).rejects.toMatchObject({ code: "invalid_request" });
+    for (const path of ["references/cafe\u0301.md", "scripts/\u202eevil.py"]) {
+      await expect(
+        client.getFile({
+          actor: ACTOR,
+          requestId: REQUEST_ID,
+          skillId: SKILL_ID,
+          revisionId: REVISION_ID,
+          path,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_request" });
+    }
 
     const archive = new Proxy(new Uint8Array([0x50, 0x4b, 3, 4]), {
       getPrototypeOf() {

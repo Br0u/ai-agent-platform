@@ -13,7 +13,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from starlette.types import Message
 
-from skill_core.types import MAX_ARCHIVE_BYTES
+from skill_core.types import MAX_ARCHIVE_BYTES, MAX_FILE_BYTES
 from skill_registry.auth import SkillRegistryAssertion
 from skill_registry.types import (
     RegistryError,
@@ -59,6 +59,7 @@ _NO_STORE_HEADERS: Final = {"Cache-Control": "no-store"}
 _ASSERTION_STATE_KEY: Final = "skill_registry_assertion"
 _REVIEW_BODY_MAX_BYTES: Final = 8 * 1024
 _RESPONSE_BODY_MAX_BYTES: Final = 3 * 1024 * 1024
+_FILE_RESPONSE_BODY_MAX_BYTES: Final = MAX_FILE_BYTES * 6 + 1024
 _CONTENT_LENGTH_MAX_DIGITS: Final = 20
 _PAGE_NUMBER_MAX_DIGITS: Final = 7
 _CONTENT_LENGTH_PATTERN: Final = re.compile(rb"0|[1-9][0-9]*\Z")
@@ -140,9 +141,14 @@ def _registry_error(error: RegistryError) -> JSONResponse:
     return _error(code, status_code=status)
 
 
-def _bounded(content: dict[str, object], *, status_code: int = 200) -> JSONResponse:
+def _bounded(
+    content: dict[str, object],
+    *,
+    status_code: int = 200,
+    maximum_bytes: int = _RESPONSE_BODY_MAX_BYTES,
+) -> JSONResponse:
     response = JSONResponse(content, status_code=status_code, headers=_NO_STORE_HEADERS)
-    if len(response.body) > _RESPONSE_BODY_MAX_BYTES:
+    if len(response.body) > maximum_bytes:
         return _error("RESPONSE_TOO_LARGE", status_code=503)
     return response
 
@@ -520,7 +526,18 @@ def build_skill_registry_router(
             return _registry_error(error)
         except Exception:
             return _error("REGISTRY_UNAVAILABLE", status_code=503)
-        return _bounded({"version": "1", "path": file_path, "content": content})
+        if not isinstance(content, str):
+            return _error("REGISTRY_UNAVAILABLE", status_code=503)
+        try:
+            content_bytes = len(content.encode("utf-8"))
+        except UnicodeEncodeError:
+            return _error("SKILL_FILE_NOT_UTF8", status_code=400)
+        if content_bytes > MAX_FILE_BYTES:
+            return _error("SKILL_FILE_TOO_LARGE", status_code=400)
+        return _bounded(
+            {"version": "1", "path": file_path, "content": content},
+            maximum_bytes=_FILE_RESPONSE_BODY_MAX_BYTES,
+        )
 
     @router.post(
         "/internal/skills/{skill_id}/revisions/{revision_id}/review",

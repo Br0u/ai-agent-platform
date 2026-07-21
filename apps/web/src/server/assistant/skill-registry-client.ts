@@ -1,9 +1,11 @@
 import "server-only";
 
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
 import {
+  isCanonicalAdminSkillPath,
   parseAdminSkillFileResponse,
   parseAdminSkillListResponse,
   parseAdminSkillRevisionDetailResponse,
@@ -22,6 +24,13 @@ export type SkillRegistryEnvironment = {
 };
 
 export type SkillRegistrySettings = { baseUrl: string; controlKey: string };
+export type SkillRegistryResolvedAddress = {
+  address: string;
+  family: 4 | 6;
+};
+export type SkillRegistryAddressResolver = (
+  hostname: string,
+) => Promise<readonly SkillRegistryResolvedAddress[]>;
 export type SkillRegistryAction =
   | "list"
   | "detail"
@@ -166,6 +175,7 @@ const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
 const MAX_ARCHIVE_BYTES = 5 * 1024 * 1024;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 3 * 1024 * 1024;
+const MAX_FILE_RESPONSE_BYTES = MAX_FILE_BYTES * 6 + 1024;
 const MAX_REVIEW_BODY_BYTES = 8 * 1024;
 const CONNECT_TIMEOUT_MS = 2_000;
 const RESPONSE_TIMEOUT_MS = 5_000;
@@ -231,7 +241,7 @@ function safeBearer(value: unknown): value is string {
   );
 }
 
-function privateHostname(hostname: string): boolean {
+function allowedHostnameSyntax(hostname: string): boolean {
   const unwrapped = hostname.startsWith("[") ? hostname.slice(1, -1) : hostname;
   const ipVersion = isIP(unwrapped);
   if (ipVersion === 4) {
@@ -282,7 +292,7 @@ export function resolveSkillRegistrySettings(
     url.pathname !== "/" ||
     url.search !== "" ||
     url.hash !== "" ||
-    !privateHostname(url.hostname)
+    !allowedHostnameSyntax(url.hostname)
   ) {
     configurationError();
   }
@@ -296,7 +306,108 @@ export function resolveSkillRegistrySettings(
       configurationError();
     }
   }
-  return { baseUrl: url.origin, controlKey };
+  return Object.freeze({ baseUrl: url.origin, controlKey });
+}
+
+type InternalSkillRegistrySettings = Readonly<{
+  baseUrl: string;
+  controlKey: string;
+  hostname: string;
+  hostHeader: string;
+  port: string;
+}>;
+
+function validatedSettings(value: unknown): InternalSkillRegistrySettings {
+  const snapshot = exactRecord(value, [["baseUrl", "controlKey"]]);
+  if (
+    snapshot === null ||
+    typeof snapshot.baseUrl !== "string" ||
+    !safeBearer(snapshot.controlKey)
+  ) {
+    configurationError();
+  }
+  const rawUrl = snapshot.baseUrl;
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    configurationError();
+  }
+  if (
+    rawUrl !== url.origin ||
+    url.protocol !== "http:" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== "" ||
+    !allowedHostnameSyntax(url.hostname)
+  ) {
+    configurationError();
+  }
+  return Object.freeze({
+    baseUrl: url.origin,
+    controlKey: snapshot.controlKey,
+    hostname: url.hostname.startsWith("[")
+      ? url.hostname.slice(1, -1)
+      : url.hostname,
+    hostHeader: url.host,
+    port: url.port,
+  });
+}
+
+function privateResolvedAddress(address: string, family: 4 | 6): boolean {
+  if (family === 4) {
+    if (isIP(address) !== 4) return false;
+    const octets = address.split(".").map(Number);
+    return (
+      octets[0] === 10 ||
+      (octets[0] === 172 && octets[1]! >= 16 && octets[1]! <= 31) ||
+      (octets[0] === 192 && octets[1] === 168)
+    );
+  }
+  return (
+    isIP(address) === 6 &&
+    !address.toLowerCase().includes("::ffff:") &&
+    /^f[cd][0-9a-f]{2}(?::|$)/iu.test(address)
+  );
+}
+
+const defaultAddressResolver: SkillRegistryAddressResolver = async (
+  hostname,
+) => {
+  const resolved = await lookup(hostname, { all: true, verbatim: true });
+  return resolved.map(({ address, family }) => ({
+    address,
+    family: family as 4 | 6,
+  }));
+};
+
+async function pinnedOrigin(
+  settings: InternalSkillRegistrySettings,
+  resolver: SkillRegistryAddressResolver,
+): Promise<string> {
+  const resolved = await resolver(settings.hostname);
+  if (!Array.isArray(resolved) || resolved.length < 1 || resolved.length > 64) {
+    clientError("transport_error");
+  }
+  const addresses: SkillRegistryResolvedAddress[] = [];
+  for (const item of resolved) {
+    const address = exactRecord(item, [["address", "family"]]);
+    if (
+      address === null ||
+      typeof address.address !== "string" ||
+      (address.family !== 4 && address.family !== 6) ||
+      !privateResolvedAddress(address.address, address.family)
+    ) {
+      clientError("transport_error");
+    }
+    addresses.push({ address: address.address, family: address.family });
+  }
+  const selected = addresses[0]!;
+  const host =
+    selected.family === 6 ? `[${selected.address}]` : selected.address;
+  return `http://${host}${settings.port === "" ? "" : `:${settings.port}`}`;
 }
 
 function canonicalUuid(value: unknown): value is string {
@@ -317,23 +428,6 @@ function pairedSurrogates(value: string): boolean {
   return true;
 }
 
-function canonicalPath(value: unknown): value is string {
-  if (
-    typeof value !== "string" ||
-    Buffer.byteLength(value, "utf8") > 160 ||
-    !pairedSurrogates(value) ||
-    CONTROL_CHARACTER.test(value) ||
-    value.includes("\\")
-  ) {
-    return false;
-  }
-  const segments = value.split("/");
-  return (
-    segments.length <= 8 &&
-    segments.every((part) => part.length > 0 && part !== "." && part !== "..")
-  );
-}
-
 function validTarget(action: SkillRegistryAction, target: string): boolean {
   if (action === "list") return target === "skills";
   if (action === "upload") return target === "new" || canonicalUuid(target);
@@ -349,7 +443,7 @@ function validTarget(action: SkillRegistryAction, target: string): boolean {
     segments.length >= 3 &&
     canonicalUuid(segments[0]) &&
     canonicalUuid(segments[1]) &&
-    canonicalPath(segments.slice(2).join("/"))
+    isCanonicalAdminSkillPath(segments.slice(2).join("/"))
   );
 }
 
@@ -499,9 +593,10 @@ function declaredLength(response: Response): number | null {
 async function boundedResponseBody(
   response: Response,
   controller: AbortController,
+  maximumBytes: number,
 ): Promise<Uint8Array> {
   const declared = declaredLength(response);
-  if (declared !== null && declared > MAX_RESPONSE_BYTES) {
+  if (declared !== null && declared > maximumBytes) {
     clientError("response_too_large");
   }
   const reader = response.body?.getReader();
@@ -521,7 +616,7 @@ async function boundedResponseBody(
       const result = await reader.read();
       if (result.done) break;
       total += result.value.byteLength;
-      if (total > MAX_RESPONSE_BYTES) {
+      if (total > maximumBytes) {
         void reader.cancel().catch(() => undefined);
         clientError("response_too_large");
       }
@@ -594,7 +689,7 @@ function parseStrictJson(bytes: Uint8Array): unknown {
     throw new Error();
   };
   const value = (depth: number): unknown => {
-    if (depth > 32 || (nodes += 1) > 50_000) throw new Error();
+    if (depth > 32 || (nodes += 1) > 500_000) throw new Error();
     whitespace();
     if (source[index] === '"') return string();
     if (source.startsWith("true", index)) {
@@ -771,6 +866,7 @@ function readReviewInput(value: unknown): SkillRegistryReviewInput | null {
         input.reason !== input.reason.trim() ||
         input.reason.length === 0 ||
         Buffer.byteLength(input.reason, "utf8") > 2_048 ||
+        Array.from(input.reason).length > 500 ||
         !pairedSurrogates(input.reason) ||
         CONTROL_CHARACTER.test(input.reason)))
   ) {
@@ -810,12 +906,15 @@ function copyArchive(value: unknown): Uint8Array<ArrayBuffer> | null {
 export function createSkillRegistryClient(options: {
   settings: SkillRegistrySettings;
   fetcher?: typeof fetch;
+  resolver?: SkillRegistryAddressResolver;
   clock?: () => number;
   nonceFactory?: () => string;
 }): SkillRegistryClient {
+  const settings = validatedSettings(options.settings);
   const fetcher = options.fetcher ?? fetch;
+  const resolver = options.resolver ?? defaultAddressResolver;
   const signer = createSkillRegistryAssertionSigner({
-    controlKey: options.settings.controlKey,
+    controlKey: settings.controlKey,
     clock: options.clock,
     nonceFactory: options.nonceFactory,
   });
@@ -838,16 +937,24 @@ export function createSkillRegistryClient(options: {
       const assertion = signer.sign(requestOptions.assertion);
       const headers: Record<string, string> = {
         Accept: "application/json",
-        Authorization: `Bearer ${options.settings.controlKey}`,
+        Authorization: `Bearer ${settings.controlKey}`,
+        Host: settings.hostHeader,
         "X-Request-Id": requestOptions.requestId,
         "X-Skill-Registry-Assertion": assertion,
       };
       if (requestOptions.contentType !== undefined) {
         headers["Content-Type"] = requestOptions.contentType;
       }
-      const responsePromise = fetcher(
-        `${options.settings.baseUrl}${requestOptions.path}`,
-        {
+      const connectDeadline = new Promise<never>((_resolve, reject) => {
+        connectTimer = setTimeout(() => {
+          controller.abort();
+          reject(new SkillRegistryClientError("timeout"));
+        }, CONNECT_TIMEOUT_MS);
+      });
+      const responsePromise = (async () => {
+        const origin = await pinnedOrigin(settings, resolver);
+        if (controller.signal.aborted) clientError("timeout");
+        return fetcher(`${origin}${requestOptions.path}`, {
           method: requestOptions.method,
           headers,
           body: requestOptions.body,
@@ -855,14 +962,8 @@ export function createSkillRegistryClient(options: {
           redirect: "manual",
           cache: "no-store",
           credentials: "omit",
-        },
-      );
-      const connectDeadline = new Promise<never>((_resolve, reject) => {
-        connectTimer = setTimeout(() => {
-          controller.abort();
-          reject(new SkillRegistryClientError("timeout"));
-        }, CONNECT_TIMEOUT_MS);
-      });
+        });
+      })();
       const response = await Promise.race([responsePromise, connectDeadline]);
       if (connectTimer !== undefined) clearTimeout(connectTimer);
       if (response.status >= 300 && response.status < 400) {
@@ -874,7 +975,11 @@ export function createSkillRegistryClient(options: {
       if (!strictNoStore(response.headers.get("cache-control"))) {
         clientError("invalid_response");
       }
-      const body = await boundedResponseBody(response, controller);
+      const body = await boundedResponseBody(
+        response,
+        controller,
+        requestOptions.file ? MAX_FILE_RESPONSE_BYTES : MAX_RESPONSE_BYTES,
+      );
       const parsed = parseStrictJson(body);
       if (response.status !== requestOptions.successStatus) {
         const code = readError(response.status, parsed);
@@ -1013,7 +1118,7 @@ export function createSkillRegistryClient(options: {
           command === null ||
           !canonicalUuid(command.skillId) ||
           !canonicalUuid(command.revisionId) ||
-          !canonicalPath(command.path)
+          !isCanonicalAdminSkillPath(command.path)
         ) {
           clientError("invalid_request");
         }
@@ -1074,8 +1179,9 @@ export function createSkillRegistryClient(options: {
           successStatus: 201,
           read: parseAdminSkillRevisionResponse,
           validate: (value) =>
-            targetSkillId === undefined ||
-            value.revision.skillId === targetSkillId,
+            value.revision.state === "pending_review" &&
+            (targetSkillId === undefined ||
+              value.revision.skillId === targetSkillId),
         });
       } catch (error) {
         throw sanitized(error);
@@ -1130,7 +1236,9 @@ export function createSkillRegistryClient(options: {
           read: parseAdminSkillRevisionResponse,
           validate: (value) =>
             value.revision.skillId === skillId &&
-            value.revision.id === revisionId,
+            value.revision.id === revisionId &&
+            value.revision.state ===
+              (reviewInput.decision === "approve" ? "published" : "rejected"),
         });
       } catch (error) {
         throw sanitized(error);

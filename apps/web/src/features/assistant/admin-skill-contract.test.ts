@@ -29,8 +29,8 @@ function revision() {
     artifactSha256: SHA256,
     createdBy: ACTOR_ID,
     createdAt: NOW,
-    reviewedBy: null,
-    reviewedAt: null,
+    reviewedBy: null as string | null,
+    reviewedAt: null as string | null,
   };
 }
 
@@ -69,7 +69,7 @@ function detailResponse() {
       compatibility: "agno>=2.7.2",
       allowedTools: ["get_skill_reference"],
       compressedSize: 512,
-      extractedSize: 1024,
+      extractedSize: 384,
       fileCount: 2,
     },
     files: [
@@ -101,7 +101,7 @@ function detailResponse() {
         blocking: false,
       },
     ],
-    previousPublishedRevisionId: null,
+    previousPublishedRevisionId: null as string | null,
     diff: {
       truncated: false,
       files: [
@@ -249,6 +249,114 @@ describe("admin Skill contracts", () => {
     duplicateSkill.skills.push({ ...duplicateSkill.skills[0]! });
     duplicateSkill.page.returned = 2;
     expect(parseAdminSkillListResponse(duplicateSkill)).toBeNull();
+  });
+
+  it("enforces review state, reviewer and timestamp relationships", () => {
+    const pendingWithReview = revision();
+    pendingWithReview.reviewedBy = ACTOR_ID;
+    pendingWithReview.reviewedAt = "2026-07-20T01:03:03.000Z";
+    expect(
+      parseAdminSkillRevisionResponse({
+        version: "1",
+        revision: pendingWithReview,
+      }),
+    ).toBeNull();
+
+    for (const state of ["published", "rejected", "archived"]) {
+      const missingReview = revision();
+      missingReview.state = state;
+      expect(
+        parseAdminSkillRevisionResponse({
+          version: "1",
+          revision: missingReview,
+        }),
+      ).toBeNull();
+
+      const staleReview = revision();
+      staleReview.state = state;
+      staleReview.reviewedBy = ACTOR_ID;
+      staleReview.reviewedAt = "2026-07-20T01:02:02.999Z";
+      expect(
+        parseAdminSkillRevisionResponse({
+          version: "1",
+          revision: staleReview,
+        }),
+      ).toBeNull();
+    }
+
+    const list = listResponse();
+    list.skills[0]!.revision!.state = "published";
+    expect(parseAdminSkillListResponse(list)).toBeNull();
+  });
+
+  it("requires positive artifact sizes and an exact extracted file sum", () => {
+    for (const key of ["compressedSize", "extractedSize"] as const) {
+      const zero = detailResponse();
+      zero.revision[key] = 0;
+      expect(parseAdminSkillRevisionDetailResponse(zero)).toBeNull();
+    }
+
+    const mismatchedSum = detailResponse();
+    mismatchedSum.revision.extractedSize += 1;
+    expect(parseAdminSkillRevisionDetailResponse(mismatchedSum)).toBeNull();
+
+    const samePreviousRevision = detailResponse();
+    samePreviousRevision.previousPublishedRevisionId = REVISION_ID;
+    expect(
+      parseAdminSkillRevisionDetailResponse(samePreviousRevision),
+    ).toBeNull();
+  });
+
+  it("rejects non-NFC, format-control and case-fold-equivalent file paths", () => {
+    for (const path of ["references/cafe\u0301.md", "scripts/\u202eevil.py"]) {
+      const value = detailResponse();
+      value.files[1]!.path = path;
+      value.findings[0]!.path = path;
+      value.diff!.files[0]!.path = path;
+      expect(parseAdminSkillRevisionDetailResponse(value)).toBeNull();
+      expect(
+        parseAdminSkillFileResponse({ version: "1", path, content: "safe" }),
+      ).toBeNull();
+    }
+
+    const collision = detailResponse();
+    collision.files.push(
+      {
+        path: "references/straße.md",
+        sha256: "d".repeat(64),
+        size: 1,
+        mediaType: "text/plain",
+        kind: "reference",
+      },
+      {
+        path: "references/STRASSE.md",
+        sha256: "e".repeat(64),
+        size: 1,
+        mediaType: "text/plain",
+        kind: "reference",
+      },
+    );
+    collision.revision.fileCount = 4;
+    collision.revision.extractedSize = 386;
+    expect(parseAdminSkillRevisionDetailResponse(collision)).toBeNull();
+  });
+
+  it("binds every diff path to the canonical file index", () => {
+    const value = detailResponse();
+    value.diff!.files[0]!.path = "scripts/deleted.py";
+    expect(parseAdminSkillRevisionDetailResponse(value)).toBeNull();
+  });
+
+  it("accepts more than 1152 bounded findings when the response is otherwise valid", () => {
+    const value = detailResponse();
+    value.findings = Array.from({ length: 1_153 }, (_, index) => ({
+      path: "scripts/check.py",
+      line: index + 1,
+      code: "subprocess",
+      message: "Review required.",
+      blocking: false,
+    }));
+    expect(parseAdminSkillRevisionDetailResponse(value)).toEqual(value);
   });
 
   it("rejects prototype, getter, symbol, hidden and extra fields without executing code", () => {

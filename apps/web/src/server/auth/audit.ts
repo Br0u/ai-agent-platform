@@ -411,9 +411,15 @@ const CANONICAL_UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const SHA256_PREFIX = /^[0-9a-f]{12}$/u;
 
-function assistantSkillAuditMetadata<const Results extends readonly string[]>(
+type AssistantSkillAuditEventKind =
+  | "upload_requested"
+  | "upload_completed"
+  | "review_requested"
+  | "review_completed";
+
+function assistantSkillAuditMetadata(
   value: unknown,
-  allowedResults: Results,
+  event: AssistantSkillAuditEventKind,
 ): SanitizedMetadata {
   const metadata = exactDataRecord(
     value,
@@ -448,13 +454,53 @@ function assistantSkillAuditMetadata<const Results extends readonly string[]>(
   ) {
     throw new AuditInputError("metadata.digest");
   }
+  const skillId = nullableUuid(metadata.skillId, "metadata.skillId");
+  const revisionId = nullableUuid(metadata.revisionId, "metadata.revisionId");
+  const result = enumValue(
+    metadata.result,
+    event.endsWith("_requested")
+      ? REQUESTED_ASSISTANT_SKILL_AUDIT_RESULTS
+      : COMPLETED_ASSISTANT_SKILL_AUDIT_RESULTS,
+    "metadata.result",
+  );
+  if ((revisionNo === null) !== (digest === null)) {
+    throw new AuditInputError("metadata.revisionNo");
+  }
+  const hasRevisionDetails = revisionNo !== null;
+  if (event === "upload_requested") {
+    if (revisionId !== null || hasRevisionDetails) {
+      throw new AuditInputError("metadata.revisionId");
+    }
+  } else if (event === "upload_completed") {
+    if (result === "success") {
+      if (skillId === null || revisionId === null || !hasRevisionDetails) {
+        throw new AuditInputError("metadata.skillId");
+      }
+    } else if (
+      (revisionId === null && hasRevisionDetails) ||
+      (revisionId !== null && skillId === null)
+    ) {
+      throw new AuditInputError("metadata.revisionId");
+    }
+  } else {
+    if (skillId === null || revisionId === null) {
+      throw new AuditInputError("metadata.skillId");
+    }
+    if (
+      event === "review_completed" &&
+      result === "success" &&
+      !hasRevisionDetails
+    ) {
+      throw new AuditInputError("metadata.revisionNo");
+    }
+  }
   return {
-    skillId: nullableUuid(metadata.skillId, "metadata.skillId"),
-    revisionId: nullableUuid(metadata.revisionId, "metadata.revisionId"),
+    skillId,
+    revisionId,
     revisionNo,
     digest,
     requestId,
-    result: enumValue(metadata.result, allowedResults, "metadata.result"),
+    result,
   };
 }
 
@@ -529,13 +575,13 @@ export const AUDIT_EVENT_SCHEMAS: Readonly<
   "assistant.model_key_revealed": (value) =>
     assistantModelAuditMetadata(value, COMPLETED_ASSISTANT_MODEL_AUDIT_RESULTS),
   "assistant.skill_upload_requested": (value) =>
-    assistantSkillAuditMetadata(value, REQUESTED_ASSISTANT_SKILL_AUDIT_RESULTS),
+    assistantSkillAuditMetadata(value, "upload_requested"),
   "assistant.skill_upload_completed": (value) =>
-    assistantSkillAuditMetadata(value, COMPLETED_ASSISTANT_SKILL_AUDIT_RESULTS),
+    assistantSkillAuditMetadata(value, "upload_completed"),
   "assistant.skill_review_requested": (value) =>
-    assistantSkillAuditMetadata(value, REQUESTED_ASSISTANT_SKILL_AUDIT_RESULTS),
+    assistantSkillAuditMetadata(value, "review_requested"),
   "assistant.skill_review_completed": (value) =>
-    assistantSkillAuditMetadata(value, COMPLETED_ASSISTANT_SKILL_AUDIT_RESULTS),
+    assistantSkillAuditMetadata(value, "review_completed"),
   "document.created": documentAuditMetadata,
   "document.draft_saved": documentAuditMetadata,
   "document.published": documentAuditMetadata,

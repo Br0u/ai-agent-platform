@@ -131,7 +131,7 @@ export type AdminSkillFileResponse = {
 
 const MAX_SKILLS = 100;
 const MAX_FILES = 128;
-const MAX_FINDINGS = MAX_FILES * ADMIN_SKILL_FINDING_CODES.length;
+const MAX_FINDINGS = 65_536;
 const MAX_MODULES = 256;
 const MAX_ALLOWED_TOOLS = 128;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -139,6 +139,7 @@ const MAX_DIFF_BYTES = 512 * 1024;
 const MAX_ARCHIVE_BYTES = 5 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 20 * 1024 * 1024;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
+const PATH_CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -147,6 +148,10 @@ const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const MODULE = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const MEDIA_TYPE = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u;
 const UTF8_ENCODER = new TextEncoder();
+const PATH_COLLATOR = new Intl.Collator("und", {
+  usage: "search",
+  sensitivity: "base",
+});
 
 function utf8Length(value: string): number {
   return UTF8_ENCODER.encode(value).byteLength;
@@ -308,12 +313,13 @@ function skillName(value: unknown): value is string {
   );
 }
 
-function canonicalPath(value: unknown): value is string {
+export function isCanonicalAdminSkillPath(value: unknown): value is string {
   if (
     typeof value !== "string" ||
     utf8Length(value) > 160 ||
     !hasOnlyPairedSurrogates(value) ||
-    CONTROL_CHARACTER.test(value) ||
+    value.normalize("NFC") !== value ||
+    PATH_CONTROL_OR_FORMAT.test(value) ||
     value.includes("\\")
   ) {
     return false;
@@ -327,6 +333,17 @@ function canonicalPath(value: unknown): value is string {
   );
 }
 
+function uniqueEquivalentPaths(paths: readonly string[]): boolean {
+  for (let left = 0; left < paths.length; left += 1) {
+    for (let right = left + 1; right < paths.length; right += 1) {
+      if (PATH_COLLATOR.compare(paths[left]!, paths[right]!) === 0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 function enumValue<const Values extends readonly string[]>(
   value: unknown,
   values: Values,
@@ -336,13 +353,19 @@ function enumValue<const Values extends readonly string[]>(
   );
 }
 
-function pairedReview(
+function reviewMetadataMatchesState(
+  state: AdminSkillRevisionState,
+  createdAt: string,
   reviewedBy: unknown,
   reviewedAt: unknown,
-): reviewedBy is string | null {
+): boolean {
+  if (state === "pending_review") {
+    return reviewedBy === null && reviewedAt === null;
+  }
   return (
-    (reviewedBy === null && reviewedAt === null) ||
-    (canonicalUuid(reviewedBy) && canonicalTimestamp(reviewedAt))
+    canonicalUuid(reviewedBy) &&
+    canonicalTimestamp(reviewedAt) &&
+    reviewedAt >= createdAt
   );
 }
 
@@ -372,7 +395,12 @@ function readRevision(value: unknown): AdminSkillRevision | null {
     !SHA256.test(item.artifactSha256) ||
     !canonicalUuid(item.createdBy) ||
     !canonicalTimestamp(item.createdAt) ||
-    !pairedReview(item.reviewedBy, item.reviewedAt)
+    !reviewMetadataMatchesState(
+      item.state,
+      item.createdAt,
+      item.reviewedBy,
+      item.reviewedAt,
+    )
   ) {
     return null;
   }
@@ -386,7 +414,7 @@ function readRevision(value: unknown): AdminSkillRevision | null {
     artifactSha256: item.artifactSha256,
     createdBy: item.createdBy,
     createdAt: item.createdAt,
-    reviewedBy: item.reviewedBy,
+    reviewedBy: item.reviewedBy as string | null,
     reviewedAt: item.reviewedAt as string | null,
   };
 }
@@ -493,7 +521,12 @@ export function parseAdminSkillListResponse(
         !SHA256_PREFIX.test(item.artifactSha256Prefix) ||
         !canonicalUuid(item.createdBy) ||
         !canonicalTimestamp(item.createdAt) ||
-        !pairedReview(item.reviewedBy, item.reviewedAt)
+        !reviewMetadataMatchesState(
+          item.state,
+          item.createdAt,
+          item.reviewedBy,
+          item.reviewedAt,
+        )
       ) {
         return null;
       }
@@ -505,7 +538,7 @@ export function parseAdminSkillListResponse(
         artifactSha256Prefix: item.artifactSha256Prefix,
         createdBy: item.createdBy,
         createdAt: item.createdAt,
-        reviewedBy: item.reviewedBy,
+        reviewedBy: item.reviewedBy as string | null,
         reviewedAt: item.reviewedAt as string | null,
       };
     }
@@ -582,8 +615,8 @@ function readDetailRevision(
       boundedText(item.compatibility, 512, { trimmed: true })
     ) ||
     allowedTools === null ||
-    !nonNegativeInteger(item.compressedSize, MAX_ARCHIVE_BYTES) ||
-    !nonNegativeInteger(item.extractedSize, MAX_EXTRACTED_BYTES) ||
+    !positiveInteger(item.compressedSize, MAX_ARCHIVE_BYTES) ||
+    !positiveInteger(item.extractedSize, MAX_EXTRACTED_BYTES) ||
     !positiveInteger(item.fileCount, MAX_FILES)
   ) {
     return null;
@@ -657,7 +690,7 @@ export function parseAdminSkillRevisionDetailResponse(
       ]);
       if (
         file === null ||
-        !canonicalPath(file.path) ||
+        !isCanonicalAdminSkillPath(file.path) ||
         typeof file.sha256 !== "string" ||
         !SHA256.test(file.sha256) ||
         !nonNegativeInteger(file.size, MAX_FILE_BYTES) ||
@@ -678,8 +711,12 @@ export function parseAdminSkillRevisionDetailResponse(
         kind: file.kind,
       });
     }
-    if (new Set(files.map(({ path }) => path)).size !== files.length)
-      return null;
+    const filePaths = files.map(({ path }) => path);
+    if (!uniqueEquivalentPaths(filePaths)) return null;
+    const extractedSize = files.reduce((total, file) => total + file.size, 0);
+    if (extractedSize !== revision.extractedSize) return null;
+    if (response.previousPublishedRevisionId === revision.id) return null;
+    const filePathIndex = new Set(filePaths);
 
     const pythonModules = readStringArray(
       dependencies.pythonModules,
@@ -710,12 +747,12 @@ export function parseAdminSkillRevisionDetailResponse(
       ]);
       if (
         finding === null ||
-        !canonicalPath(finding.path) ||
+        !isCanonicalAdminSkillPath(finding.path) ||
         !positiveInteger(finding.line, 2_147_483_647) ||
         !enumValue(finding.code, ADMIN_SKILL_FINDING_CODES) ||
         !boundedText(finding.message, 512) ||
         typeof finding.blocking !== "boolean" ||
-        !files.some(({ path }) => path === finding.path) ||
+        !filePathIndex.has(finding.path) ||
         (finding.code === "unsupported_import") !== finding.blocking
       ) {
         return null;
@@ -752,7 +789,8 @@ export function parseAdminSkillRevisionDetailResponse(
         const file = exactRecord(raw, ["path", "status", "binary", "diff"]);
         if (
           file === null ||
-          !canonicalPath(file.path) ||
+          !isCanonicalAdminSkillPath(file.path) ||
+          !filePathIndex.has(file.path) ||
           !enumValue(file.status, ["added", "deleted", "modified"] as const) ||
           typeof file.binary !== "boolean" ||
           !boundedText(file.diff, MAX_DIFF_BYTES, {
@@ -771,7 +809,7 @@ export function parseAdminSkillRevisionDetailResponse(
           diff: file.diff,
         });
       }
-      if (new Set(diffFiles.map(({ path }) => path)).size !== diffFiles.length)
+      if (!uniqueEquivalentPaths(diffFiles.map(({ path }) => path)))
         return null;
       diff = { truncated: rawDiff.truncated, files: diffFiles };
     }
@@ -802,7 +840,7 @@ export function parseAdminSkillFileResponse(
   const response = exactRecord(value, ["version", "path", "content"]);
   if (
     response?.version !== "1" ||
-    !canonicalPath(response.path) ||
+    !isCanonicalAdminSkillPath(response.path) ||
     !boundedText(response.content, MAX_FILE_BYTES, {
       empty: true,
       control: true,

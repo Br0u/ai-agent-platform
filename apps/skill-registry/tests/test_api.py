@@ -14,6 +14,7 @@ from pydantic import SecretStr
 from starlette.types import Message
 
 from skill_core.types import (
+    MAX_FILE_BYTES,
     SkillFileDiff,
     SkillFinding,
     SkillManifest,
@@ -111,6 +112,7 @@ class StubService:
         self.reviewed: object | None = None
         self.list_bounds: tuple[int, int] | None = None
         self.fail_with: RegistryError | None = None
+        self.file_content = "# Guide\n"
 
     async def list_skills(self, *, limit: int, offset: int) -> tuple[SkillSummary, ...]:
         self.list_bounds = (limit, offset)
@@ -148,7 +150,7 @@ class StubService:
             REVISION_ID,
             "references/guide.md",
         )
-        return "# Guide\n"
+        return self.file_content
 
     async def review_revision(self, command: object) -> StoredRevision:
         self.reviewed = command
@@ -298,6 +300,43 @@ def test_file_returns_only_service_verified_text() -> None:
         "path": "references/guide.md",
         "content": "# Guide\n",
     }
+
+
+def test_file_json_bound_allows_exact_maximum_escaped_text() -> None:
+    for index, content in enumerate(('"' * MAX_FILE_BYTES, "\x01" * MAX_FILE_BYTES), start=30):
+        service = StubService()
+        service.file_content = content
+        target = f"{SKILL_ID}/{REVISION_ID}/references/guide.md"
+        response = TestClient(app_for(service)).get(
+            f"/internal/skills/{SKILL_ID}/revisions/{REVISION_ID}/files/references/guide.md",
+            headers=assertion_headers(
+                "file",
+                "admin:assistant:skills:review",
+                target,
+                nonce=UUID(f"40000000-0000-4000-8000-{index:012d}"),
+            ),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["content"] == content
+
+
+def test_file_rejects_text_larger_than_two_mib() -> None:
+    service = StubService()
+    service.file_content = "x" * (MAX_FILE_BYTES + 1)
+    target = f"{SKILL_ID}/{REVISION_ID}/references/guide.md"
+    response = TestClient(app_for(service)).get(
+        f"/internal/skills/{SKILL_ID}/revisions/{REVISION_ID}/files/references/guide.md",
+        headers=assertion_headers(
+            "file",
+            "admin:assistant:skills:review",
+            target,
+            nonce=UUID("40000000-0000-4000-8000-000000000032"),
+        ),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "SKILL_FILE_TOO_LARGE"}
 
 
 def test_upload_and_review_forward_verified_assertion_context() -> None:
