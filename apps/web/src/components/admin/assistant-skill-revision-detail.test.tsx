@@ -364,6 +364,85 @@ describe("AssistantSkillRevisionDetail", () => {
     await waitFor(() => expect(reviewTrigger).toHaveFocus());
   });
 
+  it("keeps a successful review when an older detail reload resolves late", async () => {
+    const staleReload = deferred<Response>();
+    const onRevisionChanged = vi.fn();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          ...detail,
+          findings: [],
+          requestId: "detail-before-review-race",
+        }),
+      )
+      .mockReturnValueOnce(staleReload.promise)
+      .mockResolvedValueOnce(
+        Response.json({
+          version: "1",
+          revision: {
+            id: REVISION_ID,
+            skillId: SKILL_ID,
+            name: "safe-review",
+            number: 2,
+            state: "published",
+            sourceType: "upload",
+            artifactSha256: "a".repeat(64),
+            createdBy: CREATOR_ID,
+            createdAt: "2026-07-21T08:00:00.000Z",
+            reviewedBy: "22222222-2222-4222-8222-222222222222",
+            reviewedAt: "2026-07-21T09:00:00.000Z",
+          },
+          requestId: "review-wins-race",
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AssistantSkillRevisionDetail
+        actorUserId="22222222-2222-4222-8222-222222222222"
+        onRevisionChanged={onRevisionChanged}
+        revisionId={REVISION_ID}
+        skillId={SKILL_ID}
+      />,
+    );
+
+    expect(await screen.findByText("Apache-2.0")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "重新加载审核详情" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const staleSignal = (fetchMock.mock.calls[1]?.[1] as RequestInit).signal;
+    fireEvent.click(screen.getByRole("button", { name: "打开审核操作" }));
+    for (const label of [
+      "已逐项审阅内容和文件",
+      "已确认使用权和许可证",
+      "已评估并接受执行风险",
+      "确认审核人与创建者相互独立",
+    ]) {
+      fireEvent.click(screen.getByLabelText(label));
+    }
+    fireEvent.click(screen.getByRole("button", { name: "批准发布" }));
+    await waitFor(() => expect(onRevisionChanged).toHaveBeenCalledOnce());
+
+    staleReload.resolve(
+      Response.json({
+        ...detail,
+        findings: [],
+        requestId: "late-pending-detail",
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(staleSignal?.aborted).toBe(true);
+    expect(screen.getAllByText("published").length).toBeGreaterThan(0);
+    expect(screen.queryByText("pending_review")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "打开审核操作" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "审核完成，状态：published。",
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it.each([
     [
       "Escape",

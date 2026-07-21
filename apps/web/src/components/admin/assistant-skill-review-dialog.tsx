@@ -7,6 +7,7 @@ import {
 } from "@/features/assistant/admin-skill-contract";
 import { useRef, useState } from "react";
 import { AssistantSkillModal } from "./assistant-skill-modal";
+import { registryApprovalBlockingFindings } from "./assistant-skill-review-policy";
 
 type Props = {
   actorUserId: string;
@@ -103,7 +104,7 @@ export function AssistantSkillReviewDialog({
   const [announcement, setAnnouncement] = useState("");
   const [error, setError] = useState("");
   const isCreator = revision.createdBy === actorUserId;
-  const blockingFindings = findings.filter((finding) => finding.blocking);
+  const blockingFindings = registryApprovalBlockingFindings(findings);
   const allChecked = Object.values(checked).every(Boolean);
 
   const decide = async (decision: "approve" | "reject") => {

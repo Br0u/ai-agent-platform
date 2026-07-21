@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, type RefObject, useEffect, useRef } from "react";
+import { type ReactNode, type RefObject, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 
 type Props = {
@@ -54,7 +54,7 @@ export function AssistantSkillModal({
 }: Props) {
   const root = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const modal = root.current;
     if (modal === null) return;
     const hiddenSiblings: HiddenSibling[] = Array.from(document.body.children)

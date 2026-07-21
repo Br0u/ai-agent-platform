@@ -265,6 +265,10 @@ export function AssistantSkillRevisionDetail({
   };
 
   const reviewed = (revision: AdminSkillRevision) => {
+    detailGeneration.current += 1;
+    detailAbort.current?.abort();
+    detailAbort.current = null;
+    setLoading(false);
     restoreReviewFocus.current = true;
     setReviewOpen(false);
     setError("");

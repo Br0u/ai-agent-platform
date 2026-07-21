@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -6,6 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { StrictMode, useLayoutEffect, useRef, useState } from "react";
 
 import type { AdminSkillRevision } from "@/features/assistant/admin-skill-contract";
 import { AssistantSkillReviewDialog } from "./assistant-skill-review-dialog";
@@ -34,6 +36,69 @@ const attestationLabels = [
   "已评估并接受执行风险",
   "确认审核人与创建者相互独立",
 ];
+
+type ModalSettledState = {
+  ariaHidden: boolean;
+  backgroundClickBlocked: boolean;
+  inert: boolean;
+  portalPresent: boolean;
+  status: string;
+};
+
+function StrictReviewLifecycleHarness({
+  onSettled,
+}: {
+  onSettled(state: ModalSettledState): void;
+}) {
+  const [open, setOpen] = useState(true);
+  const [status, setStatus] = useState("");
+  const background = useRef<HTMLButtonElement>(null);
+
+  useLayoutEffect(() => {
+    const target = background.current;
+    if (open || target === null) return;
+    let clicked = false;
+    const recordClick = () => {
+      clicked = true;
+    };
+    target.addEventListener("click", recordClick, { once: true });
+    target.click();
+    target.removeEventListener("click", recordClick);
+    onSettled({
+      ariaHidden: target.closest('[aria-hidden="true"]') !== null,
+      backgroundClickBlocked: !clicked,
+      inert: target.closest("[inert]") !== null,
+      portalPresent: document.querySelector(".assistant-skill-dialog") !== null,
+      status,
+    });
+  }, [onSettled, open, status]);
+
+  return (
+    <div>
+      <p aria-live="polite" role="status">
+        {status}
+      </p>
+      <button ref={background} type="button">
+        背景操作
+      </button>
+      <button onClick={() => setOpen(true)} type="button">
+        再次打开审核
+      </button>
+      {open ? (
+        <AssistantSkillReviewDialog
+          actorUserId="22222222-2222-4222-8222-222222222222"
+          findings={[]}
+          onClose={() => setOpen(false)}
+          onReviewed={(reviewed) => {
+            setStatus(`父级已确认：${reviewed.state}`);
+            setOpen(false);
+          }}
+          revision={revision}
+        />
+      ) : null}
+    </div>
+  );
+}
 
 afterEach(() => {
   cleanup();
@@ -100,18 +165,53 @@ describe("AssistantSkillReviewDialog", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("allows only rejection when the detail contains a blocking finding", () => {
+  it.each([
+    ["private_key", false, "private key material"],
+    ["unsupported_import", true, "module is not permitted"],
+  ] as const)(
+    "allows only rejection for Registry blocker %s even when DTO blocking is %s",
+    (code, blocking, message) => {
+      vi.stubGlobal("fetch", vi.fn());
+      render(
+        <AssistantSkillReviewDialog
+          actorUserId="22222222-2222-4222-8222-222222222222"
+          findings={[
+            {
+              path: "scripts/run.py",
+              line: 7,
+              code,
+              message,
+              blocking,
+            },
+          ]}
+          onClose={vi.fn()}
+          onReviewed={vi.fn()}
+          revision={revision}
+        />,
+      );
+
+      expect(screen.queryByRole("button", { name: "批准发布" })).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "拒绝 revision" }),
+      ).toBeVisible();
+      expect(screen.getByText(/scripts\/run\.py:7/u)).toBeVisible();
+      expect(screen.getByText(new RegExp(message, "u"))).toBeVisible();
+      expect(screen.getByText(/阻断.*不能批准/u)).toBeVisible();
+    },
+  );
+
+  it("does not block approval for an ordinary non-blocking external URL", () => {
     vi.stubGlobal("fetch", vi.fn());
     render(
       <AssistantSkillReviewDialog
         actorUserId="22222222-2222-4222-8222-222222222222"
         findings={[
           {
-            path: "scripts/run.py",
-            line: 7,
+            path: "SKILL.md",
+            line: 2,
             code: "external_url",
-            message: "unreviewed callback",
-            blocking: true,
+            message: "review the documented source URL",
+            blocking: false,
           },
         ]}
         onClose={vi.fn()}
@@ -120,11 +220,10 @@ describe("AssistantSkillReviewDialog", () => {
       />,
     );
 
-    expect(screen.queryByRole("button", { name: "批准发布" })).toBeNull();
-    expect(screen.getByRole("button", { name: "拒绝 revision" })).toBeVisible();
-    expect(screen.getByText(/scripts\/run\.py:7/u)).toBeVisible();
-    expect(screen.getByText(/unreviewed callback/u)).toBeVisible();
-    expect(screen.getByText(/阻断.*不能批准/u)).toBeVisible();
+    for (const label of attestationLabels)
+      fireEvent.click(screen.getByLabelText(label));
+    expect(screen.getByRole("button", { name: "批准发布" })).toBeEnabled();
+    expect(screen.queryByText(/阻断.*不能批准/u)).toBeNull();
   });
 
   it("submits a valid rejection reason with the four confirmed attestations", async () => {
@@ -209,5 +308,65 @@ describe("AssistantSkillReviewDialog", () => {
     expect(dialog).toContainElement(document.activeElement as HTMLElement);
     fireEvent.click(background);
     expect(backgroundClick).not.toHaveBeenCalled();
+  });
+
+  it("restores the parent synchronously across consecutive StrictMode success cycles", async () => {
+    const reviews = [0, 1].map(() => {
+      let resolve!: (response: Response) => void;
+      const promise = new Promise<Response>((next) => {
+        resolve = next;
+      });
+      return { promise, resolve };
+    });
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(reviews[0]!.promise)
+      .mockReturnValueOnce(reviews[1]!.promise);
+    const onSettled = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <StrictMode>
+        <StrictReviewLifecycleHarness onSettled={onSettled} />
+      </StrictMode>,
+    );
+
+    for (let cycle = 0; cycle < 2; cycle += 1) {
+      if (cycle > 0) {
+        fireEvent.click(screen.getByRole("button", { name: "再次打开审核" }));
+      }
+      for (const label of attestationLabels)
+        fireEvent.click(screen.getByLabelText(label));
+      fireEvent.click(screen.getByRole("button", { name: "批准发布" }));
+
+      await act(async () => {
+        reviews[cycle]!.resolve(
+          Response.json({
+            version: "1",
+            revision: {
+              ...revision,
+              state: "published",
+              reviewedBy: "22222222-2222-4222-8222-222222222222",
+              reviewedAt: "2026-07-21T09:00:00.000Z",
+            },
+            requestId: `strict-review-${cycle}`,
+          }),
+        );
+        await reviews[cycle]!.promise;
+      });
+
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(onSettled).toHaveBeenLastCalledWith({
+        ariaHidden: false,
+        backgroundClickBlocked: false,
+        inert: false,
+        portalPresent: false,
+        status: "父级已确认：published",
+      });
+      const parentStatus = screen.getByRole("status");
+      expect(parentStatus).toHaveTextContent("父级已确认：published");
+      expect(parentStatus.closest('[aria-hidden="true"]')).toBeNull();
+      expect(parentStatus.closest("[inert]")).toBeNull();
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
