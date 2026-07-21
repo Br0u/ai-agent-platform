@@ -78,9 +78,19 @@ backup_encryption_key=$(secret)
 wrong_backup_encryption_key=$(secret)
 agno_migrator_password=$(secret)
 agno_runtime_password=$(secret)
+agent_control_migrator_password=$(secret)
+agent_control_runtime_password=$(secret)
+skill_registry_migrator_password=$(secret)
+skill_registry_manager_password=$(secret)
+skill_registry_runtime_password=$(secret)
 better_auth_secret=$(secret)
 os_security_key=$(secret)
+assistant_session_secret=$(secret)
+assistant_rate_limit_secret=$(secret)
 model_api_key=$(secret)
+model_config_encryption_key=$(secret)
+agent_config_control_key=$(secret)
+skill_registry_control_key=$(secret)
 database=ai_agent_platform_agentos_restore_test
 owner=ai_agent_owner
 platform_user_id=00000000-0000-4000-8000-000000000001
@@ -105,13 +115,27 @@ materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_enc
 materialize_secret WRONG_BACKUP_ENCRYPTION_KEY_FILE wrong_backup_encryption_key "$wrong_backup_encryption_key"
 materialize_secret AGNO_MIGRATOR_DATABASE_PASSWORD_FILE agno_migrator_database_password "$agno_migrator_password"
 materialize_secret AGNO_DATABASE_PASSWORD_FILE agno_database_password "$agno_runtime_password"
+materialize_secret AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD_FILE agent_control_migrator_database_password "$agent_control_migrator_password"
+materialize_secret AGENT_CONTROL_DATABASE_PASSWORD_FILE agent_control_database_password "$agent_control_runtime_password"
+materialize_secret SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD_FILE skill_registry_migrator_database_password "$skill_registry_migrator_password"
+materialize_secret SKILL_REGISTRY_DATABASE_PASSWORD_FILE skill_registry_database_password "$skill_registry_manager_password"
+materialize_secret SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD_FILE skill_registry_runtime_database_password "$skill_registry_runtime_password"
 materialize_secret MIGRATOR_DATABASE_URL_FILE migrator_database_url "postgresql://ai_agent_migrator:$migrator_password@db:5432/$database"
 materialize_secret RUNTIME_DATABASE_URL_FILE runtime_database_url "postgresql://ai_agent_runtime:$runtime_password@db:5432/$database"
 materialize_secret AGNO_MIGRATOR_DATABASE_URL_FILE agno_migrator_database_url "postgresql+psycopg_async://ai_agent_agno_migrator:$agno_migrator_password@db:5432/$database"
 materialize_secret AGNO_DATABASE_URL_FILE agno_database_url "postgresql+psycopg_async://ai_agent_agno:$agno_runtime_password@db:5432/$database"
+materialize_secret AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE agent_control_migrator_database_url "postgresql+psycopg_async://ai_agent_control_migrator:$agent_control_migrator_password@db:5432/$database"
+materialize_secret AGENT_CONTROL_DATABASE_URL_FILE agent_control_database_url "postgresql+psycopg_async://ai_agent_control:$agent_control_runtime_password@db:5432/$database"
+materialize_secret SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE skill_registry_migrator_database_url "postgresql+psycopg_async://ai_agent_skill_registry_migrator:$skill_registry_migrator_password@db:5432/$database"
+materialize_secret SKILL_REGISTRY_DATABASE_URL_FILE skill_registry_database_url "postgresql+psycopg_async://ai_agent_skill_registry_manager:$skill_registry_manager_password@db:5432/$database"
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$better_auth_secret"
 materialize_secret OS_SECURITY_KEY_FILE os_security_key "$os_security_key"
+materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$assistant_session_secret"
+materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret "$assistant_rate_limit_secret"
 materialize_secret MODEL_API_KEY_FILE model_api_key "$model_api_key"
+materialize_secret MODEL_CONFIG_ENCRYPTION_KEY_FILE model_config_encryption_key "$model_config_encryption_key"
+materialize_secret AGENT_CONFIG_CONTROL_KEY_FILE agent_config_control_key "$agent_config_control_key"
+materialize_secret SKILL_REGISTRY_CONTROL_KEY_FILE skill_registry_control_key "$skill_registry_control_key"
 export AGENT_ENABLED=false
 
 umask 077
@@ -125,14 +149,29 @@ BACKUP_DATABASE_PASSWORD_FILE=$BACKUP_DATABASE_PASSWORD_FILE
 BACKUP_ENCRYPTION_KEY_FILE=$BACKUP_ENCRYPTION_KEY_FILE
 AGNO_MIGRATOR_DATABASE_PASSWORD_FILE=$AGNO_MIGRATOR_DATABASE_PASSWORD_FILE
 AGNO_DATABASE_PASSWORD_FILE=$AGNO_DATABASE_PASSWORD_FILE
+AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD_FILE=$AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD_FILE
+AGENT_CONTROL_DATABASE_PASSWORD_FILE=$AGENT_CONTROL_DATABASE_PASSWORD_FILE
+SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD_FILE=$SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD_FILE
+SKILL_REGISTRY_DATABASE_PASSWORD_FILE=$SKILL_REGISTRY_DATABASE_PASSWORD_FILE
+SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD_FILE=$SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD_FILE
 MIGRATOR_DATABASE_URL_FILE=$MIGRATOR_DATABASE_URL_FILE
 RUNTIME_DATABASE_URL_FILE=$RUNTIME_DATABASE_URL_FILE
 AGNO_MIGRATOR_DATABASE_URL_FILE=$AGNO_MIGRATOR_DATABASE_URL_FILE
 AGNO_DATABASE_URL_FILE=$AGNO_DATABASE_URL_FILE
+AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE=$AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE
+AGENT_CONTROL_DATABASE_URL_FILE=$AGENT_CONTROL_DATABASE_URL_FILE
+SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE=$SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE
+SKILL_REGISTRY_DATABASE_URL_FILE=$SKILL_REGISTRY_DATABASE_URL_FILE
 BETTER_AUTH_SECRET_FILE=$BETTER_AUTH_SECRET_FILE
 OS_SECURITY_KEY_FILE=$OS_SECURITY_KEY_FILE
+ASSISTANT_SESSION_SECRET_FILE=$ASSISTANT_SESSION_SECRET_FILE
+ASSISTANT_RATE_LIMIT_SECRET_FILE=$ASSISTANT_RATE_LIMIT_SECRET_FILE
+MODEL_CONFIG_ENCRYPTION_KEY_FILE=$MODEL_CONFIG_ENCRYPTION_KEY_FILE
+AGENT_CONFIG_CONTROL_KEY_FILE=$AGENT_CONFIG_CONTROL_KEY_FILE
+SKILL_REGISTRY_CONTROL_KEY_FILE=$SKILL_REGISTRY_CONTROL_KEY_FILE
 BETTER_AUTH_URL=http://127.0.0.1:8080
 BETTER_AUTH_TRUSTED_ORIGINS=http://127.0.0.1:8080
+ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080
 PUBLIC_HOST=127.0.0.1
 ALLOW_LOCAL_VALIDATION_HOSTS=true
 BACKUP_INTERVAL_SECONDS=86400
@@ -158,11 +197,15 @@ compose() {
 }
 
 compose config --quiet
-compose build migrate agent backup
+compose build migrate agent skill-registry backup
 compose up -d --wait db
 compose run --rm migrate
 compose run --rm agno-bootstrap
 compose run --rm --no-deps agent-migrate
+compose run --rm --no-deps agent-control-bootstrap
+compose run --rm --no-deps agent-control-migrate
+compose run --rm --no-deps skill-registry-bootstrap
+compose run --rm --no-deps skill-registry-migrate
 compose up -d --no-deps agent
 
 attempt=0
@@ -242,8 +285,13 @@ docker run --rm \
   'dump=$(find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump.gpg" | head -n 1); test -n "$dump"; cp "$dump" /out/generated.dump.gpg; chmod 0600 /out/generated.dump.gpg'
 
 backup_crypto_image="${project}-backup:latest"
+skill_registry_image="${project}-skill-registry:latest"
 docker image inspect "$backup_crypto_image" >/dev/null 2>&1 || {
   echo "backup crypto image was not built" >&2
+  exit 1
+}
+docker image inspect "$skill_registry_image" >/dev/null 2>&1 || {
+  echo "skill registry image was not built" >&2
   exit 1
 }
 docker run --rm --entrypoint gpg "$backup_crypto_image" --version | sed -n '1p'
@@ -293,8 +341,10 @@ assert_restore_rejected() {
   rejection_work_root="$temp_dir/$rejection_label-work"
   mkdir -p "$rejection_work_root"
 
+  rejection_started_at=$(date +%s)
   if BACKUP_ENCRYPTION_KEY_FILE="$rejection_key_file" \
     BACKUP_CRYPTO_IMAGE="$backup_crypto_image" \
+    RESTORE_SKILL_REGISTRY_IMAGE="$skill_registry_image" \
     RESTORE_TMP_ROOT="$rejection_work_root" \
     infra/docker/restore-drill.sh \
       "$rejection_backup_file" \
@@ -305,8 +355,25 @@ assert_restore_rejected() {
     echo "$rejection_label restore unexpectedly succeeded" >&2
     exit 1
   fi
+  rejection_elapsed_seconds=$(($(date +%s) - rejection_started_at))
+  if [ "$rejection_elapsed_seconds" -gt 30 ]; then
+    echo "restore rejection exceeded its bounded runtime" >&2
+    exit 1
+  fi
   if find "$rejection_work_root" -type f -name '*.dump*' | grep -q .; then
     echo "$rejection_label restore left a usable plaintext dump" >&2
+    exit 1
+  fi
+  if find "$rejection_work_root" -mindepth 1 -print | grep -q .; then
+    echo "$rejection_label restore left a temporary path" >&2
+    exit 1
+  fi
+  if docker ps -a --filter 'name=aap-restore-' --format '{{.Names}}' | grep -q .; then
+    echo "$rejection_label restore left a container" >&2
+    exit 1
+  fi
+  if docker volume ls --filter 'name=aap-restore-' --format '{{.Name}}' | grep -q .; then
+    echo "$rejection_label restore left a volume" >&2
     exit 1
   fi
   for sensitive_value in \
@@ -358,6 +425,7 @@ echo "tampered ciphertext was rejected"
 
 BACKUP_ENCRYPTION_KEY_FILE="$BACKUP_ENCRYPTION_KEY_FILE" \
 BACKUP_CRYPTO_IMAGE="$backup_crypto_image" \
+RESTORE_SKILL_REGISTRY_IMAGE="$skill_registry_image" \
 infra/docker/restore-drill.sh \
   "$dump_dir/generated.dump.gpg" \
   "$platform_user_count" \

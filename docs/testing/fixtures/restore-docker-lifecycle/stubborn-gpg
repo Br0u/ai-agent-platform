@@ -1,0 +1,6 @@
+#!/bin/sh
+
+trap '' INT TERM HUP
+while :; do
+  sleep 1 || true
+done
