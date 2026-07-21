@@ -4020,6 +4020,32 @@ exit 0
     expect(literalDockerInvocations[0]).toContain('docker "$@"');
   });
 
+  it("explicitly propagates every restore lifecycle and scalar file read", () => {
+    const script = read("infra/docker/restore-drill.sh");
+
+    for (const checkedRead of [
+      'if ! mkdir -p "$decrypt_work_directory" "$resource_registry_directory" >/dev/null 2>&1 ||',
+      'if ! encrypted_size_raw="$(wc -c <"$backup_file" 2>/dev/null)"; then',
+      'if ! decrypted_size_raw="$(wc -c <"$decrypted_bundle_candidate" 2>/dev/null)"; then',
+      'if ! manifest_line_count_raw="$(wc -l <"$manifest_file" 2>/dev/null)" ||',
+      'if ! actual_dump_sha256="$(cat "$dump_digest_file" 2>/dev/null)"; then',
+      'if ! volume_create_output="$(cat "$docker_stdout_file" 2>/dev/null)"; then',
+      'if ! docker_scalar="$(cat "$docker_stdout_file" 2>/dev/null)"; then',
+      "if ! IFS='|' read -r \\",
+    ]) {
+      expect(script).toContain(checkedRead);
+    }
+    expect(script).not.toContain(
+      'actual_dump_sha256="$(cat "$dump_digest_file")"',
+    );
+    expect(script).not.toContain(
+      '[ "$(cat "$docker_stdout_file")" != "$volume" ]',
+    );
+    expect(script).not.toContain(
+      'docker_scalar="$(cat "$docker_stdout_file")"',
+    );
+  });
+
   it("uses only exact-named create-start Docker lifecycles", () => {
     const script = read("infra/docker/restore-drill.sh");
 
@@ -4190,6 +4216,282 @@ esac
       rmSync(sandbox, { recursive: true, force: true });
     }
   }, 15_000);
+
+  it("propagates every safety-critical Docker lifecycle I/O failure", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "restore-io-faults-"));
+    const wrappers = path.join(sandbox, "bin");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+
+    try {
+      mkdirSync(wrappers);
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      writeFileSync(
+        path.join(wrappers, "df"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf '%s\\n' 'test 1048576 0 1048576 0% /restore'
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(wrappers, "mkdir"),
+        `#!/bin/sh
+set -eu
+last=
+for argument in "$@"; do last=$argument; done
+case "$FAULT_MODE:$last" in
+  register_mkdir:*/docker-resources/.10-decrypt.tmp) exit 1 ;;
+esac
+/bin/mkdir "$@"
+case "$FAULT_MODE:$last" in
+  register_write:*/docker-resources/.10-decrypt.tmp)
+    /bin/mkdir "$last/type"
+    ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(wrappers, "chmod"),
+        `#!/bin/sh
+set -eu
+case "$FAULT_MODE:$*" in
+  register_chmod:*'/docker-resources/.10-decrypt.tmp') exit 1 ;;
+  outcome_chmod:*'/docker-resources/10-decrypt/.outcome.tmp') exit 1 ;;
+esac
+if [ "$FAULT_MODE" = supervisor_chmod ] && [ "$#" -eq 3 ]; then
+  case "$2:$3" in
+    */docker.stdout:*/docker.stderr) exit 1 ;;
+  esac
+fi
+/bin/chmod "$@"
+setup_directory=
+for argument in "$@"; do
+  case "$argument" in
+    */runtime-select.stderr) setup_directory=\${argument%/*} ;;
+  esac
+done
+case "$FAULT_MODE:$setup_directory" in
+  supervisor_stdout_init:?*)
+    /bin/rm -f "$setup_directory/docker.stdout"
+    /bin/mkdir "$setup_directory/docker.stdout"
+    ;;
+  supervisor_diagnostic_init:?*)
+    /bin/rm -f "$setup_directory/docker.stderr"
+    /bin/mkdir "$setup_directory/docker.stderr"
+    ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(wrappers, "mv"),
+        `#!/bin/sh
+set -eu
+case "$FAULT_MODE:$1:$2" in
+  register_rename:*/docker-resources/.10-decrypt.tmp:*/docker-resources/10-decrypt)
+    exit 1
+    ;;
+  outcome_rename:*/docker-resources/10-decrypt/.outcome.tmp:*/docker-resources/10-decrypt/outcome)
+    exit 1
+    ;;
+esac
+exec /bin/mv "$@"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(wrappers, "cat"),
+        `#!/bin/sh
+set -eu
+[ "$#" -gt 0 ] || exec /bin/cat
+case "$FAULT_MODE:$1" in
+  query_read:*/docker.stdout)
+    [ ! -f "$CAPTURE_DIR/query.ready" ] || exit 1
+    ;;
+  resource_type_read:*/docker-resources/10-decrypt/type|resource_name_read:*/docker-resources/10-decrypt/name|resource_outcome_read:*/docker-resources/10-decrypt/outcome)
+    /bin/cat "$1"
+    exit 1
+    ;;
+esac
+exec /bin/cat "$@"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(wrappers, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+registry=$(find "$RESTORE_TMP_ROOT" -type d -name docker-resources -print | head -n 1)
+command=$1
+shift
+case "$command" in
+  create)
+    previous=
+    name=
+    for argument in "$@"; do
+      if [ "$previous" = --name ]; then name=$argument; fi
+      previous=$argument
+    done
+    printf '%s\\n' "$name" >"$CAPTURE_DIR/container.name"
+    : >"$CAPTURE_DIR/container.exists"
+    case "$FAULT_MODE" in
+      outcome_write)
+        /bin/mkdir "$registry/10-decrypt/.outcome.tmp"
+        printf '%s\\n' fake-container-id
+        exit 0
+        ;;
+      outcome_chmod|outcome_rename|query_read)
+        printf '%s\\n' fake-container-id
+        exit 0
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  ps)
+    : >"$CAPTURE_DIR/query.ready"
+    if [ "$FAULT_MODE" != query_read ] && [ -f "$CAPTURE_DIR/container.exists" ]; then
+      /bin/cat "$CAPTURE_DIR/container.name"
+    fi
+    ;;
+  rm)
+    if [ "$FAULT_MODE" = query_read ]; then exit 1; fi
+    if [ -f "$registry/10-decrypt/outcome" ]; then
+      /bin/cat "$registry/10-decrypt/outcome" >"$CAPTURE_DIR/cleanup.outcome"
+    fi
+    /bin/rm -f "$CAPTURE_DIR/container.exists"
+    ;;
+  start) exit 1 ;;
+  stop) exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const cases = [
+        { mode: "register_mkdir", expected: "registration", docker: false },
+        { mode: "register_write", expected: "registration", docker: false },
+        { mode: "register_chmod", expected: "registration", docker: false },
+        { mode: "register_rename", expected: "registration", docker: false },
+        {
+          mode: "supervisor_stdout_init",
+          expected: "cleanup",
+          docker: false,
+        },
+        {
+          mode: "supervisor_diagnostic_init",
+          expected: "cleanup",
+          docker: false,
+        },
+        { mode: "supervisor_chmod", expected: "cleanup", docker: false },
+        { mode: "outcome_write", expected: "outcome", docker: true },
+        { mode: "outcome_chmod", expected: "outcome", docker: true },
+        { mode: "outcome_rename", expected: "outcome", docker: true },
+        { mode: "query_read", expected: "cleanup", docker: true },
+        { mode: "resource_type_read", expected: "entry", docker: true },
+        { mode: "resource_name_read", expected: "entry", docker: true },
+        { mode: "resource_outcome_read", expected: "entry", docker: true },
+      ] as const;
+      const failures: string[] = [];
+
+      for (const testCase of cases) {
+        const caseRoot = path.join(sandbox, testCase.mode);
+        const captures = path.join(caseRoot, "captures");
+        const restoreTmp = path.join(caseRoot, "restore-tmp");
+        mkdirSync(captures, { recursive: true });
+        mkdirSync(restoreTmp);
+        const result = spawnSync(
+          "sh",
+          [
+            script,
+            backupFile,
+            "1",
+            "1",
+            "11111111-1111-1111-1111-111111111111",
+            "fixture-session",
+          ],
+          {
+            encoding: "utf8",
+            timeout: 8_000,
+            env: {
+              ...process.env,
+              PATH: `${wrappers}:${process.env.PATH ?? ""}`,
+              CAPTURE_DIR: captures,
+              FAULT_MODE: testCase.mode,
+              BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+              BACKUP_CRYPTO_IMAGE: "fake-crypto",
+              RESTORE_TMP_ROOT: restoreTmp,
+              RESTORE_MAX_ENCRYPTED_BYTES: "128",
+              RESTORE_MAX_DECRYPTED_BYTES: "32",
+              RESTORE_SPACE_SAFETY_BYTES: "0",
+              RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
+              RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+              RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
+              RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "2",
+              RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "1",
+            },
+          },
+        );
+        const output = `${result.stdout}${result.stderr}`.trim();
+        const callsPath = path.join(captures, "docker.calls");
+        const calls = statSync(callsPath, { throwIfNoEntry: false })
+          ? readFileSync(callsPath, "utf8")
+          : "";
+        const expectedOutput =
+          testCase.expected === "registration" ||
+          testCase.expected === "outcome"
+            ? "restore drill decryption failed"
+            : "restore drill decryption failed\nrestore drill cleanup failed";
+        if (
+          result.error !== undefined ||
+          result.status !== 1 ||
+          output !== expectedOutput ||
+          output.includes(sandbox) ||
+          readdirSync(restoreTmp).length !== 0 ||
+          (testCase.docker ? calls.length === 0 : calls.length !== 0)
+        ) {
+          failures.push(
+            `${testCase.mode}: status=${result.status} error=${result.error?.message ?? "none"} output=${JSON.stringify(output)} calls=${JSON.stringify(calls)} temp=${JSON.stringify(readdirSync(restoreTmp))}`,
+          );
+        }
+        if (testCase.expected === "outcome") {
+          const outcomePath = path.join(captures, "cleanup.outcome");
+          const outcome = statSync(outcomePath, { throwIfNoEntry: false })
+            ? readFileSync(outcomePath, "utf8").trim()
+            : "missing";
+          if (outcome !== "ambiguous" || calls.includes("start ")) {
+            failures.push(
+              `${testCase.mode}: outcome=${outcome} calls=${JSON.stringify(calls)}`,
+            );
+          }
+        }
+        if (testCase.expected === "entry" && /(?:^|\n)rm -f /u.test(calls)) {
+          failures.push(`${testCase.mode}: cleanup used an unread entry`);
+        }
+        if (testCase.mode === "query_read") {
+          const queryCount = calls
+            .split("\n")
+            .filter((call) => call.startsWith("ps -a ")).length;
+          if (queryCount < 2) {
+            failures.push(
+              `${testCase.mode}: query read failure confirmed absence`,
+            );
+          }
+        }
+      }
+      expect(failures).toEqual([]);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 45_000);
 
   it("keeps the Docker resource registry protected and non-sensitive", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "restore-registry-mode-"));
@@ -4419,6 +4721,195 @@ esac
         }),
       ).toBeUndefined();
       expect(readdirSync(restoreTmp)).toEqual([]);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("never truncates the configured ambiguous-create settle duration", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "restore-settle-floor-"));
+    const bin = path.join(sandbox, "bin");
+    const captures = path.join(sandbox, "captures");
+    const restoreTmp = path.join(sandbox, "restore-tmp");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+
+    try {
+      for (const directory of [bin, captures, restoreTmp]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      writeFileSync(
+        path.join(bin, "df"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf '%s\\n' 'test 1048576 0 1048576 0% /restore'
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "date"),
+        `#!/bin/sh
+set -eu
+if [ "\${1:-}" != +%s ]; then exec /bin/date "$@"; fi
+count=$(cat "$CAPTURE_DIR/date.count" 2>/dev/null || printf 0)
+count=$((count + 1))
+printf '%s\\n' "$count" >"$CAPTURE_DIR/date.count"
+if [ "$count" -eq 1 ]; then
+  printf '%s\\n' 100
+elif [ "$count" -eq 2 ]; then
+  printf '%s\\n' 101
+else
+  sleep 1
+  printf '%s\\n' 102
+fi
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+case "$1" in
+  create)
+    : >"$CAPTURE_DIR/create.failed"
+    exit 1
+    ;;
+  rm) exit 1 ;;
+  ps) exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const startedAt = Date.now();
+      const result = spawnSync(
+        "sh",
+        [
+          script,
+          backupFile,
+          "1",
+          "1",
+          "11111111-1111-1111-1111-111111111111",
+          "fixture-session",
+        ],
+        {
+          encoding: "utf8",
+          timeout: 6_000,
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
+            CAPTURE_DIR: captures,
+            BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+            BACKUP_CRYPTO_IMAGE: "fake-crypto",
+            RESTORE_TMP_ROOT: restoreTmp,
+            RESTORE_MAX_ENCRYPTED_BYTES: "128",
+            RESTORE_MAX_DECRYPTED_BYTES: "32",
+            RESTORE_SPACE_SAFETY_BYTES: "0",
+            RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
+            RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+            RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
+            RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "2",
+            RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "1",
+          },
+        },
+      );
+      const elapsedMs = Date.now() - startedAt;
+      const settleElapsedMs =
+        Date.now() - statSync(path.join(captures, "create.failed")).mtimeMs;
+      const output = `${result.stdout}${result.stderr}`.trim();
+
+      expect(result.error, output).toBeUndefined();
+      expect(result.status, output).toBe(1);
+      expect(output).toBe(
+        "restore drill decryption failed\nrestore drill cleanup failed",
+      );
+      expect(settleElapsedMs).toBeGreaterThanOrEqual(950);
+      expect(elapsedMs).toBeLessThan(3_500);
+      expect(readdirSync(restoreTmp)).toEqual([]);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it("fails the focused restore runner when its own cleanup fails", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "restore-runner-cleanup-"));
+    const bin = path.join(sandbox, "bin");
+    const captures = path.join(sandbox, "captures");
+    const runtimeTmp = path.join(sandbox, "runtime-tmp");
+    const runner = path.join(
+      root,
+      "docs/testing/run-restore-docker-lifecycle.sh",
+    );
+
+    try {
+      for (const directory of [bin, captures, runtimeTmp]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+command=$1
+shift
+case "$command" in
+  build) exit 0 ;;
+  create)
+    previous=
+    for argument in "$@"; do
+      if [ "$previous" = --name ]; then
+        printf '%s\\n' "$argument" >"$CAPTURE_DIR/container.name"
+      fi
+      previous=$argument
+    done
+    printf '%s\\n' fake-container-id
+    ;;
+  ps)
+    case "$*" in
+      *'name=^/'*) cat "$CAPTURE_DIR/container.name" ;;
+    esac
+    ;;
+  start) exit 0 ;;
+  wait)
+    trap '' TERM INT HUP
+    exec sleep 1000
+    ;;
+  rm) exit 0 ;;
+  volume) exit 0 ;;
+  image)
+    [ "\${1:-}" != rm ] || exit 1
+    ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync("sh", [runner, "timeout"], {
+        encoding: "utf8",
+        timeout: 15_000,
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          CAPTURE_DIR: captures,
+          TMPDIR: runtimeTmp,
+        },
+      });
+      const output = `${result.stdout}${result.stderr}`.trim();
+
+      expect(result.error, output).toBeUndefined();
+      expect(result.status, output).toBe(1);
+      expect(output).toBe("restore lifecycle runner cleanup failed");
+      expect(output).not.toContain("acceptance passed");
+      expect(output).not.toContain(sandbox);
+      expect(readdirSync(runtimeTmp)).toEqual([]);
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }

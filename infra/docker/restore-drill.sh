@@ -91,7 +91,17 @@ if ! sleep 0.1 2>/dev/null; then
   echo "restore drill host timing support is unavailable" >&2
   exit 1
 fi
-encrypted_size_bytes="$(wc -c <"$backup_file" | tr -d ' ')"
+if ! encrypted_size_raw="$(wc -c <"$backup_file" 2>/dev/null)"; then
+  echo "restore drill could not determine encrypted backup size" >&2
+  exit 1
+fi
+if ! encrypted_size_bytes="$(
+  printf '%s' "$encrypted_size_raw" | tr -d ' '
+)"; then
+  echo "restore drill could not determine encrypted backup size" >&2
+  exit 1
+fi
+unset encrypted_size_raw
 case "$encrypted_size_bytes" in
   ''|*[!0-9]*)
     echo "restore drill could not determine encrypted backup size" >&2
@@ -205,10 +215,17 @@ run_bounded_docker() {
   docker_output_path=$3
   docker_diagnostic_path=$4
   shift 4
-  : >"$docker_output_path"
-  : >"$docker_diagnostic_path"
-  chmod 600 "$docker_output_path" "$docker_diagnostic_path"
   docker_command_timed_out=false
+  if ! : 2>/dev/null >"$docker_output_path"; then
+    return 1
+  fi
+  if ! : 2>/dev/null >"$docker_diagnostic_path"; then
+    return 1
+  fi
+  if ! chmod 600 "$docker_output_path" "$docker_diagnostic_path" \
+    >/dev/null 2>&1; then
+    return 1
+  fi
   docker "$@" >"$docker_output_path" 2>"$docker_diagnostic_path" &
   active_docker_pid=$!
   active_docker_phase=$docker_phase
@@ -239,19 +256,42 @@ register_docker_resource() {
   resource_type=$2
   resource_name=$3
   resource_path="$resource_registry_directory/$resource_key"
-  mkdir "$resource_path"
-  chmod 700 "$resource_path"
-  printf '%s\n' "$resource_type" >"$resource_path/type"
-  printf '%s\n' "$resource_name" >"$resource_path/name"
-  printf '%s\n' ambiguous >"$resource_path/outcome"
-  chmod 600 "$resource_path/type" "$resource_path/name" "$resource_path/outcome"
+  resource_temporary_path="$resource_registry_directory/.$resource_key.tmp"
+  if ! mkdir "$resource_temporary_path" >/dev/null 2>&1; then
+    return 1
+  fi
+  if ! chmod 700 "$resource_temporary_path" >/dev/null 2>&1 || \
+     ! printf '%s\n' "$resource_type" \
+       2>/dev/null >"$resource_temporary_path/type" || \
+     ! printf '%s\n' "$resource_name" \
+       2>/dev/null >"$resource_temporary_path/name" || \
+     ! printf '%s\n' ambiguous \
+       2>/dev/null >"$resource_temporary_path/outcome" || \
+     ! chmod 600 \
+       "$resource_temporary_path/type" \
+       "$resource_temporary_path/name" \
+       "$resource_temporary_path/outcome" \
+       >/dev/null 2>&1 || \
+     ! mv "$resource_temporary_path" "$resource_path" \
+       >/dev/null 2>&1; then
+    rm -rf "$resource_temporary_path" >/dev/null 2>&1 || true
+    return 1
+  fi
 }
 
 set_docker_resource_outcome() {
   resource_key=$1
   resource_outcome=$2
-  printf '%s\n' "$resource_outcome" \
-    >"$resource_registry_directory/$resource_key/outcome"
+  resource_path="$resource_registry_directory/$resource_key"
+  outcome_temporary_path="$resource_path/.outcome.tmp"
+  if ! printf '%s\n' "$resource_outcome" \
+       2>/dev/null >"$outcome_temporary_path" || \
+     ! chmod 600 "$outcome_temporary_path" >/dev/null 2>&1 || \
+     ! mv "$outcome_temporary_path" "$resource_path/outcome" \
+       >/dev/null 2>&1; then
+    rm -f "$outcome_temporary_path" >/dev/null 2>&1 || true
+    return 1
+  fi
 }
 
 run_registered_create() {
@@ -260,12 +300,17 @@ run_registered_create() {
   resource_name=$3
   resource_phase=$4
   shift 4
-  register_docker_resource "$resource_key" "$resource_type" "$resource_name"
+  if ! register_docker_resource \
+    "$resource_key" "$resource_type" "$resource_name"; then
+    return 1
+  fi
   if run_bounded_docker \
     "$docker_create_timeout_seconds" "$resource_phase" \
     "$docker_stdout_file" "$docker_diagnostic_file" \
     "$@"; then
-    set_docker_resource_outcome "$resource_key" success
+    if ! set_docker_resource_outcome "$resource_key" success; then
+      return 1
+    fi
     return 0
   else
     create_status=$?
@@ -293,7 +338,9 @@ run_container_wait() {
     wait "$wait_container"; then
     return 1
   fi
-  wait_output="$(cat "$docker_stdout_file")"
+  if ! wait_output="$(cat "$docker_stdout_file" 2>/dev/null)"; then
+    return 1
+  fi
   case "$wait_output" in
     ''|*[!0-9]*) return 1 ;;
   esac
@@ -331,7 +378,9 @@ query_docker_resource() {
       ;;
     *) return 0 ;;
   esac
-  query_output="$(cat "$docker_stdout_file")"
+  if ! query_output="$(cat "$docker_stdout_file" 2>/dev/null)"; then
+    return 0
+  fi
   if [ -z "$query_output" ]; then
     docker_query_state=absent
   elif [ "$query_output" = "$query_resource_name" ]; then
@@ -397,15 +446,35 @@ reconcile_ambiguous_resource() {
   reconcile_resource_type=$1
   reconcile_resource_name=$2
   reconcile_phase=$3
-  settle_deadline=$(($(date +%s) + docker_create_settle_seconds))
+  if ! settle_tick="$(date +%s 2>/dev/null)"; then
+    return 1
+  fi
+  case "$settle_tick" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  settle_deadline=$((
+    settle_tick + docker_create_settle_seconds + 1
+  ))
   while :; do
-    [ "$(date +%s)" -lt "$settle_deadline" ] || return 1
+    if ! settle_tick="$(date +%s 2>/dev/null)"; then
+      return 1
+    fi
+    case "$settle_tick" in
+      ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$settle_tick" -lt "$settle_deadline" ] || return 1
     if remove_docker_resource \
       "$reconcile_resource_type" "$reconcile_resource_name" \
       "$reconcile_phase"; then
       return 0
     fi
-    [ "$(date +%s)" -lt "$settle_deadline" ] || return 1
+    if ! settle_tick="$(date +%s 2>/dev/null)"; then
+      return 1
+    fi
+    case "$settle_tick" in
+      ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$settle_tick" -lt "$settle_deadline" ] || return 1
     query_docker_resource \
       "$reconcile_resource_type" \
       "$reconcile_resource_name" \
@@ -417,9 +486,18 @@ reconcile_ambiguous_resource() {
 reconcile_registered_resource() {
   resource_path=$1
   resource_key=${resource_path##*/}
-  resource_type="$(cat "$resource_path/type")"
-  resource_name="$(cat "$resource_path/name")"
-  resource_outcome="$(cat "$resource_path/outcome")"
+  if ! resource_type="$(cat "$resource_path/type" 2>/dev/null)" || \
+     ! resource_name="$(cat "$resource_path/name" 2>/dev/null)" || \
+     ! resource_outcome="$(cat "$resource_path/outcome" 2>/dev/null)"; then
+    return 1
+  fi
+  case "$resource_type" in
+    container|volume) ;;
+    *) return 1 ;;
+  esac
+  case "$resource_name" in
+    ''|*[!A-Za-z0-9_.-]*) return 1 ;;
+  esac
   case "$resource_outcome" in
     success)
       reconcile_successful_resource \
@@ -500,7 +578,17 @@ trap 'on_signal 143' TERM
 umask 077
 restore_tmp_root="${RESTORE_TMP_ROOT:-${TMPDIR:-/tmp}}"
 mkdir -p "$restore_tmp_root"
-available_kib="$(df -Pk "$restore_tmp_root" | awk 'NR == 2 { print $4; exit }')"
+if ! available_report="$(df -Pk "$restore_tmp_root" 2>/dev/null)"; then
+  echo "restore drill temporary space budget check failed" >&2
+  exit 1
+fi
+if ! available_kib="$(
+  printf '%s\n' "$available_report" | awk 'NR == 2 { print $4; exit }'
+)"; then
+  echo "restore drill temporary space budget check failed" >&2
+  exit 1
+fi
+unset available_report
 case "$available_kib" in
   ''|*[!0-9]*)
     echo "restore drill temporary space budget check failed" >&2
@@ -539,8 +627,12 @@ decrypt_work_directory="$temporary_directory/decrypt"
 decrypted_bundle_candidate="$decrypt_work_directory/restored.bundle.partial"
 decrypted_bundle="$temporary_directory/restored.bundle"
 extraction_directory="$temporary_directory/extracted"
-mkdir -p "$decrypt_work_directory" "$resource_registry_directory"
-chmod 700 "$decrypt_work_directory" "$resource_registry_directory"
+if ! mkdir -p "$decrypt_work_directory" "$resource_registry_directory" >/dev/null 2>&1 ||
+   ! chmod 700 "$decrypt_work_directory" "$resource_registry_directory" \
+     >/dev/null 2>&1; then
+  echo "restore drill temporary initialization failed" >&2
+  exit 1
+fi
 cat >"$postgres_env_file" <<EOF
 POSTGRES_DB=$database
 POSTGRES_USER=$owner
@@ -690,10 +782,26 @@ else
 fi
 
 if [ -f "$decrypted_bundle_candidate" ]; then
-  decrypted_size_bytes="$(wc -c <"$decrypted_bundle_candidate" | tr -d ' ')"
+  if ! decrypted_size_raw="$(wc -c <"$decrypted_bundle_candidate" 2>/dev/null)"; then
+    echo "restore drill decryption failed" >&2
+    exit 1
+  fi
+  if ! decrypted_size_bytes="$(
+    printf '%s' "$decrypted_size_raw" | tr -d ' '
+  )"; then
+    echo "restore drill decryption failed" >&2
+    exit 1
+  fi
+  unset decrypted_size_raw
 else
   decrypted_size_bytes=0
 fi
+case "$decrypted_size_bytes" in
+  ''|*[!0-9]*)
+    echo "restore drill decryption failed" >&2
+    exit 1
+    ;;
+esac
 if [ "$decrypt_timed_out" = "true" ]; then
   echo "restore drill decryption timed out" >&2
   exit 1
@@ -754,13 +862,20 @@ rm -f "$decrypted_bundle"
 decrypted_bundle=
 
 manifest_file="$extraction_directory/skill-backup.manifest"
-manifest_line_count="$(wc -l <"$manifest_file" | tr -d ' ')"
-manifest_format_line="$(sed -n '1p' "$manifest_file")"
-manifest_dump_line="$(sed -n '2p' "$manifest_file")"
-manifest_schema_line="$(sed -n '3p' "$manifest_file")"
-manifest_revision_line="$(sed -n '4p' "$manifest_file")"
-manifest_artifact_line="$(sed -n '5p' "$manifest_file")"
-manifest_file_line="$(sed -n '6p' "$manifest_file")"
+if ! manifest_line_count_raw="$(wc -l <"$manifest_file" 2>/dev/null)" ||
+   ! manifest_line_count="$(
+     printf '%s' "$manifest_line_count_raw" | tr -d ' '
+   )" ||
+   ! manifest_format_line="$(sed -n '1p' "$manifest_file" 2>/dev/null)" ||
+   ! manifest_dump_line="$(sed -n '2p' "$manifest_file" 2>/dev/null)" ||
+   ! manifest_schema_line="$(sed -n '3p' "$manifest_file" 2>/dev/null)" ||
+   ! manifest_revision_line="$(sed -n '4p' "$manifest_file" 2>/dev/null)" ||
+   ! manifest_artifact_line="$(sed -n '5p' "$manifest_file" 2>/dev/null)" ||
+   ! manifest_file_line="$(sed -n '6p' "$manifest_file" 2>/dev/null)"; then
+  echo "restore drill rejected invalid backup manifest" >&2
+  exit 1
+fi
+unset manifest_line_count_raw
 if [ "$manifest_line_count" != "6" ] || \
    [ "$manifest_format_line" != "format_version=1" ]; then
   echo "restore drill rejected invalid backup manifest" >&2
@@ -836,7 +951,10 @@ if ! run_container_start digest_start "$digest_container" || \
   echo "restore drill rejected backup dump digest mismatch" >&2
   exit 1
 fi
-actual_dump_sha256="$(cat "$dump_digest_file")"
+if ! actual_dump_sha256="$(cat "$dump_digest_file" 2>/dev/null)"; then
+  echo "restore drill rejected backup dump digest mismatch" >&2
+  exit 1
+fi
 case "$actual_dump_sha256" in
   *[!0-9a-f]*|'') actual_dump_sha256=invalid ;;
 esac
@@ -851,10 +969,15 @@ if ! run_registered_create \
   echo "restore drill failed database startup" >&2
   exit 1
 fi
-if [ "$(cat "$docker_stdout_file")" != "$volume" ]; then
+if ! volume_create_output="$(cat "$docker_stdout_file" 2>/dev/null)"; then
   echo "restore drill failed database startup" >&2
   exit 1
 fi
+if [ "$volume_create_output" != "$volume" ]; then
+  echo "restore drill failed database startup" >&2
+  exit 1
+fi
+unset volume_create_output
 if ! run_registered_create \
   40-database container "$container" database_create \
   create --name "$container" \
@@ -1072,7 +1195,9 @@ run_database_scalar() {
     exec "$container" "$@"; then
     return 1
   fi
-  docker_scalar="$(cat "$docker_stdout_file")"
+  if ! docker_scalar="$(cat "$docker_stdout_file" 2>/dev/null)"; then
+    return 1
+  fi
   case "$docker_scalar" in
     *'
 '*) return 1 ;;
@@ -1278,7 +1403,7 @@ case "$skill_registry_snapshot" in
     ;;
 esac
 
-IFS='|' read -r \
+if ! IFS='|' read -r \
   skill_registry_schema_version \
   skill_registry_schema_version_row_count \
   skill_revision_count \
@@ -1291,6 +1416,10 @@ IFS='|' read -r \
   skill_registry_schema_contract <<EOF
 $skill_registry_snapshot
 EOF
+then
+  echo "restore drill failed critical table checks" >&2
+  exit 1
+fi
 unset skill_registry_snapshot
 
 for restored_number in \

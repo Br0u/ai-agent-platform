@@ -24,6 +24,12 @@ type, exact generated name, and create outcome. A resource is registered as
 connection or response failure, timeout, signal, and supervisor termination—
 keeps it `AMBIGUOUS`; generic Docker CLI status cannot prove non-creation.
 Registry records never contain command arguments, paths, output, or diagnostics.
+Registration first builds a complete mode-0700 temporary entry with mode-0600
+fields, then atomically renames it to the final key. Docker is not launched if
+any mkdir, write, chmod, or rename fails. A successful create updates outcome
+through a mode-0600 temporary file and atomic rename; update failure preserves
+the original `AMBIGUOUS` value so EXIT reconciliation still removes the
+possibly-created resource.
 
 Every restore container uses an exact unique name and the same lifecycle:
 register, bounded create, bounded start, bounded wait or exec, and one cleanup
@@ -52,10 +58,13 @@ resource. Reconciliation continues for
 `RESTORE_DOCKER_CREATE_SETTLE_SECONDS` (default 5, valid integer range 1..300)
 and succeeds only after a bounded remove succeeds. It uses a wall-clock
 deadline, checks that deadline before every remove or query, and waits 0.1
-seconds between unsuccessful cycles. One already-started Docker call may add at
-most its configured CLI timeout plus kill grace beyond the deadline. This
-catches a delayed daemon-side create. If no definitive removal occurs before
-the window closes, cleanup fails closed with `restore drill cleanup failed`.
+seconds between unsuccessful cycles. The portable integer-second deadline adds
+one clock tick, so real elapsed settle time is never shorter than the configured
+duration and adds at most one extra second before call overrun. One
+already-started Docker call may add at most its configured CLI timeout plus kill
+grace, followed by at most one 0.1-second cadence wait. This catches a delayed
+daemon-side create. If no definitive removal occurs before the window closes,
+cleanup fails closed with `restore drill cleanup failed`.
 
 All cleanup diagnostics are generic. Docker stdout and stderr remain separate
 mode-0600 files and are never replayed. A temporary-directory removal failure
@@ -68,7 +77,11 @@ exit to status 1.
 Every supervised Docker call receives explicit stdout and diagnostic files.
 Commands with relevant stdout parse only the expected non-sensitive scalar,
 such as an exact resource name, a container wait status, a digest, a count, or
-a schema contract. Other output remains captured and unreported.
+a schema contract. Initialization, permission changes, registry reads and
+writes, exact-name query reads, wait results, manifests, digests, and scalar
+reads all check I/O status explicitly. A read failure stays `UNKNOWN` or fails
+closed; it can never become `ABSENT`, `SUCCESS`, or a valid scalar. Other output
+remains captured and unreported.
 
 ## Tests
 
@@ -78,7 +91,9 @@ hung late phases, delayed late create on a transient late resource, permanent
 unknown state, double signals, minimum reconciliation configuration, and both
 nonzero-main-flow and successful-main-flow temporary-directory removal
 failure. Tests also assert the registry modes and its non-sensitive field
-allowlist. Existing lifecycle, bundle, manifest, digest, trigger, role, fsync,
-space, status, and diagnostic-containment tests remain green. Final acceptance
-also includes shell/type/format/Compose checks, three real-Docker paths, and a
-six-axis residue audit.
+allowlist, inject every registry/supervisor/read failure, enforce the settle
+duration floor, and prove the focused runner fails if its own image or temporary
+cleanup fails. Existing lifecycle, bundle, manifest, digest, trigger, role,
+fsync, space, status, and diagnostic-containment tests remain green. Final
+acceptance also includes shell/type/format/Compose checks, three real-Docker
+paths, and a six-axis residue audit.

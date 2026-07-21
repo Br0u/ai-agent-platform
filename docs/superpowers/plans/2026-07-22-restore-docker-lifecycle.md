@@ -57,10 +57,10 @@
 - Modify: `infra/docker/restore-drill.sh`
 - Test: `packages/database/src/deployment-contracts.test.ts`
 
-- [ ] Validate reconciliation attempts as 2..10. Add `RESTORE_DOCKER_CREATE_SETTLE_SECONDS`, default 5, valid range 1..300, using a wall-clock deadline checked before every Docker call and 0.1-second unsuccessful-cycle cadence.
+- [ ] Validate reconciliation attempts as 2..10. Add `RESTORE_DOCKER_CREATE_SETTLE_SECONDS`, default 5, valid range 1..300, using a portable integer-second deadline with one ceiling tick, checks before every Docker call, and 0.1-second unsuccessful-cycle cadence; guarantee at least the configured duration and document the bounded overrun.
 - [ ] Create protected shared stdout/diagnostic files and a protected resource registry after temporary allocation.
-- [ ] Implement one supervisor signature: timeout, phase, stdout file, diagnostic file, Docker arguments. Track active PID and distinguish success, definite failure, and timeout/signal ambiguity without replaying output.
-- [ ] Implement resource registration before create, outcome updates, and exact-name query. Only exit 0 becomes `SUCCESS`; every launched-create nonzero remains `AMBIGUOUS`. Use normal two-ABSENT reconciliation for `SUCCESS` and remove-only settle reconciliation for `AMBIGUOUS`.
+- [ ] Implement one supervisor signature: timeout, phase, stdout file, diagnostic file, Docker arguments. Track the active PID and return bounded command status without replaying output; create classification is `SUCCESS` only for exit 0 and otherwise remains `AMBIGUOUS`.
+- [ ] Implement atomic resource registration before create, atomic outcome updates, and exact-name query. Explicitly propagate every mkdir/write/chmod/rename/read failure; never launch Docker after incomplete registration, never turn a failed outcome update or query read into `SUCCESS`/`ABSENT`. Only exit 0 becomes `SUCCESS`; every launched-create nonzero remains `AMBIGUOUS`. Use normal two-ABSENT reconciliation for `SUCCESS` and remove-only settle reconciliation for `AMBIGUOUS`.
 - [ ] Make EXIT and signal handlers ignore INT/TERM as their first action. Signal records the first code and exits; EXIT alone performs exactly one cleanup pass, preserving the original status and checking temporary-directory removal.
 - [ ] Run Tasks 1 and 3 tests until green.
 
@@ -103,7 +103,7 @@
 - Verify: `packages/database/src/deployment-contracts.test.ts`
 - Verify: `infra/docker/README.md`
 
-- [ ] Add a deterministic real-Docker runner. It builds exact images `aap-backup-lifecycle-base-task9`, `aap-backup-lifecycle-stubborn-task9`, and `aap-backup-lifecycle-copy-task9`; creates fixed fixture IDs `00000000-0000-4000-8000-000000000001` and `backup-restore-session-fixture-v1`; invokes the public restore script; verifies generic output and zero resources; and removes all fixture images and temporary paths on EXIT.
+- [ ] Add a deterministic real-Docker runner. It builds exact images `aap-backup-lifecycle-base-task9`, `aap-backup-lifecycle-stubborn-task9`, and `aap-backup-lifecycle-copy-task9`; creates fixed fixture IDs `00000000-0000-4000-8000-000000000001` and `backup-restore-session-fixture-v1`; invokes the public restore script; verifies generic output and zero resources; and removes all fixture images and temporary paths on EXIT. Image or temporary cleanup failure must force nonzero status, and the pass message is emitted only after cleanup succeeds.
 - [ ] Run `cd packages/database && pnpm exec vitest run src/deployment-contracts.test.ts` and confirm every test passes with zero skipped tests.
 - [ ] Run `sh -n infra/docker/restore-drill.sh`, `git diff --check`, `cd packages/database && pnpm typecheck`, `cd packages/database && pnpm exec prettier --check src/deployment-contracts.test.ts ../../infra/docker/README.md ../../docs/superpowers/specs/2026-07-22-restore-docker-lifecycle-design.md ../../docs/superpowers/plans/2026-07-22-restore-docker-lifecycle.md`, and `docker compose --env-file .env.example config --quiet` from the repository root.
 - [ ] Run `sh docs/testing/run-restore-docker-lifecycle.sh timeout`; assert bounded stubborn-decrypt timeout and zero residue.

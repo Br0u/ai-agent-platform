@@ -18,18 +18,34 @@ base_image=aap-backup-lifecycle-base-task9
 stubborn_image=aap-backup-lifecycle-stubborn-task9
 copy_image=aap-backup-lifecycle-copy-task9
 temporary_directory=
+success_message=
 
 cleanup() {
   cleanup_status=$?
+  cleanup_failed=false
   trap '' INT TERM
   trap - EXIT
   if command -v docker >/dev/null 2>&1; then
-    docker image rm -f \
+    if ! docker image rm -f \
       "$copy_image" "$stubborn_image" "$base_image" \
-      >/dev/null 2>&1 || true
+      >/dev/null 2>&1; then
+      cleanup_failed=true
+    fi
   fi
   if [ -n "$temporary_directory" ]; then
-    rm -rf "$temporary_directory"
+    if rm -rf "$temporary_directory" >/dev/null 2>&1; then
+      temporary_directory=
+    else
+      cleanup_failed=true
+    fi
+  fi
+  if [ "$cleanup_failed" = true ]; then
+    echo "restore lifecycle runner cleanup failed" >&2
+    if [ "$cleanup_status" -eq 0 ]; then
+      cleanup_status=1
+    fi
+  elif [ "$cleanup_status" -eq 0 ] && [ -n "$success_message" ]; then
+    printf '%s\n' "$success_message"
   fi
   exit "$cleanup_status"
 }
@@ -176,4 +192,4 @@ if docker volume ls --filter 'name=aap-restore-' --format '{{.Name}}' | grep -q 
   exit 1
 fi
 
-echo "$mode restore lifecycle acceptance passed in ${elapsed_seconds}s"
+success_message="$mode restore lifecycle acceptance passed in ${elapsed_seconds}s"
