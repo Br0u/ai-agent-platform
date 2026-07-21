@@ -72,6 +72,7 @@ class ReviewRevision:
     expected_state: Literal["pending_review"]
     reason: str | None
     attestations: ReviewAttestations
+    skill_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +111,12 @@ class SkillSummary:
     latest_revision_id: UUID | None
     latest_state: RevisionState | None
     created_at: datetime
+    latest_source_type: str | None = None
+    latest_artifact_sha256: str | None = None
+    latest_created_by: UUID | None = None
+    latest_created_at: datetime | None = None
+    latest_reviewed_by: UUID | None = None
+    latest_reviewed_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +141,9 @@ class SkillRegistryRepository(Protocol):
 
     async def review_revision(self, command: ReviewRevision) -> StoredRevision: ...
 
-    async def list_skills(self) -> tuple[SkillSummary, ...]: ...
+    async def list_skills(
+        self, *, limit: int = 50, offset: int = 0
+    ) -> tuple[SkillSummary, ...]: ...
 
     async def get_revision(self, skill_id: UUID, revision_id: UUID) -> StoredRevision: ...
 

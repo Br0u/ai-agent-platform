@@ -11,7 +11,7 @@ from skill_core import canonicalize_skill_zip
 from skill_core.archive import SkillPackageError, canonicalize_skill_archive
 from skill_core.diff import diff_packages
 from skill_core.scanner import scan
-from skill_core.types import CanonicalSkillPackage, SkillFile
+from skill_core.types import MAX_FILE_BYTES, CanonicalSkillPackage, SkillFile
 from skill_registry.artifact_store import ArtifactStoreError, SkillArtifactStore
 from skill_registry.types import (
     CreateUploadRevision,
@@ -85,8 +85,10 @@ class SkillRegistryService:
         )
         return await self.get_revision_detail(revision.skill_id, revision.id)
 
-    async def list_skills(self) -> tuple[SkillSummary, ...]:
-        return await self._repository.list_skills()
+    async def list_skills(self, *, limit: int = 50, offset: int = 0) -> tuple[SkillSummary, ...]:
+        if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
+            raise RegistryError("VALIDATION_ERROR", "Pagination bounds are invalid")
+        return await self._repository.list_skills(limit=limit, offset=offset)
 
     async def get_revision_detail(self, skill_id: UUID, revision_id: UUID) -> RevisionDetail:
         revision = await self._repository.get_revision(skill_id, revision_id)
@@ -114,6 +116,8 @@ class SkillRegistryService:
         indexed = next((file for file in files if file.path == path), None)
         if indexed is None:
             raise RegistryError("FILE_NOT_FOUND", "Skill file is not available")
+        if indexed.size > MAX_FILE_BYTES:
+            raise RegistryError("SKILL_FILE_TOO_LARGE", "Skill file is too large")
         package = await self._load_verified_package(revision, files)
         file = next(item for item in package.files if item.path == indexed.path)
         decode_failed = False
@@ -129,7 +133,7 @@ class SkillRegistryService:
         return text
 
     async def review_revision(self, command: ReviewRevision) -> StoredRevision:
-        if not command.attestations.complete:
+        if command.skill_id is None or not command.attestations.complete:
             raise RegistryError("VALIDATION_ERROR", "All review attestations are required")
         return await self._repository.review_revision(command)
 
@@ -139,7 +143,11 @@ class SkillRegistryService:
         artifact_error: tuple[str, str] | None = None
         artifact = b""
         try:
-            artifact = await self._artifact_store.get(revision.id, revision.artifact_sha256)
+            artifact = await self._artifact_store.get(
+                revision.id,
+                revision.artifact_sha256,
+                revision.compressed_size,
+            )
         except ArtifactStoreError as error:
             artifact_error = (error.code, "Skill artifact retrieval failed")
         except Exception:

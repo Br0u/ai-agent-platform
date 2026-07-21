@@ -103,7 +103,19 @@ async def test_get_recomputes_and_returns_matching_artifact() -> None:
     cursor = FakeCursor((artifact, digest))
     store = PostgresSkillArtifactStore(lambda: FakeConnection(cursor))
 
-    assert await store.get(uuid4(), digest) == artifact
+    assert await store.get(uuid4(), digest, len(artifact)) == artifact
+
+
+@pytest.mark.asyncio
+async def test_get_rejects_revision_size_mismatch_before_returning_artifact() -> None:
+    artifact = b"canonical artifact"
+    digest = hashlib.sha256(artifact).hexdigest()
+    store = PostgresSkillArtifactStore(lambda: FakeConnection(FakeCursor((artifact, digest))))
+
+    with pytest.raises(ArtifactStoreError) as caught:
+        await store.get(uuid4(), digest, len(artifact) + 1)
+
+    assert caught.value.code == "ARTIFACT_DIGEST_MISMATCH"
 
 
 @pytest.mark.asyncio

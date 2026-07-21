@@ -347,12 +347,14 @@ async def test_review_locks_then_writes_matching_event_before_state_update() -> 
         ]
     )
 
-    revision = await repository.review_revision(review_command())
+    revision = await repository.review_revision(review_command(skill_id=SKILL_ID))
 
     assert revision.state == "published"
     assert revision.reviewed_by == REVIEWER
     queries = [" ".join(query.split()) for query, _ in connection.script.executions]
     assert "FOR UPDATE" in queries[1]
+    assert "AND revision.skill_id = %s" in queries[1]
+    assert connection.script.executions[1][1] == (REVISION_ID, SKILL_ID)
     assert "revision_published" in connection.script.executions[2][1]
     assert queries[2].startswith("INSERT INTO skill_registry.skill_control_events")
     assert queries[3].startswith("UPDATE skill_registry.skill_revisions")
@@ -463,11 +465,26 @@ async def test_reject_writes_bounded_reason_to_event_and_state_transition() -> N
 
 @pytest.mark.asyncio
 async def test_repository_queries_lists_files_and_previous_published_revision() -> None:
-    repository, _ = repository_with(
+    repository, connection = repository_with(
         [
             Reply(
                 "FROM skill_registry.skills AS skill",
-                all_rows=[(SKILL_ID, "demo-skill", 1, REVISION_ID, "pending_review", NOW)],
+                all_rows=[
+                    (
+                        SKILL_ID,
+                        "demo-skill",
+                        1,
+                        REVISION_ID,
+                        "pending_review",
+                        NOW,
+                        "upload",
+                        "a" * 64,
+                        ACTOR,
+                        NOW,
+                        None,
+                        None,
+                    )
+                ],
             ),
             Reply("FROM skill_registry.skill_revisions AS revision", one=stored_row()),
             Reply(
@@ -478,12 +495,14 @@ async def test_repository_queries_lists_files_and_previous_published_revision() 
         ]
     )
 
-    summaries = await repository.list_skills()
+    summaries = await repository.list_skills(limit=25, offset=10)
     revision = await repository.get_revision(SKILL_ID, REVISION_ID)
     files = await repository.list_revision_files(REVISION_ID)
     previous = await repository.find_previous_published(revision)
 
     assert summaries[0].slug == "demo-skill"
+    assert summaries[0].latest_artifact_sha256 == "a" * 64
+    assert connection.script.executions[0][1] == (25, 10)
     assert revision.id == REVISION_ID
     assert files[0].path == "SKILL.md"
     assert previous is None

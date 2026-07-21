@@ -1,0 +1,237 @@
+"""Uvicorn application factory for the private skill registry."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from pathlib import Path
+from types import TracebackType
+from typing import Protocol, cast
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from psycopg_pool import AsyncConnectionPool
+from starlette.exceptions import HTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from skill_registry.api import build_skill_registry_router
+from skill_registry.artifact_store import PostgresSkillArtifactStore
+from skill_registry.auth import SkillRegistryAuthMiddleware, SkillRegistryAuthenticator
+from skill_registry.config import RegistryConfigError, RegistrySettings, load_scan_policy
+from skill_registry.repository import PostgresSkillRegistryRepository, RepositoryCursor
+from skill_registry.service import SkillRegistryService
+from skill_registry.types import ScanPolicy
+
+
+class RegistryPoolConnection(Protocol):
+    async def __aenter__(self) -> RegistryPoolConnection: ...
+
+    async def __aexit__(self, *args: object) -> None: ...
+
+    def cursor(self) -> RepositoryCursor: ...
+
+    def transaction(self) -> AbstractAsyncContextManager[object]: ...
+
+
+class RegistryPool(Protocol):
+    async def open(self, *, wait: bool) -> None: ...
+
+    async def close(self) -> None: ...
+
+    def connection(self) -> AbstractAsyncContextManager[RegistryPoolConnection]: ...
+
+
+PoolFactory = Callable[[str], RegistryPool]
+PolicyLoader = Callable[[Path], ScanPolicy]
+ServiceFactory = Callable[[RegistryPool, ScanPolicy], SkillRegistryService]
+ReadinessProbe = Callable[[RegistryPool], Awaitable[bool]]
+
+
+class RegistryStartupError(RuntimeError):
+    """Stable startup failure without database or key material."""
+
+
+class NoStoreMiddleware:
+    """Apply a non-cacheable response contract to every HTTP outcome."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_no_store(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = [
+                    (name, value)
+                    for name, value in message.get("headers", [])
+                    if name.lower() != b"cache-control"
+                ]
+                headers.append((b"cache-control", b"no-store"))
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_no_store)
+
+
+def _psycopg_url(value: str) -> str:
+    return value.replace("postgresql+psycopg_async://", "postgresql://", 1)
+
+
+def _default_pool_factory(database_url: str) -> RegistryPool:
+    pool = AsyncConnectionPool(
+        conninfo=database_url,
+        min_size=1,
+        max_size=10,
+        open=False,
+        timeout=2.0,
+    )
+    return cast(RegistryPool, pool)
+
+
+class _PoolLease:
+    """Adapt a pool connection context to the repository connection contract."""
+
+    __slots__ = ("_connection", "_context")
+
+    def __init__(self, pool: RegistryPool) -> None:
+        self._context = pool.connection()
+        self._connection: RegistryPoolConnection | None = None
+
+    async def __aenter__(self) -> _PoolLease:
+        self._connection = await self._context.__aenter__()
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        exception_type = cast(type[BaseException] | None, args[0] if args else None)
+        exception = cast(BaseException | None, args[1] if len(args) > 1 else None)
+        traceback = cast(TracebackType | None, args[2] if len(args) > 2 else None)
+        try:
+            await self._context.__aexit__(exception_type, exception, traceback)
+        finally:
+            self._connection = None
+
+    def cursor(self) -> RepositoryCursor:
+        if self._connection is None:
+            raise RegistryStartupError("Skill registry connection is unavailable")
+        return self._connection.cursor()
+
+    def transaction(self) -> AbstractAsyncContextManager[object]:
+        if self._connection is None:
+            raise RegistryStartupError("Skill registry connection is unavailable")
+        return self._connection.transaction()
+
+
+def _default_service_factory(pool: RegistryPool, policy: ScanPolicy) -> SkillRegistryService:
+    repository = PostgresSkillRegistryRepository(lambda: _PoolLease(pool))
+    artifact_store = PostgresSkillArtifactStore(lambda: _PoolLease(pool))
+    return SkillRegistryService(repository, artifact_store, policy)
+
+
+async def _default_readiness_probe(pool: RegistryPool) -> bool:
+    async with pool.connection() as connection:
+        async with connection.cursor() as cursor:
+            await cursor.execute("SELECT 1")
+            row = await cursor.fetchone()
+            return bool(row == (1,))
+
+
+def create_app(
+    settings: RegistrySettings | None = None,
+    *,
+    pool_factory: PoolFactory = _default_pool_factory,
+    policy_loader: PolicyLoader = load_scan_policy,
+    service_factory: ServiceFactory = _default_service_factory,
+    readiness_probe: ReadinessProbe = _default_readiness_probe,
+) -> FastAPI:
+    """Compose one lifespan-owned pool, policy, and registry service."""
+    runtime_settings = settings or RegistrySettings()  # type: ignore[call-arg]
+    database_url = _psycopg_url(runtime_settings.database_url.get_secret_value())
+    pool = pool_factory(database_url)
+    service: SkillRegistryService | None = None
+
+    def get_service() -> SkillRegistryService:
+        if service is None:
+            raise RegistryStartupError("Skill registry service is unavailable")
+        return service
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        nonlocal service
+        pool_touched = False
+        try:
+            startup_failed = False
+            try:
+                policy = policy_loader(runtime_settings.runtime_imports_file)
+                pool_touched = True
+                await pool.open(wait=True)
+                service = service_factory(pool, policy)
+                app.state.skill_registry_service = service
+            except (RegistryConfigError, RegistryStartupError):
+                raise
+            except Exception:
+                startup_failed = True
+            if startup_failed:
+                raise RegistryStartupError("Skill registry startup failed") from None
+            yield
+        finally:
+            service = None
+            app.state.skill_registry_service = None
+            if pool_touched:
+                try:
+                    await pool.close()
+                except Exception:
+                    pass
+
+    app = FastAPI(
+        title="AI Agent Platform Skill Registry",
+        lifespan=lifespan,
+        openapi_url=None,
+        docs_url=None,
+        redoc_url=None,
+    )
+    app.include_router(build_skill_registry_router(get_service))
+
+    @app.get("/internal/health/live", include_in_schema=False)
+    async def live() -> JSONResponse:
+        return JSONResponse({"live": True, "ready": False})
+
+    @app.get("/internal/health/ready", include_in_schema=False)
+    async def ready() -> JSONResponse:
+        try:
+            available = await asyncio.wait_for(readiness_probe(pool), timeout=2.0)
+        except Exception:
+            available = False
+        available = available is True
+        return JSONResponse(
+            {"live": True, "ready": available}, status_code=200 if available else 503
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(_: Request, __: RequestValidationError) -> JSONResponse:
+        return JSONResponse({"error": "VALIDATION_ERROR"}, status_code=400)
+
+    @app.exception_handler(HTTPException)
+    async def http_error(_: Request, error: HTTPException) -> JSONResponse:
+        code = "NOT_FOUND" if error.status_code == 404 else "HTTP_ERROR"
+        return JSONResponse({"error": code}, status_code=error.status_code)
+
+    @app.exception_handler(Exception)
+    async def unhandled_error(_: Request, __: Exception) -> JSONResponse:
+        return JSONResponse({"error": "REGISTRY_UNAVAILABLE"}, status_code=503)
+
+    app.add_middleware(NoStoreMiddleware)
+    app.add_middleware(
+        SkillRegistryAuthMiddleware,
+        authenticator=SkillRegistryAuthenticator(control_key=runtime_settings.control_key),
+    )
+    return app
+
+
+def app_factory() -> FastAPI:
+    """Uvicorn-compatible zero-argument application factory."""
+    return create_app()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import mimetypes
+import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
@@ -37,6 +38,7 @@ _REVISION_COLUMNS = """revision.id, revision.skill_id, skill.slug,
   revision.findings, revision.created_by, revision.created_at, revision.reviewed_by,
   revision.reviewed_at, artifact.artifact_sha256,
   artifact.compressed_size, artifact.extracted_size, artifact.file_count"""
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 
 
 class RepositoryCursor(Protocol):
@@ -307,14 +309,22 @@ class PostgresSkillRegistryRepository:
                 async with connection.transaction():
                     async with connection.cursor() as cursor:
                         await self._assert_nonce_unused(cursor, command.assertion_nonce)
+                        skill_scope = (
+                            "" if command.skill_id is None else "AND revision.skill_id = %s"
+                        )
+                        revision_parameters: tuple[object, ...] = (
+                            (command.revision_id,)
+                            if command.skill_id is None
+                            else (command.revision_id, command.skill_id)
+                        )
                         await cursor.execute(
                             f"""SELECT {_REVISION_COLUMNS}
                             FROM skill_registry.skill_revisions AS revision
                             JOIN skill_registry.skills AS skill ON skill.id = revision.skill_id
                             JOIN skill_registry.skill_revision_artifacts AS artifact
                               ON artifact.revision_id = revision.id
-                            WHERE revision.id = %s FOR UPDATE OF revision""",
-                            (command.revision_id,),
+                            WHERE revision.id = %s {skill_scope} FOR UPDATE OF revision""",
+                            revision_parameters,
                         )
                         row = await cursor.fetchone()
                         if row is None:
@@ -411,34 +421,33 @@ class PostgresSkillRegistryRepository:
                     "VALIDATION_ERROR", "Rejection reason must contain 1 to 500 characters"
                 )
 
-    async def list_skills(self) -> tuple[SkillSummary, ...]:
+    async def list_skills(self, *, limit: int = 50, offset: int = 0) -> tuple[SkillSummary, ...]:
+        if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
+            raise RegistryError("VALIDATION_ERROR", "Pagination bounds are invalid")
         rows = await self._query_all(
             """SELECT skill.id, skill.slug, latest.revision_no, latest.id,
-              latest.state, skill.created_at
+              latest.state, skill.created_at, latest.source_type,
+              latest.artifact_sha256, latest.created_by, latest.created_at,
+              latest.reviewed_by, latest.reviewed_at
             FROM skill_registry.skills AS skill
             LEFT JOIN LATERAL (
-              SELECT revision.id, revision.revision_no, revision.state
+              SELECT revision.id, revision.revision_no, revision.state,
+                revision.source_type, artifact.artifact_sha256,
+                revision.created_by, revision.created_at,
+                revision.reviewed_by, revision.reviewed_at
               FROM skill_registry.skill_revisions AS revision
+              JOIN skill_registry.skill_revision_artifacts AS artifact
+                ON artifact.revision_id = revision.id
               WHERE revision.skill_id = skill.id
               ORDER BY revision.revision_no DESC
               LIMIT 1
             ) AS latest ON true
             WHERE skill.archived_at IS NULL
-            ORDER BY skill.slug"""
+            ORDER BY skill.slug
+            LIMIT %s OFFSET %s""",
+            (limit, offset),
         )
-        return _map_storage_value(
-            lambda: tuple(
-                SkillSummary(
-                    id=UUID(str(row[0])),
-                    slug=str(row[1]),
-                    latest_revision_no=None if row[2] is None else int(row[2]),
-                    latest_revision_id=None if row[3] is None else UUID(str(row[3])),
-                    latest_state=cast(Any, row[4]),
-                    created_at=cast(datetime, row[5]),
-                )
-                for row in rows
-            )
-        )
+        return _map_storage_value(lambda: tuple(_skill_summary(row) for row in rows))
 
     async def get_revision(self, skill_id: UUID, revision_id: UUID) -> StoredRevision:
         row = await self._query_one(
@@ -570,6 +579,50 @@ def _stored_revision(row: tuple[Any, ...]) -> StoredRevision:
         compressed_size=int(row[13]),
         extracted_size=int(row[14]),
         file_count=int(row[15]),
+    )
+
+
+def _skill_summary(row: tuple[Any, ...]) -> SkillSummary:
+    skill_id = UUID(str(row[0]))
+    slug = str(row[1])
+    created_at = row[5]
+    if not isinstance(created_at, datetime):
+        raise ValueError("invalid skill timestamp")
+    if row[3] is None:
+        if any(row[index] is not None for index in (2, 4, 6, 7, 8, 9, 10, 11)):
+            raise ValueError("partial latest revision")
+        return SkillSummary(skill_id, slug, None, None, None, created_at)
+    revision_no = row[2]
+    state = row[4]
+    source_type = row[6]
+    digest = row[7]
+    revision_created_at = row[9]
+    if (
+        type(revision_no) is not int
+        or revision_no < 1
+        or state not in {"pending_review", "published", "rejected", "archived"}
+        or type(state) is not str
+        or source_type != "upload"
+        or type(digest) is not str
+        or _SHA256_PATTERN.fullmatch(digest) is None
+        or not isinstance(revision_created_at, datetime)
+        or ((row[10] is None) != (row[11] is None))
+        or (row[11] is not None and not isinstance(row[11], datetime))
+    ):
+        raise ValueError("invalid latest revision")
+    return SkillSummary(
+        id=skill_id,
+        slug=slug,
+        latest_revision_no=revision_no,
+        latest_revision_id=UUID(str(row[3])),
+        latest_state=cast(Any, state),
+        created_at=created_at,
+        latest_source_type=source_type,
+        latest_artifact_sha256=digest,
+        latest_created_by=UUID(str(row[8])),
+        latest_created_at=revision_created_at,
+        latest_reviewed_by=None if row[10] is None else UUID(str(row[10])),
+        latest_reviewed_at=row[11],
     )
 
 

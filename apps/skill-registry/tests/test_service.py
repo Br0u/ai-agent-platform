@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from skill_core.archive import canonicalize_skill_archive
-from skill_core.types import CanonicalSkillPackage
+from skill_core.types import MAX_FILE_BYTES, CanonicalSkillPackage
 from skill_registry.service import SkillRegistryService
 from skill_registry.types import (
     CreateUploadRevision,
@@ -59,13 +59,18 @@ def build_zip(
 class MemoryArtifactStore:
     def __init__(self) -> None:
         self.artifacts: dict[UUID, bytes] = {}
-        self.expected_reads: list[tuple[UUID, str]] = []
+        self.expected_reads: list[tuple[UUID, str, int | None]] = []
 
     async def put(self, revision_id: UUID, artifact: CanonicalSkillPackage) -> None:
         self.artifacts[revision_id] = artifact.archive
 
-    async def get(self, revision_id: UUID, expected_sha256: str) -> bytes:
-        self.expected_reads.append((revision_id, expected_sha256))
+    async def get(
+        self,
+        revision_id: UUID,
+        expected_sha256: str,
+        expected_compressed_size: int | None = None,
+    ) -> bytes:
+        self.expected_reads.append((revision_id, expected_sha256, expected_compressed_size))
         artifact = self.artifacts[revision_id]
         if hashlib.sha256(artifact).hexdigest() != expected_sha256:
             raise RegistryError("ARTIFACT_DIGEST_MISMATCH", "Artifact verification failed")
@@ -121,7 +126,9 @@ class MemoryRepository:
         self.revisions[self.revisions.index(revision)] = updated
         return updated
 
-    async def list_skills(self) -> tuple[SkillSummary, ...]:
+    async def list_skills(self, *, limit: int = 50, offset: int = 0) -> tuple[SkillSummary, ...]:
+        assert 1 <= limit <= 100
+        assert offset >= 0
         latest = self.revisions[-1] if self.revisions else None
         return (
             SkillSummary(
@@ -269,8 +276,16 @@ async def test_detail_verifies_artifact_and_returns_review_bundle_and_previous_d
     assert "Version one" in detail.diff.files[0].diff
     assert "Version two" in detail.diff.files[0].diff
     assert store.expected_reads[-2:] == [
-        (second.revision.id, second.revision.artifact_sha256),
-        (first.revision.id, first.revision.artifact_sha256),
+        (
+            second.revision.id,
+            second.revision.artifact_sha256,
+            second.revision.compressed_size,
+        ),
+        (
+            first.revision.id,
+            first.revision.artifact_sha256,
+            first.revision.compressed_size,
+        ),
     ]
 
 
@@ -332,6 +347,29 @@ async def test_file_read_allows_only_verified_indexed_utf8_content() -> None:
 
 
 @pytest.mark.asyncio
+async def test_file_read_rejects_oversized_index_before_artifact_read() -> None:
+    registry, repository, store = service()
+    detail = await registry.upload_zip(
+        actor=ACTOR,
+        request_id=uuid4(),
+        assertion_nonce=uuid4(),
+        archive=build_zip(),
+        target_skill_id=None,
+    )
+    previous_read_count = len(store.expected_reads)
+    repository.files[detail.revision.id] = tuple(
+        replace(file, size=MAX_FILE_BYTES + 1) if file.path == "references/guide.md" else file
+        for file in repository.files[detail.revision.id]
+    )
+
+    with pytest.raises(RegistryError) as caught:
+        await registry.get_file_text(SKILL_ID, detail.revision.id, "references/guide.md")
+
+    assert caught.value.code == "SKILL_FILE_TOO_LARGE"
+    assert len(store.expected_reads) == previous_read_count
+
+
+@pytest.mark.asyncio
 async def test_review_service_preserves_exact_attestation_command() -> None:
     registry, repository, _ = service(frozenset({"third_party"}))
     detail = await registry.upload_zip(
@@ -355,6 +393,7 @@ async def test_review_service_preserves_exact_attestation_command() -> None:
             execution_risk_accepted=True,
             independent_reviewer_confirmed=True,
         ),
+        skill_id=SKILL_ID,
     )
 
     reviewed = await registry.review_revision(command)
@@ -387,6 +426,7 @@ async def test_review_service_rejects_truthy_non_boolean_attestation() -> None:
             execution_risk_accepted=True,
             independent_reviewer_confirmed=True,
         ),
+        skill_id=SKILL_ID,
     )
 
     with pytest.raises(RegistryError) as caught:

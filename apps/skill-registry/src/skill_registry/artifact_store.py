@@ -9,7 +9,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from skill_core import canonicalize_skill_zip
-from skill_core.types import CanonicalSkillPackage
+from skill_core.types import MAX_ARCHIVE_BYTES, CanonicalSkillPackage
 
 
 class ArtifactStoreError(RuntimeError):
@@ -23,7 +23,12 @@ class ArtifactStoreError(RuntimeError):
 class SkillArtifactStore(Protocol):
     async def put(self, revision_id: UUID, artifact: CanonicalSkillPackage) -> None: ...
 
-    async def get(self, revision_id: UUID, expected_sha256: str) -> bytes: ...
+    async def get(
+        self,
+        revision_id: UUID,
+        expected_sha256: str,
+        expected_compressed_size: int | None = None,
+    ) -> bytes: ...
 
 
 class ArtifactCursor(Protocol):
@@ -92,7 +97,12 @@ class PostgresSkillArtifactStore:
                 "ARTIFACT_STORAGE_ERROR", "Skill artifact storage failed"
             ) from None
 
-    async def get(self, revision_id: UUID, expected_sha256: str) -> bytes:
+    async def get(
+        self,
+        revision_id: UUID,
+        expected_sha256: str,
+        expected_compressed_size: int | None = None,
+    ) -> bytes:
         storage_failed = False
         try:
             connection = await self._connect()
@@ -127,7 +137,18 @@ class PostgresSkillArtifactStore:
                 "ARTIFACT_STORAGE_ERROR", "Skill artifact storage failed"
             ) from None
         actual_sha256 = hashlib.sha256(artifact).hexdigest()
-        if stored_sha256 != expected_sha256 or actual_sha256 != expected_sha256:
+        if (
+            stored_sha256 != expected_sha256
+            or actual_sha256 != expected_sha256
+            or len(artifact) > MAX_ARCHIVE_BYTES
+            or (
+                expected_compressed_size is not None
+                and (
+                    type(expected_compressed_size) is not int
+                    or expected_compressed_size != len(artifact)
+                )
+            )
+        ):
             raise ArtifactStoreError(
                 "ARTIFACT_DIGEST_MISMATCH",
                 "Skill artifact digest verification failed",
