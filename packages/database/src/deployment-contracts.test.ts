@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -3750,12 +3751,89 @@ exit 0
 
   it("requires restore drills to verify the exact migration and schema contract", () => {
     const script = read("infra/docker/restore-drill.sh");
+    const expectedRegistryTriggers = [
+      ["skills_guard_update", "skills", "guard_skill_update", 19, false, false],
+      [
+        "skill_revisions_guard_insert",
+        "skill_revisions",
+        "guard_revision_insert",
+        7,
+        false,
+        false,
+      ],
+      [
+        "skill_revisions_guard_update",
+        "skill_revisions",
+        "guard_revision_update",
+        19,
+        false,
+        false,
+      ],
+      [
+        "skill_revisions_require_review_event",
+        "skill_revisions",
+        "require_revision_review_event",
+        17,
+        true,
+        true,
+      ],
+      [
+        "skill_control_events_stamp_transaction",
+        "skill_control_events",
+        "stamp_control_event_transaction",
+        7,
+        false,
+        false,
+      ],
+      [
+        "skill_control_events_append_only",
+        "skill_control_events",
+        "deny_append_only_mutation",
+        27,
+        false,
+        false,
+      ],
+      [
+        "skill_revision_artifacts_append_only",
+        "skill_revision_artifacts",
+        "deny_append_only_mutation",
+        27,
+        false,
+        false,
+      ],
+      [
+        "skill_revision_files_append_only",
+        "skill_revision_files",
+        "deny_append_only_mutation",
+        27,
+        false,
+        false,
+      ],
+    ] as const;
     expect(script).toContain("BACKUP_ENCRYPTION_KEY_FILE");
     expect(script).toContain("--decrypt");
     expect(script).toContain("--pinentry-mode loopback");
     expect(script).toContain("--passphrase-file");
-    expect(script).toContain("decrypted_candidate");
-    expect(script).toContain('mv "$decrypted_candidate" "$decrypted_dump"');
+    expect(script).toContain("decrypted_bundle_candidate");
+    expect(script).toContain(
+      'mv "$decrypted_bundle_candidate" "$decrypted_bundle"',
+    );
+    expect(script).toContain("skill-backup.manifest");
+    expect(script).toContain("database.dump");
+    expect(script).toContain("tar -tf");
+    expect(script).toContain("tar -tvf");
+    expect(script).toContain("manifest_format_version");
+    expect(script).toContain("manifest_dump_sha256");
+    expect(script).toContain("actual_dump_sha256");
+    expect(script).toContain("manifest_skill_registry_schema_version");
+    expect(script).toContain("manifest_skill_revision_count");
+    expect(script).toContain("manifest_skill_artifact_count");
+    expect(script).toContain("manifest_skill_file_count");
+    expect(script).toContain('[ "$#" -ne 5 ]');
+    expect(script).not.toContain("expected_skill_registry_schema_version");
+    expect(script).not.toContain("expected_skill_revision_count");
+    expect(script).not.toContain("expected_skill_artifact_count");
+    expect(script).not.toContain("expected_skill_file_count");
     expect(script).not.toContain("aes-256-cbc");
     expect(script).not.toContain("openssl enc");
     expect(script).toContain("--env-file");
@@ -3801,10 +3879,6 @@ exit 0
     );
     expect(script).toContain("restored_user_fixture_count");
     expect(script).toContain("restored_agno_session_fixture_count");
-    expect(script).toContain("expected_skill_registry_schema_version");
-    expect(script).toContain("expected_skill_revision_count");
-    expect(script).toContain("expected_skill_artifact_count");
-    expect(script).toContain("expected_skill_file_count");
     expect(script).toContain("skill_registry.schema_versions");
     expect(script).toContain("skill_registry.skill_revisions");
     expect(script).toContain("skill_registry.skill_revision_artifacts");
@@ -3816,8 +3890,26 @@ exit 0
     expect(script).toContain("skill_artifact_digest_mismatch_count");
     expect(script).toContain("sha256(artifact.archive_bytes)");
     expect(script).toContain("skill_registry_integrity_mismatch_count");
-    expect(script).toContain("skill_revision_artifacts_append_only");
-    expect(script).toContain("skill_revision_files_append_only");
+    expect(script).toContain("skill_registry_security_trigger_mismatch_count");
+    expect(script).toContain("trigger.tgtype::integer");
+    expect(script).toContain("trigger.tgdeferrable");
+    expect(script).toContain("trigger.tginitdeferred");
+    expect(script).toContain("trigger.tgenabled");
+    expect(script).not.toContain(
+      "function_namespace.nspname = 'skill_registry'",
+    );
+    for (const [
+      name,
+      table,
+      fn,
+      type,
+      deferrable,
+      initiallyDeferred,
+    ] of expectedRegistryTriggers) {
+      expect(script).toContain(
+        `('${name}', '${table}', '${fn}', ${type}, ${deferrable}, ${initiallyDeferred}, 'A')`,
+      );
+    }
     expect(script).toContain("BEGIN TRANSACTION READ ONLY");
     expect(script).toContain("SET LOCAL search_path = pg_catalog");
     expect(script).not.toMatch(/SELECT\s+archive_bytes/iu);
@@ -3837,6 +3929,21 @@ exit 0
     }
     expect(script).not.toContain("--schema=agent_control");
     expect(script.match(/pg_dump/g)).toHaveLength(1);
+    expect(script).toContain("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    expect(script).toContain("pg_export_snapshot()");
+    expect(script).toContain('--snapshot="$snapshot_id"');
+    expect(script).toContain("snapshot_pid");
+    expect(script).toContain("mkfifo");
+    expect(script).toContain("timeout");
+    expect(script).toContain("format_version=1");
+    expect(script).toContain("dump_sha256=");
+    expect(script).toContain("skill_registry_schema_version=");
+    expect(script).toContain("skill_revision_count=");
+    expect(script).toContain("skill_artifact_count=");
+    expect(script).toContain("skill_file_count=");
+    expect(script).toContain("skill-backup.manifest");
+    expect(script).toContain("database.dump");
+    expect(script).toContain("tar -cf");
     expect(script).toContain("--format=custom");
     expect(script).toContain("PGPASSFILE");
     expect(script).not.toContain("BACKUP_DATABASE_URL");
@@ -3887,6 +3994,15 @@ exit 0
     expect(runbook).toContain("BACKUP_ENCRYPTION_KEY_FILE");
     expect(runbook).toContain("BACKUP_CRYPTO_IMAGE");
     expect(runbook).toContain("RESTORE_TMP_ROOT");
+    expect(runbook).toContain(
+      "Registry 计数来自加密 bundle 内、与 dump 同一导出 snapshot 的 manifest",
+    );
+    expect(runbook).toContain(
+      "infra/docker/restore-drill.sh \\\n  /secure/path/ai-agent-platform-YYYYMMDDTHHMMSSZ.dump.gpg \\\n  EXPECTED_USERS EXPECTED_AGNO_SESSIONS USER_FIXTURE_ID AGNO_SESSION_FIXTURE_ID",
+    );
+    expect(runbook).toContain(
+      "`docs/testing/run-agentos-backup-restore.sh`将在 Task 10 适配新 bundle",
+    );
     expect(runbook).toContain("`pnpm secrets:preflight`");
     expect(runbook).toContain("不得绕过`run-with-secret-env.sh`");
     expect(runbook).toContain("宽于`0600`的宿主 Secret");
@@ -3904,6 +4020,8 @@ exit 0
     const encryptionKeyFile = path.join(sandbox, "encryption-key");
     const databasePassword = "backup:password\\sentinel";
     const encryptionKey = "encryption-key-sentinel-0123456789abcdef";
+    const fakeDump = "fake-custom-dump";
+    const fakeDumpSha256 = createHash("sha256").update(fakeDump).digest("hex");
 
     try {
       for (const directory of [bin, captures, backups, temporary]) {
@@ -3911,6 +4029,30 @@ exit 0
       }
       writeFileSync(passwordFile, databasePassword, { mode: 0o600 });
       writeFileSync(encryptionKeyFile, encryptionKey, { mode: 0o600 });
+      writeFileSync(
+        path.join(bin, "timeout"),
+        `#!/bin/sh
+set -eu
+shift
+exec "$@"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "psql"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$@" >"$CAPTURE_DIR/psql.argv"
+while IFS= read -r command; do
+  printf '%s\\n' "$command" >>"$CAPTURE_DIR/psql.commands"
+  case "$command" in
+    *pg_export_snapshot*) printf '%s\\n' '00000003-0000001B-1|1|2|2|3' ;;
+    '\\q') exit 0 ;;
+  esac
+done
+`,
+        { mode: 0o700 },
+      );
       writeFileSync(
         path.join(bin, "pg_dump"),
         `#!/bin/sh
@@ -3924,7 +4066,15 @@ for argument in "$@"; do
   esac
 done
 test -n "$output"
-printf 'fake-custom-dump' >"$output"
+printf '${fakeDump}' >"$output"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "sha256sum"),
+        `#!/bin/sh
+set -eu
+printf '%s  %s\\n' '${fakeDumpSha256}' "$1"
 `,
         { mode: 0o700 },
       );
@@ -3945,6 +4095,7 @@ while [ "$#" -gt 0 ]; do
 done
 test -n "$input"
 test -n "$output"
+cp "$input" "$CAPTURE_DIR/plaintext.bundle"
 { printf 'fake-openpgp'; cat "$input"; } >"$output"
 `,
         { mode: 0o700 },
@@ -3972,20 +4123,33 @@ test -n "$output"
         },
       );
 
-      expect(result.status).toBe(0);
       const output = `${result.stdout}${result.stderr}`;
+      expect(result.status, output).toBe(0);
       const pgDumpArgv = readFileSync(
         path.join(captures, "pg_dump.argv"),
+        "utf8",
+      );
+      const psqlArgv = readFileSync(path.join(captures, "psql.argv"), "utf8");
+      const psqlCommands = readFileSync(
+        path.join(captures, "psql.commands"),
         "utf8",
       );
       const gpgArgv = readFileSync(path.join(captures, "gpg.argv"), "utf8");
       for (const secret of [databasePassword, encryptionKey]) {
         expect(output).not.toContain(secret);
         expect(pgDumpArgv).not.toContain(secret);
+        expect(psqlArgv).not.toContain(secret);
+        expect(psqlCommands).not.toContain(secret);
         expect(gpgArgv).not.toContain(secret);
       }
+      expect(psqlCommands).toContain(
+        "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
+      );
+      expect(psqlCommands).toContain("pg_export_snapshot()");
+      expect(psqlCommands).toContain("COMMIT;");
       expect(pgDumpArgv).toContain("--host=db");
       expect(pgDumpArgv).toContain("--username=ai_agent_backup");
+      expect(pgDumpArgv).toContain("--snapshot=00000003-0000001B-1");
       expect(readFileSync(path.join(captures, "pgpass"), "utf8")).toBe(
         "db:5432:ai_agent_platform:ai_agent_backup:backup\\:password\\\\sentinel\n",
       );
@@ -3994,6 +4158,35 @@ test -n "$output"
       expect(backupFiles).toHaveLength(1);
       expect(gpgArgv).toContain("--cipher-algo\nAES256");
       expect(gpgArgv).toContain("--force-mdc");
+      const extractedBundle = path.join(sandbox, "extracted-bundle");
+      mkdirSync(extractedBundle, { mode: 0o700 });
+      const extracted = spawnSync(
+        "tar",
+        ["-xf", path.join(captures, "plaintext.bundle"), "-C", extractedBundle],
+        { encoding: "utf8" },
+      );
+      expect(extracted.status, `${extracted.stdout}${extracted.stderr}`).toBe(
+        0,
+      );
+      expect(readdirSync(extractedBundle).sort()).toEqual([
+        "database.dump",
+        "skill-backup.manifest",
+      ]);
+      expect(
+        readFileSync(path.join(extractedBundle, "database.dump"), "utf8"),
+      ).toBe(fakeDump);
+      expect(
+        readFileSync(
+          path.join(extractedBundle, "skill-backup.manifest"),
+          "utf8",
+        ),
+      ).toBe(`format_version=1
+dump_sha256=${fakeDumpSha256}
+skill_registry_schema_version=1
+skill_revision_count=2
+skill_artifact_count=2
+skill_file_count=3
+`);
       expect(backupFiles[0]).toMatch(/^ai-agent-platform-.*\.dump\.gpg$/u);
       expect(statSync(path.join(backups, backupFiles[0])).mode & 0o777).toBe(
         0o600,

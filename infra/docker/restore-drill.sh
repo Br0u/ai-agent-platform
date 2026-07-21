@@ -7,12 +7,8 @@ expected_user_count="${2:-}"
 expected_agno_session_count="${3:-}"
 expected_user_id="${4:-}"
 expected_agno_session_id="${5:-}"
-expected_skill_registry_schema_version="${6:-1}"
-expected_skill_revision_count="${7:-0}"
-expected_skill_artifact_count="${8:-0}"
-expected_skill_file_count="${9:-0}"
-if [ -z "$backup_file" ] || [ ! -f "$backup_file" ]; then
-  echo "usage: $0 ENCRYPTED_DUMP EXPECTED_USERS EXPECTED_AGNO_SESSIONS USER_FIXTURE_ID AGNO_SESSION_FIXTURE_ID [EXPECTED_SKILL_SCHEMA_VERSION EXPECTED_SKILL_REVISIONS EXPECTED_SKILL_ARTIFACTS EXPECTED_SKILL_FILES]" >&2
+if [ "$#" -ne 5 ] || [ -z "$backup_file" ] || [ ! -f "$backup_file" ]; then
+  echo "usage: $0 ENCRYPTED_BUNDLE EXPECTED_USERS EXPECTED_AGNO_SESSIONS USER_FIXTURE_ID AGNO_SESSION_FIXTURE_ID" >&2
   exit 64
 fi
 : "${BACKUP_ENCRYPTION_KEY_FILE:?Set BACKUP_ENCRYPTION_KEY_FILE to a readable secret file}"
@@ -25,31 +21,10 @@ for expected_count in "$expected_user_count" "$expected_agno_session_count"; do
       exit 64
       ;;
   esac
-  if [ "$expected_count" -le 0 ]; then
+  if [ "${#expected_count}" -gt 20 ] || [ "$expected_count" -le 0 ]; then
     echo "expected restored counts must be positive integers" >&2
     exit 64
   fi
-done
-case "$expected_skill_registry_schema_version" in
-  ''|*[!0-9]*)
-    echo "expected skill registry schema version must be a positive integer" >&2
-    exit 64
-    ;;
-esac
-if [ "$expected_skill_registry_schema_version" -le 0 ]; then
-  echo "expected skill registry schema version must be a positive integer" >&2
-  exit 64
-fi
-for expected_count in \
-  "$expected_skill_revision_count" \
-  "$expected_skill_artifact_count" \
-  "$expected_skill_file_count"; do
-  case "$expected_count" in
-    ''|*[!0-9]*)
-      echo "expected skill registry counts must be non-negative integers" >&2
-      exit 64
-      ;;
-  esac
 done
 case "$expected_user_id" in
   ''|*[!0-9A-Fa-f-]*)
@@ -83,8 +58,9 @@ expected_migrations="7"
 expected_latest_migration="1784480751831"
 temporary_directory=
 postgres_env_file=
-decrypted_candidate=
-decrypted_dump=
+decrypted_bundle_candidate=
+decrypted_bundle=
+extraction_directory=
 
 cleanup() {
   docker rm -f "$container" >/dev/null 2>&1 || true
@@ -111,8 +87,9 @@ mkdir -p "$restore_tmp_root"
 temporary_directory="$(mktemp -d "$restore_tmp_root/aap-restore-drill.XXXXXX")"
 postgres_env_file="$temporary_directory/postgres.env"
 gpg_home="$temporary_directory/gnupg"
-decrypted_candidate="$temporary_directory/restored.dump.partial"
-decrypted_dump="$temporary_directory/restored.dump"
+decrypted_bundle_candidate="$temporary_directory/restored.bundle.partial"
+decrypted_bundle="$temporary_directory/restored.bundle"
+extraction_directory="$temporary_directory/extracted"
 mkdir -p "$gpg_home"
 chmod 700 "$gpg_home"
 cat >"$postgres_env_file" <<EOF
@@ -136,10 +113,116 @@ docker run --rm \
   --pinentry-mode loopback \
   --no-symkey-cache \
   --passphrase-file /run/secrets/backup_encryption_key \
-  --output /work/restored.dump.partial \
+  --output /work/restored.bundle.partial \
   --decrypt "/input/$(basename "$backup_file")"
-chmod 600 "$decrypted_candidate"
-mv "$decrypted_candidate" "$decrypted_dump"
+chmod 600 "$decrypted_bundle_candidate"
+mv "$decrypted_bundle_candidate" "$decrypted_bundle"
+
+if ! docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --entrypoint sh \
+  -v "$temporary_directory:/work" \
+  "$crypto_image" \
+  -ceu '
+    bundle=/work/restored.bundle
+    members=$(tar -tf "$bundle")
+    expected=$(printf "skill-backup.manifest\ndatabase.dump")
+    [ "$members" = "$expected" ]
+    tar -tvf "$bundle" | awk '\''
+      substr($1, 1, 1) != "-" { exit 1 }
+      END { if (NR != 2) exit 1 }
+    '\''
+    mkdir /work/extracted
+    chmod 700 /work/extracted
+    tar -xf "$bundle" -C /work/extracted
+    [ -f /work/extracted/skill-backup.manifest ]
+    [ ! -L /work/extracted/skill-backup.manifest ]
+    [ -f /work/extracted/database.dump ]
+    [ ! -L /work/extracted/database.dump ]
+    manifest_size=$(wc -c </work/extracted/skill-backup.manifest)
+    dump_size=$(wc -c </work/extracted/database.dump)
+    bundle_size=$(wc -c <"$bundle")
+    [ "$manifest_size" -gt 0 ]
+    [ "$manifest_size" -le 1024 ]
+    [ "$dump_size" -gt 0 ]
+    [ "$dump_size" -le "$bundle_size" ]
+  ' >/dev/null 2>&1; then
+  echo "restore drill rejected invalid backup bundle" >&2
+  exit 1
+fi
+rm -f "$decrypted_bundle"
+decrypted_bundle=
+
+manifest_file="$extraction_directory/skill-backup.manifest"
+manifest_line_count="$(wc -l <"$manifest_file" | tr -d ' ')"
+manifest_format_line="$(sed -n '1p' "$manifest_file")"
+manifest_dump_line="$(sed -n '2p' "$manifest_file")"
+manifest_schema_line="$(sed -n '3p' "$manifest_file")"
+manifest_revision_line="$(sed -n '4p' "$manifest_file")"
+manifest_artifact_line="$(sed -n '5p' "$manifest_file")"
+manifest_file_line="$(sed -n '6p' "$manifest_file")"
+if [ "$manifest_line_count" != "6" ] || \
+   [ "$manifest_format_line" != "format_version=1" ]; then
+  echo "restore drill rejected invalid backup manifest" >&2
+  exit 1
+fi
+manifest_format_version=${manifest_format_line#format_version=}
+manifest_dump_sha256=${manifest_dump_line#dump_sha256=}
+manifest_skill_registry_schema_version=${manifest_schema_line#skill_registry_schema_version=}
+manifest_skill_revision_count=${manifest_revision_line#skill_revision_count=}
+manifest_skill_artifact_count=${manifest_artifact_line#skill_artifact_count=}
+manifest_skill_file_count=${manifest_file_line#skill_file_count=}
+if [ "$manifest_dump_line" != "dump_sha256=$manifest_dump_sha256" ] || \
+   [ "$manifest_schema_line" != "skill_registry_schema_version=$manifest_skill_registry_schema_version" ] || \
+   [ "$manifest_revision_line" != "skill_revision_count=$manifest_skill_revision_count" ] || \
+   [ "$manifest_artifact_line" != "skill_artifact_count=$manifest_skill_artifact_count" ] || \
+   [ "$manifest_file_line" != "skill_file_count=$manifest_skill_file_count" ]; then
+  echo "restore drill rejected invalid backup manifest" >&2
+  exit 1
+fi
+case "$manifest_dump_sha256" in
+  *[!0-9a-f]*|'')
+    echo "restore drill rejected invalid backup manifest" >&2
+    exit 1
+    ;;
+esac
+if [ "${#manifest_dump_sha256}" -ne 64 ]; then
+  echo "restore drill rejected invalid backup manifest" >&2
+  exit 1
+fi
+for manifest_number in \
+  "$manifest_skill_registry_schema_version" \
+  "$manifest_skill_revision_count" \
+  "$manifest_skill_artifact_count" \
+  "$manifest_skill_file_count"; do
+  case "$manifest_number" in
+    ''|*[!0-9]*)
+      echo "restore drill rejected invalid backup manifest" >&2
+      exit 1
+      ;;
+  esac
+  if [ "${#manifest_number}" -gt 20 ]; then
+    echo "restore drill rejected invalid backup manifest" >&2
+    exit 1
+  fi
+done
+if [ "$manifest_format_version" != "1" ] || \
+   [ "${#manifest_skill_registry_schema_version}" -gt 5 ] || \
+   [ "$manifest_skill_registry_schema_version" -le 0 ]; then
+  echo "restore drill rejected invalid backup manifest" >&2
+  exit 1
+fi
+dump_digest_output="$(docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --entrypoint sha256sum \
+  -v "$extraction_directory:/input:ro" \
+  "$crypto_image" /input/database.dump 2>/dev/null)"
+actual_dump_sha256=${dump_digest_output%% *}
+unset dump_digest_output
+if [ "$actual_dump_sha256" != "$manifest_dump_sha256" ]; then
+  echo "restore drill rejected backup dump digest mismatch" >&2
+  exit 1
+fi
 
 docker volume create "$volume" >/dev/null
 docker run -d --name "$container" \
@@ -160,7 +243,7 @@ done
 
 docker exec "$container" pg_restore \
   --username="$owner" --dbname="$database" --clean --if-exists --no-owner --no-acl \
-  /restore/restored.dump
+  /restore/extracted/database.dump
 
 migration_count="$(docker exec "$container" psql -U "$owner" -d "$database" -Atqc \
   "SELECT count(*) FROM drizzle.__drizzle_migrations")"
@@ -244,6 +327,45 @@ WITH version_state AS (
          WHERE file.revision_id = artifact.revision_id
        ))
   )::bigint AS mismatch_count
+), expected_security_triggers(
+  trigger_name, table_name, function_name, trigger_type,
+  is_deferrable, is_initially_deferred, enabled
+) AS (
+  VALUES
+    ('skills_guard_update', 'skills', 'guard_skill_update', 19, false, false, 'A'),
+    ('skill_revisions_guard_insert', 'skill_revisions', 'guard_revision_insert', 7, false, false, 'A'),
+    ('skill_revisions_guard_update', 'skill_revisions', 'guard_revision_update', 19, false, false, 'A'),
+    ('skill_revisions_require_review_event', 'skill_revisions', 'require_revision_review_event', 17, true, true, 'A'),
+    ('skill_control_events_stamp_transaction', 'skill_control_events', 'stamp_control_event_transaction', 7, false, false, 'A'),
+    ('skill_control_events_append_only', 'skill_control_events', 'deny_append_only_mutation', 27, false, false, 'A'),
+    ('skill_revision_artifacts_append_only', 'skill_revision_artifacts', 'deny_append_only_mutation', 27, false, false, 'A'),
+    ('skill_revision_files_append_only', 'skill_revision_files', 'deny_append_only_mutation', 27, false, false, 'A')
+), actual_security_triggers AS (
+  SELECT trigger.tgname::text,
+         relation.relname::text,
+         function.proname::text,
+         trigger.tgtype::integer,
+         trigger.tgdeferrable,
+         trigger.tginitdeferred,
+         trigger.tgenabled::text
+  FROM pg_trigger AS trigger
+  JOIN pg_class AS relation ON relation.oid = trigger.tgrelid
+  JOIN pg_namespace AS relation_namespace
+    ON relation_namespace.oid = relation.relnamespace
+  JOIN pg_proc AS function ON function.oid = trigger.tgfoid
+  WHERE relation_namespace.nspname = 'skill_registry'
+    AND NOT trigger.tgisinternal
+), security_trigger_state AS (
+  SELECT COUNT(*)::bigint AS mismatch_count
+  FROM (
+    (SELECT * FROM expected_security_triggers
+     EXCEPT
+     SELECT * FROM actual_security_triggers)
+    UNION ALL
+    (SELECT * FROM actual_security_triggers
+     EXCEPT
+     SELECT * FROM expected_security_triggers)
+  ) AS mismatch
 ), schema_state AS (
   SELECT
     to_regclass('skill_registry.schema_versions') IS NOT NULL
@@ -261,18 +383,6 @@ WITH version_state AS (
       WHERE conrelid = 'skill_registry.skill_revision_files'::regclass
         AND confrelid = 'skill_registry.skill_revisions'::regclass
         AND contype = 'f' AND convalidated
-    )
-    AND EXISTS (
-      SELECT 1 FROM pg_trigger
-      WHERE tgrelid = 'skill_registry.skill_revision_artifacts'::regclass
-        AND tgname = 'skill_revision_artifacts_append_only'
-        AND tgenabled = 'A' AND NOT tgisinternal
-    )
-    AND EXISTS (
-      SELECT 1 FROM pg_trigger
-      WHERE tgrelid = 'skill_registry.skill_revision_files'::regclass
-        AND tgname = 'skill_revision_files_append_only'
-        AND tgenabled = 'A' AND NOT tgisinternal
     ) AS contract_valid
 )
 SELECT version_state.schema_version,
@@ -283,8 +393,10 @@ SELECT version_state.schema_version,
        digest_state.total_count,
        digest_state.mismatch_count,
        integrity_state.mismatch_count,
+       security_trigger_state.mismatch_count,
        schema_state.contract_valid
-FROM version_state, row_counts, digest_state, integrity_state, schema_state;
+FROM version_state, row_counts, digest_state, integrity_state,
+     security_trigger_state, schema_state;
 COMMIT;")"
 
 IFS='|' read -r \
@@ -296,6 +408,7 @@ IFS='|' read -r \
   skill_artifact_digest_count \
   skill_artifact_digest_mismatch_count \
   skill_registry_integrity_mismatch_count \
+  skill_registry_security_trigger_mismatch_count \
   skill_registry_schema_contract <<EOF
 $skill_registry_snapshot
 EOF
@@ -311,14 +424,15 @@ if [ "$migration_count" != "$expected_migrations" ] || \
    [ "$agno_session_count" != "$expected_agno_session_count" ] || \
    [ "$restored_user_fixture_count" != "1" ] || \
    [ "$restored_agno_session_fixture_count" != "1" ] || \
-   [ "$skill_registry_schema_version" != "$expected_skill_registry_schema_version" ] || \
-   [ "$skill_registry_schema_version_row_count" != "$expected_skill_registry_schema_version" ] || \
-   [ "$skill_revision_count" != "$expected_skill_revision_count" ] || \
-   [ "$skill_artifact_count" != "$expected_skill_artifact_count" ] || \
-   [ "$skill_file_count" != "$expected_skill_file_count" ] || \
+   [ "$skill_registry_schema_version" != "$manifest_skill_registry_schema_version" ] || \
+   [ "$skill_registry_schema_version_row_count" != "$manifest_skill_registry_schema_version" ] || \
+   [ "$skill_revision_count" != "$manifest_skill_revision_count" ] || \
+   [ "$skill_artifact_count" != "$manifest_skill_artifact_count" ] || \
+   [ "$skill_file_count" != "$manifest_skill_file_count" ] || \
    [ "$skill_artifact_digest_count" != "$skill_artifact_count" ] || \
    [ "$skill_artifact_digest_mismatch_count" != "0" ] || \
    [ "$skill_registry_integrity_mismatch_count" != "0" ] || \
+   [ "$skill_registry_security_trigger_mismatch_count" != "0" ] || \
    [ "$skill_registry_schema_contract" != "t" ]; then
   echo "restore drill failed critical table checks" >&2
   exit 1
