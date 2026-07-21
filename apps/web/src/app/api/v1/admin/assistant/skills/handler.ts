@@ -33,6 +33,7 @@ import {
 } from "@/server/http/require-trusted-mutation";
 import {
   BoundedMultipartError,
+  cancelUnreadRequestBody,
   readBoundedSkillUploadMultipart,
   type BoundedSkillUpload,
 } from "@/server/http/read-bounded-multipart";
@@ -600,7 +601,7 @@ export function createAdminSkillFileHandler(
           segment === ".." ||
           segment.includes("/") ||
           segment.includes("\\") ||
-          segment.includes("%"),
+          /%(?:2f|5c)/iu.test(segment),
       )
     )
       return errorResponse(
@@ -654,6 +655,7 @@ export function createAdminSkillUploadHandler(
       commands = overrides.commands ?? createDefaultCommands();
       context = await commands.authorize(request, "upload");
     } catch (error) {
+      await cancelUnreadRequestBody(request, error);
       return errorResponse(error, fallbackRequestId);
     }
     let input: BoundedSkillUpload | null = null;

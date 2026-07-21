@@ -57,6 +57,25 @@ describe("admin skill file route", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
   });
 
+  it("allows a literal percent in a canonical file name", async () => {
+    const current = fixture();
+    const response = await current.handler(
+      new Request("https://admin.example.test/file"),
+      {
+        params: Promise.resolve({
+          skillId: SKILL_ID,
+          revisionId: REVISION_ID,
+          path: ["references", "100%.md"],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(current.client.getFile).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "references/100%.md" }),
+    );
+  });
+
   it.each([[".."], ["a/b"], [""], ["%2Fetc"]])(
     "rejects an unsafe catch-all segment %s",
     async (segment) => {

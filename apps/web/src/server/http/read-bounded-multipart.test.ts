@@ -67,6 +67,22 @@ function request(
   } as RequestInit & { duplex: "half" });
 }
 
+function streamingRequest(
+  headers: Record<string, string>,
+  cancel: (reason: unknown) => void | Promise<void>,
+): Request {
+  const body = new ReadableStream<Uint8Array>({
+    pull() {},
+    cancel,
+  });
+  return new Request("https://admin.example.test/uploads", {
+    method: "POST",
+    headers,
+    body,
+    duplex: "half",
+  } as RequestInit & { duplex: "half" });
+}
+
 const archivePart: Part = {
   name: "archive",
   filename: "safe.zip",
@@ -102,6 +118,38 @@ describe("bounded skill upload multipart", () => {
     await expect(
       readBoundedSkillUploadMultipart(current),
     ).rejects.toBeInstanceOf(BoundedMultipartError);
+  });
+
+  it.each([
+    ["wrong media", { "content-type": "application/json" }],
+    ["missing boundary", { "content-type": "multipart/form-data" }],
+    [
+      "oversized declared body",
+      {
+        "content-type": `multipart/form-data; boundary=${BOUNDARY}`,
+        "content-length": String(5 * 1024 * 1024 + 64 * 1024 + 1),
+      },
+    ],
+  ])("cancels the unread request body for %s", async (_name, headers) => {
+    const cancel = vi.fn(async () => undefined);
+
+    await expect(
+      readBoundedSkillUploadMultipart(streamingRequest(headers, cancel)),
+    ).rejects.toBeInstanceOf(BoundedMultipartError);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("preserves the parser error when early body cancellation fails", async () => {
+    const cancel = vi.fn(async () => {
+      throw new Error("cleanup failure");
+    });
+
+    await expect(
+      readBoundedSkillUploadMultipart(
+        streamingRequest({ "content-type": "application/json" }, cancel),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_multipart" });
+    expect(cancel).toHaveBeenCalledOnce();
   });
 
   it.each([

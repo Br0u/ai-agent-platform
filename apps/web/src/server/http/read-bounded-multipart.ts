@@ -33,6 +33,28 @@ function reject(code: BoundedMultipartErrorCode = "invalid_multipart"): never {
   throw new BoundedMultipartError(code);
 }
 
+export async function cancelUnreadRequestBody(
+  request: Request,
+  reason?: unknown,
+): Promise<void> {
+  try {
+    const body = request.body;
+    if (body === null || body.locked) return;
+    await body.cancel(reason);
+  } catch {
+    // Cleanup must never replace the request's primary error.
+  }
+}
+
+async function rejectBeforeRead(
+  request: Request,
+  code: BoundedMultipartErrorCode = "invalid_multipart",
+): Promise<never> {
+  const error = new BoundedMultipartError(code);
+  await cancelUnreadRequestBody(request, error);
+  throw error;
+}
+
 function contentLength(request: Request): number | null {
   const raw = request.headers.get("content-length");
   if (raw === null) return null;
@@ -62,11 +84,17 @@ export async function readBoundedSkillUploadMultipart(
     Buffer.byteLength(contentType, "utf8") > MAX_CONTENT_TYPE_BYTES ||
     !MULTIPART.test(contentType)
   ) {
-    reject();
+    return await rejectBeforeRead(request);
   }
-  const declaredLength = contentLength(request);
+  let declaredLength: number | null;
+  try {
+    declaredLength = contentLength(request);
+  } catch (error) {
+    await cancelUnreadRequestBody(request, error);
+    throw error;
+  }
   if (declaredLength === 0 || request.body === null || request.bodyUsed) {
-    reject();
+    return await rejectBeforeRead(request);
   }
 
   let source: Readable | null = null;
