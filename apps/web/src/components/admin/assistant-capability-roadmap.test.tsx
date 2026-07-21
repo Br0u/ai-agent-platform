@@ -35,9 +35,11 @@ describe("AssistantCapabilityRoadmap", () => {
         "Ollama、vLLM、OpenAI-compatible、自有模型仓库",
       ),
     ).toBeVisible();
-    expect(within(cards[1]!).getByText("未接入")).toBeVisible();
     expect(
-      within(cards[1]!).getByText("未来按 Agno Skills loader 接入"),
+      within(cards[1]!).getByText("Registry 已接入 / Agent 运行时待接"),
+    ).toBeVisible();
+    expect(
+      within(cards[1]!).getByText("审核库可用，Agent 尚未加载任何 Skill"),
     ).toBeVisible();
     expect(within(cards[2]!).getByText("未接入")).toBeVisible();
     expect(
@@ -47,7 +49,8 @@ describe("AssistantCapabilityRoadmap", () => {
     expect(
       within(cards[3]!).getByText("未来承载外部动作、审批和浏览器操作"),
     ).toBeVisible();
-    expect(container.textContent).not.toMatch(/(?:已连接|已接入|\b\d+\b)/u);
+    expect(container.textContent).not.toMatch(/(?:已连接|\b\d+\b)/u);
+    expect(container.textContent?.match(/Registry 已接入/gu)).toHaveLength(1);
   });
 
   it("keeps every roadmap action inert and performs no external work", () => {

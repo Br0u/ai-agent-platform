@@ -8,13 +8,22 @@ import { isAdminAssistantChatResponse } from "@/features/assistant/admin-assista
 import { useAssistantSession } from "@/components/assistant/use-assistant-session";
 import { AssistantModelConfigPanel } from "@/components/admin/assistant-model-config-panel";
 import { AssistantCapabilityRoadmap } from "@/components/admin/assistant-capability-roadmap";
+import {
+  AssistantSkillRegistryPanel,
+  type AdminSkillRegistrySnapshot,
+} from "@/components/admin/assistant-skill-registry-panel";
 import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
+import type { AdminSkillPermissionFlags } from "@/features/assistant/admin-skill-contract";
 import type { FormEvent } from "react";
 import "./assistant-admin-page.css";
 
 type AssistantAdminPageProps = {
   modelConfigs: AdminModelConfigSnapshot;
   sessions: AdminAssistantSessionsSnapshot;
+  skillActorUserId: string;
+  skillCanRead: boolean;
+  skillPermissions: AdminSkillPermissionFlags;
+  skillSnapshot: AdminSkillRegistrySnapshot;
   status: AdminAssistantStatusSnapshot;
 };
 
@@ -31,6 +40,10 @@ const configurationLabels: Record<
 export function AssistantAdminPage({
   modelConfigs,
   sessions,
+  skillActorUserId,
+  skillCanRead,
+  skillPermissions,
+  skillSnapshot,
   status,
 }: AssistantAdminPageProps) {
   const assistant = useAssistantSession("/admin/assistant", {
@@ -130,6 +143,13 @@ export function AssistantAdminPage({
       </section>
 
       <AssistantModelConfigPanel initialSnapshot={modelConfigs} />
+
+      <AssistantSkillRegistryPanel
+        actorUserId={skillActorUserId}
+        canRead={skillCanRead}
+        initialPermissions={skillPermissions}
+        initialSnapshot={skillSnapshot}
+      />
 
       <AssistantCapabilityRoadmap />
 

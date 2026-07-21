@@ -6,8 +6,8 @@ const CAPABILITIES = [
   },
   {
     title: "Skill 加载",
-    status: "未接入",
-    description: "未来按 Agno Skills loader 接入",
+    status: "Registry 已接入 / Agent 运行时待接",
+    description: "审核库可用，Agent 尚未加载任何 Skill",
   },
   {
     title: "知识库",
@@ -31,9 +31,9 @@ export function AssistantCapabilityRoadmap() {
         <div>
           <p>CAPABILITY ROADMAP</p>
           <h2 id="assistant-capability-roadmap-title">后续能力入口</h2>
-          <span>仅保留真实预留状态；连接、加载和操作能力尚未开放。</span>
+          <span>Skill 审核库可用；连接、运行时加载和操作能力尚未开放。</span>
         </div>
-        <strong>未接入</strong>
+        <strong>部分接入</strong>
       </header>
       <ul className="assistant-capability-roadmap__grid">
         {CAPABILITIES.map((capability) => (

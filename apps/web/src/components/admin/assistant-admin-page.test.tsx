@@ -7,12 +7,14 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import type { ComponentProps } from "react";
 import type {
   AdminAssistantSessionsSnapshot,
   AdminAssistantStatusSnapshot,
 } from "@/features/assistant/admin-assistant-contract";
 import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
-import { AssistantAdminPage } from "./assistant-admin-page";
+import type { AdminSkillRegistrySnapshot } from "./assistant-skill-registry-panel";
+import { AssistantAdminPage as ProductionAssistantAdminPage } from "./assistant-admin-page";
 
 const status = {
   mode: "placeholder" as const,
@@ -130,12 +132,78 @@ const modelConfigs = {
   controlEnabled: true,
 } satisfies AdminModelConfigSnapshot;
 
+const skillSnapshot = {
+  capability: "available",
+  skills: [],
+  page: { limit: 25, offset: 0, returned: 0 },
+} satisfies AdminSkillRegistrySnapshot;
+
+const skillPermissions = {
+  canUpload: true,
+  canManageConnections: false,
+  canReview: true,
+  canConfigure: false,
+};
+
+type PageProps = ComponentProps<typeof ProductionAssistantAdminPage>;
+
+function AssistantAdminPage(
+  props: Omit<
+    PageProps,
+    "skillActorUserId" | "skillCanRead" | "skillPermissions" | "skillSnapshot"
+  > &
+    Partial<
+      Pick<
+        PageProps,
+        | "skillActorUserId"
+        | "skillCanRead"
+        | "skillPermissions"
+        | "skillSnapshot"
+      >
+    >,
+) {
+  return (
+    <ProductionAssistantAdminPage
+      skillActorUserId="11111111-1111-4111-8111-111111111111"
+      skillCanRead
+      skillPermissions={skillPermissions}
+      skillSnapshot={skillSnapshot}
+      {...props}
+    />
+  );
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
 describe("AssistantAdminPage", () => {
+  it("places the real Skill Registry after model configuration and before the roadmap", () => {
+    render(
+      <AssistantAdminPage
+        modelConfigs={modelConfigs}
+        sessions={sessions}
+        skillActorUserId="11111111-1111-4111-8111-111111111111"
+        skillCanRead
+        skillPermissions={skillPermissions}
+        skillSnapshot={skillSnapshot}
+        status={status}
+      />,
+    );
+
+    const models = screen.getByRole("heading", { name: "云模型配置" });
+    const skills = screen.getByRole("heading", { name: "Skill 库" });
+    const roadmap = screen.getByRole("heading", { name: "后续能力入口" });
+    expect(
+      models.compareDocumentPosition(skills) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      skills.compareDocumentPosition(roadmap) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("shows four honest status cells and read-only configuration", () => {
     const { container } = render(
       <AssistantAdminPage
