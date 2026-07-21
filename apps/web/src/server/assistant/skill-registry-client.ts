@@ -434,17 +434,50 @@ export function createSkillRegistryAssertionSigner(options: {
           .digest("base64url");
         return `${canonical.toString("base64url")}.${signature}`;
       } catch (error) {
-        if (error instanceof SkillRegistryClientError) throw error;
-        clientError("invalid_request");
+        throw sanitized(error);
       }
     },
   };
 }
 
+const CLEAN_ERROR_CODES: ReadonlySet<string> = new Set([
+  ...SKILL_REGISTRY_DOMAIN_CODES,
+  "invalid_request",
+  "invalid_response",
+  "response_too_large",
+  "timeout",
+  "transport_error",
+]);
+
+function cleanErrorCode(error: unknown): SkillRegistryClientErrorCode {
+  try {
+    if (
+      typeof error !== "object" ||
+      error === null ||
+      Reflect.getPrototypeOf(error) !== SkillRegistryClientError.prototype
+    ) {
+      return "transport_error";
+    }
+    const descriptor = Reflect.getOwnPropertyDescriptor(error, "code");
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      !descriptor.enumerable ||
+      !descriptor.configurable ||
+      !descriptor.writable ||
+      typeof descriptor.value !== "string" ||
+      !CLEAN_ERROR_CODES.has(descriptor.value)
+    ) {
+      return "transport_error";
+    }
+    return descriptor.value as SkillRegistryClientErrorCode;
+  } catch {
+    return "transport_error";
+  }
+}
+
 function sanitized(error: unknown): SkillRegistryClientError {
-  return error instanceof SkillRegistryClientError
-    ? error
-    : new SkillRegistryClientError("transport_error");
+  return new SkillRegistryClientError(cleanErrorCode(error));
 }
 
 function strictNoStore(value: string | null): boolean {

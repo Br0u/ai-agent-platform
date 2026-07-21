@@ -719,4 +719,153 @@ describe("private Skill Registry client", () => {
       /private|skill-registry|control-key/iu,
     );
   });
+
+  it("returns a fresh clean-room error for a mutated same-class rejection", async () => {
+    const hostile = new SkillRegistryClientError("REGISTRY_UNAVAILABLE");
+    const secret = `${CONTROL_KEY} ${INTERNAL_URL} private-response-body`;
+    Object.defineProperties(hostile, {
+      cause: { value: new Error(secret), enumerable: true },
+      body: { value: secret, enumerable: true },
+      url: { value: INTERNAL_URL, enumerable: true },
+      key: { value: CONTROL_KEY, enumerable: true },
+      extra: { value: "private-extra", enumerable: true },
+      stack: { value: secret, configurable: true, writable: true },
+    });
+    const client = createSkillRegistryClient({
+      settings: settings(),
+      fetcher: vi.fn<typeof fetch>().mockRejectedValue(hostile),
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+
+    let caught: unknown;
+    try {
+      await client.listSkills({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        limit: 50,
+        offset: 0,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(SkillRegistryClientError);
+    expect(caught).not.toBe(hostile);
+    expect(Object.getPrototypeOf(caught)).toBe(
+      SkillRegistryClientError.prototype,
+    );
+    expect(caught).toMatchObject({ code: "REGISTRY_UNAVAILABLE" });
+    expect(Object.keys(caught as object)).toEqual(["code"]);
+    expect((caught as Error).cause).toBeUndefined();
+    expect(
+      `${String(caught)} ${JSON.stringify(caught)} ${(caught as Error).stack}`,
+    ).not.toMatch(/private|skill-registry-control|http:\/\/skill-registry/iu);
+  });
+
+  it("reads only an own data allowlisted code without invoking getters", async () => {
+    const codeGetter = vi.fn(() => "REGISTRY_UNAVAILABLE");
+    const accessor = new SkillRegistryClientError("transport_error");
+    Object.defineProperty(accessor, "code", {
+      get: codeGetter,
+      enumerable: true,
+      configurable: true,
+    });
+    const invalid = new SkillRegistryClientError(
+      "PRIVATE_INVALID_CODE" as "transport_error",
+    );
+    const proxyGet = vi.fn();
+    const proxied = new Proxy(new SkillRegistryClientError("timeout"), {
+      get(target, key, receiver) {
+        if (key === "code") proxyGet();
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const trapped = new Proxy(
+      new SkillRegistryClientError("REGISTRY_UNAVAILABLE"),
+      {
+        getOwnPropertyDescriptor() {
+          throw new Error(`${CONTROL_KEY} private proxy trap`);
+        },
+      },
+    );
+
+    for (const [error, code] of [
+      [accessor, "transport_error"],
+      [invalid, "transport_error"],
+      [proxied, "timeout"],
+      [trapped, "transport_error"],
+    ] as const) {
+      const client = createSkillRegistryClient({
+        settings: settings(),
+        fetcher: vi.fn<typeof fetch>(() => {
+          throw error;
+        }),
+        clock: () => NOW,
+        nonceFactory: () => NONCE,
+      });
+      let caught: unknown;
+      try {
+        await client.listSkills({
+          actor: ACTOR,
+          requestId: REQUEST_ID,
+          limit: 50,
+          offset: 0,
+        });
+      } catch (caughtError) {
+        caught = caughtError;
+      }
+      expect(Object.is(caught, error)).toBe(false);
+      expect(caught).toMatchObject({ code });
+      expect(Object.keys(caught as object)).toEqual(["code"]);
+      expect((caught as Error).cause).toBeUndefined();
+    }
+    expect(codeGetter).not.toHaveBeenCalled();
+    expect(proxyGet).not.toHaveBeenCalled();
+  });
+
+  it.each(["clock", "nonce"] as const)(
+    "clean-room sanitizes a same-class error thrown by the %s seam",
+    (seam) => {
+      const hostile = new SkillRegistryClientError("timeout");
+      Object.assign(hostile, {
+        cause: new Error(`${CONTROL_KEY} private cause`),
+        body: "private body",
+      });
+      const signer = createSkillRegistryAssertionSigner({
+        controlKey: CONTROL_KEY,
+        clock: () => {
+          if (seam === "clock") throw hostile;
+          return NOW;
+        },
+        nonceFactory: () => {
+          if (seam === "nonce") throw hostile;
+          return NONCE;
+        },
+      });
+
+      let caught: unknown;
+      try {
+        signer.sign({
+          action: "list",
+          actor: ACTOR,
+          permission: "admin:assistant:skills",
+          requestId: REQUEST_ID,
+          target: "skills",
+          assurance: "session",
+          assuredAt: null,
+        });
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).not.toBe(hostile);
+      expect(caught).toMatchObject({ code: "timeout" });
+      expect(Object.keys(caught as object)).toEqual(["code"]);
+      expect((caught as Error).cause).toBeUndefined();
+      expect(
+        `${JSON.stringify(caught)} ${(caught as Error).stack}`,
+      ).not.toMatch(/private|skill-registry-control/iu);
+    },
+  );
 });
