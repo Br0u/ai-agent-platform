@@ -1,0 +1,120 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { SensitiveActionError } from "@/server/auth/sensitive-action";
+import type { AuthorizedSkillCommand } from "@/server/assistant/admin-skill-commands";
+import { SkillRegistryClientError } from "@/server/assistant/skill-registry-client";
+import { createAdminSkillReviewHandler } from "../../../../handler";
+
+const REQUEST_ID = "22222222-2222-4222-8222-222222222222";
+const SKILL_ID = "33333333-3333-4333-8333-333333333333";
+const REVISION_ID = "44444444-4444-4444-8444-444444444444";
+const context = { requestId: REQUEST_ID } as AuthorizedSkillCommand;
+const input = {
+  decision: "approve",
+  reason: null,
+  expectedState: "pending_review",
+  attestations: {
+    contentReviewed: true,
+    usageRightsConfirmed: true,
+    executionRiskAccepted: true,
+    independentReviewerConfirmed: true,
+  },
+};
+
+function fixture() {
+  const commands = {
+    authorize: vi.fn(async () => context),
+    review: vi.fn(async () => ({
+      version: "1",
+      revision: { state: "published" },
+    })),
+  };
+  const readJson = vi.fn(async () => ({ ok: true as const, value: input }));
+  return {
+    commands,
+    readJson,
+    handler: createAdminSkillReviewHandler({
+      commands: commands as never,
+      readJson,
+      requestIdFactory: () => REQUEST_ID,
+    }),
+  };
+}
+
+function reviewRequest(): Request {
+  return new Request("https://admin.example.test/review", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+  });
+}
+
+describe("admin skill review route", () => {
+  it("authorizes recent MFA then passes exact route and JSON input", async () => {
+    const current = fixture();
+    const request = reviewRequest();
+    const response = await current.handler(request, {
+      params: Promise.resolve({ skillId: SKILL_ID, revisionId: REVISION_ID }),
+    });
+    expect(current.commands.authorize).toHaveBeenCalledWith(request, "review");
+    expect(current.commands.review).toHaveBeenCalledWith(context, {
+      skillId: SKILL_ID,
+      revisionId: REVISION_ID,
+      ...input,
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("maps stale password/TOTP assurance without reading JSON", async () => {
+    const current = fixture();
+    current.commands.authorize.mockRejectedValueOnce(
+      new SensitiveActionError("AUTH_MFA_REQUIRED"),
+    );
+    const response = await current.handler(reviewRequest(), {
+      params: Promise.resolve({ skillId: SKILL_ID, revisionId: REVISION_ID }),
+    });
+    expect(response.status).toBe(401);
+    expect(current.readJson).not.toHaveBeenCalled();
+  });
+
+  it("rejects extra JSON keys and malformed UUIDs", async () => {
+    const current = fixture();
+    current.readJson.mockResolvedValueOnce({
+      ok: true,
+      value: { ...input, extra: true },
+    } as never);
+    const extra = await current.handler(reviewRequest(), {
+      params: Promise.resolve({ skillId: SKILL_ID, revisionId: REVISION_ID }),
+    });
+    expect(extra.status).toBe(400);
+    expect(current.commands.review).not.toHaveBeenCalled();
+
+    const badUuid = await fixture().handler(reviewRequest(), {
+      params: Promise.resolve({ skillId: "bad", revisionId: REVISION_ID }),
+    });
+    expect(badUuid.status).toBe(400);
+  });
+
+  it("maps self review to 403 and upstream failure to stable 503", async () => {
+    const self = fixture();
+    self.commands.review.mockRejectedValueOnce(
+      new SkillRegistryClientError("REVIEW_SELF_APPROVAL_DENIED"),
+    );
+    const denied = await self.handler(reviewRequest(), {
+      params: Promise.resolve({ skillId: SKILL_ID, revisionId: REVISION_ID }),
+    });
+    expect(denied.status).toBe(403);
+
+    const unavailable = fixture();
+    unavailable.commands.review.mockRejectedValueOnce(
+      new SkillRegistryClientError("REGISTRY_UNAVAILABLE"),
+    );
+    const failed = await unavailable.handler(reviewRequest(), {
+      params: Promise.resolve({ skillId: SKILL_ID, revisionId: REVISION_ID }),
+    });
+    expect(failed.status).toBe(503);
+    expect(JSON.stringify(await failed.json())).not.toContain(
+      "REGISTRY_UNAVAILABLE",
+    );
+  });
+});
