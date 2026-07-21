@@ -47,6 +47,24 @@ const completedAssistantModelAuditMetadata = {
   result: "success",
 } as const;
 
+const requestedAssistantSkillAuditEvents = [
+  "assistant.skill_upload_requested",
+  "assistant.skill_review_requested",
+] as const satisfies readonly AuditEvent[];
+
+const completedAssistantSkillAuditEvents = [
+  "assistant.skill_upload_completed",
+  "assistant.skill_review_completed",
+] as const satisfies readonly AuditEvent[];
+
+const assistantSkillAuditMetadataBase = {
+  skillId: "11111111-1111-4111-8111-111111111111",
+  revisionId: "22222222-2222-4222-8222-222222222222",
+  revisionNo: 3,
+  digest: "0123456789ab",
+  requestId: "33333333-3333-4333-8333-333333333333",
+} as const;
+
 const assistantModelAuditInputs = [
   ...requestedAssistantModelAuditEvents.map((event) => ({
     event,
@@ -115,6 +133,10 @@ describe("audit writer", () => {
       "assistant.model_config_tested",
       "assistant.model_key_reveal_requested",
       "assistant.model_key_revealed",
+      "assistant.skill_review_completed",
+      "assistant.skill_review_requested",
+      "assistant.skill_upload_completed",
+      "assistant.skill_upload_requested",
       "auth.login_failure",
       "auth.login_success",
       "auth.logout",
@@ -257,6 +279,134 @@ describe("audit writer", () => {
       });
     },
   );
+
+  it.each([
+    ...requestedAssistantSkillAuditEvents.map((event) => ({
+      event,
+      result: "requested" as const,
+    })),
+    ...completedAssistantSkillAuditEvents.map((event) => ({
+      event,
+      result: "success" as const,
+    })),
+  ])(
+    "stores exact bounded Skill metadata for $event",
+    async ({ event, result }) => {
+      const { repository, writer } = fixture();
+      const metadata = { ...assistantSkillAuditMetadataBase, result };
+
+      await writer.write({
+        event,
+        actor: { realm: "workforce", userId: "admin-1" },
+        target: {
+          type: "assistant_skill_revision",
+          id: assistantSkillAuditMetadataBase.revisionId,
+        },
+        metadata,
+      } as AuditWriteInput);
+
+      expect(repository.insert).toHaveBeenCalledWith({
+        action: event,
+        actorRealm: "workforce",
+        actorUserId: "admin-1",
+        targetType: "assistant_skill_revision",
+        targetId: assistantSkillAuditMetadataBase.revisionId,
+        metadata,
+        ipAddress: null,
+        userAgent: null,
+      });
+    },
+  );
+
+  it("exposes phase-specific Skill audit results", () => {
+    type Requested = Extract<
+      AuditWriteInput,
+      { event: "assistant.skill_upload_requested" }
+    >;
+    type Completed = Extract<
+      AuditWriteInput,
+      { event: "assistant.skill_upload_completed" }
+    >;
+
+    expectTypeOf<
+      Requested["metadata"]["result"]
+    >().toEqualTypeOf<"requested">();
+    expectTypeOf<Completed["metadata"]["result"]>().toEqualTypeOf<
+      "success" | "failure"
+    >();
+  });
+
+  it.each([
+    "filename",
+    "archive",
+    "zip",
+    "source",
+    "reason",
+    "rejectReason",
+    "scan",
+    "findings",
+    "message",
+  ])("rejects sensitive Skill audit metadata field %s", (field) => {
+    expect(() =>
+      AUDIT_EVENT_SCHEMAS["assistant.skill_upload_completed"]({
+        ...assistantSkillAuditMetadataBase,
+        result: "failure",
+        [field]: "must-not-be-stored",
+      }),
+    ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
+  });
+
+  it.each([
+    { ...assistantSkillAuditMetadataBase, result: "requested" },
+    {
+      ...assistantSkillAuditMetadataBase,
+      skillId: "not-a-uuid",
+      result: "success",
+    },
+    { ...assistantSkillAuditMetadataBase, revisionNo: 0, result: "success" },
+    {
+      ...assistantSkillAuditMetadataBase,
+      digest: "0123456789AB",
+      result: "success",
+    },
+    {
+      ...assistantSkillAuditMetadataBase,
+      digest: "0123456789abcdef",
+      result: "success",
+    },
+  ])("rejects invalid completed Skill metadata %#", (metadata) => {
+    expect(() =>
+      AUDIT_EVENT_SCHEMAS["assistant.skill_upload_completed"](metadata),
+    ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
+  });
+
+  it("rejects Skill metadata prototype, accessors, hidden and symbol keys without executing getters", () => {
+    const getter = vi.fn(() => assistantSkillAuditMetadataBase.digest);
+    const accessor = { ...assistantSkillAuditMetadataBase, result: "success" };
+    Object.defineProperty(accessor, "digest", {
+      get: getter,
+      enumerable: true,
+    });
+    const hidden = { ...assistantSkillAuditMetadataBase, result: "success" };
+    Object.defineProperty(hidden, "filename", {
+      value: "private.zip",
+      enumerable: false,
+    });
+    const symbol = { ...assistantSkillAuditMetadataBase, result: "success" };
+    Reflect.set(symbol, Symbol("source"), "private source");
+    const inherited = Object.assign(
+      Object.create({ source: "private source" }),
+      assistantSkillAuditMetadataBase,
+      { result: "success" },
+    );
+
+    for (const metadata of [accessor, hidden, symbol, inherited]) {
+      expect(() =>
+        AUDIT_EVENT_SCHEMAS["assistant.skill_upload_completed"](metadata),
+      ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
+    }
+    expect(getter).not.toHaveBeenCalled();
+  });
 
   it("exposes phase-specific model audit result types", () => {
     type RequestedInput = Extract<

@@ -47,6 +47,8 @@ const ASSISTANT_MODEL_PROVIDERS = [
 ] as const;
 const REQUESTED_ASSISTANT_MODEL_AUDIT_RESULTS = ["requested"] as const;
 const COMPLETED_ASSISTANT_MODEL_AUDIT_RESULTS = ["success", "failure"] as const;
+const REQUESTED_ASSISTANT_SKILL_AUDIT_RESULTS = ["requested"] as const;
+const COMPLETED_ASSISTANT_SKILL_AUDIT_RESULTS = ["success", "failure"] as const;
 const DOCUMENT_AUDIT_RESULTS = ["success"] as const;
 const TARGET_TYPES = [
   "user",
@@ -57,6 +59,7 @@ const TARGET_TYPES = [
   "permission",
   "system",
   "assistant_model_config",
+  "assistant_skill_revision",
   "document",
 ] as const;
 
@@ -82,6 +85,19 @@ export type AssistantModelAuditMetadata<
   modelId: string;
   endpointId: string;
   revision: number;
+  requestId: string;
+  result: Result;
+};
+type AssistantSkillAuditResult =
+  | (typeof REQUESTED_ASSISTANT_SKILL_AUDIT_RESULTS)[number]
+  | (typeof COMPLETED_ASSISTANT_SKILL_AUDIT_RESULTS)[number];
+export type AssistantSkillAuditMetadata<
+  Result extends AssistantSkillAuditResult = AssistantSkillAuditResult,
+> = {
+  skillId: string | null;
+  revisionId: string | null;
+  revisionNo: number | null;
+  digest: string | null;
   requestId: string;
   result: Result;
 };
@@ -128,6 +144,14 @@ export type AuditMetadataByEvent = {
   >;
   "assistant.model_key_reveal_requested": AssistantModelAuditMetadata<"requested">;
   "assistant.model_key_revealed": AssistantModelAuditMetadata<
+    "success" | "failure"
+  >;
+  "assistant.skill_upload_requested": AssistantSkillAuditMetadata<"requested">;
+  "assistant.skill_upload_completed": AssistantSkillAuditMetadata<
+    "success" | "failure"
+  >;
+  "assistant.skill_review_requested": AssistantSkillAuditMetadata<"requested">;
+  "assistant.skill_review_completed": AssistantSkillAuditMetadata<
     "success" | "failure"
   >;
   "document.created": DocumentAuditMetadata;
@@ -218,6 +242,42 @@ function assertOnlyKeys(
     throw new AuditInputError(field);
   }
   return value;
+}
+
+function exactDataRecord(
+  value: unknown,
+  keys: readonly string[],
+  field: string,
+): Record<string, unknown> {
+  try {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error();
+    }
+    const prototype = Reflect.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) throw new Error();
+    const ownKeys = Reflect.ownKeys(value);
+    if (
+      ownKeys.length !== keys.length ||
+      ownKeys.some((key) => typeof key !== "string" || !keys.includes(key))
+    ) {
+      throw new Error();
+    }
+    const snapshot: Record<string, unknown> = Object.create(null);
+    for (const key of keys) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+      if (
+        descriptor === undefined ||
+        !descriptor.enumerable ||
+        !("value" in descriptor)
+      ) {
+        throw new Error();
+      }
+      snapshot[key] = descriptor.value;
+    }
+    return snapshot;
+  } catch {
+    throw new AuditInputError(field);
+  }
 }
 
 function enumValue<const Values extends readonly string[]>(
@@ -347,6 +407,57 @@ function assistantModelAuditMetadata<const Results extends readonly string[]>(
   };
 }
 
+const CANONICAL_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const SHA256_PREFIX = /^[0-9a-f]{12}$/u;
+
+function assistantSkillAuditMetadata<const Results extends readonly string[]>(
+  value: unknown,
+  allowedResults: Results,
+): SanitizedMetadata {
+  const metadata = exactDataRecord(
+    value,
+    ["skillId", "revisionId", "revisionNo", "digest", "requestId", "result"],
+    "metadata",
+  );
+  const nullableUuid = (candidate: unknown, field: string): string | null => {
+    if (candidate === null) return null;
+    if (typeof candidate !== "string" || !CANONICAL_UUID.test(candidate)) {
+      throw new AuditInputError(field);
+    }
+    return candidate;
+  };
+  const requestId = metadata.requestId;
+  if (typeof requestId !== "string" || !CANONICAL_UUID.test(requestId)) {
+    throw new AuditInputError("metadata.requestId");
+  }
+  const revisionNo = metadata.revisionNo;
+  if (
+    revisionNo !== null &&
+    (typeof revisionNo !== "number" ||
+      !Number.isSafeInteger(revisionNo) ||
+      revisionNo < 1 ||
+      revisionNo > 2_147_483_647)
+  ) {
+    throw new AuditInputError("metadata.revisionNo");
+  }
+  const digest = metadata.digest;
+  if (
+    digest !== null &&
+    (typeof digest !== "string" || !SHA256_PREFIX.test(digest))
+  ) {
+    throw new AuditInputError("metadata.digest");
+  }
+  return {
+    skillId: nullableUuid(metadata.skillId, "metadata.skillId"),
+    revisionId: nullableUuid(metadata.revisionId, "metadata.revisionId"),
+    revisionNo,
+    digest,
+    requestId,
+    result: enumValue(metadata.result, allowedResults, "metadata.result"),
+  };
+}
+
 function documentAuditMetadata(value: unknown): SanitizedMetadata {
   const metadata = assertExactKeys(
     value,
@@ -417,6 +528,14 @@ export const AUDIT_EVENT_SCHEMAS: Readonly<
     assistantModelAuditMetadata(value, REQUESTED_ASSISTANT_MODEL_AUDIT_RESULTS),
   "assistant.model_key_revealed": (value) =>
     assistantModelAuditMetadata(value, COMPLETED_ASSISTANT_MODEL_AUDIT_RESULTS),
+  "assistant.skill_upload_requested": (value) =>
+    assistantSkillAuditMetadata(value, REQUESTED_ASSISTANT_SKILL_AUDIT_RESULTS),
+  "assistant.skill_upload_completed": (value) =>
+    assistantSkillAuditMetadata(value, COMPLETED_ASSISTANT_SKILL_AUDIT_RESULTS),
+  "assistant.skill_review_requested": (value) =>
+    assistantSkillAuditMetadata(value, REQUESTED_ASSISTANT_SKILL_AUDIT_RESULTS),
+  "assistant.skill_review_completed": (value) =>
+    assistantSkillAuditMetadata(value, COMPLETED_ASSISTANT_SKILL_AUDIT_RESULTS),
   "document.created": documentAuditMetadata,
   "document.draft_saved": documentAuditMetadata,
   "document.published": documentAuditMetadata,
