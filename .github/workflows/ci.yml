@@ -42,7 +42,10 @@ jobs:
         with:
           version: "0.11.19"
           enable-cache: true
-          cache-dependency-glob: apps/agent/uv.lock
+          cache-dependency-glob: |
+            apps/agent/uv.lock
+            packages/skill-core/uv.lock
+            apps/skill-registry/uv.lock
       - run: pnpm install --frozen-lockfile
       - name: Generate masked authentication and AgentOS fixtures
         shell: bash
@@ -50,6 +53,8 @@ jobs:
           for name in POSTGRES_PASSWORD MIGRATOR_DATABASE_PASSWORD RUNTIME_DATABASE_PASSWORD BACKUP_DATABASE_PASSWORD \
             AGNO_MIGRATOR_DATABASE_PASSWORD AGNO_DATABASE_PASSWORD \
             AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD AGENT_CONTROL_DATABASE_PASSWORD OS_SECURITY_KEY \
+            SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD SKILL_REGISTRY_DATABASE_PASSWORD \
+            SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD SKILL_REGISTRY_CONTROL_KEY \
             ASSISTANT_SESSION_SECRET ASSISTANT_RATE_LIMIT_SECRET \
             BETTER_AUTH_SECRET E2E_CUSTOMER_PASSWORD E2E_STAFF_PASSWORD E2E_ADMIN_PASSWORD \
             E2E_PENDING_CUSTOMER_SESSION_TOKEN E2E_DISABLED_CUSTOMER_SESSION_TOKEN \
@@ -75,14 +80,24 @@ jobs:
           agno_runtime_url="postgresql+psycopg_async://ai_agent_agno:${AGNO_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
           agent_control_migrator_url="postgresql+psycopg_async://ai_agent_control_migrator:${AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
           agent_control_runtime_url="postgresql+psycopg_async://ai_agent_control:${AGENT_CONTROL_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
+          skill_registry_migrator_url="postgresql+psycopg_async://ai_agent_skill_registry_migrator:${SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
+          skill_registry_manager_url="postgresql+psycopg_async://ai_agent_skill_registry_manager:${SKILL_REGISTRY_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
+          skill_registry_runtime_url="postgresql+psycopg_async://ai_agent_skill_registry_runtime:${SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
           echo "::add-mask::$agno_migrator_url"
           echo "::add-mask::$agno_runtime_url"
           echo "::add-mask::$agent_control_migrator_url"
           echo "::add-mask::$agent_control_runtime_url"
+          echo "::add-mask::$skill_registry_migrator_url"
+          echo "::add-mask::$skill_registry_manager_url"
+          echo "::add-mask::$skill_registry_runtime_url"
           echo "AGNO_MIGRATOR_DATABASE_URL=$agno_migrator_url" >> "$GITHUB_ENV"
           echo "AGNO_DATABASE_URL=$agno_runtime_url" >> "$GITHUB_ENV"
           echo "AGENT_CONTROL_MIGRATOR_DATABASE_URL=$agent_control_migrator_url" >> "$GITHUB_ENV"
           echo "AGENT_CONTROL_DATABASE_URL=$agent_control_runtime_url" >> "$GITHUB_ENV"
+          echo "SKILL_REGISTRY_TEST_DATABASE_URL=postgresql://ai_agent_owner@127.0.0.1:5432/ai_agent_platform_identity_test_ci" >> "$GITHUB_ENV"
+          echo "SKILL_REGISTRY_MIGRATOR_DATABASE_URL=$skill_registry_migrator_url" >> "$GITHUB_ENV"
+          echo "SKILL_REGISTRY_DATABASE_URL=$skill_registry_manager_url" >> "$GITHUB_ENV"
+          echo "SKILL_REGISTRY_RUNTIME_DATABASE_URL=$skill_registry_runtime_url" >> "$GITHUB_ENV"
       - name: Create isolated CI databases
         shell: bash
         env:
@@ -121,6 +136,17 @@ jobs:
         run: |
           sh infra/postgres/04-agent-control-roles.sh
           sh infra/postgres/04-agent-control-roles.sh
+      - name: Bootstrap Skill Registry roles twice
+        shell: bash
+        env:
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_USER: ai_agent_owner
+          POSTGRES_DB: ai_agent_platform_identity_test_ci
+          POSTGRES_PASSWORD: unused-trust-fixture
+          SKILL_REGISTRY_ROLE_SQL_FILE: infra/postgres/05-skill-registry-roles.sql
+        run: |
+          sh infra/postgres/05-skill-registry-roles.sh
+          sh infra/postgres/05-skill-registry-roles.sh
       - name: Sync locked AgentOS dependencies
         run: uv --directory apps/agent sync --frozen
       - name: Run Agno migration twice
@@ -133,6 +159,11 @@ jobs:
         run: |
           uv --directory apps/agent run python -m agent_service.model_config_migrate
           uv --directory apps/agent run python -m agent_service.model_config_migrate
+      - name: Run Skill Registry migration twice
+        shell: bash
+        run: |
+          uv --directory apps/skill-registry run python -m skill_registry.migrate
+          uv --directory apps/skill-registry run python -m skill_registry.migrate
       - name: Verify Agno role-boundary and backup grants
         run: pnpm --filter @ai-agent-platform/database exec vitest run src/agno-role-boundary.integration.test.ts
       - name: Run AgentOS Python gates
@@ -141,8 +172,50 @@ jobs:
           uv --directory apps/agent run pytest
           uv --directory apps/agent run ruff check .
           uv --directory apps/agent run mypy src tests
+      - name: Run Skill package and Registry Python gates
+        shell: bash
+        run: |
+          uv --directory packages/skill-core run pytest -q
+          uv --directory packages/skill-core run ruff check .
+          uv --directory packages/skill-core run mypy src tests
+          uv --directory apps/skill-registry run pytest -q -rs
+          uv --directory apps/skill-registry run ruff check .
+          uv --directory apps/skill-registry run mypy src tests
       - run: docker build -t agent-service-ci -f apps/agent/Dockerfile .
       - run: docker run --rm agent-service-ci uvicorn --version
+      - name: Import the exact Skill runtime allowlist in the Agent image
+        shell: bash
+        run: |
+          docker run --rm agent-service-ci python -c "import importlib,json,pathlib; manifest=json.loads(pathlib.Path('/etc/aap/skill-runtime-imports.json').read_text()); assert manifest == {'version': 1, 'pythonModules': ['agno', 'cryptography', 'pydantic']}; [importlib.import_module(name) for name in manifest['pythonModules']]"
+      - name: Build and smoke the private Skill Registry image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -t skill-registry-ci -f apps/skill-registry/Dockerfile .
+          manager_url="${SKILL_REGISTRY_DATABASE_URL/127.0.0.1/host.docker.internal}"
+          cleanup_registry_smoke() {
+            docker rm -f skill-registry-ci-smoke >/dev/null 2>&1 || true
+          }
+          trap cleanup_registry_smoke EXIT
+          docker run -d --name skill-registry-ci-smoke --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=32m \
+            --add-host host.docker.internal:host-gateway \
+            -e SKILL_REGISTRY_DATABASE_URL="$manager_url" \
+            -e SKILL_REGISTRY_CONTROL_KEY="$SKILL_REGISTRY_CONTROL_KEY" \
+            -e SKILL_RUNTIME_IMPORTS_FILE=/etc/aap/skill-runtime-imports.json \
+            skill-registry-ci
+          for attempt in {1..30}; do
+            if docker exec skill-registry-ci-smoke python -c "import json,urllib.request; response=urllib.request.urlopen('http://127.0.0.1:7788/internal/health/ready',timeout=2); payload=json.load(response); response.close(); assert payload == {'live': True, 'ready': True}"; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker logs skill-registry-ci-smoke
+              exit 1
+            fi
+            sleep 1
+          done
+          docker exec skill-registry-ci-smoke sh -c 'test "$(id -u):$(id -g)" = 10002:10002'
+          docker inspect skill-registry-ci-smoke --format '{{.HostConfig.ReadonlyRootfs}} {{json .HostConfig.PortBindings}}' | grep -Fx 'true null'
       - run: docker build -t backup-service-ci -f infra/docker/backup.Dockerfile .
       - run: docker run --rm --entrypoint gpg backup-service-ci --version
       - run: pnpm test
@@ -150,6 +223,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm build
+      - run: pnpm restore:lifecycle:test
       - run: DATABASE_URL="$MIGRATOR_DATABASE_URL" pnpm --filter @ai-agent-platform/database db:seed-auth-e2e
         env:
           NODE_ENV: test

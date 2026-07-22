@@ -2946,6 +2946,135 @@ secrets:
     ).toHaveLength(2);
   });
 
+  it("runs the complete Skill Registry CI contract with isolated credentials", () => {
+    const workflow = read(".github/workflows/ci.yml");
+    const packageScripts = JSON.parse(read("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    const agentDockerfile = read("apps/agent/Dockerfile");
+
+    expect(workflow).toContain(
+      "cache-dependency-glob: |\n            apps/agent/uv.lock\n            packages/skill-core/uv.lock\n            apps/skill-registry/uv.lock",
+    );
+    for (const key of [
+      "SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD",
+      "SKILL_REGISTRY_DATABASE_PASSWORD",
+      "SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD",
+      "SKILL_REGISTRY_MIGRATOR_DATABASE_URL",
+      "SKILL_REGISTRY_DATABASE_URL",
+      "SKILL_REGISTRY_RUNTIME_DATABASE_URL",
+      "SKILL_REGISTRY_CONTROL_KEY",
+    ]) {
+      expect(workflow).toContain(key);
+    }
+    expect(
+      workflow.match(/sh infra\/postgres\/05-skill-registry-roles\.sh/g),
+    ).toHaveLength(2);
+    expect(workflow.match(/python -m skill_registry\.migrate/g)).toHaveLength(
+      2,
+    );
+    for (const gate of [
+      "SKILL_REGISTRY_TEST_DATABASE_URL",
+      "uv --directory packages/skill-core run pytest -q",
+      "uv --directory packages/skill-core run ruff check .",
+      "uv --directory packages/skill-core run mypy src tests",
+      "uv --directory apps/skill-registry run pytest -q -rs",
+      "uv --directory apps/skill-registry run ruff check .",
+      "uv --directory apps/skill-registry run mypy src tests",
+      "docker build -t skill-registry-ci -f apps/skill-registry/Dockerfile .",
+      "docker inspect skill-registry-ci-smoke",
+      "--read-only",
+      "/internal/health/ready",
+      "/etc/aap/skill-runtime-imports.json",
+    ]) {
+      expect(workflow).toContain(gate);
+    }
+    expect(workflow).toMatch(
+      /docker run[\s\S]*--name skill-registry-ci-smoke[\s\S]*--read-only/,
+    );
+    expect(workflow).toMatch(
+      /docker exec skill-registry-ci-smoke[\s\S]*10002:10002[\s\S]*docker inspect skill-registry-ci-smoke[\s\S]*true null/,
+    );
+    expect(workflow).toContain("docker run --rm agent-service-ci python -c");
+    expect(workflow).toContain(
+      "assert manifest == {'version': 1, 'pythonModules': ['agno', 'cryptography', 'pydantic']}",
+    );
+    expect(agentDockerfile).toContain(
+      "infra/agent/skill-runtime-imports.json /etc/aap/skill-runtime-imports.json",
+    );
+    expect(packageScripts.scripts?.["skill-registry:test"]).toBe(
+      "uv --directory apps/skill-registry run pytest -q -rs",
+    );
+    expect(packageScripts.scripts?.["skill-registry:e2e"]).toBe(
+      "sh docs/testing/run-skill-registry-e2e.sh",
+    );
+    expect(packageScripts.scripts?.["restore:lifecycle:test"]).toContain(
+      "run-restore-docker-lifecycle.sh timeout",
+    );
+    expect(packageScripts.scripts?.["restore:lifecycle:test"]).toContain(
+      "run-restore-docker-lifecycle.sh controlled-failure",
+    );
+  });
+
+  it("defines an isolated Skill Registry E2E and documents its runtime boundary", () => {
+    const spec = read("apps/web/e2e/admin-skill-registry.spec.ts");
+    const runner = read("docs/testing/run-skill-registry-e2e.sh");
+    const testingReadme = read("docs/testing/README.md");
+    const skillsReadme = read("apps/agent/src/agent_service/skills/README.md");
+
+    for (const actor of ["workforce:admin", "workforce:super_admin"]) {
+      expect(spec).toContain(actor);
+    }
+    for (const contract of [
+      "pending_review",
+      "published",
+      "adminSessionToken",
+      "modelAdminSessionToken",
+      "artifactSha256",
+      "revision",
+      "self-review",
+    ]) {
+      expect(spec).toContain(contract);
+    }
+    expect(spec).toContain("SKILL.md");
+    expect(spec).toContain("scripts/hello.py");
+    expect(spec).toContain(".setInputFiles(archive)");
+    expect(spec).toContain("AUTH_TOTP_SETUP_REQUIRED");
+    expect(spec).toContain("totpFromUri(totpUri)");
+    expect(spec).toContain("SKILL_REGISTRY_E2E_STORAGE_STATE_FILE");
+    expect(spec).toContain("storageState: storageStatePath()");
+    expect(spec.match(/browser\.newContext\(/gu)).toHaveLength(1);
+    expect(spec).not.toMatch(/https?:\/\/(?:github|gitlab|gitcode)\./u);
+
+    expect(runner).toContain("SKILL_REGISTRY_E2E_PROJECT");
+    expect(runner).toContain("trap cleanup EXIT");
+    expect(runner).toContain("docker compose -p");
+    expect(runner).toContain("restart skill-registry");
+    expect(
+      runner.match(/run_job --no-deps skill-registry-migrate/g),
+    ).toHaveLength(2);
+    expect(runner).toContain("run --rm --no-deps backup");
+    expect(runner).toContain("infra/docker/restore-drill.sh");
+    expect(runner).toContain("run-restore-docker-lifecycle.sh timeout");
+    expect(runner).toContain(
+      "run-restore-docker-lifecycle.sh controlled-failure",
+    );
+    expect(runner).toContain("admin:assistant:skills:review");
+    expect(runner).toContain("skill_revision_artifacts");
+    expect(runner).toContain("artifact_digests_verified");
+    expect(runner).toContain("SKILL_REGISTRY_E2E_STORAGE_STATE_FILE");
+    expect(runner).toContain('success_message="Skill Registry E2E passed"');
+    expect(runner).toContain("down --rmi local -v --remove-orphans");
+    expect(runner).not.toMatch(/curl[^\n]*(github|gitlab|gitcode)/iu);
+
+    for (const document of [testingReadme, skillsReadme]) {
+      expect(document).toMatch(/库[＋+]审核|库与审核/u);
+      expect(document).toMatch(/Agent[^\n]*仍[^\n]*不加载/u);
+      expect(document).toContain("LocalSkills");
+      expect(document).toMatch(/下一[^\n]*计划/u);
+    }
+  });
+
   it("limits isolated assistant E2E credentials to the seed migrator", () => {
     const base = read("compose.yaml");
     const override = read("compose.e2e.yaml");

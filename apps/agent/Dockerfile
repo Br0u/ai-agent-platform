@@ -31,6 +31,7 @@ WORKDIR /app/apps/agent
 COPY --from=builder --chown=agent:agent /app/apps/agent/.venv /app/apps/agent/.venv
 RUN install -d -o root -g root -m 0755 /etc/aap
 COPY --chown=root:root --chmod=0644 infra/agent/model-endpoints.json /etc/aap/model-endpoints.json
+COPY --chown=root:root --chmod=0644 infra/agent/skill-runtime-imports.json /etc/aap/skill-runtime-imports.json
 
 FROM runtime-base AS acceptance
 

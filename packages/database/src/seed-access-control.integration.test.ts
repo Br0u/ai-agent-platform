@@ -66,7 +66,7 @@ describePostgres("PostgreSQL access-control seed", () => {
         (SELECT count(*)::text FROM role_permissions) AS grants`,
     );
     expect(counts.rows).toEqual([
-      { roles: "7", permissions: "21", grants: "49" },
+      { roles: "7", permissions: "26", grants: "56" },
     ]);
     const explicitRoleLock = queries.findIndex(
       (query) => /from "roles"/u.test(query) && /for update/u.test(query),
@@ -134,6 +134,8 @@ describePostgres("PostgreSQL access-control seed", () => {
         permissionKeys: [
           "admin:analytics",
           "admin:assistant",
+          "admin:assistant:skills",
+          "admin:assistant:skills:upload",
           "admin:audit",
           "admin:blog",
           "admin:cases",
@@ -173,6 +175,11 @@ describePostgres("PostgreSQL access-control seed", () => {
           "admin:assistant",
           "admin:assistant:configure",
           "admin:assistant:secret:reveal",
+          "admin:assistant:skills",
+          "admin:assistant:skills:configure",
+          "admin:assistant:skills:connections",
+          "admin:assistant:skills:review",
+          "admin:assistant:skills:upload",
           "admin:audit",
           "admin:blog",
           "admin:cases",

@@ -206,7 +206,7 @@ compose run --rm --no-deps agent-control-bootstrap
 compose run --rm --no-deps agent-control-migrate
 compose run --rm --no-deps skill-registry-bootstrap
 compose run --rm --no-deps skill-registry-migrate
-compose up -d --no-deps agent
+compose up -d --no-deps agent skill-registry
 
 attempt=0
 until compose exec -T agent python -c '
@@ -234,6 +234,116 @@ with urllib.request.urlopen(request, timeout=3) as response:
   sleep 1
 done
 echo "AgentOS ready: ready=true capability=placeholder"
+
+attempt=0
+until compose exec -T skill-registry python -c '
+import json
+import urllib.request
+
+with urllib.request.urlopen(
+    "http://127.0.0.1:7788/internal/health/ready", timeout=3
+) as response:
+    payload = json.load(response)
+    assert response.status == 200
+    assert payload == {"live": True, "ready": True}
+    assert type(payload["live"]) is bool
+    assert type(payload["ready"]) is bool
+' >/dev/null 2>&1; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 30 ]; then
+    echo "Skill Registry readiness did not become ready" >&2
+    exit 1
+  fi
+  sleep 1
+done
+echo "Skill Registry ready: live=true ready=true"
+
+compose exec -T skill-registry python -c '
+import base64
+import hashlib
+import hmac
+import io
+import json
+import pathlib
+import stat
+import time
+import urllib.request
+import uuid
+import zipfile
+
+slug = "backup-restore-skill-v1"
+archive_buffer = io.BytesIO()
+with zipfile.ZipFile(
+    archive_buffer, "w", compression=zipfile.ZIP_DEFLATED
+) as archive:
+    for relative, content in (
+        (
+            "SKILL.md",
+            b"---\nname: backup-restore-skill-v1\ndescription: Backup acceptance.\nlicense: MIT\n---\n# Instructions\n",
+        ),
+        ("scripts/hello.py", b"#!/usr/bin/env python3\nprint(1)\n"),
+    ):
+        info = zipfile.ZipInfo(
+            f"{slug}/{relative}", (2026, 7, 22, 0, 0, 0)
+        )
+        info.create_system = 3
+        info.external_attr = (stat.S_IFREG | 0o600) << 16
+        info.compress_type = zipfile.ZIP_DEFLATED
+        archive.writestr(info, content)
+
+control_key = pathlib.Path(
+    "/run/secrets/skill_registry_control_key"
+).read_text().strip()
+now = int(time.time())
+payload = {
+    "action": "upload",
+    "actor": "00000000-0000-4000-8000-000000000002",
+    "assurance": "session",
+    "assuredAt": None,
+    "expiresAt": now + 5,
+    "issuedAt": now,
+    "nonce": str(uuid.uuid4()),
+    "permission": "admin:assistant:skills:upload",
+    "requestId": str(uuid.uuid4()),
+    "target": "new",
+}
+raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+derived = hmac.new(
+    control_key.encode(),
+    b"ai-agent-platform:skill-registry-assertion:v1",
+    hashlib.sha256,
+).digest()
+encode = lambda value: base64.urlsafe_b64encode(value).rstrip(b"=").decode()
+assertion = f"{encode(raw)}.{encode(hmac.new(derived, raw, hashlib.sha256).digest())}"
+request = urllib.request.Request(
+    "http://127.0.0.1:7788/internal/skills/uploads",
+    data=archive_buffer.getvalue(),
+    method="POST",
+    headers={
+        "Authorization": "Bearer " + control_key,
+        "Content-Type": "application/zip",
+        "X-Skill-Registry-Assertion": assertion,
+    },
+)
+with urllib.request.urlopen(request, timeout=5) as response:
+    result = json.load(response)
+    assert response.status == 201
+    assert result["revision"]["state"] == "pending_review"
+' >/dev/null
+
+skill_revision_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
+  "SELECT count(*) FROM skill_registry.skill_revisions")"
+skill_artifact_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
+  "SELECT count(*) FROM skill_registry.skill_revision_artifacts")"
+skill_file_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
+  "SELECT count(*) FROM skill_registry.skill_revision_files")"
+if [ "$skill_revision_count" -le 0 ] || \
+   [ "$skill_artifact_count" -le 0 ] || \
+   [ "$skill_file_count" -le 0 ]; then
+  echo "Skill Registry backup fixture is empty" >&2
+  exit 1
+fi
+echo "Skill Registry backup fixture: revisions=$skill_revision_count artifacts=$skill_artifact_count files=$skill_file_count"
 
 compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -c \
   "INSERT INTO public.users (id, name, email, identity_realm, status, email_verification_status)
@@ -423,13 +533,23 @@ assert_restore_rejected \
   "$dump_dir/tampered.dump.gpg"
 echo "tampered ciphertext was rejected"
 
-BACKUP_ENCRYPTION_KEY_FILE="$BACKUP_ENCRYPTION_KEY_FILE" \
-BACKUP_CRYPTO_IMAGE="$backup_crypto_image" \
-RESTORE_SKILL_REGISTRY_IMAGE="$skill_registry_image" \
-infra/docker/restore-drill.sh \
-  "$dump_dir/generated.dump.gpg" \
-  "$platform_user_count" \
-  "$agno_session_count" \
-  "$platform_user_id" \
-  "$agno_session_id"
+restore_output="$temp_dir/restore-output.log"
+if ! BACKUP_ENCRYPTION_KEY_FILE="$BACKUP_ENCRYPTION_KEY_FILE" \
+  BACKUP_CRYPTO_IMAGE="$backup_crypto_image" \
+  RESTORE_SKILL_REGISTRY_IMAGE="$skill_registry_image" \
+  infra/docker/restore-drill.sh \
+    "$dump_dir/generated.dump.gpg" \
+    "$platform_user_count" \
+    "$agno_session_count" \
+    "$platform_user_id" \
+    "$agno_session_id" >"$restore_output" 2>&1; then
+  cat "$restore_output" >&2
+  exit 1
+fi
+grep -E 'revisions=[1-9][0-9]* artifacts=[1-9][0-9]* files=[1-9][0-9]* artifact_digests_verified=[1-9][0-9]*' \
+  "$restore_output" >/dev/null || {
+  echo "restore did not verify a nonempty Skill Registry artifact" >&2
+  exit 1
+}
+cat "$restore_output"
 echo "AgentOS backup and restore acceptance passed"
