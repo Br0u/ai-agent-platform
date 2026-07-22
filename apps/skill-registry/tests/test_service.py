@@ -227,14 +227,27 @@ def test_scan_policy_rejects_mutable_or_implicit_allowlist() -> None:
         ScanPolicy({"third_party"})  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("invalid", [1, "true", object(), [True]])
-def test_attestations_require_exact_boolean_true(invalid: object) -> None:
-    attestations = ReviewAttestations(
-        content_reviewed=invalid,  # type: ignore[arg-type]
-        usage_rights_confirmed=True,
-        execution_risk_accepted=True,
-        independent_reviewer_confirmed=True,
-    )
+@pytest.mark.parametrize(
+    "field",
+    [
+        "content_reviewed",
+        "usage_rights_confirmed",
+        "execution_risk_accepted",
+        "reviewer_authorization_confirmed",
+    ],
+)
+@pytest.mark.parametrize("invalid", [False, 1, "true", object(), [True]])
+def test_attestations_require_all_four_values_to_be_exact_boolean_true(
+    field: str, invalid: object
+) -> None:
+    values: dict[str, object] = {
+        "content_reviewed": True,
+        "usage_rights_confirmed": True,
+        "execution_risk_accepted": True,
+        "reviewer_authorization_confirmed": True,
+    }
+    values[field] = invalid
+    attestations = ReviewAttestations(**values)  # type: ignore[arg-type]
 
     assert attestations.complete is False
 
@@ -370,7 +383,7 @@ async def test_file_read_rejects_oversized_index_before_artifact_read() -> None:
 
 
 @pytest.mark.asyncio
-async def test_review_service_preserves_exact_attestation_command() -> None:
+async def test_revision_uploader_can_approve_with_complete_attestations() -> None:
     registry, repository, _ = service(frozenset({"third_party"}))
     detail = await registry.upload_zip(
         actor=ACTOR,
@@ -381,7 +394,7 @@ async def test_review_service_preserves_exact_attestation_command() -> None:
     )
     command = ReviewRevision(
         revision_id=detail.revision.id,
-        reviewer=REVIEWER,
+        reviewer=ACTOR,
         request_id=uuid4(),
         assertion_nonce=uuid4(),
         decision="approve",
@@ -391,7 +404,7 @@ async def test_review_service_preserves_exact_attestation_command() -> None:
             content_reviewed=True,
             usage_rights_confirmed=True,
             execution_risk_accepted=True,
-            independent_reviewer_confirmed=True,
+            reviewer_authorization_confirmed=True,
         ),
         skill_id=SKILL_ID,
     )
@@ -399,6 +412,7 @@ async def test_review_service_preserves_exact_attestation_command() -> None:
     reviewed = await registry.review_revision(command)
 
     assert reviewed.state == "published"
+    assert reviewed.reviewed_by == ACTOR
     assert repository.reviews == [command]
 
 
@@ -424,7 +438,7 @@ async def test_review_service_rejects_truthy_non_boolean_attestation() -> None:
             content_reviewed=1,  # type: ignore[arg-type]
             usage_rights_confirmed=True,
             execution_risk_accepted=True,
-            independent_reviewer_confirmed=True,
+            reviewer_authorization_confirmed=True,
         ),
         skill_id=SKILL_ID,
     )

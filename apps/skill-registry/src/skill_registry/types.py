@@ -49,7 +49,7 @@ class ReviewAttestations:
     content_reviewed: bool
     usage_rights_confirmed: bool
     execution_risk_accepted: bool
-    independent_reviewer_confirmed: bool
+    reviewer_authorization_confirmed: bool
 
     @property
     def complete(self) -> bool:
@@ -57,7 +57,7 @@ class ReviewAttestations:
             self.content_reviewed,
             self.usage_rights_confirmed,
             self.execution_risk_accepted,
-            self.independent_reviewer_confirmed,
+            self.reviewer_authorization_confirmed,
         )
         return all(type(value) is bool and value is True for value in values)
 

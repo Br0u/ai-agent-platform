@@ -331,7 +331,12 @@ def review_command(**changes: object) -> ReviewRevision:
         "decision": "approve",
         "expected_state": "pending_review",
         "reason": None,
-        "attestations": ReviewAttestations(True, True, True, True),
+        "attestations": ReviewAttestations(
+            content_reviewed=True,
+            usage_rights_confirmed=True,
+            execution_risk_accepted=True,
+            reviewer_authorization_confirmed=True,
+        ),
     }
     values.update(changes)
     return ReviewRevision(**values)  # type: ignore[arg-type]
@@ -357,7 +362,29 @@ async def test_review_locks_then_writes_matching_event_before_state_update() -> 
     assert connection.script.executions[1][1] == (REVISION_ID, SKILL_ID)
     assert "revision_published" in connection.script.executions[2][1]
     assert queries[2].startswith("INSERT INTO skill_registry.skill_control_events")
+    assert "reviewer_authorization_confirmed" in queries[2]
+    assert "independent_reviewer_confirmed" not in queries[2]
     assert queries[3].startswith("UPDATE skill_registry.skill_revisions")
+    assert connection.committed is True
+
+
+@pytest.mark.asyncio
+async def test_revision_creator_can_review_and_is_bound_to_event_and_update() -> None:
+    repository, connection = repository_with(
+        [
+            Reply("FROM skill_registry.skill_revisions AS revision", one=stored_row(findings=[])),
+            Reply("INSERT INTO skill_registry.skill_control_events"),
+            Reply("UPDATE skill_registry.skill_revisions", one=(NOW,)),
+        ]
+    )
+
+    revision = await repository.review_revision(review_command(reviewer=ACTOR))
+
+    assert revision.state == "published"
+    assert revision.created_by == ACTOR
+    assert revision.reviewed_by == ACTOR
+    assert connection.script.executions[2][1][3] == str(ACTOR)
+    assert connection.script.executions[3][1][1] == ACTOR
     assert connection.committed is True
 
 
@@ -365,7 +392,6 @@ async def test_review_locks_then_writes_matching_event_before_state_update() -> 
 @pytest.mark.parametrize(
     ("command", "row", "code"),
     [
-        (review_command(reviewer=ACTOR), stored_row(findings=[]), "REVIEW_SELF_APPROVAL_DENIED"),
         (
             review_command(
                 attestations=replace(

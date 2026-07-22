@@ -344,7 +344,7 @@ class PostgresSkillRegistryRepository:
                               id, request_id, assertion_nonce, actor, event_type,
                               target_id, result_code, review_reason,
                               content_reviewed, usage_rights_confirmed,
-                              execution_risk_accepted, independent_reviewer_confirmed
+                              execution_risk_accepted, reviewer_authorization_confirmed
                             ) VALUES (
                               %s, %s, %s, %s, %s, %s, 'ok', %s,
                               %s, %s, %s, %s
@@ -360,7 +360,7 @@ class PostgresSkillRegistryRepository:
                                 command.attestations.content_reviewed,
                                 command.attestations.usage_rights_confirmed,
                                 command.attestations.execution_risk_accepted,
-                                command.attestations.independent_reviewer_confirmed,
+                                command.attestations.reviewer_authorization_confirmed,
                             ),
                         )
                         await cursor.execute(
@@ -402,10 +402,6 @@ class PostgresSkillRegistryRepository:
             raise RegistryError("VALIDATION_ERROR", "All review attestations are required")
         if revision.state != command.expected_state:
             raise RegistryError("REVISION_STATE_CONFLICT", "Skill revision is no longer pending")
-        if revision.created_by == command.reviewer:
-            raise RegistryError(
-                "REVIEW_SELF_APPROVAL_DENIED", "A second actor must review the revision"
-            )
         if command.decision == "approve":
             if command.reason is not None:
                 raise RegistryError("VALIDATION_ERROR", "Approval reason must be null")
