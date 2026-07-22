@@ -6,10 +6,12 @@ from skill_registry.config import MigrationSettings
 from skill_registry.migrate import MigrationConnection, main, run_migration
 from skill_registry.schema import (
     EXPECTED_REVIEW_CONSTRAINTS,
+    EXPECTED_REVIEW_STORAGE_COLUMNS,
     EXPECTED_REVIEW_TRIGGER_GUARDS,
     LOCK_SCHEMA_VERSION_SQL,
     PREPARE_SCHEMA_SQL,
     SCHEMA_VERSION_1_SQL,
+    SCHEMA_VERSION_2_SQL,
     SELECT_SCHEMA_VERSION_SQL,
     VERIFY_BACKUP_GRANTS_SQL,
     VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL,
@@ -53,6 +55,8 @@ class FakeCursor:
         self.executed.append(query)
         if query == SCHEMA_VERSION_1_SQL:
             self.versions = (1,)
+        elif query == SCHEMA_VERSION_2_SQL:
+            self.versions = (1, 2)
 
     async def fetchone(self) -> tuple[Any, ...] | None:
         if self._query == VERIFY_SCHEMA_OWNER_SQL:
@@ -108,7 +112,7 @@ class FakeCursor:
                 ("skill_control_events", "execution_risk_accepted", "boolean", False, ""),
                 (
                     "skill_control_events",
-                    "independent_reviewer_confirmed",
+                    "reviewer_authorization_confirmed",
                     "boolean",
                     False,
                     "",
@@ -307,7 +311,7 @@ class FakeConnection:
 
 
 @pytest.mark.asyncio
-async def test_migration_applies_version_one_once_and_keeps_repeat_at_version_one() -> None:
+async def test_migration_applies_v1_then_v2_once_and_keeps_repeat_at_exact_v2() -> None:
     cursor = FakeCursor()
     connection = FakeConnection(cursor)
     urls: list[str] = []
@@ -324,6 +328,7 @@ async def test_migration_applies_version_one_once_and_keeps_repeat_at_version_on
     assert cursor.executed.count(PREPARE_SCHEMA_SQL) == 2
     assert cursor.executed.count(LOCK_SCHEMA_VERSION_SQL) == 2
     assert cursor.executed.count(SCHEMA_VERSION_1_SQL) == 1
+    assert cursor.executed.count(SCHEMA_VERSION_2_SQL) == 1
     assert cursor.executed.count(SELECT_SCHEMA_VERSION_SQL) == 2
     assert cursor.executed.count(VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL) == 2
     assert cursor.executed.count(VERIFY_REVIEW_STORAGE_COLUMNS_SQL) == 2
@@ -337,8 +342,8 @@ async def test_migration_applies_version_one_once_and_keeps_repeat_at_version_on
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("versions", [(1, 2), (2,)])
-async def test_migration_rejects_newer_or_anomalous_version_sets_without_reapplying_v1(
+@pytest.mark.parametrize("versions", [(2,), (1, 3), (1, 2, 3), (1, 1), (1, 1, 2)])
+async def test_migration_rejects_drifted_version_sets_without_reapplying_schema(
     versions: tuple[int, ...],
 ) -> None:
     cursor = FakeCursor(versions=versions)
@@ -353,6 +358,36 @@ async def test_migration_rejects_newer_or_anomalous_version_sets_without_reapply
     assert LOCK_SCHEMA_VERSION_SQL in cursor.executed
     assert SELECT_SCHEMA_VERSION_SQL in cursor.executed
     assert SCHEMA_VERSION_1_SQL not in cursor.executed
+    assert SCHEMA_VERSION_2_SQL not in cursor.executed
+
+
+@pytest.mark.asyncio
+async def test_migration_upgrades_exact_v1_to_v2() -> None:
+    cursor = FakeCursor(versions=(1,))
+
+    async def connector(database_url: str) -> MigrationConnection:
+        return FakeConnection(cursor)
+
+    settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
+    await run_migration(settings, connector=connector)
+
+    assert SCHEMA_VERSION_1_SQL not in cursor.executed
+    assert cursor.executed.count(SCHEMA_VERSION_2_SQL) == 1
+    assert cursor.versions == (1, 2)
+
+
+@pytest.mark.asyncio
+async def test_migration_accepts_exact_v2_without_reapplying_schema() -> None:
+    cursor = FakeCursor(versions=(1, 2))
+
+    async def connector(database_url: str) -> MigrationConnection:
+        return FakeConnection(cursor)
+
+    settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
+    await run_migration(settings, connector=connector)
+
+    assert SCHEMA_VERSION_1_SQL not in cursor.executed
+    assert SCHEMA_VERSION_2_SQL not in cursor.executed
 
 
 @pytest.mark.asyncio
@@ -372,7 +407,7 @@ async def test_migration_rejects_wrong_schema_owner() -> None:
 
 
 @pytest.mark.asyncio
-async def test_migration_rejects_version_one_missing_review_storage_contract() -> None:
+async def test_migration_rejects_current_schema_missing_review_storage_contract() -> None:
     class DriftedCursor(FakeCursor):
         async def fetchall(self) -> list[tuple[Any, ...]]:
             rows = await super().fetchall()
@@ -381,7 +416,63 @@ async def test_migration_rejects_version_one_missing_review_storage_contract() -
             return rows
 
     async def connector(database_url: str) -> MigrationConnection:
-        return FakeConnection(DriftedCursor(versions=(1,)))
+        return FakeConnection(DriftedCursor(versions=(1, 2)))
+
+    settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
+    with pytest.raises(RuntimeError, match="verification failed"):
+        await run_migration(settings, connector=connector)
+
+
+@pytest.mark.asyncio
+async def test_migration_rejects_coexisting_old_review_authorization_column() -> None:
+    class DriftedCursor(FakeCursor):
+        async def fetchall(self) -> list[tuple[Any, ...]]:
+            rows = await super().fetchall()
+            if self._query == VERIFY_REVIEW_STORAGE_COLUMNS_SQL:
+                return [
+                    *rows,
+                    (
+                        "skill_control_events",
+                        "independent_reviewer_confirmed",
+                        "boolean",
+                        False,
+                        "",
+                    ),
+                ]
+            return rows
+
+    async def connector(database_url: str) -> MigrationConnection:
+        return FakeConnection(DriftedCursor(versions=(1, 2)))
+
+    settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
+    with pytest.raises(RuntimeError, match="verification failed"):
+        await run_migration(settings, connector=connector)
+
+
+@pytest.mark.asyncio
+async def test_migration_rejects_stale_second_actor_revision_guard() -> None:
+    class DriftedCursor(FakeCursor):
+        async def fetchall(self) -> list[tuple[Any, ...]]:
+            rows = await super().fetchall()
+            if self._query != VERIFY_REVIEW_TRIGGER_GUARDS_SQL:
+                return rows
+            return [
+                (
+                    function_name,
+                    definition.replace(
+                        "ELSIF OLD.state = 'published'",
+                        "IF NEW.reviewed_by = OLD.created_by THEN RAISE EXCEPTION "
+                        "'skill revision review requires a second actor' USING ERRCODE = "
+                        "'23514'; END IF; ELSIF OLD.state = 'published'",
+                    )
+                    if function_name == "guard_revision_update"
+                    else (function_name, definition),
+                )
+                for function_name, definition in rows
+            ]
+
+    async def connector(database_url: str) -> MigrationConnection:
+        return FakeConnection(DriftedCursor(versions=(1, 2)))
 
     settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
     with pytest.raises(RuntimeError, match="verification failed"):
@@ -461,9 +552,15 @@ async def test_migration_rejects_other_restored_review_constraint_drift(
 
 
 def test_review_drift_verifiers_compare_normalized_complete_definitions() -> None:
+    normalized_storage_query = " ".join(VERIFY_REVIEW_STORAGE_COLUMNS_SQL.split())
     normalized_constraint_query = " ".join(VERIFY_REVIEW_CONSTRAINTS_SQL.split())
     normalized_function_query = " ".join(VERIFY_REVIEW_TRIGGER_GUARDS_SQL.split())
 
+    assert "'independent_reviewer_confirmed'" in normalized_storage_query
+    assert "'reviewer_authorization_confirmed'" in normalized_storage_query
+    assert "independent_reviewer_confirmed" not in {
+        column_name for table_name, column_name, *_ in EXPECTED_REVIEW_STORAGE_COLUMNS
+    }
     assert "pg_get_constraintdef(constraint_row.oid, true)" in normalized_constraint_query
     assert "regexp_replace" in normalized_constraint_query
     assert all(
@@ -472,7 +569,15 @@ def test_review_drift_verifiers_compare_normalized_complete_definitions() -> Non
     )
     assert "pg_get_functiondef(function.oid)" in normalized_function_query
     assert "regexp_replace" in normalized_function_query
-    assert len(EXPECTED_REVIEW_TRIGGER_GUARDS) == 2
+    assert "'guard_revision_update'" in normalized_function_query
+    assert len(EXPECTED_REVIEW_TRIGGER_GUARDS) == 3
+    revision_guard_definition = dict(EXPECTED_REVIEW_TRIGGER_GUARDS)["guard_revision_update"]
+    assert revision_guard_definition.startswith(
+        "CREATE OR REPLACE FUNCTION skill_registry.guard_revision_update()"
+    )
+    assert "skill revision body is immutable" in revision_guard_definition
+    assert "NEW.reviewed_by = OLD.created_by" not in revision_guard_definition
+    assert "invalid skill revision state transition" in revision_guard_definition
     function_definition = dict(EXPECTED_REVIEW_TRIGGER_GUARDS)["require_revision_review_event"]
     assert isinstance(function_definition, str)
     assert function_definition.startswith(

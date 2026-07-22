@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { Pool, type PoolClient, type QueryResult } from "pg";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { assertSafeIdentityMigrationTestDatabaseUrl } from "./migrations/migration-test-safety";
 
@@ -70,9 +70,15 @@ describePostgres(
     ? "Skill registry PostgreSQL role boundary"
     : `Skill registry PostgreSQL role boundary (missing ${missingEnvironment.join(", ")})`,
   () => {
-    const owner = new Pool({ connectionString: pgUrl(requiredUrls.owner) });
-    const manager = new Pool({ connectionString: pgUrl(requiredUrls.manager) });
-    const runtime = new Pool({ connectionString: pgUrl(requiredUrls.runtime) });
+    let owner: Pool;
+    let manager: Pool;
+    let runtime: Pool;
+
+    beforeAll(() => {
+      owner = new Pool({ connectionString: pgUrl(requiredUrls.owner) });
+      manager = new Pool({ connectionString: pgUrl(requiredUrls.manager) });
+      runtime = new Pool({ connectionString: pgUrl(requiredUrls.runtime) });
+    });
 
     afterAll(async () => {
       await Promise.all([owner.end(), manager.end(), runtime.end()]);
@@ -81,7 +87,7 @@ describePostgres(
     it("allows only reviewed manager writes and keeps runtime isolated", async () => {
       const client = await manager.connect();
       const actorId = randomUUID();
-      const reviewerId = randomUUID();
+      const wrongActorId = randomUUID();
       const skillId = randomUUID();
       const revisionId = randomUUID();
       await client.query("BEGIN");
@@ -125,31 +131,110 @@ describePostgres(
         );
         await expectDatabaseError(
           client,
-          () =>
-            client.query(
+          async () => {
+            await client.query(
               `UPDATE skill_registry.skill_revisions
                SET state = 'published', reviewed_by = $1, reviewed_at = now()
                WHERE id = $2`,
               [actorId, revisionId],
-            ),
+            );
+            return client.query("SET CONSTRAINTS ALL IMMEDIATE");
+          },
           "23514",
+        );
+        await client.query("SET CONSTRAINTS ALL DEFERRED");
+        await expectDatabaseError(
+          client,
+          async () => {
+            await client.query(
+              `INSERT INTO skill_registry.skill_control_events (
+                 id, request_id, assertion_nonce, actor, event_type,
+                 target_id, result_code, content_reviewed,
+                 usage_rights_confirmed, execution_risk_accepted,
+                 reviewer_authorization_confirmed
+               ) VALUES (
+                 $1, $2, $3, $4, 'revision_published', $5, 'ok',
+                 true, true, true, true
+               )`,
+              [
+                randomUUID(),
+                randomUUID(),
+                randomUUID(),
+                wrongActorId,
+                revisionId,
+              ],
+            );
+            await client.query(
+              `UPDATE skill_registry.skill_revisions
+               SET state = 'published', reviewed_by = $1, reviewed_at = now()
+               WHERE id = $2`,
+              [actorId, revisionId],
+            );
+            return client.query("SET CONSTRAINTS ALL IMMEDIATE");
+          },
+          "23514",
+        );
+        await client.query("SET CONSTRAINTS ALL DEFERRED");
+
+        const reusedAssertionNonce = randomUUID();
+        await client.query(
+          `INSERT INTO skill_registry.skill_control_events (
+             id, request_id, assertion_nonce, actor, event_type,
+             target_id, result_code, review_reason, content_reviewed,
+             usage_rights_confirmed, execution_risk_accepted,
+             reviewer_authorization_confirmed
+           ) VALUES (
+             $1, $2, $3, $4, 'revision_rejected', $5, 'ok',
+             'Nonce boundary test', true, true, true, true
+           )`,
+          [
+            randomUUID(),
+            randomUUID(),
+            reusedAssertionNonce,
+            actorId,
+            revisionId,
+          ],
+        );
+        await expectDatabaseError(
+          client,
+          () =>
+            client.query(
+              `INSERT INTO skill_registry.skill_control_events (
+                 id, request_id, assertion_nonce, actor, event_type,
+                 target_id, result_code, review_reason, content_reviewed,
+                 usage_rights_confirmed, execution_risk_accepted,
+                 reviewer_authorization_confirmed
+               ) VALUES (
+                 $1, $2, $3, $4, 'revision_rejected', $5, 'ok',
+                 'Reused nonce must fail', true, true, true, true
+               )`,
+              [
+                randomUUID(),
+                randomUUID(),
+                reusedAssertionNonce,
+                actorId,
+                revisionId,
+              ],
+            ),
+          "23505",
+        );
+
+        await client.query(
+          `INSERT INTO skill_registry.skill_control_events (
+             id, request_id, assertion_nonce, actor, event_type,
+             target_id, result_code, content_reviewed, usage_rights_confirmed,
+             execution_risk_accepted, reviewer_authorization_confirmed
+           ) VALUES (
+             $1, $2, $3, $4, 'revision_published', $5, 'ok',
+             true, true, true, true
+           )`,
+          [randomUUID(), randomUUID(), randomUUID(), actorId, revisionId],
         );
         await client.query(
           `UPDATE skill_registry.skill_revisions
            SET state = 'published', reviewed_by = $1, reviewed_at = now()
            WHERE id = $2`,
-          [reviewerId, revisionId],
-        );
-        await client.query(
-          `INSERT INTO skill_registry.skill_control_events (
-             id, request_id, assertion_nonce, actor, event_type,
-             target_id, result_code, content_reviewed, usage_rights_confirmed,
-             execution_risk_accepted, independent_reviewer_confirmed
-           ) VALUES (
-             $1, $2, $3, $4, 'revision_published', $5, 'ok',
-             true, true, true, true
-           )`,
-          [randomUUID(), randomUUID(), randomUUID(), reviewerId, revisionId],
+          [actorId, revisionId],
         );
         await client.query("SET CONSTRAINTS ALL IMMEDIATE");
         await client.query("SET CONSTRAINTS ALL DEFERRED");

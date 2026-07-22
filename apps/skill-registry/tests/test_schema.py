@@ -6,6 +6,7 @@ from skill_registry.schema import (
     PREPARE_SCHEMA_SQL,
     REQUIRED_TABLE_NAMES,
     SCHEMA_VERSION_1_SQL,
+    SCHEMA_VERSION_2_SQL,
     SKILL_REGISTRY_SCHEMA_VERSION,
 )
 
@@ -113,10 +114,9 @@ def test_role_bootstrap_resets_role_settings_and_seals_replication_bypass() -> N
     assert "registry roles must not set session_replication_role" in normalized
 
 
-def test_schema_version_one_creates_the_exact_registry_tables() -> None:
+def test_schema_version_one_remains_the_exact_historical_registry_bootstrap() -> None:
     sql = normalize_sql(SCHEMA_VERSION_1_SQL)
 
-    assert SKILL_REGISTRY_SCHEMA_VERSION == 1
     assert REQUIRED_TABLE_NAMES == frozenset(
         {
             "skills",
@@ -129,6 +129,62 @@ def test_schema_version_one_creates_the_exact_registry_tables() -> None:
     for table_name in REQUIRED_TABLE_NAMES:
         assert f"CREATE TABLE skill_registry.{table_name}" in sql
     assert "%s" not in PREPARE_SCHEMA_SQL + SCHEMA_VERSION_1_SQL
+
+
+def test_schema_v2_renames_review_authorization_evidence() -> None:
+    sql = normalize_sql(SCHEMA_VERSION_2_SQL)
+
+    assert SKILL_REGISTRY_SCHEMA_VERSION == 2
+    assert "DROP CONSTRAINT skill_control_events_review_evidence" in sql
+    assert "RENAME COLUMN independent_reviewer_confirmed" in sql
+    assert "TO reviewer_authorization_confirmed" in sql
+    assert "reviewer_authorization_confirmed IS TRUE" in sql
+    assert "reviewer_authorization_confirmed IS NULL" in sql
+    assert "NEW.reviewed_by = OLD.created_by" not in sql
+    assert "skill revision review requires a second actor" not in sql
+    assert "INSERT INTO skill_registry.schema_versions (version) VALUES (2)" in sql
+
+
+def test_schema_v2_replaces_only_the_second_actor_revision_guard() -> None:
+    version_one = normalize_sql(SCHEMA_VERSION_1_SQL)
+    version_two = normalize_sql(SCHEMA_VERSION_2_SQL)
+
+    for preserved_guard in (
+        "NEW.id IS DISTINCT FROM OLD.id",
+        "NEW.findings IS DISTINCT FROM OLD.findings",
+        "NEW.created_at IS DISTINCT FROM OLD.created_at",
+        "skill revision body is immutable",
+        "OLD.state = 'pending_review' AND NEW.state IN ('published', 'rejected')",
+        "NEW.reviewed_by IS NULL OR NEW.reviewed_at IS NULL",
+        "OLD.state = 'published' AND NEW.state = 'archived'",
+        "NEW.reviewed_by IS DISTINCT FROM OLD.reviewed_by",
+        "review metadata is immutable after review",
+        "invalid skill revision state transition",
+    ):
+        assert preserved_guard in version_one
+        assert preserved_guard in version_two
+    assert "NEW.reviewed_by = OLD.created_by" in version_one
+    assert "NEW.reviewed_by = OLD.created_by" not in version_two
+
+    guard_start = "CREATE OR REPLACE FUNCTION skill_registry.guard_revision_update()"
+    version_one_guard = SCHEMA_VERSION_1_SQL[
+        SCHEMA_VERSION_1_SQL.index(guard_start) : SCHEMA_VERSION_1_SQL.index(
+            "CREATE OR REPLACE FUNCTION skill_registry.guard_revision_insert()"
+        )
+    ]
+    version_two_guard = SCHEMA_VERSION_2_SQL[
+        SCHEMA_VERSION_2_SQL.index(guard_start) : SCHEMA_VERSION_2_SQL.index(
+            "INSERT INTO skill_registry.schema_versions"
+        )
+    ]
+    second_actor_rejection = """    IF NEW.reviewed_by = OLD.created_by THEN
+      RAISE EXCEPTION 'skill revision review requires a second actor'
+        USING ERRCODE = '23514';
+    END IF;
+"""
+    assert normalize_sql(version_two_guard) == normalize_sql(
+        version_one_guard.replace(second_actor_rejection, "")
+    )
 
 
 def test_schema_has_permanent_identity_revision_and_nonce_uniqueness() -> None:

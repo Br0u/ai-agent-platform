@@ -23,6 +23,7 @@ from skill_registry.schema import (
     LOCK_SCHEMA_VERSION_SQL,
     PREPARE_SCHEMA_SQL,
     SCHEMA_VERSION_1_SQL,
+    SCHEMA_VERSION_2_SQL,
     SELECT_SCHEMA_VERSION_SQL,
     VERIFY_BACKUP_GRANTS_SQL,
     VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL,
@@ -171,7 +172,7 @@ async def run_migration(
     *,
     connector: ConnectionFactory = connect_database,
 ) -> None:
-    """Apply schema version one once and verify the exact access boundary."""
+    """Upgrade through schema version two and verify the exact access boundary."""
     migration_settings = settings or MigrationSettings()  # type: ignore[call-arg]
     database_url = _psycopg_url(migration_settings.database_url.get_secret_value())
     connection = await connector(database_url)
@@ -187,7 +188,10 @@ async def run_migration(
             version_state = await cursor.fetchone()
             if version_state == (None, 0):
                 await cursor.execute(SCHEMA_VERSION_1_SQL)
-            elif version_state != (1, 1):
+                await cursor.execute(SCHEMA_VERSION_2_SQL)
+            elif version_state == (1, 1):
+                await cursor.execute(SCHEMA_VERSION_2_SQL)
+            elif version_state != (2, 2):
                 raise RuntimeError("Skill registry migration verification failed")
             await _verify_migration(cursor)
 

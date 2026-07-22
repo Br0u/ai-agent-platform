@@ -10,6 +10,7 @@ import pytest
 
 from skill_registry.config import MigrationSettings
 from skill_registry.migrate import run_migration
+from skill_registry.schema import PREPARE_SCHEMA_SQL, SCHEMA_VERSION_1_SQL
 
 
 ENVIRONMENT_URLS = {
@@ -156,16 +157,20 @@ async def _insert_review_event(
         True,
         True,
     ),
+    historical_v1: bool = False,
 ) -> UUID:
     event_id = uuid4()
+    authorization_column = (
+        "independent_reviewer_confirmed" if historical_v1 else "reviewer_authorization_confirmed"
+    )
     if event_type == "revision_rejected" and review_reason is None:
         review_reason = "Rejected by the integration test reviewer."
     await connection.execute(
-        """INSERT INTO skill_registry.skill_control_events (
+        f"""INSERT INTO skill_registry.skill_control_events (
           id, request_id, assertion_nonce, actor, event_type,
           target_id, result_code, error_code, review_reason,
           content_reviewed, usage_rights_confirmed,
-          execution_risk_accepted, independent_reviewer_confirmed
+          execution_risk_accepted, {authorization_column}
         ) VALUES (
           %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
         )""",
@@ -252,7 +257,7 @@ async def test_real_registry_migration_and_role_boundary() -> None:
         version_rows = await owner.execute(
             "SELECT version FROM skill_registry.schema_versions ORDER BY version"
         )
-        assert await version_rows.fetchall() == [(1,)]
+        assert await version_rows.fetchall() == [(1,), (2,)]
 
         await owner.execute(
             "GRANT ai_agent_skill_registry_manager TO ai_agent_skill_registry_migrator"
@@ -334,7 +339,7 @@ async def test_real_registry_migration_and_role_boundary() -> None:
                   id, request_id, assertion_nonce, actor, event_type,
                   target_id, result_code, review_reason,
                   content_reviewed, usage_rights_confirmed,
-                  execution_risk_accepted, independent_reviewer_confirmed
+                  execution_risk_accepted, reviewer_authorization_confirmed
                 ) VALUES (
                   %s, %s, %s, %s, 'revision_rejected', %s, 'ok', %s,
                   true, true, true, true
@@ -437,25 +442,6 @@ async def test_real_registry_migration_and_role_boundary() -> None:
             ) VALUES (%s, %s, 2, 'pending_review', 'upload', '{}'::jsonb, %s, %s, now())""",
             (uuid4(), skill_id, actor_id, actor_id),
         )
-
-        for self_review_state, self_review_event in (
-            ("published", "revision_published"),
-            ("rejected", "revision_rejected"),
-        ):
-            with pytest.raises(psycopg.errors.CheckViolation):
-                async with manager.transaction():
-                    await _insert_review_event(
-                        manager,
-                        revision_id=revision_id,
-                        reviewer_id=actor_id,
-                        event_type=self_review_event,
-                    )
-                    await manager.execute(
-                        """UPDATE skill_registry.skill_revisions
-                        SET state = %s, reviewed_by = %s, reviewed_at = now()
-                        WHERE id = %s""",
-                        (self_review_state, actor_id, revision_id),
-                    )
 
         with pytest.raises(psycopg.errors.CheckViolation):
             async with manager.transaction():
@@ -760,6 +746,84 @@ async def test_real_registry_migration_and_role_boundary() -> None:
     bool(MISSING_ENVIRONMENT),
     reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
 )
+async def test_real_registry_migrates_v1_history_to_v2_without_losing_evidence() -> None:
+    urls = _validated_urls()
+    owner = await _connect(urls["test"])
+    migrator = await _connect(urls["migrator"])
+    manager = await _connect(urls["manager"])
+    try:
+        await owner.execute("DROP SCHEMA IF EXISTS skill_registry CASCADE")
+        await owner.execute(
+            "CREATE SCHEMA skill_registry AUTHORIZATION ai_agent_skill_registry_migrator"
+        )
+        await migrator.execute(PREPARE_SCHEMA_SQL)
+        await migrator.execute(SCHEMA_VERSION_1_SQL)
+
+        actor_id = uuid4()
+        reviewer_id = uuid4()
+        skill_id = uuid4()
+        revision_id = uuid4()
+        async with manager.transaction():
+            await _insert_skill_revision(
+                manager,
+                skill_id=skill_id,
+                revision_id=revision_id,
+                actor_id=actor_id,
+                slug=f"v1-history-{uuid4().hex[:12]}",
+                nonce=uuid4(),
+            )
+        async with manager.transaction():
+            historical_event_id = await _insert_review_event(
+                manager,
+                revision_id=revision_id,
+                reviewer_id=reviewer_id,
+                event_type="revision_published",
+                historical_v1=True,
+            )
+            await manager.execute(
+                """UPDATE skill_registry.skill_revisions
+                SET state = 'published', reviewed_by = %s, reviewed_at = now()
+                WHERE id = %s""",
+                (reviewer_id, revision_id),
+            )
+
+        settings = MigrationSettings.model_validate({"database_url": urls["migrator"]})
+        await run_migration(settings)
+
+        versions = await owner.execute(
+            "SELECT version FROM skill_registry.schema_versions ORDER BY version"
+        )
+        assert await versions.fetchall() == [(1,), (2,)]
+        columns = await owner.execute(
+            """SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'skill_registry'
+              AND table_name = 'skill_control_events'
+              AND column_name IN (
+                'independent_reviewer_confirmed',
+                'reviewer_authorization_confirmed'
+              )
+            ORDER BY column_name"""
+        )
+        assert await columns.fetchall() == [("reviewer_authorization_confirmed",)]
+        evidence = await owner.execute(
+            """SELECT reviewer_authorization_confirmed
+            FROM skill_registry.skill_control_events
+            WHERE id = %s""",
+            (historical_event_id,),
+        )
+        assert await evidence.fetchone() == (True,)
+    finally:
+        await manager.close()
+        await migrator.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
 async def test_real_registry_rejects_noncanonical_findings_from_manager_sql() -> None:
     urls = _validated_urls()
     manager = await _connect(urls["manager"])
@@ -930,14 +994,14 @@ async def test_real_registry_migration_rejects_same_name_true_constraint_drift()
                 AND content_reviewed IS TRUE
                 AND usage_rights_confirmed IS TRUE
                 AND execution_risk_accepted IS TRUE
-                AND independent_reviewer_confirmed IS TRUE
+                AND reviewer_authorization_confirmed IS TRUE
               )
               OR (
                 event_type NOT IN ('revision_published', 'revision_rejected')
                 AND content_reviewed IS NULL
                 AND usage_rights_confirmed IS NULL
                 AND execution_risk_accepted IS NULL
-                AND independent_reviewer_confirmed IS NULL
+                AND reviewer_authorization_confirmed IS NULL
               )
             )"""
         )
