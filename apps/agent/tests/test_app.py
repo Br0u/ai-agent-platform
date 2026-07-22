@@ -44,6 +44,13 @@ from agent_service.model_runtime_slot import (
 from agent_service.model_runtime_types import ManagedModel
 from agent_service.model_control_service import ModelControlService
 from agent_service.model_verifier import ModelVerificationResult
+from agent_service.skill_activation_coordinator import (
+    ActivateSkillRuntime,
+    SkillActivationError,
+    SkillActivationResult,
+    SkillRuntimeStatus,
+)
+from agent_service.skill_generation_slot import RuntimeGeneration, SkillGenerationSlot
 
 
 DATABASE_URL = "postgresql+psycopg_async://runtime:private-password@db:5432/platform"
@@ -66,6 +73,52 @@ DISABLED_MODEL_CONTROL_SETTINGS: dict[str, object] = {
 LIVE_SAFE_KEYS = {"live", "ready", "capability", "message"}
 READY_SAFE_KEYS = {"ready", "capability"}
 Probe = Callable[[AsyncPostgresDb], Awaitable[bool]]
+
+
+class ReadySkillRuntime:
+    def __init__(self) -> None:
+        self.slot = SkillGenerationSlot(
+            initial=RuntimeGeneration.unconfigured(),
+            cleaner=lambda _: None,
+        )
+        self.started = False
+
+    def status(self) -> SkillRuntimeStatus:
+        return SkillRuntimeStatus("unconfigured", False, None, None, None, 0, None)
+
+    def is_ready(self) -> bool:
+        return self.started
+
+    async def start(self) -> None:
+        await self.slot.start()
+        self.started = True
+
+    async def probe(self) -> bool:
+        return self.started
+
+    async def activate(
+        self, command: ActivateSkillRuntime
+    ) -> SkillActivationResult:
+        del command
+        raise SkillActivationError("candidate_invalid")
+
+    async def shutdown(self) -> None:
+        if self.started:
+            await self.slot.aclose()
+            self.started = False
+
+
+class UnreadySkillRuntime(ReadySkillRuntime):
+    async def probe(self) -> bool:
+        return False
+
+
+def build_ready_skill_runtime(
+    _settings: RuntimeSettings,
+    _slot: ModelRuntimeSlot,
+    _database: AsyncPostgresDb,
+) -> ReadySkillRuntime:
+    return ReadySkillRuntime()
 
 
 def managed_model(
@@ -201,7 +254,11 @@ async def ready_probe(_: AsyncPostgresDb) -> bool:
 
 
 def make_app(settings: RuntimeSettings, probe: Probe) -> FastAPI:
-    return create_app(settings=settings, readiness_probe=probe)
+    return create_app(
+        settings=settings,
+        readiness_probe=probe,
+        skill_runtime_manager_builder=build_ready_skill_runtime,
+    )
 
 
 @pytest.mark.parametrize(
@@ -435,7 +492,12 @@ def test_ready_returns_safe_503_when_database_is_unavailable(
         return probe_result
 
     database = build_database(settings)
-    app = create_app(settings=settings, database=database, readiness_probe=probe)
+    app = create_app(
+        settings=settings,
+        database=database,
+        readiness_probe=probe,
+        skill_runtime_manager_builder=build_ready_skill_runtime,
+    )
 
     with TestClient(app) as client:
         response = client.get("/internal/health/ready", headers=AUTHORIZATION)
@@ -543,6 +605,7 @@ def test_health_uses_catalog_capability_same_database_and_no_model_details(
         agent_os_factory=CapturingAgentOS,
         readiness_probe=probe,
         catalog_builder=fake_build_catalog,
+        skill_runtime_manager_builder=build_ready_skill_runtime,
     )
 
     with TestClient(app) as client:
@@ -603,6 +666,7 @@ def test_create_app_installs_agno_log_redaction_before_building_runtime(
         database=database,
         agent_os_factory=CapturingAgentOS,
         catalog_builder=catalog_builder,
+        skill_runtime_manager_builder=build_ready_skill_runtime,
     )
 
     assert events == ["logging", "catalog", "agentos"]
@@ -631,6 +695,7 @@ def test_agentos_receives_exact_disabled_composition_and_same_database(
         database=database,
         agent_os_factory=CapturingAgentOS,
         readiness_probe=probe,
+        skill_runtime_manager_builder=build_ready_skill_runtime,
     )
 
     with TestClient(app) as client:
@@ -672,6 +737,7 @@ def test_enabled_real_composition_disables_telemetry_and_reuses_database(
         database=database,
         agent_os_factory=real_factory,
         readiness_probe=probe,
+        skill_runtime_manager_builder=build_ready_skill_runtime,
     )
 
     with TestClient(app) as client:
@@ -690,6 +756,39 @@ def test_enabled_real_composition_disables_telemetry_and_reuses_database(
     assert agent_factory.id == "maduoduo"
     assert agent_factory.db is database
     assert probed == [database]
+
+
+def test_skill_runtime_probe_participates_in_readiness(
+    enabled_settings: RuntimeSettings,
+) -> None:
+    runtime = UnreadySkillRuntime()
+    app = create_app(
+        settings=enabled_settings,
+        readiness_probe=ready_probe,
+        skill_runtime_manager_builder=lambda _settings, _slot, _database: runtime,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/internal/health/ready", headers=AUTHORIZATION)
+
+    assert response.status_code == 503
+    assert response.json() == {"ready": False, "capability": "available"}
+
+
+def test_control_and_run_middleware_order_is_fail_closed() -> None:
+    app = create_app(
+        settings=dynamic_settings(),
+        readiness_probe=ready_probe,
+        repository_builder=lambda _: ActiveRepository(),
+        skill_runtime_manager_builder=build_ready_skill_runtime,
+    )
+
+    assert [cast(Any, entry.cls).__name__ for entry in app.user_middleware[:4]] == [
+        "SkillControlAuthMiddleware",
+        "ModelControlAuthMiddleware",
+        "BearerAuthMiddleware",
+        "SkillRuntimeMiddleware",
+    ]
 
 
 def test_bearer_middleware_configuration_does_not_retain_plaintext_key(
@@ -1125,6 +1224,7 @@ def test_lifespan_reconciles_before_requests_and_closes_model_before_repository(
         repository_builder=lambda _: repository,
         cipher_builder=lambda _: cipher,
         model_builder=build_model,
+        skill_runtime_manager_builder=build_ready_skill_runtime,
     )
 
     with TestClient(app) as client:
@@ -1189,6 +1289,7 @@ def test_lifespan_injects_one_control_dependency_graph_with_runtime_verifier() -
         endpoint_catalog_builder=build_endpoints,
         model_verifier=verifier,
         control_service_factory=build_control_service,
+        skill_runtime_manager_builder=build_ready_skill_runtime,
     )
 
     with TestClient(app) as client:
@@ -1252,6 +1353,7 @@ async def test_lifespan_cancellation_waits_for_ordered_runtime_cleanup() -> None
         repository_builder=lambda _: repository,
         cipher_builder=lambda _: cipher,
         model_builder=build_model,
+        skill_runtime_manager_builder=build_ready_skill_runtime,
     )
     lifespan = app.router.lifespan_context(app)
     await lifespan.__aenter__()
@@ -1313,6 +1415,7 @@ async def test_disabled_lifespan_cancellation_waits_for_one_repository_close() -
     app = create_app(
         settings=settings,
         repository_builder=lambda _: repository,
+        skill_runtime_manager_builder=build_ready_skill_runtime,
     )
     lifespan = app.router.lifespan_context(app)
     await lifespan.__aenter__()
@@ -1381,6 +1484,7 @@ async def test_lifespan_preserves_fixed_cleanup_failure_after_repository_close()
         repository_builder=lambda _: repository,
         cipher_builder=lambda _: cipher,
         model_builder=build_model,
+        skill_runtime_manager_builder=build_ready_skill_runtime,
     )
     lifespan = app.router.lifespan_context(app)
     await lifespan.__aenter__()
@@ -1427,6 +1531,7 @@ def test_lifespan_control_dependency_failure_isolated_from_bootstrap_reconciliat
         cipher_builder=unexpected_cipher,
         endpoint_catalog_builder=unexpected_endpoint,
         model_builder=build_model,
+        skill_runtime_manager_builder=build_ready_skill_runtime,
     )
 
     with TestClient(app) as client:
@@ -1456,6 +1561,7 @@ def test_lifespan_turns_control_failure_into_degraded_safe_runtime_status() -> N
         settings=settings,
         readiness_probe=ready_probe,
         repository_builder=lambda _: repository,
+        skill_runtime_manager_builder=build_ready_skill_runtime,
     )
 
     with TestClient(app) as client:
@@ -1466,7 +1572,8 @@ def test_lifespan_turns_control_failure_into_degraded_safe_runtime_status() -> N
         )
         status = app.state.model_runtime_status()
 
-    assert response.json() == {"ready": True, "capability": "degraded"}
+    assert response.status_code == 503
+    assert response.json() == {"ready": False, "capability": "degraded"}
     assert status == RuntimeModelStatus(
         capability="degraded",
         source=None,
@@ -1494,6 +1601,7 @@ def test_health_reads_live_slot_capability_on_every_request() -> None:
         readiness_probe=ready_probe,
         catalog_builder=lambda _settings, _database: catalog,
         repository_builder=lambda _: ActiveRepository(),
+        skill_runtime_manager_builder=build_ready_skill_runtime,
     )
 
     with TestClient(app) as client:

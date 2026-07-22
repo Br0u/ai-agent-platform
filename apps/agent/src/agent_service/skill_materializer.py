@@ -128,7 +128,7 @@ class SkillGenerationMaterializer:
         names = [item.package.manifest.name for item in snapshot.items]
         if (
             type(snapshot.set_id) is not UUID
-            or snapshot.state != "candidate"
+            or snapshot.state not in {"candidate", "active"}
             or snapshot.item_count != len(snapshot.items)
             or not 0 <= snapshot.item_count <= 16
             or [item.ordinal for item in snapshot.items]

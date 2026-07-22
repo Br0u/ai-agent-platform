@@ -162,6 +162,11 @@ def _capacity_failure() -> NoReturn:
     raise GenerationCapacityError() from None
 
 
+def _resolve_waiter(waiter: asyncio.Future[None]) -> None:
+    if not waiter.done():
+        waiter.set_result(None)
+
+
 class SkillGenerationSlot:
     """Atomic current generation plus at most one draining retired generation."""
 
@@ -194,6 +199,7 @@ class SkillGenerationSlot:
         self._reaper_task: asyncio.Task[None] | None = None
         self._closing = False
         self._waiters: list[asyncio.Future[None]] = []
+        self._lease_waiters: list[asyncio.Future[None]] = []
 
     @property
     def current(self) -> RuntimeGeneration:
@@ -228,11 +234,19 @@ class SkillGenerationSlot:
 
     def _release(self, entry: _GenerationEntry) -> None:
         notify = False
+        lease_waiters: list[asyncio.Future[None]] = []
         with self._lock:
             if entry.references <= 0:
                 return
             entry.references -= 1
             notify = self._retired is entry and entry.references == 0
+            if self._current.references == 0 and (
+                self._retired is None or self._retired.references == 0
+            ):
+                lease_waiters = self._lease_waiters
+                self._lease_waiters = []
+        for waiter in lease_waiters:
+            waiter.get_loop().call_soon_threadsafe(_resolve_waiter, waiter)
         if notify:
             self._notify_reaper()
 
@@ -331,6 +345,30 @@ class SkillGenerationSlot:
                 waiter = asyncio.get_running_loop().create_future()
                 self._waiters.append(waiter)
             await waiter
+
+    async def wait_leases_drained(self) -> None:
+        while True:
+            with self._lock:
+                if self._current.references == 0 and (
+                    self._retired is None or self._retired.references == 0
+                ):
+                    return
+                waiter = asyncio.get_running_loop().create_future()
+                self._lease_waiters.append(waiter)
+            await waiter
+
+    async def discard_generation(self, generation: RuntimeGeneration) -> None:
+        try:
+            await asyncio.to_thread(self._cleaner, generation)
+        except Exception:
+            _LOGGER.warning("Skill generation cleanup failed")
+
+    async def cleanup_current(self) -> None:
+        with self._lock:
+            if self._current.references != 0:
+                raise GenerationUnavailableError()
+            generation = self._current.generation
+        await self.discard_generation(generation)
 
     async def aclose(self) -> None:
         self.begin_draining()

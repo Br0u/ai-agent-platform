@@ -135,6 +135,18 @@ class PostgresSkillArtifactRepository:
             _fail("storage_unavailable")
         return self._pool
 
+    async def probe(self) -> bool:
+        try:
+            async with self._pool_or_fail().connection() as connection:
+                async with connection.cursor() as cursor:
+                    await cursor.execute("SELECT 1")
+                    row = await cursor.fetchone()
+                    return row == (1,)
+        except SkillRuntimeRepositoryError:
+            raise
+        except Exception:
+            _fail("storage_unavailable")
+
     async def load_active(self) -> RuntimeSetSnapshot | None:
         try:
             async with self._pool_or_fail().connection() as connection:
