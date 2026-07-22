@@ -1,24 +1,25 @@
 """Typed catalog for capabilities registered with AgentOS."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 
-from agno.agent import Agent
+from agno.agent import Agent, AgentFactory
 from agno.db.postgres import AsyncPostgresDb
 
 from agent_service.config import RuntimeSettings
-from agent_service.default_agent import build_default_agent
 from agent_service.model_runtime_slot import (
     ModelRuntimeSlot,
     RuntimeModelCapability,
     RuntimeModelStatus,
 )
+from agent_service.skill_agent_factory import build_skill_agent_factory
 
 
 AgentCapability = RuntimeModelCapability
 SlotBuilder = Callable[[], ModelRuntimeSlot]
-AgentBuilder = Callable[[ModelRuntimeSlot, AsyncPostgresDb], Agent]
+AgentEntry = Agent | AgentFactory
+AgentBuilder = Callable[[ModelRuntimeSlot, AsyncPostgresDb], AgentEntry]
 RuntimeStatusProvider = Callable[[], RuntimeModelStatus]
 
 
@@ -37,7 +38,7 @@ def _fixed_status(capability: AgentCapability) -> RuntimeModelStatus:
 class AgentCatalog:
     """Only capabilities that are actually registered by this service."""
 
-    agents: list[Agent] = field(default_factory=list)
+    agents: list[AgentEntry] = field(default_factory=list)
     slot: ModelRuntimeSlot | None = None
     runtime_status_provider: RuntimeStatusProvider = field(
         default=lambda: _fixed_status("placeholder"),
@@ -47,7 +48,7 @@ class AgentCatalog:
 
     def __init__(
         self,
-        agents: list[Agent] | None = None,
+        agents: Sequence[AgentEntry] | None = None,
         *,
         slot: ModelRuntimeSlot | None = None,
         runtime_status_provider: RuntimeStatusProvider | None = None,
@@ -59,7 +60,7 @@ class AgentCatalog:
         if runtime_status_provider is None:
             fixed = capability or "placeholder"
             runtime_status_provider = partial(_fixed_status, fixed)
-        object.__setattr__(self, "agents", [] if agents is None else agents)
+        object.__setattr__(self, "agents", [] if agents is None else list(agents))
         object.__setattr__(self, "slot", slot)
         object.__setattr__(
             self,
@@ -78,7 +79,7 @@ def build_catalog(
     database: AsyncPostgresDb,
     *,
     slot_builder: SlotBuilder = ModelRuntimeSlot,
-    agent_builder: AgentBuilder = build_default_agent,
+    agent_builder: AgentBuilder = build_skill_agent_factory,
 ) -> AgentCatalog:
     """Build the disabled placeholder or one stable Agent around a dormant slot."""
     if not settings.agent_enabled:

@@ -7,7 +7,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 import pytest
-from agno.agent import Agent
+from agno.agent import Agent, AgentFactory
 from agno.db.postgres import AsyncPostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
@@ -685,11 +685,10 @@ def test_enabled_real_composition_disables_telemetry_and_reuses_database(
     assert agent_os.db is database
     assert agent_os.agents is not None
     assert len(agent_os.agents) == 1
-    agent = agent_os.agents[0]
-    assert isinstance(agent, Agent)
-    assert agent.id == "maduoduo"
-    assert agent.telemetry is False
-    assert agent.db is database
+    agent_factory = agent_os.agents[0]
+    assert isinstance(agent_factory, AgentFactory)
+    assert agent_factory.id == "maduoduo"
+    assert agent_factory.db is database
     assert probed == [database]
 
 

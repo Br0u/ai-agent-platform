@@ -1,4 +1,4 @@
-from agno.agent import Agent
+from agno.agent import Agent, AgentFactory
 from agno.db.postgres import AsyncPostgresDb
 import pytest
 
@@ -116,6 +116,20 @@ def test_slot_builder_exception_propagates_without_agent_catalog() -> None:
         )
 
     assert caught.value is error
+
+
+def test_enabled_default_catalog_registers_one_fixed_agent_factory() -> None:
+    settings = make_settings(enabled=True)
+    database = build_database(settings)
+
+    catalog = build_catalog(settings, database)
+
+    assert len(catalog.agents) == 1
+    factory = catalog.agents[0]
+    assert isinstance(factory, AgentFactory)
+    assert factory.id == "maduoduo"
+    assert factory.db is database
+    assert catalog.slot is not None
 
 
 def test_agent_builder_exception_propagates_without_available_catalog() -> None:
