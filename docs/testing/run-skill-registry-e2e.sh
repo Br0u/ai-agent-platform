@@ -46,6 +46,7 @@ cleanup() {
   trap - EXIT
   cleanup_failed=false
   protected_output=false
+  failure_output=
   if [ "$owns_project" = true ] && command -v docker >/dev/null 2>&1 && [ -n "$env_file" ]; then
     if [ "$cleanup_status" -ne 0 ] && [ -n "$log_file" ] && [ -f "$log_file" ]; then
       compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -Atqc \
@@ -73,19 +74,30 @@ cleanup() {
   if [ -n "$log_file" ] && [ -f "$log_file" ] && [ -f "$temporary_directory/protected-patterns" ]; then
     if grep -F -f "$temporary_directory/protected-patterns" "$log_file" >/dev/null 2>&1; then
       cleanup_status=1
-      cleanup_failed=true
       protected_output=true
-      printf '%s\n' "Skill Registry E2E output contained protected data" >&$original_stderr
     fi
   fi
-  if [ "$cleanup_failed" = true ] && [ "$cleanup_status" -eq 0 ]; then
-    cleanup_status=1
-  fi
-  if [ "$cleanup_status" -ne 0 ] && [ "$protected_output" = false ] && [ -n "$log_file" ] && [ -f "$log_file" ]; then
-    cat "$log_file" >&$original_stderr
+  if [ "$cleanup_status" -ne 0 ] && [ "$protected_output" = false ] && \
+     [ -n "$log_file" ] && [ -f "$log_file" ]; then
+    if ! failure_output=$(cat "$log_file"); then
+      cleanup_failed=true
+    fi
   fi
   if [ -n "$temporary_directory" ]; then
-    rm -rf "$temporary_directory" >/dev/null 2>&1 || cleanup_failed=true
+    if rm -rf "$temporary_directory" >/dev/null 2>&1; then
+      temporary_directory=
+    else
+      cleanup_failed=true
+    fi
+  fi
+  if [ "$cleanup_failed" = true ]; then
+    cleanup_status=1
+    printf '%s\n' "Skill Registry E2E cleanup failed" >&$original_stderr
+  elif [ "$protected_output" = true ]; then
+    printf '%s\n' "Skill Registry E2E output contained protected data" >&$original_stderr
+  elif [ "$cleanup_status" -ne 0 ] && [ "$protected_output" = false ] && \
+       [ -n "$failure_output" ]; then
+    printf '%s\n' "$failure_output" >&$original_stderr
   fi
   if [ "$cleanup_status" -eq 0 ] && [ -n "$success_message" ]; then
     printf '%s\n' "$success_message" >&$original_stdout
@@ -435,6 +447,7 @@ esac
   echo "Skill Registry E2E state digest is invalid" >&2
   exit 1
 }
+printf '%s\n' "$artifact_sha" >>"$protected_patterns"
 
 compose restart skill-registry
 compose up -d --no-deps --wait skill-registry
@@ -463,6 +476,7 @@ restore_output="$temporary_directory/restore-output.log"
 if ! BACKUP_ENCRYPTION_KEY_FILE=$BACKUP_ENCRYPTION_KEY_FILE \
   BACKUP_CRYPTO_IMAGE="${project}-backup:latest" \
   RESTORE_SKILL_REGISTRY_IMAGE="${project}-skill-registry:latest" \
+  RESTORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha \
   RESTORE_TMP_ROOT="$restore_root" \
     infra/docker/restore-drill.sh \
       "$dump_directory/generated.dump.gpg" \

@@ -3062,6 +3062,7 @@ secrets:
     expect(runner).toContain("admin:assistant:skills:review");
     expect(runner).toContain("skill_revision_artifacts");
     expect(runner).toContain("artifact_digests_verified");
+    expect(runner).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha");
     expect(runner).toContain("SKILL_REGISTRY_E2E_STORAGE_STATE_FILE");
     expect(runner).toContain('success_message="Skill Registry E2E passed"');
     expect(runner).toContain("down --rmi local -v --remove-orphans");
@@ -3072,6 +3073,125 @@ secrets:
       expect(document).toMatch(/Agent[^\n]*仍[^\n]*不加载/u);
       expect(document).toContain("LocalSkills");
       expect(document).toMatch(/下一[^\n]*计划/u);
+    }
+    expect(testingReadme).toMatch(/同一|exact|精确/u);
+    const backupRunner = read("docs/testing/run-agentos-backup-restore.sh");
+    expect(backupRunner).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256");
+    expect(backupRunner).toContain("skill_artifact_sha");
+    expect(backupRunner).toContain(
+      "WHERE skill.slug = 'backup-restore-skill-v1'",
+    );
+    expect(backupRunner).not.toContain("WHERE skill.name");
+    expect(backupRunner).toContain("restore exact artifact digest mismatch");
+  });
+
+  it("fails closed when Skill Registry E2E temporary cleanup fails", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "skill-e2e-cleanup-"));
+    const bin = path.join(sandbox, "bin");
+    mkdirSync(bin);
+    writeFileSync(
+      path.join(bin, "rm"),
+      `#!/bin/sh
+set -eu
+if [ "\${1:-}" = -rf ] && [ "\${2:-}" = "$FAIL_TEMP" ]; then
+  exit 1
+fi
+exec /bin/rm "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const cases = [
+      {
+        file: "docs/testing/run-skill-registry-e2e.sh",
+        start: "cleanup() {",
+        end: "\non_signal() {",
+        stableError: "Skill Registry E2E cleanup failed",
+        success: "Skill Registry E2E passed",
+        tempVariable: "temporary_directory",
+        logVariable: "log_file",
+      },
+      {
+        file: "docs/testing/run-agentos-backup-restore.sh",
+        start: "cleanup() {",
+        end: "\non_signal() {",
+        stableError: "AgentOS backup and restore cleanup failed",
+        success: "AgentOS backup and restore acceptance passed",
+        tempVariable: "temp_dir",
+        logVariable: "",
+      },
+    ] as const;
+
+    try {
+      for (const testCase of cases) {
+        const source = read(testCase.file);
+        const start = source.indexOf(testCase.start);
+        const end = source.indexOf(testCase.end, start);
+        expect(start, testCase.file).toBeGreaterThan(-1);
+        expect(end, testCase.file).toBeGreaterThan(start);
+        const cleanup = source.slice(start, end);
+        const fixtureRoot = path.join(
+          sandbox,
+          path.basename(testCase.file, ".sh"),
+        );
+        mkdirSync(fixtureRoot);
+        const logFile = path.join(fixtureRoot, "e2e.log");
+        const secret = `cleanup-secret-${path.basename(testCase.file)}`;
+        const archiveSource = 'print("cleanup source sentinel")';
+        const storageState = "cleanup-storage-state-sentinel";
+        writeFileSync(
+          logFile,
+          `${secret}\n${archiveSource}\n${storageState}\n`,
+          { mode: 0o600 },
+        );
+        if (testCase.file === "docs/testing/run-skill-registry-e2e.sh") {
+          writeFileSync(
+            path.join(fixtureRoot, "protected-patterns"),
+            `${secret}\n`,
+            { mode: 0o600 },
+          );
+        }
+        const harness = path.join(
+          sandbox,
+          `${path.basename(testCase.file)}.harness.sh`,
+        );
+        writeFileSync(
+          harness,
+          `#!/bin/sh
+set -u
+${testCase.tempVariable}="$FAIL_TEMP"
+env_file=
+owns_project=false
+success_message='${testCase.success}'
+original_stdout=3
+original_stderr=4
+exec 3>&1 4>&2
+${testCase.logVariable ? `${testCase.logVariable}="$FAIL_LOG"` : ""}
+${cleanup}
+cleanup
+`,
+          { mode: 0o700 },
+        );
+        const result = spawnSync("/bin/sh", [harness], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
+            FAIL_LOG: logFile,
+            FAIL_TEMP: fixtureRoot,
+          },
+        });
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.status, `${testCase.file}: ${output}`).toBe(1);
+        expect(output.trim(), testCase.file).toBe(testCase.stableError);
+        expect(output, testCase.file).not.toContain(testCase.success);
+        expect(output, testCase.file).not.toContain(fixtureRoot);
+        expect(output, testCase.file).not.toContain(secret);
+        expect(output, testCase.file).not.toContain(archiveSource);
+        expect(output, testCase.file).not.toContain(storageState);
+      }
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
     }
   });
 
@@ -4067,6 +4187,13 @@ exit 0
     expect(script).toContain("/bootstrap/04-agent-control-roles.sh");
     expect(script).toContain("/bootstrap/05-skill-registry-roles.sh");
     expect(script).toContain("RESTORE_SKILL_REGISTRY_IMAGE");
+    expect(script).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256");
+    expect(script).toContain("expected_artifact_check_file");
+    expect(script).toContain("expected_artifact_match_count");
+    expect(script).toContain("restore expected artifact digest is invalid");
+    expect(script).not.toMatch(
+      /(?:echo|printf)[^\n]*expected_artifact_sha256/iu,
+    );
     expect(script).toContain("python -m skill_registry.migrate");
     expect(script).toContain("ai_agent_skill_registry_manager");
     expect(script).toContain("ai_agent_backup");
@@ -4227,6 +4354,74 @@ exit 0
           JSON.stringify(invalidConfig),
         ).toBe("restore drill timeout configuration is invalid");
       }
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed expected artifact SHA before Docker", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "restore-artifact-sha-"));
+    const bin = path.join(sandbox, "bin");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const dockerLog = path.join(sandbox, "docker.calls");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+
+    try {
+      mkdirSync(bin);
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      writeFileSync(dockerLog, "");
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+printf '%s\\n' "$*" >>"$DOCKER_LOG"
+exit 91
+`,
+        { mode: 0o700 },
+      );
+      const malformed = [
+        "",
+        "a".repeat(63),
+        "a".repeat(65),
+        "A".repeat(64),
+        "g".repeat(64),
+      ];
+      for (const value of malformed) {
+        const result = spawnSync(
+          "sh",
+          [
+            script,
+            backupFile,
+            "1",
+            "1",
+            "11111111-1111-1111-1111-111111111111",
+            "fixture-session",
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: `${bin}:${process.env.PATH ?? ""}`,
+              BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+              DOCKER_LOG: dockerLog,
+              RESTORE_EXPECTED_ARTIFACT_SHA256: value,
+              RESTORE_MAX_ENCRYPTED_BYTES: "1",
+            },
+          },
+        );
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.status, JSON.stringify(value)).toBe(64);
+        expect(output.trim(), JSON.stringify(value)).toBe(
+          "restore expected artifact digest is invalid",
+        );
+        if (value !== "") {
+          expect(output, JSON.stringify(value)).not.toContain(value);
+        }
+      }
+      expect(readFileSync(dockerLog, "utf8")).toBe("");
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }

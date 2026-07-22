@@ -10,27 +10,45 @@ env_file=
 temp_dir=
 secret_dir=
 dump_dir=
+success_message=
 
 cleanup() {
+  cleanup_status=$?
+  trap '' INT TERM
+  trap - EXIT
+  cleanup_failed=false
   if command -v docker >/dev/null 2>&1; then
     if [ -n "$env_file" ] && [ -f "$env_file" ]; then
       docker compose -p "$project" --env-file "$env_file" \
-        down --rmi local -v --remove-orphans >/dev/null 2>&1 || true
+        down --rmi local -v --remove-orphans >/dev/null 2>&1 || cleanup_failed=true
     fi
   fi
   if [ -n "$temp_dir" ]; then
-    rm -rf "$temp_dir"
+    if rm -rf "$temp_dir" >/dev/null 2>&1; then
+      temp_dir=
+    else
+      cleanup_failed=true
+    fi
   fi
   if [ -n "$env_file" ]; then
-    rm -f "$env_file"
+    if rm -f "$env_file" >/dev/null 2>&1; then
+      env_file=
+    else
+      cleanup_failed=true
+    fi
   fi
+  if [ "$cleanup_failed" = true ]; then
+    cleanup_status=1
+    echo "AgentOS backup and restore cleanup failed" >&2
+  elif [ "$cleanup_status" -eq 0 ] && [ -n "$success_message" ]; then
+    printf '%s\n' "$success_message"
+  fi
+  exit "$cleanup_status"
 }
 
 on_signal() {
-  code=$1
-  cleanup
-  trap - EXIT
-  exit "$code"
+  trap '' INT TERM
+  exit "$1"
 }
 
 trap cleanup EXIT
@@ -337,10 +355,26 @@ skill_artifact_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc
   "SELECT count(*) FROM skill_registry.skill_revision_artifacts")"
 skill_file_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
   "SELECT count(*) FROM skill_registry.skill_revision_files")"
+skill_artifact_sha="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
+  "SELECT artifact.artifact_sha256
+     FROM skill_registry.skill_revision_artifacts AS artifact
+     JOIN skill_registry.skill_revisions AS revision ON revision.id = artifact.revision_id
+     JOIN skill_registry.skills AS skill ON skill.id = revision.skill_id
+    WHERE skill.slug = 'backup-restore-skill-v1'")"
 if [ "$skill_revision_count" -le 0 ] || \
    [ "$skill_artifact_count" -le 0 ] || \
    [ "$skill_file_count" -le 0 ]; then
   echo "Skill Registry backup fixture is empty" >&2
+  exit 1
+fi
+case "$skill_artifact_sha" in
+  ''|*[!0-9a-f]*)
+    echo "Skill Registry backup fixture digest is invalid" >&2
+    exit 1
+    ;;
+esac
+if [ "${#skill_artifact_sha}" -ne 64 ]; then
+  echo "Skill Registry backup fixture digest is invalid" >&2
   exit 1
 fi
 echo "Skill Registry backup fixture: revisions=$skill_revision_count artifacts=$skill_artifact_count files=$skill_file_count"
@@ -537,6 +571,7 @@ restore_output="$temp_dir/restore-output.log"
 if ! BACKUP_ENCRYPTION_KEY_FILE="$BACKUP_ENCRYPTION_KEY_FILE" \
   BACKUP_CRYPTO_IMAGE="$backup_crypto_image" \
   RESTORE_SKILL_REGISTRY_IMAGE="$skill_registry_image" \
+  RESTORE_EXPECTED_ARTIFACT_SHA256="$skill_artifact_sha" \
   infra/docker/restore-drill.sh \
     "$dump_dir/generated.dump.gpg" \
     "$platform_user_count" \
@@ -552,4 +587,32 @@ grep -E 'revisions=[1-9][0-9]* artifacts=[1-9][0-9]* files=[1-9][0-9]* artifact_
   exit 1
 }
 cat "$restore_output"
-echo "AgentOS backup and restore acceptance passed"
+
+case "$skill_artifact_sha" in
+  0*) different_artifact_sha="1${skill_artifact_sha#?}" ;;
+  *) different_artifact_sha="0${skill_artifact_sha#?}" ;;
+esac
+mismatch_output="$temp_dir/restore-artifact-mismatch.log"
+if BACKUP_ENCRYPTION_KEY_FILE="$BACKUP_ENCRYPTION_KEY_FILE" \
+  BACKUP_CRYPTO_IMAGE="$backup_crypto_image" \
+  RESTORE_SKILL_REGISTRY_IMAGE="$skill_registry_image" \
+  RESTORE_EXPECTED_ARTIFACT_SHA256="$different_artifact_sha" \
+  infra/docker/restore-drill.sh \
+    "$dump_dir/generated.dump.gpg" \
+    "$platform_user_count" \
+    "$agno_session_count" \
+    "$platform_user_id" \
+    "$agno_session_id" >"$mismatch_output" 2>&1; then
+  echo "restore exact artifact digest mismatch unexpectedly succeeded" >&2
+  exit 1
+fi
+grep -Fx "restore drill failed critical table checks" "$mismatch_output" >/dev/null || {
+  echo "restore exact artifact digest mismatch was not rejected generically" >&2
+  exit 1
+}
+if grep -F "$skill_artifact_sha" "$mismatch_output" >/dev/null 2>&1 || \
+   grep -F "$different_artifact_sha" "$mismatch_output" >/dev/null 2>&1; then
+  echo "restore exact artifact digest mismatch leaked a digest" >&2
+  exit 1
+fi
+success_message="AgentOS backup and restore acceptance passed"

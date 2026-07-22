@@ -6,7 +6,7 @@
 
 本计划只交付 Skill 库+审核闭环：本地 ZIP 上传、不可变 revision、双人审核、加密备份和恢复。Agent 仍不加载任何 Skill，`LocalSkills` 或其他运行时挂载属于下一计划，当前验收不得把“已发布”解释为“已运行”。
 
-运行 `pnpm skill-registry:e2e`。`run-skill-registry-e2e.sh` 创建独立 Compose project、临时 0600 secrets 和仅含 `SKILL.md`、`scripts/hello.py` 的本地 fixture；它不下载第三方 Skill。验收覆盖 `workforce:admin` 上传与自审拒绝、`workforce:super_admin` 的近期密码/TOTP 保障和发布、Registry 重启持久性、加密备份恢复后的 artifact digest，并复用 Task 9 的 restore lifecycle 门禁。成功清理所有容器、network、volume 和本地镜像后，只输出 `Skill Registry E2E passed`。
+运行 `pnpm skill-registry:e2e`。`run-skill-registry-e2e.sh` 创建独立 Compose project、临时 0600 secrets 和仅含 `SKILL.md`、`scripts/hello.py` 的本地 fixture；它不下载第三方 Skill。验收覆盖 `workforce:admin` 上传与自审拒绝、`workforce:super_admin` 的近期密码/TOTP 保障和发布、Registry 重启持久性，并要求加密备份恢复后恰好存在与本次上传完全相同的 artifact SHA-256，而不只是任意非空且自洽的 digest；同时复用 Task 9 的 restore lifecycle 门禁。只有临时目录、容器、network、volume 和本地镜像全部清理成功后才输出 `Skill Registry E2E passed`，任何清理失败都固定返回非零且不输出临时路径、Secret、ZIP/源码或浏览器 storage state。
 
 该回归由 Playwright CLI 驱动。`navigation-browser-regression.js` 是注入浏览器会话的函数，不是独立 Node.js 脚本，不应使用 `node navigation-browser-regression.js` 执行。
 

@@ -12,6 +12,22 @@ if [ "$#" -ne 5 ] || [ -z "$backup_file" ] || [ ! -f "$backup_file" ] || \
   echo "usage: $0 ENCRYPTED_BUNDLE EXPECTED_USERS EXPECTED_AGNO_SESSIONS USER_FIXTURE_ID AGNO_SESSION_FIXTURE_ID" >&2
   exit 64
 fi
+expected_artifact_sha256=
+expected_artifact_sha256_required=false
+if [ "${RESTORE_EXPECTED_ARTIFACT_SHA256+x}" = x ]; then
+  expected_artifact_sha256=$RESTORE_EXPECTED_ARTIFACT_SHA256
+  case "$expected_artifact_sha256" in
+    ''|*[!0-9a-f]*)
+      echo "restore expected artifact digest is invalid" >&2
+      exit 64
+      ;;
+  esac
+  if [ "${#expected_artifact_sha256}" -ne 64 ]; then
+    echo "restore expected artifact digest is invalid" >&2
+    exit 64
+  fi
+  expected_artifact_sha256_required=true
+fi
 : "${BACKUP_ENCRYPTION_KEY_FILE:?Set BACKUP_ENCRYPTION_KEY_FILE to a readable secret file}"
 script_directory="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 "$script_directory/validate-backup-key.sh" "$BACKUP_ENCRYPTION_KEY_FILE"
@@ -180,6 +196,7 @@ resource_registry_directory=
 manager_delete_error_file=
 backup_insert_error_file=
 runtime_select_error_file=
+expected_artifact_check_file=
 active_docker_pid=
 active_docker_phase=
 docker_command_timed_out=false
@@ -623,6 +640,7 @@ resource_registry_directory="$temporary_directory/docker-resources"
 manager_delete_error_file="$temporary_directory/manager-delete.stderr"
 backup_insert_error_file="$temporary_directory/backup-insert.stderr"
 runtime_select_error_file="$temporary_directory/runtime-select.stderr"
+expected_artifact_check_file="$temporary_directory/expected-artifact-check.sql"
 decrypt_work_directory="$temporary_directory/decrypt"
 decrypted_bundle_candidate="$decrypt_work_directory/restored.bundle.partial"
 decrypted_bundle="$temporary_directory/restored.bundle"
@@ -632,6 +650,15 @@ if ! mkdir -p "$decrypt_work_directory" "$resource_registry_directory" >/dev/nul
      >/dev/null 2>&1; then
   echo "restore drill temporary initialization failed" >&2
   exit 1
+fi
+if [ "$expected_artifact_sha256_required" = true ]; then
+  if ! printf '%s\n' \
+    "SELECT count(*) FROM skill_registry.skill_revision_artifacts WHERE artifact_sha256 = '$expected_artifact_sha256';" \
+    >"$expected_artifact_check_file" || \
+     ! chmod 600 "$expected_artifact_check_file" >/dev/null 2>&1; then
+    echo "restore drill temporary initialization failed" >&2
+    exit 1
+  fi
 fi
 cat >"$postgres_env_file" <<EOF
 POSTGRES_DB=$database
@@ -1422,6 +1449,28 @@ then
 fi
 unset skill_registry_snapshot
 
+expected_artifact_match_count=0
+if [ "$expected_artifact_sha256_required" = true ]; then
+  if ! run_database_scalar expected_artifact_match_count psql \
+    --username="$owner" --dbname="$database" --no-psqlrc \
+    --tuples-only --no-align --quiet --set=ON_ERROR_STOP=1 \
+    --file=/restore/expected-artifact-check.sql; then
+    echo "restore drill failed critical table checks" >&2
+    exit 1
+  fi
+  expected_artifact_match_count=$docker_scalar
+  case "$expected_artifact_match_count" in
+    ''|*[!0-9]*)
+      echo "restore drill failed critical table checks" >&2
+      exit 1
+      ;;
+  esac
+  if [ "${#expected_artifact_match_count}" -gt 20 ]; then
+    echo "restore drill failed critical table checks" >&2
+    exit 1
+  fi
+fi
+
 for restored_number in \
   "$migration_count" \
   "$latest_migration" \
@@ -1470,6 +1519,8 @@ if [ "$migration_count" != "$expected_migrations" ] || \
    [ "$skill_artifact_digest_mismatch_count" != "0" ] || \
    [ "$skill_registry_integrity_mismatch_count" != "0" ] || \
    [ "$skill_registry_security_trigger_mismatch_count" != "0" ] || \
+   { [ "$expected_artifact_sha256_required" = true ] && \
+     [ "$expected_artifact_match_count" != "1" ]; } || \
    [ "$skill_registry_schema_contract" != "t" ]; then
   echo "restore drill failed critical table checks" >&2
   exit 1
