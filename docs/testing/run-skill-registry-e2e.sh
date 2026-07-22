@@ -5,9 +5,10 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
 
+runtime_mode=${SKILL_RUNTIME_E2E:-false}
 project=${SKILL_REGISTRY_E2E_PROJECT:-aap-skill-registry-e2e-$$}
-case "$project" in
-  aap-skill-registry-e2e-*) ;;
+case "$runtime_mode:$project" in
+  false:aap-skill-registry-e2e-*|true:aap-skill-runtime-e2e-*) ;;
   *)
     echo "Skill Registry E2E project must use the approved prefix" >&2
     exit 1
@@ -21,6 +22,9 @@ case "$project" in
 esac
 
 compose_files="-f compose.yaml -f compose.e2e.yaml"
+if [ "$runtime_mode" = true ]; then
+  compose_files="$compose_files -f compose.skill-runtime-e2e.yaml"
+fi
 temporary_directory=
 env_file=
 log_file=
@@ -60,6 +64,11 @@ cleanup() {
                 (SELECT count(*) FROM skill_registry.skill_revisions)::text || ':' ||
                 (SELECT count(*) FROM skill_registry.skill_revision_artifacts)::text || ':' ||
                 (SELECT count(*) FROM skill_registry.skill_revision_files)::text" >>"$log_file" 2>&1 || true
+      if [ "$runtime_mode" = true ]; then
+        compose exec -T agent python -c \
+          "import urllib.request; key=open('/run/secrets/os_security_key',encoding='utf-8').read(); request=urllib.request.Request('http://127.0.0.1:7777/acceptance/skill-runtime/status',headers={'Authorization':'Bearer '+key}); print('skill-runtime-status:'+urllib.request.urlopen(request,timeout=3).read().decode())" \
+          >>"$log_file" 2>&1 || true
+      fi
       docker compose -p "$project" --env-file "$env_file" $compose_files \
         logs --no-color db agent skill-registry web proxy backup >>"$log_file" 2>&1 || true
     fi
@@ -145,6 +154,7 @@ secret_directory="$temporary_directory/secrets"
 fixture_directory="$temporary_directory/fixture"
 archive_file="$temporary_directory/skill-registry-e2e.zip"
 state_file="$temporary_directory/skill-registry-state.json"
+runtime_state_file="$temporary_directory/skill-runtime-state.json"
 storage_state_file="$temporary_directory/reviewer-storage-state.json"
 restore_root="$temporary_directory/restore"
 dump_directory="$temporary_directory/dump"
@@ -180,6 +190,7 @@ assistant_rate_limit_secret=$(secret)
 model_config_encryption_key=$(secret)
 agent_config_control_key=$(secret)
 skill_registry_control_key=$(secret)
+model_api_key=$(secret)
 customer_password=$(secret)
 staff_password=$(secret)
 admin_password=$(secret)
@@ -228,6 +239,7 @@ materialize_secret AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE agent_control_migrat
 materialize_secret AGENT_CONTROL_DATABASE_URL_FILE agent_control_database_url "postgresql+psycopg_async://ai_agent_control:$control_runtime_password@db:5432/$database"
 materialize_secret SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE skill_registry_migrator_database_url "postgresql+psycopg_async://ai_agent_skill_registry_migrator:$registry_migrator_password@db:5432/$database"
 materialize_secret SKILL_REGISTRY_DATABASE_URL_FILE skill_registry_database_url "postgresql+psycopg_async://ai_agent_skill_registry_manager:$registry_manager_password@db:5432/$database"
+materialize_secret SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE skill_registry_runtime_database_url "postgresql+psycopg_async://ai_agent_skill_registry_runtime:$registry_runtime_password@db:5432/$database"
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$better_auth_secret"
 materialize_secret OS_SECURITY_KEY_FILE os_security_key "$os_security_key"
 materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$assistant_session_secret"
@@ -235,6 +247,7 @@ materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret 
 materialize_secret MODEL_CONFIG_ENCRYPTION_KEY_FILE model_config_encryption_key "$model_config_encryption_key"
 materialize_secret AGENT_CONFIG_CONTROL_KEY_FILE agent_config_control_key "$agent_config_control_key"
 materialize_secret SKILL_REGISTRY_CONTROL_KEY_FILE skill_registry_control_key "$skill_registry_control_key"
+materialize_secret MODEL_API_KEY_FILE model_api_key "$model_api_key"
 
 http_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
 base_url="http://127.0.0.1:$http_port"
@@ -261,6 +274,7 @@ AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE=$AGENT_CONTROL_MIGRATOR_DATABASE_URL_FI
 AGENT_CONTROL_DATABASE_URL_FILE=$AGENT_CONTROL_DATABASE_URL_FILE
 SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE=$SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE
 SKILL_REGISTRY_DATABASE_URL_FILE=$SKILL_REGISTRY_DATABASE_URL_FILE
+SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE=$SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE
 BETTER_AUTH_SECRET_FILE=$BETTER_AUTH_SECRET_FILE
 OS_SECURITY_KEY_FILE=$OS_SECURITY_KEY_FILE
 ASSISTANT_SESSION_SECRET_FILE=$ASSISTANT_SESSION_SECRET_FILE
@@ -268,6 +282,7 @@ ASSISTANT_RATE_LIMIT_SECRET_FILE=$ASSISTANT_RATE_LIMIT_SECRET_FILE
 MODEL_CONFIG_ENCRYPTION_KEY_FILE=$MODEL_CONFIG_ENCRYPTION_KEY_FILE
 AGENT_CONFIG_CONTROL_KEY_FILE=$AGENT_CONFIG_CONTROL_KEY_FILE
 SKILL_REGISTRY_CONTROL_KEY_FILE=$SKILL_REGISTRY_CONTROL_KEY_FILE
+MODEL_API_KEY_FILE=$MODEL_API_KEY_FILE
 BETTER_AUTH_URL=$base_url
 BETTER_AUTH_TRUSTED_ORIGINS=$base_url
 ASSISTANT_PUBLIC_ORIGIN=$base_url
@@ -275,9 +290,9 @@ HTTP_PORT=$http_port
 PUBLIC_HOST=127.0.0.1
 ALLOW_LOCAL_VALIDATION_HOSTS=true
 FEATURE_EMAIL_VERIFICATION=false
-AGENT_ENABLED=false
-MODEL_PROVIDER=
-MODEL_ID=
+AGENT_ENABLED=$runtime_mode
+MODEL_PROVIDER=$(if [ "$runtime_mode" = true ]; then printf '%s' openai; fi)
+MODEL_ID=$(if [ "$runtime_mode" = true ]; then printf '%s' e2e-skill-runtime; fi)
 MODEL_BASE_URL=
 BACKUP_RUN_ONCE=true
 BACKUP_INTERVAL_SECONDS=86400
@@ -298,9 +313,16 @@ E2E_REPLACEMENT_PASSWORD=$replacement_password
 EOF
 chmod 600 "$env_file"
 
-slug="e2e-reviewed-$(openssl rand -hex 6)"
-mkdir -p "$fixture_directory/$slug/scripts"
-cat >"$fixture_directory/$slug/SKILL.md" <<EOF
+if [ "$runtime_mode" = true ]; then
+  slug=deterministic-runtime
+  mkdir -p "$fixture_directory/$slug/scripts"
+  cp docs/testing/fixtures/skills/deterministic/SKILL.md "$fixture_directory/$slug/SKILL.md"
+  cp docs/testing/fixtures/skills/deterministic/scripts/record.py "$fixture_directory/$slug/scripts/record.py"
+  fixture_members="SKILL.md scripts/record.py"
+else
+  slug="e2e-reviewed-$(openssl rand -hex 6)"
+  mkdir -p "$fixture_directory/$slug/scripts"
+  cat >"$fixture_directory/$slug/SKILL.md" <<EOF
 ---
 name: $slug
 description: Skill Registry E2E local fixture.
@@ -309,11 +331,13 @@ license: MIT
 # Instructions
 Use the local script only during this isolated acceptance.
 EOF
-cat >"$fixture_directory/$slug/scripts/hello.py" <<'EOF'
+  cat >"$fixture_directory/$slug/scripts/hello.py" <<'EOF'
 #!/usr/bin/env python3
 print("hello from reviewed skill")
 EOF
-python3 - "$fixture_directory" "$slug" "$archive_file" <<'PY'
+  fixture_members="SKILL.md scripts/hello.py"
+fi
+python3 - "$fixture_directory" "$slug" "$archive_file" $fixture_members <<'PY'
 import pathlib
 import sys
 import zipfile
@@ -322,7 +346,7 @@ root = pathlib.Path(sys.argv[1])
 slug = sys.argv[2]
 output = pathlib.Path(sys.argv[3])
 with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-    for relative in ("SKILL.md", "scripts/hello.py"):
+    for relative in sys.argv[4:]:
         archive.write(root / slug / relative, f"{slug}/{relative}")
 PY
 chmod 600 "$archive_file"
@@ -335,7 +359,7 @@ printf '%s\n' \
   "$registry_migrator_password" "$registry_manager_password" "$registry_runtime_password" \
   "$better_auth_secret" "$os_security_key" "$assistant_session_secret" \
   "$assistant_rate_limit_secret" "$model_config_encryption_key" \
-  "$agent_config_control_key" "$skill_registry_control_key" \
+  "$agent_config_control_key" "$skill_registry_control_key" "$model_api_key" \
   "$customer_password" "$staff_password" "$admin_password" \
   "$pending_customer_session" "$disabled_customer_session" "$staff_session" \
   "$role_target_session" "$admin_session" "$no_totp_admin_session" \
@@ -346,6 +370,63 @@ chmod 600 "$protected_patterns"
 
 compose() {
   docker compose -p "$project" --env-file "$env_file" $compose_files "$@"
+}
+
+assert_skill_runtime_stream() {
+  expected=$1
+  compose exec -T -e AAP_SKILL_RUNTIME_EXPECTED="$expected" agent python - <<'PY'
+import json
+import os
+import urllib.request
+import uuid
+
+expected = os.environ["AAP_SKILL_RUNTIME_EXPECTED"]
+security_key = open("/run/secrets/os_security_key", encoding="utf-8").read()
+boundary = f"----aap-skill-runtime-{uuid.uuid4().hex}"
+fields = {"message": "run the deterministic reviewed Skill", "stream": "true"}
+chunks = []
+for name, value in fields.items():
+    chunks.extend(
+        [
+            f"--{boundary}\r\n".encode(),
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode(),
+            value.encode(),
+            b"\r\n",
+        ]
+    )
+chunks.append(f"--{boundary}--\r\n".encode())
+request = urllib.request.Request(
+    "http://127.0.0.1:7777/agents/maduoduo/runs",
+    data=b"".join(chunks),
+    method="POST",
+    headers={
+        "Accept": "text/event-stream",
+        "Authorization": f"Bearer {security_key}",
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+    },
+)
+with urllib.request.urlopen(request, timeout=30) as response:
+    if response.status != 200 or response.headers.get_content_type() != "text/event-stream":
+        raise SystemExit("AgentOS Skill stream contract failed")
+    raw = response.read(4 * 1024 * 1024).decode("utf-8")
+
+marker = "AAP_SKILL_RUNTIME_E2E_MARKER_v1"
+if expected == "marker":
+    for required in (
+        "get_skill_script",
+        "deterministic-runtime",
+        "record.py",
+        marker,
+        "skill-tool-finished",
+    ):
+        if required not in raw:
+            raise SystemExit(f"Skill stream missing {required}")
+elif expected == "empty":
+    if "empty-set-no-skill-tools" not in raw or "get_skill_script" in raw or marker in raw:
+        raise SystemExit("empty Skill set exposed a Skill tool")
+else:
+    raise SystemExit("invalid Skill runtime stream expectation")
+PY
 }
 
 run_job() {
@@ -372,7 +453,7 @@ run_job --no-deps skill-registry-migrate
 run_job --no-deps skill-registry-migrate
 run_job --no-deps -e NODE_ENV=test migrate pnpm db:seed-auth-e2e
 compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -c \
-  "UPDATE public.users SET two_factor_enabled = CASE WHEN id = '10000000-0000-4000-8000-000000000003'::uuid THEN true ELSE false END WHERE id IN ('10000000-0000-4000-8000-000000000003'::uuid, '10000000-0000-4000-8000-000000000008'::uuid)" >/dev/null
+  "UPDATE public.users SET two_factor_enabled = true WHERE id IN ('10000000-0000-4000-8000-000000000003'::uuid, '10000000-0000-4000-8000-000000000008'::uuid)" >/dev/null
 uploader_permissions=$(compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -Atqc \
   "SELECT p.key
      FROM public.user_roles ur
@@ -434,9 +515,25 @@ export SKILL_REGISTRY_E2E_ARCHIVE=$archive_file
 export SKILL_REGISTRY_E2E_STATE_FILE=$state_file
 export SKILL_REGISTRY_E2E_STORAGE_STATE_FILE=$storage_state_file
 export SKILL_REGISTRY_E2E_SLUG=$slug
+export SKILL_RUNTIME_E2E_STATE_FILE=$runtime_state_file
 
 BASE_URL=$base_url pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep @lifecycle
+
+if [ "$runtime_mode" = true ]; then
+  BASE_URL=$base_url pnpm --filter @ai-agent-platform/web exec playwright test \
+    e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep @runtime-activate
+  assert_skill_runtime_stream marker
+  compose restart agent
+  compose up -d --no-deps --wait agent
+  assert_skill_runtime_stream marker
+  BASE_URL=$base_url pnpm --filter @ai-agent-platform/web exec playwright test \
+    e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep @runtime-empty
+  assert_skill_runtime_stream empty
+  BASE_URL=$base_url pnpm --filter @ai-agent-platform/web exec playwright test \
+    e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep @runtime-rollback
+  assert_skill_runtime_stream marker
+fi
 
 artifact_sha=$(node -e 'const fs=require("node:fs"); const state=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(state.artifactSha256)' "$state_file")
 case "$artifact_sha" in
@@ -466,6 +563,20 @@ artifact_count=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
   exit 1
 }
 
+restore_skill_runtime_environment=
+if [ "$runtime_mode" = true ]; then
+  runtime_pointer=$(compose exec -T db psql -U "$owner" -d "$database" -AtF '|' -qc \
+    "SELECT active_set_id, previous_set_id, activation_version FROM skill_registry.active_agent_skill_sets WHERE agent_id = 'maduoduo'")
+  IFS='|' read -r restore_active_set_id restore_previous_set_id restore_activation_version <<EOF
+$runtime_pointer
+EOF
+  [ -n "$restore_active_set_id" ] && [ -n "$restore_previous_set_id" ] && [ -n "$restore_activation_version" ] || {
+    echo "Skill runtime pointer is incomplete before backup" >&2
+    exit 1
+  }
+  restore_skill_runtime_environment="RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID=$restore_active_set_id RESTORE_EXPECTED_SKILL_PREVIOUS_SET_ID=$restore_previous_set_id RESTORE_EXPECTED_SKILL_ACTIVATION_VERSION=$restore_activation_version"
+fi
+
 compose run --rm --no-deps backup
 backup_volume="${project}_backup_data"
 docker run --rm -v "$backup_volume:/backups:ro" -v "$dump_directory:/out" \
@@ -473,7 +584,8 @@ docker run --rm -v "$backup_volume:/backups:ro" -v "$dump_directory:/out" \
   'backup=$(find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump.gpg" | sort | tail -n 1); test -n "$backup"; cp "$backup" /out/generated.dump.gpg; chmod 0600 /out/generated.dump.gpg'
 
 restore_output="$temporary_directory/restore-output.log"
-if ! BACKUP_ENCRYPTION_KEY_FILE=$BACKUP_ENCRYPTION_KEY_FILE \
+if ! env $restore_skill_runtime_environment \
+  BACKUP_ENCRYPTION_KEY_FILE=$BACKUP_ENCRYPTION_KEY_FILE \
   BACKUP_CRYPTO_IMAGE="${project}-backup:latest" \
   RESTORE_SKILL_REGISTRY_IMAGE="${project}-skill-registry:latest" \
   RESTORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha \
@@ -506,5 +618,9 @@ audit_leaks=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
   exit 1
 }
 
-success_message="Skill Registry E2E passed"
+if [ "$runtime_mode" = true ]; then
+  success_message="Skill runtime E2E passed"
+else
+  success_message="Skill Registry E2E passed"
+fi
 compose logs --no-color db agent skill-registry web proxy backup

@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 
 _MAX_COMPOSE_BYTES = 4 * 1024 * 1024
@@ -19,6 +20,11 @@ _MODEL_SECRET_TARGET = "/run/secrets/model_api_key"
 _DISABLED_MODEL_SOURCE = "/dev/null"
 _AGENT_WRAPPER = "/opt/aap/run-agent-with-secret-env.sh"
 _MODEL_SECRET_SPEC = f"MODEL_API_KEY={_MODEL_SECRET_TARGET}"
+_SKILL_DATABASE_ROLES = {
+    "skill_registry_migrator_database_url": "ai_agent_skill_registry_migrator",
+    "skill_registry_database_url": "ai_agent_skill_registry_manager",
+    "skill_registry_runtime_database_url": "ai_agent_skill_registry_runtime",
+}
 
 
 def _fail() -> int:
@@ -90,6 +96,60 @@ def _disabled_model_secret_is_safe(config: dict[str, Any]) -> bool:
     )
 
 
+def _resolved_secret_file(definition: object, *, root: Path) -> Path | None:
+    if type(definition) is not dict:
+        return None
+    source = definition.get("file")
+    if type(source) is not str or not source:
+        return None
+    candidate = Path(source)
+    return candidate if candidate.is_absolute() else root / candidate
+
+
+def _read_database_role(path: Path) -> tuple[str, str] | None:
+    try:
+        raw = path.read_bytes()
+        if not raw or len(raw) > 4096 or b"\x00" in raw:
+            return None
+        text = raw.decode("utf-8")
+        lines = text.splitlines()
+        if len(lines) != 1 or text.strip() != lines[0] or not lines[0]:
+            return None
+        value = lines[0]
+        if value.startswith("postgresql+psycopg_async://"):
+            parseable = "postgresql://" + value.removeprefix(
+                "postgresql+psycopg_async://"
+            )
+        elif value.startswith("postgresql://"):
+            parseable = value
+        else:
+            return None
+        parsed = urlsplit(parseable)
+        if parsed.username is None or parsed.hostname is None or not parsed.path:
+            return None
+        return unquote(parsed.username), value
+    except (OSError, UnicodeError, ValueError):
+        return None
+
+
+def _skill_database_roles_are_separated(
+    secrets: dict[str, Any], *, root: Path
+) -> bool:
+    present = set(_SKILL_DATABASE_ROLES).intersection(secrets)
+    if not present:
+        return True
+    if present != set(_SKILL_DATABASE_ROLES):
+        return False
+    values: list[str] = []
+    for name, expected_role in _SKILL_DATABASE_ROLES.items():
+        path = _resolved_secret_file(secrets.get(name), root=root)
+        parsed = None if path is None else _read_database_role(path)
+        if parsed is None or parsed[0] != expected_role:
+            return False
+        values.append(parsed[1])
+    return len(set(values)) == len(values)
+
+
 def _validate(config: object, *, root: Path) -> bool:
     if type(config) is not dict:
         return False
@@ -117,7 +177,7 @@ def _validate(config: object, *, root: Path) -> bool:
             return False
         if stat.S_IMODE(metadata.st_mode) != 0o600:
             return False
-    return True
+    return _skill_database_roles_are_separated(secrets, root=root)
 
 
 def main(arguments: list[str] | None = None) -> int:

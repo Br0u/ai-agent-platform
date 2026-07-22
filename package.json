@@ -22,6 +22,7 @@
     "skill-core:test": "uv --directory packages/skill-core run pytest -q",
     "skill-registry:test": "uv --directory apps/skill-registry run pytest -q -rs",
     "skill-registry:e2e": "sh docs/testing/run-skill-registry-e2e.sh",
+    "skill-runtime:e2e": "RUN_SKILL_RUNTIME_E2E=true sh docs/testing/run-skill-runtime-e2e.sh",
     "restore:lifecycle:test": "sh docs/testing/run-restore-docker-lifecycle.sh timeout && sh docs/testing/run-restore-docker-lifecycle.sh controlled-failure",
     "skill-core:lint": "uv --directory packages/skill-core run ruff check .",
     "skill-core:typecheck": "uv --directory packages/skill-core run mypy src tests",

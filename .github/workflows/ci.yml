@@ -222,12 +222,21 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm format:check
+      - name: Verify isolated Skill runtime acceptance contract
+        run: node docs/testing/skill-runtime-e2e.test.ts
       - run: pnpm build
       - run: pnpm restore:lifecycle:test
       - run: DATABASE_URL="$MIGRATOR_DATABASE_URL" pnpm --filter @ai-agent-platform/database db:seed-auth-e2e
         env:
           NODE_ENV: test
       - run: pnpm --filter @ai-agent-platform/web exec playwright install --with-deps chromium
+      - name: Run isolated Skill runtime acceptance
+        env:
+          RUN_SKILL_RUNTIME_E2E: "true"
+          SKILL_RUNTIME_E2E_PROJECT: aap-skill-runtime-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash docs/testing/run-skill-runtime-e2e.sh
+      - name: Run isolated backup and restore acceptance
+        run: bash docs/testing/run-agentos-backup-restore.sh
       - run: DATABASE_URL="$RUNTIME_DATABASE_URL" pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-smoke.spec.ts
       - run: docker build --target migrator -f apps/web/Dockerfile .
       - run: docker build --target runner -f apps/web/Dockerfile .

@@ -138,6 +138,14 @@ def _repository_code(error: SkillRuntimeRepositoryError) -> str:
     return "storage_unavailable"
 
 
+def _materializer_code(error: SkillMaterializerError) -> str:
+    return (
+        error.code
+        if error.code in {"artifact_invalid", "skill_validation_failed"}
+        else "skill_validation_failed"
+    )
+
+
 class SkillActivationCoordinator:
     """Own the one activation admission lock and the runtime/DB convergence state."""
 
@@ -287,12 +295,26 @@ class SkillActivationCoordinator:
             generation = None
             self._slot.set_accepting_runs(True)
             self._restore_status(active, failure_code=None)
+        except SkillRuntimeRepositoryError as error:
+            failure_code = _repository_code(error)
+            if generation is not None:
+                await self._slot.discard_generation(generation)
+            if reservation is not None:
+                reservation.cancel()
+            self._degrade(active, failure_code=failure_code)
+        except SkillMaterializerError as error:
+            failure_code = _materializer_code(error)
+            if generation is not None:
+                await self._slot.discard_generation(generation)
+            if reservation is not None:
+                reservation.cancel()
+            self._degrade(active, failure_code=failure_code)
         except Exception:
             if generation is not None:
                 await self._slot.discard_generation(generation)
             if reservation is not None:
                 reservation.cancel()
-            self._degrade(active, failure_code="runtime_degraded")
+            self._degrade(active, failure_code="skill_validation_failed")
         finally:
             self._activation_lock.release()
 
@@ -385,11 +407,7 @@ class SkillActivationCoordinator:
                     )
                     self._generation_validator(generation)
                 except SkillMaterializerError as error:
-                    code = (
-                        error.code
-                        if error.code in {"artifact_invalid", "skill_validation_failed"}
-                        else "skill_validation_failed"
-                    )
+                    code = _materializer_code(error)
                     try:
                         await self._mark_failed(command, code)
                     except Exception:

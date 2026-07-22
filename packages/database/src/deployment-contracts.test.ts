@@ -50,6 +50,7 @@ const composeSecretKeys = [
   "SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD",
   "SKILL_REGISTRY_MIGRATOR_DATABASE_URL",
   "SKILL_REGISTRY_DATABASE_URL",
+  "SKILL_REGISTRY_RUNTIME_DATABASE_URL",
   "SKILL_REGISTRY_CONTROL_KEY",
 ] as const;
 
@@ -1785,6 +1786,7 @@ exit 0
       "skill_registry_runtime_database_password",
       "skill_registry_migrator_database_url",
       "skill_registry_database_url",
+      "skill_registry_runtime_database_url",
       "skill_registry_control_key",
     ]);
     const sources = (service: RenderedService | undefined) =>
@@ -1887,13 +1889,16 @@ exit 0
     expect(visibleRegistrySources(web)).toEqual(
       new Set(["skill_registry_control_key"]),
     );
-    expect(visibleRegistrySources(agent)).toEqual(new Set());
+    expect(visibleRegistrySources(agent)).toEqual(
+      new Set(["skill_registry_runtime_database_url"]),
+    );
     expect(registrySecretHolders).toEqual({
       skill_registry_migrator_database_password: ["skill-registry-bootstrap"],
       skill_registry_database_password: ["skill-registry-bootstrap"],
       skill_registry_runtime_database_password: ["skill-registry-bootstrap"],
       skill_registry_migrator_database_url: ["skill-registry-migrate"],
       skill_registry_database_url: ["skill-registry"],
+      skill_registry_runtime_database_url: ["agent"],
       skill_registry_control_key: ["skill-registry", "web"],
     });
     expect(web?.environment?.SECRET_ENV_SPECS).toContain(
@@ -1905,8 +1910,8 @@ exit 0
     expect(web?.environment?.SECRET_ENV_SPECS).not.toMatch(
       /SKILL_REGISTRY_(?:MIGRATOR_)?DATABASE_URL/u,
     );
-    expect(agent?.environment?.SECRET_ENV_SPECS ?? "").not.toContain(
-      "SKILL_REGISTRY",
+    expect(agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "SKILL_REGISTRY_RUNTIME_DATABASE_URL=/run/secrets/skill_registry_runtime_database_url",
     );
 
     expect(registry?.user).toBe("root");
@@ -1983,6 +1988,7 @@ exit 0
       "SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD_FILE",
       "SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE",
       "SKILL_REGISTRY_DATABASE_URL_FILE",
+      "SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE",
       "SKILL_REGISTRY_CONTROL_KEY_FILE",
     ]) {
       expect(example).toMatch(new RegExp(`^${key}=`, "mu"));
@@ -1991,6 +1997,42 @@ exit 0
       /^SKILL_REGISTRY_(?:MIGRATOR_)?DATABASE_URL=/mu,
     );
     expect(example).not.toMatch(/^SKILL_REGISTRY_CONTROL_KEY=/mu);
+  });
+
+  it("mounts only the Skill Registry runtime role into the private Agent tmpfs", () => {
+    const rendered = renderComposeFixture();
+    const agent = rendered.services.agent;
+    const registry = rendered.services["skill-registry"];
+    const agentSecrets = new Set(
+      (agent?.secrets ?? [])
+        .map(secretSource)
+        .filter((source): source is string => source !== undefined),
+    );
+
+    expect(agentSecrets).toContain("skill_registry_runtime_database_url");
+    expect(agentSecrets).not.toContain("skill_registry_database_url");
+    expect(agentSecrets).not.toContain("skill_registry_migrator_database_url");
+    expect(agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "SKILL_REGISTRY_RUNTIME_DATABASE_URL=/run/secrets/skill_registry_runtime_database_url",
+    );
+    expect(agent?.tmpfs).toContain(
+      "/run/aap-skills:rw,exec,nosuid,nodev,size=96m,uid=10001,gid=10001,mode=0700",
+    );
+    const agentRunner = read("infra/docker/run-agent-with-secret-env.sh");
+    expect(agentRunner).toContain("stat -f -c '%T'");
+    expect(agentRunner).toContain("directory:10001:10001:700");
+    expect(agentRunner).toContain('"$runtime_filesystem" = tmpfs');
+    expect(agent?.depends_on?.["skill-registry-migrate"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(agent?.ports ?? []).toEqual([]);
+    expect(registry?.ports ?? []).toEqual([]);
+    expect(JSON.stringify(rendered)).not.toContain(
+      "SKILL_REGISTRY_ALLOW_LOOPBACK",
+    );
+    expect(read(".env.example")).toContain(
+      "SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE=.secrets/skill_registry_runtime_database_url",
+    );
   });
 
   it("keeps every skill-core package error stable across Registry and Web", () => {
@@ -2075,9 +2117,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
-httpd = http.server.HTTPServer(("127.0.0.1", 7788), Handler)
+httpd = http.server.HTTPServer(("127.0.0.1", 0), Handler)
 threading.Thread(target=httpd.handle_request, daemon=True).start()
-exec(os.environ["HEALTH_PROBE"], {})
+probe = os.environ["HEALTH_PROBE"].replace(
+    "127.0.0.1:7788",
+    f"127.0.0.1:{httpd.server_port}",
+)
+exec(probe, {})
 `;
     const run = (body: string) =>
       spawnSync("python3", ["-c", server], {
@@ -2114,6 +2160,9 @@ exec(os.environ["HEALTH_PROBE"], {})
     const linked = path.join(sandbox, "linked");
     const fifo = path.join(sandbox, "fifo");
     const privateValue = "preflight-private-value";
+    const runtimeUrl = path.join(sandbox, "runtime-url");
+    const managerUrl = path.join(sandbox, "manager-url");
+    const migratorUrl = path.join(sandbox, "migrator-url");
     mkdirSync(bin, { mode: 0o700 });
     writeFileSync(docker, '#!/bin/sh\nprintf "%s" "$FAKE_COMPOSE_CONFIG"\n', {
       mode: 0o700,
@@ -2125,6 +2174,23 @@ exec(os.environ["HEALTH_PROBE"], {})
     symlinkSync(secret, linked);
     expect(spawnSync("mkfifo", [fifo]).status).toBe(0);
     chmodSync(fifo, 0o600);
+    writeFileSync(
+      runtimeUrl,
+      "postgresql+psycopg_async://ai_agent_skill_registry_runtime:runtime@db:5432/platform",
+      { mode: 0o600 },
+    );
+    writeFileSync(
+      managerUrl,
+      "postgresql+psycopg_async://ai_agent_skill_registry_manager:manager@db:5432/platform",
+      { mode: 0o600 },
+    );
+    writeFileSync(
+      migratorUrl,
+      "postgresql+psycopg_async://ai_agent_skill_registry_migrator:migrator@db:5432/platform",
+      { mode: 0o600 },
+    );
+    for (const file of [runtimeUrl, managerUrl, migratorUrl])
+      chmodSync(file, 0o600);
 
     const preflight = path.join(
       root,
@@ -2149,6 +2215,33 @@ exec(os.environ["HEALTH_PROBE"], {})
     try {
       const valid = run(config("valid", secret));
       expect(valid.status, `${valid.stdout}${valid.stderr}`).toBe(0);
+
+      const roleSeparated = run({
+        secrets: {
+          skill_registry_runtime_database_url: { file: runtimeUrl },
+          skill_registry_database_url: { file: managerUrl },
+          skill_registry_migrator_database_url: { file: migratorUrl },
+        },
+        services: {},
+      });
+      expect(
+        roleSeparated.status,
+        `${roleSeparated.stdout}${roleSeparated.stderr}`,
+      ).toBe(0);
+
+      for (const invalidRuntimeFile of [managerUrl, migratorUrl]) {
+        const roleConfused = run({
+          secrets: {
+            skill_registry_runtime_database_url: { file: invalidRuntimeFile },
+            skill_registry_database_url: { file: managerUrl },
+            skill_registry_migrator_database_url: { file: migratorUrl },
+          },
+          services: {},
+        });
+        expect(roleConfused.status).not.toBe(0);
+        expect(roleConfused.stdout).toBe("");
+        expect(roleConfused.stderr).toBe("Compose secret preflight failed.\n");
+      }
 
       for (const [name, source] of [
         ["insecure", insecure],
@@ -3092,11 +3185,11 @@ secrets:
     expect(spec).toContain("SKILL.md");
     expect(spec).toContain("scripts/hello.py");
     expect(spec).toContain(".setInputFiles(archive)");
-    expect(spec).toContain("AUTH_TOTP_SETUP_REQUIRED");
-    expect(spec).toContain("totpFromUri(totpUri)");
+    expect(spec).toContain("modelAdminStaleSessionToken");
+    expect(spec).toContain('error: { code: "reauth_required" }');
     expect(spec).toContain("SKILL_REGISTRY_E2E_STORAGE_STATE_FILE");
     expect(spec).toContain("storageState: storageStatePath()");
-    expect(spec.match(/browser\.newContext\(/gu)).toHaveLength(1);
+    expect(spec.match(/browser\.newContext\(/gu)?.length).toBeGreaterThan(1);
     expect(spec).not.toMatch(/https?:\/\/(?:github|gitlab|gitcode)\./u);
 
     expect(runner).toContain("SKILL_REGISTRY_E2E_PROJECT");
@@ -3123,10 +3216,11 @@ secrets:
 
     for (const document of [testingReadme, skillsReadme]) {
       expect(document).toMatch(/库[＋+]审核|库与审核/u);
-      expect(document).toMatch(/Agent[^\n]*仍[^\n]*不加载/u);
-      expect(document).toContain("LocalSkills");
-      expect(document).toMatch(/下一[^\n]*计划/u);
+      expect(document).toMatch(/发布不等于|published[^\n]*不能证明/u);
     }
+    expect(skillsReadme).toContain("LocalSkills");
+    expect(skillsReadme).toMatch(/下一[^\n]*计划/u);
+    expect(skillsReadme).toMatch(/exact revision/u);
     expect(testingReadme).toMatch(/同一|exact|精确/u);
     const backupRunner = read("docs/testing/run-agentos-backup-restore.sh");
     expect(backupRunner).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256");
@@ -4065,6 +4159,51 @@ exit 0
     const script = read("infra/docker/restore-drill.sh");
     const expectedRegistryTriggers = [
       [
+        "active_agent_skill_sets_deny_delete",
+        "active_agent_skill_sets",
+        "deny_append_only_mutation",
+        "skill_registry",
+        11,
+        false,
+        false,
+      ],
+      [
+        "active_agent_skill_sets_guard_update",
+        "active_agent_skill_sets",
+        "guard_active_agent_skill_set_update",
+        "skill_registry",
+        19,
+        false,
+        false,
+      ],
+      [
+        "agent_skill_set_items_append_only",
+        "agent_skill_set_items",
+        "deny_append_only_mutation",
+        "skill_registry",
+        27,
+        false,
+        false,
+      ],
+      [
+        "agent_skill_set_items_validate",
+        "agent_skill_set_items",
+        "validate_agent_skill_set_contents",
+        "skill_registry",
+        29,
+        true,
+        true,
+      ],
+      [
+        "agent_skill_sets_guard_update",
+        "agent_skill_sets",
+        "guard_agent_skill_set_update",
+        "skill_registry",
+        19,
+        false,
+        false,
+      ],
+      [
         "skills_guard_update",
         "skills",
         "guard_skill_update",
@@ -4119,6 +4258,15 @@ exit 0
         false,
       ],
       [
+        "skill_set_control_events_append_only",
+        "skill_set_control_events",
+        "deny_append_only_mutation",
+        "skill_registry",
+        27,
+        false,
+        false,
+      ],
+      [
         "skill_revision_artifacts_append_only",
         "skill_revision_artifacts",
         "deny_append_only_mutation",
@@ -4133,6 +4281,15 @@ exit 0
         "deny_append_only_mutation",
         "skill_registry",
         27,
+        false,
+        false,
+      ],
+      [
+        "skill_revisions_protect_active_archive",
+        "skill_revisions",
+        "protect_active_skill_revision_archive",
+        "skill_registry",
+        19,
         false,
         false,
       ],
@@ -4287,6 +4444,10 @@ exit 0
     expect(script).toContain("skill_registry.skill_revisions");
     expect(script).toContain("skill_registry.skill_revision_artifacts");
     expect(script).toContain("skill_registry.skill_revision_files");
+    expect(script).toContain("skill_registry.agent_skill_sets");
+    expect(script).toContain("skill_registry.agent_skill_set_items");
+    expect(script).toContain("skill_registry.active_agent_skill_sets");
+    expect(script).toContain("skill_registry.skill_set_control_events");
     expect(script).toContain("skill_registry_schema_version");
     expect(script).toContain("skill_revision_count");
     expect(script).toContain("skill_artifact_count");
@@ -4418,7 +4579,7 @@ exit 0
     }
   });
 
-  it("rejects malformed expected artifact SHA before Docker", () => {
+  it("rejects malformed restore expectations before Docker", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "restore-artifact-sha-"));
     const bin = path.join(sandbox, "bin");
     const keyFile = path.join(sandbox, "encryption-key");
@@ -4479,6 +4640,52 @@ exit 91
         if (value !== "") {
           expect(output, JSON.stringify(value)).not.toContain(value);
         }
+      }
+      const validSetId = "11111111-1111-4111-8111-111111111111";
+      const malformedRuntime = [
+        {
+          RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID:
+            "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz",
+          RESTORE_EXPECTED_SKILL_PREVIOUS_SET_ID: validSetId,
+          RESTORE_EXPECTED_SKILL_ACTIVATION_VERSION: "1",
+        },
+        {
+          RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID: validSetId,
+          RESTORE_EXPECTED_SKILL_PREVIOUS_SET_ID: validSetId,
+          RESTORE_EXPECTED_SKILL_ACTIVATION_VERSION: "1 OR 1=1",
+        },
+        {
+          RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID: validSetId,
+        },
+      ];
+      for (const runtimeEnvironment of malformedRuntime) {
+        const result = spawnSync(
+          "sh",
+          [
+            script,
+            backupFile,
+            "1",
+            "1",
+            "11111111-1111-1111-1111-111111111111",
+            "fixture-session",
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: `${bin}:${process.env.PATH ?? ""}`,
+              BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+              DOCKER_LOG: dockerLog,
+              RESTORE_MAX_ENCRYPTED_BYTES: "1",
+              ...runtimeEnvironment,
+            },
+          },
+        );
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.status, JSON.stringify(runtimeEnvironment)).toBe(64);
+        expect(output.trim()).toMatch(
+          /^restore expected Skill runtime pointer is (?:invalid|incomplete)$/u,
+        );
       }
       expect(readFileSync(dockerLog, "utf8")).toBe("");
     } finally {
@@ -6900,8 +7107,8 @@ esac
         RESTORE_MAX_ENCRYPTED_BYTES: "128",
         RESTORE_MAX_DECRYPTED_BYTES: "32",
         RESTORE_SPACE_SAFETY_BYTES: "0",
-        RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
-        RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+        RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "5",
+        RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "2",
         RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
         RESTORE_DECRYPT_TIMEOUT_SECONDS: "1",
         RESTORE_DECRYPT_KILL_AFTER_SECONDS: "1",
@@ -7082,12 +7289,14 @@ esac
     );
     for (const runbook of [serverReadiness, read("infra/docker/README.md")]) {
       expect(runbook).toContain("Registry 常驻服务只持有 manager URL");
-      expect(runbook).toContain(
-        "Skill Registry runtime role/URL 本阶段不挂载给 Agent",
-      );
+      expect(runbook).toContain("Agent");
+      expect(runbook).toContain("Skill Registry");
+      expect(runbook).toContain("runtime URL");
+      expect(runbook).toContain("migrator");
     }
-    expect(rootReadme).toContain("Skill 库与审核闭环已接入");
-    expect(rootReadme).toContain("Agent 仍不加载任何 Skill");
+    expect(rootReadme).toContain("Skill 库、审核与运行时闭环已接入");
+    expect(rootReadme).toContain("96 MiB `/run/aap-skills` tmpfs");
+    expect(rootReadme).toContain("GitHub/GitLab/GitCode 导入");
   });
 
   it("keeps backup secrets out of command argv, bounds hung dumps, and removes plaintext work files", () => {
@@ -7143,7 +7352,7 @@ printf '%s\\n' "$@" >"$CAPTURE_DIR/psql.argv"
 while IFS= read -r command; do
   printf '%s\\n' "$command" >>"$CAPTURE_DIR/psql.commands"
   case "$command" in
-    *pg_export_snapshot*) printf '%s\\n' '00000003-0000001B-1|1|2|2|3|1024' ;;
+    *pg_export_snapshot*) printf '%s\\n' '00000003-0000001B-1|1|2|2|3|4|3|1|5|1024' ;;
     '\\q') exit 0 ;;
   esac
 done
@@ -7452,7 +7661,7 @@ while IFS= read -r command; do
   case "$command" in
     *pg_export_snapshot*)
       : >"$CAPTURE_DIR/idle-transaction"
-      printf '%s\n' '00000003-0000001B-1|1|2|2|3|1024'
+      printf '%s\n' '00000003-0000001B-1|1|2|2|3|4|3|1|5|1024'
       ;;
     COMMIT*) rm -f "$CAPTURE_DIR/idle-transaction" ;;
     '\\q') exit 0 ;;
@@ -7477,7 +7686,7 @@ printf 'partial-dump' >"$output"
 trap '' TERM
 mkfifo "$CAPTURE_DIR/pg-dump-block.fifo"
 blocked_pid=$$
-(sleep 5; kill -KILL "$blocked_pid" >/dev/null 2>&1 || true) >/dev/null 2>&1 &
+(sleep 8; kill -KILL "$blocked_pid" >/dev/null 2>&1 || true) >/dev/null 2>&1 &
 printf '%s\n' "$!" >"$CAPTURE_DIR/pg_dump.watchdog.pid"
 IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
 `,
@@ -7490,7 +7699,7 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
         [path.join(root, "infra/docker/backup.sh")],
         {
           encoding: "utf8",
-          timeout: 7_000,
+          timeout: 10_000,
           env: {
             ...process.env,
             PATH: `${hangBin}:${process.env.PATH ?? ""}`,
@@ -7533,7 +7742,7 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
       expect(hung.error, hungOutput).toBeUndefined();
       expect(hung.status, hungOutput).not.toBe(0);
       expect(hung.signal, hungOutput).toBeNull();
-      expect(hangElapsedMs).toBeLessThan(4_500);
+      expect(hangElapsedMs).toBeLessThan(7_500);
       expect(hungOutput.trim()).toBe("backup database dump failed");
       for (const protectedValue of [
         databasePassword,

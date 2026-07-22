@@ -1,0 +1,20 @@
+services:
+  agent:
+    build:
+      target: acceptance
+    command:
+      [
+        "uvicorn",
+        "e2e_skill_runtime.app:app_factory",
+        "--factory",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "7777",
+        "--no-access-log",
+      ]
+    environment:
+      AGENT_ENABLED: "true"
+      MODEL_PROVIDER: openai
+      MODEL_ID: e2e-skill-runtime
+      MODEL_BASE_URL: ""

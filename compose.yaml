@@ -371,6 +371,7 @@ services:
       SECRET_ENV_SPECS: >-
         AGNO_DATABASE_URL=/run/secrets/agno_database_url
         AGENT_CONTROL_DATABASE_URL=/run/secrets/agent_control_database_url
+        SKILL_REGISTRY_RUNTIME_DATABASE_URL=/run/secrets/skill_registry_runtime_database_url
         OS_SECURITY_KEY=/run/secrets/os_security_key
         MODEL_CONFIG_ENCRYPTION_KEY=/run/secrets/model_config_encryption_key
         AGENT_CONFIG_CONTROL_KEY=/run/secrets/agent_config_control_key
@@ -385,6 +386,7 @@ services:
     secrets:
       - agno_database_url
       - agent_control_database_url
+      - skill_registry_runtime_database_url
       - os_security_key
       - model_config_encryption_key
       - agent_config_control_key
@@ -396,6 +398,8 @@ services:
       agent-migrate:
         condition: service_completed_successfully
       agent-control-migrate:
+        condition: service_completed_successfully
+      skill-registry-migrate:
         condition: service_completed_successfully
     expose:
       - "7777"
@@ -415,6 +419,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=32m
+      - /run/aap-skills:rw,exec,nosuid,nodev,size=96m,uid=10001,gid=10001,mode=0700
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -655,5 +660,7 @@ secrets:
     file: ${SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE:-.secrets/skill_registry_migrator_database_url}
   skill_registry_database_url:
     file: ${SKILL_REGISTRY_DATABASE_URL_FILE:-.secrets/skill_registry_database_url}
+  skill_registry_runtime_database_url:
+    file: ${SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE:-.secrets/skill_registry_runtime_database_url}
   skill_registry_control_key:
     file: ${SKILL_REGISTRY_CONTROL_KEY_FILE:-.secrets/skill_registry_control_key}

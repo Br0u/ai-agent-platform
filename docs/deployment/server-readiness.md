@@ -84,7 +84,7 @@ docker compose ps
 
 Web 仅接收平台运行时数据库 URL、Better Auth 密钥、AgentOS Bearer 密钥、助理会话密钥以及独立 Skill Registry 控制密钥。它不得接收数据库 owner、任何 migrator 或 Skill Registry 数据库凭据。`ASSISTANT_PUBLIC_ORIGIN`必须是对外 HTTPS 精确 origin；仅隔离验收脚本允许`http://127.0.0.1:8080`并签发开发 Cookie。
 
-数据库角色分离：平台 owner 只供初始化/受控升级；平台 migrator 只供迁移；平台 runtime 只供 Web；Agno migrator/runtime 只能访问`agno`；Agent control migrator/runtime 只能访问`agent_control`；Skill Registry manager、runtime、migrator 各自分离，Registry 常驻服务只持有 manager URL，预留的 Skill Registry runtime role/URL 本阶段不挂载给 Agent 或任何常驻服务；backup 只读`public`、`drizzle`、`agno`、`skill_registry`。备份服务只接收非敏感连接字段和独立密码文件，不接收数据库 URL。运行时账号均无 schema 变更权限。`web`、`agent`和`skill-registry`都没有主机端口，唯一公开入口是 Nginx `proxy`。
+数据库角色分离：平台 owner 只供初始化/受控升级；平台 migrator 只供迁移；平台 runtime 只供 Web；Agno migrator/runtime 只能访问`agno`；Agent control migrator/runtime 只能访问`agent_control`；Skill Registry manager、runtime、migrator 各自分离，Registry 常驻服务只持有 manager URL，Agent 只持有 Skill Registry runtime URL 且只能访问 runtime view/函数；backup 只读`public`、`drizzle`、`agno`、`skill_registry`。备份服务只接收非敏感连接字段和独立密码文件，不接收数据库 URL。运行时账号均无 schema 变更权限。`web`、`agent`和`skill-registry`都没有主机端口，唯一公开入口是 Nginx `proxy`。
 
 创建首位超级管理员：
 

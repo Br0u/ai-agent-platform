@@ -69,7 +69,9 @@ function snapshot() {
 
 describe("admin Skill runtime contract", () => {
   it("accepts exact published, Registry, Agent, and permission truth", () => {
-    expect(parseAdminSkillRuntimeSnapshot(snapshot())).toEqual(snapshot());
+    const parsed = parseAdminSkillRuntimeSnapshot(snapshot());
+    expect(parsed).toEqual(snapshot());
+    expect(Object.getPrototypeOf(parsed?.agent)).toBe(Object.prototype);
   });
 
   it.each([

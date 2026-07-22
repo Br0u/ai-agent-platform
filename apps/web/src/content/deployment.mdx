@@ -28,7 +28,7 @@ import { Callout, FileTree, Steps } from "nextra/components";
 
 ### 准备基础配置和独立 Secret
 
-复制 `.env.example` 为 `.env`，至少配置数据库、Better Auth、外部 HTTPS Origin 和助理运行模式。动态模型控制面还需要两组独立数据库角色、一个 AES-256-GCM 主密钥和一个 Web/Agent 内部控制凭据。
+复制 `.env.example` 为 `.env`，至少配置数据库、Better Auth、外部 HTTPS Origin 和助理运行模式。动态模型控制面需要两组独立数据库角色；Skill Registry 另外需要严格分离的 migrator、manager、runtime 三个 DSN。Agent 只能挂载 runtime DSN。
 
 ```text
 install -d -m 700 .secrets
@@ -56,16 +56,18 @@ chmod 600 .secrets/agent_control_*_database_url
 ### 初始化平台、AgentOS 和模型控制数据库
 
 ```text
-docker compose build migrate agent-migrate agent-control-migrate agent web backup
+docker compose build migrate agent-migrate agent-control-migrate skill-registry-migrate agent skill-registry web backup
 docker compose up -d --wait db
 docker compose run --rm migrate
 docker compose run --rm agno-bootstrap
 docker compose run --rm agent-control-bootstrap
+docker compose run --rm skill-registry-bootstrap
 docker compose run --rm --no-deps agent-migrate
 docker compose run --rm --no-deps agent-control-migrate
+docker compose run --rm --no-deps skill-registry-migrate
 ```
 
-`agent-control-bootstrap` 只创建最小权限角色；`agent-control-migrate` 使用 migrator DSN 创建并校验 `agent_control` schema。迁移失败时不要启动 Agent，也不要把 migrator DSN 挂载给常驻 Agent 或 Web。
+bootstrap 任务只创建最小权限角色；migration 任务分别创建并校验控制面 schema。Skill 的 manager/migrator/runtime DSN 必须使用对应数据库用户名且三者值不同；`pnpm secrets:preflight` 会在 Compose 读取前失败关闭。迁移失败时不要启动 Agent，也不要把 manager 或 migrator DSN 挂载给常驻 Agent。
 
 ### 选择部署级开关
 
@@ -92,6 +94,8 @@ docker compose up -d --wait proxy backup
 
 使用具有 `admin:assistant:configure` 权限且最近 10 分钟内同时完成密码再认证和 TOTP 验证的账号访问 `/admin/assistant`。选择 Provider 和部署允许的 Endpoint，填写 Model ID 与 Key，先“保存草稿”，再“测试并启用”。测试成功后活动指针和运行时才会切换；保存本身不会影响当前模型。
 
+Skill 上传和审核完成后，在同一页面的“码多多 Skill 配置”中选择已发布 revision，创建候选并激活。成功条件是 Registry Active、Agent Loaded 和 Activation Version 一致。空集合会关闭全部 Skill，必须二次确认；回滚只克隆并激活 immediate previous，不能任意选择历史集合。
+
 </Steps>
 
 ## 启动与恢复语义
@@ -106,6 +110,8 @@ docker compose up -d --wait proxy backup
 
 候选模型测试失败时，失败 revision 会保留为内部记录，旧活动模型和活动指针不变。正常重启会恢复最近一次成功激活的动态配置，无需重新测试。
 
+Skill 激活先在 `/run/aap-skills` 的 96 MiB executable tmpfs 中重新校验 artifact，再 CAS 更新数据库指针。同步返回 `activation_result_unknown` 时不要重复创建候选，后台会按同一 request ID 对账；存储不可达或 Agent 加载状态不一致时 readiness 返回 503 并拒绝新 run。正常重启从 active pointer 重新物化，不依赖 Git 远端。
+
 ## 回滚
 
 后台不提供选择旧 revision 的入口，旧 revision 是不可变的内部恢复记录，不是可直接回滚的 UI 选项。运维回滚只有两种正常路径：
@@ -114,6 +120,8 @@ docker compose up -d --wait proxy backup
 2. 把希望恢复的参数重新保存为新 revision，再测试并启用。
 
 发生控制面或存储故障时，可先设置 `AGENT_ENABLED=false` 停止执行和 mutation，保留数据库证据后再修复。不要直接更新 `agent_control` 表或手工改活动指针。
+
+Skill 回滚从后台执行 immediate previous；不要直接更新 `skill_registry.active_agent_skill_sets`。备份包含 artifacts、sets、items、active/previous pointer 和私有 control events，恢复演练必须核对 digest、指针及 activation version。
 
 ## Key 与 Endpoint 运维
 
@@ -130,6 +138,6 @@ docker compose up -d --wait proxy backup
 
 ## 当前能力边界
 
-后台已经支持 OpenAI、Anthropic、Google、Qwen / DashScope、DeepSeek 和 MiniMax 的云模型配置。Skill、Knowledge、Tools/网页操作和本地算力卡片目前只是诚实的 roadmap 入口，不会加载能力、探测本地服务或发起安装请求。
+后台已经支持六家云模型配置，以及“已审核 ZIP → 候选集合 → 码多多运行时”的 Skill 闭环。当前不支持 GitHub/GitLab/GitCode 导入，也没有比容器边界更细的脚本沙箱；因此只允许上传和激活经过人工审核的 Skill。Knowledge、网页操作和本地算力仍是 roadmap 入口。
 
 设计参考 Agno 官方 [AgentOS Configuration](https://docs.agno.com/agent-os/config)、[Skills](https://docs.agno.com/skills/overview)、[Loading Skills](https://docs.agno.com/skills/loading-skills)、[Tools](https://docs.agno.com/tools/agent)、[Knowledge](https://docs.agno.com/agent-os/features/knowledge-management)、[Ollama](https://docs.agno.com/models/providers/local/ollama/overview)、[vLLM](https://docs.agno.com/models/providers/local/vllm/overview) 和 [OpenAI-compatible Models](https://docs.agno.com/models/providers/openai-like)。本仓库行为以 `apps/agent/uv.lock` 锁定的 Agno `2.7.2` 和本地测试为准，不假设最新版文档 API 已存在。

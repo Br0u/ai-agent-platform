@@ -504,11 +504,6 @@ def create_app(
         repository_unavailable = False
         if slot is not None:
             await slot.start()
-        if skill_runtime is not None:
-            try:
-                await skill_runtime.start()
-            except Exception:
-                pass
         try:
             if control_configured:
                 try:
@@ -579,6 +574,11 @@ def create_app(
                         )
                     except Exception:
                         slot.deactivate(capability="degraded")
+            if skill_runtime is not None:
+                try:
+                    await skill_runtime.start()
+                except Exception:
+                    pass
             yield
         finally:
             control_service = None

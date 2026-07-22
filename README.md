@@ -1,6 +1,6 @@
 # AI Agent Platform Customer Portal
 
-企业级 AI Agent Platform 客户门户。当前已完成全站页面、基础后台、自建数据库、Docker 部署、“码多多”单 Agent 与六家云模型动态配置闭环，以及 Skill 库、本地 ZIP 上传、不可变 revision、双人审核和加密备份恢复闭环；License、下载、OpenLab、Knowledge、网页工具和本地算力等尚未接入能力只保留诚实入口或接口契约。
+企业级 AI Agent Platform 客户门户。当前已完成全站页面、基础后台、自建数据库、Docker 部署、“码多多”单 Agent 与六家云模型动态配置闭环，以及审核过的 Skill 从 ZIP 上传、不可变 revision、双人审核、集合激活到 Agent 加载和加密备份恢复的闭环；License、下载、OpenLab、Knowledge、网页工具和本地算力等尚未接入能力只保留诚实入口或接口契约。
 
 ## 目录
 
@@ -66,6 +66,6 @@ docker compose up -d --wait proxy backup
 
 ## 当前状态
 
-已建立全站路由、蓝靛紫设计系统、PostgreSQL 最小权限角色、AgentOS 单 Agent 会话、AES-GCM 动态模型控制面和 Docker Compose 部署/验收基线。后台支持 OpenAI、Anthropic、Google、Qwen / DashScope、DeepSeek、MiniMax；动态活动配置优先于只读部署 bootstrap，失败候选不会替换旧活动模型，重启会从活动指针恢复。Skill 库与审核闭环已接入：授权管理员可上传本地 ZIP，平台生成不可变 revision，经另一位有审核权限的管理员发布，并将长期证据纳入加密备份恢复。
+已建立全站路由、蓝靛紫设计系统、PostgreSQL 最小权限角色、AgentOS 单 Agent 会话、AES-GCM 动态模型控制面和 Docker Compose 部署/验收基线。后台支持 OpenAI、Anthropic、Google、Qwen / DashScope、DeepSeek、MiniMax；动态活动配置优先于只读部署 bootstrap，失败候选不会替换旧活动模型，重启会从活动指针恢复。Skill 库、审核与运行时闭环已接入：授权管理员上传本地 ZIP，经独立审核发布 exact revision，再组成不可变集合供码多多激活、回滚和重启恢复；artifact 与运行时指针纳入加密备份恢复。
 
-Agent 仍不加载任何 Skill；`LocalSkills` 运行时挂载、Agent/Skill 绑定和 GitHub/GitLab/GitCode 导入属于后续计划。Knowledge、Tools/网页操作和自有服务器本地算力仍是未接入入口。实现边界参考 Agno 文档，但运行行为以仓库锁定的 Agno `2.7.2` 和本地测试为准。
+码多多现在只加载 Registry 中已发布且由授权管理员显式激活的 exact revision；Agent 使用只读 runtime 数据库角色，在 96 MiB `/run/aap-skills` tmpfs 中重新校验和物化，并按 run 固定 generation。GitHub/GitLab/GitCode 导入和脚本级强沙箱仍属于下一阶段。Knowledge、Tools/网页操作和自有服务器本地算力仍是未接入入口。运行行为以仓库锁定的 Agno `2.7.2` 和本地测试为准。

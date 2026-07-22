@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+import logging
 import os
 from pathlib import Path
 import stat
@@ -19,6 +20,7 @@ from skill_core import SkillMaterializationError, materialize_canonical_skill
 
 
 _DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+_LOGGER = logging.getLogger(__name__)
 
 
 class LoadedSkills(Protocol):
@@ -31,8 +33,9 @@ SkillsFactory = Callable[[str], LoadedSkills]
 class SkillMaterializerError(RuntimeError):
     """Stable materializer failure safe for the activation coordinator."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, stage: str = "unknown") -> None:
         self.code = code
+        self.stage = stage
         super().__init__(code)
 
 
@@ -43,8 +46,9 @@ class PreparedGeneration:
     root: Path
 
 
-def _fail(code: str) -> NoReturn:
-    raise SkillMaterializerError(code) from None
+def _fail(code: str, stage: str) -> NoReturn:
+    _LOGGER.warning("Skill materialization failed at %s", stage)
+    raise SkillMaterializerError(code, stage) from None
 
 
 def _default_skills_factory(path: str) -> LoadedSkills:
@@ -107,24 +111,24 @@ class SkillGenerationMaterializer:
 
     def _validate_root(self) -> None:
         if not self._root_path.is_absolute():
-            _fail("artifact_invalid")
+            _fail("artifact_invalid", "root_path")
         try:
             path_metadata = os.lstat(self._root_path)
             fd_metadata = os.fstat(self._root_fd)
         except OSError:
-            _fail("artifact_invalid")
+            _fail("artifact_invalid", "root_stat")
         if (
             not stat.S_ISDIR(path_metadata.st_mode)
             or not stat.S_ISDIR(fd_metadata.st_mode)
             or (path_metadata.st_dev, path_metadata.st_ino)
             != (fd_metadata.st_dev, fd_metadata.st_ino)
         ):
-            _fail("artifact_invalid")
+            _fail("artifact_invalid", "root_identity")
 
     @staticmethod
     def _validate_snapshot(snapshot: RuntimeSetSnapshot) -> None:
         if type(snapshot) is not RuntimeSetSnapshot:
-            _fail("skill_validation_failed")
+            _fail("skill_validation_failed", "snapshot")
         names = [item.package.manifest.name for item in snapshot.items]
         if (
             type(snapshot.set_id) is not UUID
@@ -138,7 +142,7 @@ class SkillGenerationMaterializer:
             or snapshot.total_extracted_size > 24 * 1024 * 1024
             or len(names) != len(set(names))
         ):
-            _fail("skill_validation_failed")
+            _fail("skill_validation_failed", "snapshot")
 
     def prepare(self, snapshot: RuntimeSetSnapshot) -> PreparedGeneration:
         self._validate_root()
@@ -148,7 +152,7 @@ class SkillGenerationMaterializer:
         if _exists(self._root_fd, preparing_name) or _exists(
             self._root_fd, generation_name
         ):
-            _fail("artifact_invalid")
+            _fail("artifact_invalid", "generation_exists")
 
         current_name = preparing_name
         created = False
@@ -166,7 +170,7 @@ class SkillGenerationMaterializer:
                 not stat.S_ISDIR(metadata.st_mode)
                 or stat.S_IMODE(metadata.st_mode) != 0o700
             ):
-                _fail("artifact_invalid")
+                _fail("artifact_invalid", "preparing_mode")
             for item in snapshot.items:
                 materialize_canonical_skill(
                     item.package,
@@ -176,7 +180,7 @@ class SkillGenerationMaterializer:
             os.close(preparing_fd)
             preparing_fd = -1
             if _exists(self._root_fd, generation_name):
-                _fail("artifact_invalid")
+                _fail("artifact_invalid", "generation_race")
             os.rename(
                 preparing_name,
                 generation_name,
@@ -195,7 +199,7 @@ class SkillGenerationMaterializer:
                 item.package.manifest.name: item.slug for item in snapshot.items
             }
             if len(loaded) != len(expected):
-                _fail("skill_validation_failed")
+                _fail("skill_validation_failed", "loader_count")
             actual_names: set[str] = set()
             resolved_root = generation_root.resolve(strict=True)
             for skill in loaded:
@@ -208,10 +212,10 @@ class SkillGenerationMaterializer:
                     or type(source_path) is not str
                     or Path(source_path) != resolved_root / expected[name]
                 ):
-                    _fail("skill_validation_failed")
+                    _fail("skill_validation_failed", "loader_identity")
                 actual_names.add(name)
             if actual_names != set(expected):
-                _fail("skill_validation_failed")
+                _fail("skill_validation_failed", "loader_names")
             return PreparedGeneration(
                 snapshot.set_id,
                 cast(Skills, candidate_skills),
@@ -224,15 +228,23 @@ class SkillGenerationMaterializer:
         except SkillMaterializationError:
             if created:
                 _remove_tree(self._root_fd, current_name)
-            _fail("artifact_invalid")
+            _fail("artifact_invalid", "archive_write")
         except SkillValidationError:
             if created:
                 _remove_tree(self._root_fd, current_name)
-            _fail("skill_validation_failed")
-        except Exception:
+            _fail("skill_validation_failed", "loader_validation")
+        except Exception as error:
             if created:
                 _remove_tree(self._root_fd, current_name)
-            _fail("skill_validation_failed" if loading else "artifact_invalid")
+            _LOGGER.warning(
+                "Skill materialization filesystem failure %s errno=%s",
+                type(error).__name__,
+                getattr(error, "errno", None),
+            )
+            _fail(
+                "skill_validation_failed" if loading else "artifact_invalid",
+                "loader_runtime" if loading else "filesystem",
+            )
         except BaseException:
             if created:
                 _remove_tree(self._root_fd, current_name)

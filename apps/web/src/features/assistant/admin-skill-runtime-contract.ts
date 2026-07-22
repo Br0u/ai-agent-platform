@@ -399,7 +399,16 @@ export function parseAdminAgentSkillRuntime(
       return null;
     }
   }
-  return record as AdminAgentSkillRuntime;
+  return {
+    skillCapability:
+      record.skillCapability as AdminAgentSkillRuntime["skillCapability"],
+    configured: record.configured,
+    activeSetId: record.activeSetId,
+    loadedSetId: record.loadedSetId,
+    previousSetId: record.previousSetId,
+    activationVersion: record.activationVersion,
+    failureCode: record.failureCode,
+  } as AdminAgentSkillRuntime;
 }
 
 export function parseAdminAgentSkillActivationResponse(

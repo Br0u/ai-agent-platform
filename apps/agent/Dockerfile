@@ -37,6 +37,7 @@ COPY --chown=root:root --chmod=0644 infra/agent/skill-runtime-imports.json /etc/
 FROM runtime-base AS acceptance
 
 COPY --chown=agent:agent apps/agent/tests/e2e_agent /app/apps/agent/e2e_agent
+COPY --chown=agent:agent apps/agent/tests/e2e_skill_runtime /app/apps/agent/e2e_skill_runtime
 
 USER agent
 

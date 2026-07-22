@@ -1235,6 +1235,47 @@ def test_lifespan_reconciles_before_requests_and_closes_model_before_repository(
     assert events == ["reconciled", "request", "active-rev1", "repository"]
 
 
+def test_lifespan_restores_model_before_active_skill_runtime() -> None:
+    settings = dynamic_settings()
+    cipher = ModelConfigCipher(
+        master_key=settings.model_config_encryption_key  # type: ignore[arg-type]
+    )
+    repository = ActiveRepository(stored_active(cipher=cipher))
+    events: list[str] = []
+
+    def build_model(model_settings: ActiveModelSettings) -> ManagedModel:
+        events.append("model")
+        return managed_model(model_settings.model_id, events)
+
+    def build_skill_runtime(
+        _settings: RuntimeSettings,
+        slot: ModelRuntimeSlot,
+        _database: AsyncPostgresDb,
+    ) -> ReadySkillRuntime:
+        class ModelAwareSkillRuntime(ReadySkillRuntime):
+            async def start(self) -> None:
+                events.append(f"skill:{slot.runtime_status().capability}")
+                if slot.runtime_status().capability != "available":
+                    raise RuntimeError("model must be restored before Skill runtime")
+                await super().start()
+
+        return ModelAwareSkillRuntime()
+
+    app = create_app(
+        settings=settings,
+        readiness_probe=ready_probe,
+        repository_builder=lambda _: repository,
+        cipher_builder=lambda _: cipher,
+        model_builder=build_model,
+        skill_runtime_manager_builder=build_skill_runtime,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/internal/health/ready", headers=AUTHORIZATION)
+        assert response.status_code == 200
+        assert events[:2] == ["model", "skill:available"]
+
+
 def test_lifespan_injects_one_control_dependency_graph_with_runtime_verifier() -> None:
     settings = dynamic_settings(model_timeout_seconds=37)
     events: list[str] = []

@@ -28,6 +28,37 @@ if [ "${RESTORE_EXPECTED_ARTIFACT_SHA256+x}" = x ]; then
   fi
   expected_artifact_sha256_required=true
 fi
+expected_skill_runtime_required=false
+if [ "${RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID+x}${RESTORE_EXPECTED_SKILL_PREVIOUS_SET_ID+x}${RESTORE_EXPECTED_SKILL_ACTIVATION_VERSION+x}" = xxx ]; then
+  expected_skill_active_set_id=$RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID
+  expected_skill_previous_set_id=$RESTORE_EXPECTED_SKILL_PREVIOUS_SET_ID
+  expected_skill_activation_version=$RESTORE_EXPECTED_SKILL_ACTIVATION_VERSION
+  for expected_set_id in "$expected_skill_active_set_id" "$expected_skill_previous_set_id"; do
+    case "$expected_set_id" in
+      ????????-????-????-????-????????????) ;;
+      *) echo "restore expected Skill runtime pointer is invalid" >&2; exit 64 ;;
+    esac
+    expected_set_hex=$(printf '%s' "$expected_set_id" | tr -d '-')
+    case "$expected_set_hex" in
+      ''|*[!0-9A-Fa-f]*)
+        echo "restore expected Skill runtime pointer is invalid" >&2
+        exit 64
+        ;;
+    esac
+    if [ "${#expected_set_hex}" -ne 32 ]; then
+      echo "restore expected Skill runtime pointer is invalid" >&2
+      exit 64
+    fi
+  done
+  unset expected_set_hex
+  case "$expected_skill_activation_version" in
+    ''|*[!0-9]*|0) echo "restore expected Skill runtime pointer is invalid" >&2; exit 64 ;;
+  esac
+  expected_skill_runtime_required=true
+elif [ -n "${RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID+x}${RESTORE_EXPECTED_SKILL_PREVIOUS_SET_ID+x}${RESTORE_EXPECTED_SKILL_ACTIVATION_VERSION+x}" ]; then
+  echo "restore expected Skill runtime pointer is incomplete" >&2
+  exit 64
+fi
 : "${BACKUP_ENCRYPTION_KEY_FILE:?Set BACKUP_ENCRYPTION_KEY_FILE to a readable secret file}"
 script_directory="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 "$script_directory/validate-backup-key.sh" "$BACKUP_ENCRYPTION_KEY_FILE"
@@ -1348,16 +1379,23 @@ WITH version_state AS (
 ), expected_security_triggers(
   trigger_name, table_name, function_name, function_schema, trigger_type,
   is_deferrable, is_initially_deferred, enabled
-) AS (
-  VALUES
-    ('skills_guard_update', 'skills', 'guard_skill_update', 'skill_registry', 19, false, false, 'A'),
+  ) AS (
+    VALUES
+      ('active_agent_skill_sets_deny_delete', 'active_agent_skill_sets', 'deny_append_only_mutation', 'skill_registry', 11, false, false, 'A'),
+      ('active_agent_skill_sets_guard_update', 'active_agent_skill_sets', 'guard_active_agent_skill_set_update', 'skill_registry', 19, false, false, 'A'),
+      ('agent_skill_set_items_append_only', 'agent_skill_set_items', 'deny_append_only_mutation', 'skill_registry', 27, false, false, 'A'),
+      ('agent_skill_set_items_validate', 'agent_skill_set_items', 'validate_agent_skill_set_contents', 'skill_registry', 29, true, true, 'A'),
+      ('agent_skill_sets_guard_update', 'agent_skill_sets', 'guard_agent_skill_set_update', 'skill_registry', 19, false, false, 'A'),
+      ('skills_guard_update', 'skills', 'guard_skill_update', 'skill_registry', 19, false, false, 'A'),
     ('skill_revisions_guard_insert', 'skill_revisions', 'guard_revision_insert', 'skill_registry', 7, false, false, 'A'),
     ('skill_revisions_guard_update', 'skill_revisions', 'guard_revision_update', 'skill_registry', 19, false, false, 'A'),
     ('skill_revisions_require_review_event', 'skill_revisions', 'require_revision_review_event', 'skill_registry', 17, true, true, 'A'),
-    ('skill_control_events_stamp_transaction', 'skill_control_events', 'stamp_control_event_transaction', 'skill_registry', 7, false, false, 'A'),
-    ('skill_control_events_append_only', 'skill_control_events', 'deny_append_only_mutation', 'skill_registry', 27, false, false, 'A'),
-    ('skill_revision_artifacts_append_only', 'skill_revision_artifacts', 'deny_append_only_mutation', 'skill_registry', 27, false, false, 'A'),
-    ('skill_revision_files_append_only', 'skill_revision_files', 'deny_append_only_mutation', 'skill_registry', 27, false, false, 'A')
+      ('skill_control_events_stamp_transaction', 'skill_control_events', 'stamp_control_event_transaction', 'skill_registry', 7, false, false, 'A'),
+      ('skill_control_events_append_only', 'skill_control_events', 'deny_append_only_mutation', 'skill_registry', 27, false, false, 'A'),
+      ('skill_set_control_events_append_only', 'skill_set_control_events', 'deny_append_only_mutation', 'skill_registry', 27, false, false, 'A'),
+      ('skill_revision_artifacts_append_only', 'skill_revision_artifacts', 'deny_append_only_mutation', 'skill_registry', 27, false, false, 'A'),
+      ('skill_revision_files_append_only', 'skill_revision_files', 'deny_append_only_mutation', 'skill_registry', 27, false, false, 'A'),
+      ('skill_revisions_protect_active_archive', 'skill_revisions', 'protect_active_skill_revision_archive', 'skill_registry', 19, false, false, 'A')
 ), actual_security_triggers AS (
   SELECT trigger.tgname::text,
          relation.relname::text,
@@ -1393,6 +1431,10 @@ WITH version_state AS (
     AND to_regclass('skill_registry.skill_revisions') IS NOT NULL
     AND to_regclass('skill_registry.skill_revision_artifacts') IS NOT NULL
     AND to_regclass('skill_registry.skill_revision_files') IS NOT NULL
+    AND to_regclass('skill_registry.agent_skill_sets') IS NOT NULL
+    AND to_regclass('skill_registry.agent_skill_set_items') IS NOT NULL
+    AND to_regclass('skill_registry.active_agent_skill_sets') IS NOT NULL
+    AND to_regclass('skill_registry.skill_set_control_events') IS NOT NULL
     AND EXISTS (
       SELECT 1 FROM pg_constraint
       WHERE conrelid = 'skill_registry.skill_revision_artifacts'::regclass
@@ -1402,6 +1444,18 @@ WITH version_state AS (
     AND EXISTS (
       SELECT 1 FROM pg_constraint
       WHERE conrelid = 'skill_registry.skill_revision_files'::regclass
+        AND confrelid = 'skill_registry.skill_revisions'::regclass
+        AND contype = 'f' AND convalidated
+    )
+    AND EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conrelid = 'skill_registry.agent_skill_set_items'::regclass
+        AND confrelid = 'skill_registry.agent_skill_sets'::regclass
+        AND contype = 'f' AND convalidated
+    )
+    AND EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conrelid = 'skill_registry.agent_skill_set_items'::regclass
         AND confrelid = 'skill_registry.skill_revisions'::regclass
         AND contype = 'f' AND convalidated
     ) AS contract_valid
@@ -1471,6 +1525,37 @@ if [ "$expected_artifact_sha256_required" = true ]; then
   fi
 fi
 
+expected_skill_runtime_match_count=0
+skill_runtime_set_count=0
+skill_runtime_event_count=0
+if [ "$expected_skill_runtime_required" = true ]; then
+  if ! run_database_scalar expected_skill_runtime_match_count psql \
+    --username="$owner" --dbname="$database" --no-psqlrc \
+    --tuples-only --no-align --quiet --set=ON_ERROR_STOP=1 --command="
+SELECT COUNT(*)
+FROM skill_registry.active_agent_skill_sets
+WHERE agent_id = 'maduoduo'
+  AND active_set_id = '$expected_skill_active_set_id'::uuid
+  AND previous_set_id = '$expected_skill_previous_set_id'::uuid
+  AND activation_version = $expected_skill_activation_version::bigint;"; then
+    echo "restore drill failed Skill runtime pointer check" >&2
+    exit 1
+  fi
+  expected_skill_runtime_match_count=$docker_scalar
+  if ! run_database_scalar skill_runtime_set_count psql -U "$owner" -d "$database" -Atqc \
+    "SELECT count(*) FROM skill_registry.agent_skill_sets"; then
+    echo "restore drill failed Skill runtime set check" >&2
+    exit 1
+  fi
+  skill_runtime_set_count=$docker_scalar
+  if ! run_database_scalar skill_runtime_event_count psql -U "$owner" -d "$database" -Atqc \
+    "SELECT count(*) FROM skill_registry.skill_set_control_events"; then
+    echo "restore drill failed Skill runtime event check" >&2
+    exit 1
+  fi
+  skill_runtime_event_count=$docker_scalar
+fi
+
 for restored_number in \
   "$migration_count" \
   "$latest_migration" \
@@ -1521,9 +1606,13 @@ if [ "$migration_count" != "$expected_migrations" ] || \
    [ "$skill_registry_security_trigger_mismatch_count" != "0" ] || \
    { [ "$expected_artifact_sha256_required" = true ] && \
      [ "$expected_artifact_match_count" != "1" ]; } || \
+   { [ "$expected_skill_runtime_required" = true ] && \
+     { [ "$expected_skill_runtime_match_count" != "1" ] || \
+       [ "$skill_runtime_set_count" -le 1 ] || \
+       [ "$skill_runtime_event_count" -le 1 ]; }; } || \
    [ "$skill_registry_schema_contract" != "t" ]; then
   echo "restore drill failed critical table checks" >&2
   exit 1
 fi
 
-restore_success_message="restore drill passed: migrations=$migration_count latest=$latest_migration users=$user_count agno_sessions=$agno_session_count agno_schema_versions=$agno_schema_version_count skill_registry_version=$skill_registry_schema_version revisions=$skill_revision_count artifacts=$skill_artifact_count files=$skill_file_count artifact_digests_verified=$skill_artifact_digest_count"
+restore_success_message="restore drill passed: migrations=$migration_count latest=$latest_migration users=$user_count agno_sessions=$agno_session_count agno_schema_versions=$agno_schema_version_count skill_registry_version=$skill_registry_schema_version revisions=$skill_revision_count artifacts=$skill_artifact_count files=$skill_file_count artifact_digests_verified=$skill_artifact_digest_count runtime_sets=$skill_runtime_set_count runtime_events=$skill_runtime_event_count"

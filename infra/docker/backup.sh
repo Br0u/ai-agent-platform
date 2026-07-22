@@ -192,6 +192,10 @@ while true; do
        (SELECT COUNT(*) FROM skill_registry.skill_revisions),
        (SELECT COUNT(*) FROM skill_registry.skill_revision_artifacts),
        (SELECT COUNT(*) FROM skill_registry.skill_revision_files),
+       (SELECT COUNT(*) FROM skill_registry.agent_skill_sets),
+       (SELECT COUNT(*) FROM skill_registry.agent_skill_set_items),
+       (SELECT COUNT(*) FROM skill_registry.active_agent_skill_sets),
+       (SELECT COUNT(*) FROM skill_registry.skill_set_control_events),
        pg_database_size(current_database());" >&3
   if ! IFS='|' read -r \
     snapshot_id \
@@ -199,6 +203,10 @@ while true; do
     skill_revision_count \
     skill_artifact_count \
     skill_file_count \
+    skill_runtime_set_count \
+    skill_runtime_item_count \
+    skill_runtime_pointer_count \
+    skill_runtime_event_count \
     database_size_bytes <"$snapshot_output_fifo"; then
     echo "backup snapshot acquisition failed" >&2
     exit 1
@@ -214,6 +222,10 @@ while true; do
     "$skill_revision_count" \
     "$skill_artifact_count" \
     "$skill_file_count" \
+    "$skill_runtime_set_count" \
+    "$skill_runtime_item_count" \
+    "$skill_runtime_pointer_count" \
+    "$skill_runtime_event_count" \
     "$database_size_bytes"; do
     case "$snapshot_number" in
       ''|*[!0-9]*)

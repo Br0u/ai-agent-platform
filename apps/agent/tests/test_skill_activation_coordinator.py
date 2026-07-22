@@ -178,6 +178,24 @@ async def test_prepare_failure_marks_candidate_failed_and_keeps_old_runtime(
 
 
 @pytest.mark.asyncio
+async def test_restore_reports_a_stable_materialization_failure(
+    tmp_path: Path,
+) -> None:
+    repository = Repository()
+    repository.active = snapshot(state="active", version=1)
+    service, slot, root_fd, materializer = await coordinator(tmp_path, repository)
+    materializer.failure = SkillMaterializerError("artifact_invalid")
+    try:
+        await service.restore()
+
+        assert service.status().skill_capability == "degraded"
+        assert service.status().active_set_id == SET_ID
+        assert service.status().failure_code == "artifact_invalid"
+    finally:
+        await close(service, slot, root_fd)
+
+
+@pytest.mark.asyncio
 async def test_nonblocking_busy_and_runtime_capacity_fail_before_cas(
     tmp_path: Path,
 ) -> None:

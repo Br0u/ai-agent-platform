@@ -2,7 +2,7 @@
 
 目标部署拓扑：`proxy + web + agent + skill-registry + db + backup`。采用 Docker Compose 单机部署作为一期基线，代码镜像与数据卷分离。
 
-生产启动顺序固定为：`db → migrate / agno-bootstrap → agent-migrate / agent-control-bootstrap / skill-registry-bootstrap → agent-control-migrate / skill-registry-migrate → agent / skill-registry → web → proxy/backup`。`migrate`负责平台 schema；`agno-bootstrap`与`agent-migrate`分别负责 Agno 最小权限角色和 schema；`agent-control-bootstrap`在 Agno 角色就绪后创建动态模型控制面的独立角色，`agent-control-migrate`负责`agent_control`schema；`skill-registry-bootstrap`与`skill-registry-migrate`创建 Registry 最小权限角色和长期 schema。Agent 只持有 Agno 与动态控制面的 runtime URL；Registry 常驻服务只持有 manager URL。预留的 Skill Registry runtime role/URL 本阶段不挂载给 Agent、Web 或 Registry 常驻服务，任何常驻服务都不持有 migrator 凭据。
+生产启动顺序固定为：`db → migrate / agno-bootstrap → agent-migrate / agent-control-bootstrap / skill-registry-bootstrap → agent-control-migrate / skill-registry-migrate → agent / skill-registry → web → proxy/backup`。`migrate`负责平台 schema；`agno-bootstrap`与`agent-migrate`分别负责 Agno 最小权限角色和 schema；`agent-control-bootstrap`在 Agno 角色就绪后创建动态模型控制面的独立角色，`agent-control-migrate`负责`agent_control`schema；`skill-registry-bootstrap`与`skill-registry-migrate`创建 Registry 最小权限角色和长期 schema。Agent 持有 Agno、动态控制面和 Skill Registry 的 runtime URL；Registry 常驻服务只持有 manager URL。manager、runtime、migrator 三个 Skill Registry DSN 必须分离，任何常驻服务都不持有 migrator 凭据。
 
 `ai_agent_control_migrator`拥有`agent_control`schema 和表，`ai_agent_control`只获得运行所需的`SELECT/INSERT/UPDATE`权限。`AGENT_ENABLED=true`只负责注册码多多并启用动态模型控制面，启动时不要求 Provider、Model ID 或模型 Key；部署环境中的完整 Provider/Model/Key 仅是可选、只读的 bootstrap source。一旦存在动态活动配置，动态配置优先，加载失败时 fail closed，不静默回退部署 bootstrap。自定义模型 Endpoint 只能编辑`infra/agent/model-endpoints.json`后重建 Agent 镜像；目录以 root `0644`复制到只读容器，Web 不持有目录或模型 Endpoint。
 
