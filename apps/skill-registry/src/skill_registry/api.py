@@ -407,7 +407,9 @@ async def _read_review(request: Request) -> ParsedReview | None:
             content_reviewed=cast(bool, attestations["contentReviewed"]),
             usage_rights_confirmed=cast(bool, attestations["usageRightsConfirmed"]),
             execution_risk_accepted=cast(bool, attestations["executionRiskAccepted"]),
-            independent_reviewer_confirmed=cast(bool, attestations["independentReviewerConfirmed"]),
+            reviewer_authorization_confirmed=cast(
+                bool, attestations["independentReviewerConfirmed"]
+            ),
         ),
     )
 

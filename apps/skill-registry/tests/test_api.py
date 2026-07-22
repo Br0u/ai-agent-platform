@@ -270,9 +270,7 @@ def test_package_validation_errors_remain_stable_client_errors() -> None:
         assert response.headers["cache-control"] == "no-store"
         assert b"private validation detail" not in response.body
 
-    too_large = _registry_error(
-        RegistryError("ARCHIVE_TOO_LARGE", "private validation detail")
-    )
+    too_large = _registry_error(RegistryError("ARCHIVE_TOO_LARGE", "private validation detail"))
     assert too_large.status_code == 413
     assert json.loads(too_large.body) == {"error": "ARCHIVE_TOO_LARGE"}
     assert b"private validation detail" not in too_large.body
@@ -421,6 +419,7 @@ def test_upload_and_review_forward_verified_assertion_context() -> None:
     assert service.reviewed is not None
     assert getattr(service.reviewed, "reviewer") == ACTOR
     assert getattr(service.reviewed, "skill_id") == SKILL_ID
+    assert service.reviewed.attestations.reviewer_authorization_confirmed is True
 
 
 def test_upload_content_length_is_rejected_without_receiving_body() -> None:

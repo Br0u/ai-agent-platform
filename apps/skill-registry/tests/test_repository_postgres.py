@@ -342,7 +342,7 @@ async def test_real_postgres_allows_self_review_and_is_concurrency_safe() -> Non
             WHERE event.target_id = %s AND event.event_type = 'revision_published'""",
             (created.id,),
         )
-        assert await cursor.fetchone() == (actor, actor)
+        assert await cursor.fetchone() == (str(actor), actor)
 
     concurrent_package = canonicalize_skill_zip(build_zip(slug, instructions="# Changed\n"))
     concurrent = await repository.create_upload_revision(
