@@ -7,6 +7,7 @@ import type {
 import { isAdminAssistantChatResponse } from "@/features/assistant/admin-assistant-contract";
 import { useAssistantSession } from "@/components/assistant/use-assistant-session";
 import { AssistantModelConfigPanel } from "@/components/admin/assistant-model-config-panel";
+import { AssistantSkillConfigurationPanel } from "@/components/admin/assistant-skill-configuration-panel";
 import { AssistantCapabilityRoadmap } from "@/components/admin/assistant-capability-roadmap";
 import {
   AssistantSkillRegistryPanel,
@@ -14,6 +15,7 @@ import {
 } from "@/components/admin/assistant-skill-registry-panel";
 import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
 import type { AdminSkillPermissionFlags } from "@/features/assistant/admin-skill-contract";
+import type { AdminSkillRuntimeSnapshot } from "@/features/assistant/admin-skill-runtime-contract";
 import type { FormEvent } from "react";
 import "./assistant-admin-page.css";
 
@@ -23,6 +25,7 @@ type AssistantAdminPageProps = {
   skillActorUserId: string;
   skillCanRead: boolean;
   skillPermissions: AdminSkillPermissionFlags;
+  skillRuntime: AdminSkillRuntimeSnapshot;
   skillSnapshot: AdminSkillRegistrySnapshot;
   status: AdminAssistantStatusSnapshot;
 };
@@ -43,6 +46,7 @@ export function AssistantAdminPage({
   skillActorUserId,
   skillCanRead,
   skillPermissions,
+  skillRuntime,
   skillSnapshot,
   status,
 }: AssistantAdminPageProps) {
@@ -143,6 +147,8 @@ export function AssistantAdminPage({
       </section>
 
       <AssistantModelConfigPanel initialSnapshot={modelConfigs} />
+
+      <AssistantSkillConfigurationPanel initialSnapshot={skillRuntime} />
 
       <AssistantSkillRegistryPanel
         actorUserId={skillActorUserId}

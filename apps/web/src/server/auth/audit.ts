@@ -101,6 +101,15 @@ export type AssistantSkillAuditMetadata<
   requestId: string;
   result: Result;
 };
+export type AssistantSkillRuntimeAuditMetadata = {
+  operation: "create" | "activate" | "discard" | "rollback";
+  setId: string | null;
+  activationVersion: number;
+  revisionCount: number;
+  requestId: string | null;
+  activationRequestId: string | null;
+  result: "success" | "failure";
+};
 export type AuditTargetType = (typeof TARGET_TYPES)[number];
 
 export type AuditMetadataByEvent = {
@@ -154,6 +163,7 @@ export type AuditMetadataByEvent = {
   "assistant.skill_review_completed": AssistantSkillAuditMetadata<
     "success" | "failure"
   >;
+  "assistant.skill_runtime_changed": AssistantSkillRuntimeAuditMetadata;
   "document.created": DocumentAuditMetadata;
   "document.draft_saved": DocumentAuditMetadata;
   "document.published": DocumentAuditMetadata;
@@ -504,6 +514,67 @@ function assistantSkillAuditMetadata(
   };
 }
 
+function assistantSkillRuntimeAuditMetadata(value: unknown): SanitizedMetadata {
+  const metadata = exactDataRecord(
+    value,
+    [
+      "operation",
+      "setId",
+      "activationVersion",
+      "revisionCount",
+      "requestId",
+      "activationRequestId",
+      "result",
+    ],
+    "metadata",
+  );
+  if (
+    !(
+      metadata.requestId === null ||
+      (typeof metadata.requestId === "string" &&
+        CANONICAL_UUID.test(metadata.requestId))
+    ) ||
+    !(
+      metadata.activationRequestId === null ||
+      (typeof metadata.activationRequestId === "string" &&
+        CANONICAL_UUID.test(metadata.activationRequestId))
+    ) ||
+    (metadata.requestId === null && metadata.activationRequestId === null) ||
+    metadata.requestId === metadata.activationRequestId ||
+    !(
+      metadata.setId === null ||
+      (typeof metadata.setId === "string" &&
+        CANONICAL_UUID.test(metadata.setId))
+    ) ||
+    typeof metadata.activationVersion !== "number" ||
+    !Number.isSafeInteger(metadata.activationVersion) ||
+    metadata.activationVersion < 0 ||
+    typeof metadata.revisionCount !== "number" ||
+    !Number.isSafeInteger(metadata.revisionCount) ||
+    metadata.revisionCount < 0 ||
+    metadata.revisionCount > 16
+  ) {
+    throw new AuditInputError("metadata");
+  }
+  return {
+    operation: enumValue(
+      metadata.operation,
+      ["create", "activate", "discard", "rollback"] as const,
+      "metadata.operation",
+    ),
+    setId: metadata.setId,
+    activationVersion: metadata.activationVersion,
+    revisionCount: metadata.revisionCount,
+    requestId: metadata.requestId,
+    activationRequestId: metadata.activationRequestId,
+    result: enumValue(
+      metadata.result,
+      ["success", "failure"] as const,
+      "metadata.result",
+    ),
+  };
+}
+
 function documentAuditMetadata(value: unknown): SanitizedMetadata {
   const metadata = assertExactKeys(
     value,
@@ -582,6 +653,7 @@ export const AUDIT_EVENT_SCHEMAS: Readonly<
     assistantSkillAuditMetadata(value, "review_requested"),
   "assistant.skill_review_completed": (value) =>
     assistantSkillAuditMetadata(value, "review_completed"),
+  "assistant.skill_runtime_changed": assistantSkillRuntimeAuditMetadata,
   "document.created": documentAuditMetadata,
   "document.draft_saved": documentAuditMetadata,
   "document.published": documentAuditMetadata,

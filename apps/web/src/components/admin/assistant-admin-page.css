@@ -13,6 +13,7 @@
 
 .assistant-admin__heading p,
 .assistant-admin__runtime p,
+.assistant-admin__skill-runtime header p,
 .assistant-model-config__heading p,
 .assistant-skill-registry__heading p,
 .assistant-capability-roadmap__heading p,
@@ -338,6 +339,161 @@
   color: var(--color-muted);
   background: var(--color-canvas);
   font-weight: 700;
+}
+
+.assistant-admin__skill-runtime {
+  margin-top: 16px;
+  border: 1px solid var(--color-workspace-line);
+  background: var(--color-surface);
+}
+
+.assistant-admin__skill-runtime > header,
+.assistant-admin__skill-runtime > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 24px;
+}
+
+.assistant-admin__skill-runtime > header {
+  border-bottom: 1px solid var(--color-workspace-line);
+}
+
+.assistant-admin__skill-runtime h2,
+.assistant-admin__skill-runtime h3 {
+  margin: 0;
+  font: 730 22px/1.2 var(--font-display);
+}
+
+.assistant-admin__skill-runtime h3 {
+  font-size: 16px;
+}
+
+.assistant-admin__skill-runtime > header > strong {
+  color: #159b70;
+  font: 700 10px/1.2 var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.assistant-admin__skill-runtime > header > strong[data-state="degraded"] {
+  color: #b84e2b;
+}
+
+.assistant-admin__skill-runtime > dl {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin: 0;
+  border-bottom: 1px solid var(--color-workspace-line);
+}
+
+.assistant-admin__skill-runtime > dl > div {
+  min-width: 0;
+  padding: 14px 16px;
+  border-right: 1px solid var(--color-workspace-line);
+}
+
+.assistant-admin__skill-runtime > dl > div:last-child {
+  border-right: 0;
+}
+
+.assistant-admin__skill-runtime dt {
+  color: var(--color-muted);
+  font: 650 9px/1.2 var(--font-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.assistant-admin__skill-runtime dd {
+  overflow: hidden;
+  margin: 7px 0 0;
+  font: 700 12px/1.2 var(--font-mono);
+  text-overflow: ellipsis;
+}
+
+.assistant-admin__skill-runtime-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.assistant-admin__skill-runtime-grid > section {
+  min-width: 0;
+  padding: 22px 24px;
+}
+
+.assistant-admin__skill-runtime-grid > section:first-child {
+  border-right: 1px solid var(--color-workspace-line);
+}
+
+.assistant-admin__skill-runtime-grid ul {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.assistant-admin__skill-runtime-grid li,
+.assistant-admin__skill-runtime-grid label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.assistant-admin__skill-runtime-grid li {
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-workspace-line);
+  background: var(--color-canvas);
+  font-size: 12px;
+}
+
+.assistant-admin__skill-runtime-grid label {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.assistant-admin__skill-runtime-grid label small {
+  margin-left: auto;
+  color: var(--color-muted);
+  font: 650 9px/1.2 var(--font-mono);
+}
+
+.assistant-admin__skill-runtime button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--color-workspace-line);
+  border-radius: 3px;
+  color: var(--color-ink);
+  background: var(--color-canvas);
+  font-weight: 700;
+}
+
+.assistant-admin__skill-runtime button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.assistant-admin__skill-runtime button:focus-visible,
+.assistant-admin__skill-runtime input:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-signal) 38%, transparent);
+  outline-offset: 2px;
+}
+
+.assistant-admin__skill-runtime-grid li > div {
+  display: flex;
+  gap: 6px;
+}
+
+.assistant-admin__skill-runtime > footer {
+  border-top: 1px solid var(--color-workspace-line);
+}
+
+.assistant-admin__skill-runtime > footer p {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 12px;
 }
 
 .assistant-skill-registry {
@@ -1042,6 +1198,18 @@
     grid-template-columns: 1fr;
   }
 
+  .assistant-admin__skill-runtime > dl {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .assistant-admin__skill-runtime > dl > div:nth-child(3) {
+    border-right: 0;
+  }
+
+  .assistant-admin__skill-runtime > dl > div:nth-child(-n + 3) {
+    border-bottom: 1px solid var(--color-workspace-line);
+  }
+
   .assistant-skill-detail__summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1088,6 +1256,8 @@
   }
 
   .assistant-model-config__heading,
+  .assistant-admin__skill-runtime > header,
+  .assistant-admin__skill-runtime > footer,
   .assistant-skill-registry__heading,
   .assistant-capability-roadmap__heading,
   .assistant-model-config__editor > header,
@@ -1098,8 +1268,30 @@
 
   .assistant-model-config__providers,
   .assistant-model-config__fields,
+  .assistant-admin__skill-runtime-grid,
   .assistant-capability-roadmap__grid {
     grid-template-columns: 1fr;
+  }
+
+  .assistant-admin__skill-runtime > dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .assistant-admin__skill-runtime > dl > div:nth-child(3) {
+    border-right: 1px solid var(--color-workspace-line);
+  }
+
+  .assistant-admin__skill-runtime > dl > div:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .assistant-admin__skill-runtime > dl > div:nth-child(-n + 4) {
+    border-bottom: 1px solid var(--color-workspace-line);
+  }
+
+  .assistant-admin__skill-runtime-grid > section:first-child {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-workspace-line);
   }
 
   .assistant-capability-roadmap__grid > li {

@@ -17,6 +17,14 @@ import {
   type AdminSkillRevisionDetailResponse,
   type AdminSkillRevisionResponse,
 } from "@/features/assistant/admin-skill-contract";
+import {
+  parseAdminAvailableSkillRevisions,
+  parseAdminSkillRegistryRuntime,
+  parseAdminSkillSetMutationResponse,
+  type AdminAvailableSkillRevisions,
+  type AdminSkillRegistryRuntime,
+  type AdminSkillSetMutationResponse,
+} from "@/features/assistant/admin-skill-runtime-contract";
 
 export type SkillRegistryEnvironment = {
   NODE_ENV?: string;
@@ -56,11 +64,17 @@ export type SkillRegistryAction =
   | "detail"
   | "file"
   | "upload"
-  | "review";
+  | "review"
+  | "skill_set_status"
+  | "skill_set_available"
+  | "skill_set_create"
+  | "skill_set_discard"
+  | "skill_set_rollback";
 export type SkillRegistryPermission =
   | "admin:assistant:skills"
   | "admin:assistant:skills:upload"
-  | "admin:assistant:skills:review";
+  | "admin:assistant:skills:review"
+  | "admin:assistant:skills:configure";
 export type SkillRegistryAssurance = "session" | "password+mfa";
 
 export type SkillRegistryAssertionInput = {
@@ -121,6 +135,41 @@ export type SkillRegistryClient = {
   }): Promise<AdminSkillRevisionResponse>;
 };
 
+export type SkillRegistryRuntimeClient = {
+  runtimeStatus(input: {
+    actor: string;
+    requestId: string;
+  }): Promise<AdminSkillRegistryRuntime>;
+  listAvailableRevisions(input: {
+    actor: string;
+    requestId: string;
+    limit: number;
+    offset: number;
+  }): Promise<AdminAvailableSkillRevisions>;
+  createSkillSet(input: {
+    actor: string;
+    requestId: string;
+    assuredAt: number;
+    revisionIds: string[];
+  }): Promise<AdminSkillSetMutationResponse>;
+  discardSkillSet(input: {
+    actor: string;
+    requestId: string;
+    assuredAt: number;
+    setId: string;
+  }): Promise<AdminSkillSetMutationResponse>;
+  clonePreviousSkillSet(input: {
+    actor: string;
+    requestId: string;
+    assuredAt: number;
+    expectedActivationVersion: number;
+    expectedPreviousSetId: string;
+  }): Promise<AdminSkillSetMutationResponse>;
+};
+
+export type CompleteSkillRegistryClient = SkillRegistryClient &
+  SkillRegistryRuntimeClient;
+
 export const SKILL_REGISTRY_DOMAIN_CODES = [
   "ARCHIVE_ENCRYPTED",
   "ARCHIVE_EXTRACTED_TOO_LARGE",
@@ -161,6 +210,11 @@ export const SKILL_REGISTRY_DOMAIN_CODES = [
   "SKILL_SCAN_FAILED",
   "SKILL_SCRIPT_SHEBANG_UNSUPPORTED",
   "VALIDATION_ERROR",
+  "candidate_invalid",
+  "skill_set_not_found",
+  "skill_set_state_conflict",
+  "idempotency_conflict",
+  "registry_unavailable",
 ] as const;
 
 export type SkillRegistryDomainErrorCode =
@@ -195,7 +249,17 @@ const ACTION_PERMISSION: Readonly<
   file: "admin:assistant:skills:review",
   upload: "admin:assistant:skills:upload",
   review: "admin:assistant:skills:review",
+  skill_set_status: "admin:assistant:skills",
+  skill_set_available: "admin:assistant:skills",
+  skill_set_create: "admin:assistant:skills:configure",
+  skill_set_discard: "admin:assistant:skills:configure",
+  skill_set_rollback: "admin:assistant:skills:configure",
 };
+const SKILL_SET_MUTATIONS: ReadonlySet<SkillRegistryAction> = new Set([
+  "skill_set_create",
+  "skill_set_discard",
+  "skill_set_rollback",
+]);
 const BEARER = /^[A-Za-z0-9._~+/-]+=*$/u;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -552,6 +616,15 @@ function pairedSurrogates(value: string): boolean {
 function validTarget(action: SkillRegistryAction, target: string): boolean {
   if (action === "list") return target === "skills";
   if (action === "upload") return target === "new" || canonicalUuid(target);
+  if (action === "skill_set_status" || action === "skill_set_create") {
+    return target === "maduoduo";
+  }
+  if (action === "skill_set_available") return target === "published-revisions";
+  if (action === "skill_set_rollback") return target === "maduoduo:previous";
+  if (action === "skill_set_discard") {
+    const [agent, setId, ...extra] = target.split(":");
+    return agent === "maduoduo" && canonicalUuid(setId) && extra.length === 0;
+  }
   const segments = target.split("/");
   if (action === "detail" || action === "review") {
     return (
@@ -619,7 +692,10 @@ export function createSkillRegistryAssertionSigner(options: {
         ) {
           clientError("invalid_request");
         }
-        if (value.action === "review") {
+        if (
+          value.action === "review" ||
+          SKILL_SET_MUTATIONS.has(value.action as SkillRegistryAction)
+        ) {
           if (
             value.assurance !== "password+mfa" ||
             typeof value.assuredAt !== "number" ||
@@ -632,7 +708,11 @@ export function createSkillRegistryAssertionSigner(options: {
         } else if (value.assurance !== "session" || value.assuredAt !== null) {
           clientError("invalid_request");
         }
-        const nonce = nonceFactory();
+        const nonce = SKILL_SET_MUTATIONS.has(
+          value.action as SkillRegistryAction,
+        )
+          ? value.requestId
+          : nonceFactory();
         if (!canonicalUuid(nonce)) clientError("invalid_request");
         const payload = {
           action: value.action,
@@ -936,6 +1016,11 @@ const STATUS_BY_CODE: Readonly<Record<SkillRegistryDomainErrorCode, number>> = {
   SKILL_SCAN_FAILED: 503,
   SKILL_SCRIPT_SHEBANG_UNSUPPORTED: 400,
   VALIDATION_ERROR: 400,
+  candidate_invalid: 400,
+  skill_set_not_found: 404,
+  skill_set_state_conflict: 409,
+  idempotency_conflict: 409,
+  registry_unavailable: 503,
 };
 
 function readError(
@@ -1038,13 +1123,41 @@ function copyArchive(value: unknown): Uint8Array<ArrayBuffer> | null {
   }
 }
 
+function canonicalUuidArray(value: unknown, maximum: number): string[] | null {
+  try {
+    if (
+      !Array.isArray(value) ||
+      Reflect.getPrototypeOf(value) !== Array.prototype ||
+      value.length > maximum ||
+      Reflect.ownKeys(value).length !== value.length + 1
+    ) {
+      return null;
+    }
+    const result: string[] = [];
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, String(index));
+      if (
+        !descriptor?.enumerable ||
+        !("value" in descriptor) ||
+        !canonicalUuid(descriptor.value)
+      ) {
+        return null;
+      }
+      result.push(descriptor.value);
+    }
+    return new Set(result).size === result.length ? result : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createSkillRegistryClient(options: {
   settings: SkillRegistrySettings;
   transport?: SkillRegistryTransport;
   resolver?: SkillRegistryAddressResolver;
   clock?: () => number;
   nonceFactory?: () => string;
-}): SkillRegistryClient {
+}): CompleteSkillRegistryClient {
   const settings = validatedSettings(options.settings);
   const transport = options.transport ?? sendPinnedSkillRegistryHttpRequest;
   const resolver = options.resolver ?? defaultAddressResolver;
@@ -1166,7 +1279,10 @@ export function createSkillRegistryClient(options: {
       permission: ACTION_PERMISSION[action],
       requestId: command.requestId,
       target,
-      assurance: action === "review" ? "password+mfa" : "session",
+      assurance:
+        action === "review" || SKILL_SET_MUTATIONS.has(action)
+          ? "password+mfa"
+          : "session",
       assuredAt,
     };
   }
@@ -1382,6 +1498,208 @@ export function createSkillRegistryClient(options: {
             value.revision.id === revisionId &&
             value.revision.state ===
               (reviewInput.decision === "approve" ? "published" : "rejected"),
+        });
+      } catch (error) {
+        throw sanitized(error);
+      }
+    },
+
+    async runtimeStatus(input) {
+      try {
+        const command = readCommandIdentity(input, ["actor", "requestId"]);
+        if (command === null) clientError("invalid_request");
+        const actor = command.actor as string;
+        const requestId = command.requestId as string;
+        return await request({
+          method: "GET",
+          path: "/internal/skill-sets/runtime-status",
+          requestId,
+          assertion: assertion(
+            { actor, requestId },
+            "skill_set_status",
+            "maduoduo",
+          ),
+          successStatus: 200,
+          read: parseAdminSkillRegistryRuntime,
+        });
+      } catch (error) {
+        throw sanitized(error);
+      }
+    },
+
+    async listAvailableRevisions(input) {
+      try {
+        const command = readCommandIdentity(input, [
+          "actor",
+          "requestId",
+          "limit",
+          "offset",
+        ]);
+        if (
+          command === null ||
+          typeof command.limit !== "number" ||
+          !Number.isSafeInteger(command.limit) ||
+          command.limit < 1 ||
+          command.limit > 100 ||
+          typeof command.offset !== "number" ||
+          !Number.isSafeInteger(command.offset) ||
+          command.offset < 0 ||
+          command.offset > 1_000_000
+        ) {
+          clientError("invalid_request");
+        }
+        const actor = command.actor as string;
+        const requestId = command.requestId as string;
+        const limit = command.limit as number;
+        const offset = command.offset as number;
+        return await request({
+          method: "GET",
+          path: `/internal/skill-sets/available-revisions?limit=${limit}&offset=${offset}`,
+          requestId,
+          assertion: assertion(
+            { actor, requestId },
+            "skill_set_available",
+            "published-revisions",
+          ),
+          successStatus: 200,
+          read: parseAdminAvailableSkillRevisions,
+          validate: (value) => value.limit === limit && value.offset === offset,
+        });
+      } catch (error) {
+        throw sanitized(error);
+      }
+    },
+
+    async createSkillSet(input) {
+      try {
+        const command = readCommandIdentity(input, [
+          "actor",
+          "requestId",
+          "assuredAt",
+          "revisionIds",
+        ]);
+        const revisionIds = canonicalUuidArray(command?.revisionIds, 16);
+        if (
+          command === null ||
+          revisionIds === null ||
+          typeof command.assuredAt !== "number" ||
+          !Number.isSafeInteger(command.assuredAt)
+        ) {
+          clientError("invalid_request");
+        }
+        const actor = command.actor as string;
+        const requestId = command.requestId as string;
+        const body = JSON.stringify({
+          agentId: "maduoduo",
+          requestId,
+          revisionIds,
+        });
+        return await request({
+          method: "POST",
+          path: "/internal/skill-sets",
+          requestId,
+          assertion: assertion(
+            { actor, requestId },
+            "skill_set_create",
+            "maduoduo",
+            command.assuredAt as number,
+          ),
+          contentType: "application/json",
+          body,
+          successStatus: 201,
+          read: parseAdminSkillSetMutationResponse,
+          validate: (value) =>
+            value.set.state === "candidate" &&
+            value.set.revisionIds.join(",") === revisionIds.join(","),
+        });
+      } catch (error) {
+        throw sanitized(error);
+      }
+    },
+
+    async discardSkillSet(input) {
+      try {
+        const command = readCommandIdentity(input, [
+          "actor",
+          "requestId",
+          "assuredAt",
+          "setId",
+        ]);
+        if (
+          command === null ||
+          !canonicalUuid(command.setId) ||
+          typeof command.assuredAt !== "number" ||
+          !Number.isSafeInteger(command.assuredAt)
+        ) {
+          clientError("invalid_request");
+        }
+        const actor = command.actor as string;
+        const requestId = command.requestId as string;
+        const setId = command.setId as string;
+        return await request({
+          method: "POST",
+          path: `/internal/skill-sets/${setId}/discard`,
+          requestId,
+          assertion: assertion(
+            { actor, requestId },
+            "skill_set_discard",
+            `maduoduo:${setId}`,
+            command.assuredAt as number,
+          ),
+          contentType: "application/json",
+          body: JSON.stringify({ requestId }),
+          successStatus: 200,
+          read: parseAdminSkillSetMutationResponse,
+          validate: (value) =>
+            value.set.id === setId && value.set.state === "discarded",
+        });
+      } catch (error) {
+        throw sanitized(error);
+      }
+    },
+
+    async clonePreviousSkillSet(input) {
+      try {
+        const command = readCommandIdentity(input, [
+          "actor",
+          "requestId",
+          "assuredAt",
+          "expectedActivationVersion",
+          "expectedPreviousSetId",
+        ]);
+        if (
+          command === null ||
+          !canonicalUuid(command.expectedPreviousSetId) ||
+          typeof command.expectedActivationVersion !== "number" ||
+          !Number.isSafeInteger(command.expectedActivationVersion) ||
+          command.expectedActivationVersion < 1 ||
+          typeof command.assuredAt !== "number" ||
+          !Number.isSafeInteger(command.assuredAt)
+        ) {
+          clientError("invalid_request");
+        }
+        const actor = command.actor as string;
+        const requestId = command.requestId as string;
+        return await request({
+          method: "POST",
+          path: "/internal/skill-sets/rollback-candidates",
+          requestId,
+          assertion: assertion(
+            { actor, requestId },
+            "skill_set_rollback",
+            "maduoduo:previous",
+            command.assuredAt as number,
+          ),
+          contentType: "application/json",
+          body: JSON.stringify({
+            agentId: "maduoduo",
+            expectedActivationVersion: command.expectedActivationVersion,
+            expectedPreviousSetId: command.expectedPreviousSetId,
+            requestId,
+          }),
+          successStatus: 201,
+          read: parseAdminSkillSetMutationResponse,
+          validate: (value) => value.set.state === "candidate",
         });
       } catch (error) {
         throw sanitized(error);

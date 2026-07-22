@@ -165,6 +165,7 @@ describe("audit writer", () => {
       "assistant.model_key_revealed",
       "assistant.skill_review_completed",
       "assistant.skill_review_requested",
+      "assistant.skill_runtime_changed",
       "assistant.skill_upload_completed",
       "assistant.skill_upload_requested",
       "auth.login_failure",
@@ -875,6 +876,67 @@ describe("audit writer", () => {
     expect(repository.insert).toHaveBeenCalledWith(
       expect.objectContaining({ metadata: { category: "ineligible" } }),
     );
+  });
+
+  it("stores bounded Skill runtime IDs and counts without artifact data", async () => {
+    const { repository, writer } = fixture();
+    await writer.write({
+      event: "assistant.skill_runtime_changed",
+      actor: {
+        realm: "workforce",
+        userId: "11111111-1111-4111-8111-111111111111",
+      },
+      target: { type: "system", id: "maduoduo-skill-runtime" },
+      metadata: {
+        operation: "rollback",
+        setId: "22222222-2222-4222-8222-222222222222",
+        activationVersion: 4,
+        revisionCount: 0,
+        requestId: "33333333-3333-4333-8333-333333333333",
+        activationRequestId: "44444444-4444-4444-8444-444444444444",
+        result: "success",
+      },
+    });
+
+    expect(repository.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "assistant.skill_runtime_changed",
+        metadata: expect.not.objectContaining({ artifact: expect.anything() }),
+      }),
+    );
+  });
+
+  it("rejects reused Skill rollback IDs and unknown runtime metadata", async () => {
+    const input = {
+      event: "assistant.skill_runtime_changed",
+      target: { type: "system" },
+      metadata: {
+        operation: "rollback",
+        setId: "22222222-2222-4222-8222-222222222222",
+        activationVersion: 4,
+        revisionCount: 0,
+        requestId: "33333333-3333-4333-8333-333333333333",
+        activationRequestId: "33333333-3333-4333-8333-333333333333",
+        result: "failure",
+      },
+    };
+    const { repository, writer } = fixture();
+    await expect(writer.write(runtimeAuditInput(input))).rejects.toMatchObject({
+      code: "AUDIT_INPUT_INVALID",
+    });
+    await expect(
+      writer.write(
+        runtimeAuditInput({
+          ...input,
+          metadata: {
+            ...input.metadata,
+            activationRequestId: "44444444-4444-4444-8444-444444444444",
+            artifactPath: "/private",
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "AUDIT_INPUT_INVALID" });
+    expect(repository.insert).not.toHaveBeenCalled();
   });
 
   it("stores an exact role_changed transition", async () => {
