@@ -101,7 +101,16 @@ describe("admin skill upload route", () => {
     );
 
     expect(cancel).toHaveBeenCalledOnce();
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      version: "1",
+      requestId: REQUEST_ID,
+      error: {
+        code: "permission_denied",
+        message: "Permission denied",
+        retryable: false,
+      },
+    });
     expect(current.readMultipart).not.toHaveBeenCalled();
   });
 

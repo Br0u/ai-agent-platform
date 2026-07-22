@@ -240,6 +240,32 @@ describe("Skill Registry settings", () => {
       controlKey: CONTROL_KEY,
     });
   });
+
+  it("allows an exact loopback origin only behind the explicit development flag", () => {
+    expect(
+      resolveSkillRegistrySettings({
+        NODE_ENV: "development",
+        SKILL_REGISTRY_ALLOW_LOOPBACK: "true",
+        SKILL_REGISTRY_INTERNAL_URL: "http://127.0.0.1:7780",
+        SKILL_REGISTRY_CONTROL_KEY: CONTROL_KEY,
+        OS_SECURITY_KEY: OS_KEY,
+        AGENT_CONFIG_CONTROL_KEY: AGENT_CONTROL_KEY,
+      }),
+    ).toEqual({
+      baseUrl: "http://127.0.0.1:7780",
+      controlKey: CONTROL_KEY,
+    });
+    expect(() =>
+      resolveSkillRegistrySettings({
+        NODE_ENV: "production",
+        SKILL_REGISTRY_ALLOW_LOOPBACK: "true",
+        SKILL_REGISTRY_INTERNAL_URL: "http://127.0.0.1:7780",
+        SKILL_REGISTRY_CONTROL_KEY: CONTROL_KEY,
+        OS_SECURITY_KEY: OS_KEY,
+        AGENT_CONFIG_CONTROL_KEY: AGENT_CONTROL_KEY,
+      }),
+    ).toThrow("Skill Registry configuration is invalid");
+  });
 });
 
 describe("Skill Registry assertion signer", () => {
@@ -327,6 +353,39 @@ describe("Skill Registry assertion signer", () => {
 });
 
 describe("private Skill Registry client", () => {
+  it("pins loopback only for explicitly enabled development settings", async () => {
+    const resolver = vi
+      .fn<AddressResolver>()
+      .mockResolvedValue([{ address: "127.0.0.1", family: 4 }]);
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse(listResponse()));
+    const client = createSkillRegistryClient({
+      settings: resolveSkillRegistrySettings({
+        NODE_ENV: "development",
+        SKILL_REGISTRY_ALLOW_LOOPBACK: "true",
+        SKILL_REGISTRY_INTERNAL_URL: "http://127.0.0.1:7780",
+        SKILL_REGISTRY_CONTROL_KEY: CONTROL_KEY,
+        OS_SECURITY_KEY: OS_KEY,
+        AGENT_CONFIG_CONTROL_KEY: AGENT_CONTROL_KEY,
+      }),
+      resolver,
+      fetcher,
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+
+    await expect(
+      client.listSkills({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        limit: 50,
+        offset: 0,
+      }),
+    ).resolves.toEqual(listResponse());
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it("accepts only the frozen branded settings object", async () => {
     const resolved = settings();
     const fetcher = vi

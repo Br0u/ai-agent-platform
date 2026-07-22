@@ -10,7 +10,7 @@ describe("Next production build contract", () => {
     };
 
     expect(packageJson.dependencies?.["@node-rs/argon2"]).toBe("2.0.2");
-    expect(packageJson.scripts?.dev).toBe("next dev --webpack");
+    expect(packageJson.scripts?.dev).toBe("node scripts/run-dev.mjs");
     expect(packageJson.scripts?.build).toBe("next build --webpack");
     expect(source).toContain('"@node-rs/argon2"');
     expect(source).toContain('config.externals.push("@node-rs/argon2")');

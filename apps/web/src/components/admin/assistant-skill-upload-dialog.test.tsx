@@ -127,6 +127,117 @@ describe("AssistantSkillUploadDialog", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("explains when the uploaded ZIP fails server-side validation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json(
+          {
+            version: "1",
+            requestId: "invalid-archive",
+            error: {
+              code: "validation_error",
+              message: "Invalid skill request",
+              retryable: false,
+            },
+          },
+          { status: 400 },
+        ),
+      ),
+    );
+    render(
+      <AssistantSkillUploadDialog onClose={vi.fn()} onUploaded={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: {
+        files: [
+          new File(["zip"], "invalid-skill.zip", {
+            type: "application/zip",
+          }),
+        ],
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "提交审核" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Skill ZIP 格式不符合要求，请检查压缩包目录结构后重试。",
+    );
+  });
+
+  it("explains when the Skill Registry is unavailable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json(
+          {
+            version: "1",
+            requestId: "registry-offline",
+            error: {
+              code: "registry_unavailable",
+              message: "Skill Registry is unavailable",
+              retryable: true,
+            },
+          },
+          { status: 503 },
+        ),
+      ),
+    );
+    render(
+      <AssistantSkillUploadDialog onClose={vi.fn()} onUploaded={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: {
+        files: [
+          new File(["zip"], "safe-review.zip", {
+            type: "application/zip",
+          }),
+        ],
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "提交审核" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Skill Registry 当前不可用，请联系管理员启动服务后重试。",
+    );
+  });
+
+  it("does not describe a rejected upload origin as an invalid ZIP", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json(
+          {
+            version: "1",
+            requestId: "origin-rejected",
+            error: {
+              code: "permission_denied",
+              message: "Permission denied",
+              retryable: false,
+            },
+          },
+          { status: 403 },
+        ),
+      ),
+    );
+    render(
+      <AssistantSkillUploadDialog onClose={vi.fn()} onUploaded={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: {
+        files: [
+          new File(["zip"], "safe-review.zip", {
+            type: "application/zip",
+          }),
+        ],
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "提交审核" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "上传请求被拒绝；请确认访问地址已配置并重新登录后重试。",
+    );
+  });
+
   it("traps focus and blocks background interaction across body levels", () => {
     const backgroundClick = vi.fn();
     const externalClick = vi.fn();

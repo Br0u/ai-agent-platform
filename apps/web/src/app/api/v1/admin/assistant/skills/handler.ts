@@ -91,6 +91,8 @@ type SkillCommands = ReturnType<typeof createAdminSkillCommands>;
 function defaultRegistryClient(): SkillRegistryClient {
   return createSkillRegistryClient({
     settings: resolveSkillRegistrySettings({
+      NODE_ENV: process.env.NODE_ENV,
+      SKILL_REGISTRY_ALLOW_LOOPBACK: process.env.SKILL_REGISTRY_ALLOW_LOOPBACK,
       SKILL_REGISTRY_INTERNAL_URL: process.env.SKILL_REGISTRY_INTERNAL_URL,
       SKILL_REGISTRY_CONTROL_KEY: process.env.SKILL_REGISTRY_CONTROL_KEY,
       OS_SECURITY_KEY: process.env.OS_SECURITY_KEY,
@@ -139,7 +141,7 @@ function errorBody(requestId: string, code: PublicSkillErrorCode) {
 
 function classifyError(error: unknown): PublicError {
   if (error instanceof MutationRequestError) {
-    return { code: "validation_error", status: 400 };
+    return { code: "permission_denied", status: 403 };
   }
   if (error instanceof BoundedMultipartError) {
     return error.code === "invalid_multipart"

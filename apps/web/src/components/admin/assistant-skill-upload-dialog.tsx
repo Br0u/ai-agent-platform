@@ -10,6 +10,13 @@ import { AssistantSkillModal } from "./assistant-skill-modal";
 const MAX_ARCHIVE_BYTES = 5 * 1024 * 1024;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const GENERIC_UPLOAD_ERROR = "上传失败；未改变当前 Skill 列表，请稍后重试。";
+const INVALID_ARCHIVE_ERROR =
+  "Skill ZIP 格式不符合要求，请检查压缩包目录结构后重试。";
+const REGISTRY_UNAVAILABLE_ERROR =
+  "Skill Registry 当前不可用，请联系管理员启动服务后重试。";
+const UPLOAD_REJECTED_ERROR =
+  "上传请求被拒绝；请确认访问地址已配置并重新登录后重试。";
 
 type Props = {
   onClose(): void;
@@ -52,6 +59,33 @@ function parseUploadResponse(value: unknown): AdminSkillRevision | null {
     return parsed?.revision.state === "pending_review" ? parsed.revision : null;
   } catch {
     return null;
+  }
+}
+
+async function uploadErrorMessage(response: Response): Promise<string> {
+  if (
+    response.status !== 400 &&
+    response.status !== 403 &&
+    response.status !== 503
+  ) {
+    return GENERIC_UPLOAD_ERROR;
+  }
+  try {
+    const body: unknown = await response.json();
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return GENERIC_UPLOAD_ERROR;
+    }
+    const error = Reflect.get(body, "error");
+    if (typeof error !== "object" || error === null || Array.isArray(error)) {
+      return GENERIC_UPLOAD_ERROR;
+    }
+    const code = Reflect.get(error, "code");
+    if (code === "validation_error") return INVALID_ARCHIVE_ERROR;
+    if (code === "permission_denied") return UPLOAD_REJECTED_ERROR;
+    if (code === "registry_unavailable") return REGISTRY_UNAVAILABLE_ERROR;
+    return GENERIC_UPLOAD_ERROR;
+  } catch {
+    return GENERIC_UPLOAD_ERROR;
   }
 }
 
@@ -105,12 +139,16 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
     submittingRef.current = true;
     setSubmitting(true);
     let revision: AdminSkillRevision;
+    let failureMessage = GENERIC_UPLOAD_ERROR;
     try {
       const response = await fetch("/api/v1/admin/assistant/skills/uploads", {
         method: "POST",
         body,
       });
-      if (!response.ok) throw new Error("upload failed");
+      if (!response.ok) {
+        failureMessage = await uploadErrorMessage(response);
+        throw new Error("upload failed");
+      }
       const parsed = parseUploadResponse(await response.json());
       if (!mounted.current || currentOperation !== operation.current) return;
       if (parsed === null) throw new Error("invalid upload response");
@@ -119,7 +157,7 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
       if (!mounted.current || currentOperation !== operation.current) return;
       submittingRef.current = false;
       setSubmitting(false);
-      setError("上传失败；未改变当前 Skill 列表，请稍后重试。");
+      setError(failureMessage);
       return;
     }
     submittingRef.current = false;

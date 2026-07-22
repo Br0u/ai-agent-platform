@@ -19,6 +19,8 @@ import {
 } from "@/features/assistant/admin-skill-contract";
 
 export type SkillRegistryEnvironment = {
+  NODE_ENV?: string;
+  SKILL_REGISTRY_ALLOW_LOOPBACK?: string;
   SKILL_REGISTRY_INTERNAL_URL?: string;
   SKILL_REGISTRY_CONTROL_KEY?: string;
   OS_SECURITY_KEY?: string;
@@ -27,6 +29,7 @@ export type SkillRegistryEnvironment = {
 
 export type SkillRegistrySettings = { baseUrl: string; controlKey: string };
 const SKILL_REGISTRY_SETTINGS_BRAND = new WeakSet<object>();
+const SKILL_REGISTRY_LOOPBACK_SETTINGS = new WeakSet<object>();
 export type SkillRegistryResolvedAddress = {
   address: string;
   family: 4 | 6;
@@ -266,10 +269,14 @@ function safeBearer(value: unknown): value is string {
   );
 }
 
-function allowedHostnameSyntax(hostname: string): boolean {
+function allowedHostnameSyntax(
+  hostname: string,
+  allowLoopback = false,
+): boolean {
   const unwrapped = hostname.startsWith("[") ? hostname.slice(1, -1) : hostname;
   const ipVersion = isIP(unwrapped);
   if (ipVersion === 4) {
+    if (allowLoopback && unwrapped === "127.0.0.1") return true;
     const octets = unwrapped.split(".").map(Number);
     return (
       octets[0] === 10 ||
@@ -277,9 +284,12 @@ function allowedHostnameSyntax(hostname: string): boolean {
       (octets[0] === 192 && octets[1] === 168)
     );
   }
-  if (ipVersion === 6) return /^f[cd][0-9a-f]{2}:/u.test(unwrapped);
+  if (ipVersion === 6) {
+    if (allowLoopback && unwrapped === "::1") return true;
+    return /^f[cd][0-9a-f]{2}:/u.test(unwrapped);
+  }
   if (
-    hostname === "localhost" ||
+    (hostname === "localhost" && !allowLoopback) ||
     hostname.endsWith(".localhost") ||
     /^\d+$/u.test(hostname)
   ) {
@@ -296,11 +306,16 @@ export function resolveSkillRegistrySettings(
   environment?: SkillRegistryEnvironment,
 ): SkillRegistrySettings {
   const source = environment ?? {
+    NODE_ENV: process.env.NODE_ENV,
+    SKILL_REGISTRY_ALLOW_LOOPBACK: process.env.SKILL_REGISTRY_ALLOW_LOOPBACK,
     SKILL_REGISTRY_INTERNAL_URL: process.env.SKILL_REGISTRY_INTERNAL_URL,
     SKILL_REGISTRY_CONTROL_KEY: process.env.SKILL_REGISTRY_CONTROL_KEY,
     OS_SECURITY_KEY: process.env.OS_SECURITY_KEY,
     AGENT_CONFIG_CONTROL_KEY: process.env.AGENT_CONFIG_CONTROL_KEY,
   };
+  const allowLoopback =
+    source.NODE_ENV === "development" &&
+    source.SKILL_REGISTRY_ALLOW_LOOPBACK === "true";
   const rawUrl = source.SKILL_REGISTRY_INTERNAL_URL;
   let url: URL;
   try {
@@ -317,7 +332,7 @@ export function resolveSkillRegistrySettings(
     url.pathname !== "/" ||
     url.search !== "" ||
     url.hash !== "" ||
-    !allowedHostnameSyntax(url.hostname)
+    !allowedHostnameSyntax(url.hostname, allowLoopback)
   ) {
     configurationError();
   }
@@ -336,6 +351,7 @@ export function resolveSkillRegistrySettings(
     controlKey,
   };
   SKILL_REGISTRY_SETTINGS_BRAND.add(settings);
+  if (allowLoopback) SKILL_REGISTRY_LOOPBACK_SETTINGS.add(settings);
   return Object.freeze(settings);
 }
 
@@ -345,6 +361,7 @@ type InternalSkillRegistrySettings = Readonly<{
   hostname: string;
   hostHeader: string;
   port: number;
+  allowLoopback: boolean;
 }>;
 
 function validatedSettings(value: unknown): InternalSkillRegistrySettings {
@@ -364,6 +381,7 @@ function validatedSettings(value: unknown): InternalSkillRegistrySettings {
     configurationError();
   }
   const rawUrl = snapshot.baseUrl;
+  const allowLoopback = SKILL_REGISTRY_LOOPBACK_SETTINGS.has(value);
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -378,7 +396,7 @@ function validatedSettings(value: unknown): InternalSkillRegistrySettings {
     url.pathname !== "/" ||
     url.search !== "" ||
     url.hash !== "" ||
-    !allowedHostnameSyntax(url.hostname)
+    !allowedHostnameSyntax(url.hostname, allowLoopback)
   ) {
     configurationError();
   }
@@ -390,12 +408,18 @@ function validatedSettings(value: unknown): InternalSkillRegistrySettings {
       : url.hostname,
     hostHeader: url.host,
     port: url.port === "" ? 80 : Number(url.port),
+    allowLoopback,
   });
 }
 
-function privateResolvedAddress(address: string, family: 4 | 6): boolean {
+function privateResolvedAddress(
+  address: string,
+  family: 4 | 6,
+  allowLoopback = false,
+): boolean {
   if (family === 4) {
     if (isIP(address) !== 4) return false;
+    if (allowLoopback && address === "127.0.0.1") return true;
     const octets = address.split(".").map(Number);
     return (
       octets[0] === 10 ||
@@ -403,6 +427,7 @@ function privateResolvedAddress(address: string, family: 4 | 6): boolean {
       (octets[0] === 192 && octets[1] === 168)
     );
   }
+  if (allowLoopback && address === "::1") return true;
   return (
     isIP(address) === 6 &&
     !address.toLowerCase().includes("::ffff:") &&
@@ -435,7 +460,11 @@ async function pinnedAddress(
       address === null ||
       typeof address.address !== "string" ||
       (address.family !== 4 && address.family !== 6) ||
-      !privateResolvedAddress(address.address, address.family)
+      !privateResolvedAddress(
+        address.address,
+        address.family,
+        settings.allowLoopback,
+      )
     ) {
       clientError("transport_error");
     }

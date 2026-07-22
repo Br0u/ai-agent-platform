@@ -9,6 +9,8 @@
   },
   "scripts": {
     "dev": "pnpm --filter @ai-agent-platform/web dev",
+    "dev:registry-proxy": "docker compose -p ai-agent-platform-dev -f infra/docker/compose.skill-registry-dev-proxy.yaml up -d --wait",
+    "dev:registry-proxy:stop": "docker compose -p ai-agent-platform-dev -f infra/docker/compose.skill-registry-dev-proxy.yaml down",
     "build": "pnpm -r --if-present build",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
