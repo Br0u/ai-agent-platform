@@ -14,6 +14,7 @@ def test_database_uses_runtime_secret_and_isolated_agno_schema(
         {
             "OS_SECURITY_KEY": "internal-security-key-0123456789abcdef",
             "AGNO_DATABASE_URL": DATABASE_URL,
+            "SKILL_REGISTRY_RUNTIME_DATABASE_URL": DATABASE_URL,
         }
     )
 

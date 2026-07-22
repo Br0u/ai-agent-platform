@@ -58,6 +58,7 @@ CONTROL_KEY = "model-control-key-0123456789abcdef"
 AUTHORIZATION = {"Authorization": f"Bearer {SECURITY_KEY}"}
 CONTROL_AUTHORIZATION = {"Authorization": f"Bearer {CONTROL_KEY}"}
 DISABLED_MODEL_CONTROL_SETTINGS: dict[str, object] = {
+    "SKILL_REGISTRY_RUNTIME_DATABASE_URL": DATABASE_URL,
     "AGENT_CONTROL_DATABASE_URL": None,
     "MODEL_CONFIG_ENCRYPTION_KEY": None,
     "AGENT_CONFIG_CONTROL_KEY": None,
@@ -95,6 +96,7 @@ def dynamic_settings(
     values: dict[str, object] = {
         "OS_SECURITY_KEY": SECURITY_KEY,
         "AGNO_DATABASE_URL": DATABASE_URL,
+        "SKILL_REGISTRY_RUNTIME_DATABASE_URL": DATABASE_URL,
         "AGENT_CONTROL_DATABASE_URL": CONTROL_DATABASE_URL,
         "MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY,
         "AGENT_CONFIG_CONTROL_KEY": CONTROL_KEY,
@@ -742,6 +744,7 @@ def test_real_agentos_route_accepts_runtime_credentials_from_environment(
     monkeypatch.setenv("AGNO_DATABASE_URL", DATABASE_URL)
     for variable in DISABLED_MODEL_CONTROL_SETTINGS:
         monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv("SKILL_REGISTRY_RUNTIME_DATABASE_URL", DATABASE_URL)
 
     app = create_app()
     schema = app.openapi()
@@ -932,6 +935,7 @@ async def test_corrupt_dynamic_active_degrades_and_never_falls_back_to_bootstrap
             {
                 "OS_SECURITY_KEY": SECURITY_KEY,
                 "AGNO_DATABASE_URL": DATABASE_URL,
+                "SKILL_REGISTRY_RUNTIME_DATABASE_URL": DATABASE_URL,
                 "MODEL_CONFIG_ENCRYPTION_KEY": "22" * 32,
             }
         ).model_config_encryption_key  # type: ignore[arg-type]
@@ -1286,6 +1290,7 @@ async def test_disabled_lifespan_cancellation_waits_for_one_repository_close() -
         {
             "OS_SECURITY_KEY": SECURITY_KEY,
             "AGNO_DATABASE_URL": DATABASE_URL,
+            "SKILL_REGISTRY_RUNTIME_DATABASE_URL": DATABASE_URL,
             "AGENT_CONTROL_DATABASE_URL": CONTROL_DATABASE_URL,
             "MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY,
             "AGENT_CONFIG_CONTROL_KEY": CONTROL_KEY,

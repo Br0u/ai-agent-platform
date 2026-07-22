@@ -262,6 +262,26 @@ class RuntimeSettings(_AgentSettings):
         validation_alias="AGNO_DATABASE_URL",
         repr=False,
     )
+    skill_registry_runtime_database_url: AsyncPostgresUrl = Field(
+        validation_alias="SKILL_REGISTRY_RUNTIME_DATABASE_URL",
+        repr=False,
+    )
+    skill_runtime_root: Literal["/run/aap-skills"] = Field(
+        default="/run/aap-skills",
+        validation_alias="SKILL_RUNTIME_ROOT",
+    )
+    skill_activate_timeout_seconds: Literal[60] = Field(
+        default=60,
+        validation_alias="SKILL_ACTIVATE_TIMEOUT_SECONDS",
+    )
+    skill_cas_timeout_seconds: Literal[5] = Field(
+        default=5,
+        validation_alias="SKILL_CAS_TIMEOUT_SECONDS",
+    )
+    skill_shutdown_timeout_seconds: Literal[30] = Field(
+        default=30,
+        validation_alias="SKILL_SHUTDOWN_TIMEOUT_SECONDS",
+    )
     agent_control_database_url: AsyncPostgresUrl | None = Field(
         default=None,
         validation_alias="AGENT_CONTROL_DATABASE_URL",
@@ -329,9 +349,9 @@ class RuntimeSettings(_AgentSettings):
         validation_alias="HEALTH_DB_PROBE_TIMEOUT_SECONDS",
     )
 
-    _validate_database_url = field_validator("agno_database_url")(
-        _validate_async_postgres_url
-    )
+    _validate_database_url = field_validator(
+        "agno_database_url", "skill_registry_runtime_database_url"
+    )(_validate_async_postgres_url)
 
     @field_validator("agent_control_database_url", mode="after")
     @classmethod

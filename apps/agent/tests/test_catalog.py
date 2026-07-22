@@ -16,6 +16,7 @@ def make_settings(*, enabled: bool, bootstrap: bool = False) -> RuntimeSettings:
     values: dict[str, object] = {
         "OS_SECURITY_KEY": SECURITY_KEY,
         "AGNO_DATABASE_URL": DATABASE_URL,
+        "SKILL_REGISTRY_RUNTIME_DATABASE_URL": DATABASE_URL,
         "AGENT_ENABLED": enabled,
     }
     if bootstrap:

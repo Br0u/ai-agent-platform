@@ -30,6 +30,13 @@ python_version = "3.13"
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["conftest", "test_archive", "test_diff", "test_manifest", "test_scanner"]
+module = [
+    "conftest",
+    "test_archive",
+    "test_diff",
+    "test_manifest",
+    "test_materialize",
+    "test_scanner",
+]
 disallow_incomplete_defs = false
 disallow_untyped_defs = false

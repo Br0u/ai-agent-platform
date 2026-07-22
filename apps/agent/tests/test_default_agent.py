@@ -14,6 +14,7 @@ def test_build_default_agent_has_exact_runtime_identity_and_safe_contract() -> N
         {
             "OS_SECURITY_KEY": "internal-security-key-0123456789abcdef",
             "AGNO_DATABASE_URL": DATABASE_URL,
+            "SKILL_REGISTRY_RUNTIME_DATABASE_URL": DATABASE_URL,
         }
     )
     database = build_database(settings)
@@ -50,6 +51,7 @@ def test_build_default_agent_accepts_the_agentos_runtime_database_type() -> None
         {
             "OS_SECURITY_KEY": "internal-security-key-0123456789abcdef",
             "AGNO_DATABASE_URL": DATABASE_URL,
+            "SKILL_REGISTRY_RUNTIME_DATABASE_URL": DATABASE_URL,
         }
     )
     database = build_database(settings)

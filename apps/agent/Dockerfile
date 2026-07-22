@@ -9,6 +9,7 @@ WORKDIR /app/apps/agent
 
 COPY apps/agent/pyproject.toml ./pyproject.toml
 COPY apps/agent/uv.lock ./uv.lock
+COPY packages/skill-core /app/packages/skill-core
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY apps/agent/src ./src
