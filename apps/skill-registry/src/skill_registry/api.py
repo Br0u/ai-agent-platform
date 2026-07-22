@@ -76,14 +76,20 @@ _STABLE_REGISTRY_CODES: Final = frozenset(
     {
         "ARCHIVE_ENCRYPTED",
         "ARCHIVE_EXTRACTED_TOO_LARGE",
+        "ARCHIVE_FILE_TOO_LARGE",
+        "ARCHIVE_GIT_LFS_POINTER",
+        "ARCHIVE_GIT_METADATA",
         "ARCHIVE_INVALID",
         "ARCHIVE_MULTIPLE_SKILL_ROOTS",
         "ARCHIVE_NESTED",
+        "ARCHIVE_PATH_CONFLICT",
         "ARCHIVE_PATH_TOO_DEEP",
         "ARCHIVE_PATH_TOO_LONG",
+        "ARCHIVE_SKILL_ROOT_REQUIRED",
         "ARCHIVE_TOO_LARGE",
         "ARCHIVE_TOO_MANY_FILES",
         "ARCHIVE_UNSAFE_PATH",
+        "ARCHIVE_UNSUPPORTED_FILE",
         "ARTIFACT_DIGEST_MISMATCH",
         "ARTIFACT_NOT_FOUND",
         "ARTIFACT_STORAGE_ERROR",
@@ -95,11 +101,13 @@ _STABLE_REGISTRY_CODES: Final = frozenset(
         "REVIEW_SELF_APPROVAL_DENIED",
         "REVISION_NOT_FOUND",
         "REVISION_STATE_CONFLICT",
+        "SKILL_BINARY_FILE",
         "SKILL_FILE_NOT_UTF8",
         "SKILL_FILE_TOO_LARGE",
         "SKILL_NAME_CONFLICT",
         "SKILL_NOT_FOUND",
         "SKILL_SCAN_FAILED",
+        "SKILL_SCRIPT_SHEBANG_UNSUPPORTED",
         "VALIDATION_ERROR",
     }
 )
@@ -134,6 +142,8 @@ def _registry_error(error: RegistryError) -> JSONResponse:
         "SKILL_SCAN_FAILED",
     }:
         status = 503
+    elif code == "ARCHIVE_TOO_LARGE":
+        status = 413
     elif code == "REGISTRY_UNAVAILABLE":
         status = 503
     else:

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AuthAccessError } from "@/server/auth/access";
 import type { AuthorizedSkillCommand } from "@/server/assistant/admin-skill-commands";
+import { SkillRegistryClientError } from "@/server/assistant/skill-registry-client";
 import { BoundedMultipartError } from "@/server/http/read-bounded-multipart";
 import { MutationRequestError } from "@/server/http/require-trusted-mutation";
 import { createAdminSkillUploadHandler } from "../handler";
@@ -119,5 +120,48 @@ describe("admin skill upload route", () => {
     expect(response.status).toBe(status);
     expect(current.commands.upload).not.toHaveBeenCalled();
     expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it.each(["SKILL_BINARY_FILE", "SKILL_SCRIPT_SHEBANG_UNSUPPORTED"] as const)(
+    "maps Registry package error %s to safe 400",
+    async (code) => {
+      const current = fixture();
+      current.commands.upload.mockRejectedValueOnce(
+        new SkillRegistryClientError(code),
+      );
+
+      const response = await current.handler(
+        new Request("https://admin.example.test/uploads", { method: "POST" }),
+      );
+
+      expect(response.status).toBe(400);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      await expect(response.json()).resolves.toEqual({
+        version: "1",
+        requestId: REQUEST_ID,
+        error: {
+          code: "validation_error",
+          message: "Invalid skill request",
+          retryable: false,
+        },
+      });
+    },
+  );
+
+  it("preserves the Registry archive-too-large response as a safe 413", async () => {
+    const current = fixture();
+    current.commands.upload.mockRejectedValueOnce(
+      new SkillRegistryClientError("ARCHIVE_TOO_LARGE"),
+    );
+
+    const response = await current.handler(
+      new Request("https://admin.example.test/uploads", { method: "POST" }),
+    );
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({
+      requestId: REQUEST_ID,
+      error: { code: "payload_too_large", retryable: false },
+    });
   });
 });

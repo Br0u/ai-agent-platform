@@ -192,8 +192,10 @@ function classifyError(error: unknown): PublicError {
       error.code === "VALIDATION_ERROR" ||
       error.code.startsWith("ARCHIVE_") ||
       error.code === "MANIFEST_INVALID" ||
+      error.code === "SKILL_BINARY_FILE" ||
       error.code === "SKILL_FILE_NOT_UTF8" ||
-      error.code === "SKILL_FILE_TOO_LARGE"
+      error.code === "SKILL_FILE_TOO_LARGE" ||
+      error.code === "SKILL_SCRIPT_SHEBANG_UNSUPPORTED"
     ) {
       return { code: "validation_error", status: 400 };
     }

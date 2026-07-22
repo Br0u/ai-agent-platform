@@ -20,7 +20,7 @@ from skill_core.types import (
     SkillManifest,
     SkillPackageDiff,
 )
-from skill_registry.api import build_skill_registry_router
+from skill_registry.api import _registry_error, build_skill_registry_router
 from skill_registry.auth import (
     ASSERTION_KEY_DERIVATION_DOMAIN,
     SkillRegistryAuthMiddleware,
@@ -42,6 +42,18 @@ SKILL_ID = UUID("10000000-0000-4000-8000-000000000001")
 REVISION_ID = UUID("20000000-0000-4000-8000-000000000001")
 REQUEST_ID = UUID("30000000-0000-4000-8000-000000000001")
 NOW = datetime(2026, 7, 21, tzinfo=UTC)
+
+
+PACKAGE_VALIDATION_CODES = (
+    "ARCHIVE_FILE_TOO_LARGE",
+    "ARCHIVE_GIT_LFS_POINTER",
+    "ARCHIVE_GIT_METADATA",
+    "ARCHIVE_PATH_CONFLICT",
+    "ARCHIVE_SKILL_ROOT_REQUIRED",
+    "ARCHIVE_UNSUPPORTED_FILE",
+    "SKILL_BINARY_FILE",
+    "SKILL_SCRIPT_SHEBANG_UNSUPPORTED",
+)
 
 
 def assertion_headers(
@@ -247,6 +259,23 @@ def test_extreme_pagination_numbers_are_stable_validation_errors() -> None:
         assert response.json() == {"error": "VALIDATION_ERROR"}
         assert response.headers["cache-control"] == "no-store"
         assert service.list_bounds is None
+
+
+def test_package_validation_errors_remain_stable_client_errors() -> None:
+    for code in PACKAGE_VALIDATION_CODES:
+        response = _registry_error(RegistryError(code, "private validation detail"))
+
+        assert response.status_code == 400
+        assert json.loads(response.body) == {"error": code}
+        assert response.headers["cache-control"] == "no-store"
+        assert b"private validation detail" not in response.body
+
+    too_large = _registry_error(
+        RegistryError("ARCHIVE_TOO_LARGE", "private validation detail")
+    )
+    assert too_large.status_code == 413
+    assert json.loads(too_large.body) == {"error": "ARCHIVE_TOO_LARGE"}
+    assert b"private validation detail" not in too_large.body
 
 
 def test_detail_contains_review_metadata_without_source_content() -> None:

@@ -640,7 +640,7 @@ describe("production deployment security contracts", () => {
     expect(firstDeployment).toContain("不得复用 Better Auth 或 AgentOS 密钥");
     expect(firstDeployment).toContain("不要提交");
     expect(firstDeployment).toContain(
-      "docker compose build web agent migrate agent-migrate backup",
+      "docker compose build web agent skill-registry migrate agent-migrate agent-control-migrate skill-registry-migrate backup",
     );
   });
 
@@ -1991,6 +1991,59 @@ exit 0
       /^SKILL_REGISTRY_(?:MIGRATOR_)?DATABASE_URL=/mu,
     );
     expect(example).not.toMatch(/^SKILL_REGISTRY_CONTROL_KEY=/mu);
+  });
+
+  it("keeps every skill-core package error stable across Registry and Web", () => {
+    const coreSources = [
+      read("packages/skill-core/src/skill_core/archive.py"),
+      read("packages/skill-core/src/skill_core/manifest.py"),
+    ];
+    const registry = read("apps/skill-registry/src/skill_registry/api.py");
+    const web = read("apps/web/src/server/assistant/skill-registry-client.ts");
+    const webHandler = read(
+      "apps/web/src/app/api/v1/admin/assistant/skills/handler.ts",
+    );
+    const coreCodes = new Set(
+      coreSources.flatMap((source) =>
+        [...source.matchAll(/SkillPackageError\(\s*"([A-Z0-9_]+)"/gu)].map(
+          (match) => match[1],
+        ),
+      ),
+    );
+    const registryBlock = registry.match(
+      /_STABLE_REGISTRY_CODES: Final = frozenset\(\s*\{([\s\S]*?)\}\s*\)/u,
+    )?.[1];
+    const webCodesBlock = web.match(
+      /SKILL_REGISTRY_DOMAIN_CODES = \[([\s\S]*?)\] as const/u,
+    )?.[1];
+    const webStatusBlock = web.match(
+      /const STATUS_BY_CODE:[\s\S]*?= \{([\s\S]*?)\n\};/u,
+    )?.[1];
+
+    expect(coreCodes.size).toBeGreaterThan(0);
+    expect(registryBlock).toBeDefined();
+    expect(webCodesBlock).toBeDefined();
+    expect(webStatusBlock).toBeDefined();
+    expect(registry).toMatch(
+      /elif code == "ARCHIVE_TOO_LARGE":\s*status = 413/u,
+    );
+    for (const code of coreCodes) {
+      expect(registryBlock).toMatch(new RegExp(`"${code}"`, "u"));
+      expect(webCodesBlock).toMatch(new RegExp(`"${code}"`, "u"));
+      expect(webStatusBlock).toMatch(
+        new RegExp(
+          `^\\s*${code}: ${code === "ARCHIVE_TOO_LARGE" ? 413 : 400},$`,
+          "mu",
+        ),
+      );
+      if (code.startsWith("ARCHIVE_")) {
+        expect(webHandler).toContain('error.code.startsWith("ARCHIVE_")');
+      } else {
+        expect(webHandler).toMatch(
+          new RegExp(`error\\.code === "${code}"`, "u"),
+        );
+      }
+    }
   });
 
   it("executes a bounded Skill Registry readiness response contract", () => {
@@ -3834,8 +3887,12 @@ exit 0
       "docker compose up -d --wait db",
       "docker compose run --rm migrate",
       "docker compose run --rm agno-bootstrap",
+      "docker compose run --rm agent-control-bootstrap",
+      "docker compose run --rm skill-registry-bootstrap",
       "docker compose run --rm --no-deps agent-migrate",
-      "docker compose up -d --no-deps --wait agent",
+      "docker compose run --rm --no-deps agent-control-migrate",
+      "docker compose run --rm --no-deps skill-registry-migrate",
+      "docker compose up -d --no-deps --wait agent skill-registry",
       "docker compose up -d --wait web",
       "docker compose up -d --wait proxy backup",
     ];
@@ -3854,9 +3911,11 @@ exit 0
       );
     }
     expect(runbook).toContain(
-      "db → migrate → agno-bootstrap → agent-migrate → agent → web → proxy/backup",
+      "db → migrate / agno-bootstrap → agent-migrate / agent-control-bootstrap / skill-registry-bootstrap → agent-control-migrate / skill-registry-migrate → agent / skill-registry → web → proxy/backup",
     );
-    expect(runbook).toContain("`backup`等待平台和 Agno 迁移都成功");
+    expect(runbook).toContain(
+      "`backup`等待平台、Agno 和 Skill Registry 迁移成功",
+    );
     expect(runbook).toContain("`proxy`等待`web`健康");
     expect(runbook).not.toContain("后续服务按`service_healthy`顺序启动");
 
@@ -7005,6 +7064,32 @@ esac
     expect(runbook).toContain("README 和测试配置中禁止放真实凭据");
   });
 
+  it("keeps operator runbooks aligned with the Skill Registry topology", () => {
+    const serverReadiness = read("docs/deployment/server-readiness.md");
+    const rootReadme = read("README.md");
+
+    for (const runbook of [serverReadiness, rootReadme]) {
+      expect(runbook).toContain("skill-registry-bootstrap");
+      expect(runbook).toContain("skill-registry-migrate");
+      expect(runbook).toContain("skill-registry");
+      expect(runbook).toContain(
+        "db → migrate / agno-bootstrap → agent-migrate / agent-control-bootstrap / skill-registry-bootstrap → agent-control-migrate / skill-registry-migrate → agent / skill-registry → web → proxy/backup",
+      );
+    }
+
+    expect(serverReadiness).toContain(
+      "`public`、`drizzle`、`agno`、`skill_registry`",
+    );
+    for (const runbook of [serverReadiness, read("infra/docker/README.md")]) {
+      expect(runbook).toContain("Registry 常驻服务只持有 manager URL");
+      expect(runbook).toContain(
+        "Skill Registry runtime role/URL 本阶段不挂载给 Agent",
+      );
+    }
+    expect(rootReadme).toContain("Skill 库与审核闭环已接入");
+    expect(rootReadme).toContain("Agent 仍不加载任何 Skill");
+  });
+
   it("keeps backup secrets out of command argv, bounds hung dumps, and removes plaintext work files", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "backup-secret-boundary-"));
     const bin = path.join(sandbox, "bin");
@@ -7526,7 +7611,7 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
     }
   });
 
-  it("documents AgentOS upgrades, startup order, and rollback sequencing", () => {
+  it("documents platform upgrades, startup order, and rollback sequencing", () => {
     const runbook = read("docs/deployment/server-readiness.md");
     const dockerReadme = read("infra/docker/README.md");
     const architecture = read("docs/architecture/system-design.md");
@@ -7535,10 +7620,10 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
 
     expect(runbook).toContain("docker compose run --rm agno-bootstrap");
     expect(documentation).toContain(
-      "db → migrate → agno-bootstrap → agent-migrate → agent → web → proxy/backup",
+      "db → migrate / agno-bootstrap → agent-migrate / agent-control-bootstrap / skill-registry-bootstrap → agent-control-migrate / skill-registry-migrate → agent / skill-registry → web → proxy/backup",
     );
     expect(runbook).toMatch(
-      /停止[^\n]*agent[\s\S]*恢复[^\n]*dump[\s\S]*agent-migrate[\s\S]*ready[\s\S]*重启[^\n]*web/iu,
+      /停止[^\n]*agent[^\n]*skill-registry[\s\S]*恢复[^\n]*bundle[\s\S]*bootstrap\/migrate[\s\S]*ready[\s\S]*重启[^\n]*web/iu,
     );
     expect(rootReadme).not.toContain(
       "docker compose up -d --build --wait db migrate agno-bootstrap agent-migrate agent web proxy backup",
