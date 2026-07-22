@@ -22,8 +22,12 @@ from skill_registry.artifact_store import (
     PostgresSkillArtifactStore,
 )
 from skill_registry.repository import PostgresSkillRegistryRepository, RepositoryConnection
+from skill_registry.service import SkillSetService
+from skill_registry.skill_set_repository import PostgresSkillSetRepository
 from skill_registry.types import (
+    CreateSkillSet,
     CreateUploadRevision,
+    DiscardSkillSet,
     RegistryError,
     ReviewAttestations,
     ReviewRevision,
@@ -449,3 +453,82 @@ async def test_real_postgres_rejection_persists_reason_in_append_only_event() ->
             (created.id,),
         )
         assert await cursor.fetchone() == (reason, True, True, True, True)
+
+
+async def test_real_postgres_skill_set_repository_preserves_order_and_replays() -> None:
+    actor = uuid4()
+    reviewer = uuid4()
+    registry = PostgresSkillRegistryRepository(manager_repository_connection)
+    published: list[StoredRevision] = []
+    for position in (1, 2):
+        package = canonicalize_skill_zip(build_zip(f"pg-set-{position}-{uuid4().hex[:12]}"))
+        uploaded = await registry.create_upload_revision(create_command(package, actor=actor))
+        published.append(
+            await registry.review_revision(
+                ReviewRevision(
+                    revision_id=uploaded.id,
+                    reviewer=reviewer,
+                    request_id=uuid4(),
+                    assertion_nonce=uuid4(),
+                    decision="approve",
+                    expected_state="pending_review",
+                    reason=None,
+                    attestations=ReviewAttestations(True, True, True, True),
+                )
+            )
+        )
+
+    service = SkillSetService(PostgresSkillSetRepository(manager_repository_connection))
+    request_id = uuid4()
+    ordered_revision_ids = (published[1].id, published[0].id)
+    command = CreateSkillSet(
+        actor,
+        request_id,
+        request_id,
+        "maduoduo",
+        ordered_revision_ids,
+    )
+    created = await service.create_skill_set(command)
+    replayed = await service.create_skill_set(command)
+
+    assert created.replayed is False
+    assert created.skill_set.state == "candidate"
+    assert created.skill_set.revision_ids == ordered_revision_ids
+    assert replayed.replayed is True
+    assert replayed.skill_set.id == created.skill_set.id
+
+    status = await service.get_runtime_status("maduoduo")
+    loaded = next(item for item in status.candidates if item.id == created.skill_set.id)
+    assert loaded.revision_ids == ordered_revision_ids
+    available = await service.list_available_revisions(limit=100, offset=0)
+    available_ids = {item.revision_id for item in available.items}
+    assert set(ordered_revision_ids) <= available_ids
+    assert available.total >= 2
+
+    discard_request_id = uuid4()
+    discard = DiscardSkillSet(
+        actor,
+        discard_request_id,
+        discard_request_id,
+        "maduoduo",
+        created.skill_set.id,
+    )
+    discarded = await service.discard_skill_set(discard)
+    discard_replay = await service.discard_skill_set(discard)
+    assert discarded.replayed is False
+    assert discarded.skill_set.state == "discarded"
+    assert discard_replay.replayed is True
+    assert discard_replay.skill_set.id == created.skill_set.id
+
+    missing_request_id = uuid4()
+    with pytest.raises(RegistryError) as caught:
+        await service.discard_skill_set(
+            DiscardSkillSet(
+                actor,
+                missing_request_id,
+                missing_request_id,
+                "maduoduo",
+                uuid4(),
+            )
+        )
+    assert caught.value.code == "SKILL_SET_NOT_FOUND"

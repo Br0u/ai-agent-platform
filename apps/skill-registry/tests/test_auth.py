@@ -18,6 +18,7 @@ from skill_registry.auth import (
     SkillRegistryAuthenticator,
     SkillRegistryAuthMiddleware,
     SkillRegistryBearerError,
+    match_request_target,
 )
 
 
@@ -213,6 +214,116 @@ def test_read_nonce_replay_is_rejected_and_cache_is_bounded() -> None:
     )
     with pytest.raises(SkillRegistryAssertionError):
         verifier.authenticate(headers=headers(second), action="list", target="skills", now=100)
+
+
+def test_skill_set_reads_and_mutations_use_exact_permissions_assurance_and_nonce() -> None:
+    read = signed_assertion(
+        action="skill_set_status",
+        permission="admin:assistant:skills",
+        target="maduoduo",
+    )
+    assert (
+        authenticator()
+        .authenticate(
+            headers=headers(read),
+            action="skill_set_status",
+            target="maduoduo",
+            now=100,
+        )
+        .assurance
+        == "session"
+    )
+
+    mutation = signed_assertion(
+        action="skill_set_create",
+        permission="admin:assistant:skills:configure",
+        target="maduoduo",
+        assurance="password+mfa",
+        assured_at=0,
+        nonce=REQUEST_ID,
+    )
+    verified = authenticator().authenticate(
+        headers=headers(mutation),
+        action="skill_set_create",
+        target="maduoduo",
+        now=100,
+    )
+    assert verified.nonce == verified.request_id
+
+    for invalid in (
+        signed_assertion(
+            action="skill_set_create",
+            permission="admin:assistant:skills:configure",
+            target="maduoduo",
+            nonce=REQUEST_ID,
+        ),
+        signed_assertion(
+            action="skill_set_create",
+            permission="admin:assistant:skills:review",
+            target="maduoduo",
+            assurance="password+mfa",
+            assured_at=0,
+            nonce=REQUEST_ID,
+        ),
+        signed_assertion(
+            action="skill_set_create",
+            permission="admin:assistant:skills:configure",
+            target="maduoduo",
+            assurance="password+mfa",
+            assured_at=0,
+        ),
+    ):
+        with pytest.raises(SkillRegistryAssertionError):
+            authenticator().authenticate(
+                headers=headers(invalid),
+                action="skill_set_create",
+                target="maduoduo",
+                now=100,
+            )
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "query", "expected"),
+    [
+        ("POST", "/internal/skill-sets", b"", ("skill_set_create", "maduoduo")),
+        (
+            "GET",
+            "/internal/skill-sets/runtime-status",
+            b"",
+            ("skill_set_status", "maduoduo"),
+        ),
+        (
+            "GET",
+            "/internal/skill-sets/available-revisions",
+            b"limit=100&offset=0",
+            ("skill_set_available", "published-revisions"),
+        ),
+        (
+            "POST",
+            f"/internal/skill-sets/{REQUEST_ID}/discard",
+            b"",
+            ("skill_set_discard", f"maduoduo:{REQUEST_ID}"),
+        ),
+        (
+            "POST",
+            "/internal/skill-sets/rollback-candidates",
+            b"",
+            ("skill_set_rollback", "maduoduo:previous"),
+        ),
+    ],
+)
+def test_skill_set_routes_bind_exact_assertion_action_and_target(
+    method: str,
+    path: str,
+    query: bytes,
+    expected: tuple[str, str],
+) -> None:
+    assert (
+        match_request_target(
+            {"type": "http", "method": method, "path": path, "query_string": query}
+        )
+        == expected
+    )
 
 
 @pytest.mark.asyncio

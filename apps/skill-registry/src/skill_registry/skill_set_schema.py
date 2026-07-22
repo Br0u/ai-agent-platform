@@ -599,7 +599,10 @@ BEGIN
   FROM skill_registry.agent_skill_sets AS skill_set
   WHERE skill_set.id = p_set_id AND skill_set.agent_id = p_agent_id
   FOR UPDATE;
-  IF NOT FOUND OR candidate_state <> 'candidate' THEN
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'skill set does not exist' USING ERRCODE = 'P0002';
+  END IF;
+  IF candidate_state <> 'candidate' THEN
     RAISE EXCEPTION 'skill set is not a candidate' USING ERRCODE = '40001';
   END IF;
   UPDATE skill_registry.agent_skill_sets

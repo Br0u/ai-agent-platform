@@ -17,8 +17,12 @@ from skill_core.types import (
 )
 from skill_registry.repository import PostgresSkillRegistryRepository
 from skill_registry.schema import SCHEMA_VERSION_1_SQL
+from skill_registry.skill_set_repository import PostgresSkillSetRepository
 from skill_registry.types import (
+    ClonePreviousSkillSet,
+    CreateSkillSet,
     CreateUploadRevision,
+    DiscardSkillSet,
     RegistryError,
     ReviewAttestations,
     ReviewRevision,
@@ -30,6 +34,7 @@ ACTOR = UUID("00000000-0000-4000-8000-000000000001")
 REVIEWER = UUID("00000000-0000-4000-8000-000000000002")
 SKILL_ID = UUID("10000000-0000-4000-8000-000000000001")
 REVISION_ID = UUID("20000000-0000-4000-8000-000000000001")
+SET_ID = UUID("40000000-0000-4000-8000-000000000001")
 
 
 def package() -> CanonicalSkillPackage:
@@ -215,6 +220,13 @@ def repository_with(
     return PostgresSkillRegistryRepository(
         lambda: connection, id_factory=lambda: next(identifiers)
     ), connection
+
+
+def skill_set_repository_with(
+    replies: list[Reply],
+) -> tuple[PostgresSkillSetRepository, ScriptedConnection]:
+    connection = ScriptedConnection(replies)
+    return PostgresSkillSetRepository(lambda: connection), connection
 
 
 @pytest.mark.asyncio
@@ -630,3 +642,222 @@ async def test_repository_scrubs_invalid_database_values_during_mapping() -> Non
     assert secret not in repr(caught.value.args)
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_skill_set_repository_create_calls_function_and_loads_ordered_set() -> None:
+    repository, connection = skill_set_repository_with(
+        [
+            Reply("create_agent_skill_set", one=(SET_ID, False, 1, 123)),
+            Reply(
+                "FROM skill_registry.manager_skill_sets",
+                one=(
+                    SET_ID,
+                    "maduoduo",
+                    "candidate",
+                    1,
+                    123,
+                    None,
+                    None,
+                ),
+            ),
+            Reply(
+                "FROM skill_registry.manager_skill_set_items",
+                all_rows=[(REVISION_ID,)],
+            ),
+        ]
+    )
+    request_id = uuid4()
+    command = CreateSkillSet(
+        ACTOR,
+        request_id,
+        request_id,
+        "maduoduo",
+        (REVISION_ID,),
+    )
+
+    result = await repository.create_skill_set(command, "a" * 64)
+
+    assert result.skill_set.id == SET_ID
+    assert result.skill_set.revision_ids == (REVISION_ID,)
+    assert result.skill_set.item_count == 1
+    assert result.replayed is False
+    assert connection.committed is True
+    assert connection.script.executions[0][1] == (
+        "maduoduo",
+        [REVISION_ID],
+        ACTOR,
+        request_id,
+        request_id,
+        "a" * 64,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["discard", "clone"])
+async def test_skill_set_repository_discard_and_clone_return_current_stored_set(
+    operation: str,
+) -> None:
+    function_name = (
+        "discard_agent_skill_set" if operation == "discard" else "clone_previous_agent_skill_set"
+    )
+    state = "discarded" if operation == "discard" else "candidate"
+    function_row: tuple[object, ...] = (
+        (SET_ID, state, False) if operation == "discard" else (SET_ID, False, 0, 0)
+    )
+    repository, _ = skill_set_repository_with(
+        [
+            Reply(function_name, one=function_row),
+            Reply(
+                "FROM skill_registry.manager_skill_sets",
+                one=(
+                    SET_ID,
+                    "maduoduo",
+                    state,
+                    0,
+                    0,
+                    None,
+                    None,
+                ),
+            ),
+            Reply("FROM skill_registry.manager_skill_set_items", all_rows=[]),
+        ]
+    )
+    request_id = uuid4()
+
+    if operation == "discard":
+        result = await repository.discard_skill_set(
+            DiscardSkillSet(ACTOR, request_id, request_id, "maduoduo", SET_ID),
+            "b" * 64,
+        )
+    else:
+        result = await repository.clone_previous_skill_set(
+            ClonePreviousSkillSet(
+                ACTOR,
+                request_id,
+                request_id,
+                "maduoduo",
+                2,
+                SET_ID,
+            ),
+            "c" * 64,
+        )
+
+    assert result.skill_set.state == state
+    assert result.replayed is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sqlstate", "code"),
+    [
+        ("P0002", "SKILL_SET_NOT_FOUND"),
+        ("23505", "IDEMPOTENCY_CONFLICT"),
+        ("40001", "SKILL_SET_STATE_CONFLICT"),
+        ("22023", "CANDIDATE_INVALID"),
+        ("99999", "REGISTRY_STORAGE_ERROR"),
+    ],
+)
+async def test_skill_set_repository_maps_mutation_sqlstates(sqlstate: str, code: str) -> None:
+    class DatabaseFailure(RuntimeError):
+        pass
+
+    failure = DatabaseFailure("private database detail")
+    failure.sqlstate = sqlstate  # type: ignore[attr-defined]
+    repository, _ = skill_set_repository_with([Reply("discard_agent_skill_set", error=failure)])
+    request_id = uuid4()
+
+    with pytest.raises(RegistryError) as caught:
+        await repository.discard_skill_set(
+            DiscardSkillSet(ACTOR, request_id, request_id, "maduoduo", SET_ID),
+            "b" * 64,
+        )
+
+    assert caught.value.code == code
+    assert "private" not in str(caught.value)
+    assert caught.value.__cause__ is None
+
+
+@pytest.mark.asyncio
+async def test_skill_set_repository_resolves_all_published_revisions_and_pages() -> None:
+    repository, connection = skill_set_repository_with(
+        [
+            Reply(
+                "revision.id = ANY",
+                all_rows=[(SKILL_ID, REVISION_ID, "demo-skill", 2, "a" * 64, 123)],
+            ),
+            Reply("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"),
+            Reply("count(*)", one=(1,)),
+            Reply(
+                "revision.state = 'published'",
+                all_rows=[(SKILL_ID, REVISION_ID, "demo-skill", 2, "a" * 64, 123)],
+            ),
+        ]
+    )
+
+    resolved = await repository.resolve_published_revisions((REVISION_ID,))
+    page, total = await repository.list_available_revisions(limit=25, offset=10)
+
+    assert resolved[0].revision_id == REVISION_ID
+    assert page[0].revision_no == 2
+    assert total == 1
+    assert connection.script.executions[-1][1] == (25, 10)
+
+
+@pytest.mark.asyncio
+async def test_skill_set_repository_reads_active_previous_and_candidates() -> None:
+    previous_id = uuid4()
+    candidate_id = uuid4()
+    repository, _ = skill_set_repository_with(
+        [
+            Reply("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"),
+            Reply("FROM skill_registry.manager_active_skill_set", one=(SET_ID, previous_id, 3)),
+            Reply(
+                "FROM skill_registry.manager_skill_sets",
+                one=(
+                    SET_ID,
+                    "maduoduo",
+                    "active",
+                    1,
+                    10,
+                    None,
+                    3,
+                ),
+            ),
+            Reply("FROM skill_registry.manager_skill_set_items", all_rows=[(REVISION_ID,)]),
+            Reply(
+                "FROM skill_registry.manager_skill_sets",
+                one=(
+                    previous_id,
+                    "maduoduo",
+                    "superseded",
+                    0,
+                    0,
+                    None,
+                    3,
+                ),
+            ),
+            Reply("FROM skill_registry.manager_skill_set_items", all_rows=[]),
+            Reply("state = 'candidate'", all_rows=[(candidate_id,)]),
+            Reply(
+                "FROM skill_registry.manager_skill_sets",
+                one=(
+                    candidate_id,
+                    "maduoduo",
+                    "candidate",
+                    0,
+                    0,
+                    None,
+                    None,
+                ),
+            ),
+            Reply("FROM skill_registry.manager_skill_set_items", all_rows=[]),
+        ]
+    )
+
+    status = await repository.get_runtime_status("maduoduo")
+
+    assert status.activation_version == 3
+    assert status.active is not None and status.active.id == SET_ID
+    assert status.previous is not None and status.previous.id == previous_id
+    assert [candidate.id for candidate in status.candidates] == [candidate_id]

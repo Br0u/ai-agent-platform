@@ -12,16 +12,23 @@ import pytest
 
 from skill_core.archive import canonicalize_skill_archive
 from skill_core.types import MAX_FILE_BYTES, CanonicalSkillPackage
-from skill_registry.service import SkillRegistryService
+from skill_registry.service import SkillRegistryService, SkillSetService
 from skill_registry.types import (
+    ClonePreviousSkillSet,
+    CreateSkillSet,
+    CreateSkillSetResult,
     CreateUploadRevision,
     RegistryError,
+    PublishedRevisionOption,
     ReviewAttestations,
     ReviewRevision,
     ScanPolicy,
     SkillSummary,
     StoredFile,
     StoredRevision,
+    StoredSkillSet,
+    SkillRuntimeStatus,
+    DiscardSkillSet,
 )
 
 
@@ -161,6 +168,65 @@ class MemoryRepository:
         return max(candidates, key=lambda item: item.revision_no, default=None)
 
 
+class MemorySkillSetRepository:
+    def __init__(self, options: tuple[PublishedRevisionOption, ...]) -> None:
+        self.options = options
+        self.creates: list[tuple[CreateSkillSet, str]] = []
+        self.discards: list[tuple[DiscardSkillSet, str]] = []
+        self.clones: list[tuple[ClonePreviousSkillSet, str]] = []
+
+    async def resolve_published_revisions(
+        self, revision_ids: tuple[UUID, ...]
+    ) -> tuple[PublishedRevisionOption, ...]:
+        selected = set(revision_ids)
+        return tuple(option for option in self.options if option.revision_id in selected)
+
+    async def create_skill_set(
+        self, command: CreateSkillSet, request_fingerprint: str
+    ) -> CreateSkillSetResult:
+        self.creates.append((command, request_fingerprint))
+        return _set_result(command.revision_ids)
+
+    async def discard_skill_set(
+        self, command: DiscardSkillSet, request_fingerprint: str
+    ) -> CreateSkillSetResult:
+        self.discards.append((command, request_fingerprint))
+        return _set_result((), state="discarded")
+
+    async def clone_previous_skill_set(
+        self, command: ClonePreviousSkillSet, request_fingerprint: str
+    ) -> CreateSkillSetResult:
+        self.clones.append((command, request_fingerprint))
+        return _set_result(())
+
+    async def get_runtime_status(self, agent_id: str) -> SkillRuntimeStatus:
+        assert agent_id == "maduoduo"
+        return SkillRuntimeStatus(None, None, 0, ())
+
+    async def list_available_revisions(
+        self, *, limit: int, offset: int
+    ) -> tuple[tuple[PublishedRevisionOption, ...], int]:
+        return self.options[offset : offset + limit], len(self.options)
+
+
+def _set_result(
+    revision_ids: tuple[UUID, ...], *, state: str = "candidate"
+) -> CreateSkillSetResult:
+    return CreateSkillSetResult(
+        skill_set=StoredSkillSet(
+            id=uuid4(),
+            agent_id="maduoduo",
+            state=state,  # type: ignore[arg-type]
+            revision_ids=revision_ids,
+            item_count=len(revision_ids),
+            total_extracted_size=len(revision_ids),
+            activation_version=None,
+            failure_code=None,
+        ),
+        replayed=False,
+    )
+
+
 def service(
     allowed: frozenset[str] = frozenset(),
 ) -> tuple[SkillRegistryService, MemoryRepository, MemoryArtifactStore]:
@@ -187,6 +253,174 @@ def assert_exception_is_scrubbed(error: BaseException, secret: bytes) -> None:
             pending.append(current.__context__)
     assert error.__cause__ is None
     assert error.__context__ is None
+
+
+def _revision_option(*, skill_id: UUID | None = None) -> PublishedRevisionOption:
+    return PublishedRevisionOption(
+        skill_id=skill_id or uuid4(),
+        revision_id=uuid4(),
+        slug=f"skill-{uuid4().hex[:8]}",
+        revision_no=1,
+        artifact_sha256=uuid4().hex * 2,
+        extracted_size=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_skill_set_service_accepts_empty_and_preserves_selected_revision_order() -> None:
+    first = _revision_option()
+    second = _revision_option()
+    repository = MemorySkillSetRepository((first, second))
+    registry = SkillSetService(repository)
+    request_id = uuid4()
+
+    empty = await registry.create_skill_set(
+        CreateSkillSet(ACTOR, request_id, request_id, "maduoduo", ())
+    )
+    ordered_request = uuid4()
+    ordered = await registry.create_skill_set(
+        CreateSkillSet(
+            ACTOR,
+            ordered_request,
+            ordered_request,
+            "maduoduo",
+            (second.revision_id, first.revision_id),
+        )
+    )
+
+    assert empty.skill_set.revision_ids == ()
+    assert ordered.skill_set.revision_ids == (second.revision_id, first.revision_id)
+    assert repository.creates[1][0].revision_ids == (second.revision_id, first.revision_id)
+    assert len(repository.creates[0][1]) == 64
+    assert repository.creates[0][1] != repository.creates[1][1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revision_count", [17, 20])
+async def test_skill_set_service_rejects_more_than_sixteen_revisions(
+    revision_count: int,
+) -> None:
+    options = tuple(_revision_option() for _ in range(revision_count))
+    registry = SkillSetService(MemorySkillSetRepository(options))
+    request_id = uuid4()
+
+    with pytest.raises(RegistryError) as caught:
+        await registry.create_skill_set(
+            CreateSkillSet(
+                ACTOR,
+                request_id,
+                request_id,
+                "maduoduo",
+                tuple(option.revision_id for option in options),
+            )
+        )
+
+    assert caught.value.code == "CANDIDATE_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_skill_set_service_rejects_duplicate_revision_and_duplicate_skill() -> None:
+    shared_skill = uuid4()
+    first = _revision_option(skill_id=shared_skill)
+    second = _revision_option(skill_id=shared_skill)
+    registry = SkillSetService(MemorySkillSetRepository((first, second)))
+
+    for revision_ids in (
+        (first.revision_id, first.revision_id),
+        (first.revision_id, second.revision_id),
+    ):
+        request_id = uuid4()
+        with pytest.raises(RegistryError) as caught:
+            await registry.create_skill_set(
+                CreateSkillSet(
+                    ACTOR,
+                    request_id,
+                    request_id,
+                    "maduoduo",
+                    revision_ids,
+                )
+            )
+        assert caught.value.code == "CANDIDATE_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_skill_set_service_rejects_missing_revision_agent_and_nonce_mismatch() -> None:
+    option = _revision_option()
+    registry = SkillSetService(MemorySkillSetRepository((option,)))
+    invalid_commands = (
+        CreateSkillSet(ACTOR, uuid4(), uuid4(), "maduoduo", (option.revision_id,)),
+        CreateSkillSet(
+            ACTOR,
+            uuid4(),
+            uuid4(),
+            "other",  # type: ignore[arg-type]
+            (option.revision_id,),
+        ),
+    )
+    for command in invalid_commands:
+        with pytest.raises(RegistryError) as caught:
+            await registry.create_skill_set(command)
+        assert caught.value.code == "CANDIDATE_INVALID"
+
+    request_id = uuid4()
+    with pytest.raises(RegistryError) as caught:
+        await registry.create_skill_set(
+            CreateSkillSet(ACTOR, request_id, request_id, "maduoduo", (uuid4(),))
+        )
+    assert caught.value.code == "CANDIDATE_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_skill_set_service_fingerprints_discard_and_atomic_previous_clone() -> None:
+    repository = MemorySkillSetRepository(())
+    registry = SkillSetService(repository)
+    discard_request = uuid4()
+    clone_request = uuid4()
+    previous_set_id = uuid4()
+
+    await registry.discard_skill_set(
+        DiscardSkillSet(ACTOR, discard_request, discard_request, "maduoduo", uuid4())
+    )
+    await registry.clone_previous_skill_set(
+        ClonePreviousSkillSet(
+            actor=ACTOR,
+            request_id=clone_request,
+            assertion_nonce=clone_request,
+            agent_id="maduoduo",
+            expected_activation_version=2,
+            expected_previous_set_id=previous_set_id,
+        )
+    )
+
+    assert len(repository.discards[0][1]) == 64
+    assert repository.clones[0][0].expected_activation_version == 2
+    assert repository.clones[0][0].expected_previous_set_id == previous_set_id
+    assert repository.discards[0][1] != repository.clones[0][1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", [0, True, 9_223_372_036_854_775_808])
+async def test_skill_set_service_rejects_non_bigint_activation_version(
+    version: object,
+) -> None:
+    repository = MemorySkillSetRepository((_revision_option(),))
+    service = SkillSetService(repository)
+    request_id = uuid4()
+
+    with pytest.raises(RegistryError) as caught:
+        await service.clone_previous_skill_set(
+            ClonePreviousSkillSet(
+                ACTOR,
+                request_id,
+                request_id,
+                "maduoduo",
+                version,  # type: ignore[arg-type]
+                uuid4(),
+            )
+        )
+
+    assert caught.value.code == "CANDIDATE_INVALID"
+    assert repository.clones == []
 
 
 @pytest.mark.asyncio

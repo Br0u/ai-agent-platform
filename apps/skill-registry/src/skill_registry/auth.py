@@ -21,11 +21,23 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 
-SkillRegistryAction = Literal["list", "detail", "file", "upload", "review"]
+SkillRegistryAction = Literal[
+    "list",
+    "detail",
+    "file",
+    "upload",
+    "review",
+    "skill_set_status",
+    "skill_set_available",
+    "skill_set_create",
+    "skill_set_discard",
+    "skill_set_rollback",
+]
 SkillRegistryPermission = Literal[
     "admin:assistant:skills",
     "admin:assistant:skills:upload",
     "admin:assistant:skills:review",
+    "admin:assistant:skills:configure",
 ]
 Assurance = Literal["session", "password+mfa"]
 
@@ -53,6 +65,9 @@ _REVIEW_PATTERN: Final = re.compile(
     rb"/internal/skills/(" + _UUID_PATTERN + rb")/revisions/(" + _UUID_PATTERN + rb")/review\Z"
 )
 _UPLOAD_QUERY_PATTERN: Final = re.compile(rb"targetSkillId=(" + _UUID_PATTERN + rb")\Z")
+_SKILL_SET_DISCARD_PATTERN: Final = re.compile(
+    rb"/internal/skill-sets/(" + _UUID_PATTERN + rb")/discard\Z"
+)
 _ASSERTION_FIELDS: Final = frozenset(
     {
         "action",
@@ -73,8 +88,21 @@ _ACTION_PERMISSIONS: Final[dict[SkillRegistryAction, SkillRegistryPermission]] =
     "file": "admin:assistant:skills:review",
     "upload": "admin:assistant:skills:upload",
     "review": "admin:assistant:skills:review",
+    "skill_set_status": "admin:assistant:skills",
+    "skill_set_available": "admin:assistant:skills",
+    "skill_set_create": "admin:assistant:skills:configure",
+    "skill_set_discard": "admin:assistant:skills:configure",
+    "skill_set_rollback": "admin:assistant:skills:configure",
 }
-_READ_ACTIONS: Final = frozenset({"list", "detail", "file"})
+_READ_ACTIONS: Final = frozenset(
+    {"list", "detail", "file", "skill_set_status", "skill_set_available"}
+)
+_MFA_ACTIONS: Final = frozenset(
+    {"review", "skill_set_create", "skill_set_discard", "skill_set_rollback"}
+)
+_SKILL_SET_MUTATIONS: Final = frozenset(
+    {"skill_set_create", "skill_set_discard", "skill_set_rollback"}
+)
 _NO_STORE_HEADERS: Final = {"Cache-Control": "no-store"}
 
 
@@ -335,7 +363,7 @@ class SkillRegistryAuthenticator:
             or expires_at <= now
         ):
             _fail_assertion()
-        if action == "review":
+        if action in _MFA_ACTIONS:
             if (
                 assurance != "password+mfa"
                 or type(assured_at) is not int
@@ -344,6 +372,8 @@ class SkillRegistryAuthenticator:
             ):
                 _fail_assertion()
         elif assurance != "session" or assured_at is not None:
+            _fail_assertion()
+        if action in _SKILL_SET_MUTATIONS and nonce != request_id:
             _fail_assertion()
         if action in _READ_ACTIONS and not self._nonce_cache.claim(nonce, now=now):
             _fail_assertion()
@@ -387,6 +417,17 @@ def match_request_target(scope: Scope) -> tuple[SkillRegistryAction | None, str 
         return None, None
     if method == "GET" and path == b"/internal/skills":
         return "list", "skills"
+    if method == "POST" and path == b"/internal/skill-sets" and not query:
+        return "skill_set_create", "maduoduo"
+    if method == "GET" and path == b"/internal/skill-sets/runtime-status" and not query:
+        return "skill_set_status", "maduoduo"
+    if method == "GET" and path == b"/internal/skill-sets/available-revisions":
+        return "skill_set_available", "published-revisions"
+    if method == "POST" and path == b"/internal/skill-sets/rollback-candidates" and not query:
+        return "skill_set_rollback", "maduoduo:previous"
+    discard = _SKILL_SET_DISCARD_PATTERN.fullmatch(path)
+    if method == "POST" and discard is not None and not query:
+        return "skill_set_discard", f"maduoduo:{discard.group(1).decode()}"
     if method == "POST" and path == b"/internal/skills/uploads":
         if not query:
             return "upload", "new"
@@ -424,7 +465,12 @@ class SkillRegistryAuthMiddleware:
         self._clock = clock
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not scope.get("path", "").startswith("/internal/skills"):
+        path = scope.get("path", "")
+        if (
+            scope["type"] != "http"
+            or type(path) is not str
+            or not path.startswith(("/internal/skills", "/internal/skill-sets"))
+        ):
             await self.app(scope, receive, send)
             return
         action, target = match_request_target(scope)

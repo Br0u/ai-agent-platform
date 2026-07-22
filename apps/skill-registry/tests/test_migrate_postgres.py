@@ -987,7 +987,8 @@ async def test_activation_function_serializes_concurrent_cas() -> None:
             )
             row = await row_cursor.fetchone()
             assert row is not None
-            return int(row[0])
+            assert isinstance(row[0], int)
+            return row[0]
 
         results = await asyncio.gather(
             activate(first_runtime, first_set),
@@ -1038,7 +1039,7 @@ async def test_set_replay_concurrent_activation_returns_saved_result() -> None:
             )
             return await result.fetchone()
 
-        assert await asyncio.gather(activate(first_runtime), activate(second_runtime)) == [
+        assert list(await asyncio.gather(activate(first_runtime), activate(second_runtime))) == [
             (1,),
             (1,),
         ]
@@ -1276,7 +1277,7 @@ async def test_manager_create_concurrent_replay_returns_one_candidate() -> None:
     first_manager = await _connect(urls["manager"])
     second_manager = await _connect(urls["manager"])
     actor_id = uuid4()
-    parameters = (
+    parameters: tuple[object, ...] = (
         "maduoduo",
         [],
         actor_id,

@@ -23,7 +23,9 @@ from skill_registry.artifact_store import PostgresSkillArtifactStore
 from skill_registry.auth import SkillRegistryAuthMiddleware, SkillRegistryAuthenticator
 from skill_registry.config import RegistryConfigError, RegistrySettings, load_scan_policy
 from skill_registry.repository import PostgresSkillRegistryRepository, RepositoryCursor
-from skill_registry.service import SkillRegistryService
+from skill_registry.service import SkillRegistryService, SkillSetService
+from skill_registry.skill_set_api import build_skill_set_router
+from skill_registry.skill_set_repository import PostgresSkillSetRepository
 from skill_registry.types import ScanPolicy
 
 
@@ -51,6 +53,7 @@ class RegistryPool(Protocol):
 PoolFactory = Callable[[SecretStr], RegistryPool]
 PolicyLoader = Callable[[Path], ScanPolicy]
 ServiceFactory = Callable[[RegistryPool, ScanPolicy], SkillRegistryService]
+SkillSetServiceFactory = Callable[[RegistryPool], SkillSetService]
 ReadinessProbe = Callable[[RegistryPool], Awaitable[bool]]
 
 
@@ -221,6 +224,10 @@ def _default_service_factory(pool: RegistryPool, policy: ScanPolicy) -> SkillReg
     return SkillRegistryService(repository, artifact_store, policy)
 
 
+def _default_skill_set_service_factory(pool: RegistryPool) -> SkillSetService:
+    return SkillSetService(PostgresSkillSetRepository(lambda: _PoolLease(pool)))
+
+
 async def _default_readiness_probe(pool: RegistryPool) -> bool:
     async with pool.connection() as connection:
         async with connection.cursor() as cursor:
@@ -235,21 +242,28 @@ def create_app(
     pool_factory: PoolFactory = _default_pool_factory,
     policy_loader: PolicyLoader = load_scan_policy,
     service_factory: ServiceFactory = _default_service_factory,
+    skill_set_service_factory: SkillSetServiceFactory = _default_skill_set_service_factory,
     readiness_probe: ReadinessProbe = _default_readiness_probe,
 ) -> FastAPI:
     """Compose one lifespan-owned pool, policy, and registry service."""
     runtime_settings = settings or RegistrySettings()  # type: ignore[call-arg]
     pool: RegistryPool | None = None
     service: SkillRegistryService | None = None
+    skill_set_service: SkillSetService | None = None
 
     def get_service() -> SkillRegistryService:
         if service is None:
             raise RegistryStartupError("Skill registry service is unavailable")
         return service
 
+    def get_skill_set_service() -> SkillSetService:
+        if skill_set_service is None:
+            raise RegistryStartupError("Skill set service is unavailable")
+        return skill_set_service
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        nonlocal pool, service
+        nonlocal pool, service, skill_set_service
         pool_touched = False
         try:
             startup_failed = False
@@ -259,7 +273,9 @@ def create_app(
                 pool_touched = True
                 await pool.open(wait=True)
                 service = service_factory(pool, policy)
+                skill_set_service = skill_set_service_factory(pool)
                 app.state.skill_registry_service = service
+                app.state.skill_set_service = skill_set_service
             except RegistryConfigError:
                 raise
             except Exception:
@@ -269,7 +285,9 @@ def create_app(
             yield
         finally:
             service = None
+            skill_set_service = None
             app.state.skill_registry_service = None
+            app.state.skill_set_service = None
             candidate_pool = pool
             pool = None
             if pool_touched and candidate_pool is not None:
@@ -286,6 +304,7 @@ def create_app(
         redoc_url=None,
     )
     app.include_router(build_skill_registry_router(get_service))
+    app.include_router(build_skill_set_router(get_skill_set_service))
 
     @app.get("/internal/health/live", include_in_schema=False)
     async def live() -> JSONResponse:

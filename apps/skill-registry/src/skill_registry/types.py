@@ -16,6 +16,8 @@ from skill_core.types import (
 
 RevisionState = Literal["pending_review", "published", "rejected", "archived"]
 ReviewDecision = Literal["approve", "reject"]
+AgentId = Literal["maduoduo"]
+SkillSetState = Literal["candidate", "active", "superseded", "failed", "discarded"]
 
 
 class RegistryError(RuntimeError):
@@ -136,6 +138,82 @@ class RevisionDetail:
     diff: SkillPackageDiff | None
 
 
+@dataclass(frozen=True, slots=True)
+class CreateSkillSet:
+    actor: UUID
+    request_id: UUID
+    assertion_nonce: UUID
+    agent_id: AgentId
+    revision_ids: tuple[UUID, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DiscardSkillSet:
+    actor: UUID
+    request_id: UUID
+    assertion_nonce: UUID
+    agent_id: AgentId
+    set_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class ClonePreviousSkillSet:
+    actor: UUID
+    request_id: UUID
+    assertion_nonce: UUID
+    agent_id: AgentId
+    expected_activation_version: int
+    expected_previous_set_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class StoredSkillSet:
+    id: UUID
+    agent_id: AgentId
+    state: SkillSetState
+    revision_ids: tuple[UUID, ...]
+    item_count: int
+    total_extracted_size: int
+    activation_version: int | None
+    failure_code: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CreateSkillSetResult:
+    skill_set: StoredSkillSet
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SkillRuntimeStatus:
+    active: StoredSkillSet | None
+    previous: StoredSkillSet | None
+    activation_version: int
+    candidates: tuple[StoredSkillSet, ...]
+
+    @property
+    def candidate_count(self) -> int:
+        return len(self.candidates)
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedRevisionOption:
+    skill_id: UUID
+    revision_id: UUID
+    slug: str
+    revision_no: int
+    artifact_sha256: str
+    extracted_size: int
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedRevisionPage:
+    items: tuple[PublishedRevisionOption, ...]
+    limit: int
+    offset: int
+    total: int
+
+
 class SkillRegistryRepository(Protocol):
     async def create_upload_revision(self, command: CreateUploadRevision) -> StoredRevision: ...
 
@@ -150,3 +228,27 @@ class SkillRegistryRepository(Protocol):
     async def list_revision_files(self, revision_id: UUID) -> tuple[StoredFile, ...]: ...
 
     async def find_previous_published(self, revision: StoredRevision) -> StoredRevision | None: ...
+
+
+class SkillSetRepository(Protocol):
+    async def resolve_published_revisions(
+        self, revision_ids: tuple[UUID, ...]
+    ) -> tuple[PublishedRevisionOption, ...]: ...
+
+    async def create_skill_set(
+        self, command: CreateSkillSet, request_fingerprint: str
+    ) -> CreateSkillSetResult: ...
+
+    async def discard_skill_set(
+        self, command: DiscardSkillSet, request_fingerprint: str
+    ) -> CreateSkillSetResult: ...
+
+    async def clone_previous_skill_set(
+        self, command: ClonePreviousSkillSet, request_fingerprint: str
+    ) -> CreateSkillSetResult: ...
+
+    async def get_runtime_status(self, agent_id: AgentId) -> SkillRuntimeStatus: ...
+
+    async def list_available_revisions(
+        self, *, limit: int, offset: int
+    ) -> tuple[tuple[PublishedRevisionOption, ...], int]: ...

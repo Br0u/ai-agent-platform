@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 import sys
 from dataclasses import replace
 from uuid import UUID
@@ -14,17 +16,131 @@ from skill_core.scanner import scan
 from skill_core.types import MAX_FILE_BYTES, CanonicalSkillPackage, SkillFile
 from skill_registry.artifact_store import ArtifactStoreError, SkillArtifactStore
 from skill_registry.types import (
+    AgentId,
+    ClonePreviousSkillSet,
+    CreateSkillSet,
+    CreateSkillSetResult,
     CreateUploadRevision,
+    DiscardSkillSet,
+    PublishedRevisionPage,
     PythonImportSummary,
     RegistryError,
     ReviewRevision,
     RevisionDetail,
     ScanPolicy,
     SkillRegistryRepository,
+    SkillRuntimeStatus,
+    SkillSetRepository,
     SkillSummary,
     StoredFile,
     StoredRevision,
 )
+
+
+_POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807
+
+
+def _request_fingerprint(content: dict[str, object]) -> str:
+    encoded = json.dumps(
+        content,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+class SkillSetService:
+    """Validate fixed-Agent candidate commands before the database state machine."""
+
+    def __init__(self, repository: SkillSetRepository) -> None:
+        self._repository = repository
+
+    @staticmethod
+    def _validate_mutation(*, agent_id: str, request_id: UUID, assertion_nonce: UUID) -> AgentId:
+        if agent_id != "maduoduo" or assertion_nonce != request_id:
+            raise RegistryError("CANDIDATE_INVALID", "Skill set mutation is invalid")
+        return "maduoduo"
+
+    async def create_skill_set(self, command: CreateSkillSet) -> CreateSkillSetResult:
+        self._validate_mutation(
+            agent_id=command.agent_id,
+            request_id=command.request_id,
+            assertion_nonce=command.assertion_nonce,
+        )
+        revision_ids = command.revision_ids
+        if (
+            type(revision_ids) is not tuple
+            or len(revision_ids) > 16
+            or len(set(revision_ids)) != len(revision_ids)
+        ):
+            raise RegistryError("CANDIDATE_INVALID", "Skill set revisions are invalid")
+        options = await self._repository.resolve_published_revisions(revision_ids)
+        indexed = {option.revision_id: option for option in options}
+        if len(indexed) != len(options) or indexed.keys() != set(revision_ids):
+            raise RegistryError("CANDIDATE_INVALID", "Published revisions are unavailable")
+        ordered = tuple(indexed[revision_id] for revision_id in revision_ids)
+        if len({option.skill_id for option in ordered}) != len(ordered):
+            raise RegistryError("CANDIDATE_INVALID", "A Skill may appear only once")
+        fingerprint = _request_fingerprint(
+            {
+                "action": "skill_set_create",
+                "agentId": command.agent_id,
+                "revisionIds": [str(revision_id) for revision_id in revision_ids],
+            }
+        )
+        return await self._repository.create_skill_set(command, fingerprint)
+
+    async def discard_skill_set(self, command: DiscardSkillSet) -> CreateSkillSetResult:
+        self._validate_mutation(
+            agent_id=command.agent_id,
+            request_id=command.request_id,
+            assertion_nonce=command.assertion_nonce,
+        )
+        fingerprint = _request_fingerprint(
+            {
+                "action": "skill_set_discard",
+                "agentId": command.agent_id,
+                "setId": str(command.set_id),
+            }
+        )
+        return await self._repository.discard_skill_set(command, fingerprint)
+
+    async def clone_previous_skill_set(
+        self, command: ClonePreviousSkillSet
+    ) -> CreateSkillSetResult:
+        self._validate_mutation(
+            agent_id=command.agent_id,
+            request_id=command.request_id,
+            assertion_nonce=command.assertion_nonce,
+        )
+        if type(command.expected_activation_version) is not int or not (
+            1 <= command.expected_activation_version <= _POSTGRES_BIGINT_MAX
+        ):
+            raise RegistryError("CANDIDATE_INVALID", "Rollback pointer is invalid")
+        fingerprint = _request_fingerprint(
+            {
+                "action": "skill_set_clone",
+                "agentId": command.agent_id,
+                "expectedActivationVersion": command.expected_activation_version,
+                "expectedPreviousSetId": str(command.expected_previous_set_id),
+            }
+        )
+        return await self._repository.clone_previous_skill_set(command, fingerprint)
+
+    async def get_runtime_status(self, agent_id: str) -> SkillRuntimeStatus:
+        if agent_id != "maduoduo":
+            raise RegistryError("CANDIDATE_INVALID", "Agent id is invalid")
+        return await self._repository.get_runtime_status("maduoduo")
+
+    async def list_available_revisions(self, *, limit: int, offset: int) -> PublishedRevisionPage:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise RegistryError("CANDIDATE_INVALID", "Pagination bounds are invalid")
+        if type(offset) is not int or offset < 0:
+            raise RegistryError("CANDIDATE_INVALID", "Pagination bounds are invalid")
+        items, total = await self._repository.list_available_revisions(limit=limit, offset=offset)
+        return PublishedRevisionPage(items, limit, offset, total)
 
 
 class SkillRegistryService:

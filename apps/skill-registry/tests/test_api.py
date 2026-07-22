@@ -26,13 +26,19 @@ from skill_registry.auth import (
     SkillRegistryAuthMiddleware,
     SkillRegistryAuthenticator,
 )
+from skill_registry.skill_set_api import build_skill_set_router
 from skill_registry.types import (
+    CreateSkillSetResult,
+    PublishedRevisionOption,
+    PublishedRevisionPage,
     PythonImportSummary,
     RegistryError,
     RevisionDetail,
     SkillSummary,
     StoredFile,
     StoredRevision,
+    StoredSkillSet,
+    SkillRuntimeStatus,
 )
 
 
@@ -42,6 +48,7 @@ SKILL_ID = UUID("10000000-0000-4000-8000-000000000001")
 REVISION_ID = UUID("20000000-0000-4000-8000-000000000001")
 REQUEST_ID = UUID("30000000-0000-4000-8000-000000000001")
 NOW = datetime(2026, 7, 21, tzinfo=UTC)
+SET_ID = UUID("50000000-0000-4000-8000-000000000001")
 
 
 PACKAGE_VALIDATION_CODES = (
@@ -169,6 +176,70 @@ class StubService:
         return replace(revision(), state="published", reviewed_by=ACTOR, reviewed_at=NOW)
 
 
+class SkillSetStubService:
+    def __init__(self) -> None:
+        self.created: object | None = None
+        self.discarded: object | None = None
+        self.cloned: object | None = None
+        self.fail_with: RegistryError | None = None
+
+    async def create_skill_set(self, command: object) -> CreateSkillSetResult:
+        self.created = command
+        self._raise_if_configured()
+        return CreateSkillSetResult(candidate_set(), False)
+
+    async def discard_skill_set(self, command: object) -> CreateSkillSetResult:
+        self.discarded = command
+        self._raise_if_configured()
+        return CreateSkillSetResult(replace(candidate_set(), state="discarded"), False)
+
+    async def clone_previous_skill_set(self, command: object) -> CreateSkillSetResult:
+        self.cloned = command
+        self._raise_if_configured()
+        return CreateSkillSetResult(candidate_set(), False)
+
+    async def get_runtime_status(self, agent_id: str) -> SkillRuntimeStatus:
+        assert agent_id == "maduoduo"
+        self._raise_if_configured()
+        return SkillRuntimeStatus(None, None, 0, (candidate_set(),))
+
+    async def list_available_revisions(self, *, limit: int, offset: int) -> PublishedRevisionPage:
+        assert (limit, offset) == (100, 0)
+        self._raise_if_configured()
+        return PublishedRevisionPage(
+            (
+                PublishedRevisionOption(
+                    SKILL_ID,
+                    REVISION_ID,
+                    "demo",
+                    2,
+                    "a" * 64,
+                    123,
+                ),
+            ),
+            limit,
+            offset,
+            1,
+        )
+
+    def _raise_if_configured(self) -> None:
+        if self.fail_with is not None:
+            raise self.fail_with
+
+
+def candidate_set() -> StoredSkillSet:
+    return StoredSkillSet(
+        SET_ID,
+        "maduoduo",
+        "candidate",
+        (REVISION_ID,),
+        1,
+        123,
+        None,
+        None,
+    )
+
+
 def detail() -> RevisionDetail:
     item = revision()
     files = (
@@ -198,6 +269,31 @@ def app_for(service: StubService) -> FastAPI:
         clock=lambda: 100.0,
     )
     return app
+
+
+def skill_set_app_for(service: SkillSetStubService) -> FastAPI:
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+    app.include_router(build_skill_set_router(lambda: service))
+    app.add_middleware(
+        SkillRegistryAuthMiddleware,
+        authenticator=SkillRegistryAuthenticator(control_key=SecretStr(CONTROL_KEY)),
+        clock=lambda: 100.0,
+    )
+    return app
+
+
+def skill_set_mutation_headers(action: str, target: str) -> dict[str, str]:
+    return {
+        **assertion_headers(
+            action,
+            "admin:assistant:skills:configure",
+            target,
+            nonce=REQUEST_ID,
+            assurance="password+mfa",
+            assured_at=99,
+        ),
+        "Content-Type": "application/json",
+    }
 
 
 def test_list_is_bounded_metadata_only() -> None:
@@ -266,13 +362,13 @@ def test_package_validation_errors_remain_stable_client_errors() -> None:
         response = _registry_error(RegistryError(code, "private validation detail"))
 
         assert response.status_code == 400
-        assert json.loads(response.body) == {"error": code}
+        assert json.loads(bytes(response.body)) == {"error": code}
         assert response.headers["cache-control"] == "no-store"
         assert b"private validation detail" not in response.body
 
     too_large = _registry_error(RegistryError("ARCHIVE_TOO_LARGE", "private validation detail"))
     assert too_large.status_code == 413
-    assert json.loads(too_large.body) == {"error": "ARCHIVE_TOO_LARGE"}
+    assert json.loads(bytes(too_large.body)) == {"error": "ARCHIVE_TOO_LARGE"}
     assert b"private validation detail" not in too_large.body
 
 
@@ -419,7 +515,7 @@ def test_upload_and_review_forward_verified_assertion_context() -> None:
     assert service.reviewed is not None
     assert getattr(service.reviewed, "reviewer") == ACTOR
     assert getattr(service.reviewed, "skill_id") == SKILL_ID
-    assert service.reviewed.attestations.reviewer_authorization_confirmed is True
+    assert getattr(service.reviewed, "attestations").reviewer_authorization_confirmed is True
 
 
 def test_upload_content_length_is_rejected_without_receiving_body() -> None:
@@ -609,3 +705,219 @@ def test_errors_return_only_stable_code_and_no_secret_exception_chain() -> None:
     assert response.status_code == 503
     assert response.json() == {"error": "REGISTRY_STORAGE_ERROR"}
     assert secret not in response.text
+
+
+def test_skill_set_create_forwards_bound_assertion_and_returns_exact_summary() -> None:
+    service = SkillSetStubService()
+    response = TestClient(skill_set_app_for(service)).post(
+        "/internal/skill-sets",
+        headers=skill_set_mutation_headers("skill_set_create", "maduoduo"),
+        content=json.dumps(
+            {
+                "agentId": "maduoduo",
+                "revisionIds": [str(REVISION_ID)],
+                "requestId": str(REQUEST_ID),
+            },
+            separators=(",", ":"),
+        ),
+    )
+
+    assert response.status_code == 201
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {
+        "set": {
+            "id": str(SET_ID),
+            "state": "candidate",
+            "revisionIds": [str(REVISION_ID)],
+            "itemCount": 1,
+            "totalExtractedSize": 123,
+        },
+        "replayed": False,
+    }
+    assert service.created is not None
+    assert getattr(service.created, "actor") == ACTOR
+    assert getattr(service.created, "request_id") == REQUEST_ID
+    assert getattr(service.created, "assertion_nonce") == REQUEST_ID
+    assert getattr(service.created, "agent_id") == "maduoduo"
+    assert getattr(service.created, "revision_ids") == (REVISION_ID,)
+
+
+def test_skill_set_status_and_available_revisions_have_exact_bounded_shapes() -> None:
+    service = SkillSetStubService()
+    client = TestClient(skill_set_app_for(service))
+    status = client.get(
+        "/internal/skill-sets/runtime-status",
+        headers=assertion_headers(
+            "skill_set_status",
+            "admin:assistant:skills",
+            "maduoduo",
+            nonce=UUID("40000000-0000-4000-8000-000000000041"),
+        ),
+    )
+    available = client.get(
+        "/internal/skill-sets/available-revisions?limit=100&offset=0",
+        headers=assertion_headers(
+            "skill_set_available",
+            "admin:assistant:skills",
+            "published-revisions",
+            nonce=UUID("40000000-0000-4000-8000-000000000042"),
+        ),
+    )
+
+    assert status.status_code == 200
+    assert status.headers["cache-control"] == "no-store"
+    assert status.json() == {
+        "active": None,
+        "previous": None,
+        "activationVersion": 0,
+        "candidateCount": 1,
+        "candidates": [
+            {
+                "id": str(SET_ID),
+                "state": "candidate",
+                "revisionIds": [str(REVISION_ID)],
+                "itemCount": 1,
+                "totalExtractedSize": 123,
+                "failureCode": None,
+            }
+        ],
+    }
+    assert available.status_code == 200
+    assert available.headers["cache-control"] == "no-store"
+    assert available.json() == {
+        "items": [
+            {
+                "skillId": str(SKILL_ID),
+                "revisionId": str(REVISION_ID),
+                "slug": "demo",
+                "revisionNo": 2,
+                "artifactSha256": "a" * 64,
+                "extractedSize": 123,
+            }
+        ],
+        "limit": 100,
+        "offset": 0,
+        "total": 1,
+    }
+
+
+def test_skill_set_discard_and_rollback_forward_cas_inputs() -> None:
+    service = SkillSetStubService()
+    client = TestClient(skill_set_app_for(service))
+    discarded = client.post(
+        f"/internal/skill-sets/{SET_ID}/discard",
+        headers=skill_set_mutation_headers("skill_set_discard", f"maduoduo:{SET_ID}"),
+        content=json.dumps({"requestId": str(REQUEST_ID)}, separators=(",", ":")),
+    )
+    rolled_back = client.post(
+        "/internal/skill-sets/rollback-candidates",
+        headers=skill_set_mutation_headers("skill_set_rollback", "maduoduo:previous"),
+        content=json.dumps(
+            {
+                "agentId": "maduoduo",
+                "expectedActivationVersion": 1,
+                "expectedPreviousSetId": str(SET_ID),
+                "requestId": str(REQUEST_ID),
+            },
+            separators=(",", ":"),
+        ),
+    )
+
+    assert discarded.status_code == 200
+    assert discarded.json()["set"]["state"] == "discarded"
+    assert getattr(service.discarded, "set_id") == SET_ID
+    assert getattr(service.discarded, "assertion_nonce") == REQUEST_ID
+    assert rolled_back.status_code == 201
+    assert rolled_back.json()["set"]["state"] == "candidate"
+    assert getattr(service.cloned, "expected_activation_version") == 1
+    assert getattr(service.cloned, "expected_previous_set_id") == SET_ID
+    assert getattr(service.cloned, "request_id") == REQUEST_ID
+
+
+def test_skill_set_json_is_strict_bounded_and_request_bound() -> None:
+    valid = {
+        "agentId": "maduoduo",
+        "revisionIds": [str(REVISION_ID)],
+        "requestId": str(REQUEST_ID),
+    }
+    cases = (
+        {**valid, "unknown": True},
+        {**valid, "revisionIds": ["not-a-uuid"]},
+        {**valid, "revisionIds": [str(REVISION_ID)] * 17},
+        {**valid, "requestId": "30000000-0000-4000-8000-000000000002"},
+    )
+    for body in cases:
+        service = SkillSetStubService()
+        response = TestClient(skill_set_app_for(service)).post(
+            "/internal/skill-sets",
+            headers=skill_set_mutation_headers("skill_set_create", "maduoduo"),
+            content=json.dumps(body, separators=(",", ":")),
+        )
+        assert response.status_code == 400
+        assert response.json() == {"error": "candidate_invalid"}
+        assert response.headers["cache-control"] == "no-store"
+        assert service.created is None
+
+    duplicate = (
+        '{"agentId":"maduoduo","revisionIds":["'
+        + str(REVISION_ID)
+        + '"],"requestId":"'
+        + str(REQUEST_ID)
+        + '","requestId":"'
+        + str(REQUEST_ID)
+        + '"}'
+    )
+    duplicate_response = TestClient(skill_set_app_for(SkillSetStubService())).post(
+        "/internal/skill-sets",
+        headers=skill_set_mutation_headers("skill_set_create", "maduoduo"),
+        content=duplicate,
+    )
+    assert duplicate_response.status_code == 400
+    assert duplicate_response.json() == {"error": "candidate_invalid"}
+
+    oversized_response = TestClient(skill_set_app_for(SkillSetStubService())).post(
+        "/internal/skill-sets",
+        headers=skill_set_mutation_headers("skill_set_create", "maduoduo"),
+        content=b"{" + b"x" * (8 * 1024),
+    )
+    assert oversized_response.status_code == 400
+    assert oversized_response.json() == {"error": "candidate_invalid"}
+
+    oversized_version = TestClient(skill_set_app_for(SkillSetStubService())).post(
+        "/internal/skill-sets/rollback-candidates",
+        headers=skill_set_mutation_headers("skill_set_rollback", "maduoduo:previous"),
+        json={
+            "agentId": "maduoduo",
+            "expectedActivationVersion": 9_223_372_036_854_775_808,
+            "expectedPreviousSetId": str(SET_ID),
+            "requestId": str(REQUEST_ID),
+        },
+    )
+    assert oversized_version.status_code == 400
+    assert oversized_version.json() == {"error": "candidate_invalid"}
+
+
+def test_skill_set_service_errors_are_stable_and_hide_details() -> None:
+    cases = (
+        ("CANDIDATE_INVALID", 400, "candidate_invalid"),
+        ("SKILL_SET_NOT_FOUND", 404, "skill_set_not_found"),
+        ("SKILL_SET_STATE_CONFLICT", 409, "skill_set_state_conflict"),
+        ("IDEMPOTENCY_CONFLICT", 409, "idempotency_conflict"),
+        ("REGISTRY_STORAGE_ERROR", 503, "registry_unavailable"),
+        ("UNEXPECTED_PRIVATE_ERROR", 503, "registry_unavailable"),
+    )
+    for code, status_code, external_code in cases:
+        service = SkillSetStubService()
+        service.fail_with = RegistryError(code, "postgresql://private-secret")
+        response = TestClient(skill_set_app_for(service)).get(
+            "/internal/skill-sets/runtime-status",
+            headers=assertion_headers(
+                "skill_set_status",
+                "admin:assistant:skills",
+                "maduoduo",
+                nonce=UUID("40000000-0000-4000-8000-000000000043"),
+            ),
+        )
+        assert response.status_code == status_code
+        assert response.json() == {"error": external_code}
+        assert "private-secret" not in response.text
