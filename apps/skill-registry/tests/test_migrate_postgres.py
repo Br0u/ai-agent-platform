@@ -190,6 +190,110 @@ async def _insert_review_event(
     return event_id
 
 
+async def _reset_registry_schema(urls: dict[str, str]) -> None:
+    owner = await _connect(urls["test"])
+    try:
+        await owner.execute("DROP SCHEMA IF EXISTS skill_registry CASCADE")
+        await owner.execute(
+            "CREATE SCHEMA skill_registry AUTHORIZATION ai_agent_skill_registry_migrator"
+        )
+    finally:
+        await owner.close()
+    await run_migration(MigrationSettings.model_validate({"database_url": urls["migrator"]}))
+
+
+async def _create_published_revision(
+    manager: psycopg.AsyncConnection[tuple[object, ...]],
+    *,
+    actor_id: UUID,
+    reviewer_id: UUID,
+) -> tuple[UUID, UUID]:
+    skill_id = uuid4()
+    revision_id = uuid4()
+    async with manager.transaction():
+        await _insert_skill_revision(
+            manager,
+            skill_id=skill_id,
+            revision_id=revision_id,
+            actor_id=actor_id,
+            slug=f"skill-set-{uuid4().hex[:16]}",
+            nonce=uuid4(),
+        )
+    async with manager.transaction():
+        await _insert_review_event(
+            manager,
+            revision_id=revision_id,
+            reviewer_id=reviewer_id,
+            event_type="revision_published",
+        )
+        await manager.execute(
+            """UPDATE skill_registry.skill_revisions
+            SET state = 'published', reviewed_by = %s, reviewed_at = now()
+            WHERE id = %s""",
+            (reviewer_id, revision_id),
+        )
+    return skill_id, revision_id
+
+
+async def _seed_candidate_set(
+    owner: psycopg.AsyncConnection[tuple[object, ...]],
+    *,
+    actor_id: UUID,
+    revisions: tuple[tuple[UUID, UUID], ...],
+) -> UUID:
+    set_id = uuid4()
+    set_no_cursor = await owner.execute(
+        "SELECT COALESCE(MAX(set_no), 0) + 1 FROM skill_registry.agent_skill_sets"
+    )
+    set_no_row = await set_no_cursor.fetchone()
+    assert set_no_row is not None
+    await owner.execute(
+        """INSERT INTO skill_registry.agent_skill_sets (
+          id, agent_id, set_no, state, created_by, request_id, request_fingerprint
+        ) VALUES (%s, 'maduoduo', %s, 'candidate', %s, %s, %s)""",
+        (set_id, set_no_row[0], actor_id, uuid4(), "c" * 64),
+    )
+    for ordinal, (skill_id, revision_id) in enumerate(revisions):
+        await owner.execute(
+            """INSERT INTO skill_registry.agent_skill_set_items (
+              set_id, agent_id, ordinal, skill_id, skill_revision_id
+            ) VALUES (%s, 'maduoduo', %s, %s, %s)""",
+            (set_id, ordinal, skill_id, revision_id),
+        )
+    return set_id
+
+
+def _activate_sql() -> str:
+    return """SELECT skill_registry.activate_agent_skill_set(
+      %s::text, %s::uuid, %s::bigint, %s::uuid, %s::uuid, %s::uuid, %s::char(64)
+    )"""
+
+
+def _fail_sql() -> str:
+    return """SELECT skill_registry.mark_agent_skill_set_failed(
+      %s::text, %s::uuid, %s::bigint, %s::uuid, %s::uuid, %s::uuid,
+      %s::char(64), %s::text
+    )"""
+
+
+def _create_set_sql() -> str:
+    return """SELECT * FROM skill_registry.create_agent_skill_set(
+      %s::text, %s::uuid[], %s::uuid, %s::uuid, %s::uuid, %s::char(64)
+    )"""
+
+
+def _discard_set_sql() -> str:
+    return """SELECT * FROM skill_registry.discard_agent_skill_set(
+      %s::text, %s::uuid, %s::uuid, %s::uuid, %s::uuid, %s::char(64)
+    )"""
+
+
+def _clone_set_sql() -> str:
+    return """SELECT * FROM skill_registry.clone_previous_agent_skill_set(
+      %s::text, %s::bigint, %s::uuid, %s::uuid, %s::uuid, %s::uuid, %s::char(64)
+    )"""
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(
     bool(MISSING_ENVIRONMENT),
@@ -257,7 +361,7 @@ async def test_real_registry_migration_and_role_boundary() -> None:
         version_rows = await owner.execute(
             "SELECT version FROM skill_registry.schema_versions ORDER BY version"
         )
-        assert await version_rows.fetchall() == [(1,), (2,)]
+        assert await version_rows.fetchall() == [(1,), (2,), (3,)]
 
         await owner.execute(
             "GRANT ai_agent_skill_registry_manager TO ai_agent_skill_registry_migrator"
@@ -746,7 +850,610 @@ async def test_real_registry_migration_and_role_boundary() -> None:
     bool(MISSING_ENVIRONMENT),
     reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
 )
-async def test_real_registry_migrates_v1_history_to_v2_without_losing_evidence() -> None:
+async def test_activation_function_replays_and_reconcile_function_reports_truth() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    owner = await _connect(urls["test"])
+    manager = await _connect(urls["manager"])
+    runtime = await _connect(urls["runtime"])
+    actor_id = uuid4()
+    try:
+        revision = await _create_published_revision(manager, actor_id=actor_id, reviewer_id=uuid4())
+        candidate_id = await _seed_candidate_set(owner, actor_id=actor_id, revisions=(revision,))
+        request_id = uuid4()
+        nonce = uuid4()
+        fingerprint = "1" * 64
+        activated = await runtime.execute(
+            _activate_sql(),
+            ("maduoduo", candidate_id, 0, actor_id, request_id, nonce, fingerprint),
+        )
+        assert await activated.fetchone() == (1,)
+        replay = await runtime.execute(
+            _activate_sql(),
+            ("maduoduo", candidate_id, 0, actor_id, request_id, nonce, fingerprint),
+        )
+        assert await replay.fetchone() == (1,)
+
+        reconciled = await runtime.execute(
+            """SELECT * FROM skill_registry.reconcile_agent_skill_activation(
+              %s::text, %s::uuid
+            )""",
+            ("maduoduo", candidate_id),
+        )
+        assert await reconciled.fetchone() == (candidate_id, None, 1, "active")
+
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            await runtime.execute(
+                _activate_sql(),
+                (
+                    "maduoduo",
+                    candidate_id,
+                    0,
+                    actor_id,
+                    request_id,
+                    uuid4(),
+                    fingerprint,
+                ),
+            )
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            await runtime.execute(
+                _fail_sql(),
+                (
+                    "maduoduo",
+                    candidate_id,
+                    1,
+                    actor_id,
+                    uuid4(),
+                    nonce,
+                    "2" * 64,
+                    "agent_build_failed",
+                ),
+            )
+    finally:
+        await runtime.close()
+        await manager.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_failure_function_marks_only_unchanged_candidate_and_replays() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    owner = await _connect(urls["test"])
+    runtime = await _connect(urls["runtime"])
+    actor_id = uuid4()
+    try:
+        candidate_id = await _seed_candidate_set(owner, actor_id=actor_id, revisions=())
+        request_id = uuid4()
+        nonce = uuid4()
+        parameters = (
+            "maduoduo",
+            candidate_id,
+            0,
+            actor_id,
+            request_id,
+            nonce,
+            "3" * 64,
+            "skill_validation_failed",
+        )
+        failed = await runtime.execute(_fail_sql(), parameters)
+        assert await failed.fetchone() == (True,)
+        replay = await runtime.execute(_fail_sql(), parameters)
+        assert await replay.fetchone() == (True,)
+        state = await owner.execute(
+            "SELECT state, failure_code FROM skill_registry.agent_skill_sets WHERE id = %s",
+            (candidate_id,),
+        )
+        assert await state.fetchone() == ("failed", "skill_validation_failed")
+    finally:
+        await runtime.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_activation_function_serializes_concurrent_cas() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    owner = await _connect(urls["test"])
+    first_runtime = await _connect(urls["runtime"])
+    second_runtime = await _connect(urls["runtime"])
+    actor_id = uuid4()
+    try:
+        first_set = await _seed_candidate_set(owner, actor_id=actor_id, revisions=())
+        second_set = await _seed_candidate_set(owner, actor_id=actor_id, revisions=())
+
+        async def activate(
+            connection: psycopg.AsyncConnection[tuple[object, ...]], set_id: UUID
+        ) -> int:
+            row_cursor = await connection.execute(
+                _activate_sql(),
+                (
+                    "maduoduo",
+                    set_id,
+                    0,
+                    actor_id,
+                    uuid4(),
+                    uuid4(),
+                    uuid4().hex * 2,
+                ),
+            )
+            row = await row_cursor.fetchone()
+            assert row is not None
+            return int(row[0])
+
+        results = await asyncio.gather(
+            activate(first_runtime, first_set),
+            activate(second_runtime, second_set),
+            return_exceptions=True,
+        )
+        assert sum(result == 1 for result in results) == 1
+        assert (
+            sum(isinstance(result, psycopg.errors.SerializationFailure) for result in results) == 1
+        )
+    finally:
+        await second_runtime.close()
+        await first_runtime.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_set_replay_concurrent_activation_returns_saved_result() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    owner = await _connect(urls["test"])
+    first_runtime = await _connect(urls["runtime"])
+    second_runtime = await _connect(urls["runtime"])
+    actor_id = uuid4()
+    request_id = uuid4()
+    nonce = uuid4()
+    try:
+        candidate_id = await _seed_candidate_set(owner, actor_id=actor_id, revisions=())
+
+        async def activate(
+            connection: psycopg.AsyncConnection[tuple[object, ...]],
+        ) -> tuple[object, ...] | None:
+            result = await connection.execute(
+                _activate_sql(),
+                (
+                    "maduoduo",
+                    candidate_id,
+                    0,
+                    actor_id,
+                    request_id,
+                    nonce,
+                    "e" * 64,
+                ),
+            )
+            return await result.fetchone()
+
+        assert await asyncio.gather(activate(first_runtime), activate(second_runtime)) == [
+            (1,),
+            (1,),
+        ]
+    finally:
+        await second_runtime.close()
+        await first_runtime.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_active_archive_guard_protects_active_and_immediate_previous() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    owner = await _connect(urls["test"])
+    manager = await _connect(urls["manager"])
+    runtime = await _connect(urls["runtime"])
+    actor_id = uuid4()
+    try:
+        first_revision = await _create_published_revision(
+            manager, actor_id=actor_id, reviewer_id=uuid4()
+        )
+        second_revision = await _create_published_revision(
+            manager, actor_id=actor_id, reviewer_id=uuid4()
+        )
+        first_set = await _seed_candidate_set(owner, actor_id=actor_id, revisions=(first_revision,))
+        second_set = await _seed_candidate_set(
+            owner, actor_id=actor_id, revisions=(second_revision,)
+        )
+        for expected_version, candidate_id in ((0, first_set), (1, second_set)):
+            await runtime.execute(
+                _activate_sql(),
+                (
+                    "maduoduo",
+                    candidate_id,
+                    expected_version,
+                    actor_id,
+                    uuid4(),
+                    uuid4(),
+                    uuid4().hex * 2,
+                ),
+            )
+        for _, revision_id in (first_revision, second_revision):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                await manager.execute(
+                    "UPDATE skill_registry.skill_revisions SET state = 'archived' WHERE id = %s",
+                    (revision_id,),
+                )
+    finally:
+        await runtime.close()
+        await manager.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_active_archive_waits_for_activation_revision_lock_and_then_fails() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    owner = await _connect(urls["test"])
+    manager = await _connect(urls["manager"])
+    runtime = await _connect(urls["runtime"])
+    actor_id = uuid4()
+    archive_task: asyncio.Task[object] | None = None
+    try:
+        revision = await _create_published_revision(manager, actor_id=actor_id, reviewer_id=uuid4())
+        candidate_id = await _seed_candidate_set(owner, actor_id=actor_id, revisions=(revision,))
+        async with runtime.transaction():
+            await runtime.execute(
+                _activate_sql(),
+                (
+                    "maduoduo",
+                    candidate_id,
+                    0,
+                    actor_id,
+                    uuid4(),
+                    uuid4(),
+                    "2" * 64,
+                ),
+            )
+            archive_task = asyncio.create_task(
+                manager.execute(
+                    "UPDATE skill_registry.skill_revisions SET state = 'archived' WHERE id = %s",
+                    (revision[1],),
+                )
+            )
+            await asyncio.sleep(0.05)
+            assert not archive_task.done()
+        assert archive_task is not None
+        with pytest.raises(psycopg.errors.CheckViolation):
+            await archive_task
+    finally:
+        if archive_task is not None and not archive_task.done():
+            archive_task.cancel()
+        await runtime.close()
+        await manager.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_set_replay_events_and_runtime_functions_are_not_forgeable() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    owner = await _connect(urls["test"])
+    manager = await _connect(urls["manager"])
+    runtime = await _connect(urls["runtime"])
+    try:
+        for connection in (manager, runtime):
+            await _expect_database_error(
+                connection,
+                psycopg.errors.InsufficientPrivilege,
+                """INSERT INTO skill_registry.skill_set_control_events (
+                  id, actor, action, event_type, target, request_id, assertion_nonce,
+                  request_fingerprint, result_set_id, result_set_state
+                ) VALUES (
+                  %s, %s, 'skill_set_create', 'skill_set_created', 'maduoduo',
+                  %s, %s, %s, %s, 'candidate'
+                )""",
+                (uuid4(), uuid4(), uuid4(), uuid4(), "4" * 64, uuid4()),
+            )
+        function_privilege = await owner.execute(
+            """SELECT
+              EXISTS (
+                SELECT 1
+                FROM pg_proc AS function
+                JOIN pg_namespace AS function_schema
+                  ON function_schema.oid = function.pronamespace
+                CROSS JOIN LATERAL aclexplode(COALESCE(
+                  function.proacl, acldefault('f', function.proowner)
+                )) AS acl
+                WHERE function_schema.nspname = 'skill_registry'
+                  AND function.proname = 'activate_agent_skill_set'
+                  AND acl.grantee = 0
+                  AND acl.privilege_type = 'EXECUTE'
+              ),
+              has_function_privilege('ai_agent_skill_registry_manager',
+                'skill_registry.activate_agent_skill_set(text,uuid,bigint,uuid,uuid,uuid,character)',
+                'EXECUTE')"""
+        )
+        assert await function_privilege.fetchone() == (False, False)
+    finally:
+        await runtime.close()
+        await manager.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_manager_create_preserves_order_replays_and_enforces_candidate_quota() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    manager = await _connect(urls["manager"])
+    actor_id = uuid4()
+    try:
+        first = await _create_published_revision(manager, actor_id=actor_id, reviewer_id=uuid4())
+        second = await _create_published_revision(manager, actor_id=actor_id, reviewer_id=uuid4())
+        request_id = uuid4()
+        nonce = uuid4()
+        parameters = (
+            "maduoduo",
+            [second[1], first[1]],
+            actor_id,
+            request_id,
+            nonce,
+            "5" * 64,
+        )
+        created_cursor = await manager.execute(_create_set_sql(), parameters)
+        created = await created_cursor.fetchone()
+        assert created is not None
+        assert created[1:] == (False, 2, 2)
+        set_id = created[0]
+        replay_cursor = await manager.execute(_create_set_sql(), parameters)
+        assert await replay_cursor.fetchone() == (set_id, True, 2, 2)
+        ordered_items = await manager.execute(
+            """SELECT revision_id
+            FROM skill_registry.manager_skill_set_items
+            WHERE set_id = %s ORDER BY ordinal""",
+            (set_id,),
+        )
+        assert await ordered_items.fetchall() == [(second[1],), (first[1],)]
+
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            await manager.execute(
+                _create_set_sql(),
+                (
+                    "maduoduo",
+                    [second[1], first[1]],
+                    actor_id,
+                    request_id,
+                    uuid4(),
+                    "5" * 64,
+                ),
+            )
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            await manager.execute(
+                _create_set_sql(),
+                ("maduoduo", [first[1], first[1]], actor_id, uuid4(), uuid4(), "6" * 64),
+            )
+
+        for _ in range(19):
+            await manager.execute(
+                _create_set_sql(),
+                ("maduoduo", [], actor_id, uuid4(), uuid4(), uuid4().hex * 2),
+            )
+        with pytest.raises(psycopg.errors.ProgramLimitExceeded):
+            await manager.execute(
+                _create_set_sql(),
+                ("maduoduo", [], actor_id, uuid4(), uuid4(), "7" * 64),
+            )
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_manager_create_concurrent_replay_returns_one_candidate() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    first_manager = await _connect(urls["manager"])
+    second_manager = await _connect(urls["manager"])
+    actor_id = uuid4()
+    parameters = (
+        "maduoduo",
+        [],
+        actor_id,
+        uuid4(),
+        uuid4(),
+        "f" * 64,
+    )
+    try:
+
+        async def create(
+            connection: psycopg.AsyncConnection[tuple[object, ...]],
+        ) -> tuple[object, ...] | None:
+            result = await connection.execute(_create_set_sql(), parameters)
+            return await result.fetchone()
+
+        results = await asyncio.gather(create(first_manager), create(second_manager))
+        assert results[0] is not None
+        assert results[1] is not None
+        assert results[0][0] == results[1][0]
+        assert {results[0][1], results[1][1]} == {False, True}
+    finally:
+        await second_manager.close()
+        await first_manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_manager_discard_is_audited_and_replayed_without_deleting_items() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    manager = await _connect(urls["manager"])
+    actor_id = uuid4()
+    try:
+        revision = await _create_published_revision(manager, actor_id=actor_id, reviewer_id=uuid4())
+        created_cursor = await manager.execute(
+            _create_set_sql(),
+            ("maduoduo", [revision[1]], actor_id, uuid4(), uuid4(), "8" * 64),
+        )
+        created = await created_cursor.fetchone()
+        assert created is not None
+        set_id = created[0]
+        request_id = uuid4()
+        nonce = uuid4()
+        parameters = ("maduoduo", set_id, actor_id, request_id, nonce, "9" * 64)
+        discarded_cursor = await manager.execute(_discard_set_sql(), parameters)
+        assert await discarded_cursor.fetchone() == (set_id, "discarded", False)
+        replay_cursor = await manager.execute(_discard_set_sql(), parameters)
+        assert await replay_cursor.fetchone() == (set_id, "discarded", True)
+        items = await manager.execute(
+            "SELECT count(*) FROM skill_registry.manager_skill_set_items WHERE set_id = %s",
+            (set_id,),
+        )
+        assert await items.fetchone() == (1,)
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_manager_clone_locks_expected_previous_and_preserves_item_order() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    owner = await _connect(urls["test"])
+    manager = await _connect(urls["manager"])
+    runtime = await _connect(urls["runtime"])
+    actor_id = uuid4()
+    try:
+        first = await _create_published_revision(manager, actor_id=actor_id, reviewer_id=uuid4())
+        second = await _create_published_revision(manager, actor_id=actor_id, reviewer_id=uuid4())
+        previous_set = await _seed_candidate_set(
+            owner, actor_id=actor_id, revisions=(second, first)
+        )
+        active_set = await _seed_candidate_set(owner, actor_id=actor_id, revisions=())
+        for expected_version, set_id in ((0, previous_set), (1, active_set)):
+            await runtime.execute(
+                _activate_sql(),
+                (
+                    "maduoduo",
+                    set_id,
+                    expected_version,
+                    actor_id,
+                    uuid4(),
+                    uuid4(),
+                    uuid4().hex * 2,
+                ),
+            )
+
+        parameters = (
+            "maduoduo",
+            2,
+            previous_set,
+            actor_id,
+            uuid4(),
+            uuid4(),
+            "a" * 64,
+        )
+        cloned_cursor = await manager.execute(_clone_set_sql(), parameters)
+        cloned = await cloned_cursor.fetchone()
+        assert cloned is not None
+        assert cloned[1:] == (False, 2, 2)
+        cloned_items = await manager.execute(
+            """SELECT revision_id FROM skill_registry.manager_skill_set_items
+            WHERE set_id = %s ORDER BY ordinal""",
+            (cloned[0],),
+        )
+        assert await cloned_items.fetchall() == [(second[1],), (first[1],)]
+        replay_cursor = await manager.execute(_clone_set_sql(), parameters)
+        assert await replay_cursor.fetchone() == (cloned[0], True, 2, 2)
+
+        with pytest.raises(psycopg.errors.SerializationFailure):
+            await manager.execute(
+                _clone_set_sql(),
+                (
+                    "maduoduo",
+                    1,
+                    previous_set,
+                    actor_id,
+                    uuid4(),
+                    uuid4(),
+                    "b" * 64,
+                ),
+            )
+    finally:
+        await runtime.close()
+        await manager.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_backup_skill_set_access_is_read_only_and_cannot_execute_functions() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    owner = await _connect(urls["test"])
+    actor_id = uuid4()
+    try:
+        candidate_id = await _seed_candidate_set(owner, actor_id=actor_id, revisions=())
+        async with owner.transaction():
+            await owner.execute("SET LOCAL ROLE ai_agent_backup")
+            selected = await owner.execute(
+                "SELECT id FROM skill_registry.agent_skill_sets WHERE id = %s",
+                (candidate_id,),
+            )
+            assert await selected.fetchone() == (candidate_id,)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            async with owner.transaction():
+                await owner.execute("SET LOCAL ROLE ai_agent_backup")
+                await owner.execute(
+                    "UPDATE skill_registry.agent_skill_sets SET state = 'discarded' WHERE id = %s",
+                    (candidate_id,),
+                )
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            async with owner.transaction():
+                await owner.execute("SET LOCAL ROLE ai_agent_backup")
+                await owner.execute(
+                    _create_set_sql(),
+                    ("maduoduo", [], actor_id, uuid4(), uuid4(), "d" * 64),
+                )
+    finally:
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_real_registry_migrates_v1_history_to_v3_without_losing_evidence() -> None:
     urls = _validated_urls()
     owner = await _connect(urls["test"])
     migrator = await _connect(urls["migrator"])
@@ -793,7 +1500,7 @@ async def test_real_registry_migrates_v1_history_to_v2_without_losing_evidence()
         versions = await owner.execute(
             "SELECT version FROM skill_registry.schema_versions ORDER BY version"
         )
-        assert await versions.fetchall() == [(1,), (2,)]
+        assert await versions.fetchall() == [(1,), (2,), (3,)]
         columns = await owner.execute(
             """SELECT column_name
             FROM information_schema.columns
@@ -940,6 +1647,10 @@ async def test_real_registry_publish_trigger_fails_closed_for_seeded_invalid_fin
     finally:
         await owner.execute(
             """TRUNCATE TABLE
+              skill_registry.skill_set_control_events,
+              skill_registry.active_agent_skill_sets,
+              skill_registry.agent_skill_set_items,
+              skill_registry.agent_skill_sets,
               skill_registry.skill_control_events,
               skill_registry.skill_revision_files,
               skill_registry.skill_revision_artifacts,

@@ -2,12 +2,12 @@ from pathlib import Path
 import re
 import subprocess
 
+import skill_registry.schema as registry_schema
 from skill_registry.schema import (
     PREPARE_SCHEMA_SQL,
-    REQUIRED_TABLE_NAMES,
+    REVIEWED_SKILL_TABLE_NAMES,
     SCHEMA_VERSION_1_SQL,
     SCHEMA_VERSION_2_SQL,
-    SKILL_REGISTRY_SCHEMA_VERSION,
 )
 
 
@@ -117,7 +117,7 @@ def test_role_bootstrap_resets_role_settings_and_seals_replication_bypass() -> N
 def test_schema_version_one_remains_the_exact_historical_registry_bootstrap() -> None:
     sql = normalize_sql(SCHEMA_VERSION_1_SQL)
 
-    assert REQUIRED_TABLE_NAMES == frozenset(
+    assert REVIEWED_SKILL_TABLE_NAMES == frozenset(
         {
             "skills",
             "skill_revisions",
@@ -126,7 +126,7 @@ def test_schema_version_one_remains_the_exact_historical_registry_bootstrap() ->
             "skill_control_events",
         }
     )
-    for table_name in REQUIRED_TABLE_NAMES:
+    for table_name in REVIEWED_SKILL_TABLE_NAMES:
         assert f"CREATE TABLE skill_registry.{table_name}" in sql
     assert "%s" not in PREPARE_SCHEMA_SQL + SCHEMA_VERSION_1_SQL
 
@@ -134,7 +134,6 @@ def test_schema_version_one_remains_the_exact_historical_registry_bootstrap() ->
 def test_schema_v2_renames_review_authorization_evidence() -> None:
     sql = normalize_sql(SCHEMA_VERSION_2_SQL)
 
-    assert SKILL_REGISTRY_SCHEMA_VERSION == 2
     assert "DROP CONSTRAINT skill_control_events_review_evidence" in sql
     assert "RENAME COLUMN independent_reviewer_confirmed" in sql
     assert "TO reviewer_authorization_confirmed" in sql
@@ -185,6 +184,53 @@ def test_schema_v2_replaces_only_the_second_actor_revision_guard() -> None:
     assert normalize_sql(version_two_guard) == normalize_sql(
         version_one_guard.replace(second_actor_rejection, "")
     )
+
+
+def test_skill_set_tables_are_introduced_only_by_schema_v3() -> None:
+    sql = normalize_sql(getattr(registry_schema, "SCHEMA_VERSION_3_SQL", ""))
+
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 3
+    for table_name in (
+        "agent_skill_sets",
+        "agent_skill_set_items",
+        "active_agent_skill_sets",
+        "skill_set_control_events",
+    ):
+        assert f"CREATE TABLE skill_registry.{table_name}" in sql
+    assert "agent_id varchar(64) NOT NULL DEFAULT 'maduoduo'" in sql
+    assert "state IN ('candidate','active','superseded','failed','discarded')" in sql
+    assert "UNIQUE (created_by, agent_id, request_id)" in sql
+    assert "UNIQUE (set_id, skill_id)" in sql
+    assert "UNIQUE (set_id, skill_revision_id)" in sql
+    assert "FOREIGN KEY (set_id, agent_id)" in sql
+    assert "FOREIGN KEY (skill_revision_id, skill_id)" in sql
+    assert "assertion_nonce uuid NOT NULL UNIQUE" in sql
+    assert "UNIQUE (actor, action, target, request_id)" in sql
+
+
+def test_skill_set_views_expose_runtime_and_manager_boundaries_in_schema_v3() -> None:
+    sql = normalize_sql(getattr(registry_schema, "SCHEMA_VERSION_3_SQL", ""))
+
+    for view_name in (
+        "runtime_active_skill_set",
+        "runtime_skill_sets",
+        "runtime_skill_set_items",
+        "manager_active_skill_set",
+        "manager_skill_sets",
+        "manager_skill_set_items",
+    ):
+        assert f"CREATE VIEW skill_registry.{view_name}" in sql
+    assert "jsonb_agg(jsonb_build_object('path', file.path" in sql
+    assert "'sha256', file.file_sha256" in sql
+    assert "'size', file.size" in sql
+    assert "'mediaType', file.media_type" in sql
+    assert "ORDER BY file.path" in sql
+    assert "GRANT SELECT ON skill_registry.runtime_active_skill_set" in sql
+    assert "TO ai_agent_skill_registry_runtime" in sql
+    assert "GRANT SELECT ON skill_registry.manager_active_skill_set" in sql
+    assert "TO ai_agent_skill_registry_manager" in sql
+    assert "skill_registry.skill_set_control_events TO ai_agent_backup" in sql
+    assert "INSERT INTO skill_registry.schema_versions (version) VALUES (3)" in sql
 
 
 def test_schema_has_permanent_identity_revision_and_nonce_uniqueness() -> None:

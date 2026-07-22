@@ -272,6 +272,53 @@ describePostgres(
           () => client.query("SET session_replication_role = replica"),
           "42501",
         );
+        await expect(
+          client.query(
+            "SELECT * FROM skill_registry.manager_skill_sets LIMIT 0",
+          ),
+        ).resolves.toBeDefined();
+        const setRequestId = randomUUID();
+        const setNonce = randomUUID();
+        const createdSet = await client.query<{
+          set_id: string;
+          replayed: boolean;
+          item_count: number;
+          total_extracted_size: string;
+        }>(
+          `SELECT * FROM skill_registry.create_agent_skill_set(
+             'maduoduo'::text, ARRAY[]::uuid[], $1::uuid, $2::uuid,
+             $3::uuid, $4::char(64)
+           )`,
+          [actorId, setRequestId, setNonce, "e".repeat(64)],
+        );
+        expect(createdSet.rows[0]).toMatchObject({
+          replayed: false,
+          item_count: 0,
+          total_extracted_size: "0",
+        });
+        await expectDatabaseError(
+          client,
+          () =>
+            client.query(
+              `INSERT INTO skill_registry.agent_skill_sets (
+                 id, agent_id, set_no, state, created_by, request_id,
+                 request_fingerprint
+               ) VALUES ($1, 'maduoduo', 999, 'candidate', $2, $3, $4)`,
+              [randomUUID(), actorId, randomUUID(), "f".repeat(64)],
+            ),
+          "42501",
+        );
+        await expectDatabaseError(
+          client,
+          () =>
+            client.query(
+              `SELECT * FROM skill_registry.reconcile_agent_skill_activation(
+                 'maduoduo'::text, $1::uuid
+               )`,
+              [randomUUID()],
+            ),
+          "42501",
+        );
       } finally {
         await client.query("ROLLBACK");
         client.release();
@@ -279,6 +326,39 @@ describePostgres(
 
       await expect(
         runtime.query("SELECT * FROM skill_registry.skills LIMIT 0"),
+      ).rejects.toMatchObject({ code: "42501" });
+      await expect(
+        runtime.query(
+          "SELECT * FROM skill_registry.runtime_skill_sets LIMIT 0",
+        ),
+      ).resolves.toBeDefined();
+      await expect(
+        runtime.query(
+          "SELECT * FROM skill_registry.manager_skill_sets LIMIT 0",
+        ),
+      ).rejects.toMatchObject({ code: "42501" });
+      const reconciliation = await runtime.query<{
+        activation_version: string;
+        target_state: string | null;
+      }>(
+        `SELECT * FROM skill_registry.reconcile_agent_skill_activation(
+           'maduoduo'::text, $1::uuid
+         )`,
+        [randomUUID()],
+      );
+      expect(reconciliation.rows).toHaveLength(1);
+      expect(
+        Number(reconciliation.rows[0]?.activation_version),
+      ).toBeGreaterThanOrEqual(0);
+      expect(reconciliation.rows[0]?.target_state).toBeNull();
+      await expect(
+        runtime.query(
+          `SELECT * FROM skill_registry.create_agent_skill_set(
+             'maduoduo'::text, ARRAY[]::uuid[], $1::uuid, $2::uuid,
+             $3::uuid, $4::char(64)
+           )`,
+          [randomUUID(), randomUUID(), randomUUID(), "0".repeat(64)],
+        ),
       ).rejects.toMatchObject({ code: "42501" });
     });
 
@@ -290,12 +370,29 @@ describePostgres(
         await expect(
           backup.query("SELECT * FROM skill_registry.skills LIMIT 0"),
         ).resolves.toBeDefined();
+        await expect(
+          backup.query(
+            "SELECT * FROM skill_registry.skill_set_control_events LIMIT 0",
+          ),
+        ).resolves.toBeDefined();
         await expectDatabaseError(
           backup,
           () =>
             backup.query(
               "INSERT INTO skill_registry.skills (id, slug, created_by) VALUES ($1, $2, $3)",
               [randomUUID(), `backup-${randomUUID()}`, randomUUID()],
+            ),
+          "42501",
+        );
+        await expectDatabaseError(
+          backup,
+          () =>
+            backup.query(
+              `SELECT * FROM skill_registry.create_agent_skill_set(
+                 'maduoduo'::text, ARRAY[]::uuid[], $1::uuid, $2::uuid,
+                 $3::uuid, $4::char(64)
+               )`,
+              [randomUUID(), randomUUID(), randomUUID(), "1".repeat(64)],
             ),
           "42501",
         );

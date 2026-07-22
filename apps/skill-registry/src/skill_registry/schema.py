@@ -1,8 +1,15 @@
 """Literal schema migrations for the isolated reviewed-skill registry."""
 
-SKILL_REGISTRY_SCHEMA_VERSION = 2
+from skill_registry.skill_set_schema import (
+    MANAGER_SKILL_SET_VIEW_NAMES,
+    RUNTIME_SKILL_SET_VIEW_NAMES,
+    SCHEMA_VERSION_3_SQL as SCHEMA_VERSION_3_SQL,
+    SKILL_SET_TABLE_NAMES,
+)
 
-REQUIRED_TABLE_NAMES = frozenset(
+SKILL_REGISTRY_SCHEMA_VERSION = 3
+
+REVIEWED_SKILL_TABLE_NAMES = frozenset(
     {
         "skills",
         "skill_revisions",
@@ -12,15 +19,26 @@ REQUIRED_TABLE_NAMES = frozenset(
     }
 )
 
+REQUIRED_TABLE_NAMES = REVIEWED_SKILL_TABLE_NAMES | SKILL_SET_TABLE_NAMES
+REQUIRED_VIEW_NAMES = MANAGER_SKILL_SET_VIEW_NAMES | RUNTIME_SKILL_SET_VIEW_NAMES
+
 EXPECTED_TABLE_OWNERS = frozenset(
     (table_name, "ai_agent_skill_registry_migrator")
     for table_name in REQUIRED_TABLE_NAMES | {"schema_versions"}
 )
 
+EXPECTED_VIEW_OWNERS = frozenset(
+    (view_name, "ai_agent_skill_registry_migrator") for view_name in REQUIRED_VIEW_NAMES
+)
+
 EXPECTED_MANAGER_TABLE_GRANTS = frozenset(
     (table_name, privilege, False)
-    for table_name in REQUIRED_TABLE_NAMES
+    for table_name in REVIEWED_SKILL_TABLE_NAMES
     for privilege in ("INSERT", "SELECT")
+) | frozenset((view_name, "SELECT", False) for view_name in MANAGER_SKILL_SET_VIEW_NAMES)
+
+EXPECTED_RUNTIME_VIEW_GRANTS = frozenset(
+    (view_name, "SELECT", False) for view_name in RUNTIME_SKILL_SET_VIEW_NAMES
 )
 
 EXPECTED_MANAGER_COLUMN_GRANTS = frozenset(
@@ -42,6 +60,7 @@ EXPECTED_SCHEMA_GRANTS = frozenset(
         ("ai_agent_skill_registry_manager", "USAGE", False),
         ("ai_agent_skill_registry_migrator", "CREATE", False),
         ("ai_agent_skill_registry_migrator", "USAGE", False),
+        ("ai_agent_skill_registry_runtime", "USAGE", False),
     }
 )
 
@@ -177,45 +196,200 @@ EXPECTED_REVIEW_TRIGGER_GUARDS = frozenset(
     }
 )
 
-EXPECTED_FUNCTION_BOUNDARY = frozenset(
-    (
-        function_name,
-        "ai_agent_skill_registry_migrator",
-        0,
-        "trigger",
-        "plpgsql",
-        False,
-        "search_path=pg_catalog, skill_registry",
-        True,
-        False,
+EXPECTED_FUNCTION_BOUNDARY = (
+    frozenset(
+        (
+            function_name,
+            "ai_agent_skill_registry_migrator",
+            0,
+            "trigger",
+            "plpgsql",
+            False,
+            "search_path=pg_catalog, skill_registry",
+            True,
+            False,
+        )
+        for function_name in {
+            "deny_append_only_mutation",
+            "guard_revision_insert",
+            "guard_revision_update",
+            "guard_skill_update",
+            "require_revision_review_event",
+            "stamp_control_event_transaction",
+            "guard_agent_skill_set_update",
+            "guard_active_agent_skill_set_update",
+            "validate_agent_skill_set_contents",
+        }
     )
-    for function_name in {
-        "deny_append_only_mutation",
-        "guard_revision_insert",
-        "guard_revision_update",
-        "guard_skill_update",
-        "require_revision_review_event",
-        "stamp_control_event_transaction",
+    | {
+        (
+            "validate_skill_findings",
+            "ai_agent_skill_registry_migrator",
+            1,
+            "boolean",
+            "sql",
+            False,
+            "search_path=pg_catalog, skill_registry",
+            True,
+            True,
+        )
     }
-) | {
-    (
-        "validate_skill_findings",
-        "ai_agent_skill_registry_migrator",
-        1,
-        "boolean",
-        "sql",
-        False,
-        "search_path=pg_catalog, skill_registry",
-        True,
-        True,
-    )
-}
+    | {
+        (
+            "create_agent_skill_set",
+            "ai_agent_skill_registry_migrator",
+            6,
+            "record",
+            "plpgsql",
+            True,
+            "search_path=pg_catalog, skill_registry",
+            True,
+            True,
+        ),
+        (
+            "discard_agent_skill_set",
+            "ai_agent_skill_registry_migrator",
+            6,
+            "record",
+            "plpgsql",
+            True,
+            "search_path=pg_catalog, skill_registry",
+            True,
+            True,
+        ),
+        (
+            "clone_previous_agent_skill_set",
+            "ai_agent_skill_registry_migrator",
+            7,
+            "record",
+            "plpgsql",
+            True,
+            "search_path=pg_catalog, skill_registry",
+            True,
+            True,
+        ),
+        (
+            "protect_active_skill_revision_archive",
+            "ai_agent_skill_registry_migrator",
+            0,
+            "trigger",
+            "plpgsql",
+            True,
+            "search_path=pg_catalog, skill_registry",
+            True,
+            False,
+        ),
+        (
+            "activate_agent_skill_set",
+            "ai_agent_skill_registry_migrator",
+            7,
+            "bigint",
+            "plpgsql",
+            True,
+            "search_path=pg_catalog, skill_registry",
+            True,
+            False,
+        ),
+        (
+            "mark_agent_skill_set_failed",
+            "ai_agent_skill_registry_migrator",
+            8,
+            "boolean",
+            "plpgsql",
+            True,
+            "search_path=pg_catalog, skill_registry",
+            True,
+            False,
+        ),
+        (
+            "reconcile_agent_skill_activation",
+            "ai_agent_skill_registry_migrator",
+            2,
+            "record",
+            "plpgsql",
+            True,
+            "search_path=pg_catalog, skill_registry",
+            True,
+            False,
+        ),
+    }
+)
+
+EXPECTED_RUNTIME_FUNCTION_GRANTS = frozenset(
+    {
+        ("activate_agent_skill_set", True, False, False, False),
+        ("mark_agent_skill_set_failed", True, False, False, False),
+        ("reconcile_agent_skill_activation", True, False, False, False),
+    }
+)
+
+EXPECTED_MANAGER_FUNCTION_GRANTS = frozenset(
+    {
+        ("clone_previous_agent_skill_set", True, False, False, False),
+        ("create_agent_skill_set", True, False, False, False),
+        ("discard_agent_skill_set", True, False, False, False),
+    }
+)
 
 EXPECTED_SECURITY_TRIGGERS = frozenset(
     {
         (
+            "active_agent_skill_sets_deny_delete",
+            "active_agent_skill_sets",
+            "deny_append_only_mutation",
+            11,
+            False,
+            False,
+            "A",
+        ),
+        (
+            "active_agent_skill_sets_guard_update",
+            "active_agent_skill_sets",
+            "guard_active_agent_skill_set_update",
+            19,
+            False,
+            False,
+            "A",
+        ),
+        (
+            "agent_skill_set_items_append_only",
+            "agent_skill_set_items",
+            "deny_append_only_mutation",
+            27,
+            False,
+            False,
+            "A",
+        ),
+        (
+            "agent_skill_set_items_validate",
+            "agent_skill_set_items",
+            "validate_agent_skill_set_contents",
+            29,
+            True,
+            True,
+            "A",
+        ),
+        (
+            "agent_skill_sets_guard_update",
+            "agent_skill_sets",
+            "guard_agent_skill_set_update",
+            19,
+            False,
+            False,
+            "A",
+        ),
+        (
             "skill_control_events_append_only",
             "skill_control_events",
+            "deny_append_only_mutation",
+            27,
+            False,
+            False,
+            "A",
+        ),
+        (
+            "skill_set_control_events_append_only",
+            "skill_set_control_events",
             "deny_append_only_mutation",
             27,
             False,
@@ -274,6 +448,15 @@ EXPECTED_SECURITY_TRIGGERS = frozenset(
             17,
             True,
             True,
+            "A",
+        ),
+        (
+            "skill_revisions_protect_active_archive",
+            "skill_revisions",
+            "protect_active_skill_revision_archive",
+            19,
+            False,
+            False,
             "A",
         ),
         (
@@ -845,6 +1028,15 @@ WHERE n.nspname = 'skill_registry'
 ORDER BY c.relname
 """
 
+VERIFY_VIEWS_SQL = """SELECT
+  c.relname::text,
+  pg_get_userbyid(c.relowner)::text
+FROM pg_class AS c
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+WHERE n.nspname = 'skill_registry' AND c.relkind = 'v'
+ORDER BY c.relname
+"""
+
 VERIFY_MANAGER_TABLE_GRANTS_SQL = """SELECT
   table_name::text,
   privilege_type::text,
@@ -865,6 +1057,66 @@ WHERE table_schema = 'skill_registry'
   AND grantee = 'ai_agent_skill_registry_manager'
   AND privilege_type = 'UPDATE'
 ORDER BY table_name, column_name
+"""
+
+VERIFY_RUNTIME_VIEW_GRANTS_SQL = """SELECT
+  table_name::text,
+  privilege_type::text,
+  is_grantable = 'YES'
+FROM information_schema.role_table_grants
+WHERE table_schema = 'skill_registry'
+  AND grantee = 'ai_agent_skill_registry_runtime'
+ORDER BY table_name, privilege_type
+"""
+
+VERIFY_RUNTIME_FUNCTION_GRANTS_SQL = """SELECT
+  p.proname::text,
+  pg_catalog.has_function_privilege(
+    'ai_agent_skill_registry_runtime', p.oid, 'EXECUTE'
+  ),
+  pg_catalog.has_function_privilege(
+    'ai_agent_skill_registry_manager', p.oid, 'EXECUTE'
+  ),
+  pg_catalog.has_function_privilege('ai_agent_backup', p.oid, 'EXECUTE'),
+  EXISTS (
+    SELECT 1
+    FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) AS acl
+    WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'
+  )
+FROM pg_proc AS p
+JOIN pg_namespace AS n ON n.oid = p.pronamespace
+WHERE n.nspname = 'skill_registry'
+  AND p.proname IN (
+    'activate_agent_skill_set',
+    'mark_agent_skill_set_failed',
+    'reconcile_agent_skill_activation'
+  )
+ORDER BY p.proname
+"""
+
+VERIFY_MANAGER_FUNCTION_GRANTS_SQL = """SELECT
+  p.proname::text,
+  pg_catalog.has_function_privilege(
+    'ai_agent_skill_registry_manager', p.oid, 'EXECUTE'
+  ),
+  pg_catalog.has_function_privilege(
+    'ai_agent_skill_registry_runtime', p.oid, 'EXECUTE'
+  ),
+  pg_catalog.has_function_privilege('ai_agent_backup', p.oid, 'EXECUTE'),
+  EXISTS (
+    SELECT 1
+    FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) AS acl
+    WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'
+  )
+FROM pg_proc AS p
+JOIN pg_namespace AS n ON n.oid = p.pronamespace
+WHERE n.nspname = 'skill_registry'
+  AND p.proname IN (
+    'create_agent_skill_set',
+    'discard_agent_skill_set',
+    'clone_previous_agent_skill_set'
+  )
+ORDER BY p.proname
 """
 
 VERIFY_BACKUP_GRANTS_SQL = """SELECT
@@ -889,17 +1141,28 @@ CROSS JOIN LATERAL aclexplode(
   COALESCE(c.relacl, acldefault('r', c.relowner))
 ) AS acl
 WHERE n.nspname = 'skill_registry'
-  AND c.relkind IN ('r', 'p')
+  AND c.relkind IN ('r', 'p', 'v')
   AND (
     acl.grantee = 0
     OR pg_get_userbyid(acl.grantee)::text IN (
-      'ai_agent_skill_registry_runtime',
       'ai_agent_migrator',
       'ai_agent_runtime',
       'ai_agent_agno_migrator',
       'ai_agent_agno',
       'ai_agent_control_migrator',
       'ai_agent_control'
+    )
+    OR (
+      pg_get_userbyid(acl.grantee)::text = 'ai_agent_skill_registry_runtime'
+      AND NOT (
+        c.relkind = 'v'
+        AND c.relname IN (
+          'runtime_active_skill_set',
+          'runtime_skill_sets',
+          'runtime_skill_set_items'
+        )
+        AND acl.privilege_type = 'SELECT'
+      )
     )
   )
 ORDER BY c.relname, 2, acl.privilege_type

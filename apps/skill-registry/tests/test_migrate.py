@@ -2,16 +2,28 @@ from typing import Any
 
 import pytest
 
+import skill_registry.schema as registry_schema
 from skill_registry.config import MigrationSettings
 from skill_registry.migrate import MigrationConnection, main, run_migration
 from skill_registry.schema import (
+    EXPECTED_BACKUP_GRANTS,
+    EXPECTED_FUNCTION_BOUNDARY,
+    EXPECTED_MANAGER_TABLE_GRANTS,
+    EXPECTED_MANAGER_FUNCTION_GRANTS,
     EXPECTED_REVIEW_CONSTRAINTS,
     EXPECTED_REVIEW_STORAGE_COLUMNS,
     EXPECTED_REVIEW_TRIGGER_GUARDS,
+    EXPECTED_RUNTIME_VIEW_GRANTS,
+    EXPECTED_RUNTIME_FUNCTION_GRANTS,
+    EXPECTED_SCHEMA_GRANTS,
+    EXPECTED_SECURITY_TRIGGERS,
+    EXPECTED_TABLE_OWNERS,
+    EXPECTED_VIEW_OWNERS,
     LOCK_SCHEMA_VERSION_SQL,
     PREPARE_SCHEMA_SQL,
     SCHEMA_VERSION_1_SQL,
     SCHEMA_VERSION_2_SQL,
+    SCHEMA_VERSION_3_SQL,
     SELECT_SCHEMA_VERSION_SQL,
     VERIFY_BACKUP_GRANTS_SQL,
     VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL,
@@ -19,16 +31,20 @@ from skill_registry.schema import (
     VERIFY_FUNCTION_BOUNDARY_SQL,
     VERIFY_MANAGER_COLUMN_GRANTS_SQL,
     VERIFY_MANAGER_TABLE_GRANTS_SQL,
+    VERIFY_MANAGER_FUNCTION_GRANTS_SQL,
     VERIFY_REGISTRY_ROLE_MEMBERSHIPS_SQL,
     VERIFY_REGISTRY_ROLE_SETTINGS_SQL,
     VERIFY_REPLICATION_PARAMETER_PRIVILEGES_SQL,
     VERIFY_REVIEW_CONSTRAINTS_SQL,
     VERIFY_REVIEW_STORAGE_COLUMNS_SQL,
     VERIFY_REVIEW_TRIGGER_GUARDS_SQL,
+    VERIFY_RUNTIME_VIEW_GRANTS_SQL,
+    VERIFY_RUNTIME_FUNCTION_GRANTS_SQL,
     VERIFY_SCHEMA_GRANTS_SQL,
     VERIFY_SCHEMA_OWNER_SQL,
     VERIFY_SECURITY_TRIGGERS_SQL,
     VERIFY_TABLES_SQL,
+    VERIFY_VIEWS_SQL,
 )
 
 
@@ -57,6 +73,8 @@ class FakeCursor:
             self.versions = (1,)
         elif query == SCHEMA_VERSION_2_SQL:
             self.versions = (1, 2)
+        elif query == SCHEMA_VERSION_3_SQL:
+            self.versions = (1, 2, 3)
 
     async def fetchone(self) -> tuple[Any, ...] | None:
         if self._query == VERIFY_SCHEMA_OWNER_SQL:
@@ -70,40 +88,19 @@ class FakeCursor:
 
     async def fetchall(self) -> list[tuple[Any, ...]]:
         rows: dict[str, list[tuple[Any, ...]]] = {
-            VERIFY_TABLES_SQL: [
-                ("schema_versions", "ai_agent_skill_registry_migrator"),
-                ("skill_control_events", "ai_agent_skill_registry_migrator"),
-                ("skill_revision_artifacts", "ai_agent_skill_registry_migrator"),
-                ("skill_revision_files", "ai_agent_skill_registry_migrator"),
-                ("skill_revisions", "ai_agent_skill_registry_migrator"),
-                ("skills", "ai_agent_skill_registry_migrator"),
-            ],
-            VERIFY_MANAGER_TABLE_GRANTS_SQL: [
-                ("skill_control_events", "INSERT", False),
-                ("skill_control_events", "SELECT", False),
-                ("skill_revision_artifacts", "INSERT", False),
-                ("skill_revision_artifacts", "SELECT", False),
-                ("skill_revision_files", "INSERT", False),
-                ("skill_revision_files", "SELECT", False),
-                ("skill_revisions", "INSERT", False),
-                ("skill_revisions", "SELECT", False),
-                ("skills", "INSERT", False),
-                ("skills", "SELECT", False),
-            ],
+            VERIFY_TABLES_SQL: sorted(EXPECTED_TABLE_OWNERS),
+            VERIFY_VIEWS_SQL: sorted(EXPECTED_VIEW_OWNERS),
+            VERIFY_MANAGER_TABLE_GRANTS_SQL: sorted(EXPECTED_MANAGER_TABLE_GRANTS),
+            VERIFY_MANAGER_FUNCTION_GRANTS_SQL: sorted(EXPECTED_MANAGER_FUNCTION_GRANTS),
             VERIFY_MANAGER_COLUMN_GRANTS_SQL: [
                 ("skill_revisions", "reviewed_at", "UPDATE", False),
                 ("skill_revisions", "reviewed_by", "UPDATE", False),
                 ("skill_revisions", "state", "UPDATE", False),
                 ("skills", "archived_at", "UPDATE", False),
             ],
-            VERIFY_BACKUP_GRANTS_SQL: [
-                ("schema_versions", "SELECT", False),
-                ("skill_control_events", "SELECT", False),
-                ("skill_revision_artifacts", "SELECT", False),
-                ("skill_revision_files", "SELECT", False),
-                ("skill_revisions", "SELECT", False),
-                ("skills", "SELECT", False),
-            ],
+            VERIFY_RUNTIME_VIEW_GRANTS_SQL: sorted(EXPECTED_RUNTIME_VIEW_GRANTS),
+            VERIFY_RUNTIME_FUNCTION_GRANTS_SQL: sorted(EXPECTED_RUNTIME_FUNCTION_GRANTS),
+            VERIFY_BACKUP_GRANTS_SQL: sorted(EXPECTED_BACKUP_GRANTS),
             VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL: [
                 ("transaction_id", "bigint", True, ""),
             ],
@@ -129,171 +126,20 @@ class FakeCursor:
             ],
             VERIFY_REVIEW_CONSTRAINTS_SQL: sorted(EXPECTED_REVIEW_CONSTRAINTS),
             VERIFY_REVIEW_TRIGGER_GUARDS_SQL: sorted(EXPECTED_REVIEW_TRIGGER_GUARDS),
-            VERIFY_FUNCTION_BOUNDARY_SQL: [
-                (
-                    "deny_append_only_mutation",
-                    "ai_agent_skill_registry_migrator",
-                    0,
-                    "trigger",
-                    "plpgsql",
-                    False,
-                    "search_path=pg_catalog, skill_registry",
-                    True,
-                    False,
-                ),
-                (
-                    "guard_revision_insert",
-                    "ai_agent_skill_registry_migrator",
-                    0,
-                    "trigger",
-                    "plpgsql",
-                    False,
-                    "search_path=pg_catalog, skill_registry",
-                    True,
-                    False,
-                ),
-                (
-                    "guard_revision_update",
-                    "ai_agent_skill_registry_migrator",
-                    0,
-                    "trigger",
-                    "plpgsql",
-                    False,
-                    "search_path=pg_catalog, skill_registry",
-                    True,
-                    False,
-                ),
-                (
-                    "guard_skill_update",
-                    "ai_agent_skill_registry_migrator",
-                    0,
-                    "trigger",
-                    "plpgsql",
-                    False,
-                    "search_path=pg_catalog, skill_registry",
-                    True,
-                    False,
-                ),
-                (
-                    "require_revision_review_event",
-                    "ai_agent_skill_registry_migrator",
-                    0,
-                    "trigger",
-                    "plpgsql",
-                    False,
-                    "search_path=pg_catalog, skill_registry",
-                    True,
-                    False,
-                ),
-                (
-                    "stamp_control_event_transaction",
-                    "ai_agent_skill_registry_migrator",
-                    0,
-                    "trigger",
-                    "plpgsql",
-                    False,
-                    "search_path=pg_catalog, skill_registry",
-                    True,
-                    False,
-                ),
-                (
-                    "validate_skill_findings",
-                    "ai_agent_skill_registry_migrator",
-                    1,
-                    "boolean",
-                    "sql",
-                    False,
-                    "search_path=pg_catalog, skill_registry",
-                    True,
-                    True,
-                ),
-            ],
-            VERIFY_SECURITY_TRIGGERS_SQL: [
-                (
-                    "skill_control_events_append_only",
-                    "skill_control_events",
-                    "deny_append_only_mutation",
-                    27,
-                    False,
-                    False,
-                    "A",
-                ),
-                (
-                    "skill_control_events_stamp_transaction",
-                    "skill_control_events",
-                    "stamp_control_event_transaction",
-                    7,
-                    False,
-                    False,
-                    "A",
-                ),
-                (
-                    "skill_revision_artifacts_append_only",
-                    "skill_revision_artifacts",
-                    "deny_append_only_mutation",
-                    27,
-                    False,
-                    False,
-                    "A",
-                ),
-                (
-                    "skill_revision_files_append_only",
-                    "skill_revision_files",
-                    "deny_append_only_mutation",
-                    27,
-                    False,
-                    False,
-                    "A",
-                ),
-                (
-                    "skill_revisions_guard_insert",
-                    "skill_revisions",
-                    "guard_revision_insert",
-                    7,
-                    False,
-                    False,
-                    "A",
-                ),
-                (
-                    "skill_revisions_guard_update",
-                    "skill_revisions",
-                    "guard_revision_update",
-                    19,
-                    False,
-                    False,
-                    "A",
-                ),
-                (
-                    "skill_revisions_require_review_event",
-                    "skill_revisions",
-                    "require_revision_review_event",
-                    17,
-                    True,
-                    True,
-                    "A",
-                ),
-                (
-                    "skills_guard_update",
-                    "skills",
-                    "guard_skill_update",
-                    19,
-                    False,
-                    False,
-                    "A",
-                ),
-            ],
+            VERIFY_FUNCTION_BOUNDARY_SQL: sorted(EXPECTED_FUNCTION_BOUNDARY),
+            VERIFY_SECURITY_TRIGGERS_SQL: sorted(EXPECTED_SECURITY_TRIGGERS),
             VERIFY_FORBIDDEN_GRANTS_SQL: [],
             VERIFY_REGISTRY_ROLE_MEMBERSHIPS_SQL: [],
             VERIFY_REGISTRY_ROLE_SETTINGS_SQL: [],
             VERIFY_REPLICATION_PARAMETER_PRIVILEGES_SQL: [],
-            VERIFY_SCHEMA_GRANTS_SQL: [
-                ("ai_agent_backup", "USAGE", False),
-                ("ai_agent_skill_registry_manager", "USAGE", False),
-                ("ai_agent_skill_registry_migrator", "CREATE", False),
-                ("ai_agent_skill_registry_migrator", "USAGE", False),
-            ],
+            VERIFY_SCHEMA_GRANTS_SQL: sorted(EXPECTED_SCHEMA_GRANTS),
         }
         return rows[self._query]
+
+
+def test_skill_set_tables_and_views_require_schema_v3_migration() -> None:
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 3
+    assert getattr(registry_schema, "SCHEMA_VERSION_3_SQL", "")
 
 
 class FakeConnection:
@@ -311,7 +157,7 @@ class FakeConnection:
 
 
 @pytest.mark.asyncio
-async def test_migration_applies_v1_then_v2_once_and_keeps_repeat_at_exact_v2() -> None:
+async def test_migration_applies_v1_through_v3_once_and_keeps_repeat_at_exact_v3() -> None:
     cursor = FakeCursor()
     connection = FakeConnection(cursor)
     urls: list[str] = []
@@ -329,6 +175,7 @@ async def test_migration_applies_v1_then_v2_once_and_keeps_repeat_at_exact_v2() 
     assert cursor.executed.count(LOCK_SCHEMA_VERSION_SQL) == 2
     assert cursor.executed.count(SCHEMA_VERSION_1_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_2_SQL) == 1
+    assert cursor.executed.count(SCHEMA_VERSION_3_SQL) == 1
     assert cursor.executed.count(SELECT_SCHEMA_VERSION_SQL) == 2
     assert cursor.executed.count(VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL) == 2
     assert cursor.executed.count(VERIFY_REVIEW_STORAGE_COLUMNS_SQL) == 2
@@ -342,7 +189,10 @@ async def test_migration_applies_v1_then_v2_once_and_keeps_repeat_at_exact_v2() 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("versions", [(2,), (1, 3), (1, 2, 3), (1, 1), (1, 1, 2)])
+@pytest.mark.parametrize(
+    "versions",
+    [(2,), (3,), (1, 3), (1, 2, 4), (1, 1), (1, 1, 2), (1, 2, 3, 3)],
+)
 async def test_migration_rejects_drifted_version_sets_without_reapplying_schema(
     versions: tuple[int, ...],
 ) -> None:
@@ -359,10 +209,11 @@ async def test_migration_rejects_drifted_version_sets_without_reapplying_schema(
     assert SELECT_SCHEMA_VERSION_SQL in cursor.executed
     assert SCHEMA_VERSION_1_SQL not in cursor.executed
     assert SCHEMA_VERSION_2_SQL not in cursor.executed
+    assert SCHEMA_VERSION_3_SQL not in cursor.executed
 
 
 @pytest.mark.asyncio
-async def test_migration_upgrades_exact_v1_to_v2() -> None:
+async def test_migration_upgrades_exact_v1_to_v3() -> None:
     cursor = FakeCursor(versions=(1,))
 
     async def connector(database_url: str) -> MigrationConnection:
@@ -373,11 +224,12 @@ async def test_migration_upgrades_exact_v1_to_v2() -> None:
 
     assert SCHEMA_VERSION_1_SQL not in cursor.executed
     assert cursor.executed.count(SCHEMA_VERSION_2_SQL) == 1
-    assert cursor.versions == (1, 2)
+    assert cursor.executed.count(SCHEMA_VERSION_3_SQL) == 1
+    assert cursor.versions == (1, 2, 3)
 
 
 @pytest.mark.asyncio
-async def test_migration_accepts_exact_v2_without_reapplying_schema() -> None:
+async def test_migration_upgrades_exact_v2_to_v3() -> None:
     cursor = FakeCursor(versions=(1, 2))
 
     async def connector(database_url: str) -> MigrationConnection:
@@ -388,6 +240,8 @@ async def test_migration_accepts_exact_v2_without_reapplying_schema() -> None:
 
     assert SCHEMA_VERSION_1_SQL not in cursor.executed
     assert SCHEMA_VERSION_2_SQL not in cursor.executed
+    assert cursor.executed.count(SCHEMA_VERSION_3_SQL) == 1
+    assert cursor.versions == (1, 2, 3)
 
 
 @pytest.mark.asyncio
