@@ -147,7 +147,12 @@ def _read_validated_files(
 
     for info, central_name in zip(infos, central_names, strict=True):
         data_offset = _validate_raw_local_header(raw_archive, info, central_name)
-        normalized = _normalize_path(info.filename)
+        decoded_name = _decode_zip_name(
+            central_name,
+            info.flag_bits,
+            create_system=info.create_system,
+        )
+        normalized = _normalize_path(decoded_name)
         collision_path = normalized.rstrip("/")
         folded = collision_path.casefold()
         if collision_path in normalized_paths or folded in folded_paths:
@@ -156,10 +161,10 @@ def _read_validated_files(
                 "ZIP contains colliding canonical paths",
                 path=normalized,
             )
-        normalized_paths[collision_path] = info.filename
+        normalized_paths[collision_path] = decoded_name
         folded_paths[folded] = collision_path
 
-        is_directory = info.is_dir()
+        is_directory = decoded_name.endswith("/")
         _validate_member_type(info, is_directory)
         if info.flag_bits & 0x1:
             raise SkillPackageError("ARCHIVE_ENCRYPTED", "Encrypted ZIP members are not allowed")
@@ -250,7 +255,11 @@ def _validate_raw_local_header(
     local_name = raw_archive[name_start:name_end]
     if b"\x00" in local_name:
         raise SkillPackageError("ARCHIVE_UNSAFE_PATH", "Unsafe ZIP member path")
-    decoded_local_name = _decode_zip_name(local_name, local_flags)
+    decoded_local_name = _decode_zip_name(
+        local_name,
+        local_flags,
+        create_system=info.create_system,
+    )
     _normalize_path(decoded_local_name)
     if local_name != central_name:
         raise SkillPackageError("ARCHIVE_INVALID", "ZIP local and central paths do not match")
@@ -278,8 +287,18 @@ def _read_raw_central_names(raw_archive: bytes, count: int, offset: int) -> tupl
     return tuple(names)
 
 
-def _decode_zip_name(raw_name: bytes, flags: int) -> str:
-    encoding = "utf-8" if flags & 0x800 else "cp437"
+def _decode_zip_name(raw_name: bytes, flags: int, *, create_system: int) -> str:
+    if flags & 0x800:
+        encoding = "utf-8"
+    elif raw_name.isascii():
+        encoding = "ascii"
+    elif create_system == 3:
+        try:
+            return raw_name.decode("utf-8")
+        except UnicodeDecodeError:
+            encoding = "cp437"
+    else:
+        encoding = "cp437"
     try:
         return raw_name.decode(encoding)
     except UnicodeDecodeError as error:

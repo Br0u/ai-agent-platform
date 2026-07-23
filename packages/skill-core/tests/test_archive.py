@@ -116,6 +116,56 @@ def test_rejects_unicode_normalization_duplicates_and_case_collisions(
     assert_archive_error(archive, "ARCHIVE_PATH_CONFLICT")
 
 
+def test_recovers_utf8_path_from_unflagged_unix_zip(zip_builder) -> None:
+    target = "demo-skill/references/07-从CPU到NPU.md"
+    placeholder = "x" * len(target.encode("utf-8"))
+    archive = zip_builder(
+        {
+            "demo-skill/SKILL.md": DEFAULT_SKILL_MD,
+            placeholder: b"NPU reference",
+        }
+    )
+    archive = replace_zip_name_byte(
+        archive,
+        placeholder.encode("ascii"),
+        target.encode("utf-8"),
+    )
+
+    canonical = canonicalize_skill_archive(archive)
+
+    assert [file.path for file in canonical.files] == [
+        "SKILL.md",
+        "references/07-从CPU到NPU.md",
+    ]
+
+
+def test_keeps_unflagged_dos_zip_paths_in_cp437(zip_builder) -> None:
+    placeholder = "demo-skill/references/xx.md"
+    archive = zip_builder(
+        {
+            "demo-skill/SKILL.md": DEFAULT_SKILL_MD,
+            placeholder: b"CP437 reference",
+        }
+    )
+    archive = replace_zip_name_byte(
+        archive,
+        placeholder.encode("ascii"),
+        b"demo-skill/references/\xc3\xa9.md",
+    )
+    patched = bytearray(archive)
+    offset = 0
+    while (offset := patched.find(b"PK\x01\x02", offset)) >= 0:
+        patched[offset + 5] = 0
+        offset += 4
+
+    canonical = canonicalize_skill_archive(bytes(patched))
+
+    assert [file.path for file in canonical.files] == [
+        "SKILL.md",
+        "references/├⌐.md",
+    ]
+
+
 def test_rejects_file_and_directory_with_same_canonical_path(zip_builder) -> None:
     directory = "demo-skill/conflict/"
     archive = zip_builder(
