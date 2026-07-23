@@ -106,6 +106,45 @@ class RuntimeProbeModel(Model):
 
 
 @dataclass
+class RunBoundaryProbeModel(RuntimeProbeModel):
+    """Require the slot to preserve the provider's complete response pipeline."""
+
+    def invoke(self, *_args: object, **_kwargs: object) -> ModelResponse:
+        raise AssertionError("low-level sync invoke bypassed provider response")
+
+    async def ainvoke(self, *_args: object, **_kwargs: object) -> ModelResponse:
+        raise AssertionError("low-level async invoke bypassed provider response")
+
+    def invoke_stream(
+        self, *_args: object, **_kwargs: object
+    ) -> Iterator[ModelResponse]:
+        raise AssertionError("low-level sync stream bypassed provider response")
+        yield  # pragma: no cover
+
+    async def ainvoke_stream(
+        self, *_args: object, **_kwargs: object
+    ) -> AsyncIterator[ModelResponse]:
+        raise AssertionError("low-level async stream bypassed provider response")
+        yield  # pragma: no cover
+
+    def response(self, *_args: object, **_kwargs: object) -> ModelResponse:
+        return self._response("response")
+
+    async def aresponse(self, *_args: object, **_kwargs: object) -> ModelResponse:
+        return self._response("aresponse")
+
+    def response_stream(
+        self, *_args: object, **_kwargs: object
+    ) -> Iterator[ModelResponse]:
+        yield self._response("response_stream")
+
+    async def aresponse_stream(
+        self, *_args: object, **_kwargs: object
+    ) -> AsyncIterator[ModelResponse]:
+        yield self._response("aresponse_stream")
+
+
+@dataclass
 class BlockingAsyncStreamModel(RuntimeProbeModel):
     stream_entered: asyncio.Event = field(default_factory=asyncio.Event)
     stream_cancelled: bool = False
@@ -271,6 +310,76 @@ def test_dormant_slot_is_safely_unavailable_without_provider_io() -> None:
         slot.invoke_stream()
     with pytest.raises(ModelRuntimeUnavailableError):
         slot.ainvoke_stream()
+
+
+def test_sync_response_delegates_the_complete_provider_pipeline() -> None:
+    async def scenario() -> None:
+        closes: list[str] = []
+        slot = ModelRuntimeSlot()
+        await slot.start()
+        model = RunBoundaryProbeModel(id="provider")
+        slot.activate(managed(model, closes), 1, metadata("deepseek"))
+
+        assert content(slot.response(messages=[])) == "provider:response"
+
+        await slot.shutdown()
+        assert closes == ["provider"]
+
+    asyncio.run(scenario())
+
+
+def test_async_response_delegates_the_complete_provider_pipeline() -> None:
+    async def scenario() -> None:
+        closes: list[str] = []
+        slot = ModelRuntimeSlot()
+        await slot.start()
+        model = RunBoundaryProbeModel(id="provider")
+        slot.activate(managed(model, closes), 1, metadata("deepseek"))
+
+        assert content(await slot.aresponse(messages=[])) == "provider:aresponse"
+
+        await slot.shutdown()
+        assert closes == ["provider"]
+
+    asyncio.run(scenario())
+
+
+def test_sync_response_stream_delegates_the_complete_provider_pipeline() -> None:
+    async def scenario() -> None:
+        closes: list[str] = []
+        slot = ModelRuntimeSlot()
+        await slot.start()
+        model = RunBoundaryProbeModel(id="provider")
+        slot.activate(managed(model, closes), 1, metadata("deepseek"))
+
+        responses = list(slot.response_stream(messages=[]))
+        assert [content(response) for response in responses] == [
+            "provider:response_stream"
+        ]
+
+        await slot.shutdown()
+        assert closes == ["provider"]
+
+    asyncio.run(scenario())
+
+
+def test_async_response_stream_delegates_the_complete_provider_pipeline() -> None:
+    async def scenario() -> None:
+        closes: list[str] = []
+        slot = ModelRuntimeSlot()
+        await slot.start()
+        model = RunBoundaryProbeModel(id="provider")
+        slot.activate(managed(model, closes), 1, metadata("deepseek"))
+
+        responses = [response async for response in slot.aresponse_stream(messages=[])]
+        assert [content(response) for response in responses] == [
+            "provider:aresponse_stream"
+        ]
+
+        await slot.shutdown()
+        assert closes == ["provider"]
+
+    asyncio.run(scenario())
 
 
 def test_activation_uses_global_version_not_provider_revision() -> None:

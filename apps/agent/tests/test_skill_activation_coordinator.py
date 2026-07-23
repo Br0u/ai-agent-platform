@@ -4,6 +4,7 @@ import asyncio
 from collections import deque
 import os
 from pathlib import Path
+import time
 from uuid import UUID
 
 import pytest
@@ -89,9 +90,17 @@ class Materializer:
         self.root = root
         self.failure: SkillMaterializerError | None = None
         self.calls = 0
+        self.delay_seconds = 0.0
+        self.sequence: list[str] | None = None
 
     def prepare(self, candidate: RuntimeSetSnapshot) -> PreparedGeneration:
         self.calls += 1
+        if self.sequence is not None:
+            self.sequence.append("prepare-start")
+        if self.delay_seconds:
+            time.sleep(self.delay_seconds)
+        if self.sequence is not None:
+            self.sequence.append("prepare-end")
         if self.failure is not None:
             raise self.failure
         path = self.root / f"generation-{candidate.set_id}"
@@ -153,6 +162,63 @@ async def test_success_prepares_cas_and_atomically_installs_generation(
         assert service.status().skill_capability == "ready"
         assert service.status().active_set_id == SET_ID
         assert service.status().loaded_set_id == SET_ID
+    finally:
+        await close(service, slot, root_fd)
+
+
+@pytest.mark.asyncio
+async def test_materialization_does_not_block_the_agent_event_loop(
+    tmp_path: Path,
+) -> None:
+    repository = Repository()
+    service, slot, root_fd, materializer = await coordinator(tmp_path, repository)
+    sequence: list[str] = []
+    materializer.sequence = sequence
+    materializer.delay_seconds = 0.05
+
+    async def tick() -> None:
+        sequence.append("event-loop-tick")
+
+    try:
+        activation = asyncio.create_task(service.activate(command()))
+        ticker = asyncio.create_task(tick())
+        await asyncio.gather(activation, ticker)
+
+        assert sequence.index("event-loop-tick") < sequence.index("prepare-end")
+    finally:
+        await close(service, slot, root_fd)
+
+
+@pytest.mark.asyncio
+async def test_materialization_timeout_cleans_late_generation_before_retry(
+    tmp_path: Path,
+) -> None:
+    repository = Repository()
+    service, slot, root_fd, materializer = await coordinator(
+        tmp_path,
+        repository,
+        timeout=0.01,
+    )
+    materializer.delay_seconds = 0.05
+    sequence: list[str] = []
+    materializer.sequence = sequence
+    try:
+        with pytest.raises(SkillActivationError) as caught:
+            await service.activate(command())
+        assert caught.value.code == "activation_timeout"
+        assert sequence == ["prepare-start"]
+
+        with pytest.raises(SkillActivationError) as busy:
+            await service.activate(command())
+        assert busy.value.code == "activation_busy"
+
+        await service.wait_idle()
+        assert list(tmp_path.iterdir()) == []
+        assert service.status().failure_code == "activation_timeout"
+
+        materializer.delay_seconds = 0
+        result = await service.activate(command())
+        assert result.activation_version == 1
     finally:
         await close(service, slot, root_fd)
 

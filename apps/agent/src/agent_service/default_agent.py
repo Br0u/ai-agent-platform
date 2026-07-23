@@ -46,6 +46,8 @@ def build_default_agent(
         ],
         add_history_to_context=True,
         num_history_runs=6,
+        max_tool_calls_from_history=2,
+        tool_call_limit=8,
         tools=None,
         skills=skills,
         telemetry=False,

@@ -281,7 +281,7 @@ class SkillActivationCoordinator:
                 self._restore_status(None, failure_code=None)
                 return
             reservation = self._slot.reserve_replacement()
-            prepared = self._materializer.prepare(active)
+            prepared = await asyncio.to_thread(self._materializer.prepare, active)
             generation = RuntimeGeneration(
                 True,
                 active.set_id,
@@ -358,6 +358,33 @@ class SkillActivationCoordinator:
 
         task.add_done_callback(completed)
 
+    async def _finish_abandoned_prepare(
+        self,
+        prepare_task: asyncio.Task[PreparedGeneration],
+        candidate: RuntimeSetSnapshot,
+        activation_version: int,
+        reservation: GenerationReservation,
+        active: RuntimeSetSnapshot | None,
+    ) -> None:
+        try:
+            try:
+                prepared = await asyncio.shield(prepare_task)
+            except Exception:
+                return
+            generation = RuntimeGeneration(
+                True,
+                candidate.set_id,
+                activation_version,
+                prepared.skills,
+                prepared.root,
+            )
+            await self._slot.discard_generation(generation)
+        finally:
+            reservation.cancel()
+            self._restore_status(active, failure_code="activation_timeout")
+            if self._activation_lock.locked():
+                self._activation_lock.release()
+
     async def activate(self, command: ActivateSkillRuntime) -> SkillActivationResult:
         if type(command) is not ActivateSkillRuntime:
             _fail("candidate_invalid")
@@ -397,7 +424,26 @@ class SkillActivationCoordinator:
                     )
                 )
                 try:
-                    prepared = self._materializer.prepare(candidate)
+                    prepare_task = asyncio.create_task(
+                        asyncio.to_thread(self._materializer.prepare, candidate),
+                        name=f"skill-prepare-{command.request_id}",
+                    )
+                    try:
+                        prepared = await asyncio.shield(prepare_task)
+                    except asyncio.CancelledError:
+                        cleanup_task = asyncio.create_task(
+                            self._finish_abandoned_prepare(
+                                prepare_task,
+                                candidate,
+                                actual_version + 1,
+                                reservation,
+                                active,
+                            ),
+                            name=f"skill-prepare-cleanup-{command.request_id}",
+                        )
+                        self._track(cleanup_task)
+                        transferred = True
+                        raise
                     generation = RuntimeGeneration(
                         True,
                         candidate.set_id,
