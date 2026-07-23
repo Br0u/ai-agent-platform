@@ -3238,6 +3238,15 @@ secrets:
     expect(runner).toContain("SKILL_REGISTRY_E2E_PROJECT");
     expect(runner).toContain("trap cleanup EXIT");
     expect(runner).toContain("docker compose -p");
+    expect(runner).toContain(
+      'materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$migrator_password" 644',
+    );
+    expect(runner).toContain(
+      'materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$runtime_password" 644',
+    );
+    expect(runner).toContain(
+      'materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$backup_password" 644',
+    );
     expect(runner).toContain("restart skill-registry");
     expect(
       runner.match(/run_job --no-deps skill-registry-migrate/g),

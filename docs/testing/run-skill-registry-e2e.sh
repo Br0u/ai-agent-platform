@@ -212,17 +212,22 @@ materialize_secret() {
   variable_name=$1
   secret_name=$2
   secret_value=$3
+  secret_mode=${4:-600}
   secret_path="$secret_directory/$secret_name"
   printf '%s' "$secret_value" >"$secret_path"
-  chmod 600 "$secret_path"
+  chmod "$secret_mode" "$secret_path"
   eval "$variable_name=\$secret_path"
   export "$variable_name"
 }
 
 materialize_secret POSTGRES_PASSWORD_FILE postgres_password "$postgres_password"
-materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$migrator_password"
-materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$runtime_password"
-materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$backup_password"
+# Docker Compose implements file-backed secrets as bind mounts on Linux. The
+# Postgres image executes initdb hooks as its unprivileged postgres user, so
+# these role-bootstrap files must be readable after the privilege drop. Their
+# parent directory remains 0700 and the mounts remain read-only.
+materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$migrator_password" 644
+materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$runtime_password" 644
+materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$backup_password" 644
 materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key"
 materialize_secret AGNO_MIGRATOR_DATABASE_PASSWORD_FILE agno_migrator_database_password "$agno_migrator_password"
 materialize_secret AGNO_DATABASE_PASSWORD_FILE agno_database_password "$agno_runtime_password"
