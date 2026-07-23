@@ -312,6 +312,7 @@ def control_settings(*, agent_enabled: bool = False) -> RuntimeSettings:
         {
             "OS_SECURITY_KEY": OS_SECURITY_KEY,
             "AGNO_DATABASE_URL": DATABASE_URL,
+            "SKILL_REGISTRY_RUNTIME_DATABASE_URL": DATABASE_URL,
             "AGENT_CONTROL_DATABASE_URL": CONTROL_DATABASE_URL,
             "MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY,
             "AGENT_CONFIG_CONTROL_KEY": CONTROL_KEY,

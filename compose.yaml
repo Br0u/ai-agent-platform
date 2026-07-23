@@ -209,6 +209,146 @@ services:
     networks:
       - backend
 
+  skill-registry-bootstrap:
+    image: postgres:18.3-alpine3.23
+    restart: "no"
+    user: root
+    entrypoint: ["/opt/aap/run-with-secret-env.sh"]
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-ai_agent_owner}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_agent_platform}
+      SECRET_ENV_SPECS: >-
+        POSTGRES_PASSWORD=/run/secrets/postgres_password
+        SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD=/run/secrets/skill_registry_migrator_database_password
+        SKILL_REGISTRY_DATABASE_PASSWORD=/run/secrets/skill_registry_database_password
+        SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD=/run/secrets/skill_registry_runtime_database_password
+      SECRET_RUN_AS: postgres
+    secrets:
+      - postgres_password
+      - skill_registry_migrator_database_password
+      - skill_registry_database_password
+      - skill_registry_runtime_database_password
+    volumes:
+      - ./infra/docker/run-with-secret-env.sh:/opt/aap/run-with-secret-env.sh:ro
+      - ./infra/postgres/05-skill-registry-roles.sh:/opt/postgres/05-skill-registry-roles.sh:ro
+      - ./infra/postgres/05-skill-registry-roles.sql:/opt/postgres/05-skill-registry-roles.sql:ro
+    command: ["/opt/postgres/05-skill-registry-roles.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+      agno-bootstrap:
+        condition: service_completed_successfully
+      agent-control-bootstrap:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    networks:
+      - backend
+
+  skill-registry-migrate:
+    build:
+      context: .
+      dockerfile: apps/skill-registry/Dockerfile
+    restart: "no"
+    user: root
+    entrypoint: ["/opt/aap/run-with-secret-env.sh"]
+    command: ["python", "-m", "skill_registry.migrate"]
+    environment:
+      SECRET_ENV_SPECS: SKILL_REGISTRY_MIGRATOR_DATABASE_URL=/run/secrets/skill_registry_migrator_database_url
+      SECRET_RUN_AS: skill-registry
+    secrets:
+      - skill_registry_migrator_database_url
+    depends_on:
+      skill-registry-bootstrap:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    networks:
+      - backend
+
+  skill-registry:
+    build:
+      context: .
+      dockerfile: apps/skill-registry/Dockerfile
+    restart: unless-stopped
+    user: root
+    entrypoint: ["/opt/aap/run-with-secret-env.sh"]
+    command:
+      [
+        "uvicorn",
+        "skill_registry.app:app_factory",
+        "--factory",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "7788",
+        "--no-access-log",
+      ]
+    environment:
+      SECRET_ENV_SPECS: >-
+        SKILL_REGISTRY_DATABASE_URL=/run/secrets/skill_registry_database_url
+        SKILL_REGISTRY_CONTROL_KEY=/run/secrets/skill_registry_control_key
+      SECRET_RUN_AS: skill-registry
+      SKILL_RUNTIME_IMPORTS_FILE: /etc/aap/skill-runtime-imports.json
+    secrets:
+      - skill_registry_database_url
+      - skill_registry_control_key
+    depends_on:
+      skill-registry-migrate:
+        condition: service_completed_successfully
+    expose:
+      - "7788"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/usr/sbin/gosu",
+          "skill-registry",
+          "python",
+          "-c",
+          "import json,sys,urllib.request; sys.tracebacklimit=0; response=urllib.request.urlopen('http://127.0.0.1:7788/internal/health/ready',timeout=3); raw=response.read(129); response.close(); payload=json.loads(raw) if len(raw)<=128 else None; raise SystemExit(0 if type(payload) is dict and set(payload)=={'live','ready'} and payload['live'] is True and payload['ready'] is True else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    mem_limit: 512m
+    cpus: "1.0"
+    pids_limit: 256
+    networks:
+      - backend
+
   agent:
     build:
       context: .
@@ -231,6 +371,7 @@ services:
       SECRET_ENV_SPECS: >-
         AGNO_DATABASE_URL=/run/secrets/agno_database_url
         AGENT_CONTROL_DATABASE_URL=/run/secrets/agent_control_database_url
+        SKILL_REGISTRY_RUNTIME_DATABASE_URL=/run/secrets/skill_registry_runtime_database_url
         OS_SECURITY_KEY=/run/secrets/os_security_key
         MODEL_CONFIG_ENCRYPTION_KEY=/run/secrets/model_config_encryption_key
         AGENT_CONFIG_CONTROL_KEY=/run/secrets/agent_config_control_key
@@ -245,6 +386,7 @@ services:
     secrets:
       - agno_database_url
       - agent_control_database_url
+      - skill_registry_runtime_database_url
       - os_security_key
       - model_config_encryption_key
       - agent_config_control_key
@@ -256,6 +398,8 @@ services:
       agent-migrate:
         condition: service_completed_successfully
       agent-control-migrate:
+        condition: service_completed_successfully
+      skill-registry-migrate:
         condition: service_completed_successfully
     expose:
       - "7777"
@@ -275,6 +419,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=32m
+      - /run/aap-skills:rw,exec,nosuid,nodev,size=96m,uid=10001,gid=10001,mode=0700
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -309,11 +454,13 @@ services:
         AGENT_CONFIG_CONTROL_KEY=/run/secrets/agent_config_control_key
         ASSISTANT_SESSION_SECRET=/run/secrets/assistant_session_secret
         ASSISTANT_RATE_LIMIT_SECRET=/run/secrets/assistant_rate_limit_secret
+        SKILL_REGISTRY_CONTROL_KEY=/run/secrets/skill_registry_control_key
       SECRET_RUN_AS: node
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:?Set BETTER_AUTH_URL in .env}
       BETTER_AUTH_TRUSTED_ORIGINS: ${BETTER_AUTH_TRUSTED_ORIGINS:?Set BETTER_AUTH_TRUSTED_ORIGINS in .env}
       FEATURE_EMAIL_VERIFICATION: ${FEATURE_EMAIL_VERIFICATION:-false}
       AGENTOS_INTERNAL_URL: http://agent:7777
+      SKILL_REGISTRY_INTERNAL_URL: ${SKILL_REGISTRY_INTERNAL_URL:-http://skill-registry:7788}
       ASSISTANT_PUBLIC_ORIGIN: ${ASSISTANT_PUBLIC_ORIGIN:?Set ASSISTANT_PUBLIC_ORIGIN in .env}
       ASSISTANT_PROVIDER_MODE: ${ASSISTANT_PROVIDER_MODE:-placeholder}
       ASSISTANT_AGENTOS_RUN_TIMEOUT_MS: ${ASSISTANT_AGENTOS_RUN_TIMEOUT_MS:-55000}
@@ -329,11 +476,14 @@ services:
       - agent_config_control_key
       - assistant_session_secret
       - assistant_rate_limit_secret
+      - skill_registry_control_key
     volumes:
       - ./infra/docker/run-with-secret-env.sh:/opt/aap/run-with-secret-env.sh:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
+      skill-registry:
+        condition: service_healthy
     expose:
       - "3000"
     healthcheck:
@@ -416,6 +566,13 @@ services:
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
       BACKUP_RUN_ONCE: ${BACKUP_RUN_ONCE:-false}
+      BACKUP_DUMP_TIMEOUT_SECONDS: ${BACKUP_DUMP_TIMEOUT_SECONDS:-3600}
+      BACKUP_DUMP_KILL_AFTER_SECONDS: ${BACKUP_DUMP_KILL_AFTER_SECONDS:-5}
+      BACKUP_SNAPSHOT_TIMEOUT_SECONDS: ${BACKUP_SNAPSHOT_TIMEOUT_SECONDS:-3665}
+      BACKUP_PROCESS_KILL_AFTER_SECONDS: ${BACKUP_PROCESS_KILL_AFTER_SECONDS:-5}
+      BACKUP_ENCRYPT_TIMEOUT_SECONDS: ${BACKUP_ENCRYPT_TIMEOUT_SECONDS:-3600}
+      BACKUP_ENCRYPT_KILL_AFTER_SECONDS: ${BACKUP_ENCRYPT_KILL_AFTER_SECONDS:-5}
+      BACKUP_SPACE_SAFETY_BYTES: ${BACKUP_SPACE_SAFETY_BYTES:-67108864}
     secrets:
       - backup_database_password
       - backup_encryption_key
@@ -426,11 +583,13 @@ services:
         condition: service_completed_successfully
       agent-migrate:
         condition: service_completed_successfully
+      skill-registry-migrate:
+        condition: service_completed_successfully
     security_opt:
       - no-new-privileges:true
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=32m
+      - /tmp:rw,noexec,nosuid,size=${BACKUP_TMPFS_SIZE:-1g}
     cap_drop:
       - ALL
     networks:
@@ -491,3 +650,17 @@ secrets:
     file: ${MODEL_CONFIG_ENCRYPTION_KEY_FILE:-.secrets/model_config_encryption_key}
   agent_config_control_key:
     file: ${AGENT_CONFIG_CONTROL_KEY_FILE:-.secrets/agent_config_control_key}
+  skill_registry_migrator_database_password:
+    file: ${SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD_FILE:-.secrets/skill_registry_migrator_database_password}
+  skill_registry_database_password:
+    file: ${SKILL_REGISTRY_DATABASE_PASSWORD_FILE:-.secrets/skill_registry_database_password}
+  skill_registry_runtime_database_password:
+    file: ${SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD_FILE:-.secrets/skill_registry_runtime_database_password}
+  skill_registry_migrator_database_url:
+    file: ${SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE:-.secrets/skill_registry_migrator_database_url}
+  skill_registry_database_url:
+    file: ${SKILL_REGISTRY_DATABASE_URL_FILE:-.secrets/skill_registry_database_url}
+  skill_registry_runtime_database_url:
+    file: ${SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE:-.secrets/skill_registry_runtime_database_url}
+  skill_registry_control_key:
+    file: ${SKILL_REGISTRY_CONTROL_KEY_FILE:-.secrets/skill_registry_control_key}

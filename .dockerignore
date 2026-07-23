@@ -22,7 +22,8 @@ coverage
 output
 backups
 data
-uploads
+/uploads
+/skill-registry-artifacts
 .env
 .env.*
 !.env.example

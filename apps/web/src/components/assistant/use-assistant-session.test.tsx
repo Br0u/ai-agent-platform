@@ -233,7 +233,50 @@ describe("useAssistantSession", () => {
     expect(result.current.latestAnnouncement).toBe("第一段第二段");
   });
 
-  it("removes partial SSE messages and retains the draft when the stream fails", async () => {
+  it("renews the request idle timeout whenever the response stream advances", async () => {
+    vi.useFakeTimers();
+    const encoder = new TextEncoder();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(streamController) {
+            controller = streamController;
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+    );
+    const { result } = renderHook(() =>
+      useAssistantSession("/assistant", { timeoutMs: 100 }),
+    );
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = result.current.submit("持续输出");
+    });
+    await act(async () => {
+      controller.enqueue(
+        encoder.encode(
+          'event: start\ndata: {"version":"1","requestId":"stream-idle","mode":"agentos","session":{"temporary":true,"expiresAt":"2026-07-13T12:00:00.000Z"},"message":{"id":"message-idle","role":"assistant"},"suggestedActions":[]}\n\n' +
+            'event: delta\ndata: {"content":"第一段"}\n\n',
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(75);
+      controller.enqueue(
+        encoder.encode('event: delta\ndata: {"content":"第二段"}\n\n'),
+      );
+      await vi.advanceTimersByTimeAsync(75);
+      controller.enqueue(encoder.encode("event: done\ndata: {}\n\n"));
+      controller.close();
+      await pending;
+    });
+
+    expect(result.current.requestStatus).toBe("idle");
+    expect(result.current.messages.at(-1)?.content).toBe("第一段第二段");
+  });
+
+  it("retains and marks a partial SSE answer when the stream fails", async () => {
     const encoder = new TextEncoder();
     let controller!: ReadableStreamDefaultController<Uint8Array>;
     vi.mocked(fetch).mockResolvedValue(
@@ -273,7 +316,16 @@ describe("useAssistantSession", () => {
     });
 
     expect(result.current.requestStatus).toBe("failed");
-    expect(result.current.messages).toEqual([]);
+    expect(result.current.messages).toEqual([
+      { id: 1, role: "user", content: "保留这个问题" },
+      {
+        id: 2,
+        role: "assistant",
+        content: "不完整回答",
+        suggestedActions: [],
+        incomplete: true,
+      },
+    ]);
     expect(result.current.draft).toBe("保留这个问题");
     expect(result.current.latestAnnouncement).toBe(
       "发送失败，请重试或使用帮助中心或商务咨询。",

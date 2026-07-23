@@ -47,6 +47,54 @@ const completedAssistantModelAuditMetadata = {
   result: "success",
 } as const;
 
+const requestedAssistantSkillAuditEvents = [
+  "assistant.skill_upload_requested",
+  "assistant.skill_review_requested",
+] as const satisfies readonly AuditEvent[];
+
+const completedAssistantSkillAuditEvents = [
+  "assistant.skill_upload_completed",
+  "assistant.skill_review_completed",
+] as const satisfies readonly AuditEvent[];
+
+const assistantSkillAuditMetadataBase = {
+  skillId: "11111111-1111-4111-8111-111111111111",
+  revisionId: "22222222-2222-4222-8222-222222222222",
+  revisionNo: 3,
+  digest: "0123456789ab",
+  requestId: "33333333-3333-4333-8333-333333333333",
+} as const;
+
+const assistantSkillAuditCases = [
+  {
+    event: "assistant.skill_upload_requested",
+    metadata: {
+      ...assistantSkillAuditMetadataBase,
+      revisionId: null,
+      revisionNo: null,
+      digest: null,
+      result: "requested",
+    },
+  },
+  {
+    event: "assistant.skill_upload_completed",
+    metadata: { ...assistantSkillAuditMetadataBase, result: "success" },
+  },
+  {
+    event: "assistant.skill_review_requested",
+    metadata: {
+      ...assistantSkillAuditMetadataBase,
+      revisionNo: null,
+      digest: null,
+      result: "requested",
+    },
+  },
+  {
+    event: "assistant.skill_review_completed",
+    metadata: { ...assistantSkillAuditMetadataBase, result: "success" },
+  },
+] as const;
+
 const assistantModelAuditInputs = [
   ...requestedAssistantModelAuditEvents.map((event) => ({
     event,
@@ -115,6 +163,11 @@ describe("audit writer", () => {
       "assistant.model_config_tested",
       "assistant.model_key_reveal_requested",
       "assistant.model_key_revealed",
+      "assistant.skill_review_completed",
+      "assistant.skill_review_requested",
+      "assistant.skill_runtime_changed",
+      "assistant.skill_upload_completed",
+      "assistant.skill_upload_requested",
       "auth.login_failure",
       "auth.login_success",
       "auth.logout",
@@ -257,6 +310,209 @@ describe("audit writer", () => {
       });
     },
   );
+
+  it.each(assistantSkillAuditCases)(
+    "stores exact bounded Skill metadata for $event",
+    async ({ event, metadata }) => {
+      const { repository, writer } = fixture();
+
+      await writer.write({
+        event,
+        actor: { realm: "workforce", userId: "admin-1" },
+        target: {
+          type: "assistant_skill_revision",
+          id: assistantSkillAuditMetadataBase.revisionId,
+        },
+        metadata,
+      } as AuditWriteInput);
+
+      expect(repository.insert).toHaveBeenCalledWith({
+        action: event,
+        actorRealm: "workforce",
+        actorUserId: "admin-1",
+        targetType: "assistant_skill_revision",
+        targetId: assistantSkillAuditMetadataBase.revisionId,
+        metadata,
+        ipAddress: null,
+        userAgent: null,
+      });
+    },
+  );
+
+  it("exposes phase-specific Skill audit results", () => {
+    type Requested = Extract<
+      AuditWriteInput,
+      { event: "assistant.skill_upload_requested" }
+    >;
+    type Completed = Extract<
+      AuditWriteInput,
+      { event: "assistant.skill_upload_completed" }
+    >;
+
+    expectTypeOf<
+      Requested["metadata"]["result"]
+    >().toEqualTypeOf<"requested">();
+    expectTypeOf<Completed["metadata"]["result"]>().toEqualTypeOf<
+      "success" | "failure"
+    >();
+  });
+
+  it.each([
+    "filename",
+    "archive",
+    "zip",
+    "source",
+    "reason",
+    "rejectReason",
+    "scan",
+    "findings",
+    "message",
+  ])("rejects sensitive Skill audit metadata field %s", (field) => {
+    expect(() =>
+      AUDIT_EVENT_SCHEMAS["assistant.skill_upload_completed"]({
+        ...assistantSkillAuditMetadataBase,
+        result: "failure",
+        [field]: "must-not-be-stored",
+      }),
+    ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
+  });
+
+  it.each([
+    { ...assistantSkillAuditMetadataBase, result: "requested" },
+    {
+      ...assistantSkillAuditMetadataBase,
+      skillId: "not-a-uuid",
+      result: "success",
+    },
+    { ...assistantSkillAuditMetadataBase, revisionNo: 0, result: "success" },
+    {
+      ...assistantSkillAuditMetadataBase,
+      digest: "0123456789AB",
+      result: "success",
+    },
+    {
+      ...assistantSkillAuditMetadataBase,
+      digest: "0123456789abcdef",
+      result: "success",
+    },
+  ])("rejects invalid completed Skill metadata %#", (metadata) => {
+    expect(() =>
+      AUDIT_EVENT_SCHEMAS["assistant.skill_upload_completed"](metadata),
+    ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
+  });
+
+  it.each(completedAssistantSkillAuditEvents)(
+    "rejects all-null successful Skill identity for %s",
+    (event) => {
+      expect(() =>
+        AUDIT_EVENT_SCHEMAS[event]({
+          skillId: null,
+          revisionId: null,
+          revisionNo: null,
+          digest: null,
+          requestId: assistantSkillAuditMetadataBase.requestId,
+          result: "success",
+        }),
+      ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
+    },
+  );
+
+  it.each(
+    requestedAssistantSkillAuditEvents.filter((event) =>
+      event.includes("review"),
+    ),
+  )("requires review request identity for %s", (event) => {
+    expect(() =>
+      AUDIT_EVENT_SCHEMAS[event]({
+        ...assistantSkillAuditMetadataBase,
+        skillId: null,
+        revisionId: null,
+        result: "requested",
+      }),
+    ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
+  });
+
+  it("rejects a revision identity on upload_requested", () => {
+    expect(() =>
+      AUDIT_EVENT_SCHEMAS["assistant.skill_upload_requested"]({
+        ...assistantSkillAuditMetadataBase,
+        result: "requested",
+      }),
+    ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
+  });
+
+  it("accepts traceable failure metadata with consistent optional revision details", () => {
+    expect(
+      AUDIT_EVENT_SCHEMAS["assistant.skill_upload_completed"]({
+        skillId: null,
+        revisionId: null,
+        revisionNo: null,
+        digest: null,
+        requestId: assistantSkillAuditMetadataBase.requestId,
+        result: "failure",
+      }),
+    ).toEqual({
+      skillId: null,
+      revisionId: null,
+      revisionNo: null,
+      digest: null,
+      requestId: assistantSkillAuditMetadataBase.requestId,
+      result: "failure",
+    });
+    expect(
+      AUDIT_EVENT_SCHEMAS["assistant.skill_review_completed"]({
+        ...assistantSkillAuditMetadataBase,
+        revisionNo: null,
+        digest: null,
+        result: "failure",
+      }),
+    ).toMatchObject({
+      skillId: assistantSkillAuditMetadataBase.skillId,
+      revisionId: assistantSkillAuditMetadataBase.revisionId,
+      result: "failure",
+    });
+  });
+
+  it.each([
+    { revisionNo: 3, digest: null },
+    { revisionNo: null, digest: assistantSkillAuditMetadataBase.digest },
+  ])("rejects inconsistent optional revision audit fields %#", (overrides) => {
+    expect(() =>
+      AUDIT_EVENT_SCHEMAS["assistant.skill_review_completed"]({
+        ...assistantSkillAuditMetadataBase,
+        ...overrides,
+        result: "failure",
+      }),
+    ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
+  });
+
+  it("rejects Skill metadata prototype, accessors, hidden and symbol keys without executing getters", () => {
+    const getter = vi.fn(() => assistantSkillAuditMetadataBase.digest);
+    const accessor = { ...assistantSkillAuditMetadataBase, result: "success" };
+    Object.defineProperty(accessor, "digest", {
+      get: getter,
+      enumerable: true,
+    });
+    const hidden = { ...assistantSkillAuditMetadataBase, result: "success" };
+    Object.defineProperty(hidden, "filename", {
+      value: "private.zip",
+      enumerable: false,
+    });
+    const symbol = { ...assistantSkillAuditMetadataBase, result: "success" };
+    Reflect.set(symbol, Symbol("source"), "private source");
+    const inherited = Object.assign(
+      Object.create({ source: "private source" }),
+      assistantSkillAuditMetadataBase,
+      { result: "success" },
+    );
+
+    for (const metadata of [accessor, hidden, symbol, inherited]) {
+      expect(() =>
+        AUDIT_EVENT_SCHEMAS["assistant.skill_upload_completed"](metadata),
+      ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
+    }
+    expect(getter).not.toHaveBeenCalled();
+  });
 
   it("exposes phase-specific model audit result types", () => {
     type RequestedInput = Extract<
@@ -620,6 +876,67 @@ describe("audit writer", () => {
     expect(repository.insert).toHaveBeenCalledWith(
       expect.objectContaining({ metadata: { category: "ineligible" } }),
     );
+  });
+
+  it("stores bounded Skill runtime IDs and counts without artifact data", async () => {
+    const { repository, writer } = fixture();
+    await writer.write({
+      event: "assistant.skill_runtime_changed",
+      actor: {
+        realm: "workforce",
+        userId: "11111111-1111-4111-8111-111111111111",
+      },
+      target: { type: "system", id: "maduoduo-skill-runtime" },
+      metadata: {
+        operation: "rollback",
+        setId: "22222222-2222-4222-8222-222222222222",
+        activationVersion: 4,
+        revisionCount: 0,
+        requestId: "33333333-3333-4333-8333-333333333333",
+        activationRequestId: "44444444-4444-4444-8444-444444444444",
+        result: "success",
+      },
+    });
+
+    expect(repository.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "assistant.skill_runtime_changed",
+        metadata: expect.not.objectContaining({ artifact: expect.anything() }),
+      }),
+    );
+  });
+
+  it("rejects reused Skill rollback IDs and unknown runtime metadata", async () => {
+    const input = {
+      event: "assistant.skill_runtime_changed",
+      target: { type: "system" },
+      metadata: {
+        operation: "rollback",
+        setId: "22222222-2222-4222-8222-222222222222",
+        activationVersion: 4,
+        revisionCount: 0,
+        requestId: "33333333-3333-4333-8333-333333333333",
+        activationRequestId: "33333333-3333-4333-8333-333333333333",
+        result: "failure",
+      },
+    };
+    const { repository, writer } = fixture();
+    await expect(writer.write(runtimeAuditInput(input))).rejects.toMatchObject({
+      code: "AUDIT_INPUT_INVALID",
+    });
+    await expect(
+      writer.write(
+        runtimeAuditInput({
+          ...input,
+          metadata: {
+            ...input.metadata,
+            activationRequestId: "44444444-4444-4444-8444-444444444444",
+            artifactPath: "/private",
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "AUDIT_INPUT_INVALID" });
+    expect(repository.insert).not.toHaveBeenCalled();
   });
 
   it("stores an exact role_changed transition", async () => {

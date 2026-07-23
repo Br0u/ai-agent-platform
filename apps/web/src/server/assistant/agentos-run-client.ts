@@ -11,7 +11,7 @@ import {
 } from "./agentos-transport";
 import { ASSISTANT_CONTENT_MAX_CODE_POINTS } from "@/features/assistant/assistant-contract";
 
-export const AGENTOS_RUN_MAX_RESPONSE_BYTES = 256 * 1_024;
+export const AGENTOS_RUN_MAX_RESPONSE_BYTES = 4 * 1_024 * 1_024;
 export const AGENTOS_SESSION_DELETE_TIMEOUT_MS = 3_000;
 
 const DEFAULT_RUN_TIMEOUT_MS = 55_000;
@@ -44,11 +44,29 @@ export type AgentOSRunClientErrorCode =
   | AgentOSUnexpectedStatusCategory
   | "unexpected_status";
 
+export type AgentOSRunDiagnostic =
+  | "event_after_completion"
+  | "event_frame_invalid"
+  | "run_cancelled_event"
+  | "run_error_event"
+  | "stream_content_too_large"
+  | "stream_empty_content"
+  | "stream_trailing_data";
+
 export class AgentOSRunClientError extends Error {
-  constructor(readonly code: AgentOSRunClientErrorCode) {
+  declare readonly diagnostic?: AgentOSRunDiagnostic;
+
+  constructor(
+    readonly code: AgentOSRunClientErrorCode,
+    diagnostic?: AgentOSRunDiagnostic,
+  ) {
     super("AgentOS run request failed");
     Object.defineProperty(this, "name", {
       value: "AgentOSRunClientError",
+      configurable: true,
+    });
+    Object.defineProperty(this, "diagnostic", {
+      value: diagnostic,
       configurable: true,
     });
   }
@@ -122,11 +140,11 @@ function sanitized(error: unknown): AgentOSRunClientError {
 function parseAgentOSEvent(frame: string): Record<string, unknown> {
   const lines = frame.replaceAll("\r\n", "\n").split("\n");
   if (lines.length !== 2) {
-    throw new AgentOSRunClientError("invalid_response");
+    throw new AgentOSRunClientError("invalid_response", "event_frame_invalid");
   }
   const [eventLine, dataLine] = lines;
   if (!eventLine?.startsWith("event: ") || !dataLine?.startsWith("data: ")) {
-    throw new AgentOSRunClientError("invalid_response");
+    throw new AgentOSRunClientError("invalid_response", "event_frame_invalid");
   }
   try {
     const body = JSON.parse(dataLine.slice(6));
@@ -139,7 +157,7 @@ function parseAgentOSEvent(frame: string): Record<string, unknown> {
     }
     return body;
   } catch {
-    throw new AgentOSRunClientError("invalid_response");
+    throw new AgentOSRunClientError("invalid_response", "event_frame_invalid");
   }
 }
 
@@ -154,9 +172,20 @@ async function* parseAgentOSRunStream(
 
   const consumeFrame = function* (frame: string): Iterable<string> {
     const event = parseAgentOSEvent(frame);
-    if (completed) throw new AgentOSRunClientError("invalid_response");
+    if (completed) {
+      throw new AgentOSRunClientError(
+        "invalid_response",
+        "event_after_completion",
+      );
+    }
     if (event.event === "RunError") {
-      throw new AgentOSRunClientError("invalid_response");
+      throw new AgentOSRunClientError("invalid_response", "run_error_event");
+    }
+    if (event.event === "RunCancelled") {
+      throw new AgentOSRunClientError(
+        "invalid_response",
+        "run_cancelled_event",
+      );
     }
     if (event.event === "RunCompleted") {
       completed = true;
@@ -165,12 +194,15 @@ async function* parseAgentOSRunStream(
     if (event.event !== "RunContent") return;
     if (typeof event.content !== "string") {
       if (typeof event.reasoning_content === "string") return;
-      throw new AgentOSRunClientError("invalid_response");
+      return;
     }
     if (event.content.length === 0) return;
     contentCodePoints += Array.from(event.content).length;
     if (contentCodePoints > ASSISTANT_CONTENT_MAX_CODE_POINTS) {
-      throw new AgentOSRunClientError("invalid_response");
+      throw new AgentOSRunClientError(
+        "invalid_response",
+        "stream_content_too_large",
+      );
     }
     hasNonWhitespaceContent ||= event.content.trim().length > 0;
     yield event.content;
@@ -190,8 +222,17 @@ async function* parseAgentOSRunStream(
     }
     buffer += decoder.decode();
     buffer = buffer.replaceAll("\r\n", "\n");
-    if (buffer.trim().length > 0 || !completed || !hasNonWhitespaceContent) {
-      throw new AgentOSRunClientError("invalid_response");
+    if (buffer.trim().length > 0) {
+      throw new AgentOSRunClientError(
+        "invalid_response",
+        "stream_trailing_data",
+      );
+    }
+    if (!hasNonWhitespaceContent) {
+      throw new AgentOSRunClientError(
+        "invalid_response",
+        "stream_empty_content",
+      );
     }
   } catch (error) {
     throw sanitized(error);
@@ -212,6 +253,7 @@ export function createAgentOSRunClient(options: {
       const form = new FormData();
       form.set("message", input.message);
       form.set("stream", "true");
+      form.set("stream_events", "false");
       if (input.sessionId !== undefined) {
         form.set("session_id", input.sessionId);
       }

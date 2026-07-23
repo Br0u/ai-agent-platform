@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback } from "react";
 import type { AssistantSession } from "./use-assistant-session";
+import { AssistantMarkdown } from "./assistant-markdown";
 import {
   AssistantPromptInput,
   type AssistantPromptSubmit,
@@ -75,8 +76,17 @@ export function AssistantConversation({
                 className="assistant-conversation__user-mark"
               />
             )}
-            <div>
-              <p>{message.content}</p>
+            <div className="assistant-conversation__message-body">
+              {message.role === "assistant" ? (
+                <AssistantMarkdown content={message.content} />
+              ) : (
+                <p>{message.content}</p>
+              )}
+              {message.role === "assistant" && message.incomplete ? (
+                <small className="assistant-conversation__incomplete">
+                  回答未完成
+                </small>
+              ) : null}
               {message.role === "assistant" &&
               message.suggestedActions.length > 0 ? (
                 <nav aria-label="建议操作">

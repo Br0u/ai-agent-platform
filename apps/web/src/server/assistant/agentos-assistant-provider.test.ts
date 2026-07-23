@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentOSRunClient } from "./agentos-run-client";
+import {
+  AgentOSRunClientError,
+  type AgentOSRunClient,
+} from "./agentos-run-client";
 import type { AgentOSExecutionCircuit } from "./agentos-execution-circuit";
 import {
   AgentOSAssistantProvider,
@@ -16,6 +19,10 @@ function fixture(
     deleteSession?: AgentOSRunClient["deleteSession"];
     randomUUID?: () => string;
     cleanupRecorder?: AgentOSCleanupRecorder;
+    runFailureRecorder?: (event: {
+      code: string;
+      diagnostic: string | null;
+    }) => void;
     useDefaultCleanupRecorder?: boolean;
   } = {},
 ) {
@@ -36,13 +43,21 @@ function fixture(
     inspect: () => ({ state: "closed", consecutiveFailures: 0 }),
   };
   const cleanupRecorder = vi.fn(options.cleanupRecorder);
+  const runFailureRecorder = vi.fn(options.runFailureRecorder);
   const provider = new AgentOSAssistantProvider({
     runClient,
     circuit,
     randomUUID: options.randomUUID ?? (() => "ephemeral-internal-id"),
     ...(options.useDefaultCleanupRecorder ? {} : { cleanupRecorder }),
+    runFailureRecorder,
   });
-  return { provider, runClient, circuit, cleanupRecorder };
+  return {
+    provider,
+    runClient,
+    circuit,
+    cleanupRecorder,
+    runFailureRecorder,
+  };
 }
 
 const assistantRequest = {
@@ -55,6 +70,36 @@ afterEach(() => {
 });
 
 describe("AgentOSAssistantProvider", () => {
+  it("records only the safe run failure code and diagnostic before circuit sanitization", async () => {
+    const runError = new AgentOSRunClientError(
+      "invalid_response",
+      "event_frame_invalid",
+    );
+    const { provider, runFailureRecorder } = fixture({
+      runAgentStream: vi.fn(async function* () {
+        throw runError;
+      }),
+    });
+
+    await expect(
+      provider.reply({
+        request: assistantRequest,
+        session: {
+          kind: "persistent",
+          internalSessionId: "private-session",
+        },
+      }),
+    ).rejects.toBe(runError);
+
+    expect(runFailureRecorder).toHaveBeenCalledExactlyOnceWith({
+      code: "invalid_response",
+      diagnostic: "event_frame_invalid",
+    });
+    expect(JSON.stringify(runFailureRecorder.mock.calls)).not.toMatch(
+      /private|prompt|reply|url|key|session/iu,
+    );
+  });
+
   it("projects default cleanup logs onto the fixed safe event shape", () => {
     const warning = vi
       .spyOn(console, "warn")
@@ -120,6 +165,33 @@ describe("AgentOSAssistantProvider", () => {
     expect(runClient.deleteSession).toHaveBeenCalledExactlyOnceWith(
       "ephemeral-internal-id",
     );
+  });
+
+  it("uses the platform UUID generator without losing its receiver", async () => {
+    const runClient: AgentOSRunClient = {
+      runAgent: vi.fn(async () => ({ content: "真实模型回答" })),
+      runAgentStream: vi.fn(async function* () {
+        yield "真实模型回答";
+      }),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const circuit: AgentOSExecutionCircuit = {
+      execute: vi.fn((operation) => operation()),
+      inspect: () => ({ state: "closed", consecutiveFailures: 0 }),
+    };
+    const provider = new AgentOSAssistantProvider({ runClient, circuit });
+
+    await expect(
+      provider.reply({
+        request: assistantRequest,
+        session: { kind: "ephemeral" },
+      }),
+    ).resolves.toMatchObject({ content: "真实模型回答" });
+
+    const sessionId = vi.mocked(runClient.runAgentStream).mock.calls[0]?.[0]
+      .sessionId;
+    expect(sessionId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(runClient.deleteSession).toHaveBeenCalledExactlyOnceWith(sessionId);
   });
 
   it.each(["timeout", "transport_error"] as const)(

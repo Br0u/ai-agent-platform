@@ -7,6 +7,8 @@ import {
 
 const JSON_CONTENT_TYPE =
   /^application\/json[\t ]*(?:;[\t ]*charset[\t ]*=[\t ]*(?:utf-8|"utf-8")[\t ]*)?$/iu;
+const MULTIPART_CONTENT_TYPE =
+  /^multipart\/form-data[\t ]*;[\t ]*boundary=(?:"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,70}"|[!#$%&'*+.^_`|~0-9A-Za-z-]{1,70})$/u;
 
 export class MutationRequestError extends Error {
   readonly code = "MUTATION_REQUEST_REJECTED";
@@ -21,8 +23,9 @@ function rejectMutation(): never {
   throw new MutationRequestError();
 }
 
-export function requireTrustedJsonMutation(
+function requireTrustedMutation(
   request: Request,
+  contentTypePattern: RegExp,
   environment: AuthEnvironment = process.env,
 ): void {
   try {
@@ -38,7 +41,7 @@ export function requireTrustedJsonMutation(
       !trustedOrigins.has(origin) ||
       (fetchSite !== null && fetchSite !== "same-origin") ||
       contentType === null ||
-      !JSON_CONTENT_TYPE.test(contentType)
+      !contentTypePattern.test(contentType)
     ) {
       rejectMutation();
     }
@@ -46,4 +49,18 @@ export function requireTrustedJsonMutation(
     if (error instanceof MutationRequestError) throw error;
     rejectMutation();
   }
+}
+
+export function requireTrustedJsonMutation(
+  request: Request,
+  environment: AuthEnvironment = process.env,
+): void {
+  requireTrustedMutation(request, JSON_CONTENT_TYPE, environment);
+}
+
+export function requireTrustedMultipartMutation(
+  request: Request,
+  environment: AuthEnvironment = process.env,
+): void {
+  requireTrustedMutation(request, MULTIPART_CONTENT_TYPE, environment);
 }

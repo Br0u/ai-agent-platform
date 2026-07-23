@@ -376,7 +376,7 @@ function snapshot(
         runtimeValid || control.source !== "none"
           ? model.configuration
           : "状态不可用",
-      skills: "未接入",
+      skills: "已接入",
       sessionStorage:
         inspection.persistence === "agentos"
           ? "AgentOS 持久化已启用"
@@ -412,7 +412,7 @@ export async function loadAdminAssistantStatus(
   const controlTask = (async () => {
     const client = options.controlClient ?? defaultModelControlClient();
     const response = await client.runtimeStatus({
-      requestId: (options.requestIdFactory ?? crypto.randomUUID)(),
+      requestId: (options.requestIdFactory ?? (() => crypto.randomUUID()))(),
     });
     return safeControlRuntime(response);
   })();

@@ -4,6 +4,7 @@ import type { AuthEnvironment } from "../auth/shared-options";
 import {
   MutationRequestError,
   requireTrustedJsonMutation,
+  requireTrustedMultipartMutation,
 } from "./require-trusted-mutation";
 
 const AUTH_ENVIRONMENT: AuthEnvironment = {
@@ -204,4 +205,66 @@ describe("trusted JSON mutation guard", () => {
       ).not.toContain(privateField);
     },
   );
+});
+
+describe("trusted multipart mutation guard", () => {
+  it.each([
+    "multipart/form-data; boundary=safe-boundary",
+    'multipart/form-data;boundary="safe-boundary"',
+  ])("accepts trusted exact multipart content type %s", (contentType) => {
+    expect(() =>
+      requireTrustedMultipartMutation(
+        requestWithHeaders({
+          origin: "https://staff.example.test",
+          "sec-fetch-site": "same-origin",
+          "content-type": contentType,
+        }),
+        AUTH_ENVIRONMENT,
+      ),
+    ).not.toThrow();
+  });
+
+  it.each([
+    undefined,
+    "multipart/form-data",
+    "multipart/form-data; boundary=",
+    "multipart/form-data; boundary=bad boundary",
+    "multipart/form-data; boundary=safe; charset=utf-8",
+    "multipart/form-data, multipart/form-data; boundary=safe",
+    "application/json",
+  ])("rejects malformed multipart content type %s", (contentType) => {
+    const headers = new Headers({
+      origin: "https://admin.example.test",
+      "sec-fetch-site": "same-origin",
+    });
+    if (contentType !== undefined) headers.set("content-type", contentType);
+    expect(() =>
+      requireTrustedMultipartMutation(
+        unreadableRequest(headers),
+        AUTH_ENVIRONMENT,
+      ),
+    ).toThrowError(MutationRequestError);
+  });
+
+  it("keeps the same Origin and fetch-metadata checks as JSON", () => {
+    for (const headers of [
+      {
+        origin: "https://attacker.example.test",
+        "sec-fetch-site": "same-origin",
+        "content-type": "multipart/form-data; boundary=safe",
+      },
+      {
+        origin: "https://admin.example.test",
+        "sec-fetch-site": "cross-site",
+        "content-type": "multipart/form-data; boundary=safe",
+      },
+    ]) {
+      expect(() =>
+        requireTrustedMultipartMutation(
+          requestWithHeaders(headers),
+          AUTH_ENVIRONMENT,
+        ),
+      ).toThrowError(MutationRequestError);
+    }
+  });
 });

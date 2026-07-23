@@ -292,6 +292,11 @@ describe("SiteShell", () => {
             "admin:assistant",
             "admin:assistant:configure",
             "admin:assistant:secret:reveal",
+            "admin:assistant:skills",
+            "admin:assistant:skills:configure",
+            "admin:assistant:skills:connections",
+            "admin:assistant:skills:review",
+            "admin:assistant:skills:upload",
           ],
           displayName: "Model administrator",
           mustChangePassword: false,
@@ -309,6 +314,11 @@ describe("SiteShell", () => {
       "admin:assistant",
       "admin:assistant:configure",
       "admin:assistant:secret:reveal",
+      "admin:assistant:skills",
+      "admin:assistant:skills:configure",
+      "admin:assistant:skills:connections",
+      "admin:assistant:skills:review",
+      "admin:assistant:skills:upload",
     ]);
   });
 

@@ -1,7 +1,10 @@
 import { loadAdminAssistantSessions } from "@/app/api/v1/admin/assistant/sessions/handler";
 import { loadAdminAssistantStatus } from "@/app/api/v1/admin/assistant/status/handler";
 import { loadAdminModelConfigSnapshot } from "@/app/api/v1/admin/assistant/model-configs/handler";
+import { loadAdminSkillRuntimeSnapshot } from "@/app/api/v1/admin/assistant/skill-runtime/handler";
+import { createAdminSkillListHandler } from "@/app/api/v1/admin/assistant/skills/handler";
 import { AssistantAdminPage } from "@/components/admin/assistant-admin-page";
+import type { AdminSkillRegistrySnapshot } from "@/components/admin/assistant-skill-registry-panel";
 import { metadataForRegisteredRoute } from "@/components/route-scaffold/registered-route-page";
 import type {
   AdminAssistantSessionsSnapshot,
@@ -12,7 +15,13 @@ import {
   type AdminModelConfigSnapshot,
   type AdminModelProvider,
 } from "@/features/assistant/admin-model-config-contract";
-import { requirePermission } from "@/server/auth/access";
+import {
+  parseAdminSkillListResponse,
+  parseAdminSkillPermissionFlags,
+  type AdminSkillPermissionFlags,
+} from "@/features/assistant/admin-skill-contract";
+import type { AdminSkillRuntimeSnapshot } from "@/features/assistant/admin-skill-runtime-contract";
+import { requirePermission, type WorkforceActor } from "@/server/auth/access";
 
 const pathname = "/admin/assistant";
 const modelProviderNames: Readonly<Record<AdminModelProvider, string>> = {
@@ -62,20 +71,166 @@ function unavailableModelConfigSnapshot(
   };
 }
 
+type LoadedSkillSnapshot = {
+  snapshot: AdminSkillRegistrySnapshot;
+  permissions: AdminSkillPermissionFlags;
+};
+
+function actorSkillPermissions(
+  actor: WorkforceActor,
+): AdminSkillPermissionFlags {
+  const canRead = actor.permissions.includes("admin:assistant:skills");
+  return {
+    canUpload:
+      canRead && actor.permissions.includes("admin:assistant:skills:upload"),
+    canManageConnections:
+      canRead &&
+      actor.permissions.includes("admin:assistant:skills:connections"),
+    canReview:
+      canRead && actor.permissions.includes("admin:assistant:skills:review"),
+    canConfigure:
+      canRead && actor.permissions.includes("admin:assistant:skills:configure"),
+  };
+}
+
+function unavailableSkillSnapshot(actor: WorkforceActor): LoadedSkillSnapshot {
+  return {
+    snapshot: { capability: "degraded", skills: [] },
+    permissions: actorSkillPermissions(actor),
+  };
+}
+
+function unavailableSkillRuntimeSnapshot(
+  actor: WorkforceActor,
+): AdminSkillRuntimeSnapshot {
+  const canRead = actor.permissions.includes("admin:assistant:skills");
+  return {
+    version: "1",
+    available: { items: [], limit: 100, offset: 0, total: 0 },
+    registry: {
+      active: null,
+      previous: null,
+      activationVersion: 0,
+      candidateCount: 0,
+      candidates: [],
+    },
+    agent: {
+      skillCapability: "degraded",
+      configured: false,
+      activeSetId: null,
+      loadedSetId: null,
+      previousSetId: null,
+      activationVersion: 0,
+      failureCode: "runtime_degraded",
+    },
+    permissions: {
+      canRead,
+      canConfigure:
+        canRead &&
+        actor.permissions.includes("admin:assistant:skills:configure"),
+    },
+  };
+}
+
+function parseSkillListEnvelope(value: unknown): LoadedSkillSnapshot | null {
+  try {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return null;
+    }
+    if (Reflect.getPrototypeOf(value) !== Object.prototype) return null;
+    const keys = [
+      "version",
+      "skills",
+      "page",
+      "requestId",
+      "permissions",
+    ] as const;
+    const ownKeys = Reflect.ownKeys(value);
+    if (
+      ownKeys.length !== keys.length ||
+      ownKeys.some(
+        (key) => typeof key !== "string" || !keys.includes(key as never),
+      )
+    ) {
+      return null;
+    }
+    const record: Record<string, unknown> = Object.create(null);
+    for (const key of keys) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+      if (!descriptor?.enumerable || !("value" in descriptor)) return null;
+      record[key] = descriptor.value;
+    }
+    if (
+      typeof record.requestId !== "string" ||
+      record.requestId.length < 1 ||
+      record.requestId.length > 128
+    ) {
+      return null;
+    }
+    const list = parseAdminSkillListResponse({
+      version: record.version,
+      skills: record.skills,
+      page: record.page,
+    });
+    const permissions = parseAdminSkillPermissionFlags(record.permissions);
+    if (list === null || permissions === null) return null;
+    return {
+      snapshot: {
+        capability: "available",
+        skills: list.skills,
+        page: list.page,
+      },
+      permissions,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function loadAdminSkillSnapshot(
+  actor: WorkforceActor,
+): Promise<LoadedSkillSnapshot> {
+  if (!actor.permissions.includes("admin:assistant:skills")) {
+    return unavailableSkillSnapshot(actor);
+  }
+  const handler = createAdminSkillListHandler({
+    access: {
+      requirePermission: async () => actor,
+    },
+  });
+  const response = await handler(
+    new Request(
+      "http://skill-registry.internal/api/v1/admin/assistant/skills?limit=25&offset=0",
+    ),
+  );
+  if (!response.ok) throw new Error("Skill Registry snapshot unavailable");
+  const parsed = parseSkillListEnvelope(await response.json());
+  if (parsed === null) throw new Error("Invalid Skill Registry snapshot");
+  return parsed;
+}
+
 export const metadata = metadataForRegisteredRoute(pathname);
 
 export default async function AdminAssistantPage() {
   const actor = await requirePermission("admin:assistant");
-  const [status, sessions, modelConfigs]: [
+  const [status, sessions, modelConfigs, skillRuntime, skillRegistry]: [
     AdminAssistantStatusSnapshot,
     AdminAssistantSessionsSnapshot,
     AdminModelConfigSnapshot,
+    AdminSkillRuntimeSnapshot,
+    LoadedSkillSnapshot,
   ] = await Promise.all([
     loadAdminAssistantStatus(),
     loadAdminAssistantSessions(),
     loadAdminModelConfigSnapshot(actor).catch(() =>
       unavailableModelConfigSnapshot(actor.permissions),
     ),
+    actor.permissions.includes("admin:assistant:skills")
+      ? loadAdminSkillRuntimeSnapshot(actor).catch(() =>
+          unavailableSkillRuntimeSnapshot(actor),
+        )
+      : Promise.resolve(unavailableSkillRuntimeSnapshot(actor)),
+    loadAdminSkillSnapshot(actor).catch(() => unavailableSkillSnapshot(actor)),
   ]);
 
   return (
@@ -83,6 +238,11 @@ export default async function AdminAssistantPage() {
       <AssistantAdminPage
         modelConfigs={modelConfigs}
         sessions={sessions}
+        skillActorUserId={actor.userId}
+        skillCanRead={actor.permissions.includes("admin:assistant:skills")}
+        skillPermissions={skillRegistry.permissions}
+        skillRuntime={skillRuntime}
+        skillSnapshot={skillRegistry.snapshot}
         status={status}
       />
     </main>

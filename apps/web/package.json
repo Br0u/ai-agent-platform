@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --webpack",
+    "dev": "node scripts/run-dev.mjs",
     "build": "next build --webpack",
     "start": "next start",
     "test": "vitest run",
@@ -19,6 +19,7 @@
     "@ai-agent-platform/integrations": "workspace:*",
     "@ai-agent-platform/ui": "workspace:*",
     "@better-auth/drizzle-adapter": "1.6.23",
+    "@fastify/busboy": "3.2.0",
     "@node-rs/argon2": "2.0.2",
     "better-auth": "1.6.23",
     "drizzle-orm": "0.45.2",
@@ -32,6 +33,8 @@
     "qrcode": "1.5.4",
     "react": "19.2.7",
     "react-dom": "19.2.7",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
     "server-only": "0.0.1",
     "zod": "4.4.3"
   },

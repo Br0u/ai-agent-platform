@@ -9,6 +9,7 @@ WORKDIR /app/apps/agent
 
 COPY apps/agent/pyproject.toml ./pyproject.toml
 COPY apps/agent/uv.lock ./uv.lock
+COPY packages/skill-core /app/packages/skill-core
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY apps/agent/src ./src
@@ -31,10 +32,12 @@ WORKDIR /app/apps/agent
 COPY --from=builder --chown=agent:agent /app/apps/agent/.venv /app/apps/agent/.venv
 RUN install -d -o root -g root -m 0755 /etc/aap
 COPY --chown=root:root --chmod=0644 infra/agent/model-endpoints.json /etc/aap/model-endpoints.json
+COPY --chown=root:root --chmod=0644 infra/agent/skill-runtime-imports.json /etc/aap/skill-runtime-imports.json
 
 FROM runtime-base AS acceptance
 
 COPY --chown=agent:agent apps/agent/tests/e2e_agent /app/apps/agent/e2e_agent
+COPY --chown=agent:agent apps/agent/tests/e2e_skill_runtime /app/apps/agent/e2e_skill_runtime
 
 USER agent
 

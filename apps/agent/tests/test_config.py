@@ -16,6 +16,9 @@ from agent_service.provider_smoke import ProviderSmokeSettings
 
 
 RUNTIME_URL = "postgresql+psycopg_async://runtime:runtime-password@db:5432/platform"
+SKILL_RUNTIME_URL = (
+    "postgresql+psycopg_async://skill-runtime:skill-runtime-password@db:5432/platform"
+)
 MIGRATOR_URL = "postgresql+psycopg_async://migrator:migrator-password@db:5432/platform"
 CONTROL_RUNTIME_URL = (
     "postgresql+psycopg_async://control:control-password@db:5432/platform"
@@ -53,6 +56,7 @@ def _runtime_model_result(values: dict[str, object]) -> config.ActiveModelSettin
         {
             "OS_SECURITY_KEY": SECURITY_KEY,
             "AGNO_DATABASE_URL": RUNTIME_URL,
+            "SKILL_REGISTRY_RUNTIME_DATABASE_URL": SKILL_RUNTIME_URL,
             "AGENT_CONTROL_DATABASE_URL": CONTROL_RUNTIME_URL,
             "MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY,
             "AGENT_CONFIG_CONTROL_KEY": CONTROL_KEY,
@@ -168,6 +172,7 @@ def isolated_agent_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
     controlled_names = {
         "OS_SECURITY_KEY",
         "AGNO_DATABASE_URL",
+        "SKILL_REGISTRY_RUNTIME_DATABASE_URL",
         "AGNO_MIGRATOR_DATABASE_URL",
         "AGENT_CONTROL_DATABASE_URL",
         "AGENT_CONTROL_MIGRATOR_DATABASE_URL",
@@ -203,6 +208,7 @@ def isolated_agent_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
 def valid_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OS_SECURITY_KEY", SECURITY_KEY)
     monkeypatch.setenv("AGNO_DATABASE_URL", RUNTIME_URL)
+    monkeypatch.setenv("SKILL_REGISTRY_RUNTIME_DATABASE_URL", SKILL_RUNTIME_URL)
     monkeypatch.setenv("AGENT_CONTROL_DATABASE_URL", CONTROL_RUNTIME_URL)
     monkeypatch.setenv("MODEL_CONFIG_ENCRYPTION_KEY", ENCRYPTION_KEY)
     monkeypatch.setenv("AGENT_CONFIG_CONTROL_KEY", CONTROL_KEY)
@@ -508,6 +514,7 @@ def test_uppercase_variables_win_when_both_cases_exist(
     uppercase_values = {
         "OS_SECURITY_KEY": SECURITY_KEY,
         "AGNO_DATABASE_URL": RUNTIME_URL,
+        "SKILL_REGISTRY_RUNTIME_DATABASE_URL": SKILL_RUNTIME_URL,
         "AGENT_CONTROL_DATABASE_URL": CONTROL_RUNTIME_URL,
         "MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY,
         "AGENT_CONFIG_CONTROL_KEY": CONTROL_KEY,
@@ -557,6 +564,11 @@ def test_all_fields_use_explicit_uppercase_environment_aliases() -> None:
         "agno_schema": "AGNO_SCHEMA",
         "os_security_key": "OS_SECURITY_KEY",
         "agno_database_url": "AGNO_DATABASE_URL",
+        "skill_registry_runtime_database_url": "SKILL_REGISTRY_RUNTIME_DATABASE_URL",
+        "skill_runtime_root": "SKILL_RUNTIME_ROOT",
+        "skill_activate_timeout_seconds": "SKILL_ACTIVATE_TIMEOUT_SECONDS",
+        "skill_cas_timeout_seconds": "SKILL_CAS_TIMEOUT_SECONDS",
+        "skill_shutdown_timeout_seconds": "SKILL_SHUTDOWN_TIMEOUT_SECONDS",
         "agent_control_database_url": "AGENT_CONTROL_DATABASE_URL",
         "model_config_encryption_key": "MODEL_CONFIG_ENCRYPTION_KEY",
         "agent_config_control_key": "AGENT_CONFIG_CONTROL_KEY",
@@ -1274,18 +1286,61 @@ def test_health_settings_have_positive_defaults(valid_runtime_env: None) -> None
     assert math.isfinite(settings.health_db_probe_timeout_seconds)
 
 
+def test_skill_runtime_settings_are_required_fixed_and_bounded(
+    valid_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = RuntimeSettings(_env_file=None)
+
+    assert (
+        settings.skill_registry_runtime_database_url.get_secret_value()
+        == SKILL_RUNTIME_URL
+    )
+    assert settings.skill_runtime_root == "/run/aap-skills"
+    assert settings.skill_activate_timeout_seconds == 60
+    assert settings.skill_cas_timeout_seconds == 5
+    assert settings.skill_shutdown_timeout_seconds == 30
+
+    monkeypatch.delenv("SKILL_REGISTRY_RUNTIME_DATABASE_URL")
+    with pytest.raises(ValidationError):
+        RuntimeSettings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("SKILL_RUNTIME_ROOT", "/tmp/skills"),
+        ("SKILL_ACTIVATE_TIMEOUT_SECONDS", "61"),
+        ("SKILL_CAS_TIMEOUT_SECONDS", "6"),
+        ("SKILL_SHUTDOWN_TIMEOUT_SECONDS", "31"),
+    ],
+)
+def test_skill_runtime_fixed_safety_settings_reject_overrides(
+    valid_runtime_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError):
+        RuntimeSettings(_env_file=None)
+
+
 def test_secrets_are_wrapped_and_hidden_from_repr(valid_runtime_env: None) -> None:
     settings = RuntimeSettings(_env_file=None)
     rendered = repr(settings)
 
     assert isinstance(settings.os_security_key, SecretStr)
     assert isinstance(settings.agno_database_url, SecretStr)
+    assert isinstance(settings.skill_registry_runtime_database_url, SecretStr)
     assert isinstance(settings.agent_control_database_url, SecretStr)
     assert isinstance(settings.model_config_encryption_key, SecretStr)
     assert isinstance(settings.agent_config_control_key, SecretStr)
     for field_name in (
         "os_security_key",
         "agno_database_url",
+        "skill_registry_runtime_database_url",
         "agent_control_database_url",
         "model_config_encryption_key",
         "agent_config_control_key",
@@ -1294,6 +1349,7 @@ def test_secrets_are_wrapped_and_hidden_from_repr(valid_runtime_env: None) -> No
         assert RuntimeSettings.model_fields[field_name].repr is False
     assert SECURITY_KEY not in rendered
     assert "runtime-password" not in rendered
+    assert "skill-runtime-password" not in rendered
     assert "control-password" not in rendered
     assert ENCRYPTION_KEY not in rendered
     assert CONTROL_KEY not in rendered

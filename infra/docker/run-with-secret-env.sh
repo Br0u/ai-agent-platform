@@ -13,7 +13,7 @@ if [ -z "${SECRET_RUN_AS-}" ]; then
   exit 1
 fi
 case "$SECRET_RUN_AS" in
-  postgres|agent|node) run_as=$SECRET_RUN_AS ;;
+  postgres|agent|node|skill-registry) run_as=$SECRET_RUN_AS ;;
   *)
     printf '%s\n' "invalid SECRET_RUN_AS target" >&2
     exit 1
@@ -66,8 +66,16 @@ for specification in $SECRET_ENV_SPECS; do
       exit 1
       ;;
   esac
-  if [ ! -r "$secret_file" ]; then
-    printf '%s\n' "$variable_name secret is unavailable" >&2
+  if [ -L "$secret_file" ] || [ ! -f "$secret_file" ]; then
+    printf '%s\n' "$variable_name secret file is invalid" >&2
+    exit 1
+  fi
+  if ! secret_mode=$(stat -c '%a' -- "$secret_file" 2>/dev/null); then
+    printf '%s\n' "$variable_name secret file is invalid" >&2
+    exit 1
+  fi
+  if [ "$secret_mode" != 600 ] || [ ! -r "$secret_file" ]; then
+    printf '%s\n' "$variable_name secret file is invalid" >&2
     exit 1
   fi
 

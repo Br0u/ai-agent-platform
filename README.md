@@ -1,14 +1,16 @@
 # AI Agent Platform Customer Portal
 
-企业级 AI Agent Platform 客户门户。当前已完成全站页面、基础后台、自建数据库、Docker 部署，以及“码多多”单 Agent 与六家云模型动态配置闭环；License、下载、OpenLab、Skill、Knowledge、网页工具和本地算力等尚未接入能力只保留诚实入口或接口契约。
+企业级 AI Agent Platform 客户门户。当前已完成全站页面、基础后台、自建数据库、Docker 部署、“码多多”单 Agent 与六家云模型动态配置闭环，以及审核过的 Skill 从 ZIP 上传、不可变 revision、双人审核、集合激活到 Agent 加载和加密备份恢复的闭环；License、下载、OpenLab、Knowledge、网页工具和本地算力等尚未接入能力只保留诚实入口或接口契约。
 
 ## 目录
 
 ```text
 apps/web/                 Next.js 全站应用
 apps/agent/               内部 AgentOS Python 服务
+apps/skill-registry/      内部 Skill 库、校验与审核服务
 packages/ui/              共享设计系统与组件
 packages/database/        PostgreSQL Schema、迁移与种子数据
+packages/skill-core/      Skill archive、manifest 与静态安全校验
 packages/integrations/    外部能力适配器与 Mock
 infra/docker/             数据库备份脚本
 infra/nginx/              反向代理配置
@@ -57,17 +59,22 @@ cp .env.example .env
 # ASSISTANT_PROVIDER_MODE=agentos
 # 按 .env.example 创建全部独立的 0600 单行 Secret；不要复用数据库、认证、控制面或模型加密密钥
 docker compose config --quiet
-docker compose build migrate agent-migrate agent-control-migrate agent web backup
+pnpm secrets:preflight
+docker compose build migrate agent-migrate agent-control-migrate skill-registry-migrate agent skill-registry web backup
 docker compose up -d --wait db
 docker compose run --rm migrate
 docker compose run --rm agno-bootstrap
 docker compose run --rm agent-control-bootstrap
+docker compose run --rm skill-registry-bootstrap
 docker compose run --rm --no-deps agent-migrate
 docker compose run --rm --no-deps agent-control-migrate
-docker compose up -d --no-deps --wait agent
+docker compose run --rm --no-deps skill-registry-migrate
+docker compose up -d --no-deps --wait agent skill-registry
 docker compose up -d --wait web
 docker compose up -d --wait proxy backup
 ```
+
+生产启动顺序固定为：`db → migrate / agno-bootstrap → agent-migrate / agent-control-bootstrap / skill-registry-bootstrap → agent-control-migrate / skill-registry-migrate → agent / skill-registry → web → proxy/backup`。
 
 访问 `http://127.0.0.1:8080`。验收：
 
@@ -113,7 +120,7 @@ docker compose run --rm -it migrate pnpm --filter @ai-agent-platform/database au
    - AGENT_ENABLED=true
    - ASSISTANT_PROVIDER_MODE=agentos
 7. 先运行 docker compose config --quiet；失败时停止，不得继续启动。
-8. 严格执行 README 当前 Docker Compose 顺序，不能遗漏 agent-control-bootstrap 或 agent-control-migrate。
+8. 严格执行 README 当前 Docker Compose 顺序，不能遗漏 agent-control-bootstrap 或 agent-control-migrate，也不能遗漏 skill-registry-bootstrap 或 skill-registry-migrate。
 9. 不配置部署 bootstrap Provider Key；模型由管理员启动后在 /admin/assistant 配置。
 10. 最后必须检查 docker compose ps，并验证 /api/health/live 和 /api/health/ready。
 11. 只报告做了什么、如何验证、仍需人工完成什么；不得把“容器启动”冒充成“模型已经可用”。
@@ -123,6 +130,6 @@ docker compose run --rm -it migrate pnpm --filter @ai-agent-platform/database au
 
 ## 当前状态
 
-已建立全站路由、蓝靛紫设计系统、PostgreSQL 最小权限角色、AgentOS 单 Agent 会话、AES-GCM 动态模型控制面和 Docker Compose 部署/验收基线。后台支持 OpenAI、Anthropic、Google、Qwen / DashScope、DeepSeek、MiniMax；动态活动配置优先于只读部署 bootstrap，失败候选不会替换旧活动模型，重启会从活动指针恢复。
+已建立全站路由、蓝靛紫设计系统、PostgreSQL 最小权限角色、AgentOS 单 Agent 会话、AES-GCM 动态模型控制面和 Docker Compose 部署/验收基线。后台支持 OpenAI、Anthropic、Google、Qwen / DashScope、DeepSeek、MiniMax；动态活动配置优先于只读部署 bootstrap，失败候选不会替换旧活动模型，重启会从活动指针恢复。Skill 库、审核与运行时闭环已接入：授权管理员上传本地 ZIP，经具备审核权限的账号审核发布 exact revision，再组成不可变集合供码多多激活、回滚和重启恢复；artifact 与运行时指针纳入加密备份恢复。
 
-Skill、Knowledge、Tools/网页操作和自有服务器本地算力目前仍是未接入入口，不会加载能力或探测本地服务。实现边界参考 Agno 文档，但运行行为以仓库锁定的 Agno `2.7.2` 和本地测试为准。
+码多多现在只加载 Registry 中已发布且由授权管理员显式激活的 exact revision；Agent 使用只读 runtime 数据库角色，在 96 MiB `/run/aap-skills` tmpfs 中重新校验和物化，并按 run 固定 generation。GitHub/GitLab/GitCode 导入和脚本级强沙箱仍属于下一阶段。Knowledge、Tools/网页操作和自有服务器本地算力仍是未接入入口。运行行为以仓库锁定的 Agno `2.7.2` 和本地测试为准。

@@ -51,9 +51,15 @@ License、下载中心、OpenLab及其他尚未接入的外部能力必须保持
 ## 常用命令
 
 ```bash
+pnpm dev:registry-proxy
 pnpm dev
 pnpm --filter @ai-agent-platform/web test
 pnpm --filter @ai-agent-platform/web typecheck
 pnpm --filter @ai-agent-platform/web lint
 pnpm build
 ```
+
+宿主机开发固定使用`http://localhost:3000`。`pnpm dev`会从当前仓库的共享
+`.secrets`目录加载Web所需的`0600`密钥，不再依赖`.env.local`中的明文副本；
+Skill Registry容器仅在Docker backend网络中监听时，先运行
+`pnpm dev:registry-proxy`，将其安全映射到`127.0.0.1:7788`。

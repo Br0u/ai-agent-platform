@@ -67,7 +67,6 @@ describe("AgentOS execution circuit", () => {
     "server_error",
     "unexpected_status",
     "invalid_content_type",
-    "response_too_large",
     "invalid_response",
   ] as const)(
     "counts the sanitized AgentOS run/client error %s",
@@ -85,6 +84,29 @@ describe("AgentOS execution circuit", () => {
       });
     },
   );
+
+  it("does not open the global circuit for one request's bounded response failure", async () => {
+    const { circuit } = circuitFixture({ failureThreshold: 1 });
+    const failures = [
+      failure("response_too_large"),
+      new AgentOSRunClientError("invalid_response", "stream_content_too_large"),
+      new AgentOSRunClientError("invalid_response", "run_cancelled_event"),
+      new AgentOSRunClientError("invalid_response", "run_error_event"),
+      new AgentOSRunClientError("invalid_response", "stream_empty_content"),
+    ];
+
+    for (const error of failures) {
+      await expect(
+        circuit.execute(async () => {
+          throw error;
+        }),
+      ).rejects.toBe(error);
+      expect(circuit.inspect()).toEqual({
+        state: "closed",
+        consecutiveFailures: 0,
+      });
+    }
+  });
 
   it("does not count invalid requests, upstream rate limits, other 4xx, user Abort, or external abort", async () => {
     const { circuit } = circuitFixture();

@@ -32,7 +32,7 @@ RUN_ASSISTANT_RUNTIME_E2E=true ./docs/testing/run-assistant-runtime-e2e.sh
 - 验证普通管理员只读、当前 MFA 模型管理员可配置/查看、过期 MFA 跳转重新验证、revision 冲突、kill switch、bootstrap Key 不可查看，以及明文 Key 30 秒 DOM 清理。
 - 页面所有 `/api/v1/**` 响应，以及验收主动读取的 control/chat JSON 响应，都进入终态账本并默认 strict。只有精确的配置 list/save DTO 可显示对应末四位，只有精确 reveal 200 响应可显示对应完整 Key；会话 token、其他完整 Key 和独立末四位均不得出现。
 - Web 平台审计、Agent control event、浏览器控制台、HTTP 错误体、常驻容器日志和一次性任务 transcript 都不得包含完整 Key 或末四位。
-- Skill、Knowledge、Tools/网页操作和本地算力卡片显示批准的未接入状态；点击禁用控件后请求数组必须严格为空。
+- Skill 卡片显示 Registry / Agent 运行时已接入；Knowledge、Tools/网页操作和本地算力卡片保持未接入，点击其禁用控件后请求数组必须严格为空。
 - 公开和 Admin 状态只暴露固定标识 `码多多（maduoduo）` 与安全能力字段，不泄漏内部 URL、提示词、凭据或供应商错误体。
 - 同一 Cookie 两轮连续对话、独立浏览器上下文、session 删除重建、Admin 临时 session 立即删除、未认证 WebSocket 403、执行熔断和恢复均使用真实 AgentOS 路径。
 - `web`、`agent`、`db` 不发布主机端口，`proxy:8080` 是唯一入口。结束后再次断言无本项目容器、卷、网络、本地镜像、临时 Secret/pattern/transcript 和项目锁。

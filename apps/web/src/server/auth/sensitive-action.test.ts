@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SensitiveActionError,
   createSensitiveActionGuard,
+  createSensitiveActionEvidenceGuard,
   createWorkforceAssuranceGuard,
 } from "./sensitive-action";
 
@@ -39,6 +40,22 @@ function fixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("sensitive workforce action guard", () => {
+  it("returns the conservative real password/TOTP proof time for signed assertions", async () => {
+    const { getSession, requirePermission } = fixture();
+    const guard = createSensitiveActionEvidenceGuard({
+      now: () => now,
+      requirePermission,
+      getSession,
+    });
+
+    await expect(
+      guard("admin:users", { recentWithinSeconds: 600, mfaRequired: true }),
+    ).resolves.toEqual({
+      actor,
+      assuredAt: Math.floor((now.getTime() - 5 * 60_000) / 1000),
+    });
+  });
+
   it("supports recent workforce assurance without inventing a permission", async () => {
     const requireActor = vi.fn(async () => ({ ...actor, permissions: [] }));
     const getSession = vi.fn(async () => ({

@@ -58,6 +58,14 @@ const permissions: readonly PermissionSeed[] = [
   { key: "console:team", name: "管理客户团队" },
   { key: "admin:site", name: "管理站点" },
   { key: "admin:assistant", name: "管理 AI 助理" },
+  { key: "admin:assistant:skills", name: "查看 AI 助理 Skill 库" },
+  { key: "admin:assistant:skills:upload", name: "上传 AI 助理 Skill" },
+  {
+    key: "admin:assistant:skills:connections",
+    name: "管理 AI 助理 Skill 外部连接",
+  },
+  { key: "admin:assistant:skills:review", name: "审核 AI 助理 Skill" },
+  { key: "admin:assistant:skills:configure", name: "配置 AI 助理 Skill" },
   {
     key: "admin:assistant:configure",
     name: "配置 AI 助理模型",
@@ -92,6 +100,9 @@ const permissions: readonly PermissionSeed[] = [
 const superAdminOnlyPermissionKeys = new Set([
   "admin:assistant:configure",
   "admin:assistant:secret:reveal",
+  "admin:assistant:skills:connections",
+  "admin:assistant:skills:review",
+  "admin:assistant:skills:configure",
   "admin:docs:delete",
 ]);
 

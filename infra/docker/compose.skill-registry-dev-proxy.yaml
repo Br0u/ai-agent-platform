@@ -1,0 +1,47 @@
+services:
+  skill-registry-dev-proxy:
+    image: ${WEB_RUNTIME_IMAGE:-ai-agent-platform-web}
+    restart: unless-stopped
+    entrypoint: ["node"]
+    command:
+      - -e
+      - >-
+        const net=require("node:net");
+        const server=net.createServer(client=>{
+          const upstream=net.connect(7788,"skill-registry");
+          client.pipe(upstream);upstream.pipe(client);
+          const close=()=>{client.destroy();upstream.destroy()};
+          client.on("error",close);upstream.on("error",close)
+        });
+        server.listen(7788,"0.0.0.0")
+    ports:
+      - "127.0.0.1:${SKILL_REGISTRY_DEV_PORT:-7788}:7788"
+    networks:
+      - default
+      - backend
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:7788/internal/health/ready')
+          .then(response=>process.exit(response.ok?0:1))
+          .catch(()=>process.exit(1))
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+networks:
+  default: {}
+  backend:
+    external: true
+    name: ${AAP_DOCKER_BACKEND_NETWORK:-ai-agent-platform_backend}

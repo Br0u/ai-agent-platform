@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 import hmac
 import inspect
+from pathlib import Path
 import time
 from typing import Protocol, cast
 
@@ -51,6 +52,19 @@ from agent_service.model_runtime_slot import (
 )
 from agent_service.model_runtime_types import ManagedModel
 from agent_service.runtime_logging import install_agno_log_redaction
+from agent_service.skill_activation_coordinator import (
+    ActivateSkillRuntime,
+    SkillActivationResult,
+    SkillRuntimeStatus,
+)
+from agent_service.skill_control_api import (
+    SkillControlAuthMiddleware,
+    build_skill_control_router,
+)
+from agent_service.skill_control_auth import SkillControlAuthenticator
+from agent_service.skill_generation_slot import SkillGenerationSlot
+from agent_service.skill_runtime_manager import SkillRuntimeManager
+from agent_service.skill_runtime_middleware import SkillRuntimeMiddleware
 
 
 class AgentOSApplication(Protocol):
@@ -80,12 +94,52 @@ DynamicDependenciesBuilder = Callable[
 ]
 
 
+class SkillRuntimeApplication(Protocol):
+    slot: SkillGenerationSlot
+
+    def status(self) -> SkillRuntimeStatus: ...
+
+    def is_ready(self) -> bool: ...
+
+    async def start(self) -> None: ...
+
+    async def probe(self) -> bool: ...
+
+    async def activate(self, command: ActivateSkillRuntime) -> SkillActivationResult: ...
+
+    async def shutdown(self) -> None: ...
+
+
+SkillRuntimeManagerBuilder = Callable[
+    [RuntimeSettings, ModelRuntimeSlot, AsyncPostgresDb],
+    SkillRuntimeApplication,
+]
+
+
 def _build_repository(database_url: SecretStr) -> ActiveConfigRepository:
     return PostgresModelConfigRepository(database_url=database_url)
 
 
 def _build_cipher(master_key: SecretStr) -> ModelConfigCipher:
     return ModelConfigCipher(master_key=master_key)
+
+
+def _build_skill_runtime_manager(
+    settings: RuntimeSettings,
+    model_slot: ModelRuntimeSlot,
+    database: AsyncPostgresDb,
+) -> SkillRuntimeApplication:
+    return SkillRuntimeManager(
+        database_url=cast(
+            SecretStr,
+            settings.skill_registry_runtime_database_url,
+        ),
+        runtime_root=Path(settings.skill_runtime_root),
+        model_slot=model_slot,
+        agno_database=database,
+        activate_timeout_seconds=settings.skill_activate_timeout_seconds,
+        shutdown_timeout_seconds=settings.skill_shutdown_timeout_seconds,
+    )
 
 
 async def _close_candidate(managed: ManagedModel | None) -> None:
@@ -151,6 +205,27 @@ async def _finish_repository_cleanup(
     cleanup_task = asyncio.create_task(
         _close_repository(repository),
         name="agent-control-repository-cleanup",
+    )
+    cancellation_received = False
+    while True:
+        try:
+            await asyncio.shield(cleanup_task)
+            break
+        except asyncio.CancelledError:
+            if cleanup_task.cancelled():
+                raise
+            cancellation_received = True
+    if cancellation_received:
+        raise asyncio.CancelledError
+
+
+async def _finish_skill_runtime_cleanup(
+    runtime: SkillRuntimeApplication,
+) -> None:
+    """Finish Skill drain despite outer cancellation, then re-propagate it."""
+    cleanup_task = asyncio.create_task(
+        runtime.shutdown(),
+        name="skill-runtime-ordered-cleanup",
     )
     cancellation_received = False
     while True:
@@ -371,6 +446,9 @@ def create_app(
     model_verifier: ModelVerifier = verify_model,
     control_service_factory: ControlServiceFactory = ModelControlService,
     control_clock: Callable[[], float] = time.time,
+    skill_runtime_manager_builder: SkillRuntimeManagerBuilder = (
+        _build_skill_runtime_manager
+    ),
 ) -> FastAPI:
     """Compose the protected FastAPI and configured AgentOS surfaces."""
     install_agno_log_redaction()
@@ -393,9 +471,22 @@ def create_app(
         if control_configured
         else None
     )
+    skill_control_authenticator = (
+        SkillControlAuthenticator(
+            control_key=cast(SecretStr, runtime_settings.agent_config_control_key),
+            os_security_key=runtime_settings.os_security_key,
+        )
+        if control_configured
+        else None
+    )
     runtime_database = database or build_database(runtime_settings)
     catalog = catalog_builder(runtime_settings, runtime_database)
     control_slot = catalog.slot or ModelRuntimeSlot()
+    skill_runtime = (
+        skill_runtime_manager_builder(runtime_settings, catalog.slot, runtime_database)
+        if catalog.slot is not None
+        else None
+    )
     control_service: ModelControlService | None = None
 
     def get_control_service() -> ModelControlService:
@@ -483,13 +574,22 @@ def create_app(
                         )
                     except Exception:
                         slot.deactivate(capability="degraded")
+            if skill_runtime is not None:
+                try:
+                    await skill_runtime.start()
+                except Exception:
+                    pass
             yield
         finally:
             control_service = None
-            if slot is not None:
-                await _finish_runtime_cleanup(slot, repository)
-            else:
-                await _finish_repository_cleanup(repository)
+            try:
+                if skill_runtime is not None:
+                    await _finish_skill_runtime_cleanup(skill_runtime)
+            finally:
+                if slot is not None:
+                    await _finish_runtime_cleanup(slot, repository)
+                else:
+                    await _finish_repository_cleanup(repository)
 
     base_app = FastAPI(
         title="AI Agent Platform AgentOS",
@@ -498,6 +598,10 @@ def create_app(
     base_app.state.model_runtime_status = catalog.runtime_status_provider
     if control_configured:
         base_app.include_router(build_model_control_router(get_control_service))
+        if skill_runtime is not None:
+            base_app.include_router(build_skill_control_router(lambda: skill_runtime))
+    if skill_runtime is not None:
+        base_app.state.skill_runtime_status = skill_runtime.status
 
     @base_app.get("/internal/health/live", include_in_schema=False)
     async def live() -> JSONResponse:
@@ -518,7 +622,17 @@ def create_app(
         except Exception:
             database_is_ready = False
 
-        if not database_is_ready:
+        skill_is_ready = True
+        if skill_runtime is not None:
+            try:
+                skill_is_ready = await asyncio.wait_for(
+                    skill_runtime.probe(),
+                    timeout=runtime_settings.health_db_probe_timeout_seconds,
+                )
+            except Exception:
+                skill_is_ready = False
+        model_is_ready = catalog.capability != "degraded"
+        if not database_is_ready or not skill_is_ready or not model_is_ready:
             return _readiness_response(
                 ready=False,
                 capability=catalog.capability,
@@ -544,6 +658,12 @@ def create_app(
     )
     application = agent_os.get_app()
     application.state.model_runtime_status = catalog.runtime_status_provider
+    if skill_runtime is not None:
+        application.state.skill_runtime_status = skill_runtime.status
+        application.add_middleware(
+            SkillRuntimeMiddleware,
+            slot=skill_runtime.slot,
+        )
     application.add_middleware(
         BearerAuthMiddleware,
         security_key=runtime_settings.os_security_key,
@@ -553,6 +673,12 @@ def create_app(
         application.add_middleware(
             ModelControlAuthMiddleware,
             authenticator=control_authenticator,
+            clock=control_clock,
+        )
+    if skill_control_authenticator is not None and skill_runtime is not None:
+        application.add_middleware(
+            SkillControlAuthMiddleware,
+            authenticator=skill_control_authenticator,
             clock=control_clock,
         )
     return application

@@ -7,12 +7,15 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import type { ComponentProps } from "react";
 import type {
   AdminAssistantSessionsSnapshot,
   AdminAssistantStatusSnapshot,
 } from "@/features/assistant/admin-assistant-contract";
 import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
-import { AssistantAdminPage } from "./assistant-admin-page";
+import type { AdminSkillRegistrySnapshot } from "./assistant-skill-registry-panel";
+import type { AdminSkillRuntimeSnapshot } from "@/features/assistant/admin-skill-runtime-contract";
+import { AssistantAdminPage as ProductionAssistantAdminPage } from "./assistant-admin-page";
 
 const status = {
   mode: "placeholder" as const,
@@ -130,12 +133,115 @@ const modelConfigs = {
   controlEnabled: true,
 } satisfies AdminModelConfigSnapshot;
 
+const skillSnapshot = {
+  capability: "available",
+  skills: [],
+  page: { limit: 25, offset: 0, returned: 0 },
+} satisfies AdminSkillRegistrySnapshot;
+
+const skillPermissions = {
+  canUpload: true,
+  canManageConnections: false,
+  canReview: true,
+  canConfigure: false,
+};
+
+const skillRuntime = {
+  version: "1",
+  available: { items: [], limit: 100, offset: 0, total: 0 },
+  registry: {
+    active: null,
+    previous: null,
+    activationVersion: 0,
+    candidateCount: 0,
+    candidates: [],
+  },
+  agent: {
+    skillCapability: "unconfigured",
+    configured: false,
+    activeSetId: null,
+    loadedSetId: null,
+    previousSetId: null,
+    activationVersion: 0,
+    failureCode: null,
+  },
+  permissions: { canRead: true, canConfigure: false },
+} satisfies AdminSkillRuntimeSnapshot;
+
+type PageProps = ComponentProps<typeof ProductionAssistantAdminPage>;
+
+function AssistantAdminPage(
+  props: Omit<
+    PageProps,
+    | "skillActorUserId"
+    | "skillCanRead"
+    | "skillPermissions"
+    | "skillRuntime"
+    | "skillSnapshot"
+  > &
+    Partial<
+      Pick<
+        PageProps,
+        | "skillActorUserId"
+        | "skillCanRead"
+        | "skillPermissions"
+        | "skillRuntime"
+        | "skillSnapshot"
+      >
+    >,
+) {
+  return (
+    <ProductionAssistantAdminPage
+      skillActorUserId="11111111-1111-4111-8111-111111111111"
+      skillCanRead
+      skillPermissions={skillPermissions}
+      skillRuntime={skillRuntime}
+      skillSnapshot={skillSnapshot}
+      {...props}
+    />
+  );
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
 describe("AssistantAdminPage", () => {
+  it("places runtime binding and the Skill Registry after model configuration and before the roadmap", () => {
+    render(
+      <AssistantAdminPage
+        modelConfigs={modelConfigs}
+        sessions={sessions}
+        skillActorUserId="11111111-1111-4111-8111-111111111111"
+        skillCanRead
+        skillPermissions={skillPermissions}
+        skillSnapshot={skillSnapshot}
+        status={status}
+      />,
+    );
+
+    const models = screen.getByRole("heading", { name: "云模型配置" });
+    const runtime = screen.getByRole("heading", { name: "码多多 Skill 配置" });
+    const skills = screen.getByRole("heading", { name: "Skill 库" });
+    const roadmap = screen.getByRole("heading", { name: "后续能力入口" });
+    expect(
+      models.compareDocumentPosition(runtime) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      runtime.compareDocumentPosition(skills) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      models.compareDocumentPosition(skills) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      skills.compareDocumentPosition(roadmap) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("shows four honest status cells and read-only configuration", () => {
     const { container } = render(
       <AssistantAdminPage
@@ -258,7 +364,7 @@ describe("AssistantAdminPage", () => {
 
     expect(screen.getByRole("button", { name: "会话审计" })).toBeDisabled();
     expect(screen.getAllByRole("button", { name: /暂不可用$/u })).toHaveLength(
-      4,
+      3,
     );
     for (const action of screen.getAllByRole("button", {
       name: /暂不可用$/u,

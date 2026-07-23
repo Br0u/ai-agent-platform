@@ -248,6 +248,7 @@ def test_runtime_rejects_custom_headers_before_model_build(
             {
                 "OS_SECURITY_KEY": RUNTIME_SECURITY_KEY,
                 "AGNO_DATABASE_URL": RUNTIME_DATABASE_URL,
+                "SKILL_REGISTRY_RUNTIME_DATABASE_URL": RUNTIME_DATABASE_URL,
                 "AGENT_ENABLED": True,
                 "MODEL_PROVIDER": provider,
                 "MODEL_ID": MODEL_ID,

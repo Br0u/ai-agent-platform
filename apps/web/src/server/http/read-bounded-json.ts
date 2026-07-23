@@ -1,4 +1,17 @@
+import { cancelUnreadRequestBody } from "./cancel-request-body";
+
 export type JsonReadResult = { ok: true; value: unknown } | { ok: false };
+
+async function cancelReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  reason: unknown,
+): Promise<void> {
+  try {
+    await reader.cancel(reason);
+  } catch {
+    // Cleanup must never replace the read or validation failure.
+  }
+}
 
 export async function readBoundedJson(
   request: Request,
@@ -10,6 +23,7 @@ export async function readBoundedJson(
     /^\d+$/u.test(contentLength) &&
     Number(contentLength) > maximumBytes
   ) {
+    await cancelUnreadRequestBody(request);
     return { ok: false };
   }
 
@@ -26,7 +40,7 @@ export async function readBoundedJson(
 
       totalBytes += value.byteLength;
       if (totalBytes > maximumBytes) {
-        await reader.cancel();
+        await cancelReader(reader, new Error("JSON body is too large"));
         return { ok: false };
       }
       chunks.push(value);
@@ -45,7 +59,15 @@ export async function readBoundedJson(
         new TextDecoder("utf-8", { fatal: true }).decode(bytes),
       ),
     };
-  } catch {
+  } catch (error) {
+    await cancelReader(reader, error);
     return { ok: false };
+  } finally {
+    chunks.length = 0;
+    try {
+      reader.releaseLock();
+    } catch {
+      // Cleanup only.
+    }
   }
 }

@@ -108,10 +108,10 @@ class _SlotEntry:
 _STOP_REAPER = object()
 
 
-class _SyncSlotIterator(Iterator[ModelResponse]):
+class _SyncSlotIterator(Iterator[Any]):
     def __init__(
         self,
-        iterator: Iterator[ModelResponse],
+        iterator: Iterator[Any],
         release: Callable[[], None],
     ) -> None:
         self._iterator = iterator
@@ -122,10 +122,10 @@ class _SyncSlotIterator(Iterator[ModelResponse]):
         self._closing = False
         self._released = False
 
-    def __iter__(self) -> Iterator[ModelResponse]:
+    def __iter__(self) -> Iterator[Any]:
         return self
 
-    def __next__(self) -> ModelResponse:
+    def __next__(self) -> Any:
         with self._condition:
             if self._close_requested:
                 raise StopIteration
@@ -173,10 +173,10 @@ class _SyncSlotIterator(Iterator[ModelResponse]):
                     self._condition.notify_all()
 
 
-class _AsyncSlotIterator(AsyncIterator[ModelResponse]):
+class _AsyncSlotIterator(AsyncIterator[Any]):
     def __init__(
         self,
-        iterator: AsyncIterator[ModelResponse],
+        iterator: AsyncIterator[Any],
         release: Callable[[], None],
     ) -> None:
         self._iterator = iterator
@@ -187,10 +187,10 @@ class _AsyncSlotIterator(AsyncIterator[ModelResponse]):
         self._released = False
         self._close_task: asyncio.Task[None] | None = None
 
-    def __aiter__(self) -> AsyncIterator[ModelResponse]:
+    def __aiter__(self) -> AsyncIterator[Any]:
         return self
 
-    async def __anext__(self) -> ModelResponse:
+    async def __anext__(self) -> Any:
         async with self._condition:
             if self._close_requested:
                 raise StopAsyncIteration
@@ -541,6 +541,44 @@ class ModelRuntimeSlot(Model):
             failed = self._cleanup_failed
         if timed_out or failed:
             raise ModelRuntimeCleanupError("model runtime cleanup failed") from None
+
+    def response(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        entry = self._capture()
+        try:
+            return entry.managed.model.response(*args, **kwargs)
+        finally:
+            self._release_from_sync(entry)
+
+    async def aresponse(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        entry = self._capture()
+        try:
+            return await entry.managed.model.aresponse(*args, **kwargs)
+        finally:
+            self._release_from_async(entry)
+
+    def response_stream(self, *args: Any, **kwargs: Any) -> Iterator[Any]:
+        entry = self._capture()
+        try:
+            iterator = iter(entry.managed.model.response_stream(*args, **kwargs))
+        except BaseException:
+            self._release_from_sync(entry)
+            raise
+        return _SyncSlotIterator(
+            iterator,
+            lambda: self._release_from_sync(entry),
+        )
+
+    def aresponse_stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        entry = self._capture()
+        try:
+            iterator = aiter(entry.managed.model.aresponse_stream(*args, **kwargs))
+        except BaseException:
+            self._release_from_sync(entry)
+            raise
+        return _AsyncSlotIterator(
+            iterator,
+            lambda: self._release_from_async(entry),
+        )
 
     def invoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
         entry = self._capture()

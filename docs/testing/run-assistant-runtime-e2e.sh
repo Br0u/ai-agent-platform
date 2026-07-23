@@ -295,6 +295,9 @@ agno_migrator_password=$(secret)
 agno_runtime_password=$(secret)
 agent_control_migrator_password=$(secret)
 agent_control_runtime_password=$(secret)
+skill_registry_migrator_password=$(secret)
+skill_registry_manager_password=$(secret)
+skill_registry_runtime_password=$(secret)
 backup_encryption_key=$(secret)
 os_security_key=$(secret)
 assistant_session_secret=$(secret)
@@ -302,6 +305,7 @@ assistant_rate_limit_secret=$(secret)
 model_api_key=$(secret)
 model_config_encryption_key=$(secret)
 agent_config_control_key=$(secret)
+skill_registry_control_key=$(secret)
 agent_runtime_token=$os_security_key
 
 materialize_secret() {
@@ -323,12 +327,18 @@ materialize_secret AGNO_MIGRATOR_DATABASE_PASSWORD_FILE agno_migrator_database_p
 materialize_secret AGNO_DATABASE_PASSWORD_FILE agno_database_password "$agno_runtime_password"
 materialize_secret AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD_FILE agent_control_migrator_database_password "$agent_control_migrator_password"
 materialize_secret AGENT_CONTROL_DATABASE_PASSWORD_FILE agent_control_database_password "$agent_control_runtime_password"
+materialize_secret SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD_FILE skill_registry_migrator_database_password "$skill_registry_migrator_password"
+materialize_secret SKILL_REGISTRY_DATABASE_PASSWORD_FILE skill_registry_database_password "$skill_registry_manager_password"
+materialize_secret SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD_FILE skill_registry_runtime_database_password "$skill_registry_runtime_password"
 materialize_secret MIGRATOR_DATABASE_URL_FILE migrator_database_url "$MIGRATOR_DATABASE_URL"
 materialize_secret RUNTIME_DATABASE_URL_FILE runtime_database_url "$RUNTIME_DATABASE_URL"
 materialize_secret AGNO_MIGRATOR_DATABASE_URL_FILE agno_migrator_database_url "postgresql+psycopg_async://ai_agent_agno_migrator:$agno_migrator_password@db:5432/$POSTGRES_DB"
 materialize_secret AGNO_DATABASE_URL_FILE agno_database_url "postgresql+psycopg_async://ai_agent_agno:$agno_runtime_password@db:5432/$POSTGRES_DB"
 materialize_secret AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE agent_control_migrator_database_url "postgresql+psycopg_async://ai_agent_control_migrator:$agent_control_migrator_password@db:5432/$POSTGRES_DB"
 materialize_secret AGENT_CONTROL_DATABASE_URL_FILE agent_control_database_url "postgresql+psycopg_async://ai_agent_control:$agent_control_runtime_password@db:5432/$POSTGRES_DB"
+materialize_secret SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE skill_registry_migrator_database_url "postgresql+psycopg_async://ai_agent_skill_registry_migrator:$skill_registry_migrator_password@db:5432/$POSTGRES_DB"
+materialize_secret SKILL_REGISTRY_DATABASE_URL_FILE skill_registry_database_url "postgresql+psycopg_async://ai_agent_skill_registry_manager:$skill_registry_manager_password@db:5432/$POSTGRES_DB"
+materialize_secret SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE skill_registry_runtime_database_url "postgresql+psycopg_async://ai_agent_skill_registry_runtime:$skill_registry_runtime_password@db:5432/$POSTGRES_DB"
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECRET"
 materialize_secret OS_SECURITY_KEY_FILE os_security_key "$agent_runtime_token"
 materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$assistant_session_secret"
@@ -336,6 +346,7 @@ materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret 
 materialize_secret MODEL_API_KEY_FILE model_api_key "$model_api_key"
 materialize_secret MODEL_CONFIG_ENCRYPTION_KEY_FILE model_config_encryption_key "$model_config_encryption_key"
 materialize_secret AGENT_CONFIG_CONTROL_KEY_FILE agent_config_control_key "$agent_config_control_key"
+materialize_secret SKILL_REGISTRY_CONTROL_KEY_FILE skill_registry_control_key "$skill_registry_control_key"
 
 protected_patterns_file="$temp_dir/protected-runtime-patterns"
 (
@@ -367,10 +378,16 @@ protected_patterns_file="$temp_dir/protected-runtime-patterns"
     "$agno_runtime_password" \
     "$agent_control_migrator_password" \
     "$agent_control_runtime_password" \
+    "$skill_registry_migrator_password" \
+    "$skill_registry_manager_password" \
+    "$skill_registry_runtime_password" \
     "postgresql+psycopg_async://ai_agent_agno_migrator:$agno_migrator_password@db:5432/$POSTGRES_DB" \
     "postgresql+psycopg_async://ai_agent_agno:$agno_runtime_password@db:5432/$POSTGRES_DB" \
     "postgresql+psycopg_async://ai_agent_control_migrator:$agent_control_migrator_password@db:5432/$POSTGRES_DB" \
     "postgresql+psycopg_async://ai_agent_control:$agent_control_runtime_password@db:5432/$POSTGRES_DB" \
+    "postgresql+psycopg_async://ai_agent_skill_registry_migrator:$skill_registry_migrator_password@db:5432/$POSTGRES_DB" \
+    "postgresql+psycopg_async://ai_agent_skill_registry_manager:$skill_registry_manager_password@db:5432/$POSTGRES_DB" \
+    "postgresql+psycopg_async://ai_agent_skill_registry_runtime:$skill_registry_runtime_password@db:5432/$POSTGRES_DB" \
     "$backup_encryption_key" \
     "$agent_runtime_token" \
     "$assistant_session_secret" \
@@ -378,6 +395,7 @@ protected_patterns_file="$temp_dir/protected-runtime-patterns"
     "$model_api_key" \
     "$model_config_encryption_key" \
     "$agent_config_control_key" \
+    "$skill_registry_control_key" \
     "$POSTGRES_PASSWORD_FILE" \
     "$MIGRATOR_DATABASE_PASSWORD_FILE" \
     "$RUNTIME_DATABASE_PASSWORD_FILE" \
@@ -387,19 +405,26 @@ protected_patterns_file="$temp_dir/protected-runtime-patterns"
     "$AGNO_DATABASE_PASSWORD_FILE" \
     "$AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD_FILE" \
     "$AGENT_CONTROL_DATABASE_PASSWORD_FILE" \
+    "$SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD_FILE" \
+    "$SKILL_REGISTRY_DATABASE_PASSWORD_FILE" \
+    "$SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD_FILE" \
     "$MIGRATOR_DATABASE_URL_FILE" \
     "$RUNTIME_DATABASE_URL_FILE" \
     "$AGNO_MIGRATOR_DATABASE_URL_FILE" \
     "$AGNO_DATABASE_URL_FILE" \
     "$AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE" \
     "$AGENT_CONTROL_DATABASE_URL_FILE" \
+    "$SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE" \
+    "$SKILL_REGISTRY_DATABASE_URL_FILE" \
+    "$SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE" \
     "$BETTER_AUTH_SECRET_FILE" \
     "$OS_SECURITY_KEY_FILE" \
     "$ASSISTANT_SESSION_SECRET_FILE" \
     "$ASSISTANT_RATE_LIMIT_SECRET_FILE" \
     "$MODEL_API_KEY_FILE" \
     "$MODEL_CONFIG_ENCRYPTION_KEY_FILE" \
-    "$AGENT_CONFIG_CONTROL_KEY_FILE" >"$protected_patterns_file"
+    "$AGENT_CONFIG_CONTROL_KEY_FILE" \
+    "$SKILL_REGISTRY_CONTROL_KEY_FILE" >"$protected_patterns_file"
 )
 chmod 600 "$protected_patterns_file"
 

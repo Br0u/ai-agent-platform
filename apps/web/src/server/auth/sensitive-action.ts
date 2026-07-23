@@ -30,6 +30,11 @@ export class SensitiveActionError extends Error {
   }
 }
 
+export type WorkforceAssuranceEvidence = {
+  actor: WorkforceActor;
+  assuredAt: number;
+};
+
 function asDate(value: unknown): Date | null {
   if (value instanceof Date) return value;
   if (typeof value === "string" || typeof value === "number") {
@@ -66,18 +71,32 @@ export function createSensitiveActionGuard(dependencies: {
   requirePermission: (permission: PermissionKey) => Promise<WorkforceActor>;
   getSession: () => Promise<SensitiveSession | null>;
 }) {
+  const requireEvidence = createSensitiveActionEvidenceGuard(dependencies);
   return async function requireSensitiveWorkforceAction(
     permission: PermissionKey,
     options: { recentWithinSeconds?: number; mfaRequired?: boolean } = {},
   ): Promise<WorkforceActor> {
+    return (await requireEvidence(permission, options)).actor;
+  };
+}
+
+export function createSensitiveActionEvidenceGuard(dependencies: {
+  now?: () => Date;
+  requirePermission: (permission: PermissionKey) => Promise<WorkforceActor>;
+  getSession: () => Promise<SensitiveSession | null>;
+}) {
+  return async function requireSensitiveWorkforceActionEvidence(
+    permission: PermissionKey,
+    options: { recentWithinSeconds?: number; mfaRequired?: boolean } = {},
+  ): Promise<WorkforceAssuranceEvidence> {
     const actor = await dependencies.requirePermission(permission);
-    await assertWorkforceAssurance(
+    const assuredAt = await assertWorkforceAssurance(
       actor.userId,
       await dependencies.getSession(),
       options,
       (dependencies.now ?? (() => new Date()))(),
     );
-    return actor;
+    return { actor, assuredAt };
   };
 }
 
@@ -86,7 +105,7 @@ async function assertWorkforceAssurance(
   session: SensitiveSession | null,
   options: { recentWithinSeconds?: number; mfaRequired?: boolean },
   now: Date,
-): Promise<void> {
+): Promise<number> {
   const windowMs = (options.recentWithinSeconds ?? 10 * 60) * 1000;
   const currentTime = now.getTime();
   if (
@@ -106,6 +125,12 @@ async function assertWorkforceAssurance(
   ) {
     throw new SensitiveActionError("AUTH_MFA_REQUIRED");
   }
+  const passwordAssuredAt = session.createdAt.getTime();
+  const mfaAssuredAt =
+    options.mfaRequired === false
+      ? passwordAssuredAt
+      : (session.mfaVerifiedAt as Date).getTime();
+  return Math.floor(Math.min(passwordAssuredAt, mfaAssuredAt) / 1000);
 }
 
 export function createWorkforceAssuranceGuard<
@@ -148,6 +173,20 @@ export async function requireSensitiveWorkforceAction(
 ): Promise<WorkforceActor> {
   const getHeaders = nextHeaders;
   return createSensitiveActionGuard({
+    requirePermission,
+    getSession: async () =>
+      parseSensitiveSession(
+        await getStaffAuth().api.getSession({ headers: await getHeaders() }),
+      ),
+  })(permission, options);
+}
+
+export async function requireSensitiveWorkforceActionEvidence(
+  permission: PermissionKey,
+  options?: { recentWithinSeconds?: number; mfaRequired?: boolean },
+): Promise<WorkforceAssuranceEvidence> {
+  const getHeaders = nextHeaders;
+  return createSensitiveActionEvidenceGuard({
     requirePermission,
     getSession: async () =>
       parseSensitiveSession(

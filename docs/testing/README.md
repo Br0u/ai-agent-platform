@@ -2,6 +2,16 @@
 
 模型供应商的可选真实 API 验证见 [model-provider-smoke.md](./model-provider-smoke.md)，入口为 `run-model-provider-smoke.sh`。该入口不属于常规 CI，必须显式提供单个供应商的真实凭据。
 
+## Skill Registry 纵向验收
+
+Skill 库+审核与运行时交付分成两道门禁：Registry 验收负责本地 ZIP、不可变 revision、双人审核和恢复；Runtime 验收负责把已发布 exact revision 组成集合并由 Agent 真实加载。发布不等于运行，只有激活成功且 Agent Loaded 与 Registry Active 一致才算生效。
+
+运行 `pnpm skill-registry:e2e`。`run-skill-registry-e2e.sh` 创建独立 Compose project、临时 0600 secrets 和仅含 `SKILL.md`、`scripts/hello.py` 的本地 fixture；它不下载第三方 Skill。验收覆盖 `workforce:admin` 上传与自审拒绝、`workforce:super_admin` 的近期密码/TOTP 保障和发布、Registry 重启持久性，并要求加密备份恢复后恰好存在与本次上传完全相同的 artifact SHA-256，而不只是任意非空且自洽的 digest；同时复用 Task 9 的 restore lifecycle 门禁。只有临时目录、容器、network、volume 和本地镜像全部清理成功后才输出 `Skill Registry E2E passed`，任何清理失败都固定返回非零且不输出临时路径、Secret、ZIP/源码或浏览器 storage state。
+
+运行 `pnpm skill-runtime:e2e` 执行完整运行时门禁。它复用同一隔离框架，但改用 `deterministic-runtime` fixture 和 acceptance-only Agent 镜像；验收必须在 AgentOS SSE 中看到 exact `get_skill_script` 调用、`execute=true` 参数、工具结果和 `AAP_SKILL_RUNTIME_E2E_MARKER_v1`，并覆盖无权限/无 MFA 拒绝、Agent 重启恢复、显式空集合、回滚及 active/previous/version 的备份恢复。生产 Agent 镜像不包含 fixture、fault route 或 acceptance composition root。
+
+运行时单元回归还必须覆盖：Agno 请求固定发送 `stream_events=false`、`RunCancelled` 不能被当成成功、流超时按无数据空闲时间续期、大指令/引用/脚本分页、脚本输出在读取阶段即受限、脚本与物化不阻塞事件循环、物化超时后的 generation 清理，以及单次大响应不会误打开全局执行熔断。浏览器收到部分内容后若流失败，应保留该内容并显示“回答未完成”，不能静默删除已经展示的回答。
+
 该回归由 Playwright CLI 驱动。`navigation-browser-regression.js` 是注入浏览器会话的函数，不是独立 Node.js 脚本，不应使用 `node navigation-browser-regression.js` 执行。
 
 ## 运行

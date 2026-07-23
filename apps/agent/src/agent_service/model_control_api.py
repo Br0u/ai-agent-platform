@@ -37,6 +37,7 @@ from agent_service.model_control_service import (
     ModelControlStorageError,
     ModelControlValidationError,
 )
+from agent_service.skill_control_api import is_recognized_skill_control_route
 
 
 CONTROL_PATH_PREFIX = "/internal/control/"
@@ -116,6 +117,9 @@ class ModelControlAuthMiddleware:
         if scope["type"] != "http" or not scope.get("path", "").startswith(
             CONTROL_PATH_PREFIX
         ):
+            await self.app(scope, receive, send)
+            return
+        if is_recognized_skill_control_route(scope):
             await self.app(scope, receive, send)
             return
 

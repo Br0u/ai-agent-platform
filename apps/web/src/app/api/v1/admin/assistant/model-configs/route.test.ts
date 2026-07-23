@@ -79,6 +79,19 @@ function client(): AgentModelControlClient {
 }
 
 describe("GET /api/v1/admin/assistant/model-configs", () => {
+  it("uses the platform UUID generator without losing its receiver", async () => {
+    const controlClient = client();
+
+    await expect(
+      loadAdminModelConfigSnapshot(ACTOR, { client: controlClient }),
+    ).resolves.toMatchObject({ version: "1" });
+
+    const listed = vi.mocked(controlClient.listModelConfigs).mock.calls[0]?.[0];
+    const runtime = vi.mocked(controlClient.runtimeStatus).mock.calls[0]?.[0];
+    expect(listed?.requestId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(runtime?.requestId).toBe(listed?.requestId);
+  });
+
   it("loads one metadata-only fixed-order snapshot and derives capabilities", async () => {
     const controlClient = client();
 

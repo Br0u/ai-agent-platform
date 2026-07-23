@@ -2072,7 +2072,6 @@ test.describe("@control deterministic model control", () => {
     page.on("request", (request) => capabilityRequests.push(request.url()));
     for (const label of [
       "本地算力暂不可用",
-      "Skill 加载暂不可用",
       "知识库暂不可用",
       "网页与操作工具暂不可用",
     ]) {
@@ -2083,9 +2082,15 @@ test.describe("@control deterministic model control", () => {
       );
     }
     expect(capabilityRequests).toEqual([]);
+    await expect(
+      page
+        .getByRole("article")
+        .filter({ hasText: "Skill 加载" })
+        .getByText("已接入"),
+    ).toBeVisible();
     for (const [title, status] of [
       ["本地算力", "预留 / 未连接"],
-      ["Skill 加载", "未接入"],
+      ["Skill 加载", "Registry / Agent 运行时已接入"],
       ["知识库", "未接入"],
       ["网页与操作工具", "未接入"],
     ] as const) {

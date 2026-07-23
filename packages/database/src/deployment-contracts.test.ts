@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -44,6 +45,13 @@ const composeSecretKeys = [
   "AGENT_CONTROL_DATABASE_URL",
   "MODEL_CONFIG_ENCRYPTION_KEY",
   "AGENT_CONFIG_CONTROL_KEY",
+  "SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD",
+  "SKILL_REGISTRY_DATABASE_PASSWORD",
+  "SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD",
+  "SKILL_REGISTRY_MIGRATOR_DATABASE_URL",
+  "SKILL_REGISTRY_DATABASE_URL",
+  "SKILL_REGISTRY_RUNTIME_DATABASE_URL",
+  "SKILL_REGISTRY_CONTROL_KEY",
 ] as const;
 
 type RenderedSecretAttachment = string | { source?: string; target?: string };
@@ -51,7 +59,12 @@ type RenderedSecretAttachment = string | { source?: string; target?: string };
 type RenderedNetworkAttachment = null | { gw_priority?: number };
 type RenderedVolumeAttachment =
   | string
-  | { source?: string; target?: string; read_only?: boolean };
+  | {
+      type?: string;
+      source?: string;
+      target?: string;
+      read_only?: boolean;
+    };
 
 type RenderedService = {
   build?: { target?: string };
@@ -578,7 +591,9 @@ describe("production deployment security contracts", () => {
     }
     expect(webService).not.toContain("ASSISTANT_AGENTOS_DEFAULT_AGENT_ID");
     expect(webService).not.toContain("MODEL_API_KEY");
-    expect(webService).not.toMatch(/agent:[\s\S]*condition: service_healthy/u);
+    expect(webService).not.toContain(
+      "      agent:\n        condition: service_healthy",
+    );
     expect(webService).not.toMatch(/^\s{4}ports:/mu);
     expect(agentService).not.toMatch(/^\s{4}ports:/mu);
     expect(proxyService).toMatch(/^\s{4}ports:/mu);
@@ -660,7 +675,7 @@ describe("production deployment security contracts", () => {
     expect(firstDeployment).toContain("不得复用 Better Auth 或 AgentOS 密钥");
     expect(firstDeployment).toContain("不要提交");
     expect(firstDeployment).toContain(
-      "docker compose build migrate agent-migrate agent-control-migrate agent web backup",
+      "docker compose build web agent skill-registry migrate agent-migrate agent-control-migrate skill-registry-migrate backup",
     );
   });
 
@@ -1440,6 +1455,7 @@ exit 0
     expect(backupService).not.toMatch(/user:\s*(?:root|0)/u);
     const backupImage = read("infra/docker/backup.Dockerfile");
     expect(backupImage).toContain("apk add --no-cache gnupg");
+    expect(backupImage).toContain("coreutils");
     expect(backupImage).toContain("USER postgres");
     expect(backupImage).toContain("ENTRYPOINT");
     const workflow = read(".github/workflows/ci.yml");
@@ -1786,6 +1802,664 @@ exit 0
     );
   });
 
+  const dockerAvailable =
+    spawnSync("docker", ["info", "--format", "{{.ServerVersion}}"], {
+      stdio: "ignore",
+    }).status === 0;
+
+  it("deploys the Skill Registry behind ordered least-privilege boundaries", () => {
+    const rendered = renderComposeFixture();
+    const bootstrap = rendered.services["skill-registry-bootstrap"];
+    const migration = rendered.services["skill-registry-migrate"];
+    const registry = rendered.services["skill-registry"];
+    const web = rendered.services.web;
+    const agent = rendered.services.agent;
+    const registrySecretSources = new Set([
+      "skill_registry_migrator_database_password",
+      "skill_registry_database_password",
+      "skill_registry_runtime_database_password",
+      "skill_registry_migrator_database_url",
+      "skill_registry_database_url",
+      "skill_registry_runtime_database_url",
+      "skill_registry_control_key",
+    ]);
+    const sources = (service: RenderedService | undefined) =>
+      new Set(
+        (service?.secrets ?? [])
+          .map(secretSource)
+          .filter((source): source is string => source !== undefined),
+      );
+    const visibleRegistrySources = (service: RenderedService | undefined) =>
+      new Set(
+        [...sources(service)].filter((source) =>
+          registrySecretSources.has(source),
+        ),
+      );
+    const registrySecretHolders = Object.fromEntries(
+      [...registrySecretSources].map((source) => [
+        source,
+        Object.entries(rendered.services)
+          .filter(([, service]) => sources(service).has(source))
+          .map(([name]) => name),
+      ]),
+    );
+
+    expect(bootstrap).toBeDefined();
+    expect(migration).toBeDefined();
+    expect(registry).toBeDefined();
+
+    const dockerfile = read("apps/skill-registry/Dockerfile");
+    const runtimeImports = read("infra/agent/skill-runtime-imports.json");
+    const runner = read("infra/docker/run-with-secret-env.sh");
+
+    expect(runtimeImports).toBe(
+      '{"version":1,"pythonModules":["agno","cryptography","pydantic"]}\n',
+    );
+    expect(JSON.parse(runtimeImports)).toEqual({
+      version: 1,
+      pythonModules: ["agno", "cryptography", "pydantic"],
+    });
+
+    const pinnedPythonImage =
+      "python:3.13.13-slim-trixie@sha256:aa938a849bcb82dce8f49480f056ab82bf5c1c3ebc294f0430f37b6820e7f286";
+    expect(
+      dockerfile.match(new RegExp(`FROM ${pinnedPythonImage}`, "gu")),
+    ).toHaveLength(2);
+    expect(dockerfile).toContain(
+      'RUN test "$(python --version)" = "Python 3.13.13"',
+    );
+    expect(dockerfile).toContain("uv sync --frozen --no-dev");
+    expect(dockerfile).toContain(
+      "groupadd --system --gid 10002 skill-registry",
+    );
+    expect(dockerfile).toContain(
+      "useradd --system --uid 10002 --gid skill-registry",
+    );
+    expect(dockerfile).toContain(
+      "COPY --chown=root:root --chmod=0644 infra/agent/skill-runtime-imports.json /etc/aap/skill-runtime-imports.json",
+    );
+    expect(dockerfile).toContain(
+      "COPY --chown=root:root --chmod=0755 infra/docker/run-with-secret-env.sh /opt/aap/run-with-secret-env.sh",
+    );
+    expect(dockerfile).not.toContain("COPY . .");
+    expect(runner).toContain("postgres|agent|node|skill-registry");
+
+    expect(bootstrap?.depends_on?.db?.condition).toBe("service_healthy");
+    expect(bootstrap?.depends_on?.["agno-bootstrap"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(bootstrap?.depends_on?.["agent-control-bootstrap"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(migration?.depends_on?.["skill-registry-bootstrap"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(registry?.depends_on?.["skill-registry-migrate"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(web?.depends_on?.["skill-registry"]?.condition).toBe(
+      "service_healthy",
+    );
+    expect(migration?.command).toEqual([
+      "python",
+      "-m",
+      "skill_registry.migrate",
+    ]);
+
+    expect(sources(bootstrap)).toEqual(
+      new Set([
+        "postgres_password",
+        "skill_registry_migrator_database_password",
+        "skill_registry_database_password",
+        "skill_registry_runtime_database_password",
+      ]),
+    );
+    expect(sources(migration)).toEqual(
+      new Set(["skill_registry_migrator_database_url"]),
+    );
+    expect(sources(registry)).toEqual(
+      new Set(["skill_registry_database_url", "skill_registry_control_key"]),
+    );
+    expect(visibleRegistrySources(web)).toEqual(
+      new Set(["skill_registry_control_key"]),
+    );
+    expect(visibleRegistrySources(agent)).toEqual(
+      new Set(["skill_registry_runtime_database_url"]),
+    );
+    expect(registrySecretHolders).toEqual({
+      skill_registry_migrator_database_password: ["skill-registry-bootstrap"],
+      skill_registry_database_password: ["skill-registry-bootstrap"],
+      skill_registry_runtime_database_password: ["skill-registry-bootstrap"],
+      skill_registry_migrator_database_url: ["skill-registry-migrate"],
+      skill_registry_database_url: ["skill-registry"],
+      skill_registry_runtime_database_url: ["agent"],
+      skill_registry_control_key: ["skill-registry", "web"],
+    });
+    expect(web?.environment?.SECRET_ENV_SPECS).toContain(
+      "SKILL_REGISTRY_CONTROL_KEY=/run/secrets/skill_registry_control_key",
+    );
+    expect(web?.environment?.SKILL_REGISTRY_INTERNAL_URL).toBe(
+      "http://skill-registry:7788",
+    );
+    expect(web?.environment?.SECRET_ENV_SPECS).not.toMatch(
+      /SKILL_REGISTRY_(?:MIGRATOR_)?DATABASE_URL/u,
+    );
+    expect(agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "SKILL_REGISTRY_RUNTIME_DATABASE_URL=/run/secrets/skill_registry_runtime_database_url",
+    );
+
+    expect(registry?.user).toBe("root");
+    expect(registry?.entrypoint).toEqual(["/opt/aap/run-with-secret-env.sh"]);
+    expect(registry?.environment?.SECRET_RUN_AS).toBe("skill-registry");
+    expect(registry?.environment?.SECRET_ENV_SPECS).toContain(
+      "SKILL_REGISTRY_DATABASE_URL=/run/secrets/skill_registry_database_url",
+    );
+    expect(registry?.environment?.SECRET_ENV_SPECS).toContain(
+      "SKILL_REGISTRY_CONTROL_KEY=/run/secrets/skill_registry_control_key",
+    );
+    expect(registry?.environment?.SKILL_RUNTIME_IMPORTS_FILE).toBe(
+      "/etc/aap/skill-runtime-imports.json",
+    );
+    expect(registry?.read_only).toBe(true);
+    expect(registry?.tmpfs).toEqual(["/tmp:rw,noexec,nosuid,nodev,size=64m"]);
+    expect(new Set(registry?.cap_drop)).toEqual(new Set(["ALL"]));
+    expect(new Set(registry?.cap_add)).toEqual(
+      new Set(["DAC_OVERRIDE", "SETGID", "SETUID"]),
+    );
+    expect(registry?.security_opt).toContain("no-new-privileges:true");
+    expect(Number(registry?.mem_limit)).toBe(512 * 1_024 * 1_024);
+    expect(Number(registry?.cpus)).toBe(1);
+    expect(registry?.pids_limit).toBe(256);
+    expect(registry?.ports ?? []).toEqual([]);
+    expect(Object.keys(registry?.networks ?? {})).toEqual(["backend"]);
+    expect(registry?.volumes ?? []).toEqual([]);
+    expect(registry?.healthcheck?.test).toEqual([
+      "CMD",
+      "/usr/sbin/gosu",
+      "skill-registry",
+      "python",
+      "-c",
+      "import json,sys,urllib.request; sys.tracebacklimit=0; response=urllib.request.urlopen('http://127.0.0.1:7788/internal/health/ready',timeout=3); raw=response.read(129); response.close(); payload=json.loads(raw) if len(raw)<=128 else None; raise SystemExit(0 if type(payload) is dict and set(payload)=={'live','ready'} and payload['live'] is True and payload['ready'] is True else 1)",
+    ]);
+    for (const service of [bootstrap, migration]) {
+      expect(service?.read_only).toBe(true);
+      expect(new Set(service?.cap_drop)).toEqual(new Set(["ALL"]));
+      expect(new Set(service?.cap_add)).toEqual(
+        new Set(["DAC_OVERRIDE", "SETGID", "SETUID"]),
+      );
+      expect(service?.security_opt).toContain("no-new-privileges:true");
+      expect(Object.keys(service?.networks ?? {})).toEqual(["backend"]);
+      expect(service?.ports ?? []).toEqual([]);
+    }
+
+    const databaseVolumes = rendered.services.db?.volumes ?? [];
+    expect(databaseVolumes).toContainEqual(
+      expect.objectContaining({
+        type: "volume",
+        source: "db_data",
+        target: "/var/lib/postgresql",
+      }),
+    );
+    const uploadRoute =
+      "apps/web/src/app/api/v1/admin/assistant/skills/uploads/route.ts";
+    const gitIgnoreProbe = spawnSync(
+      "git",
+      ["check-ignore", "-q", "--no-index", uploadRoute],
+      { cwd: root },
+    );
+    expect(gitIgnoreProbe.status).toBe(1);
+    expect(read(".gitignore")).toContain("/uploads/");
+    expect(read(".gitignore")).toContain("/skill-registry-artifacts/");
+    expect(read(".dockerignore")).toContain("/uploads");
+    expect(read(".dockerignore")).toContain("/skill-registry-artifacts");
+    const example = read(".env.example");
+    expect(example).toContain(
+      "SKILL_REGISTRY_INTERNAL_URL=http://skill-registry:7788",
+    );
+    for (const key of [
+      "SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD_FILE",
+      "SKILL_REGISTRY_DATABASE_PASSWORD_FILE",
+      "SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD_FILE",
+      "SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE",
+      "SKILL_REGISTRY_DATABASE_URL_FILE",
+      "SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE",
+      "SKILL_REGISTRY_CONTROL_KEY_FILE",
+    ]) {
+      expect(example).toMatch(new RegExp(`^${key}=`, "mu"));
+    }
+    expect(example).not.toMatch(
+      /^SKILL_REGISTRY_(?:MIGRATOR_)?DATABASE_URL=/mu,
+    );
+    expect(example).not.toMatch(/^SKILL_REGISTRY_CONTROL_KEY=/mu);
+  });
+
+  it("mounts only the Skill Registry runtime role into the private Agent tmpfs", () => {
+    const rendered = renderComposeFixture();
+    const agent = rendered.services.agent;
+    const registry = rendered.services["skill-registry"];
+    const agentSecrets = new Set(
+      (agent?.secrets ?? [])
+        .map(secretSource)
+        .filter((source): source is string => source !== undefined),
+    );
+
+    expect(agentSecrets).toContain("skill_registry_runtime_database_url");
+    expect(agentSecrets).not.toContain("skill_registry_database_url");
+    expect(agentSecrets).not.toContain("skill_registry_migrator_database_url");
+    expect(agent?.environment?.SECRET_ENV_SPECS).toContain(
+      "SKILL_REGISTRY_RUNTIME_DATABASE_URL=/run/secrets/skill_registry_runtime_database_url",
+    );
+    expect(agent?.tmpfs).toContain(
+      "/run/aap-skills:rw,exec,nosuid,nodev,size=96m,uid=10001,gid=10001,mode=0700",
+    );
+    const agentRunner = read("infra/docker/run-agent-with-secret-env.sh");
+    expect(agentRunner).toContain("stat -f -c '%T'");
+    expect(agentRunner).toContain("directory:10001:10001:700");
+    expect(agentRunner).toContain('"$runtime_filesystem" = tmpfs');
+    expect(agent?.depends_on?.["skill-registry-migrate"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(agent?.ports ?? []).toEqual([]);
+    expect(registry?.ports ?? []).toEqual([]);
+    expect(JSON.stringify(rendered)).not.toContain(
+      "SKILL_REGISTRY_ALLOW_LOOPBACK",
+    );
+    expect(read(".env.example")).toContain(
+      "SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE=.secrets/skill_registry_runtime_database_url",
+    );
+  });
+
+  it("keeps every skill-core package error stable across Registry and Web", () => {
+    const coreSources = [
+      read("packages/skill-core/src/skill_core/archive.py"),
+      read("packages/skill-core/src/skill_core/manifest.py"),
+    ];
+    const registry = read("apps/skill-registry/src/skill_registry/api.py");
+    const web = read("apps/web/src/server/assistant/skill-registry-client.ts");
+    const webHandler = read(
+      "apps/web/src/app/api/v1/admin/assistant/skills/handler.ts",
+    );
+    const coreCodes = new Set(
+      coreSources.flatMap((source) =>
+        [...source.matchAll(/SkillPackageError\(\s*"([A-Z0-9_]+)"/gu)].map(
+          (match) => match[1],
+        ),
+      ),
+    );
+    const registryBlock = registry.match(
+      /_STABLE_REGISTRY_CODES: Final = frozenset\(\s*\{([\s\S]*?)\}\s*\)/u,
+    )?.[1];
+    const webCodesBlock = web.match(
+      /SKILL_REGISTRY_DOMAIN_CODES = \[([\s\S]*?)\] as const/u,
+    )?.[1];
+    const webStatusBlock = web.match(
+      /const STATUS_BY_CODE:[\s\S]*?= \{([\s\S]*?)\n\};/u,
+    )?.[1];
+
+    expect(coreCodes.size).toBeGreaterThan(0);
+    expect(registryBlock).toBeDefined();
+    expect(webCodesBlock).toBeDefined();
+    expect(webStatusBlock).toBeDefined();
+    expect(registry).toMatch(
+      /elif code == "ARCHIVE_TOO_LARGE":\s*status = 413/u,
+    );
+    for (const code of coreCodes) {
+      expect(registryBlock).toMatch(new RegExp(`"${code}"`, "u"));
+      expect(webCodesBlock).toMatch(new RegExp(`"${code}"`, "u"));
+      expect(webStatusBlock).toMatch(
+        new RegExp(
+          `^\\s*${code}: ${code === "ARCHIVE_TOO_LARGE" ? 413 : 400},$`,
+          "mu",
+        ),
+      );
+      if (code.startsWith("ARCHIVE_")) {
+        expect(webHandler).toContain('error.code.startsWith("ARCHIVE_")');
+      } else {
+        expect(webHandler).toMatch(
+          new RegExp(`error\\.code === "${code}"`, "u"),
+        );
+      }
+    }
+  });
+
+  it("executes a bounded Skill Registry readiness response contract", () => {
+    const healthcheck =
+      renderComposeFixture().services["skill-registry"]?.healthcheck?.test;
+    const probe = healthcheck?.at(-1);
+    expect(healthcheck?.slice(0, -1)).toEqual([
+      "CMD",
+      "/usr/sbin/gosu",
+      "skill-registry",
+      "python",
+      "-c",
+    ]);
+    expect(probe).toBeDefined();
+    const server = `
+import http.server
+import os
+import threading
+
+body = os.environ["HEALTH_BODY"].encode("utf-8")
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        pass
+
+httpd = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+threading.Thread(target=httpd.handle_request, daemon=True).start()
+probe = os.environ["HEALTH_PROBE"].replace(
+    "127.0.0.1:7788",
+    f"127.0.0.1:{httpd.server_port}",
+)
+exec(probe, {})
+`;
+    const run = (body: string) =>
+      spawnSync("python3", ["-c", server], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HEALTH_BODY: body,
+          HEALTH_PROBE: probe,
+        },
+        timeout: 5_000,
+      });
+    const valid = run('{"live":true,"ready":true}');
+    expect(valid.status, `${valid.stdout}${valid.stderr}`).toBe(0);
+
+    for (const body of [
+      '{"live":true,"ready":false}',
+      "not-json",
+      `${'{"live":true,"ready":true}'}${" ".repeat(200)}`,
+    ]) {
+      const invalid = run(body);
+      const output = `${invalid.stdout}${invalid.stderr}`;
+      expect(invalid.error, output).toBeUndefined();
+      expect(invalid.status, output).not.toBe(0);
+      expect(output).not.toContain(body);
+    }
+  });
+
+  it("preflights every resolved host secret before Compose startup", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "compose-preflight-"));
+    const bin = path.join(sandbox, "bin");
+    const docker = path.join(bin, "docker");
+    const secret = path.join(sandbox, "secret");
+    const insecure = path.join(sandbox, "insecure");
+    const linked = path.join(sandbox, "linked");
+    const fifo = path.join(sandbox, "fifo");
+    const privateValue = "preflight-private-value";
+    const runtimeUrl = path.join(sandbox, "runtime-url");
+    const managerUrl = path.join(sandbox, "manager-url");
+    const migratorUrl = path.join(sandbox, "migrator-url");
+    mkdirSync(bin, { mode: 0o700 });
+    writeFileSync(docker, '#!/bin/sh\nprintf "%s" "$FAKE_COMPOSE_CONFIG"\n', {
+      mode: 0o700,
+    });
+    writeFileSync(secret, privateValue, { mode: 0o600 });
+    chmodSync(secret, 0o600);
+    writeFileSync(insecure, privateValue, { mode: 0o644 });
+    chmodSync(insecure, 0o644);
+    symlinkSync(secret, linked);
+    expect(spawnSync("mkfifo", [fifo]).status).toBe(0);
+    chmodSync(fifo, 0o600);
+    writeFileSync(
+      runtimeUrl,
+      "postgresql+psycopg_async://ai_agent_skill_registry_runtime:runtime@db:5432/platform",
+      { mode: 0o600 },
+    );
+    writeFileSync(
+      managerUrl,
+      "postgresql+psycopg_async://ai_agent_skill_registry_manager:manager@db:5432/platform",
+      { mode: 0o600 },
+    );
+    writeFileSync(
+      migratorUrl,
+      "postgresql+psycopg_async://ai_agent_skill_registry_migrator:migrator@db:5432/platform",
+      { mode: 0o600 },
+    );
+    for (const file of [runtimeUrl, managerUrl, migratorUrl])
+      chmodSync(file, 0o600);
+
+    const preflight = path.join(
+      root,
+      "infra/docker/validate-compose-secret-files.py",
+    );
+    const run = (config: object) =>
+      spawnSync("python3", [preflight], {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          FAKE_COMPOSE_CONFIG: JSON.stringify(config),
+        },
+        timeout: 5_000,
+      });
+    const config = (name: string, file: string, services: object = {}) => ({
+      secrets: { [name]: { file } },
+      services,
+    });
+
+    try {
+      const valid = run(config("valid", secret));
+      expect(valid.status, `${valid.stdout}${valid.stderr}`).toBe(0);
+
+      const roleSeparated = run({
+        secrets: {
+          skill_registry_runtime_database_url: { file: runtimeUrl },
+          skill_registry_database_url: { file: managerUrl },
+          skill_registry_migrator_database_url: { file: migratorUrl },
+        },
+        services: {},
+      });
+      expect(
+        roleSeparated.status,
+        `${roleSeparated.stdout}${roleSeparated.stderr}`,
+      ).toBe(0);
+
+      for (const invalidRuntimeFile of [managerUrl, migratorUrl]) {
+        const roleConfused = run({
+          secrets: {
+            skill_registry_runtime_database_url: { file: invalidRuntimeFile },
+            skill_registry_database_url: { file: managerUrl },
+            skill_registry_migrator_database_url: { file: migratorUrl },
+          },
+          services: {},
+        });
+        expect(roleConfused.status).not.toBe(0);
+        expect(roleConfused.stdout).toBe("");
+        expect(roleConfused.stderr).toBe("Compose secret preflight failed.\n");
+      }
+
+      for (const [name, source] of [
+        ["insecure", insecure],
+        ["linked", linked],
+        ["fifo", fifo],
+        ["not_model_api_key", "/dev/null"],
+        ["model_api_key", fifo],
+        ["embedded_nul", "\0secret-path"],
+      ] as const) {
+        const invalid = run(config(name, source));
+        const output = `${invalid.stdout}${invalid.stderr}`;
+        expect(invalid.error, `${name}: ${output}`).toBeUndefined();
+        expect(invalid.status, `${name}: ${output}`).not.toBe(0);
+        expect(invalid.stdout).toBe("");
+        expect(invalid.stderr).toBe("Compose secret preflight failed.\n");
+        expect(output).not.toContain(privateValue);
+        expect(output).not.toContain(source);
+      }
+
+      const disabledModelService = {
+        agent: {
+          entrypoint: ["/opt/aap/run-agent-with-secret-env.sh"],
+          environment: {
+            MODEL_PROVIDER: "",
+            MODEL_ID: "",
+            SECRET_ENV_SPECS:
+              "AGNO_DATABASE_URL=/run/secrets/agno_database_url MODEL_API_KEY=/run/secrets/model_api_key",
+          },
+          secrets: [
+            {
+              source: "model_api_key",
+              target: "/run/secrets/model_api_key",
+            },
+          ],
+        },
+      };
+      const disabledModel = run(
+        config("model_api_key", "/dev/null", disabledModelService),
+      );
+      expect(
+        disabledModel.status,
+        `${disabledModel.stdout}${disabledModel.stderr}`,
+      ).toBe(0);
+
+      for (const services of [
+        {
+          ...disabledModelService,
+          agent: {
+            ...disabledModelService.agent,
+            environment: {
+              ...disabledModelService.agent.environment,
+              MODEL_PROVIDER: "openai",
+              MODEL_ID: "model",
+            },
+          },
+        },
+        {
+          ...disabledModelService,
+          agent: {
+            ...disabledModelService.agent,
+            entrypoint: ["/opt/aap/run-with-secret-env.sh"],
+          },
+        },
+        {
+          ...disabledModelService,
+          agent: {
+            ...disabledModelService.agent,
+            secrets: null,
+          },
+        },
+      ]) {
+        const invalidException = run(
+          config("model_api_key", "/dev/null", services),
+        );
+        expect(invalidException.stdout).toBe("");
+        expect(invalidException.stderr).toBe(
+          "Compose secret preflight failed.\n",
+        );
+        expect(invalidException.status).not.toBe(0);
+      }
+
+      const scripts = JSON.parse(read("package.json")) as {
+        scripts?: Record<string, string>;
+      };
+      expect(scripts.scripts?.["secrets:preflight"]).toBe(
+        "python3 infra/docker/validate-compose-secret-files.py",
+      );
+      expect(read(".env.example")).toContain(
+        "pnpm secrets:preflight && docker compose up",
+      );
+      expect(read("README.md")).toContain(
+        "pnpm secrets:preflight\ndocker compose build",
+      );
+      expect(read("docs/deployment/server-readiness.md")).toContain(
+        "pnpm secrets:preflight\ndocker compose config",
+      );
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!dockerAvailable)(
+    "rejects a host symlink before Compose resolves it into a regular secret mount",
+    () => {
+      const sandbox = mkdtempSync(path.join(tmpdir(), "compose-secret-link-"));
+      const secret = path.join(sandbox, "secret");
+      const linked = path.join(sandbox, "linked");
+      const composeFile = path.join(sandbox, "compose.yaml");
+      const project = `aap-secret-link-${process.pid}`;
+      writeFileSync(secret, "private-compose-value", { mode: 0o600 });
+      chmodSync(secret, 0o600);
+      symlinkSync(secret, linked);
+      writeFileSync(
+        composeFile,
+        `services:
+  probe:
+    image: postgres:18.3-alpine3.23
+    command:
+      - sh
+      - -ceu
+      - >-
+        test "$(stat -c '%a' -- /run/secrets/direct)" = 600;
+        test "$(stat -c '%a' -- /run/secrets/linked)" = 600;
+        test ! -L /run/secrets/linked;
+        test -f /run/secrets/linked
+    secrets:
+      - direct
+      - linked
+secrets:
+  direct:
+    file: ${secret}
+  linked:
+    file: ${linked}
+`,
+        { mode: 0o600 },
+      );
+      chmodSync(composeFile, 0o600);
+
+      try {
+        const mounted = spawnSync(
+          "docker",
+          ["compose", "-p", project, "-f", composeFile, "run", "--rm", "probe"],
+          { encoding: "utf8", timeout: 10_000 },
+        );
+        expect(mounted.status, `${mounted.stdout}${mounted.stderr}`).toBe(0);
+
+        const preflight = spawnSync(
+          "python3",
+          [
+            path.join(root, "infra/docker/validate-compose-secret-files.py"),
+            "-p",
+            project,
+            "-f",
+            composeFile,
+          ],
+          { cwd: root, encoding: "utf8", timeout: 5_000 },
+        );
+        const output = `${preflight.stdout}${preflight.stderr}`;
+        expect(preflight.error, output).toBeUndefined();
+        expect(preflight.status, output).not.toBe(0);
+        expect(output).not.toContain(secret);
+        expect(output).not.toContain(linked);
+        expect(output).not.toContain("private-compose-value");
+      } finally {
+        spawnSync(
+          "docker",
+          [
+            "compose",
+            "-p",
+            project,
+            "-f",
+            composeFile,
+            "down",
+            "-v",
+            "--remove-orphans",
+          ],
+          { stdio: "ignore", timeout: 5_000 },
+        );
+        rmSync(sandbox, { recursive: true, force: true });
+      }
+    },
+    20_000,
+  );
+
   it("documents control-role secrets, migrations, and dynamic precedence", () => {
     const example = read(".env.example");
     const dockerReadme = read("infra/docker/README.md");
@@ -2112,6 +2786,9 @@ exit 0
       "agent-migrate": "agent",
       "agent-control-bootstrap": "postgres",
       "agent-control-migrate": "agent",
+      "skill-registry-bootstrap": "postgres",
+      "skill-registry-migrate": "skill-registry",
+      "skill-registry": "skill-registry",
       agent: "agent",
       web: "node",
     } as const;
@@ -2155,11 +2832,6 @@ exit 0
     expect(agentHealthcheck).not.toContain("/run/secrets/os_security_key");
     expect(webHealthcheck).toContain("gosu node");
   });
-
-  const dockerAvailable =
-    spawnSync("docker", ["info", "--format", "{{.ServerVersion}}"], {
-      stdio: "ignore",
-    }).status === 0;
 
   it.skipIf(!dockerAvailable)(
     "loads a deployment-user-owned 0600 secret then executes as postgres",
@@ -2215,6 +2887,121 @@ exit 0
       }
     },
   );
+
+  for (const invalidType of ["insecure", "linked", "fifo"] as const) {
+    it.skipIf(!dockerAvailable)(
+      `rejects ${invalidType} container secrets without blocking or starting the child`,
+      () => {
+        const sandbox = mkdtempSync(path.join(tmpdir(), "aap-secret-types-"));
+        const insecure = path.join(sandbox, "insecure");
+        const target = path.join(sandbox, "target");
+        const linked = path.join(sandbox, "linked");
+        const fifo = path.join(sandbox, "fifo");
+        const secret = "container-private-value";
+        if (invalidType === "insecure") {
+          writeFileSync(insecure, secret, { mode: 0o644 });
+          chmodSync(insecure, 0o644);
+        } else if (invalidType === "linked") {
+          writeFileSync(target, secret, { mode: 0o600 });
+          chmodSync(target, 0o600);
+          symlinkSync("target", linked);
+        } else {
+          expect(spawnSync("mkfifo", [fifo]).status).toBe(0);
+          chmodSync(fifo, 0o600);
+        }
+        const runner = path.join(root, "infra/docker/run-with-secret-env.sh");
+        const containerName = `aap-secret-type-${invalidType}-${process.pid}`;
+
+        spawnSync("docker", ["rm", "-f", containerName], {
+          stdio: "ignore",
+          timeout: 3_000,
+        });
+        try {
+          const started = spawnSync(
+            "docker",
+            [
+              "run",
+              "-d",
+              "--name",
+              containerName,
+              "--user",
+              "root",
+              "--cap-drop",
+              "ALL",
+              "--cap-add",
+              "DAC_OVERRIDE",
+              "--cap-add",
+              "SETGID",
+              "--cap-add",
+              "SETUID",
+              "--security-opt",
+              "no-new-privileges:true",
+              "--env",
+              "SECRET_RUN_AS=postgres",
+              "--env",
+              `SECRET_ENV_SPECS=CONTAINER_TEST_SECRET=/run/secrets/${invalidType}`,
+              "--mount",
+              `type=bind,src=${sandbox},dst=/run/secrets,readonly`,
+              "--mount",
+              `type=bind,src=${runner},dst=/opt/aap/run-with-secret-env.sh,readonly`,
+              "--entrypoint",
+              "sh",
+              "postgres:18.3-alpine3.23",
+              "-ceu",
+              'exec timeout -s KILL 2 /opt/aap/run-with-secret-env.sh sh -ceu \'printf "%s" "CHILD_STARTED"\'',
+            ],
+            { encoding: "utf8", timeout: 3_000 },
+          );
+          expect(started.status, `${started.stdout}${started.stderr}`).toBe(0);
+
+          let running = true;
+          let exitCode: number | null = null;
+          const deadline = Date.now() + 3_000;
+          while (Date.now() < deadline) {
+            const inspected = spawnSync(
+              "docker",
+              [
+                "inspect",
+                "--format",
+                "{{.State.Running}} {{.State.ExitCode}}",
+                containerName,
+              ],
+              { encoding: "utf8", timeout: 1_000 },
+            );
+            expect(
+              inspected.status,
+              `${inspected.stdout}${inspected.stderr}`,
+            ).toBe(0);
+            const [runningValue, exitValue] = inspected.stdout
+              .trim()
+              .split(" ");
+            running = runningValue === "true";
+            exitCode = Number(exitValue);
+            if (!running) break;
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+          }
+
+          const logged = spawnSync("docker", ["logs", containerName], {
+            encoding: "utf8",
+            timeout: 1_000,
+          });
+          const output = `${logged.stdout}${logged.stderr}`;
+          expect(running, output).toBe(false);
+          expect([124, 137, 143], output).not.toContain(exitCode);
+          expect(exitCode, output).not.toBe(0);
+          expect(output).not.toContain("CHILD_STARTED");
+          expect(output).not.toContain(secret);
+        } finally {
+          spawnSync("docker", ["rm", "-f", containerName], {
+            stdio: "ignore",
+            timeout: 3_000,
+          });
+          rmSync(sandbox, { recursive: true, force: true });
+        }
+      },
+      10_000,
+    );
+  }
 
   it("enforces the rendered Compose model across every service", () => {
     const rendered = renderComposeFixture();
@@ -2337,6 +3124,256 @@ exit 0
     expect(
       workflow.match(/python -m agent_service\.model_config_migrate/g),
     ).toHaveLength(2);
+  });
+
+  it("runs the complete Skill Registry CI contract with isolated credentials", () => {
+    const workflow = read(".github/workflows/ci.yml");
+    const packageScripts = JSON.parse(read("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    const agentDockerfile = read("apps/agent/Dockerfile");
+
+    expect(workflow).toContain(
+      "cache-dependency-glob: |\n            apps/agent/uv.lock\n            packages/skill-core/uv.lock\n            apps/skill-registry/uv.lock",
+    );
+    for (const key of [
+      "SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD",
+      "SKILL_REGISTRY_DATABASE_PASSWORD",
+      "SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD",
+      "SKILL_REGISTRY_MIGRATOR_DATABASE_URL",
+      "SKILL_REGISTRY_DATABASE_URL",
+      "SKILL_REGISTRY_RUNTIME_DATABASE_URL",
+      "SKILL_REGISTRY_CONTROL_KEY",
+    ]) {
+      expect(workflow).toContain(key);
+    }
+    expect(
+      workflow.match(/sh infra\/postgres\/05-skill-registry-roles\.sh/g),
+    ).toHaveLength(2);
+    expect(workflow.match(/python -m skill_registry\.migrate/g)).toHaveLength(
+      2,
+    );
+    for (const gate of [
+      "SKILL_REGISTRY_TEST_DATABASE_URL",
+      "uv --directory packages/skill-core run pytest -q",
+      "uv --directory packages/skill-core run ruff check .",
+      "uv --directory packages/skill-core run mypy src tests",
+      "uv --directory apps/skill-registry run pytest -q -rs",
+      "uv --directory apps/skill-registry run ruff check .",
+      "uv --directory apps/skill-registry run mypy src tests",
+      "docker build -t skill-registry-ci -f apps/skill-registry/Dockerfile .",
+      "docker inspect skill-registry-ci-smoke",
+      "--read-only",
+      "/internal/health/ready",
+      "/etc/aap/skill-runtime-imports.json",
+    ]) {
+      expect(workflow).toContain(gate);
+    }
+    expect(workflow).toMatch(
+      /docker run[\s\S]*--name skill-registry-ci-smoke[\s\S]*--read-only/,
+    );
+    expect(workflow).toMatch(
+      /docker exec skill-registry-ci-smoke[\s\S]*10002:10002[\s\S]*docker inspect skill-registry-ci-smoke[\s\S]*true null/,
+    );
+    expect(workflow).toContain("docker run --rm agent-service-ci python -c");
+    expect(workflow).toContain(
+      "assert manifest == {'version': 1, 'pythonModules': ['agno', 'cryptography', 'pydantic']}",
+    );
+    expect(agentDockerfile).toContain(
+      "infra/agent/skill-runtime-imports.json /etc/aap/skill-runtime-imports.json",
+    );
+    expect(packageScripts.scripts?.["skill-registry:test"]).toBe(
+      "uv --directory apps/skill-registry run pytest -q -rs",
+    );
+    expect(packageScripts.scripts?.["skill-registry:e2e"]).toBe(
+      "sh docs/testing/run-skill-registry-e2e.sh",
+    );
+    expect(packageScripts.scripts?.["restore:lifecycle:test"]).toContain(
+      "run-restore-docker-lifecycle.sh timeout",
+    );
+    expect(packageScripts.scripts?.["restore:lifecycle:test"]).toContain(
+      "run-restore-docker-lifecycle.sh controlled-failure",
+    );
+  });
+
+  it("defines an isolated Skill Registry E2E and documents its runtime boundary", () => {
+    const spec = read("apps/web/e2e/admin-skill-registry.spec.ts");
+    const runner = read("docs/testing/run-skill-registry-e2e.sh");
+    const testingReadme = read("docs/testing/README.md");
+    const skillsReadme = read("apps/agent/src/agent_service/skills/README.md");
+
+    for (const actor of ["workforce:admin", "workforce:super_admin"]) {
+      expect(spec).toContain(actor);
+    }
+    for (const contract of [
+      "pending_review",
+      "published",
+      "adminSessionToken",
+      "modelAdminSessionToken",
+      "artifactSha256",
+      "revision",
+      "self-review",
+    ]) {
+      expect(spec).toContain(contract);
+    }
+    expect(spec).toContain("SKILL.md");
+    expect(spec).toContain("scripts/hello.py");
+    expect(spec).toContain(".setInputFiles(archive)");
+    expect(spec).toContain("modelAdminStaleSessionToken");
+    expect(spec).toContain('error: { code: "reauth_required" }');
+    expect(spec).toContain("SKILL_REGISTRY_E2E_STORAGE_STATE_FILE");
+    expect(spec).toContain("storageState: storageStatePath()");
+    expect(spec.match(/browser\.newContext\(/gu)?.length).toBeGreaterThan(1);
+    expect(spec).not.toMatch(/https?:\/\/(?:github|gitlab|gitcode)\./u);
+
+    expect(runner).toContain("SKILL_REGISTRY_E2E_PROJECT");
+    expect(runner).toContain("trap cleanup EXIT");
+    expect(runner).toContain("docker compose -p");
+    expect(runner).toContain("restart skill-registry");
+    expect(
+      runner.match(/run_job --no-deps skill-registry-migrate/g),
+    ).toHaveLength(2);
+    expect(runner).toContain("run --rm --no-deps backup");
+    expect(runner).toContain("infra/docker/restore-drill.sh");
+    expect(runner).toContain("run-restore-docker-lifecycle.sh timeout");
+    expect(runner).toContain(
+      "run-restore-docker-lifecycle.sh controlled-failure",
+    );
+    expect(runner).toContain("admin:assistant:skills:review");
+    expect(runner).toContain("skill_revision_artifacts");
+    expect(runner).toContain("artifact_digests_verified");
+    expect(runner).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha");
+    expect(runner).toContain("SKILL_REGISTRY_E2E_STORAGE_STATE_FILE");
+    expect(runner).toContain('success_message="Skill Registry E2E passed"');
+    expect(runner).toContain("down --rmi local -v --remove-orphans");
+    expect(runner).not.toMatch(/curl[^\n]*(github|gitlab|gitcode)/iu);
+
+    for (const document of [testingReadme, skillsReadme]) {
+      expect(document).toMatch(/库[＋+]审核|库与审核/u);
+      expect(document).toMatch(/发布不等于|published[^\n]*不能证明/u);
+    }
+    expect(skillsReadme).toContain("LocalSkills");
+    expect(skillsReadme).toMatch(/下一[^\n]*计划/u);
+    expect(skillsReadme).toMatch(/exact revision/u);
+    expect(testingReadme).toMatch(/同一|exact|精确/u);
+    const backupRunner = read("docs/testing/run-agentos-backup-restore.sh");
+    expect(backupRunner).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256");
+    expect(backupRunner).toContain("skill_artifact_sha");
+    expect(backupRunner).toContain(
+      "WHERE skill.slug = 'backup-restore-skill-v1'",
+    );
+    expect(backupRunner).not.toContain("WHERE skill.name");
+    expect(backupRunner).toContain("restore exact artifact digest mismatch");
+  });
+
+  it("fails closed when Skill Registry E2E temporary cleanup fails", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "skill-e2e-cleanup-"));
+    const bin = path.join(sandbox, "bin");
+    mkdirSync(bin);
+    writeFileSync(
+      path.join(bin, "rm"),
+      `#!/bin/sh
+set -eu
+if [ "\${1:-}" = -rf ] && [ "\${2:-}" = "$FAIL_TEMP" ]; then
+  exit 1
+fi
+exec /bin/rm "$@"
+`,
+      { mode: 0o700 },
+    );
+
+    const cases = [
+      {
+        file: "docs/testing/run-skill-registry-e2e.sh",
+        start: "cleanup() {",
+        end: "\non_signal() {",
+        stableError: "Skill Registry E2E cleanup failed",
+        success: "Skill Registry E2E passed",
+        tempVariable: "temporary_directory",
+        logVariable: "log_file",
+      },
+      {
+        file: "docs/testing/run-agentos-backup-restore.sh",
+        start: "cleanup() {",
+        end: "\non_signal() {",
+        stableError: "AgentOS backup and restore cleanup failed",
+        success: "AgentOS backup and restore acceptance passed",
+        tempVariable: "temp_dir",
+        logVariable: "",
+      },
+    ] as const;
+
+    try {
+      for (const testCase of cases) {
+        const source = read(testCase.file);
+        const start = source.indexOf(testCase.start);
+        const end = source.indexOf(testCase.end, start);
+        expect(start, testCase.file).toBeGreaterThan(-1);
+        expect(end, testCase.file).toBeGreaterThan(start);
+        const cleanup = source.slice(start, end);
+        const fixtureRoot = path.join(
+          sandbox,
+          path.basename(testCase.file, ".sh"),
+        );
+        mkdirSync(fixtureRoot);
+        const logFile = path.join(fixtureRoot, "e2e.log");
+        const secret = `cleanup-secret-${path.basename(testCase.file)}`;
+        const archiveSource = 'print("cleanup source sentinel")';
+        const storageState = "cleanup-storage-state-sentinel";
+        writeFileSync(
+          logFile,
+          `${secret}\n${archiveSource}\n${storageState}\n`,
+          { mode: 0o600 },
+        );
+        if (testCase.file === "docs/testing/run-skill-registry-e2e.sh") {
+          writeFileSync(
+            path.join(fixtureRoot, "protected-patterns"),
+            `${secret}\n`,
+            { mode: 0o600 },
+          );
+        }
+        const harness = path.join(
+          sandbox,
+          `${path.basename(testCase.file)}.harness.sh`,
+        );
+        writeFileSync(
+          harness,
+          `#!/bin/sh
+set -u
+${testCase.tempVariable}="$FAIL_TEMP"
+env_file=
+owns_project=false
+success_message='${testCase.success}'
+original_stdout=3
+original_stderr=4
+exec 3>&1 4>&2
+${testCase.logVariable ? `${testCase.logVariable}="$FAIL_LOG"` : ""}
+${cleanup}
+cleanup
+`,
+          { mode: 0o700 },
+        );
+        const result = spawnSync("/bin/sh", [harness], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
+            FAIL_LOG: logFile,
+            FAIL_TEMP: fixtureRoot,
+          },
+        });
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.status, `${testCase.file}: ${output}`).toBe(1);
+        expect(output.trim(), testCase.file).toBe(testCase.stableError);
+        expect(output, testCase.file).not.toContain(testCase.success);
+        expect(output, testCase.file).not.toContain(fixtureRoot);
+        expect(output, testCase.file).not.toContain(secret);
+        expect(output, testCase.file).not.toContain(archiveSource);
+        expect(output, testCase.file).not.toContain(storageState);
+      }
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
   });
 
   it("limits isolated assistant E2E credentials to the seed migrator", () => {
@@ -2979,9 +4016,11 @@ exit 0
       "docker compose run --rm migrate",
       "docker compose run --rm agno-bootstrap",
       "docker compose run --rm agent-control-bootstrap",
+      "docker compose run --rm skill-registry-bootstrap",
       "docker compose run --rm --no-deps agent-migrate",
       "docker compose run --rm --no-deps agent-control-migrate",
-      "docker compose up -d --no-deps --wait agent",
+      "docker compose run --rm --no-deps skill-registry-migrate",
+      "docker compose up -d --no-deps --wait agent skill-registry",
       "docker compose up -d --wait web",
       "docker compose up -d --wait proxy backup",
     ];
@@ -3000,11 +4039,11 @@ exit 0
       );
     }
     expect(runbook).toContain(
-      "db → migrate → agno-bootstrap → agent-control-bootstrap → agent-migrate → agent-control-migrate → agent → web → proxy/backup",
+      "db → migrate / agno-bootstrap → agent-migrate / agent-control-bootstrap / skill-registry-bootstrap → agent-control-migrate / skill-registry-migrate → agent / skill-registry → web → proxy/backup",
     );
-    expect(runbook).toContain("十个服务");
-    expect(runbook).toContain("`agent`等待 Agno 与控制面迁移都成功");
-    expect(runbook).toContain("`backup`等待平台和 Agno 迁移都成功");
+    expect(runbook).toContain(
+      "`backup`等待平台、Agno 和 Skill Registry 迁移成功",
+    );
     expect(runbook).toContain("`proxy`等待`web`健康");
     expect(runbook).not.toContain("后续服务按`service_healthy`顺序启动");
 
@@ -3152,19 +4191,225 @@ exit 0
 
   it("requires restore drills to verify the exact migration and schema contract", () => {
     const script = read("infra/docker/restore-drill.sh");
+    const expectedRegistryTriggers = [
+      [
+        "active_agent_skill_sets_deny_delete",
+        "active_agent_skill_sets",
+        "deny_append_only_mutation",
+        "skill_registry",
+        11,
+        false,
+        false,
+      ],
+      [
+        "active_agent_skill_sets_guard_update",
+        "active_agent_skill_sets",
+        "guard_active_agent_skill_set_update",
+        "skill_registry",
+        19,
+        false,
+        false,
+      ],
+      [
+        "agent_skill_set_items_append_only",
+        "agent_skill_set_items",
+        "deny_append_only_mutation",
+        "skill_registry",
+        27,
+        false,
+        false,
+      ],
+      [
+        "agent_skill_set_items_validate",
+        "agent_skill_set_items",
+        "validate_agent_skill_set_contents",
+        "skill_registry",
+        29,
+        true,
+        true,
+      ],
+      [
+        "agent_skill_sets_guard_update",
+        "agent_skill_sets",
+        "guard_agent_skill_set_update",
+        "skill_registry",
+        19,
+        false,
+        false,
+      ],
+      [
+        "skills_guard_update",
+        "skills",
+        "guard_skill_update",
+        "skill_registry",
+        19,
+        false,
+        false,
+      ],
+      [
+        "skill_revisions_guard_insert",
+        "skill_revisions",
+        "guard_revision_insert",
+        "skill_registry",
+        7,
+        false,
+        false,
+      ],
+      [
+        "skill_revisions_guard_update",
+        "skill_revisions",
+        "guard_revision_update",
+        "skill_registry",
+        19,
+        false,
+        false,
+      ],
+      [
+        "skill_revisions_require_review_event",
+        "skill_revisions",
+        "require_revision_review_event",
+        "skill_registry",
+        17,
+        true,
+        true,
+      ],
+      [
+        "skill_control_events_stamp_transaction",
+        "skill_control_events",
+        "stamp_control_event_transaction",
+        "skill_registry",
+        7,
+        false,
+        false,
+      ],
+      [
+        "skill_control_events_append_only",
+        "skill_control_events",
+        "deny_append_only_mutation",
+        "skill_registry",
+        27,
+        false,
+        false,
+      ],
+      [
+        "skill_set_control_events_append_only",
+        "skill_set_control_events",
+        "deny_append_only_mutation",
+        "skill_registry",
+        27,
+        false,
+        false,
+      ],
+      [
+        "skill_revision_artifacts_append_only",
+        "skill_revision_artifacts",
+        "deny_append_only_mutation",
+        "skill_registry",
+        27,
+        false,
+        false,
+      ],
+      [
+        "skill_revision_files_append_only",
+        "skill_revision_files",
+        "deny_append_only_mutation",
+        "skill_registry",
+        27,
+        false,
+        false,
+      ],
+      [
+        "skill_revisions_protect_active_archive",
+        "skill_revisions",
+        "protect_active_skill_revision_archive",
+        "skill_registry",
+        19,
+        false,
+        false,
+      ],
+    ] as const;
     expect(script).toContain("BACKUP_ENCRYPTION_KEY_FILE");
     expect(script).toContain("--decrypt");
     expect(script).toContain("--pinentry-mode loopback");
     expect(script).toContain("--passphrase-file");
-    expect(script).toContain("decrypted_candidate");
-    expect(script).toContain('mv "$decrypted_candidate" "$decrypted_dump"');
+    expect(script).toContain("RESTORE_MAX_ENCRYPTED_BYTES");
+    expect(script).toContain("RESTORE_MAX_DECRYPTED_BYTES");
+    expect(script).toContain("RESTORE_DECRYPT_TIMEOUT_SECONDS");
+    expect(script).toContain("RESTORE_DECRYPT_KILL_AFTER_SECONDS");
+    expect(script).toContain("RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS");
+    expect(script).toContain("RESTORE_DOCKER_CLI_TIMEOUT_SECONDS");
+    expect(script).toContain("RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS");
+    expect(script).toContain("RESTORE_DECRYPT_RECONCILE_ATTEMPTS");
+    expect(script).toContain("RESTORE_DOCKER_CREATE_SETTLE_SECONDS");
+    expect(script).toContain("RESTORE_SPACE_SAFETY_BYTES");
+    expect(script).toContain('decrypt_container="aap-restore-decrypt-$run_id"');
+    expect(script).toContain('head -c "$2"');
+    expect(script).toContain('create --name "$decrypt_container"');
+    expect(script).toContain('start "$start_container"');
+    expect(script).toContain('wait "$wait_container"');
+    expect(script).not.toContain('docker run --name "$decrypt_container"');
+    expect(script).toContain("run_bounded_docker");
+    expect(script).toContain("terminate_active_docker");
+    expect(script).toContain("query_docker_resource");
+    expect(script).toContain("reconcile_registered_resource");
+    expect(script).toContain("reconcile_ambiguous_resource");
+    expect(script).toContain("resource_registry_directory");
+    expect(script).toContain(
+      'ps -a \\\n          --filter "name=^/$query_resource_name$"',
+    );
+    expect(script).toContain(
+      'volume ls \\\n          --filter "name=^$query_resource_name$"',
+    );
+    expect(script).not.toContain(
+      'docker container inspect "$decrypt_container"',
+    );
+    expect(script).not.toContain('docker rm -f "$container" >/dev/null');
+    expect(script).not.toContain('docker volume rm "$volume" >/dev/null');
+    expect(script).toContain("restore drill cleanup failed");
+    expect(script).toContain("sleep 0.1");
+    expect(script).toContain('rm -f "$remove_resource_name"');
+    expect(script).toContain(
+      "restore drill rejected oversized encrypted backup",
+    );
+    expect(script).toContain(
+      "restore drill rejected oversized decrypted bundle",
+    );
+    expect(script).toContain("restore drill decryption timed out");
+    expect(script).toContain(
+      "restore drill temporary space budget is insufficient",
+    );
+    expect(script).toContain("decrypted_bundle_candidate");
+    expect(script.indexOf('if wait "$gpg_pid"')).toBeLessThan(
+      script.indexOf('if wait "$head_pid"'),
+    );
+    expect(script).toContain('kill -TERM "$head_pid"');
+    expect(script).toContain('kill -KILL "$head_pid"');
+    expect(script).toContain(
+      'mv "$decrypted_bundle_candidate" "$decrypted_bundle"',
+    );
+    expect(script).toContain("skill-backup.manifest");
+    expect(script).toContain("database.dump");
+    expect(script).toContain("tar -tf");
+    expect(script).toContain("tar -tvf");
+    expect(script).toContain("manifest_format_version");
+    expect(script).toContain("manifest_dump_sha256");
+    expect(script).toContain("actual_dump_sha256");
+    expect(script).toContain("manifest_skill_registry_schema_version");
+    expect(script).toContain("manifest_skill_revision_count");
+    expect(script).toContain("manifest_skill_artifact_count");
+    expect(script).toContain("manifest_skill_file_count");
+    expect(script).toContain('[ "$#" -ne 5 ]');
+    expect(script).not.toContain("expected_skill_registry_schema_version");
+    expect(script).not.toContain("expected_skill_revision_count");
+    expect(script).not.toContain("expected_skill_artifact_count");
+    expect(script).not.toContain("expected_skill_file_count");
     expect(script).not.toContain("aes-256-cbc");
     expect(script).not.toContain("openssl enc");
     expect(script).toContain("--env-file");
     expect(script).not.toMatch(/docker run[^\n]*-e\s+POSTGRES_/u);
     expect(script).not.toContain("POSTGRES_PASSWORD=");
-    expect(script).toContain('expected_migrations="7"');
-    expect(script).toContain('expected_latest_migration="1784480751831"');
+    expect(script).toContain('expected_migrations="8"');
+    expect(script).toContain('expected_latest_migration="1784480751832"');
     expect(script).toContain("migration_count");
     expect(script).toContain("latest_migration");
     expect(script).toContain("users_email_lower_unique");
@@ -3185,6 +4430,32 @@ exit 0
     expect(script).toContain("audit_logs_created_id_desc_idx");
     expect(script).toContain("rate_limits_key_unique");
     expect(script).toContain("--clean --if-exists");
+    expect(script).not.toContain("--no-owner");
+    expect(script).not.toContain("--no-acl");
+    expect(script).toContain("/bootstrap/01-roles.sh");
+    expect(script).toContain("/bootstrap/03-agno-roles.sh");
+    expect(script).toContain("/bootstrap/04-agent-control-roles.sh");
+    expect(script).toContain("/bootstrap/05-skill-registry-roles.sh");
+    expect(script).toContain("RESTORE_SKILL_REGISTRY_IMAGE");
+    expect(script).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256");
+    expect(script).toContain("expected_artifact_check_file");
+    expect(script).toContain("expected_artifact_match_count");
+    expect(script).toContain("restore expected artifact digest is invalid");
+    expect(script).not.toMatch(
+      /(?:echo|printf)[^\n]*expected_artifact_sha256/iu,
+    );
+    expect(script).toContain("python -m skill_registry.migrate");
+    expect(script).toContain("ai_agent_skill_registry_manager");
+    expect(script).toContain("ai_agent_backup");
+    expect(script).toContain("ai_agent_skill_registry_runtime");
+    expect(script).toContain("manager_insert_check_file");
+    expect(script).toContain("backup_insert_denied_file");
+    expect(script).toContain("--file=/restore/manager-insert-check.sql");
+    expect(script).toContain("--file=/restore/backup-insert-denied.sql");
+    expect(script).toContain("--set=VERBOSITY=verbose");
+    expect(script).toContain('grep -q "42501"');
+    expect(script).toContain('grep -q "permission denied"');
+    expect(script).toContain("restore drill failed registry role checks");
     expect(script).toContain("to_regclass('agno.agno_sessions') IS NOT NULL");
     expect(script).toContain(
       "to_regclass('agno.agno_schema_versions') IS NOT NULL",
@@ -3203,17 +4474,2081 @@ exit 0
     );
     expect(script).toContain("restored_user_fixture_count");
     expect(script).toContain("restored_agno_session_fixture_count");
+    expect(script).toContain("skill_registry.schema_versions");
+    expect(script).toContain("skill_registry.skill_revisions");
+    expect(script).toContain("skill_registry.skill_revision_artifacts");
+    expect(script).toContain("skill_registry.skill_revision_files");
+    expect(script).toContain("skill_registry.agent_skill_sets");
+    expect(script).toContain("skill_registry.agent_skill_set_items");
+    expect(script).toContain("skill_registry.active_agent_skill_sets");
+    expect(script).toContain("skill_registry.skill_set_control_events");
+    expect(script).toContain("skill_registry_schema_version");
+    expect(script).toContain("skill_revision_count");
+    expect(script).toContain("skill_artifact_count");
+    expect(script).toContain("skill_file_count");
+    expect(script).toContain("skill_artifact_digest_mismatch_count");
+    expect(script).toContain("sha256(artifact.archive_bytes)");
+    expect(script).toContain("skill_registry_integrity_mismatch_count");
+    expect(script).toContain("skill_registry_security_trigger_mismatch_count");
+    expect(script).toContain("trigger.tgtype::integer");
+    expect(script).toContain("trigger.tgdeferrable");
+    expect(script).toContain("trigger.tginitdeferred");
+    expect(script).toContain("trigger.tgenabled");
+    expect(script).toContain("function_namespace.nspname::text");
+    expect(script).toContain("function_namespace.oid = function.pronamespace");
+    for (const [
+      name,
+      table,
+      fn,
+      functionSchema,
+      type,
+      deferrable,
+      initiallyDeferred,
+    ] of expectedRegistryTriggers) {
+      expect(script).toContain(
+        `('${name}', '${table}', '${fn}', '${functionSchema}', ${type}, ${deferrable}, ${initiallyDeferred}, 'A')`,
+      );
+    }
+    expect(script).toContain("BEGIN TRANSACTION READ ONLY");
+    expect(script).toContain("SET LOCAL search_path = pg_catalog");
+    expect(script).not.toMatch(/SELECT\s+archive_bytes/iu);
+    expect(script).not.toMatch(/encode\s*\(\s*artifact\.archive_bytes/iu);
+    expect(script).not.toMatch(
+      /(?:echo|printf)[^\n]*(?:archive_bytes|review_reason)/iu,
+    );
     expect(script).not.toMatch(/SELECT\s+(?:message|messages|content|runs?)/iu);
     expect(script).not.toContain('[ "$migration_count" -lt 1 ]');
   });
 
+  it("routes every restore Docker CLI through one bounded supervisor", () => {
+    const script = read("infra/docker/restore-drill.sh");
+    const literalDockerInvocations = script
+      .split("\n")
+      .filter((line) => /^\s*docker(?:\s|$)/u.test(line));
+
+    expect(literalDockerInvocations).toHaveLength(1);
+    expect(literalDockerInvocations[0]).toContain('docker "$@"');
+  });
+
+  it("explicitly propagates every restore lifecycle and scalar file read", () => {
+    const script = read("infra/docker/restore-drill.sh");
+
+    for (const checkedRead of [
+      'if ! mkdir -p "$decrypt_work_directory" "$resource_registry_directory" >/dev/null 2>&1 ||',
+      'if ! encrypted_size_raw="$(wc -c <"$backup_file" 2>/dev/null)"; then',
+      'if ! decrypted_size_raw="$(wc -c <"$decrypted_bundle_candidate" 2>/dev/null)"; then',
+      'if ! manifest_line_count_raw="$(wc -l <"$manifest_file" 2>/dev/null)" ||',
+      'if ! actual_dump_sha256="$(cat "$dump_digest_file" 2>/dev/null)"; then',
+      'if ! volume_create_output="$(cat "$docker_stdout_file" 2>/dev/null)"; then',
+      'if ! docker_scalar="$(cat "$docker_stdout_file" 2>/dev/null)"; then',
+      "if ! IFS='|' read -r \\",
+    ]) {
+      expect(script).toContain(checkedRead);
+    }
+    expect(script).not.toContain(
+      'actual_dump_sha256="$(cat "$dump_digest_file")"',
+    );
+    expect(script).not.toContain(
+      '[ "$(cat "$docker_stdout_file")" != "$volume" ]',
+    );
+    expect(script).not.toContain(
+      'docker_scalar="$(cat "$docker_stdout_file")"',
+    );
+  });
+
+  it("uses only exact-named create-start Docker lifecycles", () => {
+    const script = read("infra/docker/restore-drill.sh");
+
+    expect(script).not.toContain("docker run --rm");
+    expect(script).not.toContain("docker run -d");
+  });
+
+  it("rejects impossible Docker reconciliation and settle settings", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "restore-config-"));
+    const keyFile = path.join(sandbox, "encryption-key");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+
+    try {
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      const invalidCases = [
+        { RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "1" },
+        { RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "0" },
+        { RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "301" },
+        { RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "invalid" },
+      ];
+
+      for (const invalidConfig of invalidCases) {
+        const result = spawnSync(
+          "sh",
+          [
+            script,
+            backupFile,
+            "1",
+            "1",
+            "11111111-1111-1111-1111-111111111111",
+            "fixture-session",
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+              RESTORE_MAX_ENCRYPTED_BYTES: "1",
+              ...invalidConfig,
+            },
+          },
+        );
+        expect(result.status, JSON.stringify(invalidConfig)).toBe(64);
+        expect(
+          `${result.stdout}${result.stderr}`.trim(),
+          JSON.stringify(invalidConfig),
+        ).toBe("restore drill timeout configuration is invalid");
+      }
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed restore expectations before Docker", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "restore-artifact-sha-"));
+    const bin = path.join(sandbox, "bin");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const dockerLog = path.join(sandbox, "docker.calls");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+
+    try {
+      mkdirSync(bin);
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      writeFileSync(dockerLog, "");
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+printf '%s\\n' "$*" >>"$DOCKER_LOG"
+exit 91
+`,
+        { mode: 0o700 },
+      );
+      const malformed = [
+        "",
+        "a".repeat(63),
+        "a".repeat(65),
+        "A".repeat(64),
+        "g".repeat(64),
+      ];
+      for (const value of malformed) {
+        const result = spawnSync(
+          "sh",
+          [
+            script,
+            backupFile,
+            "1",
+            "1",
+            "11111111-1111-1111-1111-111111111111",
+            "fixture-session",
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: `${bin}:${process.env.PATH ?? ""}`,
+              BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+              DOCKER_LOG: dockerLog,
+              RESTORE_EXPECTED_ARTIFACT_SHA256: value,
+              RESTORE_MAX_ENCRYPTED_BYTES: "1",
+            },
+          },
+        );
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.status, JSON.stringify(value)).toBe(64);
+        expect(output.trim(), JSON.stringify(value)).toBe(
+          "restore expected artifact digest is invalid",
+        );
+        if (value !== "") {
+          expect(output, JSON.stringify(value)).not.toContain(value);
+        }
+      }
+      const validSetId = "11111111-1111-4111-8111-111111111111";
+      const malformedRuntime = [
+        {
+          RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID:
+            "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz",
+          RESTORE_EXPECTED_SKILL_PREVIOUS_SET_ID: validSetId,
+          RESTORE_EXPECTED_SKILL_ACTIVATION_VERSION: "1",
+        },
+        {
+          RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID: validSetId,
+          RESTORE_EXPECTED_SKILL_PREVIOUS_SET_ID: validSetId,
+          RESTORE_EXPECTED_SKILL_ACTIVATION_VERSION: "1 OR 1=1",
+        },
+        {
+          RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID: validSetId,
+        },
+      ];
+      for (const runtimeEnvironment of malformedRuntime) {
+        const result = spawnSync(
+          "sh",
+          [
+            script,
+            backupFile,
+            "1",
+            "1",
+            "11111111-1111-1111-1111-111111111111",
+            "fixture-session",
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: `${bin}:${process.env.PATH ?? ""}`,
+              BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+              DOCKER_LOG: dockerLog,
+              RESTORE_MAX_ENCRYPTED_BYTES: "1",
+              ...runtimeEnvironment,
+            },
+          },
+        );
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.status, JSON.stringify(runtimeEnvironment)).toBe(64);
+        expect(output.trim()).toMatch(
+          /^restore expected Skill runtime pointer is (?:invalid|incomplete)$/u,
+        );
+      }
+      expect(readFileSync(dockerLog, "utf8")).toBe("");
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("makes EXIT the only cleanup owner before repeated signals", () => {
+    const script = read("infra/docker/restore-drill.sh");
+    const onExit = script.match(/on_exit\(\) \{[\s\S]*?\n\}/u)?.[0];
+    const onSignal = script.match(/on_signal\(\) \{[\s\S]*?\n\}/u)?.[0];
+
+    expect(onExit).toMatch(/^on_exit\(\) \{\n  trap '' INT TERM/u);
+    expect(onSignal).toMatch(/^on_signal\(\) \{\n  trap '' INT TERM/u);
+    expect(onSignal).not.toContain("cleanup");
+    expect(script).toContain("trap 'on_exit \"$?\"' EXIT");
+  });
+
+  it("fails closed when restore temporary-directory removal fails", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "restore-temp-cleanup-"));
+    const bin = path.join(sandbox, "bin");
+    const captures = path.join(sandbox, "captures");
+    const restoreTmp = path.join(sandbox, "restore-tmp");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+
+    try {
+      for (const directory of [bin, captures, restoreTmp]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      writeFileSync(
+        path.join(bin, "df"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf '%s\\n' 'test 1048576 0 1048576 0% /restore'
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "rm"),
+        `#!/bin/sh
+set -eu
+if [ "\${1:-}" = -rf ] && [ "\${2:-}" != "\${2#aap-restore-drill.}" ]; then
+  exit 1
+fi
+case "\${2:-}" in
+  "$RESTORE_TMP_ROOT"/aap-restore-drill.*) exit 1 ;;
+esac
+exec /bin/rm "$@"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+case "$1" in
+  create) exit 1 ;;
+  rm) exit 0 ;;
+  ps) exit 0 ;;
+  stop) exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const secret = "temp-cleanup-secret-sentinel";
+      const result = spawnSync(
+        "sh",
+        [
+          script,
+          backupFile,
+          "1",
+          "1",
+          "11111111-1111-1111-1111-111111111111",
+          "fixture-session",
+        ],
+        {
+          encoding: "utf8",
+          timeout: 10_000,
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
+            CAPTURE_DIR: captures,
+            BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+            BACKUP_CRYPTO_IMAGE: "fake-crypto",
+            RESTORE_TMP_ROOT: restoreTmp,
+            RESTORE_MAX_ENCRYPTED_BYTES: "128",
+            RESTORE_MAX_DECRYPTED_BYTES: "32",
+            RESTORE_SPACE_SAFETY_BYTES: "0",
+            RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
+            RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+            RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
+            RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "2",
+            RESTORE_TEST_SECRET: secret,
+          },
+        },
+      );
+      const output = `${result.stdout}${result.stderr}`;
+
+      expect(result.error, output).toBeUndefined();
+      expect(result.status, output).toBe(1);
+      expect(output.trim()).toBe(
+        "restore drill decryption failed\nrestore drill cleanup failed",
+      );
+      expect(output).not.toContain(secret);
+      expect(output).not.toContain(sandbox);
+      expect(readdirSync(restoreTmp)).not.toEqual([]);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it("propagates every safety-critical Docker lifecycle I/O failure", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "restore-io-faults-"));
+    const wrappers = path.join(sandbox, "bin");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+
+    try {
+      mkdirSync(wrappers);
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      writeFileSync(
+        path.join(wrappers, "df"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf '%s\\n' 'test 1048576 0 1048576 0% /restore'
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(wrappers, "mkdir"),
+        `#!/bin/sh
+set -eu
+last=
+for argument in "$@"; do last=$argument; done
+case "$FAULT_MODE:$last" in
+  register_mkdir:*/docker-resources/.10-decrypt.tmp) exit 1 ;;
+esac
+/bin/mkdir "$@"
+case "$FAULT_MODE:$last" in
+  register_write:*/docker-resources/.10-decrypt.tmp)
+    /bin/mkdir "$last/type"
+    ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(wrappers, "chmod"),
+        `#!/bin/sh
+set -eu
+case "$FAULT_MODE:$*" in
+  register_chmod:*'/docker-resources/.10-decrypt.tmp') exit 1 ;;
+  outcome_chmod:*'/docker-resources/10-decrypt/.outcome.tmp') exit 1 ;;
+esac
+if [ "$FAULT_MODE" = supervisor_chmod ] && [ "$#" -eq 3 ]; then
+  case "$2:$3" in
+    */docker.stdout:*/docker.stderr) exit 1 ;;
+  esac
+fi
+/bin/chmod "$@"
+setup_directory=
+for argument in "$@"; do
+  case "$argument" in
+    */runtime-select.stderr) setup_directory=\${argument%/*} ;;
+  esac
+done
+case "$FAULT_MODE:$setup_directory" in
+  supervisor_stdout_init:?*)
+    /bin/rm -f "$setup_directory/docker.stdout"
+    /bin/mkdir "$setup_directory/docker.stdout"
+    ;;
+  supervisor_diagnostic_init:?*)
+    /bin/rm -f "$setup_directory/docker.stderr"
+    /bin/mkdir "$setup_directory/docker.stderr"
+    ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(wrappers, "mv"),
+        `#!/bin/sh
+set -eu
+case "$FAULT_MODE:$1:$2" in
+  register_rename:*/docker-resources/.10-decrypt.tmp:*/docker-resources/10-decrypt)
+    exit 1
+    ;;
+  outcome_rename:*/docker-resources/10-decrypt/.outcome.tmp:*/docker-resources/10-decrypt/outcome)
+    exit 1
+    ;;
+esac
+exec /bin/mv "$@"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(wrappers, "cat"),
+        `#!/bin/sh
+set -eu
+[ "$#" -gt 0 ] || exec /bin/cat
+case "$FAULT_MODE:$1" in
+  query_read:*/docker.stdout)
+    [ ! -f "$CAPTURE_DIR/query.ready" ] || exit 1
+    ;;
+  resource_type_read:*/docker-resources/10-decrypt/type|resource_name_read:*/docker-resources/10-decrypt/name|resource_outcome_read:*/docker-resources/10-decrypt/outcome)
+    /bin/cat "$1"
+    exit 1
+    ;;
+esac
+exec /bin/cat "$@"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(wrappers, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+registry=$(find "$RESTORE_TMP_ROOT" -type d -name docker-resources -print | head -n 1)
+command=$1
+shift
+case "$command" in
+  create)
+    previous=
+    name=
+    for argument in "$@"; do
+      if [ "$previous" = --name ]; then name=$argument; fi
+      previous=$argument
+    done
+    printf '%s\\n' "$name" >"$CAPTURE_DIR/container.name"
+    : >"$CAPTURE_DIR/container.exists"
+    case "$FAULT_MODE" in
+      outcome_write)
+        /bin/mkdir "$registry/10-decrypt/.outcome.tmp"
+        printf '%s\\n' fake-container-id
+        exit 0
+        ;;
+      outcome_chmod|outcome_rename|query_read)
+        printf '%s\\n' fake-container-id
+        exit 0
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  ps)
+    : >"$CAPTURE_DIR/query.ready"
+    if [ "$FAULT_MODE" != query_read ] && [ -f "$CAPTURE_DIR/container.exists" ]; then
+      /bin/cat "$CAPTURE_DIR/container.name"
+    fi
+    ;;
+  rm)
+    if [ "$FAULT_MODE" = query_read ]; then exit 1; fi
+    if [ -f "$registry/10-decrypt/outcome" ]; then
+      /bin/cat "$registry/10-decrypt/outcome" >"$CAPTURE_DIR/cleanup.outcome"
+    fi
+    /bin/rm -f "$CAPTURE_DIR/container.exists"
+    ;;
+  start) exit 1 ;;
+  stop) exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const cases = [
+        { mode: "register_mkdir", expected: "registration", docker: false },
+        { mode: "register_write", expected: "registration", docker: false },
+        { mode: "register_chmod", expected: "registration", docker: false },
+        { mode: "register_rename", expected: "registration", docker: false },
+        {
+          mode: "supervisor_stdout_init",
+          expected: "cleanup",
+          docker: false,
+        },
+        {
+          mode: "supervisor_diagnostic_init",
+          expected: "cleanup",
+          docker: false,
+        },
+        { mode: "supervisor_chmod", expected: "cleanup", docker: false },
+        { mode: "outcome_write", expected: "outcome", docker: true },
+        { mode: "outcome_chmod", expected: "outcome", docker: true },
+        { mode: "outcome_rename", expected: "outcome", docker: true },
+        { mode: "query_read", expected: "cleanup", docker: true },
+        { mode: "resource_type_read", expected: "entry", docker: true },
+        { mode: "resource_name_read", expected: "entry", docker: true },
+        { mode: "resource_outcome_read", expected: "entry", docker: true },
+      ] as const;
+      const failures: string[] = [];
+
+      for (const testCase of cases) {
+        const caseRoot = path.join(sandbox, testCase.mode);
+        const captures = path.join(caseRoot, "captures");
+        const restoreTmp = path.join(caseRoot, "restore-tmp");
+        mkdirSync(captures, { recursive: true });
+        mkdirSync(restoreTmp);
+        const result = spawnSync(
+          "sh",
+          [
+            script,
+            backupFile,
+            "1",
+            "1",
+            "11111111-1111-1111-1111-111111111111",
+            "fixture-session",
+          ],
+          {
+            encoding: "utf8",
+            timeout: 8_000,
+            env: {
+              ...process.env,
+              PATH: `${wrappers}:${process.env.PATH ?? ""}`,
+              CAPTURE_DIR: captures,
+              FAULT_MODE: testCase.mode,
+              BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+              BACKUP_CRYPTO_IMAGE: "fake-crypto",
+              RESTORE_TMP_ROOT: restoreTmp,
+              RESTORE_MAX_ENCRYPTED_BYTES: "128",
+              RESTORE_MAX_DECRYPTED_BYTES: "32",
+              RESTORE_SPACE_SAFETY_BYTES: "0",
+              RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
+              RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+              RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
+              RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "2",
+              RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "1",
+            },
+          },
+        );
+        const output = `${result.stdout}${result.stderr}`.trim();
+        const callsPath = path.join(captures, "docker.calls");
+        const calls = statSync(callsPath, { throwIfNoEntry: false })
+          ? readFileSync(callsPath, "utf8")
+          : "";
+        const expectedOutput =
+          testCase.expected === "registration" ||
+          testCase.expected === "outcome"
+            ? "restore drill decryption failed"
+            : "restore drill decryption failed\nrestore drill cleanup failed";
+        if (
+          result.error !== undefined ||
+          result.status !== 1 ||
+          output !== expectedOutput ||
+          output.includes(sandbox) ||
+          readdirSync(restoreTmp).length !== 0 ||
+          (testCase.docker ? calls.length === 0 : calls.length !== 0)
+        ) {
+          failures.push(
+            `${testCase.mode}: status=${result.status} error=${result.error?.message ?? "none"} output=${JSON.stringify(output)} calls=${JSON.stringify(calls)} temp=${JSON.stringify(readdirSync(restoreTmp))}`,
+          );
+        }
+        if (testCase.expected === "outcome") {
+          const outcomePath = path.join(captures, "cleanup.outcome");
+          const outcome = statSync(outcomePath, { throwIfNoEntry: false })
+            ? readFileSync(outcomePath, "utf8").trim()
+            : "missing";
+          if (outcome !== "ambiguous" || calls.includes("start ")) {
+            failures.push(
+              `${testCase.mode}: outcome=${outcome} calls=${JSON.stringify(calls)}`,
+            );
+          }
+        }
+        if (testCase.expected === "entry" && /(?:^|\n)rm -f /u.test(calls)) {
+          failures.push(`${testCase.mode}: cleanup used an unread entry`);
+        }
+        if (testCase.mode === "query_read") {
+          const queryCount = calls
+            .split("\n")
+            .filter((call) => call.startsWith("ps -a ")).length;
+          if (queryCount < 2) {
+            failures.push(
+              `${testCase.mode}: query read failure confirmed absence`,
+            );
+          }
+        }
+      }
+      expect(failures).toEqual([]);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 45_000);
+
+  it("keeps the Docker resource registry protected and non-sensitive", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "restore-registry-mode-"));
+    const bin = path.join(sandbox, "bin");
+    const captures = path.join(sandbox, "captures");
+    const restoreTmp = path.join(sandbox, "restore-tmp");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+
+    try {
+      for (const directory of [bin, captures, restoreTmp]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      const secret = "registry-secret-sentinel";
+      writeFileSync(keyFile, `0123456789abcdef${secret}`, { mode: 0o600 });
+      writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      writeFileSync(
+        path.join(bin, "df"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf '%s\\n' 'test 1048576 0 1048576 0% /restore'
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+mode_of() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+}
+registry=$(find "$RESTORE_TMP_ROOT" -type d -name docker-resources -print | head -n 1)
+record="$registry/10-decrypt"
+{
+  printf 'registry|%s\\n' "$(mode_of "$registry")"
+  for field in type name outcome; do
+    printf '%s|%s|%s\\n' "$field" "$(mode_of "$record/$field")" "$(cat "$record/$field")"
+  done
+} >"$CAPTURE_DIR/registry.snapshot"
+case "$1" in
+  create) exit 1 ;;
+  rm) exit 0 ;;
+  ps) exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync(
+        "sh",
+        [
+          script,
+          backupFile,
+          "1",
+          "1",
+          "11111111-1111-1111-1111-111111111111",
+          "fixture-session",
+        ],
+        {
+          encoding: "utf8",
+          timeout: 10_000,
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
+            CAPTURE_DIR: captures,
+            BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+            BACKUP_CRYPTO_IMAGE: "fake-crypto",
+            RESTORE_TMP_ROOT: restoreTmp,
+            RESTORE_MAX_ENCRYPTED_BYTES: "128",
+            RESTORE_MAX_DECRYPTED_BYTES: "32",
+            RESTORE_SPACE_SAFETY_BYTES: "0",
+            RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
+            RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+          },
+        },
+      );
+      const output = `${result.stdout}${result.stderr}`;
+      const snapshot = readFileSync(
+        path.join(captures, "registry.snapshot"),
+        "utf8",
+      );
+
+      expect(result.status, output).toBe(1);
+      expect(output.trim()).toBe("restore drill decryption failed");
+      expect(snapshot).toMatch(
+        /^registry\|700\ntype\|600\|container\nname\|600\|aap-restore-decrypt-[A-Za-z0-9T-]+\noutcome\|600\|ambiguous\n$/u,
+      );
+      for (const protectedValue of [
+        secret,
+        keyFile,
+        backupFile,
+        "--passphrase-file",
+        "docker.stderr",
+      ]) {
+        expect(snapshot).not.toContain(protectedValue);
+      }
+      expect(readdirSync(restoreTmp)).toEqual([]);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it("settles and removes a delayed resource after an ambiguous create", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "restore-late-create-"));
+    const bin = path.join(sandbox, "bin");
+    const captures = path.join(sandbox, "captures");
+    const restoreTmp = path.join(sandbox, "restore-tmp");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+
+    try {
+      for (const directory of [bin, captures, restoreTmp]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      writeFileSync(
+        path.join(bin, "df"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf '%s\\n' 'test 1048576 0 1048576 0% /restore'
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+
+increment() {
+  count=$(cat "$CAPTURE_DIR/rm.count" 2>/dev/null || printf 0)
+  count=$((count + 1))
+  printf '%s\\n' "$count" >"$CAPTURE_DIR/rm.count"
+}
+
+command=$1
+shift
+case "$command" in
+  create)
+    previous=
+    for argument in "$@"; do
+      if [ "$previous" = --name ]; then
+        printf '%s\\n' "$argument" >"$CAPTURE_DIR/container.name"
+      fi
+      previous=$argument
+    done
+    (
+      trap '' TERM INT HUP
+      sleep 3.5
+      : >"$CAPTURE_DIR/container.exists"
+      : >"$CAPTURE_DIR/late-create.completed"
+    ) &
+    printf '%s\\n' "$!" >"$CAPTURE_DIR/late-create.pid"
+    trap '' TERM INT HUP
+    exec sleep 1000
+    ;;
+  rm)
+    increment
+    [ -f "$CAPTURE_DIR/container.exists" ] || exit 1
+    /bin/rm -f "$CAPTURE_DIR/container.exists"
+    ;;
+  ps)
+    if [ -f "$CAPTURE_DIR/container.exists" ]; then
+      cat "$CAPTURE_DIR/container.name"
+    fi
+    ;;
+  stop) exit 1 ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync(
+        "sh",
+        [
+          script,
+          backupFile,
+          "1",
+          "1",
+          "11111111-1111-1111-1111-111111111111",
+          "fixture-session",
+        ],
+        {
+          encoding: "utf8",
+          timeout: 12_000,
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
+            CAPTURE_DIR: captures,
+            BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+            BACKUP_CRYPTO_IMAGE: "fake-crypto",
+            RESTORE_TMP_ROOT: restoreTmp,
+            RESTORE_MAX_ENCRYPTED_BYTES: "128",
+            RESTORE_MAX_DECRYPTED_BYTES: "32",
+            RESTORE_SPACE_SAFETY_BYTES: "0",
+            RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
+            RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+            RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
+            RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "3",
+            RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "3",
+          },
+        },
+      );
+      const output = `${result.stdout}${result.stderr}`;
+      spawnSync("sleep", ["1"]);
+
+      expect(result.error, output).toBeUndefined();
+      expect(result.status, output).toBe(1);
+      expect(output.trim()).toBe("restore drill decryption failed");
+      expect(
+        statSync(path.join(captures, "late-create.completed"), {
+          throwIfNoEntry: false,
+        }),
+      ).toBeDefined();
+      expect(
+        statSync(path.join(captures, "container.exists"), {
+          throwIfNoEntry: false,
+        }),
+      ).toBeUndefined();
+      expect(readdirSync(restoreTmp)).toEqual([]);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("never truncates the configured ambiguous-create settle duration", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "restore-settle-floor-"));
+    const bin = path.join(sandbox, "bin");
+    const captures = path.join(sandbox, "captures");
+    const restoreTmp = path.join(sandbox, "restore-tmp");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+
+    try {
+      for (const directory of [bin, captures, restoreTmp]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      writeFileSync(
+        path.join(bin, "df"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf '%s\\n' 'test 1048576 0 1048576 0% /restore'
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "date"),
+        `#!/bin/sh
+set -eu
+if [ "\${1:-}" != +%s ]; then exec /bin/date "$@"; fi
+count=$(cat "$CAPTURE_DIR/date.count" 2>/dev/null || printf 0)
+count=$((count + 1))
+printf '%s\\n' "$count" >"$CAPTURE_DIR/date.count"
+if [ "$count" -eq 1 ]; then
+  printf '%s\\n' 100
+elif [ "$count" -eq 2 ]; then
+  printf '%s\\n' 101
+else
+  sleep 1
+  printf '%s\\n' 102
+fi
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+case "$1" in
+  create)
+    : >"$CAPTURE_DIR/create.failed"
+    exit 1
+    ;;
+  rm) exit 1 ;;
+  ps) exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const startedAt = Date.now();
+      const result = spawnSync(
+        "sh",
+        [
+          script,
+          backupFile,
+          "1",
+          "1",
+          "11111111-1111-1111-1111-111111111111",
+          "fixture-session",
+        ],
+        {
+          encoding: "utf8",
+          timeout: 6_000,
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH ?? ""}`,
+            CAPTURE_DIR: captures,
+            BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+            BACKUP_CRYPTO_IMAGE: "fake-crypto",
+            RESTORE_TMP_ROOT: restoreTmp,
+            RESTORE_MAX_ENCRYPTED_BYTES: "128",
+            RESTORE_MAX_DECRYPTED_BYTES: "32",
+            RESTORE_SPACE_SAFETY_BYTES: "0",
+            RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
+            RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+            RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
+            RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "2",
+            RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "1",
+          },
+        },
+      );
+      const elapsedMs = Date.now() - startedAt;
+      const settleElapsedMs =
+        Date.now() - statSync(path.join(captures, "create.failed")).mtimeMs;
+      const output = `${result.stdout}${result.stderr}`.trim();
+
+      expect(result.error, output).toBeUndefined();
+      expect(result.status, output).toBe(1);
+      expect(output).toBe(
+        "restore drill decryption failed\nrestore drill cleanup failed",
+      );
+      expect(settleElapsedMs).toBeGreaterThanOrEqual(950);
+      expect(elapsedMs).toBeLessThan(3_500);
+      expect(readdirSync(restoreTmp)).toEqual([]);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it("fails the focused restore runner when its own cleanup fails", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "restore-runner-cleanup-"));
+    const bin = path.join(sandbox, "bin");
+    const captures = path.join(sandbox, "captures");
+    const runtimeTmp = path.join(sandbox, "runtime-tmp");
+    const runner = path.join(
+      root,
+      "docs/testing/run-restore-docker-lifecycle.sh",
+    );
+
+    try {
+      for (const directory of [bin, captures, runtimeTmp]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+command=$1
+shift
+case "$command" in
+  build) exit 0 ;;
+  create)
+    previous=
+    for argument in "$@"; do
+      if [ "$previous" = --name ]; then
+        printf '%s\\n' "$argument" >"$CAPTURE_DIR/container.name"
+      fi
+      previous=$argument
+    done
+    printf '%s\\n' fake-container-id
+    ;;
+  ps)
+    case "$*" in
+      *'name=^/'*) cat "$CAPTURE_DIR/container.name" ;;
+    esac
+    ;;
+  start) exit 0 ;;
+  wait)
+    trap '' TERM INT HUP
+    exec sleep 1000
+    ;;
+  rm) exit 0 ;;
+  volume) exit 0 ;;
+  image)
+    [ "\${1:-}" != rm ] || exit 1
+    ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync("sh", [runner, "timeout"], {
+        encoding: "utf8",
+        timeout: 15_000,
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          CAPTURE_DIR: captures,
+          TMPDIR: runtimeTmp,
+        },
+      });
+      const output = `${result.stdout}${result.stderr}`.trim();
+
+      expect(result.error, output).toBeUndefined();
+      expect(result.status, output).toBe(1);
+      expect(output).toBe("restore lifecycle runner cleanup failed");
+      expect(output).not.toContain("acceptance passed");
+      expect(output).not.toContain(sandbox);
+      expect(readdirSync(runtimeTmp)).toEqual([]);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("keeps every nonzero launched create ambiguous until removal is proven", () => {
+    const sandbox = mkdtempSync(
+      path.join(tmpdir(), "restore-create-classification-"),
+    );
+    const bin = path.join(sandbox, "bin");
+    const fixture = path.join(sandbox, "fixture");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const dumpFile = path.join(fixture, "database.dump");
+    const manifestFile = path.join(fixture, "skill-backup.manifest");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+
+    try {
+      for (const directory of [bin, fixture]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(dumpFile, "fake-custom-database-dump", { mode: 0o600 });
+      const dumpSha256 = createHash("sha256")
+        .update(readFileSync(dumpFile))
+        .digest("hex");
+      writeFileSync(
+        manifestFile,
+        `format_version=1
+dump_sha256=${dumpSha256}
+skill_registry_schema_version=1
+skill_revision_count=0
+skill_artifact_count=0
+skill_file_count=0
+`,
+        { mode: 0o600 },
+      );
+      const archive = spawnSync(
+        "tar",
+        [
+          "-cf",
+          backupFile,
+          "-C",
+          fixture,
+          "skill-backup.manifest",
+          "database.dump",
+        ],
+        { encoding: "utf8" },
+      );
+      expect(archive.status, `${archive.stdout}${archive.stderr}`).toBe(0);
+
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+
+container_resource() {
+  resource_name=$1
+  case "$resource_name" in
+    aap-restore-decrypt-*) printf '%s\n' decrypt ;;
+    aap-restore-bundle-*) printf '%s\n' bundle ;;
+    aap-restore-digest-*) printf '%s\n' digest ;;
+    aap-restore-registry-*) printf '%s\n' registry ;;
+    aap-restore-drill-*) printf '%s\n' database ;;
+    *) exit 1 ;;
+  esac
+}
+
+command=$1
+shift
+case "$command" in
+  create)
+    previous=
+    name=
+    work_mount=
+    input_mount=
+    for argument in "$@"; do
+      if [ "$previous" = --name ]; then
+        name=$argument
+      fi
+      case "$argument" in
+        *:/work) work_mount=\${argument%:/work} ;;
+        *:/input:ro) input_mount=\${argument%:/input:ro} ;;
+      esac
+      previous=$argument
+    done
+    resource=$(container_resource "$name")
+    printf '%s\n' "$name" >"$CAPTURE_DIR/$resource.name"
+    [ -z "$work_mount" ] || printf '%s\n' "$work_mount" >"$CAPTURE_DIR/$resource.work"
+    [ -z "$input_mount" ] || printf '%s\n' "$input_mount" >"$CAPTURE_DIR/$resource.input"
+    case "$FAKE_DOCKER_MODE:$resource" in
+      immediate_container:decrypt)
+        : >"$CAPTURE_DIR/decrypt.exists"
+        exit 1
+        ;;
+      absent_container:decrypt)
+        exit 1
+        ;;
+    esac
+    : >"$CAPTURE_DIR/$resource.exists"
+    printf '%s\n' fake-container-id
+    ;;
+  start)
+    target=$1
+    resource=
+    for candidate in decrypt bundle digest database registry; do
+      if [ -f "$CAPTURE_DIR/$candidate.name" ] &&
+         [ "$target" = "$(cat "$CAPTURE_DIR/$candidate.name")" ]; then
+        resource=$candidate
+      fi
+    done
+    case "$resource" in
+      decrypt)
+        work=$(cat "$CAPTURE_DIR/decrypt.work")
+        cp "$FAKE_BACKUP_FILE" "$work/restored.bundle.partial"
+        ;;
+      bundle)
+        work=$(cat "$CAPTURE_DIR/bundle.work")
+        mkdir "$work/extracted"
+        chmod 700 "$work/extracted"
+        tar -xf "$work/restored.bundle" -C "$work/extracted"
+        ;;
+      digest)
+        work=$(cat "$CAPTURE_DIR/digest.work")
+        input=$(cat "$CAPTURE_DIR/digest.input")
+        sha256sum "$input/database.dump" | awk '{ print $1 }' >"$work/dump-digest"
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  wait) printf '%s\n' 0 ;;
+  ps)
+    for resource in decrypt bundle digest database registry; do
+      if [ -f "$CAPTURE_DIR/$resource.exists" ]; then
+        cat "$CAPTURE_DIR/$resource.name"
+      fi
+    done
+    ;;
+  rm)
+    target=
+    for argument in "$@"; do target=$argument; done
+    for resource in decrypt bundle digest database registry; do
+      if [ -f "$CAPTURE_DIR/$resource.name" ] &&
+         [ "$target" = "$(cat "$CAPTURE_DIR/$resource.name")" ]; then
+        if [ "$FAKE_DOCKER_MODE:$resource" = immediate_container:decrypt ]; then
+          count=$(cat "$CAPTURE_DIR/decrypt.rm-count" 2>/dev/null || printf 0)
+          count=$((count + 1))
+          printf '%s\n' "$count" >"$CAPTURE_DIR/decrypt.rm-count"
+          [ "$count" -gt 1 ] || exit 1
+        fi
+        [ -f "$CAPTURE_DIR/$resource.exists" ] || exit 1
+        /bin/rm -f "$CAPTURE_DIR/$resource.exists"
+        exit 0
+      fi
+    done
+    exit 1
+    ;;
+  volume)
+    subcommand=$1
+    shift
+    case "$subcommand" in
+      create)
+        printf '%s\n' "$1" >"$CAPTURE_DIR/volume.name"
+        if [ "$FAKE_DOCKER_MODE" = late_volume ]; then
+          (
+            sleep 0.5
+            : >"$CAPTURE_DIR/volume.exists"
+            : >"$CAPTURE_DIR/late-volume.completed"
+          ) &
+          printf '%s\n' "$!" >"$CAPTURE_DIR/late-volume.pid"
+          exit 1
+        fi
+        exit 1
+        ;;
+      rm)
+        [ -f "$CAPTURE_DIR/volume.exists" ] || exit 1
+        /bin/rm -f "$CAPTURE_DIR/volume.exists"
+        ;;
+      ls)
+        if [ -f "$CAPTURE_DIR/volume.exists" ]; then
+          cat "$CAPTURE_DIR/volume.name"
+        fi
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const cases = [
+        {
+          mode: "immediate_container",
+          expectedOutput: "restore drill decryption failed",
+        },
+        {
+          mode: "late_volume",
+          expectedOutput: "restore drill failed database startup",
+        },
+        {
+          mode: "absent_container",
+          expectedOutput:
+            "restore drill decryption failed\nrestore drill cleanup failed",
+        },
+      ] as const;
+      const failures: string[] = [];
+
+      for (const testCase of cases) {
+        const caseRoot = path.join(sandbox, testCase.mode);
+        const captures = path.join(caseRoot, "captures");
+        const restoreTmp = path.join(caseRoot, "restore-tmp");
+        mkdirSync(captures, { recursive: true });
+        mkdirSync(restoreTmp);
+        const startedAt = Date.now();
+        const result = spawnSync(
+          "sh",
+          [
+            script,
+            backupFile,
+            "1",
+            "1",
+            "11111111-1111-1111-1111-111111111111",
+            "fixture-session",
+          ],
+          {
+            encoding: "utf8",
+            timeout: 10_000,
+            env: {
+              ...process.env,
+              PATH: `${bin}:${process.env.PATH ?? ""}`,
+              CAPTURE_DIR: captures,
+              FAKE_BACKUP_FILE: backupFile,
+              FAKE_DOCKER_MODE: testCase.mode,
+              BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+              BACKUP_CRYPTO_IMAGE: "fake-crypto",
+              RESTORE_TMP_ROOT: restoreTmp,
+              RESTORE_MAX_ENCRYPTED_BYTES: "1048576",
+              RESTORE_MAX_DECRYPTED_BYTES: "1048576",
+              RESTORE_SPACE_SAFETY_BYTES: "0",
+              RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
+              RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+              RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
+              RESTORE_DECRYPT_TIMEOUT_SECONDS: "1",
+              RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "3",
+              RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "2",
+            },
+          },
+        );
+        const elapsedMs = Date.now() - startedAt;
+        const output = `${result.stdout}${result.stderr}`.trim();
+        spawnSync("sleep", ["1"]);
+        const calls = readFileSync(path.join(captures, "docker.calls"), "utf8");
+        const resourceMarkers = readdirSync(captures).filter((name) =>
+          name.endsWith(".exists"),
+        );
+        if (
+          result.error !== undefined ||
+          result.status !== 1 ||
+          output !== testCase.expectedOutput ||
+          elapsedMs >= 6_000 ||
+          readdirSync(restoreTmp).length !== 0 ||
+          resourceMarkers.length !== 0 ||
+          !/(?:^|\n)(?:rm -f|volume rm) /u.test(calls)
+        ) {
+          failures.push(
+            `${testCase.mode}: status=${result.status} error=${result.error?.message ?? "none"} elapsed=${elapsedMs} output=${JSON.stringify(output)} temp=${JSON.stringify(readdirSync(restoreTmp))} markers=${JSON.stringify(resourceMarkers)} calls=${JSON.stringify(calls)}`,
+          );
+        }
+        if (testCase.mode === "immediate_container") {
+          const rmCountPath = path.join(captures, "decrypt.rm-count");
+          const rmCount = statSync(rmCountPath, { throwIfNoEntry: false })
+            ? Number(readFileSync(rmCountPath, "utf8").trim())
+            : 0;
+          if (!calls.includes("ps -a --filter") || rmCount < 2) {
+            failures.push(
+              `${testCase.mode}: missing exact query/remove evidence, rmCount=${rmCount}`,
+            );
+          }
+        }
+        if (testCase.mode === "late_volume") {
+          const completed = statSync(
+            path.join(captures, "late-volume.completed"),
+            { throwIfNoEntry: false },
+          );
+          const pidPath = path.join(captures, "late-volume.pid");
+          if (!completed || !statSync(pidPath, { throwIfNoEntry: false })) {
+            failures.push(`${testCase.mode}: delayed create did not complete`);
+          } else {
+            const latePid = readFileSync(pidPath, "utf8").trim();
+            const live = spawnSync("sh", ["-c", 'kill -0 "$1"', "sh", latePid]);
+            if (live.status === 0) {
+              failures.push(`${testCase.mode}: live pid ${latePid}`);
+            }
+          }
+        }
+        if (testCase.mode === "absent_container") {
+          if (!calls.includes("ps -a --filter") || elapsedMs < 900) {
+            failures.push(
+              `${testCase.mode}: settle was skipped, elapsed=${elapsedMs}`,
+            );
+          }
+        }
+      }
+      expect(failures).toEqual([]);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("bounds representative late Docker lifecycle phases", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "restore-late-phases-"));
+    const bin = path.join(sandbox, "bin");
+    const fixture = path.join(sandbox, "fixture");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const dumpFile = path.join(fixture, "database.dump");
+    const manifestFile = path.join(fixture, "skill-backup.manifest");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+
+    try {
+      for (const directory of [bin, fixture]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(dumpFile, "fake-custom-database-dump", { mode: 0o600 });
+      const dumpSha256 = createHash("sha256")
+        .update(readFileSync(dumpFile))
+        .digest("hex");
+      writeFileSync(
+        manifestFile,
+        `format_version=1
+dump_sha256=${dumpSha256}
+skill_registry_schema_version=1
+skill_revision_count=1
+skill_artifact_count=1
+skill_file_count=1
+`,
+        { mode: 0o600 },
+      );
+      const archive = spawnSync(
+        "tar",
+        [
+          "-cf",
+          backupFile,
+          "-C",
+          fixture,
+          "skill-backup.manifest",
+          "database.dump",
+        ],
+        { encoding: "utf8" },
+      );
+      expect(archive.status, `${archive.stdout}${archive.stderr}`).toBe(0);
+
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+
+hang_phase() {
+  phase=$1
+  printf '%s\\n' "$$" >"$CAPTURE_DIR/$phase.pids"
+  : >"$CAPTURE_DIR/$phase.started"
+  trap '' TERM INT HUP
+  exec sleep 10
+}
+
+command=$1
+shift
+case "$command" in
+  create)
+    previous=
+    name=
+    work_mount=
+    input_mount=
+    for argument in "$@"; do
+      if [ "$previous" = --name ]; then
+        name=$argument
+      fi
+      case "$argument" in
+        *:/work) work_mount=\${argument%:/work} ;;
+        *:/input:ro) input_mount=\${argument%:/input:ro} ;;
+      esac
+      previous=$argument
+    done
+    case "$name" in
+      aap-restore-decrypt-*) resource=decrypt ;;
+      aap-restore-bundle-*) resource=bundle ;;
+      aap-restore-digest-*) resource=digest ;;
+      aap-restore-registry-*) resource=registry ;;
+      aap-restore-drill-*) resource=database ;;
+      *) exit 1 ;;
+    esac
+    printf '%s\\n' "$name" >"$CAPTURE_DIR/$resource.name"
+    [ -z "$work_mount" ] || printf '%s\\n' "$work_mount" >"$CAPTURE_DIR/$resource.work"
+    [ -z "$input_mount" ] || printf '%s\\n' "$input_mount" >"$CAPTURE_DIR/$resource.input"
+    : >"$CAPTURE_DIR/$resource.exists"
+    printf '%s\\n' fake-container-id
+    ;;
+  start)
+    target=$1
+    resource=
+    for candidate in decrypt bundle digest database registry; do
+      if [ -f "$CAPTURE_DIR/$candidate.name" ] &&
+         [ "$target" = "$(cat "$CAPTURE_DIR/$candidate.name")" ]; then
+        resource=$candidate
+      fi
+    done
+    case "$resource" in
+      decrypt)
+        work=$(cat "$CAPTURE_DIR/decrypt.work")
+        cp "$FAKE_BACKUP_FILE" "$work/restored.bundle.partial"
+        ;;
+      bundle)
+        if [ "$FAKE_DOCKER_MODE" = bundle_validation_start_hang ]; then
+          hang_phase bundle-validation-start
+        fi
+        work=$(cat "$CAPTURE_DIR/bundle.work")
+        mkdir "$work/extracted"
+        chmod 700 "$work/extracted"
+        tar -xf "$work/restored.bundle" -C "$work/extracted"
+        ;;
+      digest)
+        work=$(cat "$CAPTURE_DIR/digest.work")
+        input=$(cat "$CAPTURE_DIR/digest.input")
+        sha256sum "$input/database.dump" | awk '{ print $1 }' >"$work/dump-digest"
+        ;;
+      database)
+        if [ "$FAKE_DOCKER_MODE" = database_start_hang ]; then
+          hang_phase database-start
+        fi
+        ;;
+      registry)
+        if [ "$FAKE_DOCKER_MODE" = registry_migration_hang ]; then
+          hang_phase registry-migration
+        fi
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  wait) printf '%s\\n' 0 ;;
+  ps)
+    for resource in decrypt bundle digest database registry; do
+      if [ -f "$CAPTURE_DIR/$resource.exists" ]; then
+        cat "$CAPTURE_DIR/$resource.name"
+      fi
+    done
+    ;;
+  exec)
+    shift
+    case "\${1:-}" in
+      pg_isready) exit 0 ;;
+      sh) exit 0 ;;
+      pg_restore)
+        if [ "$FAKE_DOCKER_MODE" = database_exec_migration_hang ]; then
+          hang_phase database-exec-migration
+        fi
+        if [ "$FAKE_DOCKER_MODE" = registry_migration_hang ]; then
+          exit 0
+        fi
+        exit 1
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  rm)
+    target=
+    for argument in "$@"; do target=$argument; done
+    for resource in decrypt bundle digest database registry; do
+      if [ -f "$CAPTURE_DIR/$resource.name" ] &&
+         [ "$target" = "$(cat "$CAPTURE_DIR/$resource.name")" ]; then
+        /bin/rm -f "$CAPTURE_DIR/$resource.exists"
+        exit 0
+      fi
+    done
+    exit 0
+    ;;
+  volume)
+    subcommand=$1
+    shift
+    case "$subcommand" in
+      create)
+        printf '%s\\n' "$1" >"$CAPTURE_DIR/volume.name"
+        : >"$CAPTURE_DIR/volume.exists"
+        if [ "$FAKE_DOCKER_MODE" = volume_create_hang ]; then
+          hang_phase volume-create
+        fi
+        printf '%s\\n' "$1"
+        ;;
+      rm) /bin/rm -f "$CAPTURE_DIR/volume.exists" ;;
+      ls)
+        if [ -f "$CAPTURE_DIR/volume.exists" ]; then
+          cat "$CAPTURE_DIR/volume.name"
+        fi
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  stop) exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const lateCases = [
+        [
+          "bundle_validation_start_hang",
+          "restore drill rejected invalid backup bundle",
+        ],
+        ["volume_create_hang", "restore drill failed database startup"],
+        ["database_start_hang", "restore drill failed database startup"],
+        [
+          "database_exec_migration_hang",
+          "restore drill failed database restore",
+        ],
+        [
+          "registry_migration_hang",
+          "restore drill failed skill registry migration verification",
+        ],
+      ] as const;
+      const failures: string[] = [];
+
+      for (const [mode, expectedOutput] of lateCases) {
+        const caseRoot = path.join(sandbox, mode);
+        const captures = path.join(caseRoot, "captures");
+        const restoreTmp = path.join(caseRoot, "restore-tmp");
+        mkdirSync(captures, { recursive: true });
+        mkdirSync(restoreTmp);
+        const startedAt = Date.now();
+        const result = spawnSync(
+          "sh",
+          [
+            script,
+            backupFile,
+            "1",
+            "1",
+            "11111111-1111-1111-1111-111111111111",
+            "fixture-session",
+          ],
+          {
+            encoding: "utf8",
+            timeout: 10_000,
+            env: {
+              ...process.env,
+              PATH: `${bin}:${process.env.PATH ?? ""}`,
+              CAPTURE_DIR: captures,
+              FAKE_BACKUP_FILE: backupFile,
+              FAKE_DOCKER_MODE: mode,
+              BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+              BACKUP_CRYPTO_IMAGE: "fake-crypto",
+              RESTORE_SKILL_REGISTRY_IMAGE: "fake-skill-registry",
+              RESTORE_TMP_ROOT: restoreTmp,
+              RESTORE_MAX_DECRYPTED_BYTES: "1048576",
+              RESTORE_SPACE_SAFETY_BYTES: "0",
+              RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
+              RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+              RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
+              RESTORE_DECRYPT_TIMEOUT_SECONDS: "1",
+              RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "3",
+              RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "2",
+            },
+          },
+        );
+        const elapsedMs = Date.now() - startedAt;
+        const output = `${result.stdout}${result.stderr}`.trim();
+        if (
+          result.error !== undefined ||
+          result.status !== 1 ||
+          output !== expectedOutput ||
+          elapsedMs >= 7_000 ||
+          readdirSync(restoreTmp).length !== 0 ||
+          readdirSync(captures).some((name) => name.endsWith(".exists"))
+        ) {
+          failures.push(
+            `${mode}: status=${result.status} error=${result.error?.message ?? "none"} elapsed=${elapsedMs} output=${JSON.stringify(output)} temp=${JSON.stringify(readdirSync(restoreTmp))}`,
+          );
+        }
+        for (const pidFile of readdirSync(captures).filter((name) =>
+          name.endsWith(".pids"),
+        )) {
+          const pid = readFileSync(path.join(captures, pidFile), "utf8").trim();
+          const live = spawnSync("sh", ["-c", 'kill -0 "$1"', "sh", pid]);
+          if (live.status === 0) {
+            failures.push(`${mode}: live pid ${pid}`);
+          }
+        }
+      }
+
+      expect(failures).toEqual([]);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 45_000);
+
+  it("contains pg_restore output and bounds database resource cleanup", () => {
+    const sandbox = mkdtempSync(
+      path.join(tmpdir(), "restore-output-boundary-"),
+    );
+    const bin = path.join(sandbox, "bin");
+    const captures = path.join(sandbox, "captures");
+    const fixture = path.join(sandbox, "fixture");
+    const restoreTmp = path.join(sandbox, "restore-tmp");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const dumpFile = path.join(fixture, "database.dump");
+    const manifestFile = path.join(fixture, "skill-backup.manifest");
+    const sentinel = "skill-registry-archive-bytes-sentinel-deadbeef";
+
+    try {
+      for (const directory of [bin, captures, fixture, restoreTmp]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(dumpFile, "fake-custom-database-dump", { mode: 0o600 });
+      const dumpSha256 = createHash("sha256")
+        .update(readFileSync(dumpFile))
+        .digest("hex");
+      writeFileSync(
+        manifestFile,
+        `format_version=1
+dump_sha256=${dumpSha256}
+skill_registry_schema_version=1
+skill_revision_count=1
+skill_artifact_count=1
+skill_file_count=1
+`,
+        { mode: 0o600 },
+      );
+      const archive = spawnSync(
+        "tar",
+        [
+          "-cf",
+          backupFile,
+          "-C",
+          fixture,
+          "skill-backup.manifest",
+          "database.dump",
+        ],
+        { encoding: "utf8" },
+      );
+      expect(archive.status, `${archive.stdout}${archive.stderr}`).toBe(0);
+
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+
+increment() {
+  counter=$1
+  count=$(cat "$CAPTURE_DIR/$counter" 2>/dev/null || printf 0)
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$CAPTURE_DIR/$counter"
+  printf '%s\n' "$count"
+}
+
+command=$1
+shift
+case "$command" in
+  create)
+    previous=
+    name=
+    work_mount=
+    input_mount=
+    for argument in "$@"; do
+      if [ "$previous" = --name ]; then
+        name=$argument
+      fi
+      case "$argument" in
+        *:/work) work_mount=\${argument%:/work} ;;
+        *:/input:ro) input_mount=\${argument%:/input:ro} ;;
+      esac
+      previous=$argument
+    done
+    case "$name" in
+      aap-restore-decrypt-*) resource=decrypt ;;
+      aap-restore-bundle-*) resource=bundle ;;
+      aap-restore-digest-*) resource=digest ;;
+      aap-restore-registry-*) resource=registry ;;
+      aap-restore-drill-*) resource=database ;;
+      *) exit 1 ;;
+    esac
+    printf '%s\n' "$name" >"$CAPTURE_DIR/$resource.name"
+    [ -z "$work_mount" ] || printf '%s\n' "$work_mount" >"$CAPTURE_DIR/$resource.work"
+    [ -z "$input_mount" ] || printf '%s\n' "$input_mount" >"$CAPTURE_DIR/$resource.input"
+    : >"$CAPTURE_DIR/$resource.exists"
+    printf '%s\n' fake-container-id
+    ;;
+  start)
+    target=$1
+    resource=
+    for candidate in decrypt bundle digest database registry; do
+      if [ -f "$CAPTURE_DIR/$candidate.name" ] &&
+         [ "$target" = "$(cat "$CAPTURE_DIR/$candidate.name")" ]; then
+        resource=$candidate
+      fi
+    done
+    case "$resource" in
+      decrypt)
+        work=$(cat "$CAPTURE_DIR/decrypt.work")
+        cp "$FAKE_BACKUP_FILE" "$work/restored.bundle.partial"
+        ;;
+      bundle)
+        work=$(cat "$CAPTURE_DIR/bundle.work")
+        mkdir "$work/extracted"
+        chmod 700 "$work/extracted"
+        tar -xf "$work/restored.bundle" -C "$work/extracted"
+        ;;
+      digest)
+        work=$(cat "$CAPTURE_DIR/digest.work")
+        input=$(cat "$CAPTURE_DIR/digest.input")
+        sha256sum "$input/database.dump" | awk '{ print $1 }' >"$work/dump-digest"
+        ;;
+      database|registry) ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  wait) printf '%s\n' 0 ;;
+  ps)
+    for resource in decrypt bundle digest database registry; do
+      if [ -f "$CAPTURE_DIR/$resource.exists" ]; then
+        cat "$CAPTURE_DIR/$resource.name"
+      fi
+    done
+    ;;
+  exec)
+    container=$1
+    shift
+    case "\${1:-}" in
+      pg_isready) exit 0 ;;
+      sh)
+        if [ "$FAKE_DOCKER_MODE" = success_temp_rm_failure ]; then
+          case "$*" in
+            *"DELETE FROM skill_registry.skills"*|*"backup-insert-denied.sql"*|*"SELECT count(*) FROM skill_registry.skills"*)
+              printf '%s\n' 'ERROR: 42501 permission denied' >&2
+              exit 1
+              ;;
+          esac
+        fi
+        exit 0
+        ;;
+      pg_restore)
+        if [ "$FAKE_DOCKER_MODE" = success_temp_rm_failure ]; then
+          exit 0
+        fi
+        printf '%s\n' 'pg_restore raw stdout: ${sentinel}'
+        printf '%s\n' 'pg_restore: error: COPY skill_registry.skill_revision_artifacts: ${sentinel}' >&2
+        exit 1
+        ;;
+      psql)
+        [ "$FAKE_DOCKER_MODE" = success_temp_rm_failure ] || exit 1
+        case " $* " in
+          *"BEGIN TRANSACTION READ ONLY"*) printf '%s\n' '1|1|1|1|1|1|0|0|0|t' ;;
+          *"SELECT count(*) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 8 ;;
+          *"SELECT max(created_at) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 1784480751832 ;;
+          *"WHERE id = "*) printf '%s\n' 1 ;;
+          *"WHERE session_id = "*) printf '%s\n' 1 ;;
+          *"SELECT count(*) FROM public.users"*) printf '%s\n' 1 ;;
+          *"SELECT count(*) FROM agno.agno_sessions"*) printf '%s\n' 1 ;;
+          *"SELECT count(*) FROM agno.agno_schema_versions"*) printf '%s\n' 1 ;;
+          *"to_regclass('public.users')"*) printf '%s\n' t ;;
+          *) exit 1 ;;
+        esac
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  rm)
+    target=
+    for argument in "$@"; do target=$argument; done
+    for resource in decrypt bundle digest database registry; do
+      if [ -f "$CAPTURE_DIR/$resource.name" ] &&
+         [ "$target" = "$(cat "$CAPTURE_DIR/$resource.name")" ]; then
+        if [ "$resource" = database ]; then
+          count=$(increment restore-container-rm.count)
+          if [ "$FAKE_DOCKER_MODE" = container_hang ] && [ "$count" -eq 1 ]; then
+            printf '%s\n' "$$" >"$CAPTURE_DIR/container-rm.pids"
+            trap '' TERM INT HUP
+            exec sleep 10
+          fi
+        fi
+        /bin/rm -f "$CAPTURE_DIR/$resource.exists"
+        exit 0
+      fi
+    done
+    exit 1
+    ;;
+  volume)
+    subcommand=$1
+    shift
+    case "$subcommand" in
+      create)
+        printf '%s\n' "$1" >"$CAPTURE_DIR/restore-volume.name"
+        : >"$CAPTURE_DIR/restore-volume.exists"
+        printf '%s\n' "$1"
+        ;;
+      rm)
+        count=$(increment restore-volume-rm.count)
+        if [ "$FAKE_DOCKER_MODE" = volume_hang ] && [ "$count" -eq 1 ]; then
+          printf '%s\n' "$$" >"$CAPTURE_DIR/volume-rm.pids"
+          trap '' TERM INT HUP
+          exec sleep 10
+        fi
+        if [ "$FAKE_DOCKER_MODE" = volume_unknown ]; then
+          exit 1
+        fi
+        /bin/rm -f "$CAPTURE_DIR/restore-volume.exists"
+        ;;
+      ls)
+        increment restore-volume-query.count >/dev/null
+        if [ "$FAKE_DOCKER_MODE" = volume_unknown ]; then
+          printf '%s\n' 'daemon connection failed: ${sentinel}' >&2
+          exit 1
+        fi
+        if [ -f "$CAPTURE_DIR/restore-volume.exists" ]; then
+          cat "$CAPTURE_DIR/restore-volume.name"
+        fi
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  stop) exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "rm"),
+        `#!/bin/sh
+set -eu
+case "$FAKE_DOCKER_MODE:\${1:-}:\${2:-}" in
+  success_temp_rm_failure:-rf:"$RESTORE_TMP_ROOT"/aap-restore-drill.*) exit 1 ;;
+esac
+exec /bin/rm "$@"
+`,
+        { mode: 0o700 },
+      );
+
+      const cases = [
+        {
+          mode: "baseline",
+          expectedOutput: "restore drill failed database restore",
+          expectedMaxElapsedMs: 5_000,
+        },
+        {
+          mode: "container_hang",
+          expectedOutput: "restore drill failed database restore",
+          expectedMaxElapsedMs: 7_000,
+        },
+        {
+          mode: "volume_hang",
+          expectedOutput: "restore drill failed database restore",
+          expectedMaxElapsedMs: 7_000,
+        },
+        {
+          mode: "volume_unknown",
+          expectedOutput:
+            "restore drill failed database restore\nrestore drill cleanup failed",
+          expectedMaxElapsedMs: 7_000,
+        },
+        {
+          mode: "success_temp_rm_failure",
+          expectedOutput: "restore drill cleanup failed",
+          expectedMaxElapsedMs: 8_000,
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        const caseCaptures = path.join(captures, testCase.mode);
+        const caseRestoreTmp = path.join(restoreTmp, testCase.mode);
+        mkdirSync(caseCaptures);
+        mkdirSync(caseRestoreTmp);
+        const startedAt = Date.now();
+        const result = spawnSync(
+          "sh",
+          [
+            path.join(root, "infra/docker/restore-drill.sh"),
+            backupFile,
+            "1",
+            "1",
+            "11111111-1111-1111-1111-111111111111",
+            "fixture-session",
+          ],
+          {
+            encoding: "utf8",
+            timeout: 15_000,
+            env: {
+              ...process.env,
+              PATH: `${bin}:${process.env.PATH ?? ""}`,
+              CAPTURE_DIR: caseCaptures,
+              FAKE_BACKUP_FILE: backupFile,
+              FAKE_DOCKER_MODE: testCase.mode,
+              BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+              BACKUP_CRYPTO_IMAGE: "fake-crypto",
+              RESTORE_SKILL_REGISTRY_IMAGE: "fake-skill-registry",
+              RESTORE_TMP_ROOT: caseRestoreTmp,
+              RESTORE_MAX_DECRYPTED_BYTES: "1048576",
+              RESTORE_SPACE_SAFETY_BYTES: "0",
+              RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+              RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
+              RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "3",
+            },
+          },
+        );
+        const elapsedMs = Date.now() - startedAt;
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.error, `${testCase.mode}: ${output}`).toBeUndefined();
+        expect(result.status, `${testCase.mode}: ${output}`).toBe(1);
+        expect(output.trim(), testCase.mode).toBe(testCase.expectedOutput);
+        expect(output, testCase.mode).not.toContain(sentinel);
+        expect(output, testCase.mode).not.toContain("pg_restore:");
+        expect(elapsedMs, testCase.mode).toBeLessThan(
+          testCase.expectedMaxElapsedMs,
+        );
+        if (testCase.mode === "success_temp_rm_failure") {
+          expect(readdirSync(caseRestoreTmp), testCase.mode).not.toEqual([]);
+        } else {
+          expect(readdirSync(caseRestoreTmp), testCase.mode).toEqual([]);
+        }
+        const dockerCalls = readFileSync(
+          path.join(caseCaptures, "docker.calls"),
+          "utf8",
+        );
+        expect(dockerCalls).toContain("exec aap-restore-drill-");
+        expect(dockerCalls).toContain("pg_restore");
+        expect(dockerCalls).toContain("rm -f aap-restore-drill-");
+        expect(dockerCalls).toContain("volume rm aap-restore-drill-");
+        if (testCase.mode !== "volume_unknown") {
+          expect(
+            statSync(path.join(caseCaptures, "database.exists"), {
+              throwIfNoEntry: false,
+            }),
+            testCase.mode,
+          ).toBeUndefined();
+          expect(
+            statSync(path.join(caseCaptures, "restore-volume.exists"), {
+              throwIfNoEntry: false,
+            }),
+            testCase.mode,
+          ).toBeUndefined();
+        }
+        for (const pidFile of readdirSync(caseCaptures).filter((name) =>
+          name.endsWith(".pids"),
+        )) {
+          const pid = readFileSync(
+            path.join(caseCaptures, pidFile),
+            "utf8",
+          ).trim();
+          const live = spawnSync("sh", ["-c", 'kill -0 "$1"', "sh", pid]);
+          expect(live.status, `${testCase.mode}: live pid ${pid}`).not.toBe(0);
+        }
+      }
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it("backs up all platform and AgentOS schemas through one protected dump", () => {
     const script = read("infra/docker/backup.sh");
-    for (const schema of ["public", "drizzle", "agno"]) {
+    const backup = renderComposeFixture().services.backup;
+    for (const schema of ["public", "drizzle", "agno", "skill_registry"]) {
       expect(script).toContain(`--schema=${schema}`);
     }
+    expect(script).not.toContain("--schema=agent_control");
     expect(script.match(/pg_dump/g)).toHaveLength(1);
+    expect(script).toContain("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    expect(script).toContain("pg_export_snapshot()");
+    expect(script).toContain('--snapshot="$snapshot_id"');
+    expect(script).toContain("snapshot_group_pid");
+    expect(script).toContain("mkfifo");
+    expect(script).toContain("timeout");
+    expect(script).toContain("BACKUP_DUMP_TIMEOUT_SECONDS");
+    expect(script).toContain("BACKUP_DUMP_KILL_AFTER_SECONDS");
+    expect(script).toContain("BACKUP_PROCESS_KILL_AFTER_SECONDS");
+    expect(script).toContain("BACKUP_ENCRYPT_TIMEOUT_SECONDS");
+    expect(script).toContain("BACKUP_ENCRYPT_KILL_AFTER_SECONDS");
+    expect(script).toContain("BACKUP_SPACE_SAFETY_BYTES");
+    expect(script).toContain("pg_database_size(current_database())");
+    expect(script).toContain("backup temporary space budget is insufficient");
+    expect(script).toContain("backup database dump failed");
+    expect(script).toContain("terminate_process_group");
+    expect(script).toContain(
+      'timeout_command="${BACKUP_TIMEOUT_COMMAND:-/usr/bin/timeout}"',
+    );
+    expect(script.match(/setsid "\$timeout_command"/g)).toHaveLength(3);
+    expect(script).not.toContain("timeout --foreground");
+    expect(backup?.environment?.BACKUP_DUMP_TIMEOUT_SECONDS).toBe("3600");
+    expect(backup?.environment?.BACKUP_DUMP_KILL_AFTER_SECONDS).toBe("5");
+    expect(backup?.environment?.BACKUP_SNAPSHOT_TIMEOUT_SECONDS).toBe("3665");
+    expect(backup?.environment?.BACKUP_SPACE_SAFETY_BYTES).toBe("67108864");
+    expect(backup?.tmpfs).toContain("/tmp:rw,noexec,nosuid,size=1g");
+    expect(read(".env.example")).toContain("BACKUP_TMPFS_SIZE=1g");
+    expect(script).toContain("format_version=1");
+    expect(script).toContain("dump_sha256=");
+    expect(script).toContain("skill_registry_schema_version=");
+    expect(script).toContain("skill_revision_count=");
+    expect(script).toContain("skill_artifact_count=");
+    expect(script).toContain("skill_file_count=");
+    expect(script).toContain("skill-backup.manifest");
+    expect(script).toContain("database.dump");
+    expect(script).toContain("tar -cf");
     expect(script).toContain("--format=custom");
+    expect(script).not.toContain("--no-owner");
+    expect(script).not.toContain("--no-acl");
     expect(script).toContain("PGPASSFILE");
     expect(script).not.toContain("BACKUP_DATABASE_URL");
     expect(script).toContain("--symmetric");
@@ -3231,9 +6566,774 @@ exit 0
     expect(script).toContain("trap cleanup EXIT");
     expect(script).toContain("trap 'exit 130' INT");
     expect(script).toContain("trap 'exit 143' TERM");
+    expect(backup?.depends_on?.migrate?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(backup?.depends_on?.["agent-migrate"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(backup?.depends_on?.["skill-registry-migrate"]?.condition).toBe(
+      "service_completed_successfully",
+    );
   });
 
-  it("keeps backup secrets out of command argv and removes plaintext work files", () => {
+  it("bounds restore decrypt input and expansion before plaintext can fill disk", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "restore-decrypt-bounds-"));
+    const bin = path.join(sandbox, "bin");
+    const captures = path.join(sandbox, "captures");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+    const args = [
+      script,
+      backupFile,
+      "1",
+      "1",
+      "11111111-1111-1111-1111-111111111111",
+      "fixture-session",
+    ];
+
+    try {
+      mkdirSync(bin);
+      mkdirSync(captures);
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(backupFile, "x".repeat(64), { mode: 0o600 });
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+case "\${1:-}" in
+  create)
+    previous=
+    for argument in "$@"; do
+      if [ "$previous" = --name ]; then
+        printf '%s\n' "$argument" >"$CAPTURE_DIR/container.name"
+      fi
+      case "$argument" in
+        *:/work) printf '%s\n' "\${argument%:/work}" >"$CAPTURE_DIR/work" ;;
+      esac
+      previous=$argument
+    done
+    : >"$CAPTURE_DIR/container.exists"
+    printf '%s\n' fake-decrypt-container-id
+    ;;
+  start)
+    case "\${RESTORE_FAKE_MODE:-}" in
+      expansion)
+        work=$(cat "$CAPTURE_DIR/work")
+        count=0
+        while [ "$count" -lt 64 ]; do
+          printf x
+          count=$((count + 1))
+        done >"$work/restored.bundle.partial"
+        exit 1
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  stop)
+    exit 0
+    ;;
+  rm)
+    rm -f "$CAPTURE_DIR/container.exists"
+    ;;
+  ps)
+    if [ -f "$CAPTURE_DIR/container.exists" ]; then
+      cat "$CAPTURE_DIR/container.name"
+    fi
+    ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "df"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf 'test 1048576 0 %s 0%% /restore\n' "\${RESTORE_FAKE_AVAILABLE_KIB:-1048576}"
+`,
+        { mode: 0o700 },
+      );
+
+      const commonEnv = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        CAPTURE_DIR: captures,
+        BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+        BACKUP_CRYPTO_IMAGE: "fake-crypto",
+        RESTORE_MAX_ENCRYPTED_BYTES: "128",
+        RESTORE_MAX_DECRYPTED_BYTES: "32",
+        RESTORE_DECRYPT_TIMEOUT_SECONDS: "5",
+        RESTORE_DECRYPT_KILL_AFTER_SECONDS: "1",
+        RESTORE_SPACE_SAFETY_BYTES: "16",
+      };
+
+      const oversized = spawnSync("sh", args, {
+        encoding: "utf8",
+        env: {
+          ...commonEnv,
+          RESTORE_MAX_ENCRYPTED_BYTES: "32",
+          RESTORE_TMP_ROOT: path.join(sandbox, "oversized-tmp"),
+        },
+      });
+      expect(`${oversized.stdout}${oversized.stderr}`.trim()).toBe(
+        "restore drill rejected oversized encrypted backup",
+      );
+      expect(oversized.status).toBe(1);
+      expect(readdirSync(captures)).toEqual([]);
+
+      writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      const invalidBudget = spawnSync("sh", args, {
+        encoding: "utf8",
+        env: {
+          ...commonEnv,
+          RESTORE_SPACE_SAFETY_BYTES: "-1",
+          RESTORE_TMP_ROOT: path.join(sandbox, "invalid-budget-tmp"),
+        },
+      });
+      expect(`${invalidBudget.stdout}${invalidBudget.stderr}`.trim()).toBe(
+        "restore drill space budget configuration is invalid",
+      );
+      expect(invalidBudget.status).toBe(64);
+      expect(readdirSync(captures)).toEqual([]);
+
+      const insufficientTmp = path.join(sandbox, "insufficient-tmp");
+      mkdirSync(insufficientTmp);
+      const insufficient = spawnSync("sh", args, {
+        encoding: "utf8",
+        env: {
+          ...commonEnv,
+          RESTORE_MAX_DECRYPTED_BYTES: "2048",
+          RESTORE_FAKE_AVAILABLE_KIB: "1",
+          RESTORE_TMP_ROOT: insufficientTmp,
+        },
+      });
+      expect(`${insufficient.stdout}${insufficient.stderr}`.trim()).toBe(
+        "restore drill temporary space budget is insufficient",
+      );
+      expect(insufficient.status).toBe(1);
+      expect(readdirSync(captures)).toEqual([]);
+      expect(readdirSync(insufficientTmp)).toEqual([]);
+
+      const expansionTmp = path.join(sandbox, "expansion-tmp");
+      mkdirSync(expansionTmp);
+      const expansion = spawnSync("sh", args, {
+        encoding: "utf8",
+        env: {
+          ...commonEnv,
+          RESTORE_FAKE_MODE: "expansion",
+          RESTORE_TMP_ROOT: expansionTmp,
+        },
+      });
+      expect(`${expansion.stdout}${expansion.stderr}`.trim()).toBe(
+        "restore drill rejected oversized decrypted bundle",
+      );
+      expect(expansion.status).toBe(1);
+      expect(readdirSync(expansionTmp)).toEqual([]);
+      expect(
+        readFileSync(path.join(captures, "docker.calls"), "utf8"),
+      ).toContain("create --name aap-restore-decrypt-");
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it("bounds and reconciles every decrypt Docker CLI phase", () => {
+    const sandbox = mkdtempSync(
+      path.join(tmpdir(), "restore-docker-lifecycle-"),
+    );
+    const bin = path.join(sandbox, "bin");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+    const args = [
+      script,
+      backupFile,
+      "1",
+      "1",
+      "11111111-1111-1111-1111-111111111111",
+      "fixture-session",
+    ];
+
+    try {
+      mkdirSync(bin);
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      writeFileSync(
+        path.join(bin, "df"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf '%s\n' 'test 1048576 0 1048576 0% /restore'
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "signal-driver"),
+        `#!/bin/sh
+set -u
+"$@" &
+child=$!
+attempt=0
+until [ -f "$SIGNAL_PHASE_MARKER" ]; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 100 ]; then
+    kill -KILL "$child" >/dev/null 2>&1 || true
+    wait "$child" >/dev/null 2>&1 || true
+    exit 88
+  fi
+  sleep 0.1
+done
+kill -TERM "$child"
+attempt=0
+until [ -f "$SECOND_SIGNAL_PHASE_MARKER" ]; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 100 ]; then
+    kill -KILL "$child" >/dev/null 2>&1 || true
+    wait "$child" >/dev/null 2>&1 || true
+    exit 89
+  fi
+  sleep 0.1
+done
+kill -INT "$child" >/dev/null 2>&1 || true
+wait "$child"
+exit $?
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+
+hang_phase() {
+  phase=$1
+  printf '%s\n' "$$" >>"$CAPTURE_DIR/$phase.pids"
+  : >"$CAPTURE_DIR/$phase.started"
+  trap '' TERM INT HUP
+  exec sleep 1000
+}
+
+command=$1
+shift
+case "$command" in
+  create)
+    case "$FAKE_DOCKER_MODE" in
+      create_hang|signal_create) hang_phase create ;;
+    esac
+    previous=
+    for argument in "$@"; do
+      if [ "$previous" = --name ]; then
+        printf '%s\n' "$argument" >"$CAPTURE_DIR/container.name"
+      fi
+      previous=$argument
+    done
+    : >"$CAPTURE_DIR/container.exists"
+    printf '%s\n' fake-decrypt-container-id
+    ;;
+  start)
+    case "$FAKE_DOCKER_MODE" in
+      start_hang|signal_start)
+        hang_phase start
+        ;;
+    esac
+    exit 0
+    ;;
+  wait)
+    case "$FAKE_DOCKER_MODE" in
+      wait_hang|signal_wait) hang_phase wait ;;
+    esac
+    printf '%s\n' 1
+    ;;
+  rm)
+    : >"$CAPTURE_DIR/rm.started"
+    case "$FAKE_DOCKER_MODE" in
+      rm_hang)
+        if [ ! -f "$CAPTURE_DIR/rm.hung-once" ]; then
+          : >"$CAPTURE_DIR/rm.hung-once"
+          hang_phase rm
+        fi
+        ;;
+    esac
+    [ -f "$CAPTURE_DIR/container.exists" ] || exit 1
+    rm -f "$CAPTURE_DIR/container.exists"
+    ;;
+  ps)
+    if [ -f "$CAPTURE_DIR/container.exists" ]; then
+      cat "$CAPTURE_DIR/container.name"
+    fi
+    ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const baseEnv = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+        BACKUP_CRYPTO_IMAGE: "fake-crypto",
+        RESTORE_MAX_ENCRYPTED_BYTES: "128",
+        RESTORE_MAX_DECRYPTED_BYTES: "32",
+        RESTORE_SPACE_SAFETY_BYTES: "0",
+        RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
+        RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+        RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
+        RESTORE_DECRYPT_TIMEOUT_SECONDS: "1",
+        RESTORE_DECRYPT_KILL_AFTER_SECONDS: "1",
+        RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "3",
+        RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "2",
+      };
+      const cases = [
+        [
+          "create_hang",
+          "restore drill decryption failed\nrestore drill cleanup failed",
+          "create",
+        ],
+        ["start_hang", "restore drill decryption timed out", "start"],
+        ["wait_hang", "restore drill decryption timed out", "wait"],
+        ["rm_hang", "restore drill decryption failed", "rm"],
+      ] as const;
+
+      for (const [mode, expectedOutput, expectedPhase] of cases) {
+        const caseRoot = path.join(sandbox, mode);
+        const captures = path.join(caseRoot, "captures");
+        const restoreTmp = path.join(caseRoot, "restore-tmp");
+        mkdirSync(captures, { recursive: true });
+        mkdirSync(restoreTmp);
+        const startedAt = Date.now();
+        const result = spawnSync("sh", args, {
+          encoding: "utf8",
+          timeout: 10_000,
+          env: {
+            ...baseEnv,
+            CAPTURE_DIR: captures,
+            FAKE_DOCKER_MODE: mode,
+            RESTORE_TMP_ROOT: restoreTmp,
+          },
+        });
+        const elapsedMs = Date.now() - startedAt;
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.error, `${mode}: ${output}`).toBeUndefined();
+        expect(result.status, `${mode}: ${output}`).toBe(1);
+        expect(output.trim(), mode).toBe(expectedOutput);
+        expect(elapsedMs, mode).toBeLessThan(8_000);
+        expect(readdirSync(restoreTmp), mode).toEqual([]);
+        expect(
+          statSync(path.join(captures, "container.exists"), {
+            throwIfNoEntry: false,
+          }),
+          mode,
+        ).toBeUndefined();
+        const calls = readFileSync(path.join(captures, "docker.calls"), "utf8");
+        expect(calls, mode).toContain("create --name aap-restore-decrypt-");
+        expect(calls, mode).toContain(`${expectedPhase}`);
+        for (const pidFile of readdirSync(captures).filter((name) =>
+          name.endsWith(".pids"),
+        )) {
+          for (const pid of readFileSync(path.join(captures, pidFile), "utf8")
+            .trim()
+            .split("\n")) {
+            const live = spawnSync("sh", ["-c", 'kill -0 "$1"', "sh", pid]);
+            expect(live.status, `${mode}: live pid ${pid}`).not.toBe(0);
+          }
+        }
+      }
+
+      for (const phase of ["create", "start", "wait"] as const) {
+        const mode = `signal_${phase}`;
+        const caseRoot = path.join(sandbox, mode);
+        const captures = path.join(caseRoot, "captures");
+        const restoreTmp = path.join(caseRoot, "restore-tmp");
+        mkdirSync(captures, { recursive: true });
+        mkdirSync(restoreTmp);
+        const startedAt = Date.now();
+        const result = spawnSync(path.join(bin, "signal-driver"), args, {
+          encoding: "utf8",
+          timeout: 10_000,
+          env: {
+            ...baseEnv,
+            CAPTURE_DIR: captures,
+            FAKE_DOCKER_MODE: mode,
+            RESTORE_TMP_ROOT: restoreTmp,
+            SIGNAL_PHASE_MARKER: path.join(captures, `${phase}.started`),
+            SECOND_SIGNAL_PHASE_MARKER: path.join(captures, "rm.started"),
+          },
+        });
+        const elapsedMs = Date.now() - startedAt;
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.error, `${mode}: ${output}`).toBeUndefined();
+        expect(result.status, `${mode}: ${output}`).toBe(143);
+        expect(output.trim(), mode).toBe(
+          phase === "create"
+            ? "restore drill interrupted\nrestore drill cleanup failed"
+            : "restore drill interrupted",
+        );
+        expect(elapsedMs, mode).toBeLessThan(8_000);
+        expect(readdirSync(restoreTmp), mode).toEqual([]);
+        expect(
+          statSync(path.join(captures, "container.exists"), {
+            throwIfNoEntry: false,
+          }),
+          mode,
+        ).toBeUndefined();
+        for (const pidFile of readdirSync(captures).filter((name) =>
+          name.endsWith(".pids"),
+        )) {
+          for (const pid of readFileSync(path.join(captures, pidFile), "utf8")
+            .trim()
+            .split("\n")) {
+            const live = spawnSync("sh", ["-c", 'kill -0 "$1"', "sh", pid]);
+            expect(live.status, `${mode}: live pid ${pid}`).not.toBe(0);
+          }
+        }
+      }
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 80_000);
+
+  it("fails closed when decrypt container identity queries are unknown", () => {
+    const sandbox = mkdtempSync(
+      path.join(tmpdir(), "restore-docker-query-state-"),
+    );
+    const bin = path.join(sandbox, "bin");
+    const keyFile = path.join(sandbox, "encryption-key");
+    const backupFile = path.join(sandbox, "backup.dump.gpg");
+    const script = path.join(root, "infra/docker/restore-drill.sh");
+    const args = [
+      script,
+      backupFile,
+      "1",
+      "1",
+      "11111111-1111-1111-1111-111111111111",
+      "fixture-session",
+    ];
+
+    try {
+      mkdirSync(bin);
+      writeFileSync(keyFile, "0123456789abcdef0123456789abcdef", {
+        mode: 0o600,
+      });
+      writeFileSync(backupFile, "cipher", { mode: 0o600 });
+      writeFileSync(
+        path.join(bin, "df"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf '%s\\n' 'test 1048576 0 1048576 0% /restore'
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "signal-driver"),
+        `#!/bin/sh
+set -u
+"$@" &
+child=$!
+attempt=0
+until [ -f "$SIGNAL_PHASE_MARKER" ]; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 100 ]; then
+    kill -KILL "$child" >/dev/null 2>&1 || true
+    wait "$child" >/dev/null 2>&1 || true
+    exit 88
+  fi
+  sleep 0.1
+done
+kill -TERM "$child"
+wait "$child"
+exit $?
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >>"$CAPTURE_DIR/docker.calls"
+
+increment() {
+  counter=$1
+  count=$(cat "$CAPTURE_DIR/$counter" 2>/dev/null || printf 0)
+  count=$((count + 1))
+  printf '%s\\n' "$count" >"$CAPTURE_DIR/$counter"
+  printf '%s\\n' "$count"
+}
+
+command=$1
+shift
+case "$command" in
+  create)
+    previous=
+    for argument in "$@"; do
+      if [ "$previous" = --name ]; then
+        printf '%s\\n' "$argument" >"$CAPTURE_DIR/decrypt.name"
+      fi
+      previous=$argument
+    done
+    case "$FAKE_DOCKER_MODE" in
+      exact_absent) ;;
+      *) : >"$CAPTURE_DIR/container.exists" ;;
+    esac
+    : >"$CAPTURE_DIR/create.started"
+    case "$FAKE_DOCKER_MODE" in
+      signal_permanent_unknown)
+        printf '%s\\n' "$$" >"$CAPTURE_DIR/create.pids"
+        trap '' TERM INT HUP
+        exec sleep 1000
+        ;;
+    esac
+    exit 0
+    ;;
+  rm)
+    count=$(increment rm.count)
+    case "$FAKE_DOCKER_MODE:$count" in
+      transient_unknown_exists:3)
+        rm -f "$CAPTURE_DIR/container.exists"
+        exit 0
+        ;;
+    esac
+    exit 1
+    ;;
+  ps)
+    count=$(increment query.count)
+    case "$FAKE_DOCKER_MODE:$count" in
+      transient_unknown_exists:1)
+        printf '%s\\n' 'daemon connection failed: sensitive diagnostic' >&2
+        exit 1
+        ;;
+      transient_unknown_exists:2)
+        cat "$CAPTURE_DIR/decrypt.name"
+        ;;
+      exact_absent:*)
+        exit 0
+        ;;
+      permanent_unexpected:*)
+        printf '%s\\n' unexpected-container-name
+        ;;
+      *)
+        printf '%s\\n' 'daemon connection failed: sensitive diagnostic' >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  stop) exit 1 ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+
+      const baseEnv = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+        BACKUP_CRYPTO_IMAGE: "fake-crypto",
+        RESTORE_MAX_ENCRYPTED_BYTES: "128",
+        RESTORE_MAX_DECRYPTED_BYTES: "32",
+        RESTORE_SPACE_SAFETY_BYTES: "0",
+        RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "5",
+        RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "2",
+        RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
+        RESTORE_DECRYPT_TIMEOUT_SECONDS: "1",
+        RESTORE_DECRYPT_KILL_AFTER_SECONDS: "1",
+        RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "3",
+      };
+      const cases = [
+        {
+          mode: "permanent_unknown",
+          expectedStatus: 1,
+          expectedOutput:
+            "restore drill decryption failed\nrestore drill cleanup failed",
+          expectedRmCount: "3",
+          expectedQueryCount: "4",
+          containerMayRemain: true,
+          signal: false,
+        },
+        {
+          mode: "transient_unknown_exists",
+          expectedStatus: 1,
+          expectedOutput: "restore drill decryption failed",
+          expectedRmCount: "3",
+          expectedQueryCount: "3",
+          containerMayRemain: false,
+          signal: false,
+        },
+        {
+          mode: "exact_absent",
+          expectedStatus: 1,
+          expectedOutput: "restore drill decryption failed",
+          expectedRmCount: "2",
+          expectedQueryCount: "3",
+          containerMayRemain: false,
+          signal: false,
+        },
+        {
+          mode: "permanent_unexpected",
+          expectedStatus: 1,
+          expectedOutput:
+            "restore drill decryption failed\nrestore drill cleanup failed",
+          expectedRmCount: "3",
+          expectedQueryCount: "4",
+          containerMayRemain: true,
+          signal: false,
+        },
+        {
+          mode: "signal_permanent_unknown",
+          expectedStatus: 143,
+          expectedOutput:
+            "restore drill interrupted\nrestore drill cleanup failed",
+          expectedRmCount: "at_least_one",
+          expectedQueryCount: "at_least_one",
+          containerMayRemain: true,
+          signal: true,
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        const caseRoot = path.join(sandbox, testCase.mode);
+        const captures = path.join(caseRoot, "captures");
+        const restoreTmp = path.join(caseRoot, "restore-tmp");
+        mkdirSync(captures, { recursive: true });
+        mkdirSync(restoreTmp);
+        const spawnArgs = testCase.signal
+          ? [path.join(bin, "signal-driver"), ...args]
+          : ["sh", ...args];
+        const result = spawnSync(spawnArgs[0], spawnArgs.slice(1), {
+          encoding: "utf8",
+          timeout: 15_000,
+          env: {
+            ...baseEnv,
+            CAPTURE_DIR: captures,
+            FAKE_DOCKER_MODE: testCase.mode,
+            RESTORE_TMP_ROOT: restoreTmp,
+            SIGNAL_PHASE_MARKER: path.join(captures, "create.started"),
+          },
+        });
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.error, `${testCase.mode}: ${output}`).toBeUndefined();
+        expect(result.status, `${testCase.mode}: ${output}`).toBe(
+          testCase.expectedStatus,
+        );
+        expect(output.trim(), testCase.mode).toBe(testCase.expectedOutput);
+        const rmCount = readFileSync(
+          path.join(captures, "rm.count"),
+          "utf8",
+        ).trim();
+        const queryCount = readFileSync(
+          path.join(captures, "query.count"),
+          "utf8",
+        ).trim();
+        if (testCase.expectedRmCount === "at_least_one") {
+          expect(Number(rmCount), testCase.mode).toBeGreaterThanOrEqual(1);
+          expect(Number(queryCount), testCase.mode).toBeGreaterThanOrEqual(1);
+        } else {
+          expect(rmCount, testCase.mode).toBe(testCase.expectedRmCount);
+          expect(queryCount, testCase.mode).toBe(testCase.expectedQueryCount);
+        }
+        expect(
+          statSync(path.join(captures, "container.exists"), {
+            throwIfNoEntry: false,
+          }) !== undefined,
+          testCase.mode,
+        ).toBe(testCase.containerMayRemain);
+        expect(output, testCase.mode).not.toContain("sensitive diagnostic");
+        expect(readdirSync(restoreTmp), testCase.mode).toEqual([]);
+        if (testCase.signal) {
+          const pid = readFileSync(
+            path.join(captures, "create.pids"),
+            "utf8",
+          ).trim();
+          const live = spawnSync("sh", ["-c", 'kill -0 "$1"', "sh", pid]);
+          expect(live.status, `live pid ${pid}`).not.toBe(0);
+        }
+      }
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("documents immutable registry recovery without weakening secret preflights", () => {
+    const runbook = read("infra/docker/README.md");
+
+    expect(runbook).toContain("skill-registry-bootstrap");
+    expect(runbook).toContain("skill-registry-migrate");
+    expect(runbook).toContain("agent / skill-registry → web → proxy/backup");
+    expect(runbook).toContain(
+      "`skill_registry`保存长期、不可变的 Skill 审核证据",
+    );
+    expect(runbook).toContain(
+      "`agent_control`仍是短生命周期控制面，不进入备份",
+    );
+    expect(runbook).toContain(
+      "schema version、revision/artifact/file 的源端计数",
+    );
+    expect(runbook).toContain("PostgreSQL 内验证每个 archive 的 SHA-256");
+    expect(runbook).toContain("空 Registry 使用显式计数`0/0/0`");
+    expect(runbook).toContain("BACKUP_DATABASE_PASSWORD_FILE");
+    expect(runbook).toContain("BACKUP_ENCRYPTION_KEY_FILE");
+    expect(runbook).toContain("BACKUP_CRYPTO_IMAGE");
+    expect(runbook).toContain("RESTORE_TMP_ROOT");
+    expect(runbook).toContain("BACKUP_DUMP_TIMEOUT_SECONDS=3600");
+    expect(runbook).toContain("BACKUP_DUMP_KILL_AFTER_SECONDS=5");
+    expect(runbook).toContain("BACKUP_SNAPSHOT_TIMEOUT_SECONDS=3665");
+    expect(runbook).toContain(
+      "Registry 计数来自加密 bundle 内、与 dump 同一导出 snapshot 的 manifest",
+    );
+    expect(runbook).toContain(
+      "infra/docker/restore-drill.sh \\\n  /secure/path/ai-agent-platform-YYYYMMDDTHHMMSSZ.dump.gpg \\\n  EXPECTED_USERS EXPECTED_AGNO_SESSIONS USER_FIXTURE_ID AGNO_SESSION_FIXTURE_ID",
+    );
+    expect(runbook).toContain(
+      "`docs/testing/run-restore-docker-lifecycle.sh`验证真实 Docker",
+    );
+    expect(runbook).toContain(
+      "`docs/testing/run-agentos-backup-restore.sh`验证当前完整 OpenPGP 备份恢复链",
+    );
+    expect(runbook).toContain("`pnpm secrets:preflight`");
+    expect(runbook).toContain("不得绕过`run-with-secret-env.sh`");
+    expect(runbook).toContain("宽于`0600`的宿主 Secret");
+    expect(runbook).toContain("密钥轮换");
+    expect(runbook).toContain("README 和测试配置中禁止放真实凭据");
+  });
+
+  it("keeps operator runbooks aligned with the Skill Registry topology", () => {
+    const serverReadiness = read("docs/deployment/server-readiness.md");
+    const rootReadme = read("README.md");
+
+    for (const runbook of [serverReadiness, rootReadme]) {
+      expect(runbook).toContain("skill-registry-bootstrap");
+      expect(runbook).toContain("skill-registry-migrate");
+      expect(runbook).toContain("skill-registry");
+      expect(runbook).toContain(
+        "db → migrate / agno-bootstrap → agent-migrate / agent-control-bootstrap / skill-registry-bootstrap → agent-control-migrate / skill-registry-migrate → agent / skill-registry → web → proxy/backup",
+      );
+    }
+
+    expect(serverReadiness).toContain(
+      "`public`、`drizzle`、`agno`、`skill_registry`",
+    );
+    for (const runbook of [serverReadiness, read("infra/docker/README.md")]) {
+      expect(runbook).toContain("Registry 常驻服务只持有 manager URL");
+      expect(runbook).toContain("Agent");
+      expect(runbook).toContain("Skill Registry");
+      expect(runbook).toContain("runtime URL");
+      expect(runbook).toContain("migrator");
+    }
+    expect(rootReadme).toContain("Skill 库、审核与运行时闭环已接入");
+    expect(rootReadme).toContain("96 MiB `/run/aap-skills` tmpfs");
+    expect(rootReadme).toContain("GitHub/GitLab/GitCode 导入");
+  });
+
+  it("keeps backup secrets out of command argv, bounds hung dumps, and removes plaintext work files", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "backup-secret-boundary-"));
     const bin = path.join(sandbox, "bin");
     const captures = path.join(sandbox, "captures");
@@ -3243,6 +7343,10 @@ exit 0
     const encryptionKeyFile = path.join(sandbox, "encryption-key");
     const databasePassword = "backup:password\\sentinel";
     const encryptionKey = "encryption-key-sentinel-0123456789abcdef";
+    const fakeDump = "fake-custom-dump";
+    const fakeDumpSha256 = createHash("sha256").update(fakeDump).digest("hex");
+    const hungProcessIds: number[] = [];
+    let hungFallbackWatchdogPid: number | undefined;
 
     try {
       for (const directory of [bin, captures, backups, temporary]) {
@@ -3250,6 +7354,45 @@ exit 0
       }
       writeFileSync(passwordFile, databasePassword, { mode: 0o600 });
       writeFileSync(encryptionKeyFile, encryptionKey, { mode: 0o600 });
+      writeFileSync(
+        path.join(bin, "timeout"),
+        `#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -s|-k|--signal|--kill-after) shift 2 ;;
+    --signal=*|--kill-after=*|--foreground) shift ;;
+    --) shift; break ;;
+    *) shift; break ;;
+  esac
+done
+exec "$@"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "setsid"),
+        `#!/bin/sh
+set -eu
+exec "$@"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "psql"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$@" >"$CAPTURE_DIR/psql.argv"
+while IFS= read -r command; do
+  printf '%s\\n' "$command" >>"$CAPTURE_DIR/psql.commands"
+  case "$command" in
+    *pg_export_snapshot*) printf '%s\\n' '00000003-0000001B-1|1|2|2|3|4|3|1|5|1024' ;;
+    '\\q') exit 0 ;;
+  esac
+done
+`,
+        { mode: 0o700 },
+      );
       writeFileSync(
         path.join(bin, "pg_dump"),
         `#!/bin/sh
@@ -3263,7 +7406,15 @@ for argument in "$@"; do
   esac
 done
 test -n "$output"
-printf 'fake-custom-dump' >"$output"
+printf '${fakeDump}' >"$output"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "sha256sum"),
+        `#!/bin/sh
+set -eu
+printf '%s  %s\\n' '${fakeDumpSha256}' "$1"
 `,
         { mode: 0o700 },
       );
@@ -3272,19 +7423,24 @@ printf 'fake-custom-dump' >"$output"
         `#!/bin/sh
 set -eu
 printf '%s\\n' "$@" >"$CAPTURE_DIR/gpg.argv"
-input=
 output=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --output) shift; output=$1 ;;
-    --*) ;;
-    *) input=$1 ;;
   esac
   shift
 done
-test -n "$input"
 test -n "$output"
-{ printf 'fake-openpgp'; cat "$input"; } >"$output"
+cat >"$CAPTURE_DIR/plaintext.bundle"
+{ printf 'fake-openpgp'; cat "$CAPTURE_DIR/plaintext.bundle"; } >"$output"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "fsync"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$1" >>"$CAPTURE_DIR/fsync.paths"
 `,
         { mode: 0o700 },
       );
@@ -3307,24 +7463,38 @@ test -n "$output"
             BACKUP_DIRECTORY: backups,
             BACKUP_TMP_DIRECTORY: temporary,
             BACKUP_RUN_ONCE: "true",
+            BACKUP_TIMEOUT_COMMAND: path.join(bin, "timeout"),
           },
         },
       );
 
-      expect(result.status).toBe(0);
       const output = `${result.stdout}${result.stderr}`;
+      expect(result.status, output).toBe(0);
       const pgDumpArgv = readFileSync(
         path.join(captures, "pg_dump.argv"),
+        "utf8",
+      );
+      const psqlArgv = readFileSync(path.join(captures, "psql.argv"), "utf8");
+      const psqlCommands = readFileSync(
+        path.join(captures, "psql.commands"),
         "utf8",
       );
       const gpgArgv = readFileSync(path.join(captures, "gpg.argv"), "utf8");
       for (const secret of [databasePassword, encryptionKey]) {
         expect(output).not.toContain(secret);
         expect(pgDumpArgv).not.toContain(secret);
+        expect(psqlArgv).not.toContain(secret);
+        expect(psqlCommands).not.toContain(secret);
         expect(gpgArgv).not.toContain(secret);
       }
+      expect(psqlCommands).toContain(
+        "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
+      );
+      expect(psqlCommands).toContain("pg_export_snapshot()");
+      expect(psqlCommands).toContain("COMMIT;");
       expect(pgDumpArgv).toContain("--host=db");
       expect(pgDumpArgv).toContain("--username=ai_agent_backup");
+      expect(pgDumpArgv).toContain("--snapshot=00000003-0000001B-1");
       expect(readFileSync(path.join(captures, "pgpass"), "utf8")).toBe(
         "db:5432:ai_agent_platform:ai_agent_backup:backup\\:password\\\\sentinel\n",
       );
@@ -3333,14 +7503,315 @@ test -n "$output"
       expect(backupFiles).toHaveLength(1);
       expect(gpgArgv).toContain("--cipher-algo\nAES256");
       expect(gpgArgv).toContain("--force-mdc");
+      const extractedBundle = path.join(sandbox, "extracted-bundle");
+      mkdirSync(extractedBundle, { mode: 0o700 });
+      const extracted = spawnSync(
+        "tar",
+        ["-xf", path.join(captures, "plaintext.bundle"), "-C", extractedBundle],
+        { encoding: "utf8" },
+      );
+      expect(extracted.status, `${extracted.stdout}${extracted.stderr}`).toBe(
+        0,
+      );
+      expect(readdirSync(extractedBundle).sort()).toEqual([
+        "database.dump",
+        "skill-backup.manifest",
+      ]);
+      expect(
+        readFileSync(path.join(extractedBundle, "database.dump"), "utf8"),
+      ).toBe(fakeDump);
+      expect(
+        readFileSync(
+          path.join(extractedBundle, "skill-backup.manifest"),
+          "utf8",
+        ),
+      ).toBe(`format_version=1
+dump_sha256=${fakeDumpSha256}
+skill_registry_schema_version=1
+skill_revision_count=2
+skill_artifact_count=2
+skill_file_count=3
+`);
       expect(backupFiles[0]).toMatch(/^ai-agent-platform-.*\.dump\.gpg$/u);
       expect(statSync(path.join(backups, backupFiles[0])).mode & 0o777).toBe(
         0o600,
       );
+      expect(
+        readFileSync(path.join(captures, "fsync.paths"), "utf8")
+          .trim()
+          .split("\n"),
+      ).toEqual([expect.stringMatching(/\.dump\.gpg\.tmp$/u), backups]);
+
+      const capacityBin = path.join(sandbox, "capacity-bin");
+      const capacityCaptures = path.join(sandbox, "capacity-captures");
+      const capacityBackups = path.join(sandbox, "capacity-backups");
+      const capacityTemporary = path.join(sandbox, "capacity-temporary");
+      for (const directory of [
+        capacityBin,
+        capacityCaptures,
+        capacityBackups,
+        capacityTemporary,
+      ]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      for (const executable of [
+        "timeout",
+        "setsid",
+        "psql",
+        "pg_dump",
+        "sha256sum",
+        "gpg",
+        "fsync",
+      ]) {
+        const target = path.join(capacityBin, executable);
+        copyFileSync(path.join(bin, executable), target);
+        chmodSync(target, 0o700);
+      }
+      writeFileSync(
+        path.join(capacityBin, "df"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf '%s\n' 'test 1 0 1 0% /work'
+`,
+        { mode: 0o700 },
+      );
+      const insufficientCapacity = spawnSync(
+        "sh",
+        [path.join(root, "infra/docker/backup.sh")],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${capacityBin}:${process.env.PATH ?? ""}`,
+            CAPTURE_DIR: capacityCaptures,
+            PGHOST: "db",
+            PGPORT: "5432",
+            PGDATABASE: "ai_agent_platform",
+            PGUSER: "ai_agent_backup",
+            BACKUP_DATABASE_PASSWORD_FILE: passwordFile,
+            BACKUP_ENCRYPTION_KEY_FILE: encryptionKeyFile,
+            BACKUP_DIRECTORY: capacityBackups,
+            BACKUP_TMP_DIRECTORY: capacityTemporary,
+            BACKUP_RUN_ONCE: "true",
+            BACKUP_TIMEOUT_COMMAND: path.join(capacityBin, "timeout"),
+            BACKUP_PROCESS_KILL_AFTER_SECONDS: "1",
+          },
+        },
+      );
+      const capacityOutput = `${insufficientCapacity.stdout}${insufficientCapacity.stderr}`;
+      expect(insufficientCapacity.status, capacityOutput).toBe(1);
+      expect(capacityOutput.trim()).toBe(
+        "backup temporary space budget is insufficient",
+      );
+      expect(readdirSync(capacityCaptures)).not.toContain("pg_dump.argv");
+      expect(readdirSync(capacityBackups)).toEqual([]);
+      expect(readdirSync(capacityTemporary)).toEqual([]);
+
+      const hangBin = path.join(sandbox, "hang-bin");
+      const hangCaptures = path.join(sandbox, "hang-captures");
+      const hangBackups = path.join(sandbox, "hang-backups");
+      const hangTemporary = path.join(sandbox, "hang-temporary");
+      for (const directory of [
+        hangBin,
+        hangCaptures,
+        hangBackups,
+        hangTemporary,
+      ]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      writeFileSync(
+        path.join(hangBin, "timeout"),
+        `#!/bin/sh
+set -eu
+signal=TERM
+kill_after=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -s|--signal) signal=$2; shift 2 ;;
+    -k|--kill-after) kill_after=$2; shift 2 ;;
+    --signal=*) signal=\${1#*=}; shift ;;
+    --kill-after=*) kill_after=\${1#*=}; shift ;;
+    --foreground) shift ;;
+    --) shift; break ;;
+    *) duration=$1; shift; break ;;
+  esac
+done
+test -n "\${duration:-}"
+test "$#" -gt 0
+if [ "$1" = "psql" ]; then
+  exec "$@"
+fi
+child=
+watchdog=
+terminate() {
+  [ -z "$watchdog" ] || kill "$watchdog" >/dev/null 2>&1 || true
+  [ -z "$child" ] || kill -TERM "$child" >/dev/null 2>&1 || true
+  [ -z "$child" ] || wait "$child" >/dev/null 2>&1 || true
+  exit 143
+}
+trap terminate TERM INT HUP
+"$@" &
+child=$!
+(
+  sleep "$duration"
+  kill -"$signal" "$child" >/dev/null 2>&1 || exit 0
+  if [ -n "$kill_after" ]; then
+    sleep "$kill_after"
+    kill -KILL "$child" >/dev/null 2>&1 || true
+  fi
+) &
+watchdog=$!
+set +e
+wait "$child"
+status=$?
+set -e
+kill "$watchdog" >/dev/null 2>&1 || true
+wait "$watchdog" >/dev/null 2>&1 || true
+exit "$status"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(hangBin, "setsid"),
+        `#!/bin/sh
+set -eu
+exec "$@"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(hangBin, "psql"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' "$$" >"$CAPTURE_DIR/snapshot.pid"
+cleanup_snapshot() {
+  rm -f "$CAPTURE_DIR/idle-transaction"
+  printf 'exited\n' >"$CAPTURE_DIR/snapshot.exited"
+}
+trap 'cleanup_snapshot; exit 143' TERM INT HUP
+trap cleanup_snapshot EXIT
+while IFS= read -r command; do
+  case "$command" in
+    *pg_export_snapshot*)
+      : >"$CAPTURE_DIR/idle-transaction"
+      printf '%s\n' '00000003-0000001B-1|1|2|2|3|4|3|1|5|1024'
+      ;;
+    COMMIT*) rm -f "$CAPTURE_DIR/idle-transaction" ;;
+    '\\q') exit 0 ;;
+  esac
+done
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(hangBin, "pg_dump"),
+        `#!/bin/sh
+set -eu
+printf '%s\n' "$$" >"$CAPTURE_DIR/pg_dump.pid"
+output=
+for argument in "$@"; do
+  case "$argument" in
+    --file=*) output=\${argument#--file=} ;;
+  esac
+done
+test -n "$output"
+printf 'partial-dump' >"$output"
+trap '' TERM
+mkfifo "$CAPTURE_DIR/pg-dump-block.fifo"
+blocked_pid=$$
+(sleep 8; kill -KILL "$blocked_pid" >/dev/null 2>&1 || true) >/dev/null 2>&1 &
+printf '%s\n' "$!" >"$CAPTURE_DIR/pg_dump.watchdog.pid"
+IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
+`,
+        { mode: 0o700 },
+      );
+
+      const hangStartedAt = Date.now();
+      const hung = spawnSync(
+        "sh",
+        [path.join(root, "infra/docker/backup.sh")],
+        {
+          encoding: "utf8",
+          timeout: 10_000,
+          env: {
+            ...process.env,
+            PATH: `${hangBin}:${process.env.PATH ?? ""}`,
+            CAPTURE_DIR: hangCaptures,
+            PGHOST: "db",
+            PGPORT: "5432",
+            PGDATABASE: "ai_agent_platform",
+            PGUSER: "ai_agent_backup",
+            BACKUP_DATABASE_PASSWORD_FILE: passwordFile,
+            BACKUP_ENCRYPTION_KEY_FILE: encryptionKeyFile,
+            BACKUP_DIRECTORY: hangBackups,
+            BACKUP_TMP_DIRECTORY: hangTemporary,
+            BACKUP_RUN_ONCE: "true",
+            BACKUP_TIMEOUT_COMMAND: path.join(hangBin, "timeout"),
+            BACKUP_DUMP_TIMEOUT_SECONDS: "1",
+            BACKUP_DUMP_KILL_AFTER_SECONDS: "1",
+            BACKUP_SNAPSHOT_TIMEOUT_SECONDS: "62",
+            BACKUP_PROCESS_KILL_AFTER_SECONDS: "1",
+          },
+        },
+      );
+      const hangElapsedMs = Date.now() - hangStartedAt;
+      for (const pidFile of ["snapshot.pid", "pg_dump.pid"]) {
+        hungProcessIds.push(
+          Number(readFileSync(path.join(hangCaptures, pidFile), "utf8").trim()),
+        );
+      }
+      hungFallbackWatchdogPid = Number(
+        readFileSync(
+          path.join(hangCaptures, "pg_dump.watchdog.pid"),
+          "utf8",
+        ).trim(),
+      );
+      try {
+        process.kill(hungFallbackWatchdogPid, "SIGKILL");
+      } catch {
+        // The fallback already fired on the pre-timeout RED path.
+      }
+      const hungOutput = `${hung.stdout}${hung.stderr}`;
+      expect(hung.error, hungOutput).toBeUndefined();
+      expect(hung.status, hungOutput).not.toBe(0);
+      expect(hung.signal, hungOutput).toBeNull();
+      expect(hangElapsedMs).toBeLessThan(7_500);
+      expect(hungOutput.trim()).toBe("backup database dump failed");
+      for (const protectedValue of [
+        databasePassword,
+        encryptionKey,
+        hangTemporary,
+      ]) {
+        expect(hungOutput).not.toContain(protectedValue);
+      }
+      expect(readdirSync(hangTemporary)).toEqual([]);
+      expect(readdirSync(hangBackups)).toEqual([]);
+      expect(readdirSync(hangCaptures)).not.toContain("idle-transaction");
+      expect(
+        readFileSync(path.join(hangCaptures, "snapshot.exited"), "utf8"),
+      ).toBe("exited\n");
+      for (const pid of hungProcessIds) {
+        expect(() => process.kill(pid, 0)).toThrow();
+      }
     } finally {
+      if (hungFallbackWatchdogPid !== undefined) {
+        try {
+          process.kill(hungFallbackWatchdogPid, "SIGKILL");
+        } catch {
+          // Watchdog already exited.
+        }
+      }
+      for (const pid of hungProcessIds) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // Process already exited and was reaped by the backup script.
+        }
+      }
       rmSync(sandbox, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it("validates exactly the single passphrase line consumed by GnuPG", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "backup-key-format-"));
@@ -3383,7 +7854,7 @@ test -n "$output"
     }
   });
 
-  it("documents AgentOS upgrades, startup order, and rollback sequencing", () => {
+  it("documents platform upgrades, startup order, and rollback sequencing", () => {
     const runbook = read("docs/deployment/server-readiness.md");
     const dockerReadme = read("infra/docker/README.md");
     const architecture = read("docs/architecture/system-design.md");
@@ -3392,10 +7863,10 @@ test -n "$output"
 
     expect(runbook).toContain("docker compose run --rm agno-bootstrap");
     expect(documentation).toContain(
-      "db → migrate → agno-bootstrap → agent-migrate → agent → web → proxy/backup",
+      "db → migrate / agno-bootstrap → agent-migrate / agent-control-bootstrap / skill-registry-bootstrap → agent-control-migrate / skill-registry-migrate → agent / skill-registry → web → proxy/backup",
     );
     expect(runbook).toMatch(
-      /停止[^\n]*agent[\s\S]*恢复[^\n]*dump[\s\S]*agent-migrate[\s\S]*ready[\s\S]*重启[^\n]*web/iu,
+      /停止[^\n]*agent[^\n]*skill-registry[\s\S]*恢复[^\n]*bundle[\s\S]*bootstrap\/migrate[\s\S]*ready[\s\S]*重启[^\n]*web/iu,
     );
     expect(rootReadme).not.toContain(
       "docker compose up -d --build --wait db migrate agno-bootstrap agent-migrate agent web proxy backup",
@@ -3421,6 +7892,10 @@ test -n "$output"
     expect(script).toMatch(/build[^\n]*migrate[^\n]*agent[^\n]*backup/u);
     expect(script).toContain("run --rm agno-bootstrap");
     expect(script).toContain("run --rm --no-deps agent-migrate");
+    expect(script).toContain("run --rm --no-deps agent-control-bootstrap");
+    expect(script).toContain("run --rm --no-deps agent-control-migrate");
+    expect(script).toContain("run --rm --no-deps skill-registry-bootstrap");
+    expect(script).toContain("run --rm --no-deps skill-registry-migrate");
     expect(script).toContain("up -d --no-deps agent");
     expect(script).toContain("run --rm --no-deps backup");
     expect(script).toContain("http://127.0.0.1:7777/internal/health/ready");
@@ -3436,7 +7911,15 @@ test -n "$output"
     expect(script).toContain("backup_data");
     expect(script).toContain(".dump.gpg");
     expect(script).toContain("BACKUP_ENCRYPTION_KEY_FILE");
+    expect(script).toContain("ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080");
+    expect(script).toContain("ASSISTANT_SESSION_SECRET_FILE");
+    expect(script).toContain("ASSISTANT_RATE_LIMIT_SECRET_FILE");
+    expect(script).toContain("AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE");
+    expect(script).toContain("SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE");
+    expect(script).toContain("RESTORE_SKILL_REGISTRY_IMAGE");
     expect(script).toContain("wrong encryption key was rejected");
+    expect(script).toContain("rejection_elapsed_seconds");
+    expect(script).toContain("restore rejection exceeded its bounded runtime");
     expect(script).toContain("tampered ciphertext was rejected");
     expect(script).toContain("OpenPGP packet contract verified");
     expect(script).toContain("mdc_method: 2");

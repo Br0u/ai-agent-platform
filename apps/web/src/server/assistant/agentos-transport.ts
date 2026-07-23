@@ -420,22 +420,29 @@ export function createAgentOSTransport(options: {
       });
       if (request.signal?.aborted) onExternalAbort();
 
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const deadline = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          if (abortedBy !== null) return;
-          abortedBy = "timeout";
-          controller.abort();
-          cancelBody(reader, response);
-          reject(new AgentOSTransportError("timeout"));
-        }, request.timeoutMs);
-      });
+      const waitForUpstream = async <T>(operation: Promise<T>): Promise<T> => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const idleTimeout = new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            if (abortedBy !== null) return;
+            abortedBy = "timeout";
+            controller.abort();
+            cancelBody(reader, response);
+            reject(new AgentOSTransportError("timeout"));
+          }, request.timeoutMs);
+        });
+        try {
+          return await Promise.race([operation, idleTimeout, externalAbort]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      };
 
       let completed = false;
       try {
         const beforeFetch = abortError(abortedBy);
         if (beforeFetch) throw beforeFetch;
-        response = await Promise.race([
+        response = await waitForUpstream(
           fetcher(requestUrl, {
             method: request.method,
             headers,
@@ -445,9 +452,7 @@ export function createAgentOSTransport(options: {
             cache: "no-store",
             credentials: "omit",
           }),
-          deadline,
-          externalAbort,
-        ]);
+        );
         const afterFetch = abortError(abortedBy);
         if (afterFetch) throw afterFetch;
         if (response.status >= 300 && response.status < 400) {
@@ -477,11 +482,7 @@ export function createAgentOSTransport(options: {
         while (true) {
           const beforeRead = abortError(abortedBy);
           if (beforeRead) throw beforeRead;
-          const chunk = await Promise.race([
-            reader.read(),
-            deadline,
-            externalAbort,
-          ]);
+          const chunk = await waitForUpstream(reader.read());
           const afterRead = abortError(abortedBy);
           if (afterRead) throw afterRead;
           if (chunk.done) {
@@ -498,7 +499,6 @@ export function createAgentOSTransport(options: {
         if (error instanceof AgentOSTransportError) throw error;
         throw new AgentOSTransportError(abortedBy ?? "transport_error");
       } finally {
-        if (timer) clearTimeout(timer);
         request.signal?.removeEventListener("abort", onExternalAbort);
         if (!completed) cancelBody(reader, response);
         if (reader !== null) {

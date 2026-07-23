@@ -57,6 +57,11 @@ const permissionKeys = [
   "console:team",
   "admin:site",
   "admin:assistant",
+  "admin:assistant:skills",
+  "admin:assistant:skills:upload",
+  "admin:assistant:skills:connections",
+  "admin:assistant:skills:review",
+  "admin:assistant:skills:configure",
   "admin:assistant:configure",
   "admin:assistant:secret:reveal",
   "admin:navigation",
@@ -81,8 +86,23 @@ const assistantModelPermissions = [
   "admin:assistant:secret:reveal",
 ] as const;
 
+const assistantSkillAdminPermissions = [
+  "admin:assistant:skills",
+  "admin:assistant:skills:upload",
+] as const;
+
+const assistantSkillSuperAdminPermissions = [
+  ...assistantSkillAdminPermissions,
+  "admin:assistant:skills:connections",
+  "admin:assistant:skills:review",
+  "admin:assistant:skills:configure",
+] as const;
+
 const superAdminOnlyPermissions = [
   ...assistantModelPermissions,
+  "admin:assistant:skills:connections",
+  "admin:assistant:skills:review",
+  "admin:assistant:skills:configure",
   "admin:docs:delete",
 ] as const;
 
@@ -177,6 +197,10 @@ describe("seedAccessControl", () => {
         description: "查看已保存的 AI 助理模型 Key",
       },
     );
+    expect(repository.permissions.get("admin:assistant:skills")).toEqual({
+      key: "admin:assistant:skills",
+      name: "查看 AI 助理 Skill 库",
+    });
     expect([...repository.roles.keys()]).toEqual([
       "customer:customer_admin",
       "customer:customer_member",
@@ -241,6 +265,29 @@ describe("seedAccessControl", () => {
         ).toBe(false);
       }
     }
+    for (const permission of assistantSkillAdminPermissions) {
+      expect(repository.grants.get("workforce:admin")?.has(permission)).toBe(
+        true,
+      );
+      expect(
+        repository.grants.get("workforce:super_admin")?.has(permission),
+      ).toBe(true);
+    }
+    for (const permission of assistantSkillSuperAdminPermissions.slice(2)) {
+      expect(repository.grants.get("workforce:admin")?.has(permission)).toBe(
+        false,
+      );
+      expect(
+        repository.grants.get("workforce:super_admin")?.has(permission),
+      ).toBe(true);
+    }
+    for (const role of ["employee", "content_operator", "support_operator"]) {
+      for (const permission of assistantSkillSuperAdminPermissions) {
+        expect(
+          repository.grants.get(`workforce:${role}`)?.has(permission) ?? false,
+        ).toBe(false);
+      }
+    }
     for (const [role, grants] of repository.grants) {
       if (role.startsWith("workforce:")) {
         expect([...grants].some((key) => key.startsWith("console:"))).toBe(
@@ -261,7 +308,7 @@ describe("seedAccessControl", () => {
     await seedAccessControl(repository);
 
     expect(repository.transactions).toBe(2);
-    expect(repository.permissions.size).toBe(21);
+    expect(repository.permissions.size).toBe(26);
     expect(repository.roles.size).toBe(7);
     expect(repository.grants.size).toBe(7);
     expect(

@@ -35,10 +35,15 @@ describe("AssistantCapabilityRoadmap", () => {
         "Ollama、vLLM、OpenAI-compatible、自有模型仓库",
       ),
     ).toBeVisible();
-    expect(within(cards[1]!).getByText("未接入")).toBeVisible();
     expect(
-      within(cards[1]!).getByText("未来按 Agno Skills loader 接入"),
+      within(cards[1]!).getByText("Registry / Agent 运行时已接入"),
     ).toBeVisible();
+    expect(
+      within(cards[1]!).getByText(
+        "审核版本组成集合并激活后，由 Agent 按 exact revision 加载",
+      ),
+    ).toBeVisible();
+    expect(within(cards[1]!).getByText("已接入")).toBeVisible();
     expect(within(cards[2]!).getByText("未接入")).toBeVisible();
     expect(
       within(cards[2]!).getByText("未来承载文档、网页内容和检索"),
@@ -47,7 +52,10 @@ describe("AssistantCapabilityRoadmap", () => {
     expect(
       within(cards[3]!).getByText("未来承载外部动作、审批和浏览器操作"),
     ).toBeVisible();
-    expect(container.textContent).not.toMatch(/(?:已连接|已接入|\b\d+\b)/u);
+    expect(container.textContent).not.toMatch(/(?:已连接|\b\d+\b)/u);
+    expect(
+      container.textContent?.match(/Registry \/ Agent 运行时已接入/gu),
+    ).toHaveLength(1);
   });
 
   it("keeps every roadmap action inert and performs no external work", () => {
@@ -62,7 +70,7 @@ describe("AssistantCapabilityRoadmap", () => {
 
     render(<AssistantCapabilityRoadmap />);
     const actions = screen.getAllByRole("button");
-    expect(actions).toHaveLength(4);
+    expect(actions).toHaveLength(3);
     for (const action of actions) {
       expect(action).toBeDisabled();
       fireEvent.click(action);

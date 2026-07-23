@@ -9,6 +9,8 @@
   },
   "scripts": {
     "dev": "pnpm --filter @ai-agent-platform/web dev",
+    "dev:registry-proxy": "docker compose -p ai-agent-platform-dev -f infra/docker/compose.skill-registry-dev-proxy.yaml up -d --wait",
+    "dev:registry-proxy:stop": "docker compose -p ai-agent-platform-dev -f infra/docker/compose.skill-registry-dev-proxy.yaml down",
     "build": "pnpm -r --if-present build",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
@@ -16,6 +18,14 @@
     "format:check": "pnpm -r --if-present format:check",
     "agent:test": "uv --directory apps/agent run pytest -q",
     "agent:lint": "uv --directory apps/agent run ruff check .",
-    "agent:typecheck": "uv --directory apps/agent run mypy src tests"
+    "agent:typecheck": "uv --directory apps/agent run mypy src tests",
+    "skill-core:test": "uv --directory packages/skill-core run pytest -q",
+    "skill-registry:test": "uv --directory apps/skill-registry run pytest -q -rs",
+    "skill-registry:e2e": "sh docs/testing/run-skill-registry-e2e.sh",
+    "skill-runtime:e2e": "RUN_SKILL_RUNTIME_E2E=true sh docs/testing/run-skill-runtime-e2e.sh",
+    "restore:lifecycle:test": "sh docs/testing/run-restore-docker-lifecycle.sh timeout && sh docs/testing/run-restore-docker-lifecycle.sh controlled-failure",
+    "skill-core:lint": "uv --directory packages/skill-core run ruff check .",
+    "skill-core:typecheck": "uv --directory packages/skill-core run mypy src tests",
+    "secrets:preflight": "python3 infra/docker/validate-compose-secret-files.py"
   }
 }

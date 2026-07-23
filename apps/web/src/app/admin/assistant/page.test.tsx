@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => ({
   loadStatus: vi.fn(),
   loadSessions: vi.fn(),
   loadModelConfigs: vi.fn(),
+  loadSkillRuntime: vi.fn(),
+  createSkillListHandler: vi.fn(),
+  skillListHandler: vi.fn(),
 }));
 
 vi.mock("@/server/auth/access", () => ({
@@ -20,6 +23,12 @@ vi.mock("@/app/api/v1/admin/assistant/sessions/handler", () => ({
 }));
 vi.mock("@/app/api/v1/admin/assistant/model-configs/handler", () => ({
   loadAdminModelConfigSnapshot: mocks.loadModelConfigs,
+}));
+vi.mock("@/app/api/v1/admin/assistant/skill-runtime/handler", () => ({
+  loadAdminSkillRuntimeSnapshot: mocks.loadSkillRuntime,
+}));
+vi.mock("@/app/api/v1/admin/assistant/skills/handler", () => ({
+  createAdminSkillListHandler: mocks.createSkillListHandler,
 }));
 
 import AdminAssistantPage from "./page";
@@ -92,7 +101,65 @@ const actor = {
   displayName: "Admin",
   mustChangePassword: false,
   twoFactorEnabled: true,
-  permissions: ["admin:assistant", "admin:assistant:configure"],
+  permissions: [
+    "admin:assistant",
+    "admin:assistant:configure",
+    "admin:assistant:skills",
+    "admin:assistant:skills:upload",
+    "admin:assistant:skills:review",
+  ],
+};
+
+const skillListResponse = {
+  version: "1",
+  skills: [
+    {
+      id: "33333333-3333-4333-8333-333333333333",
+      name: "safe-review",
+      createdAt: "2026-07-21T08:00:00.000Z",
+      revision: {
+        id: "44444444-4444-4444-8444-444444444444",
+        number: 1,
+        state: "pending_review",
+        sourceType: "upload",
+        artifactSha256Prefix: "aaaaaaaaaaaa",
+        createdBy: "11111111-1111-4111-8111-111111111111",
+        createdAt: "2026-07-21T08:00:00.000Z",
+        reviewedBy: null,
+        reviewedAt: null,
+      },
+    },
+  ],
+  page: { limit: 25, offset: 0, returned: 1 },
+  requestId: "66666666-6666-4666-8666-666666666666",
+  permissions: {
+    canUpload: true,
+    canManageConnections: false,
+    canReview: true,
+    canConfigure: false,
+  },
+};
+
+const skillRuntime = {
+  version: "1" as const,
+  available: { items: [], limit: 100, offset: 0, total: 0 },
+  registry: {
+    active: null,
+    previous: null,
+    activationVersion: 0,
+    candidateCount: 0,
+    candidates: [],
+  },
+  agent: {
+    skillCapability: "unconfigured" as const,
+    configured: false,
+    activeSetId: null,
+    loadedSetId: null,
+    previousSetId: null,
+    activationVersion: 0,
+    failureCode: null,
+  },
+  permissions: { canRead: true, canConfigure: false },
 };
 
 const modelConfigs = {
@@ -171,6 +238,14 @@ const unavailableStatus = {
   message: "助手基础服务暂不可用。",
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 afterEach(cleanup);
 
 describe("AdminAssistantPage", () => {
@@ -180,6 +255,9 @@ describe("AdminAssistantPage", () => {
     mocks.loadStatus.mockResolvedValue(status);
     mocks.loadSessions.mockResolvedValue(sessions);
     mocks.loadModelConfigs.mockResolvedValue(modelConfigs);
+    mocks.loadSkillRuntime.mockResolvedValue(skillRuntime);
+    mocks.createSkillListHandler.mockReturnValue(mocks.skillListHandler);
+    mocks.skillListHandler.mockResolvedValue(Response.json(skillListResponse));
   });
 
   it("requires the exact assistant permission before loading protected data", async () => {
@@ -193,6 +271,9 @@ describe("AdminAssistantPage", () => {
     expect(mocks.loadStatus).toHaveBeenCalledOnce();
     expect(mocks.loadSessions).toHaveBeenCalledOnce();
     expect(mocks.loadModelConfigs).toHaveBeenCalledExactlyOnceWith(actor);
+    expect(mocks.loadSkillRuntime).toHaveBeenCalledExactlyOnceWith(actor);
+    expect(mocks.createSkillListHandler).toHaveBeenCalledOnce();
+    expect(mocks.skillListHandler).toHaveBeenCalledOnce();
     expect(serializedProps).not.toMatch(
       /sk-fixture-secret|ciphertext|nonce|https?:\/\/|assertion/iu,
     );
@@ -200,6 +281,36 @@ describe("AdminAssistantPage", () => {
     expect(
       screen.getByRole("heading", { name: "受保护的助手测试控制台" }),
     ).toBeVisible();
+    expect(screen.getByText("safe-review")).toBeVisible();
+  });
+
+  it("starts status, sessions, models, runtime and Skill snapshot loading in parallel", async () => {
+    const pendingStatus = deferred<typeof status>();
+    const pendingSessions = deferred<typeof sessions>();
+    const pendingModels = deferred<AdminModelConfigSnapshot>();
+    const pendingRuntime = deferred<typeof skillRuntime>();
+    const pendingSkills = deferred<Response>();
+    mocks.loadStatus.mockReturnValueOnce(pendingStatus.promise);
+    mocks.loadSessions.mockReturnValueOnce(pendingSessions.promise);
+    mocks.loadModelConfigs.mockReturnValueOnce(pendingModels.promise);
+    mocks.loadSkillRuntime.mockReturnValueOnce(pendingRuntime.promise);
+    mocks.skillListHandler.mockReturnValueOnce(pendingSkills.promise);
+
+    const page = AdminAssistantPage();
+    await vi.waitFor(() => {
+      expect(mocks.loadStatus).toHaveBeenCalledOnce();
+      expect(mocks.loadSessions).toHaveBeenCalledOnce();
+      expect(mocks.loadModelConfigs).toHaveBeenCalledOnce();
+      expect(mocks.loadSkillRuntime).toHaveBeenCalledOnce();
+      expect(mocks.skillListHandler).toHaveBeenCalledOnce();
+    });
+
+    pendingStatus.resolve(status);
+    pendingSessions.resolve(sessions);
+    pendingModels.resolve(modelConfigs);
+    pendingRuntime.resolve(skillRuntime);
+    pendingSkills.resolve(Response.json(skillListResponse));
+    await expect(page).resolves.toBeDefined();
   });
 
   it("does not load protected sources when the page guard rejects", async () => {
@@ -209,6 +320,28 @@ describe("AdminAssistantPage", () => {
     expect(mocks.loadStatus).not.toHaveBeenCalled();
     expect(mocks.loadSessions).not.toHaveBeenCalled();
     expect(mocks.loadModelConfigs).not.toHaveBeenCalled();
+    expect(mocks.loadSkillRuntime).not.toHaveBeenCalled();
+    expect(mocks.createSkillListHandler).not.toHaveBeenCalled();
+    expect(mocks.loadSkillRuntime).not.toHaveBeenCalled();
+  });
+
+  it("does not request the Skill Registry when the actor lacks Skill read permission", async () => {
+    mocks.requirePermission.mockResolvedValueOnce({
+      ...actor,
+      permissions: ["admin:assistant", "admin:assistant:configure"],
+    });
+
+    render(await AdminAssistantPage());
+
+    expect(mocks.createSkillListHandler).not.toHaveBeenCalled();
+    expect(screen.getByText("degraded / 数据不可确认")).toBeVisible();
+    expect(screen.getByText("当前账号没有 Skill 库读取权限。")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "刷新 Skill 列表" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /上传 Skill/u }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders one consistent unavailable persistence truth table when runtime resolution fails", async () => {
@@ -274,5 +407,32 @@ describe("AdminAssistantPage", () => {
     expect(document.body.textContent).not.toMatch(
       /raw|agent:7777|security|secret/iu,
     );
+  });
+
+  it("renders a degraded Skill snapshot instead of a fake normal empty library", async () => {
+    mocks.skillListHandler.mockResolvedValueOnce(
+      new Response(null, { status: 503 }),
+    );
+
+    render(await AdminAssistantPage());
+
+    expect(screen.getByText("degraded / 数据不可确认")).toBeVisible();
+    expect(
+      screen.getByText("Skill 列表不可用，不能确认库是否为空。"),
+    ).toBeVisible();
+    expect(screen.queryByText("当前没有 Skill。")).not.toBeInTheDocument();
+  });
+
+  it("degrades only Skill configuration when runtime control is unavailable", async () => {
+    mocks.loadSkillRuntime.mockRejectedValueOnce(
+      new Error("raw runtime DSN and private path"),
+    );
+
+    render(await AdminAssistantPage());
+
+    expect(screen.getByText("运行状态不一致")).toBeVisible();
+    expect(screen.getByText("runtime_degraded")).toBeVisible();
+    expect(screen.getByText("safe-review")).toBeVisible();
+    expect(document.body.textContent).not.toMatch(/raw runtime|private path/iu);
   });
 });
