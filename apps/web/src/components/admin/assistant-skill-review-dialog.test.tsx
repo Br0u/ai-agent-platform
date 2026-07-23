@@ -177,7 +177,9 @@ describe("AssistantSkillReviewDialog", () => {
 
     await waitFor(() => expect(onReviewed).toHaveBeenCalledOnce());
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)),
+    ).toMatchObject({
       attestations: { reviewerAuthorizationConfirmed: true },
     });
   });

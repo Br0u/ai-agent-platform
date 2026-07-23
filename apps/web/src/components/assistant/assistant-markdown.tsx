@@ -59,11 +59,7 @@ function safeAssistantUrl(value: string): string {
   }
 }
 
-function AssistantMarkdownLink({
-  href,
-  node,
-  ...props
-}: MarkdownAnchorProps) {
+function AssistantMarkdownLink({ href, node, ...props }: MarkdownAnchorProps) {
   void node;
   if (!href) return <>{props.children}</>;
 

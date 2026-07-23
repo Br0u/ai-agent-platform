@@ -36,9 +36,7 @@ const AGENTOS_ENVIRONMENT = {
   ASSISTANT_PROVIDER_MODE: "agentos",
 } as const;
 
-const LEGACY_RUNTIME_KEY = Symbol.for(
-  "ai-agent-platform:assistant:runtime:v1",
-);
+const LEGACY_RUNTIME_KEY = Symbol.for("ai-agent-platform:assistant:runtime:v1");
 const RUNTIME_KEY = Symbol.for("ai-agent-platform:assistant:runtime:v2");
 
 afterEach(() => {
