@@ -8,6 +8,7 @@ from skill_registry.schema import (
     REVIEWED_SKILL_TABLE_NAMES,
     SCHEMA_VERSION_1_SQL,
     SCHEMA_VERSION_2_SQL,
+    SCHEMA_VERSION_4_SQL,
 )
 
 
@@ -189,7 +190,6 @@ def test_schema_v2_replaces_only_the_second_actor_revision_guard() -> None:
 def test_skill_set_tables_are_introduced_only_by_schema_v3() -> None:
     sql = normalize_sql(getattr(registry_schema, "SCHEMA_VERSION_3_SQL", ""))
 
-    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 3
     for table_name in (
         "agent_skill_sets",
         "agent_skill_set_items",
@@ -224,13 +224,24 @@ def test_skill_set_views_expose_runtime_and_manager_boundaries_in_schema_v3() ->
     assert "'sha256', file.file_sha256" in sql
     assert "'size', file.size" in sql
     assert "'mediaType', file.media_type" in sql
-    assert "ORDER BY file.path" in sql
+    assert "ORDER BY pg_catalog.convert_to(file.path, 'UTF8')" in sql
     assert "GRANT SELECT ON skill_registry.runtime_active_skill_set" in sql
     assert "TO ai_agent_skill_registry_runtime" in sql
     assert "GRANT SELECT ON skill_registry.manager_active_skill_set" in sql
     assert "TO ai_agent_skill_registry_manager" in sql
     assert "skill_registry.skill_set_control_events TO ai_agent_backup" in sql
     assert "INSERT INTO skill_registry.schema_versions (version) VALUES (3)" in sql
+
+
+def test_schema_v4_replaces_runtime_file_index_with_canonical_utf8_order() -> None:
+    sql = normalize_sql(SCHEMA_VERSION_4_SQL)
+
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 4
+    assert "CREATE OR REPLACE VIEW skill_registry.runtime_skill_set_items" in sql
+    assert "ORDER BY pg_catalog.convert_to(file.path, 'UTF8')" in sql
+    assert "ALTER VIEW skill_registry.runtime_skill_set_items OWNER TO ai_agent_skill_registry_migrator" in sql
+    assert "GRANT SELECT ON skill_registry.runtime_skill_set_items TO ai_agent_skill_registry_runtime" in sql
+    assert "INSERT INTO skill_registry.schema_versions (version) VALUES (4)" in sql
 
 
 def test_schema_has_permanent_identity_revision_and_nonce_uniqueness() -> None:

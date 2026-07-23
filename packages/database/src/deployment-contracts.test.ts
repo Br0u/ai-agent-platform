@@ -3172,8 +3172,17 @@ secrets:
     expect(workflow).toMatch(
       /docker run[\s\S]*--name skill-registry-ci-smoke[\s\S]*--read-only/,
     );
-    expect(workflow).toMatch(
-      /docker exec skill-registry-ci-smoke[\s\S]*10002:10002[\s\S]*docker inspect skill-registry-ci-smoke[\s\S]*true null/,
+    expect(workflow).toContain(
+      "docker exec skill-registry-ci-smoke sh -c 'test \"$(id -u):$(id -g)\" = 10002:10002'",
+    );
+    expect(workflow).toContain(
+      "readonly_rootfs=\"$(docker inspect skill-registry-ci-smoke --format '{{.HostConfig.ReadonlyRootfs}}')\"",
+    );
+    expect(workflow).toContain(
+      "port_bindings=\"$(docker inspect skill-registry-ci-smoke --format '{{json .HostConfig.PortBindings}}')\"",
+    );
+    expect(workflow).toContain(
+      `[ "$readonly_rootfs" != true ] || { [ "$port_bindings" != null ] && [ "$port_bindings" != '{}' ]; }`,
     );
     expect(workflow).toContain("docker run --rm agent-service-ci python -c");
     expect(workflow).toContain(
@@ -3228,7 +3237,27 @@ secrets:
 
     expect(runner).toContain("SKILL_REGISTRY_E2E_PROJECT");
     expect(runner).toContain("trap cleanup EXIT");
+    expect(runner.indexOf('. "$env_file"')).toBeLessThan(
+      runner.indexOf("compose config --quiet"),
+    );
     expect(runner).toContain("docker compose -p");
+    expect(runner).toContain(
+      'materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$migrator_password" 644',
+    );
+    expect(runner).toContain(
+      'materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$runtime_password" 644',
+    );
+    expect(runner).toContain(
+      'materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$backup_password" 644',
+    );
+    expect(runner).toContain(
+      'materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key" 644',
+    );
+    expect(runner).toContain('-e OUTPUT_UID="$(id -u)"');
+    expect(runner).toContain('-e OUTPUT_GID="$(id -g)"');
+    expect(runner).toContain(
+      'chown "$OUTPUT_UID:$OUTPUT_GID" /out/generated.dump.gpg',
+    );
     expect(runner).toContain("restart skill-registry");
     expect(
       runner.match(/run_job --no-deps skill-registry-migrate/g),
@@ -3502,7 +3531,9 @@ cleanup
       expect(materialized, file).toBeGreaterThan(generated);
       expect(composeConfig, file).toBeGreaterThan(materialized);
       expect(runner).toMatch(/chmod 700 [^\n]*"\$secret_dir"/u);
-      expect(runner).toContain('chmod 600 "$secret_path"');
+      expect(runner).toMatch(
+        /(?:chmod 600 "\$secret_path"|secret_mode=\$\{4:-600\}[\s\S]*chmod "\$secret_mode" "\$secret_path")/u,
+      );
       expect(runner).toContain("umask 077");
       expect(runner).toContain("trap cleanup EXIT");
       expect(runner).not.toContain('echo "$model_api_key"');
@@ -7885,6 +7916,25 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
       script.indexOf("mktemp"),
     );
     expect(script).toContain('chmod 600 "$env_file"');
+    expect(script).toContain(
+      'materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$migrator_password" 644',
+    );
+    expect(script).toContain(
+      'materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$runtime_password" 644',
+    );
+    expect(script).toContain(
+      'materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$backup_password" 644',
+    );
+    expect(script).toContain(
+      'materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key" 644',
+    );
+    expect(script).toContain('set -a\n. "$env_file"\nset +a');
+    expect(script).toContain("command -v id >/dev/null 2>&1");
+    expect(script).toContain('-e OUTPUT_UID="$(id -u)"');
+    expect(script).toContain('-e OUTPUT_GID="$(id -g)"');
+    expect(script).toContain(
+      'chown "$OUTPUT_UID:$OUTPUT_GID" /out/generated.dump.gpg',
+    );
     expect(script).toContain('stat -f %Lp "$env_file"');
     expect(script).toContain('stat -c %a "$env_file"');
     expect(script).toContain('[ "$env_permissions" = "600" ]');

@@ -264,10 +264,10 @@ run_bounded_docker() {
   docker_diagnostic_path=$4
   shift 4
   docker_command_timed_out=false
-  if ! : 2>/dev/null >"$docker_output_path"; then
+  if ! dd if=/dev/null of="$docker_output_path" 2>/dev/null; then
     return 1
   fi
-  if ! : 2>/dev/null >"$docker_diagnostic_path"; then
+  if ! dd if=/dev/null of="$docker_diagnostic_path" 2>/dev/null; then
     return 1
   fi
   if ! chmod 600 "$docker_output_path" "$docker_diagnostic_path" \
@@ -734,29 +734,32 @@ VALUES (
   '00000000-0000-0000-0000-000000000094'
 );
 SQL
-: >"$database_restore_output_file"
-: >"$database_restore_diagnostic_file"
-: >"$docker_stdout_file"
-: >"$docker_diagnostic_file"
-: >"$dump_digest_file"
-: >"$manager_delete_error_file"
-: >"$backup_insert_error_file"
-: >"$runtime_select_error_file"
-chmod 600 \
-  "$postgres_env_file" \
-  "$roles_env_file" \
-  "$skill_registry_migrator_url_file" \
-  "$owner_password_file" \
-  "$manager_insert_check_file" \
-  "$backup_insert_denied_file" \
-  "$database_restore_output_file" \
-  "$database_restore_diagnostic_file" \
-  "$docker_stdout_file" \
-  "$docker_diagnostic_file" \
-  "$dump_digest_file" \
-  "$manager_delete_error_file" \
-  "$backup_insert_error_file" \
-  "$runtime_select_error_file"
+if ! dd if=/dev/null of="$database_restore_output_file" 2>/dev/null || \
+   ! dd if=/dev/null of="$database_restore_diagnostic_file" 2>/dev/null || \
+   ! dd if=/dev/null of="$docker_stdout_file" 2>/dev/null || \
+   ! dd if=/dev/null of="$docker_diagnostic_file" 2>/dev/null || \
+   ! dd if=/dev/null of="$dump_digest_file" 2>/dev/null || \
+   ! dd if=/dev/null of="$manager_delete_error_file" 2>/dev/null || \
+   ! dd if=/dev/null of="$backup_insert_error_file" 2>/dev/null || \
+   ! dd if=/dev/null of="$runtime_select_error_file" 2>/dev/null || \
+   ! chmod 600 \
+     "$postgres_env_file" \
+     "$roles_env_file" \
+     "$skill_registry_migrator_url_file" \
+     "$owner_password_file" \
+     "$manager_insert_check_file" \
+     "$backup_insert_denied_file" \
+     "$database_restore_output_file" \
+     "$database_restore_diagnostic_file" \
+     "$docker_stdout_file" \
+     "$docker_diagnostic_file" \
+     "$dump_digest_file" \
+     "$manager_delete_error_file" \
+     "$backup_insert_error_file" \
+     "$runtime_select_error_file"; then
+  echo "restore drill temporary initialization failed" >&2
+  exit 1
+fi
 
 if ! run_registered_create \
   10-decrypt container "$decrypt_container" decrypt_create \

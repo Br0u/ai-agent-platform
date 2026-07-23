@@ -361,7 +361,7 @@ async def test_real_registry_migration_and_role_boundary() -> None:
         version_rows = await owner.execute(
             "SELECT version FROM skill_registry.schema_versions ORDER BY version"
         )
-        assert await version_rows.fetchall() == [(1,), (2,), (3,)]
+        assert await version_rows.fetchall() == [(1,), (2,), (3,), (4,)]
 
         await owner.execute(
             "GRANT ai_agent_skill_registry_manager TO ai_agent_skill_registry_migrator"
@@ -1454,7 +1454,7 @@ async def test_backup_skill_set_access_is_read_only_and_cannot_execute_functions
     bool(MISSING_ENVIRONMENT),
     reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
 )
-async def test_real_registry_migrates_v1_history_to_v3_without_losing_evidence() -> None:
+async def test_real_registry_migrates_v1_history_to_v4_without_losing_evidence() -> None:
     urls = _validated_urls()
     owner = await _connect(urls["test"])
     migrator = await _connect(urls["migrator"])
@@ -1501,7 +1501,7 @@ async def test_real_registry_migrates_v1_history_to_v3_without_losing_evidence()
         versions = await owner.execute(
             "SELECT version FROM skill_registry.schema_versions ORDER BY version"
         )
-        assert await versions.fetchall() == [(1,), (2,), (3,)]
+        assert await versions.fetchall() == [(1,), (2,), (3,), (4,)]
         columns = await owner.execute(
             """SELECT column_name
             FROM information_schema.columns

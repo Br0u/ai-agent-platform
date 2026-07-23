@@ -123,7 +123,7 @@ trap cleanup EXIT
 trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
 
-for command in docker openssl python3 node pnpm; do
+for command in docker id openssl python3 node pnpm; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "$command is required" >&2
     exit 1
@@ -212,18 +212,23 @@ materialize_secret() {
   variable_name=$1
   secret_name=$2
   secret_value=$3
+  secret_mode=${4:-600}
   secret_path="$secret_directory/$secret_name"
   printf '%s' "$secret_value" >"$secret_path"
-  chmod 600 "$secret_path"
+  chmod "$secret_mode" "$secret_path"
   eval "$variable_name=\$secret_path"
   export "$variable_name"
 }
 
 materialize_secret POSTGRES_PASSWORD_FILE postgres_password "$postgres_password"
-materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$migrator_password"
-materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$runtime_password"
-materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$backup_password"
-materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key"
+# Docker Compose implements file-backed secrets as bind mounts on Linux. The
+# Postgres image executes initdb hooks as its unprivileged postgres user, so
+# these role-bootstrap files must be readable after the privilege drop. Their
+# parent directory remains 0700 and the mounts remain read-only.
+materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$migrator_password" 644
+materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$runtime_password" 644
+materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$backup_password" 644
+materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key" 644
 materialize_secret AGNO_MIGRATOR_DATABASE_PASSWORD_FILE agno_migrator_database_password "$agno_migrator_password"
 materialize_secret AGNO_DATABASE_PASSWORD_FILE agno_database_password "$agno_runtime_password"
 materialize_secret AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD_FILE agent_control_migrator_database_password "$control_migrator_password"
@@ -312,6 +317,13 @@ E2E_REVOKED_SESSION_TOKEN=$revoked_session
 E2E_REPLACEMENT_PASSWORD=$replacement_password
 EOF
 chmod 600 "$env_file"
+
+# Compose gives the parent process environment precedence over --env-file.
+# Replace any CI-level fixture values with this run's generated values before
+# the first Compose interpolation so the seed and Playwright use one token set.
+set -a
+. "$env_file"
+set +a
 
 if [ "$runtime_mode" = true ]; then
   slug=deterministic-runtime
@@ -579,9 +591,12 @@ fi
 
 compose run --rm --no-deps backup
 backup_volume="${project}_backup_data"
-docker run --rm -v "$backup_volume:/backups:ro" -v "$dump_directory:/out" \
+docker run --rm \
+  -e OUTPUT_UID="$(id -u)" \
+  -e OUTPUT_GID="$(id -g)" \
+  -v "$backup_volume:/backups:ro" -v "$dump_directory:/out" \
   postgres:18.3-alpine3.23 sh -c \
-  'backup=$(find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump.gpg" | sort | tail -n 1); test -n "$backup"; cp "$backup" /out/generated.dump.gpg; chmod 0600 /out/generated.dump.gpg'
+  'backup=$(find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump.gpg" | sort | tail -n 1); test -n "$backup"; cp "$backup" /out/generated.dump.gpg; chown "$OUTPUT_UID:$OUTPUT_GID" /out/generated.dump.gpg; chmod 0600 /out/generated.dump.gpg'
 
 restore_output="$temporary_directory/restore-output.log"
 if ! env $restore_skill_runtime_environment \
