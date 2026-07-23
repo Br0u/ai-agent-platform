@@ -3531,7 +3531,9 @@ cleanup
       expect(materialized, file).toBeGreaterThan(generated);
       expect(composeConfig, file).toBeGreaterThan(materialized);
       expect(runner).toMatch(/chmod 700 [^\n]*"\$secret_dir"/u);
-      expect(runner).toContain('chmod 600 "$secret_path"');
+      expect(runner).toMatch(
+        /(?:chmod 600 "\$secret_path"|secret_mode=\$\{4:-600\}[\s\S]*chmod "\$secret_mode" "\$secret_path")/u,
+      );
       expect(runner).toContain("umask 077");
       expect(runner).toContain("trap cleanup EXIT");
       expect(runner).not.toContain('echo "$model_api_key"');
