@@ -83,6 +83,10 @@ command -v openssl >/dev/null 2>&1 || {
   echo "openssl is required" >&2
   exit 1
 }
+command -v id >/dev/null 2>&1 || {
+  echo "id is required" >&2
+  exit 1
+}
 
 secret() {
   openssl rand -hex 32
@@ -438,10 +442,12 @@ until docker run --rm -v "$backup_volume:/backups:ro" \
 done
 
 docker run --rm \
+  -e OUTPUT_UID="$(id -u)" \
+  -e OUTPUT_GID="$(id -g)" \
   -v "$backup_volume:/backups:ro" \
   -v "$dump_dir:/out" \
   postgres:18.3-alpine3.23 sh -c \
-  'dump=$(find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump.gpg" | head -n 1); test -n "$dump"; cp "$dump" /out/generated.dump.gpg; chmod 0600 /out/generated.dump.gpg'
+  'dump=$(find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump.gpg" | head -n 1); test -n "$dump"; cp "$dump" /out/generated.dump.gpg; chown "$OUTPUT_UID:$OUTPUT_GID" /out/generated.dump.gpg; chmod 0600 /out/generated.dump.gpg'
 
 backup_crypto_image="${project}-backup:latest"
 skill_registry_image="${project}-skill-registry:latest"

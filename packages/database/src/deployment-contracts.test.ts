@@ -7929,6 +7929,12 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
       'materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key" 644',
     );
     expect(script).toContain('set -a\n. "$env_file"\nset +a');
+    expect(script).toContain("command -v id >/dev/null 2>&1");
+    expect(script).toContain('-e OUTPUT_UID="$(id -u)"');
+    expect(script).toContain('-e OUTPUT_GID="$(id -g)"');
+    expect(script).toContain(
+      'chown "$OUTPUT_UID:$OUTPUT_GID" /out/generated.dump.gpg',
+    );
     expect(script).toContain('stat -f %Lp "$env_file"');
     expect(script).toContain('stat -c %a "$env_file"');
     expect(script).toContain('[ "$env_permissions" = "600" ]');
