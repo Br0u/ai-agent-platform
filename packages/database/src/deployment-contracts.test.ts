@@ -3253,6 +3253,11 @@ secrets:
     expect(runner).toContain(
       'materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key" 644',
     );
+    expect(runner).toContain('-e OUTPUT_UID="$(id -u)"');
+    expect(runner).toContain('-e OUTPUT_GID="$(id -g)"');
+    expect(runner).toContain(
+      'chown "$OUTPUT_UID:$OUTPUT_GID" /out/generated.dump.gpg',
+    );
     expect(runner).toContain("restart skill-registry");
     expect(
       runner.match(/run_job --no-deps skill-registry-migrate/g),

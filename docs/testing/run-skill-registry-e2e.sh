@@ -123,7 +123,7 @@ trap cleanup EXIT
 trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
 
-for command in docker openssl python3 node pnpm; do
+for command in docker id openssl python3 node pnpm; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "$command is required" >&2
     exit 1
@@ -591,9 +591,12 @@ fi
 
 compose run --rm --no-deps backup
 backup_volume="${project}_backup_data"
-docker run --rm -v "$backup_volume:/backups:ro" -v "$dump_directory:/out" \
+docker run --rm \
+  -e OUTPUT_UID="$(id -u)" \
+  -e OUTPUT_GID="$(id -g)" \
+  -v "$backup_volume:/backups:ro" -v "$dump_directory:/out" \
   postgres:18.3-alpine3.23 sh -c \
-  'backup=$(find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump.gpg" | sort | tail -n 1); test -n "$backup"; cp "$backup" /out/generated.dump.gpg; chmod 0600 /out/generated.dump.gpg'
+  'backup=$(find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump.gpg" | sort | tail -n 1); test -n "$backup"; cp "$backup" /out/generated.dump.gpg; chown "$OUTPUT_UID:$OUTPUT_GID" /out/generated.dump.gpg; chmod 0600 /out/generated.dump.gpg'
 
 restore_output="$temporary_directory/restore-output.log"
 if ! env $restore_skill_runtime_environment \
