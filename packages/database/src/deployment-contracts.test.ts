@@ -3237,6 +3237,9 @@ secrets:
 
     expect(runner).toContain("SKILL_REGISTRY_E2E_PROJECT");
     expect(runner).toContain("trap cleanup EXIT");
+    expect(runner.indexOf('. "$env_file"')).toBeLessThan(
+      runner.indexOf("compose config --quiet"),
+    );
     expect(runner).toContain("docker compose -p");
     expect(runner).toContain(
       'materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$migrator_password" 644',

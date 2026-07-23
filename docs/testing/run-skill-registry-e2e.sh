@@ -318,6 +318,13 @@ E2E_REPLACEMENT_PASSWORD=$replacement_password
 EOF
 chmod 600 "$env_file"
 
+# Compose gives the parent process environment precedence over --env-file.
+# Replace any CI-level fixture values with this run's generated values before
+# the first Compose interpolation so the seed and Playwright use one token set.
+set -a
+. "$env_file"
+set +a
+
 if [ "$runtime_mode" = true ]; then
   slug=deterministic-runtime
   mkdir -p "$fixture_directory/$slug/scripts"
