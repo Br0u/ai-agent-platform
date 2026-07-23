@@ -616,6 +616,40 @@ describe("production deployment security contracts", () => {
     );
   });
 
+  it("separates direct Web development from local Compose and gives agents safe instructions", () => {
+    const rootReadme = read("README.md");
+    const environmentMigration = read(
+      "docs/deployment/maduoduo-environment-migration.md",
+    );
+    const example = read(".env.example");
+
+    expect(rootReadme).toContain("## 本地开发（直接运行 Web，端口 3000）");
+    expect(rootReadme).toContain(
+      "## 本地 Docker Compose（完整环境，端口 8080）",
+    );
+    expect(rootReadme).toContain("BETTER_AUTH_URL=http://127.0.0.1:8080");
+    expect(rootReadme).toContain(
+      "ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080",
+    );
+    expect(rootReadme).toContain("PUBLIC_HOST=127.0.0.1");
+    expect(rootReadme).toContain("ALLOW_LOCAL_VALIDATION_HOSTS=true");
+    expect(rootReadme).toContain("Docker Compose 2.33.1");
+    expect(rootReadme).toContain("## 交给 Agent 的本地 Docker 部署 Prompt");
+    expect(rootReadme).toContain("不得执行 docker compose down -v");
+    expect(rootReadme).toContain(
+      "不能遗漏 agent-control-bootstrap 或 agent-control-migrate",
+    );
+    expect(rootReadme).toContain("不得把“容器启动”冒充成“模型已经可用”");
+    expect(environmentMigration).toContain(
+      "直接运行`pnpm dev`、浏览器访问 Web 端口`3000`时",
+    );
+    expect(environmentMigration).toContain(
+      "本地 Docker Compose 经过 Nginx 代理，只访问端口`8080`",
+    );
+    expect(example).toContain("生产部署模板");
+    expect(example).toContain("127.0.0.1:8080");
+  });
+
   it("documents assistant secret files and current images in first deployment", () => {
     const runbook = read("docs/deployment/server-readiness.md");
     const firstDeployment = runbook
