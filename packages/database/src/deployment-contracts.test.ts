@@ -3250,6 +3250,9 @@ secrets:
     expect(runner).toContain(
       'materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$backup_password" 644',
     );
+    expect(runner).toContain(
+      'materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key" 644',
+    );
     expect(runner).toContain("restart skill-registry");
     expect(
       runner.match(/run_job --no-deps skill-registry-migrate/g),
