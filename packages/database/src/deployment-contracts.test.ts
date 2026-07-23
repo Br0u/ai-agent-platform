@@ -3172,8 +3172,17 @@ secrets:
     expect(workflow).toMatch(
       /docker run[\s\S]*--name skill-registry-ci-smoke[\s\S]*--read-only/,
     );
-    expect(workflow).toMatch(
-      /docker exec skill-registry-ci-smoke[\s\S]*10002:10002[\s\S]*docker inspect skill-registry-ci-smoke[\s\S]*true null/,
+    expect(workflow).toContain(
+      "docker exec skill-registry-ci-smoke sh -c 'test \"$(id -u):$(id -g)\" = 10002:10002'",
+    );
+    expect(workflow).toContain(
+      "readonly_rootfs=\"$(docker inspect skill-registry-ci-smoke --format '{{.HostConfig.ReadonlyRootfs}}')\"",
+    );
+    expect(workflow).toContain(
+      "port_bindings=\"$(docker inspect skill-registry-ci-smoke --format '{{json .HostConfig.PortBindings}}')\"",
+    );
+    expect(workflow).toContain(
+      `[ "$readonly_rootfs" != true ] || { [ "$port_bindings" != null ] && [ "$port_bindings" != '{}' ]; }`,
     );
     expect(workflow).toContain("docker run --rm agent-service-ci python -c");
     expect(workflow).toContain(
