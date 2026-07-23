@@ -24,6 +24,7 @@ from skill_registry.schema import (
     SCHEMA_VERSION_1_SQL,
     SCHEMA_VERSION_2_SQL,
     SCHEMA_VERSION_3_SQL,
+    SCHEMA_VERSION_4_SQL,
     SELECT_SCHEMA_VERSION_SQL,
     VERIFY_BACKUP_GRANTS_SQL,
     VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL,
@@ -75,6 +76,8 @@ class FakeCursor:
             self.versions = (1, 2)
         elif query == SCHEMA_VERSION_3_SQL:
             self.versions = (1, 2, 3)
+        elif query == SCHEMA_VERSION_4_SQL:
+            self.versions = (1, 2, 3, 4)
 
     async def fetchone(self) -> tuple[Any, ...] | None:
         if self._query == VERIFY_SCHEMA_OWNER_SQL:
@@ -137,9 +140,9 @@ class FakeCursor:
         return rows[self._query]
 
 
-def test_skill_set_tables_and_views_require_schema_v3_migration() -> None:
-    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 3
-    assert getattr(registry_schema, "SCHEMA_VERSION_3_SQL", "")
+def test_runtime_file_index_upgrade_requires_schema_v4_migration() -> None:
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 4
+    assert getattr(registry_schema, "SCHEMA_VERSION_4_SQL", "")
 
 
 class FakeConnection:
@@ -157,7 +160,7 @@ class FakeConnection:
 
 
 @pytest.mark.asyncio
-async def test_migration_applies_v1_through_v3_once_and_keeps_repeat_at_exact_v3() -> None:
+async def test_migration_applies_v1_through_v4_once_and_keeps_repeat_at_exact_v4() -> None:
     cursor = FakeCursor()
     connection = FakeConnection(cursor)
     urls: list[str] = []
@@ -176,6 +179,7 @@ async def test_migration_applies_v1_through_v3_once_and_keeps_repeat_at_exact_v3
     assert cursor.executed.count(SCHEMA_VERSION_1_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_2_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_3_SQL) == 1
+    assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
     assert cursor.executed.count(SELECT_SCHEMA_VERSION_SQL) == 2
     assert cursor.executed.count(VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL) == 2
     assert cursor.executed.count(VERIFY_REVIEW_STORAGE_COLUMNS_SQL) == 2
@@ -210,10 +214,11 @@ async def test_migration_rejects_drifted_version_sets_without_reapplying_schema(
     assert SCHEMA_VERSION_1_SQL not in cursor.executed
     assert SCHEMA_VERSION_2_SQL not in cursor.executed
     assert SCHEMA_VERSION_3_SQL not in cursor.executed
+    assert SCHEMA_VERSION_4_SQL not in cursor.executed
 
 
 @pytest.mark.asyncio
-async def test_migration_upgrades_exact_v1_to_v3() -> None:
+async def test_migration_upgrades_exact_v1_to_v4() -> None:
     cursor = FakeCursor(versions=(1,))
 
     async def connector(database_url: str) -> MigrationConnection:
@@ -225,11 +230,12 @@ async def test_migration_upgrades_exact_v1_to_v3() -> None:
     assert SCHEMA_VERSION_1_SQL not in cursor.executed
     assert cursor.executed.count(SCHEMA_VERSION_2_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_3_SQL) == 1
-    assert cursor.versions == (1, 2, 3)
+    assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
+    assert cursor.versions == (1, 2, 3, 4)
 
 
 @pytest.mark.asyncio
-async def test_migration_upgrades_exact_v2_to_v3() -> None:
+async def test_migration_upgrades_exact_v2_to_v4() -> None:
     cursor = FakeCursor(versions=(1, 2))
 
     async def connector(database_url: str) -> MigrationConnection:
@@ -241,7 +247,25 @@ async def test_migration_upgrades_exact_v2_to_v3() -> None:
     assert SCHEMA_VERSION_1_SQL not in cursor.executed
     assert SCHEMA_VERSION_2_SQL not in cursor.executed
     assert cursor.executed.count(SCHEMA_VERSION_3_SQL) == 1
-    assert cursor.versions == (1, 2, 3)
+    assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
+    assert cursor.versions == (1, 2, 3, 4)
+
+
+@pytest.mark.asyncio
+async def test_migration_upgrades_exact_v3_to_v4() -> None:
+    cursor = FakeCursor(versions=(1, 2, 3))
+
+    async def connector(database_url: str) -> MigrationConnection:
+        return FakeConnection(cursor)
+
+    settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
+    await run_migration(settings, connector=connector)
+
+    assert SCHEMA_VERSION_1_SQL not in cursor.executed
+    assert SCHEMA_VERSION_2_SQL not in cursor.executed
+    assert SCHEMA_VERSION_3_SQL not in cursor.executed
+    assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
+    assert cursor.versions == (1, 2, 3, 4)
 
 
 @pytest.mark.asyncio

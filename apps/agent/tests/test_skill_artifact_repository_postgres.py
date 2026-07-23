@@ -61,9 +61,11 @@ def package(slug: str) -> CanonicalSkillPackage:
     return canonicalize_skill_zip(output.getvalue())
 
 
-async def seed_published_revision() -> UUID:
+async def seed_published_revision(
+    value: CanonicalSkillPackage | None = None,
+) -> UUID:
     assert OWNER_URL is not None
-    value = package(f"runtime-pg-{uuid4().hex[:12]}")
+    value = value or package(f"runtime-pg-{uuid4().hex[:12]}")
     skill_id, revision_id, actor = uuid4(), uuid4(), uuid4()
     review_request_id = uuid4()
     async with await psycopg.AsyncConnection.connect(
@@ -171,6 +173,33 @@ async def create_candidate(revision_id: UUID) -> UUID:
         row = await cursor.fetchone()
         assert row is not None
         return UUID(str(row[0]))
+
+
+async def test_runtime_file_index_uses_canonical_utf8_path_order() -> None:
+    assert RUNTIME_URL is not None
+    value = package(f"runtime-order-{uuid4().hex[:12]}")
+    revision_id = await seed_published_revision(value)
+    candidate_id = await create_candidate(revision_id)
+
+    async with await psycopg.AsyncConnection.connect(
+        psycopg_url(RUNTIME_URL)
+    ) as connection:
+        cursor = await connection.execute(
+            """SELECT file_index FROM skill_registry.runtime_skill_set_items
+            WHERE set_id = %s
+            ORDER BY ordinal""",
+            (candidate_id,),
+        )
+        row = await cursor.fetchone()
+
+    assert row is not None and len(row) == 1
+    assert type(row[0]) is list
+    assert all(
+        type(entry) is dict and type(entry.get("path")) is str for entry in row[0]
+    )
+    assert tuple(entry["path"] for entry in row[0]) == tuple(
+        file.path for file in value.files
+    )
 
 
 async def test_real_runtime_role_loads_validates_activates_fails_and_reconciles() -> (

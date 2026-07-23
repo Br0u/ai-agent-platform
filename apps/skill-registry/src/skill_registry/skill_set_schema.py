@@ -1,4 +1,4 @@
-"""Immutable schema-v3 SQL for reviewed Skill runtime sets."""
+"""Schema SQL for reviewed Skill runtime sets."""
 
 SKILL_SET_TABLE_NAMES = frozenset(
     {
@@ -1140,7 +1140,7 @@ SELECT
       'sha256', file.file_sha256,
       'size', file.size,
       'mediaType', file.media_type
-    ) ORDER BY file.path)
+    ) ORDER BY pg_catalog.convert_to(file.path, 'UTF8'))
     FROM skill_registry.skill_revision_files AS file
     WHERE file.revision_id = item.skill_revision_id
   ), '[]'::jsonb) AS file_index
@@ -1231,5 +1231,47 @@ TO ai_agent_backup;
 
 INSERT INTO skill_registry.schema_versions (version)
 VALUES (3)
+ON CONFLICT (version) DO NOTHING;
+"""
+
+
+SCHEMA_VERSION_4_SQL = """
+CREATE OR REPLACE VIEW skill_registry.runtime_skill_set_items AS
+SELECT
+  item.set_id,
+  item.ordinal,
+  item.skill_id,
+  item.skill_revision_id AS revision_id,
+  skill.slug,
+  artifact.artifact_sha256,
+  artifact.compressed_size,
+  artifact.extracted_size,
+  artifact.file_count,
+  artifact.archive_bytes,
+  COALESCE((
+    SELECT jsonb_agg(jsonb_build_object('path', file.path,
+      'sha256', file.file_sha256,
+      'size', file.size,
+      'mediaType', file.media_type
+    ) ORDER BY pg_catalog.convert_to(file.path, 'UTF8'))
+    FROM skill_registry.skill_revision_files AS file
+    WHERE file.revision_id = item.skill_revision_id
+  ), '[]'::jsonb) AS file_index
+FROM skill_registry.agent_skill_set_items AS item
+JOIN skill_registry.skills AS skill ON skill.id = item.skill_id
+JOIN skill_registry.skill_revision_artifacts AS artifact
+  ON artifact.revision_id = item.skill_revision_id
+  AND artifact.skill_id = item.skill_id;
+
+ALTER VIEW skill_registry.runtime_skill_set_items
+  OWNER TO ai_agent_skill_registry_migrator;
+REVOKE ALL ON skill_registry.runtime_skill_set_items
+FROM PUBLIC, ai_agent_skill_registry_manager, ai_agent_skill_registry_runtime,
+  ai_agent_backup;
+GRANT SELECT ON skill_registry.runtime_skill_set_items
+TO ai_agent_skill_registry_runtime;
+
+INSERT INTO skill_registry.schema_versions (version)
+VALUES (4)
 ON CONFLICT (version) DO NOTHING;
 """
