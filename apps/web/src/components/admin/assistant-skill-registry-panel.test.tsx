@@ -241,9 +241,45 @@ describe("AssistantSkillRegistryPanel", () => {
 
     expect(await screen.findByText("safe-review")).toBeVisible();
     expect(screen.getByText("pending_review")).toBeVisible();
-    expect(screen.getByRole("status")).toHaveTextContent(/等待独立审核/u);
+    expect(screen.getByRole("status")).toHaveTextContent(/等待审核/u);
     await waitFor(() => expect(trigger).toHaveFocus());
     expect(document.body.textContent).not.toContain("已启用");
+  });
+
+  it("opens an existing Skill update with its target ID prefilled", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(Response.json(uploadEnvelope(), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AssistantSkillRegistryPanel
+        actorUserId={ACTOR_ID}
+        canRead
+        initialPermissions={{ ...readOnlyPermissions, canUpload: true }}
+        initialSnapshot={snapshot}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "上传新版本 safe-review" }),
+    );
+    const target = screen.getByLabelText(/目标 Skill ID/u);
+    expect(target).toHaveValue(SKILL_ID);
+    expect(target).toHaveAttribute("readonly");
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: {
+        files: [
+          new File(["zip"], "safe-review-v2.zip", {
+            type: "application/zip",
+          }),
+        ],
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "提交审核" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    const body = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(body.get("targetSkillId")).toBe(SKILL_ID);
   });
 
   it("does not let a late list refresh overwrite a completed upload", async () => {

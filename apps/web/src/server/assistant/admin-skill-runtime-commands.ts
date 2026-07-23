@@ -158,19 +158,9 @@ export function createAdminSkillRuntimeCommands(dependencies: Dependencies) {
     activationRequestId: string | null,
     execute: () => Promise<T>,
   ): Promise<T> {
+    let result: T;
     try {
-      const result = await execute();
-      await audit(
-        context,
-        operation,
-        setId,
-        activationVersion,
-        revisionCount,
-        requestId,
-        activationRequestId,
-        "success",
-      );
-      return result;
+      result = await execute();
     } catch (error) {
       await audit(
         context,
@@ -185,6 +175,21 @@ export function createAdminSkillRuntimeCommands(dependencies: Dependencies) {
       if (error instanceof AdminSkillRuntimeCommandError) throw error;
       throw new AdminSkillRuntimeCommandError(mapFailure(error));
     }
+    try {
+      await audit(
+        context,
+        operation,
+        setId,
+        activationVersion,
+        revisionCount,
+        requestId,
+        activationRequestId,
+        "success",
+      );
+    } catch {
+      throw new AdminSkillRuntimeCommandError("activation_result_unknown");
+    }
+    return result;
   }
 
   return {

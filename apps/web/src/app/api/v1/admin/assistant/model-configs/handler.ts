@@ -263,7 +263,7 @@ export async function loadAdminModelConfigSnapshot(
   options: SnapshotOptions = {},
 ): Promise<AdminModelConfigSnapshot> {
   const client = options.client ?? defaultModelControlClient();
-  const requestId = (options.requestIdFactory ?? crypto.randomUUID)();
+  const requestId = (options.requestIdFactory ?? (() => crypto.randomUUID()))();
   const [listed, runtime] = await Promise.all([
     client.listModelConfigs({ requestId }),
     client.runtimeStatus({ requestId }),

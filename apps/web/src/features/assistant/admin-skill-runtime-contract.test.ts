@@ -74,6 +74,29 @@ describe("admin Skill runtime contract", () => {
     expect(Object.getPrototypeOf(parsed?.agent)).toBe(Object.prototype);
   });
 
+  it("returns plain published revisions for Server-to-Client serialization", () => {
+    const parsed = parseAdminSkillRuntimeSnapshot(snapshot());
+
+    expect(Object.getPrototypeOf(parsed?.available.items[0])).toBe(
+      Object.prototype,
+    );
+  });
+
+  it("accepts multiple published revisions of the same Skill", () => {
+    const value = snapshot();
+    value.available.items.push({
+      ...value.available.items[0]!,
+      revisionId: "55555555-5555-4555-8555-555555555555",
+      revisionNo: 2,
+      artifactSha256: "b".repeat(64),
+    });
+    value.available.total = 2;
+
+    expect(parseAdminSkillRuntimeSnapshot(value)?.available.items).toHaveLength(
+      2,
+    );
+  });
+
   it.each([
     [
       "top-level extra",

@@ -126,7 +126,7 @@ export async function loadAdminSkillRuntimeSnapshot(
   actor: WorkforceActor,
   options: SnapshotOptions = {},
 ): Promise<AdminSkillRuntimeSnapshot> {
-  const requestId = (options.requestIdFactory ?? crypto.randomUUID)();
+  const requestId = (options.requestIdFactory ?? (() => crypto.randomUUID()))();
   if (!UUID.test(requestId)) throw new TypeError("Invalid request ID");
   const registry = options.registry ?? defaultRegistry();
   const agent = options.agent ?? defaultAgent();

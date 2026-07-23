@@ -17,10 +17,13 @@ const REGISTRY_UNAVAILABLE_ERROR =
   "Skill Registry 当前不可用，请联系管理员启动服务后重试。";
 const UPLOAD_REJECTED_ERROR =
   "上传请求被拒绝；请确认访问地址已配置并重新登录后重试。";
+const EXISTING_SKILL_ERROR =
+  "同名 Skill 已存在；请关闭窗口并从 Skill 列表点击“上传新版本”。";
 
 type Props = {
   onClose(): void;
   onUploaded(revision: AdminSkillRevision): void;
+  targetSkill?: { id: string; name: string };
 };
 
 function parseUploadResponse(value: unknown): AdminSkillRevision | null {
@@ -66,6 +69,7 @@ async function uploadErrorMessage(response: Response): Promise<string> {
   if (
     response.status !== 400 &&
     response.status !== 403 &&
+    response.status !== 409 &&
     response.status !== 503
   ) {
     return GENERIC_UPLOAD_ERROR;
@@ -82,6 +86,7 @@ async function uploadErrorMessage(response: Response): Promise<string> {
     const code = Reflect.get(error, "code");
     if (code === "validation_error") return INVALID_ARCHIVE_ERROR;
     if (code === "permission_denied") return UPLOAD_REJECTED_ERROR;
+    if (code === "state_conflict") return EXISTING_SKILL_ERROR;
     if (code === "registry_unavailable") return REGISTRY_UNAVAILABLE_ERROR;
     return GENERIC_UPLOAD_ERROR;
   } catch {
@@ -89,10 +94,14 @@ async function uploadErrorMessage(response: Response): Promise<string> {
   }
 }
 
-export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
+export function AssistantSkillUploadDialog({
+  onClose,
+  onUploaded,
+  targetSkill,
+}: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
-  const [targetSkillId, setTargetSkillId] = useState("");
+  const [targetSkillId, setTargetSkillId] = useState(targetSkill?.id ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const [error, setError] = useState("");
@@ -162,7 +171,7 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
     }
     submittingRef.current = false;
     setSubmitting(false);
-    setAnnouncement("上传成功，状态：pending_review（待独立审核）。");
+    setAnnouncement("上传成功，状态：pending_review（待审核）。");
     onUploaded(revision);
   };
 
@@ -191,15 +200,21 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
           ref={inputRef}
           type="file"
         />
-        <label htmlFor="assistant-skill-target">目标 Skill ID（可选）</label>
+        <label htmlFor="assistant-skill-target">
+          目标 Skill ID{targetSkill === undefined ? "（可选）" : ""}
+        </label>
         <input
           autoComplete="off"
           id="assistant-skill-target"
           onChange={(event) => setTargetSkillId(event.target.value)}
           placeholder="更新已有 Skill 时填写 UUID"
+          readOnly={targetSkill !== undefined}
           value={targetSkillId}
         />
         <small>
+          {targetSkill === undefined
+            ? "留空会创建新 Skill；更新已有 Skill 请从列表点击“上传新版本”。"
+            : `正在更新 ${targetSkill.name}；上传后生成新的 revision。`}
           ZIP 上传后只进入 pending_review，不会自动启用或接入 Agent。
         </small>
         {error ? <p role="alert">{error}</p> : null}

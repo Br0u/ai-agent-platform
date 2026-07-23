@@ -364,7 +364,7 @@ describe("AssistantAdminPage", () => {
 
     expect(screen.getByRole("button", { name: "会话审计" })).toBeDisabled();
     expect(screen.getAllByRole("button", { name: /暂不可用$/u })).toHaveLength(
-      4,
+      3,
     );
     for (const action of screen.getAllByRole("button", {
       name: /暂不可用$/u,

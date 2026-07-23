@@ -169,4 +169,29 @@ describe("admin Skill runtime commands", () => {
       }),
     );
   });
+
+  it("reports an unknown result without writing a false failure after a committed mutation", async () => {
+    const { commands, registry, audit } = setup();
+    audit.write.mockRejectedValueOnce(new Error("audit storage unavailable"));
+    const context = await commands.authorize(
+      new Request("https://example.test/api", { method: "POST" }),
+    );
+
+    await expect(
+      commands.createCandidate(context, {
+        agentId: "maduoduo",
+        revisionIds: [REVISION],
+        requestId: REQUEST_ID,
+      }),
+    ).rejects.toEqual(
+      new AdminSkillRuntimeCommandError("activation_result_unknown"),
+    );
+    expect(registry.createSkillSet).toHaveBeenCalledOnce();
+    expect(audit.write).toHaveBeenCalledOnce();
+    expect(audit.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ result: "success" }),
+      }),
+    );
+  });
 });

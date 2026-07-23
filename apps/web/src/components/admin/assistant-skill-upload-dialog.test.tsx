@@ -238,6 +238,43 @@ describe("AssistantSkillUploadDialog", () => {
     );
   });
 
+  it("explains how to update an existing Skill after a name conflict", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json(
+          {
+            version: "1",
+            requestId: "name-conflict",
+            error: {
+              code: "state_conflict",
+              message: "Skill revision state has changed",
+              retryable: false,
+            },
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+    render(
+      <AssistantSkillUploadDialog onClose={vi.fn()} onUploaded={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: {
+        files: [
+          new File(["zip"], "safe-review.zip", {
+            type: "application/zip",
+          }),
+        ],
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "提交审核" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "同名 Skill 已存在；请关闭窗口并从 Skill 列表点击“上传新版本”。",
+    );
+  });
+
   it("traps focus and blocks background interaction across body levels", () => {
     const backgroundClick = vi.fn();
     const externalClick = vi.fn();

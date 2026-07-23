@@ -26,7 +26,7 @@ function responseSnapshot(value: unknown): AdminSkillRuntimeSnapshot | null {
 function isConsistent(snapshot: AdminSkillRuntimeSnapshot): boolean {
   return (
     snapshot.agent.skillCapability !== "degraded" &&
-    snapshot.registry.active?.id === snapshot.agent.loadedSetId &&
+    (snapshot.registry.active?.id ?? null) === snapshot.agent.loadedSetId &&
     snapshot.registry.activationVersion === snapshot.agent.activationVersion
   );
 }
@@ -111,7 +111,10 @@ export function AssistantSkillConfigurationPanel({ initialSnapshot }: Props) {
       const value: unknown = await response.json();
       if (!response.ok) {
         const code = operationError(value);
-        if (code === "activation_result_unknown") {
+        if (
+          code === "activation_result_unknown" ||
+          code === "activation_timeout"
+        ) {
           setUnknownResult(true);
           setMessage("激活结果未知，正在读取权威状态…");
           await reconcileUnknown();
@@ -236,7 +239,16 @@ export function AssistantSkillConfigurationPanel({ initialSnapshot }: Props) {
                           setSelected((current) =>
                             current.includes(item.revisionId)
                               ? current.filter((id) => id !== item.revisionId)
-                              : [...current, item.revisionId],
+                              : [
+                                  ...current.filter((id) =>
+                                    snapshot.available.items.every(
+                                      (candidate) =>
+                                        candidate.revisionId !== id ||
+                                        candidate.skillId !== item.skillId,
+                                    ),
+                                  ),
+                                  item.revisionId,
+                                ],
                           );
                         }}
                         type="checkbox"

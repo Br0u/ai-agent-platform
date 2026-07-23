@@ -290,13 +290,16 @@ export function parseAdminAvailableSkillRevisions(
     ) {
       return null;
     }
-    items.push(item as AdminPublishedSkillRevision);
+    items.push({
+      skillId: item.skillId,
+      revisionId: item.revisionId,
+      slug: item.slug,
+      revisionNo: item.revisionNo,
+      artifactSha256: item.artifactSha256,
+      extractedSize: item.extractedSize,
+    });
   }
-  if (
-    new Set(items.map((item) => item.skillId)).size !== items.length ||
-    new Set(items.map((item) => item.revisionId)).size !== items.length ||
-    new Set(items.map((item) => item.slug)).size !== items.length
-  ) {
+  if (new Set(items.map((item) => item.revisionId)).size !== items.length) {
     return null;
   }
   return {

@@ -8,6 +8,7 @@ import {
   createSkillCandidateHandler,
   createSkillRollbackHandler,
   createSkillRuntimeListHandler,
+  loadAdminSkillRuntimeSnapshot,
 } from "./handler";
 
 const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
@@ -69,6 +70,47 @@ function post(body: object) {
 }
 
 describe("admin Skill runtime BFF", () => {
+  it("uses the platform UUID generator without losing its receiver", async () => {
+    const registry = {
+      listAvailableRevisions: vi.fn(async () => ({
+        items: [],
+        limit: 100,
+        offset: 0,
+        total: 0,
+      })),
+      runtimeStatus: vi.fn(async () => ({
+        active: null,
+        previous: null,
+        activationVersion: 0,
+        candidateCount: 0,
+        candidates: [],
+      })),
+    };
+    const agent = {
+      runtimeStatus: vi.fn(async () => ({
+        skillCapability: "unconfigured" as const,
+        configured: false,
+        activeSetId: null,
+        loadedSetId: null,
+        previousSetId: null,
+        activationVersion: 0,
+        failureCode: null,
+      })),
+    };
+
+    await expect(
+      loadAdminSkillRuntimeSnapshot(actor, {
+        registry: registry as never,
+        agent: agent as never,
+      }),
+    ).resolves.toMatchObject({
+      version: "1",
+      agent: { skillCapability: "unconfigured" },
+    });
+    expect(registry.runtimeStatus).toHaveBeenCalledOnce();
+    expect(agent.runtimeStatus).toHaveBeenCalledOnce();
+  });
+
   it("loads one no-store snapshot under read permission", async () => {
     const loadSnapshot = vi.fn(async () => ({
       version: "1" as const,

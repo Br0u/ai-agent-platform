@@ -263,6 +263,43 @@ describe("GET /api/v1/admin/assistant/status", () => {
     );
   });
 
+  it("uses the platform UUID generator without losing its receiver", async () => {
+    const runtimeStatus = vi.fn(async (input: { requestId: string }) => {
+      void input;
+      return controlRuntime();
+    });
+
+    await loadAdminAssistantStatus({
+      runtime: {
+        readinessStatus: vi.fn(async () => ({
+          probed: true,
+          live: true,
+          ready: true,
+          capability: "available" as const,
+        })),
+        inspect: vi.fn(() => ({
+          providerMode: "agentos" as const,
+          persistence: "agentos" as const,
+          circuits: {
+            readiness: { state: "closed" as const, consecutiveFailures: 0 },
+            execution: { state: "closed" as const, consecutiveFailures: 0 },
+          },
+          readiness: {
+            cacheTtlMs: 5_000,
+            probeTimeoutMs: 1_500,
+            failureThreshold: 3,
+          },
+        })),
+      },
+      controlClient: { runtimeStatus },
+    });
+
+    expect(runtimeStatus).toHaveBeenCalledOnce();
+    expect(runtimeStatus.mock.calls[0]?.[0].requestId).toMatch(
+      /^[0-9a-f-]{36}$/u,
+    );
+  });
+
   it("labels a deployment bootstrap as untested without a dynamic revision", async () => {
     const result = await loadAdminAssistantStatus({
       runtime: {
@@ -1497,7 +1534,7 @@ describe("GET /api/v1/admin/assistant/status", () => {
         configuration: {
           defaultAgent: "码多多（占位）",
           model: "未配置",
-          skills: "未接入",
+          skills: "已接入",
           sessionStorage: "未启用",
         },
         message: "模型尚未配置，当前为安全占位模式。",

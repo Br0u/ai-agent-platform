@@ -93,6 +93,10 @@ export function AssistantSkillRegistryPanel({
     revisionId: string;
   } | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadTarget, setUploadTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const uploadTrigger = useRef<HTMLButtonElement>(null);
   const restoreUploadFocus = useRef(false);
@@ -129,6 +133,16 @@ export function AssistantSkillRegistryPanel({
   const closeUpload = () => {
     restoreUploadFocus.current = true;
     setUploadOpen(false);
+    setUploadTarget(null);
+  };
+
+  const openUpload = (
+    trigger: HTMLButtonElement,
+    target: { id: string; name: string } | null,
+  ) => {
+    uploadTrigger.current = trigger;
+    setUploadTarget(target);
+    setUploadOpen(true);
   };
 
   const refresh = async () => {
@@ -238,7 +252,7 @@ export function AssistantSkillRegistryPanel({
     });
     setSelection(null);
     closeUpload();
-    setAnnouncement("上传完成：pending_review，等待独立审核。");
+    setAnnouncement("上传完成：pending_review，等待审核。");
   };
 
   const revisionChanged = (revision: AdminSkillRevision) => {
@@ -270,7 +284,7 @@ export function AssistantSkillRegistryPanel({
         <div>
           <p>REVIEWED SKILL REGISTRY</p>
           <h2 id="assistant-skill-registry-title">Skill 库</h2>
-          <span>上传、扫描和双人审核已接入；Agent 运行时加载尚未接入。</span>
+          <span>上传、扫描、审核与 Agent 运行时加载已接入。</span>
         </div>
         <strong>
           {snapshot.capability === "available"
@@ -292,8 +306,7 @@ export function AssistantSkillRegistryPanel({
         ) : null}
         {canRead && permissions.canUpload ? (
           <button
-            onClick={() => setUploadOpen(true)}
-            ref={uploadTrigger}
+            onClick={(event) => openUpload(event.currentTarget, null)}
             type="button"
           >
             上传 Skill ZIP
@@ -330,21 +343,39 @@ export function AssistantSkillRegistryPanel({
                   <span>尚无 revision</span>
                 )}
               </div>
-              {canRead && permissions.canReview && skill.revision ? (
-                <button
-                  aria-expanded={selection?.revisionId === skill.revision.id}
-                  onClick={() =>
-                    setSelection((current) =>
-                      current?.revisionId === skill.revision?.id
-                        ? null
-                        : { skillId: skill.id, revisionId: skill.revision!.id },
-                    )
-                  }
-                  type="button"
-                >
-                  查看审核详情 {skill.name}
-                </button>
-              ) : null}
+              <div>
+                {canRead && permissions.canUpload ? (
+                  <button
+                    onClick={(event) =>
+                      openUpload(event.currentTarget, {
+                        id: skill.id,
+                        name: skill.name,
+                      })
+                    }
+                    type="button"
+                  >
+                    上传新版本 {skill.name}
+                  </button>
+                ) : null}
+                {canRead && permissions.canReview && skill.revision ? (
+                  <button
+                    aria-expanded={selection?.revisionId === skill.revision.id}
+                    onClick={() =>
+                      setSelection((current) =>
+                        current?.revisionId === skill.revision?.id
+                          ? null
+                          : {
+                              skillId: skill.id,
+                              revisionId: skill.revision!.id,
+                            },
+                      )
+                    }
+                    type="button"
+                  >
+                    查看审核详情 {skill.name}
+                  </button>
+                ) : null}
+              </div>
             </li>
           ))}
         </ul>
@@ -362,6 +393,7 @@ export function AssistantSkillRegistryPanel({
         <AssistantSkillUploadDialog
           onClose={closeUpload}
           onUploaded={uploaded}
+          targetSkill={uploadTarget ?? undefined}
         />
       ) : null}
     </section>

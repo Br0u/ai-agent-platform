@@ -86,6 +86,76 @@ describe("AssistantSkillConfigurationPanel", () => {
     ).toBeVisible();
   });
 
+  it("treats matching unconfigured Registry and Agent state as consistent", () => {
+    render(
+      <AssistantSkillConfigurationPanel
+        initialSnapshot={{
+          ...snapshot,
+          registry: {
+            active: null,
+            previous: null,
+            activationVersion: 0,
+            candidateCount: 0,
+            candidates: [],
+          },
+          agent: {
+            skillCapability: "unconfigured",
+            configured: false,
+            activeSetId: null,
+            loadedSetId: null,
+            previousSetId: null,
+            activationVersion: 0,
+            failureCode: null,
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("REGISTRY / AGENT 一致")).toBeVisible();
+    expect(screen.getByRole("checkbox")).toBeEnabled();
+  });
+
+  it("allows only one published revision per Skill in a candidate", async () => {
+    const newerRevision = "77777777-7777-4777-8777-777777777777";
+    const multipleRevisions: AdminSkillRuntimeSnapshot = {
+      ...snapshot,
+      available: {
+        ...snapshot.available,
+        total: 2,
+        items: [
+          snapshot.available.items[0]!,
+          {
+            ...snapshot.available.items[0]!,
+            revisionId: newerRevision,
+            revisionNo: 3,
+            artifactSha256: "b".repeat(64),
+          },
+        ],
+      },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({}, { status: 201 }))
+      .mockResolvedValueOnce(Response.json(envelope(multipleRevisions)));
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AssistantSkillConfigurationPanel initialSnapshot={multipleRevisions} />,
+    );
+
+    const revisions = screen.getAllByRole("checkbox");
+    fireEvent.click(revisions[0]!);
+    fireEvent.click(revisions[1]!);
+
+    expect(revisions[0]).not.toBeChecked();
+    expect(revisions[1]).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "创建候选集合" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(
+      JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string),
+    ).toMatchObject({ revisionIds: [newerRevision] });
+  });
+
   it("hides mutations when the account can only read", () => {
     render(
       <AssistantSkillConfigurationPanel
@@ -163,6 +233,45 @@ describe("AssistantSkillConfigurationPanel", () => {
         Response.json(
           { error: { code: "activation_result_unknown" } },
           { status: 503 },
+        ),
+      )
+      .mockResolvedValueOnce(Response.json(envelope(activated)));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistantSkillConfigurationPanel initialSnapshot={snapshot} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "激活" }));
+
+    expect(await screen.findByText("对账完成，运行状态已确认。")).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "/api/v1/admin/assistant/skill-runtime",
+    );
+  });
+
+  it("polls authority after an activation timeout instead of reporting failure", async () => {
+    const activated: AdminSkillRuntimeSnapshot = {
+      ...snapshot,
+      registry: {
+        active: set(CANDIDATE, "active"),
+        previous: set(ACTIVE, "superseded"),
+        activationVersion: 2,
+        candidateCount: 0,
+        candidates: [],
+      },
+      agent: {
+        ...snapshot.agent,
+        activeSetId: CANDIDATE,
+        loadedSetId: CANDIDATE,
+        previousSetId: ACTIVE,
+        activationVersion: 2,
+      },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          { error: { code: "activation_timeout" } },
+          { status: 504 },
         ),
       )
       .mockResolvedValueOnce(Response.json(envelope(activated)));

@@ -828,7 +828,10 @@
   line-height: 1.6;
 }
 
-.assistant-capability-roadmap__grid button {
+.assistant-capability-roadmap__grid button,
+.assistant-capability-roadmap__availability {
+  display: grid;
+  place-items: center;
   min-height: 44px;
   margin-top: auto;
   border: 1px solid var(--color-workspace-line);
@@ -836,6 +839,10 @@
   color: var(--color-muted);
   background: var(--color-canvas);
   font-weight: 700;
+}
+
+.assistant-capability-roadmap__availability {
+  color: var(--color-ai-accent);
 }
 
 .assistant-capability-roadmap__grid button:disabled {
