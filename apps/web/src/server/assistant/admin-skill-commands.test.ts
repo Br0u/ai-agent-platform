@@ -136,7 +136,7 @@ const reviewInput = {
     contentReviewed: true as const,
     usageRightsConfirmed: true as const,
     executionRiskAccepted: true as const,
-    independentReviewerConfirmed: true as const,
+    reviewerAuthorizationConfirmed: true as const,
   },
 };
 
@@ -366,12 +366,12 @@ describe("admin skill review command", () => {
       },
     ],
     ["extra input key", { ...reviewInput, unexpected: true }],
-    ["self approval", { ...reviewInput }],
+    ["upstream state conflict", { ...reviewInput }],
   ])("fails closed for %s", async (scenario, input) => {
     const current = fixture();
-    if (scenario === "self approval") {
+    if (scenario === "upstream state conflict") {
       vi.mocked(current.client.reviewRevision).mockRejectedValueOnce(
-        new SkillRegistryClientError("REVIEW_SELF_APPROVAL_DENIED"),
+        new SkillRegistryClientError("REVISION_STATE_CONFLICT"),
       );
     }
     const context = await current.commands.authorize(request(), "review");
@@ -379,7 +379,7 @@ describe("admin skill review command", () => {
     await expect(
       current.commands.review(context, input as never),
     ).rejects.toBeInstanceOf(Error);
-    if (scenario !== "self approval") {
+    if (scenario !== "upstream state conflict") {
       expect(current.client.reviewRevision).not.toHaveBeenCalled();
       expect(current.audit.write).not.toHaveBeenCalled();
     } else {

@@ -254,11 +254,7 @@ export function AssistantSkillRevisionDetail({
   };
 
   const openReview = () => {
-    if (
-      detail?.revision.state !== "pending_review" ||
-      detail.revision.createdBy === actorUserId
-    )
-      return;
+    if (detail?.revision.state !== "pending_review") return;
     setError("");
     setAnnouncement("");
     setReviewOpen(true);
@@ -410,19 +406,14 @@ export function AssistantSkillRevisionDetail({
               </>
             )}
           </section>
-          {detail.revision.state === "pending_review" &&
-          detail.revision.createdBy === actorUserId ? (
-            <p>该 revision 需独立审核人；创建者只能查看审核证据。</p>
-          ) : (
-            <button
-              aria-disabled={detail.revision.state !== "pending_review"}
-              onClick={openReview}
-              ref={reviewTrigger}
-              type="button"
-            >
-              打开审核操作
-            </button>
-          )}
+          <button
+            aria-disabled={detail.revision.state !== "pending_review"}
+            onClick={openReview}
+            ref={reviewTrigger}
+            type="button"
+          >
+            打开审核操作
+          </button>
           {detail.revision.state !== "pending_review" ? (
             <p>该 revision 已完成审核，当前状态：{detail.revision.state}。</p>
           ) : null}

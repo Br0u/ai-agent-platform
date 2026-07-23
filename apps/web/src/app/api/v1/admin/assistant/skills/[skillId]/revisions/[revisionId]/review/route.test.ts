@@ -17,7 +17,7 @@ const input = {
     contentReviewed: true,
     usageRightsConfirmed: true,
     executionRiskAccepted: true,
-    independentReviewerConfirmed: true,
+    reviewerAuthorizationConfirmed: true,
   },
 };
 
@@ -173,15 +173,15 @@ describe("admin skill review route", () => {
     expect(badUuid.status).toBe(400);
   });
 
-  it("maps self review to 403 and upstream failure to stable 503", async () => {
-    const self = fixture();
-    self.commands.review.mockRejectedValueOnce(
-      new SkillRegistryClientError("REVIEW_SELF_APPROVAL_DENIED"),
+  it("maps state conflicts to 409 and upstream failures to stable 503", async () => {
+    const conflict = fixture();
+    conflict.commands.review.mockRejectedValueOnce(
+      new SkillRegistryClientError("REVISION_STATE_CONFLICT"),
     );
-    const denied = await self.handler(reviewRequest(), {
+    const denied = await conflict.handler(reviewRequest(), {
       params: Promise.resolve({ skillId: SKILL_ID, revisionId: REVISION_ID }),
     });
-    expect(denied.status).toBe(403);
+    expect(denied.status).toBe(409);
 
     const unavailable = fixture();
     unavailable.commands.review.mockRejectedValueOnce(

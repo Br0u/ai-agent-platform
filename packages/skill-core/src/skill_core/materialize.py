@@ -15,6 +15,7 @@ from .types import CanonicalSkillPackage, SkillFile
 
 _DIRECTORY_MODE: Final = 0o700
 _FILE_MODE: Final = 0o600
+_SCRIPT_MODE: Final = 0o700
 _DIRECTORY_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _FILE_WRITE_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 _FILE_READ_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -152,21 +153,26 @@ def _write_all(fd: int, content: bytes) -> None:
         pending = pending[written:]
 
 
+def _file_mode(file: SkillFile) -> int:
+    return _SCRIPT_MODE if file.path.startswith("scripts/") else _FILE_MODE
+
+
 def _write_file(
     generation_fd: int,
     file: SkillFile,
     identities: dict[tuple[str, ...], _NodeIdentity],
 ) -> None:
     parts = tuple(file.path.split("/"))
+    expected_mode = _file_mode(file)
     parent_fd = _open_directory_chain(generation_fd, parts[:-1], identities)
     try:
-        file_fd = os.open(parts[-1], _FILE_WRITE_FLAGS, _FILE_MODE, dir_fd=parent_fd)
+        file_fd = os.open(parts[-1], _FILE_WRITE_FLAGS, expected_mode, dir_fd=parent_fd)
         try:
-            os.fchmod(file_fd, _FILE_MODE)
+            os.fchmod(file_fd, expected_mode)
             metadata = os.fstat(file_fd)
             if (
                 not stat.S_ISREG(metadata.st_mode)
-                or stat.S_IMODE(metadata.st_mode) != _FILE_MODE
+                or stat.S_IMODE(metadata.st_mode) != expected_mode
                 or metadata.st_nlink != 1
             ):
                 _fail("MATERIALIZE_FAILED")
@@ -197,6 +203,7 @@ def _verify_file(
     identities: dict[tuple[str, ...], _NodeIdentity],
 ) -> None:
     parts = tuple(file.path.split("/"))
+    expected_mode = _file_mode(file)
     parent_fd = _open_directory_chain(generation_fd, parts[:-1], identities)
     try:
         file_fd = os.open(parts[-1], _FILE_READ_FLAGS, dir_fd=parent_fd)
@@ -204,7 +211,7 @@ def _verify_file(
             metadata = os.fstat(file_fd)
             if (
                 not stat.S_ISREG(metadata.st_mode)
-                or stat.S_IMODE(metadata.st_mode) != _FILE_MODE
+                or stat.S_IMODE(metadata.st_mode) != expected_mode
                 or metadata.st_nlink != 1
                 or metadata.st_size != file.size
             ):

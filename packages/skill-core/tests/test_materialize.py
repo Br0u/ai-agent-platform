@@ -49,7 +49,8 @@ def test_materializes_exact_tree_with_restrictive_permissions(tmp_path: Path, zi
     assert (tmp_path / "gen" / "references" / "guide.md").read_text() == "# Guide\n"
     assert stat.S_IMODE((tmp_path / "gen").stat().st_mode) == 0o700
     assert stat.S_IMODE((tmp_path / "gen" / "scripts").stat().st_mode) == 0o700
-    assert stat.S_IMODE((tmp_path / "gen" / "scripts" / "run.py").stat().st_mode) == 0o600
+    assert stat.S_IMODE((tmp_path / "gen" / "SKILL.md").stat().st_mode) == 0o600
+    assert stat.S_IMODE((tmp_path / "gen" / "scripts" / "run.py").stat().st_mode) == 0o700
 
 
 @pytest.mark.parametrize("directory_name", ["", ".", "..", "../escape", "a/b", "x\x00y"])

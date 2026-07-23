@@ -662,7 +662,7 @@ def test_real_postgres_app_upload_detail_review_and_readiness(tmp_path: Path) ->
                     "contentReviewed": True,
                     "usageRightsConfirmed": True,
                     "executionRiskAccepted": True,
-                    "independentReviewerConfirmed": True,
+                    "reviewerAuthorizationConfirmed": True,
                 },
             },
         )

@@ -169,7 +169,7 @@ function readReviewInput(value: unknown): AdminSkillReviewInput | null {
       "contentReviewed",
       "usageRightsConfirmed",
       "executionRiskAccepted",
-      "independentReviewerConfirmed",
+      "reviewerAuthorizationConfirmed",
     ],
   ]);
   if (
@@ -184,7 +184,7 @@ function readReviewInput(value: unknown): AdminSkillReviewInput | null {
     attestations.contentReviewed !== true ||
     attestations.usageRightsConfirmed !== true ||
     attestations.executionRiskAccepted !== true ||
-    attestations.independentReviewerConfirmed !== true
+    attestations.reviewerAuthorizationConfirmed !== true
   ) {
     return null;
   }
@@ -211,7 +211,7 @@ function readReviewInput(value: unknown): AdminSkillReviewInput | null {
       contentReviewed: true,
       usageRightsConfirmed: true,
       executionRiskAccepted: true,
-      independentReviewerConfirmed: true,
+      reviewerAuthorizationConfirmed: true,
     },
   };
 }

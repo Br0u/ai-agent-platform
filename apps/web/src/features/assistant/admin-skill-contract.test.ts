@@ -121,7 +121,7 @@ function detailResponse() {
       contentReviewed: true,
       usageRightsConfirmed: true,
       executionRiskAccepted: true,
-      independentReviewerConfirmed: true,
+      reviewerAuthorizationConfirmed: true,
     },
   };
 }
@@ -622,7 +622,7 @@ describe("admin Skill contracts", () => {
       "contentReviewed",
       "usageRightsConfirmed",
       "executionRiskAccepted",
-      "independentReviewerConfirmed",
+      "reviewerAuthorizationConfirmed",
     ] as const) {
       const value = detailResponse();
       value.reviewAttestations[key] = false;

@@ -95,7 +95,7 @@ export type SkillRegistryReviewInput = {
     contentReviewed: true;
     usageRightsConfirmed: true;
     executionRiskAccepted: true;
-    independentReviewerConfirmed: true;
+    reviewerAuthorizationConfirmed: true;
   };
 };
 
@@ -199,7 +199,6 @@ export const SKILL_REGISTRY_DOMAIN_CODES = [
   "REGISTRY_UNAVAILABLE",
   "RESPONSE_TOO_LARGE",
   "REVIEW_BLOCKED",
-  "REVIEW_SELF_APPROVAL_DENIED",
   "REVISION_NOT_FOUND",
   "REVISION_STATE_CONFLICT",
   "SKILL_BINARY_FILE",
@@ -1005,7 +1004,6 @@ const STATUS_BY_CODE: Readonly<Record<SkillRegistryDomainErrorCode, number>> = {
   REGISTRY_UNAVAILABLE: 503,
   RESPONSE_TOO_LARGE: 503,
   REVIEW_BLOCKED: 409,
-  REVIEW_SELF_APPROVAL_DENIED: 409,
   REVISION_NOT_FOUND: 404,
   REVISION_STATE_CONFLICT: 409,
   SKILL_BINARY_FILE: 400,
@@ -1064,7 +1062,7 @@ function readReviewInput(value: unknown): SkillRegistryReviewInput | null {
       "contentReviewed",
       "usageRightsConfirmed",
       "executionRiskAccepted",
-      "independentReviewerConfirmed",
+      "reviewerAuthorizationConfirmed",
     ],
   ]);
   if (
@@ -1075,7 +1073,7 @@ function readReviewInput(value: unknown): SkillRegistryReviewInput | null {
     attestations.contentReviewed !== true ||
     attestations.usageRightsConfirmed !== true ||
     attestations.executionRiskAccepted !== true ||
-    attestations.independentReviewerConfirmed !== true
+    attestations.reviewerAuthorizationConfirmed !== true
   ) {
     return null;
   }
@@ -1100,7 +1098,7 @@ function readReviewInput(value: unknown): SkillRegistryReviewInput | null {
       contentReviewed: true,
       usageRightsConfirmed: true,
       executionRiskAccepted: true,
-      independentReviewerConfirmed: true,
+      reviewerAuthorizationConfirmed: true,
     },
   };
 }

@@ -91,7 +91,7 @@ const detail = {
     contentReviewed: true,
     usageRightsConfirmed: true,
     executionRiskAccepted: true,
-    independentReviewerConfirmed: true,
+    reviewerAuthorizationConfirmed: true,
   },
 } satisfies AdminSkillRevisionDetailResponse;
 
@@ -277,7 +277,7 @@ describe("AssistantSkillRevisionDetail", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("shows the creator a read-only independent-review requirement", async () => {
+  it("allows the creator to open review controls", async () => {
     vi.stubGlobal(
       "fetch",
       vi
@@ -296,8 +296,11 @@ describe("AssistantSkillRevisionDetail", () => {
     );
 
     expect(await screen.findByText("Apache-2.0")).toBeVisible();
-    expect(screen.getByText(/需独立审核人/u)).toBeVisible();
-    expect(screen.queryByRole("button", { name: "打开审核操作" })).toBeNull();
+    const review = screen.getByRole("button", { name: "打开审核操作" });
+    expect(review).toBeVisible();
+    fireEvent.click(review);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.getByText(/具备审核权限时可以自审/u)).toBeVisible();
   });
 
   it("closes review actions after publication and exposes the new textual state", async () => {
@@ -349,7 +352,7 @@ describe("AssistantSkillRevisionDetail", () => {
       "已逐项审阅内容和文件",
       "已确认使用权和许可证",
       "已评估并接受执行风险",
-      "确认审核人与创建者相互独立",
+      "确认当前账号具有审核权限",
     ]) {
       fireEvent.click(screen.getByLabelText(label));
     }
@@ -415,7 +418,7 @@ describe("AssistantSkillRevisionDetail", () => {
       "已逐项审阅内容和文件",
       "已确认使用权和许可证",
       "已评估并接受执行风险",
-      "确认审核人与创建者相互独立",
+      "确认当前账号具有审核权限",
     ]) {
       fireEvent.click(screen.getByLabelText(label));
     }
@@ -513,7 +516,7 @@ describe("AssistantSkillRevisionDetail", () => {
       "已逐项审阅内容和文件",
       "已确认使用权和许可证",
       "已评估并接受执行风险",
-      "确认审核人与创建者相互独立",
+      "确认当前账号具有审核权限",
     ]) {
       fireEvent.click(screen.getByLabelText(label));
     }

@@ -133,7 +133,7 @@ export type AdminSkillRevisionDetailResponse = {
     contentReviewed: true;
     usageRightsConfirmed: true;
     executionRiskAccepted: true;
-    independentReviewerConfirmed: true;
+    reviewerAuthorizationConfirmed: true;
   };
 };
 
@@ -667,7 +667,7 @@ export function parseAdminSkillRevisionDetailResponse(
       "contentReviewed",
       "usageRightsConfirmed",
       "executionRiskAccepted",
-      "independentReviewerConfirmed",
+      "reviewerAuthorizationConfirmed",
     ]);
     if (
       response?.version !== "1" ||
@@ -680,7 +680,7 @@ export function parseAdminSkillRevisionDetailResponse(
       attestations.contentReviewed !== true ||
       attestations.usageRightsConfirmed !== true ||
       attestations.executionRiskAccepted !== true ||
-      attestations.independentReviewerConfirmed !== true ||
+      attestations.reviewerAuthorizationConfirmed !== true ||
       !(
         response.previousPublishedRevisionId === null ||
         canonicalUuid(response.previousPublishedRevisionId)
@@ -839,7 +839,7 @@ export function parseAdminSkillRevisionDetailResponse(
         contentReviewed: true,
         usageRightsConfirmed: true,
         executionRiskAccepted: true,
-        independentReviewerConfirmed: true,
+        reviewerAuthorizationConfirmed: true,
       },
     };
   } catch {

@@ -92,7 +92,7 @@ function detailEnvelope() {
       contentReviewed: true as const,
       usageRightsConfirmed: true as const,
       executionRiskAccepted: true as const,
-      independentReviewerConfirmed: true as const,
+      reviewerAuthorizationConfirmed: true as const,
     },
     requestId: "detail-race",
   };
@@ -366,7 +366,7 @@ describe("AssistantSkillRegistryPanel", () => {
       "已逐项审阅内容和文件",
       "已确认使用权和许可证",
       "已评估并接受执行风险",
-      "确认审核人与创建者相互独立",
+      "确认当前账号具有审核权限",
     ]) {
       fireEvent.click(screen.getByLabelText(label));
     }

@@ -140,8 +140,9 @@ test.describe("Skill Registry delivery", () => {
       ],
     });
 
-    // Actor A lacks review permission; a direct self-review attempt is denied
-    // before it can mutate the pending revision.
+    // Actor A lacks review permission; a direct review attempt is denied before
+    // it can mutate the pending revision. An uploader with that permission may
+    // self-review after recent MFA.
     const selfReview = await page
       .context()
       .request.post(
@@ -156,12 +157,12 @@ test.describe("Skill Registry delivery", () => {
               contentReviewed: true,
               usageRightsConfirmed: true,
               executionRiskAccepted: true,
-              independentReviewerConfirmed: true,
+              reviewerAuthorizationConfirmed: true,
             },
           },
         },
       );
-    expect(selfReview.status(), "self-review must be denied").toBe(403);
+    expect(selfReview.status(), "review permission must be required").toBe(403);
     await expect(selfReview.json()).resolves.toMatchObject({
       error: { code: "permission_denied" },
     });
@@ -215,7 +216,7 @@ test.describe("Skill Registry delivery", () => {
       "已逐项审阅内容和文件",
       "已确认使用权和许可证",
       "已评估并接受执行风险",
-      "确认审核人与创建者相互独立",
+      "确认当前账号具有审核权限",
     ]) {
       await reviewDialog.getByLabel(label).check();
     }

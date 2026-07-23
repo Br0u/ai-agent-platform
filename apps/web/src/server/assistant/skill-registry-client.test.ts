@@ -167,7 +167,7 @@ function detailResponse() {
       contentReviewed: true,
       usageRightsConfirmed: true,
       executionRiskAccepted: true,
-      independentReviewerConfirmed: true,
+      reviewerAuthorizationConfirmed: true,
     },
   };
 }
@@ -1000,7 +1000,7 @@ describe("private Skill Registry client", () => {
             contentReviewed: true,
             usageRightsConfirmed: true,
             executionRiskAccepted: true,
-            independentReviewerConfirmed: true,
+            reviewerAuthorizationConfirmed: true,
           },
         },
       }),
@@ -1087,7 +1087,7 @@ describe("private Skill Registry client", () => {
           contentReviewed: true,
           usageRightsConfirmed: true,
           executionRiskAccepted: true,
-          independentReviewerConfirmed: true,
+          reviewerAuthorizationConfirmed: true,
         },
       }),
       headers: expect.objectContaining({ "Content-Type": "application/json" }),
@@ -1122,7 +1122,7 @@ describe("private Skill Registry client", () => {
       contentReviewed: true as const,
       usageRightsConfirmed: true as const,
       executionRiskAccepted: true as const,
-      independentReviewerConfirmed: true as const,
+      reviewerAuthorizationConfirmed: true as const,
     };
 
     await expect(
@@ -1197,7 +1197,7 @@ describe("private Skill Registry client", () => {
           contentReviewed: true as const,
           usageRightsConfirmed: true as const,
           executionRiskAccepted: true as const,
-          independentReviewerConfirmed: true as const,
+          reviewerAuthorizationConfirmed: true as const,
         },
       },
     });

@@ -69,7 +69,7 @@ _ATTESTATION_FIELDS: Final = frozenset(
         "contentReviewed",
         "usageRightsConfirmed",
         "executionRiskAccepted",
-        "independentReviewerConfirmed",
+        "reviewerAuthorizationConfirmed",
     }
 )
 _STABLE_REGISTRY_CODES: Final = frozenset(
@@ -98,7 +98,6 @@ _STABLE_REGISTRY_CODES: Final = frozenset(
         "MANIFEST_INVALID",
         "REGISTRY_STORAGE_ERROR",
         "REVIEW_BLOCKED",
-        "REVIEW_SELF_APPROVAL_DENIED",
         "REVISION_NOT_FOUND",
         "REVISION_STATE_CONFLICT",
         "SKILL_BINARY_FILE",
@@ -131,7 +130,6 @@ def _registry_error(error: RegistryError) -> JSONResponse:
         "ASSERTION_REPLAY",
         "SKILL_NAME_CONFLICT",
         "REVISION_STATE_CONFLICT",
-        "REVIEW_SELF_APPROVAL_DENIED",
         "REVIEW_BLOCKED",
     }:
         status = 409
@@ -280,7 +278,7 @@ def _detail_content(detail: RevisionDetail) -> dict[str, object]:
             "contentReviewed": True,
             "usageRightsConfirmed": True,
             "executionRiskAccepted": True,
-            "independentReviewerConfirmed": True,
+            "reviewerAuthorizationConfirmed": True,
         },
     }
 
@@ -408,7 +406,7 @@ async def _read_review(request: Request) -> ParsedReview | None:
             usage_rights_confirmed=cast(bool, attestations["usageRightsConfirmed"]),
             execution_risk_accepted=cast(bool, attestations["executionRiskAccepted"]),
             reviewer_authorization_confirmed=cast(
-                bool, attestations["independentReviewerConfirmed"]
+                bool, attestations["reviewerAuthorizationConfirmed"]
             ),
         ),
     )

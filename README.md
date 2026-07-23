@@ -130,6 +130,6 @@ docker compose run --rm -it migrate pnpm --filter @ai-agent-platform/database au
 
 ## 当前状态
 
-已建立全站路由、蓝靛紫设计系统、PostgreSQL 最小权限角色、AgentOS 单 Agent 会话、AES-GCM 动态模型控制面和 Docker Compose 部署/验收基线。后台支持 OpenAI、Anthropic、Google、Qwen / DashScope、DeepSeek、MiniMax；动态活动配置优先于只读部署 bootstrap，失败候选不会替换旧活动模型，重启会从活动指针恢复。Skill 库、审核与运行时闭环已接入：授权管理员上传本地 ZIP，经独立审核发布 exact revision，再组成不可变集合供码多多激活、回滚和重启恢复；artifact 与运行时指针纳入加密备份恢复。
+已建立全站路由、蓝靛紫设计系统、PostgreSQL 最小权限角色、AgentOS 单 Agent 会话、AES-GCM 动态模型控制面和 Docker Compose 部署/验收基线。后台支持 OpenAI、Anthropic、Google、Qwen / DashScope、DeepSeek、MiniMax；动态活动配置优先于只读部署 bootstrap，失败候选不会替换旧活动模型，重启会从活动指针恢复。Skill 库、审核与运行时闭环已接入：授权管理员上传本地 ZIP，经具备审核权限的账号审核发布 exact revision，再组成不可变集合供码多多激活、回滚和重启恢复；artifact 与运行时指针纳入加密备份恢复。
 
 码多多现在只加载 Registry 中已发布且由授权管理员显式激活的 exact revision；Agent 使用只读 runtime 数据库角色，在 96 MiB `/run/aap-skills` tmpfs 中重新校验和物化，并按 run 固定 generation。GitHub/GitLab/GitCode 导入和脚本级强沙箱仍属于下一阶段。Knowledge、Tools/网页操作和自有服务器本地算力仍是未接入入口。运行行为以仓库锁定的 Agno `2.7.2` 和本地测试为准。

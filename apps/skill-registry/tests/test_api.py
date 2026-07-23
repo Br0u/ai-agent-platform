@@ -399,7 +399,7 @@ def test_detail_contains_review_metadata_without_source_content() -> None:
         "contentReviewed",
         "usageRightsConfirmed",
         "executionRiskAccepted",
-        "independentReviewerConfirmed",
+        "reviewerAuthorizationConfirmed",
     }
     assert "secret source" not in response.text
 
@@ -505,7 +505,7 @@ def test_upload_and_review_forward_verified_assertion_context() -> None:
                     "contentReviewed": True,
                     "usageRightsConfirmed": True,
                     "executionRiskAccepted": True,
-                    "independentReviewerConfirmed": True,
+                    "reviewerAuthorizationConfirmed": True,
                 },
             },
             separators=(",", ":"),

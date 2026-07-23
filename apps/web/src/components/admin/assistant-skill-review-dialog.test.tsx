@@ -34,7 +34,7 @@ const attestationLabels = [
   "已逐项审阅内容和文件",
   "已确认使用权和许可证",
   "已评估并接受执行风险",
-  "确认审核人与创建者相互独立",
+  "确认当前账号具有审核权限",
 ];
 
 type ModalSettledState = {
@@ -145,24 +145,41 @@ describe("AssistantSkillReviewDialog", () => {
     expect(screen.getByRole("status")).toHaveTextContent("published");
   });
 
-  it("prevents the creator from making any review decision or attestation", () => {
-    const fetchMock = vi.fn();
+  it("allows the creator to review after confirming authorization", async () => {
+    const onReviewed = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        version: "1",
+        revision: {
+          ...revision,
+          state: "published",
+          reviewedBy: CREATOR_ID,
+          reviewedAt: "2026-07-21T09:00:00.000Z",
+        },
+        requestId: "trace-self-review",
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     render(
       <AssistantSkillReviewDialog
         actorUserId={CREATOR_ID}
         findings={[]}
         onClose={vi.fn()}
-        onReviewed={vi.fn()}
+        onReviewed={onReviewed}
         revision={revision}
       />,
     );
 
-    expect(screen.getByText(/需独立审核人/u)).toBeVisible();
-    expect(screen.queryByRole("button", { name: "批准发布" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "拒绝 revision" })).toBeNull();
-    expect(screen.queryByLabelText(attestationLabels[3]!)).toBeNull();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText(/具备审核权限时可以自审/u)).toBeVisible();
+    for (const label of attestationLabels)
+      fireEvent.click(screen.getByLabelText(label));
+    fireEvent.click(screen.getByRole("button", { name: "批准发布" }));
+
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledOnce());
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      attestations: { reviewerAuthorizationConfirmed: true },
+    });
   });
 
   it.each([

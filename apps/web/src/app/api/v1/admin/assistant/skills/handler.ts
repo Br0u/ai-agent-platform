@@ -55,7 +55,6 @@ type PublicSkillErrorCode =
   | "validation_error"
   | "payload_too_large"
   | "not_found"
-  | "review_denied"
   | "state_conflict"
   | "registry_bad_gateway"
   | "registry_unavailable";
@@ -67,7 +66,6 @@ const ERROR_MESSAGES: Readonly<Record<PublicSkillErrorCode, string>> = {
   validation_error: "Invalid skill request",
   payload_too_large: "Skill upload is too large",
   not_found: "Skill revision was not found",
-  review_denied: "Skill review is not allowed",
   state_conflict: "Skill revision state has changed",
   registry_bad_gateway: "Skill Registry returned an invalid response",
   registry_unavailable: "Skill Registry is unavailable",
@@ -177,9 +175,6 @@ function classifyError(error: unknown): PublicError {
       error.code === "FILE_NOT_FOUND"
     ) {
       return { code: "not_found", status: 404 };
-    }
-    if (error.code === "REVIEW_SELF_APPROVAL_DENIED") {
-      return { code: "review_denied", status: 403 };
     }
     if (
       error.code === "REVISION_STATE_CONFLICT" ||
@@ -412,7 +407,7 @@ function parseReviewBody(
       "contentReviewed",
       "usageRightsConfirmed",
       "executionRiskAccepted",
-      "independentReviewerConfirmed",
+      "reviewerAuthorizationConfirmed",
     ];
     const actualAttestationKeys = Reflect.ownKeys(attestations);
     if (
@@ -453,7 +448,7 @@ function parseReviewBody(
         contentReviewed: true,
         usageRightsConfirmed: true,
         executionRiskAccepted: true,
-        independentReviewerConfirmed: true,
+        reviewerAuthorizationConfirmed: true,
       },
     };
   } catch {
