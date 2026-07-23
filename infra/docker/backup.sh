@@ -321,29 +321,48 @@ while true; do
     "$encrypt_timeout_seconds" \
     sh -c '
       set -eu
-      set -o pipefail
-      trap "set +e; wait; exit 143" TERM INT HUP
-      tar -cf - -C "$1" skill-backup.manifest database.dump |
-        gpg --homedir "$2" \
-          --batch \
-          --yes \
-          --no-tty \
-          --pinentry-mode loopback \
-          --no-symkey-cache \
-          --passphrase-file "$3" \
-          --symmetric \
-          --cipher-algo AES256 \
-          --s2k-mode 3 \
-          --s2k-digest-algo SHA512 \
-          --s2k-count 65011712 \
-          --force-mdc \
-          --compress-algo none \
-          --output "$4"
+      tar_pid=
+      gpg_pid=
+      encryption_fifo=$5
+      stop_children() {
+        [ -z "$tar_pid" ] || kill -TERM "$tar_pid" >/dev/null 2>&1 || true
+        [ -z "$gpg_pid" ] || kill -TERM "$gpg_pid" >/dev/null 2>&1 || true
+        [ -z "$tar_pid" ] || wait "$tar_pid" >/dev/null 2>&1 || true
+        [ -z "$gpg_pid" ] || wait "$gpg_pid" >/dev/null 2>&1 || true
+        rm -f "$encryption_fifo"
+      }
+      trap "stop_children; exit 143" TERM INT HUP
+      mkfifo "$encryption_fifo"
+      tar -cf - -C "$1" skill-backup.manifest database.dump >"$encryption_fifo" &
+      tar_pid=$!
+      gpg --homedir "$2" \
+        --batch \
+        --yes \
+        --no-tty \
+        --pinentry-mode loopback \
+        --no-symkey-cache \
+        --passphrase-file "$3" \
+        --symmetric \
+        --cipher-algo AES256 \
+        --s2k-mode 3 \
+        --s2k-digest-algo SHA512 \
+        --s2k-count 65011712 \
+        --force-mdc \
+        --compress-algo none \
+        --output "$4" <"$encryption_fifo" &
+      gpg_pid=$!
+      if wait "$gpg_pid"; then gpg_status=0; else gpg_status=$?; fi
+      gpg_pid=
+      if wait "$tar_pid"; then tar_status=0; else tar_status=$?; fi
+      tar_pid=
+      rm -f "$encryption_fifo"
+      [ "$tar_status" -eq 0 ] && [ "$gpg_status" -eq 0 ]
     ' sh \
       "$staging_directory" \
       "$gpg_home" \
       "$BACKUP_ENCRYPTION_KEY_FILE" \
-      "$encrypted_temporary_file" 2>/dev/null &
+      "$encrypted_temporary_file" \
+      "$staging_directory/encryption.pipe" 2>/dev/null &
   encrypt_group_pid=$!
   if ! wait "$encrypt_group_pid"; then
     echo "backup encryption failed" >&2
