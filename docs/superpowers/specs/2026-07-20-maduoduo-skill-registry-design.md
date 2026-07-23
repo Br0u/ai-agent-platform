@@ -1,7 +1,7 @@
 # 码多多 Skill Registry、审核与 Git 导入设计规格
 
 > 日期：2026-07-20
-> 状态：已确认（实施规划时补充 GitHub 固定跳转白名单与 GitLab API Token scope 约束）
+> 状态：待书面确认
 > 前置规格：`docs/superpowers/specs/2026-07-16-maduoduo-single-agent-loop-design.md`、`docs/superpowers/specs/2026-07-17-admin-assistant-model-configuration-design.md`
 
 ## 1. 背景与现状
@@ -223,7 +223,9 @@ skill-name/
 | `id` | UUID 主键 |
 | `skill_id` / `revision_no` | Skill 内单调递增版本，组合唯一 |
 | `state` | `pending_review | published | rejected | archived` |
-| `source_type` | `upload | github | gitlab | gitcode` 摘要；完整来源见 origins 表 |
+| `source_type` | `upload | github | gitlab | gitcode` |
+| `source_commit_sha` | Git 来源的完整 commit SHA；上传为空 |
+| `source_path` | 仓库内 Skill 根路径；上传为空 |
 | `manifest_json` | 解析后的 name、description、license、scripts、references |
 | `artifact_sha256` | canonical ZIP SHA-256，唯一校验依据 |
 | `created_by` / `created_at` | 上传或导入人 |
@@ -250,16 +252,12 @@ skill-name/
 
 ### 8.5 Git 来源与连接
 
-- `git_provider_connections`：Provider、主机、外部账户/安装 ID、凭据密文、nonce、encryption key ID、独立 credential version、创建/更新/吊销时间；
-- `skill_sources`：Provider、稳定仓库 ID、canonical owner/repo、Skill path、tracked ref；connection 按每次 job/check 选择，不固化在 source identity；rename/transfer 仅允许在 Provider 解析为同一 stable ID 后受控更新坐标；
-- `skill_import_jobs`：connection、请求 ref、解析后的 commit SHA、状态、错误类别、尝试次数、操作者和时间；
-- `skill_source_checks`：带 actor/idempotency/fingerprint 的远端 commit 检查结果，不创建 revision；
-- `skill_command_receipts`：ZIP upload、connection create/revoke 和 job cancel 的持久幂等结果；
-- `skill_revision_origins`：每个 revision 唯一且不可变的 upload/Git provenance，保存导入当时坐标、commit、操作者和时间；数据库用 unique + deferred constraint trigger 保证每个 revision 提交时恰好一个 origin。
+- `git_provider_connections`：Provider、主机、外部账户/安装 ID、凭据密文、nonce、key version、创建/更新/吊销时间；
+- `skill_sources`：Provider、connection、稳定仓库 ID、owner/repo、Skill path、默认 ref；
+- `skill_import_jobs`：请求 ref、解析后的 commit SHA、状态、错误类别、尝试次数、操作者和时间；
+- `skill_source_checks`：某来源最近一次远端 commit 检查结果，不创建 revision。
 
-schema v3 删除 `(skill_id, artifact_sha256)` 唯一约束。不同上传或 Git 来源即使产出相同 artifact，也必须创建独立 `pending_review` revision 并分别审核许可证和 provenance；只有同一 idempotent job/command 的安全重试返回原 revision。
-
-Provider 凭据、OAuth refresh token 和 PKCE verifier 使用专用 `SKILL_SOURCE_ENCRYPTION_KEYS_FILE` active/previous keyring 做 AES-256-GCM 认证加密，不复用模型配置密钥、认证密钥或备份密钥。connection credential 与 pre-connection flow 使用不同 AAD/envelope/version；credential version 和 flow version 都不能与 encryption key ID 混用。key rotation 同时处理 connection 和仍未过期/未使用的 flow，callback/expiry 清除 verifier envelope，旧 key 仅在不存在仍需解密的行后移除。OAuth refresh 在外部调用前取得数据库 single-flight claim；同一 connection 同时只允许一个刷新，key rotation 跳过 claimed 行，claim owner 崩溃或结果不确定时进入 `reauthorization_required` 而不是重放旧 refresh token。
+Provider 凭据和 OAuth refresh token 使用专用 `SKILL_SOURCE_ENCRYPTION_KEY` 做 AES-256-GCM 认证加密，不复用模型配置密钥、认证密钥或备份密钥。
 
 ### 8.6 Agent Skill 集合
 
@@ -293,7 +291,7 @@ upload/import request
 - “加入候选集合”不等于运行时已生效；
 - 只有 Agent 返回激活成功并更新 `activation_version` 后，页面才显示“运行中”；
 - 上传/导入者不能审核自己创建的 revision；超级管理员也不例外；
-- 只有同一 idempotent job/command 的安全重试返回原 revision；不同来源或新动作即使 commit/path/摘要相同，也生成独立 `pending_review` revision；
+- 同一远端 commit 和 path 已存在相同摘要时返回已有 revision，不重复造版本；
 - 远端更新必须生成新的 `pending_review` revision，重新审核和激活。
 
 ## 10. 上传与 Git 导入
@@ -303,9 +301,8 @@ upload/import request
 1. 管理员在 `/admin/assistant` 选择 ZIP，并选择“创建新 Skill”或“给现有 Skill 添加 revision”。
 2. Web 只做 MIME、请求体上限和权限检查，通过私有网络流式转发到 Skill Registry；不落 Web 本地磁盘。
 3. Registry 在受限临时目录中流式验证、解压、扫描和 canonicalize。
-4. 浏览器为一次上传动作生成 UUID idempotency key；Registry 以 actor、target skill 和原始 archive digest 做持久 receipt，响应丢失重试返回原 revision；
-5. 成功后用一个数据库事务写入 revision、唯一 upload origin、文件索引、制品、事件和 receipt；
-6. 临时文件立即清除；服务器重启不依赖任何上传目录。
+4. 成功后用一个数据库事务写入 revision、文件索引、制品和事件。
+5. 临时文件立即清除；服务器重启不依赖任何上传目录。
 
 ### 10.2 Git 导入
 
@@ -315,7 +312,7 @@ upload/import request
 2. 将 branch/tag 解析为完整 commit SHA；
 3. 只按固定 Provider adapter 生成 API URL；
 4. 下载固定 commit 的 archive，或按受限 tree/raw-file API 获取目标路径；
-5. 默认禁止跨主机 redirect；仅允许 Provider adapter 声明的固定 HTTPS 跳转主机，并逐跳重新验证，跨主机时不得转发原 Authorization header；
+5. 禁止跨主机 redirect，并重新验证每次 redirect；
 6. 应用与 ZIP 上传完全相同的大小、路径、类型、扫描和 canonicalize 流程；
 7. 事务写入 `pending_review` revision；
 8. job 标记 `succeeded`，失败则记录稳定错误码和脱敏说明。
@@ -323,9 +320,9 @@ upload/import request
 一期 Provider 策略：
 
 - GitHub：公开仓库可匿名；私有仓库优先 GitHub App installation token；下载固定 commit archive；
-- GitLab.com：公开仓库可匿名；私有仓库使用 `read_api` OAuth/project access token，或支持 Code Download 的 fine-grained token；部署 Token 只支持 Git/Registry，不用于 REST archive API；使用 repository archive 的 `sha + path`；
+- GitLab.com：公开仓库可匿名；私有仓库使用 OAuth 或仅含 `read_repository` 的项目/部署 Token；使用 repository archive 的 `sha + path`；
 - 自建 GitLab：主机必须先进入部署级允许列表，完成 HTTPS、DNS/IP 和 redirect 校验；
-- GitCode：公开仓库匿名能力以实际 API 返回为准；私有仓库一期只使用 header-only 只读 PAT；通过 API v5 tree/raw-file adapter 获取固定 ref 下的受限路径；
+- GitCode：公开仓库匿名能力以实际 API 返回为准；私有仓库使用 OAuth 或只读 Token；通过 API v5 tree/raw-file adapter 获取固定 ref 下的受限路径；
 - Token 只放 Authorization header，不进入 URL、日志、审计或错误信息。
 
 不接受用户直接提交 clone URL。owner、repo、ref 和 path 分字段校验后由 adapter 构造 URL，从根上缩小 SSRF 和凭据泄漏面。
@@ -345,9 +342,9 @@ upload/import request
 ### 11.1 连接方式
 
 - GitHub：部署 GitHub App；安装授权后只保存 installation ID，短期 installation token 用时生成且不持久化；
-- GitLab.com：OAuth connection；也允许项目范围的 `read_api` Token 或支持 Code Download 的 fine-grained token；
-- 自建 GitLab：部署先配置允许主机，一期由管理员录入上述只读 API Token；不动态注册 OAuth client，不接受只能用于 Git clone 的部署 Token；
-- GitCode：一期使用只读个人访问 Token 并只通过 Authorization/PRIVATE-TOKEN header；OAuth 延后，禁止为兼容接口退回 query token。
+- GitLab.com：OAuth connection；也允许项目范围的 `read_repository` Token；
+- 自建 GitLab：部署先配置允许主机和 OAuth client，或由管理员录入只读项目/部署 Token；
+- GitCode：OAuth connection 或只读个人访问 Token。
 
 公开仓库无需创建 connection，但仍只能访问固定 Provider 主机。
 
@@ -357,8 +354,8 @@ upload/import request
 - Web 不持久化、不回显、不记录 Token，请求和响应均 `Cache-Control: no-store`；
 - Registry 收到后立即加密，只返回 connection metadata 和末四位；
 - 明文只在一次 Provider 请求期间存在于内存；
-- GitHub App 私钥、OAuth client secret 和 `SKILL_SOURCE_ENCRYPTION_KEYS_FILE` 使用 Docker Secret；
-- Agent 和 Web 不挂载 `SKILL_SOURCE_ENCRYPTION_KEYS_FILE`；
+- GitHub App 私钥、OAuth client secret 和 `SKILL_SOURCE_ENCRYPTION_KEY` 使用 Docker Secret；
+- Agent 和 Web 不挂载 `SKILL_SOURCE_ENCRYPTION_KEY`；
 - 连接吊销后不能发起新导入，已固化 revision 和运行中 Skill 不受影响。
 
 ## 12. 审核与授权
@@ -532,7 +529,7 @@ Agno `Skills` 对部分非校验异常会记录 warning 后继续，因此平台
 - `git_fetch`：Registry 到 proxy 的内部网络；
 - `git_egress`：只有 proxy 连接的外网网络。
 
-Web 仍只有 `frontend + backend`；Agent 仍只有 `backend + model_egress`；Registry 不连接 `model_egress`，Agent 不连接 `git_egress`。应用层 Provider adapter、DNS/IP 拒绝规则和 proxy allowlist 必须同时存在；Registry 与 proxy 必须只读挂载并消费同一份 root-owned `SKILL_GIT_ALLOWED_HOSTS_FILE`，不得维护两份会漂移的主机列表。
+Web 仍只有 `frontend + backend`；Agent 仍只有 `backend + model_egress`；Registry 不连接 `model_egress`，Agent 不连接 `git_egress`。应用层 Provider adapter、主机允许列表、DNS/IP 拒绝规则和 proxy allowlist 必须同时存在。
 
 新增数据库角色：
 
@@ -586,7 +583,7 @@ Web 仍只有 `frontend + backend`；Agent 仍只有 `backend + model_egress`；
 - `ARTIFACT_DIGEST_MISMATCH`、`SKILL_LOAD_FAILED`；
 - `ACTIVATION_VERSION_CONFLICT`、`ACTIVATION_DRAIN_TIMEOUT`。
 
-日志和指标记录 Provider、job/revision/set ID、commit SHA、摘要前缀、耗时、大小、状态和错误类别；不记录 Token、Authorization header、OAuth code/state、query/Referer、Error message/stack、文件正文、脚本输出或完整用户路径。Nginx 使用 `$uri` 而不是完整 request；Web `onRequestError` 只记录去 query 的 pathname、route、digest 和稳定错误类别。
+日志和指标记录 Provider、job/revision/set ID、commit SHA、摘要前缀、耗时、大小、状态和错误类别；不记录 Token、Authorization header、文件正文、脚本输出或完整用户路径。
 
 ## 20. 测试与验收
 
@@ -596,9 +593,8 @@ Web 仍只有 `frontend + backend`；Agent 仍只有 `backend + model_egress`；
 - canonical ZIP 和 SHA-256 的确定性；
 - Agno frontmatter/name/description 校验与目录名一致性；
 - 同名 Skill、重复 revision、状态机和双人审核；
-- Provider URL 构造、ref 到 commit 解析、固定 redirect 白名单与 SSRF 拒绝；
+- Provider URL 构造、ref 到 commit 解析、redirect/SSRF 拒绝；
 - Token 加密、错误脱敏、无 Token URL/日志；
-- ZIP/source mutation 的持久幂等、每 revision 恰好一个 origin、OAuth callback query/Referer/error 脱敏；
 - artifact store PostgreSQL 实现和未来接口合同；
 - candidate set、CAS、空集合、回滚和活动 revision 归档保护；
 - Agno 构造成功但少加载/覆盖时的集合等值失败；
@@ -629,7 +625,7 @@ Web 仍只有 `frontend + backend`；Agent 仍只有 `backend + model_egress`；
 ### 20.4 Docker 验收
 
 - Web 无 Git 外网，Agent 无 Git 凭据，Registry 不能直连外网，只有 proxy 可出站；
-- proxy 拒绝未允许域名、HTTP、私网 IP 和非 Provider 固定白名单的跨主机 redirect；
+- proxy 拒绝未允许域名、HTTP、私网 IP、跨主机 redirect；
 - Agent 根文件系统只读，`/tmp` noexec，只有 `/run/aap-skills` 可执行；
 - Agent 非 root、cap drop、`no-new-privileges`、CPU/内存/PID 限制保持；
 - 加密备份包含 `skill_registry`，恢复后摘要与活动集合一致；
@@ -659,7 +655,6 @@ Web 仍只有 `frontend + backend`；Agent 仍只有 `backend + model_egress`；
 - Git egress proxy；
 - GitHub/GitLab/GitCode adapters；
 - Provider connection、凭据加密、检查更新和重新导入。
-- GitCode OAuth 不在一期内；private GitCode 必须通过 header-only PAT live smoke 才算交付。
 
 ### 阶段 D：运行安全增强（后续独立决策）
 
@@ -690,6 +685,6 @@ Web 仍只有 `frontend + backend`；Agent 仍只有 `backend + model_egress`；
 - [GitLab repository archive API](https://docs.gitlab.com/api/repositories/)：支持 `sha` 和 `path`；
 - [GitLab OAuth](https://docs.gitlab.com/api/oauth2/)、[project access token](https://docs.gitlab.com/user/project/settings/project_access_tokens/) 与 [token scopes](https://docs.gitlab.com/security/tokens/access_token_scopes/)：用于受限私有仓库访问；
 - [GitCode API v5](https://docs.gitcode.com/v1-docs/en/docs/repos/)：使用 repository tree 和 raw file 接口实现受限路径导入；
-- [GitCode OAuth](https://docs.gitcode.com/docs/apis/oauth/)：仅作后续阶段依据，一期不接入。
+- [GitCode OAuth](https://docs.gitcode.com/docs/apis/oauth/)：用于私有仓库授权。
 
 实现时必须以锁定 Provider API 版本的官方文档和合同测试为准；任何 Provider 能力缺失都应返回明确“不支持”，不能退回任意 URL 或 shell `git clone`。
