@@ -215,6 +215,11 @@ describe("FloatingChatWidget", () => {
     expect(
       screen.getByTestId("assistant-quick-service-state"),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "你好，我是码多多。已启用的审核 Skill 会按配置加载；知识库和网页正文读取尚未接入。",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("如何开始了解平台？")).toBeInTheDocument();
     expect(screen.getByText("如何获取部署支持？")).toBeInTheDocument();
     expect(screen.getByText("如何提交产品问题？")).toBeInTheDocument();
@@ -321,6 +326,37 @@ describe("FloatingChatWidget", () => {
     expect(screen.getByRole("link", { name: "客户支持" })).toHaveAttribute(
       "href",
       "/support",
+    );
+  });
+
+  it("renders streamed assistant output as Markdown in the quick surface", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ...successfulReply,
+              message: {
+                ...successfulReply.message,
+                content: "## NPU\n\n**NPU** 是 AI 推理加速器。",
+              },
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          ),
+      ),
+    );
+    openWidget();
+
+    fireEvent.click(screen.getByRole("button", { name: "如何提交产品问题？" }));
+
+    const heading = await screen.findByRole("heading", { name: "NPU" });
+    expect(heading).toBeInTheDocument();
+    expect(screen.getByText("NPU", { selector: "strong" })).toHaveTextContent(
+      "NPU",
     );
   });
 

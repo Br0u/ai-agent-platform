@@ -429,7 +429,7 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
 
 export type AssistantRuntime = ReturnType<typeof createAssistantRuntime>;
 
-const RUNTIME_KEY = Symbol.for("ai-agent-platform:assistant:runtime:v1");
+const RUNTIME_KEY = Symbol.for("ai-agent-platform:assistant:runtime:v2");
 
 function runtimeStore(): Record<symbol, AssistantRuntime | undefined> {
   return globalThis as typeof globalThis &

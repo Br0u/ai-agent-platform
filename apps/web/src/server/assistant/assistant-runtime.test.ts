@@ -36,9 +36,13 @@ const AGENTOS_ENVIRONMENT = {
   ASSISTANT_PROVIDER_MODE: "agentos",
 } as const;
 
-const RUNTIME_KEY = Symbol.for("ai-agent-platform:assistant:runtime:v1");
+const LEGACY_RUNTIME_KEY = Symbol.for(
+  "ai-agent-platform:assistant:runtime:v1",
+);
+const RUNTIME_KEY = Symbol.for("ai-agent-platform:assistant:runtime:v2");
 
 afterEach(() => {
+  delete (globalThis as Record<PropertyKey, unknown>)[LEGACY_RUNTIME_KEY];
   delete (globalThis as Record<PropertyKey, unknown>)[RUNTIME_KEY];
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
@@ -494,5 +498,20 @@ describe("assistant server runtime", () => {
     );
 
     expect(getAssistantRuntime()).toBe(getAssistantRuntime());
+  });
+
+  it("does not reuse the legacy hot-reload runtime slot", () => {
+    for (const [name, value] of Object.entries(VALID_ENVIRONMENT)) {
+      vi.stubEnv(name, value);
+    }
+    vi.stubEnv(
+      "DATABASE_URL",
+      "postgresql://runtime:runtime@127.0.0.1:5432/runtime",
+    );
+    const legacyRuntime = { stale: true };
+    (globalThis as Record<PropertyKey, unknown>)[LEGACY_RUNTIME_KEY] =
+      legacyRuntime;
+
+    expect(getAssistantRuntime()).not.toBe(legacyRuntime);
   });
 });

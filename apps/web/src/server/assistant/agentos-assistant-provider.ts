@@ -6,7 +6,12 @@ import type {
   AssistantProviderReply,
 } from "./assistant-provider";
 import type { AgentOSExecutionCircuit } from "./agentos-execution-circuit";
-import type { AgentOSRunClient } from "./agentos-run-client";
+import {
+  AgentOSRunClientError,
+  type AgentOSRunClient,
+  type AgentOSRunClientErrorCode,
+  type AgentOSRunDiagnostic,
+} from "./agentos-run-client";
 
 export type AgentOSCleanupFailureCategory =
   | "ephemeral_session_cleanup_failed"
@@ -20,6 +25,26 @@ export type AgentOSCleanupFailureEvent = {
 export type AgentOSCleanupRecorder = (
   event: AgentOSCleanupFailureEvent,
 ) => void;
+
+export type AgentOSRunFailureEvent = {
+  code: AgentOSRunClientErrorCode | "unexpected";
+  diagnostic: AgentOSRunDiagnostic | null;
+};
+
+export type AgentOSRunFailureRecorder = (event: AgentOSRunFailureEvent) => void;
+
+export const defaultAgentOSRunFailureRecorder: AgentOSRunFailureRecorder = (
+  event,
+) => {
+  try {
+    console.warn("Assistant AgentOS run failed", {
+      code: event.code,
+      diagnostic: event.diagnostic,
+    });
+  } catch {
+    // Observability must never replace the original run failure.
+  }
+};
 
 export const defaultAgentOSCleanupRecorder: AgentOSCleanupRecorder = (
   event,
@@ -43,6 +68,7 @@ export class AgentOSAssistantProvider implements AssistantProvider {
       circuit: AgentOSExecutionCircuit;
       randomUUID?: () => string;
       cleanupRecorder?: AgentOSCleanupRecorder;
+      runFailureRecorder?: AgentOSRunFailureRecorder;
     },
   ) {}
 
@@ -79,10 +105,15 @@ export class AgentOSAssistantProvider implements AssistantProvider {
       return queue.shift()!;
     };
     const execution = this.options.circuit.execute(async () => {
-      while (true) {
-        const next = await iterator.next();
-        if (next.done) return;
-        push({ kind: "chunk", value: next.value });
+      try {
+        while (true) {
+          const next = await iterator.next();
+          if (next.done) return;
+          push({ kind: "chunk", value: next.value });
+        }
+      } catch (error) {
+        this.recordRunFailure(error);
+        throw error;
       }
     });
     void execution.then(
@@ -99,6 +130,23 @@ export class AgentOSAssistantProvider implements AssistantProvider {
     } finally {
       await iterator.return?.();
       await execution.catch(() => undefined);
+    }
+  }
+
+  private recordRunFailure(error: unknown): void {
+    const event: AgentOSRunFailureEvent =
+      error instanceof AgentOSRunClientError
+        ? {
+            code: error.code,
+            diagnostic: error.diagnostic ?? null,
+          }
+        : { code: "unexpected", diagnostic: null };
+    try {
+      (this.options.runFailureRecorder ?? defaultAgentOSRunFailureRecorder)(
+        event,
+      );
+    } catch {
+      // Failure recording cannot replace the original run error.
     }
   }
 
@@ -126,7 +174,9 @@ export class AgentOSAssistantProvider implements AssistantProvider {
       return;
     }
 
-    const sessionId = (this.options.randomUUID ?? crypto.randomUUID)();
+    const sessionId = (
+      this.options.randomUUID ?? (() => crypto.randomUUID())
+    )();
     try {
       yield* this.runStream(invocation, sessionId, false);
     } finally {

@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { createAdminAssistantChatHandler } from "./handler";
 
-const RUNTIME_KEY = Symbol.for("ai-agent-platform:assistant:runtime:v1");
+const RUNTIME_KEY = Symbol.for("ai-agent-platform:assistant:runtime:v2");
 
 afterEach(() => {
   delete (globalThis as Record<PropertyKey, unknown>)[RUNTIME_KEY];

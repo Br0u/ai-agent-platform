@@ -170,7 +170,9 @@ export function AssistantWorkspace({
             <p className="assistant-workspace__disclosure">
               <span>{displayedServiceState.message}</span>
               <span>{sessionBoundary}</span>
-              <span>尚未接入 Skill、知识库或网页正文读取。</span>
+              <span>
+                已启用的审核 Skill 会按配置加载；知识库和网页正文读取尚未接入。
+              </span>
             </p>
             <div aria-label="常见问题" className="assistant-workspace__presets">
               {ASSISTANT_PRESET_QUESTIONS.map((question) => (

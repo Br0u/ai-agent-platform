@@ -27,6 +27,7 @@ import {
 } from "react";
 import { ASSISTANT_PRESET_QUESTIONS } from "@/features/assistant/assistant-contract";
 import { useAssistantExperience } from "../assistant/assistant-experience-provider";
+import { AssistantMarkdown } from "../assistant/assistant-markdown";
 import {
   AssistantPromptInput,
   type AssistantPromptSubmit,
@@ -206,7 +207,10 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
             M
           </span>
           <div className="floating-assistant__message-content">
-            <p>你好，我是码多多。当前尚未接入 Skill、知识库或网页正文读取。</p>
+            <p>
+              你好，我是码多多。已启用的审核 Skill
+              会按配置加载；知识库和网页正文读取尚未接入。
+            </p>
           </div>
         </article>
 
@@ -224,7 +228,11 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
               </span>
             ) : null}
             <div className="floating-assistant__message-content">
-              <p>{message.content}</p>
+              {message.role === "assistant" ? (
+                <AssistantMarkdown content={message.content} />
+              ) : (
+                <p>{message.content}</p>
+              )}
               {message.role === "assistant" &&
               message.suggestedActions.length > 0 ? (
                 <div className="floating-assistant__actions">

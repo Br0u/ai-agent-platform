@@ -24,6 +24,7 @@ type ResponseAssistantMessage = {
   role: "assistant";
   content: string;
   suggestedActions: AssistantSuggestedAction[];
+  incomplete?: boolean;
 };
 
 export type AssistantMessage = UserAssistantMessage | ResponseAssistantMessage;
@@ -234,16 +235,24 @@ export function useAssistantSession(
       const control = new Promise<never>((_resolve, reject) => {
         rejectControl = reject;
       });
-      const timeoutId = setTimeout(() => {
+      const expireRequest = () => {
         timedOut = true;
         controller.abort();
         rejectControl(REQUEST_TIMEOUT);
-      }, timeoutMs);
+      };
+      let timeoutId = setTimeout(expireRequest, timeoutMs);
       activeRequest.current = {
         controller,
         rejectControl,
         timeoutId,
         token,
+      };
+      const renewTimeout = () => {
+        const active = activeRequest.current;
+        if (active?.token !== token || timedOut) return;
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(expireRequest, timeoutMs);
+        active.timeoutId = timeoutId;
       };
       updateRequestStatus("sending");
       setLatestAnnouncement("");
@@ -369,6 +378,7 @@ export function useAssistantSession(
                 streamCompleted = true;
                 break;
               }
+              renewTimeout();
               buffer += decoder.decode(chunk.value, { stream: true });
               buffer = buffer.replaceAll("\r\n", "\n");
               let boundary = buffer.indexOf("\n\n");
@@ -435,6 +445,17 @@ export function useAssistantSession(
             ),
           );
         };
+        const retainIncompleteStream = () => {
+          if (streamedMessageIds === null) return;
+          const assistantId = streamedMessageIds.assistant;
+          setMessages((current) =>
+            current.map((item) =>
+              item.role === "assistant" && item.id === assistantId
+                ? { ...item, suggestedActions: [], incomplete: true }
+                : item,
+            ),
+          );
+        };
         if (token !== requestToken.current || error === REQUEST_CANCELLED) {
           discardStreamedMessages();
           return;
@@ -456,7 +477,7 @@ export function useAssistantSession(
           discardStreamedMessages();
           return;
         }
-        discardStreamedMessages();
+        retainIncompleteStream();
         setLastFailedRequest(payload);
         setLatestAnnouncement(
           error instanceof SafeAssistantRequestFailure

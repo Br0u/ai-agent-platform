@@ -78,7 +78,7 @@ describe("AgentOS run settings", () => {
 });
 
 describe("AgentOS run client", () => {
-  it("requests streaming mode and yields content deltas before completion", async () => {
+  it("requests Agno's content-only stream and accepts clean EOF after text", async () => {
     const encoder = new TextEncoder();
     let controller!: ReadableStreamDefaultController<Uint8Array>;
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
@@ -112,6 +112,7 @@ describe("AgentOS run client", () => {
 
     const form = fetcher.mock.calls[0]?.[1]?.body as FormData;
     expect(form.get("stream")).toBe("true");
+    expect(form.get("stream_events")).toBe("false");
     expect(fetcher.mock.calls[0]?.[1]?.headers).toEqual({
       Accept: "text/event-stream",
       Authorization: `Bearer ${SECURITY_KEY}`,
@@ -119,8 +120,7 @@ describe("AgentOS run client", () => {
 
     controller.enqueue(
       encoder.encode(
-        'event: RunContent\ndata: {"event":"RunContent","content":"第二段"}\n\n' +
-          'event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n',
+        'event: RunContent\ndata: {"event":"RunContent","content":"第二段"}\n\n',
       ),
     );
     controller.close();
@@ -134,22 +134,81 @@ describe("AgentOS run client", () => {
     });
   });
 
+  it("ignores non-text RunContent events while preserving later text", async () => {
+    const rawStream =
+      'event: RunStarted\ndata: {"event":"RunStarted"}\n\n' +
+      'event: RunContent\ndata: {"event":"RunContent","content":null,"content_type":"str"}\n\n' +
+      'event: RunContent\ndata: {"event":"RunContent","content":"NPU 正文"}\n\n' +
+      'event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n';
+    const client = createAgentOSRunClient({
+      settings: settings(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(rawStream, {
+          headers: { "content-type": "text/event-stream" },
+        }),
+      ),
+    });
+
+    const chunks: string[] = [];
+    for await (const chunk of client.runAgentStream({
+      message: "private prompt",
+      sessionId: "private-session",
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual(["NPU 正文"]);
+  });
+
+  it("keeps large Skill tool events off the public run stream", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const form = init?.body as FormData;
+      const rawStream =
+        form.get("stream_events") === "false"
+          ? 'event: RunContent\ndata: {"event":"RunContent","content":"NPU 正文"}\n\n' +
+            'event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n'
+          : 'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","result":"' +
+            "x".repeat(AGENTOS_RUN_MAX_RESPONSE_BYTES) +
+            '"}\n\n' +
+            'event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n';
+      return new Response(rawStream, {
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    const client = createAgentOSRunClient({ settings: settings(), fetcher });
+
+    const chunks: string[] = [];
+    for await (const chunk of client.runAgentStream({
+      message: "使用大 Skill",
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual(["NPU 正文"]);
+    expect(
+      (fetcher.mock.calls[0]?.[1]?.body as FormData).get("stream_events"),
+    ).toBe("false");
+  });
+
   it.each([
     [
       "an upstream error event",
       'event: RunError\ndata: {"event":"RunError","content":"private upstream detail"}\n\n',
     ],
     [
-      "a stream without completion",
-      'event: RunContent\ndata: {"event":"RunContent","content":"partial private answer"}\n\n',
+      "a cancelled stream followed by Agno's completion event",
+      'event: RunContent\ndata: {"event":"RunContent","content":"partial private answer"}\n\n' +
+        'event: RunCancelled\ndata: {"event":"RunCancelled","reason":"private cancellation reason"}\n\n' +
+        'event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n',
+    ],
+    [
+      "a completed stream without text",
+      'event: RunContent\ndata: {"event":"RunContent","content":null}\n\n' +
+        'event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n',
     ],
     [
       "malformed SSE JSON",
       'event: RunContent\ndata: {"event":"RunContent","content":}\n\n',
-    ],
-    [
-      "a RunContent event without content or reasoning",
-      'event: RunContent\ndata: {"event":"RunContent"}\n\n',
     ],
   ])("sanitizes %s", async (_name, rawStream) => {
     const client = createAgentOSRunClient({
@@ -177,6 +236,27 @@ describe("AgentOS run client", () => {
     expect(JSON.stringify(error)).not.toMatch(
       /private|upstream|detail|answer|prompt|session/iu,
     );
+  });
+
+  it("matches Agno 2.7 content-only streams that end without RunCompleted", async () => {
+    const client = createAgentOSRunClient({
+      settings: settings(),
+      fetcher: vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          new Response(
+            'event: RunContent\ndata: {"event":"RunContent","content":"partial private answer"}\n\n',
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+    });
+    const consume = async () => {
+      for await (const chunk of client.runAgentStream({ message: "private" })) {
+        void chunk;
+      }
+    };
+
+    await expect(consume()).resolves.toBeUndefined();
   });
 
   it("enforces the run deadline while waiting for the first stream event", async () => {
@@ -357,10 +437,11 @@ describe("AgentOS run client", () => {
     },
   );
 
-  it("accepts exactly 262144 raw response bytes and rejects 262145", async () => {
-    expect(AGENTOS_RUN_MAX_RESPONSE_BYTES).toBe(262_144);
+  it("accepts exactly the raw response budget and rejects one byte more", async () => {
+    expect(AGENTOS_RUN_MAX_RESPONSE_BYTES).toBe(4_194_304);
     const payload = JSON.stringify({ content: "ok" });
-    const exact = payload + " ".repeat(262_144 - payload.length);
+    const exact =
+      payload + " ".repeat(AGENTOS_RUN_MAX_RESPONSE_BYTES - payload.length);
     const oversized = exact + " ";
     const fetcher = vi
       .fn<typeof fetch>()
@@ -382,6 +463,36 @@ describe("AgentOS run client", () => {
     await expect(client.runAgent({ message: "second" })).rejects.toMatchObject({
       code: "response_too_large",
     });
+  });
+
+  it("accepts a maximum-length answer split across one-character SSE events", async () => {
+    const fragments = Array.from(
+      { length: 32_768 },
+      () => 'event: RunContent\ndata: {"event":"RunContent","content":"x"}\n\n',
+    ).join("");
+    expect(new TextEncoder().encode(fragments).byteLength).toBeGreaterThan(
+      256 * 1_024,
+    );
+    const client = createAgentOSRunClient({
+      settings: settings(),
+      fetcher: vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          new Response(
+            `${fragments}event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n`,
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+    });
+
+    let content = "";
+    for await (const chunk of client.runAgentStream({
+      message: "fragmented",
+    })) {
+      content += chunk;
+    }
+
+    expect(content).toBe("x".repeat(32_768));
   });
 
   it("bounds final content by Unicode code points rather than UTF-16 length or bytes", async () => {

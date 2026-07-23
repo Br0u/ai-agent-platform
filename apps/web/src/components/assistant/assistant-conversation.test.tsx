@@ -50,6 +50,33 @@ function renderConversation(
 afterEach(cleanup);
 
 describe("AssistantConversation", () => {
+  it("labels a retained partial answer as incomplete", () => {
+    const session = createSession({
+      messages: [
+        {
+          id: 1,
+          role: "assistant",
+          content: "已收到的部分内容",
+          suggestedActions: [],
+          incomplete: true,
+        },
+      ],
+      requestStatus: "failed",
+      latestAnnouncement: "发送失败，请重试。",
+    });
+
+    render(
+      <AssistantConversation
+        ariaLabel="测试助手"
+        registerComposer={() => () => undefined}
+        session={session}
+        variant="workspace"
+      />,
+    );
+
+    expect(screen.getByText("已收到的部分内容")).toBeInTheDocument();
+    expect(screen.getByText("回答未完成")).toBeInTheDocument();
+  });
   it("renders an accessible message log with user and assistant messages", () => {
     const session = createSession({
       messages: [
@@ -81,6 +108,51 @@ describe("AssistantConversation", () => {
       "data-variant",
       "workspace",
     );
+  });
+
+  it("renders assistant replies as safe GFM Markdown while keeping user input literal", () => {
+    const session = createSession({
+      messages: [
+        { id: 1, role: "user", content: "**这不是粗体**" },
+        {
+          id: 2,
+          role: "assistant",
+          content:
+            "## 什么是 NPU？\n\n**NPU** 是 AI 加速器。\n\n| 项目 | 说明 |\n| --- | --- |\n| 用途 | 推理 |\n\n[查看资料](https://example.com/docs) [不安全链接](javascript:alert(1))\n\n<img src=x onerror=alert(1)><script>alert(1)</script>",
+          suggestedActions: [],
+        },
+      ],
+    });
+
+    renderConversation(session, { variant: "workspace" });
+
+    const log = screen.getByRole("log", { name: "码多多对话" });
+    const userMessage = within(log).getByRole("article", { name: "你的消息" });
+    const assistantMessage = within(log).getByRole("article", {
+      name: "码多多的消息",
+    });
+
+    expect(
+      within(assistantMessage).getByRole("heading", { name: "什么是 NPU？" }),
+    ).toBeInTheDocument();
+    expect(within(assistantMessage).getByText("NPU")).toHaveProperty(
+      "tagName",
+      "STRONG",
+    );
+    expect(within(assistantMessage).getByRole("table")).toBeInTheDocument();
+    const referenceLink = within(assistantMessage).getByRole("link", {
+      name: "查看资料",
+    });
+    expect(referenceLink).toHaveAttribute("href", "https://example.com/docs");
+    expect(referenceLink).toHaveAttribute("target", "_blank");
+    expect(referenceLink).toHaveAttribute("rel", "noreferrer noopener");
+    expect(
+      within(assistantMessage).queryByRole("link", { name: "不安全链接" }),
+    ).toBeNull();
+    expect(assistantMessage.querySelector("img")).toBeNull();
+    expect(assistantMessage.querySelector("script")).toBeNull();
+    expect(userMessage.querySelector("strong")).toBeNull();
+    expect(userMessage).toHaveTextContent("**这不是粗体**");
   });
 
   it("updates the shared draft and submits from the form", () => {

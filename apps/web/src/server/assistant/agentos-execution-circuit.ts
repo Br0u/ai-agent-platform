@@ -37,9 +37,15 @@ function countedFailure(error: unknown): boolean {
     case "server_error":
     case "unexpected_status":
     case "invalid_content_type":
-    case "response_too_large":
-    case "invalid_response":
       return true;
+    case "invalid_response":
+      return ![
+        "run_cancelled_event",
+        "run_error_event",
+        "stream_content_too_large",
+        "stream_empty_content",
+      ].includes(error.diagnostic ?? "");
+    case "response_too_large":
     case "external_abort":
     case "invalid_request":
     case "rate_limited":

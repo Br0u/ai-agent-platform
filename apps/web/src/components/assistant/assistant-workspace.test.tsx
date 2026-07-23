@@ -187,7 +187,9 @@ describe("AssistantWorkspace", () => {
     expect(screen.getByText("公开网页助手 · 匿名会话")).toBeVisible();
     expect(screen.getByText("安全占位模式，不创建服务端会话。")).toBeVisible();
     expect(
-      screen.getByText("尚未接入 Skill、知识库或网页正文读取。"),
+      screen.getByText(
+        "已启用的审核 Skill 会按配置加载；知识库和网页正文读取尚未接入。",
+      ),
     ).toBeVisible();
     expect(screen.getByTestId("assistant-service-state")).toHaveAttribute(
       "data-capability",
@@ -256,7 +258,9 @@ describe("AssistantWorkspace", () => {
         ),
       ).toBeVisible();
       expect(
-        screen.getByText("尚未接入 Skill、知识库或网页正文读取。"),
+        screen.getByText(
+          "已启用的审核 Skill 会按配置加载；知识库和网页正文读取尚未接入。",
+        ),
       ).toBeVisible();
       expect(screen.queryByText("安全占位模式，不创建服务端会话。")).toBeNull();
     },

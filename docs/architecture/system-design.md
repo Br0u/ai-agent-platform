@@ -25,8 +25,15 @@ Browser
 - CMS：管理导航、页面配置、产品、版本、博客、案例、FAQ 等站内内容。
 - Console：登录后统一外壳；依赖外部系统的区域展示未开放状态。
 - Integrations：License、Download、OpenLab 等提供稳定接口，默认关闭。
-- AgentOS：独立 Python 服务；提供码多多单 Agent 与动态模型配置，当前仍不加载 Skill、知识库或工作流。
-- Skill Registry：独立 Python 服务；保存本地 ZIP、不可变 revision、校验结果与双人审核证据，不向 Agent 运行时挂载 Skill。
+- AgentOS：独立 Python 服务；提供码多多单 Agent、动态模型配置，并按已激活集合加载审核通过的 exact Skill revision；知识库与工作流尚未接入。
+- Skill Registry：独立 Python 服务；保存本地 ZIP、不可变 revision、校验与审核证据，并向 Agent 提供已激活集合及受签名保护的 artifact 读取接口。
+
+### Skill 运行边界
+
+- Agent 只物化 Registry 已激活集合中的 exact published revision；物化、Agno 校验和脚本执行都移出 Agent 异步事件循环，超时后的晚到 generation 必须清理后才能重试。
+- Skill 指令、引用和脚本读取每次最多返回 12,000 字符并通过 `next_offset` 续页；单次脚本执行最长 30 秒，参数最多 16 个且单项最多 1,024 字符，stdout/stderr 合计最多保留 12,000 字符。
+- 单次 Agent run 最多 8 次工具调用，历史上下文最多带回 2 次工具调用；公开 SSE 显式关闭 Agno 内部事件流，只转发文本增量和完成事件。原始 SSE 最多 4 MiB，最终正文仍最多 32,768 个 Unicode code point。Web/Agent 间 55 秒为无数据空闲超时，每个上游 chunk 会续期。
+- 审核是当前脚本执行的信任边界；脚本仍在 Agent 容器的系统权限和网络边界内运行，不等价于独立 OS 沙箱。需要接入来源不完全可信的第三方 Skill 时，必须先增加独立执行容器或同等级隔离。
 
 ## 数据原则
 

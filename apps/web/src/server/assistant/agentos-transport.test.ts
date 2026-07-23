@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   AgentOSTransportError,
@@ -7,6 +7,10 @@ import {
 
 const INTERNAL_URL = "http://agent:7777";
 const SECURITY_KEY = "agentos-internal-security-key-32-bytes";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 function abortAwareFetcher(): typeof fetch {
   return vi.fn<typeof fetch>(async (_url, init) => {
@@ -66,6 +70,48 @@ describe("AgentOS transport cancellation", () => {
         maxResponseBytes: 1_024,
       }),
     ).rejects.toMatchObject({ code: "timeout" });
+  });
+
+  it("treats the stream timeout as an idle timeout and renews it after each chunk", async () => {
+    vi.useFakeTimers();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const transport = createAgentOSTransport({
+      settings: { baseUrl: INTERNAL_URL, securityKey: SECURITY_KEY },
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(streamController) {
+              controller = streamController;
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      ),
+    });
+    const consume = async () => {
+      const chunks: number[][] = [];
+      for await (const chunk of transport.stream({
+        method: "GET",
+        path: "/active-stream",
+        acceptedStatuses: [200],
+        acceptedMediaTypes: ["text/event-stream"],
+        timeoutMs: 100,
+        maxResponseBytes: 1_024,
+      })) {
+        chunks.push([...chunk]);
+      }
+      return chunks;
+    };
+    const running = consume();
+    const assertion = expect(running).resolves.toEqual([[1], [2]]);
+
+    controller.enqueue(new Uint8Array([1]));
+    await vi.advanceTimersByTimeAsync(75);
+    controller.enqueue(new Uint8Array([2]));
+    await vi.advanceTimersByTimeAsync(75);
+    controller.close();
+
+    await assertion;
   });
 });
 
