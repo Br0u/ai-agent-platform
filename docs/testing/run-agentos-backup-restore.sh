@@ -118,18 +118,23 @@ materialize_secret() {
   variable_name=$1
   secret_name=$2
   secret_value=$3
+  secret_mode=${4:-600}
   secret_path="$secret_dir/$secret_name"
   (umask 077 && printf '%s' "$secret_value" >"$secret_path")
-  chmod 600 "$secret_path"
+  chmod "$secret_mode" "$secret_path"
   eval "$variable_name=\$secret_path"
   export "$variable_name"
 }
 
 materialize_secret POSTGRES_PASSWORD_FILE postgres_password "$postgres_password"
-materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$migrator_password"
-materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$runtime_password"
-materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$backup_password"
-materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key"
+# Docker Compose implements file-backed secrets as bind mounts on Linux. The
+# Postgres and backup images read these files as their unprivileged postgres
+# user, so they must remain readable after the privilege drop. Their parent
+# directory stays 0700 and every Compose mount remains read-only.
+materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$migrator_password" 644
+materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$runtime_password" 644
+materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$backup_password" 644
+materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key" 644
 materialize_secret WRONG_BACKUP_ENCRYPTION_KEY_FILE wrong_backup_encryption_key "$wrong_backup_encryption_key"
 materialize_secret AGNO_MIGRATOR_DATABASE_PASSWORD_FILE agno_migrator_database_password "$agno_migrator_password"
 materialize_secret AGNO_DATABASE_PASSWORD_FILE agno_database_password "$agno_runtime_password"
@@ -199,6 +204,14 @@ BACKUP_RETENTION_DAYS=14
 BACKUP_RUN_ONCE=true
 EOF
 chmod 600 "$env_file"
+
+# Compose gives the parent process environment precedence over --env-file.
+# Replace CI-level fixture values with this run's generated values before the
+# first Compose interpolation so every service uses one credential set.
+set -a
+. "$env_file"
+set +a
+
 if env_permissions=$(stat -f %Lp "$env_file" 2>/dev/null); then
   :
 elif env_permissions=$(stat -c %a "$env_file" 2>/dev/null); then

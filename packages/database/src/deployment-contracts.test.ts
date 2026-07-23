@@ -7914,6 +7914,19 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
       script.indexOf("mktemp"),
     );
     expect(script).toContain('chmod 600 "$env_file"');
+    expect(script).toContain(
+      'materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$migrator_password" 644',
+    );
+    expect(script).toContain(
+      'materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$runtime_password" 644',
+    );
+    expect(script).toContain(
+      'materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$backup_password" 644',
+    );
+    expect(script).toContain(
+      'materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key" 644',
+    );
+    expect(script).toContain('set -a\n. "$env_file"\nset +a');
     expect(script).toContain('stat -f %Lp "$env_file"');
     expect(script).toContain('stat -c %a "$env_file"');
     expect(script).toContain('[ "$env_permissions" = "600" ]');
