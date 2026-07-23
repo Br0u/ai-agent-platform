@@ -204,16 +204,20 @@ jobs:
             -e SKILL_REGISTRY_CONTROL_KEY="$SKILL_REGISTRY_CONTROL_KEY" \
             -e SKILL_RUNTIME_IMPORTS_FILE=/etc/aap/skill-runtime-imports.json \
             skill-registry-ci
+          ready=false
           for attempt in {1..30}; do
-            if docker exec skill-registry-ci-smoke python -c "import json,urllib.request; response=urllib.request.urlopen('http://127.0.0.1:7788/internal/health/ready',timeout=2); payload=json.load(response); response.close(); assert payload == {'live': True, 'ready': True}"; then
+            readiness="$(docker exec skill-registry-ci-smoke python -c "import json,urllib.request; response=urllib.request.urlopen('http://127.0.0.1:7788/internal/health/ready',timeout=2); payload=json.load(response); response.close(); assert payload == {'live': True, 'ready': True}; print('ready')" 2>/dev/null || printf 'not-ready')"
+            if [ "$readiness" = "ready" ]; then
+              ready=true
               break
-            fi
-            if [ "$attempt" -eq 30 ]; then
-              docker logs skill-registry-ci-smoke
-              exit 1
             fi
             sleep 1
           done
+          if [ "$ready" != true ]; then
+            printf '%s\n' "Skill Registry readiness probe timed out after 30 attempts" >&2
+            docker logs skill-registry-ci-smoke
+            exit 1
+          fi
           docker exec skill-registry-ci-smoke sh -c 'test "$(id -u):$(id -g)" = 10002:10002'
           docker inspect skill-registry-ci-smoke --format '{{.HostConfig.ReadonlyRootfs}} {{json .HostConfig.PortBindings}}' | grep -Fx 'true null'
       - run: docker build -t backup-service-ci -f infra/docker/backup.Dockerfile .
