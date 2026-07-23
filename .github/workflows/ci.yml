@@ -219,7 +219,12 @@ jobs:
             exit 1
           fi
           docker exec skill-registry-ci-smoke sh -c 'test "$(id -u):$(id -g)" = 10002:10002'
-          docker inspect skill-registry-ci-smoke --format '{{.HostConfig.ReadonlyRootfs}} {{json .HostConfig.PortBindings}}' | grep -Fx 'true null'
+          readonly_rootfs="$(docker inspect skill-registry-ci-smoke --format '{{.HostConfig.ReadonlyRootfs}}')"
+          port_bindings="$(docker inspect skill-registry-ci-smoke --format '{{json .HostConfig.PortBindings}}')"
+          if [ "$readonly_rootfs" != true ] || { [ "$port_bindings" != null ] && [ "$port_bindings" != '{}' ]; }; then
+            printf '%s\n' "Skill Registry smoke container security flags are invalid" >&2
+            exit 1
+          fi
       - run: docker build -t backup-service-ci -f infra/docker/backup.Dockerfile .
       - run: docker run --rm --entrypoint gpg backup-service-ci --version
       - run: pnpm test
