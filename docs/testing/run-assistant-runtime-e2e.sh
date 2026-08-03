@@ -312,16 +312,19 @@ materialize_secret() {
   variable_name=$1
   secret_name=$2
   secret_value=$3
+  secret_mode=${4:-600}
   secret_path="$secret_dir/$secret_name"
   (umask 077 && printf '%s' "$secret_value" >"$secret_path")
-  chmod 600 "$secret_path"
+  chmod "$secret_mode" "$secret_path"
   export "$variable_name=$secret_path"
 }
 
 materialize_secret POSTGRES_PASSWORD_FILE postgres_password "$POSTGRES_PASSWORD"
-materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$MIGRATOR_DATABASE_PASSWORD"
-materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$RUNTIME_DATABASE_PASSWORD"
-materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$BACKUP_DATABASE_PASSWORD"
+# Docker Compose bind-mounts file secrets on Linux; Postgres reads these initdb
+# role-bootstrap files after it drops to postgres. The 0700 parent and read-only mounts remain private.
+materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$MIGRATOR_DATABASE_PASSWORD" 644
+materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$RUNTIME_DATABASE_PASSWORD" 644
+materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$BACKUP_DATABASE_PASSWORD" 644
 materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key"
 materialize_secret AGNO_MIGRATOR_DATABASE_PASSWORD_FILE agno_migrator_database_password "$agno_migrator_password"
 materialize_secret AGNO_DATABASE_PASSWORD_FILE agno_database_password "$agno_runtime_password"

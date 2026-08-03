@@ -3605,6 +3605,32 @@ cleanup
     }
   });
 
+  it("keeps Postgres-readable role-bootstrap secrets scoped to isolated acceptance runners", () => {
+    const roleBootstrapSecrets = [
+      'materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$MIGRATOR_DATABASE_PASSWORD" 644',
+      'materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$RUNTIME_DATABASE_PASSWORD" 644',
+      'materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$BACKUP_DATABASE_PASSWORD" 644',
+    ];
+
+    for (const file of [
+      "docs/testing/run-assistant-runtime-e2e.sh",
+      "docs/testing/run-assistant-experience-e2e.sh",
+      "docs/testing/run-cms-documents-e2e.sh",
+    ]) {
+      const runner = read(file);
+      const materializedCalls =
+        runner.match(/^materialize_secret [^\n]+$/gmu) ?? [];
+
+      expect(runner, file).toContain("secret_mode=${4:-600}");
+      expect(runner, file).toContain('chmod "$secret_mode"');
+      expect(runner, file).toMatch(/chmod 700 [^\n]*"\$secret_dir"/u);
+      expect(
+        materializedCalls.filter((call) => call.endsWith(" 644")),
+        file,
+      ).toEqual(roleBootstrapSecrets);
+    }
+  });
+
   it("executes the assistant experience runner with fail-closed ownership and cleanup", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "aap-experience-owner-"));
     const repo = path.join(sandbox, "repo");

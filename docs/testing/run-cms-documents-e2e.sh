@@ -135,9 +135,10 @@ materialize_secret() {
   variable_name=$1
   filename=$2
   value=$3
+  secret_mode=${4:-600}
   path="$secret_dir/$filename"
   printf '%s' "$value" >"$path"
-  chmod 600 "$path"
+  chmod "$secret_mode" "$path"
   export "$variable_name=$path"
 }
 
@@ -162,9 +163,11 @@ export PNPM_REGISTRY=${PNPM_REGISTRY:-https://registry.npmjs.org}
 export CMS_DOCUMENTS_E2E_RUN_ID=$run_token
 
 materialize_secret POSTGRES_PASSWORD_FILE postgres_password "$POSTGRES_PASSWORD"
-materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$MIGRATOR_DATABASE_PASSWORD"
-materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$RUNTIME_DATABASE_PASSWORD"
-materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$BACKUP_DATABASE_PASSWORD"
+# Docker Compose bind-mounts file secrets on Linux; Postgres reads these initdb
+# role-bootstrap files after it drops to postgres. The 0700 parent and read-only mounts remain private.
+materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$MIGRATOR_DATABASE_PASSWORD" 644
+materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$RUNTIME_DATABASE_PASSWORD" 644
+materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$BACKUP_DATABASE_PASSWORD" 644
 materialize_secret MIGRATOR_DATABASE_URL_FILE migrator_database_url "$MIGRATOR_DATABASE_URL"
 materialize_secret RUNTIME_DATABASE_URL_FILE runtime_database_url "$RUNTIME_DATABASE_URL"
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECRET"
