@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -3456,6 +3457,14 @@ cleanup
     expect(afterCreateOrReuse).not.toMatch(/cat\s+"?\$env_file"?/u);
     expect(runner).toContain("BACKUP_ENCRYPTION_KEY_FILE");
     expect(runner).not.toContain("BACKUP_DATABASE_URL_FILE");
+    expect(runner).toContain("E2E_MODEL_ADMIN_SESSION_TOKEN");
+    expect(runner).toContain("E2E_MODEL_ADMIN_STALE_SESSION_TOKEN");
+    expect(runner).toContain(
+      'env_file=${AAP_ASSISTANT_EXPERIENCE_E2E_ENV_FILE:-"$repo_root/.env.e2e"}',
+    );
+    expect(runner).toContain('if [ "$env_file_created" != true ]');
+    expect(runner).toContain("env_staging_file=$(mktemp");
+    expect(runner).toContain("E2E env file must not be a symlink");
   });
 
   it("runs both assistant browser suites from an owned isolated project", () => {
@@ -3512,11 +3521,58 @@ cleanup
     );
   });
 
+  it("gates startup and every isolated browser acceptance chain in CI", () => {
+    const workflow = read(".github/workflows/ci.yml");
+    const experience = read("docs/testing/run-assistant-experience-e2e.sh");
+    const identity = read("docs/testing/run-identity-access-e2e.sh");
+
+    expect(workflow).toContain(
+      "pnpm --filter @ai-agent-platform/web test:assistant-startup",
+    );
+    for (const [gate, runner] of [
+      ["assistant-runtime", "docs/testing/run-assistant-runtime-e2e.sh"],
+      ["assistant-experience", "docs/testing/run-assistant-experience-e2e.sh"],
+      ["identity-access", "docs/testing/run-identity-access-e2e.sh"],
+      ["cms-documents", "docs/testing/run-cms-documents-e2e.sh"],
+    ]) {
+      expect(workflow).toContain(
+        `- gate: ${gate}\n            runner: ${runner}`,
+      );
+    }
+    expect(workflow).toContain("sudo apt-get install --yes lsof");
+    expect(workflow).toContain('run: sh "${{ matrix.runner }}"');
+    expect(workflow).toContain('RUN_ASSISTANT_RUNTIME_E2E: "true"');
+    expect(identity).toContain("AAP_ASSISTANT_EXPERIENCE_E2E_SUITE=identity");
+    expect(identity).toContain(
+      'private_dir=$(mktemp -d "$runtime_tmp/aap-identity-access-e2e.XXXXXX")',
+    );
+    expect(identity).toContain(
+      'export AAP_ASSISTANT_EXPERIENCE_E2E_ENV_FILE="$private_dir/env"',
+    );
+    expect(identity).toContain("cleanup_private_dir");
+    expect(experience).toContain("e2e/auth-access.spec.ts");
+    expect(experience).toContain("e2e/proxy-auth-security.spec.ts");
+    expect(experience).toContain("--grep '@totp-enroll'");
+    expect(experience).toContain("--grep '@recovery-consume'");
+    expect(experience).toContain(
+      "--grep-invert '@security-state|@saved-admin-after-restart|@saved-admin-revoke|@saved-admin-rejected-after-restart'",
+    );
+    expect(experience).toContain("restart web proxy");
+    expect(experience).toContain("restart proxy");
+    expect(experience).toContain("--wait web proxy");
+    expect(experience).toContain("@saved-admin-after-restart");
+    expect(experience).toContain("@saved-admin-revoke");
+    expect(experience).toContain("@saved-admin-rejected-after-restart");
+    expect(experience).toContain("down -v --remove-orphans");
+  });
+
   it("materializes an isolated model credential in every Compose runner", () => {
+    const assistantExperienceRunner =
+      "docs/testing/run-assistant-experience-e2e.sh";
     for (const file of [
       "docs/testing/run-assistant-runtime-e2e.sh",
-      "docs/testing/run-assistant-experience-e2e.sh",
       "docs/testing/run-agentos-backup-restore.sh",
+      assistantExperienceRunner,
     ]) {
       const runner = read(file);
       const secretDirectory = runner.indexOf('secret_dir="$temp_dir/secrets"');
@@ -3535,7 +3591,14 @@ cleanup
         /(?:chmod 600 "\$secret_path"|secret_mode=\$\{4:-600\}[\s\S]*chmod "\$secret_mode" "\$secret_path")/u,
       );
       expect(runner).toContain("umask 077");
-      expect(runner).toContain("trap cleanup EXIT");
+      if (file === assistantExperienceRunner) {
+        expect(runner).toContain("trap on_exit EXIT");
+        expect(runner).toMatch(
+          /on_exit\(\) \{[\s\S]*code=\$\?[\s\S]*cleanup \|\| cleanup_code=\$\?[\s\S]*\[ "\$code" -ne 0 \][\s\S]*exit "\$code"[\s\S]*exit "\$cleanup_code"/u,
+        );
+      } else {
+        expect(runner, file).toContain("trap cleanup EXIT");
+      }
       expect(runner).not.toContain('echo "$model_api_key"');
       expect(runner).not.toContain('cat "$MODEL_API_KEY_FILE"');
       expect(runner).not.toMatch(/set\s+-[^\n]*x/u);
@@ -3548,6 +3611,7 @@ cleanup
     const bin = path.join(sandbox, "bin");
     const temp = path.join(sandbox, "tmp");
     const alternateTemp = path.join(sandbox, "alternate-tmp");
+    const spacedTemp = path.join(sandbox, "temporary files");
     const project = `aap-assistant-e2e-${path.basename(sandbox)}`;
     const projectLock = path.join("/tmp", `${project}.assistant-e2e.lock`);
     const otherProject = `${project}-other`;
@@ -3563,18 +3627,26 @@ cleanup
       repo,
       "docs/testing/run-assistant-experience-e2e.sh",
     );
+    const identityRunner = path.join(
+      repo,
+      "docs/testing/run-identity-access-e2e.sh",
+    );
     mkdirSync(path.dirname(runner), { recursive: true });
     mkdirSync(bin, { recursive: true });
     mkdirSync(temp, { recursive: true });
     mkdirSync(alternateTemp, { recursive: true });
+    mkdirSync(spacedTemp, { recursive: true });
     for (const command of [
       "cat",
       "chmod",
       "dirname",
       "mkdir",
       "mktemp",
+      "mv",
+      "ln",
       "rm",
       "rmdir",
+      "sh",
       "stat",
     ]) {
       const resolved = spawnSync("/bin/sh", ["-c", `command -v ${command}`], {
@@ -3589,6 +3661,10 @@ cleanup
     copyFileSync(
       path.join(root, "docs/testing/run-assistant-experience-e2e.sh"),
       runner,
+    );
+    copyFileSync(
+      path.join(root, "docs/testing/run-identity-access-e2e.sh"),
+      identityRunner,
     );
     writeFileSync(
       path.join(repo, ".env.e2e"),
@@ -3622,6 +3698,8 @@ cleanup
         "E2E_ROLE_TARGET_SESSION_TOKEN=fixture-role-target",
         "E2E_ADMIN_SESSION_TOKEN=fixture-admin-session",
         "E2E_NO_TOTP_ADMIN_SESSION_TOKEN=fixture-no-totp",
+        "E2E_MODEL_ADMIN_SESSION_TOKEN=fixture-model-admin",
+        "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN=fixture-model-admin-stale",
         "E2E_REVOKED_SESSION_TOKEN=fixture-revoked",
         "E2E_REPLACEMENT_PASSWORD=fixture-replacement",
       ].join("\n"),
@@ -3659,8 +3737,16 @@ printf "%064d\\n" "$count"
       path.join(bin, "docker"),
       `#!/bin/sh
 printf '%s\\n' "$*" >>"$FAKE_DOCKER_LOG"
+printf 'docker %s\\n' "$*" >>"$FAKE_EVENT_LOG"
 case "$1 $2" in
-  "ps -aq") [ "\${FAKE_RESOURCE:-}" = container ] && echo existing-container; exit 0 ;;
+  "ps -aq")
+    if [ "\${FAKE_RESOURCE:-}" = container ]; then
+      echo existing-container
+    elif [ "\${FAKE_RESIDUE_AFTER_CLEANUP:-false}" = true ] && [ -f "$FAKE_DOCKER_DOWN_FILE" ]; then
+      echo existing-container
+    fi
+    exit 0
+    ;;
   "volume ls") [ "\${FAKE_RESOURCE:-}" = volume ] && echo existing-volume; exit 0 ;;
   "network ls") [ "\${FAKE_RESOURCE:-}" = network ] && echo existing-network; exit 0 ;;
   "image ls") [ "\${FAKE_RESOURCE:-}" = image ] && echo existing-image; exit 0 ;;
@@ -3671,11 +3757,19 @@ case " $* " in
     if [ "\${FAKE_REPLACE_OWNER_TOKEN:-false}" = true ]; then
       printf '%s\\n' replaced-owner >"$FAKE_PROJECT_LOCK/token"
     fi
+    if [ "\${FAKE_REPLACE_PROJECT_LOCK_WITH_SYMLINK:-false}" = true ]; then
+      rm -rf "$FAKE_PROJECT_LOCK"
+      ln -s "$FAKE_SYMLINK_TARGET" "$FAKE_PROJECT_LOCK"
+    fi
     [ "\${FAKE_DOCKER_FAIL:-}" = build ] && exit 42
     exit 0
     ;;
   *" compose "*" up -d --wait db "*) [ "\${FAKE_DOCKER_FAIL:-}" = up ] && exit 43; exit 0 ;;
-  *" compose "*" down --rmi local -v --remove-orphans "*) exit 0 ;;
+  *" compose "*" down --rmi local -v --remove-orphans "*)
+    printf '%s\\n' down >"$FAKE_DOCKER_DOWN_FILE"
+    [ "\${FAKE_DOCKER_FAIL:-}" = cleanup ] && exit 46
+    exit 0
+    ;;
 esac
 exit 0
 `,
@@ -3685,6 +3779,8 @@ exit 0
       path.join(bin, "pnpm"),
       `#!/bin/sh
 printf '%s\\n' "$*" >>"$FAKE_PNPM_LOG"
+printf 'pnpm %s\\n' "$*" >>"$FAKE_EVENT_LOG"
+[ "\${FAKE_REMOVE_CALLER_ENV:-false}" = true ] && rm -f "$FAKE_CALLER_ENV"
 [ "\${FAKE_PNPM_FAIL:-false}" = true ] && exit 44
 exit 0
 `,
@@ -3695,17 +3791,22 @@ exit 0
       name: string,
       extra: NodeJS.ProcessEnv = {},
       selectedProject = project,
+      entryPoint = runner,
     ) => {
       const dockerLog = path.join(sandbox, `${name}.docker.log`);
       const pnpmLog = path.join(sandbox, `${name}.pnpm.log`);
       const opensslCount = path.join(sandbox, `${name}.openssl.count`);
       const opensslLog = path.join(sandbox, `${name}.openssl.log`);
       const lsofLog = path.join(sandbox, `${name}.lsof.log`);
+      const eventLog = path.join(sandbox, `${name}.events.log`);
+      const downFile = path.join(sandbox, `${name}.down`);
       writeFileSync(dockerLog, "");
       writeFileSync(pnpmLog, "");
       writeFileSync(opensslLog, "");
       writeFileSync(lsofLog, "");
-      const result = spawnSync("/bin/sh", [runner], {
+      writeFileSync(eventLog, "");
+      rmSync(downFile, { force: true });
+      const result = spawnSync("/bin/sh", [entryPoint], {
         cwd: repo,
         encoding: "utf8",
         env: {
@@ -3714,14 +3815,17 @@ exit 0
           TMPDIR: temp,
           AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT: selectedProject,
           FAKE_DOCKER_LOG: dockerLog,
+          FAKE_DOCKER_DOWN_FILE: downFile,
           FAKE_DOCKER_FAIL: "",
           FAKE_OPENSSL_FAIL_AFTER: "",
           FAKE_OPENSSL_LOG: opensslLog,
+          FAKE_EVENT_LOG: eventLog,
           FAKE_PNPM_LOG: pnpmLog,
           FAKE_PNPM_FAIL: "false",
           FAKE_PORT_BUSY: "false",
           FAKE_PROJECT_LOCK: projectLock,
           FAKE_REPLACE_OWNER_TOKEN: "false",
+          FAKE_REPLACE_PROJECT_LOCK_WITH_SYMLINK: "false",
           FAKE_RESOURCE: "",
           FAKE_OPENSSL_COUNT_FILE: opensslCount,
           ...extra,
@@ -3733,6 +3837,7 @@ exit 0
         lsofCalls: readFileSync(lsofLog, "utf8"),
         opensslCalls: readFileSync(opensslLog, "utf8"),
         pnpmCalls: readFileSync(pnpmLog, "utf8"),
+        events: readFileSync(eventLog, "utf8"),
       };
     };
     const downCalls = (calls: string) =>
@@ -3740,10 +3845,12 @@ exit 0
     const expectOwnedArtifactsCleaned = () => {
       expect(() => statSync(projectLock)).toThrow();
       expect(() => statSync(portLock)).toThrow();
-      for (const directory of [temp, alternateTemp]) {
+      for (const directory of [temp, alternateTemp, spacedTemp]) {
         expect(
-          readdirSync(directory).filter((entry) =>
-            entry.startsWith("aap-assistant-e2e."),
+          readdirSync(directory).filter(
+            (entry) =>
+              entry.startsWith("aap-assistant-e2e.") ||
+              entry.startsWith("aap-identity-access-e2e."),
           ),
         ).toEqual([]);
       }
@@ -3766,6 +3873,8 @@ exit 0
       "fixture-role-target",
       "fixture-admin-session",
       "fixture-no-totp",
+      "fixture-model-admin",
+      "fixture-model-admin-stale",
       "fixture-revoked",
       "fixture-replacement",
       ...Array.from({ length: 5 }, (_, index) =>
@@ -3879,11 +3988,136 @@ exit 0
       expect(downCalls(later.dockerCalls)).toHaveLength(1);
       expectOwnedArtifactsCleaned();
 
-      const success = run("success");
+      const disappearedCallerEnv = path.join(alternateTemp, "caller-owned.env");
+      copyFileSync(path.join(repo, ".env.e2e"), disappearedCallerEnv);
+      const missingCallerEnv = run("missing-caller-env", {
+        AAP_ASSISTANT_EXPERIENCE_E2E_ENV_FILE: disappearedCallerEnv,
+        FAKE_CALLER_ENV: disappearedCallerEnv,
+        FAKE_REMOVE_CALLER_ENV: "true",
+      });
+      expect(missingCallerEnv.result.status).toBe(1);
+      expect(downCalls(missingCallerEnv.dockerCalls)).toHaveLength(0);
+      expect(() => statSync(disappearedCallerEnv)).toThrow();
+      expectOwnedArtifactsCleaned();
+
+      const cleanupFailure = run("cleanup-failure", {
+        FAKE_DOCKER_FAIL: "cleanup",
+      });
+      expect(cleanupFailure.result.status).toBe(1);
+      expect(downCalls(cleanupFailure.dockerCalls)).toHaveLength(1);
+      expectOwnedArtifactsCleaned();
+
+      const cleanupResidue = run("cleanup-residue", {
+        FAKE_RESIDUE_AFTER_CLEANUP: "true",
+      });
+      expect(cleanupResidue.result.status).toBe(1);
+      expect(downCalls(cleanupResidue.dockerCalls)).toHaveLength(1);
+      expectOwnedArtifactsCleaned();
+
+      const testAndCleanupFailure = run("test-and-cleanup-failure", {
+        FAKE_DOCKER_FAIL: "cleanup",
+        FAKE_PNPM_FAIL: "true",
+      });
+      expect(testAndCleanupFailure.result.status).toBe(44);
+      expect(downCalls(testAndCleanupFailure.dockerCalls)).toHaveLength(1);
+      expectOwnedArtifactsCleaned();
+
+      const generatedEnvFile = path.join(alternateTemp, "generated.env");
+      const generatedEnv = run("generated-env", {
+        AAP_ASSISTANT_EXPERIENCE_E2E_ENV_FILE: generatedEnvFile,
+      });
+      expect(generatedEnv.result.status).toBe(0);
+      expect(() => statSync(generatedEnvFile)).toThrow();
+      expectOwnedArtifactsCleaned();
+
+      const spacedGeneratedEnvFile = path.join(spacedTemp, "generated.env");
+      const spacedGeneratedEnv = run("spaced-generated-env", {
+        TMPDIR: spacedTemp,
+        AAP_ASSISTANT_EXPERIENCE_E2E_ENV_FILE: spacedGeneratedEnvFile,
+      });
+      expect(spacedGeneratedEnv.result.status).toBe(0);
+      expect(() => statSync(spacedGeneratedEnvFile)).toThrow();
+      expectOwnedArtifactsCleaned();
+
+      const identityEarlyOpenSslFailure = run(
+        "identity-early-openssl-failure",
+        { FAKE_OPENSSL_FAIL_AFTER: "0" },
+        project,
+        identityRunner,
+      );
+      expect(identityEarlyOpenSslFailure.result.status).toBe(45);
+      expect(downCalls(identityEarlyOpenSslFailure.dockerCalls)).toHaveLength(
+        0,
+      );
+      expectOwnedArtifactsCleaned();
+
+      const identityTestFailure = run(
+        "identity-test-failure",
+        { FAKE_PNPM_FAIL: "true" },
+        project,
+        identityRunner,
+      );
+      expect(identityTestFailure.result.status).toBe(44);
+      expect(downCalls(identityTestFailure.dockerCalls)).toHaveLength(1);
+      expectOwnedArtifactsCleaned();
+
+      const identityCleanupFailure = run(
+        "identity-cleanup-failure",
+        { FAKE_DOCKER_FAIL: "cleanup" },
+        project,
+        identityRunner,
+      );
+      expect(identityCleanupFailure.result.status).toBe(1);
+      expect(downCalls(identityCleanupFailure.dockerCalls)).toHaveLength(1);
+      expectOwnedArtifactsCleaned();
+
+      const copiedLockTarget = path.join(sandbox, "copied-project-lock");
+      writeFixtureLock(copiedLockTarget, String(1).padStart(64, "0"));
+      const symlinkedProjectLock = run("symlinked-project-lock", {
+        FAKE_DOCKER_FAIL: "build",
+        FAKE_REPLACE_PROJECT_LOCK_WITH_SYMLINK: "true",
+        FAKE_SYMLINK_TARGET: copiedLockTarget,
+      });
+      expect(symlinkedProjectLock.result.status).toBe(42);
+      expect(downCalls(symlinkedProjectLock.dockerCalls)).toHaveLength(0);
+      expect(lstatSync(projectLock).isSymbolicLink()).toBe(true);
+      expect(
+        readFileSync(path.join(copiedLockTarget, "token"), "utf8").trim(),
+      ).toBe(String(1).padStart(64, "0"));
+      rmSync(projectLock);
+      removeFixtureLock(copiedLockTarget, [String(1).padStart(64, "0")]);
+      expectOwnedArtifactsCleaned();
+
+      const success = run("identity-success", {}, project, identityRunner);
       expect(success.result.status).toBe(0);
       expect(downCalls(success.dockerCalls)).toHaveLength(1);
-      expect(success.pnpmCalls).toContain("e2e/assistant-experience.spec.ts");
-      expect(success.pnpmCalls).toContain("e2e/pricing-assistant.spec.ts");
+      const orderedIdentityEvents = [
+        "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @totp-enroll",
+        "docker compose -p",
+        "restart proxy",
+        "up -d --wait proxy",
+        "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @recovery-consume",
+        "docker compose -p",
+        "restart web proxy",
+        "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @saved-admin-after-restart",
+        "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @security-state",
+        "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @saved-admin-revoke",
+        "restart web proxy",
+        "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @saved-admin-rejected-after-restart",
+      ];
+      let after = -1;
+      for (const marker of orderedIdentityEvents) {
+        const index = success.events.indexOf(marker, after + 1);
+        expect(index, marker).toBeGreaterThan(after);
+        after = index;
+      }
+      expect(success.events.match(/restart web proxy/gu)).toHaveLength(2);
+      expect(success.events.match(/restart proxy/gu)).toHaveLength(1);
+      expect(success.events.match(/up -d --wait web proxy/gu)).toHaveLength(4);
+      expect(success.events.match(/up -d --wait proxy/gu)).toHaveLength(1);
+      expect(success.pnpmCalls).toContain("@security-state");
+      expect(success.pnpmCalls).toContain("@saved-admin-after-restart");
+      expect(success.pnpmCalls).toContain("e2e/proxy-auth-security.spec.ts");
       expectOwnedArtifactsCleaned();
 
       for (const runResult of [
@@ -3899,6 +4133,16 @@ exit 0
         replacedOwner,
         up,
         later,
+        missingCallerEnv,
+        cleanupFailure,
+        cleanupResidue,
+        testAndCleanupFailure,
+        generatedEnv,
+        spacedGeneratedEnv,
+        identityEarlyOpenSslFailure,
+        identityTestFailure,
+        identityCleanupFailure,
+        symlinkedProjectLock,
         success,
       ]) {
         const combinedLogs = [

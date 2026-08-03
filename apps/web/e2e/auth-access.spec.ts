@@ -399,7 +399,7 @@ test.describe("shared authorization state", () => {
     await admin.close();
   });
 
-  test("@security-state saved administrator session is still valid", async ({
+  test("@security-state @saved-admin-after-restart saved administrator session is still valid", async ({
     browser,
   }) => {
     const admin = await browser.newContext({ storageState: adminStatePath });
@@ -409,7 +409,7 @@ test.describe("shared authorization state", () => {
     await admin.close();
   });
 
-  test("@security-state saved administrator session can be revoked", async ({
+  test("@security-state @saved-admin-revoke saved administrator session can be revoked", async ({
     browser,
   }) => {
     const admin = await browser.newContext({ storageState: adminStatePath });
@@ -432,7 +432,7 @@ test.describe("shared authorization state", () => {
     await admin.close();
   });
 
-  test("@security-state saved administrator session remains rejected", async ({
+  test("@security-state @saved-admin-rejected-after-restart saved administrator session remains rejected", async ({
     browser,
   }) => {
     const admin = await browser.newContext({ storageState: adminStatePath });
