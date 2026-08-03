@@ -503,6 +503,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
+      - /app/apps/web/.next/cache:rw,noexec,nosuid,nodev,size=32m,uid=1000,gid=1000,mode=0750
     security_opt:
       - no-new-privileges:true
     cap_drop:

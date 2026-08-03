@@ -14,6 +14,8 @@ case "$suite" in
     ;;
 esac
 
+experience_grep=${AAP_ASSISTANT_EXPERIENCE_E2E_GREP:-}
+
 project=${AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT:-aap-assistant-e2e}
 case "$project" in
   aap-assistant-e2e|aap-assistant-e2e-*) ;;
@@ -532,11 +534,16 @@ run_auth_access() {
 provision_stack
 
 if [ "$suite" = "experience" ]; then
+  if [ -n "$experience_grep" ]; then
+    set -- --grep "$experience_grep"
+  else
+    set --
+  fi
   BASE_URL=http://127.0.0.1:8080 \
     pnpm --filter @ai-agent-platform/web exec playwright test \
     e2e/assistant-experience.spec.ts \
     e2e/pricing-assistant.spec.ts \
-    --workers=1
+    --workers=1 "$@"
   exit 0
 fi
 

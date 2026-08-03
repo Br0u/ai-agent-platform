@@ -33,6 +33,7 @@ import {
   type AssistantStreamEvent,
 } from "../src/features/assistant/assistant-stream";
 import { ASSISTANT_CONTENT_MAX_CODE_POINTS } from "../src/features/assistant/assistant-contract";
+import { parseAdminAssistantStatusResponse } from "../src/features/assistant/admin-assistant-contract";
 
 const CHAT_PATH = "/api/v1/assistant/chat";
 const SESSION_PATH = "/api/v1/assistant/session";
@@ -885,9 +886,79 @@ async function completeSeededAdminTwoFactor(context: BrowserContext) {
   await page.close();
 }
 
+type BoundedReadinessObservation = {
+  ready: boolean;
+  description: string;
+};
+
+async function pollReadinessWithinBudget<T>({
+  budgetMs,
+  getStatus,
+  inspect,
+  now = Date.now,
+  pause = (delayMs) =>
+    new Promise<void>((resolve) => setTimeout(resolve, delayMs)),
+}: {
+  budgetMs: number;
+  getStatus: (timeoutMs: number) => Promise<T>;
+  inspect: (value: T) => BoundedReadinessObservation;
+  now?: () => number;
+  pause?: (delayMs: number) => Promise<void>;
+}): Promise<BoundedReadinessObservation> {
+  const deadline = now() + budgetMs;
+  let lastObservation: BoundedReadinessObservation = {
+    ready: false,
+    description: "no status response",
+  };
+  while (true) {
+    const remainingMs = deadline - now();
+    if (remainingMs <= 0) {
+      return lastObservation;
+    }
+    try {
+      lastObservation = inspect(await getStatus(remainingMs));
+    } catch (error) {
+      const failureKind = error instanceof Error ? error.name : "unknown";
+      return {
+        ready: false,
+        description: `status request ${failureKind} after ${remainingMs}ms`,
+      };
+    }
+    if (lastObservation.ready) {
+      return lastObservation;
+    }
+    const pollDelayMs = Math.min(100, deadline - now());
+    if (pollDelayMs > 0) {
+      await pause(pollDelayMs);
+    }
+  }
+}
+
 test.describe.configure({ mode: "serial" });
 
 test.describe("@guard assistant response safety guard", () => {
+  test("bounds stalled readiness requests to their remaining total budget", async () => {
+    let currentTime = 4_000;
+    const requestedTimeouts: number[] = [];
+    const outcome = await pollReadinessWithinBudget({
+      budgetMs: 10_000,
+      now: () => currentTime,
+      getStatus: async (timeoutMs) => {
+        requestedTimeouts.push(timeoutMs);
+        currentTime += timeoutMs;
+        throw new Error("stalled status request");
+      },
+      inspect: () => ({ ready: true, description: "unreachable" }),
+    });
+
+    expect(requestedTimeouts).toEqual([10_000]);
+    expect(requestedTimeouts[0]).toBeLessThan(30_000);
+    expect(outcome).toEqual({
+      ready: false,
+      description: "status request Error after 10000ms",
+    });
+  });
+
   test("rejects internal run and session identifier keys recursively", () => {
     const forbiddenKeys = [
       "sessionId",
@@ -2356,13 +2427,84 @@ test.describe("@control deterministic model control", () => {
       const response = await context.request.post(CHAT_PATH, {
         data: CHAT_BODY,
       });
-      expect(response.status()).toBe(200);
+      if (response.status() !== 200) {
+        const failure = await readControlJson(response);
+        expect(
+          response.status(),
+          `assistant chat returned a safe failure body: ${JSON.stringify(failure)}`,
+        ).toBe(200);
+      }
       const body = await readControlAssistantStream(response);
       expect(JSON.stringify(body)).toContain(expectedMarker);
       const deletion = await context.request.delete(SESSION_PATH);
       expect(deletion.status()).toBe(204);
       await drainControlResponses();
       await context.close();
+    };
+
+    const waitForRestoredDynamicModel = async ({
+      provider,
+      modelId,
+      configRevision,
+    }: {
+      provider: (typeof CONTROL_PROVIDERS)[number]["provider"];
+      modelId: string;
+      configRevision: number;
+    }) => {
+      const outcome = await pollReadinessWithinBudget({
+        budgetMs: 10_000,
+        getStatus: async (timeoutMs) => {
+          const response = await modelAdmin.request.get(ADMIN_STATUS_PATH, {
+            timeout: timeoutMs,
+          });
+          const statusCode = response.status();
+          const body = await readControlJson(response, { method: "GET" });
+          return {
+            status: parseAdminAssistantStatusResponse(body),
+            statusCode,
+          };
+        },
+        inspect: ({ status, statusCode }) => {
+          if (status === null) {
+            return {
+              ready: false,
+              description: `HTTP ${statusCode} invalid public status envelope`,
+            };
+          }
+          const runtime = status.status.runtime;
+          const description = [
+            `HTTP ${statusCode}`,
+            runtime.capability,
+            runtime.source,
+            String(runtime.provider),
+            String(runtime.modelId),
+            String(runtime.configRevision),
+            runtime.circuits.readiness.state,
+            runtime.circuits.execution.state,
+          ].join(" ");
+          return {
+            ready:
+              statusCode === 200 &&
+              runtime.live &&
+              runtime.ready &&
+              runtime.capability === "available" &&
+              runtime.selectedProvider === "agentos" &&
+              runtime.source === "dynamic" &&
+              runtime.provider === provider &&
+              runtime.modelId === modelId &&
+              runtime.configRevision === configRevision &&
+              runtime.circuits.readiness.state === "closed" &&
+              runtime.circuits.execution.state === "closed",
+            description,
+          };
+        },
+      });
+      if (outcome.ready) {
+        return;
+      }
+      throw new Error(
+        `agent recreate did not restore ${provider}/${modelId}/rev ${configRevision}: ${outcome.description}`,
+      );
     };
 
     const admin = await browser.newContext({ baseURL });
@@ -2516,6 +2658,11 @@ test.describe("@control deterministic model control", () => {
     await ask("deterministic-model:e2e-openai-rev1:turn:1");
 
     recreateAgent(true);
+    await waitForRestoredDynamicModel({
+      provider: "openai",
+      modelId: modelIds.openai,
+      configRevision: 1,
+    });
     await ask("deterministic-model:e2e-openai-rev1:turn:1");
 
     await page.reload();
@@ -2535,6 +2682,11 @@ test.describe("@control deterministic model control", () => {
     const afterRestart = agentContainerMetadata();
     expect(afterRestart.id).not.toBe(afterSwitch.id);
     expect(afterRestart.startedAt).not.toBe(afterSwitch.startedAt);
+    await waitForRestoredDynamicModel({
+      provider: "dashscope",
+      modelId: modelIds.dashscope,
+      configRevision: 1,
+    });
     await ask("deterministic-model:e2e-qwen-rev1:turn:1");
 
     const staleRevision = await modelAdmin.request.post(
@@ -2675,6 +2827,11 @@ test.describe("@control deterministic model control", () => {
     await drainControlResponses();
     await disabledPage.close();
     recreateAgent(true);
+    await waitForRestoredDynamicModel({
+      provider: "dashscope",
+      modelId: modelIds.dashscope,
+      configRevision: 1,
+    });
     await ask("deterministic-model:e2e-qwen-rev1:turn:1");
     const finalAuditChatResponse = await modelAdmin.request.post(
       ADMIN_CHAT_PATH,

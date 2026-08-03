@@ -1187,6 +1187,30 @@ describe("production deployment security contracts", () => {
       /function recreateAgent\(enabled: boolean\): void \{\s*collectAgentSessionIdentityAudit\(\);/u,
     );
     expect(browserAcceptance).toContain(
+      "const waitForRestoredDynamicModel = async",
+    );
+    expect(browserAcceptance).toContain("pollReadinessWithinBudget({");
+    expect(browserAcceptance).toContain("budgetMs: 10_000");
+    expect(browserAcceptance).toContain(
+      "modelAdmin.request.get(ADMIN_STATUS_PATH, {\n            timeout: timeoutMs,\n          })",
+    );
+    expect(browserAcceptance).toContain(
+      "bounds stalled readiness requests to their remaining total budget",
+    );
+    expect(browserAcceptance).not.toContain(
+      "modelAdmin.request.get(ADMIN_STATUS_PATH);",
+    );
+    expect(browserAcceptance).toContain(
+      "parseAdminAssistantStatusResponse(body)",
+    );
+    expect(browserAcceptance).toContain('runtime.source === "dynamic"');
+    expect(browserAcceptance).toContain(
+      'runtime.circuits.execution.state === "closed"',
+    );
+    expect(browserAcceptance).toContain(
+      "agent recreate did not restore ${provider}/${modelId}/rev ${configRevision}",
+    );
+    expect(browserAcceptance).toContain(
       "await context.request.delete(SESSION_PATH)",
     );
     expect(browserAcceptance).toContain(
@@ -1998,6 +2022,10 @@ exit 0
     );
     expect(web?.depends_on?.["skill-registry"]?.condition).toBe(
       "service_healthy",
+    );
+    expect(web?.read_only).toBe(true);
+    expect(web?.tmpfs).toContain(
+      "/app/apps/web/.next/cache:rw,noexec,nosuid,nodev,size=32m,uid=1000,gid=1000,mode=0750",
     );
     expect(migration?.command).toEqual([
       "python",
@@ -3568,6 +3596,13 @@ cleanup
   it("runs both assistant browser suites from an owned isolated project", () => {
     const runner = read("docs/testing/run-assistant-experience-e2e.sh");
     const webDockerfile = read("apps/web/Dockerfile");
+    const promptStyles = read(
+      "apps/web/src/components/assistant/assistant-prompt-input.css",
+    );
+    const promptFocusRule =
+      promptStyles.match(
+        /\.assistant-prompt-input__surface:focus-within,[\s\S]*?\.assistant-prompt-input__surface:focus-within\s*\{[\s\S]*?\n\}/u,
+      )?.[0] ?? "";
 
     expect(runner).toContain(
       "project=${AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT:-aap-assistant-e2e}",
@@ -3619,6 +3654,11 @@ cleanup
     expect(webDockerfile).toContain(
       "--mount=type=cache,id=ai-agent-platform-pnpm-store",
     );
+    expect(promptFocusRule).toContain(
+      ".assistant-prompt-input__surface:focus-within",
+    );
+    expect(promptFocusRule).toContain("border-color: rgb(126 151 216 / 70%);");
+    expect(promptFocusRule).toContain("0 0 0 3px rgb(86 192 248 / 22%)");
     expect(
       runner.indexOf("materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE"),
     ).toBeLessThan(runner.indexOf("config --quiet"));

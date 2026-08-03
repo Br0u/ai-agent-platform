@@ -73,9 +73,12 @@ describe("AssistantPromptInput", () => {
   it("adds image attachments, shows previews, and removes them safely", async () => {
     renderPrompt();
     const file = new File(["image"], "部署架构.png", { type: "image/png" });
-    const input = screen.getByLabelText("选择图片附件");
+    const input = document.querySelector<HTMLInputElement>(
+      ".assistant-prompt-input__file",
+    );
+    expect(input).not.toBeNull();
 
-    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.change(input!, { target: { files: [file] } });
 
     expect(
       await screen.findByRole("button", { name: "预览 部署架构.png" }),
@@ -109,7 +112,11 @@ describe("AssistantPromptInput", () => {
         new File([String(index)], `image-${index}.png`, { type: "image/png" }),
     );
 
-    fireEvent.change(screen.getByLabelText("选择图片附件"), {
+    const input = document.querySelector<HTMLInputElement>(
+      ".assistant-prompt-input__file",
+    );
+    expect(input).not.toBeNull();
+    fireEvent.change(input!, {
       target: { files },
     });
 

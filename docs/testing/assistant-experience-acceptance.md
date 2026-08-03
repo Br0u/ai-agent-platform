@@ -1,4 +1,4 @@
-# AI 助理三形态浏览器验收
+# AI 助理浏览器验收
 
 ## 验收入口
 
@@ -6,38 +6,48 @@
 sh docs/testing/run-assistant-experience-e2e.sh
 ```
 
-脚本默认使用隔离 Compose 项目 `aap-assistant-e2e`。需要保留失败现场或避免项目名冲突时，可以使用同前缀的独立项目：
+该 runner 默认使用隔离 Compose 项目 `aap-assistant-e2e`。需要避免项目名冲突时，可以使用同前缀的独立项目：
 
 ```bash
-AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT=aap-assistant-e2e-task9 \
+AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT=aap-assistant-e2e-local \
   sh docs/testing/run-assistant-experience-e2e.sh
 ```
 
-脚本在构建前原子取得位于 `/tmp` 的固定项目锁和全局 `8080` 端口锁，并拒绝接管已有容器、卷、网络、项目镜像或已被占用的端口。锁不依赖 `TMPDIR`，因此同一 Compose 项目从不同临时目录启动时仍会串行；不同项目也会因共享全局 `8080` 锁而串行，后启动的并发任务会被明确拒绝。只有本次运行持有的两个 `0600` owner token 都未被替换，退出 trap 才执行一次 `down --rmi local -v --remove-orphans`；令牌不匹配时拒绝清理并保留现场供人工核查。
+脚本在构建前原子取得固定项目锁和全局 `8080` 端口锁，拒绝接管已有容器、卷、网络、项目镜像或被占用的端口。只有本次运行持有的 owner token 未被替换，退出 trap 才执行自有项目的 `down --rmi local -v --remove-orphans`；令牌不匹配时拒绝清理并保留现场供人工核查。项目名只接受 `aap-assistant-e2e` 或安全字符构成的同前缀后缀。
 
-可配置项目名用于保留某次失败现场或避免项目名冲突，但仅接受 `aap-assistant-e2e` 或带安全字符后缀的同前缀名称，避免 shell 与路径注入。`.env.e2e` 是脚本生成或复用的本地凭据源，始终验证并收紧为 `0600`，不会输出内容；数据库、认证、AgentOS 和 Assistant 密钥在交给 Compose 前统一物化为临时 `0600` secret 文件，不进入命令参数。临时目录带独立 owner token，退出时只删除本次运行创建的已知文件并使用 `rmdir` 收口，不会对任意路径执行递归删除。Dockerfile 的 pnpm store 使用 BuildKit 内容寻址缓存，目的是让 registry 中断后能够复用已校验包，不缓存项目 secret，也不改变锁文件校验。
+`.env.e2e` 中的本地凭据和交给 Compose 的数据库、认证、AgentOS、Assistant secret 文件，除 MIGRATOR、RUNTIME、BACKUP 三类 initdb role password 外，默认以 `0600` 处理，不输出 secret。这三类文件自物化起临时使用 `0644`，贯穿 Compose config/build 与数据库初始化；它们位于私有 `0700` 临时目录、容器内只读挂载，数据库 ready 后立即收紧为 `0600`。临时目录带独立 owner token，清理仅作用于本次创建的已知文件，不对任意路径做递归删除。Dockerfile 的 pnpm store 使用 BuildKit 内容寻址缓存，既不缓存项目 secret，也不改变锁文件校验。
 
-所有权只会在锁、同名资源、端口、secret 和 `docker compose config --quiet` 全部通过后取得。在此之前任何失败都不会调用 `docker compose down`；取得所有权后的 build、up、Playwright 或正常退出则恰好清理一次。缺少 `lsof` 时脚本按失败关闭处理，不会猜测端口是否空闲。
+默认运行完整 Experience 套件。需要只复现某条 Experience 用例时，可安全传入 Playwright grep：
 
-## 自动验证范围
+```bash
+AAP_ASSISTANT_EXPERIENCE_E2E_GREP='workspace changes its conversation rail' \
+  sh docs/testing/run-assistant-experience-e2e.sh
+```
 
-- 同时运行 `e2e/assistant-experience.spec.ts` 与 `e2e/pricing-assistant.spec.ts`，不会遗漏旧价格计算验收。
-- 两个浏览器项目共用同一隔离反向代理、IP 限流桶和数据库 fixture，因此 runner 固定使用 `--workers=1` 串行执行真实助手请求，避免测试自竞争；不会用 mock 或放宽断言代替真实链路。
-- 顶部入口打开右侧 Dock；桌面默认宽度为 `480px`，拖拽边界为 `380–760px`，键盘方向键可调整。
-- 只有正常 pointer up 和键盘调整写入宽度偏好；pointer cancel 不写入，刷新恢复最近一次主动宽度。
-- 已打开的 Dock 在精确 `721→720→721` 断点切换中保持单一 dialog：`721px` 恢复 separator 与原桌面宽度偏好，`720px` 全屏、无 separator 且继续锁定背景滚动；移动全屏不会覆盖 `localStorage` 中的桌面宽度偏好。
-- Quick → Dock → `/assistant` 共用草稿、消息和进行中的单次请求；从完整页点击真实品牌首页入口返回门户后，surface 关闭但会话不丢失，重新打开 Quick/Dock 不会重复请求。
-- 遮罩与 Escape 可关闭 Dock，并把焦点还给原入口；任意时刻只有一个 dialog。
-- `390×844` 下 Dock 全屏且无 separator；缩小 viewport 模拟软键盘后输入区仍在可视范围，消息区可滚动且页面无横向溢出。
-- 采集所有 console 类型、page error、request failure 和意外 `404/429/5xx`；只对白名单内的占位服务或限流响应放行。
-- 继续覆盖价格计算、登录/注册、管理员助手及客户端路由中的助手会话回归。
+该变量只作为单个 `--grep` 参数透传；未设置时仍运行完整套件。
+
+## 当前自动验证范围
+
+runner 同时运行 `e2e/assistant-experience.spec.ts` 与 `e2e/pricing-assistant.spec.ts`，并固定 `--workers=1`。两个浏览器项目共用隔离代理、限流桶和数据库 fixture，串行执行避免真实助手请求互相竞争。
+
+当前生产可达路径是 Header 与 Quick 两个入口进入 `/assistant` workspace，而不是 Dock：
+
+- Header 的键盘操作导航到 `/assistant`，并可将焦点交给 workspace composer；测试同时确认可见焦点样式。
+- Quick 可打开、关闭、选择预设并显示安全服务状态；从 Quick 展开后进入 `/assistant` workspace。
+- Quick 与 workspace 在展开过程中保留同一草稿、消息和进行中的单次请求，覆盖会话连续性。
+- workspace 在精确 `721px ↔ 720px` 断点切换 conversation rail，不以遗留的 Dock separator 作为断言对象。
+- 移动端覆盖 Quick 展开后的页面滚动、缩窄 viewport 后 composer 可用、输入区适配及无横向溢出。
+- 覆盖认证与管理员受保护操作、价格计算、助手预设、安全建议动作、客户端路由会话边界，以及 pricing/assistant API 的不支持方法处理。
+- 覆盖键盘可见焦点；原始附件 file input 标记为不可访问且不纳入移动端可交互控件尺寸检查，用户可见的附件按钮仍受尺寸与可用性约束。
+- 采集 console、page error、request failure 和意外 `404/429/5xx`；仅对白名单中的占位服务或限流响应放行。
+
+## 诚实边界
+
+`AssistantDock` 当前不是生产可达路径。因此本 runner 不声明覆盖 Dock 拖拽、宽度持久化、遮罩、Escape 关闭、separator 断点、移动全屏或 `localStorage` 宽度恢复。`AssistantDock` 及 `useAssistantDockSize` 仍有组件/Hook 单测，但这些不是本 runner 的端到端证据。
+
+同样，本 runner 的通过只表示本机隔离 Compose 环境中的 Experience 验收通过；不表示 GitHub 或其他远端 CI 已通过。assistant-runtime 的动态模型、重建与恢复由独立 runtime runner 验证，不记入本文件的 Experience 计数。
 
 ## 最新真实运行记录
 
-- 部署契约：`39/39` 通过，其中 fake Docker/pnpm/openssl/lsof harness 在 CI 可直接执行，不依赖本机 Docker。
-- 可执行安全分支覆盖：同一项目跨不同 `TMPDIR` 的固定锁、不同项目争用全局 `8080` 锁、已有容器/卷/网络/项目镜像、缺少 `lsof`、端口占用、secret 创建失败和 compose config 失败均为 `down 0`；取得所有权后的 build/up/后续失败与成功均为 `down 1`。替换 owner token 后同样为 `down 0` 并保留被篡改锁；正常路径的临时 secret 和自有锁无残留。
-- Playwright：两个 spec、两个项目在提交 `7bf0b63` 的完整隔离 runner 中为 `19 passed / 3 expected skipped / 0 failed`，production standalone 构建生成 `38/38` 个页面。
-- `c6e0109` 已将 Dockerfile 的 pnpm store 改为 BuildKit 内容寻址缓存并加入有界网络重试；后续 migrate/web 依赖安装层均命中 `CACHED`，此前 registry 中断导致 runner 未进入 Playwright 的问题已关闭，不再作为当前限制。
-- `7bf0b63` 完整 runner 退出后，隔离项目容器、卷、网络、项目镜像、锁和临时 secret 均为 `0` 残留；全局 `8080` 端口已释放，原有默认 E2E 镜像 ID 未变化。
-- 最终规格复审新增精确断点恢复和完整页返回门户连续性后，Playwright 清单为 `24` 个用例；提交 `c044d07` 将完整 runner 固定为 `--workers=1` 后，隔离项目 `aap-assistant-e2e-task10-final-review3` 为 `20 passed / 4 expected skipped / 0 failed`。runner 退出后，本轮及三次预跑项目的容器、卷、网络、项目镜像、锁和临时 secret 均为 `0` 残留，全局 `8080` 端口已释放。
-- 终审修复 Dock 退出隔离、Quick/Dock/Workspace 共享服务状态、完整页首帧状态和顶部入口语义后，提交 `de17031` 使用隔离项目 `aap-assistant-e2e-final-de17031-v2` 再次运行完整 runner：`20 passed / 4 expected skipped / 0 failed`，耗时 `48.4s`，容器内 production build 生成 `38/38` 个页面。退出后该项目的容器、卷、网络、项目镜像、锁和临时 secret 均为 `0`，全局 `8080` 端口无监听。
+- 2026-08-03：以隔离项目 `aap-assistant-e2e-localdiagnostic` 执行完整 Experience runner，结果为 `20 passed / 4 skipped / 0 failed`，退出码 `0`。
+- 本轮仅记录 Experience runner 的结果；assistant-runtime 已另行验证，未混入以上计数。
