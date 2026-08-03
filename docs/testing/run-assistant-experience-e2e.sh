@@ -61,6 +61,8 @@ os_security_key
 assistant_session_secret
 assistant_rate_limit_secret
 model_api_key
+agent_config_control_key
+skill_registry_control_key
 "
 project_lock_dir="/tmp/$project.assistant-e2e.lock"
 port_lock_dir="/tmp/aap-assistant-experience-e2e-port-8080.lock"
@@ -444,11 +446,21 @@ materialize_secret() {
   export "$variable_name=$secret_path"
 }
 
+prepare_initdb_role_secret_permissions() {
+  chmod 644 "$MIGRATOR_DATABASE_PASSWORD_FILE" "$RUNTIME_DATABASE_PASSWORD_FILE" "$BACKUP_DATABASE_PASSWORD_FILE"
+}
+
+tighten_initdb_role_secret_permissions() {
+  chmod 600 "$MIGRATOR_DATABASE_PASSWORD_FILE" "$RUNTIME_DATABASE_PASSWORD_FILE" "$BACKUP_DATABASE_PASSWORD_FILE"
+}
+
 backup_encryption_key=$(secret)
 os_security_key=$(secret)
 assistant_session_secret=$(secret)
 assistant_rate_limit_secret=$(secret)
 model_api_key=$(secret)
+agent_config_control_key=$(secret)
+skill_registry_control_key=$(secret)
 
 materialize_secret POSTGRES_PASSWORD_FILE postgres_password "$POSTGRES_PASSWORD"
 # Docker Compose bind-mounts file secrets on Linux; Postgres reads these initdb
@@ -464,6 +476,8 @@ materialize_secret OS_SECURITY_KEY_FILE os_security_key "$os_security_key"
 materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$assistant_session_secret"
 materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret "$assistant_rate_limit_secret"
 materialize_secret MODEL_API_KEY_FILE model_api_key "$model_api_key"
+materialize_secret AGENT_CONFIG_CONTROL_KEY_FILE agent_config_control_key "$agent_config_control_key"
+materialize_secret SKILL_REGISTRY_CONTROL_KEY_FILE skill_registry_control_key "$skill_registry_control_key"
 
 [ "$PUBLIC_HOST" = "127.0.0.1" ] || {
   echo "PUBLIC_HOST must be 127.0.0.1 for isolated E2E" >&2
@@ -483,21 +497,30 @@ owns_project=true
 docker compose -p "$project" --env-file "$env_file" $compose_files build migrate web
 
 provision_stack() {
+  prepare_initdb_role_secret_permissions
   docker compose -p "$project" --env-file "$env_file" $compose_files up -d --wait db
+  tighten_initdb_role_secret_permissions
   docker compose -p "$project" --env-file "$env_file" $compose_files run --rm migrate
   docker compose -p "$project" --env-file "$env_file" $compose_files run --rm \
     -e NODE_ENV=test migrate pnpm db:seed-auth-e2e
-  docker compose -p "$project" --env-file "$env_file" $compose_files up -d --wait web proxy
+  docker compose -p "$project" --env-file "$env_file" $compose_files up -d --no-deps --wait web proxy
+}
+
+enable_seeded_admin_two_factor() {
+  docker compose -p "$project" --env-file "$env_file" $compose_files exec -T db \
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+    "UPDATE users SET two_factor_enabled = true WHERE id = '10000000-0000-4000-8000-000000000003'::uuid" \
+    >/dev/null
 }
 
 restart_web_and_proxy() {
-  docker compose -p "$project" --env-file "$env_file" $compose_files restart web proxy
-  docker compose -p "$project" --env-file "$env_file" $compose_files up -d --wait web proxy
+  docker compose -p "$project" --env-file "$env_file" $compose_files restart --no-deps web proxy
+  docker compose -p "$project" --env-file "$env_file" $compose_files up -d --no-deps --wait web proxy
 }
 
 restart_proxy() {
-  docker compose -p "$project" --env-file "$env_file" $compose_files restart proxy
-  docker compose -p "$project" --env-file "$env_file" $compose_files up -d --wait proxy
+  docker compose -p "$project" --env-file "$env_file" $compose_files restart --no-deps proxy
+  docker compose -p "$project" --env-file "$env_file" $compose_files up -d --no-deps --wait proxy
 }
 
 run_auth_access() {
@@ -535,6 +558,7 @@ run_auth_access --workers=1 \
 docker compose -p "$project" --env-file "$env_file" $compose_files \
   down -v --remove-orphans
 provision_stack
+enable_seeded_admin_two_factor
 
 BASE_URL=http://127.0.0.1:8080 \
   pnpm --filter @ai-agent-platform/web exec playwright test \

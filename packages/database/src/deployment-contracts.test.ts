@@ -708,6 +708,8 @@ describe("production deployment security contracts", () => {
       "migrate",
       "agent-migrate",
       "agent-control-migrate",
+      "skill-registry",
+      "skill-registry-migrate",
       "agent",
       "backup",
       "web",
@@ -729,6 +731,26 @@ describe("production deployment security contracts", () => {
     expect(script).toContain(
       'run_compose_job "agent-migrate-2" --no-deps agent-migrate',
     );
+    expect(script).toContain(
+      'run_compose_job "skill-registry-bootstrap-1" skill-registry-bootstrap',
+    );
+    expect(script).toContain(
+      'run_compose_job "skill-registry-bootstrap-2" skill-registry-bootstrap',
+    );
+    expect(script).toContain(
+      'run_compose_job "skill-registry-migrate-1" --no-deps skill-registry-migrate',
+    );
+    expect(script).toContain(
+      'run_compose_job "skill-registry-migrate-2" --no-deps skill-registry-migrate',
+    );
+    expect(
+      script.indexOf('run_compose_job "skill-registry-bootstrap-2"'),
+    ).toBeLessThan(
+      script.indexOf('run_compose_job "skill-registry-migrate-1"'),
+    );
+    expect(
+      script.indexOf('run_compose_job "skill-registry-migrate-2"'),
+    ).toBeLessThan(script.indexOf("compose up -d --no-deps --wait agent"));
     expect(script.match(/compose run --rm/g)).toHaveLength(1);
     expect(script).toContain("run_compose_job() {");
     expect(script).toContain(
@@ -973,8 +995,8 @@ describe("production deployment security contracts", () => {
     const invalidResponseIndex = browserAcceptance.indexOf(
       "const invalidResponse =",
     );
-    const blockedResponseIndex = browserAcceptance.indexOf(
-      "const blockedResponse =",
+    const recoveredResponseIndex = browserAcceptance.indexOf(
+      "const recoveredResponse =",
       invalidResponseIndex,
     );
     const circuitAdminAuthIndex = browserAcceptance.indexOf(
@@ -982,21 +1004,70 @@ describe("production deployment security contracts", () => {
       invalidResponseIndex,
     );
     expect(invalidResponseIndex).toBeGreaterThanOrEqual(0);
-    expect(blockedResponseIndex).toBeGreaterThan(invalidResponseIndex);
-    expect(blockedResponseIndex).toBeLessThan(circuitAdminAuthIndex);
-    const degradedStatusIndex = browserAcceptance.indexOf(
-      "const status = await readSafeJson",
-      invalidResponseIndex,
+    expect(recoveredResponseIndex).toBeGreaterThan(invalidResponseIndex);
+    expect(recoveredResponseIndex).toBeLessThan(circuitAdminAuthIndex);
+    expect(
+      browserAcceptance.indexOf(
+        "readSafeAssistantErrorStream(",
+        invalidResponseIndex,
+      ),
+    ).toBeGreaterThan(invalidResponseIndex);
+    expect(browserAcceptance).toContain(
+      "function assertNoPublicInvalidModelOutput",
     );
+    expect(browserAcceptance).toContain(
+      "const forbiddenPartialError = parseSafeAssistantErrorStream(",
+    );
+    expect(browserAcceptance).toContain(
+      "forbiddenPartialError.message.content",
+    );
+    expect(
+      browserAcceptance.indexOf(
+        "assertNoPublicInvalidModelOutput(invalid)",
+        invalidResponseIndex,
+      ),
+    ).toBeGreaterThan(invalidResponseIndex);
+    expect(
+      browserAcceptance.indexOf(
+        "readSafeAssistantStream(",
+        recoveredResponseIndex,
+      ),
+    ).toBeGreaterThan(recoveredResponseIndex);
+    expect(
+      browserAcceptance.indexOf(
+        'content: "deterministic-turn:2"',
+        recoveredResponseIndex,
+      ),
+    ).toBeGreaterThan(recoveredResponseIndex);
+    const readyAdminStatusIndex = browserAcceptance.indexOf(
+      '"AgentOS bounded failure admin status"',
+      circuitAdminAuthIndex,
+    );
+    const closedExecutionCircuitIndex = browserAcceptance.indexOf(
+      'execution: { state: "closed", consecutiveFailures: 0 }',
+      readyAdminStatusIndex,
+    );
+    expect(readyAdminStatusIndex).toBeGreaterThan(circuitAdminAuthIndex);
+    expect(closedExecutionCircuitIndex).toBeGreaterThan(readyAdminStatusIndex);
+    const readyStatusIndex = browserAcceptance.indexOf(
+      "const status = await readSafeJson",
+      readyAdminStatusIndex,
+    );
+    const readyPublicStatusIndex = browserAcceptance.indexOf(
+      '"AgentOS bounded failure public status"',
+      readyStatusIndex,
+    );
+    expect(readyStatusIndex).toBeGreaterThan(readyAdminStatusIndex);
+    expect(readyPublicStatusIndex).toBeGreaterThan(readyStatusIndex);
     const finalSessionSnapshotIndex = browserAcceptance.indexOf(
       "agentSessionIds();",
-      degradedStatusIndex,
+      readyStatusIndex,
     );
     const finalContextCloseIndex = browserAcceptance.indexOf(
       "await context.close();",
-      degradedStatusIndex,
+      readyStatusIndex,
     );
-    expect(finalSessionSnapshotIndex).toBeGreaterThan(degradedStatusIndex);
+    expect(finalSessionSnapshotIndex).toBeGreaterThan(readyStatusIndex);
     expect(finalSessionSnapshotIndex).toBeLessThan(finalContextCloseIndex);
     for (const variable of [
       "POSTGRES_PASSWORD",
@@ -1054,12 +1125,20 @@ describe("production deployment security contracts", () => {
       "AGENT_CONTROL_DATABASE_URL_FILE",
       "MODEL_CONFIG_ENCRYPTION_KEY_FILE",
       "AGENT_CONFIG_CONTROL_KEY_FILE",
+      "SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD_FILE",
+      "SKILL_REGISTRY_DATABASE_PASSWORD_FILE",
+      "SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD_FILE",
+      "SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE",
+      "SKILL_REGISTRY_DATABASE_URL_FILE",
+      "SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE",
+      "SKILL_REGISTRY_CONTROL_KEY_FILE",
     ]) {
       expect(script).toContain(`materialize_secret ${materialized}`);
       expect(script).toContain(`"$${materialized}"`);
     }
     expect(script).toContain("model_config_encryption_key=$(secret)");
     expect(script).toContain("agent_config_control_key=$(secret)");
+    expect(script).toContain("skill_registry_control_key=$(secret)");
     expect(script).toContain("model-key-full-patterns");
     expect(script).toContain("model-key-last4-patterns");
     expect(script).toContain(
@@ -1074,11 +1153,30 @@ describe("production deployment security contracts", () => {
     expect(script).toContain(
       'run_compose_job "agent-control-migrate-1" --no-deps agent-control-migrate',
     );
+    expect(script).toContain(
+      'run_compose_job "skill-registry-bootstrap-1" skill-registry-bootstrap',
+    );
+    expect(script).toContain(
+      'run_compose_job "skill-registry-migrate-1" --no-deps skill-registry-migrate',
+    );
     expect(script).toContain("--grep @control");
     expect(script).toContain("assert_zero_residue");
     expect(browserAcceptance).toContain("@control deterministic model control");
     expect(browserAcceptance).toContain("AAP_RUNTIME_MODEL_KEYS_FILE");
     expect(browserAcceptance).toContain("AAP_RUNTIME_MODEL_KEY_LAST4_FILE");
+    for (const protectedFile of [
+      "SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD_FILE",
+      "SKILL_REGISTRY_DATABASE_PASSWORD_FILE",
+      "SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD_FILE",
+      "SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE",
+      "SKILL_REGISTRY_DATABASE_URL_FILE",
+      "SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE",
+      "SKILL_REGISTRY_CONTROL_KEY_FILE",
+    ]) {
+      expect(browserAcceptance).toContain(
+        `protectedFileValues("${protectedFile}")`,
+      );
+    }
     expect(browserAcceptance).toContain("e2e-fail-openai-rev2");
     expect(browserAcceptance).toContain("page.clock.fastForward(30_000)");
     expect(browserAcceptance).toContain("recreateAgent(false)");
@@ -3501,6 +3599,14 @@ cleanup
       "materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE",
     );
     expect(runner).toContain("materialize_secret OS_SECURITY_KEY_FILE");
+    expect(runner).toContain(
+      "materialize_secret AGENT_CONFIG_CONTROL_KEY_FILE",
+    );
+    expect(runner).toContain(
+      "materialize_secret SKILL_REGISTRY_CONTROL_KEY_FILE",
+    );
+    expect(runner).toContain("agent_config_control_key=$(secret)");
+    expect(runner).toContain("skill_registry_control_key=$(secret)");
     expect(runner).not.toContain('rm -rf "$temp_dir"');
     expect(runner).toContain("release_owned_lock");
     expect(runner).toContain("cleanup_temp_dir");
@@ -3557,13 +3663,18 @@ cleanup
     expect(experience).toContain(
       "--grep-invert '@security-state|@saved-admin-after-restart|@saved-admin-revoke|@saved-admin-rejected-after-restart'",
     );
-    expect(experience).toContain("restart web proxy");
-    expect(experience).toContain("restart proxy");
-    expect(experience).toContain("--wait web proxy");
+    expect(experience).toContain("restart --no-deps web proxy");
+    expect(experience).toContain("restart --no-deps proxy");
+    expect(experience).toContain("up -d --no-deps --wait web proxy");
+    expect(experience).toContain("up -d --no-deps --wait proxy");
     expect(experience).toContain("@saved-admin-after-restart");
     expect(experience).toContain("@saved-admin-revoke");
     expect(experience).toContain("@saved-admin-rejected-after-restart");
     expect(experience).toContain("down -v --remove-orphans");
+    expect(experience).toContain("enable_seeded_admin_two_factor()");
+    expect(experience).toContain(
+      "UPDATE users SET two_factor_enabled = true WHERE id = '10000000-0000-4000-8000-000000000003'::uuid",
+    );
   });
 
   it("materializes an isolated model credential in every Compose runner", () => {
@@ -3612,11 +3723,17 @@ cleanup
       'materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$BACKUP_DATABASE_PASSWORD" 644',
     ];
 
-    for (const file of [
-      "docs/testing/run-assistant-runtime-e2e.sh",
-      "docs/testing/run-assistant-experience-e2e.sh",
-      "docs/testing/run-cms-documents-e2e.sh",
-    ]) {
+    for (const [file, readableSecrets] of [
+      [
+        "docs/testing/run-assistant-runtime-e2e.sh",
+        [
+          ...roleBootstrapSecrets,
+          'materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key" 644',
+        ],
+      ],
+      ["docs/testing/run-assistant-experience-e2e.sh", roleBootstrapSecrets],
+      ["docs/testing/run-cms-documents-e2e.sh", roleBootstrapSecrets],
+    ] as const) {
       const runner = read(file);
       const materializedCalls =
         runner.match(/^materialize_secret [^\n]+$/gmu) ?? [];
@@ -3627,8 +3744,80 @@ cleanup
       expect(
         materializedCalls.filter((call) => call.endsWith(" 644")),
         file,
-      ).toEqual(roleBootstrapSecrets);
+      ).toEqual(readableSecrets);
     }
+  });
+
+  it("cycles initdb role secrets around every database initialization", () => {
+    const roleSecrets = [
+      "MIGRATOR_DATABASE_PASSWORD_FILE",
+      "RUNTIME_DATABASE_PASSWORD_FILE",
+      "BACKUP_DATABASE_PASSWORD_FILE",
+    ];
+    const allRoleSecrets = `"${roleSecrets.map((name) => `$${name}`).join('" "')}"`;
+    const runners = [
+      {
+        file: "docs/testing/run-assistant-runtime-e2e.sh",
+        databaseReady: "compose up -d --wait db",
+        firstMigration: 'run_compose_job "migrate-1" migrate',
+        tightenedSecrets:
+          '"$MIGRATOR_DATABASE_PASSWORD_FILE" "$RUNTIME_DATABASE_PASSWORD_FILE"',
+      },
+      {
+        file: "docs/testing/run-assistant-experience-e2e.sh",
+        databaseReady: "$compose_files up -d --wait db",
+        firstMigration: "$compose_files run --rm migrate",
+        tightenedSecrets: allRoleSecrets,
+      },
+      {
+        file: "docs/testing/run-cms-documents-e2e.sh",
+        databaseReady: "compose up -d --wait db",
+        firstMigration: "compose run --rm migrate",
+        tightenedSecrets: allRoleSecrets,
+      },
+    ];
+
+    for (const {
+      file,
+      databaseReady,
+      firstMigration,
+      tightenedSecrets,
+    } of runners) {
+      const runner = read(file);
+      const preparation = runner.lastIndexOf(
+        "prepare_initdb_role_secret_permissions",
+      );
+      const tightening = runner.lastIndexOf(
+        "tighten_initdb_role_secret_permissions",
+      );
+
+      expect(runner, file).toContain(
+        "prepare_initdb_role_secret_permissions()",
+      );
+      expect(runner, file).toContain(
+        "tighten_initdb_role_secret_permissions()",
+      );
+      expect(runner, file).toContain(`chmod 644 ${allRoleSecrets}`);
+      expect(runner, file).toContain(`chmod 600 ${tightenedSecrets}`);
+      expect(preparation, file).toBeGreaterThanOrEqual(0);
+      expect(preparation, file).toBeLessThan(runner.indexOf(databaseReady));
+      expect(tightening, file).toBeGreaterThan(runner.indexOf(databaseReady));
+      expect(tightening, file).toBeLessThan(runner.indexOf(firstMigration));
+    }
+
+    const runtime = read("docs/testing/run-assistant-runtime-e2e.sh");
+    const backupJob = runtime.indexOf(
+      'run_compose_job "backup-once" --no-deps -e BACKUP_RUN_ONCE=true backup',
+    );
+    const backupTightening = runtime.indexOf(
+      "tighten_backup_role_secret_permission",
+      backupJob,
+    );
+    expect(runtime).toContain("tighten_backup_role_secret_permission()");
+    expect(runtime).toContain(
+      'chmod 600 "$BACKUP_DATABASE_PASSWORD_FILE" "$BACKUP_ENCRYPTION_KEY_FILE"',
+    );
+    expect(backupTightening).toBeGreaterThan(backupJob);
   });
 
   it("executes the assistant experience runner with fail-closed ownership and cleanup", () => {
@@ -3664,7 +3853,6 @@ cleanup
     mkdirSync(spacedTemp, { recursive: true });
     for (const command of [
       "cat",
-      "chmod",
       "dirname",
       "mkdir",
       "mktemp",
@@ -3681,6 +3869,18 @@ cleanup
       expect(resolved).not.toBe("");
       symlinkSync(resolved, path.join(bin, command));
     }
+    const systemChmod = spawnSync("/bin/sh", ["-c", "command -v chmod"], {
+      encoding: "utf8",
+    }).stdout.trim();
+    expect(systemChmod).not.toBe("");
+    writeFileSync(
+      path.join(bin, "chmod"),
+      `#!/bin/sh
+printf 'chmod %s\\n' "$*" >>"$FAKE_EVENT_LOG"
+exec "${systemChmod}" "$@"
+`,
+      { mode: 0o755 },
+    );
     expect(() => statSync(projectLock)).toThrow();
     expect(() => statSync(otherProjectLock)).toThrow();
     expect(() => statSync(portLock)).toThrow();
@@ -4117,18 +4317,51 @@ exit 0
       const success = run("identity-success", {}, project, identityRunner);
       expect(success.result.status).toBe(0);
       expect(downCalls(success.dockerCalls)).toHaveLength(1);
+      const modeChanges = (mode: "644" | "600") =>
+        [
+          ...success.events.matchAll(
+            new RegExp(
+              `^chmod ${mode} [^\\n]*migrator_database_password[^\\n]*runtime_database_password[^\\n]*backup_database_password`,
+              "gmu",
+            ),
+          ),
+        ].map((match) => match.index ?? -1);
+      const databaseStarts = [
+        ...success.events.matchAll(/docker compose[^\n]*up -d --wait db/gmu),
+      ].map((match) => match.index ?? -1);
+      const readableRoleSecretModes = modeChanges("644");
+      const tightenedRoleSecretModes = modeChanges("600");
+      expect(readableRoleSecretModes).toHaveLength(2);
+      expect(tightenedRoleSecretModes).toHaveLength(2);
+      expect(databaseStarts).toHaveLength(2);
+      for (const index of [0, 1]) {
+        expect(readableRoleSecretModes[index]).toBeLessThan(
+          databaseStarts[index],
+        );
+        expect(databaseStarts[index]).toBeLessThan(
+          tightenedRoleSecretModes[index],
+        );
+      }
+      const secondSeededAdminMfa = success.events.indexOf(
+        "UPDATE users SET two_factor_enabled = true WHERE id = '10000000-0000-4000-8000-000000000003'::uuid",
+      );
+      const proxySecurityTest = success.events.indexOf(
+        "e2e/proxy-auth-security.spec.ts",
+      );
+      expect(secondSeededAdminMfa).toBeGreaterThan(databaseStarts[1]);
+      expect(secondSeededAdminMfa).toBeLessThan(proxySecurityTest);
       const orderedIdentityEvents = [
         "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @totp-enroll",
         "docker compose -p",
-        "restart proxy",
-        "up -d --wait proxy",
+        "restart --no-deps proxy",
+        "up -d --no-deps --wait proxy",
         "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @recovery-consume",
         "docker compose -p",
-        "restart web proxy",
+        "restart --no-deps web proxy",
         "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @saved-admin-after-restart",
         "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @security-state",
         "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @saved-admin-revoke",
-        "restart web proxy",
+        "restart --no-deps web proxy",
         "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @saved-admin-rejected-after-restart",
       ];
       let after = -1;
@@ -4137,10 +4370,16 @@ exit 0
         expect(index, marker).toBeGreaterThan(after);
         after = index;
       }
-      expect(success.events.match(/restart web proxy/gu)).toHaveLength(2);
-      expect(success.events.match(/restart proxy/gu)).toHaveLength(1);
-      expect(success.events.match(/up -d --wait web proxy/gu)).toHaveLength(4);
-      expect(success.events.match(/up -d --wait proxy/gu)).toHaveLength(1);
+      expect(
+        success.events.match(/restart --no-deps web proxy/gu),
+      ).toHaveLength(2);
+      expect(success.events.match(/restart --no-deps proxy/gu)).toHaveLength(1);
+      expect(
+        success.events.match(/up -d --no-deps --wait web proxy/gu),
+      ).toHaveLength(4);
+      expect(
+        success.events.match(/up -d --no-deps --wait proxy/gu),
+      ).toHaveLength(1);
       expect(success.pnpmCalls).toContain("@security-state");
       expect(success.pnpmCalls).toContain("@saved-admin-after-restart");
       expect(success.pnpmCalls).toContain("e2e/proxy-auth-security.spec.ts");
@@ -8342,6 +8581,7 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
     const proxySpec = read("apps/web/e2e/proxy-auth-security.spec.ts");
     expect(proxySpec).toContain("audit-source-ip");
     expect(proxySpec).toContain("audit-e2e-");
+    expect(proxySpec).toContain('audit.request.get("/api/v1/session/staff")');
     expect(proxySpec).not.toContain('locator("body")).not.toContainText');
   });
 
@@ -8866,6 +9106,11 @@ exec /usr/bin/mktemp "$@"
     expect(runner).toContain("build migrate web");
     expect(runner).toContain("up -d --wait db");
     expect(runner).toContain("run --rm migrate");
+    expect(runner).toContain(
+      "materialize_secret SKILL_REGISTRY_CONTROL_KEY_FILE skill_registry_control_key",
+    );
+    expect(runner).toContain("up -d --no-deps --wait web");
+    expect(runner).toContain("up -d --no-deps --wait proxy");
     expect(runner).toContain("db:seed-auth-e2e");
     expect(runner).toContain("DOCUMENT_SEED_MANIFEST");
     expect(runner).toContain("E2E_MODEL_ADMIN_SESSION_TOKEN");

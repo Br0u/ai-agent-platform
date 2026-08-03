@@ -142,6 +142,14 @@ materialize_secret() {
   export "$variable_name=$path"
 }
 
+prepare_initdb_role_secret_permissions() {
+  chmod 644 "$MIGRATOR_DATABASE_PASSWORD_FILE" "$RUNTIME_DATABASE_PASSWORD_FILE" "$BACKUP_DATABASE_PASSWORD_FILE"
+}
+
+tighten_initdb_role_secret_permissions() {
+  chmod 600 "$MIGRATOR_DATABASE_PASSWORD_FILE" "$RUNTIME_DATABASE_PASSWORD_FILE" "$BACKUP_DATABASE_PASSWORD_FILE"
+}
+
 export POSTGRES_DB=ai_agent_platform_cms_e2e
 export POSTGRES_USER=ai_agent_owner
 export POSTGRES_PASSWORD=$(secret)
@@ -173,6 +181,7 @@ materialize_secret RUNTIME_DATABASE_URL_FILE runtime_database_url "$RUNTIME_DATA
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECRET"
 materialize_secret OS_SECURITY_KEY_FILE os_security_key "$(secret)"
 materialize_secret AGENT_CONFIG_CONTROL_KEY_FILE agent_config_control_key "$(secret)"
+materialize_secret SKILL_REGISTRY_CONTROL_KEY_FILE skill_registry_control_key "$(secret)"
 materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$(secret)"
 materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret "$(secret)"
 
@@ -205,7 +214,9 @@ manifest_slugs=$(pnpm --filter @ai-agent-platform/document-content exec \
 owns_project=true
 compose config --quiet || fail "Compose configuration"
 compose build migrate web || fail "current Web and migrator image build"
+prepare_initdb_role_secret_permissions || fail "pre-init role secret permission preparation"
 compose up -d --wait db || fail "isolated PostgreSQL startup"
+tighten_initdb_role_secret_permissions || fail "post-init role secret permission tightening"
 compose run --rm migrate || fail "migration/backfill and grant steps"
 compose run --rm \
   -e NODE_ENV=test \

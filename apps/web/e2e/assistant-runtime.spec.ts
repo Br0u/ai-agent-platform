@@ -26,6 +26,13 @@ import {
   fixtureCredentials,
   totpFromUri,
 } from "./auth-fixtures";
+import {
+  ASSISTANT_STREAM_MEDIA_TYPE,
+  formatAssistantStreamEvent,
+  parseAssistantStreamFrame,
+  type AssistantStreamEvent,
+} from "../src/features/assistant/assistant-stream";
+import { ASSISTANT_CONTENT_MAX_CODE_POINTS } from "../src/features/assistant/assistant-contract";
 
 const CHAT_PATH = "/api/v1/assistant/chat";
 const SESSION_PATH = "/api/v1/assistant/session";
@@ -72,6 +79,13 @@ type SafeShape =
   | SafeRule
   | SafeShape[]
   | { [key: string]: SafeShape };
+type AssistantStreamStart = Extract<AssistantStreamEvent, { event: "start" }>;
+type ParsedAssistantStreamResponse = Omit<
+  AssistantStreamStart["data"],
+  "message"
+> & {
+  message: AssistantStreamStart["data"]["message"] & { content: string };
+};
 
 function safeRule(accepts: (value: unknown) => boolean): SafeRule {
   return { [SAFE_RULE]: true, accepts };
@@ -244,6 +258,12 @@ function runtimeProtectedValues(): string[] {
     ...protectedFileValues("AGENT_CONTROL_DATABASE_PASSWORD_FILE"),
     ...protectedFileValues("AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE"),
     ...protectedFileValues("AGENT_CONTROL_DATABASE_URL_FILE"),
+    ...protectedFileValues("SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD_FILE"),
+    ...protectedFileValues("SKILL_REGISTRY_DATABASE_PASSWORD_FILE"),
+    ...protectedFileValues("SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD_FILE"),
+    ...protectedFileValues("SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE"),
+    ...protectedFileValues("SKILL_REGISTRY_DATABASE_URL_FILE"),
+    ...protectedFileValues("SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE"),
     ...protectedFileValues("BETTER_AUTH_SECRET_FILE"),
     ...protectedFileValues("OS_SECURITY_KEY_FILE"),
     ...protectedFileValues("ASSISTANT_SESSION_SECRET_FILE"),
@@ -251,6 +271,7 @@ function runtimeProtectedValues(): string[] {
     ...protectedFileValues("MODEL_API_KEY_FILE"),
     ...protectedFileValues("MODEL_CONFIG_ENCRYPTION_KEY_FILE"),
     ...protectedFileValues("AGENT_CONFIG_CONTROL_KEY_FILE"),
+    ...protectedFileValues("SKILL_REGISTRY_CONTROL_KEY_FILE"),
     ...protectedLedgerValues("AAP_RUNTIME_MODEL_KEYS_FILE"),
   ];
 }
@@ -575,6 +596,203 @@ async function readSafeJson(
   return parseSafeJson(await response.text(), protectedValues);
 }
 
+function parseSafeAssistantStreamEvents(
+  contentType: string | undefined,
+  rawStream: string,
+  protectedValues: string[],
+): AssistantStreamEvent[] {
+  expect(
+    contentType?.split(";", 1)[0]?.trim().toLowerCase() ===
+      ASSISTANT_STREAM_MEDIA_TYPE,
+    "AgentOS stream response must use SSE",
+  ).toBe(true);
+
+  const events: AssistantStreamEvent[] = [];
+  let remainder = rawStream.replaceAll("\r\n", "\n");
+  let boundary = remainder.indexOf("\n\n");
+  while (boundary !== -1) {
+    const rawFrame = remainder.slice(0, boundary);
+    remainder = remainder.slice(boundary + 2);
+    if (rawFrame.length > 0) {
+      const event = parseAssistantStreamFrame(rawFrame);
+      if (event === null) {
+        throw new Error("assistant SSE response contains an invalid frame");
+      }
+      events.push(event);
+    }
+    boundary = remainder.indexOf("\n\n");
+  }
+  if (remainder.trim().length > 0) {
+    throw new Error("assistant SSE response contains trailing data");
+  }
+
+  expectNoProtectedValue(events, protectedValues, rawStream);
+  return events;
+}
+
+function reconstructAssistantStreamResponse(
+  start: AssistantStreamStart,
+  content: string,
+): ParsedAssistantStreamResponse {
+  return {
+    ...start.data,
+    message: { ...start.data.message, content },
+  };
+}
+
+function parseSafeAssistantStream(
+  contentType: string | undefined,
+  rawStream: string,
+  protectedValues: string[],
+): ParsedAssistantStreamResponse {
+  const events = parseSafeAssistantStreamEvents(
+    contentType,
+    rawStream,
+    protectedValues,
+  );
+
+  let start: Extract<AssistantStreamEvent, { event: "start" }> | undefined;
+  const content: string[] = [];
+  let contentCodePoints = 0;
+  let done = false;
+  for (const event of events) {
+    if (start === undefined) {
+      if (event.event !== "start") {
+        throw new Error("assistant SSE response must begin with start");
+      }
+      start = event;
+      continue;
+    }
+    if (done) {
+      throw new Error("assistant SSE response contains events after done");
+    }
+    if (event.event === "delta") {
+      contentCodePoints += Array.from(event.data.content).length;
+      if (contentCodePoints > ASSISTANT_CONTENT_MAX_CODE_POINTS) {
+        throw new Error("assistant SSE response exceeds the content limit");
+      }
+      content.push(event.data.content);
+      continue;
+    }
+    if (event.event === "done") {
+      done = true;
+      continue;
+    }
+    if (event.event === "error") {
+      throw new Error("assistant SSE response contains an error event");
+    }
+    throw new Error("assistant SSE response has an invalid event order");
+  }
+
+  if (
+    start === undefined ||
+    content.length === 0 ||
+    content.join("").trim().length === 0 ||
+    !done
+  ) {
+    throw new Error("assistant SSE response is incomplete");
+  }
+
+  const response = reconstructAssistantStreamResponse(start, content.join(""));
+  expectNoProtectedValue(response, protectedValues, rawStream);
+  return response;
+}
+
+function parseSafeAssistantErrorStream(
+  contentType: string | undefined,
+  rawStream: string,
+  protectedValues: string[],
+): ParsedAssistantStreamResponse {
+  const events = parseSafeAssistantStreamEvents(
+    contentType,
+    rawStream,
+    protectedValues,
+  );
+  let start: Extract<AssistantStreamEvent, { event: "start" }> | undefined;
+  const content: string[] = [];
+  let contentCodePoints = 0;
+  let errored = false;
+  for (const event of events) {
+    if (start === undefined) {
+      if (event.event !== "start") {
+        throw new Error("assistant SSE error response must begin with start");
+      }
+      start = event;
+      continue;
+    }
+    if (errored) {
+      throw new Error(
+        "assistant SSE error response contains events after error",
+      );
+    }
+    if (event.event === "delta") {
+      contentCodePoints += Array.from(event.data.content).length;
+      if (contentCodePoints > ASSISTANT_CONTENT_MAX_CODE_POINTS) {
+        throw new Error(
+          "assistant SSE error response exceeds the content limit",
+        );
+      }
+      content.push(event.data.content);
+      continue;
+    }
+    if (event.event === "error") {
+      errored = true;
+      continue;
+    }
+    if (event.event === "done") {
+      throw new Error("assistant SSE error response must not contain done");
+    }
+    throw new Error("assistant SSE error response has an invalid event order");
+  }
+
+  if (start === undefined || !errored) {
+    throw new Error("assistant SSE error response is incomplete");
+  }
+
+  const response = reconstructAssistantStreamResponse(start, content.join(""));
+  expectNoProtectedValue(response, protectedValues, rawStream);
+  return response;
+}
+
+async function readSafeAssistantStream(
+  response: APIResponse,
+  protectedValues: string[],
+): Promise<ParsedAssistantStreamResponse> {
+  const setCookie = response.headers()["set-cookie"];
+  if (setCookie?.includes("aap_assistant_sid_dev=")) {
+    cookieCredential(setCookie);
+  }
+  return parseSafeAssistantStream(
+    response.headers()["content-type"],
+    await response.text(),
+    protectedValues,
+  );
+}
+
+async function readSafeAssistantErrorStream(
+  response: APIResponse,
+  protectedValues: string[],
+): Promise<ParsedAssistantStreamResponse> {
+  const setCookie = response.headers()["set-cookie"];
+  if (setCookie?.includes("aap_assistant_sid_dev=")) {
+    cookieCredential(setCookie);
+  }
+  return parseSafeAssistantErrorStream(
+    response.headers()["content-type"],
+    await response.text(),
+    protectedValues,
+  );
+}
+
+function assertNoPublicInvalidModelOutput(value: unknown): void {
+  expect(
+    /(?:__aap_e2e_invalid_response__|deterministic-turn|invalid_response)/iu.test(
+      JSON.stringify(value),
+    ),
+    "invalid model output reached the public response",
+  ).toBe(false);
+}
+
 function collectBrowserDiagnostics(context: BrowserContext) {
   const registeredPages = new WeakSet<Page>();
   const registerPage = (page: Page) => {
@@ -833,6 +1051,257 @@ test.describe("@guard assistant response safety guard", () => {
       outcomes.every((outcome) => outcome.safeFailure),
       "invalid secret file errors must be fixed and path-free",
     ).toBe(true);
+  });
+
+  test("reconstructs only complete safe AgentOS SSE responses", () => {
+    const start = {
+      event: "start" as const,
+      data: {
+        version: "1" as const,
+        requestId: "guard-sse-request",
+        mode: "agentos" as const,
+        session: {
+          temporary: true as const,
+          expiresAt: "2026-08-03T00:00:00.000Z",
+        },
+        message: { id: "guard-sse-message", role: "assistant" as const },
+        suggestedActions: [],
+      },
+    };
+    const done = { event: "done" as const, data: {} };
+    const valid = [
+      start,
+      { event: "delta" as const, data: { content: "safe " } },
+      { event: "delta" as const, data: { content: "stream" } },
+      done,
+    ]
+      .map(formatAssistantStreamEvent)
+      .join("");
+
+    assertSafeResponse(
+      parseSafeAssistantStream(
+        `${ASSISTANT_STREAM_MEDIA_TYPE}; charset=utf-8`,
+        valid,
+        [],
+      ),
+      "guard SSE reconstruction",
+    ).matches({
+      version: "1",
+      requestId: "guard-sse-request",
+      mode: "agentos",
+      session: { temporary: true, expiresAt: "2026-08-03T00:00:00.000Z" },
+      message: {
+        id: "guard-sse-message",
+        role: "assistant",
+        content: "safe stream",
+      },
+      suggestedActions: [],
+    });
+
+    const invalidStreams = [
+      ["event: start\ndata: not-json\n\n", "invalid frame"],
+      [valid.trimEnd(), "trailing data"],
+      [
+        formatAssistantStreamEvent({
+          event: "delta",
+          data: { content: "out-of-order" },
+        }),
+        "start",
+      ],
+      [
+        [
+          formatAssistantStreamEvent(start),
+          formatAssistantStreamEvent({ event: "error", data: {} }),
+        ].join(""),
+        "error event",
+      ],
+      [
+        [
+          formatAssistantStreamEvent(start),
+          formatAssistantStreamEvent(done),
+        ].join(""),
+        "incomplete",
+      ],
+      [
+        [
+          formatAssistantStreamEvent(start),
+          formatAssistantStreamEvent({
+            event: "delta",
+            data: { content: " \n" },
+          }),
+          formatAssistantStreamEvent(done),
+        ].join(""),
+        "incomplete",
+      ],
+      [
+        [
+          formatAssistantStreamEvent(start),
+          formatAssistantStreamEvent({
+            event: "delta",
+            data: { content: "x".repeat(ASSISTANT_CONTENT_MAX_CODE_POINTS) },
+          }),
+          formatAssistantStreamEvent({
+            event: "delta",
+            data: { content: "y" },
+          }),
+          formatAssistantStreamEvent(done),
+        ].join(""),
+        "content limit",
+      ],
+    ] as const;
+    for (const [rawStream, expectedFailure] of invalidStreams) {
+      expect(() =>
+        parseSafeAssistantStream(ASSISTANT_STREAM_MEDIA_TYPE, rawStream, []),
+      ).toThrow(expectedFailure);
+    }
+    expect(() =>
+      parseSafeAssistantStream("text/event-stream-invalid", valid, []),
+    ).toThrow("must use SSE");
+
+    const protectedValue = "guard-sse-secret-never-render";
+    let protectedFailure = "";
+    try {
+      parseSafeAssistantStream(
+        ASSISTANT_STREAM_MEDIA_TYPE,
+        [
+          formatAssistantStreamEvent(start),
+          formatAssistantStreamEvent({
+            event: "delta",
+            data: { content: protectedValue },
+          }),
+          formatAssistantStreamEvent(done),
+        ].join(""),
+        [protectedValue],
+      );
+    } catch (error) {
+      protectedFailure = error instanceof Error ? error.message : "";
+    }
+    expect(protectedFailure).toContain(
+      "protected value leaked in assistant response",
+    );
+    expect(protectedFailure).not.toContain(protectedValue);
+  });
+
+  test("accepts only a safe terminal AgentOS SSE error stream", () => {
+    const start = {
+      event: "start" as const,
+      data: {
+        version: "1" as const,
+        requestId: "guard-sse-error-request",
+        mode: "agentos" as const,
+        session: {
+          temporary: true as const,
+          expiresAt: "2026-08-03T00:00:00.000Z",
+        },
+        message: { id: "guard-sse-error-message", role: "assistant" as const },
+        suggestedActions: [],
+      },
+    };
+    const error = { event: "error" as const, data: {} };
+    const rawErrorStream = [
+      formatAssistantStreamEvent(start),
+      formatAssistantStreamEvent({
+        event: "delta" as const,
+        data: { content: "started before failure" },
+      }),
+      formatAssistantStreamEvent(error),
+    ].join("");
+
+    assertSafeResponse(
+      parseSafeAssistantErrorStream(
+        ASSISTANT_STREAM_MEDIA_TYPE,
+        rawErrorStream,
+        [],
+      ),
+      "guard SSE error envelope",
+    ).matches({
+      version: "1",
+      requestId: "guard-sse-error-request",
+      mode: "agentos",
+      session: { temporary: true, expiresAt: "2026-08-03T00:00:00.000Z" },
+      message: {
+        id: "guard-sse-error-message",
+        role: "assistant",
+        content: "started before failure",
+      },
+      suggestedActions: [],
+    });
+    expect(() =>
+      parseSafeAssistantStream(ASSISTANT_STREAM_MEDIA_TYPE, rawErrorStream, []),
+    ).toThrow("error event");
+
+    const invalidStreams = [
+      [
+        [
+          formatAssistantStreamEvent(start),
+          formatAssistantStreamEvent({ event: "done", data: {} }),
+        ].join(""),
+        "must not contain done",
+      ],
+      [
+        [
+          formatAssistantStreamEvent(start),
+          formatAssistantStreamEvent(error),
+          formatAssistantStreamEvent({
+            event: "delta",
+            data: { content: "after-error" },
+          }),
+        ].join(""),
+        "events after error",
+      ],
+      [formatAssistantStreamEvent(start), "incomplete"],
+    ] as const;
+    for (const [invalidRawStream, expectedFailure] of invalidStreams) {
+      expect(() =>
+        parseSafeAssistantErrorStream(
+          ASSISTANT_STREAM_MEDIA_TYPE,
+          invalidRawStream,
+          [],
+        ),
+      ).toThrow(expectedFailure);
+    }
+
+    const protectedValue = "guard-sse-error-secret-never-render";
+    let protectedFailure = "";
+    try {
+      parseSafeAssistantErrorStream(
+        ASSISTANT_STREAM_MEDIA_TYPE,
+        [
+          formatAssistantStreamEvent(start),
+          formatAssistantStreamEvent({
+            event: "delta",
+            data: { content: protectedValue },
+          }),
+          formatAssistantStreamEvent(error),
+        ].join(""),
+        [protectedValue],
+      );
+    } catch (caught) {
+      protectedFailure = caught instanceof Error ? caught.message : "";
+    }
+    expect(protectedFailure).toContain(
+      "protected value leaked in assistant response",
+    );
+    expect(protectedFailure).not.toContain(protectedValue);
+
+    const forbiddenPartialError = parseSafeAssistantErrorStream(
+      ASSISTANT_STREAM_MEDIA_TYPE,
+      [
+        formatAssistantStreamEvent(start),
+        formatAssistantStreamEvent({
+          event: "delta",
+          data: { content: INVALID_RESPONSE_SENTINEL },
+        }),
+        formatAssistantStreamEvent(error),
+      ].join(""),
+      [],
+    );
+    expect(forbiddenPartialError.message.content).toBe(
+      INVALID_RESPONSE_SENTINEL,
+    );
+    expect(() =>
+      assertNoPublicInvalidModelOutput(forbiddenPartialError),
+    ).toThrow("invalid model output reached the public response");
   });
 
   test("routes every assistant JSON body through the safety guard", () => {
@@ -1140,7 +1609,7 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
       configuration: {
         defaultAgent: "码多多（占位）",
         model: "未配置",
-        skills: "未接入",
+        skills: "已接入",
         sessionStorage: "未启用",
       },
       message: "公开入口使用安全占位模式；AgentOS 基础设施尚未探测。",
@@ -1284,7 +1753,7 @@ test.describe("@agentos deterministic runtime", () => {
         configuration: {
           defaultAgent: "码多多（maduoduo）",
           model: "OpenAI / e2e-deterministic（部署配置）",
-          skills: "未接入",
+          skills: "已接入",
           sessionStorage: "AgentOS 持久化已启用",
         },
         message: "AI 助理基础服务已就绪。",
@@ -1354,7 +1823,7 @@ test.describe("@agentos deterministic runtime", () => {
       data: CHAT_BODY,
     });
     expect(firstResponse.status()).toBe(200);
-    const first = await readSafeJson(firstResponse, protectedValues);
+    const first = await readSafeAssistantStream(firstResponse, protectedValues);
     assertSafeResponse(first, "AgentOS first turn").matches({
       version: "1",
       requestId: requestIdMatcher,
@@ -1389,7 +1858,7 @@ test.describe("@agentos deterministic runtime", () => {
       },
     });
     expect(secondResponse.status()).toBe(200);
-    const second = await readSafeJson(secondResponse, [
+    const second = await readSafeAssistantStream(secondResponse, [
       ...protectedValues,
       firstCredential,
     ]);
@@ -1422,7 +1891,7 @@ test.describe("@agentos deterministic runtime", () => {
       { data: CHAT_BODY },
     );
     expect(independentResponse.status()).toBe(200);
-    const independent = await readSafeJson(
+    const independent = await readSafeAssistantStream(
       independentResponse,
       protectedValues,
     );
@@ -1470,7 +1939,7 @@ test.describe("@agentos deterministic runtime", () => {
       },
     });
     expect(thirdResponse.status()).toBe(200);
-    const third = await readSafeJson(thirdResponse, protectedValues);
+    const third = await readSafeAssistantStream(thirdResponse, protectedValues);
     assertSafeResponse(third, "AgentOS replacement turn").matches({
       version: "1",
       requestId: requestIdMatcher,
@@ -1514,7 +1983,7 @@ test.describe("@agentos deterministic runtime", () => {
     ).toBe(false);
   });
 
-  test("returns a safe 503 for invalid output and opens the execution circuit", async ({
+  test("bounds invalid output to a safe SSE error without opening the execution circuit", async ({
     browser,
     baseURL,
   }) => {
@@ -1528,42 +1997,58 @@ test.describe("@agentos deterministic runtime", () => {
         context: { pathname: "/assistant" },
       },
     });
-    expect(invalidResponse.status()).toBe(503);
-    const invalid = await readSafeJson(invalidResponse, protectedValues);
-    assertSafeResponse(invalid, "AgentOS invalid response").matches({
+    expect(invalidResponse.status()).toBe(200);
+    const invalid = await readSafeAssistantErrorStream(
+      invalidResponse,
+      protectedValues,
+    );
+    assertSafeResponse(invalid, "AgentOS invalid SSE envelope").matches({
       version: "1",
       requestId: requestIdMatcher,
-      error: {
-        code: "assistant_unavailable",
-        message: "助手服务暂不可用，请使用帮助中心或商务咨询。",
-        retryable: true,
+      mode: "agentos",
+      session: { temporary: true, expiresAt: expiresAtMatcher },
+      message: {
+        id: messageIdMatcher,
+        role: "assistant",
+        content: safeRule((value) => typeof value === "string"),
       },
+      suggestedActions: [],
     });
-    expect(
-      /(?:__aap_e2e_invalid_response__|deterministic-turn|invalid_response)/iu.test(
-        JSON.stringify(invalid),
-      ),
-      "invalid model output reached the public response",
-    ).toBe(false);
+    assertNoPublicInvalidModelOutput(invalid);
+    const invalidCookie = (await context.cookies()).find(
+      (cookie) => cookie.name === "aap_assistant_sid_dev",
+    )?.value;
+    if (!invalidCookie)
+      throw new Error("invalid stream did not establish an assistant Cookie");
 
-    const blockedResponse = await context.request.post(CHAT_PATH, {
+    const recoveredResponse = await context.request.post(CHAT_PATH, {
       data: CHAT_BODY,
     });
-    expect(blockedResponse.status()).toBe(503);
-    const blocked = await readSafeJson(blockedResponse, protectedValues);
-    assertSafeResponse(blocked, "AgentOS circuit rejection").matches({
+    expect(recoveredResponse.status()).toBe(200);
+    const recovered = await readSafeAssistantStream(
+      recoveredResponse,
+      protectedValues,
+    );
+    assertSafeResponse(recovered, "AgentOS bounded failure recovery").matches({
       version: "1",
       requestId: requestIdMatcher,
-      error: {
-        code: "assistant_unavailable",
-        message: "助手服务暂不可用，请使用帮助中心或商务咨询。",
-        retryable: true,
+      mode: "agentos",
+      session: { temporary: true, expiresAt: expiresAtMatcher },
+      message: {
+        id: messageIdMatcher,
+        role: "assistant",
+        content: "deterministic-turn:2",
       },
+      suggestedActions: [],
     });
     expect(
-      JSON.stringify(blocked).includes("deterministic-turn"),
-      "circuit rejection contained model output",
-    ).toBe(false);
+      stableCookieCredential(
+        (await context.cookies()).find(
+          (cookie) => cookie.name === "aap_assistant_sid_dev",
+        )?.value ?? "",
+      ) === stableCookieCredential(invalidCookie),
+      "bounded invalid stream changed the persisted assistant session",
+    ).toBe(true);
 
     const credentials = fixtureCredentials();
     const admin = await browser.newContext({ baseURL });
@@ -1580,21 +2065,24 @@ test.describe("@agentos deterministic runtime", () => {
       ...protectedValues,
       credentials.adminSessionToken,
     ]);
-    assertSafeResponse(adminStatus, "AgentOS degraded admin status").matches({
+    assertSafeResponse(
+      adminStatus,
+      "AgentOS bounded failure admin status",
+    ).matches({
       version: "1",
       requestId: requestIdMatcher,
       status: {
         mode: "agentos",
         runtime: {
           live: true,
-          ready: false,
-          capability: "degraded",
+          ready: true,
+          capability: "available",
           providerMode: "agentos",
-          selectedProvider: "unavailable",
+          selectedProvider: "agentos",
           persistence: "agentos",
           circuits: {
             readiness: { state: "closed", consecutiveFailures: 0 },
-            execution: { state: "open", consecutiveFailures: 1 },
+            execution: { state: "closed", consecutiveFailures: 0 },
           },
           readiness: {
             cacheTtlMs: 1000,
@@ -1624,37 +2112,39 @@ test.describe("@agentos deterministic runtime", () => {
           {
             id: "model",
             label: "模型",
-            state: "degraded",
-            detail: "模型执行暂不可用",
+            state: "ready",
+            detail: "部署模型已启用",
           },
           {
             id: "public_entry",
             label: "公开入口",
-            state: "degraded",
-            detail: "降级模式",
+            state: "ready",
+            detail: "AgentOS 模式可用",
           },
         ],
         configuration: {
           defaultAgent: "码多多（maduoduo）",
-          model: "OpenAI / e2e-deterministic（部署配置，执行暂不可用）",
-          skills: "未接入",
+          model: "OpenAI / e2e-deterministic（部署配置）",
+          skills: "已接入",
           sessionStorage: "AgentOS 持久化已启用",
         },
-        message: "助手基础服务暂不可用。",
+        message: "AI 助理基础服务已就绪。",
       },
     });
 
     const statusResponse = await context.request.get(STATUS_PATH);
     expect(statusResponse.status()).toBe(200);
     const status = await readSafeJson(statusResponse, protectedValues);
-    assertSafeResponse(status, "AgentOS degraded public status").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      live: true,
-      ready: false,
-      capability: "degraded",
-      message: "助手基础服务暂不可用。",
-    });
+    assertSafeResponse(status, "AgentOS bounded failure public status").matches(
+      {
+        version: "1",
+        requestId: requestIdMatcher,
+        live: true,
+        ready: true,
+        capability: "available",
+        message: "AI 助理基础服务已就绪。",
+      },
+    );
     agentSessionIds();
     await admin.close();
     await context.close();
@@ -1768,6 +2258,28 @@ test.describe("@control deterministic model control", () => {
         }),
       );
     };
+    const readControlAssistantStream = async (
+      response: APIResponse,
+    ): Promise<unknown> => {
+      const setCookie = response.headers()["set-cookie"];
+      if (setCookie?.includes("aap_assistant_sid_dev=")) {
+        cookieCredential(setCookie);
+      }
+      const rawStream = await response.text();
+      controlResponseLedger.push({
+        exposure: "strict",
+        rawJson: rawStream,
+        allowedLastFour: [],
+        method: "DIRECT",
+        pathname: new URL(response.url()).pathname,
+        status: response.status(),
+      });
+      return parseSafeAssistantStream(
+        response.headers()["content-type"],
+        rawStream,
+        currentProtectedValues(),
+      );
+    };
     async function trackControlResponses(
       context: BrowserContext,
     ): Promise<void> {
@@ -1845,7 +2357,7 @@ test.describe("@control deterministic model control", () => {
         data: CHAT_BODY,
       });
       expect(response.status()).toBe(200);
-      const body = await readControlJson(response);
+      const body = await readControlAssistantStream(response);
       expect(JSON.stringify(body)).toContain(expectedMarker);
       const deletion = await context.request.delete(SESSION_PATH);
       expect(deletion.status()).toBe(204);
@@ -2086,7 +2598,7 @@ test.describe("@control deterministic model control", () => {
       page
         .getByRole("article")
         .filter({ hasText: "Skill 加载" })
-        .getByText("已接入"),
+        .getByText("已接入", { exact: true }),
     ).toBeVisible();
     for (const [title, status] of [
       ["本地算力", "预留 / 未连接"],
