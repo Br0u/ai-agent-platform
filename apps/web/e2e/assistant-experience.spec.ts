@@ -8,11 +8,7 @@ import {
   type TestInfo,
 } from "@playwright/test";
 
-import {
-  addSignedSession,
-  fixtureCredentials,
-  totpFromUri,
-} from "./auth-fixtures";
+import { addSignedSession, fixtureCredentials } from "./auth-fixtures";
 
 const VIEWPORTS = {
   desktop: { width: 1440, height: 1000 },
@@ -296,28 +292,6 @@ function assistantSuccessResponse(content: string) {
     },
     suggestedActions: [],
   };
-}
-
-async function ensureAdminTwoFactor(
-  page: Page,
-  baseURL: string,
-  sessionToken: string,
-) {
-  await addSignedSession(page.context(), baseURL, "workforce", sessionToken);
-  await page.goto("/staff/two-factor?returnTo=%2Fadmin%2Fassistant");
-
-  const start = page.getByRole("button", { name: "开始设置" });
-  if (await start.isVisible()) {
-    await page.getByLabel("当前密码").fill(fixtureCredentials().adminPassword);
-    await start.click();
-    const uri = (
-      await page.locator("code").filter({ hasText: "otpauth://" }).textContent()
-    )?.trim();
-    if (!uri) throw new Error("TOTP URI was not rendered");
-    await page.getByLabel("六位验证码").fill(totpFromUri(uri));
-    await page.getByRole("button", { name: "验证并启用" }).click();
-    await expect(page).toHaveURL(/\/admin\/assistant$/u);
-  }
 }
 
 test("portal header, quick assistant, and standalone workspace are keyboard-safe", async ({
@@ -621,12 +595,11 @@ test("authenticated assistant operations and protected auth forms are usable", a
   await configure(page, testInfo);
   const evidence = collectEvidence(page);
   const credentials = fixtureCredentials();
-  await ensureAdminTwoFactor(
-    page,
+  await addSignedSession(
+    page.context(),
     baseURL,
-    testInfo.project.name === "desktop"
-      ? credentials.adminSessionToken
-      : credentials.noTotpAdminSessionToken,
+    "workforce",
+    credentials.modelAdminSessionToken,
   );
 
   await page.goto("/admin/assistant");

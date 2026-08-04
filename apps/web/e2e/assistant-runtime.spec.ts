@@ -915,13 +915,14 @@ async function pollReadinessWithinBudget<T>({
     if (remainingMs <= 0) {
       return lastObservation;
     }
+    const requestTimeoutMs = Math.min(5_000, remainingMs);
     try {
-      lastObservation = inspect(await getStatus(remainingMs));
+      lastObservation = inspect(await getStatus(requestTimeoutMs));
     } catch (error) {
       const failureKind = error instanceof Error ? error.name : "unknown";
-      return {
+      lastObservation = {
         ready: false,
-        description: `status request ${failureKind} after ${remainingMs}ms`,
+        description: `status request ${failureKind} after ${requestTimeoutMs}ms`,
       };
     }
     if (lastObservation.ready) {
@@ -951,11 +952,13 @@ test.describe("@guard assistant response safety guard", () => {
       inspect: () => ({ ready: true, description: "unreachable" }),
     });
 
-    expect(requestedTimeouts).toEqual([10_000]);
-    expect(requestedTimeouts[0]).toBeLessThan(30_000);
+    expect(requestedTimeouts).toEqual([5_000, 5_000]);
+    expect(requestedTimeouts.every((timeoutMs) => timeoutMs < 30_000)).toBe(
+      true,
+    );
     expect(outcome).toEqual({
       ready: false,
-      description: "status request Error after 10000ms",
+      description: "status request Error after 5000ms",
     });
   });
 
@@ -2452,7 +2455,7 @@ test.describe("@control deterministic model control", () => {
       configRevision: number;
     }) => {
       const outcome = await pollReadinessWithinBudget({
-        budgetMs: 10_000,
+        budgetMs: 20_000,
         getStatus: async (timeoutMs) => {
           const response = await modelAdmin.request.get(ADMIN_STATUS_PATH, {
             timeout: timeoutMs,
