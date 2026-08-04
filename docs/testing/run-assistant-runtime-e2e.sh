@@ -783,7 +783,6 @@ export MODEL_RUN_TIMEOUT_SECONDS=1
 export ASSISTANT_PROVIDER_MODE=agentos
 export ASSISTANT_AGENTOS_RUN_TIMEOUT_MS=51000
 export ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD=1
-export ASSISTANT_AGENTOS_CIRCUIT_RESET_MS=30000
 
 compose config --quiet
 compose up -d --no-deps --force-recreate --wait agent
