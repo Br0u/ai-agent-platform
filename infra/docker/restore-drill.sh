@@ -1059,7 +1059,7 @@ attempt=0
 until run_bounded_docker \
   "$docker_cli_timeout_seconds" database_ready \
   "$docker_stdout_file" "$docker_diagnostic_file" \
-  exec "$container" pg_isready -U "$owner" -d "$database"; do
+  exec "$container" pg_isready --host=127.0.0.1 -U "$owner" -d "$database"; do
   attempt=$((attempt + 1))
   if [ "$attempt" -ge 30 ]; then
     echo "restore drill database did not become ready" >&2

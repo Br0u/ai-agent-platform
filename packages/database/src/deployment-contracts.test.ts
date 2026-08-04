@@ -4954,6 +4954,9 @@ exit 0
     expect(script).toContain("RESTORE_DECRYPT_RECONCILE_ATTEMPTS");
     expect(script).toContain("RESTORE_DOCKER_CREATE_SETTLE_SECONDS");
     expect(script).toContain("RESTORE_SPACE_SAFETY_BYTES");
+    expect(script).toContain(
+      'exec "$container" pg_isready --host=127.0.0.1 -U "$owner" -d "$database"',
+    );
     expect(script).toContain('decrypt_container="aap-restore-decrypt-$run_id"');
     expect(script).toContain('head -c "$2"');
     expect(script).toContain('create --name "$decrypt_container"');
@@ -6604,7 +6607,7 @@ case "$command" in
   exec)
     shift
     case "\${1:-}" in
-      pg_isready) exit 0 ;;
+      pg_isready) [ "\${2:-}" = --host=127.0.0.1 ] || exit 1 ;;
       sh) exit 0 ;;
       pg_restore)
         if [ "$FAKE_DOCKER_MODE" = database_exec_migration_hang ]; then
@@ -6885,7 +6888,7 @@ case "$command" in
     container=$1
     shift
     case "\${1:-}" in
-      pg_isready) exit 0 ;;
+      pg_isready) [ "\${2:-}" = --host=127.0.0.1 ] || exit 1 ;;
       sh)
         if [ "$FAKE_DOCKER_MODE" = success_temp_rm_failure ]; then
           case "$*" in
