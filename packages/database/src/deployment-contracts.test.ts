@@ -21,6 +21,11 @@ import { describe, expect, it } from "vitest";
 
 const root = path.resolve(import.meta.dirname, "../../..");
 const read = (file: string) => readFileSync(path.join(root, file), "utf8");
+// Intentionally textual and conservative: comments and strings also reject tracing.
+const shellTracingDirective =
+  /\bset[ \t]+(?:(?:-[A-Za-z]+[ \t]+)*-[A-Za-z]*x[A-Za-z]*(?=[^A-Za-z]|$)|(?:-[A-Za-z]+[ \t]+)*-o[ \t]+xtrace(?=[^A-Za-z]|$))/u;
+const hasShellTracingDirective = (script: string) =>
+  shellTracingDirective.test(script);
 
 const composeSecretKeys = [
   "POSTGRES_PASSWORD",
@@ -3720,6 +3725,33 @@ cleanup
   it("materializes an isolated model credential in every Compose runner", () => {
     const assistantExperienceRunner =
       "docs/testing/run-assistant-experience-e2e.sh";
+
+    for (const runnerWithoutTracing of [
+      'set -- --grep "$experience_grep"',
+      "set -- --exclude '**/*.spec.ts'",
+    ]) {
+      expect(hasShellTracingDirective(runnerWithoutTracing)).toBe(false);
+    }
+
+    for (const tracingRunner of [
+      "#!/bin/sh\nset -x\necho traced",
+      "#!/bin/sh\nset -eux\necho traced",
+      "set -e -x",
+      "set -x; echo traced",
+      "if ready; then set -o xtrace; fi",
+      "true && set -x",
+      "false || set -x",
+      "(set -x)",
+      "{ set -x; }",
+      "do set -x",
+      "foo#bar; set -x",
+      '"$(set -x; :)"',
+      "# set -x",
+      'printf "%s" "set -x"',
+    ]) {
+      expect(hasShellTracingDirective(tracingRunner), tracingRunner).toBe(true);
+    }
+
     for (const file of [
       "docs/testing/run-assistant-runtime-e2e.sh",
       "docs/testing/run-agentos-backup-restore.sh",
@@ -3752,7 +3784,7 @@ cleanup
       }
       expect(runner).not.toContain('echo "$model_api_key"');
       expect(runner).not.toContain('cat "$MODEL_API_KEY_FILE"');
-      expect(runner).not.toMatch(/set\s+-[^\n]*x/u);
+      expect(hasShellTracingDirective(runner)).toBe(false);
     }
   });
 
