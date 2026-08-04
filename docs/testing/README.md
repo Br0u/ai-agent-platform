@@ -51,6 +51,23 @@ kill "$(lsof -tiTCP:3100 -sTCP:LISTEN)"
 - Console/CMS：在1440和390验证账号资料、License占位、产品内容、OpenLab占位和Analytics空状态；后台布局不得出现公开Mega Menu或页脚。
 - 全程收集console error/warning、page error、request failure和HTTP 404；任何诊断记录都会使回归失败。
 
+## 隔离 Assistant 与鉴权验收
+
+CI 在基础质量门禁通过后并行运行四条独立链路，映射关系直接声明在 `.github/workflows/ci.yml` 的 `isolated-acceptance` matrix 中：
+
+- `run-assistant-runtime-e2e.sh`：Assistant runtime、控制面与动态模型链路。
+- `run-assistant-experience-e2e.sh`：助手体验与价格页浏览器链路。
+- `run-identity-access-e2e.sh`：完整身份权限状态机与真实代理安全链路。
+- `run-cms-documents-e2e.sh`：CMS 文档迁移、浏览器与持续观察链路。
+
+本地运行完整鉴权门禁：
+
+```bash
+sh docs/testing/run-identity-access-e2e.sh
+```
+
+鉴权入口复用 Assistant 隔离栈，按 desktop 单 worker 依次执行 TOTP 注册、重启并等待 `proxy`、恢复码消费、同时重启并等待 `web` 与 `proxy`、验证保存的管理员会话仍有效、其余共享安全状态、撤销该会话、再次重启并等待两项服务、验证会话被拒绝，再运行 desktop/mobile 无状态访问矩阵；三个保存会话阶段有独立 Playwright tag，不会被其余 `@security-state` 调用重复执行。随后销毁数据库卷并重新迁移、seed，最后执行 `proxy-auth-security.spec.ts`，避免前一阶段的会话变更或数据库/IP 限流污染代理断言。脚本只清理自己持有的 Compose 项目、锁、临时 secrets 与自行创建的 env 文件；identity 入口使用 `mktemp -d` 私有目录保存临时 env，已有调用方 `.env.e2e` 不会被删除。清理 Compose 资源、私有目录、secret 或锁失败，或清理后仍有本次项目 residue，都会使原本成功的运行失败；测试本身失败时仍尝试清理并保留该测试的退出码。
+
 ## CMS 文档完整验收
 
 `run-cms-documents-e2e.sh` 是 CMS 文档迁移的强制隔离门禁。它创建唯一 Compose 项目和单次临时 secrets，构建当前 migrator/Web 镜像，启动隔离 PostgreSQL，运行全部 migration、权限 seed、runtime grant 和测试专用 workforce fixture，然后校验七篇种子文档与 `DOCUMENT_SEED_MANIFEST`。

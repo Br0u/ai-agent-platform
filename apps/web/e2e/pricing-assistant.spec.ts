@@ -10,6 +10,8 @@ const DESKTOP_VIEWPORT = { width: 1440, height: 1000 };
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const ASSISTANT_API = "/api/v1/assistant/chat";
 const ASSISTANT_STATUS_API = "/api/v1/assistant/status";
+const VISIBLE_INTERACTIVE_CONTROL_SELECTOR =
+  "button, a, textarea, input:not([aria-hidden='true'])";
 const CURRENCY_AMOUNT =
   /(?:[¥￥$€£]\s*\d)|(?:(?:CNY|RMB|USD)\s*\d)|(?:\d+(?:\.\d+)?\s*元)/u;
 
@@ -525,7 +527,9 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
     });
     expect(drawerStyle.bottomLeft).toBe("0px");
     expect(drawerStyle.bottomRight).toBe("0px");
-    await expectMinimumControlSize(dialog.locator("button, a, input"));
+    await expectMinimumControlSize(
+      dialog.locator(VISIBLE_INTERACTIVE_CONTROL_SELECTOR),
+    );
     const staticMobilePanelRule = await page.evaluate(() => {
       for (const sheet of Array.from(document.styleSheets)) {
         for (const rule of Array.from(sheet.cssRules)) {

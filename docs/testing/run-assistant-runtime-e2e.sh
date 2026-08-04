@@ -312,17 +312,34 @@ materialize_secret() {
   variable_name=$1
   secret_name=$2
   secret_value=$3
+  secret_mode=${4:-600}
   secret_path="$secret_dir/$secret_name"
   (umask 077 && printf '%s' "$secret_value" >"$secret_path")
-  chmod 600 "$secret_path"
+  chmod "$secret_mode" "$secret_path"
   export "$variable_name=$secret_path"
 }
 
+prepare_initdb_role_secret_permissions() {
+  chmod 644 "$MIGRATOR_DATABASE_PASSWORD_FILE" "$RUNTIME_DATABASE_PASSWORD_FILE" "$BACKUP_DATABASE_PASSWORD_FILE"
+}
+
+tighten_initdb_role_secret_permissions() {
+  chmod 600 "$MIGRATOR_DATABASE_PASSWORD_FILE" "$RUNTIME_DATABASE_PASSWORD_FILE"
+}
+
+tighten_backup_role_secret_permission() {
+  chmod 600 "$BACKUP_DATABASE_PASSWORD_FILE" "$BACKUP_ENCRYPTION_KEY_FILE"
+}
+
 materialize_secret POSTGRES_PASSWORD_FILE postgres_password "$POSTGRES_PASSWORD"
-materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$MIGRATOR_DATABASE_PASSWORD"
-materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$RUNTIME_DATABASE_PASSWORD"
-materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$BACKUP_DATABASE_PASSWORD"
-materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key"
+# Docker Compose bind-mounts file secrets on Linux; Postgres reads these initdb
+# role-bootstrap files after it drops to postgres. The 0700 parent and read-only mounts remain private.
+materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$MIGRATOR_DATABASE_PASSWORD" 644
+materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$RUNTIME_DATABASE_PASSWORD" 644
+materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$BACKUP_DATABASE_PASSWORD" 644
+# The backup container also drops to postgres, so keep both of its file
+# secrets readable only until the one-shot backup has finished.
+materialize_secret BACKUP_ENCRYPTION_KEY_FILE backup_encryption_key "$backup_encryption_key" 644
 materialize_secret AGNO_MIGRATOR_DATABASE_PASSWORD_FILE agno_migrator_database_password "$agno_migrator_password"
 materialize_secret AGNO_DATABASE_PASSWORD_FILE agno_database_password "$agno_runtime_password"
 materialize_secret AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD_FILE agent_control_migrator_database_password "$agent_control_migrator_password"
@@ -683,11 +700,15 @@ owns_project=true
 build_service migrate
 build_service agent-migrate
 build_service agent-control-migrate
+build_service skill-registry
+build_service skill-registry-migrate
 build_service agent
 build_service backup
 build_service web
 echo "Assistant runtime E2E phase: provision databases"
+prepare_initdb_role_secret_permissions
 compose up -d --wait db
+tighten_initdb_role_secret_permissions
 run_compose_job "migrate-1" migrate
 run_compose_job "migrate-2" migrate
 run_compose_job "agno-bootstrap-1" agno-bootstrap
@@ -696,14 +717,19 @@ run_compose_job "agent-migrate-1" --no-deps agent-migrate
 run_compose_job "agent-migrate-2" --no-deps agent-migrate
 run_compose_job "agent-control-bootstrap-1" agent-control-bootstrap
 run_compose_job "agent-control-bootstrap-2" agent-control-bootstrap
+run_compose_job "skill-registry-bootstrap-1" skill-registry-bootstrap
+run_compose_job "skill-registry-bootstrap-2" skill-registry-bootstrap
 run_compose_job "agent-control-migrate-1" --no-deps agent-control-migrate
 run_compose_job "agent-control-migrate-2" --no-deps agent-control-migrate
+run_compose_job "skill-registry-migrate-1" --no-deps skill-registry-migrate
+run_compose_job "skill-registry-migrate-2" --no-deps skill-registry-migrate
 compose up -d --no-deps --wait agent
 assert_control_preflight
 run_compose_job "seed-auth-placeholder" -e NODE_ENV=test migrate pnpm db:seed-auth-e2e
 compose up -d --no-deps --wait web
 compose up -d --no-deps --wait proxy
 run_compose_job "backup-once" --no-deps -e BACKUP_RUN_ONCE=true backup
+tighten_backup_role_secret_permission
 
 web_port_bindings=$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$(compose ps -q web)")
 agent_port_bindings=$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$(compose ps -q agent)")
@@ -757,7 +783,6 @@ export MODEL_RUN_TIMEOUT_SECONDS=1
 export ASSISTANT_PROVIDER_MODE=agentos
 export ASSISTANT_AGENTOS_RUN_TIMEOUT_MS=51000
 export ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD=1
-export ASSISTANT_AGENTOS_CIRCUIT_RESET_MS=30000
 
 compose config --quiet
 compose up -d --no-deps --force-recreate --wait agent
@@ -775,7 +800,6 @@ collect_agent_session_identities
 scan_logs "agentos-bootstrap" "$agentos_dynamic_patterns_file"
 reset_assistant_rate_limits
 
-# The AgentOS invalid-response check intentionally opens the execution circuit.
 # Recreate both runtime sides before exercising the dynamic-control path.
 compose up -d --no-deps --force-recreate --wait agent
 run_compose_job "seed-auth-control" -e NODE_ENV=test migrate pnpm db:seed-auth-e2e

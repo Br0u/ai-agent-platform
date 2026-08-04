@@ -399,7 +399,7 @@ test.describe("shared authorization state", () => {
     await admin.close();
   });
 
-  test("@security-state saved administrator session is still valid", async ({
+  test("@security-state @saved-admin-after-restart saved administrator session is still valid", async ({
     browser,
   }) => {
     const admin = await browser.newContext({ storageState: adminStatePath });
@@ -409,7 +409,7 @@ test.describe("shared authorization state", () => {
     await admin.close();
   });
 
-  test("@security-state saved administrator session can be revoked", async ({
+  test("@security-state @saved-admin-revoke saved administrator session can be revoked", async ({
     browser,
   }) => {
     const admin = await browser.newContext({ storageState: adminStatePath });
@@ -417,13 +417,13 @@ test.describe("shared authorization state", () => {
     await page.goto(
       `/admin/users?search=${encodeURIComponent(identities.admin.email)}`,
     );
-    const row = page
-      .getByRole("row")
-      .filter({ hasText: identities.admin.email });
-    const form = row.locator("form").filter({
-      has: page.getByRole("button", { name: "撤销全部会话" }),
-    });
-    await form.getByRole("button", { name: "撤销全部会话" }).click();
+    const form = page.locator(
+      `form:has(input[name="userId"][value="${identities.admin.id}"]):has(input[name="realm"][value="workforce"]):has(button:has-text("撤销全部会话"))`,
+    );
+    await expect(form).toHaveCount(1);
+    await form
+      .getByRole("button", { name: "撤销全部会话", exact: true })
+      .click();
     await expect
       .poll(async () =>
         (await admin.request.get("/api/v1/session/staff")).status(),
@@ -432,7 +432,7 @@ test.describe("shared authorization state", () => {
     await admin.close();
   });
 
-  test("@security-state saved administrator session remains rejected", async ({
+  test("@security-state @saved-admin-rejected-after-restart saved administrator session remains rejected", async ({
     browser,
   }) => {
     const admin = await browser.newContext({ storageState: adminStatePath });

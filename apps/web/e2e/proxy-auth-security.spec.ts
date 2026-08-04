@@ -47,6 +47,7 @@ test("proxy overwrites spoofed client IP before the failed-login audit", async (
     },
   });
   const page = await audit.newPage();
+  expect((await audit.request.get("/api/v1/session/staff")).status()).toBe(200);
   await page.goto("/admin/audit-logs?action=auth.login_failure");
   const eventRow = page
     .getByTestId(/^audit-row-/u)

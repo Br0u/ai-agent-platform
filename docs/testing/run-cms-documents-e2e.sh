@@ -135,10 +135,19 @@ materialize_secret() {
   variable_name=$1
   filename=$2
   value=$3
+  secret_mode=${4:-600}
   path="$secret_dir/$filename"
   printf '%s' "$value" >"$path"
-  chmod 600 "$path"
+  chmod "$secret_mode" "$path"
   export "$variable_name=$path"
+}
+
+prepare_initdb_role_secret_permissions() {
+  chmod 644 "$MIGRATOR_DATABASE_PASSWORD_FILE" "$RUNTIME_DATABASE_PASSWORD_FILE" "$BACKUP_DATABASE_PASSWORD_FILE"
+}
+
+tighten_initdb_role_secret_permissions() {
+  chmod 600 "$MIGRATOR_DATABASE_PASSWORD_FILE" "$RUNTIME_DATABASE_PASSWORD_FILE" "$BACKUP_DATABASE_PASSWORD_FILE"
 }
 
 export POSTGRES_DB=ai_agent_platform_cms_e2e
@@ -162,14 +171,17 @@ export PNPM_REGISTRY=${PNPM_REGISTRY:-https://registry.npmjs.org}
 export CMS_DOCUMENTS_E2E_RUN_ID=$run_token
 
 materialize_secret POSTGRES_PASSWORD_FILE postgres_password "$POSTGRES_PASSWORD"
-materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$MIGRATOR_DATABASE_PASSWORD"
-materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$RUNTIME_DATABASE_PASSWORD"
-materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$BACKUP_DATABASE_PASSWORD"
+# Docker Compose bind-mounts file secrets on Linux; Postgres reads these initdb
+# role-bootstrap files after it drops to postgres. The 0700 parent and read-only mounts remain private.
+materialize_secret MIGRATOR_DATABASE_PASSWORD_FILE migrator_database_password "$MIGRATOR_DATABASE_PASSWORD" 644
+materialize_secret RUNTIME_DATABASE_PASSWORD_FILE runtime_database_password "$RUNTIME_DATABASE_PASSWORD" 644
+materialize_secret BACKUP_DATABASE_PASSWORD_FILE backup_database_password "$BACKUP_DATABASE_PASSWORD" 644
 materialize_secret MIGRATOR_DATABASE_URL_FILE migrator_database_url "$MIGRATOR_DATABASE_URL"
 materialize_secret RUNTIME_DATABASE_URL_FILE runtime_database_url "$RUNTIME_DATABASE_URL"
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECRET"
 materialize_secret OS_SECURITY_KEY_FILE os_security_key "$(secret)"
 materialize_secret AGENT_CONFIG_CONTROL_KEY_FILE agent_config_control_key "$(secret)"
+materialize_secret SKILL_REGISTRY_CONTROL_KEY_FILE skill_registry_control_key "$(secret)"
 materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$(secret)"
 materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret "$(secret)"
 
@@ -202,7 +214,9 @@ manifest_slugs=$(pnpm --filter @ai-agent-platform/document-content exec \
 owns_project=true
 compose config --quiet || fail "Compose configuration"
 compose build migrate web || fail "current Web and migrator image build"
+prepare_initdb_role_secret_permissions || fail "pre-init role secret permission preparation"
 compose up -d --wait db || fail "isolated PostgreSQL startup"
+tighten_initdb_role_secret_permissions || fail "post-init role secret permission tightening"
 compose run --rm migrate || fail "migration/backfill and grant steps"
 compose run --rm \
   -e NODE_ENV=test \

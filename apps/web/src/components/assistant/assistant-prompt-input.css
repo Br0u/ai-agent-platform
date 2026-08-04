@@ -50,8 +50,15 @@
     0 0 32px rgb(118 128 216 / 12%);
 }
 
-.assistant-prompt-input__surface:focus-within {
+.assistant-prompt-input__surface:focus-within,
+.assistant-prompt-input[data-expanded="true"]
+  .assistant-prompt-input__surface:focus-within {
   border-color: rgb(126 151 216 / 70%);
+  box-shadow:
+    0 20px 42px rgb(70 89 150 / 13%),
+    inset 0 1px rgb(255 255 255 / 90%),
+    0 0 0 3px rgb(86 192 248 / 22%),
+    0 0 32px rgb(118 128 216 / 12%);
 }
 
 .assistant-prompt-input textarea {

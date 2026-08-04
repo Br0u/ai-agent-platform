@@ -235,11 +235,12 @@ export function AssistantPromptInput({
       >
         <input
           accept="image/*"
-          aria-label="选择图片附件"
+          aria-hidden="true"
           className="assistant-prompt-input__file"
           multiple
           onChange={addFiles}
           ref={fileInputRef}
+          tabIndex={-1}
           type="file"
         />
 
