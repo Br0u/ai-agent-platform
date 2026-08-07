@@ -14,6 +14,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const replacementTarget = {
+  id: "33333333-3333-4333-8333-333333333333",
+  enabled: true,
+  replacementToken: "a".repeat(64),
+  revisionId: "44444444-4444-4444-8444-444444444444",
+};
+
 describe("AssistantSkillUploadDialog", () => {
   it("uploads a ZIP and returns a directly available revision", async () => {
     const onUploaded = vi.fn();
@@ -39,6 +46,7 @@ describe("AssistantSkillUploadDialog", () => {
     );
     render(
       <AssistantSkillUploadDialog
+        loadReplacementTarget={vi.fn(async () => replacementTarget)}
         onClose={vi.fn()}
         onReauthRequired={vi.fn()}
         onReplacementResultUnknown={vi.fn(async () => undefined)}
@@ -91,6 +99,7 @@ describe("AssistantSkillUploadDialog", () => {
     vi.stubGlobal("fetch", fetcher);
     render(
       <AssistantSkillUploadDialog
+        loadReplacementTarget={vi.fn(async () => replacementTarget)}
         onClose={vi.fn()}
         onReauthRequired={vi.fn()}
         onReplacementResultUnknown={vi.fn(async () => undefined)}
@@ -151,6 +160,10 @@ describe("AssistantSkillUploadDialog", () => {
     vi.stubGlobal("fetch", fetcher);
     render(
       <AssistantSkillUploadDialog
+        loadReplacementTarget={vi.fn(async () => ({
+          ...replacementTarget,
+          enabled: false,
+        }))}
         onClose={vi.fn()}
         onReauthRequired={vi.fn()}
         onReplacementResultUnknown={vi.fn(async () => undefined)}
@@ -202,6 +215,7 @@ describe("AssistantSkillUploadDialog", () => {
     );
     render(
       <AssistantSkillUploadDialog
+        loadReplacementTarget={vi.fn(async () => replacementTarget)}
         onClose={vi.fn()}
         onReauthRequired={vi.fn()}
         onReplacementResultUnknown={onReplacementResultUnknown}
@@ -215,7 +229,9 @@ describe("AssistantSkillUploadDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "上传" }));
 
     await waitFor(() =>
-      expect(onReplacementResultUnknown).toHaveBeenCalledWith(skillId),
+      expect(onReplacementResultUnknown).toHaveBeenCalledWith(
+        replacementTarget,
+      ),
     );
     expect(onUploaded).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "上传中" })).toBeDisabled();
@@ -255,6 +271,7 @@ describe("AssistantSkillUploadDialog", () => {
     );
     render(
       <AssistantSkillUploadDialog
+        loadReplacementTarget={vi.fn(async () => replacementTarget)}
         onClose={vi.fn()}
         onReauthRequired={vi.fn()}
         onReplacementResultUnknown={vi.fn(async () => undefined)}

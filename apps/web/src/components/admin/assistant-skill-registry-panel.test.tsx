@@ -437,6 +437,97 @@ describe("AssistantSkillRegistryPanel", () => {
     expect(screen.getByRole("button", { name: "停用" })).toBeEnabled();
   });
 
+  it("reconciles an unknown replacement whose target is on a later page", async () => {
+    let uploadCalls = 0;
+    let listRound = 0;
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/skills/uploads")) {
+        uploadCalls += 1;
+        return uploadCalls === 1
+          ? Response.json(
+              {
+                version: "1",
+                requestId: "conflict",
+                error: { code: "state_conflict" },
+                conflictingSkillId: enabledSkill.id,
+                replacementToken: enabledSkill.replacementToken,
+                conflictingSkillEnabled: true,
+              },
+              { status: 409 },
+            )
+          : Response.json(
+              {
+                version: "1",
+                requestId: "unknown",
+                error: { code: "result_unknown" },
+              },
+              { status: 503 },
+            );
+      }
+      const offset = new URL(url, "https://example.test").searchParams.get(
+        "offset",
+      );
+      if (offset === "0") listRound += 1;
+      const skills =
+        offset === "0"
+          ? Array.from({ length: 100 }, (_, index) => ({
+              ...secondSkill,
+              id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+              name: `other-skill-${index}`,
+            }))
+          : [
+              listRound === 1
+                ? enabledSkill
+                : { ...enabledSkill, revisionId: replacementRevisionId },
+            ];
+      return Response.json({
+        version: "1",
+        skills,
+        page: {
+          limit: 100,
+          offset: Number(offset),
+          returned: skills.length,
+        },
+        requestId: `list-${listRound}-${offset}`,
+        permissions: {
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        },
+      });
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal("fetch", fetcher);
+    render(
+      <AssistantSkillRegistryPanel
+        canRead
+        initialPermissions={{
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        }}
+        initialSnapshot={{ capability: "available", skills: [secondSkill] }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "上传 Skill ZIP" }));
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: { files: [new File(["zip"], "safe-skill.zip")] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Skill 状态已确认。",
+      ),
+    );
+    expect(listRound).toBe(2);
+    expect(
+      screen.getByRole("button", { name: "上传 Skill ZIP" }),
+    ).toBeEnabled();
+  });
+
   it("keeps replacement controls locked when target confirmation fails", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     vi.stubGlobal(

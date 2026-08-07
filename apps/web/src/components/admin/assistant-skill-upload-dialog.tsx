@@ -2,6 +2,7 @@
 
 import {
   parseAdminSkillRevisionResponse,
+  type AdminSkillListResponse,
   type AdminSkillRevision,
 } from "@/features/assistant/admin-skill-contract";
 import { type FormEvent, useEffect, useRef, useState } from "react";
@@ -19,11 +20,21 @@ const EXISTING_SKILL_ERROR =
   "同名 Skill 已存在，但无法确认替换目标，请刷新后重试。";
 
 type Props = {
+  loadReplacementTarget(
+    skillId: string,
+  ): Promise<AssistantSkillReplacementTarget | null>;
   onClose(): void;
   onUploaded(revision: AdminSkillRevision): void;
-  onReplacementResultUnknown(skillId: string): Promise<void>;
+  onReplacementResultUnknown(
+    target: AssistantSkillReplacementTarget,
+  ): Promise<void>;
   onReauthRequired(): void;
 };
+
+export type AssistantSkillReplacementTarget = Pick<
+  AdminSkillListResponse["skills"][number],
+  "id" | "enabled" | "replacementToken" | "revisionId"
+>;
 
 function parseUploadResponse(value: unknown): AdminSkillRevision | null {
   try {
@@ -157,6 +168,7 @@ async function uploadError(response: Response): Promise<{
 }
 
 export function AssistantSkillUploadDialog({
+  loadReplacementTarget,
   onClose,
   onUploaded,
   onReplacementResultUnknown,
@@ -231,6 +243,15 @@ export function AssistantSkillUploadDialog({
           !window.confirm("发现同名 Skill，是否替换？")
         )
           throw new Error("upload failed");
+        const replacementTarget = await loadReplacementTarget(
+          failure.conflictingSkillId,
+        );
+        if (
+          replacementTarget === null ||
+          replacementTarget.replacementToken !== failure.replacementToken ||
+          replacementTarget.enabled !== failure.conflictingSkillEnabled
+        )
+          throw new Error("replacement target changed");
         response = await send({
           targetSkillId: failure.conflictingSkillId,
           replacementToken: failure.replacementToken,
@@ -242,7 +263,7 @@ export function AssistantSkillUploadDialog({
             return;
           }
           if (replacementFailure.outcome === "result_unknown") {
-            await onReplacementResultUnknown(failure.conflictingSkillId);
+            await onReplacementResultUnknown(replacementTarget);
             return;
           }
           failureMessage = replacementFailure.message;

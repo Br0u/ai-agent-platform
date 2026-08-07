@@ -7,7 +7,10 @@ import {
   type AdminSkillPermissionFlags,
 } from "@/features/assistant/admin-skill-contract";
 import { useEffect, useRef, useState } from "react";
-import { AssistantSkillUploadDialog } from "./assistant-skill-upload-dialog";
+import {
+  AssistantSkillUploadDialog,
+  type AssistantSkillReplacementTarget,
+} from "./assistant-skill-upload-dialog";
 
 export type AdminSkillRegistrySnapshot = {
   capability: "available" | "degraded";
@@ -278,16 +281,34 @@ export function AssistantSkillRegistryPanel({
     void refresh();
   };
 
-  const replacementResultUnknown = async (skillId: string): Promise<void> => {
-    const previous = snapshot.skills.find((skill) => skill.id === skillId);
+  const loadReplacementTarget = async (
+    skillId: string,
+  ): Promise<AssistantSkillReplacementTarget | null> => {
+    const cached = snapshot.skills.find((skill) => skill.id === skillId);
+    if (cached !== undefined) return cached;
+    for (let offset = 0; offset <= 1_000_000; offset += 100) {
+      const response = await fetch(
+        `/api/v1/admin/assistant/skills?limit=100&offset=${offset}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) return null;
+      const parsed = parseListEnvelope(await response.json());
+      if (parsed === null) return null;
+      const target = parsed.list.skills.find((skill) => skill.id === skillId);
+      if (target !== undefined) return target;
+      if (parsed.list.page.returned < 100) return null;
+    }
+    return null;
+  };
+
+  const replacementResultUnknown = async (
+    previous: AssistantSkillReplacementTarget,
+  ): Promise<void> => {
     const expectation: UnresolvedSkillOperation = {
-      skillId,
+      skillId: previous.id,
       expectedPresence: "present",
-      expectedEnabled: previous?.enabled ?? null,
-      expectedRevision:
-        previous === undefined
-          ? null
-          : { kind: "changed", revisionId: previous.revisionId },
+      expectedEnabled: previous.enabled,
+      expectedRevision: { kind: "changed", revisionId: previous.revisionId },
     };
     setUnresolvedOperation((current) => current ?? expectation);
     closeUpload();
@@ -496,6 +517,7 @@ export function AssistantSkillRegistryPanel({
       )}
       {uploadOpen && canRead && permissions.canUpload ? (
         <AssistantSkillUploadDialog
+          loadReplacementTarget={loadReplacementTarget}
           onClose={closeUpload}
           onUploaded={uploaded}
           onReauthRequired={replacementReauthRequired}
