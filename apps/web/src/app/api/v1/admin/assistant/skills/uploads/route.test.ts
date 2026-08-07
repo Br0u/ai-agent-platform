@@ -523,7 +523,11 @@ describe("admin skill upload route", () => {
       );
 
       expect(response.status).toBe(status);
-      await expect(response.json()).resolves.toMatchObject({ error: { code } });
+      const body = await response.json();
+      expect(body).toMatchObject({ error: { code } });
+      if (code === "result_unknown") {
+        expect(body).toMatchObject({ error: { retryable: false } });
+      }
       expect(lifecycle.applySkillSet).toHaveBeenCalledOnce();
     },
   );

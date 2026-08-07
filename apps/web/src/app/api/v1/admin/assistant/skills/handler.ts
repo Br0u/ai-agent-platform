@@ -148,9 +148,7 @@ function errorBody(requestId: string, code: PublicSkillErrorCode) {
       code,
       message: ERROR_MESSAGES[code],
       retryable:
-        code === "registry_bad_gateway" ||
-        code === "registry_unavailable" ||
-        code === "result_unknown",
+        code === "registry_bad_gateway" || code === "registry_unavailable",
     },
     ...(code === "reauth_required" ? { redirectTo: "/staff/re-auth" } : {}),
   };

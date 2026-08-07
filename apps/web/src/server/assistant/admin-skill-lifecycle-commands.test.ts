@@ -159,7 +159,7 @@ describe("admin Skill lifecycle commands", () => {
     );
   });
 
-  it("keeps the prior runtime untouched when activation result is unknown", async () => {
+  it("retains the candidate for reconciliation when activation result is unknown", async () => {
     const { commands, registry, agent } = setup();
     agent.activate.mockRejectedValueOnce(
       new AgentSkillControlClientError("activation_result_unknown"),
@@ -177,6 +177,110 @@ describe("admin Skill lifecycle commands", () => {
         requestId: REQUEST_ID,
       }),
     ).rejects.toMatchObject({ code: "result_unknown" });
+    expect(registry.discardSkillSet).not.toHaveBeenCalled();
+    expect(registry.createSkillSet).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a Registry and Agent disagreement before creating a candidate", async () => {
+    const { commands, registry, agent } = setup();
+    registry.runtimeStatus.mockReset().mockResolvedValue({
+      active: {
+        id: SET_ID,
+        state: "active",
+        revisionIds: [REVISION_ID],
+        itemCount: 1,
+        totalExtractedSize: 42,
+        failureCode: null,
+      },
+      previous: null,
+      activationVersion: 0,
+      candidateCount: 0,
+      candidates: [],
+    });
+    agent.runtimeStatus.mockReset().mockResolvedValue({
+      skillCapability: "ready",
+      configured: true,
+      activeSetId: null,
+      loadedSetId: null,
+      previousSetId: null,
+      activationVersion: 0,
+      failureCode: null,
+    });
+    const context = await commands.authorize(
+      new Request("https://example.test/api", { method: "POST" }),
+    );
+
+    await expect(
+      commands.applySkillSet(context, {
+        operation: "replace",
+        skillId: SKILL_ID,
+        expectedActivationVersion: 0,
+        nextRevisionIds: [REVISION_ID],
+        requestId: REQUEST_ID,
+      }),
+    ).rejects.toMatchObject({ code: "state_conflict" });
+    expect(registry.createSkillSet).not.toHaveBeenCalled();
+  });
+
+  it("classifies a post-activation Registry and Agent disagreement as unknown", async () => {
+    const { commands, registry, agent } = setup();
+    registry.runtimeStatus
+      .mockReset()
+      .mockResolvedValueOnce({
+        active: null,
+        previous: null,
+        activationVersion: 0,
+        candidateCount: 0,
+        candidates: [],
+      })
+      .mockResolvedValueOnce({
+        active: {
+          id: SET_ID,
+          state: "active",
+          revisionIds: [REVISION_ID],
+          itemCount: 1,
+          totalExtractedSize: 42,
+          failureCode: null,
+        },
+        previous: null,
+        activationVersion: 1,
+        candidateCount: 0,
+        candidates: [],
+      });
+    agent.runtimeStatus
+      .mockReset()
+      .mockResolvedValueOnce({
+        skillCapability: "unconfigured",
+        configured: false,
+        activeSetId: null,
+        loadedSetId: null,
+        previousSetId: null,
+        activationVersion: 0,
+        failureCode: null,
+      })
+      .mockResolvedValueOnce({
+        skillCapability: "ready",
+        configured: true,
+        activeSetId: SET_ID,
+        loadedSetId: null,
+        previousSetId: null,
+        activationVersion: 1,
+        failureCode: null,
+      });
+    const context = await commands.authorize(
+      new Request("https://example.test/api", { method: "POST" }),
+    );
+
+    await expect(
+      commands.applySkillSet(context, {
+        operation: "replace",
+        skillId: SKILL_ID,
+        expectedActivationVersion: 0,
+        nextRevisionIds: [REVISION_ID],
+        requestId: REQUEST_ID,
+      }),
+    ).rejects.toMatchObject({ code: "result_unknown" });
+    expect(registry.createSkillSet).toHaveBeenCalledOnce();
     expect(registry.discardSkillSet).not.toHaveBeenCalled();
   });
 });

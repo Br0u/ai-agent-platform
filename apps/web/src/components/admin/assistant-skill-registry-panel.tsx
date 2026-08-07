@@ -171,7 +171,10 @@ export function AssistantSkillRegistryPanel({
     setUploadOpen(true);
   };
 
-  const refresh = async (announce = true): Promise<boolean> => {
+  const refresh = async (
+    announce = true,
+    expectedSkillId: string | null = null,
+  ): Promise<boolean> => {
     const generation = listGeneration.current + 1;
     listGeneration.current = generation;
     listAbort.current?.abort();
@@ -180,25 +183,39 @@ export function AssistantSkillRegistryPanel({
     setRefreshing(true);
     setAnnouncement("");
     try {
-      const response = await fetch(
-        "/api/v1/admin/assistant/skills?limit=25&offset=0",
-        { cache: "no-store", signal: controller.signal },
-      );
-      if (controller.signal.aborted || generation !== listGeneration.current)
-        return false;
-      if (!response.ok) throw new Error("list failed");
-      const parsed = parseListEnvelope(await response.json());
-      if (controller.signal.aborted || generation !== listGeneration.current)
-        return false;
-      if (parsed === null) throw new Error("invalid list response");
-      setSnapshot({
-        capability: "available",
-        skills: parsed.list.skills,
-        page: parsed.list.page,
-      });
-      setPermissions(parsed.permissions);
-      if (announce) setAnnouncement("Skill 列表已刷新。");
-      return true;
+      for (
+        let offset = 0;
+        offset <= 1_000_000;
+        offset += expectedSkillId === null ? 25 : 100
+      ) {
+        const limit = expectedSkillId === null ? 25 : 100;
+        const response = await fetch(
+          `/api/v1/admin/assistant/skills?limit=${limit}&offset=${offset}`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        if (controller.signal.aborted || generation !== listGeneration.current)
+          return false;
+        if (!response.ok) throw new Error("list failed");
+        const parsed = parseListEnvelope(await response.json());
+        if (controller.signal.aborted || generation !== listGeneration.current)
+          return false;
+        if (parsed === null) throw new Error("invalid list response");
+        const found =
+          expectedSkillId === null ||
+          parsed.list.skills.some((skill) => skill.id === expectedSkillId);
+        if (found) {
+          setSnapshot({
+            capability: "available",
+            skills: parsed.list.skills,
+            page: parsed.list.page,
+          });
+          setPermissions(parsed.permissions);
+          if (announce) setAnnouncement("Skill 列表已刷新。");
+          return true;
+        }
+        if (parsed.list.page.returned < limit) return false;
+      }
+      return false;
     } catch (caught) {
       if (
         isAbortError(caught) ||
@@ -227,7 +244,17 @@ export function AssistantSkillRegistryPanel({
   const replacementResultUnknown = async (skillId: string): Promise<void> => {
     setPendingSkillId(skillId);
     closeUpload();
-    if (await refresh(false)) {
+    if (await refresh(false, skillId)) {
+      setPendingSkillId(null);
+      setAnnouncement("Skill 状态已确认。");
+    } else {
+      setAnnouncement("操作结果正在确认，请刷新后再试。");
+    }
+  };
+
+  const confirmPendingReplacement = async (): Promise<void> => {
+    if (pendingSkillId === null) return;
+    if (await refresh(false, pendingSkillId)) {
       setPendingSkillId(null);
       setAnnouncement("Skill 状态已确认。");
     } else {
@@ -277,7 +304,7 @@ export function AssistantSkillRegistryPanel({
         }
         if (failure === "result_unknown") {
           preservePending = true;
-          if (await refresh(false)) {
+          if (await refresh(false, skill.id)) {
             preservePending = false;
             setAnnouncement("Skill 状态已确认。");
           } else {
@@ -325,7 +352,11 @@ export function AssistantSkillRegistryPanel({
         {canRead ? (
           <button
             disabled={refreshing}
-            onClick={() => void refresh()}
+            onClick={() =>
+              void (pendingSkillId === null
+                ? refresh()
+                : confirmPendingReplacement())
+            }
             type="button"
           >
             刷新 Skill 列表
@@ -333,6 +364,7 @@ export function AssistantSkillRegistryPanel({
         ) : null}
         {canRead && permissions.canUpload ? (
           <button
+            disabled={pendingSkillId !== null}
             onClick={(event) => openUpload(event.currentTarget)}
             type="button"
           >
