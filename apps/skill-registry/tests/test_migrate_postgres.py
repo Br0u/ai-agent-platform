@@ -2,6 +2,8 @@ import asyncio
 import os
 from pathlib import Path
 import re
+from types import TracebackType
+from typing import Any, cast
 from urllib.parse import unquote, urlsplit
 from uuid import UUID, uuid4
 
@@ -10,7 +12,9 @@ import pytest
 
 from skill_registry.config import MigrationSettings
 from skill_registry.migrate import run_migration
+from skill_registry.repository import PostgresSkillRegistryRepository, RepositoryConnection
 from skill_registry.schema import PREPARE_SCHEMA_SQL, SCHEMA_VERSION_1_SQL
+from skill_registry.types import ArchiveSkill, RegistryError
 
 
 ENVIRONMENT_URLS = {
@@ -86,6 +90,91 @@ async def _connect(database_url: str) -> psycopg.AsyncConnection[tuple[object, .
     return await psycopg.AsyncConnection.connect(
         _psycopg_url(database_url),
         autocommit=True,
+    )
+
+
+class _ArchiveLockGateCursor:
+    def __init__(
+        self,
+        cursor: Any,
+        locked: asyncio.Event,
+        release: asyncio.Event,
+    ) -> None:
+        self._cursor = cursor
+        self._locked = locked
+        self._release = release
+
+    async def __aenter__(self) -> "_ArchiveLockGateCursor":
+        await self._cursor.__aenter__()
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self._cursor.__aexit__(*args)
+
+    async def execute(self, query: str, parameters: tuple[object, ...] = ()) -> Any:
+        result = await self._cursor.execute(query, parameters)
+        if "FOR UPDATE OF skill" in query:
+            self._locked.set()
+            await self._release.wait()
+        return result
+
+    async def fetchone(self) -> tuple[Any, ...] | None:
+        return cast(tuple[Any, ...] | None, await self._cursor.fetchone())
+
+    async def fetchall(self) -> list[tuple[Any, ...]]:
+        return cast(list[tuple[Any, ...]], await self._cursor.fetchall())
+
+
+class _ArchiveLockGateConnection:
+    def __init__(
+        self,
+        connection: psycopg.AsyncConnection[tuple[object, ...]],
+        locked: asyncio.Event,
+        release: asyncio.Event,
+    ) -> None:
+        self._connection = connection
+        self._locked = locked
+        self._release = release
+
+    async def __aenter__(self) -> "_ArchiveLockGateConnection":
+        await self._connection.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        await self._connection.__aexit__(exc_type, exc, traceback)
+
+    def transaction(self) -> Any:
+        return self._connection.transaction()
+
+    def cursor(self) -> _ArchiveLockGateCursor:
+        return _ArchiveLockGateCursor(
+            self._connection.cursor(),
+            self._locked,
+            self._release,
+        )
+
+
+def _archive_repository(
+    connection: RepositoryConnection,
+) -> PostgresSkillRegistryRepository:
+    async def connector() -> RepositoryConnection:
+        return connection
+
+    return PostgresSkillRegistryRepository(connector)
+
+
+def _archive_command(skill_id: UUID, actor_id: UUID) -> ArchiveSkill:
+    return ArchiveSkill(
+        actor=actor_id,
+        request_id=uuid4(),
+        assertion_nonce=uuid4(),
+        skill_id=skill_id,
+        expected_artifact_sha256="a" * 64,
     )
 
 
@@ -760,86 +849,119 @@ async def test_activation_function_serializes_concurrent_cas() -> None:
     bool(MISSING_ENVIRONMENT),
     reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
 )
-async def test_archive_serializes_candidate_creation_and_activation() -> None:
+async def test_repository_archive_serializes_candidate_creation_and_both_activation_orders() -> None:
     urls = _validated_urls()
     await _reset_registry_schema(urls)
     owner = await _connect(urls["test"])
-    archiver = await _connect(urls["manager"])
     manager = await _connect(urls["manager"])
     runtime = await _connect(urls["runtime"])
     actor_id = uuid4()
     try:
-        create_skill_id, create_revision_id = await _create_published_revision(
+        archive_first_skill_id, archive_first_revision_id = await _create_published_revision(
             manager, actor_id=actor_id
         )
-        async with archiver.transaction():
-            lock = await archiver.execute(
-                "SELECT id FROM skill_registry.skills WHERE id = %s FOR UPDATE",
-                (create_skill_id,),
-            )
-            assert await lock.fetchone() == (create_skill_id,)
-            create_task = asyncio.create_task(
-                manager.execute(
-                    _create_set_sql(),
-                    (
-                        "maduoduo",
-                        [create_revision_id],
-                        actor_id,
-                        uuid4(),
-                        uuid4(),
-                        "a" * 64,
-                    ),
-                )
-            )
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(asyncio.shield(create_task), timeout=0.1)
-            await archiver.execute(
-                "UPDATE skill_registry.skills SET archived_at = now() WHERE id = %s",
-                (create_skill_id,),
-            )
-        with pytest.raises(psycopg.errors.CheckViolation):
-            await create_task
-
-        activate_skill_id, activate_revision_id = await _create_published_revision(
-            manager, actor_id=actor_id
-        )
-        candidate_id = await _seed_candidate_set(
+        archive_first_candidate_id = await _seed_candidate_set(
             owner,
             actor_id=actor_id,
-            revisions=((activate_skill_id, activate_revision_id),),
+            revisions=((archive_first_skill_id, archive_first_revision_id),),
         )
-        async with archiver.transaction():
-            lock = await archiver.execute(
-                "SELECT id FROM skill_registry.skills WHERE id = %s FOR UPDATE",
-                (activate_skill_id,),
+        lock_acquired = asyncio.Event()
+        release_archive = asyncio.Event()
+        archive_connection = await _connect(urls["manager"])
+        gated_connection = _ArchiveLockGateConnection(
+            archive_connection,
+            lock_acquired,
+            release_archive,
+        )
+        archive_task = asyncio.create_task(
+            _archive_repository(cast(RepositoryConnection, gated_connection)).archive_skill(
+                _archive_command(archive_first_skill_id, actor_id)
             )
-            assert await lock.fetchone() == (activate_skill_id,)
-            activate_task = asyncio.create_task(
-                runtime.execute(
-                    _activate_sql(),
-                    (
-                        "maduoduo",
-                        candidate_id,
-                        0,
-                        actor_id,
-                        uuid4(),
-                        uuid4(),
-                        "b" * 64,
-                    ),
+        )
+        await asyncio.wait_for(lock_acquired.wait(), timeout=1)
+        create_task = asyncio.create_task(
+            manager.execute(
+                _create_set_sql(),
+                (
+                    "maduoduo",
+                    [archive_first_revision_id],
+                    actor_id,
+                    uuid4(),
+                    uuid4(),
+                    "a" * 64,
+                ),
+            )
+        )
+        activate_task = asyncio.create_task(
+            runtime.execute(
+                _activate_sql(),
+                (
+                    "maduoduo",
+                    archive_first_candidate_id,
+                    0,
+                    actor_id,
+                    uuid4(),
+                    uuid4(),
+                    "b" * 64,
+                ),
+            )
+        )
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(create_task), timeout=0.1)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(activate_task), timeout=0.1)
+        release_archive.set()
+        await archive_task
+        with pytest.raises(psycopg.errors.CheckViolation):
+            await create_task
+        with pytest.raises(psycopg.errors.CheckViolation):
+            await activate_task
+
+        activation_first_skill_id, activation_first_revision_id = (
+            await _create_published_revision(manager, actor_id=actor_id)
+        )
+        activation_first_candidate_id = await _seed_candidate_set(
+            owner,
+            actor_id=actor_id,
+            revisions=((activation_first_skill_id, activation_first_revision_id),),
+        )
+        activation_first_archive = _archive_repository(
+            cast(RepositoryConnection, await _connect(urls["manager"]))
+        )
+        async with runtime.transaction():
+            activated = await runtime.execute(
+                _activate_sql(),
+                (
+                    "maduoduo",
+                    activation_first_candidate_id,
+                    0,
+                    actor_id,
+                    uuid4(),
+                    uuid4(),
+                    "c" * 64,
+                ),
+            )
+            assert await activated.fetchone() == (1,)
+            activation_first_archive_task = asyncio.create_task(
+                activation_first_archive.archive_skill(
+                    _archive_command(activation_first_skill_id, actor_id)
                 )
             )
             with pytest.raises(TimeoutError):
-                await asyncio.wait_for(asyncio.shield(activate_task), timeout=0.1)
-            await archiver.execute(
-                "UPDATE skill_registry.skills SET archived_at = now() WHERE id = %s",
-                (activate_skill_id,),
-            )
-        with pytest.raises(psycopg.errors.CheckViolation):
-            await activate_task
+                await asyncio.wait_for(
+                    asyncio.shield(activation_first_archive_task), timeout=0.1
+                )
+        with pytest.raises(RegistryError, match="Active Skill cannot be archived") as caught:
+            await activation_first_archive_task
+        assert caught.value.code == "SKILL_ACTIVE"
+        archived = await owner.execute(
+            "SELECT archived_at FROM skill_registry.skills WHERE id = %s",
+            (activation_first_skill_id,),
+        )
+        assert await archived.fetchone() == (None,)
     finally:
         await runtime.close()
         await manager.close()
-        await archiver.close()
         await owner.close()
 
 

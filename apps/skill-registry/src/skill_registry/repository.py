@@ -226,6 +226,15 @@ class PostgresSkillRegistryRepository:
                     async with connection.cursor() as cursor:
                         await self._assert_nonce_unused(cursor, command.assertion_nonce)
                         await cursor.execute(
+                            """SELECT skill.id
+                            FROM skill_registry.skills AS skill
+                            WHERE skill.id = %s AND skill.archived_at IS NULL
+                            FOR UPDATE OF skill""",
+                            (command.skill_id,),
+                        )
+                        if await cursor.fetchone() is None:
+                            raise RegistryError("SKILL_NOT_FOUND", "Skill does not exist")
+                        await cursor.execute(
                             """SELECT latest.artifact_sha256,
                               EXISTS (
                                 SELECT 1
@@ -246,8 +255,7 @@ class PostgresSkillRegistryRepository:
                               ORDER BY revision.revision_no DESC
                               LIMIT 1
                             ) AS latest ON true
-                            WHERE skill.id = %s AND skill.archived_at IS NULL
-                            FOR UPDATE OF skill""",
+                            WHERE skill.id = %s AND skill.archived_at IS NULL""",
                             (command.skill_id,),
                         )
                         row = await cursor.fetchone()

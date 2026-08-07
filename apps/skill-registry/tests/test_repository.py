@@ -227,7 +227,8 @@ def skill_set_repository_with(
 async def test_archive_skill_requires_inactive_matching_digest() -> None:
     repository, connection = repository_with(
         [
-            Reply("FOR UPDATE OF skill", one=("a" * 64, False)),
+            Reply("FOR UPDATE OF skill", one=(SKILL_ID,)),
+            Reply("latest.artifact_sha256", one=("a" * 64, False)),
             Reply("UPDATE skill_registry.skills"),
             Reply("INSERT INTO skill_registry.skill_control_events"),
         ]
@@ -244,12 +245,19 @@ async def test_archive_skill_requires_inactive_matching_digest() -> None:
     )
 
     assert connection.committed is True
-    archive_query = next(
+    lock_query = next(
         query for query, _ in connection.script.executions if "FOR UPDATE OF skill" in query
     )
-    assert "FROM skill_registry.manager_active_skill_set AS active_set" in archive_query
-    assert "JOIN skill_registry.manager_skill_set_items AS active_item" in archive_query
-    assert "FROM skill_registry.active_agent_skill_sets" not in archive_query
+    validation_query = next(
+        query for query, _ in connection.script.executions if "latest.artifact_sha256" in query
+    )
+    assert "manager_active_skill_set" not in lock_query
+    assert "FROM skill_registry.manager_active_skill_set AS active_set" in validation_query
+    assert "JOIN skill_registry.manager_skill_set_items AS active_item" in validation_query
+    assert "FROM skill_registry.active_agent_skill_sets" not in validation_query
+    assert connection.script.executions.index((lock_query, (SKILL_ID,))) < (
+        connection.script.executions.index((validation_query, (SKILL_ID,)))
+    )
     assert "archived_at = now()" in connection.script.executions[-2][0]
 
 
