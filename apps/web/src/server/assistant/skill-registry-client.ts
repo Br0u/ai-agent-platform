@@ -111,6 +111,7 @@ export type SkillRegistryClient = {
     requestId: string;
     archive: Uint8Array;
     targetSkillId?: string;
+    expectedArtifactSha256?: string;
   }): Promise<AdminSkillRevisionResponse>;
 };
 
@@ -224,10 +225,22 @@ export class SkillRegistryClientError extends Error {
   constructor(
     readonly code: SkillRegistryClientErrorCode,
     readonly conflictingSkillId: string | null = null,
+    readonly replacementToken: string | null = null,
+    readonly conflictingSkillEnabled: boolean | null = null,
   ) {
     super("Skill Registry request failed");
     Object.defineProperty(this, "conflictingSkillId", {
       value: conflictingSkillId,
+      configurable: true,
+      enumerable: false,
+    });
+    Object.defineProperty(this, "replacementToken", {
+      value: replacementToken,
+      configurable: true,
+      enumerable: false,
+    });
+    Object.defineProperty(this, "conflictingSkillEnabled", {
+      value: conflictingSkillEnabled,
       configurable: true,
       enumerable: false,
     });
@@ -759,6 +772,8 @@ function cleanErrorCode(error: unknown): SkillRegistryClientErrorCode {
 function sanitized(error: unknown): SkillRegistryClientError {
   const code = cleanErrorCode(error);
   let conflictingSkillId: string | null = null;
+  let replacementToken: string | null = null;
+  let conflictingSkillEnabled: boolean | null = null;
   try {
     if (
       code === "SKILL_NAME_CONFLICT" &&
@@ -778,11 +793,43 @@ function sanitized(error: unknown): SkillRegistryClientError {
       ) {
         conflictingSkillId = descriptor.value;
       }
+      const tokenDescriptor = Reflect.getOwnPropertyDescriptor(
+        error,
+        "replacementToken",
+      );
+      if (
+        tokenDescriptor !== undefined &&
+        "value" in tokenDescriptor &&
+        !tokenDescriptor.enumerable &&
+        typeof tokenDescriptor.value === "string" &&
+        /^[0-9a-f]{64}$/u.test(tokenDescriptor.value)
+      ) {
+        replacementToken = tokenDescriptor.value;
+      }
+      const enabledDescriptor = Reflect.getOwnPropertyDescriptor(
+        error,
+        "conflictingSkillEnabled",
+      );
+      if (
+        enabledDescriptor !== undefined &&
+        "value" in enabledDescriptor &&
+        !enabledDescriptor.enumerable &&
+        typeof enabledDescriptor.value === "boolean"
+      ) {
+        conflictingSkillEnabled = enabledDescriptor.value;
+      }
     }
   } catch {
     conflictingSkillId = null;
+    replacementToken = null;
+    conflictingSkillEnabled = null;
   }
-  return new SkillRegistryClientError(code, conflictingSkillId);
+  return new SkillRegistryClientError(
+    code,
+    conflictingSkillId,
+    replacementToken,
+    conflictingSkillEnabled,
+  );
 }
 
 function strictNoStore(value: string | null): boolean {
@@ -1037,10 +1084,17 @@ function readError(
 ): {
   code: SkillRegistryDomainErrorCode;
   conflictingSkillId: string | null;
+  replacementToken: string | null;
+  conflictingSkillEnabled: boolean | null;
 } | null {
   const response = exactRecord(value, [
     ["error"],
-    ["error", "conflictingSkillId"],
+    [
+      "error",
+      "conflictingSkillId",
+      "replacementToken",
+      "conflictingSkillEnabled",
+    ],
   ]);
   if (
     response === null ||
@@ -1055,14 +1109,29 @@ function readError(
     canonicalUuid(response.conflictingSkillId)
       ? response.conflictingSkillId
       : null;
+  const replacementToken =
+    response.error === "SKILL_NAME_CONFLICT" &&
+    typeof response.replacementToken === "string" &&
+    /^[0-9a-f]{64}$/u.test(response.replacementToken)
+      ? response.replacementToken
+      : null;
+  const conflictingSkillEnabled =
+    response.error === "SKILL_NAME_CONFLICT" &&
+    typeof response.conflictingSkillEnabled === "boolean"
+      ? response.conflictingSkillEnabled
+      : null;
   if (
     Object.hasOwn(response, "conflictingSkillId") &&
-    conflictingSkillId === null
+    (conflictingSkillId === null ||
+      replacementToken === null ||
+      conflictingSkillEnabled === null)
   )
     return null;
   return {
     code: response.error as SkillRegistryDomainErrorCode,
     conflictingSkillId,
+    replacementToken,
+    conflictingSkillEnabled,
   };
 }
 
@@ -1216,6 +1285,8 @@ export function createSkillRegistryClient(options: {
         throw new SkillRegistryClientError(
           error.code,
           error.conflictingSkillId,
+          error.replacementToken,
+          error.conflictingSkillEnabled,
         );
       }
       if (requestOptions.file) {
@@ -1383,7 +1454,13 @@ export function createSkillRegistryClient(options: {
       try {
         const snapshot = exactRecord(input, [
           ["actor", "requestId", "archive"],
-          ["actor", "requestId", "archive", "targetSkillId"],
+          [
+            "actor",
+            "requestId",
+            "archive",
+            "targetSkillId",
+            "expectedArtifactSha256",
+          ],
         ]);
         const archive =
           snapshot === null ? null : copyArchive(snapshot.archive);
@@ -1395,18 +1472,28 @@ export function createSkillRegistryClient(options: {
           !(
             snapshot.targetSkillId === undefined ||
             canonicalUuid(snapshot.targetSkillId)
-          )
+          ) ||
+          (snapshot.targetSkillId === undefined) !==
+            (snapshot.expectedArtifactSha256 === undefined) ||
+          (snapshot.expectedArtifactSha256 !== undefined &&
+            (typeof snapshot.expectedArtifactSha256 !== "string" ||
+              !/^[0-9a-f]{64}$/u.test(snapshot.expectedArtifactSha256)))
         ) {
           clientError("invalid_request");
         }
         const actor = snapshot.actor as string;
         const requestId = snapshot.requestId as string;
         const targetSkillId = snapshot.targetSkillId as string | undefined;
+        const expectedArtifactSha256 = snapshot.expectedArtifactSha256 as
+          | string
+          | undefined;
         const target = targetSkillId ?? "new";
         return await request({
           method: "POST",
           path: `/internal/skills/uploads${
-            targetSkillId === undefined ? "" : `?targetSkillId=${targetSkillId}`
+            targetSkillId === undefined
+              ? ""
+              : `?targetSkillId=${targetSkillId}&expectedArtifactSha256=${expectedArtifactSha256}`
           }`,
           requestId,
           assertion: assertion({ actor, requestId }, "upload", target),

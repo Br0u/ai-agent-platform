@@ -23,10 +23,18 @@ class RegistryError(RuntimeError):
     """Stable registry error that never includes source or credential material."""
 
     def __init__(
-        self, code: str, message: str, *, conflicting_skill_id: UUID | None = None
+        self,
+        code: str,
+        message: str,
+        *,
+        conflicting_skill_id: UUID | None = None,
+        replacement_token: str | None = None,
+        conflicting_skill_enabled: bool | None = None,
     ) -> None:
         self.code = code
         self.conflicting_skill_id = conflicting_skill_id
+        self.replacement_token = replacement_token
+        self.conflicting_skill_enabled = conflicting_skill_enabled
         super().__init__(message)
 
 
@@ -46,6 +54,7 @@ class CreateUploadRevision:
     assertion_nonce: UUID
     package: CanonicalSkillPackage
     target_skill_id: UUID | None
+    expected_artifact_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

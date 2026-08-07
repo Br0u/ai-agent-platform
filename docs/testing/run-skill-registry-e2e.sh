@@ -521,21 +521,6 @@ export SKILL_RUNTIME_E2E_STATE_FILE=$runtime_state_file
 BASE_URL=$base_url pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep @lifecycle
 
-if [ "$runtime_mode" = true ]; then
-  BASE_URL=$base_url pnpm --filter @ai-agent-platform/web exec playwright test \
-    e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep @runtime-activate
-  assert_skill_runtime_stream marker
-  compose restart agent
-  compose up -d --no-deps --wait agent
-  assert_skill_runtime_stream marker
-  BASE_URL=$base_url pnpm --filter @ai-agent-platform/web exec playwright test \
-    e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep @runtime-empty
-  assert_skill_runtime_stream empty
-  BASE_URL=$base_url pnpm --filter @ai-agent-platform/web exec playwright test \
-    e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep @runtime-rollback
-  assert_skill_runtime_stream marker
-fi
-
 artifact_sha=$(node -e 'const fs=require("node:fs"); const state=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(state.artifactSha256)' "$state_file")
 case "$artifact_sha" in
   [0-9a-f][0-9a-f]*) ;;

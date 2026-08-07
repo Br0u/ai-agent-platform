@@ -60,7 +60,11 @@ _DETAIL_PATTERN: Final = re.compile(
 _FILE_PATTERN: Final = re.compile(
     rb"/internal/skills/(" + _UUID_PATTERN + rb")/revisions/(" + _UUID_PATTERN + rb")/files/(.+)\Z"
 )
-_UPLOAD_QUERY_PATTERN: Final = re.compile(rb"targetSkillId=(" + _UUID_PATTERN + rb")\Z")
+_UPLOAD_QUERY_PATTERN: Final = re.compile(
+    rb"targetSkillId=("
+    + _UUID_PATTERN
+    + rb")&expectedArtifactSha256=[0-9a-f]{64}\Z"
+)
 _ARCHIVE_PATTERN: Final = re.compile(
     rb"/internal/skills/(" + _UUID_PATTERN + rb")/archive\Z"
 )

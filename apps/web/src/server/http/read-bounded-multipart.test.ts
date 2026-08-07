@@ -95,12 +95,14 @@ describe("bounded skill upload multipart", () => {
     const current = request([
       archivePart,
       { name: "targetSkillId", value: SKILL_ID },
+      { name: "expectedArtifactSha256", value: "a".repeat(64) },
     ]);
     const formData = vi.spyOn(current, "formData");
 
     await expect(readBoundedSkillUploadMultipart(current)).resolves.toEqual({
       archive: ZIP,
       targetSkillId: SKILL_ID,
+      expectedArtifactSha256: "a".repeat(64),
     });
     expect(formData).not.toHaveBeenCalled();
   });

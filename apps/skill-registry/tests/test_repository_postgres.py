@@ -92,6 +92,7 @@ def create_command(
     *,
     actor: UUID,
     target_skill_id: UUID | None = None,
+    expected_artifact_sha256: str | None = None,
     assertion_nonce: UUID | None = None,
 ) -> CreateUploadRevision:
     return CreateUploadRevision(
@@ -100,6 +101,7 @@ def create_command(
         assertion_nonce=assertion_nonce or uuid4(),
         package=package,
         target_skill_id=target_skill_id,
+        expected_artifact_sha256=expected_artifact_sha256,
     )
 
 
@@ -316,7 +318,12 @@ async def test_real_postgres_queries_previous_published_revision_and_files() -> 
     first = await repository.create_upload_revision(create_command(first_package, actor=actor))
     second_package = canonicalize_skill_zip(build_zip(slug, instructions="# Second\n"))
     second = await repository.create_upload_revision(
-        create_command(second_package, actor=actor, target_skill_id=first.skill_id)
+        create_command(
+            second_package,
+            actor=actor,
+            target_skill_id=first.skill_id,
+            expected_artifact_sha256=first_package.sha256,
+        )
     )
 
     summaries = await repository.list_skills()

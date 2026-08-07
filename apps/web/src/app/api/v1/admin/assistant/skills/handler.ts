@@ -196,8 +196,14 @@ function errorResponse(error: unknown, requestId: string): Response {
       ...body,
       ...(error instanceof SkillRegistryClientError &&
       error.code === "SKILL_NAME_CONFLICT" &&
-      error.conflictingSkillId !== null
-        ? { conflictingSkillId: error.conflictingSkillId }
+      error.conflictingSkillId !== null &&
+      error.replacementToken !== null &&
+      error.conflictingSkillEnabled !== null
+        ? {
+            conflictingSkillId: error.conflictingSkillId,
+            replacementToken: error.replacementToken,
+            conflictingSkillEnabled: error.conflictingSkillEnabled,
+          }
         : {}),
     },
     {

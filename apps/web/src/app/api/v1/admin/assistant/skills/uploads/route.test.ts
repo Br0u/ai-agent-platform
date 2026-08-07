@@ -178,6 +178,8 @@ describe("admin skill upload route", () => {
       new SkillRegistryClientError(
         "SKILL_NAME_CONFLICT",
         revision.revision.skillId,
+        "a".repeat(64),
+        true,
       ),
     );
 
@@ -189,6 +191,8 @@ describe("admin skill upload route", () => {
     await expect(response.json()).resolves.toMatchObject({
       requestId: REQUEST_ID,
       conflictingSkillId: revision.revision.skillId,
+      replacementToken: "a".repeat(64),
+      conflictingSkillEnabled: true,
       error: { code: "state_conflict" },
     });
   });

@@ -268,6 +268,15 @@ def test_skill_set_reads_and_mutations_use_exact_permissions_assurance_and_nonce
             b"",
             ("archive", REQUEST_ID),
         ),
+        (
+            "POST",
+            "/internal/skills/uploads",
+            (
+                f"targetSkillId={REQUEST_ID}&"
+                f"expectedArtifactSha256={'a' * 64}"
+            ).encode(),
+            ("upload", REQUEST_ID),
+        ),
     ],
 )
 def test_skill_set_routes_bind_exact_assertion_action_and_target(

@@ -29,6 +29,7 @@ export class BoundedMultipartError extends Error {
 export type BoundedSkillUpload = {
   archive: Uint8Array;
   targetSkillId?: string;
+  expectedArtifactSha256?: string;
 };
 
 function reject(code: BoundedMultipartErrorCode = "invalid_multipart"): never {
@@ -93,6 +94,7 @@ export async function readBoundedSkillUploadMultipart(
   let archiveBytes = 0;
   let archive: Uint8Array | null = null;
   let targetSkillId: string | undefined;
+  let expectedArtifactSha256: string | undefined;
   let rawBytes = 0;
   let settled = false;
 
@@ -129,11 +131,11 @@ export async function readBoundedSkillUploadMultipart(
         fileHwm: 64 * 1024,
         limits: {
           fieldNameSize: 32,
-          fieldSize: 36,
-          fields: 1,
+          fieldSize: 64,
+          fields: 2,
           fileSize: MAX_ARCHIVE_BYTES,
           files: 1,
-          parts: 2,
+          parts: 3,
           headerPairs: 8,
           headerSize: 2 * 1024,
         },
@@ -192,17 +194,27 @@ export async function readBoundedSkillUploadMultipart(
     parser.on(
       "field",
       (fieldName, value, fieldNameTruncated, valueTruncated) => {
-        if (
-          fieldName !== "targetSkillId" ||
-          targetSkillId !== undefined ||
-          fieldNameTruncated ||
-          valueTruncated ||
-          !UUID.test(value)
-        ) {
+        if (fieldNameTruncated || valueTruncated) {
           fail();
           return;
         }
-        targetSkillId = value;
+        if (
+          fieldName === "targetSkillId" &&
+          targetSkillId === undefined &&
+          UUID.test(value)
+        ) {
+          targetSkillId = value;
+          return;
+        }
+        if (
+          fieldName === "expectedArtifactSha256" &&
+          expectedArtifactSha256 === undefined &&
+          /^[0-9a-f]{64}$/u.test(value)
+        ) {
+          expectedArtifactSha256 = value;
+          return;
+        }
+        fail();
       },
     );
 
@@ -213,6 +225,8 @@ export async function readBoundedSkillUploadMultipart(
         activeFile !== null ||
         archiveBytes === 0 ||
         !validZipPrefix(archive) ||
+        (targetSkillId === undefined) !==
+          (expectedArtifactSha256 === undefined) ||
         (declaredLength !== null && declaredLength !== rawBytes)
       ) {
         fail();
@@ -223,6 +237,9 @@ export async function readBoundedSkillUploadMultipart(
       const result = {
         archive,
         ...(targetSkillId === undefined ? {} : { targetSkillId }),
+        ...(expectedArtifactSha256 === undefined
+          ? {}
+          : { expectedArtifactSha256 }),
       };
       archive = null;
       resolve(result);

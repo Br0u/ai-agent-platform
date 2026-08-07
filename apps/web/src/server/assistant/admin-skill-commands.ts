@@ -29,6 +29,7 @@ export type AuthorizedSkillCommand = Readonly<{
 export type AdminSkillUploadInput = {
   archive: Uint8Array;
   targetSkillId?: string;
+  expectedArtifactSha256?: string;
 };
 
 export type AdminSkillCommandErrorCode =
@@ -100,7 +101,10 @@ function safeActor(value: WorkforceActor): WorkforceActor {
 }
 
 function readUploadInput(value: unknown): AdminSkillUploadInput | null {
-  const input = exactRecord(value, [["archive"], ["archive", "targetSkillId"]]);
+  const input = exactRecord(value, [
+    ["archive"],
+    ["archive", "targetSkillId", "expectedArtifactSha256"],
+  ]);
   if (
     input === null ||
     !(input.archive instanceof Uint8Array) ||
@@ -109,7 +113,12 @@ function readUploadInput(value: unknown): AdminSkillUploadInput | null {
     input.archive.byteLength > MAX_ARCHIVE_BYTES ||
     (input.targetSkillId !== undefined &&
       (typeof input.targetSkillId !== "string" ||
-        !UUID.test(input.targetSkillId)))
+        !UUID.test(input.targetSkillId))) ||
+    (input.targetSkillId === undefined) !==
+      (input.expectedArtifactSha256 === undefined) ||
+    (input.expectedArtifactSha256 !== undefined &&
+      (typeof input.expectedArtifactSha256 !== "string" ||
+        !/^[0-9a-f]{64}$/u.test(input.expectedArtifactSha256)))
   ) {
     return null;
   }
@@ -117,7 +126,10 @@ function readUploadInput(value: unknown): AdminSkillUploadInput | null {
     archive: input.archive,
     ...(input.targetSkillId === undefined
       ? {}
-      : { targetSkillId: input.targetSkillId as string }),
+      : {
+          targetSkillId: input.targetSkillId as string,
+          expectedArtifactSha256: input.expectedArtifactSha256 as string,
+        }),
   };
 }
 
@@ -247,7 +259,10 @@ export function createAdminSkillCommands(dependencies: CommandDependencies) {
             archive: input.archive,
             ...(input.targetSkillId === undefined
               ? {}
-              : { targetSkillId: input.targetSkillId }),
+              : {
+                  targetSkillId: input.targetSkillId,
+                  expectedArtifactSha256: input.expectedArtifactSha256!,
+                }),
           });
         } catch (error) {
           failed = true;

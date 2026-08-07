@@ -314,6 +314,7 @@ async def test_new_upload_uses_unique_slug_as_source_for_conflict_or_idempotence
             Reply("INSERT INTO skill_registry.skills", one=None),
             Reply("SELECT id FROM skill_registry.skills WHERE slug", one=(SKILL_ID,)),
             Reply("artifact_sha256 = %s", one=None),
+            Reply("ORDER BY revision.revision_no DESC", one=("a" * 64, True)),
         ]
     )
 
@@ -321,6 +322,8 @@ async def test_new_upload_uses_unique_slug_as_source_for_conflict_or_idempotence
         await conflicting.create_upload_revision(create_command())
     assert caught.value.code == "SKILL_NAME_CONFLICT"
     assert caught.value.conflicting_skill_id == SKILL_ID
+    assert caught.value.replacement_token == "a" * 64
+    assert caught.value.conflicting_skill_enabled is True
     assert (
         "ON CONFLICT (slug) WHERE archived_at IS NULL DO NOTHING"
         in conflict_connection.script.executions[1][0]
@@ -346,23 +349,36 @@ async def test_target_revision_requires_locked_matching_slug_and_is_digest_idemp
     repository, _ = repository_with(
         [
             Reply(
-                "WHERE id = %s AND archived_at IS NULL",
-                one=("other-skill",),
+                "WHERE skill.id = %s AND skill.archived_at IS NULL",
+                one=("other-skill", "a" * 64),
             )
         ]
     )
     with pytest.raises(RegistryError) as caught:
-        await repository.create_upload_revision(create_command(target_skill_id=SKILL_ID))
+        await repository.create_upload_revision(
+            create_command(
+                target_skill_id=SKILL_ID,
+                expected_artifact_sha256="a" * 64,
+            )
+        )
     assert caught.value.code == "SKILL_NAME_CONFLICT"
 
     repository, connection = repository_with(
         [
-            Reply("WHERE id = %s AND archived_at IS NULL", one=("demo-skill",)),
+            Reply(
+                "WHERE skill.id = %s AND skill.archived_at IS NULL",
+                one=("demo-skill", "a" * 64),
+            ),
             Reply("artifact_sha256 = %s", one=stored_row()),
             Reply("INSERT INTO skill_registry.skill_control_events"),
         ]
     )
-    revision = await repository.create_upload_revision(create_command(target_skill_id=SKILL_ID))
+    revision = await repository.create_upload_revision(
+        create_command(
+            target_skill_id=SKILL_ID,
+            expected_artifact_sha256="a" * 64,
+        )
+    )
     assert revision.id == REVISION_ID
     assert "archived_at IS NULL" in connection.script.executions[1][0]
     assert len(connection.script.executions) == 4

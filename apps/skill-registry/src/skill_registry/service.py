@@ -165,6 +165,7 @@ class SkillRegistryService:
         assertion_nonce: UUID,
         archive: bytes,
         target_skill_id: UUID | None,
+        expected_artifact_sha256: str | None = None,
     ) -> RevisionDetail:
         package_error_code: str | None = None
         package = None
@@ -190,10 +191,7 @@ class SkillRegistryService:
             findings = ()
         if scan_failed:
             raise RegistryError("SKILL_SCAN_FAILED", "Skill package scan failed") from None
-        if any(
-            finding.code in {"unsupported_import", "private_key"}
-            for finding in findings
-        ):
+        if any(finding.code in {"unsupported_import", "private_key"} for finding in findings):
             raise RegistryError("SKILL_SCAN_BLOCKED", "Blocking findings prevent upload")
         package = replace(package, findings=findings)
         revision = await self._repository.create_upload_revision(
@@ -203,6 +201,7 @@ class SkillRegistryService:
                 assertion_nonce=assertion_nonce,
                 package=package,
                 target_skill_id=target_skill_id,
+                expected_artifact_sha256=expected_artifact_sha256,
             )
         )
         return await self.get_revision_detail(revision.skill_id, revision.id)

@@ -35,6 +35,7 @@ class RegistryAPIService(Protocol):
         assertion_nonce: UUID,
         archive: bytes,
         target_skill_id: UUID | None,
+        expected_artifact_sha256: str | None,
     ) -> RevisionDetail: ...
 
     async def get_revision_detail(self, skill_id: UUID, revision_id: UUID) -> RevisionDetail: ...
@@ -50,6 +51,7 @@ class RegistryAPIService(Protocol):
         skill_id: UUID,
         expected_artifact_sha256: str,
     ) -> None: ...
+
 
 _NO_STORE_HEADERS: Final = {"Cache-Control": "no-store"}
 _ASSERTION_STATE_KEY: Final = "skill_registry_assertion"
@@ -133,9 +135,19 @@ def _registry_error(error: RegistryError) -> JSONResponse:
         status = 503
     else:
         status = 400
-    if code == "SKILL_NAME_CONFLICT" and error.conflicting_skill_id is not None:
+    if (
+        code == "SKILL_NAME_CONFLICT"
+        and error.conflicting_skill_id is not None
+        and error.replacement_token is not None
+        and error.conflicting_skill_enabled is not None
+    ):
         return JSONResponse(
-            {"error": code, "conflictingSkillId": str(error.conflicting_skill_id)},
+            {
+                "error": code,
+                "conflictingSkillId": str(error.conflicting_skill_id),
+                "replacementToken": error.replacement_token,
+                "conflictingSkillEnabled": error.conflicting_skill_enabled,
+            },
             status_code=status,
             headers=_NO_STORE_HEADERS,
         )
@@ -417,7 +429,21 @@ def build_skill_registry_router(
             return _error("ARCHIVE_TOO_LARGE", status_code=413)
         target_raw = request.query_params.get("targetSkillId")
         target_skill_id = None if target_raw is None else _parse_uuid(target_raw)
-        if target_raw is not None and target_skill_id is None:
+        expected_artifact_sha256 = request.query_params.get("expectedArtifactSha256")
+        if (
+            (target_raw is not None and target_skill_id is None)
+            or (target_skill_id is None) != (expected_artifact_sha256 is None)
+            or (
+                expected_artifact_sha256 is not None
+                and (
+                    len(expected_artifact_sha256) != 64
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in expected_artifact_sha256
+                    )
+                )
+            )
+        ):
             return _error("VALIDATION_ERROR", status_code=400)
         try:
             try:
@@ -427,6 +453,7 @@ def build_skill_registry_router(
                     assertion_nonce=assertion.nonce,
                     archive=archive,
                     target_skill_id=target_skill_id,
+                    expected_artifact_sha256=expected_artifact_sha256,
                 )
             except RegistryError as error:
                 return _registry_error(error)

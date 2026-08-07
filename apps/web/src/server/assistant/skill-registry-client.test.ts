@@ -923,6 +923,7 @@ describe("private Skill Registry client", () => {
         actor: ACTOR,
         requestId: REQUEST_ID,
         targetSkillId: SKILL_ID,
+        expectedArtifactSha256: SHA256,
         archive: new Uint8Array([0x50, 0x4b, 3, 4]),
       }),
     ).resolves.toEqual({ version: "1", revision: revision() });
@@ -939,7 +940,7 @@ describe("private Skill Registry client", () => {
       `http://${PRIVATE_ADDRESS}:7780/internal/skills?limit=50&offset=0`,
       `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}`,
       `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}/files/scripts/run%252Fhidden%255C.py`,
-      `http://${PRIVATE_ADDRESS}:7780/internal/skills/uploads?targetSkillId=${SKILL_ID}`,
+      `http://${PRIVATE_ADDRESS}:7780/internal/skills/uploads?targetSkillId=${SKILL_ID}&expectedArtifactSha256=${SHA256}`,
       `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/archive`,
     ]);
     const expected = [
@@ -1011,14 +1012,17 @@ describe("private Skill Registry client", () => {
   it("returns the safe conflicting Skill ID for replacement confirmation", async () => {
     const client = createSkillRegistryClient({
       settings: settings(),
-      fetcher: vi
-        .fn<typeof fetch>()
-        .mockResolvedValue(
-          jsonResponse(
-            { error: "SKILL_NAME_CONFLICT", conflictingSkillId: SKILL_ID },
-            409,
-          ),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse(
+          {
+            error: "SKILL_NAME_CONFLICT",
+            conflictingSkillId: SKILL_ID,
+            replacementToken: SHA256,
+            conflictingSkillEnabled: true,
+          },
+          409,
         ),
+      ),
       clock: () => NOW,
       nonceFactory: () => NONCE,
     });
@@ -1032,6 +1036,8 @@ describe("private Skill Registry client", () => {
     ).rejects.toMatchObject({
       code: "SKILL_NAME_CONFLICT",
       conflictingSkillId: SKILL_ID,
+      replacementToken: SHA256,
+      conflictingSkillEnabled: true,
     });
   });
 

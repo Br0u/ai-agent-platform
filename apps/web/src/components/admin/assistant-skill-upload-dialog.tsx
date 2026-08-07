@@ -62,10 +62,18 @@ function parseUploadResponse(value: unknown): AdminSkillRevision | null {
   }
 }
 
-async function uploadError(
-  response: Response,
-): Promise<{ message: string; conflictingSkillId: string | null }> {
-  const fallback = { message: GENERIC_UPLOAD_ERROR, conflictingSkillId: null };
+async function uploadError(response: Response): Promise<{
+  message: string;
+  conflictingSkillId: string | null;
+  replacementToken: string | null;
+  conflictingSkillEnabled: boolean | null;
+}> {
+  const fallback = {
+    message: GENERIC_UPLOAD_ERROR,
+    conflictingSkillId: null,
+    replacementToken: null,
+    conflictingSkillEnabled: null,
+  };
   if (
     response.status !== 400 &&
     response.status !== 403 &&
@@ -85,18 +93,47 @@ async function uploadError(
     }
     const code = Reflect.get(error, "code");
     const conflictingSkillId = Reflect.get(body, "conflictingSkillId");
+    const replacementToken = Reflect.get(body, "replacementToken");
+    const conflictingSkillEnabled = Reflect.get(
+      body,
+      "conflictingSkillEnabled",
+    );
     if (code === "validation_error")
-      return { message: INVALID_ARCHIVE_ERROR, conflictingSkillId: null };
+      return {
+        message: INVALID_ARCHIVE_ERROR,
+        conflictingSkillId: null,
+        replacementToken: null,
+        conflictingSkillEnabled: null,
+      };
     if (code === "permission_denied")
-      return { message: UPLOAD_REJECTED_ERROR, conflictingSkillId: null };
+      return {
+        message: UPLOAD_REJECTED_ERROR,
+        conflictingSkillId: null,
+        replacementToken: null,
+        conflictingSkillEnabled: null,
+      };
     if (code === "state_conflict")
       return {
         message: EXISTING_SKILL_ERROR,
         conflictingSkillId:
           typeof conflictingSkillId === "string" ? conflictingSkillId : null,
+        replacementToken:
+          typeof replacementToken === "string" &&
+          /^[0-9a-f]{64}$/u.test(replacementToken)
+            ? replacementToken
+            : null,
+        conflictingSkillEnabled:
+          typeof conflictingSkillEnabled === "boolean"
+            ? conflictingSkillEnabled
+            : null,
       };
     if (code === "registry_unavailable")
-      return { message: REGISTRY_UNAVAILABLE_ERROR, conflictingSkillId: null };
+      return {
+        message: REGISTRY_UNAVAILABLE_ERROR,
+        conflictingSkillId: null,
+        replacementToken: null,
+        conflictingSkillEnabled: null,
+      };
     return fallback;
   } catch {
     return fallback;
@@ -146,28 +183,40 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
     let revision: AdminSkillRevision;
     let failureMessage = GENERIC_UPLOAD_ERROR;
     try {
-      const send = (targetSkillId?: string) => {
+      const send = (replacement?: {
+        targetSkillId: string;
+        replacementToken: string;
+      }) => {
         const body = new FormData();
         body.append("archive", file, file.name);
-        if (targetSkillId !== undefined)
-          body.append("targetSkillId", targetSkillId);
+        if (replacement !== undefined) {
+          body.append("targetSkillId", replacement.targetSkillId);
+          body.append("expectedArtifactSha256", replacement.replacementToken);
+        }
         return fetch("/api/v1/admin/assistant/skills/uploads", {
           method: "POST",
           body,
         });
       };
       let targetSkillId: string | undefined;
+      let replacementWasEnabled = false;
       let response = await send();
       if (!response.ok) {
         const failure = await uploadError(response);
         failureMessage = failure.message;
         if (
           failure.conflictingSkillId === null ||
+          failure.replacementToken === null ||
+          failure.conflictingSkillEnabled === null ||
           !window.confirm("发现同名 Skill，是否替换？")
         )
           throw new Error("upload failed");
         targetSkillId = failure.conflictingSkillId;
-        response = await send(targetSkillId);
+        replacementWasEnabled = failure.conflictingSkillEnabled;
+        response = await send({
+          targetSkillId,
+          replacementToken: failure.replacementToken,
+        });
         if (!response.ok) {
           failureMessage = (await uploadError(response)).message;
           throw new Error("replacement failed");
@@ -177,7 +226,7 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
       if (!mounted.current || currentOperation !== operation.current) return;
       if (parsed === null) throw new Error("invalid upload response");
       revision = parsed;
-      if (targetSkillId !== undefined) {
+      if (targetSkillId !== undefined && replacementWasEnabled) {
         const activation = await fetch(
           `/api/v1/admin/assistant/skills/${targetSkillId}/enable`,
           {

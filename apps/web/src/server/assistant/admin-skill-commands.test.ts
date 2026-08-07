@@ -175,6 +175,7 @@ describe("admin skill upload command", () => {
       current.commands.upload(context, {
         archive: ARCHIVE,
         targetSkillId: SKILL_ID,
+        expectedArtifactSha256: "a".repeat(64),
       }),
     ).resolves.toEqual(uploadedRevision);
     expect(current.client.uploadSkill).toHaveBeenCalledWith({
@@ -182,6 +183,7 @@ describe("admin skill upload command", () => {
       requestId: REQUEST_ID,
       archive: ARCHIVE,
       targetSkillId: SKILL_ID,
+      expectedArtifactSha256: "a".repeat(64),
     });
     expect(current.operations.slice(-3)).toEqual([
       "audit:assistant.skill_upload_requested",
