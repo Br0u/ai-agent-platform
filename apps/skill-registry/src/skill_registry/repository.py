@@ -451,7 +451,7 @@ class PostgresSkillRegistryRepository:
             """SELECT skill.id, skill.slug,
               current_revision.manifest ->> 'description',
               active_revision.revision_id IS NOT NULL,
-              current_revision.created_at, current_revision.artifact_sha256,
+              current_revision.created_at, artifact.artifact_sha256,
               current_revision.id
             FROM skill_registry.skills AS skill
             LEFT JOIN LATERAL (

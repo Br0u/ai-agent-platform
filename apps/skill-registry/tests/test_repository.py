@@ -696,6 +696,8 @@ async def test_skill_library_reads_the_authoritative_current_revision() -> None:
     query = connection.script.executions[0][0]
     assert "active_item.revision_id" in query
     assert "current_revision.id = skill.current_revision_id" in query
+    assert "artifact.artifact_sha256" in query
+    assert "current_revision.artifact_sha256" not in query
     assert "SELECT latest_revision.id" not in query
 
 
