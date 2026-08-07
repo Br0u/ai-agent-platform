@@ -118,6 +118,7 @@ function listResponse() {
         enabled: true,
         uploadedAt: "2026-07-20T01:02:03.000Z",
         replacementToken: SHA256,
+        revisionId: REVISION_ID,
       },
     ],
     page: { limit: 50, offset: 0, returned: 1 },

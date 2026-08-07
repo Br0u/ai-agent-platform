@@ -115,6 +115,7 @@ const skillListResponse = {
       enabled: false,
       uploadedAt: "2026-07-21T08:00:00.000Z",
       replacementToken: "a".repeat(64),
+      revisionId: "44444444-4444-4444-8444-444444444444",
     },
   ],
   page: { limit: 25, offset: 0, returned: 1 },

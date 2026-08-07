@@ -310,6 +310,7 @@ def test_list_is_bounded_metadata_only() -> None:
                 "enabled": True,
                 "uploadedAt": "2026-07-21T00:00:00.000Z",
                 "replacementToken": "a" * 64,
+                "revisionId": str(REVISION_ID),
             }
         ],
         "page": {"limit": 25, "offset": 10, "returned": 1},

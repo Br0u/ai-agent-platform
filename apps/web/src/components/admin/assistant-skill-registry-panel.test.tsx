@@ -21,6 +21,7 @@ const enabledSkill = {
   enabled: true,
   uploadedAt: "2026-07-21T08:00:00.000Z",
   replacementToken: "a".repeat(64),
+  revisionId: "44444444-4444-4444-8444-444444444444",
 };
 
 describe("AssistantSkillRegistryPanel", () => {

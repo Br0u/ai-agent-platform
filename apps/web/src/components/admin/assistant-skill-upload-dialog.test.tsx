@@ -50,7 +50,7 @@ describe("AssistantSkillUploadDialog", () => {
     expect(onUploaded.mock.calls[0]?.[0].state).toBe("published");
   });
 
-  it("confirms and activates a same-name replacement", async () => {
+  it("confirms an active same-name replacement in one follow-up request", async () => {
     const onUploaded = vi.fn();
     const skillId = "33333333-3333-4333-8333-333333333333";
     const revision = {
@@ -82,8 +82,7 @@ describe("AssistantSkillUploadDialog", () => {
       )
       .mockResolvedValueOnce(
         Response.json({ version: "1", revision, requestId: "replacement" }),
-      )
-      .mockResolvedValueOnce(Response.json({ version: "1" }));
+      );
     vi.stubGlobal("fetch", fetcher);
     render(
       <AssistantSkillUploadDialog onClose={vi.fn()} onUploaded={onUploaded} />,
@@ -96,10 +95,13 @@ describe("AssistantSkillUploadDialog", () => {
 
     await waitFor(() => expect(onUploaded).toHaveBeenCalledWith(revision));
     expect(window.confirm).toHaveBeenCalledWith("发现同名 Skill，是否替换？");
-    expect(fetcher).toHaveBeenCalledTimes(3);
-    expect(fetcher.mock.calls[2]?.[0]).toBe(
-      `/api/v1/admin/assistant/skills/${skillId}/enable`,
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[1]?.[0]).toBe(
+      "/api/v1/admin/assistant/skills/uploads",
     );
+    const replacementBody = fetcher.mock.calls[1]?.[1]?.body as FormData;
+    expect(replacementBody.get("targetSkillId")).toBe(skillId);
+    expect(replacementBody.get("expectedArtifactSha256")).toBe("a".repeat(64));
   });
 
   it("keeps an inactive same-name replacement inactive", async () => {

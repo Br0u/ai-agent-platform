@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { WorkforceActor } from "@/server/auth/access";
+import { AgentSkillControlClientError } from "./agent-skill-control-client";
 import {
   AdminSkillLifecycleCommandError,
   createAdminSkillLifecycleCommands,
@@ -156,5 +157,26 @@ describe("admin Skill lifecycle commands", () => {
     expect(registry.discardSkillSet).toHaveBeenCalledWith(
       expect.objectContaining({ setId: SET_ID }),
     );
+  });
+
+  it("keeps the prior runtime untouched when activation result is unknown", async () => {
+    const { commands, registry, agent } = setup();
+    agent.activate.mockRejectedValueOnce(
+      new AgentSkillControlClientError("activation_result_unknown"),
+    );
+    const context = await commands.authorize(
+      new Request("https://example.test/api", { method: "POST" }),
+    );
+
+    await expect(
+      commands.applySkillSet(context, {
+        operation: "replace",
+        skillId: SKILL_ID,
+        expectedActivationVersion: 0,
+        nextRevisionIds: [REVISION_ID],
+        requestId: REQUEST_ID,
+      }),
+    ).rejects.toMatchObject({ code: "result_unknown" });
+    expect(registry.discardSkillSet).not.toHaveBeenCalled();
   });
 });

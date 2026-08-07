@@ -188,6 +188,7 @@ def _summary_content(summary: SkillLibraryItem) -> dict[str, object]:
         "enabled": summary.enabled,
         "uploadedAt": _iso(summary.uploaded_at),
         "replacementToken": summary.replacement_token,
+        "revisionId": str(summary.revision_id),
     }
 
 

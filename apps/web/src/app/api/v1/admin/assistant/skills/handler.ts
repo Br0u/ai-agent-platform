@@ -14,11 +14,25 @@ import {
   createAdminSkillCommands,
   type AuthorizedSkillCommand,
 } from "@/server/assistant/admin-skill-commands";
+import {
+  AdminSkillLifecycleCommandError,
+  createAdminSkillLifecycleCommands,
+  type AuthorizedSkillLifecycleCommand,
+} from "@/server/assistant/admin-skill-lifecycle-commands";
+import {
+  createAgentSkillControlClient,
+  resolveAgentSkillControlSettings,
+} from "@/server/assistant/agent-skill-control-client";
+import {
+  SensitiveActionError,
+  requireSensitiveWorkforceActionEvidence,
+} from "@/server/auth/sensitive-action";
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
 import {
   SkillRegistryClientError,
   createSkillRegistryClient,
   resolveSkillRegistrySettings,
+  type CompleteSkillRegistryClient,
   type SkillRegistryClient,
 } from "@/server/assistant/skill-registry-client";
 import {
@@ -74,7 +88,7 @@ type DynamicFileContext = {
 
 type SkillCommands = ReturnType<typeof createAdminSkillCommands>;
 
-function defaultRegistryClient(): SkillRegistryClient {
+function defaultRegistryClient(): CompleteSkillRegistryClient {
   return createSkillRegistryClient({
     settings: resolveSkillRegistrySettings({
       NODE_ENV: process.env.NODE_ENV,
@@ -83,6 +97,23 @@ function defaultRegistryClient(): SkillRegistryClient {
       SKILL_REGISTRY_CONTROL_KEY: process.env.SKILL_REGISTRY_CONTROL_KEY,
       OS_SECURITY_KEY: process.env.OS_SECURITY_KEY,
       AGENT_CONFIG_CONTROL_KEY: process.env.AGENT_CONFIG_CONTROL_KEY,
+    }),
+  });
+}
+
+function createDefaultLifecycleCommands() {
+  const registry = defaultRegistryClient();
+  return createAdminSkillLifecycleCommands({
+    requireTrustedMutation: requireTrustedMultipartMutation,
+    requireSensitiveAction: requireSensitiveWorkforceActionEvidence,
+    audit: createAuditWriter(),
+    registry,
+    agent: createAgentSkillControlClient({
+      settings: resolveAgentSkillControlSettings({
+        AGENTOS_INTERNAL_URL: process.env.AGENTOS_INTERNAL_URL,
+        OS_SECURITY_KEY: process.env.OS_SECURITY_KEY,
+        AGENT_CONFIG_CONTROL_KEY: process.env.AGENT_CONFIG_CONTROL_KEY,
+      }),
     }),
   });
 }
@@ -137,12 +168,27 @@ function classifyError(error: unknown): PublicError {
       status: error.status,
     };
   }
+  if (error instanceof SensitiveActionError) {
+    return { code: "reauth_required", status: 401 };
+  }
   if (error instanceof AdminSkillCommandError) {
     if (error.code === "authorization_failed") {
       return { code: "permission_denied", status: 403 };
     }
     if (error.code === "validation_error") {
       return { code: "validation_error", status: 400 };
+    }
+    return { code: "registry_unavailable", status: 503 };
+  }
+  if (error instanceof AdminSkillLifecycleCommandError) {
+    if (error.code === "authorization_failed") {
+      return { code: "permission_denied", status: 403 };
+    }
+    if (error.code === "validation_error") {
+      return { code: "validation_error", status: 400 };
+    }
+    if (error.code === "state_conflict") {
+      return { code: "state_conflict", status: 409 };
     }
     return { code: "registry_unavailable", status: 503 };
   }
@@ -160,6 +206,7 @@ function classifyError(error: unknown): PublicError {
     if (
       error.code === "REVISION_STATE_CONFLICT" ||
       error.code === "SKILL_NAME_CONFLICT" ||
+      error.code === "SKILL_CHANGED" ||
       error.code === "ASSERTION_REPLAY"
     ) {
       return { code: "state_conflict", status: 409 };
@@ -543,6 +590,14 @@ export function createAdminSkillFileHandler(
 export function createAdminSkillUploadHandler(
   overrides: {
     commands?: Pick<SkillCommands, "authorize" | "upload">;
+    lifecycle?: Pick<
+      ReturnType<typeof createAdminSkillLifecycleCommands>,
+      "authorize" | "applySkillSet"
+    >;
+    registry?: Pick<
+      CompleteSkillRegistryClient,
+      "listSkills" | "runtimeStatus"
+    >;
     readMultipart?: (request: Request) => Promise<BoundedSkillUpload>;
     requestIdFactory?: () => string;
   } = {},
@@ -565,7 +620,72 @@ export function createAdminSkillUploadHandler(
     let input: BoundedSkillUpload | null = null;
     try {
       input = await readMultipart(request);
+      let activeReplacement: {
+        priorRevisionId: string;
+        skillId: string;
+        activationVersion: number;
+        revisionIds: string[];
+        lifecycle: Pick<
+          ReturnType<typeof createAdminSkillLifecycleCommands>,
+          "applySkillSet"
+        >;
+        context: AuthorizedSkillLifecycleCommand;
+      } | null = null;
+      if (input.targetSkillId !== undefined) {
+        const registry = overrides.registry ?? defaultRegistryClient();
+        const library = await registry.listSkills({
+          actor: context.actor.userId,
+          requestId: registryRequestId(requestIdFactory),
+          limit: 100,
+          offset: 0,
+        });
+        const prior = library.skills.find(
+          (skill) => skill.id === input?.targetSkillId,
+        );
+        if (prior === undefined) {
+          throw new SkillRegistryClientError("SKILL_NOT_FOUND");
+        }
+        if (prior.enabled) {
+          const runtime = await registry.runtimeStatus({
+            actor: context.actor.userId,
+            requestId: registryRequestId(requestIdFactory),
+          });
+          if (
+            runtime.active === null ||
+            !runtime.active.revisionIds.includes(prior.revisionId)
+          ) {
+            throw new AdminSkillLifecycleCommandError("state_conflict");
+          }
+          const lifecycle =
+            overrides.lifecycle ?? createDefaultLifecycleCommands();
+          const lifecycleContext = await lifecycle.authorize(request);
+          activeReplacement = {
+            priorRevisionId: prior.revisionId,
+            skillId: prior.id,
+            activationVersion: runtime.activationVersion,
+            revisionIds: runtime.active.revisionIds,
+            lifecycle,
+            context: lifecycleContext,
+          };
+        }
+      }
       const response = await commands.upload(context, input);
+      if (activeReplacement !== null) {
+        await activeReplacement.lifecycle.applySkillSet(
+          activeReplacement.context,
+          {
+            operation: "replace",
+            skillId: activeReplacement.skillId,
+            expectedActivationVersion: activeReplacement.activationVersion,
+            nextRevisionIds: activeReplacement.revisionIds.map((revisionId) =>
+              revisionId === activeReplacement.priorRevisionId
+                ? response.revision.id
+                : revisionId,
+            ),
+            requestId: context.requestId,
+          },
+        );
+      }
       return Response.json(
         { ...response, requestId: context.requestId },
         { status: 201, headers: NO_STORE_HEADERS },

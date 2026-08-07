@@ -74,6 +74,7 @@ export type AdminSkillLibraryItem = {
   enabled: boolean;
   uploadedAt: string;
   replacementToken: string;
+  revisionId: string;
 };
 
 export type AdminSkillRevisionDetailResponse = {
@@ -455,6 +456,7 @@ export function parseAdminSkillListResponse(
       "enabled",
       "uploadedAt",
       "replacementToken",
+      "revisionId",
     ]);
     if (
       skill === null ||
@@ -464,7 +466,8 @@ export function parseAdminSkillListResponse(
       typeof skill.enabled !== "boolean" ||
       !canonicalTimestamp(skill.uploadedAt) ||
       typeof skill.replacementToken !== "string" ||
-      !SHA256.test(skill.replacementToken)
+      !SHA256.test(skill.replacementToken) ||
+      !canonicalUuid(skill.revisionId)
     ) {
       return null;
     }
@@ -475,6 +478,7 @@ export function parseAdminSkillListResponse(
       enabled: skill.enabled,
       uploadedAt: skill.uploadedAt,
       replacementToken: skill.replacementToken,
+      revisionId: skill.revisionId,
     });
   }
   if (

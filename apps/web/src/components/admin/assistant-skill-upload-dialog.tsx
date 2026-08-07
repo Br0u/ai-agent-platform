@@ -198,8 +198,6 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
           body,
         });
       };
-      let targetSkillId: string | undefined;
-      let replacementWasEnabled = false;
       let response = await send();
       if (!response.ok) {
         const failure = await uploadError(response);
@@ -211,10 +209,8 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
           !window.confirm("发现同名 Skill，是否替换？")
         )
           throw new Error("upload failed");
-        targetSkillId = failure.conflictingSkillId;
-        replacementWasEnabled = failure.conflictingSkillEnabled;
         response = await send({
-          targetSkillId,
+          targetSkillId: failure.conflictingSkillId,
           replacementToken: failure.replacementToken,
         });
         if (!response.ok) {
@@ -226,20 +222,6 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
       if (!mounted.current || currentOperation !== operation.current) return;
       if (parsed === null) throw new Error("invalid upload response");
       revision = parsed;
-      if (targetSkillId !== undefined && replacementWasEnabled) {
-        const activation = await fetch(
-          `/api/v1/admin/assistant/skills/${targetSkillId}/enable`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ requestId: crypto.randomUUID() }),
-          },
-        );
-        if (!activation.ok) {
-          failureMessage = "替换文件已上传，但未能启用；原 Skill 仍在使用。";
-          throw new Error("replacement activation failed");
-        }
-      }
     } catch {
       if (!mounted.current || currentOperation !== operation.current) return;
       submittingRef.current = false;
