@@ -12,10 +12,7 @@ export {
   pythonCasefoldAdminSkillPath,
 };
 
-export const ADMIN_SKILL_REVISION_STATES = [
-  "published",
-  "archived",
-] as const;
+export const ADMIN_SKILL_REVISION_STATES = ["published", "archived"] as const;
 
 export const ADMIN_SKILL_FILE_KINDS = [
   "manifest",

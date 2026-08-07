@@ -22,6 +22,7 @@ from skill_core.types import (
     SkillManifest,
 )
 from skill_registry.types import (
+    ArchiveSkill,
     CreateUploadRevision,
     RegistryError,
     SkillLibraryItem,
@@ -117,6 +118,7 @@ class PostgresSkillRegistryRepository:
                             raise RegistryError(
                                 "SKILL_NAME_CONFLICT",
                                 "A different skill already uses this name",
+                                conflicting_skill_id=skill_id,
                             )
                         revision_no = 1
                         if not is_new:
@@ -210,6 +212,69 @@ class PostgresSkillRegistryRepository:
             failure = _database_failure(error)
         assert failure is not None
         raise RegistryError(*failure) from None
+
+    async def archive_skill(self, command: ArchiveSkill) -> None:
+        try:
+            connection = await self._connect()
+            async with connection:
+                async with connection.transaction():
+                    async with connection.cursor() as cursor:
+                        await self._assert_nonce_unused(cursor, command.assertion_nonce)
+                        await cursor.execute(
+                            """SELECT latest.artifact_sha256,
+                              EXISTS (
+                                SELECT 1
+                                FROM skill_registry.active_agent_skill_sets AS active_set
+                                JOIN skill_registry.agent_skill_set_items AS active_item
+                                  ON active_item.set_id = active_set.active_set_id
+                                WHERE active_set.agent_id = 'maduoduo'
+                                  AND active_item.skill_id = skill.id
+                              )
+                            FROM skill_registry.skills AS skill
+                            JOIN LATERAL (
+                              SELECT artifact.artifact_sha256
+                              FROM skill_registry.skill_revisions AS revision
+                              JOIN skill_registry.skill_revision_artifacts AS artifact
+                                ON artifact.revision_id = revision.id
+                              WHERE revision.skill_id = skill.id
+                                AND revision.state = 'published'
+                              ORDER BY revision.revision_no DESC
+                              LIMIT 1
+                            ) AS latest ON true
+                            WHERE skill.id = %s AND skill.archived_at IS NULL
+                            FOR UPDATE OF skill""",
+                            (command.skill_id,),
+                        )
+                        row = await cursor.fetchone()
+                        if row is None:
+                            raise RegistryError("SKILL_NOT_FOUND", "Skill does not exist")
+                        if str(row[0]) != command.expected_artifact_sha256:
+                            raise RegistryError("SKILL_CHANGED", "Skill has changed")
+                        if row[1] is not False:
+                            raise RegistryError("SKILL_ACTIVE", "Active Skill cannot be archived")
+                        await cursor.execute(
+                            """UPDATE skill_registry.skills
+                            SET archived_at = now()
+                            WHERE id = %s AND archived_at IS NULL""",
+                            (command.skill_id,),
+                        )
+                        await cursor.execute(
+                            """INSERT INTO skill_registry.skill_control_events (
+                              id, request_id, assertion_nonce, actor, event_type,
+                              target_id, result_code
+                            ) VALUES (%s, %s, %s, %s, 'skill_archived', %s, 'ok')""",
+                            (
+                                self._id_factory(),
+                                command.request_id,
+                                command.assertion_nonce,
+                                str(command.actor),
+                                command.skill_id,
+                            ),
+                        )
+        except RegistryError:
+            raise
+        except Exception as error:
+            raise RegistryError(*_database_failure(error)) from None
 
     async def _assert_nonce_unused(self, cursor: RepositoryCursor, assertion_nonce: UUID) -> None:
         await cursor.execute(

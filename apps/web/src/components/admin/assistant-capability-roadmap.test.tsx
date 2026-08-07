@@ -39,9 +39,7 @@ describe("AssistantCapabilityRoadmap", () => {
       within(cards[1]!).getByText("Registry / Agent 运行时已接入"),
     ).toBeVisible();
     expect(
-      within(cards[1]!).getByText(
-        "上传版本组成集合并激活后，由 Agent 按 exact revision 加载",
-      ),
+      within(cards[1]!).getByText("上传到 Skill 库后可直接启用、停用或删除"),
     ).toBeVisible();
     expect(within(cards[1]!).getByText("已接入")).toBeVisible();
     expect(within(cards[2]!).getByText("未接入")).toBeVisible();

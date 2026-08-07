@@ -298,7 +298,6 @@ describe("Skill Registry assertion signer", () => {
       signer.sign(hidden as Parameters<typeof signer.sign>[0]),
     ).toThrow(SkillRegistryClientError);
     expect(nonceFactory).not.toHaveBeenCalled();
-
   });
 });
 
@@ -865,7 +864,7 @@ describe("private Skill Registry client", () => {
     );
   });
 
-  it("calls list/detail/file/upload with exact signed route context", async () => {
+  it("calls list/detail/file/upload/archive with exact signed route context", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse(listResponse()))
@@ -879,6 +878,9 @@ describe("private Skill Registry client", () => {
       )
       .mockResolvedValueOnce(
         jsonResponse({ version: "1", revision: revision() }, 201),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ version: "1", archivedSkillId: SKILL_ID }),
       );
     const client = createSkillRegistryClient({
       settings: settings(),
@@ -924,11 +926,21 @@ describe("private Skill Registry client", () => {
         archive: new Uint8Array([0x50, 0x4b, 3, 4]),
       }),
     ).resolves.toEqual({ version: "1", revision: revision() });
+    await expect(
+      client.archiveSkill({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        assuredAt: NOW,
+        skillId: SKILL_ID,
+        expectedArtifactSha256: SHA256,
+      }),
+    ).resolves.toBeUndefined();
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
       `http://${PRIVATE_ADDRESS}:7780/internal/skills?limit=50&offset=0`,
       `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}`,
       `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}/files/scripts/run%252Fhidden%255C.py`,
       `http://${PRIVATE_ADDRESS}:7780/internal/skills/uploads?targetSkillId=${SKILL_ID}`,
+      `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/archive`,
     ]);
     const expected = [
       ["list", "admin:assistant:skills", "skills", "session", null],
@@ -947,6 +959,13 @@ describe("private Skill Registry client", () => {
         null,
       ],
       ["upload", "admin:assistant:skills:upload", SKILL_ID, "session", null],
+      [
+        "archive",
+        "admin:assistant:skills:configure",
+        SKILL_ID,
+        "password+mfa",
+        NOW,
+      ],
     ];
     for (const [
       index,
@@ -978,6 +997,41 @@ describe("private Skill Registry client", () => {
       method: "POST",
       body: expect.any(Uint8Array),
       headers: expect.objectContaining({ "Content-Type": "application/zip" }),
+    });
+    expect(fetcher.mock.calls[4]![1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({
+        requestId: REQUEST_ID,
+        expectedArtifactSha256: SHA256,
+      }),
+      headers: expect.objectContaining({ "Content-Type": "application/json" }),
+    });
+  });
+
+  it("returns the safe conflicting Skill ID for replacement confirmation", async () => {
+    const client = createSkillRegistryClient({
+      settings: settings(),
+      fetcher: vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          jsonResponse(
+            { error: "SKILL_NAME_CONFLICT", conflictingSkillId: SKILL_ID },
+            409,
+          ),
+        ),
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+
+    await expect(
+      client.uploadSkill({
+        actor: ACTOR,
+        requestId: REQUEST_ID,
+        archive: new Uint8Array([0x50, 0x4b, 3, 4]),
+      }),
+    ).rejects.toMatchObject({
+      code: "SKILL_NAME_CONFLICT",
+      conflictingSkillId: SKILL_ID,
     });
   });
 

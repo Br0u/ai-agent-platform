@@ -27,9 +27,7 @@ const actor: WorkforceActor = {
   displayName: "Admin",
   mustChangePassword: false,
   twoFactorEnabled: true,
-  permissions: [
-    "admin:assistant:skills:upload",
-  ],
+  permissions: ["admin:assistant:skills:upload"],
 };
 
 const uploadedRevision = {
@@ -149,9 +147,9 @@ describe("admin skill command authorization", () => {
       "upload",
     );
     await current.commands.upload(upload, { archive: ARCHIVE });
-    await expect(current.commands.upload(upload, { archive: ARCHIVE })).rejects.toEqual(
-      new AdminSkillCommandError("authorization_failed"),
-    );
+    await expect(
+      current.commands.upload(upload, { archive: ARCHIVE }),
+    ).rejects.toEqual(new AdminSkillCommandError("authorization_failed"));
 
     const expired = await current.commands.authorize(
       request("multipart/form-data; boundary=safe"),

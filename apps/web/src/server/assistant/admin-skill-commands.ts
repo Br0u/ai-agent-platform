@@ -193,9 +193,7 @@ export function createAdminSkillCommands(dependencies: CommandDependencies) {
         "admin:assistant:skills:upload",
       );
       const issuedAt = readNow();
-      if (
-        issuedAt > Number.MAX_SAFE_INTEGER - AUTHORIZATION_TTL_MS
-      ) {
+      if (issuedAt > Number.MAX_SAFE_INTEGER - AUTHORIZATION_TTL_MS) {
         throw new AdminSkillCommandError("registry_unavailable");
       }
       const requestId = requestIdFactory();
@@ -285,6 +283,5 @@ export function createAdminSkillCommands(dependencies: CommandDependencies) {
         rawInput = undefined as never;
       }
     },
-
   };
 }

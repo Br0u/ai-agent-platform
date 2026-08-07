@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
+import json
 import re
 from typing import Final, Protocol
 from uuid import UUID
@@ -40,6 +41,16 @@ class RegistryAPIService(Protocol):
 
     async def get_file_text(self, skill_id: UUID, revision_id: UUID, path: str) -> str: ...
 
+    async def archive_skill(
+        self,
+        *,
+        actor: UUID,
+        request_id: UUID,
+        assertion_nonce: UUID,
+        skill_id: UUID,
+        expected_artifact_sha256: str,
+    ) -> None: ...
+
 _NO_STORE_HEADERS: Final = {"Cache-Control": "no-store"}
 _ASSERTION_STATE_KEY: Final = "skill_registry_assertion"
 _RESPONSE_BODY_MAX_BYTES: Final = 3 * 1024 * 1024
@@ -75,6 +86,8 @@ _STABLE_REGISTRY_CODES: Final = frozenset(
         "REVISION_NOT_FOUND",
         "SKILL_SCAN_BLOCKED",
         "SKILL_BINARY_FILE",
+        "SKILL_ACTIVE",
+        "SKILL_CHANGED",
         "SKILL_FILE_NOT_UTF8",
         "SKILL_FILE_TOO_LARGE",
         "SKILL_NAME_CONFLICT",
@@ -103,6 +116,8 @@ def _registry_error(error: RegistryError) -> JSONResponse:
     elif code in {
         "ASSERTION_REPLAY",
         "SKILL_NAME_CONFLICT",
+        "SKILL_CHANGED",
+        "SKILL_ACTIVE",
     }:
         status = 409
     elif code in {
@@ -118,6 +133,12 @@ def _registry_error(error: RegistryError) -> JSONResponse:
         status = 503
     else:
         status = 400
+    if code == "SKILL_NAME_CONFLICT" and error.conflicting_skill_id is not None:
+        return JSONResponse(
+            {"error": code, "conflictingSkillId": str(error.conflicting_skill_id)},
+            status_code=status,
+            headers=_NO_STORE_HEADERS,
+        )
     return _error(code, status_code=status)
 
 
@@ -348,6 +369,37 @@ def build_skill_registry_router(
                 "page": {"limit": limit, "offset": offset, "returned": len(skills)},
             }
         )
+
+    @router.post("/internal/skills/{skill_id}/archive", include_in_schema=False)
+    async def archive_skill(skill_id: UUID, request: Request) -> JSONResponse:
+        assertion = _request_assertion(request)
+        body = await _read_body(request, 512)
+        try:
+            payload = None if body is None else json.loads(body)
+        except (UnicodeError, json.JSONDecodeError):
+            payload = None
+        if (
+            assertion is None
+            or type(payload) is not dict
+            or set(payload) != {"requestId", "expectedArtifactSha256"}
+            or payload.get("requestId") != str(assertion.request_id)
+            or type(payload.get("expectedArtifactSha256")) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", payload["expectedArtifactSha256"]) is None
+        ):
+            return _error("VALIDATION_ERROR", status_code=400)
+        try:
+            await service_provider().archive_skill(
+                actor=assertion.actor,
+                request_id=assertion.request_id,
+                assertion_nonce=assertion.nonce,
+                skill_id=skill_id,
+                expected_artifact_sha256=payload["expectedArtifactSha256"],
+            )
+        except RegistryError as error:
+            return _registry_error(error)
+        except Exception:
+            return _error("REGISTRY_UNAVAILABLE", status_code=503)
+        return _bounded({"version": "1", "archivedSkillId": str(skill_id)})
 
     @router.post("/internal/skills/uploads", include_in_schema=False)
     async def upload_skill(request: Request) -> JSONResponse:

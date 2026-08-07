@@ -18,7 +18,11 @@ const AUTHORIZED = Symbol("authorized-skill-lifecycle-command");
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
-export type SkillLifecycleOperation = "enable" | "disable" | "replace" | "delete";
+export type SkillLifecycleOperation =
+  | "enable"
+  | "disable"
+  | "replace"
+  | "delete";
 export type AdminSkillLifecycleCommandErrorCode =
   | "authorization_failed"
   | "validation_error"
@@ -98,7 +102,9 @@ export function createAdminSkillLifecycleCommands(dependencies: Dependencies) {
   const grants = new WeakSet<object>();
 
   return {
-    async authorize(request: Request): Promise<AuthorizedSkillLifecycleCommand> {
+    async authorize(
+      request: Request,
+    ): Promise<AuthorizedSkillLifecycleCommand> {
       dependencies.requireTrustedMutation(request);
       const evidence = await dependencies.requireSensitiveAction(
         "admin:assistant:skills:configure",
@@ -108,7 +114,9 @@ export function createAdminSkillLifecycleCommands(dependencies: Dependencies) {
         [AUTHORIZED]: true as const,
         actor: Object.freeze({
           ...evidence.actor,
-          permissions: Object.freeze([...evidence.actor.permissions]) as string[],
+          permissions: Object.freeze([
+            ...evidence.actor.permissions,
+          ]) as string[],
         }),
         assuredAt: evidence.assuredAt,
       });
@@ -157,7 +165,10 @@ export function createAdminSkillLifecycleCommands(dependencies: Dependencies) {
       }
 
       const candidateRequestId = derivedRequestId(input.requestId, "candidate");
-      const activationRequestId = derivedRequestId(input.requestId, "activation");
+      const activationRequestId = derivedRequestId(
+        input.requestId,
+        "activation",
+      );
       let candidateId: string | null = null;
       let activationVersion = input.expectedActivationVersion;
       let result: "success" | "failure" = "failure";

@@ -171,4 +171,25 @@ describe("admin skill upload route", () => {
       error: { code: "payload_too_large", retryable: false },
     });
   });
+
+  it("returns only the safe conflicting Skill ID for replacement confirmation", async () => {
+    const current = fixture();
+    current.commands.upload.mockRejectedValueOnce(
+      new SkillRegistryClientError(
+        "SKILL_NAME_CONFLICT",
+        revision.revision.skillId,
+      ),
+    );
+
+    const response = await current.handler(
+      new Request("https://admin.example.test/uploads", { method: "POST" }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      requestId: REQUEST_ID,
+      conflictingSkillId: revision.revision.skillId,
+      error: { code: "state_conflict" },
+    });
+  });
 });

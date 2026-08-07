@@ -172,8 +172,8 @@ function classifyError(error: unknown): PublicError {
       error.code === "SKILL_BINARY_FILE" ||
       error.code === "SKILL_FILE_NOT_UTF8" ||
       error.code === "SKILL_FILE_TOO_LARGE" ||
-      error.code === "SKILL_SCRIPT_SHEBANG_UNSUPPORTED"
-      || error.code === "SKILL_SCAN_BLOCKED"
+      error.code === "SKILL_SCRIPT_SHEBANG_UNSUPPORTED" ||
+      error.code === "SKILL_SCAN_BLOCKED"
     ) {
       return { code: "validation_error", status: 400 };
     }
@@ -190,10 +190,21 @@ function classifyError(error: unknown): PublicError {
 
 function errorResponse(error: unknown, requestId: string): Response {
   const mapped = classifyError(error);
-  return Response.json(errorBody(requestId, mapped.code), {
-    status: mapped.status,
-    headers: NO_STORE_HEADERS,
-  });
+  const body = errorBody(requestId, mapped.code);
+  return Response.json(
+    {
+      ...body,
+      ...(error instanceof SkillRegistryClientError &&
+      error.code === "SKILL_NAME_CONFLICT" &&
+      error.conflictingSkillId !== null
+        ? { conflictingSkillId: error.conflictingSkillId }
+        : {}),
+    },
+    {
+      status: mapped.status,
+      headers: NO_STORE_HEADERS,
+    },
+  );
 }
 
 function permissionFlags(actor: WorkforceActor): AdminSkillPermissionFlags {

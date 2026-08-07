@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import re
 import sys
 from dataclasses import replace
 from uuid import UUID
@@ -17,6 +18,7 @@ from skill_core.types import MAX_FILE_BYTES, CanonicalSkillPackage, SkillFile
 from skill_registry.artifact_store import ArtifactStoreError, SkillArtifactStore
 from skill_registry.types import (
     AgentId,
+    ArchiveSkill,
     ClonePreviousSkillSet,
     CreateSkillSet,
     CreateSkillSetResult,
@@ -211,6 +213,27 @@ class SkillRegistryService:
         if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
             raise RegistryError("VALIDATION_ERROR", "Pagination bounds are invalid")
         return await self._repository.list_skills(limit=limit, offset=offset)
+
+    async def archive_skill(
+        self,
+        *,
+        actor: UUID,
+        request_id: UUID,
+        assertion_nonce: UUID,
+        skill_id: UUID,
+        expected_artifact_sha256: str,
+    ) -> None:
+        if re.fullmatch(r"[0-9a-f]{64}", expected_artifact_sha256) is None:
+            raise RegistryError("VALIDATION_ERROR", "Artifact digest is invalid")
+        await self._repository.archive_skill(
+            ArchiveSkill(
+                actor=actor,
+                request_id=request_id,
+                assertion_nonce=assertion_nonce,
+                skill_id=skill_id,
+                expected_artifact_sha256=expected_artifact_sha256,
+            )
+        )
 
     async def get_revision_detail(self, skill_id: UUID, revision_id: UUID) -> RevisionDetail:
         revision = await self._repository.get_revision(skill_id, revision_id)

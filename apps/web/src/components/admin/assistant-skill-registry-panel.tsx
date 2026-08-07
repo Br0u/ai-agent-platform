@@ -5,7 +5,6 @@ import {
   parseAdminSkillPermissionFlags,
   type AdminSkillListResponse,
   type AdminSkillPermissionFlags,
-  type AdminSkillRevision,
 } from "@/features/assistant/admin-skill-contract";
 import { useEffect, useRef, useState } from "react";
 import { AssistantSkillUploadDialog } from "./assistant-skill-upload-dialog";
@@ -86,11 +85,8 @@ export function AssistantSkillRegistryPanel({
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [permissions, setPermissions] = useState(initialPermissions);
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [uploadTarget, setUploadTarget] = useState<{
-    id: string;
-    name: string;
-  } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [pendingSkillId, setPendingSkillId] = useState<string | null>(null);
   const uploadTrigger = useRef<HTMLButtonElement>(null);
   const restoreUploadFocus = useRef(false);
   const listAbort = useRef<AbortController | null>(null);
@@ -116,25 +112,13 @@ export function AssistantSkillRegistryPanel({
     [],
   );
 
-  const invalidateListRequest = () => {
-    listGeneration.current += 1;
-    listAbort.current?.abort();
-    listAbort.current = null;
-    setRefreshing(false);
-  };
-
   const closeUpload = () => {
     restoreUploadFocus.current = true;
     setUploadOpen(false);
-    setUploadTarget(null);
   };
 
-  const openUpload = (
-    trigger: HTMLButtonElement,
-    target: { id: string; name: string } | null,
-  ) => {
+  const openUpload = (trigger: HTMLButtonElement) => {
     uploadTrigger.current = trigger;
-    setUploadTarget(target);
     setUploadOpen(true);
   };
 
@@ -182,43 +166,53 @@ export function AssistantSkillRegistryPanel({
     }
   };
 
-  const uploaded = (revision: AdminSkillRevision) => {
-    invalidateListRequest();
-    setSnapshot((current) => {
-      const existing = current.skills.find(
-        (skill) => skill.id === revision.skillId,
-      );
-      const item: AdminSkillListResponse["skills"][number] = {
-        id: revision.skillId,
-        name: revision.name,
-        createdAt: existing?.createdAt ?? revision.createdAt,
-        revision: {
-          id: revision.id,
-          number: revision.number,
-          state: revision.state,
-          sourceType: "upload",
-          artifactSha256Prefix: revision.artifactSha256.slice(0, 12),
-          createdBy: revision.createdBy,
-          createdAt: revision.createdAt,
-        },
-      };
-      const limit = current.page?.limit ?? 25;
-      const skills = [
-        item,
-        ...current.skills.filter((skill) => skill.id !== revision.skillId),
-      ].slice(0, limit);
-      return {
-        capability: "available",
-        skills,
-        page: {
-          limit: current.page?.limit ?? 25,
-          offset: 0,
-          returned: skills.length,
-        },
-      };
-    });
+  const uploaded = () => {
     closeUpload();
-    setAnnouncement("上传完成，可在 Skill 配置中决定是否启用。");
+    setAnnouncement("上传完成。");
+    void refresh();
+  };
+
+  const mutate = async (
+    skill: AdminSkillListResponse["skills"][number],
+    operation: "enable" | "disable" | "delete",
+  ) => {
+    if (
+      operation === "delete" &&
+      !window.confirm(
+        skill.enabled
+          ? `删除 ${skill.name} 会先停用并从 Skill 库移除，是否继续？`
+          : `确认从 Skill 库删除 ${skill.name}？`,
+      )
+    ) {
+      return;
+    }
+    setPendingSkillId(skill.id);
+    setAnnouncement("");
+    try {
+      const response = await fetch(
+        `/api/v1/admin/assistant/skills/${skill.id}${
+          operation === "delete" ? "" : `/${operation}`
+        }`,
+        {
+          method: operation === "delete" ? "DELETE" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId: crypto.randomUUID() }),
+        },
+      );
+      if (!response.ok) throw new Error("mutation failed");
+      await refresh();
+      setAnnouncement(
+        operation === "enable"
+          ? "Skill 已启用。"
+          : operation === "disable"
+            ? "Skill 已停用。"
+            : "Skill 已删除。",
+      );
+    } catch {
+      setAnnouncement("操作失败，Skill 状态未确认。");
+    } finally {
+      setPendingSkillId(null);
+    }
   };
 
   return (
@@ -252,7 +246,7 @@ export function AssistantSkillRegistryPanel({
         ) : null}
         {canRead && permissions.canUpload ? (
           <button
-            onClick={(event) => openUpload(event.currentTarget, null)}
+            onClick={(event) => openUpload(event.currentTarget)}
             type="button"
           >
             上传 Skill ZIP
@@ -278,32 +272,29 @@ export function AssistantSkillRegistryPanel({
           {snapshot.skills.map((skill) => (
             <li key={skill.id}>
               <div>
-                <strong>{skill.name}</strong>
-                {skill.revision ? (
-                  <span>
-                    revision #{skill.revision.number} ·{" "}
-                    <strong>
-                      {skill.revision.state === "published" ? "可启用" : "已归档"}
-                    </strong>{" "}
-                    · digest{" "}
-                    {skill.revision.artifactSha256Prefix}
-                  </span>
-                ) : (
-                  <span>尚无 revision</span>
-                )}
+                <strong>{skill.enabled ? "● 已启用" : "○ 未启用"}</strong>
+                <span>{skill.name}</span>
+                <small>{skill.description}</small>
               </div>
               <div>
-                {canRead && permissions.canUpload ? (
+                {canRead && permissions.canConfigure ? (
                   <button
-                    onClick={(event) =>
-                      openUpload(event.currentTarget, {
-                        id: skill.id,
-                        name: skill.name,
-                      })
+                    disabled={pendingSkillId === skill.id}
+                    onClick={() =>
+                      void mutate(skill, skill.enabled ? "disable" : "enable")
                     }
                     type="button"
                   >
-                    上传新版本 {skill.name}
+                    {skill.enabled ? "停用" : "启用"}
+                  </button>
+                ) : null}
+                {canRead && permissions.canConfigure ? (
+                  <button
+                    disabled={pendingSkillId === skill.id}
+                    onClick={() => void mutate(skill, "delete")}
+                    type="button"
+                  >
+                    删除
                   </button>
                 ) : null}
               </div>
@@ -315,7 +306,6 @@ export function AssistantSkillRegistryPanel({
         <AssistantSkillUploadDialog
           onClose={closeUpload}
           onUploaded={uploaded}
-          targetSkill={uploadTarget ?? undefined}
         />
       ) : null}
     </section>

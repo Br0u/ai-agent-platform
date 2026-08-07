@@ -22,8 +22,11 @@ SkillSetState = Literal["candidate", "active", "superseded", "failed", "discarde
 class RegistryError(RuntimeError):
     """Stable registry error that never includes source or credential material."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self, code: str, message: str, *, conflicting_skill_id: UUID | None = None
+    ) -> None:
         self.code = code
+        self.conflicting_skill_id = conflicting_skill_id
         super().__init__(message)
 
 
@@ -43,6 +46,15 @@ class CreateUploadRevision:
     assertion_nonce: UUID
     package: CanonicalSkillPackage
     target_skill_id: UUID | None
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveSkill:
+    actor: UUID
+    request_id: UUID
+    assertion_nonce: UUID
+    skill_id: UUID
+    expected_artifact_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,6 +189,8 @@ class PublishedRevisionPage:
 
 class SkillRegistryRepository(Protocol):
     async def create_upload_revision(self, command: CreateUploadRevision) -> StoredRevision: ...
+
+    async def archive_skill(self, command: ArchiveSkill) -> None: ...
 
     async def list_skills(
         self, *, limit: int = 50, offset: int = 0

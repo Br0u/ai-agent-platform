@@ -19,6 +19,7 @@ from skill_registry.repository import PostgresSkillRegistryRepository
 from skill_registry.schema import SCHEMA_VERSION_5_SQL
 from skill_registry.skill_set_repository import PostgresSkillSetRepository
 from skill_registry.types import (
+    ArchiveSkill,
     ClonePreviousSkillSet,
     CreateSkillSet,
     CreateUploadRevision,
@@ -223,6 +224,30 @@ def skill_set_repository_with(
 
 
 @pytest.mark.asyncio
+async def test_archive_skill_requires_inactive_matching_digest() -> None:
+    repository, connection = repository_with(
+        [
+            Reply("FOR UPDATE OF skill", one=("a" * 64, False)),
+            Reply("UPDATE skill_registry.skills"),
+            Reply("INSERT INTO skill_registry.skill_control_events"),
+        ]
+    )
+
+    await repository.archive_skill(
+        ArchiveSkill(
+            actor=ACTOR,
+            request_id=uuid4(),
+            assertion_nonce=uuid4(),
+            skill_id=SKILL_ID,
+            expected_artifact_sha256="a" * 64,
+        )
+    )
+
+    assert connection.committed is True
+    assert "archived_at = now()" in connection.script.executions[-2][0]
+
+
+@pytest.mark.asyncio
 async def test_create_upload_revision_writes_complete_bundle_in_one_transaction() -> None:
     repository, connection = repository_with(
         [
@@ -289,6 +314,7 @@ async def test_new_upload_uses_unique_slug_as_source_for_conflict_or_idempotence
     with pytest.raises(RegistryError) as caught:
         await conflicting.create_upload_revision(create_command())
     assert caught.value.code == "SKILL_NAME_CONFLICT"
+    assert caught.value.conflicting_skill_id == SKILL_ID
     assert (
         "ON CONFLICT (slug) WHERE archived_at IS NULL DO NOTHING"
         in conflict_connection.script.executions[1][0]
