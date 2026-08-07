@@ -224,8 +224,8 @@ class PostgresSkillRegistryRepository:
                             """SELECT latest.artifact_sha256,
                               EXISTS (
                                 SELECT 1
-                                FROM skill_registry.active_agent_skill_sets AS active_set
-                                JOIN skill_registry.agent_skill_set_items AS active_item
+                                FROM skill_registry.manager_active_skill_set AS active_set
+                                JOIN skill_registry.manager_skill_set_items AS active_item
                                   ON active_item.set_id = active_set.active_set_id
                                 WHERE active_set.agent_id = 'maduoduo'
                                   AND active_item.skill_id = skill.id
@@ -374,8 +374,8 @@ class PostgresSkillRegistryRepository:
               latest.manifest ->> 'description',
               EXISTS (
                 SELECT 1
-                FROM skill_registry.active_agent_skill_sets AS active_set
-                JOIN skill_registry.agent_skill_set_items AS active_item
+                FROM skill_registry.manager_active_skill_set AS active_set
+                JOIN skill_registry.manager_skill_set_items AS active_item
                   ON active_item.set_id = active_set.active_set_id
                 WHERE active_set.agent_id = 'maduoduo'
                   AND active_item.skill_id = skill.id

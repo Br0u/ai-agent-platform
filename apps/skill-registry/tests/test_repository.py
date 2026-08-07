@@ -244,6 +244,12 @@ async def test_archive_skill_requires_inactive_matching_digest() -> None:
     )
 
     assert connection.committed is True
+    archive_query = next(
+        query for query, _ in connection.script.executions if "FOR UPDATE OF skill" in query
+    )
+    assert "FROM skill_registry.manager_active_skill_set AS active_set" in archive_query
+    assert "JOIN skill_registry.manager_skill_set_items AS active_item" in archive_query
+    assert "FROM skill_registry.active_agent_skill_sets" not in archive_query
     assert "archived_at = now()" in connection.script.executions[-2][0]
 
 
@@ -401,7 +407,9 @@ async def test_repository_queries_lists_files_and_previous_published_revision() 
     assert summaries[0].replacement_token == "a" * 64
     assert summaries[0].revision_id == REVISION_ID
     list_query = connection.script.executions[0][0]
-    assert "active_agent_skill_sets" in list_query
+    assert "FROM skill_registry.manager_active_skill_set AS active_set" in list_query
+    assert "JOIN skill_registry.manager_skill_set_items AS active_item" in list_query
+    assert "FROM skill_registry.active_agent_skill_sets" not in list_query
     assert "candidate" not in list_query
     assert connection.script.executions[0][1] == (25, 10)
     assert revision.id == REVISION_ID
