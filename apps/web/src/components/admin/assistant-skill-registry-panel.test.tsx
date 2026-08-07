@@ -515,7 +515,11 @@ describe("AssistantSkillRegistryPanel", () => {
     expect(screen.getByRole("button", { name: "停用" })).toBeEnabled();
   });
 
-  it("unlocks an unknown delete only after authoritative pagination confirms absence", async () => {
+  it("unlocks an unknown delete only after the terminal authoritative page confirms absence", async () => {
+    let resolveTerminalPage!: (response: Response) => void;
+    const terminalPage = new Promise<Response>((resolve) => {
+      resolveTerminalPage = resolve;
+    });
     vi.spyOn(window, "confirm").mockReturnValue(true);
     vi.stubGlobal(
       "fetch",
@@ -534,16 +538,21 @@ describe("AssistantSkillRegistryPanel", () => {
         .mockResolvedValueOnce(
           Response.json({
             version: "1",
-            skills: [],
-            page: { limit: 100, offset: 0, returned: 0 },
-            requestId: "delete-confirmed-absent",
+            skills: Array.from({ length: 100 }, (_, index) => ({
+              ...enabledSkill,
+              id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+              name: `other-skill-${index}`,
+            })),
+            page: { limit: 100, offset: 0, returned: 100 },
+            requestId: "delete-first-page",
             permissions: {
               canUpload: true,
               canManageConnections: false,
               canConfigure: true,
             },
           }),
-        ),
+        )
+        .mockReturnValueOnce(terminalPage),
     );
     render(
       <AssistantSkillRegistryPanel
@@ -560,16 +569,126 @@ describe("AssistantSkillRegistryPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "删除" }));
 
     await waitFor(() =>
-      expect(screen.queryByText(enabledSkill.name)).not.toBeInTheDocument(),
+      expect(fetch).toHaveBeenNthCalledWith(
+        3,
+        "/api/v1/admin/assistant/skills?limit=100&offset=100",
+        expect.anything(),
+      ),
     );
     expect(
       screen.getByRole("button", { name: "上传 Skill ZIP" }),
-    ).toBeEnabled();
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "停用" })).toBeDisabled();
+
+    resolveTerminalPage!(
+      Response.json({
+        version: "1",
+        skills: [],
+        page: { limit: 100, offset: 100, returned: 0 },
+        requestId: "delete-confirmed-absent",
+        permissions: {
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        },
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByText(enabledSkill.name)).not.toBeInTheDocument(),
+    );
     expect(fetch).toHaveBeenNthCalledWith(
       2,
       "/api/v1/admin/assistant/skills?limit=100&offset=0",
       expect.anything(),
     );
+    expect(
+      screen.getByRole("button", { name: "上传 Skill ZIP" }),
+    ).toBeEnabled();
+  });
+
+  it("keeps an unknown delete unresolved when a later page still contains the target", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "delete-unknown",
+              error: { code: "result_unknown" },
+            },
+            { status: 503 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            version: "1",
+            skills: Array.from({ length: 100 }, (_, index) => ({
+              ...enabledSkill,
+              id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+              name: `other-skill-${index}`,
+            })),
+            page: { limit: 100, offset: 0, returned: 100 },
+            requestId: "delete-first-page",
+            permissions: {
+              canUpload: true,
+              canManageConnections: false,
+              canConfigure: true,
+            },
+          }),
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            version: "1",
+            skills: [enabledSkill],
+            page: { limit: 100, offset: 100, returned: 1 },
+            requestId: "delete-target-still-present",
+            permissions: {
+              canUpload: true,
+              canManageConnections: false,
+              canConfigure: true,
+            },
+          }),
+        ),
+    );
+    render(
+      <AssistantSkillRegistryPanel
+        canRead
+        initialPermissions={{
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        }}
+        initialSnapshot={{
+          capability: "available",
+          skills: [enabledSkill, secondSkill],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "删除" })[0]);
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenNthCalledWith(
+        3,
+        "/api/v1/admin/assistant/skills?limit=100&offset=100",
+        expect.anything(),
+      ),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "操作结果正在确认，请刷新后再试。",
+    );
+    expect(
+      screen.getByRole("button", { name: "上传 Skill ZIP" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "停用" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "启用" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "刷新 Skill 列表" }),
+    ).toBeEnabled();
   });
 
   it("sends a confirmed replacement re-auth response to the exact staff route", async () => {
