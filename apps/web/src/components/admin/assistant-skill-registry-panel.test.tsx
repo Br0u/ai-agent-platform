@@ -30,6 +30,7 @@ const secondSkill = {
   enabled: false,
   revisionId: "66666666-6666-4666-8666-666666666666",
 };
+const replacementRevisionId = "77777777-7777-4777-8777-777777777777";
 
 describe("AssistantSkillRegistryPanel", () => {
   it("shows one clean Skill row without revision or candidate controls", () => {
@@ -141,6 +142,99 @@ describe("AssistantSkillRegistryPanel", () => {
     expect(screen.getByRole("button", { name: "删除" })).toBeDisabled();
   });
 
+  it.each([
+    {
+      operation: "停用",
+      initial: enabledSkill,
+      stale: enabledSkill,
+      converged: { ...enabledSkill, enabled: false },
+      nextOperation: "启用",
+    },
+    {
+      operation: "启用",
+      initial: secondSkill,
+      stale: secondSkill,
+      converged: { ...secondSkill, enabled: true },
+      nextOperation: "停用",
+    },
+  ])(
+    "keeps an unknown $operation locked until the exact enabled state is observed",
+    async ({ operation, initial, stale, converged, nextOperation }) => {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(
+            Response.json(
+              {
+                version: "1",
+                requestId: "unknown",
+                error: { code: "result_unknown" },
+              },
+              { status: 503 },
+            ),
+          )
+          .mockResolvedValueOnce(
+            Response.json({
+              version: "1",
+              skills: [stale],
+              page: { limit: 100, offset: 0, returned: 1 },
+              requestId: "stale",
+              permissions: {
+                canUpload: true,
+                canManageConnections: false,
+                canConfigure: true,
+              },
+            }),
+          )
+          .mockResolvedValueOnce(
+            Response.json({
+              version: "1",
+              skills: [converged],
+              page: { limit: 100, offset: 0, returned: 1 },
+              requestId: "converged",
+              permissions: {
+                canUpload: true,
+                canManageConnections: false,
+                canConfigure: true,
+              },
+            }),
+          ),
+      );
+      render(
+        <AssistantSkillRegistryPanel
+          canRead
+          initialPermissions={{
+            canUpload: true,
+            canManageConnections: false,
+            canConfigure: true,
+          }}
+          initialSnapshot={{ capability: "available", skills: [initial] }}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: operation }));
+
+      await waitFor(() =>
+        expect(screen.getByRole("status")).toHaveTextContent(
+          "操作结果正在确认，请刷新后再试。",
+        ),
+      );
+      expect(screen.getByRole("button", { name: operation })).toBeDisabled();
+
+      fireEvent.click(screen.getByRole("button", { name: "刷新 Skill 列表" }));
+
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: nextOperation }),
+        ).toBeEnabled(),
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Skill 状态已确认。",
+      );
+    },
+  );
+
   it("refreshes authoritative state before unlocking an unknown replacement", async () => {
     let resolveRefresh!: (response: Response) => void;
     const refresh = new Promise<Response>((resolve) => {
@@ -226,7 +320,7 @@ describe("AssistantSkillRegistryPanel", () => {
     resolveRefresh!(
       Response.json({
         version: "1",
-        skills: [enabledSkill],
+        skills: [{ ...enabledSkill, revisionId: replacementRevisionId }],
         page: { limit: 100, offset: 100, returned: 1 },
         requestId: "refresh",
         permissions: {
@@ -246,7 +340,7 @@ describe("AssistantSkillRegistryPanel", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Skill 状态已确认。");
   });
 
-  it("keeps replacement controls locked when the target is absent until Refresh observes it", async () => {
+  it("keeps replacement controls locked until a new enabled revision is observed", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     vi.stubGlobal(
       "fetch",
@@ -278,9 +372,9 @@ describe("AssistantSkillRegistryPanel", () => {
         .mockResolvedValueOnce(
           Response.json({
             version: "1",
-            skills: [],
-            page: { limit: 100, offset: 0, returned: 0 },
-            requestId: "target-absent",
+            skills: [enabledSkill],
+            page: { limit: 100, offset: 0, returned: 1 },
+            requestId: "old-revision",
             permissions: {
               canUpload: true,
               canManageConnections: false,
@@ -291,9 +385,9 @@ describe("AssistantSkillRegistryPanel", () => {
         .mockResolvedValueOnce(
           Response.json({
             version: "1",
-            skills: [enabledSkill],
+            skills: [{ ...enabledSkill, revisionId: replacementRevisionId }],
             page: { limit: 100, offset: 0, returned: 1 },
-            requestId: "target-observed",
+            requestId: "replacement-observed",
             permissions: {
               canUpload: true,
               canManageConnections: false,
@@ -440,7 +534,10 @@ describe("AssistantSkillRegistryPanel", () => {
         exactConfirmationCalls += 1;
         return Response.json({
           version: "1",
-          skills: exactConfirmationCalls === 1 ? [] : [enabledSkill],
+          skills:
+            exactConfirmationCalls === 1
+              ? []
+              : [{ ...enabledSkill, revisionId: replacementRevisionId }],
           page: {
             limit: 100,
             offset: 0,

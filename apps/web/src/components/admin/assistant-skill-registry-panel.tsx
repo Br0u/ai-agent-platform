@@ -25,6 +25,11 @@ type Props = {
 type UnresolvedSkillOperation = {
   skillId: string;
   expectedPresence: "present" | "absent";
+  expectedEnabled: boolean | null;
+  expectedRevision:
+    | { kind: "exact"; revisionId: string }
+    | { kind: "changed"; revisionId: string }
+    | null;
 };
 
 function navigateToStaffReauth(path: "/staff/re-auth") {
@@ -208,13 +213,26 @@ export function AssistantSkillRegistryPanel({
           return false;
         if (parsed === null) throw new Error("invalid list response");
         const found =
+          expectation === null
+            ? undefined
+            : parsed.list.skills.find(
+                (skill) => skill.id === expectation.skillId,
+              );
+        const expectedSkillObserved =
+          found !== undefined &&
           expectation !== null &&
-          parsed.list.skills.some((skill) => skill.id === expectation.skillId);
+          expectation.expectedEnabled !== null &&
+          found.enabled === expectation.expectedEnabled &&
+          expectation.expectedRevision !== null &&
+          (expectation.expectedRevision.kind === "exact"
+            ? found.revisionId === expectation.expectedRevision.revisionId
+            : found.revisionId !== expectation.expectedRevision.revisionId);
         const expectedResultObserved =
           expectation === null ||
-          (expectation.expectedPresence === "present" && found) ||
+          (expectation.expectedPresence === "present" &&
+            expectedSkillObserved) ||
           (expectation.expectedPresence === "absent" &&
-            !found &&
+            found === undefined &&
             parsed.list.page.returned < limit);
         if (expectedResultObserved) {
           setSnapshot((current) => ({
@@ -231,7 +249,7 @@ export function AssistantSkillRegistryPanel({
           if (announce) setAnnouncement("Skill 列表已刷新。");
           return true;
         }
-        if (expectation?.expectedPresence === "absent" && found) return false;
+        if (found !== undefined) return false;
         if (parsed.list.page.returned < limit) return false;
       }
       return false;
@@ -261,18 +279,21 @@ export function AssistantSkillRegistryPanel({
   };
 
   const replacementResultUnknown = async (skillId: string): Promise<void> => {
+    const previous = snapshot.skills.find((skill) => skill.id === skillId);
     const expectation: UnresolvedSkillOperation = {
       skillId,
       expectedPresence: "present",
+      expectedEnabled: previous?.enabled ?? null,
+      expectedRevision:
+        previous === undefined
+          ? null
+          : { kind: "changed", revisionId: previous.revisionId },
     };
     setUnresolvedOperation((current) => current ?? expectation);
     closeUpload();
     if (await refresh(false, expectation)) {
       setUnresolvedOperation((current) =>
-        current?.skillId === expectation.skillId &&
-        current.expectedPresence === expectation.expectedPresence
-          ? null
-          : current,
+        current === expectation ? null : current,
       );
       setAnnouncement("Skill 状态已确认。");
     } else {
@@ -285,10 +306,7 @@ export function AssistantSkillRegistryPanel({
     const expectation = unresolvedOperation;
     if (await refresh(false, expectation)) {
       setUnresolvedOperation((current) =>
-        current?.skillId === expectation.skillId &&
-        current.expectedPresence === expectation.expectedPresence
-          ? null
-          : current,
+        current === expectation ? null : current,
       );
       setAnnouncement("Skill 状态已确认。");
     } else {
@@ -340,14 +358,17 @@ export function AssistantSkillRegistryPanel({
           const expectation: UnresolvedSkillOperation = {
             skillId: skill.id,
             expectedPresence: operation === "delete" ? "absent" : "present",
+            expectedEnabled:
+              operation === "delete" ? null : operation === "enable",
+            expectedRevision:
+              operation === "delete"
+                ? null
+                : { kind: "exact", revisionId: skill.revisionId },
           };
           setUnresolvedOperation((current) => current ?? expectation);
           if (await refresh(false, expectation)) {
             setUnresolvedOperation((current) =>
-              current?.skillId === expectation.skillId &&
-              current.expectedPresence === expectation.expectedPresence
-                ? null
-                : current,
+              current === expectation ? null : current,
             );
             setAnnouncement("Skill 状态已确认。");
           } else {
