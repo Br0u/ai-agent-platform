@@ -8,7 +8,7 @@ from skill_registry.skill_set_schema import (
     SKILL_SET_TABLE_NAMES,
 )
 
-SKILL_REGISTRY_SCHEMA_VERSION = 7
+SKILL_REGISTRY_SCHEMA_VERSION = 8
 
 SKILL_TABLE_NAMES = frozenset(
     {
@@ -1127,6 +1127,107 @@ ALTER TABLE skill_registry.agent_skill_sets
 
 INSERT INTO skill_registry.schema_versions (version)
 VALUES (7)
+ON CONFLICT (version) DO NOTHING;
+"""
+
+SCHEMA_VERSION_8_SQL = """
+CREATE OR REPLACE FUNCTION skill_registry.validate_agent_skill_set_contents()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, skill_registry
+AS $$
+DECLARE
+  target_set_id uuid;
+  stored_item_count bigint;
+  actual_item_count bigint;
+  actual_total_size bigint;
+  valid_item_count bigint;
+BEGIN
+  target_set_id := COALESCE(NEW.set_id, OLD.set_id);
+  PERFORM skill.id
+  FROM skill_registry.skills AS skill
+  WHERE skill.id IN (
+    SELECT item.skill_id
+    FROM skill_registry.agent_skill_set_items AS item
+    WHERE item.set_id = target_set_id
+  )
+  ORDER BY skill.id
+  FOR SHARE OF skill;
+
+  SELECT count(*) INTO stored_item_count
+  FROM skill_registry.agent_skill_set_items AS item
+  WHERE item.set_id = target_set_id;
+  SELECT
+    count(*),
+    COALESCE(sum(artifact.extracted_size), 0),
+    count(*) FILTER (
+      WHERE revision.state = 'published' AND skill.archived_at IS NULL
+    )
+  INTO actual_item_count, actual_total_size, valid_item_count
+  FROM skill_registry.agent_skill_set_items AS item
+  JOIN skill_registry.skill_revisions AS revision
+    ON revision.id = item.skill_revision_id AND revision.skill_id = item.skill_id
+  JOIN skill_registry.skills AS skill ON skill.id = item.skill_id
+  JOIN skill_registry.skill_revision_artifacts AS artifact
+    ON artifact.revision_id = revision.id AND artifact.skill_id = revision.skill_id
+  WHERE item.set_id = target_set_id;
+
+  IF actual_item_count <> stored_item_count
+    OR actual_item_count > 16 OR actual_total_size > 25165824
+    OR valid_item_count <> actual_item_count THEN
+    RAISE EXCEPTION 'invalid skill set contents' USING ERRCODE = '23514';
+  END IF;
+
+  UPDATE skill_registry.agent_skill_sets
+  SET item_count = actual_item_count::smallint,
+      total_extracted_size = actual_total_size
+  WHERE id = target_set_id AND state = 'candidate';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'skill set content is immutable' USING ERRCODE = '42501';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION skill_registry.reject_archived_skill_activation()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, skill_registry
+AS $$
+BEGIN
+  IF OLD.state = 'candidate' AND NEW.state = 'active' THEN
+    PERFORM skill.id
+    FROM skill_registry.skills AS skill
+    WHERE skill.id IN (
+      SELECT item.skill_id
+      FROM skill_registry.agent_skill_set_items AS item
+      WHERE item.set_id = NEW.id
+    )
+    ORDER BY skill.id
+    FOR SHARE OF skill;
+    IF EXISTS (
+      SELECT 1
+      FROM skill_registry.agent_skill_set_items AS item
+      JOIN skill_registry.skills AS skill ON skill.id = item.skill_id
+      WHERE item.set_id = NEW.id AND skill.archived_at IS NOT NULL
+    ) THEN
+      RAISE EXCEPTION 'archived skill cannot be activated'
+        USING ERRCODE = '23514';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+ALTER FUNCTION skill_registry.validate_agent_skill_set_contents()
+  OWNER TO ai_agent_skill_registry_migrator;
+ALTER FUNCTION skill_registry.reject_archived_skill_activation()
+  OWNER TO ai_agent_skill_registry_migrator;
+REVOKE ALL ON FUNCTION skill_registry.validate_agent_skill_set_contents() FROM PUBLIC;
+REVOKE ALL ON FUNCTION skill_registry.reject_archived_skill_activation() FROM PUBLIC;
+
+INSERT INTO skill_registry.schema_versions (version)
+VALUES (8)
 ON CONFLICT (version) DO NOTHING;
 """
 

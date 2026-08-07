@@ -237,7 +237,7 @@ def test_skill_set_views_expose_runtime_and_manager_boundaries_in_schema_v3() ->
 def test_schema_v4_replaces_runtime_file_index_with_canonical_utf8_order() -> None:
     sql = normalize_sql(SCHEMA_VERSION_4_SQL)
 
-    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 7
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 8
     assert "CREATE OR REPLACE VIEW skill_registry.runtime_skill_set_items" in sql
     assert "ORDER BY pg_catalog.convert_to(file.path, 'UTF8')" in sql
     assert (
@@ -254,7 +254,7 @@ def test_schema_v4_replaces_runtime_file_index_with_canonical_utf8_order() -> No
 def test_active_skill_names_are_unique_but_archived_names_are_reusable() -> None:
     sql = normalize_sql(getattr(registry_schema, "SCHEMA_VERSION_6_SQL", ""))
 
-    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 7
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 8
     assert "DROP CONSTRAINT skills_slug_key" in sql
     assert (
         "CREATE UNIQUE INDEX skills_active_slug_key "
@@ -264,12 +264,14 @@ def test_active_skill_names_are_unique_but_archived_names_are_reusable() -> None
 
 def test_archived_skills_cannot_enter_or_reenter_runtime_sets() -> None:
     sql = normalize_sql(registry_schema.SCHEMA_VERSION_3_SQL)
-    migration = normalize_sql(registry_schema.SCHEMA_VERSION_7_SQL)
+    trigger_migration = normalize_sql(registry_schema.SCHEMA_VERSION_7_SQL)
+    migration = normalize_sql(registry_schema.SCHEMA_VERSION_8_SQL)
 
     assert "skill.archived_at IS NULL" in sql
     assert sql.count("skill.archived_at IS NOT NULL") >= 2
-    assert "agent_skill_set_items_reject_archived" in migration
-    assert "agent_skill_sets_reject_archived_activation" in migration
+    assert migration.count("FOR SHARE OF skill") == 2
+    assert "agent_skill_set_items_reject_archived" in trigger_migration
+    assert "agent_skill_sets_reject_archived_activation" in trigger_migration
 
 
 def test_schema_has_permanent_identity_revision_and_nonce_uniqueness() -> None:

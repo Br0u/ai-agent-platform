@@ -348,7 +348,16 @@ async def test_real_registry_migration_and_role_boundary() -> None:
         version_rows = await owner.execute(
             "SELECT version FROM skill_registry.schema_versions ORDER BY version"
         )
-        assert await version_rows.fetchall() == [(1,), (2,), (3,), (4,), (5,), (6,)]
+        assert await version_rows.fetchall() == [
+            (1,),
+            (2,),
+            (3,),
+            (4,),
+            (5,),
+            (6,),
+            (7,),
+            (8,),
+        ]
 
         await owner.execute(
             "GRANT ai_agent_skill_registry_manager TO ai_agent_skill_registry_migrator"
@@ -743,6 +752,94 @@ async def test_activation_function_serializes_concurrent_cas() -> None:
     finally:
         await second_runtime.close()
         await first_runtime.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_archive_serializes_candidate_creation_and_activation() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    owner = await _connect(urls["test"])
+    archiver = await _connect(urls["manager"])
+    manager = await _connect(urls["manager"])
+    runtime = await _connect(urls["runtime"])
+    actor_id = uuid4()
+    try:
+        create_skill_id, create_revision_id = await _create_published_revision(
+            manager, actor_id=actor_id
+        )
+        async with archiver.transaction():
+            lock = await archiver.execute(
+                "SELECT id FROM skill_registry.skills WHERE id = %s FOR UPDATE",
+                (create_skill_id,),
+            )
+            assert await lock.fetchone() == (create_skill_id,)
+            create_task = asyncio.create_task(
+                manager.execute(
+                    _create_set_sql(),
+                    (
+                        "maduoduo",
+                        [create_revision_id],
+                        actor_id,
+                        uuid4(),
+                        uuid4(),
+                        "a" * 64,
+                    ),
+                )
+            )
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(create_task), timeout=0.1)
+            await archiver.execute(
+                "UPDATE skill_registry.skills SET archived_at = now() WHERE id = %s",
+                (create_skill_id,),
+            )
+        with pytest.raises(psycopg.errors.CheckViolation):
+            await create_task
+
+        activate_skill_id, activate_revision_id = await _create_published_revision(
+            manager, actor_id=actor_id
+        )
+        candidate_id = await _seed_candidate_set(
+            owner,
+            actor_id=actor_id,
+            revisions=((activate_skill_id, activate_revision_id),),
+        )
+        async with archiver.transaction():
+            lock = await archiver.execute(
+                "SELECT id FROM skill_registry.skills WHERE id = %s FOR UPDATE",
+                (activate_skill_id,),
+            )
+            assert await lock.fetchone() == (activate_skill_id,)
+            activate_task = asyncio.create_task(
+                runtime.execute(
+                    _activate_sql(),
+                    (
+                        "maduoduo",
+                        candidate_id,
+                        0,
+                        actor_id,
+                        uuid4(),
+                        uuid4(),
+                        "b" * 64,
+                    ),
+                )
+            )
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(activate_task), timeout=0.1)
+            await archiver.execute(
+                "UPDATE skill_registry.skills SET archived_at = now() WHERE id = %s",
+                (activate_skill_id,),
+            )
+        with pytest.raises(psycopg.errors.CheckViolation):
+            await activate_task
+    finally:
+        await runtime.close()
+        await manager.close()
+        await archiver.close()
         await owner.close()
 
 
@@ -1190,7 +1287,7 @@ async def test_backup_skill_set_access_is_read_only_and_cannot_execute_functions
     bool(MISSING_ENVIRONMENT),
     reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
 )
-async def test_real_registry_migrates_v1_history_to_v6_without_review_storage() -> None:
+async def test_real_registry_migrates_v1_history_to_v8_without_review_storage() -> None:
     urls = _validated_urls()
     owner = await _connect(urls["test"])
     migrator = await _connect(urls["migrator"])
@@ -1238,7 +1335,16 @@ async def test_real_registry_migrates_v1_history_to_v6_without_review_storage() 
         versions = await owner.execute(
             "SELECT version FROM skill_registry.schema_versions ORDER BY version"
         )
-        assert await versions.fetchall() == [(1,), (2,), (3,), (4,), (5,), (6,)]
+        assert await versions.fetchall() == [
+            (1,),
+            (2,),
+            (3,),
+            (4,),
+            (5,),
+            (6,),
+            (7,),
+            (8,),
+        ]
         columns = await owner.execute(
             """SELECT column_name
             FROM information_schema.columns
