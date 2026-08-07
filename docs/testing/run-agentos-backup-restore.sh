@@ -318,7 +318,7 @@ with zipfile.ZipFile(
             "SKILL.md",
             b"---\nname: backup-restore-skill-v1\ndescription: Backup acceptance.\nlicense: MIT\n---\n# Instructions\n",
         ),
-        ("scripts/hello.py", b"#!/usr/bin/env python3\nprint(1)\n"),
+        ("references/hello.md", b"# Backup restore reference\nRead-only fixture.\n"),
     ):
         info = zipfile.ZipInfo(
             f"{slug}/{relative}", (2026, 7, 22, 0, 0, 0)
