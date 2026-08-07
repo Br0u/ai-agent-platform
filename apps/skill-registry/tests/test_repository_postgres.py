@@ -173,6 +173,33 @@ async def test_real_postgres_upload_is_atomic_canonical_and_idempotent() -> None
     assert await table_counts_for_slug(slug) == (1, 1, 1, 1, 2)
 
 
+async def test_upload_after_archive_creates_a_new_skill_identity() -> None:
+    slug = f"pg-reupload-{uuid4().hex[:12]}"
+    actor = uuid4()
+    repository = PostgresSkillRegistryRepository(manager_repository_connection)
+    first = await repository.create_upload_revision(
+        create_command(canonicalize_skill_zip(build_zip(slug)), actor=actor)
+    )
+
+    assert MANAGER_URL is not None
+    async with await connect(MANAGER_URL) as connection:
+        await connection.execute(
+            "UPDATE skill_registry.skills SET archived_at = now() WHERE id = %s",
+            (first.skill_id,),
+        )
+
+    second = await repository.create_upload_revision(
+        create_command(
+            canonicalize_skill_zip(build_zip(slug, instructions="# Re-uploaded\n")),
+            actor=actor,
+        )
+    )
+
+    assert second.skill_id != first.skill_id
+    assert second.revision_no == 1
+    assert await table_counts_for_slug(slug) == (2, 2, 2, 2, 2)
+
+
 async def test_real_postgres_rejects_forged_package_before_any_database_write() -> None:
     slug = f"pg-rollback-{uuid4().hex[:12]}"
     package = canonicalize_skill_zip(build_zip(slug))

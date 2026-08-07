@@ -8,7 +8,7 @@ from skill_registry.skill_set_schema import (
     SKILL_SET_TABLE_NAMES,
 )
 
-SKILL_REGISTRY_SCHEMA_VERSION = 5
+SKILL_REGISTRY_SCHEMA_VERSION = 6
 
 SKILL_TABLE_NAMES = frozenset(
     {
@@ -67,6 +67,10 @@ EXPECTED_CONTROL_EVENT_TRANSACTION_COLUMN = frozenset({("transaction_id", "bigin
 
 EXPECTED_STORAGE_COLUMNS = frozenset(
     {("skill_revisions", "findings", "jsonb", True, "'[]'::jsonb")}
+)
+
+EXPECTED_SKILL_INDEXES = frozenset(
+    {("skills_active_slug_key", True, "(archived_at IS NULL)")}
 )
 
 _PG18_FINDINGS_CONSTRAINT = "CHECK (skill_registry.validate_skill_findings(findings))"
@@ -1030,6 +1034,18 @@ VALUES (5)
 ON CONFLICT (version) DO NOTHING;
 """
 
+SCHEMA_VERSION_6_SQL = """
+ALTER TABLE skill_registry.skills
+  DROP CONSTRAINT skills_slug_key;
+CREATE UNIQUE INDEX skills_active_slug_key
+  ON skill_registry.skills (slug)
+  WHERE archived_at IS NULL;
+
+INSERT INTO skill_registry.schema_versions (version)
+VALUES (6)
+ON CONFLICT (version) DO NOTHING;
+"""
+
 VERIFY_TABLES_SQL = """SELECT
   c.relname::text,
   pg_get_userbyid(c.relowner)::text
@@ -1038,6 +1054,20 @@ JOIN pg_namespace AS n ON n.oid = c.relnamespace
 WHERE n.nspname = 'skill_registry'
   AND c.relkind IN ('r', 'p')
 ORDER BY c.relname
+"""
+
+VERIFY_SKILL_INDEXES_SQL = """SELECT
+  index_class.relname::text,
+  index.indisunique,
+  pg_get_expr(index.indpred, index.indrelid)::text
+FROM pg_index AS index
+JOIN pg_class AS index_class ON index_class.oid = index.indexrelid
+JOIN pg_class AS table_class ON table_class.oid = index.indrelid
+JOIN pg_namespace AS namespace ON namespace.oid = table_class.relnamespace
+WHERE namespace.nspname = 'skill_registry'
+  AND table_class.relname = 'skills'
+  AND index_class.relname = 'skills_active_slug_key'
+ORDER BY index_class.relname
 """
 
 VERIFY_VIEWS_SQL = """SELECT

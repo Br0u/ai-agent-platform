@@ -236,12 +236,23 @@ def test_skill_set_views_expose_runtime_and_manager_boundaries_in_schema_v3() ->
 def test_schema_v4_replaces_runtime_file_index_with_canonical_utf8_order() -> None:
     sql = normalize_sql(SCHEMA_VERSION_4_SQL)
 
-    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 5
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 6
     assert "CREATE OR REPLACE VIEW skill_registry.runtime_skill_set_items" in sql
     assert "ORDER BY pg_catalog.convert_to(file.path, 'UTF8')" in sql
     assert "ALTER VIEW skill_registry.runtime_skill_set_items OWNER TO ai_agent_skill_registry_migrator" in sql
     assert "GRANT SELECT ON skill_registry.runtime_skill_set_items TO ai_agent_skill_registry_runtime" in sql
     assert "INSERT INTO skill_registry.schema_versions (version) VALUES (4)" in sql
+
+
+def test_active_skill_names_are_unique_but_archived_names_are_reusable() -> None:
+    sql = normalize_sql(getattr(registry_schema, "SCHEMA_VERSION_6_SQL", ""))
+
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 6
+    assert "DROP CONSTRAINT skills_slug_key" in sql
+    assert (
+        "CREATE UNIQUE INDEX skills_active_slug_key "
+        "ON skill_registry.skills (slug) WHERE archived_at IS NULL"
+    ) in sql
 
 
 def test_schema_has_permanent_identity_revision_and_nonce_uniqueness() -> None:

@@ -12,6 +12,7 @@ from skill_registry.schema import (
     EXPECTED_MANAGER_TABLE_GRANTS,
     EXPECTED_MANAGER_FUNCTION_GRANTS,
     EXPECTED_REGISTRY_CONSTRAINTS,
+    EXPECTED_SKILL_INDEXES,
     EXPECTED_STORAGE_COLUMNS,
     EXPECTED_TRIGGER_GUARDS,
     EXPECTED_RUNTIME_VIEW_GRANTS,
@@ -27,6 +28,7 @@ from skill_registry.schema import (
     SCHEMA_VERSION_3_SQL,
     SCHEMA_VERSION_4_SQL,
     SCHEMA_VERSION_5_SQL,
+    SCHEMA_VERSION_6_SQL,
     SELECT_SCHEMA_VERSION_SQL,
     VERIFY_BACKUP_GRANTS_SQL,
     VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL,
@@ -46,6 +48,7 @@ from skill_registry.schema import (
     VERIFY_SCHEMA_GRANTS_SQL,
     VERIFY_SCHEMA_OWNER_SQL,
     VERIFY_SECURITY_TRIGGERS_SQL,
+    VERIFY_SKILL_INDEXES_SQL,
     VERIFY_TABLES_SQL,
     VERIFY_VIEWS_SQL,
 )
@@ -82,6 +85,8 @@ class FakeCursor:
             self.versions = (1, 2, 3, 4)
         elif query == SCHEMA_VERSION_5_SQL:
             self.versions = (1, 2, 3, 4, 5)
+        elif query == SCHEMA_VERSION_6_SQL:
+            self.versions = (1, 2, 3, 4, 5, 6)
 
     async def fetchone(self) -> tuple[Any, ...] | None:
         if self._query == VERIFY_SCHEMA_OWNER_SQL:
@@ -107,6 +112,7 @@ class FakeCursor:
                 ("transaction_id", "bigint", True, ""),
             ],
             VERIFY_STORAGE_COLUMNS_SQL: sorted(EXPECTED_STORAGE_COLUMNS),
+            VERIFY_SKILL_INDEXES_SQL: sorted(EXPECTED_SKILL_INDEXES),
             VERIFY_REGISTRY_CONSTRAINTS_SQL: sorted(EXPECTED_REGISTRY_CONSTRAINTS),
             VERIFY_TRIGGER_GUARDS_SQL: sorted(EXPECTED_TRIGGER_GUARDS),
             VERIFY_FUNCTION_BOUNDARY_SQL: sorted(EXPECTED_FUNCTION_BOUNDARY),
@@ -120,8 +126,7 @@ class FakeCursor:
         return rows[self._query]
 
 
-def test_review_removal_requires_schema_v5_migration() -> None:
-    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 5
+def test_review_removal_keeps_schema_v5_migration() -> None:
     assert getattr(registry_schema, "SCHEMA_VERSION_5_SQL", "")
 
 
@@ -140,7 +145,7 @@ class FakeConnection:
 
 
 @pytest.mark.asyncio
-async def test_migration_applies_v1_through_v5_once_and_keeps_repeat_at_exact_v5() -> None:
+async def test_migration_applies_v1_through_v6_once_and_keeps_repeat_at_exact_v6() -> None:
     cursor = FakeCursor()
     connection = FakeConnection(cursor)
     urls: list[str] = []
@@ -161,9 +166,11 @@ async def test_migration_applies_v1_through_v5_once_and_keeps_repeat_at_exact_v5
     assert cursor.executed.count(SCHEMA_VERSION_3_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_5_SQL) == 1
+    assert cursor.executed.count(SCHEMA_VERSION_6_SQL) == 1
     assert cursor.executed.count(SELECT_SCHEMA_VERSION_SQL) == 2
     assert cursor.executed.count(VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL) == 2
     assert cursor.executed.count(VERIFY_STORAGE_COLUMNS_SQL) == 2
+    assert cursor.executed.count(VERIFY_SKILL_INDEXES_SQL) == 2
     assert cursor.executed.count(VERIFY_REGISTRY_CONSTRAINTS_SQL) == 2
     assert cursor.executed.count(VERIFY_TRIGGER_GUARDS_SQL) == 2
     assert cursor.executed.count(VERIFY_FUNCTION_BOUNDARY_SQL) == 2
@@ -197,10 +204,11 @@ async def test_migration_rejects_drifted_version_sets_without_reapplying_schema(
     assert SCHEMA_VERSION_3_SQL not in cursor.executed
     assert SCHEMA_VERSION_4_SQL not in cursor.executed
     assert SCHEMA_VERSION_5_SQL not in cursor.executed
+    assert SCHEMA_VERSION_6_SQL not in cursor.executed
 
 
 @pytest.mark.asyncio
-async def test_migration_upgrades_exact_v1_to_v5() -> None:
+async def test_migration_upgrades_exact_v1_to_v6() -> None:
     cursor = FakeCursor(versions=(1,))
 
     async def connector(database_url: str) -> MigrationConnection:
@@ -214,11 +222,12 @@ async def test_migration_upgrades_exact_v1_to_v5() -> None:
     assert cursor.executed.count(SCHEMA_VERSION_3_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_5_SQL) == 1
-    assert cursor.versions == (1, 2, 3, 4, 5)
+    assert cursor.executed.count(SCHEMA_VERSION_6_SQL) == 1
+    assert cursor.versions == (1, 2, 3, 4, 5, 6)
 
 
 @pytest.mark.asyncio
-async def test_migration_upgrades_exact_v2_to_v5() -> None:
+async def test_migration_upgrades_exact_v2_to_v6() -> None:
     cursor = FakeCursor(versions=(1, 2))
 
     async def connector(database_url: str) -> MigrationConnection:
@@ -232,11 +241,12 @@ async def test_migration_upgrades_exact_v2_to_v5() -> None:
     assert cursor.executed.count(SCHEMA_VERSION_3_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_5_SQL) == 1
-    assert cursor.versions == (1, 2, 3, 4, 5)
+    assert cursor.executed.count(SCHEMA_VERSION_6_SQL) == 1
+    assert cursor.versions == (1, 2, 3, 4, 5, 6)
 
 
 @pytest.mark.asyncio
-async def test_migration_upgrades_exact_v3_to_v5() -> None:
+async def test_migration_upgrades_exact_v3_to_v6() -> None:
     cursor = FakeCursor(versions=(1, 2, 3))
 
     async def connector(database_url: str) -> MigrationConnection:
@@ -250,7 +260,22 @@ async def test_migration_upgrades_exact_v3_to_v5() -> None:
     assert SCHEMA_VERSION_3_SQL not in cursor.executed
     assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_5_SQL) == 1
-    assert cursor.versions == (1, 2, 3, 4, 5)
+    assert cursor.executed.count(SCHEMA_VERSION_6_SQL) == 1
+    assert cursor.versions == (1, 2, 3, 4, 5, 6)
+
+
+@pytest.mark.asyncio
+async def test_migration_upgrades_exact_v5_to_v6() -> None:
+    cursor = FakeCursor(versions=(1, 2, 3, 4, 5))
+
+    async def connector(database_url: str) -> MigrationConnection:
+        return FakeConnection(cursor)
+
+    settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
+    await run_migration(settings, connector=connector)
+
+    assert cursor.executed.count(SCHEMA_VERSION_6_SQL) == 1
+    assert cursor.versions == (1, 2, 3, 4, 5, 6)
 
 
 @pytest.mark.asyncio

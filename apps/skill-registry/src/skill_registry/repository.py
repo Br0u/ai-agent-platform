@@ -249,7 +249,8 @@ class PostgresSkillRegistryRepository:
         if command.target_skill_id is not None:
             await cursor.execute(
                 """SELECT slug FROM skill_registry.skills
-                WHERE id = %s FOR UPDATE""",
+                WHERE id = %s AND archived_at IS NULL
+                FOR UPDATE""",
                 (command.target_skill_id,),
             )
             row = await cursor.fetchone()
@@ -266,7 +267,7 @@ class PostgresSkillRegistryRepository:
         await cursor.execute(
             """INSERT INTO skill_registry.skills (id, slug, created_by)
             VALUES (%s, %s, %s)
-            ON CONFLICT (slug) DO NOTHING
+            ON CONFLICT (slug) WHERE archived_at IS NULL DO NOTHING
             RETURNING id""",
             (candidate_skill_id, command.package.manifest.name, command.actor),
         )
@@ -274,7 +275,8 @@ class PostgresSkillRegistryRepository:
         if inserted is not None:
             return UUID(str(inserted[0])), True
         await cursor.execute(
-            """SELECT id FROM skill_registry.skills WHERE slug = %s""",
+            """SELECT id FROM skill_registry.skills
+            WHERE slug = %s AND archived_at IS NULL""",
             (command.package.manifest.name,),
         )
         existing = await cursor.fetchone()

@@ -245,7 +245,7 @@ async def test_create_upload_revision_writes_complete_bundle_in_one_transaction(
     assert connection.committed is True
     assert connection.rolled_back is False
     queries = [query for query, _ in connection.script.executions]
-    assert "ON CONFLICT (slug) DO NOTHING" in queries[1]
+    assert "ON CONFLICT (slug) WHERE archived_at IS NULL DO NOTHING" in queries[1]
     assert queries[-1].find("skill_control_events") >= 0
     artifact_parameters = connection.script.executions[4][1]
     assert artifact_parameters[-1] == package().archive
@@ -289,7 +289,11 @@ async def test_new_upload_uses_unique_slug_as_source_for_conflict_or_idempotence
     with pytest.raises(RegistryError) as caught:
         await conflicting.create_upload_revision(create_command())
     assert caught.value.code == "SKILL_NAME_CONFLICT"
-    assert "ON CONFLICT (slug) DO NOTHING" in conflict_connection.script.executions[1][0]
+    assert (
+        "ON CONFLICT (slug) WHERE archived_at IS NULL DO NOTHING"
+        in conflict_connection.script.executions[1][0]
+    )
+    assert "archived_at IS NULL" in conflict_connection.script.executions[2][0]
 
     idempotent, idempotent_connection = repository_with(
         [
@@ -308,7 +312,12 @@ async def test_new_upload_uses_unique_slug_as_source_for_conflict_or_idempotence
 @pytest.mark.asyncio
 async def test_target_revision_requires_locked_matching_slug_and_is_digest_idempotent() -> None:
     repository, _ = repository_with(
-        [Reply("FROM skill_registry.skills WHERE id = %s FOR UPDATE", one=("other-skill",))]
+        [
+            Reply(
+                "WHERE id = %s AND archived_at IS NULL",
+                one=("other-skill",),
+            )
+        ]
     )
     with pytest.raises(RegistryError) as caught:
         await repository.create_upload_revision(create_command(target_skill_id=SKILL_ID))
@@ -316,13 +325,14 @@ async def test_target_revision_requires_locked_matching_slug_and_is_digest_idemp
 
     repository, connection = repository_with(
         [
-            Reply("FROM skill_registry.skills WHERE id = %s FOR UPDATE", one=("demo-skill",)),
+            Reply("WHERE id = %s AND archived_at IS NULL", one=("demo-skill",)),
             Reply("artifact_sha256 = %s", one=stored_row()),
             Reply("INSERT INTO skill_registry.skill_control_events"),
         ]
     )
     revision = await repository.create_upload_revision(create_command(target_skill_id=SKILL_ID))
     assert revision.id == REVISION_ID
+    assert "archived_at IS NULL" in connection.script.executions[1][0]
     assert len(connection.script.executions) == 4
     assert connection.script.executions[-1][1][-1] == "replay"
 
