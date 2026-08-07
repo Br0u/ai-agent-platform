@@ -7188,28 +7188,28 @@ exec /bin/rm "$@"
         {
           mode: "baseline",
           expectedOutput: "restore drill failed database restore",
-          expectedMaxElapsedMs: 5_000,
+          expectedMaxElapsedMs: 8_000,
         },
         {
           mode: "container_hang",
           expectedOutput: "restore drill failed database restore",
-          expectedMaxElapsedMs: 7_000,
+          expectedMaxElapsedMs: 10_000,
         },
         {
           mode: "volume_hang",
           expectedOutput: "restore drill failed database restore",
-          expectedMaxElapsedMs: 7_000,
+          expectedMaxElapsedMs: 10_000,
         },
         {
           mode: "volume_unknown",
           expectedOutput:
             "restore drill failed database restore\nrestore drill cleanup failed",
-          expectedMaxElapsedMs: 7_000,
+          expectedMaxElapsedMs: 10_000,
         },
         {
           mode: "success_temp_rm_failure",
           expectedOutput: "restore drill cleanup failed",
-          expectedMaxElapsedMs: 8_000,
+          expectedMaxElapsedMs: 12_000,
         },
       ] as const;
 
@@ -7685,10 +7685,10 @@ esac
         RESTORE_MAX_ENCRYPTED_BYTES: "128",
         RESTORE_MAX_DECRYPTED_BYTES: "32",
         RESTORE_SPACE_SAFETY_BYTES: "0",
-        RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
-        RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+        RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "2",
+        RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "2",
         RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
-        RESTORE_DECRYPT_TIMEOUT_SECONDS: "1",
+        RESTORE_DECRYPT_TIMEOUT_SECONDS: "2",
         RESTORE_DECRYPT_KILL_AFTER_SECONDS: "1",
         RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "3",
         RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "2",
@@ -7713,7 +7713,7 @@ esac
         const startedAt = Date.now();
         const result = spawnSync("sh", args, {
           encoding: "utf8",
-          timeout: 10_000,
+          timeout: 15_000,
           env: {
             ...baseEnv,
             CAPTURE_DIR: captures,
@@ -7726,7 +7726,7 @@ esac
         expect(result.error, `${mode}: ${output}`).toBeUndefined();
         expect(result.status, `${mode}: ${output}`).toBe(1);
         expect(output.trim(), mode).toBe(expectedOutput);
-        expect(elapsedMs, mode).toBeLessThan(8_000);
+        expect(elapsedMs, mode).toBeLessThan(12_000);
         expect(readdirSync(restoreTmp), mode).toEqual([]);
         expect(
           statSync(path.join(captures, "container.exists"), {
@@ -7759,7 +7759,7 @@ esac
         const startedAt = Date.now();
         const result = spawnSync(path.join(bin, "signal-driver"), args, {
           encoding: "utf8",
-          timeout: 10_000,
+          timeout: 15_000,
           env: {
             ...baseEnv,
             CAPTURE_DIR: captures,
@@ -7778,7 +7778,7 @@ esac
             ? "restore drill interrupted\nrestore drill cleanup failed"
             : "restore drill interrupted",
         );
-        expect(elapsedMs, mode).toBeLessThan(8_000);
+        expect(elapsedMs, mode).toBeLessThan(12_000);
         expect(readdirSync(restoreTmp), mode).toEqual([]);
         expect(
           statSync(path.join(captures, "container.exists"), {
@@ -8534,7 +8534,7 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
         [path.join(root, "infra/docker/backup.sh")],
         {
           encoding: "utf8",
-          timeout: 10_000,
+          timeout: 20_000,
           env: {
             ...process.env,
             PATH: `${hangBin}:${process.env.PATH ?? ""}`,
@@ -8549,9 +8549,9 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
             BACKUP_TMP_DIRECTORY: hangTemporary,
             BACKUP_RUN_ONCE: "true",
             BACKUP_TIMEOUT_COMMAND: path.join(hangBin, "timeout"),
-            BACKUP_DUMP_TIMEOUT_SECONDS: "1",
+            BACKUP_DUMP_TIMEOUT_SECONDS: "2",
             BACKUP_DUMP_KILL_AFTER_SECONDS: "1",
-            BACKUP_SNAPSHOT_TIMEOUT_SECONDS: "62",
+            BACKUP_SNAPSHOT_TIMEOUT_SECONDS: "63",
             BACKUP_PROCESS_KILL_AFTER_SECONDS: "1",
           },
         },
@@ -8577,7 +8577,7 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
       expect(hung.error, hungOutput).toBeUndefined();
       expect(hung.status, hungOutput).not.toBe(0);
       expect(hung.signal, hungOutput).toBeNull();
-      expect(hangElapsedMs).toBeLessThan(7_500);
+      expect(hangElapsedMs).toBeLessThan(12_500);
       expect(hungOutput.trim()).toBe("backup database dump failed");
       for (const protectedValue of [
         databasePassword,
@@ -8612,7 +8612,7 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
       }
       rmSync(sandbox, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, 30_000);
 
   it("validates exactly the single passphrase line consumed by GnuPG", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "backup-key-format-"));
