@@ -3446,6 +3446,14 @@ secrets:
     );
     expect(runner).toContain("skill_revision_artifacts");
     expect(runner).toContain("artifact_digests_verified");
+    expect(runner).toContain("state.revisionId");
+    expect(runner).toContain("state.artifactSha256");
+    expect(runner).toContain(
+      "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    );
+    expect(runner).toContain("WHERE revision_id = '$revision_id'");
+    expect(runner).toContain("AND artifact_sha256 = '$artifact_sha'");
+    expect(runner).not.toContain("WHERE artifact_sha256 = '$artifact_sha'");
     expect(runner).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha");
     expect(runner).toContain("SKILL_REGISTRY_E2E_STATE_FILE");
     expect(runner).toContain('success_message="Skill Registry E2E passed"');

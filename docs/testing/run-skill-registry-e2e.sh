@@ -530,15 +530,22 @@ done
 
 run_skill_registry_playwright @lifecycle
 
-artifact_sha=$(node -e 'const fs=require("node:fs"); const state=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(state.artifactSha256)' "$state_file")
-case "$artifact_sha" in
-  [0-9a-f][0-9a-f]*) ;;
-  *) echo "Skill Registry E2E state digest is invalid" >&2; exit 1 ;;
-esac
-[ "${#artifact_sha}" -eq 64 ] || {
-  echo "Skill Registry E2E state digest is invalid" >&2
+state_values=$(node -e '
+  const fs = require("node:fs");
+  const state = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const sha256 = /^[0-9a-f]{64}$/;
+  if (!uuid.test(state.revisionId) || !sha256.test(state.artifactSha256)) {
+    process.exit(1);
+  }
+  process.stdout.write(`${state.revisionId}|${state.artifactSha256}`);
+' "$state_file") || {
+  echo "Skill Registry E2E final state is invalid" >&2
   exit 1
 }
+IFS='|' read -r revision_id artifact_sha <<EOF
+$state_values
+EOF
 printf '%s\n' "$artifact_sha" >>"$protected_patterns"
 
 compose restart skill-registry
@@ -551,7 +558,7 @@ user_count=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc "SELECT co
 agno_count=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc "SELECT count(*) FROM agno.agno_sessions")
 fixture_user=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc "SELECT id FROM public.users ORDER BY id LIMIT 1")
 artifact_count=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
-  "SELECT count(*) FROM skill_registry.skill_revision_artifacts WHERE artifact_sha256 = '$artifact_sha'")
+  "SELECT count(*) FROM skill_registry.skill_revision_artifacts WHERE revision_id = '$revision_id'::uuid AND artifact_sha256 = '$artifact_sha'")
 [ "$artifact_count" = 1 ] || {
   echo "published artifact digest was not persisted" >&2
   exit 1
