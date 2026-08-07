@@ -5184,9 +5184,7 @@ exit 0
     expect(script).toContain("SET CONSTRAINTS ALL DEFERRED");
     expect(script).toContain("skill.current_revision_id");
     expect(script).toContain("agent_skill_sets_sync_current_revisions");
-    expect(script).toContain(
-      "conrelid = 'skill_registry.skills'::regclass",
-    );
+    expect(script).toContain("conrelid = 'skill_registry.skills'::regclass");
     expect(script).toContain("--file=/restore/manager-insert-check.sql");
     expect(script).toContain("--file=/restore/backup-insert-denied.sql");
     expect(script).toContain("--set=VERBOSITY=verbose");
