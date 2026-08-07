@@ -22,6 +22,11 @@ type Props = {
   navigateToReauth?: (path: "/staff/re-auth") => void;
 };
 
+type UnresolvedSkillOperation = {
+  skillId: string;
+  expectedPresence: "present" | "absent";
+};
+
 function navigateToStaffReauth(path: "/staff/re-auth") {
   window.location.assign(path);
 }
@@ -135,7 +140,9 @@ export function AssistantSkillRegistryPanel({
   const [permissions, setPermissions] = useState(initialPermissions);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [pendingSkillId, setPendingSkillId] = useState<string | null>(null);
+  const [mutatingSkillId, setMutatingSkillId] = useState<string | null>(null);
+  const [unresolvedOperation, setUnresolvedOperation] =
+    useState<UnresolvedSkillOperation | null>(null);
   const uploadTrigger = useRef<HTMLButtonElement>(null);
   const restoreUploadFocus = useRef(false);
   const listAbort = useRef<AbortController | null>(null);
@@ -173,7 +180,7 @@ export function AssistantSkillRegistryPanel({
 
   const refresh = async (
     announce = true,
-    expectedSkillId: string | null = null,
+    expectation: UnresolvedSkillOperation | null = null,
   ): Promise<boolean> => {
     const generation = listGeneration.current + 1;
     listGeneration.current = generation;
@@ -186,9 +193,9 @@ export function AssistantSkillRegistryPanel({
       for (
         let offset = 0;
         offset <= 1_000_000;
-        offset += expectedSkillId === null ? 25 : 100
+        offset += expectation === null ? 25 : 100
       ) {
-        const limit = expectedSkillId === null ? 25 : 100;
+        const limit = expectation === null ? 25 : 100;
         const response = await fetch(
           `/api/v1/admin/assistant/skills?limit=${limit}&offset=${offset}`,
           { cache: "no-store", signal: controller.signal },
@@ -201,18 +208,30 @@ export function AssistantSkillRegistryPanel({
           return false;
         if (parsed === null) throw new Error("invalid list response");
         const found =
-          expectedSkillId === null ||
-          parsed.list.skills.some((skill) => skill.id === expectedSkillId);
-        if (found) {
-          setSnapshot({
+          expectation !== null &&
+          parsed.list.skills.some((skill) => skill.id === expectation.skillId);
+        const expectedResultObserved =
+          expectation === null ||
+          (expectation.expectedPresence === "present" && found) ||
+          (expectation.expectedPresence === "absent" &&
+            !found &&
+            parsed.list.page.returned < limit);
+        if (expectedResultObserved) {
+          setSnapshot((current) => ({
             capability: "available",
-            skills: parsed.list.skills,
+            skills:
+              expectation?.expectedPresence === "absent"
+                ? current.skills.filter(
+                    (skill) => skill.id !== expectation.skillId,
+                  )
+                : parsed.list.skills,
             page: parsed.list.page,
-          });
+          }));
           setPermissions(parsed.permissions);
           if (announce) setAnnouncement("Skill 列表已刷新。");
           return true;
         }
+        if (expectation?.expectedPresence === "absent" && found) return false;
         if (parsed.list.page.returned < limit) return false;
       }
       return false;
@@ -242,20 +261,35 @@ export function AssistantSkillRegistryPanel({
   };
 
   const replacementResultUnknown = async (skillId: string): Promise<void> => {
-    setPendingSkillId(skillId);
+    const expectation: UnresolvedSkillOperation = {
+      skillId,
+      expectedPresence: "present",
+    };
+    setUnresolvedOperation((current) => current ?? expectation);
     closeUpload();
-    if (await refresh(false, skillId)) {
-      setPendingSkillId(null);
+    if (await refresh(false, expectation)) {
+      setUnresolvedOperation((current) =>
+        current?.skillId === expectation.skillId &&
+        current.expectedPresence === expectation.expectedPresence
+          ? null
+          : current,
+      );
       setAnnouncement("Skill 状态已确认。");
     } else {
       setAnnouncement("操作结果正在确认，请刷新后再试。");
     }
   };
 
-  const confirmPendingReplacement = async (): Promise<void> => {
-    if (pendingSkillId === null) return;
-    if (await refresh(false, pendingSkillId)) {
-      setPendingSkillId(null);
+  const confirmUnresolvedOperation = async (): Promise<void> => {
+    if (unresolvedOperation === null) return;
+    const expectation = unresolvedOperation;
+    if (await refresh(false, expectation)) {
+      setUnresolvedOperation((current) =>
+        current?.skillId === expectation.skillId &&
+        current.expectedPresence === expectation.expectedPresence
+          ? null
+          : current,
+      );
       setAnnouncement("Skill 状态已确认。");
     } else {
       setAnnouncement("操作结果正在确认，请刷新后再试。");
@@ -271,6 +305,7 @@ export function AssistantSkillRegistryPanel({
     skill: AdminSkillListResponse["skills"][number],
     operation: "enable" | "disable" | "delete",
   ) => {
+    if (unresolvedOperation !== null || mutatingSkillId !== null) return;
     if (
       operation === "delete" &&
       !window.confirm(
@@ -281,9 +316,8 @@ export function AssistantSkillRegistryPanel({
     ) {
       return;
     }
-    setPendingSkillId(skill.id);
+    setMutatingSkillId(skill.id);
     setAnnouncement("");
-    let preservePending = false;
     try {
       const response = await fetch(
         `/api/v1/admin/assistant/skills/${skill.id}${
@@ -303,9 +337,18 @@ export function AssistantSkillRegistryPanel({
           return;
         }
         if (failure === "result_unknown") {
-          preservePending = true;
-          if (await refresh(false, skill.id)) {
-            preservePending = false;
+          const expectation: UnresolvedSkillOperation = {
+            skillId: skill.id,
+            expectedPresence: operation === "delete" ? "absent" : "present",
+          };
+          setUnresolvedOperation((current) => current ?? expectation);
+          if (await refresh(false, expectation)) {
+            setUnresolvedOperation((current) =>
+              current?.skillId === expectation.skillId &&
+              current.expectedPresence === expectation.expectedPresence
+                ? null
+                : current,
+            );
             setAnnouncement("Skill 状态已确认。");
           } else {
             setAnnouncement("操作结果正在确认，请刷新后再试。");
@@ -325,7 +368,7 @@ export function AssistantSkillRegistryPanel({
     } catch {
       setAnnouncement("操作失败，Skill 状态未确认。");
     } finally {
-      if (!preservePending) setPendingSkillId(null);
+      setMutatingSkillId(null);
     }
   };
 
@@ -353,9 +396,9 @@ export function AssistantSkillRegistryPanel({
           <button
             disabled={refreshing}
             onClick={() =>
-              void (pendingSkillId === null
+              void (unresolvedOperation === null
                 ? refresh()
-                : confirmPendingReplacement())
+                : confirmUnresolvedOperation())
             }
             type="button"
           >
@@ -364,7 +407,7 @@ export function AssistantSkillRegistryPanel({
         ) : null}
         {canRead && permissions.canUpload ? (
           <button
-            disabled={pendingSkillId !== null}
+            disabled={mutatingSkillId !== null || unresolvedOperation !== null}
             onClick={(event) => openUpload(event.currentTarget)}
             type="button"
           >
@@ -398,7 +441,10 @@ export function AssistantSkillRegistryPanel({
               <div>
                 {canRead && permissions.canConfigure ? (
                   <button
-                    disabled={pendingSkillId === skill.id}
+                    disabled={
+                      unresolvedOperation !== null ||
+                      mutatingSkillId === skill.id
+                    }
                     onClick={() =>
                       void mutate(skill, skill.enabled ? "disable" : "enable")
                     }
@@ -409,7 +455,10 @@ export function AssistantSkillRegistryPanel({
                 ) : null}
                 {canRead && permissions.canConfigure ? (
                   <button
-                    disabled={pendingSkillId === skill.id}
+                    disabled={
+                      unresolvedOperation !== null ||
+                      mutatingSkillId === skill.id
+                    }
                     onClick={() => void mutate(skill, "delete")}
                     type="button"
                   >
