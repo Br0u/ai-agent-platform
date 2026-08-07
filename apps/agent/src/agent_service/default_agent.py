@@ -21,8 +21,8 @@ MADUODUO_SAFETY_INSTRUCTIONS = (
 NO_SKILL_INSTRUCTION = (
     "你没有工具或操作权限，不得伪造搜索、读取、写入、发送、执行或其他操作已经完成。"
 )
-REVIEWED_SKILL_INSTRUCTION = (
-    "你只能使用当前已审核 Skill 暴露的 Skill 工具；不得声称拥有其他工具或操作权限，"
+ENABLED_SKILL_INSTRUCTION = (
+    "你只能使用当前已启用 Skill 暴露的 Skill 工具；不得声称拥有其他工具或操作权限，"
     "也不得伪造执行结果。"
 )
 MADUODUO_INSTRUCTIONS = (*MADUODUO_SAFETY_INSTRUCTIONS, NO_SKILL_INSTRUCTION)
@@ -42,7 +42,7 @@ def build_default_agent(
         db=database,
         instructions=[
             *MADUODUO_SAFETY_INSTRUCTIONS,
-            NO_SKILL_INSTRUCTION if skills is None else REVIEWED_SKILL_INSTRUCTION,
+            NO_SKILL_INSTRUCTION if skills is None else ENABLED_SKILL_INSTRUCTION,
         ],
         add_history_to_context=True,
         num_history_runs=6,

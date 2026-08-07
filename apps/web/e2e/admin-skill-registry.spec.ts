@@ -67,7 +67,7 @@ function readState(): E2EState {
 test.describe("Skill Registry delivery", () => {
   test.describe.configure({ mode: "serial" });
 
-  test("@lifecycle workforce:admin uploads pending and workforce:super_admin publishes after MFA", async ({
+  test("@lifecycle workforce:admin uploads a published revision", async ({
     baseURL,
     page,
   }) => {
@@ -100,7 +100,7 @@ test.describe("Skill Registry delivery", () => {
         response.request().method() === "POST" &&
         response.url().endsWith("/api/v1/admin/assistant/skills/uploads"),
     );
-    await page.getByRole("button", { name: "提交审核" }).click();
+    await page.getByRole("button", { name: "上传", exact: true }).click();
     const uploaded = await uploadedResponse;
     expect(uploaded.status()).toBe(201);
     const uploadBody = (await uploaded.json()) as {
@@ -115,57 +115,26 @@ test.describe("Skill Registry delivery", () => {
     };
     expect(uploadBody.revision).toMatchObject({
       name: slug,
-      state: "pending_review",
+      state: "published",
     });
     await expect(page.getByText(slug, { exact: true })).toBeVisible();
-    await expect(
-      page.getByText("pending_review", { exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: `查看审核详情 ${slug}` }),
-    ).toHaveCount(0);
+    await expect(page.getByText("published", { exact: true })).toBeVisible();
 
     const uploaderList = await page.context().request.get(LIST_PATH);
     expect(uploaderList.status()).toBe(200);
     await expect(uploaderList.json()).resolves.toMatchObject({
-      permissions: { canReview: false, canUpload: true },
+      permissions: { canUpload: true },
       skills: [
         expect.objectContaining({
           id: uploadBody.revision.skillId,
           revision: expect.objectContaining({
             id: uploadBody.revision.id,
-            state: "pending_review",
+            state: "published",
           }),
         }),
       ],
     });
 
-    // Actor A lacks review permission; a direct review attempt is denied before
-    // it can mutate the pending revision. An uploader with that permission may
-    // self-review after recent MFA.
-    const selfReview = await page
-      .context()
-      .request.post(
-        `/api/v1/admin/assistant/skills/${uploadBody.revision.skillId}/revisions/${uploadBody.revision.id}/review`,
-        {
-          headers: originHeaders,
-          data: {
-            decision: "approve",
-            expectedState: "pending_review",
-            reason: null,
-            attestations: {
-              contentReviewed: true,
-              usageRightsConfirmed: true,
-              executionRiskAccepted: true,
-              reviewerAuthorizationConfirmed: true,
-            },
-          },
-        },
-      );
-    expect(selfReview.status(), "review permission must be required").toBe(403);
-    await expect(selfReview.json()).resolves.toMatchObject({
-      error: { code: "permission_denied" },
-    });
     await page.context().clearCookies();
 
     await addSignedSession(
@@ -201,37 +170,6 @@ test.describe("Skill Registry delivery", () => {
     expect(
       (await page.context().request.get("/api/v1/session/staff")).status(),
     ).toBe(200);
-    await page.goto("/admin/assistant");
-    await page.getByRole("button", { name: `查看审核详情 ${slug}` }).click();
-    await expect(
-      page.getByRole("heading", { name: "Revision 审核详情" }),
-    ).toBeVisible();
-    await expect(
-      page.getByText(uploadBody.revision.artifactSha256, { exact: true }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "打开审核操作" }).click();
-    const reviewDialog = page.getByRole("dialog");
-    await expect(reviewDialog).toBeVisible();
-    for (const label of [
-      "已逐项审阅内容和文件",
-      "已确认使用权和许可证",
-      "已评估并接受执行风险",
-      "确认当前账号具有审核权限",
-    ]) {
-      await reviewDialog.getByLabel(label).check();
-    }
-    const reviewedResponse = page.waitForResponse(
-      (response) =>
-        response.request().method() === "POST" &&
-        response
-          .url()
-          .endsWith(
-            `/skills/${uploadBody.revision.skillId}/revisions/${uploadBody.revision.id}/review`,
-          ),
-    );
-    await reviewDialog.getByRole("button", { name: "批准发布" }).click();
-    expect((await reviewedResponse).status()).toBe(200);
-    await expect(page.getByText("published").first()).toBeVisible();
     writeState({
       artifactSha256: uploadBody.revision.artifactSha256,
       revisionId: uploadBody.revision.id,
@@ -239,9 +177,9 @@ test.describe("Skill Registry delivery", () => {
       skillId: uploadBody.revision.skillId,
       slug,
     });
-    const reviewerStorageState = storageStatePath();
-    await page.context().storageState({ path: reviewerStorageState });
-    chmodSync(reviewerStorageState, 0o600);
+    const modelAdminStorageState = storageStatePath();
+    await page.context().storageState({ path: modelAdminStorageState });
+    chmodSync(modelAdminStorageState, 0o600);
     await page.context().clearCookies();
   });
 
@@ -288,7 +226,7 @@ test.describe("Skill Registry delivery", () => {
     await reviewer.close();
   });
 
-  test("@runtime-activate requires MFA and activates the exact reviewed revision", async ({
+  test("@runtime-activate requires MFA and activates the exact uploaded revision", async ({
     baseURL,
     browser,
   }) => {

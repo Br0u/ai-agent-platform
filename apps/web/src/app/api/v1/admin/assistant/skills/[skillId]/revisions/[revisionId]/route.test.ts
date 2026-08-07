@@ -46,7 +46,7 @@ describe("admin skill revision detail route", () => {
     });
   });
 
-  it("requires review permission, not read-only permission", async () => {
+  it("requires read permission", async () => {
     const current = fixture();
     current.access.requirePermission.mockRejectedValueOnce(
       new AuthAccessError("AUTH_PERMISSION_DENIED", 403),
@@ -58,7 +58,7 @@ describe("admin skill revision detail route", () => {
       },
     );
     expect(current.access.requirePermission).toHaveBeenCalledWith(
-      "admin:assistant:skills:review",
+      "admin:assistant:skills",
     );
     expect(response.status).toBe(403);
     expect(current.client.getRevision).not.toHaveBeenCalled();

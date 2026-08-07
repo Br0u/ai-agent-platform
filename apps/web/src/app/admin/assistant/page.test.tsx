@@ -106,7 +106,6 @@ const actor = {
     "admin:assistant:configure",
     "admin:assistant:skills",
     "admin:assistant:skills:upload",
-    "admin:assistant:skills:review",
   ],
 };
 
@@ -120,13 +119,11 @@ const skillListResponse = {
       revision: {
         id: "44444444-4444-4444-8444-444444444444",
         number: 1,
-        state: "pending_review",
+        state: "published",
         sourceType: "upload",
         artifactSha256Prefix: "aaaaaaaaaaaa",
         createdBy: "11111111-1111-4111-8111-111111111111",
         createdAt: "2026-07-21T08:00:00.000Z",
-        reviewedBy: null,
-        reviewedAt: null,
       },
     },
   ],
@@ -135,7 +132,6 @@ const skillListResponse = {
   permissions: {
     canUpload: true,
     canManageConnections: false,
-    canReview: true,
     canConfigure: false,
   },
 };

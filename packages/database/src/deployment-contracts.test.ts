@@ -3343,17 +3343,12 @@ secrets:
     const testingReadme = read("docs/testing/README.md");
     const skillsReadme = read("apps/agent/src/agent_service/skills/README.md");
 
-    for (const actor of ["workforce:admin", "workforce:super_admin"]) {
-      expect(spec).toContain(actor);
-    }
     for (const contract of [
-      "pending_review",
       "published",
       "adminSessionToken",
       "modelAdminSessionToken",
       "artifactSha256",
       "revision",
-      "self-review",
     ]) {
       expect(spec).toContain(contract);
     }
@@ -3400,7 +3395,6 @@ secrets:
     expect(runner).toContain(
       "run-restore-docker-lifecycle.sh controlled-failure",
     );
-    expect(runner).toContain("admin:assistant:skills:review");
     expect(runner).toContain("skill_revision_artifacts");
     expect(runner).toContain("artifact_digests_verified");
     expect(runner).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha");
@@ -3410,8 +3404,8 @@ secrets:
     expect(runner).not.toMatch(/curl[^\n]*(github|gitlab|gitcode)/iu);
 
     for (const document of [testingReadme, skillsReadme]) {
-      expect(document).toMatch(/库[＋+]审核|库与审核/u);
-      expect(document).toMatch(/发布不等于|published[^\n]*不能证明/u);
+      expect(document).toMatch(/Skill 库|Skill Registry/u);
+      expect(document).toMatch(/上传不等于|published[^\n]*不能证明/u);
     }
     expect(skillsReadme).toContain("LocalSkills");
     expect(skillsReadme).toMatch(/下一[^\n]*计划/u);
@@ -3425,6 +3419,42 @@ secrets:
     );
     expect(backupRunner).not.toContain("WHERE skill.name");
     expect(backupRunner).toContain("restore exact artifact digest mismatch");
+  });
+
+  it("does not expose the retired manual Skill review workflow", () => {
+    const productFiles = [
+      "README.md",
+      "apps/agent/src/agent_service/skills/README.md",
+      "apps/agent/src/agent_service/skill_artifact_repository.py",
+      "apps/agent/src/agent_service/skill_materializer.py",
+      "apps/agent/src/agent_service/skill_runtime_types.py",
+      "apps/skill-registry/pyproject.toml",
+      "apps/skill-registry/src/skill_registry/__init__.py",
+      "apps/skill-registry/src/skill_registry/skill_set_repository.py",
+      "apps/skill-registry/src/skill_registry/skill_set_schema.py",
+      "apps/web/src/components/assistant/assistant-workspace.tsx",
+      "apps/web/src/components/admin/assistant-capability-roadmap.tsx",
+      "apps/web/src/components/ui/floating-chat-widget-shadcnui.tsx",
+      "apps/web/src/content/deployment.mdx",
+      "docs/testing/README.md",
+      "infra/docker/README.md",
+    ];
+    const retired = [
+      /admin:assistant:skills:review/iu,
+      /\/review(?:\/|["'`])/iu,
+      /人工审核/iu,
+      /审核 Skill/iu,
+      /已审核/iu,
+      /reviewed Skill/iu,
+      /review workflow/iu,
+    ];
+
+    for (const file of productFiles) {
+      const source = read(file);
+      for (const pattern of retired) {
+        expect(source, `${file} contains ${pattern}`).not.toMatch(pattern);
+      }
+    }
   });
 
   it("fails closed when Skill Registry E2E temporary cleanup fails", () => {
@@ -7884,7 +7914,7 @@ esac
     expect(runbook).toContain("skill-registry-migrate");
     expect(runbook).toContain("agent / skill-registry → web → proxy/backup");
     expect(runbook).toContain(
-      "`skill_registry`保存长期、不可变的 Skill 审核证据",
+      "`skill_registry`保存长期、不可变的 Skill 上传产物与运行时集合",
     );
     expect(runbook).toContain(
       "`agent_control`仍是短生命周期控制面，不进入备份",
@@ -7943,7 +7973,7 @@ esac
       expect(runbook).toContain("runtime URL");
       expect(runbook).toContain("migrator");
     }
-    expect(rootReadme).toContain("Skill 库、审核与运行时闭环已接入");
+    expect(rootReadme).toContain("Skill 库与运行时闭环已接入");
     expect(rootReadme).toContain("96 MiB `/run/aap-skills` tmpfs");
     expect(rootReadme).toContain("GitHub/GitLab/GitCode 导入");
   });

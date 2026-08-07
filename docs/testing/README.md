@@ -4,7 +4,7 @@
 
 ## Skill Registry 纵向验收
 
-Skill 库+审核与运行时交付分成两道门禁：Registry 验收负责本地 ZIP、不可变 revision、双人审核和恢复；Runtime 验收负责把已发布 exact revision 组成集合并由 Agent 真实加载。发布不等于运行，只有激活成功且 Agent Loaded 与 Registry Active 一致才算生效。
+Skill 库与运行时交付分成两道门禁：Registry 验收负责本地 ZIP、静态安全扫描、不可变 published revision 和恢复；Runtime 验收负责把指定 exact revision 组成集合并由 Agent 真实加载。上传不等于启用，只有激活成功且 Agent Loaded 与 Registry Active 一致才算生效。
 
 运行 `pnpm skill-registry:e2e`。`run-skill-registry-e2e.sh` 创建独立 Compose project、临时 0600 secrets 和仅含 `SKILL.md`、`scripts/hello.py` 的本地 fixture；它不下载第三方 Skill。验收覆盖 `workforce:admin` 上传与自审拒绝、`workforce:super_admin` 的近期密码/TOTP 保障和发布、Registry 重启持久性，并要求加密备份恢复后恰好存在与本次上传完全相同的 artifact SHA-256，而不只是任意非空且自洽的 digest；同时复用 Task 9 的 restore lifecycle 门禁。只有临时目录、容器、network、volume 和本地镜像全部清理成功后才输出 `Skill Registry E2E passed`，任何清理失败都固定返回非零且不输出临时路径、Secret、ZIP/源码或浏览器 storage state。
 

@@ -178,7 +178,6 @@ describePostgres("PostgreSQL access-control seed", () => {
           "admin:assistant:skills",
           "admin:assistant:skills:configure",
           "admin:assistant:skills:connections",
-          "admin:assistant:skills:review",
           "admin:assistant:skills:upload",
           "admin:audit",
           "admin:blog",

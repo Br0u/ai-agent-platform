@@ -155,7 +155,7 @@ fixture_directory="$temporary_directory/fixture"
 archive_file="$temporary_directory/skill-registry-e2e.zip"
 state_file="$temporary_directory/skill-registry-state.json"
 runtime_state_file="$temporary_directory/skill-runtime-state.json"
-storage_state_file="$temporary_directory/reviewer-storage-state.json"
+storage_state_file="$temporary_directory/model-admin-storage-state.json"
 restore_root="$temporary_directory/restore"
 dump_directory="$temporary_directory/dump"
 env_file="$temporary_directory/e2e.env"
@@ -332,7 +332,7 @@ if [ "$runtime_mode" = true ]; then
   cp docs/testing/fixtures/skills/deterministic/scripts/record.py "$fixture_directory/$slug/scripts/record.py"
   fixture_members="SKILL.md scripts/record.py"
 else
-  slug="e2e-reviewed-$(openssl rand -hex 6)"
+  slug="e2e-uploaded-$(openssl rand -hex 6)"
   mkdir -p "$fixture_directory/$slug/scripts"
   cat >"$fixture_directory/$slug/SKILL.md" <<EOF
 ---
@@ -345,7 +345,7 @@ Use the local script only during this isolated acceptance.
 EOF
   cat >"$fixture_directory/$slug/scripts/hello.py" <<'EOF'
 #!/usr/bin/env python3
-print("hello from reviewed skill")
+print("hello from uploaded skill")
 EOF
   fixture_members="SKILL.md scripts/hello.py"
 fi
@@ -377,7 +377,7 @@ printf '%s\n' \
   "$role_target_session" "$admin_session" "$no_totp_admin_session" \
   "$model_admin_session" "$model_admin_stale_session" "$revoked_session" \
   "$replacement_password" "Skill Registry E2E local fixture." \
-  'print("hello from reviewed skill")' >"$protected_patterns"
+  'print("hello from uploaded skill")' >"$protected_patterns"
 chmod 600 "$protected_patterns"
 
 compose() {
@@ -395,7 +395,7 @@ import uuid
 expected = os.environ["AAP_SKILL_RUNTIME_EXPECTED"]
 security_key = open("/run/secrets/os_security_key", encoding="utf-8").read()
 boundary = f"----aap-skill-runtime-{uuid.uuid4().hex}"
-fields = {"message": "run the deterministic reviewed Skill", "stream": "true"}
+fields = {"message": "run the deterministic uploaded Skill", "stream": "true"}
 chunks = []
 for name, value in fields.items():
     chunks.extend(
@@ -480,17 +480,6 @@ expected_uploader_permissions=$(printf '%s\n' \
   'admin:assistant:skills:upload')
 [ "$uploader_permissions" = "$expected_uploader_permissions" ] || {
   echo "workforce:admin is missing the Skill read/upload grant contract" >&2
-  exit 1
-}
-uploader_review_permissions=$(compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -Atqc \
-  "SELECT count(*)
-     FROM public.user_roles ur
-     JOIN public.role_permissions rp ON rp.role_id = ur.role_id
-     JOIN public.permissions p ON p.id = rp.permission_id
-    WHERE ur.user_id = '10000000-0000-4000-8000-000000000003'::uuid
-      AND p.key = 'admin:assistant:skills:review'")
-[ "$uploader_review_permissions" = 0 ] || {
-  echo "workforce:admin unexpectedly has the Skill review grant" >&2
   exit 1
 }
 compose up -d --no-deps --wait agent skill-registry
@@ -627,7 +616,7 @@ docs/testing/run-restore-docker-lifecycle.sh timeout
 docs/testing/run-restore-docker-lifecycle.sh controlled-failure
 
 audit_leaks=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
-  "SELECT count(*) FROM public.audit_logs WHERE metadata::text LIKE '%Skill Registry E2E local fixture.%' OR metadata::text LIKE '%hello from reviewed skill%'")
+  "SELECT count(*) FROM public.audit_logs WHERE metadata::text LIKE '%Skill Registry E2E local fixture.%' OR metadata::text LIKE '%hello from uploaded skill%'")
 [ "$audit_leaks" = 0 ] || {
   echo "audit metadata contains Skill source or script output" >&2
   exit 1

@@ -86,8 +86,6 @@ function actorSkillPermissions(
     canManageConnections:
       canRead &&
       actor.permissions.includes("admin:assistant:skills:connections"),
-    canReview:
-      canRead && actor.permissions.includes("admin:assistant:skills:review"),
     canConfigure:
       canRead && actor.permissions.includes("admin:assistant:skills:configure"),
   };
@@ -238,7 +236,6 @@ export default async function AdminAssistantPage() {
       <AssistantAdminPage
         modelConfigs={modelConfigs}
         sessions={sessions}
-        skillActorUserId={actor.userId}
         skillCanRead={actor.permissions.includes("admin:assistant:skills")}
         skillPermissions={skillRegistry.permissions}
         skillRuntime={skillRuntime}

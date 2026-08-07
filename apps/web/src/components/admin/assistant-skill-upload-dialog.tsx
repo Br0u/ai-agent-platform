@@ -59,7 +59,7 @@ function parseUploadResponse(value: unknown): AdminSkillRevision | null {
       version: record.version,
       revision: record.revision,
     });
-    return parsed?.revision.state === "pending_review" ? parsed.revision : null;
+    return parsed?.revision.state === "published" ? parsed.revision : null;
   } catch {
     return null;
   }
@@ -171,7 +171,7 @@ export function AssistantSkillUploadDialog({
     }
     submittingRef.current = false;
     setSubmitting(false);
-    setAnnouncement("上传成功，状态：pending_review（待审核）。");
+    setAnnouncement("上传成功，可选择是否启用。");
     onUploaded(revision);
   };
 
@@ -215,14 +215,14 @@ export function AssistantSkillUploadDialog({
           {targetSkill === undefined
             ? "留空会创建新 Skill；更新已有 Skill 请从列表点击“上传新版本”。"
             : `正在更新 ${targetSkill.name}；上传后生成新的 revision。`}
-          ZIP 上传后只进入 pending_review，不会自动启用或接入 Agent。
+          ZIP 上传通过校验后进入 Skill 库，不会自动启用或接入 Agent。
         </small>
         {error ? <p role="alert">{error}</p> : null}
         <p aria-live="polite" role="status">
           {announcement}
         </p>
         <button disabled={submitting} type="submit">
-          {submitting ? "上传中" : "提交审核"}
+          {submitting ? "上传中" : "上传"}
         </button>
       </form>
     </AssistantSkillModal>

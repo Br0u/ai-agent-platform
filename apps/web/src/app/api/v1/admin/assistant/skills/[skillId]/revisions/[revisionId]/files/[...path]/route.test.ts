@@ -67,7 +67,7 @@ describe("admin skill file route", () => {
       },
     );
     expect(current.access.requirePermission).toHaveBeenCalledWith(
-      "admin:assistant:skills:review",
+      "admin:assistant:skills",
     );
     expect(current.client.getFile).toHaveBeenCalledWith({
       actor: actor.userId,

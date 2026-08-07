@@ -13,9 +13,7 @@ export {
 };
 
 export const ADMIN_SKILL_REVISION_STATES = [
-  "pending_review",
   "published",
-  "rejected",
   "archived",
 ] as const;
 
@@ -46,7 +44,6 @@ export type AdminSkillFindingCode = (typeof ADMIN_SKILL_FINDING_CODES)[number];
 export type AdminSkillPermissionFlags = {
   canUpload: boolean;
   canManageConnections: boolean;
-  canReview: boolean;
   canConfigure: boolean;
 };
 
@@ -60,8 +57,6 @@ export type AdminSkillRevision = {
   artifactSha256: string;
   createdBy: string;
   createdAt: string;
-  reviewedBy: string | null;
-  reviewedAt: string | null;
 };
 
 export type AdminSkillRevisionResponse = {
@@ -83,8 +78,6 @@ export type AdminSkillListResponse = {
       artifactSha256Prefix: string;
       createdBy: string;
       createdAt: string;
-      reviewedBy: string | null;
-      reviewedAt: string | null;
     };
   }>;
   page: { limit: number; offset: number; returned: number };
@@ -128,12 +121,6 @@ export type AdminSkillRevisionDetailResponse = {
       binary: boolean;
       diff: string;
     }>;
-  };
-  reviewAttestations: {
-    contentReviewed: true;
-    usageRightsConfirmed: true;
-    executionRiskAccepted: true;
-    reviewerAuthorizationConfirmed: true;
   };
 };
 
@@ -362,22 +349,6 @@ function enumValue<const Values extends readonly string[]>(
   );
 }
 
-function reviewMetadataMatchesState(
-  state: AdminSkillRevisionState,
-  createdAt: string,
-  reviewedBy: unknown,
-  reviewedAt: unknown,
-): boolean {
-  if (state === "pending_review") {
-    return reviewedBy === null && reviewedAt === null;
-  }
-  return (
-    canonicalUuid(reviewedBy) &&
-    canonicalTimestamp(reviewedAt) &&
-    reviewedAt >= createdAt
-  );
-}
-
 function readRevision(value: unknown): AdminSkillRevision | null {
   const item = exactRecord(value, [
     "id",
@@ -389,8 +360,6 @@ function readRevision(value: unknown): AdminSkillRevision | null {
     "artifactSha256",
     "createdBy",
     "createdAt",
-    "reviewedBy",
-    "reviewedAt",
   ]);
   if (
     item === null ||
@@ -403,13 +372,7 @@ function readRevision(value: unknown): AdminSkillRevision | null {
     typeof item.artifactSha256 !== "string" ||
     !SHA256.test(item.artifactSha256) ||
     !canonicalUuid(item.createdBy) ||
-    !canonicalTimestamp(item.createdAt) ||
-    !reviewMetadataMatchesState(
-      item.state,
-      item.createdAt,
-      item.reviewedBy,
-      item.reviewedAt,
-    )
+    !canonicalTimestamp(item.createdAt)
   ) {
     return null;
   }
@@ -423,8 +386,6 @@ function readRevision(value: unknown): AdminSkillRevision | null {
     artifactSha256: item.artifactSha256,
     createdBy: item.createdBy,
     createdAt: item.createdAt,
-    reviewedBy: item.reviewedBy as string | null,
-    reviewedAt: item.reviewedAt as string | null,
   };
 }
 
@@ -449,14 +410,12 @@ export function parseAdminSkillPermissionFlags(
   const flags = exactRecord(value, [
     "canUpload",
     "canManageConnections",
-    "canReview",
     "canConfigure",
   ]);
   if (
     flags === null ||
     typeof flags.canUpload !== "boolean" ||
     typeof flags.canManageConnections !== "boolean" ||
-    typeof flags.canReview !== "boolean" ||
     typeof flags.canConfigure !== "boolean"
   ) {
     return null;
@@ -464,7 +423,6 @@ export function parseAdminSkillPermissionFlags(
   return {
     canUpload: flags.canUpload,
     canManageConnections: flags.canManageConnections,
-    canReview: flags.canReview,
     canConfigure: flags.canConfigure,
   };
 }
@@ -517,8 +475,6 @@ export function parseAdminSkillListResponse(
         "artifactSha256Prefix",
         "createdBy",
         "createdAt",
-        "reviewedBy",
-        "reviewedAt",
       ]);
       if (
         item === null ||
@@ -529,13 +485,7 @@ export function parseAdminSkillListResponse(
         typeof item.artifactSha256Prefix !== "string" ||
         !SHA256_PREFIX.test(item.artifactSha256Prefix) ||
         !canonicalUuid(item.createdBy) ||
-        !canonicalTimestamp(item.createdAt) ||
-        !reviewMetadataMatchesState(
-          item.state,
-          item.createdAt,
-          item.reviewedBy,
-          item.reviewedAt,
-        )
+        !canonicalTimestamp(item.createdAt)
       ) {
         return null;
       }
@@ -547,8 +497,6 @@ export function parseAdminSkillListResponse(
         artifactSha256Prefix: item.artifactSha256Prefix,
         createdBy: item.createdBy,
         createdAt: item.createdAt,
-        reviewedBy: item.reviewedBy as string | null,
-        reviewedAt: item.reviewedAt as string | null,
       };
     }
     skills.push({
@@ -584,8 +532,6 @@ function readDetailRevision(
     "artifactSha256",
     "createdBy",
     "createdAt",
-    "reviewedBy",
-    "reviewedAt",
     "description",
     "license",
     "compatibility",
@@ -605,8 +551,6 @@ function readDetailRevision(
     artifactSha256: item.artifactSha256,
     createdBy: item.createdBy,
     createdAt: item.createdAt,
-    reviewedBy: item.reviewedBy,
-    reviewedAt: item.reviewedAt,
   });
   const allowedTools = readStringArray(
     item.allowedTools,
@@ -654,7 +598,6 @@ export function parseAdminSkillRevisionDetailResponse(
       "findings",
       "previousPublishedRevisionId",
       "diff",
-      "reviewAttestations",
     ]);
     const revision = readDetailRevision(response?.revision);
     const rawFiles = exactArray(response?.files, MAX_FILES);
@@ -663,12 +606,6 @@ export function parseAdminSkillRevisionDetailResponse(
       "pythonModules",
       "unavailablePythonModules",
     ]);
-    const attestations = exactRecord(response?.reviewAttestations, [
-      "contentReviewed",
-      "usageRightsConfirmed",
-      "executionRiskAccepted",
-      "reviewerAuthorizationConfirmed",
-    ]);
     if (
       response?.version !== "1" ||
       revision === null ||
@@ -676,11 +613,6 @@ export function parseAdminSkillRevisionDetailResponse(
       revision.fileCount !== rawFiles.length ||
       rawFindings === null ||
       dependencies === null ||
-      attestations === null ||
-      attestations.contentReviewed !== true ||
-      attestations.usageRightsConfirmed !== true ||
-      attestations.executionRiskAccepted !== true ||
-      attestations.reviewerAuthorizationConfirmed !== true ||
       !(
         response.previousPublishedRevisionId === null ||
         canonicalUuid(response.previousPublishedRevisionId)
@@ -835,12 +767,6 @@ export function parseAdminSkillRevisionDetailResponse(
       findings,
       previousPublishedRevisionId: response.previousPublishedRevisionId,
       diff,
-      reviewAttestations: {
-        contentReviewed: true,
-        usageRightsConfirmed: true,
-        executionRiskAccepted: true,
-        reviewerAuthorizationConfirmed: true,
-      },
     };
   } catch {
     return null;

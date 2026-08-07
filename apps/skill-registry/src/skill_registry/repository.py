@@ -7,7 +7,6 @@ import mimetypes
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
-from dataclasses import replace
 from datetime import datetime
 from typing import Any, Protocol, TypeVar, cast
 from uuid import UUID, uuid4
@@ -25,7 +24,6 @@ from skill_core.types import (
 from skill_registry.types import (
     CreateUploadRevision,
     RegistryError,
-    ReviewRevision,
     SkillSummary,
     StoredFile,
     StoredRevision,
@@ -35,8 +33,8 @@ from skill_registry.artifact_store import ArtifactStoreError, validate_artifact_
 
 _REVISION_COLUMNS = """revision.id, revision.skill_id, skill.slug,
   revision.revision_no, revision.state, revision.source_type, revision.manifest,
-  revision.findings, revision.created_by, revision.created_at, revision.reviewed_by,
-  revision.reviewed_at, artifact.artifact_sha256,
+  revision.findings, revision.created_by, revision.created_at,
+  artifact.artifact_sha256,
   artifact.compressed_size, artifact.extracted_size, artifact.file_count"""
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -69,7 +67,7 @@ MappedValue = TypeVar("MappedValue")
 
 
 class PostgresSkillRegistryRepository:
-    """Persist complete revision bundles and reviews in one transaction."""
+    """Persist complete, validated revision bundles in one transaction."""
 
     def __init__(
         self,
@@ -145,7 +143,7 @@ class PostgresSkillRegistryRepository:
                               id, skill_id, revision_no, state, source_type, manifest,
                               findings, created_by
                             ) VALUES (
-                              %s, %s, %s, 'pending_review', 'upload', %s, %s, %s
+                              %s, %s, %s, 'published', 'upload', %s, %s, %s
                             ) RETURNING created_at""",
                             (
                                 revision_id,
@@ -195,14 +193,12 @@ class PostgresSkillRegistryRepository:
                             skill_id=skill_id,
                             skill_slug=command.package.manifest.name,
                             revision_no=revision_no,
-                            state="pending_review",
+                            state="published",
                             source_type="upload",
                             manifest=command.package.manifest,
                             findings=command.package.findings,
                             created_by=command.actor,
                             created_at=created_row[0],
-                            reviewed_by=None,
-                            reviewed_at=None,
                             artifact_sha256=command.package.sha256,
                             compressed_size=command.package.compressed_size,
                             extracted_size=command.package.extracted_size,
@@ -301,136 +297,18 @@ class PostgresSkillRegistryRepository:
         row = await cursor.fetchone()
         return None if row is None else _stored_revision(row)
 
-    async def review_revision(self, command: ReviewRevision) -> StoredRevision:
-        failure: tuple[str, str] | None = None
-        try:
-            connection = await self._connect()
-            async with connection:
-                async with connection.transaction():
-                    async with connection.cursor() as cursor:
-                        await self._assert_nonce_unused(cursor, command.assertion_nonce)
-                        skill_scope = (
-                            "" if command.skill_id is None else "AND revision.skill_id = %s"
-                        )
-                        revision_parameters: tuple[object, ...] = (
-                            (command.revision_id,)
-                            if command.skill_id is None
-                            else (command.revision_id, command.skill_id)
-                        )
-                        await cursor.execute(
-                            f"""SELECT {_REVISION_COLUMNS}
-                            FROM skill_registry.skill_revisions AS revision
-                            JOIN skill_registry.skills AS skill ON skill.id = revision.skill_id
-                            JOIN skill_registry.skill_revision_artifacts AS artifact
-                              ON artifact.revision_id = revision.id
-                            WHERE revision.id = %s {skill_scope} FOR UPDATE OF revision""",
-                            revision_parameters,
-                        )
-                        row = await cursor.fetchone()
-                        if row is None:
-                            raise RegistryError(
-                                "REVISION_NOT_FOUND", "Skill revision does not exist"
-                            )
-                        revision = _stored_revision(row)
-                        self._validate_review(command, revision)
-                        new_state = "published" if command.decision == "approve" else "rejected"
-                        event_type = (
-                            "revision_published"
-                            if command.decision == "approve"
-                            else "revision_rejected"
-                        )
-                        await cursor.execute(
-                            """INSERT INTO skill_registry.skill_control_events (
-                              id, request_id, assertion_nonce, actor, event_type,
-                              target_id, result_code, review_reason,
-                              content_reviewed, usage_rights_confirmed,
-                              execution_risk_accepted, reviewer_authorization_confirmed
-                            ) VALUES (
-                              %s, %s, %s, %s, %s, %s, 'ok', %s,
-                              %s, %s, %s, %s
-                            )""",
-                            (
-                                self._id_factory(),
-                                command.request_id,
-                                command.assertion_nonce,
-                                str(command.reviewer),
-                                event_type,
-                                command.revision_id,
-                                command.reason,
-                                command.attestations.content_reviewed,
-                                command.attestations.usage_rights_confirmed,
-                                command.attestations.execution_risk_accepted,
-                                command.attestations.reviewer_authorization_confirmed,
-                            ),
-                        )
-                        await cursor.execute(
-                            """UPDATE skill_registry.skill_revisions
-                            SET state = %s, reviewed_by = %s, reviewed_at = now()
-                            WHERE id = %s
-                            RETURNING reviewed_at""",
-                            (
-                                new_state,
-                                command.reviewer,
-                                command.revision_id,
-                            ),
-                        )
-                        reviewed_row = await cursor.fetchone()
-                        if reviewed_row is None or not isinstance(reviewed_row[0], datetime):
-                            raise RegistryError(
-                                "REGISTRY_STORAGE_ERROR", "Skill registry operation failed"
-                            )
-                        return replace(
-                            revision,
-                            state=cast(Any, new_state),
-                            reviewed_by=command.reviewer,
-                            reviewed_at=reviewed_row[0],
-                        )
-        except RegistryError:
-            raise
-        except Exception as error:
-            failure = _database_failure(error)
-        assert failure is not None
-        raise RegistryError(*failure) from None
-
-    @staticmethod
-    def _validate_review(command: ReviewRevision, revision: StoredRevision) -> None:
-        if command.expected_state != "pending_review":
-            raise RegistryError("VALIDATION_ERROR", "Expected state must be pending_review")
-        if command.decision not in ("approve", "reject"):
-            raise RegistryError("VALIDATION_ERROR", "Review decision is invalid")
-        if not command.attestations.complete:
-            raise RegistryError("VALIDATION_ERROR", "All review attestations are required")
-        if revision.state != command.expected_state:
-            raise RegistryError("REVISION_STATE_CONFLICT", "Skill revision is no longer pending")
-        if command.decision == "approve":
-            if command.reason is not None:
-                raise RegistryError("VALIDATION_ERROR", "Approval reason must be null")
-            if any(
-                finding.code in {"unsupported_import", "private_key"}
-                for finding in revision.findings
-            ):
-                raise RegistryError("REVIEW_BLOCKED", "Blocking findings prevent publication")
-        else:
-            reason = command.reason if command.reason is not None else ""
-            if not reason.strip() or len(reason) > 500:
-                raise RegistryError(
-                    "VALIDATION_ERROR", "Rejection reason must contain 1 to 500 characters"
-                )
-
     async def list_skills(self, *, limit: int = 50, offset: int = 0) -> tuple[SkillSummary, ...]:
         if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
             raise RegistryError("VALIDATION_ERROR", "Pagination bounds are invalid")
         rows = await self._query_all(
             """SELECT skill.id, skill.slug, latest.revision_no, latest.id,
               latest.state, skill.created_at, latest.source_type,
-              latest.artifact_sha256, latest.created_by, latest.created_at,
-              latest.reviewed_by, latest.reviewed_at
+              latest.artifact_sha256, latest.created_by, latest.created_at
             FROM skill_registry.skills AS skill
             LEFT JOIN LATERAL (
               SELECT revision.id, revision.revision_no, revision.state,
                 revision.source_type, artifact.artifact_sha256,
-                revision.created_by, revision.created_at,
-                revision.reviewed_by, revision.reviewed_at
+                revision.created_by, revision.created_at
               FROM skill_registry.skill_revisions AS revision
               JOIN skill_registry.skill_revision_artifacts AS artifact
                 ON artifact.revision_id = revision.id
@@ -569,12 +447,10 @@ def _stored_revision(row: tuple[Any, ...]) -> StoredRevision:
         findings=_findings_from_json(cast(Sequence[Mapping[str, object]], row[7])),
         created_by=UUID(str(row[8])),
         created_at=cast(datetime, row[9]),
-        reviewed_by=None if row[10] is None else UUID(str(row[10])),
-        reviewed_at=cast(datetime | None, row[11]),
-        artifact_sha256=str(row[12]),
-        compressed_size=int(row[13]),
-        extracted_size=int(row[14]),
-        file_count=int(row[15]),
+        artifact_sha256=str(row[10]),
+        compressed_size=int(row[11]),
+        extracted_size=int(row[12]),
+        file_count=int(row[13]),
     )
 
 
@@ -585,7 +461,7 @@ def _skill_summary(row: tuple[Any, ...]) -> SkillSummary:
     if not isinstance(created_at, datetime):
         raise ValueError("invalid skill timestamp")
     if row[3] is None:
-        if any(row[index] is not None for index in (2, 4, 6, 7, 8, 9, 10, 11)):
+        if any(row[index] is not None for index in (2, 4, 6, 7, 8, 9)):
             raise ValueError("partial latest revision")
         return SkillSummary(skill_id, slug, None, None, None, created_at)
     revision_no = row[2]
@@ -596,14 +472,12 @@ def _skill_summary(row: tuple[Any, ...]) -> SkillSummary:
     if (
         type(revision_no) is not int
         or revision_no < 1
-        or state not in {"pending_review", "published", "rejected", "archived"}
+        or state not in {"published", "archived"}
         or type(state) is not str
         or source_type != "upload"
         or type(digest) is not str
         or _SHA256_PATTERN.fullmatch(digest) is None
         or not isinstance(revision_created_at, datetime)
-        or ((row[10] is None) != (row[11] is None))
-        or (row[11] is not None and not isinstance(row[11], datetime))
     ):
         raise ValueError("invalid latest revision")
     return SkillSummary(
@@ -617,8 +491,6 @@ def _skill_summary(row: tuple[Any, ...]) -> SkillSummary:
         latest_artifact_sha256=digest,
         latest_created_by=UUID(str(row[8])),
         latest_created_at=revision_created_at,
-        latest_reviewed_by=None if row[10] is None else UUID(str(row[10])),
-        latest_reviewed_at=row[11],
     )
 
 

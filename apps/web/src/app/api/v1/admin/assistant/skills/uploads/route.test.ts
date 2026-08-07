@@ -16,13 +16,11 @@ const revision = {
     skillId: "33333333-3333-4333-8333-333333333333",
     name: "safe-skill",
     number: 1,
-    state: "pending_review" as const,
+    state: "published" as const,
     sourceType: "upload" as const,
     artifactSha256: "a".repeat(64),
     createdBy: "11111111-1111-4111-8111-111111111111",
     createdAt: "2027-01-15T08:00:00Z",
-    reviewedBy: null,
-    reviewedAt: null,
   },
 };
 
@@ -67,7 +65,7 @@ describe("admin skill upload route", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     await expect(response.json()).resolves.toMatchObject({
       requestId: REQUEST_ID,
-      revision: { state: "pending_review" },
+      revision: { state: "published" },
     });
   });
 

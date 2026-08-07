@@ -5,7 +5,7 @@ import subprocess
 import skill_registry.schema as registry_schema
 from skill_registry.schema import (
     PREPARE_SCHEMA_SQL,
-    REVIEWED_SKILL_TABLE_NAMES,
+    SKILL_TABLE_NAMES,
     SCHEMA_VERSION_1_SQL,
     SCHEMA_VERSION_2_SQL,
     SCHEMA_VERSION_4_SQL,
@@ -118,7 +118,7 @@ def test_role_bootstrap_resets_role_settings_and_seals_replication_bypass() -> N
 def test_schema_version_one_remains_the_exact_historical_registry_bootstrap() -> None:
     sql = normalize_sql(SCHEMA_VERSION_1_SQL)
 
-    assert REVIEWED_SKILL_TABLE_NAMES == frozenset(
+    assert SKILL_TABLE_NAMES == frozenset(
         {
             "skills",
             "skill_revisions",
@@ -127,7 +127,7 @@ def test_schema_version_one_remains_the_exact_historical_registry_bootstrap() ->
             "skill_control_events",
         }
     )
-    for table_name in REVIEWED_SKILL_TABLE_NAMES:
+    for table_name in SKILL_TABLE_NAMES:
         assert f"CREATE TABLE skill_registry.{table_name}" in sql
     assert "%s" not in PREPARE_SCHEMA_SQL + SCHEMA_VERSION_1_SQL
 
@@ -236,7 +236,7 @@ def test_skill_set_views_expose_runtime_and_manager_boundaries_in_schema_v3() ->
 def test_schema_v4_replaces_runtime_file_index_with_canonical_utf8_order() -> None:
     sql = normalize_sql(SCHEMA_VERSION_4_SQL)
 
-    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 4
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 5
     assert "CREATE OR REPLACE VIEW skill_registry.runtime_skill_set_items" in sql
     assert "ORDER BY pg_catalog.convert_to(file.path, 'UTF8')" in sql
     assert "ALTER VIEW skill_registry.runtime_skill_set_items OWNER TO ai_agent_skill_registry_migrator" in sql

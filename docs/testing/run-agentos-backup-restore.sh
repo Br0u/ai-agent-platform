@@ -365,7 +365,7 @@ request = urllib.request.Request(
 with urllib.request.urlopen(request, timeout=5) as response:
     result = json.load(response)
     assert response.status == 201
-    assert result["revision"]["state"] == "pending_review"
+    assert result["revision"]["state"] == "published"
 ' >/dev/null
 
 skill_revision_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \

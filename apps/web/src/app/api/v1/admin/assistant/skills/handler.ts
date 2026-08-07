@@ -10,13 +10,8 @@ import {
 } from "@/server/auth/access";
 import { createAuditWriter } from "@/server/auth/audit";
 import {
-  SensitiveActionError,
-  requireSensitiveWorkforceActionEvidence,
-} from "@/server/auth/sensitive-action";
-import {
   AdminSkillCommandError,
   createAdminSkillCommands,
-  type AdminSkillReviewInput,
   type AuthorizedSkillCommand,
 } from "@/server/assistant/admin-skill-commands";
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
@@ -28,7 +23,6 @@ import {
 } from "@/server/assistant/skill-registry-client";
 import {
   MutationRequestError,
-  requireTrustedJsonMutation,
   requireTrustedMultipartMutation,
 } from "@/server/http/require-trusted-mutation";
 import { cancelUnreadRequestBody } from "@/server/http/cancel-request-body";
@@ -37,16 +31,10 @@ import {
   readBoundedSkillUploadMultipart,
   type BoundedSkillUpload,
 } from "@/server/http/read-bounded-multipart";
-import {
-  readBoundedJson,
-  type JsonReadResult,
-} from "@/server/http/read-bounded-json";
 
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const MAX_REVIEW_BODY_BYTES = 8 * 1024;
-const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
 
 type PublicSkillErrorCode =
   | "authentication_required"
@@ -110,14 +98,10 @@ function createDefaultCommands(): SkillCommands {
     getFile: (input) => (client ??= defaultRegistryClient()).getFile(input),
     uploadSkill: (input) =>
       (client ??= defaultRegistryClient()).uploadSkill(input),
-    reviewRevision: (input) =>
-      (client ??= defaultRegistryClient()).reviewRevision(input),
   };
   return createAdminSkillCommands({
     requireTrustedUploadMutation: requireTrustedMultipartMutation,
-    requireTrustedJsonMutation,
     requirePermission,
-    requireSensitiveAction: requireSensitiveWorkforceActionEvidence,
     audit: { write: (input) => (audit ??= createAuditWriter()).write(input) },
     client: lazyClient,
   });
@@ -153,9 +137,6 @@ function classifyError(error: unknown): PublicError {
       status: error.status,
     };
   }
-  if (error instanceof SensitiveActionError) {
-    return { code: "reauth_required", status: 401 };
-  }
   if (error instanceof AdminSkillCommandError) {
     if (error.code === "authorization_failed") {
       return { code: "permission_denied", status: 403 };
@@ -178,7 +159,6 @@ function classifyError(error: unknown): PublicError {
     }
     if (
       error.code === "REVISION_STATE_CONFLICT" ||
-      error.code === "REVIEW_BLOCKED" ||
       error.code === "SKILL_NAME_CONFLICT" ||
       error.code === "ASSERTION_REPLAY"
     ) {
@@ -193,6 +173,7 @@ function classifyError(error: unknown): PublicError {
       error.code === "SKILL_FILE_NOT_UTF8" ||
       error.code === "SKILL_FILE_TOO_LARGE" ||
       error.code === "SKILL_SCRIPT_SHEBANG_UNSUPPORTED"
+      || error.code === "SKILL_SCAN_BLOCKED"
     ) {
       return { code: "validation_error", status: 400 };
     }
@@ -221,7 +202,6 @@ function permissionFlags(actor: WorkforceActor): AdminSkillPermissionFlags {
     canManageConnections: actor.permissions.includes(
       "admin:assistant:skills:connections",
     ),
-    canReview: actor.permissions.includes("admin:assistant:skills:review"),
     canConfigure: actor.permissions.includes(
       "admin:assistant:skills:configure",
     ),
@@ -359,103 +339,6 @@ function exactFileParams(value: unknown): {
   }
 }
 
-function hasOnlyPairedSurrogates(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const unit = value.charCodeAt(index);
-    if (unit >= 0xd800 && unit <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (next < 0xdc00 || next > 0xdfff) return false;
-      index += 1;
-    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function parseReviewBody(
-  value: unknown,
-): Omit<AdminSkillReviewInput, "skillId" | "revisionId"> | null {
-  try {
-    if (typeof value !== "object" || value === null || Array.isArray(value))
-      return null;
-    const input = value as Record<string, unknown>;
-    const keys = Reflect.ownKeys(input);
-    const expected = ["decision", "reason", "expectedState", "attestations"];
-    if (
-      keys.length !== expected.length ||
-      keys.some((key) => typeof key !== "string" || !expected.includes(key))
-    )
-      return null;
-    for (const key of expected) {
-      const descriptor = Reflect.getOwnPropertyDescriptor(input, key);
-      if (
-        descriptor === undefined ||
-        !("value" in descriptor) ||
-        !descriptor.enumerable
-      )
-        return null;
-    }
-    const attestations = input.attestations;
-    if (
-      typeof attestations !== "object" ||
-      attestations === null ||
-      Array.isArray(attestations)
-    )
-      return null;
-    const attestationKeys = [
-      "contentReviewed",
-      "usageRightsConfirmed",
-      "executionRiskAccepted",
-      "reviewerAuthorizationConfirmed",
-    ];
-    const actualAttestationKeys = Reflect.ownKeys(attestations);
-    if (
-      actualAttestationKeys.length !== 4 ||
-      actualAttestationKeys.some(
-        (key) => typeof key !== "string" || !attestationKeys.includes(key),
-      )
-    )
-      return null;
-    for (const key of attestationKeys) {
-      const descriptor = Reflect.getOwnPropertyDescriptor(attestations, key);
-      if (
-        descriptor === undefined ||
-        !("value" in descriptor) ||
-        descriptor.value !== true
-      )
-        return null;
-    }
-    if (
-      (input.decision !== "approve" && input.decision !== "reject") ||
-      input.expectedState !== "pending_review" ||
-      (input.decision === "approve" && input.reason !== null) ||
-      (input.decision === "reject" &&
-        (typeof input.reason !== "string" ||
-          input.reason.trim() !== input.reason ||
-          input.reason.length === 0 ||
-          Array.from(input.reason).length > 500 ||
-          Buffer.byteLength(input.reason, "utf8") > 2_048 ||
-          !hasOnlyPairedSurrogates(input.reason) ||
-          CONTROL_CHARACTER.test(input.reason)))
-    )
-      return null;
-    return {
-      decision: input.decision,
-      reason: input.reason as string | null,
-      expectedState: "pending_review",
-      attestations: {
-        contentReviewed: true,
-        usageRightsConfirmed: true,
-        executionRiskAccepted: true,
-        reviewerAuthorizationConfirmed: true,
-      },
-    };
-  } catch {
-    return null;
-  }
-}
-
 const defaultReadDependencies = {
   access: { requirePermission },
   requestIdFactory: () => crypto.randomUUID(),
@@ -536,7 +419,7 @@ export function createAdminSkillRevisionHandler(
     let actor: WorkforceActor;
     try {
       actor = await dependencies.access.requirePermission(
-        "admin:assistant:skills:review",
+        "admin:assistant:skills",
       );
     } catch (error) {
       return errorResponse(error, requestId);
@@ -585,7 +468,7 @@ export function createAdminSkillFileHandler(
     let actor: WorkforceActor;
     try {
       actor = await dependencies.access.requirePermission(
-        "admin:assistant:skills:review",
+        "admin:assistant:skills",
       );
     } catch (error) {
       return errorResponse(error, requestId);
@@ -678,93 +561,7 @@ export function createAdminSkillUploadHandler(
   };
 }
 
-export function createAdminSkillReviewHandler(
-  overrides: {
-    commands?: Pick<SkillCommands, "authorize" | "review">;
-    readJson?: (
-      request: Request,
-      maximumBytes: number,
-    ) => Promise<JsonReadResult>;
-    requestIdFactory?: () => string;
-  } = {},
-) {
-  const readJson = overrides.readJson ?? readBoundedJson;
-  const requestIdFactory =
-    overrides.requestIdFactory ?? (() => crypto.randomUUID());
-  return async function POST(
-    request: Request,
-    routeContext: DynamicRevisionContext,
-  ): Promise<Response> {
-    const fallbackRequestId = publicRequestId(request, requestIdFactory);
-    let commands: Pick<SkillCommands, "authorize" | "review">;
-    let context: AuthorizedSkillCommand;
-    try {
-      commands = overrides.commands ?? createDefaultCommands();
-      context = await commands.authorize(request, "review");
-    } catch (error) {
-      await cancelUnreadRequestBody(request, error);
-      return errorResponse(error, fallbackRequestId);
-    }
-    let params: { skillId: string; revisionId: string } | null = null;
-    try {
-      params = exactRevisionParams(await routeContext.params);
-    } catch {
-      params = null;
-    }
-    if (params === null) {
-      const error = new AdminSkillCommandError("validation_error");
-      await cancelUnreadRequestBody(request, error);
-      return errorResponse(error, context.requestId);
-    }
-    const length = request.headers.get("content-length");
-    const oversized =
-      length !== null &&
-      /^\d+$/u.test(length) &&
-      Number(length) > MAX_REVIEW_BODY_BYTES;
-    if (oversized) {
-      await cancelUnreadRequestBody(request);
-      return Response.json(errorBody(context.requestId, "payload_too_large"), {
-        status: 413,
-        headers: NO_STORE_HEADERS,
-      });
-    }
-    let read: JsonReadResult;
-    let readFailure: unknown;
-    try {
-      read = await readJson(request, MAX_REVIEW_BODY_BYTES);
-    } catch (error) {
-      readFailure = error;
-      read = { ok: false };
-    }
-    if (!read.ok) {
-      await cancelUnreadRequestBody(request, readFailure);
-      return Response.json(errorBody(context.requestId, "validation_error"), {
-        status: 400,
-        headers: NO_STORE_HEADERS,
-      });
-    }
-    let input = parseReviewBody(read.value);
-    if (input === null)
-      return errorResponse(
-        new AdminSkillCommandError("validation_error"),
-        context.requestId,
-      );
-    try {
-      const response = await commands.review(context, { ...params, ...input });
-      return Response.json(
-        { ...response, requestId: context.requestId },
-        { headers: NO_STORE_HEADERS },
-      );
-    } catch (error) {
-      return errorResponse(error, context.requestId);
-    } finally {
-      input = null;
-    }
-  };
-}
-
 export const adminSkillListHandler = createAdminSkillListHandler();
 export const adminSkillUploadHandler = createAdminSkillUploadHandler();
 export const adminSkillRevisionHandler = createAdminSkillRevisionHandler();
 export const adminSkillFileHandler = createAdminSkillFileHandler();
-export const adminSkillReviewHandler = createAdminSkillReviewHandler();

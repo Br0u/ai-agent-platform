@@ -295,7 +295,6 @@ describe("SiteShell", () => {
             "admin:assistant:skills",
             "admin:assistant:skills:configure",
             "admin:assistant:skills:connections",
-            "admin:assistant:skills:review",
             "admin:assistant:skills:upload",
           ],
           displayName: "Model administrator",
@@ -317,7 +316,6 @@ describe("SiteShell", () => {
       "admin:assistant:skills",
       "admin:assistant:skills:configure",
       "admin:assistant:skills:connections",
-      "admin:assistant:skills:review",
       "admin:assistant:skills:upload",
     ]);
   });

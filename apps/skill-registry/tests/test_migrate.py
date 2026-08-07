@@ -8,11 +8,12 @@ from skill_registry.migrate import MigrationConnection, main, run_migration
 from skill_registry.schema import (
     EXPECTED_BACKUP_GRANTS,
     EXPECTED_FUNCTION_BOUNDARY,
+    EXPECTED_MANAGER_COLUMN_GRANTS,
     EXPECTED_MANAGER_TABLE_GRANTS,
     EXPECTED_MANAGER_FUNCTION_GRANTS,
-    EXPECTED_REVIEW_CONSTRAINTS,
-    EXPECTED_REVIEW_STORAGE_COLUMNS,
-    EXPECTED_REVIEW_TRIGGER_GUARDS,
+    EXPECTED_REGISTRY_CONSTRAINTS,
+    EXPECTED_STORAGE_COLUMNS,
+    EXPECTED_TRIGGER_GUARDS,
     EXPECTED_RUNTIME_VIEW_GRANTS,
     EXPECTED_RUNTIME_FUNCTION_GRANTS,
     EXPECTED_SCHEMA_GRANTS,
@@ -25,6 +26,7 @@ from skill_registry.schema import (
     SCHEMA_VERSION_2_SQL,
     SCHEMA_VERSION_3_SQL,
     SCHEMA_VERSION_4_SQL,
+    SCHEMA_VERSION_5_SQL,
     SELECT_SCHEMA_VERSION_SQL,
     VERIFY_BACKUP_GRANTS_SQL,
     VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL,
@@ -36,9 +38,9 @@ from skill_registry.schema import (
     VERIFY_REGISTRY_ROLE_MEMBERSHIPS_SQL,
     VERIFY_REGISTRY_ROLE_SETTINGS_SQL,
     VERIFY_REPLICATION_PARAMETER_PRIVILEGES_SQL,
-    VERIFY_REVIEW_CONSTRAINTS_SQL,
-    VERIFY_REVIEW_STORAGE_COLUMNS_SQL,
-    VERIFY_REVIEW_TRIGGER_GUARDS_SQL,
+    VERIFY_REGISTRY_CONSTRAINTS_SQL,
+    VERIFY_STORAGE_COLUMNS_SQL,
+    VERIFY_TRIGGER_GUARDS_SQL,
     VERIFY_RUNTIME_VIEW_GRANTS_SQL,
     VERIFY_RUNTIME_FUNCTION_GRANTS_SQL,
     VERIFY_SCHEMA_GRANTS_SQL,
@@ -78,6 +80,8 @@ class FakeCursor:
             self.versions = (1, 2, 3)
         elif query == SCHEMA_VERSION_4_SQL:
             self.versions = (1, 2, 3, 4)
+        elif query == SCHEMA_VERSION_5_SQL:
+            self.versions = (1, 2, 3, 4, 5)
 
     async def fetchone(self) -> tuple[Any, ...] | None:
         if self._query == VERIFY_SCHEMA_OWNER_SQL:
@@ -95,40 +99,16 @@ class FakeCursor:
             VERIFY_VIEWS_SQL: sorted(EXPECTED_VIEW_OWNERS),
             VERIFY_MANAGER_TABLE_GRANTS_SQL: sorted(EXPECTED_MANAGER_TABLE_GRANTS),
             VERIFY_MANAGER_FUNCTION_GRANTS_SQL: sorted(EXPECTED_MANAGER_FUNCTION_GRANTS),
-            VERIFY_MANAGER_COLUMN_GRANTS_SQL: [
-                ("skill_revisions", "reviewed_at", "UPDATE", False),
-                ("skill_revisions", "reviewed_by", "UPDATE", False),
-                ("skill_revisions", "state", "UPDATE", False),
-                ("skills", "archived_at", "UPDATE", False),
-            ],
+            VERIFY_MANAGER_COLUMN_GRANTS_SQL: sorted(EXPECTED_MANAGER_COLUMN_GRANTS),
             VERIFY_RUNTIME_VIEW_GRANTS_SQL: sorted(EXPECTED_RUNTIME_VIEW_GRANTS),
             VERIFY_RUNTIME_FUNCTION_GRANTS_SQL: sorted(EXPECTED_RUNTIME_FUNCTION_GRANTS),
             VERIFY_BACKUP_GRANTS_SQL: sorted(EXPECTED_BACKUP_GRANTS),
             VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL: [
                 ("transaction_id", "bigint", True, ""),
             ],
-            VERIFY_REVIEW_STORAGE_COLUMNS_SQL: [
-                ("skill_control_events", "content_reviewed", "boolean", False, ""),
-                ("skill_control_events", "execution_risk_accepted", "boolean", False, ""),
-                (
-                    "skill_control_events",
-                    "reviewer_authorization_confirmed",
-                    "boolean",
-                    False,
-                    "",
-                ),
-                (
-                    "skill_control_events",
-                    "review_reason",
-                    "character varying(500)",
-                    False,
-                    "",
-                ),
-                ("skill_control_events", "usage_rights_confirmed", "boolean", False, ""),
-                ("skill_revisions", "findings", "jsonb", True, "'[]'::jsonb"),
-            ],
-            VERIFY_REVIEW_CONSTRAINTS_SQL: sorted(EXPECTED_REVIEW_CONSTRAINTS),
-            VERIFY_REVIEW_TRIGGER_GUARDS_SQL: sorted(EXPECTED_REVIEW_TRIGGER_GUARDS),
+            VERIFY_STORAGE_COLUMNS_SQL: sorted(EXPECTED_STORAGE_COLUMNS),
+            VERIFY_REGISTRY_CONSTRAINTS_SQL: sorted(EXPECTED_REGISTRY_CONSTRAINTS),
+            VERIFY_TRIGGER_GUARDS_SQL: sorted(EXPECTED_TRIGGER_GUARDS),
             VERIFY_FUNCTION_BOUNDARY_SQL: sorted(EXPECTED_FUNCTION_BOUNDARY),
             VERIFY_SECURITY_TRIGGERS_SQL: sorted(EXPECTED_SECURITY_TRIGGERS),
             VERIFY_FORBIDDEN_GRANTS_SQL: [],
@@ -140,9 +120,9 @@ class FakeCursor:
         return rows[self._query]
 
 
-def test_runtime_file_index_upgrade_requires_schema_v4_migration() -> None:
-    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 4
-    assert getattr(registry_schema, "SCHEMA_VERSION_4_SQL", "")
+def test_review_removal_requires_schema_v5_migration() -> None:
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 5
+    assert getattr(registry_schema, "SCHEMA_VERSION_5_SQL", "")
 
 
 class FakeConnection:
@@ -160,7 +140,7 @@ class FakeConnection:
 
 
 @pytest.mark.asyncio
-async def test_migration_applies_v1_through_v4_once_and_keeps_repeat_at_exact_v4() -> None:
+async def test_migration_applies_v1_through_v5_once_and_keeps_repeat_at_exact_v5() -> None:
     cursor = FakeCursor()
     connection = FakeConnection(cursor)
     urls: list[str] = []
@@ -180,11 +160,12 @@ async def test_migration_applies_v1_through_v4_once_and_keeps_repeat_at_exact_v4
     assert cursor.executed.count(SCHEMA_VERSION_2_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_3_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
+    assert cursor.executed.count(SCHEMA_VERSION_5_SQL) == 1
     assert cursor.executed.count(SELECT_SCHEMA_VERSION_SQL) == 2
     assert cursor.executed.count(VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL) == 2
-    assert cursor.executed.count(VERIFY_REVIEW_STORAGE_COLUMNS_SQL) == 2
-    assert cursor.executed.count(VERIFY_REVIEW_CONSTRAINTS_SQL) == 2
-    assert cursor.executed.count(VERIFY_REVIEW_TRIGGER_GUARDS_SQL) == 2
+    assert cursor.executed.count(VERIFY_STORAGE_COLUMNS_SQL) == 2
+    assert cursor.executed.count(VERIFY_REGISTRY_CONSTRAINTS_SQL) == 2
+    assert cursor.executed.count(VERIFY_TRIGGER_GUARDS_SQL) == 2
     assert cursor.executed.count(VERIFY_FUNCTION_BOUNDARY_SQL) == 2
     assert cursor.executed.count(VERIFY_SECURITY_TRIGGERS_SQL) == 2
     assert cursor.executed.count(VERIFY_REGISTRY_ROLE_MEMBERSHIPS_SQL) == 2
@@ -215,10 +196,11 @@ async def test_migration_rejects_drifted_version_sets_without_reapplying_schema(
     assert SCHEMA_VERSION_2_SQL not in cursor.executed
     assert SCHEMA_VERSION_3_SQL not in cursor.executed
     assert SCHEMA_VERSION_4_SQL not in cursor.executed
+    assert SCHEMA_VERSION_5_SQL not in cursor.executed
 
 
 @pytest.mark.asyncio
-async def test_migration_upgrades_exact_v1_to_v4() -> None:
+async def test_migration_upgrades_exact_v1_to_v5() -> None:
     cursor = FakeCursor(versions=(1,))
 
     async def connector(database_url: str) -> MigrationConnection:
@@ -231,11 +213,12 @@ async def test_migration_upgrades_exact_v1_to_v4() -> None:
     assert cursor.executed.count(SCHEMA_VERSION_2_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_3_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
-    assert cursor.versions == (1, 2, 3, 4)
+    assert cursor.executed.count(SCHEMA_VERSION_5_SQL) == 1
+    assert cursor.versions == (1, 2, 3, 4, 5)
 
 
 @pytest.mark.asyncio
-async def test_migration_upgrades_exact_v2_to_v4() -> None:
+async def test_migration_upgrades_exact_v2_to_v5() -> None:
     cursor = FakeCursor(versions=(1, 2))
 
     async def connector(database_url: str) -> MigrationConnection:
@@ -248,11 +231,12 @@ async def test_migration_upgrades_exact_v2_to_v4() -> None:
     assert SCHEMA_VERSION_2_SQL not in cursor.executed
     assert cursor.executed.count(SCHEMA_VERSION_3_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
-    assert cursor.versions == (1, 2, 3, 4)
+    assert cursor.executed.count(SCHEMA_VERSION_5_SQL) == 1
+    assert cursor.versions == (1, 2, 3, 4, 5)
 
 
 @pytest.mark.asyncio
-async def test_migration_upgrades_exact_v3_to_v4() -> None:
+async def test_migration_upgrades_exact_v3_to_v5() -> None:
     cursor = FakeCursor(versions=(1, 2, 3))
 
     async def connector(database_url: str) -> MigrationConnection:
@@ -265,7 +249,8 @@ async def test_migration_upgrades_exact_v3_to_v4() -> None:
     assert SCHEMA_VERSION_2_SQL not in cursor.executed
     assert SCHEMA_VERSION_3_SQL not in cursor.executed
     assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
-    assert cursor.versions == (1, 2, 3, 4)
+    assert cursor.executed.count(SCHEMA_VERSION_5_SQL) == 1
+    assert cursor.versions == (1, 2, 3, 4, 5)
 
 
 @pytest.mark.asyncio
@@ -289,7 +274,7 @@ async def test_migration_rejects_current_schema_missing_review_storage_contract(
     class DriftedCursor(FakeCursor):
         async def fetchall(self) -> list[tuple[Any, ...]]:
             rows = await super().fetchall()
-            if self._query == VERIFY_REVIEW_STORAGE_COLUMNS_SQL:
+            if self._query == VERIFY_STORAGE_COLUMNS_SQL:
                 return [row for row in rows if row[1] != "findings"]
             return rows
 
@@ -306,7 +291,7 @@ async def test_migration_rejects_coexisting_old_review_authorization_column() ->
     class DriftedCursor(FakeCursor):
         async def fetchall(self) -> list[tuple[Any, ...]]:
             rows = await super().fetchall()
-            if self._query == VERIFY_REVIEW_STORAGE_COLUMNS_SQL:
+            if self._query == VERIFY_STORAGE_COLUMNS_SQL:
                 return [
                     *rows,
                     (
@@ -332,7 +317,7 @@ async def test_migration_rejects_stale_second_actor_revision_guard() -> None:
     class DriftedCursor(FakeCursor):
         async def fetchall(self) -> list[tuple[Any, ...]]:
             rows = await super().fetchall()
-            if self._query != VERIFY_REVIEW_TRIGGER_GUARDS_SQL:
+            if self._query != VERIFY_TRIGGER_GUARDS_SQL:
                 return rows
             return [
                 (
@@ -369,7 +354,7 @@ _RESTORED_REVIEW_EVENT_CAST = (
 def _restored_review_constraint_rows() -> list[tuple[Any, ...]]:
     return [
         (*row[:4], row[4].replace(_ORIGINAL_REVIEW_EVENT_CAST, _RESTORED_REVIEW_EVENT_CAST))
-        for row in sorted(EXPECTED_REVIEW_CONSTRAINTS)
+        for row in sorted(EXPECTED_REGISTRY_CONSTRAINTS)
     ]
 
 
@@ -377,7 +362,7 @@ def _restored_review_constraint_rows() -> list[tuple[Any, ...]]:
 async def test_migration_accepts_only_the_known_pg_restore_review_cast_deparse() -> None:
     class RestoredCursor(FakeCursor):
         async def fetchall(self) -> list[tuple[Any, ...]]:
-            if self._query == VERIFY_REVIEW_CONSTRAINTS_SQL:
+            if self._query == VERIFY_REGISTRY_CONSTRAINTS_SQL:
                 return _restored_review_constraint_rows()
             return await super().fetchall()
 
@@ -395,19 +380,6 @@ async def test_migration_accepts_only_the_known_pg_restore_review_cast_deparse()
         lambda row: ("renamed_constraint", *row[1:]),
         lambda row: (row[0], "skills", *row[2:]),
         lambda row: (*row[:3], False, row[4]),
-        lambda row: (*row[:4], row[4].replace("revision_rejected", "revision_deleted")),
-        lambda row: (
-            *row[:4],
-            row[4].replace(
-                _RESTORED_REVIEW_EVENT_CAST,
-                "ARRAY['revision_rejected'::character varying::text, "
-                "'revision_published'::character varying::text]",
-            ),
-        ),
-        lambda row: (
-            *row[:4],
-            row[4].replace("content_reviewed IS TRUE", "content_reviewed IS FALSE"),
-        ),
     ],
 )
 async def test_migration_rejects_other_restored_review_constraint_drift(
@@ -415,7 +387,7 @@ async def test_migration_rejects_other_restored_review_constraint_drift(
 ) -> None:
     class DriftedRestoredCursor(FakeCursor):
         async def fetchall(self) -> list[tuple[Any, ...]]:
-            if self._query == VERIFY_REVIEW_CONSTRAINTS_SQL:
+            if self._query == VERIFY_REGISTRY_CONSTRAINTS_SQL:
                 rows = _restored_review_constraint_rows()
                 rows[0] = mutate(rows[0])
                 return rows
@@ -429,40 +401,29 @@ async def test_migration_rejects_other_restored_review_constraint_drift(
         await run_migration(settings, connector=connector)
 
 
-def test_review_drift_verifiers_compare_normalized_complete_definitions() -> None:
-    normalized_storage_query = " ".join(VERIFY_REVIEW_STORAGE_COLUMNS_SQL.split())
-    normalized_constraint_query = " ".join(VERIFY_REVIEW_CONSTRAINTS_SQL.split())
-    normalized_function_query = " ".join(VERIFY_REVIEW_TRIGGER_GUARDS_SQL.split())
+def test_revision_drift_verifiers_compare_normalized_complete_definitions() -> None:
+    normalized_storage_query = " ".join(VERIFY_STORAGE_COLUMNS_SQL.split())
+    normalized_constraint_query = " ".join(VERIFY_REGISTRY_CONSTRAINTS_SQL.split())
+    normalized_function_query = " ".join(VERIFY_TRIGGER_GUARDS_SQL.split())
 
-    assert "'independent_reviewer_confirmed'" in normalized_storage_query
-    assert "'reviewer_authorization_confirmed'" in normalized_storage_query
-    assert "independent_reviewer_confirmed" not in {
-        column_name for table_name, column_name, *_ in EXPECTED_REVIEW_STORAGE_COLUMNS
-    }
+    assert "'findings'" in normalized_storage_query
     assert "pg_get_constraintdef(constraint_row.oid, true)" in normalized_constraint_query
     assert "regexp_replace" in normalized_constraint_query
     assert all(
         len(row) == 5 and isinstance(row[4], str) and row[4].startswith("CHECK (")
-        for row in EXPECTED_REVIEW_CONSTRAINTS
+        for row in EXPECTED_REGISTRY_CONSTRAINTS
     )
     assert "pg_get_functiondef(function.oid)" in normalized_function_query
     assert "regexp_replace" in normalized_function_query
     assert "'guard_revision_update'" in normalized_function_query
-    assert len(EXPECTED_REVIEW_TRIGGER_GUARDS) == 3
-    revision_guard_definition = dict(EXPECTED_REVIEW_TRIGGER_GUARDS)["guard_revision_update"]
+    assert len(EXPECTED_TRIGGER_GUARDS) == 2
+    revision_guard_definition = dict(EXPECTED_TRIGGER_GUARDS)["guard_revision_update"]
     assert revision_guard_definition.startswith(
         "CREATE OR REPLACE FUNCTION skill_registry.guard_revision_update()"
     )
     assert "skill revision body is immutable" in revision_guard_definition
-    assert "NEW.reviewed_by = OLD.created_by" not in revision_guard_definition
     assert "invalid skill revision state transition" in revision_guard_definition
-    function_definition = dict(EXPECTED_REVIEW_TRIGGER_GUARDS)["require_revision_review_event"]
-    assert isinstance(function_definition, str)
-    assert function_definition.startswith(
-        "CREATE OR REPLACE FUNCTION skill_registry.require_revision_review_event()"
-    )
-    assert "blocking skill findings prevent publication" in function_definition
-    findings_definition = dict(EXPECTED_REVIEW_TRIGGER_GUARDS)["validate_skill_findings"]
+    findings_definition = dict(EXPECTED_TRIGGER_GUARDS)["validate_skill_findings"]
     assert findings_definition.startswith(
         "CREATE OR REPLACE FUNCTION skill_registry.validate_skill_findings(candidate jsonb)"
     )

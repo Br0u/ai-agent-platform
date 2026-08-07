@@ -8,7 +8,6 @@ import {
   type AdminSkillRevision,
 } from "@/features/assistant/admin-skill-contract";
 import { useEffect, useRef, useState } from "react";
-import { AssistantSkillRevisionDetail } from "./assistant-skill-revision-detail";
 import { AssistantSkillUploadDialog } from "./assistant-skill-upload-dialog";
 
 export type AdminSkillRegistrySnapshot = {
@@ -18,7 +17,6 @@ export type AdminSkillRegistrySnapshot = {
 };
 
 type Props = {
-  actorUserId: string;
   canRead: boolean;
   initialPermissions: AdminSkillPermissionFlags;
   initialSnapshot: AdminSkillRegistrySnapshot;
@@ -81,17 +79,12 @@ function isAbortError(value: unknown): boolean {
 }
 
 export function AssistantSkillRegistryPanel({
-  actorUserId,
   canRead,
   initialPermissions,
   initialSnapshot,
 }: Props) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [permissions, setPermissions] = useState(initialPermissions);
-  const [selection, setSelection] = useState<{
-    skillId: string;
-    revisionId: string;
-  } | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadTarget, setUploadTarget] = useState<{
     id: string;
@@ -171,30 +164,6 @@ export function AssistantSkillRegistryPanel({
         page: parsed.list.page,
       });
       setPermissions(parsed.permissions);
-      setSelection((current) => {
-        if (current === null) return null;
-        const previousRevision = snapshot.skills.find(
-          (skill) => skill.id === current.skillId,
-        )?.revision;
-        const nextRevision = parsed.list.skills.find(
-          (skill) => skill.id === current.skillId,
-        )?.revision;
-        return previousRevision !== null &&
-          previousRevision !== undefined &&
-          nextRevision !== null &&
-          nextRevision !== undefined &&
-          previousRevision.id === current.revisionId &&
-          nextRevision.id === current.revisionId &&
-          previousRevision.number === nextRevision.number &&
-          previousRevision.state === nextRevision.state &&
-          previousRevision.createdBy === nextRevision.createdBy &&
-          previousRevision.artifactSha256Prefix ===
-            nextRevision.artifactSha256Prefix &&
-          previousRevision.reviewedBy === nextRevision.reviewedBy &&
-          previousRevision.reviewedAt === nextRevision.reviewedAt
-          ? current
-          : null;
-      });
       setAnnouncement("Skill 列表已刷新。");
     } catch (caught) {
       if (
@@ -231,8 +200,6 @@ export function AssistantSkillRegistryPanel({
           artifactSha256Prefix: revision.artifactSha256.slice(0, 12),
           createdBy: revision.createdBy,
           createdAt: revision.createdAt,
-          reviewedBy: revision.reviewedBy,
-          reviewedAt: revision.reviewedAt,
         },
       };
       const limit = current.page?.limit ?? 25;
@@ -250,29 +217,8 @@ export function AssistantSkillRegistryPanel({
         },
       };
     });
-    setSelection(null);
     closeUpload();
-    setAnnouncement("上传完成：pending_review，等待审核。");
-  };
-
-  const revisionChanged = (revision: AdminSkillRevision) => {
-    invalidateListRequest();
-    setSnapshot((current) => ({
-      ...current,
-      skills: current.skills.map((skill) =>
-        skill.id !== revision.skillId || skill.revision?.id !== revision.id
-          ? skill
-          : {
-              ...skill,
-              revision: {
-                ...skill.revision,
-                state: revision.state,
-                reviewedBy: revision.reviewedBy,
-                reviewedAt: revision.reviewedAt,
-              },
-            },
-      ),
-    }));
+    setAnnouncement("上传完成，可在 Skill 配置中决定是否启用。");
   };
 
   return (
@@ -282,9 +228,9 @@ export function AssistantSkillRegistryPanel({
     >
       <header className="assistant-skill-registry__heading">
         <div>
-          <p>REVIEWED SKILL REGISTRY</p>
+          <p>SKILL REGISTRY</p>
           <h2 id="assistant-skill-registry-title">Skill 库</h2>
-          <span>上传、扫描、审核与 Agent 运行时加载已接入。</span>
+          <span>上传、扫描与 Agent 运行时启用已接入。</span>
         </div>
         <strong>
           {snapshot.capability === "available"
@@ -336,7 +282,10 @@ export function AssistantSkillRegistryPanel({
                 {skill.revision ? (
                   <span>
                     revision #{skill.revision.number} ·{" "}
-                    <strong>{skill.revision.state}</strong> · digest{" "}
+                    <strong>
+                      {skill.revision.state === "published" ? "可启用" : "已归档"}
+                    </strong>{" "}
+                    · digest{" "}
                     {skill.revision.artifactSha256Prefix}
                   </span>
                 ) : (
@@ -357,38 +306,11 @@ export function AssistantSkillRegistryPanel({
                     上传新版本 {skill.name}
                   </button>
                 ) : null}
-                {canRead && permissions.canReview && skill.revision ? (
-                  <button
-                    aria-expanded={selection?.revisionId === skill.revision.id}
-                    onClick={() =>
-                      setSelection((current) =>
-                        current?.revisionId === skill.revision?.id
-                          ? null
-                          : {
-                              skillId: skill.id,
-                              revisionId: skill.revision!.id,
-                            },
-                      )
-                    }
-                    type="button"
-                  >
-                    查看审核详情 {skill.name}
-                  </button>
-                ) : null}
               </div>
             </li>
           ))}
         </ul>
       )}
-      {selection && canRead && permissions.canReview ? (
-        <AssistantSkillRevisionDetail
-          actorUserId={actorUserId}
-          key={`${selection.skillId}:${selection.revisionId}`}
-          onRevisionChanged={revisionChanged}
-          revisionId={selection.revisionId}
-          skillId={selection.skillId}
-        />
-      ) : null}
       {uploadOpen && canRead && permissions.canUpload ? (
         <AssistantSkillUploadDialog
           onClose={closeUpload}

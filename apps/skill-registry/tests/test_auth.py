@@ -111,8 +111,8 @@ def test_rejects_missing_wrong_or_duplicate_bearer(
     "assertion",
     [
         signed_assertion(control_key="wrong-key-012345678901234567890123"),
-        signed_assertion(permission="admin:assistant:skills:review"),
-        signed_assertion(action="review"),
+        signed_assertion(permission="admin:assistant:skills:configure"),
+        signed_assertion(action="detail"),
         signed_assertion(target="different"),
         signed_assertion(issued_at=101, expires_at=105),
         signed_assertion(issued_at=94, expires_at=99),
@@ -145,54 +145,6 @@ def test_rejects_duplicate_assertion_header_and_padded_base64url() -> None:
             target="new",
             now=100,
         )
-
-
-def test_review_requires_recent_password_and_mfa_assurance() -> None:
-    target = f"{ACTOR}/{REQUEST_ID}"
-    verifier = authenticator()
-    valid = signed_assertion(
-        action="review",
-        permission="admin:assistant:skills:review",
-        target=target,
-        assurance="password+mfa",
-        assured_at=0,
-        nonce="20000000-0000-4000-8000-000000000002",
-    )
-    assert (
-        verifier.authenticate(
-            headers=headers(valid), action="review", target=target, now=100
-        ).assured_at
-        == 0
-    )
-
-    for assertion in (
-        signed_assertion(
-            action="review",
-            permission="admin:assistant:skills:review",
-            target=target,
-            nonce="20000000-0000-4000-8000-000000000003",
-        ),
-        signed_assertion(
-            action="review",
-            permission="admin:assistant:skills:review",
-            target=target,
-            assurance="password+mfa",
-            assured_at=-501,
-            nonce="20000000-0000-4000-8000-000000000004",
-        ),
-        signed_assertion(
-            action="review",
-            permission="admin:assistant:skills:review",
-            target=target,
-            assurance="password+mfa",
-            assured_at=101,
-            nonce="20000000-0000-4000-8000-000000000005",
-        ),
-    ):
-        with pytest.raises(SkillRegistryAssertionError):
-            verifier.authenticate(
-                headers=headers(assertion), action="review", target=target, now=100
-            )
 
 
 def test_read_nonce_replay_is_rejected_and_cache_is_bounded() -> None:
@@ -259,7 +211,7 @@ def test_skill_set_reads_and_mutations_use_exact_permissions_assurance_and_nonce
         ),
         signed_assertion(
             action="skill_set_create",
-            permission="admin:assistant:skills:review",
+            permission="admin:assistant:skills:upload",
             target="maduoduo",
             assurance="password+mfa",
             assured_at=0,

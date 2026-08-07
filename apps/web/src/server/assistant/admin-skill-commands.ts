@@ -8,11 +8,7 @@ import type {
   AssistantSkillAuditMetadata,
   AuditWriteInput,
 } from "../auth/audit";
-import type { WorkforceAssuranceEvidence } from "../auth/sensitive-action";
-import type {
-  SkillRegistryClient,
-  SkillRegistryReviewInput,
-} from "./skill-registry-client";
+import type { SkillRegistryClient } from "./skill-registry-client";
 
 declare const AUTHORIZED_SKILL_COMMAND: unique symbol;
 
@@ -20,9 +16,8 @@ const AUTHORIZATION_TTL_MS = 30_000;
 const MAX_ARCHIVE_BYTES = 5 * 1024 * 1024;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
 
-export type AdminSkillCommandAction = "upload" | "review";
+export type AdminSkillCommandAction = "upload";
 
 export type AuthorizedSkillCommand = Readonly<{
   [AUTHORIZED_SKILL_COMMAND]: true;
@@ -34,11 +29,6 @@ export type AuthorizedSkillCommand = Readonly<{
 export type AdminSkillUploadInput = {
   archive: Uint8Array;
   targetSkillId?: string;
-};
-
-export type AdminSkillReviewInput = SkillRegistryReviewInput & {
-  skillId: string;
-  revisionId: string;
 };
 
 export type AdminSkillCommandErrorCode =
@@ -54,16 +44,9 @@ export class AdminSkillCommandError extends Error {
   }
 }
 
-type RequireSensitiveAction = (
-  permission: PermissionKey,
-  options: { recentWithinSeconds: number; mfaRequired: true },
-) => Promise<WorkforceAssuranceEvidence>;
-
 type CommandDependencies = {
   requireTrustedUploadMutation(request: Request): void;
-  requireTrustedJsonMutation(request: Request): void;
   requirePermission(permission: PermissionKey): Promise<WorkforceActor>;
-  requireSensitiveAction: RequireSensitiveAction;
   audit: { write(input: AuditWriteInput): Promise<void> };
   client: SkillRegistryClient;
   requestIdFactory?: () => string;
@@ -73,7 +56,6 @@ type CommandDependencies = {
 type Grant = {
   action: AdminSkillCommandAction;
   expiresAt: number;
-  assuredAt: number | null;
 };
 
 function exactRecord(
@@ -117,20 +99,6 @@ function safeActor(value: WorkforceActor): WorkforceActor {
   return Object.freeze({ ...value, permissions });
 }
 
-function hasOnlyPairedSurrogates(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const unit = value.charCodeAt(index);
-    if (unit >= 0xd800 && unit <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (next < 0xdc00 || next > 0xdfff) return false;
-      index += 1;
-    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
-      return false;
-    }
-  }
-  return true;
-}
-
 function readUploadInput(value: unknown): AdminSkillUploadInput | null {
   const input = exactRecord(value, [["archive"], ["archive", "targetSkillId"]]);
   if (
@@ -150,69 +118,6 @@ function readUploadInput(value: unknown): AdminSkillUploadInput | null {
     ...(input.targetSkillId === undefined
       ? {}
       : { targetSkillId: input.targetSkillId as string }),
-  };
-}
-
-function readReviewInput(value: unknown): AdminSkillReviewInput | null {
-  const input = exactRecord(value, [
-    [
-      "skillId",
-      "revisionId",
-      "decision",
-      "reason",
-      "expectedState",
-      "attestations",
-    ],
-  ]);
-  const attestations = exactRecord(input?.attestations, [
-    [
-      "contentReviewed",
-      "usageRightsConfirmed",
-      "executionRiskAccepted",
-      "reviewerAuthorizationConfirmed",
-    ],
-  ]);
-  if (
-    input === null ||
-    attestations === null ||
-    typeof input.skillId !== "string" ||
-    !UUID.test(input.skillId) ||
-    typeof input.revisionId !== "string" ||
-    !UUID.test(input.revisionId) ||
-    (input.decision !== "approve" && input.decision !== "reject") ||
-    input.expectedState !== "pending_review" ||
-    attestations.contentReviewed !== true ||
-    attestations.usageRightsConfirmed !== true ||
-    attestations.executionRiskAccepted !== true ||
-    attestations.reviewerAuthorizationConfirmed !== true
-  ) {
-    return null;
-  }
-  if (
-    (input.decision === "approve" && input.reason !== null) ||
-    (input.decision === "reject" &&
-      (typeof input.reason !== "string" ||
-        input.reason.length === 0 ||
-        input.reason !== input.reason.trim() ||
-        Array.from(input.reason).length > 500 ||
-        Buffer.byteLength(input.reason, "utf8") > 2_048 ||
-        !hasOnlyPairedSurrogates(input.reason) ||
-        CONTROL_CHARACTER.test(input.reason)))
-  ) {
-    return null;
-  }
-  return {
-    skillId: input.skillId,
-    revisionId: input.revisionId,
-    decision: input.decision,
-    reason: input.reason as string | null,
-    expectedState: "pending_review",
-    attestations: {
-      contentReviewed: true,
-      usageRightsConfirmed: true,
-      executionRiskAccepted: true,
-      reviewerAuthorizationConfirmed: true,
-    },
   };
 }
 
@@ -283,37 +188,13 @@ export function createAdminSkillCommands(dependencies: CommandDependencies) {
       request: Request,
       action: AdminSkillCommandAction,
     ): Promise<AuthorizedSkillCommand> {
-      if (action === "upload") {
-        dependencies.requireTrustedUploadMutation(request);
-      } else if (action === "review") {
-        dependencies.requireTrustedJsonMutation(request);
-      } else {
-        throw new AdminSkillCommandError("validation_error");
-      }
-      let actor: WorkforceActor;
-      let assuredAt: number | null = null;
-      if (action === "upload") {
-        actor = await dependencies.requirePermission(
-          "admin:assistant:skills:upload",
-        );
-      } else {
-        const evidence = await dependencies.requireSensitiveAction(
-          "admin:assistant:skills:review",
-          { recentWithinSeconds: 600, mfaRequired: true },
-        );
-        actor = evidence.actor;
-        assuredAt = evidence.assuredAt;
-      }
+      dependencies.requireTrustedUploadMutation(request);
+      const actor = await dependencies.requirePermission(
+        "admin:assistant:skills:upload",
+      );
       const issuedAt = readNow();
-      const issuedAtSeconds = Math.floor(issuedAt / 1000);
       if (
-        issuedAt > Number.MAX_SAFE_INTEGER - AUTHORIZATION_TTL_MS ||
-        (action === "review" &&
-          (assuredAt === null ||
-            !Number.isSafeInteger(assuredAt) ||
-            assuredAt < 0 ||
-            assuredAt > issuedAtSeconds ||
-            assuredAt < issuedAtSeconds - 600))
+        issuedAt > Number.MAX_SAFE_INTEGER - AUTHORIZATION_TTL_MS
       ) {
         throw new AdminSkillCommandError("registry_unavailable");
       }
@@ -329,7 +210,6 @@ export function createAdminSkillCommands(dependencies: CommandDependencies) {
       authorized.set(context, {
         action,
         expiresAt: issuedAt + AUTHORIZATION_TTL_MS,
-        assuredAt,
       });
       return context;
     },
@@ -406,81 +286,5 @@ export function createAdminSkillCommands(dependencies: CommandDependencies) {
       }
     },
 
-    async review(
-      context: AuthorizedSkillCommand,
-      rawInput: AdminSkillReviewInput,
-    ): Promise<AdminSkillRevisionResponse> {
-      const grant = consume(context, "review");
-      let input = readReviewInput(rawInput);
-      if (input === null || grant.assuredAt === null) {
-        throw new AdminSkillCommandError("validation_error");
-      }
-      const envelope = {
-        actor: { realm: "workforce" as const, userId: context.actor.userId },
-        target: {
-          type: "assistant_skill_revision" as const,
-          id: input.revisionId,
-        },
-      };
-      try {
-        await initialAudit({
-          event: "assistant.skill_review_requested",
-          ...envelope,
-          metadata: auditMetadata(
-            context.requestId,
-            "requested",
-            null,
-            input.skillId,
-            input.revisionId,
-          ),
-        });
-        let response: AdminSkillRevisionResponse | null = null;
-        let failed = false;
-        let primary: unknown;
-        try {
-          response = await dependencies.client.reviewRevision({
-            actor: context.actor.userId,
-            requestId: context.requestId,
-            skillId: input.skillId,
-            revisionId: input.revisionId,
-            assuredAt: grant.assuredAt,
-            input: {
-              decision: input.decision,
-              reason: input.reason,
-              expectedState: input.expectedState,
-              attestations: input.attestations,
-            },
-          });
-        } catch (error) {
-          failed = true;
-          primary = error;
-        }
-        try {
-          await dependencies.audit.write({
-            event: "assistant.skill_review_completed",
-            ...envelope,
-            metadata: auditMetadata(
-              context.requestId,
-              failed ? "failure" : "success",
-              response?.revision ?? null,
-              input.skillId,
-              input.revisionId,
-            ),
-          });
-        } catch {
-          if (!failed) {
-            throw new AdminSkillCommandError("storage_unavailable");
-          }
-        }
-        if (failed) throw primary;
-        if (response === null) {
-          throw new AdminSkillCommandError("registry_unavailable");
-        }
-        return response;
-      } finally {
-        input = null;
-        rawInput = undefined as never;
-      }
-    },
   };
 }

@@ -138,6 +138,6 @@ Skill 回滚从后台执行 immediate previous；不要直接更新 `skill_regis
 
 ## 当前能力边界
 
-后台已经支持六家云模型配置，以及“已审核 ZIP → 候选集合 → 码多多运行时”的 Skill 闭环。当前不支持 GitHub/GitLab/GitCode 导入，也没有比容器边界更细的脚本沙箱；因此只允许上传和激活经过人工审核的 Skill。Knowledge、网页操作和本地算力仍是 roadmap 入口。
+后台已经支持六家云模型配置，以及“已验证 ZIP → 码多多运行时”的 Skill 闭环。当前不支持 GitHub/GitLab/GitCode 导入，也没有比容器边界更细的脚本沙箱；因此只允许上传通过自动安全扫描的 Skill。Knowledge、网页操作和本地算力仍是 roadmap 入口。
 
 设计参考 Agno 官方 [AgentOS Configuration](https://docs.agno.com/agent-os/config)、[Skills](https://docs.agno.com/skills/overview)、[Loading Skills](https://docs.agno.com/skills/loading-skills)、[Tools](https://docs.agno.com/tools/agent)、[Knowledge](https://docs.agno.com/agent-os/features/knowledge-management)、[Ollama](https://docs.agno.com/models/providers/local/ollama/overview)、[vLLM](https://docs.agno.com/models/providers/local/vllm/overview) 和 [OpenAI-compatible Models](https://docs.agno.com/models/providers/openai-like)。本仓库行为以 `apps/agent/uv.lock` 锁定的 Agno `2.7.2` 和本地测试为准，不假设最新版文档 API 已存在。

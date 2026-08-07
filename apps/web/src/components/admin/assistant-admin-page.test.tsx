@@ -142,7 +142,6 @@ const skillSnapshot = {
 const skillPermissions = {
   canUpload: true,
   canManageConnections: false,
-  canReview: true,
   canConfigure: false,
 };
 
@@ -173,7 +172,6 @@ type PageProps = ComponentProps<typeof ProductionAssistantAdminPage>;
 function AssistantAdminPage(
   props: Omit<
     PageProps,
-    | "skillActorUserId"
     | "skillCanRead"
     | "skillPermissions"
     | "skillRuntime"
@@ -182,7 +180,6 @@ function AssistantAdminPage(
     Partial<
       Pick<
         PageProps,
-        | "skillActorUserId"
         | "skillCanRead"
         | "skillPermissions"
         | "skillRuntime"
@@ -192,7 +189,6 @@ function AssistantAdminPage(
 ) {
   return (
     <ProductionAssistantAdminPage
-      skillActorUserId="11111111-1111-4111-8111-111111111111"
       skillCanRead
       skillPermissions={skillPermissions}
       skillRuntime={skillRuntime}
@@ -213,7 +209,6 @@ describe("AssistantAdminPage", () => {
       <AssistantAdminPage
         modelConfigs={modelConfigs}
         sessions={sessions}
-        skillActorUserId="11111111-1111-4111-8111-111111111111"
         skillCanRead
         skillPermissions={skillPermissions}
         skillSnapshot={skillSnapshot}

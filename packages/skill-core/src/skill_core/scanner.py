@@ -32,14 +32,14 @@ _FILESYSTEM_WRITE = re.compile(
 _EXTERNAL_URL = re.compile(r"https?://[^\s<>'\"]+")
 
 _LINE_PATTERNS: tuple[tuple[str, re.Pattern[str], str], ...] = (
-    ("possible_secret", _POSSIBLE_SECRET, "Possible credential-like assignment; review required."),
-    ("private_key", _PRIVATE_KEY, "Private-key marker found; review required."),
-    ("network_access", _NETWORK, "Network-capable operation found; review required."),
-    ("subprocess", _SUBPROCESS, "Subprocess-capable operation found; review required."),
-    ("environment_read", _ENVIRONMENT, "Environment access found; review required."),
-    ("dynamic_code", _DYNAMIC_CODE, "Dynamic code execution found; review required."),
-    ("filesystem_write", _FILESYSTEM_WRITE, "Filesystem mutation found; review required."),
-    ("external_url", _EXTERNAL_URL, "External URL found; review required."),
+    ("possible_secret", _POSSIBLE_SECRET, "Possible credential-like assignment found."),
+    ("private_key", _PRIVATE_KEY, "Private-key marker found; upload blocked."),
+    ("network_access", _NETWORK, "Network-capable operation found."),
+    ("subprocess", _SUBPROCESS, "Subprocess-capable operation found."),
+    ("environment_read", _ENVIRONMENT, "Environment access found."),
+    ("dynamic_code", _DYNAMIC_CODE, "Dynamic code execution found."),
+    ("filesystem_write", _FILESYSTEM_WRITE, "Filesystem mutation found."),
+    ("external_url", _EXTERNAL_URL, "External URL found."),
 )
 
 

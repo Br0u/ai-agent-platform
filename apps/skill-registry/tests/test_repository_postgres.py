@@ -29,8 +29,6 @@ from skill_registry.types import (
     CreateUploadRevision,
     DiscardSkillSet,
     RegistryError,
-    ReviewAttestations,
-    ReviewRevision,
     StoredRevision,
 )
 
@@ -138,7 +136,7 @@ async def test_real_postgres_upload_is_atomic_canonical_and_idempotent() -> None
 
     created = await repository.create_upload_revision(create_command(package, actor=actor))
 
-    assert created.state == "pending_review"
+    assert created.state == "published"
     assert await table_counts_for_slug(slug) == (1, 1, 1, 1, 1)
     assert raw_archive != package.archive
     assert MANAGER_URL is not None
@@ -219,48 +217,18 @@ async def test_real_postgres_nonce_replay_precedes_business_logic_across_mutatio
     )
     assert fresh_replay.id == created.id
 
-    with pytest.raises(RegistryError) as caught:
-        await repository.review_revision(
-            ReviewRevision(
-                revision_id=created.id,
-                reviewer=uuid4(),
-                request_id=uuid4(),
-                assertion_nonce=upload_nonce,
-                decision="approve",
-                expected_state="pending_review",
-                reason=None,
-                attestations=ReviewAttestations(True, True, True, True),
-            )
-        )
-    assert caught.value.code == "ASSERTION_REPLAY"
-
-    review_nonce = uuid4()
-    reviewed = await repository.review_revision(
-        ReviewRevision(
-            revision_id=created.id,
-            reviewer=uuid4(),
-            request_id=uuid4(),
-            assertion_nonce=review_nonce,
-            decision="approve",
-            expected_state="pending_review",
-            reason=None,
-            attestations=ReviewAttestations(True, True, True, True),
-        )
-    )
-    assert reviewed.state == "published"
-
     other_slug = f"pg-cross-nonce-{uuid4().hex[:12]}"
     with pytest.raises(RegistryError) as caught:
         await repository.create_upload_revision(
             create_command(
                 canonicalize_skill_zip(build_zip(other_slug)),
                 actor=actor,
-                assertion_nonce=review_nonce,
+                assertion_nonce=upload_nonce,
             )
         )
     assert caught.value.code == "ASSERTION_REPLAY"
     assert await table_counts_for_slug(other_slug) == (0, 0, 0, 0, 0)
-    assert await table_counts_for_slug(slug) == (1, 1, 1, 1, 3)
+    assert await table_counts_for_slug(slug) == (1, 1, 1, 1, 2)
 
 
 async def test_real_postgres_concurrent_nonce_replay_rolls_back_loser() -> None:
@@ -301,7 +269,7 @@ async def test_real_postgres_artifact_store_put_and_digest_verification() -> Non
             await connection.execute(
                 """INSERT INTO skill_registry.skill_revisions (
                   id, skill_id, revision_no, state, source_type, manifest, findings, created_by
-                ) VALUES (%s, %s, 1, 'pending_review', 'upload', '{}'::jsonb, '[]'::jsonb, %s)""",
+                ) VALUES (%s, %s, 1, 'published', 'upload', '{}'::jsonb, '[]'::jsonb, %s)""",
                 (revision_id, skill_id, actor),
             )
     store = PostgresSkillArtifactStore(manager_artifact_connection)
@@ -313,98 +281,12 @@ async def test_real_postgres_artifact_store_put_and_digest_verification() -> Non
     assert caught.value.code == "ARTIFACT_DIGEST_MISMATCH"
 
 
-async def test_real_postgres_allows_self_review_and_is_concurrency_safe() -> None:
-    slug = f"pg-review-{uuid4().hex[:12]}"
-    actor = uuid4()
-    package = canonicalize_skill_zip(build_zip(slug))
-    repository = PostgresSkillRegistryRepository(manager_repository_connection)
-    created = await repository.create_upload_revision(create_command(package, actor=actor))
-
-    attestations = ReviewAttestations(True, True, True, True)
-    reviewed = await repository.review_revision(
-        ReviewRevision(
-            revision_id=created.id,
-            reviewer=actor,
-            request_id=uuid4(),
-            assertion_nonce=uuid4(),
-            decision="approve",
-            expected_state="pending_review",
-            reason=None,
-            attestations=attestations,
-        )
-    )
-    assert reviewed.state == "published"
-    assert reviewed.created_by == actor
-    assert reviewed.reviewed_by == actor
-
-    assert OWNER_URL is not None
-    async with await connect(OWNER_URL) as connection:
-        cursor = await connection.execute(
-            """SELECT event.actor, revision.reviewed_by
-            FROM skill_registry.skill_control_events AS event
-            JOIN skill_registry.skill_revisions AS revision ON revision.id = event.target_id
-            WHERE event.target_id = %s AND event.event_type = 'revision_published'""",
-            (created.id,),
-        )
-        assert await cursor.fetchone() == (str(actor), actor)
-
-    concurrent_package = canonicalize_skill_zip(build_zip(slug, instructions="# Changed\n"))
-    concurrent = await repository.create_upload_revision(
-        create_command(concurrent_package, actor=actor, target_skill_id=created.skill_id)
-    )
-
-    async def approve(reviewer: UUID) -> StoredRevision:
-        contender = PostgresSkillRegistryRepository(manager_repository_connection)
-        return await contender.review_revision(
-            ReviewRevision(
-                revision_id=concurrent.id,
-                reviewer=reviewer,
-                request_id=uuid4(),
-                assertion_nonce=uuid4(),
-                decision="approve",
-                expected_state="pending_review",
-                reason=None,
-                attestations=attestations,
-            )
-        )
-
-    results = await asyncio.gather(approve(uuid4()), approve(uuid4()), return_exceptions=True)
-    successes = [result for result in results if isinstance(result, StoredRevision)]
-    failures = [result for result in results if isinstance(result, RegistryError)]
-    assert len(successes) == 1
-    assert len(failures) == 1
-    assert failures[0].code == "REVISION_STATE_CONFLICT"
-    assert successes[0].state == "published"
-
-    async with await connect(OWNER_URL) as connection:
-        cursor = await connection.execute(
-            """SELECT count(*) FROM skill_registry.skill_control_events
-            WHERE target_id = %s AND event_type = 'revision_published'""",
-            (concurrent.id,),
-        )
-        row = await cursor.fetchone()
-        assert row == (1,)
-
-
 async def test_real_postgres_queries_previous_published_revision_and_files() -> None:
     slug = f"pg-query-{uuid4().hex[:12]}"
     actor = uuid4()
-    reviewer = uuid4()
     repository = PostgresSkillRegistryRepository(manager_repository_connection)
     first_package = canonicalize_skill_zip(build_zip(slug, instructions="# First\n"))
     first = await repository.create_upload_revision(create_command(first_package, actor=actor))
-    await repository.review_revision(
-        ReviewRevision(
-            revision_id=first.id,
-            reviewer=reviewer,
-            request_id=uuid4(),
-            assertion_nonce=uuid4(),
-            decision="approve",
-            expected_state="pending_review",
-            reason=None,
-            attestations=ReviewAttestations(True, True, True, True),
-        )
-    )
     second_package = canonicalize_skill_zip(build_zip(slug, instructions="# Second\n"))
     second = await repository.create_upload_revision(
         create_command(second_package, actor=actor, target_skill_id=first.skill_id)
@@ -421,61 +303,14 @@ async def test_real_postgres_queries_previous_published_revision_and_files() -> 
     assert previous is not None and previous.id == first.id
 
 
-async def test_real_postgres_rejection_persists_reason_in_append_only_event() -> None:
-    slug = f"pg-reject-{uuid4().hex[:12]}"
-    repository = PostgresSkillRegistryRepository(manager_repository_connection)
-    created = await repository.create_upload_revision(
-        create_command(canonicalize_skill_zip(build_zip(slug)), actor=uuid4())
-    )
-    reason = "Usage rights were not demonstrated."
-
-    rejected = await repository.review_revision(
-        ReviewRevision(
-            revision_id=created.id,
-            reviewer=uuid4(),
-            request_id=uuid4(),
-            assertion_nonce=uuid4(),
-            decision="reject",
-            expected_state="pending_review",
-            reason=reason,
-            attestations=ReviewAttestations(True, True, True, True),
-        )
-    )
-
-    assert rejected.state == "rejected"
-    assert OWNER_URL is not None
-    async with await connect(OWNER_URL) as connection:
-        cursor = await connection.execute(
-            """SELECT review_reason, content_reviewed, usage_rights_confirmed,
-              execution_risk_accepted, reviewer_authorization_confirmed
-            FROM skill_registry.skill_control_events
-            WHERE target_id = %s AND event_type = 'revision_rejected'""",
-            (created.id,),
-        )
-        assert await cursor.fetchone() == (reason, True, True, True, True)
-
-
 async def test_real_postgres_skill_set_repository_preserves_order_and_replays() -> None:
     actor = uuid4()
-    reviewer = uuid4()
     registry = PostgresSkillRegistryRepository(manager_repository_connection)
     published: list[StoredRevision] = []
     for position in (1, 2):
         package = canonicalize_skill_zip(build_zip(f"pg-set-{position}-{uuid4().hex[:12]}"))
-        uploaded = await registry.create_upload_revision(create_command(package, actor=actor))
         published.append(
-            await registry.review_revision(
-                ReviewRevision(
-                    revision_id=uploaded.id,
-                    reviewer=reviewer,
-                    request_id=uuid4(),
-                    assertion_nonce=uuid4(),
-                    decision="approve",
-                    expected_state="pending_review",
-                    reason=None,
-                    attestations=ReviewAttestations(True, True, True, True),
-                )
-            )
+            await registry.create_upload_revision(create_command(package, actor=actor))
         )
 
     service = SkillSetService(PostgresSkillSetRepository(manager_repository_connection))

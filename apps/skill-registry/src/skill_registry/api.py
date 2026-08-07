@@ -1,12 +1,11 @@
-"""Thin private HTTP boundary for reviewed skill revisions."""
+"""Thin private HTTP boundary for validated Skill revisions."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-import json
 import re
-from typing import Final, Literal, NoReturn, Protocol, cast
+from typing import Final, Protocol
 from uuid import UUID
 
 from fastapi import APIRouter, Request
@@ -17,9 +16,6 @@ from skill_core.types import MAX_ARCHIVE_BYTES, MAX_FILE_BYTES
 from skill_registry.auth import SkillRegistryAssertion
 from skill_registry.types import (
     RegistryError,
-    ReviewAttestations,
-    ReviewDecision,
-    ReviewRevision,
     RevisionDetail,
     SkillSummary,
     StoredFile,
@@ -44,34 +40,13 @@ class RegistryAPIService(Protocol):
 
     async def get_file_text(self, skill_id: UUID, revision_id: UUID, path: str) -> str: ...
 
-    async def review_revision(self, command: ReviewRevision) -> StoredRevision: ...
-
-
-ParsedReview = tuple[
-    ReviewDecision,
-    Literal["pending_review"],
-    str | None,
-    ReviewAttestations,
-]
-
-
 _NO_STORE_HEADERS: Final = {"Cache-Control": "no-store"}
 _ASSERTION_STATE_KEY: Final = "skill_registry_assertion"
-_REVIEW_BODY_MAX_BYTES: Final = 8 * 1024
 _RESPONSE_BODY_MAX_BYTES: Final = 3 * 1024 * 1024
 _FILE_RESPONSE_BODY_MAX_BYTES: Final = MAX_FILE_BYTES * 6 + 1024
 _CONTENT_LENGTH_MAX_DIGITS: Final = 20
 _PAGE_NUMBER_MAX_DIGITS: Final = 7
 _CONTENT_LENGTH_PATTERN: Final = re.compile(rb"0|[1-9][0-9]*\Z")
-_REVIEW_FIELDS: Final = frozenset({"decision", "expectedState", "reason", "attestations"})
-_ATTESTATION_FIELDS: Final = frozenset(
-    {
-        "contentReviewed",
-        "usageRightsConfirmed",
-        "executionRiskAccepted",
-        "reviewerAuthorizationConfirmed",
-    }
-)
 _STABLE_REGISTRY_CODES: Final = frozenset(
     {
         "ARCHIVE_ENCRYPTED",
@@ -97,9 +72,8 @@ _STABLE_REGISTRY_CODES: Final = frozenset(
         "FILE_NOT_FOUND",
         "MANIFEST_INVALID",
         "REGISTRY_STORAGE_ERROR",
-        "REVIEW_BLOCKED",
         "REVISION_NOT_FOUND",
-        "REVISION_STATE_CONFLICT",
+        "SKILL_SCAN_BLOCKED",
         "SKILL_BINARY_FILE",
         "SKILL_FILE_NOT_UTF8",
         "SKILL_FILE_TOO_LARGE",
@@ -129,8 +103,6 @@ def _registry_error(error: RegistryError) -> JSONResponse:
     elif code in {
         "ASSERTION_REPLAY",
         "SKILL_NAME_CONFLICT",
-        "REVISION_STATE_CONFLICT",
-        "REVIEW_BLOCKED",
     }:
         status = 409
     elif code in {
@@ -172,8 +144,6 @@ def _revision_metadata(revision: StoredRevision) -> dict[str, object]:
         "artifactSha256": revision.artifact_sha256,
         "createdBy": str(revision.created_by),
         "createdAt": _iso(revision.created_at),
-        "reviewedBy": None if revision.reviewed_by is None else str(revision.reviewed_by),
-        "reviewedAt": _iso(revision.reviewed_at),
     }
 
 
@@ -194,10 +164,6 @@ def _summary_content(summary: SkillSummary) -> dict[str, object]:
                 None if summary.latest_created_by is None else str(summary.latest_created_by)
             ),
             "createdAt": _iso(summary.latest_created_at),
-            "reviewedBy": (
-                None if summary.latest_reviewed_by is None else str(summary.latest_reviewed_by)
-            ),
-            "reviewedAt": _iso(summary.latest_reviewed_at),
         }
     return {
         "id": str(summary.id),
@@ -274,12 +240,6 @@ def _detail_content(detail: RevisionDetail) -> dict[str, object]:
             else str(detail.previous_published_revision_id)
         ),
         "diff": package_diff,
-        "reviewAttestations": {
-            "contentReviewed": True,
-            "usageRightsConfirmed": True,
-            "executionRiskAccepted": True,
-            "reviewerAuthorizationConfirmed": True,
-        },
     }
 
 
@@ -343,73 +303,6 @@ async def _read_body(request: Request, maximum: int) -> bytes | None:
         raw.clear()
         message = None
         chunk = b""
-
-
-def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    value: dict[str, object] = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError("duplicate field")
-        value[key] = item
-    return value
-
-
-def _reject_constant(_: str) -> NoReturn:
-    raise ValueError("invalid number")
-
-
-async def _read_review(request: Request) -> ParsedReview | None:
-    content_types = _header_values(request, b"content-type")
-    if content_types != [b"application/json"]:
-        return None
-    raw = await _read_body(request, _REVIEW_BODY_MAX_BYTES)
-    if raw is None:
-        return None
-    parsed: object | None = None
-    try:
-        parsed = json.loads(
-            raw,
-            object_pairs_hook=_strict_object,
-            parse_constant=_reject_constant,
-        )
-    except (UnicodeError, json.JSONDecodeError, TypeError, ValueError):
-        pass
-    finally:
-        raw = b""
-    if type(parsed) is not dict:
-        return None
-    payload = cast(dict[str, object], parsed)
-    if set(payload) != _REVIEW_FIELDS or type(payload["attestations"]) is not dict:
-        return None
-    attestations = cast(dict[str, object], payload["attestations"])
-    if set(attestations) != _ATTESTATION_FIELDS or any(
-        type(attestations[key]) is not bool for key in _ATTESTATION_FIELDS
-    ):
-        return None
-    decision = payload["decision"]
-    expected_state = payload["expectedState"]
-    reason = payload["reason"]
-    if (
-        type(decision) is not str
-        or decision not in ("approve", "reject")
-        or type(expected_state) is not str
-        or expected_state != "pending_review"
-        or (reason is not None and type(reason) is not str)
-    ):
-        return None
-    return (
-        cast(ReviewDecision, decision),
-        cast(Literal["pending_review"], expected_state),
-        reason,
-        ReviewAttestations(
-            content_reviewed=cast(bool, attestations["contentReviewed"]),
-            usage_rights_confirmed=cast(bool, attestations["usageRightsConfirmed"]),
-            execution_risk_accepted=cast(bool, attestations["executionRiskAccepted"]),
-            reviewer_authorization_confirmed=cast(
-                bool, attestations["reviewerAuthorizationConfirmed"]
-            ),
-        ),
-    )
 
 
 def _parse_uuid(value: str) -> UUID | None:
@@ -548,40 +441,5 @@ def build_skill_registry_router(
             {"version": "1", "path": file_path, "content": content},
             maximum_bytes=_FILE_RESPONSE_BODY_MAX_BYTES,
         )
-
-    @router.post(
-        "/internal/skills/{skill_id}/revisions/{revision_id}/review",
-        include_in_schema=False,
-    )
-    async def review_revision(skill_id: str, revision_id: str, request: Request) -> JSONResponse:
-        assertion = _request_assertion(request)
-        skill_uuid, revision_uuid = _parse_uuid(skill_id), _parse_uuid(revision_id)
-        if assertion is None or skill_uuid is None or revision_uuid is None:
-            return _error("VALIDATION_ERROR", status_code=400)
-        parsed = await _read_review(request)
-        if parsed is None:
-            return _error("VALIDATION_ERROR", status_code=400)
-        decision, expected_state, reason, attestations = parsed
-        try:
-            reviewed = await service_provider().review_revision(
-                ReviewRevision(
-                    revision_id=revision_uuid,
-                    reviewer=assertion.actor,
-                    request_id=assertion.request_id,
-                    assertion_nonce=assertion.nonce,
-                    decision=decision,
-                    expected_state=expected_state,
-                    reason=reason,
-                    attestations=attestations,
-                    skill_id=skill_uuid,
-                )
-            )
-        except RegistryError as error:
-            return _registry_error(error)
-        except Exception:
-            return _error("REGISTRY_UNAVAILABLE", status_code=503)
-        if reviewed.skill_id != skill_uuid:
-            return _error("REVISION_NOT_FOUND", status_code=404)
-        return _bounded({"version": "1", "revision": _revision_metadata(reviewed)})
 
     return router

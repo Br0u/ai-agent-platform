@@ -1,4 +1,4 @@
-"""Immutable contracts for the reviewed Skill runtime."""
+"""Immutable contracts for the validated Skill runtime."""
 
 from __future__ import annotations
 

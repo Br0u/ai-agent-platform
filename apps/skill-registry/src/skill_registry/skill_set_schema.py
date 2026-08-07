@@ -1,4 +1,4 @@
-"""Schema SQL for reviewed Skill runtime sets."""
+"""Schema SQL for validated Skill runtime sets."""
 
 SKILL_SET_TABLE_NAMES = frozenset(
     {

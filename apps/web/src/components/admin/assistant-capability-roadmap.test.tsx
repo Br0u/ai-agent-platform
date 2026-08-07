@@ -40,7 +40,7 @@ describe("AssistantCapabilityRoadmap", () => {
     ).toBeVisible();
     expect(
       within(cards[1]!).getByText(
-        "审核版本组成集合并激活后，由 Agent 按 exact revision 加载",
+        "上传版本组成集合并激活后，由 Agent 按 exact revision 加载",
       ),
     ).toBeVisible();
     expect(within(cards[1]!).getByText("已接入")).toBeVisible();

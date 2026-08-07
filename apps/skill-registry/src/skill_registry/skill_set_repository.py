@@ -36,7 +36,7 @@ _SET_COLUMNS = """skill_set.set_id, skill_set.agent_id, skill_set.state,
 
 
 class PostgresSkillSetRepository:
-    """Call only reviewed manager functions and read only manager views."""
+    """Call only restricted manager functions and read only manager views."""
 
     def __init__(self, connection_factory: RepositoryConnectionFactory) -> None:
         self._connection_factory = connection_factory

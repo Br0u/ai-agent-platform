@@ -159,10 +159,6 @@ export type AuditMetadataByEvent = {
   "assistant.skill_upload_completed": AssistantSkillAuditMetadata<
     "success" | "failure"
   >;
-  "assistant.skill_review_requested": AssistantSkillAuditMetadata<"requested">;
-  "assistant.skill_review_completed": AssistantSkillAuditMetadata<
-    "success" | "failure"
-  >;
   "assistant.skill_runtime_changed": AssistantSkillRuntimeAuditMetadata;
   "document.created": DocumentAuditMetadata;
   "document.draft_saved": DocumentAuditMetadata;
@@ -649,10 +645,6 @@ export const AUDIT_EVENT_SCHEMAS: Readonly<
     assistantSkillAuditMetadata(value, "upload_requested"),
   "assistant.skill_upload_completed": (value) =>
     assistantSkillAuditMetadata(value, "upload_completed"),
-  "assistant.skill_review_requested": (value) =>
-    assistantSkillAuditMetadata(value, "review_requested"),
-  "assistant.skill_review_completed": (value) =>
-    assistantSkillAuditMetadata(value, "review_completed"),
   "assistant.skill_runtime_changed": assistantSkillRuntimeAuditMetadata,
   "document.created": documentAuditMetadata,
   "document.draft_saved": documentAuditMetadata,

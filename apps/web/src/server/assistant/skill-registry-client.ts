@@ -64,7 +64,6 @@ export type SkillRegistryAction =
   | "detail"
   | "file"
   | "upload"
-  | "review"
   | "skill_set_status"
   | "skill_set_available"
   | "skill_set_create"
@@ -73,7 +72,6 @@ export type SkillRegistryAction =
 export type SkillRegistryPermission =
   | "admin:assistant:skills"
   | "admin:assistant:skills:upload"
-  | "admin:assistant:skills:review"
   | "admin:assistant:skills:configure";
 export type SkillRegistryAssurance = "session" | "password+mfa";
 
@@ -85,18 +83,6 @@ export type SkillRegistryAssertionInput = {
   target: string;
   assurance: SkillRegistryAssurance;
   assuredAt: number | null;
-};
-
-export type SkillRegistryReviewInput = {
-  decision: "approve" | "reject";
-  expectedState: "pending_review";
-  reason: string | null;
-  attestations: {
-    contentReviewed: true;
-    usageRightsConfirmed: true;
-    executionRiskAccepted: true;
-    reviewerAuthorizationConfirmed: true;
-  };
 };
 
 export type SkillRegistryClient = {
@@ -124,14 +110,6 @@ export type SkillRegistryClient = {
     requestId: string;
     archive: Uint8Array;
     targetSkillId?: string;
-  }): Promise<AdminSkillRevisionResponse>;
-  reviewRevision(input: {
-    actor: string;
-    requestId: string;
-    skillId: string;
-    revisionId: string;
-    assuredAt: number;
-    input: SkillRegistryReviewInput;
   }): Promise<AdminSkillRevisionResponse>;
 };
 
@@ -198,7 +176,7 @@ export const SKILL_REGISTRY_DOMAIN_CODES = [
   "REGISTRY_STORAGE_ERROR",
   "REGISTRY_UNAVAILABLE",
   "RESPONSE_TOO_LARGE",
-  "REVIEW_BLOCKED",
+  "SKILL_SCAN_BLOCKED",
   "REVISION_NOT_FOUND",
   "REVISION_STATE_CONFLICT",
   "SKILL_BINARY_FILE",
@@ -244,10 +222,9 @@ const ACTION_PERMISSION: Readonly<
   Record<SkillRegistryAction, SkillRegistryPermission>
 > = {
   list: "admin:assistant:skills",
-  detail: "admin:assistant:skills:review",
-  file: "admin:assistant:skills:review",
+  detail: "admin:assistant:skills",
+  file: "admin:assistant:skills",
   upload: "admin:assistant:skills:upload",
-  review: "admin:assistant:skills:review",
   skill_set_status: "admin:assistant:skills",
   skill_set_available: "admin:assistant:skills",
   skill_set_create: "admin:assistant:skills:configure",
@@ -262,12 +239,10 @@ const SKILL_SET_MUTATIONS: ReadonlySet<SkillRegistryAction> = new Set([
 const BEARER = /^[A-Za-z0-9._~+/-]+=*$/u;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
 const MAX_ARCHIVE_BYTES = 5 * 1024 * 1024;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 3 * 1024 * 1024;
 const MAX_FILE_RESPONSE_BYTES = MAX_FILE_BYTES * 6 + 1024;
-const MAX_REVIEW_BODY_BYTES = 8 * 1024;
 const CONNECT_TIMEOUT_MS = 2_000;
 const RESPONSE_TIMEOUT_MS = 5_000;
 
@@ -598,20 +573,6 @@ function canonicalUuid(value: unknown): value is string {
   return typeof value === "string" && UUID.test(value);
 }
 
-function pairedSurrogates(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const unit = value.charCodeAt(index);
-    if (unit >= 0xd800 && unit <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (next < 0xdc00 || next > 0xdfff) return false;
-      index += 1;
-    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
-      return false;
-    }
-  }
-  return true;
-}
-
 function validTarget(action: SkillRegistryAction, target: string): boolean {
   if (action === "list") return target === "skills";
   if (action === "upload") return target === "new" || canonicalUuid(target);
@@ -625,7 +586,7 @@ function validTarget(action: SkillRegistryAction, target: string): boolean {
     return agent === "maduoduo" && canonicalUuid(setId) && extra.length === 0;
   }
   const segments = target.split("/");
-  if (action === "detail" || action === "review") {
+  if (action === "detail") {
     return (
       segments.length === 2 &&
       canonicalUuid(segments[0]) &&
@@ -692,7 +653,6 @@ export function createSkillRegistryAssertionSigner(options: {
           clientError("invalid_request");
         }
         if (
-          value.action === "review" ||
           SKILL_SET_MUTATIONS.has(value.action as SkillRegistryAction)
         ) {
           if (
@@ -1003,7 +963,7 @@ const STATUS_BY_CODE: Readonly<Record<SkillRegistryDomainErrorCode, number>> = {
   REGISTRY_STORAGE_ERROR: 503,
   REGISTRY_UNAVAILABLE: 503,
   RESPONSE_TOO_LARGE: 503,
-  REVIEW_BLOCKED: 409,
+  SKILL_SCAN_BLOCKED: 400,
   REVISION_NOT_FOUND: 404,
   REVISION_STATE_CONFLICT: 409,
   SKILL_BINARY_FILE: 400,
@@ -1051,56 +1011,6 @@ function readCommandIdentity(
     canonicalUuid(command.requestId)
     ? command
     : null;
-}
-
-function readReviewInput(value: unknown): SkillRegistryReviewInput | null {
-  const input = exactRecord(value, [
-    ["decision", "expectedState", "reason", "attestations"],
-  ]);
-  const attestations = exactRecord(input?.attestations, [
-    [
-      "contentReviewed",
-      "usageRightsConfirmed",
-      "executionRiskAccepted",
-      "reviewerAuthorizationConfirmed",
-    ],
-  ]);
-  if (
-    input === null ||
-    attestations === null ||
-    (input.decision !== "approve" && input.decision !== "reject") ||
-    input.expectedState !== "pending_review" ||
-    attestations.contentReviewed !== true ||
-    attestations.usageRightsConfirmed !== true ||
-    attestations.executionRiskAccepted !== true ||
-    attestations.reviewerAuthorizationConfirmed !== true
-  ) {
-    return null;
-  }
-  if (
-    (input.decision === "approve" && input.reason !== null) ||
-    (input.decision === "reject" &&
-      (typeof input.reason !== "string" ||
-        input.reason !== input.reason.trim() ||
-        input.reason.length === 0 ||
-        Buffer.byteLength(input.reason, "utf8") > 2_048 ||
-        Array.from(input.reason).length > 500 ||
-        !pairedSurrogates(input.reason) ||
-        CONTROL_CHARACTER.test(input.reason)))
-  ) {
-    return null;
-  }
-  return {
-    decision: input.decision,
-    expectedState: "pending_review",
-    reason: input.reason as string | null,
-    attestations: {
-      contentReviewed: true,
-      usageRightsConfirmed: true,
-      executionRiskAccepted: true,
-      reviewerAuthorizationConfirmed: true,
-    },
-  };
 }
 
 function copyArchive(value: unknown): Uint8Array<ArrayBuffer> | null {
@@ -1278,7 +1188,7 @@ export function createSkillRegistryClient(options: {
       requestId: command.requestId,
       target,
       assurance:
-        action === "review" || SKILL_SET_MUTATIONS.has(action)
+        SKILL_SET_MUTATIONS.has(action)
           ? "password+mfa"
           : "session",
       assuredAt,
@@ -1436,66 +1346,9 @@ export function createSkillRegistryClient(options: {
           successStatus: 201,
           read: parseAdminSkillRevisionResponse,
           validate: (value) =>
-            value.revision.state === "pending_review" &&
+            value.revision.state === "published" &&
             (targetSkillId === undefined ||
               value.revision.skillId === targetSkillId),
-        });
-      } catch (error) {
-        throw sanitized(error);
-      }
-    },
-
-    async reviewRevision(input) {
-      try {
-        const command = readCommandIdentity(input, [
-          "actor",
-          "requestId",
-          "skillId",
-          "revisionId",
-          "assuredAt",
-          "input",
-        ]);
-        const reviewInput =
-          command === null ? null : readReviewInput(command.input);
-        if (
-          command === null ||
-          reviewInput === null ||
-          !canonicalUuid(command.skillId) ||
-          !canonicalUuid(command.revisionId) ||
-          typeof command.assuredAt !== "number" ||
-          !Number.isSafeInteger(command.assuredAt)
-        ) {
-          clientError("invalid_request");
-        }
-        const { actor, requestId, skillId, revisionId } = command as Record<
-          "actor" | "requestId" | "skillId" | "revisionId",
-          string
-        >;
-        const assuredAt = command.assuredAt as number;
-        const body = JSON.stringify(reviewInput);
-        if (Buffer.byteLength(body, "utf8") > MAX_REVIEW_BODY_BYTES) {
-          clientError("invalid_request");
-        }
-        const target = `${skillId}/${revisionId}`;
-        return await request({
-          method: "POST",
-          path: `/internal/skills/${skillId}/revisions/${revisionId}/review`,
-          requestId,
-          assertion: assertion(
-            { actor, requestId },
-            "review",
-            target,
-            assuredAt,
-          ),
-          contentType: "application/json",
-          body,
-          successStatus: 200,
-          read: parseAdminSkillRevisionResponse,
-          validate: (value) =>
-            value.revision.skillId === skillId &&
-            value.revision.id === revisionId &&
-            value.revision.state ===
-              (reviewInput.decision === "approve" ? "published" : "rejected"),
         });
       } catch (error) {
         throw sanitized(error);

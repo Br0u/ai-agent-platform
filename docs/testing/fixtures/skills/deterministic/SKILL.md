@@ -1,6 +1,6 @@
 ---
 name: deterministic-runtime
-description: Deterministic reviewed Skill used only by isolated runtime acceptance.
+description: Deterministic validated Skill used only by isolated runtime acceptance.
 license: MIT
 ---
 # Deterministic runtime acceptance

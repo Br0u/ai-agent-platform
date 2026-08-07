@@ -171,7 +171,7 @@ export function AssistantWorkspace({
               <span>{displayedServiceState.message}</span>
               <span>{sessionBoundary}</span>
               <span>
-                已启用的审核 Skill 会按配置加载；知识库和网页正文读取尚未接入。
+                已启用的 Skill 会按配置加载；知识库和网页正文读取尚未接入。
               </span>
             </p>
             <div aria-label="常见问题" className="assistant-workspace__presets">

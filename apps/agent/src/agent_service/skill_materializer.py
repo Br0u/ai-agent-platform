@@ -154,7 +154,7 @@ class PagedSkills(Skills):
                 "call again with offset=next_offset."
             ),
             "get_skill_script": (
-                "Read one bounded script page, or execute the reviewed script with "
+                "Read one bounded script page, or execute the validated packaged script with "
                 "bounded timeout and output. For reads, continue with offset=next_offset."
             ),
         }

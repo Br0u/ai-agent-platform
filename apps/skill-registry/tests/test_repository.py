@@ -16,7 +16,7 @@ from skill_core.types import (
     SkillFinding,
 )
 from skill_registry.repository import PostgresSkillRegistryRepository
-from skill_registry.schema import SCHEMA_VERSION_1_SQL
+from skill_registry.schema import SCHEMA_VERSION_5_SQL
 from skill_registry.skill_set_repository import PostgresSkillSetRepository
 from skill_registry.types import (
     ClonePreviousSkillSet,
@@ -24,14 +24,11 @@ from skill_registry.types import (
     CreateUploadRevision,
     DiscardSkillSet,
     RegistryError,
-    ReviewAttestations,
-    ReviewRevision,
 )
 
 
 NOW = datetime(2026, 7, 21, tzinfo=UTC)
 ACTOR = UUID("00000000-0000-4000-8000-000000000001")
-REVIEWER = UUID("00000000-0000-4000-8000-000000000002")
 SKILL_ID = UUID("10000000-0000-4000-8000-000000000001")
 REVISION_ID = UUID("20000000-0000-4000-8000-000000000001")
 SET_ID = UUID("40000000-0000-4000-8000-000000000001")
@@ -77,9 +74,7 @@ def create_command(**changes: object) -> CreateUploadRevision:
 
 def stored_row(
     *,
-    state: str = "pending_review",
-    reviewed_by: UUID | None = None,
-    reviewed_at: datetime | None = None,
+    state: str = "published",
     findings: list[dict[str, object]] | None = None,
 ) -> tuple[object, ...]:
     return (
@@ -113,8 +108,6 @@ def stored_row(
         ],
         ACTOR,
         NOW,
-        reviewed_by,
-        reviewed_at,
         "a" * 64,
         9,
         7,
@@ -246,7 +239,7 @@ async def test_create_upload_revision_writes_complete_bundle_in_one_transaction(
 
     assert revision.id == REVISION_ID
     assert revision.skill_id == SKILL_ID
-    assert revision.state == "pending_review"
+    assert revision.state == "published"
     assert revision.manifest.license == "MIT"
     assert revision.findings[0].code == "unsupported_import"
     assert connection.committed is True
@@ -334,173 +327,6 @@ async def test_target_revision_requires_locked_matching_slug_and_is_digest_idemp
     assert connection.script.executions[-1][1][-1] == "replay"
 
 
-def review_command(**changes: object) -> ReviewRevision:
-    values: dict[str, object] = {
-        "revision_id": REVISION_ID,
-        "reviewer": REVIEWER,
-        "request_id": uuid4(),
-        "assertion_nonce": uuid4(),
-        "decision": "approve",
-        "expected_state": "pending_review",
-        "reason": None,
-        "attestations": ReviewAttestations(
-            content_reviewed=True,
-            usage_rights_confirmed=True,
-            execution_risk_accepted=True,
-            reviewer_authorization_confirmed=True,
-        ),
-    }
-    values.update(changes)
-    return ReviewRevision(**values)  # type: ignore[arg-type]
-
-
-@pytest.mark.asyncio
-async def test_review_locks_then_writes_matching_event_before_state_update() -> None:
-    repository, connection = repository_with(
-        [
-            Reply("FROM skill_registry.skill_revisions AS revision", one=stored_row(findings=[])),
-            Reply("INSERT INTO skill_registry.skill_control_events"),
-            Reply("UPDATE skill_registry.skill_revisions", one=(NOW,)),
-        ]
-    )
-
-    revision = await repository.review_revision(review_command(skill_id=SKILL_ID))
-
-    assert revision.state == "published"
-    assert revision.reviewed_by == REVIEWER
-    queries = [" ".join(query.split()) for query, _ in connection.script.executions]
-    assert "FOR UPDATE" in queries[1]
-    assert "AND revision.skill_id = %s" in queries[1]
-    assert connection.script.executions[1][1] == (REVISION_ID, SKILL_ID)
-    assert "revision_published" in connection.script.executions[2][1]
-    assert queries[2].startswith("INSERT INTO skill_registry.skill_control_events")
-    assert "reviewer_authorization_confirmed" in queries[2]
-    assert "independent_reviewer_confirmed" not in queries[2]
-    assert queries[3].startswith("UPDATE skill_registry.skill_revisions")
-    assert connection.committed is True
-
-
-@pytest.mark.asyncio
-async def test_revision_creator_can_review_and_is_bound_to_event_and_update() -> None:
-    repository, connection = repository_with(
-        [
-            Reply("FROM skill_registry.skill_revisions AS revision", one=stored_row(findings=[])),
-            Reply("INSERT INTO skill_registry.skill_control_events"),
-            Reply("UPDATE skill_registry.skill_revisions", one=(NOW,)),
-        ]
-    )
-
-    revision = await repository.review_revision(review_command(reviewer=ACTOR))
-
-    assert revision.state == "published"
-    assert revision.created_by == ACTOR
-    assert revision.reviewed_by == ACTOR
-    assert connection.script.executions[2][1][3] == str(ACTOR)
-    assert connection.script.executions[3][1][1] == ACTOR
-    assert connection.committed is True
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("command", "row", "code"),
-    [
-        (
-            review_command(
-                attestations=replace(
-                    ReviewAttestations(True, True, True, True),
-                    execution_risk_accepted=False,
-                )
-            ),
-            stored_row(findings=[]),
-            "VALIDATION_ERROR",
-        ),
-        (
-            review_command(),
-            stored_row(state="published", reviewed_by=REVIEWER, reviewed_at=NOW),
-            "REVISION_STATE_CONFLICT",
-        ),
-        (review_command(), stored_row(), "REVIEW_BLOCKED"),
-        (review_command(decision="reject", reason=""), stored_row(findings=[]), "VALIDATION_ERROR"),
-        (
-            review_command(decision="reject", reason="   "),
-            stored_row(findings=[]),
-            "VALIDATION_ERROR",
-        ),
-        (
-            review_command(decision="reject", reason="x" * 501),
-            stored_row(findings=[]),
-            "VALIDATION_ERROR",
-        ),
-        (
-            review_command(decision="reject", reason=" " + "x" * 500 + " "),
-            stored_row(findings=[]),
-            "VALIDATION_ERROR",
-        ),
-    ],
-)
-async def test_review_rejects_invalid_or_blocked_transition_under_lock(
-    command: ReviewRevision,
-    row: tuple[object, ...],
-    code: str,
-) -> None:
-    repository, connection = repository_with(
-        [Reply("FROM skill_registry.skill_revisions AS revision", one=row)]
-    )
-
-    with pytest.raises(RegistryError) as caught:
-        await repository.review_revision(command)
-
-    assert caught.value.code == code
-    assert connection.rolled_back is True
-
-
-@pytest.mark.asyncio
-async def test_warning_findings_do_not_block_fully_attested_approval() -> None:
-    warnings = [
-        {
-            "path": "SKILL.md",
-            "line": 4,
-            "code": "possible_secret",
-            "message": "Possible credential-like assignment; review required.",
-            "blocking": False,
-        }
-    ]
-    repository, _ = repository_with(
-        [
-            Reply(
-                "FROM skill_registry.skill_revisions AS revision", one=stored_row(findings=warnings)
-            ),
-            Reply("INSERT INTO skill_registry.skill_control_events"),
-            Reply("UPDATE skill_registry.skill_revisions", one=(NOW,)),
-        ]
-    )
-
-    result = await repository.review_revision(review_command())
-
-    assert result.state == "published"
-
-
-@pytest.mark.asyncio
-async def test_reject_writes_bounded_reason_to_event_and_state_transition() -> None:
-    repository, connection = repository_with(
-        [
-            Reply("FROM skill_registry.skill_revisions AS revision", one=stored_row(findings=[])),
-            Reply("INSERT INTO skill_registry.skill_control_events"),
-            Reply("UPDATE skill_registry.skill_revisions", one=(NOW,)),
-        ]
-    )
-
-    result = await repository.review_revision(
-        review_command(decision="reject", reason="Usage rights were not demonstrated.")
-    )
-
-    assert result.state == "rejected"
-    event_parameters = connection.script.executions[2][1]
-    assert "revision_rejected" in event_parameters
-    assert event_parameters[6] == "Usage rights were not demonstrated."
-    assert event_parameters[7:] == (True, True, True, True)
-
-
 @pytest.mark.asyncio
 async def test_repository_queries_lists_files_and_previous_published_revision() -> None:
     repository, connection = repository_with(
@@ -513,14 +339,12 @@ async def test_repository_queries_lists_files_and_previous_published_revision() 
                         "demo-skill",
                         1,
                         REVISION_ID,
-                        "pending_review",
+                        "published",
                         NOW,
                         "upload",
                         "a" * 64,
                         ACTOR,
                         NOW,
-                        None,
-                        None,
                     )
                 ],
             ),
@@ -546,39 +370,17 @@ async def test_repository_queries_lists_files_and_previous_published_revision() 
     assert previous is None
 
 
-def test_schema_persists_findings_and_rejection_reason_with_immutable_boundaries() -> None:
-    sql = " ".join(SCHEMA_VERSION_1_SQL.split())
+def test_schema_removes_review_state_and_keeps_revision_immutability() -> None:
+    sql = " ".join(SCHEMA_VERSION_5_SQL.split())
 
-    assert "findings jsonb NOT NULL" in sql
-    assert "review_reason varchar(500)" in sql
+    assert "DROP COLUMN reviewed_by" in sql
+    assert "DROP COLUMN reviewed_at" in sql
+    assert "state IN ('published', 'archived')" in sql
     assert "NEW.findings IS DISTINCT FROM OLD.findings" in sql
-    assert "event_type = 'revision_rejected'" in sql
-    assert "GRANT UPDATE (review_reason)" not in sql
-
-
-def test_schema_requires_exact_review_evidence_and_blocks_findings_in_trigger() -> None:
-    sql = " ".join(SCHEMA_VERSION_1_SQL.split())
-
-    for column in (
-        "content_reviewed boolean",
-        "usage_rights_confirmed boolean",
-        "execution_risk_accepted boolean",
-        "independent_reviewer_confirmed boolean",
-    ):
-        assert column in sql
-    assert "CONSTRAINT skill_revisions_findings_array" in sql
-    assert "CONSTRAINT skill_control_events_review_evidence" in sql
-    assert "CONSTRAINT skill_control_events_review_reason" in sql
-    assert "content_reviewed IS TRUE" in sql
-    assert "content_reviewed IS NULL" in sql
-    assert "event_type = 'revision_rejected' AND review_reason IS NOT NULL" in sql
-    assert "event_type <> 'revision_rejected' AND review_reason IS NULL" in sql
-    assert "jsonb_array_elements(OLD.findings)" in sql
-    assert "finding ->> 'code' IN ('unsupported_import', 'private_key')" in sql
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["create", "review", "list"])
+@pytest.mark.parametrize("operation", ["create", "list"])
 async def test_repository_sanitizes_connection_failures(operation: str) -> None:
     def fail_connection() -> NoReturn:
         raise RuntimeError("connection failure includes secret-source")
@@ -588,8 +390,6 @@ async def test_repository_sanitizes_connection_failures(operation: str) -> None:
     with pytest.raises(RegistryError) as caught:
         if operation == "create":
             await repository.create_upload_revision(create_command())
-        elif operation == "review":
-            await repository.review_revision(review_command())
         else:
             await repository.list_skills()
 
@@ -600,17 +400,13 @@ async def test_repository_sanitizes_connection_failures(operation: str) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["upload", "review"])
-async def test_repeated_mutation_nonce_is_rejected_before_business_work(operation: str) -> None:
+async def test_repeated_upload_nonce_is_rejected_before_business_work() -> None:
     repository, connection = repository_with(
         [Reply("WHERE assertion_nonce = %s", one=(REVISION_ID,))]
     )
 
     with pytest.raises(RegistryError) as caught:
-        if operation == "upload":
-            await repository.create_upload_revision(create_command())
-        else:
-            await repository.review_revision(review_command())
+        await repository.create_upload_revision(create_command())
 
     assert caught.value.code == "ASSERTION_REPLAY"
     assert len(connection.script.executions) == 1

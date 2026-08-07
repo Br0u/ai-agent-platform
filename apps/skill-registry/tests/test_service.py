@@ -20,8 +20,6 @@ from skill_registry.types import (
     CreateUploadRevision,
     RegistryError,
     PublishedRevisionOption,
-    ReviewAttestations,
-    ReviewRevision,
     ScanPolicy,
     SkillSummary,
     StoredFile,
@@ -33,7 +31,6 @@ from skill_registry.types import (
 
 
 ACTOR = UUID("00000000-0000-4000-8000-000000000001")
-REVIEWER = UUID("00000000-0000-4000-8000-000000000002")
 SKILL_ID = UUID("10000000-0000-4000-8000-000000000001")
 NOW = datetime(2026, 7, 21, tzinfo=UTC)
 
@@ -90,7 +87,6 @@ class MemoryRepository:
         self.revisions: list[StoredRevision] = []
         self.files: dict[UUID, tuple[StoredFile, ...]] = {}
         self.uploads: list[CreateUploadRevision] = []
-        self.reviews: list[ReviewRevision] = []
 
     async def create_upload_revision(self, command: CreateUploadRevision) -> StoredRevision:
         self.uploads.append(command)
@@ -100,14 +96,12 @@ class MemoryRepository:
             skill_id=command.target_skill_id or SKILL_ID,
             skill_slug=command.package.manifest.name,
             revision_no=len(self.revisions) + 1,
-            state="pending_review",
+            state="published",
             source_type="upload",
             manifest=command.package.manifest,
             findings=command.package.findings,
             created_by=command.actor,
             created_at=NOW,
-            reviewed_by=None,
-            reviewed_at=None,
             artifact_sha256=command.package.sha256,
             compressed_size=command.package.compressed_size,
             extracted_size=command.package.extracted_size,
@@ -120,18 +114,6 @@ class MemoryRepository:
         )
         await self.store.put(revision_id, command.package)
         return revision
-
-    async def review_revision(self, command: ReviewRevision) -> StoredRevision:
-        self.reviews.append(command)
-        revision = next(item for item in self.revisions if item.id == command.revision_id)
-        updated = replace(
-            revision,
-            state="published" if command.decision == "approve" else "rejected",
-            reviewed_by=command.reviewer,
-            reviewed_at=NOW,
-        )
-        self.revisions[self.revisions.index(revision)] = updated
-        return updated
 
     async def list_skills(self, *, limit: int = 50, offset: int = 0) -> tuple[SkillSummary, ...]:
         assert 1 <= limit <= 100
@@ -427,23 +409,20 @@ async def test_skill_set_service_rejects_non_bigint_activation_version(
 async def test_upload_uses_explicit_frozen_allowlist_and_stores_canonical_only() -> None:
     registry, repository, store = service()
 
-    detail = await registry.upload_zip(
-        actor=ACTOR,
-        request_id=uuid4(),
-        assertion_nonce=uuid4(),
-        archive=build_zip(),
-        target_skill_id=None,
-    )
+    with pytest.raises(RegistryError) as caught:
+        await registry.upload_zip(
+            actor=ACTOR,
+            request_id=uuid4(),
+            assertion_nonce=uuid4(),
+            archive=build_zip(),
+            target_skill_id=None,
+        )
+    assert caught.value.code == "SKILL_SCAN_BLOCKED"
+    assert repository.uploads == []
+    assert store.artifacts == {}
 
-    package = repository.uploads[0].package
-    assert detail.revision.state == "pending_review"
-    assert [item.code for item in package.findings].count("unsupported_import") == 1
-    assert package.findings[0].path == "scripts/run.py"
-    assert store.artifacts[detail.revision.id] == package.archive
-    assert store.artifacts[detail.revision.id] != build_zip()
-
-    allowed_registry, allowed_repository, _ = service(frozenset({"third_party"}))
-    await allowed_registry.upload_zip(
+    allowed_registry, allowed_repository, allowed_store = service(frozenset({"third_party"}))
+    detail = await allowed_registry.upload_zip(
         actor=ACTOR,
         request_id=uuid4(),
         assertion_nonce=uuid4(),
@@ -454,6 +433,8 @@ async def test_upload_uses_explicit_frozen_allowlist_and_stores_canonical_only()
         finding.code == "unsupported_import"
         for finding in allowed_repository.uploads[0].package.findings
     )
+    assert detail.revision.state == "published"
+    assert allowed_store.artifacts[detail.revision.id] != build_zip()
 
 
 def test_scan_policy_rejects_mutable_or_implicit_allowlist() -> None:
@@ -461,46 +442,15 @@ def test_scan_policy_rejects_mutable_or_implicit_allowlist() -> None:
         ScanPolicy({"third_party"})  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize(
-    "field",
-    [
-        "content_reviewed",
-        "usage_rights_confirmed",
-        "execution_risk_accepted",
-        "reviewer_authorization_confirmed",
-    ],
-)
-@pytest.mark.parametrize("invalid", [False, 1, "true", object(), [True]])
-def test_attestations_require_all_four_values_to_be_exact_boolean_true(
-    field: str, invalid: object
-) -> None:
-    values: dict[str, object] = {
-        "content_reviewed": True,
-        "usage_rights_confirmed": True,
-        "execution_risk_accepted": True,
-        "reviewer_authorization_confirmed": True,
-    }
-    values[field] = invalid
-    attestations = ReviewAttestations(**values)  # type: ignore[arg-type]
-
-    assert attestations.complete is False
-
-
 @pytest.mark.asyncio
-async def test_detail_verifies_artifact_and_returns_review_bundle_and_previous_diff() -> None:
-    registry, repository, store = service()
+async def test_detail_verifies_artifact_and_returns_previous_diff() -> None:
+    registry, repository, store = service(frozenset({"third_party"}))
     first = await registry.upload_zip(
         actor=ACTOR,
         request_id=uuid4(),
         assertion_nonce=uuid4(),
         archive=build_zip(instructions="# Version one\n"),
         target_skill_id=None,
-    )
-    repository.revisions[0] = replace(
-        repository.revisions[0],
-        state="published",
-        reviewed_by=REVIEWER,
-        reviewed_at=NOW,
     )
     second = await registry.upload_zip(
         actor=ACTOR,
@@ -516,7 +466,7 @@ async def test_detail_verifies_artifact_and_returns_review_bundle_and_previous_d
     assert [file.path for file in detail.scripts] == ["scripts/run.py"]
     assert [file.path for file in detail.references] == ["references/guide.md"]
     assert detail.python_imports.modules == ("pathlib", "third_party")
-    assert detail.python_imports.unavailable_modules == ("third_party",)
+    assert detail.python_imports.unavailable_modules == ()
     assert detail.previous_published_revision_id == first.revision.id
     assert detail.diff is not None
     assert detail.diff.truncated is False
@@ -538,7 +488,7 @@ async def test_detail_verifies_artifact_and_returns_review_bundle_and_previous_d
 
 @pytest.mark.asyncio
 async def test_file_read_allows_only_verified_indexed_utf8_content() -> None:
-    registry, repository, store = service()
+    registry, repository, store = service(frozenset({"third_party"}))
     detail = await registry.upload_zip(
         actor=ACTOR,
         request_id=uuid4(),
@@ -595,7 +545,7 @@ async def test_file_read_allows_only_verified_indexed_utf8_content() -> None:
 
 @pytest.mark.asyncio
 async def test_file_read_rejects_oversized_index_before_artifact_read() -> None:
-    registry, repository, store = service()
+    registry, repository, store = service(frozenset({"third_party"}))
     detail = await registry.upload_zip(
         actor=ACTOR,
         request_id=uuid4(),
@@ -614,74 +564,6 @@ async def test_file_read_rejects_oversized_index_before_artifact_read() -> None:
 
     assert caught.value.code == "SKILL_FILE_TOO_LARGE"
     assert len(store.expected_reads) == previous_read_count
-
-
-@pytest.mark.asyncio
-async def test_revision_uploader_can_approve_with_complete_attestations() -> None:
-    registry, repository, _ = service(frozenset({"third_party"}))
-    detail = await registry.upload_zip(
-        actor=ACTOR,
-        request_id=uuid4(),
-        assertion_nonce=uuid4(),
-        archive=build_zip(),
-        target_skill_id=None,
-    )
-    command = ReviewRevision(
-        revision_id=detail.revision.id,
-        reviewer=ACTOR,
-        request_id=uuid4(),
-        assertion_nonce=uuid4(),
-        decision="approve",
-        expected_state="pending_review",
-        reason=None,
-        attestations=ReviewAttestations(
-            content_reviewed=True,
-            usage_rights_confirmed=True,
-            execution_risk_accepted=True,
-            reviewer_authorization_confirmed=True,
-        ),
-        skill_id=SKILL_ID,
-    )
-
-    reviewed = await registry.review_revision(command)
-
-    assert reviewed.state == "published"
-    assert reviewed.reviewed_by == ACTOR
-    assert repository.reviews == [command]
-
-
-@pytest.mark.asyncio
-async def test_review_service_rejects_truthy_non_boolean_attestation() -> None:
-    registry, repository, _ = service(frozenset({"third_party"}))
-    detail = await registry.upload_zip(
-        actor=ACTOR,
-        request_id=uuid4(),
-        assertion_nonce=uuid4(),
-        archive=build_zip(),
-        target_skill_id=None,
-    )
-    command = ReviewRevision(
-        revision_id=detail.revision.id,
-        reviewer=REVIEWER,
-        request_id=uuid4(),
-        assertion_nonce=uuid4(),
-        decision="approve",
-        expected_state="pending_review",
-        reason=None,
-        attestations=ReviewAttestations(
-            content_reviewed=1,  # type: ignore[arg-type]
-            usage_rights_confirmed=True,
-            execution_risk_accepted=True,
-            reviewer_authorization_confirmed=True,
-        ),
-        skill_id=SKILL_ID,
-    )
-
-    with pytest.raises(RegistryError) as caught:
-        await registry.review_revision(command)
-
-    assert caught.value.code == "VALIDATION_ERROR"
-    assert repository.reviews == []
 
 
 @pytest.mark.asyncio

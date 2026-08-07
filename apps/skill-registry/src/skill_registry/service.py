@@ -1,4 +1,4 @@
-"""Application service for upload, review material, and two-person review."""
+"""Application service for validated Skill uploads and runtime selection."""
 
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ from skill_registry.types import (
     PublishedRevisionPage,
     PythonImportSummary,
     RegistryError,
-    ReviewRevision,
     RevisionDetail,
     ScanPolicy,
     SkillRegistryRepository,
@@ -189,6 +188,11 @@ class SkillRegistryService:
             findings = ()
         if scan_failed:
             raise RegistryError("SKILL_SCAN_FAILED", "Skill package scan failed") from None
+        if any(
+            finding.code in {"unsupported_import", "private_key"}
+            for finding in findings
+        ):
+            raise RegistryError("SKILL_SCAN_BLOCKED", "Blocking findings prevent upload")
         package = replace(package, findings=findings)
         revision = await self._repository.create_upload_revision(
             CreateUploadRevision(
@@ -247,11 +251,6 @@ class SkillRegistryService:
                 "SKILL_FILE_NOT_UTF8", "Skill file is not valid UTF-8 text"
             ) from None
         return text
-
-    async def review_revision(self, command: ReviewRevision) -> StoredRevision:
-        if command.skill_id is None or not command.attestations.complete:
-            raise RegistryError("VALIDATION_ERROR", "All review attestations are required")
-        return await self._repository.review_revision(command)
 
     async def _load_verified_package(
         self, revision: StoredRevision, files: tuple[StoredFile, ...]

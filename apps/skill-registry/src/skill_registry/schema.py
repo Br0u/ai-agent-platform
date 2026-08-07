@@ -1,4 +1,4 @@
-"""Literal schema migrations for the isolated reviewed-skill registry."""
+"""Literal schema migrations for the isolated Skill registry."""
 
 from skill_registry.skill_set_schema import (
     MANAGER_SKILL_SET_VIEW_NAMES,
@@ -8,9 +8,9 @@ from skill_registry.skill_set_schema import (
     SKILL_SET_TABLE_NAMES,
 )
 
-SKILL_REGISTRY_SCHEMA_VERSION = 4
+SKILL_REGISTRY_SCHEMA_VERSION = 5
 
-REVIEWED_SKILL_TABLE_NAMES = frozenset(
+SKILL_TABLE_NAMES = frozenset(
     {
         "skills",
         "skill_revisions",
@@ -20,7 +20,7 @@ REVIEWED_SKILL_TABLE_NAMES = frozenset(
     }
 )
 
-REQUIRED_TABLE_NAMES = REVIEWED_SKILL_TABLE_NAMES | SKILL_SET_TABLE_NAMES
+REQUIRED_TABLE_NAMES = SKILL_TABLE_NAMES | SKILL_SET_TABLE_NAMES
 REQUIRED_VIEW_NAMES = MANAGER_SKILL_SET_VIEW_NAMES | RUNTIME_SKILL_SET_VIEW_NAMES
 
 EXPECTED_TABLE_OWNERS = frozenset(
@@ -34,7 +34,7 @@ EXPECTED_VIEW_OWNERS = frozenset(
 
 EXPECTED_MANAGER_TABLE_GRANTS = frozenset(
     (table_name, privilege, False)
-    for table_name in REVIEWED_SKILL_TABLE_NAMES
+    for table_name in SKILL_TABLE_NAMES
     for privilege in ("INSERT", "SELECT")
 ) | frozenset((view_name, "SELECT", False) for view_name in MANAGER_SKILL_SET_VIEW_NAMES)
 
@@ -46,8 +46,6 @@ EXPECTED_MANAGER_COLUMN_GRANTS = frozenset(
     {
         ("skills", "archived_at", "UPDATE", False),
         ("skill_revisions", "state", "UPDATE", False),
-        ("skill_revisions", "reviewed_by", "UPDATE", False),
-        ("skill_revisions", "reviewed_at", "UPDATE", False),
     }
 )
 
@@ -67,64 +65,11 @@ EXPECTED_SCHEMA_GRANTS = frozenset(
 
 EXPECTED_CONTROL_EVENT_TRANSACTION_COLUMN = frozenset({("transaction_id", "bigint", True, "")})
 
-EXPECTED_REVIEW_STORAGE_COLUMNS = frozenset(
-    {
-        ("skill_control_events", "content_reviewed", "boolean", False, ""),
-        ("skill_control_events", "execution_risk_accepted", "boolean", False, ""),
-        (
-            "skill_control_events",
-            "reviewer_authorization_confirmed",
-            "boolean",
-            False,
-            "",
-        ),
-        (
-            "skill_control_events",
-            "review_reason",
-            "character varying(500)",
-            False,
-            "",
-        ),
-        ("skill_control_events", "usage_rights_confirmed", "boolean", False, ""),
-        ("skill_revisions", "findings", "jsonb", True, "'[]'::jsonb"),
-    }
+EXPECTED_STORAGE_COLUMNS = frozenset(
+    {("skill_revisions", "findings", "jsonb", True, "'[]'::jsonb")}
 )
 
-_PG18_REVIEW_EVIDENCE_CONSTRAINT = (
-    "CHECK ((event_type::text = ANY (ARRAY['revision_published'::character varying, "
-    "'revision_rejected'::character varying]::text[])) AND content_reviewed IS TRUE AND "
-    "usage_rights_confirmed IS TRUE AND execution_risk_accepted IS TRUE AND "
-    "reviewer_authorization_confirmed IS TRUE OR (event_type::text <> ALL "
-    "(ARRAY['revision_published'::character varying, 'revision_rejected'::character "
-    "varying]::text[])) AND content_reviewed IS NULL AND usage_rights_confirmed IS NULL "
-    "AND execution_risk_accepted IS NULL AND reviewer_authorization_confirmed IS NULL)"
-)
-_PG18_REVIEW_REASON_CONSTRAINT = (
-    "CHECK (event_type::text = 'revision_rejected'::text AND review_reason IS NOT NULL "
-    "AND char_length(btrim(review_reason::text)) >= 1 AND "
-    "char_length(btrim(review_reason::text)) <= 500 OR event_type::text <> "
-    "'revision_rejected'::text AND review_reason IS NULL)"
-)
 _PG18_FINDINGS_CONSTRAINT = "CHECK (skill_registry.validate_skill_findings(findings))"
-_PG18_REVIEW_FUNCTION = (
-    "CREATE OR REPLACE FUNCTION skill_registry.require_revision_review_event() RETURNS "
-    "trigger LANGUAGE plpgsql SET search_path TO 'pg_catalog', 'skill_registry' AS "
-    "$function$ DECLARE expected_event_type varchar(64); BEGIN IF OLD.state <> "
-    "'pending_review' OR NEW.state NOT IN ('published', 'rejected') THEN RETURN NEW; END "
-    "IF; expected_event_type := CASE WHEN NEW.state = 'published' THEN "
-    "'revision_published' WHEN NEW.state = 'rejected' THEN 'revision_rejected' END; IF "
-    "skill_registry.validate_skill_findings(OLD.findings) IS DISTINCT FROM TRUE THEN "
-    "RAISE EXCEPTION 'skill findings schema is invalid' USING ERRCODE = '23514'; END IF; "
-    "IF NEW.state = 'published' AND EXISTS ( SELECT 1 FROM "
-    "pg_catalog.jsonb_array_elements(OLD.findings) AS finding WHERE finding ->> 'code' IN "
-    "('unsupported_import', 'private_key') ) THEN RAISE EXCEPTION 'blocking skill "
-    "findings prevent publication' USING ERRCODE = '23514'; END IF; IF NOT EXISTS ( "
-    "SELECT 1 FROM skill_registry.skill_control_events AS event WHERE event.transaction_id "
-    "= pg_catalog.txid_current() AND event.target_id = NEW.id AND event.event_type = "
-    "expected_event_type AND event.actor = NEW.reviewed_by::text AND event.result_code = "
-    "'ok' ) THEN RAISE EXCEPTION 'skill revision review event is required in the same "
-    "transaction' USING ERRCODE = '23514'; END IF; RETURN NEW; END; $function$"
-)
 _PG18_FINDINGS_FUNCTION = (
     "CREATE OR REPLACE FUNCTION skill_registry.validate_skill_findings(candidate jsonb) "
     "RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT SET search_path TO "
@@ -153,32 +98,13 @@ _PG18_REVISION_UPDATE_FUNCTION = (
     "OLD.source_commit OR NEW.manifest IS DISTINCT FROM OLD.manifest OR NEW.findings IS "
     "DISTINCT FROM OLD.findings OR NEW.created_by IS DISTINCT FROM OLD.created_by OR "
     "NEW.created_at IS DISTINCT FROM OLD.created_at THEN RAISE EXCEPTION 'skill revision "
-    "body is immutable' USING ERRCODE = '42501'; END IF; IF OLD.state = 'pending_review' "
-    "AND NEW.state IN ('published', 'rejected') THEN IF NEW.reviewed_by IS NULL OR "
-    "NEW.reviewed_at IS NULL THEN RAISE EXCEPTION 'review actor and timestamp are required' "
-    "USING ERRCODE = '23514'; END IF; ELSIF OLD.state = 'published' AND NEW.state = "
-    "'archived' THEN IF NEW.reviewed_by IS DISTINCT FROM OLD.reviewed_by OR NEW.reviewed_at "
-    "IS DISTINCT FROM OLD.reviewed_at THEN RAISE EXCEPTION 'review metadata is immutable "
-    "after review' USING ERRCODE = '42501'; END IF; ELSE RAISE EXCEPTION 'invalid skill "
+    "body is immutable' USING ERRCODE = '42501'; END IF; IF OLD.state <> 'published' OR "
+    "NEW.state <> 'archived' THEN RAISE EXCEPTION 'invalid skill "
     "revision state transition' USING ERRCODE = '23514'; END IF; RETURN NEW; END; $function$"
 )
 
-EXPECTED_REVIEW_CONSTRAINTS = frozenset(
+EXPECTED_REGISTRY_CONSTRAINTS = frozenset(
     {
-        (
-            "skill_control_events_review_evidence",
-            "skill_control_events",
-            "c",
-            True,
-            _PG18_REVIEW_EVIDENCE_CONSTRAINT,
-        ),
-        (
-            "skill_control_events_review_reason",
-            "skill_control_events",
-            "c",
-            True,
-            _PG18_REVIEW_REASON_CONSTRAINT,
-        ),
         (
             "skill_revisions_findings_array",
             "skill_revisions",
@@ -189,10 +115,9 @@ EXPECTED_REVIEW_CONSTRAINTS = frozenset(
     }
 )
 
-EXPECTED_REVIEW_TRIGGER_GUARDS = frozenset(
+EXPECTED_TRIGGER_GUARDS = frozenset(
     {
         ("guard_revision_update", _PG18_REVISION_UPDATE_FUNCTION),
-        ("require_revision_review_event", _PG18_REVIEW_FUNCTION),
         ("validate_skill_findings", _PG18_FINDINGS_FUNCTION),
     }
 )
@@ -215,7 +140,6 @@ EXPECTED_FUNCTION_BOUNDARY = (
             "guard_revision_insert",
             "guard_revision_update",
             "guard_skill_update",
-            "require_revision_review_event",
             "stamp_control_event_transaction",
             "guard_agent_skill_set_update",
             "guard_active_agent_skill_set_update",
@@ -440,15 +364,6 @@ EXPECTED_SECURITY_TRIGGERS = frozenset(
             19,
             False,
             False,
-            "A",
-        ),
-        (
-            "skill_revisions_require_review_event",
-            "skill_revisions",
-            "require_revision_review_event",
-            17,
-            True,
-            True,
             "A",
         ),
         (
@@ -1019,6 +934,102 @@ VALUES (2)
 ON CONFLICT (version) DO NOTHING;
 """
 
+SCHEMA_VERSION_5_SQL = """
+DROP TRIGGER skill_revisions_require_review_event
+  ON skill_registry.skill_revisions;
+DROP FUNCTION skill_registry.require_revision_review_event();
+DROP TRIGGER skill_revisions_guard_insert
+  ON skill_registry.skill_revisions;
+DROP TRIGGER skill_revisions_guard_update
+  ON skill_registry.skill_revisions;
+
+ALTER TABLE skill_registry.skill_revisions
+  DROP CONSTRAINT skill_revisions_state_check,
+  DROP CONSTRAINT skill_revisions_check;
+UPDATE skill_registry.skill_revisions
+SET state = 'archived'
+WHERE state IN ('pending_review', 'rejected');
+ALTER TABLE skill_registry.skill_revisions
+  DROP COLUMN reviewed_by,
+  DROP COLUMN reviewed_at,
+  ADD CONSTRAINT skill_revisions_state_check
+    CHECK (state IN ('published', 'archived'));
+
+DELETE FROM skill_registry.skill_control_events
+WHERE event_type IN ('revision_published', 'revision_rejected');
+ALTER TABLE skill_registry.skill_control_events
+  DROP CONSTRAINT skill_control_events_event_type_check,
+  DROP CONSTRAINT skill_control_events_review_reason,
+  DROP CONSTRAINT skill_control_events_review_evidence,
+  DROP COLUMN review_reason,
+  DROP COLUMN content_reviewed,
+  DROP COLUMN usage_rights_confirmed,
+  DROP COLUMN execution_risk_accepted,
+  DROP COLUMN reviewer_authorization_confirmed,
+  ADD CONSTRAINT skill_control_events_event_type_check CHECK (
+    event_type IN (
+      'skill_created',
+      'revision_created',
+      'skill_archived',
+      'skill_read',
+      'revision_read'
+    )
+  );
+
+CREATE OR REPLACE FUNCTION skill_registry.guard_revision_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, skill_registry
+AS $$
+BEGIN
+  IF NEW.state <> 'published' THEN
+    RAISE EXCEPTION 'new skill revisions must be published'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION skill_registry.guard_revision_update()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, skill_registry
+AS $$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id
+    OR NEW.skill_id IS DISTINCT FROM OLD.skill_id
+    OR NEW.revision_no IS DISTINCT FROM OLD.revision_no
+    OR NEW.source_type IS DISTINCT FROM OLD.source_type
+    OR NEW.source_url IS DISTINCT FROM OLD.source_url
+    OR NEW.source_ref IS DISTINCT FROM OLD.source_ref
+    OR NEW.source_commit IS DISTINCT FROM OLD.source_commit
+    OR NEW.manifest IS DISTINCT FROM OLD.manifest
+    OR NEW.findings IS DISTINCT FROM OLD.findings
+    OR NEW.created_by IS DISTINCT FROM OLD.created_by
+    OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'skill revision body is immutable'
+      USING ERRCODE = '42501';
+  END IF;
+  IF OLD.state <> 'published' OR NEW.state <> 'archived' THEN
+    RAISE EXCEPTION 'invalid skill revision state transition'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER skill_revisions_guard_insert
+BEFORE INSERT ON skill_registry.skill_revisions
+FOR EACH ROW EXECUTE FUNCTION skill_registry.guard_revision_insert();
+CREATE TRIGGER skill_revisions_guard_update
+BEFORE UPDATE ON skill_registry.skill_revisions
+FOR EACH ROW EXECUTE FUNCTION skill_registry.guard_revision_update();
+
+INSERT INTO skill_registry.schema_versions (version)
+VALUES (5)
+ON CONFLICT (version) DO NOTHING;
+"""
+
 VERIFY_TABLES_SQL = """SELECT
   c.relname::text,
   pg_get_userbyid(c.relowner)::text
@@ -1198,7 +1209,7 @@ WHERE n.nspname = 'skill_registry'
   AND NOT a.attisdropped
 """
 
-VERIFY_REVIEW_STORAGE_COLUMNS_SQL = """SELECT
+VERIFY_STORAGE_COLUMNS_SQL = """SELECT
   c.relname::text,
   a.attname::text,
   format_type(a.atttypid, a.atttypmod)::text,
@@ -1228,7 +1239,7 @@ WHERE n.nspname = 'skill_registry'
 ORDER BY c.relname, a.attname
 """
 
-VERIFY_REVIEW_CONSTRAINTS_SQL = """SELECT
+VERIFY_REGISTRY_CONSTRAINTS_SQL = """SELECT
   constraint_row.conname::text,
   relation.relname::text,
   constraint_row.contype::text,
@@ -1249,7 +1260,7 @@ WHERE relation_schema.nspname = 'skill_registry'
 ORDER BY constraint_row.conname
 """
 
-VERIFY_REVIEW_TRIGGER_GUARDS_SQL = """SELECT
+VERIFY_TRIGGER_GUARDS_SQL = """SELECT
   function.proname::text,
   btrim(regexp_replace(
     pg_get_functiondef(function.oid),

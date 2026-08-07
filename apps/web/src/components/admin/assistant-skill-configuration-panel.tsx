@@ -178,7 +178,7 @@ export function AssistantSkillConfigurationPanel({ initialSnapshot }: Props) {
     >
       <header>
         <div>
-          <p>REVIEWED SKILL RUNTIME</p>
+          <p>SKILL RUNTIME</p>
           <h2 id="assistant-skill-runtime-title">码多多 Skill 配置</h2>
         </div>
         <strong data-state={consistent ? "ready" : "degraded"}>

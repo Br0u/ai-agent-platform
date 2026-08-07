@@ -35,7 +35,6 @@ const ADMIN_PERMISSION_KEYS = new Set([
   "admin:assistant:skills",
   "admin:assistant:skills:configure",
   "admin:assistant:skills:connections",
-  "admin:assistant:skills:review",
   "admin:assistant:skills:upload",
   "admin:docs:delete",
 ]);

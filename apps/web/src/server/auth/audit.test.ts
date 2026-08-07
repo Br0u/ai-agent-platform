@@ -47,14 +47,8 @@ const completedAssistantModelAuditMetadata = {
   result: "success",
 } as const;
 
-const requestedAssistantSkillAuditEvents = [
-  "assistant.skill_upload_requested",
-  "assistant.skill_review_requested",
-] as const satisfies readonly AuditEvent[];
-
 const completedAssistantSkillAuditEvents = [
   "assistant.skill_upload_completed",
-  "assistant.skill_review_completed",
 ] as const satisfies readonly AuditEvent[];
 
 const assistantSkillAuditMetadataBase = {
@@ -78,19 +72,6 @@ const assistantSkillAuditCases = [
   },
   {
     event: "assistant.skill_upload_completed",
-    metadata: { ...assistantSkillAuditMetadataBase, result: "success" },
-  },
-  {
-    event: "assistant.skill_review_requested",
-    metadata: {
-      ...assistantSkillAuditMetadataBase,
-      revisionNo: null,
-      digest: null,
-      result: "requested",
-    },
-  },
-  {
-    event: "assistant.skill_review_completed",
     metadata: { ...assistantSkillAuditMetadataBase, result: "success" },
   },
 ] as const;
@@ -163,8 +144,6 @@ describe("audit writer", () => {
       "assistant.model_config_tested",
       "assistant.model_key_reveal_requested",
       "assistant.model_key_revealed",
-      "assistant.skill_review_completed",
-      "assistant.skill_review_requested",
       "assistant.skill_runtime_changed",
       "assistant.skill_upload_completed",
       "assistant.skill_upload_requested",
@@ -417,21 +396,6 @@ describe("audit writer", () => {
     },
   );
 
-  it.each(
-    requestedAssistantSkillAuditEvents.filter((event) =>
-      event.includes("review"),
-    ),
-  )("requires review request identity for %s", (event) => {
-    expect(() =>
-      AUDIT_EVENT_SCHEMAS[event]({
-        ...assistantSkillAuditMetadataBase,
-        skillId: null,
-        revisionId: null,
-        result: "requested",
-      }),
-    ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
-  });
-
   it("rejects a revision identity on upload_requested", () => {
     expect(() =>
       AUDIT_EVENT_SCHEMAS["assistant.skill_upload_requested"]({
@@ -459,18 +423,6 @@ describe("audit writer", () => {
       requestId: assistantSkillAuditMetadataBase.requestId,
       result: "failure",
     });
-    expect(
-      AUDIT_EVENT_SCHEMAS["assistant.skill_review_completed"]({
-        ...assistantSkillAuditMetadataBase,
-        revisionNo: null,
-        digest: null,
-        result: "failure",
-      }),
-    ).toMatchObject({
-      skillId: assistantSkillAuditMetadataBase.skillId,
-      revisionId: assistantSkillAuditMetadataBase.revisionId,
-      result: "failure",
-    });
   });
 
   it.each([
@@ -478,7 +430,7 @@ describe("audit writer", () => {
     { revisionNo: null, digest: assistantSkillAuditMetadataBase.digest },
   ])("rejects inconsistent optional revision audit fields %#", (overrides) => {
     expect(() =>
-      AUDIT_EVENT_SCHEMAS["assistant.skill_review_completed"]({
+      AUDIT_EVENT_SCHEMAS["assistant.skill_upload_completed"]({
         ...assistantSkillAuditMetadataBase,
         ...overrides,
         result: "failure",

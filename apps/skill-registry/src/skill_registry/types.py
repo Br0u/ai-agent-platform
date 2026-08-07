@@ -1,4 +1,4 @@
-"""Frozen service and persistence contracts for reviewed skill revisions."""
+"""Frozen service and persistence contracts for uploaded skill revisions."""
 
 from __future__ import annotations
 
@@ -14,8 +14,7 @@ from skill_core.types import (
     SkillPackageDiff,
 )
 
-RevisionState = Literal["pending_review", "published", "rejected", "archived"]
-ReviewDecision = Literal["approve", "reject"]
+RevisionState = Literal["published", "archived"]
 AgentId = Literal["maduoduo"]
 SkillSetState = Literal["candidate", "active", "superseded", "failed", "discarded"]
 
@@ -47,37 +46,6 @@ class CreateUploadRevision:
 
 
 @dataclass(frozen=True, slots=True)
-class ReviewAttestations:
-    content_reviewed: bool
-    usage_rights_confirmed: bool
-    execution_risk_accepted: bool
-    reviewer_authorization_confirmed: bool
-
-    @property
-    def complete(self) -> bool:
-        values = (
-            self.content_reviewed,
-            self.usage_rights_confirmed,
-            self.execution_risk_accepted,
-            self.reviewer_authorization_confirmed,
-        )
-        return all(type(value) is bool and value is True for value in values)
-
-
-@dataclass(frozen=True, slots=True)
-class ReviewRevision:
-    revision_id: UUID
-    reviewer: UUID
-    request_id: UUID
-    assertion_nonce: UUID
-    decision: ReviewDecision
-    expected_state: Literal["pending_review"]
-    reason: str | None
-    attestations: ReviewAttestations
-    skill_id: UUID | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class StoredRevision:
     id: UUID
     skill_id: UUID
@@ -89,8 +57,6 @@ class StoredRevision:
     findings: tuple[SkillFinding, ...]
     created_by: UUID
     created_at: datetime
-    reviewed_by: UUID | None
-    reviewed_at: datetime | None
     artifact_sha256: str
     compressed_size: int
     extracted_size: int
@@ -117,8 +83,6 @@ class SkillSummary:
     latest_artifact_sha256: str | None = None
     latest_created_by: UUID | None = None
     latest_created_at: datetime | None = None
-    latest_reviewed_by: UUID | None = None
-    latest_reviewed_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,8 +180,6 @@ class PublishedRevisionPage:
 
 class SkillRegistryRepository(Protocol):
     async def create_upload_revision(self, command: CreateUploadRevision) -> StoredRevision: ...
-
-    async def review_revision(self, command: ReviewRevision) -> StoredRevision: ...
 
     async def list_skills(
         self, *, limit: int = 50, offset: int = 0

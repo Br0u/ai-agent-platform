@@ -69,9 +69,6 @@ function createSkillRegistryClient(options: ClientOptions) {
   });
 }
 
-const GOLDEN_REVIEW_ASSERTION =
-  "eyJhY3Rpb24iOiJyZXZpZXciLCJhY3RvciI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsImFzc3VyYW5jZSI6InBhc3N3b3JkK21mYSIsImFzc3VyZWRBdCI6MTk5OTk5OTcwMCwiZXhwaXJlc0F0IjoyMDAwMDAwMDA1LCJpc3N1ZWRBdCI6MjAwMDAwMDAwMCwibm9uY2UiOiIzMzMzMzMzMy0zMzMzLTQzMzMtODMzMy0zMzMzMzMzMzMzMzMiLCJwZXJtaXNzaW9uIjoiYWRtaW46YXNzaXN0YW50OnNraWxsczpyZXZpZXciLCJyZXF1ZXN0SWQiOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJ0YXJnZXQiOiI0NDQ0NDQ0NC00NDQ0LTQ0NDQtODQ0NC00NDQ0NDQ0NDQ0NDQvNTU1NTU1NTUtNTU1NS00NTU1LTg1NTUtNTU1NTU1NTU1NTU1In0.Ky7icHs2m8RHPZCHs1aiWNaG_6Aq-8AcQo7oaHMQGZQ";
-
 function settings() {
   return resolveSkillRegistrySettings({
     SKILL_REGISTRY_INTERNAL_URL: INTERNAL_URL,
@@ -102,13 +99,11 @@ function revision() {
     skillId: SKILL_ID,
     name: "safe-skill",
     number: 1,
-    state: "pending_review",
+    state: "published",
     sourceType: "upload",
     artifactSha256: SHA256,
     createdBy: ACTOR,
     createdAt: "2026-07-20T01:02:03.000Z",
-    reviewedBy: null,
-    reviewedAt: null,
   };
 }
 
@@ -123,13 +118,11 @@ function listResponse() {
         revision: {
           id: REVISION_ID,
           number: 1,
-          state: "pending_review",
+          state: "published",
           sourceType: "upload",
           artifactSha256Prefix: SHA256.slice(0, 12),
           createdBy: ACTOR,
           createdAt: "2026-07-20T01:02:03.000Z",
-          reviewedBy: null,
-          reviewedAt: null,
         },
       },
     ],
@@ -142,7 +135,7 @@ function detailResponse() {
     version: "1",
     revision: {
       ...revision(),
-      description: "A reviewed skill.",
+      description: "A validated skill.",
       license: null,
       compatibility: null,
       allowedTools: [],
@@ -163,12 +156,6 @@ function detailResponse() {
     findings: [],
     previousPublishedRevisionId: null,
     diff: null,
-    reviewAttestations: {
-      contentReviewed: true,
-      usageRightsConfirmed: true,
-      executionRiskAccepted: true,
-      reviewerAuthorizationConfirmed: true,
-    },
   };
 }
 
@@ -269,30 +256,11 @@ describe("Skill Registry settings", () => {
 });
 
 describe("Skill Registry assertion signer", () => {
-  it("matches a Python-generated review golden vector byte-for-byte", () => {
-    const assertion = createSkillRegistryAssertionSigner({
-      controlKey: CONTROL_KEY,
-      clock: () => NOW,
-      nonceFactory: () => NONCE,
-    }).sign({
-      action: "review",
-      actor: ACTOR,
-      permission: "admin:assistant:skills:review",
-      requestId: REQUEST_ID,
-      target: `${SKILL_ID}/${REVISION_ID}`,
-      assurance: "password+mfa",
-      assuredAt: NOW - 300,
-    });
-
-    expect(assertion).toBe(GOLDEN_REVIEW_ASSERTION);
-  });
-
   it.each([
     ["list", "admin:assistant:skills:upload", "skills"],
-    ["detail", "admin:assistant:skills", `${SKILL_ID}/${REVISION_ID}`],
-    ["file", "admin:assistant:skills:review", `${SKILL_ID}/${REVISION_ID}`],
-    ["upload", "admin:assistant:skills:review", "new"],
-    ["review", "admin:assistant:skills:upload", `${SKILL_ID}/${REVISION_ID}`],
+    ["detail", "admin:assistant:skills", REVISION_ID],
+    ["file", "admin:assistant:skills:upload", `${SKILL_ID}/${REVISION_ID}`],
+    ["upload", "admin:assistant:skills", "new"],
   ])(
     "rejects an invalid action/permission/target tuple",
     (action, permission, target) => {
@@ -308,8 +276,8 @@ describe("Skill Registry assertion signer", () => {
           permission,
           requestId: REQUEST_ID,
           target,
-          assurance: action === "review" ? "password+mfa" : "session",
-          assuredAt: action === "review" ? NOW : null,
+          assurance: "session",
+          assuredAt: null,
         } as Parameters<typeof signer.sign>[0]),
       ).toThrow(SkillRegistryClientError);
     },
@@ -337,18 +305,6 @@ describe("Skill Registry assertion signer", () => {
     ).toThrow(SkillRegistryClientError);
     expect(nonceFactory).not.toHaveBeenCalled();
 
-    expect(() =>
-      signer.sign({
-        action: "review",
-        actor: ACTOR.toUpperCase(),
-        permission: "admin:assistant:skills:review",
-        requestId: REQUEST_ID,
-        target: `${SKILL_ID}/${REVISION_ID}`,
-        assurance: "password+mfa",
-        assuredAt: NOW - 601,
-      }),
-    ).toThrow(SkillRegistryClientError);
-    expect(nonceFactory).not.toHaveBeenCalled();
   });
 });
 
@@ -915,7 +871,7 @@ describe("private Skill Registry client", () => {
     );
   });
 
-  it("calls list/detail/file/upload/review with exact signed route context", async () => {
+  it("calls list/detail/file/upload with exact signed route context", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse(listResponse()))
@@ -929,17 +885,6 @@ describe("private Skill Registry client", () => {
       )
       .mockResolvedValueOnce(
         jsonResponse({ version: "1", revision: revision() }, 201),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          version: "1",
-          revision: {
-            ...revision(),
-            state: "published",
-            reviewedBy: ACTOR,
-            reviewedAt: "2026-07-20T01:03:03.000Z",
-          },
-        }),
       );
     const client = createSkillRegistryClient({
       settings: settings(),
@@ -985,66 +930,29 @@ describe("private Skill Registry client", () => {
         archive: new Uint8Array([0x50, 0x4b, 3, 4]),
       }),
     ).resolves.toEqual({ version: "1", revision: revision() });
-    await expect(
-      client.reviewRevision({
-        actor: ACTOR,
-        requestId: REQUEST_ID,
-        skillId: SKILL_ID,
-        revisionId: REVISION_ID,
-        assuredAt: NOW - 300,
-        input: {
-          decision: "approve",
-          expectedState: "pending_review",
-          reason: null,
-          attestations: {
-            contentReviewed: true,
-            usageRightsConfirmed: true,
-            executionRiskAccepted: true,
-            reviewerAuthorizationConfirmed: true,
-          },
-        },
-      }),
-    ).resolves.toEqual({
-      version: "1",
-      revision: {
-        ...revision(),
-        state: "published",
-        reviewedBy: ACTOR,
-        reviewedAt: "2026-07-20T01:03:03.000Z",
-      },
-    });
-
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
       `http://${PRIVATE_ADDRESS}:7780/internal/skills?limit=50&offset=0`,
       `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}`,
       `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}/files/scripts/run%252Fhidden%255C.py`,
       `http://${PRIVATE_ADDRESS}:7780/internal/skills/uploads?targetSkillId=${SKILL_ID}`,
-      `http://${PRIVATE_ADDRESS}:7780/internal/skills/${SKILL_ID}/revisions/${REVISION_ID}/review`,
     ]);
     const expected = [
       ["list", "admin:assistant:skills", "skills", "session", null],
       [
         "detail",
-        "admin:assistant:skills:review",
+        "admin:assistant:skills",
         `${SKILL_ID}/${REVISION_ID}`,
         "session",
         null,
       ],
       [
         "file",
-        "admin:assistant:skills:review",
+        "admin:assistant:skills",
         `${SKILL_ID}/${REVISION_ID}/scripts/run%2Fhidden%5C.py`,
         "session",
         null,
       ],
       ["upload", "admin:assistant:skills:upload", SKILL_ID, "session", null],
-      [
-        "review",
-        "admin:assistant:skills:review",
-        `${SKILL_ID}/${REVISION_ID}`,
-        "password+mfa",
-        NOW - 300,
-      ],
     ];
     for (const [
       index,
@@ -1077,140 +985,6 @@ describe("private Skill Registry client", () => {
       body: expect.any(Uint8Array),
       headers: expect.objectContaining({ "Content-Type": "application/zip" }),
     });
-    expect(fetcher.mock.calls[4]![1]).toMatchObject({
-      method: "POST",
-      body: JSON.stringify({
-        decision: "approve",
-        expectedState: "pending_review",
-        reason: null,
-        attestations: {
-          contentReviewed: true,
-          usageRightsConfirmed: true,
-          executionRiskAccepted: true,
-          reviewerAuthorizationConfirmed: true,
-        },
-      }),
-      headers: expect.objectContaining({ "Content-Type": "application/json" }),
-    });
-  });
-
-  it("binds upload and review responses to the requested state transition", async () => {
-    const reviewed = (state: "published" | "rejected") => ({
-      ...revision(),
-      state,
-      reviewedBy: ACTOR,
-      reviewedAt: "2026-07-20T01:03:03.000Z",
-    });
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        jsonResponse({ version: "1", revision: reviewed("published") }, 201),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({ version: "1", revision: reviewed("rejected") }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({ version: "1", revision: reviewed("published") }),
-      );
-    const client = createSkillRegistryClient({
-      settings: settings(),
-      fetcher,
-      clock: () => NOW,
-      nonceFactory: () => NONCE,
-    });
-    const attestations = {
-      contentReviewed: true as const,
-      usageRightsConfirmed: true as const,
-      executionRiskAccepted: true as const,
-      reviewerAuthorizationConfirmed: true as const,
-    };
-
-    await expect(
-      client.uploadSkill({
-        actor: ACTOR,
-        requestId: REQUEST_ID,
-        archive: new Uint8Array([0x50, 0x4b, 3, 4]),
-      }),
-    ).rejects.toMatchObject({ code: "invalid_response" });
-    await expect(
-      client.reviewRevision({
-        actor: ACTOR,
-        requestId: REQUEST_ID,
-        skillId: SKILL_ID,
-        revisionId: REVISION_ID,
-        assuredAt: NOW - 300,
-        input: {
-          decision: "approve",
-          expectedState: "pending_review",
-          reason: null,
-          attestations,
-        },
-      }),
-    ).rejects.toMatchObject({ code: "invalid_response" });
-    await expect(
-      client.reviewRevision({
-        actor: ACTOR,
-        requestId: REQUEST_ID,
-        skillId: SKILL_ID,
-        revisionId: REVISION_ID,
-        assuredAt: NOW - 300,
-        input: {
-          decision: "reject",
-          expectedState: "pending_review",
-          reason: "Unsafe behavior.",
-          attestations,
-        },
-      }),
-    ).rejects.toMatchObject({ code: "invalid_response" });
-  });
-
-  it("accepts 500 Unicode code points and rejects a 501-point review reason", async () => {
-    const reason = "😀".repeat(500);
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
-      jsonResponse({
-        version: "1",
-        revision: {
-          ...revision(),
-          state: "rejected",
-          reviewedBy: ACTOR,
-          reviewedAt: "2026-07-20T01:03:03.000Z",
-        },
-      }),
-    );
-    const client = createSkillRegistryClient({
-      settings: settings(),
-      fetcher,
-      clock: () => NOW,
-      nonceFactory: () => NONCE,
-    });
-    const command = (value: string) => ({
-      actor: ACTOR,
-      requestId: REQUEST_ID,
-      skillId: SKILL_ID,
-      revisionId: REVISION_ID,
-      assuredAt: NOW - 300,
-      input: {
-        decision: "reject" as const,
-        expectedState: "pending_review" as const,
-        reason: value,
-        attestations: {
-          contentReviewed: true as const,
-          usageRightsConfirmed: true as const,
-          executionRiskAccepted: true as const,
-          reviewerAuthorizationConfirmed: true as const,
-        },
-      },
-    });
-
-    await expect(client.reviewRevision(command(reason))).resolves.toMatchObject(
-      {
-        revision: { state: "rejected" },
-      },
-    );
-    await expect(
-      client.reviewRevision(command("x".repeat(501))),
-    ).rejects.toMatchObject({ code: "invalid_request" });
-    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it("accepts a bounded detail response with 1153 findings", async () => {
@@ -1477,7 +1251,7 @@ describe("private Skill Registry client", () => {
   it("maps only exact status/code pairs", async () => {
     for (const [status, code, expected] of [
       [404, "SKILL_NOT_FOUND", "SKILL_NOT_FOUND"],
-      [409, "REVIEW_BLOCKED", "REVIEW_BLOCKED"],
+      [400, "SKILL_SCAN_BLOCKED", "SKILL_SCAN_BLOCKED"],
       [503, "REGISTRY_STORAGE_ERROR", "REGISTRY_STORAGE_ERROR"],
       [413, "ARCHIVE_TOO_LARGE", "ARCHIVE_TOO_LARGE"],
       [400, "ARCHIVE_FILE_TOO_LARGE", "ARCHIVE_FILE_TOO_LARGE"],

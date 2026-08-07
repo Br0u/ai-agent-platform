@@ -60,7 +60,6 @@ const permissionKeys = [
   "admin:assistant:skills",
   "admin:assistant:skills:upload",
   "admin:assistant:skills:connections",
-  "admin:assistant:skills:review",
   "admin:assistant:skills:configure",
   "admin:assistant:configure",
   "admin:assistant:secret:reveal",
@@ -94,14 +93,12 @@ const assistantSkillAdminPermissions = [
 const assistantSkillSuperAdminPermissions = [
   ...assistantSkillAdminPermissions,
   "admin:assistant:skills:connections",
-  "admin:assistant:skills:review",
   "admin:assistant:skills:configure",
 ] as const;
 
 const superAdminOnlyPermissions = [
   ...assistantModelPermissions,
   "admin:assistant:skills:connections",
-  "admin:assistant:skills:review",
   "admin:assistant:skills:configure",
   "admin:docs:delete",
 ] as const;
@@ -308,7 +305,7 @@ describe("seedAccessControl", () => {
     await seedAccessControl(repository);
 
     expect(repository.transactions).toBe(2);
-    expect(repository.permissions.size).toBe(26);
+    expect(repository.permissions.size).toBe(25);
     expect(repository.roles.size).toBe(7);
     expect(repository.grants.size).toBe(7);
     expect(

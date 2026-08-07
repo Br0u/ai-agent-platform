@@ -22,7 +22,6 @@ import "./assistant-admin-page.css";
 type AssistantAdminPageProps = {
   modelConfigs: AdminModelConfigSnapshot;
   sessions: AdminAssistantSessionsSnapshot;
-  skillActorUserId: string;
   skillCanRead: boolean;
   skillPermissions: AdminSkillPermissionFlags;
   skillRuntime: AdminSkillRuntimeSnapshot;
@@ -43,7 +42,6 @@ const configurationLabels: Record<
 export function AssistantAdminPage({
   modelConfigs,
   sessions,
-  skillActorUserId,
   skillCanRead,
   skillPermissions,
   skillRuntime,
@@ -151,7 +149,6 @@ export function AssistantAdminPage({
       <AssistantSkillConfigurationPanel initialSnapshot={skillRuntime} />
 
       <AssistantSkillRegistryPanel
-        actorUserId={skillActorUserId}
         canRead={skillCanRead}
         initialPermissions={skillPermissions}
         initialSnapshot={skillSnapshot}

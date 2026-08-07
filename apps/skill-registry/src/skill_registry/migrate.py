@@ -15,9 +15,9 @@ from skill_registry.schema import (
     EXPECTED_MANAGER_COLUMN_GRANTS,
     EXPECTED_MANAGER_FUNCTION_GRANTS,
     EXPECTED_MANAGER_TABLE_GRANTS,
-    EXPECTED_REVIEW_CONSTRAINTS,
-    EXPECTED_REVIEW_STORAGE_COLUMNS,
-    EXPECTED_REVIEW_TRIGGER_GUARDS,
+    EXPECTED_REGISTRY_CONSTRAINTS,
+    EXPECTED_STORAGE_COLUMNS,
+    EXPECTED_TRIGGER_GUARDS,
     EXPECTED_RUNTIME_VIEW_GRANTS,
     EXPECTED_RUNTIME_FUNCTION_GRANTS,
     EXPECTED_SCHEMA_GRANTS,
@@ -30,6 +30,7 @@ from skill_registry.schema import (
     SCHEMA_VERSION_2_SQL,
     SCHEMA_VERSION_3_SQL,
     SCHEMA_VERSION_4_SQL,
+    SCHEMA_VERSION_5_SQL,
     SELECT_SCHEMA_VERSION_SQL,
     VERIFY_BACKUP_GRANTS_SQL,
     VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL,
@@ -41,9 +42,9 @@ from skill_registry.schema import (
     VERIFY_REGISTRY_ROLE_MEMBERSHIPS_SQL,
     VERIFY_REGISTRY_ROLE_SETTINGS_SQL,
     VERIFY_REPLICATION_PARAMETER_PRIVILEGES_SQL,
-    VERIFY_REVIEW_CONSTRAINTS_SQL,
-    VERIFY_REVIEW_STORAGE_COLUMNS_SQL,
-    VERIFY_REVIEW_TRIGGER_GUARDS_SQL,
+    VERIFY_REGISTRY_CONSTRAINTS_SQL,
+    VERIFY_STORAGE_COLUMNS_SQL,
+    VERIFY_TRIGGER_GUARDS_SQL,
     VERIFY_RUNTIME_VIEW_GRANTS_SQL,
     VERIFY_RUNTIME_FUNCTION_GRANTS_SQL,
     VERIFY_SCHEMA_GRANTS_SQL,
@@ -124,11 +125,11 @@ def _canonicalize_restored_review_constraint(
 
 
 async def _verify_review_constraints(cursor: MigrationCursor) -> None:
-    await cursor.execute(VERIFY_REVIEW_CONSTRAINTS_SQL)
+    await cursor.execute(VERIFY_REGISTRY_CONSTRAINTS_SQL)
     actual = {
         _canonicalize_restored_review_constraint(tuple(row)) for row in await cursor.fetchall()
     }
-    if actual != EXPECTED_REVIEW_CONSTRAINTS:
+    if actual != EXPECTED_REGISTRY_CONSTRAINTS:
         raise RuntimeError("Skill registry migration verification failed")
 
 
@@ -142,14 +143,14 @@ async def _verify_migration(cursor: MigrationCursor) -> None:
     )
     await _verify_rows(
         cursor,
-        VERIFY_REVIEW_STORAGE_COLUMNS_SQL,
-        EXPECTED_REVIEW_STORAGE_COLUMNS,
+        VERIFY_STORAGE_COLUMNS_SQL,
+        EXPECTED_STORAGE_COLUMNS,
     )
     await _verify_review_constraints(cursor)
     await _verify_rows(
         cursor,
-        VERIFY_REVIEW_TRIGGER_GUARDS_SQL,
-        EXPECTED_REVIEW_TRIGGER_GUARDS,
+        VERIFY_TRIGGER_GUARDS_SQL,
+        EXPECTED_TRIGGER_GUARDS,
     )
     await _verify_rows(cursor, VERIFY_FUNCTION_BOUNDARY_SQL, EXPECTED_FUNCTION_BOUNDARY)
     await _verify_rows(cursor, VERIFY_SECURITY_TRIGGERS_SQL, EXPECTED_SECURITY_TRIGGERS)
@@ -198,7 +199,7 @@ async def run_migration(
     *,
     connector: ConnectionFactory = connect_database,
 ) -> None:
-    """Upgrade through schema version four and verify the exact access boundary."""
+    """Upgrade through schema version five and verify the exact access boundary."""
     migration_settings = settings or MigrationSettings()  # type: ignore[call-arg]
     database_url = _psycopg_url(migration_settings.database_url.get_secret_value())
     connection = await connector(database_url)
@@ -217,16 +218,22 @@ async def run_migration(
                 await cursor.execute(SCHEMA_VERSION_2_SQL)
                 await cursor.execute(SCHEMA_VERSION_3_SQL)
                 await cursor.execute(SCHEMA_VERSION_4_SQL)
+                await cursor.execute(SCHEMA_VERSION_5_SQL)
             elif version_state == (1, 1):
                 await cursor.execute(SCHEMA_VERSION_2_SQL)
                 await cursor.execute(SCHEMA_VERSION_3_SQL)
                 await cursor.execute(SCHEMA_VERSION_4_SQL)
+                await cursor.execute(SCHEMA_VERSION_5_SQL)
             elif version_state == (2, 2):
                 await cursor.execute(SCHEMA_VERSION_3_SQL)
                 await cursor.execute(SCHEMA_VERSION_4_SQL)
+                await cursor.execute(SCHEMA_VERSION_5_SQL)
             elif version_state == (3, 3):
                 await cursor.execute(SCHEMA_VERSION_4_SQL)
-            elif version_state != (4, 4):
+                await cursor.execute(SCHEMA_VERSION_5_SQL)
+            elif version_state == (4, 4):
+                await cursor.execute(SCHEMA_VERSION_5_SQL)
+            elif version_state != (5, 5):
                 raise RuntimeError("Skill registry migration verification failed")
             await _verify_migration(cursor)
 
