@@ -437,6 +437,9 @@ export function AssistantSkillRegistryPanel({
                 <strong>{skill.enabled ? "● 已启用" : "○ 未启用"}</strong>
                 <span>{skill.name}</span>
                 <small>{skill.description}</small>
+                <time dateTime={skill.uploadedAt}>
+                  上传时间：{skill.uploadedAt}
+                </time>
               </div>
               <div>
                 {canRead && permissions.canConfigure ? (

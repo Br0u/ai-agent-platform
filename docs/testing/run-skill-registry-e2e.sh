@@ -152,7 +152,9 @@ umask 077
 temporary_directory=$(mktemp -d "$runtime_tmp/aap-skill-registry-e2e.XXXXXX")
 secret_directory="$temporary_directory/secrets"
 fixture_directory="$temporary_directory/fixture"
-archive_file="$temporary_directory/skill-registry-e2e.zip"
+initial_archive_file="$temporary_directory/skill-registry-e2e-initial.zip"
+inactive_replacement_archive_file="$temporary_directory/skill-registry-e2e-inactive-replacement.zip"
+active_replacement_archive_file="$temporary_directory/skill-registry-e2e-active-replacement.zip"
 state_file="$temporary_directory/skill-registry-state.json"
 runtime_state_file="$temporary_directory/skill-runtime-state.json"
 storage_state_file="$temporary_directory/model-admin-storage-state.json"
@@ -330,7 +332,7 @@ if [ "$runtime_mode" = true ]; then
   mkdir -p "$fixture_directory/$slug/scripts"
   cp docs/testing/fixtures/skills/deterministic/SKILL.md "$fixture_directory/$slug/SKILL.md"
   cp docs/testing/fixtures/skills/deterministic/scripts/record.py "$fixture_directory/$slug/scripts/record.py"
-  fixture_members="SKILL.md scripts/record.py"
+  fixture_members="SKILL.md scripts/record.py fixture-variant.txt"
 else
   slug="e2e-uploaded-$(openssl rand -hex 6)"
   mkdir -p "$fixture_directory/$slug/scripts"
@@ -347,9 +349,14 @@ EOF
 #!/usr/bin/env python3
 print("hello from uploaded skill")
 EOF
-  fixture_members="SKILL.md scripts/hello.py"
+  fixture_members="SKILL.md scripts/hello.py fixture-variant.txt"
 fi
-python3 - "$fixture_directory" "$slug" "$archive_file" $fixture_members <<'PY'
+
+create_archive() {
+  fixture_variant=$1
+  archive_output=$2
+  printf 'Skill Registry E2E fixture variant: %s\n' "$fixture_variant" >"$fixture_directory/$slug/fixture-variant.txt"
+  python3 - "$fixture_directory" "$slug" "$archive_output" $fixture_members <<'PY'
 import pathlib
 import sys
 import zipfile
@@ -361,7 +368,12 @@ with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
     for relative in sys.argv[4:]:
         archive.write(root / slug / relative, f"{slug}/{relative}")
 PY
-chmod 600 "$archive_file"
+  chmod 600 "$archive_output"
+}
+
+create_archive initial "$initial_archive_file"
+create_archive inactive-replacement "$inactive_replacement_archive_file"
+create_archive active-replacement "$active_replacement_archive_file"
 
 protected_patterns="$temporary_directory/protected-patterns"
 printf '%s\n' \
@@ -512,7 +524,9 @@ export E2E_NO_TOTP_ADMIN_SESSION_TOKEN=$no_totp_admin_session
 export E2E_MODEL_ADMIN_STALE_SESSION_TOKEN=$model_admin_stale_session
 export E2E_REVOKED_SESSION_TOKEN=$revoked_session
 export E2E_REPLACEMENT_PASSWORD=$replacement_password
-export SKILL_REGISTRY_E2E_ARCHIVE=$archive_file
+export SKILL_REGISTRY_E2E_INITIAL_ARCHIVE=$initial_archive_file
+export SKILL_REGISTRY_E2E_INACTIVE_REPLACEMENT_ARCHIVE=$inactive_replacement_archive_file
+export SKILL_REGISTRY_E2E_ACTIVE_REPLACEMENT_ARCHIVE=$active_replacement_archive_file
 export SKILL_REGISTRY_E2E_STATE_FILE=$state_file
 export SKILL_REGISTRY_E2E_STORAGE_STATE_FILE=$storage_state_file
 export SKILL_REGISTRY_E2E_SLUG=$slug

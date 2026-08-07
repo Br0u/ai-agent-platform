@@ -50,6 +50,9 @@ describe("AssistantSkillRegistryPanel", () => {
 
     expect(screen.getByText("● 已启用")).toBeVisible();
     expect(screen.getByText("A safe skill.")).toBeVisible();
+    expect(
+      screen.getByText("上传时间：2026-07-21T08:00:00.000Z"),
+    ).toBeVisible();
     expect(screen.getByRole("button", { name: "停用" })).toBeVisible();
     expect(screen.getByRole("button", { name: "删除" })).toBeVisible();
     expect(screen.queryByText(/revision/u)).toBeNull();

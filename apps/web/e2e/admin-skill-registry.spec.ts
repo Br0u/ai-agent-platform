@@ -16,6 +16,15 @@ type E2EState = {
   slug: string;
 };
 
+type LibrarySkill = {
+  enabled: boolean;
+  id: string;
+  name: string;
+  replacementToken: string;
+  revisionId: string;
+  uploadedAt: string;
+};
+
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
@@ -37,45 +46,129 @@ function readState(): E2EState {
   return JSON.parse(readFileSync(statePath(), "utf8")) as E2EState;
 }
 
-async function upload(page: Page, archive: string): Promise<E2EState> {
+function uploadResponseState(body: unknown): E2EState {
+  const revision = (body as { revision?: Record<string, unknown> }).revision;
+  if (!revision) throw new Error("upload response has no revision");
+  const artifactSha256 = revision.artifactSha256;
+  const revisionId = revision.id;
+  const revisionNumber = revision.number;
+  const skillId = revision.skillId;
+  const slug = revision.name;
+  if (
+    typeof artifactSha256 !== "string" ||
+    typeof revisionId !== "string" ||
+    typeof revisionNumber !== "number" ||
+    typeof skillId !== "string" ||
+    typeof slug !== "string"
+  ) {
+    throw new Error("upload response has an invalid revision");
+  }
+  return { artifactSha256, revisionId, revisionNumber, skillId, slug };
+}
+
+async function upload(
+  page: Page,
+  archive: string,
+  options: { replacement?: boolean } = {},
+): Promise<E2EState> {
   await page.getByRole("button", { name: "上传 Skill ZIP" }).click();
   await page.getByLabel("Skill ZIP 文件").setInputFiles(archive);
-  const pending = page.waitForResponse(
+  const firstResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
       response.url().endsWith("/api/v1/admin/assistant/skills/uploads"),
   );
+  const confirmation = options.replacement ? page.waitForEvent("dialog") : null;
   await page.getByRole("button", { name: "上传", exact: true }).click();
-  const response = await pending;
-  expect(response.status()).toBe(201);
-  const body = (await response.json()) as {
-    revision: {
-      artifactSha256: string;
-      id: string;
-      name: string;
-      number: number;
-      skillId: string;
-    };
-  };
-  return {
-    artifactSha256: body.revision.artifactSha256,
-    revisionId: body.revision.id,
-    revisionNumber: body.revision.number,
-    skillId: body.revision.skillId,
-    slug: body.revision.name,
-  };
+  const first = await firstResponse;
+  if (!options.replacement) {
+    expect(first.status()).toBe(201);
+    return uploadResponseState(await first.json());
+  }
+
+  expect(first.status()).toBe(409);
+  if (confirmation === null)
+    throw new Error("replacement confirmation missing");
+  const replacementResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/api/v1/admin/assistant/skills/uploads") &&
+      response.status() === 201,
+  );
+  await (await confirmation).accept();
+  const replacement = await replacementResponse;
+  return uploadResponseState(await replacement.json());
+}
+
+async function librarySkill(
+  page: Page,
+  skillId: string,
+): Promise<LibrarySkill> {
+  const response = await page.context().request.get(LIST_PATH);
+  expect(response.status()).toBe(200);
+  const body = (await response.json()) as { skills: LibrarySkill[] };
+  const skill = body.skills.find((item) => item.id === skillId);
+  expect(skill).toBeDefined();
+  return skill!;
+}
+
+async function expectMissingSkill(page: Page, skillId: string): Promise<void> {
+  const response = await page.context().request.get(LIST_PATH);
+  expect(response.status()).toBe(200);
+  const body = (await response.json()) as { skills: LibrarySkill[] };
+  expect(body.skills.some((skill) => skill.id === skillId)).toBe(false);
+}
+
+async function mutate(
+  page: Page,
+  skillId: string,
+  operation: "enable" | "disable" | "delete",
+): Promise<void> {
+  const response = page.waitForResponse((candidate) => {
+    const request = candidate.request();
+    return (
+      request.method() === (operation === "delete" ? "DELETE" : "POST") &&
+      new URL(candidate.url()).pathname ===
+        `/api/v1/admin/assistant/skills/${skillId}${
+          operation === "delete" ? "" : `/${operation}`
+        }`
+    );
+  });
+  const confirmation =
+    operation === "delete" ? page.waitForEvent("dialog") : null;
+  await page
+    .getByRole("button", {
+      name:
+        operation === "delete"
+          ? "删除"
+          : operation === "enable"
+            ? "启用"
+            : "停用",
+      exact: true,
+    })
+    .click();
+  if (confirmation !== null) await (await confirmation).accept();
+  expect((await response).status()).toBe(200);
 }
 
 test.describe("Skill library lifecycle", () => {
   test.describe.configure({ mode: "serial" });
 
-  test("@lifecycle uploads one Skill and exercises runtime when enabled", async ({
+  test("@lifecycle completes the simple Skill lifecycle through product controls", async ({
     baseURL,
     browser,
     page,
   }) => {
     if (!baseURL) throw new Error("baseURL is required");
-    const archive = requiredEnvironment("SKILL_REGISTRY_E2E_ARCHIVE");
+    const initialArchive = requiredEnvironment(
+      "SKILL_REGISTRY_E2E_INITIAL_ARCHIVE",
+    );
+    const inactiveReplacementArchive = requiredEnvironment(
+      "SKILL_REGISTRY_E2E_INACTIVE_REPLACEMENT_ARCHIVE",
+    );
+    const activeReplacementArchive = requiredEnvironment(
+      "SKILL_REGISTRY_E2E_ACTIVE_REPLACEMENT_ARCHIVE",
+    );
     const slug = requiredEnvironment("SKILL_REGISTRY_E2E_SLUG");
     const origin = new URL(baseURL).origin;
 
@@ -86,10 +179,21 @@ test.describe("Skill library lifecycle", () => {
       fixtureCredentials().modelAdminSessionToken,
     );
     await page.goto("/admin/assistant");
-    const state = await upload(page, archive);
-    expect(state.slug).toBe(slug);
+
+    const initial = await upload(page, initialArchive);
+    expect(initial.slug).toBe(slug);
     await expect(page.getByText(slug, { exact: true })).toBeVisible();
     await expect(page.getByText("○ 未启用", { exact: true })).toBeVisible();
+    const firstLibraryState = await librarySkill(page, initial.skillId);
+    expect(firstLibraryState).toMatchObject({
+      enabled: false,
+      revisionId: initial.revisionId,
+    });
+    await expect(
+      page.getByText(`上传时间：${firstLibraryState.uploadedAt}`, {
+        exact: true,
+      }),
+    ).toBeVisible();
 
     const stale = await browser.newContext({ baseURL });
     await addSignedSession(
@@ -99,7 +203,7 @@ test.describe("Skill library lifecycle", () => {
       fixtureCredentials().modelAdminStaleSessionToken,
     );
     const denied = await stale.request.post(
-      `/api/v1/admin/assistant/skills/${state.skillId}/enable`,
+      `/api/v1/admin/assistant/skills/${initial.skillId}/enable`,
       {
         headers: { origin },
         data: { requestId: randomUUID() },
@@ -112,16 +216,72 @@ test.describe("Skill library lifecycle", () => {
     });
     await stale.close();
 
-    if (process.env.SKILL_RUNTIME_E2E === "true") {
-      await page.getByRole("button", { name: "启用", exact: true }).click();
-      await expect(page.getByText("● 已启用", { exact: true })).toBeVisible();
-      await page.getByRole("button", { name: "停用", exact: true }).click();
-      await expect(page.getByText("○ 未启用", { exact: true })).toBeVisible();
-    }
-    writeState(state);
+    await mutate(page, initial.skillId, "enable");
+    await expect(page.getByText("● 已启用", { exact: true })).toBeVisible();
+    expect((await librarySkill(page, initial.skillId)).enabled).toBe(true);
+
+    await mutate(page, initial.skillId, "disable");
+    await expect(page.getByText("○ 未启用", { exact: true })).toBeVisible();
+    expect((await librarySkill(page, initial.skillId)).enabled).toBe(false);
+
+    const inactiveReplacement = await upload(page, inactiveReplacementArchive, {
+      replacement: true,
+    });
+    const inactiveReplacementState = await librarySkill(page, initial.skillId);
+    expect(inactiveReplacement).toMatchObject({ skillId: initial.skillId });
+    expect(inactiveReplacement.revisionId).not.toBe(initial.revisionId);
+    expect(inactiveReplacementState).toMatchObject({
+      enabled: false,
+      revisionId: inactiveReplacement.revisionId,
+    });
+
+    await mutate(page, initial.skillId, "enable");
+    await expect(page.getByText("● 已启用", { exact: true })).toBeVisible();
+    const browserEnableRequests: string[] = [];
+    const recordBrowserEnable = (request: {
+      method(): string;
+      url(): string;
+    }) => {
+      if (
+        request.method() === "POST" &&
+        new URL(request.url()).pathname ===
+          `/api/v1/admin/assistant/skills/${initial.skillId}/enable`
+      ) {
+        browserEnableRequests.push(request.url());
+      }
+    };
+    page.on("request", recordBrowserEnable);
+    const activeReplacement = await upload(page, activeReplacementArchive, {
+      replacement: true,
+    });
+    page.off("request", recordBrowserEnable);
+    const activeReplacementState = await librarySkill(page, initial.skillId);
+    expect(browserEnableRequests).toEqual([]);
+    expect(activeReplacement).toMatchObject({ skillId: initial.skillId });
+    expect(activeReplacement.revisionId).not.toBe(
+      inactiveReplacement.revisionId,
+    );
+    expect(activeReplacementState).toMatchObject({
+      enabled: true,
+      revisionId: activeReplacement.revisionId,
+    });
+
+    await mutate(page, initial.skillId, "delete");
+    await expect(page.getByText(slug, { exact: true })).not.toBeVisible();
+    await expectMissingSkill(page, initial.skillId);
+
+    const reuploaded = await upload(page, initialArchive);
+    const reuploadedState = await librarySkill(page, reuploaded.skillId);
+    expect(reuploaded).toMatchObject({ slug });
+    expect(reuploaded.skillId).not.toBe(initial.skillId);
+    expect(reuploadedState).toMatchObject({
+      enabled: false,
+      revisionId: reuploaded.revisionId,
+    });
+    writeState(reuploaded);
   });
 
-  test("@restart keeps the uploaded Skill after Registry restart", async ({
+  test("@restart keeps the re-uploaded inactive Skill after Registry restart", async ({
     baseURL,
     page,
   }) => {
