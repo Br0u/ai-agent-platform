@@ -14,6 +14,7 @@ from skill_core.archive import canonicalize_skill_archive
 from skill_core.types import MAX_FILE_BYTES, CanonicalSkillPackage
 from skill_registry.service import SkillRegistryService, SkillSetService
 from skill_registry.types import (
+    ArchiveSkill,
     ClonePreviousSkillSet,
     CreateSkillSet,
     CreateSkillSetResult,
@@ -114,6 +115,11 @@ class MemoryRepository:
         )
         await self.store.put(revision_id, command.package)
         return revision
+
+    async def archive_skill(self, command: ArchiveSkill) -> None:
+        self.revisions = [
+            revision for revision in self.revisions if revision.skill_id != command.skill_id
+        ]
 
     async def list_skills(
         self, *, limit: int = 50, offset: int = 0

@@ -148,6 +148,9 @@ class StubService:
         self.uploaded = tuple(values.values())
         return detail()
 
+    async def archive_skill(self, **values: object) -> None:
+        self.uploaded = tuple(values.values())
+
     async def get_revision_detail(self, skill_id: UUID, revision_id: UUID) -> RevisionDetail:
         if self.fail_with is not None:
             raise self.fail_with
