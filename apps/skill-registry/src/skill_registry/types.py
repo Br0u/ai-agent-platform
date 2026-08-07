@@ -72,17 +72,14 @@ class StoredFile:
 
 
 @dataclass(frozen=True, slots=True)
-class SkillSummary:
+class SkillLibraryItem:
     id: UUID
-    slug: str
-    latest_revision_no: int | None
-    latest_revision_id: UUID | None
-    latest_state: RevisionState | None
-    created_at: datetime
-    latest_source_type: str | None = None
-    latest_artifact_sha256: str | None = None
-    latest_created_by: UUID | None = None
-    latest_created_at: datetime | None = None
+    name: str
+    description: str
+    enabled: bool
+    uploaded_at: datetime
+    replacement_token: str
+    revision_id: UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,7 +180,7 @@ class SkillRegistryRepository(Protocol):
 
     async def list_skills(
         self, *, limit: int = 50, offset: int = 0
-    ) -> tuple[SkillSummary, ...]: ...
+    ) -> tuple[SkillLibraryItem, ...]: ...
 
     async def get_revision(self, skill_id: UUID, revision_id: UUID) -> StoredRevision: ...
 

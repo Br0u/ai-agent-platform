@@ -30,7 +30,7 @@ from skill_registry.types import (
     SkillRegistryRepository,
     SkillRuntimeStatus,
     SkillSetRepository,
-    SkillSummary,
+    SkillLibraryItem,
     StoredFile,
     StoredRevision,
 )
@@ -205,7 +205,9 @@ class SkillRegistryService:
         )
         return await self.get_revision_detail(revision.skill_id, revision.id)
 
-    async def list_skills(self, *, limit: int = 50, offset: int = 0) -> tuple[SkillSummary, ...]:
+    async def list_skills(
+        self, *, limit: int = 50, offset: int = 0
+    ) -> tuple[SkillLibraryItem, ...]:
         if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
             raise RegistryError("VALIDATION_ERROR", "Pagination bounds are invalid")
         return await self._repository.list_skills(limit=limit, offset=offset)

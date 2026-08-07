@@ -66,21 +66,17 @@ export type AdminSkillRevisionResponse = {
 
 export type AdminSkillListResponse = {
   version: "1";
-  skills: Array<{
-    id: string;
-    name: string;
-    createdAt: string;
-    revision: null | {
-      id: string;
-      number: number;
-      state: AdminSkillRevisionState;
-      sourceType: "upload";
-      artifactSha256Prefix: string;
-      createdBy: string;
-      createdAt: string;
-    };
-  }>;
+  skills: AdminSkillLibraryItem[];
   page: { limit: number; offset: number; returned: number };
+};
+
+export type AdminSkillLibraryItem = {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  uploadedAt: string;
+  replacementToken: string;
 };
 
 export type AdminSkillRevisionDetailResponse = {
@@ -144,7 +140,6 @@ const PATH_CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
-const SHA256_PREFIX = /^[0-9a-f]{12}$/u;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const MODULE = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const MEDIA_TYPE = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u;
@@ -456,54 +451,33 @@ export function parseAdminSkillListResponse(
   }
   const skills: AdminSkillListResponse["skills"] = [];
   for (const raw of rawSkills) {
-    const skill = exactRecord(raw, ["id", "name", "createdAt", "revision"]);
+    const skill = exactRecord(raw, [
+      "id",
+      "name",
+      "description",
+      "enabled",
+      "uploadedAt",
+      "replacementToken",
+    ]);
     if (
       skill === null ||
       !canonicalUuid(skill.id) ||
       !skillName(skill.name) ||
-      !canonicalTimestamp(skill.createdAt)
+      !boundedText(skill.description, 4096, { empty: true }) ||
+      typeof skill.enabled !== "boolean" ||
+      !canonicalTimestamp(skill.uploadedAt) ||
+      typeof skill.replacementToken !== "string" ||
+      !SHA256.test(skill.replacementToken)
     ) {
       return null;
-    }
-    let revision: AdminSkillListResponse["skills"][number]["revision"] = null;
-    if (skill.revision !== null) {
-      const item = exactRecord(skill.revision, [
-        "id",
-        "number",
-        "state",
-        "sourceType",
-        "artifactSha256Prefix",
-        "createdBy",
-        "createdAt",
-      ]);
-      if (
-        item === null ||
-        !canonicalUuid(item.id) ||
-        !positiveInteger(item.number, 2_147_483_647) ||
-        !enumValue(item.state, ADMIN_SKILL_REVISION_STATES) ||
-        item.sourceType !== "upload" ||
-        typeof item.artifactSha256Prefix !== "string" ||
-        !SHA256_PREFIX.test(item.artifactSha256Prefix) ||
-        !canonicalUuid(item.createdBy) ||
-        !canonicalTimestamp(item.createdAt)
-      ) {
-        return null;
-      }
-      revision = {
-        id: item.id,
-        number: item.number,
-        state: item.state,
-        sourceType: "upload",
-        artifactSha256Prefix: item.artifactSha256Prefix,
-        createdBy: item.createdBy,
-        createdAt: item.createdAt,
-      };
     }
     skills.push({
       id: skill.id,
       name: skill.name,
-      createdAt: skill.createdAt,
-      revision,
+      description: skill.description,
+      enabled: skill.enabled,
+      uploadedAt: skill.uploadedAt,
+      replacementToken: skill.replacementToken,
     });
   }
   if (

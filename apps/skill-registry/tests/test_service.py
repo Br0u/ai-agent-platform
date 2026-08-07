@@ -21,7 +21,7 @@ from skill_registry.types import (
     RegistryError,
     PublishedRevisionOption,
     ScanPolicy,
-    SkillSummary,
+    SkillLibraryItem,
     StoredFile,
     StoredRevision,
     StoredSkillSet,
@@ -115,18 +115,23 @@ class MemoryRepository:
         await self.store.put(revision_id, command.package)
         return revision
 
-    async def list_skills(self, *, limit: int = 50, offset: int = 0) -> tuple[SkillSummary, ...]:
+    async def list_skills(
+        self, *, limit: int = 50, offset: int = 0
+    ) -> tuple[SkillLibraryItem, ...]:
         assert 1 <= limit <= 100
         assert offset >= 0
         latest = self.revisions[-1] if self.revisions else None
+        if latest is None:
+            return ()
         return (
-            SkillSummary(
-                SKILL_ID,
-                "demo-skill",
-                None if latest is None else latest.revision_no,
-                None if latest is None else latest.id,
-                None if latest is None else latest.state,
-                NOW,
+            SkillLibraryItem(
+                id=SKILL_ID,
+                name="demo-skill",
+                description=latest.manifest.description,
+                enabled=False,
+                uploaded_at=latest.created_at,
+                replacement_token=latest.artifact_sha256,
+                revision_id=latest.id,
             ),
         )
 

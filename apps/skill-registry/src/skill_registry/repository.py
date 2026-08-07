@@ -24,7 +24,7 @@ from skill_core.types import (
 from skill_registry.types import (
     CreateUploadRevision,
     RegistryError,
-    SkillSummary,
+    SkillLibraryItem,
     StoredFile,
     StoredRevision,
 )
@@ -299,22 +299,32 @@ class PostgresSkillRegistryRepository:
         row = await cursor.fetchone()
         return None if row is None else _stored_revision(row)
 
-    async def list_skills(self, *, limit: int = 50, offset: int = 0) -> tuple[SkillSummary, ...]:
+    async def list_skills(
+        self, *, limit: int = 50, offset: int = 0
+    ) -> tuple[SkillLibraryItem, ...]:
         if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
             raise RegistryError("VALIDATION_ERROR", "Pagination bounds are invalid")
         rows = await self._query_all(
-            """SELECT skill.id, skill.slug, latest.revision_no, latest.id,
-              latest.state, skill.created_at, latest.source_type,
-              latest.artifact_sha256, latest.created_by, latest.created_at
+            """SELECT skill.id, skill.slug,
+              latest.manifest ->> 'description',
+              EXISTS (
+                SELECT 1
+                FROM skill_registry.active_agent_skill_sets AS active_set
+                JOIN skill_registry.agent_skill_set_items AS active_item
+                  ON active_item.set_id = active_set.active_set_id
+                WHERE active_set.agent_id = 'maduoduo'
+                  AND active_item.skill_id = skill.id
+              ),
+              latest.created_at, latest.artifact_sha256, latest.id
             FROM skill_registry.skills AS skill
-            LEFT JOIN LATERAL (
-              SELECT revision.id, revision.revision_no, revision.state,
-                revision.source_type, artifact.artifact_sha256,
-                revision.created_by, revision.created_at
+            JOIN LATERAL (
+              SELECT revision.id, revision.manifest, artifact.artifact_sha256,
+                revision.created_at
               FROM skill_registry.skill_revisions AS revision
               JOIN skill_registry.skill_revision_artifacts AS artifact
                 ON artifact.revision_id = revision.id
               WHERE revision.skill_id = skill.id
+                AND revision.state = 'published'
               ORDER BY revision.revision_no DESC
               LIMIT 1
             ) AS latest ON true
@@ -323,7 +333,7 @@ class PostgresSkillRegistryRepository:
             LIMIT %s OFFSET %s""",
             (limit, offset),
         )
-        return _map_storage_value(lambda: tuple(_skill_summary(row) for row in rows))
+        return _map_storage_value(lambda: tuple(_skill_library_item(row) for row in rows))
 
     async def get_revision(self, skill_id: UUID, revision_id: UUID) -> StoredRevision:
         row = await self._query_one(
@@ -456,43 +466,27 @@ def _stored_revision(row: tuple[Any, ...]) -> StoredRevision:
     )
 
 
-def _skill_summary(row: tuple[Any, ...]) -> SkillSummary:
-    skill_id = UUID(str(row[0]))
-    slug = str(row[1])
-    created_at = row[5]
-    if not isinstance(created_at, datetime):
-        raise ValueError("invalid skill timestamp")
-    if row[3] is None:
-        if any(row[index] is not None for index in (2, 4, 6, 7, 8, 9)):
-            raise ValueError("partial latest revision")
-        return SkillSummary(skill_id, slug, None, None, None, created_at)
-    revision_no = row[2]
-    state = row[4]
-    source_type = row[6]
-    digest = row[7]
-    revision_created_at = row[9]
+def _skill_library_item(row: tuple[Any, ...]) -> SkillLibraryItem:
+    description = row[2]
+    enabled = row[3]
+    uploaded_at = row[4]
+    digest = row[5]
     if (
-        type(revision_no) is not int
-        or revision_no < 1
-        or state not in {"published", "archived"}
-        or type(state) is not str
-        or source_type != "upload"
+        type(description) is not str
+        or type(enabled) is not bool
+        or not isinstance(uploaded_at, datetime)
         or type(digest) is not str
         or _SHA256_PATTERN.fullmatch(digest) is None
-        or not isinstance(revision_created_at, datetime)
     ):
-        raise ValueError("invalid latest revision")
-    return SkillSummary(
-        id=skill_id,
-        slug=slug,
-        latest_revision_no=revision_no,
-        latest_revision_id=UUID(str(row[3])),
-        latest_state=cast(Any, state),
-        created_at=created_at,
-        latest_source_type=source_type,
-        latest_artifact_sha256=digest,
-        latest_created_by=UUID(str(row[8])),
-        latest_created_at=revision_created_at,
+        raise ValueError("invalid skill library item")
+    return SkillLibraryItem(
+        id=UUID(str(row[0])),
+        name=str(row[1]),
+        description=description,
+        enabled=enabled,
+        uploaded_at=uploaded_at,
+        replacement_token=digest,
+        revision_id=UUID(str(row[6])),
     )
 
 

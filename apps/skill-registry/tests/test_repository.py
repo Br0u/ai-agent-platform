@@ -347,14 +347,11 @@ async def test_repository_queries_lists_files_and_previous_published_revision() 
                     (
                         SKILL_ID,
                         "demo-skill",
-                        1,
-                        REVISION_ID,
-                        "published",
+                        "Demo.",
+                        True,
                         NOW,
-                        "upload",
                         "a" * 64,
-                        ACTOR,
-                        NOW,
+                        REVISION_ID,
                     )
                 ],
             ),
@@ -372,8 +369,14 @@ async def test_repository_queries_lists_files_and_previous_published_revision() 
     files = await repository.list_revision_files(REVISION_ID)
     previous = await repository.find_previous_published(revision)
 
-    assert summaries[0].slug == "demo-skill"
-    assert summaries[0].latest_artifact_sha256 == "a" * 64
+    assert summaries[0].name == "demo-skill"
+    assert summaries[0].description == "Demo."
+    assert summaries[0].enabled is True
+    assert summaries[0].replacement_token == "a" * 64
+    assert summaries[0].revision_id == REVISION_ID
+    list_query = connection.script.executions[0][0]
+    assert "active_agent_skill_sets" in list_query
+    assert "candidate" not in list_query
     assert connection.script.executions[0][1] == (25, 10)
     assert revision.id == REVISION_ID
     assert files[0].path == "SKILL.md"

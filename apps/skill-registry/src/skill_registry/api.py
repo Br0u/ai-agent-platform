@@ -17,14 +17,14 @@ from skill_registry.auth import SkillRegistryAssertion
 from skill_registry.types import (
     RegistryError,
     RevisionDetail,
-    SkillSummary,
+    SkillLibraryItem,
     StoredFile,
     StoredRevision,
 )
 
 
 class RegistryAPIService(Protocol):
-    async def list_skills(self, *, limit: int, offset: int) -> tuple[SkillSummary, ...]: ...
+    async def list_skills(self, *, limit: int, offset: int) -> tuple[SkillLibraryItem, ...]: ...
 
     async def upload_zip(
         self,
@@ -147,29 +147,14 @@ def _revision_metadata(revision: StoredRevision) -> dict[str, object]:
     }
 
 
-def _summary_content(summary: SkillSummary) -> dict[str, object]:
-    revision: dict[str, object] | None = None
-    if summary.latest_revision_id is not None:
-        revision = {
-            "id": str(summary.latest_revision_id),
-            "number": summary.latest_revision_no,
-            "state": summary.latest_state,
-            "sourceType": summary.latest_source_type,
-            "artifactSha256Prefix": (
-                None
-                if summary.latest_artifact_sha256 is None
-                else summary.latest_artifact_sha256[:12]
-            ),
-            "createdBy": (
-                None if summary.latest_created_by is None else str(summary.latest_created_by)
-            ),
-            "createdAt": _iso(summary.latest_created_at),
-        }
+def _summary_content(summary: SkillLibraryItem) -> dict[str, object]:
     return {
         "id": str(summary.id),
-        "name": summary.slug,
-        "createdAt": _iso(summary.created_at),
-        "revision": revision,
+        "name": summary.name,
+        "description": summary.description,
+        "enabled": summary.enabled,
+        "uploadedAt": _iso(summary.uploaded_at),
+        "replacementToken": summary.replacement_token,
     }
 
 

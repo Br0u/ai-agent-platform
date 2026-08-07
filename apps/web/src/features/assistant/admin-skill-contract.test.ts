@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ADMIN_SKILL_REVISION_STATES,
+  parseAdminSkillListResponse,
   parseAdminSkillRevisionResponse,
 } from "./admin-skill-contract";
 
@@ -30,6 +31,30 @@ describe("admin Skill contract", () => {
       parseAdminSkillRevisionResponse({
         ...response,
         revision: { ...response.revision, state: "pending_review" },
+      }),
+    ).toBeNull();
+  });
+
+  it("accepts only the Skill-level library shape", () => {
+    const skill = {
+      id: "33333333-3333-4333-8333-333333333333",
+      name: "safe-skill",
+      description: "A safe skill.",
+      enabled: true,
+      uploadedAt: "2026-07-21T08:00:00.000Z",
+      replacementToken: "a".repeat(64),
+    };
+    const response = {
+      version: "1",
+      skills: [skill],
+      page: { limit: 25, offset: 0, returned: 1 },
+    };
+
+    expect(parseAdminSkillListResponse(response)?.skills).toEqual([skill]);
+    expect(
+      parseAdminSkillListResponse({
+        ...response,
+        skills: [{ ...skill, revision: { number: 1 } }],
       }),
     ).toBeNull();
   });

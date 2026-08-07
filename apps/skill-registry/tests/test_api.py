@@ -34,7 +34,7 @@ from skill_registry.types import (
     PythonImportSummary,
     RegistryError,
     RevisionDetail,
-    SkillSummary,
+    SkillLibraryItem,
     StoredFile,
     StoredRevision,
     StoredSkillSet,
@@ -130,21 +130,17 @@ class StubService:
         self.fail_with: RegistryError | None = None
         self.file_content = "# Guide\n"
 
-    async def list_skills(self, *, limit: int, offset: int) -> tuple[SkillSummary, ...]:
+    async def list_skills(self, *, limit: int, offset: int) -> tuple[SkillLibraryItem, ...]:
         self.list_bounds = (limit, offset)
-        item = revision()
         return (
-            SkillSummary(
-                SKILL_ID,
-                "demo-skill",
-                item.revision_no,
-                item.id,
-                item.state,
-                NOW,
-                latest_source_type=item.source_type,
-                latest_artifact_sha256=item.artifact_sha256,
-                latest_created_by=item.created_by,
-                latest_created_at=item.created_at,
+            SkillLibraryItem(
+                id=SKILL_ID,
+                name="demo-skill",
+                description="Demo",
+                enabled=True,
+                uploaded_at=NOW,
+                replacement_token="a" * 64,
+                revision_id=REVISION_ID,
             ),
         )
 
@@ -307,16 +303,10 @@ def test_list_is_bounded_metadata_only() -> None:
             {
                 "id": str(SKILL_ID),
                 "name": "demo-skill",
-                "createdAt": "2026-07-21T00:00:00.000Z",
-                "revision": {
-                    "id": str(REVISION_ID),
-                    "number": 2,
-                    "state": "published",
-                    "sourceType": "upload",
-                    "artifactSha256Prefix": "aaaaaaaaaaaa",
-                    "createdBy": str(ACTOR),
-                    "createdAt": "2026-07-21T00:00:00.000Z",
-                },
+                "description": "Demo",
+                "enabled": True,
+                "uploadedAt": "2026-07-21T00:00:00.000Z",
+                "replacementToken": "a" * 64,
             }
         ],
         "page": {"limit": 25, "offset": 10, "returned": 1},
