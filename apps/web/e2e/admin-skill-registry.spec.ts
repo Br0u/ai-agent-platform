@@ -135,7 +135,9 @@ async function mutate(
     );
   });
   const confirmation =
-    operation === "delete" ? page.waitForEvent("dialog") : null;
+    operation === "delete"
+      ? page.waitForEvent("dialog").then((dialog) => dialog.accept())
+      : null;
   await page
     .getByRole("button", {
       name:
@@ -147,7 +149,7 @@ async function mutate(
       exact: true,
     })
     .click();
-  if (confirmation !== null) await (await confirmation).accept();
+  if (confirmation !== null) await confirmation;
   expect((await response).status()).toBe(200);
 }
 

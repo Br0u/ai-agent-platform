@@ -3357,6 +3357,9 @@ secrets:
     expect(spec).toContain(".setInputFiles(archive)");
     expect(spec).toContain("modelAdminStaleSessionToken");
     expect(spec).not.toContain("fixtureCredentials");
+    expect(spec).toContain(
+      'page.waitForEvent("dialog").then((dialog) => dialog.accept())',
+    );
     expect(spec).toContain('error: { code: "reauth_required" }');
     expect(spec).toContain('redirectTo: "/staff/re-auth"');
     expect(spec.match(/browser\.newContext\(/gu)?.length).toBe(1);
