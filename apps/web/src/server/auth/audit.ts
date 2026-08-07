@@ -102,7 +102,15 @@ export type AssistantSkillAuditMetadata<
   result: Result;
 };
 export type AssistantSkillRuntimeAuditMetadata = {
-  operation: "create" | "activate" | "discard" | "rollback";
+  operation:
+    | "create"
+    | "activate"
+    | "discard"
+    | "rollback"
+    | "enable"
+    | "disable"
+    | "replace"
+    | "delete";
   setId: string | null;
   activationVersion: number;
   revisionCount: number;
@@ -555,7 +563,16 @@ function assistantSkillRuntimeAuditMetadata(value: unknown): SanitizedMetadata {
   return {
     operation: enumValue(
       metadata.operation,
-      ["create", "activate", "discard", "rollback"] as const,
+      [
+        "create",
+        "activate",
+        "discard",
+        "rollback",
+        "enable",
+        "disable",
+        "replace",
+        "delete",
+      ] as const,
       "metadata.operation",
     ),
     setId: metadata.setId,
