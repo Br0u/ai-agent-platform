@@ -644,7 +644,32 @@ async def test_skill_set_repository_resolves_all_published_revisions_and_pages()
     assert resolved[0].revision_id == REVISION_ID
     assert page[0].revision_no == 2
     assert total == 1
+    assert all(
+        "skill.archived_at IS NULL" in query
+        for query, _ in connection.script.executions
+        if "skill_revisions AS revision" in query
+    )
     assert connection.script.executions[-1][1] == (25, 10)
+
+
+@pytest.mark.asyncio
+async def test_skill_library_prefers_the_active_revision_over_a_newer_upload() -> None:
+    repository, connection = repository_with(
+        [
+            Reply(
+                "FROM skill_registry.skills AS skill",
+                all_rows=[],
+            )
+        ]
+    )
+
+    await repository.list_skills()
+
+    query = connection.script.executions[0][0]
+    assert "active_item.revision_id" in query
+    assert "COALESCE(" in query
+    assert "active_revision.revision_id" in query
+    assert "SELECT latest_revision.id" in query
 
 
 @pytest.mark.asyncio

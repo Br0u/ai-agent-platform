@@ -371,28 +371,38 @@ class PostgresSkillRegistryRepository:
             raise RegistryError("VALIDATION_ERROR", "Pagination bounds are invalid")
         rows = await self._query_all(
             """SELECT skill.id, skill.slug,
-              latest.manifest ->> 'description',
-              EXISTS (
-                SELECT 1
-                FROM skill_registry.manager_active_skill_set AS active_set
-                JOIN skill_registry.manager_skill_set_items AS active_item
-                  ON active_item.set_id = active_set.active_set_id
-                WHERE active_set.agent_id = 'maduoduo'
-                  AND active_item.skill_id = skill.id
-              ),
-              latest.created_at, latest.artifact_sha256, latest.id
+              current_revision.manifest ->> 'description',
+              active_revision.revision_id IS NOT NULL,
+              current_revision.created_at, current_revision.artifact_sha256,
+              current_revision.id
             FROM skill_registry.skills AS skill
+            LEFT JOIN LATERAL (
+              SELECT active_item.revision_id
+              FROM skill_registry.manager_active_skill_set AS active_set
+              JOIN skill_registry.manager_skill_set_items AS active_item
+                ON active_item.set_id = active_set.active_set_id
+              WHERE active_set.agent_id = 'maduoduo'
+                AND active_item.skill_id = skill.id
+              LIMIT 1
+            ) AS active_revision ON true
             JOIN LATERAL (
               SELECT revision.id, revision.manifest, artifact.artifact_sha256,
                 revision.created_at
               FROM skill_registry.skill_revisions AS revision
               JOIN skill_registry.skill_revision_artifacts AS artifact
                 ON artifact.revision_id = revision.id
-              WHERE revision.skill_id = skill.id
-                AND revision.state = 'published'
-              ORDER BY revision.revision_no DESC
-              LIMIT 1
-            ) AS latest ON true
+              WHERE revision.id = COALESCE(
+                active_revision.revision_id,
+                (
+                  SELECT latest_revision.id
+                  FROM skill_registry.skill_revisions AS latest_revision
+                  WHERE latest_revision.skill_id = skill.id
+                    AND latest_revision.state = 'published'
+                  ORDER BY latest_revision.revision_no DESC
+                  LIMIT 1
+                )
+              )
+            ) AS current_revision ON true
             WHERE skill.archived_at IS NULL
             ORDER BY skill.slug
             LIMIT %s OFFSET %s""",

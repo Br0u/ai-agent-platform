@@ -86,18 +86,26 @@ function errorResponse(
     | "validation_error"
     | "not_found"
     | "state_conflict"
+    | "result_unknown"
     | "runtime_unavailable",
   status: number,
 ) {
   return Response.json(
-    { version: "1", requestId, error: { code } },
+    {
+      version: "1",
+      requestId,
+      error: { code },
+      ...(code === "reauth_required"
+        ? { redirectTo: "/staff/re-auth" }
+        : {}),
+    },
     { status, headers: NO_STORE },
   );
 }
 
 function mappedError(error: unknown, requestId: string): Response {
   if (error instanceof SensitiveActionError) {
-    return errorResponse(requestId, "reauth_required", 403);
+    return errorResponse(requestId, "reauth_required", 401);
   }
   if (error instanceof MutationRequestError) {
     return errorResponse(requestId, "permission_denied", 403);
@@ -109,6 +117,8 @@ function mappedError(error: unknown, requestId: string): Response {
       return errorResponse(requestId, "validation_error", 400);
     if (error.code === "state_conflict")
       return errorResponse(requestId, "state_conflict", 409);
+    if (error.code === "result_unknown")
+      return errorResponse(requestId, "result_unknown", 503);
   }
   if (error instanceof SkillRegistryClientError) {
     if (error.code === "SKILL_NOT_FOUND")

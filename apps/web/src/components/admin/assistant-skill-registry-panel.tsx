@@ -19,7 +19,57 @@ type Props = {
   canRead: boolean;
   initialPermissions: AdminSkillPermissionFlags;
   initialSnapshot: AdminSkillRegistrySnapshot;
+  navigateToReauth?: (path: "/staff/re-auth") => void;
 };
+
+function navigateToStaffReauth(path: "/staff/re-auth") {
+  window.location.assign(path);
+}
+
+async function trustedMutationFailure(
+  response: Response,
+): Promise<"reauth_required" | "result_unknown" | null> {
+  try {
+    const value: unknown = await response.json();
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      Array.isArray(value) ||
+      Reflect.getPrototypeOf(value) !== Object.prototype
+    )
+      return null;
+    const keys = Reflect.ownKeys(value);
+    const hasRedirect = keys.includes("redirectTo");
+    if (keys.length !== (hasRedirect ? 4 : 3)) return null;
+    if (
+      !["version", "requestId", "error"].every((key) => keys.includes(key))
+    )
+      return null;
+    const envelope = value as Record<string, unknown>;
+    const error = envelope.error;
+    if (
+      envelope.version !== "1" ||
+      typeof envelope.requestId !== "string" ||
+      envelope.requestId.length === 0 ||
+      typeof error !== "object" ||
+      error === null ||
+      Array.isArray(error) ||
+      Reflect.getPrototypeOf(error) !== Object.prototype ||
+      Reflect.ownKeys(error).length !== 1
+    )
+      return null;
+    const code = Reflect.get(error, "code");
+    if (
+      code === "reauth_required" &&
+      hasRedirect &&
+      envelope.redirectTo === "/staff/re-auth"
+    )
+      return code;
+    return code === "result_unknown" && !hasRedirect ? code : null;
+  } catch {
+    return null;
+  }
+}
 
 function parseListEnvelope(value: unknown): {
   list: AdminSkillListResponse;
@@ -81,6 +131,7 @@ export function AssistantSkillRegistryPanel({
   canRead,
   initialPermissions,
   initialSnapshot,
+  navigateToReauth = navigateToStaffReauth,
 }: Props) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [permissions, setPermissions] = useState(initialPermissions);
@@ -122,7 +173,7 @@ export function AssistantSkillRegistryPanel({
     setUploadOpen(true);
   };
 
-  const refresh = async () => {
+  const refresh = async (announce = true): Promise<boolean> => {
     const generation = listGeneration.current + 1;
     listGeneration.current = generation;
     listAbort.current?.abort();
@@ -136,11 +187,11 @@ export function AssistantSkillRegistryPanel({
         { cache: "no-store", signal: controller.signal },
       );
       if (controller.signal.aborted || generation !== listGeneration.current)
-        return;
+        return false;
       if (!response.ok) throw new Error("list failed");
       const parsed = parseListEnvelope(await response.json());
       if (controller.signal.aborted || generation !== listGeneration.current)
-        return;
+        return false;
       if (parsed === null) throw new Error("invalid list response");
       setSnapshot({
         capability: "available",
@@ -148,16 +199,19 @@ export function AssistantSkillRegistryPanel({
         page: parsed.list.page,
       });
       setPermissions(parsed.permissions);
-      setAnnouncement("Skill 列表已刷新。");
+      if (announce) setAnnouncement("Skill 列表已刷新。");
+      return true;
     } catch (caught) {
       if (
         isAbortError(caught) ||
         controller.signal.aborted ||
         generation !== listGeneration.current
       )
-        return;
+        return false;
       setSnapshot((current) => ({ ...current, capability: "degraded" }));
-      setAnnouncement("刷新失败，Registry 处于 degraded；已保留旧数据。");
+      if (announce)
+        setAnnouncement("刷新失败，Registry 处于 degraded；已保留旧数据。");
+      return false;
     } finally {
       if (generation === listGeneration.current) {
         listAbort.current = null;
@@ -188,6 +242,7 @@ export function AssistantSkillRegistryPanel({
     }
     setPendingSkillId(skill.id);
     setAnnouncement("");
+    let preservePending = false;
     try {
       const response = await fetch(
         `/api/v1/admin/assistant/skills/${skill.id}${
@@ -199,7 +254,25 @@ export function AssistantSkillRegistryPanel({
           body: JSON.stringify({ requestId: crypto.randomUUID() }),
         },
       );
-      if (!response.ok) throw new Error("mutation failed");
+      if (!response.ok) {
+        const failure = await trustedMutationFailure(response);
+        if (failure === "reauth_required") {
+          setAnnouncement("需要重新验证身份，正在前往验证页面。");
+          navigateToReauth("/staff/re-auth");
+          return;
+        }
+        if (failure === "result_unknown") {
+          preservePending = true;
+          if (await refresh(false)) {
+            preservePending = false;
+            setAnnouncement("Skill 状态已确认。");
+          } else {
+            setAnnouncement("操作结果正在确认，请刷新后再试。");
+          }
+          return;
+        }
+        throw new Error("mutation failed");
+      }
       await refresh();
       setAnnouncement(
         operation === "enable"
@@ -211,7 +284,7 @@ export function AssistantSkillRegistryPanel({
     } catch {
       setAnnouncement("操作失败，Skill 状态未确认。");
     } finally {
-      setPendingSkillId(null);
+      if (!preservePending) setPendingSkillId(null);
     }
   };
 

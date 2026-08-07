@@ -255,6 +255,13 @@ def test_active_skill_names_are_unique_but_archived_names_are_reusable() -> None
     ) in sql
 
 
+def test_archived_skills_cannot_enter_or_reenter_runtime_sets() -> None:
+    sql = normalize_sql(registry_schema.SCHEMA_VERSION_3_SQL)
+
+    assert "skill.archived_at IS NULL" in sql
+    assert sql.count("skill.archived_at IS NOT NULL") >= 2
+
+
 def test_schema_has_permanent_identity_revision_and_nonce_uniqueness() -> None:
     sql = normalize_sql(SCHEMA_VERSION_1_SQL)
 

@@ -481,9 +481,12 @@ BEGIN
     COALESCE(sum(artifact.extracted_size), 0)
   INTO selected_item_count, distinct_skill_count, selected_total_size
   FROM skill_registry.skill_revisions AS revision
+  JOIN skill_registry.skills AS skill ON skill.id = revision.skill_id
   JOIN skill_registry.skill_revision_artifacts AS artifact
     ON artifact.revision_id = revision.id AND artifact.skill_id = revision.skill_id
-  WHERE revision.id = ANY(p_revision_ids) AND revision.state = 'published';
+  WHERE revision.id = ANY(p_revision_ids)
+    AND revision.state = 'published'
+    AND skill.archived_at IS NULL;
   IF selected_item_count <> requested_item_count
     OR distinct_skill_count <> selected_item_count
     OR selected_total_size > 25165824 THEN
@@ -727,7 +730,9 @@ BEGIN
     FROM skill_registry.agent_skill_set_items AS item
     JOIN skill_registry.skill_revisions AS revision
       ON revision.id = item.skill_revision_id AND revision.skill_id = item.skill_id
-    WHERE item.set_id = locked_previous_set_id AND revision.state <> 'published'
+    JOIN skill_registry.skills AS skill ON skill.id = revision.skill_id
+    WHERE item.set_id = locked_previous_set_id
+      AND (revision.state <> 'published' OR skill.archived_at IS NOT NULL)
   ) THEN
     RAISE EXCEPTION 'previous skill set is not cloneable' USING ERRCODE = '23514';
   END IF;
@@ -901,7 +906,9 @@ BEGIN
     FROM skill_registry.agent_skill_set_items AS item
     JOIN skill_registry.skill_revisions AS revision
       ON revision.id = item.skill_revision_id AND revision.skill_id = item.skill_id
-    WHERE item.set_id = p_set_id AND revision.state <> 'published'
+    JOIN skill_registry.skills AS skill ON skill.id = revision.skill_id
+    WHERE item.set_id = p_set_id
+      AND (revision.state <> 'published' OR skill.archived_at IS NOT NULL)
   ) THEN
     RAISE EXCEPTION 'candidate contains unpublished revision' USING ERRCODE = '23514';
   END IF;
