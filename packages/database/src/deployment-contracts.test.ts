@@ -3454,6 +3454,9 @@ secrets:
     expect(runner).toContain("WHERE revision_id = '$revision_id'");
     expect(runner).toContain("AND artifact_sha256 = '$artifact_sha'");
     expect(runner).not.toContain("WHERE artifact_sha256 = '$artifact_sha'");
+    expect(runner).toContain(
+      "RESTORE_EXPECTED_ARTIFACT_REVISION_ID=$revision_id",
+    );
     expect(runner).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha");
     expect(runner).toContain("SKILL_REGISTRY_E2E_STATE_FILE");
     expect(runner).toContain('success_message="Skill Registry E2E passed"');
@@ -3469,6 +3472,8 @@ secrets:
     expect(skillsReadme).toMatch(/exact revision/u);
     expect(testingReadme).toMatch(/同一|exact|精确/u);
     const backupRunner = read("docs/testing/run-agentos-backup-restore.sh");
+    expect(backupRunner).toContain("skill_artifact_revision_id");
+    expect(backupRunner).toContain("RESTORE_EXPECTED_ARTIFACT_REVISION_ID");
     expect(backupRunner).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256");
     expect(backupRunner).toContain("skill_artifact_sha");
     expect(backupRunner).toContain(
@@ -5148,12 +5153,26 @@ exit 0
     expect(script).toContain("/bootstrap/04-agent-control-roles.sh");
     expect(script).toContain("/bootstrap/05-skill-registry-roles.sh");
     expect(script).toContain("RESTORE_SKILL_REGISTRY_IMAGE");
+    expect(script).toContain("RESTORE_EXPECTED_ARTIFACT_REVISION_ID");
     expect(script).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256");
+    expect(script).toContain(
+      "restore expected artifact reference is incomplete",
+    );
+    expect(script).toContain("restore expected artifact revision is invalid");
     expect(script).toContain("expected_artifact_check_file");
     expect(script).toContain("expected_artifact_match_count");
     expect(script).toContain("restore expected artifact digest is invalid");
+    expect(script).toContain(
+      "WHERE revision_id = '$expected_artifact_revision_id'::uuid",
+    );
+    expect(script).toContain(
+      "AND artifact_sha256 = '$expected_artifact_sha256'",
+    );
+    expect(script).not.toContain(
+      "WHERE artifact_sha256 = '$expected_artifact_sha256'",
+    );
     expect(script).not.toMatch(
-      /(?:echo|printf)[^\n]*expected_artifact_sha256/iu,
+      /echo[^\n]*expected_artifact_(?:sha256|revision_id)/iu,
     );
     expect(script).toContain("python -m skill_registry.migrate");
     expect(script).toContain("ai_agent_skill_registry_manager");
@@ -5354,6 +5373,8 @@ exit 91
         "A".repeat(64),
         "g".repeat(64),
       ];
+      const validArtifactRevisionId = "11111111-1111-4111-8111-111111111111";
+      const validArtifactSha256 = "a".repeat(64);
       for (const value of malformed) {
         const result = spawnSync(
           "sh",
@@ -5372,6 +5393,7 @@ exit 91
               PATH: `${bin}:${process.env.PATH ?? ""}`,
               BACKUP_ENCRYPTION_KEY_FILE: keyFile,
               DOCKER_LOG: dockerLog,
+              RESTORE_EXPECTED_ARTIFACT_REVISION_ID: validArtifactRevisionId,
               RESTORE_EXPECTED_ARTIFACT_SHA256: value,
               RESTORE_MAX_ENCRYPTED_BYTES: "1",
             },
@@ -5385,6 +5407,74 @@ exit 91
         if (value !== "") {
           expect(output, JSON.stringify(value)).not.toContain(value);
         }
+      }
+      for (const value of [
+        "11111111-1111-1111-1111-11111111111",
+        "11111111-1111-1111-1111-1111111111111",
+        "11111111-1111-1111-1111-11111111111g",
+        "11111111-1111-1111-1111-11111111111A",
+        "11111111-1111-1111-1111-111111111111' OR 1=1 --",
+      ]) {
+        const result = spawnSync(
+          "sh",
+          [
+            script,
+            backupFile,
+            "1",
+            "1",
+            "11111111-1111-1111-1111-111111111111",
+            "fixture-session",
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: `${bin}:${process.env.PATH ?? ""}`,
+              BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+              DOCKER_LOG: dockerLog,
+              RESTORE_EXPECTED_ARTIFACT_REVISION_ID: value,
+              RESTORE_EXPECTED_ARTIFACT_SHA256: validArtifactSha256,
+              RESTORE_MAX_ENCRYPTED_BYTES: "1",
+            },
+          },
+        );
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.status, JSON.stringify(value)).toBe(64);
+        expect(output.trim(), JSON.stringify(value)).toBe(
+          "restore expected artifact revision is invalid",
+        );
+        expect(output, JSON.stringify(value)).not.toContain(value);
+      }
+      for (const artifactEnvironment of [
+        { RESTORE_EXPECTED_ARTIFACT_REVISION_ID: validArtifactRevisionId },
+        { RESTORE_EXPECTED_ARTIFACT_SHA256: validArtifactSha256 },
+      ]) {
+        const result = spawnSync(
+          "sh",
+          [
+            script,
+            backupFile,
+            "1",
+            "1",
+            "11111111-1111-1111-1111-111111111111",
+            "fixture-session",
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: `${bin}:${process.env.PATH ?? ""}`,
+              BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+              DOCKER_LOG: dockerLog,
+              RESTORE_MAX_ENCRYPTED_BYTES: "1",
+              ...artifactEnvironment,
+            },
+          },
+        );
+        expect(result.status, JSON.stringify(artifactEnvironment)).toBe(64);
+        expect(`${result.stdout}${result.stderr}`.trim()).toBe(
+          "restore expected artifact reference is incomplete",
+        );
       }
       const validSetId = "11111111-1111-4111-8111-111111111111";
       const malformedRuntime = [

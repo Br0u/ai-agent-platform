@@ -12,22 +12,44 @@ if [ "$#" -ne 5 ] || [ -z "$backup_file" ] || [ ! -f "$backup_file" ] || \
   echo "usage: $0 ENCRYPTED_BUNDLE EXPECTED_USERS EXPECTED_AGNO_SESSIONS USER_FIXTURE_ID AGNO_SESSION_FIXTURE_ID" >&2
   exit 64
 fi
+expected_artifact_revision_id=
 expected_artifact_sha256=
-expected_artifact_sha256_required=false
-if [ "${RESTORE_EXPECTED_ARTIFACT_SHA256+x}" = x ]; then
-  expected_artifact_sha256=$RESTORE_EXPECTED_ARTIFACT_SHA256
-  case "$expected_artifact_sha256" in
-    ''|*[!0-9a-f]*)
+expected_artifact_required=false
+case "${RESTORE_EXPECTED_ARTIFACT_REVISION_ID+x}${RESTORE_EXPECTED_ARTIFACT_SHA256+x}" in
+  xx)
+    expected_artifact_revision_id=$RESTORE_EXPECTED_ARTIFACT_REVISION_ID
+    expected_artifact_sha256=$RESTORE_EXPECTED_ARTIFACT_SHA256
+    case "$expected_artifact_revision_id" in
+      ????????-????-????-????-????????????) ;;
+      *) echo "restore expected artifact revision is invalid" >&2; exit 64 ;;
+    esac
+    expected_artifact_revision_hex=$(printf '%s' "$expected_artifact_revision_id" | tr -d '-')
+    case "$expected_artifact_revision_hex" in
+      ''|*[!0-9a-f]*)
+        echo "restore expected artifact revision is invalid" >&2
+        exit 64
+        ;;
+    esac
+    if [ "${#expected_artifact_revision_hex}" -ne 32 ]; then
+      echo "restore expected artifact revision is invalid" >&2
+      exit 64
+    fi
+    unset expected_artifact_revision_hex
+    case "$expected_artifact_sha256" in
+      ''|*[!0-9a-f]*)
+        echo "restore expected artifact digest is invalid" >&2
+        exit 64
+        ;;
+    esac
+    if [ "${#expected_artifact_sha256}" -ne 64 ]; then
       echo "restore expected artifact digest is invalid" >&2
       exit 64
-      ;;
-  esac
-  if [ "${#expected_artifact_sha256}" -ne 64 ]; then
-    echo "restore expected artifact digest is invalid" >&2
-    exit 64
-  fi
-  expected_artifact_sha256_required=true
-fi
+    fi
+    expected_artifact_required=true
+    ;;
+  '') ;;
+  *) echo "restore expected artifact reference is incomplete" >&2; exit 64 ;;
+esac
 expected_skill_runtime_required=false
 if [ "${RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID+x}${RESTORE_EXPECTED_SKILL_PREVIOUS_SET_ID+x}${RESTORE_EXPECTED_SKILL_ACTIVATION_VERSION+x}" = xxx ]; then
   expected_skill_active_set_id=$RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID
@@ -682,9 +704,9 @@ if ! mkdir -p "$decrypt_work_directory" "$resource_registry_directory" >/dev/nul
   echo "restore drill temporary initialization failed" >&2
   exit 1
 fi
-if [ "$expected_artifact_sha256_required" = true ]; then
+if [ "$expected_artifact_required" = true ]; then
   if ! printf '%s\n' \
-    "SELECT count(*) FROM skill_registry.skill_revision_artifacts WHERE artifact_sha256 = '$expected_artifact_sha256';" \
+    "SELECT count(*) FROM skill_registry.skill_revision_artifacts WHERE revision_id = '$expected_artifact_revision_id'::uuid AND artifact_sha256 = '$expected_artifact_sha256';" \
     >"$expected_artifact_check_file" || \
      ! chmod 600 "$expected_artifact_check_file" >/dev/null 2>&1; then
     echo "restore drill temporary initialization failed" >&2
@@ -1508,7 +1530,7 @@ fi
 unset skill_registry_snapshot
 
 expected_artifact_match_count=0
-if [ "$expected_artifact_sha256_required" = true ]; then
+if [ "$expected_artifact_required" = true ]; then
   if ! run_database_scalar expected_artifact_match_count psql \
     --username="$owner" --dbname="$database" --no-psqlrc \
     --tuples-only --no-align --quiet --set=ON_ERROR_STOP=1 \
@@ -1608,7 +1630,7 @@ if [ "$migration_count" != "$expected_migrations" ] || \
    [ "$skill_artifact_digest_mismatch_count" != "0" ] || \
    [ "$skill_registry_integrity_mismatch_count" != "0" ] || \
    [ "$skill_registry_security_trigger_mismatch_count" != "0" ] || \
-   { [ "$expected_artifact_sha256_required" = true ] && \
+   { [ "$expected_artifact_required" = true ] && \
      [ "$expected_artifact_match_count" != "1" ]; } || \
    { [ "$expected_skill_runtime_required" = true ] && \
      { [ "$expected_skill_runtime_match_count" != "1" ] || \

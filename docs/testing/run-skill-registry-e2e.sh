@@ -592,6 +592,7 @@ if ! env $restore_skill_runtime_environment \
   BACKUP_ENCRYPTION_KEY_FILE=$BACKUP_ENCRYPTION_KEY_FILE \
   BACKUP_CRYPTO_IMAGE="${project}-backup:latest" \
   RESTORE_SKILL_REGISTRY_IMAGE="${project}-skill-registry:latest" \
+  RESTORE_EXPECTED_ARTIFACT_REVISION_ID=$revision_id \
   RESTORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha \
   RESTORE_TMP_ROOT="$restore_root" \
     infra/docker/restore-drill.sh \
