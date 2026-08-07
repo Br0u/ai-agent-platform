@@ -8,7 +8,7 @@ from skill_registry.skill_set_schema import (
     SKILL_SET_TABLE_NAMES,
 )
 
-SKILL_REGISTRY_SCHEMA_VERSION = 6
+SKILL_REGISTRY_SCHEMA_VERSION = 7
 
 SKILL_TABLE_NAMES = frozenset(
     {
@@ -69,9 +69,7 @@ EXPECTED_STORAGE_COLUMNS = frozenset(
     {("skill_revisions", "findings", "jsonb", True, "'[]'::jsonb")}
 )
 
-EXPECTED_SKILL_INDEXES = frozenset(
-    {("skills_active_slug_key", True, "(archived_at IS NULL)")}
-)
+EXPECTED_SKILL_INDEXES = frozenset({("skills_active_slug_key", True, "(archived_at IS NULL)")})
 
 _PG18_FINDINGS_CONSTRAINT = "CHECK (skill_registry.validate_skill_findings(findings))"
 _PG18_FINDINGS_FUNCTION = (
@@ -144,6 +142,8 @@ EXPECTED_FUNCTION_BOUNDARY = (
             "guard_revision_insert",
             "guard_revision_update",
             "guard_skill_update",
+            "reject_archived_skill_activation",
+            "reject_archived_skill_set_item",
             "stamp_control_event_transaction",
             "guard_agent_skill_set_update",
             "guard_active_agent_skill_set_update",
@@ -290,12 +290,30 @@ EXPECTED_SECURITY_TRIGGERS = frozenset(
             "A",
         ),
         (
+            "agent_skill_set_items_reject_archived",
+            "agent_skill_set_items",
+            "reject_archived_skill_set_item",
+            7,
+            False,
+            False,
+            "A",
+        ),
+        (
             "agent_skill_set_items_validate",
             "agent_skill_set_items",
             "validate_agent_skill_set_contents",
             29,
             True,
             True,
+            "A",
+        ),
+        (
+            "agent_skill_sets_reject_archived_activation",
+            "agent_skill_sets",
+            "reject_archived_skill_activation",
+            19,
+            False,
+            False,
             "A",
         ),
         (
@@ -1043,6 +1061,68 @@ CREATE UNIQUE INDEX skills_active_slug_key
 
 INSERT INTO skill_registry.schema_versions (version)
 VALUES (6)
+ON CONFLICT (version) DO NOTHING;
+"""
+
+SCHEMA_VERSION_7_SQL = """
+CREATE OR REPLACE FUNCTION skill_registry.reject_archived_skill_set_item()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, skill_registry
+AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM skill_registry.skills AS skill
+    WHERE skill.id = NEW.skill_id AND skill.archived_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'archived skill cannot enter a runtime set'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION skill_registry.reject_archived_skill_activation()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, skill_registry
+AS $$
+BEGIN
+  IF OLD.state = 'candidate' AND NEW.state = 'active' AND EXISTS (
+    SELECT 1
+    FROM skill_registry.agent_skill_set_items AS item
+    JOIN skill_registry.skills AS skill ON skill.id = item.skill_id
+    WHERE item.set_id = NEW.id AND skill.archived_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'archived skill cannot be activated'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+ALTER FUNCTION skill_registry.reject_archived_skill_set_item()
+  OWNER TO ai_agent_skill_registry_migrator;
+ALTER FUNCTION skill_registry.reject_archived_skill_activation()
+  OWNER TO ai_agent_skill_registry_migrator;
+REVOKE ALL ON FUNCTION skill_registry.reject_archived_skill_set_item() FROM PUBLIC;
+REVOKE ALL ON FUNCTION skill_registry.reject_archived_skill_activation() FROM PUBLIC;
+
+CREATE TRIGGER agent_skill_set_items_reject_archived
+BEFORE INSERT ON skill_registry.agent_skill_set_items
+FOR EACH ROW EXECUTE FUNCTION skill_registry.reject_archived_skill_set_item();
+ALTER TABLE skill_registry.agent_skill_set_items
+  ENABLE ALWAYS TRIGGER agent_skill_set_items_reject_archived;
+
+CREATE TRIGGER agent_skill_sets_reject_archived_activation
+BEFORE UPDATE OF state ON skill_registry.agent_skill_sets
+FOR EACH ROW EXECUTE FUNCTION skill_registry.reject_archived_skill_activation();
+ALTER TABLE skill_registry.agent_skill_sets
+  ENABLE ALWAYS TRIGGER agent_skill_sets_reject_archived_activation;
+
+INSERT INTO skill_registry.schema_versions (version)
+VALUES (7)
 ON CONFLICT (version) DO NOTHING;
 """
 

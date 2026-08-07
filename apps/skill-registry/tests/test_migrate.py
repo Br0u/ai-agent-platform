@@ -29,6 +29,7 @@ from skill_registry.schema import (
     SCHEMA_VERSION_4_SQL,
     SCHEMA_VERSION_5_SQL,
     SCHEMA_VERSION_6_SQL,
+    SCHEMA_VERSION_7_SQL,
     SELECT_SCHEMA_VERSION_SQL,
     VERIFY_BACKUP_GRANTS_SQL,
     VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL,
@@ -87,6 +88,8 @@ class FakeCursor:
             self.versions = (1, 2, 3, 4, 5)
         elif query == SCHEMA_VERSION_6_SQL:
             self.versions = (1, 2, 3, 4, 5, 6)
+        elif query == SCHEMA_VERSION_7_SQL:
+            self.versions = (1, 2, 3, 4, 5, 6, 7)
 
     async def fetchone(self) -> tuple[Any, ...] | None:
         if self._query == VERIFY_SCHEMA_OWNER_SQL:
@@ -145,7 +148,7 @@ class FakeConnection:
 
 
 @pytest.mark.asyncio
-async def test_migration_applies_v1_through_v6_once_and_keeps_repeat_at_exact_v6() -> None:
+async def test_migration_applies_v1_through_v7_once_and_keeps_repeat_at_exact_v7() -> None:
     cursor = FakeCursor()
     connection = FakeConnection(cursor)
     urls: list[str] = []
@@ -167,6 +170,7 @@ async def test_migration_applies_v1_through_v6_once_and_keeps_repeat_at_exact_v6
     assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_5_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_6_SQL) == 1
+    assert cursor.executed.count(SCHEMA_VERSION_7_SQL) == 1
     assert cursor.executed.count(SELECT_SCHEMA_VERSION_SQL) == 2
     assert cursor.executed.count(VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL) == 2
     assert cursor.executed.count(VERIFY_STORAGE_COLUMNS_SQL) == 2
@@ -205,10 +209,11 @@ async def test_migration_rejects_drifted_version_sets_without_reapplying_schema(
     assert SCHEMA_VERSION_4_SQL not in cursor.executed
     assert SCHEMA_VERSION_5_SQL not in cursor.executed
     assert SCHEMA_VERSION_6_SQL not in cursor.executed
+    assert SCHEMA_VERSION_7_SQL not in cursor.executed
 
 
 @pytest.mark.asyncio
-async def test_migration_upgrades_exact_v1_to_v6() -> None:
+async def test_migration_upgrades_exact_v1_to_v7() -> None:
     cursor = FakeCursor(versions=(1,))
 
     async def connector(database_url: str) -> MigrationConnection:
@@ -223,11 +228,12 @@ async def test_migration_upgrades_exact_v1_to_v6() -> None:
     assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_5_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_6_SQL) == 1
-    assert cursor.versions == (1, 2, 3, 4, 5, 6)
+    assert cursor.executed.count(SCHEMA_VERSION_7_SQL) == 1
+    assert cursor.versions == (1, 2, 3, 4, 5, 6, 7)
 
 
 @pytest.mark.asyncio
-async def test_migration_upgrades_exact_v2_to_v6() -> None:
+async def test_migration_upgrades_exact_v2_to_v7() -> None:
     cursor = FakeCursor(versions=(1, 2))
 
     async def connector(database_url: str) -> MigrationConnection:
@@ -242,11 +248,12 @@ async def test_migration_upgrades_exact_v2_to_v6() -> None:
     assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_5_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_6_SQL) == 1
-    assert cursor.versions == (1, 2, 3, 4, 5, 6)
+    assert cursor.executed.count(SCHEMA_VERSION_7_SQL) == 1
+    assert cursor.versions == (1, 2, 3, 4, 5, 6, 7)
 
 
 @pytest.mark.asyncio
-async def test_migration_upgrades_exact_v3_to_v6() -> None:
+async def test_migration_upgrades_exact_v3_to_v7() -> None:
     cursor = FakeCursor(versions=(1, 2, 3))
 
     async def connector(database_url: str) -> MigrationConnection:
@@ -261,11 +268,12 @@ async def test_migration_upgrades_exact_v3_to_v6() -> None:
     assert cursor.executed.count(SCHEMA_VERSION_4_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_5_SQL) == 1
     assert cursor.executed.count(SCHEMA_VERSION_6_SQL) == 1
-    assert cursor.versions == (1, 2, 3, 4, 5, 6)
+    assert cursor.executed.count(SCHEMA_VERSION_7_SQL) == 1
+    assert cursor.versions == (1, 2, 3, 4, 5, 6, 7)
 
 
 @pytest.mark.asyncio
-async def test_migration_upgrades_exact_v5_to_v6() -> None:
+async def test_migration_upgrades_exact_v5_to_v7() -> None:
     cursor = FakeCursor(versions=(1, 2, 3, 4, 5))
 
     async def connector(database_url: str) -> MigrationConnection:
@@ -275,7 +283,22 @@ async def test_migration_upgrades_exact_v5_to_v6() -> None:
     await run_migration(settings, connector=connector)
 
     assert cursor.executed.count(SCHEMA_VERSION_6_SQL) == 1
-    assert cursor.versions == (1, 2, 3, 4, 5, 6)
+    assert cursor.executed.count(SCHEMA_VERSION_7_SQL) == 1
+    assert cursor.versions == (1, 2, 3, 4, 5, 6, 7)
+
+
+@pytest.mark.asyncio
+async def test_migration_upgrades_exact_v6_to_v7() -> None:
+    cursor = FakeCursor(versions=(1, 2, 3, 4, 5, 6))
+
+    async def connector(database_url: str) -> MigrationConnection:
+        return FakeConnection(cursor)
+
+    settings = MigrationSettings.model_validate({"database_url": MIGRATOR_URL})
+    await run_migration(settings, connector=connector)
+
+    assert cursor.executed.count(SCHEMA_VERSION_7_SQL) == 1
+    assert cursor.versions == (1, 2, 3, 4, 5, 6, 7)
 
 
 @pytest.mark.asyncio

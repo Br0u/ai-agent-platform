@@ -33,6 +33,7 @@ from skill_registry.schema import (
     SCHEMA_VERSION_4_SQL,
     SCHEMA_VERSION_5_SQL,
     SCHEMA_VERSION_6_SQL,
+    SCHEMA_VERSION_7_SQL,
     SELECT_SCHEMA_VERSION_SQL,
     VERIFY_BACKUP_GRANTS_SQL,
     VERIFY_CONTROL_EVENT_TRANSACTION_COLUMN_SQL,
@@ -203,7 +204,7 @@ async def run_migration(
     *,
     connector: ConnectionFactory = connect_database,
 ) -> None:
-    """Upgrade through schema version six and verify the exact access boundary."""
+    """Upgrade through schema version seven and verify the exact access boundary."""
     migration_settings = settings or MigrationSettings()  # type: ignore[call-arg]
     database_url = _psycopg_url(migration_settings.database_url.get_secret_value())
     connection = await connector(database_url)
@@ -224,27 +225,35 @@ async def run_migration(
                 await cursor.execute(SCHEMA_VERSION_4_SQL)
                 await cursor.execute(SCHEMA_VERSION_5_SQL)
                 await cursor.execute(SCHEMA_VERSION_6_SQL)
+                await cursor.execute(SCHEMA_VERSION_7_SQL)
             elif version_state == (1, 1):
                 await cursor.execute(SCHEMA_VERSION_2_SQL)
                 await cursor.execute(SCHEMA_VERSION_3_SQL)
                 await cursor.execute(SCHEMA_VERSION_4_SQL)
                 await cursor.execute(SCHEMA_VERSION_5_SQL)
                 await cursor.execute(SCHEMA_VERSION_6_SQL)
+                await cursor.execute(SCHEMA_VERSION_7_SQL)
             elif version_state == (2, 2):
                 await cursor.execute(SCHEMA_VERSION_3_SQL)
                 await cursor.execute(SCHEMA_VERSION_4_SQL)
                 await cursor.execute(SCHEMA_VERSION_5_SQL)
                 await cursor.execute(SCHEMA_VERSION_6_SQL)
+                await cursor.execute(SCHEMA_VERSION_7_SQL)
             elif version_state == (3, 3):
                 await cursor.execute(SCHEMA_VERSION_4_SQL)
                 await cursor.execute(SCHEMA_VERSION_5_SQL)
                 await cursor.execute(SCHEMA_VERSION_6_SQL)
+                await cursor.execute(SCHEMA_VERSION_7_SQL)
             elif version_state == (4, 4):
                 await cursor.execute(SCHEMA_VERSION_5_SQL)
                 await cursor.execute(SCHEMA_VERSION_6_SQL)
+                await cursor.execute(SCHEMA_VERSION_7_SQL)
             elif version_state == (5, 5):
                 await cursor.execute(SCHEMA_VERSION_6_SQL)
-            elif version_state != (6, 6):
+                await cursor.execute(SCHEMA_VERSION_7_SQL)
+            elif version_state == (6, 6):
+                await cursor.execute(SCHEMA_VERSION_7_SQL)
+            elif version_state != (7, 7):
                 raise RuntimeError("Skill registry migration verification failed")
             await _verify_migration(cursor)
 
