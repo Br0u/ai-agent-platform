@@ -327,13 +327,13 @@ set +a
 
 if [ "$runtime_mode" = true ]; then
   slug=deterministic-runtime
-  mkdir -p "$fixture_directory/$slug/scripts"
+  mkdir -p "$fixture_directory/$slug/references"
   cp docs/testing/fixtures/skills/deterministic/SKILL.md "$fixture_directory/$slug/SKILL.md"
-  cp docs/testing/fixtures/skills/deterministic/scripts/record.py "$fixture_directory/$slug/scripts/record.py"
-  fixture_members="SKILL.md scripts/record.py fixture-variant.txt"
+  cp docs/testing/fixtures/skills/deterministic/references/marker.md "$fixture_directory/$slug/references/marker.md"
+  fixture_members="SKILL.md references/marker.md fixture-variant.txt"
 else
   slug="e2e-uploaded-$(openssl rand -hex 6)"
-  mkdir -p "$fixture_directory/$slug/scripts"
+  mkdir -p "$fixture_directory/$slug/references"
   cat >"$fixture_directory/$slug/SKILL.md" <<EOF
 ---
 name: $slug
@@ -341,13 +341,12 @@ description: Skill Registry E2E local fixture.
 license: MIT
 ---
 # Instructions
-Use the local script only during this isolated acceptance.
+Use the local reference only during this isolated acceptance.
 EOF
-  cat >"$fixture_directory/$slug/scripts/hello.py" <<'EOF'
-#!/usr/bin/env python3
-print("hello from uploaded skill")
+  cat >"$fixture_directory/$slug/references/hello.md" <<'EOF'
+hello from uploaded skill
 EOF
-  fixture_members="SKILL.md scripts/hello.py fixture-variant.txt"
+  fixture_members="SKILL.md references/hello.md fixture-variant.txt"
 fi
 
 create_archive() {
@@ -390,7 +389,7 @@ printf '%s\n' \
   "Skill Registry E2E fixture variant: initial" \
   "Skill Registry E2E fixture variant: inactive-replacement" \
   "Skill Registry E2E fixture variant: active-replacement" \
-  'print("hello from uploaded skill")' >"$protected_patterns"
+  "hello from uploaded skill" >"$protected_patterns"
 chmod 600 "$protected_patterns"
 
 compose() {
@@ -438,16 +437,16 @@ with urllib.request.urlopen(request, timeout=30) as response:
 marker = "AAP_SKILL_RUNTIME_E2E_MARKER_v1"
 if expected == "marker":
     for required in (
-        "get_skill_script",
+        "get_skill_reference",
         "deterministic-runtime",
-        "record.py",
+        "marker.md",
         marker,
         "skill-tool-finished",
     ):
         if required not in raw:
             raise SystemExit(f"Skill stream missing {required}")
 elif expected == "empty":
-    if "empty-set-no-skill-tools" not in raw or "get_skill_script" in raw or marker in raw:
+    if "empty-set-no-skill-tools" not in raw or "get_skill_reference" in raw or marker in raw:
         raise SystemExit("empty Skill set exposed a Skill tool")
 else:
     raise SystemExit("invalid Skill runtime stream expectation")
@@ -619,7 +618,7 @@ docs/testing/run-restore-docker-lifecycle.sh controlled-failure
 audit_leaks=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
   "SELECT count(*) FROM public.audit_logs WHERE metadata::text LIKE '%Skill Registry E2E local fixture.%' OR metadata::text LIKE '%hello from uploaded skill%'")
 [ "$audit_leaks" = 0 ] || {
-  echo "audit metadata contains Skill source or script output" >&2
+  echo "audit metadata contains Skill source content" >&2
   exit 1
 }
 

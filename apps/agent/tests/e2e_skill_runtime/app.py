@@ -1,4 +1,4 @@
-"""Acceptance-only AgentOS app proving real Agno Skill tool execution."""
+"""Acceptance-only AgentOS app proving real Agno Skill reference access."""
 
 from __future__ import annotations
 
@@ -30,11 +30,10 @@ from e2e_skill_runtime.faults import (
 )
 
 
-_TOOL_NAME = "get_skill_script"
+_TOOL_NAME = "get_skill_reference"
 _TOOL_ARGUMENTS = {
     "skill_name": "deterministic-runtime",
-    "script_path": "record.py",
-    "execute": True,
+    "reference_path": "marker.md",
 }
 
 

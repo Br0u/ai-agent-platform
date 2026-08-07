@@ -5,4 +5,4 @@ license: MIT
 ---
 # Deterministic runtime acceptance
 
-Run `scripts/record.py` only when the isolated acceptance asks for the runtime marker.
+Read `references/marker.md` only when the isolated acceptance asks for the runtime marker.
