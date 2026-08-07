@@ -21,6 +21,8 @@ const EXISTING_SKILL_ERROR =
 type Props = {
   onClose(): void;
   onUploaded(revision: AdminSkillRevision): void;
+  onReplacementResultUnknown(skillId: string): Promise<void>;
+  onReauthRequired(): void;
 };
 
 function parseUploadResponse(value: unknown): AdminSkillRevision | null {
@@ -67,15 +69,18 @@ async function uploadError(response: Response): Promise<{
   conflictingSkillId: string | null;
   replacementToken: string | null;
   conflictingSkillEnabled: boolean | null;
+  outcome: "reauth_required" | "result_unknown" | null;
 }> {
   const fallback = {
     message: GENERIC_UPLOAD_ERROR,
     conflictingSkillId: null,
     replacementToken: null,
     conflictingSkillEnabled: null,
+    outcome: null,
   };
   if (
     response.status !== 400 &&
+    response.status !== 401 &&
     response.status !== 403 &&
     response.status !== 409 &&
     response.status !== 503
@@ -104,6 +109,7 @@ async function uploadError(response: Response): Promise<{
         conflictingSkillId: null,
         replacementToken: null,
         conflictingSkillEnabled: null,
+        outcome: null,
       };
     if (code === "permission_denied")
       return {
@@ -111,6 +117,7 @@ async function uploadError(response: Response): Promise<{
         conflictingSkillId: null,
         replacementToken: null,
         conflictingSkillEnabled: null,
+        outcome: null,
       };
     if (code === "state_conflict")
       return {
@@ -126,13 +133,22 @@ async function uploadError(response: Response): Promise<{
           typeof conflictingSkillEnabled === "boolean"
             ? conflictingSkillEnabled
             : null,
+        outcome: null,
       };
+    if (
+      code === "reauth_required" &&
+      Reflect.get(body, "redirectTo") === "/staff/re-auth"
+    )
+      return { ...fallback, outcome: "reauth_required" };
+    if (code === "result_unknown")
+      return { ...fallback, outcome: "result_unknown" };
     if (code === "registry_unavailable")
       return {
         message: REGISTRY_UNAVAILABLE_ERROR,
         conflictingSkillId: null,
         replacementToken: null,
         conflictingSkillEnabled: null,
+        outcome: null,
       };
     return fallback;
   } catch {
@@ -140,7 +156,12 @@ async function uploadError(response: Response): Promise<{
   }
 }
 
-export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
+export function AssistantSkillUploadDialog({
+  onClose,
+  onUploaded,
+  onReplacementResultUnknown,
+  onReauthRequired,
+}: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -182,6 +203,7 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
     setSubmitting(true);
     let revision: AdminSkillRevision;
     let failureMessage = GENERIC_UPLOAD_ERROR;
+    let replacementSkillId: string | null = null;
     try {
       const send = (replacement?: {
         targetSkillId: string;
@@ -214,9 +236,19 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
           replacementToken: failure.replacementToken,
         });
         if (!response.ok) {
-          failureMessage = (await uploadError(response)).message;
+          const replacementFailure = await uploadError(response);
+          if (replacementFailure.outcome === "reauth_required") {
+            onReauthRequired();
+            return;
+          }
+          if (replacementFailure.outcome === "result_unknown") {
+            await onReplacementResultUnknown(failure.conflictingSkillId);
+            return;
+          }
+          failureMessage = replacementFailure.message;
           throw new Error("replacement failed");
         }
+        replacementSkillId = failure.conflictingSkillId;
       }
       const parsed = parseUploadResponse(await response.json());
       if (!mounted.current || currentOperation !== operation.current) return;
@@ -231,7 +263,11 @@ export function AssistantSkillUploadDialog({ onClose, onUploaded }: Props) {
     }
     submittingRef.current = false;
     setSubmitting(false);
-    setAnnouncement("上传成功，可选择是否启用。");
+    setAnnouncement(
+      replacementSkillId === null
+        ? "上传成功，可选择是否启用。"
+        : "Skill 已替换。",
+    );
     onUploaded(revision);
   };
 

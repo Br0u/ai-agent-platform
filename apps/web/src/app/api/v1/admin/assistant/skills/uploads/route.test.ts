@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { AuthAccessError } from "@/server/auth/access";
+import { SensitiveActionError } from "@/server/auth/sensitive-action";
 import type { AuthorizedSkillCommand } from "@/server/assistant/admin-skill-commands";
 import type { AuthorizedSkillLifecycleCommand } from "@/server/assistant/admin-skill-lifecycle-commands";
+import { AdminSkillLifecycleCommandError } from "@/server/assistant/admin-skill-lifecycle-commands";
 import { SkillRegistryClientError } from "@/server/assistant/skill-registry-client";
 import {
   BoundedMultipartError,
@@ -291,7 +293,7 @@ describe("admin skill upload route", () => {
     );
   });
 
-  it("keeps an inactive replacement out of runtime activation", async () => {
+  it("requires configured assurance but keeps an inactive replacement out of runtime activation", async () => {
     const current = fixture();
     current.readMultipart.mockResolvedValueOnce({
       archive: new Uint8Array([0x50, 0x4b, 3, 4]),
@@ -333,7 +335,321 @@ describe("admin skill upload route", () => {
     );
 
     expect(response.status).toBe(201);
-    expect(lifecycle.authorize).not.toHaveBeenCalled();
+    expect(lifecycle.authorize).toHaveBeenCalledOnce();
     expect(lifecycle.applySkillSet).not.toHaveBeenCalled();
+  });
+
+  it("requires recent configure assurance before any confirmed replacement upload", async () => {
+    const current = fixture();
+    current.readMultipart.mockResolvedValueOnce({
+      archive: new Uint8Array([0x50, 0x4b, 3, 4]),
+      targetSkillId: SKILL_ID,
+      expectedArtifactSha256: "a".repeat(64),
+    });
+    const lifecycle = {
+      authorize: vi.fn(async () => {
+        throw new SensitiveActionError("AUTH_REAUTH_REQUIRED");
+      }),
+      applySkillSet: vi.fn(),
+    };
+    const handler = createAdminSkillUploadHandler({
+      commands: current.commands,
+      lifecycle: lifecycle as never,
+      readMultipart: current.readMultipart,
+      requestIdFactory: () => REQUEST_ID,
+    });
+
+    const response = await handler(
+      new Request("https://admin.example.test/uploads", { method: "POST" }),
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "reauth_required" },
+      redirectTo: "/staff/re-auth",
+    });
+    expect(current.commands.upload).not.toHaveBeenCalled();
+  });
+
+  it("does not activate again when authoritative state already contains the uploaded revision", async () => {
+    const current = fixture();
+    current.readMultipart.mockResolvedValueOnce({
+      archive: new Uint8Array([0x50, 0x4b, 3, 4]),
+      targetSkillId: SKILL_ID,
+      expectedArtifactSha256: "a".repeat(64),
+    });
+    current.commands.upload.mockResolvedValueOnce({
+      ...revision,
+      revision: {
+        ...revision.revision,
+        id: NEW_REVISION_ID,
+        skillId: SKILL_ID,
+      },
+    });
+    const registry = {
+      listSkills: vi.fn(async () => ({
+        version: "1" as const,
+        skills: [
+          {
+            id: SKILL_ID,
+            name: "safe-skill",
+            description: "",
+            enabled: true,
+            uploadedAt: "2026-08-07T08:00:00.000Z",
+            replacementToken: "b".repeat(64),
+            revisionId: NEW_REVISION_ID,
+          },
+        ],
+        page: { limit: 100, offset: 0, returned: 1 },
+      })),
+      runtimeStatus: vi.fn(async () => ({
+        active: {
+          id: "66666666-6666-4666-8666-666666666666",
+          state: "active" as const,
+          revisionIds: [NEW_REVISION_ID],
+          itemCount: 1,
+          totalExtractedSize: 42,
+          failureCode: null,
+        },
+        previous: null,
+        activationVersion: 8,
+        candidateCount: 0,
+        candidates: [],
+      })),
+    };
+    const lifecycle = {
+      authorize: vi.fn(async () => lifecycleContext),
+      applySkillSet: vi.fn(),
+    };
+    const handler = createAdminSkillUploadHandler({
+      commands: current.commands,
+      lifecycle: lifecycle as never,
+      readMultipart: current.readMultipart,
+      requestIdFactory: () => REQUEST_ID,
+      registry: registry as never,
+    });
+
+    const response = await handler(
+      new Request("https://admin.example.test/uploads", { method: "POST" }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(lifecycle.applySkillSet).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "activation failure",
+      new AdminSkillLifecycleCommandError("runtime_unavailable"),
+      503,
+      "registry_unavailable",
+    ],
+    [
+      "unknown activation result",
+      new AdminSkillLifecycleCommandError("result_unknown"),
+      503,
+      "result_unknown",
+    ],
+    [
+      "Registry and Agent disagreement",
+      new AdminSkillLifecycleCommandError("state_conflict"),
+      409,
+      "state_conflict",
+    ],
+  ] as const)(
+    "returns a stable error when replacement has %s",
+    async (_name, failure, status, code) => {
+      const current = fixture();
+      current.readMultipart.mockResolvedValueOnce({
+        archive: new Uint8Array([0x50, 0x4b, 3, 4]),
+        targetSkillId: SKILL_ID,
+        expectedArtifactSha256: "a".repeat(64),
+      });
+      current.commands.upload.mockResolvedValueOnce({
+        ...revision,
+        revision: {
+          ...revision.revision,
+          id: NEW_REVISION_ID,
+          skillId: SKILL_ID,
+        },
+      });
+      const registry = {
+        listSkills: vi.fn(async () => ({
+          version: "1" as const,
+          skills: [
+            {
+              id: SKILL_ID,
+              name: "safe-skill",
+              description: "",
+              enabled: true,
+              uploadedAt: "2026-08-07T08:00:00.000Z",
+              replacementToken: "a".repeat(64),
+              revisionId: OLD_REVISION_ID,
+            },
+          ],
+          page: { limit: 100, offset: 0, returned: 1 },
+        })),
+        runtimeStatus: vi.fn(async () => ({
+          active: {
+            id: "66666666-6666-4666-8666-666666666666",
+            state: "active" as const,
+            revisionIds: [OLD_REVISION_ID],
+            itemCount: 1,
+            totalExtractedSize: 42,
+            failureCode: null,
+          },
+          previous: null,
+          activationVersion: 7,
+          candidateCount: 0,
+          candidates: [],
+        })),
+      };
+      const lifecycle = {
+        authorize: vi.fn(async () => lifecycleContext),
+        applySkillSet: vi.fn(async () => {
+          throw failure;
+        }),
+      };
+      const handler = createAdminSkillUploadHandler({
+        commands: current.commands,
+        readMultipart: current.readMultipart,
+        requestIdFactory: () => REQUEST_ID,
+        registry: registry as never,
+        lifecycle: lifecycle as never,
+      });
+
+      const response = await handler(
+        new Request("https://admin.example.test/uploads", { method: "POST" }),
+      );
+
+      expect(response.status).toBe(status);
+      await expect(response.json()).resolves.toMatchObject({ error: { code } });
+      expect(lifecycle.applySkillSet).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("returns state conflict after upload when authoritative Registry state changed", async () => {
+    const current = fixture();
+    current.readMultipart.mockResolvedValueOnce({
+      archive: new Uint8Array([0x50, 0x4b, 3, 4]),
+      targetSkillId: SKILL_ID,
+      expectedArtifactSha256: "a".repeat(64),
+    });
+    const registry = {
+      listSkills: vi.fn(async () => ({
+        version: "1" as const,
+        skills: [
+          {
+            id: SKILL_ID,
+            name: "safe-skill",
+            description: "",
+            enabled: false,
+            uploadedAt: "2026-08-07T08:00:00.000Z",
+            replacementToken: "b".repeat(64),
+            revisionId: "77777777-7777-4777-8777-777777777777",
+          },
+        ],
+        page: { limit: 100, offset: 0, returned: 1 },
+      })),
+      runtimeStatus: vi.fn(async () => ({
+        active: null,
+        previous: null,
+        activationVersion: 7,
+        candidateCount: 0,
+        candidates: [],
+      })),
+    };
+    const lifecycle = {
+      authorize: vi.fn(async () => lifecycleContext),
+      applySkillSet: vi.fn(async () => ({ activationVersion: 8 })),
+    };
+    const handler = createAdminSkillUploadHandler({
+      commands: current.commands,
+      readMultipart: current.readMultipart,
+      requestIdFactory: () => REQUEST_ID,
+      registry: registry as never,
+      lifecycle: lifecycle as never,
+    });
+
+    const response = await handler(
+      new Request("https://admin.example.test/uploads", { method: "POST" }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "state_conflict" },
+    });
+    expect(lifecycle.applySkillSet).not.toHaveBeenCalled();
+  });
+
+  it("resolves a replacement target beyond the first bounded Registry page", async () => {
+    const current = fixture();
+    current.readMultipart.mockResolvedValueOnce({
+      archive: new Uint8Array([0x50, 0x4b, 3, 4]),
+      targetSkillId: SKILL_ID,
+      expectedArtifactSha256: "a".repeat(64),
+    });
+    current.commands.upload.mockResolvedValueOnce({
+      ...revision,
+      revision: {
+        ...revision.revision,
+        id: NEW_REVISION_ID,
+        skillId: SKILL_ID,
+      },
+    });
+    const registry = {
+      listSkills: vi
+        .fn()
+        .mockResolvedValueOnce({
+          version: "1" as const,
+          skills: Array.from({ length: 100 }, (_, index) => ({
+            id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+            name: `skill-${index}`,
+            description: "",
+            enabled: false,
+            uploadedAt: "2026-08-07T08:00:00.000Z",
+            replacementToken: "a".repeat(64),
+            revisionId: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+          })),
+          page: { limit: 100, offset: 0, returned: 100 },
+        })
+        .mockResolvedValueOnce({
+          version: "1" as const,
+          skills: [
+            {
+              id: SKILL_ID,
+              name: "safe-skill",
+              description: "",
+              enabled: false,
+              uploadedAt: "2026-08-07T08:00:00.000Z",
+              replacementToken: "b".repeat(64),
+              revisionId: NEW_REVISION_ID,
+            },
+          ],
+          page: { limit: 100, offset: 100, returned: 1 },
+        }),
+      runtimeStatus: vi.fn(),
+    };
+    const lifecycle = {
+      authorize: vi.fn(async () => lifecycleContext),
+      applySkillSet: vi.fn(),
+    };
+    const handler = createAdminSkillUploadHandler({
+      commands: current.commands,
+      readMultipart: current.readMultipart,
+      requestIdFactory: () => REQUEST_ID,
+      registry: registry as never,
+      lifecycle: lifecycle as never,
+    });
+
+    const response = await handler(
+      new Request("https://admin.example.test/uploads", { method: "POST" }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(registry.listSkills).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ limit: 100, offset: 100 }),
+    );
   });
 });

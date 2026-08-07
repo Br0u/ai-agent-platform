@@ -41,9 +41,7 @@ async function trustedMutationFailure(
     const keys = Reflect.ownKeys(value);
     const hasRedirect = keys.includes("redirectTo");
     if (keys.length !== (hasRedirect ? 4 : 3)) return null;
-    if (
-      !["version", "requestId", "error"].every((key) => keys.includes(key))
-    )
+    if (!["version", "requestId", "error"].every((key) => keys.includes(key)))
       return null;
     const envelope = value as Record<string, unknown>;
     const error = envelope.error;
@@ -226,6 +224,22 @@ export function AssistantSkillRegistryPanel({
     void refresh();
   };
 
+  const replacementResultUnknown = async (skillId: string): Promise<void> => {
+    setPendingSkillId(skillId);
+    closeUpload();
+    if (await refresh(false)) {
+      setPendingSkillId(null);
+      setAnnouncement("Skill 状态已确认。");
+    } else {
+      setAnnouncement("操作结果正在确认，请刷新后再试。");
+    }
+  };
+
+  const replacementReauthRequired = () => {
+    setAnnouncement("需要重新验证身份，正在前往验证页面。");
+    navigateToReauth("/staff/re-auth");
+  };
+
   const mutate = async (
     skill: AdminSkillListResponse["skills"][number],
     operation: "enable" | "disable" | "delete",
@@ -379,6 +393,8 @@ export function AssistantSkillRegistryPanel({
         <AssistantSkillUploadDialog
           onClose={closeUpload}
           onUploaded={uploaded}
+          onReauthRequired={replacementReauthRequired}
+          onReplacementResultUnknown={replacementResultUnknown}
         />
       ) : null}
     </section>

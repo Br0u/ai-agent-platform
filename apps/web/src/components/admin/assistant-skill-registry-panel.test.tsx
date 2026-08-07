@@ -130,4 +130,139 @@ describe("AssistantSkillRegistryPanel", () => {
     expect(screen.getByRole("button", { name: "停用" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "删除" })).toBeDisabled();
   });
+
+  it("refreshes authoritative state before unlocking an unknown replacement", async () => {
+    let resolveRefresh!: (response: Response) => void;
+    const refresh = new Promise<Response>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "conflict",
+              error: { code: "state_conflict" },
+              conflictingSkillId: enabledSkill.id,
+              replacementToken: "a".repeat(64),
+              conflictingSkillEnabled: true,
+            },
+            { status: 409 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "unknown",
+              error: { code: "result_unknown" },
+            },
+            { status: 503 },
+          ),
+        )
+        .mockReturnValueOnce(refresh),
+    );
+    render(
+      <AssistantSkillRegistryPanel
+        canRead
+        initialPermissions={{
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        }}
+        initialSnapshot={{ capability: "available", skills: [enabledSkill] }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "上传 Skill ZIP" }));
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: { files: [new File(["zip"], "safe-skill.zip")] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "停用" })).toBeDisabled();
+    resolveRefresh!(
+      Response.json({
+        version: "1",
+        skills: [enabledSkill],
+        page: { limit: 25, offset: 0, returned: 1 },
+        requestId: "refresh",
+        permissions: {
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        },
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "停用" })).toBeEnabled(),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Skill 状态已确认。");
+  });
+
+  it("sends a confirmed replacement re-auth response to the exact staff route", async () => {
+    const navigateToReauth = vi.fn();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "conflict",
+              error: { code: "state_conflict" },
+              conflictingSkillId: enabledSkill.id,
+              replacementToken: "a".repeat(64),
+              conflictingSkillEnabled: true,
+            },
+            { status: 409 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "reauth",
+              error: { code: "reauth_required" },
+              redirectTo: "/staff/re-auth",
+            },
+            { status: 401 },
+          ),
+        ),
+    );
+    render(
+      <AssistantSkillRegistryPanel
+        canRead
+        initialPermissions={{
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        }}
+        initialSnapshot={{ capability: "available", skills: [enabledSkill] }}
+        navigateToReauth={navigateToReauth}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "上传 Skill ZIP" }));
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: { files: [new File(["zip"], "safe-skill.zip")] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+
+    await waitFor(() =>
+      expect(navigateToReauth).toHaveBeenCalledExactlyOnceWith(
+        "/staff/re-auth",
+      ),
+    );
+  });
 });

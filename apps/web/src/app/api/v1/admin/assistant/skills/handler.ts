@@ -58,6 +58,7 @@ type PublicSkillErrorCode =
   | "payload_too_large"
   | "not_found"
   | "state_conflict"
+  | "result_unknown"
   | "registry_bad_gateway"
   | "registry_unavailable";
 
@@ -69,6 +70,7 @@ const ERROR_MESSAGES: Readonly<Record<PublicSkillErrorCode, string>> = {
   payload_too_large: "Skill upload is too large",
   not_found: "Skill revision was not found",
   state_conflict: "Skill revision state has changed",
+  result_unknown: "Skill replacement result is still being confirmed",
   registry_bad_gateway: "Skill Registry returned an invalid response",
   registry_unavailable: "Skill Registry is unavailable",
 };
@@ -146,7 +148,9 @@ function errorBody(requestId: string, code: PublicSkillErrorCode) {
       code,
       message: ERROR_MESSAGES[code],
       retryable:
-        code === "registry_bad_gateway" || code === "registry_unavailable",
+        code === "registry_bad_gateway" ||
+        code === "registry_unavailable" ||
+        code === "result_unknown",
     },
     ...(code === "reauth_required" ? { redirectTo: "/staff/re-auth" } : {}),
   };
@@ -189,6 +193,9 @@ function classifyError(error: unknown): PublicError {
     }
     if (error.code === "state_conflict") {
       return { code: "state_conflict", status: 409 };
+    }
+    if (error.code === "result_unknown") {
+      return { code: "result_unknown", status: 503 };
     }
     return { code: "registry_unavailable", status: 503 };
   }
@@ -426,6 +433,26 @@ function registryRequestId(factory: () => string): string {
   }
 }
 
+async function findSkillForReplacement(
+  registry: Pick<CompleteSkillRegistryClient, "listSkills">,
+  actor: string,
+  requestIdFactory: () => string,
+  skillId: string,
+) {
+  for (let offset = 0; offset <= 1_000_000; offset += 100) {
+    const library = await registry.listSkills({
+      actor,
+      requestId: registryRequestId(requestIdFactory),
+      limit: 100,
+      offset,
+    });
+    const skill = library.skills.find((item) => item.id === skillId);
+    if (skill !== undefined) return skill;
+    if (library.page.returned < 100) return null;
+  }
+  throw new AdminSkillCommandError("registry_unavailable");
+}
+
 export function createAdminSkillListHandler(
   overrides: {
     access?: Pick<AccessService, "requirePermission">;
@@ -620,71 +647,62 @@ export function createAdminSkillUploadHandler(
     let input: BoundedSkillUpload | null = null;
     try {
       input = await readMultipart(request);
-      let activeReplacement: {
-        priorRevisionId: string;
-        skillId: string;
-        activationVersion: number;
-        revisionIds: string[];
+      let replacement: {
         lifecycle: Pick<
           ReturnType<typeof createAdminSkillLifecycleCommands>,
           "applySkillSet"
         >;
         context: AuthorizedSkillLifecycleCommand;
+        skillId: string;
       } | null = null;
       if (input.targetSkillId !== undefined) {
+        const lifecycle =
+          overrides.lifecycle ?? createDefaultLifecycleCommands();
+        replacement = {
+          lifecycle,
+          context: await lifecycle.authorize(request),
+          skillId: input.targetSkillId,
+        };
+      }
+      const response = await commands.upload(context, input);
+      if (replacement !== null) {
         const registry = overrides.registry ?? defaultRegistryClient();
-        const library = await registry.listSkills({
-          actor: context.actor.userId,
-          requestId: registryRequestId(requestIdFactory),
-          limit: 100,
-          offset: 0,
-        });
-        const prior = library.skills.find(
-          (skill) => skill.id === input?.targetSkillId,
+        const current = await findSkillForReplacement(
+          registry,
+          context.actor.userId,
+          requestIdFactory,
+          replacement.skillId,
         );
-        if (prior === undefined) {
+        if (current === null)
           throw new SkillRegistryClientError("SKILL_NOT_FOUND");
-        }
-        if (prior.enabled) {
+        if (current.revisionId === response.revision.id && !current.enabled) {
+          // The post-upload authoritative state confirms an inactive replacement.
+        } else {
           const runtime = await registry.runtimeStatus({
             actor: context.actor.userId,
             requestId: registryRequestId(requestIdFactory),
           });
           if (
             runtime.active === null ||
-            !runtime.active.revisionIds.includes(prior.revisionId)
+            !current.enabled ||
+            !runtime.active.revisionIds.includes(current.revisionId)
           ) {
             throw new AdminSkillLifecycleCommandError("state_conflict");
           }
-          const lifecycle =
-            overrides.lifecycle ?? createDefaultLifecycleCommands();
-          const lifecycleContext = await lifecycle.authorize(request);
-          activeReplacement = {
-            priorRevisionId: prior.revisionId,
-            skillId: prior.id,
-            activationVersion: runtime.activationVersion,
-            revisionIds: runtime.active.revisionIds,
-            lifecycle,
-            context: lifecycleContext,
-          };
+          if (current.revisionId !== response.revision.id) {
+            await replacement.lifecycle.applySkillSet(replacement.context, {
+              operation: "replace",
+              skillId: replacement.skillId,
+              expectedActivationVersion: runtime.activationVersion,
+              nextRevisionIds: runtime.active.revisionIds.map((revisionId) =>
+                revisionId === current.revisionId
+                  ? response.revision.id
+                  : revisionId,
+              ),
+              requestId: context.requestId,
+            });
+          }
         }
-      }
-      const response = await commands.upload(context, input);
-      if (activeReplacement !== null) {
-        await activeReplacement.lifecycle.applySkillSet(
-          activeReplacement.context,
-          {
-            operation: "replace",
-            skillId: activeReplacement.skillId,
-            expectedActivationVersion: activeReplacement.activationVersion,
-            nextRevisionIds: activeReplacement.revisionIds.map((revisionId) =>
-              revisionId === activeReplacement.priorRevisionId
-                ? response.revision.id
-                : revisionId,
-            ),
-            requestId: context.requestId,
-          },
-        );
       }
       return Response.json(
         { ...response, requestId: context.requestId },

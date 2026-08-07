@@ -38,7 +38,12 @@ describe("AssistantSkillUploadDialog", () => {
       ),
     );
     render(
-      <AssistantSkillUploadDialog onClose={vi.fn()} onUploaded={onUploaded} />,
+      <AssistantSkillUploadDialog
+        onClose={vi.fn()}
+        onReauthRequired={vi.fn()}
+        onReplacementResultUnknown={vi.fn(async () => undefined)}
+        onUploaded={onUploaded}
+      />,
     );
 
     fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
@@ -85,7 +90,12 @@ describe("AssistantSkillUploadDialog", () => {
       );
     vi.stubGlobal("fetch", fetcher);
     render(
-      <AssistantSkillUploadDialog onClose={vi.fn()} onUploaded={onUploaded} />,
+      <AssistantSkillUploadDialog
+        onClose={vi.fn()}
+        onReauthRequired={vi.fn()}
+        onReplacementResultUnknown={vi.fn(async () => undefined)}
+        onUploaded={onUploaded}
+      />,
     );
 
     fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
@@ -102,6 +112,7 @@ describe("AssistantSkillUploadDialog", () => {
     const replacementBody = fetcher.mock.calls[1]?.[1]?.body as FormData;
     expect(replacementBody.get("targetSkillId")).toBe(skillId);
     expect(replacementBody.get("expectedArtifactSha256")).toBe("a".repeat(64));
+    expect(screen.getByRole("status")).toHaveTextContent("Skill 已替换。");
   });
 
   it("keeps an inactive same-name replacement inactive", async () => {
@@ -139,7 +150,12 @@ describe("AssistantSkillUploadDialog", () => {
       );
     vi.stubGlobal("fetch", fetcher);
     render(
-      <AssistantSkillUploadDialog onClose={vi.fn()} onUploaded={onUploaded} />,
+      <AssistantSkillUploadDialog
+        onClose={vi.fn()}
+        onReauthRequired={vi.fn()}
+        onReplacementResultUnknown={vi.fn(async () => undefined)}
+        onUploaded={onUploaded}
+      />,
     );
 
     fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
@@ -149,5 +165,113 @@ describe("AssistantSkillUploadDialog", () => {
 
     await waitFor(() => expect(onUploaded).toHaveBeenCalledWith(revision));
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks retry and delegates authoritative refresh when replacement result is unknown", async () => {
+    const onUploaded = vi.fn();
+    const onReplacementResultUnknown = vi.fn(async () => undefined);
+    const skillId = "33333333-3333-4333-8333-333333333333";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "conflict",
+              error: { code: "state_conflict" },
+              conflictingSkillId: skillId,
+              replacementToken: "a".repeat(64),
+              conflictingSkillEnabled: true,
+            },
+            { status: 409 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "unknown",
+              error: { code: "result_unknown" },
+            },
+            { status: 503 },
+          ),
+        ),
+    );
+    render(
+      <AssistantSkillUploadDialog
+        onClose={vi.fn()}
+        onReauthRequired={vi.fn()}
+        onReplacementResultUnknown={onReplacementResultUnknown}
+        onUploaded={onUploaded}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: { files: [new File(["zip"], "safe-skill.zip")] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+
+    await waitFor(() =>
+      expect(onReplacementResultUnknown).toHaveBeenCalledWith(skillId),
+    );
+    expect(onUploaded).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "上传中" })).toBeDisabled();
+  });
+
+  it("does not report success when confirmed replacement activation fails", async () => {
+    const onUploaded = vi.fn();
+    const skillId = "33333333-3333-4333-8333-333333333333";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "conflict",
+              error: { code: "state_conflict" },
+              conflictingSkillId: skillId,
+              replacementToken: "a".repeat(64),
+              conflictingSkillEnabled: true,
+            },
+            { status: 409 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "activation-failed",
+              error: { code: "registry_unavailable" },
+            },
+            { status: 503 },
+          ),
+        ),
+    );
+    render(
+      <AssistantSkillUploadDialog
+        onClose={vi.fn()}
+        onReauthRequired={vi.fn()}
+        onReplacementResultUnknown={vi.fn(async () => undefined)}
+        onUploaded={onUploaded}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: { files: [new File(["zip"], "safe-skill.zip")] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Skill Registry 当前不可用",
+      ),
+    );
+    expect(onUploaded).not.toHaveBeenCalled();
   });
 });
