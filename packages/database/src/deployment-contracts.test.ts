@@ -3349,19 +3349,66 @@ secrets:
       "revision",
       "○ 未启用",
       "● 已启用",
-      'name: "启用"',
-      'name: "停用"',
+      'operation === "enable"',
+      '"停用"',
     ]) {
       expect(spec).toContain(contract);
     }
     expect(spec).toContain(".setInputFiles(archive)");
     expect(spec).toContain("modelAdminStaleSessionToken");
+    expect(spec).not.toContain("fixtureCredentials");
     expect(spec).toContain('error: { code: "reauth_required" }');
     expect(spec).toContain('redirectTo: "/staff/re-auth"');
     expect(spec.match(/browser\.newContext\(/gu)?.length).toBe(1);
     expect(spec).not.toMatch(/https?:\/\/(?:github|gitlab|gitcode)\./u);
 
     expect(runner).toContain("SKILL_REGISTRY_E2E_PROJECT");
+    expect(runner).toContain("AGENT_ENABLED=true");
+    expect(runner).toContain("MODEL_PROVIDER=openai");
+    expect(runner).toContain("e2e-skill-registry");
+    expect(runner).not.toContain("export E2E_CUSTOMER_PASSWORD=");
+    expect(runner).not.toContain("export E2E_STAFF_PASSWORD=");
+    expect(runner).not.toContain("export E2E_ADMIN_PASSWORD=");
+    expect(runner).not.toContain("export E2E_STAFF_SESSION_TOKEN=");
+    expect(runner).not.toContain("export E2E_ADMIN_SESSION_TOKEN=");
+    expect(runner).not.toContain(
+      "export SKILL_REGISTRY_E2E_STORAGE_STATE_FILE=",
+    );
+    expect(runner).not.toContain("export SKILL_RUNTIME_E2E_STATE_FILE=");
+    const playwrightEnvironment = runner.slice(
+      runner.indexOf("run_skill_registry_playwright()"),
+      runner.indexOf("compose config --quiet"),
+    );
+    expect(playwrightEnvironment).toContain("env -i");
+    for (const allowedPlaywrightVariable of [
+      "BETTER_AUTH_SECRET",
+      "E2E_MODEL_ADMIN_SESSION_TOKEN",
+      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
+      "SKILL_REGISTRY_E2E_INITIAL_ARCHIVE",
+      "SKILL_REGISTRY_E2E_INACTIVE_REPLACEMENT_ARCHIVE",
+      "SKILL_REGISTRY_E2E_ACTIVE_REPLACEMENT_ARCHIVE",
+      "SKILL_REGISTRY_E2E_STATE_FILE",
+      "SKILL_REGISTRY_E2E_SLUG",
+    ]) {
+      expect(playwrightEnvironment).toContain(allowedPlaywrightVariable);
+    }
+    for (const forbiddenPlaywrightVariable of [
+      "E2E_CUSTOMER_PASSWORD",
+      "E2E_STAFF_PASSWORD",
+      "E2E_ADMIN_PASSWORD",
+      "E2E_STAFF_SESSION_TOKEN",
+      "E2E_ADMIN_SESSION_TOKEN",
+      "E2E_REPLACEMENT_PASSWORD",
+    ]) {
+      expect(playwrightEnvironment).not.toContain(forbiddenPlaywrightVariable);
+    }
+    for (const fixtureSource of [
+      "Skill Registry E2E fixture variant: initial",
+      "Skill Registry E2E fixture variant: inactive-replacement",
+      "Skill Registry E2E fixture variant: active-replacement",
+    ]) {
+      expect(runner).toContain(fixtureSource);
+    }
     expect(runner).toContain("trap cleanup EXIT");
     expect(runner.indexOf('. "$env_file"')).toBeLessThan(
       runner.indexOf("compose config --quiet"),
@@ -3397,7 +3444,7 @@ secrets:
     expect(runner).toContain("skill_revision_artifacts");
     expect(runner).toContain("artifact_digests_verified");
     expect(runner).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha");
-    expect(runner).toContain("SKILL_REGISTRY_E2E_STORAGE_STATE_FILE");
+    expect(runner).toContain("SKILL_REGISTRY_E2E_STATE_FILE");
     expect(runner).toContain('success_message="Skill Registry E2E passed"');
     expect(runner).toContain("down --rmi local -v --remove-orphans");
     expect(runner).not.toMatch(/curl[^\n]*(github|gitlab|gitcode)/iu);

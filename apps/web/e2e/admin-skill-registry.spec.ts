@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
 
-import { addSignedSession, fixtureCredentials } from "./auth-fixtures";
+import { addSignedSession } from "./auth-fixtures";
 
 const LIST_PATH = "/api/v1/admin/assistant/skills?limit=25&offset=0";
 
@@ -169,6 +169,12 @@ test.describe("Skill library lifecycle", () => {
     const activeReplacementArchive = requiredEnvironment(
       "SKILL_REGISTRY_E2E_ACTIVE_REPLACEMENT_ARCHIVE",
     );
+    const modelAdminSessionToken = requiredEnvironment(
+      "E2E_MODEL_ADMIN_SESSION_TOKEN",
+    );
+    const modelAdminStaleSessionToken = requiredEnvironment(
+      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
+    );
     const slug = requiredEnvironment("SKILL_REGISTRY_E2E_SLUG");
     const origin = new URL(baseURL).origin;
 
@@ -176,7 +182,7 @@ test.describe("Skill library lifecycle", () => {
       page.context(),
       baseURL,
       "workforce",
-      fixtureCredentials().modelAdminSessionToken,
+      modelAdminSessionToken,
     );
     await page.goto("/admin/assistant");
 
@@ -200,7 +206,7 @@ test.describe("Skill library lifecycle", () => {
       stale,
       baseURL,
       "workforce",
-      fixtureCredentials().modelAdminStaleSessionToken,
+      modelAdminStaleSessionToken,
     );
     const denied = await stale.request.post(
       `/api/v1/admin/assistant/skills/${initial.skillId}/enable`,
@@ -287,11 +293,14 @@ test.describe("Skill library lifecycle", () => {
   }) => {
     if (!baseURL) throw new Error("baseURL is required");
     const expected = readState();
+    const modelAdminSessionToken = requiredEnvironment(
+      "E2E_MODEL_ADMIN_SESSION_TOKEN",
+    );
     await addSignedSession(
       page.context(),
       baseURL,
       "workforce",
-      fixtureCredentials().modelAdminSessionToken,
+      modelAdminSessionToken,
     );
     const response = await page.context().request.get(LIST_PATH);
     expect(response.status()).toBe(200);

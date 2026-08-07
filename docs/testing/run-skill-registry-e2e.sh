@@ -156,8 +156,6 @@ initial_archive_file="$temporary_directory/skill-registry-e2e-initial.zip"
 inactive_replacement_archive_file="$temporary_directory/skill-registry-e2e-inactive-replacement.zip"
 active_replacement_archive_file="$temporary_directory/skill-registry-e2e-active-replacement.zip"
 state_file="$temporary_directory/skill-registry-state.json"
-runtime_state_file="$temporary_directory/skill-runtime-state.json"
-storage_state_file="$temporary_directory/model-admin-storage-state.json"
 restore_root="$temporary_directory/restore"
 dump_directory="$temporary_directory/dump"
 env_file="$temporary_directory/e2e.env"
@@ -297,9 +295,9 @@ HTTP_PORT=$http_port
 PUBLIC_HOST=127.0.0.1
 ALLOW_LOCAL_VALIDATION_HOSTS=true
 FEATURE_EMAIL_VERIFICATION=false
-AGENT_ENABLED=$runtime_mode
-MODEL_PROVIDER=$(if [ "$runtime_mode" = true ]; then printf '%s' openai; fi)
-MODEL_ID=$(if [ "$runtime_mode" = true ]; then printf '%s' e2e-skill-runtime; fi)
+AGENT_ENABLED=true
+MODEL_PROVIDER=openai
+MODEL_ID=$(if [ "$runtime_mode" = true ]; then printf '%s' e2e-skill-runtime; else printf '%s' e2e-skill-registry; fi)
 MODEL_BASE_URL=
 BACKUP_RUN_ONCE=true
 BACKUP_INTERVAL_SECONDS=86400
@@ -389,6 +387,9 @@ printf '%s\n' \
   "$role_target_session" "$admin_session" "$no_totp_admin_session" \
   "$model_admin_session" "$model_admin_stale_session" "$revoked_session" \
   "$replacement_password" "Skill Registry E2E local fixture." \
+  "Skill Registry E2E fixture variant: initial" \
+  "Skill Registry E2E fixture variant: inactive-replacement" \
+  "Skill Registry E2E fixture variant: active-replacement" \
   'print("hello from uploaded skill")' >"$protected_patterns"
 chmod 600 "$protected_patterns"
 
@@ -457,6 +458,24 @@ run_job() {
   compose run --rm "$@"
 }
 
+run_skill_registry_playwright() {
+  env -i \
+    PATH="$PATH" \
+    HOME="${HOME:-/tmp}" \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    BASE_URL="$base_url" \
+    BETTER_AUTH_SECRET="$better_auth_secret" \
+    E2E_MODEL_ADMIN_SESSION_TOKEN="$model_admin_session" \
+    E2E_MODEL_ADMIN_STALE_SESSION_TOKEN="$model_admin_stale_session" \
+    SKILL_REGISTRY_E2E_INITIAL_ARCHIVE="$initial_archive_file" \
+    SKILL_REGISTRY_E2E_INACTIVE_REPLACEMENT_ARCHIVE="$inactive_replacement_archive_file" \
+    SKILL_REGISTRY_E2E_ACTIVE_REPLACEMENT_ARCHIVE="$active_replacement_archive_file" \
+    SKILL_REGISTRY_E2E_STATE_FILE="$state_file" \
+    SKILL_REGISTRY_E2E_SLUG="$slug" \
+    pnpm --filter @ai-agent-platform/web exec playwright test \
+      e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep "$1"
+}
+
 compose config --quiet
 owns_project=true
 compose build migrate agent skill-registry web backup
@@ -509,31 +528,7 @@ for service in db agent skill-registry web; do
   esac
 done
 
-export BETTER_AUTH_SECRET
-BETTER_AUTH_SECRET=$better_auth_secret
-export E2E_ADMIN_SESSION_TOKEN=$admin_session
-export E2E_MODEL_ADMIN_SESSION_TOKEN=$model_admin_session
-export E2E_CUSTOMER_PASSWORD=$customer_password
-export E2E_STAFF_PASSWORD=$staff_password
-export E2E_ADMIN_PASSWORD=$admin_password
-export E2E_PENDING_CUSTOMER_SESSION_TOKEN=$pending_customer_session
-export E2E_DISABLED_CUSTOMER_SESSION_TOKEN=$disabled_customer_session
-export E2E_STAFF_SESSION_TOKEN=$staff_session
-export E2E_ROLE_TARGET_SESSION_TOKEN=$role_target_session
-export E2E_NO_TOTP_ADMIN_SESSION_TOKEN=$no_totp_admin_session
-export E2E_MODEL_ADMIN_STALE_SESSION_TOKEN=$model_admin_stale_session
-export E2E_REVOKED_SESSION_TOKEN=$revoked_session
-export E2E_REPLACEMENT_PASSWORD=$replacement_password
-export SKILL_REGISTRY_E2E_INITIAL_ARCHIVE=$initial_archive_file
-export SKILL_REGISTRY_E2E_INACTIVE_REPLACEMENT_ARCHIVE=$inactive_replacement_archive_file
-export SKILL_REGISTRY_E2E_ACTIVE_REPLACEMENT_ARCHIVE=$active_replacement_archive_file
-export SKILL_REGISTRY_E2E_STATE_FILE=$state_file
-export SKILL_REGISTRY_E2E_STORAGE_STATE_FILE=$storage_state_file
-export SKILL_REGISTRY_E2E_SLUG=$slug
-export SKILL_RUNTIME_E2E_STATE_FILE=$runtime_state_file
-
-BASE_URL=$base_url pnpm --filter @ai-agent-platform/web exec playwright test \
-  e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep @lifecycle
+run_skill_registry_playwright @lifecycle
 
 artifact_sha=$(node -e 'const fs=require("node:fs"); const state=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(state.artifactSha256)' "$state_file")
 case "$artifact_sha" in
@@ -548,8 +543,7 @@ printf '%s\n' "$artifact_sha" >>"$protected_patterns"
 
 compose restart skill-registry
 compose up -d --no-deps --wait skill-registry
-BASE_URL=$base_url pnpm --filter @ai-agent-platform/web exec playwright test \
-  e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep @restart
+run_skill_registry_playwright @restart
 
 compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -c \
   "INSERT INTO agno.agno_sessions (session_id, session_type, created_at) VALUES ('$agno_fixture', 'agent', 0)" >/dev/null
