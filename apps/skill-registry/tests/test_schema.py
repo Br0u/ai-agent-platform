@@ -9,6 +9,7 @@ from skill_registry.schema import (
     SCHEMA_VERSION_1_SQL,
     SCHEMA_VERSION_2_SQL,
     SCHEMA_VERSION_4_SQL,
+    SCHEMA_VERSION_5_SQL,
 )
 
 
@@ -430,6 +431,13 @@ def test_security_functions_pin_search_path_and_triggers_are_always_enabled() ->
         "skill_revision_files_append_only",
         "skill_control_events_append_only",
     ):
+        assert f"ENABLE ALWAYS TRIGGER {trigger_name}" in sql
+
+
+def test_review_removal_keeps_recreated_revision_guards_always_enabled() -> None:
+    sql = normalize_sql(SCHEMA_VERSION_5_SQL)
+
+    for trigger_name in ("skill_revisions_guard_insert", "skill_revisions_guard_update"):
         assert f"ENABLE ALWAYS TRIGGER {trigger_name}" in sql
 
 

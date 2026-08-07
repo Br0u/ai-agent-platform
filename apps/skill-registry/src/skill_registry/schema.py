@@ -1043,9 +1043,13 @@ $$;
 CREATE TRIGGER skill_revisions_guard_insert
 BEFORE INSERT ON skill_registry.skill_revisions
 FOR EACH ROW EXECUTE FUNCTION skill_registry.guard_revision_insert();
+ALTER TABLE skill_registry.skill_revisions
+  ENABLE ALWAYS TRIGGER skill_revisions_guard_insert;
 CREATE TRIGGER skill_revisions_guard_update
 BEFORE UPDATE ON skill_registry.skill_revisions
 FOR EACH ROW EXECUTE FUNCTION skill_registry.guard_revision_update();
+ALTER TABLE skill_registry.skill_revisions
+  ENABLE ALWAYS TRIGGER skill_revisions_guard_update;
 
 INSERT INTO skill_registry.schema_versions (version)
 VALUES (5)

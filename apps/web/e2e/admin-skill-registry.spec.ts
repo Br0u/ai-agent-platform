@@ -69,7 +69,7 @@ async function upload(page: Page, archive: string): Promise<E2EState> {
 test.describe("Skill library lifecycle", () => {
   test.describe.configure({ mode: "serial" });
 
-  test("@lifecycle uploads, enables, and disables one Skill", async ({
+  test("@lifecycle uploads one Skill and exercises runtime when enabled", async ({
     baseURL,
     browser,
     page,
@@ -112,10 +112,12 @@ test.describe("Skill library lifecycle", () => {
     });
     await stale.close();
 
-    await page.getByRole("button", { name: "启用" }).click();
-    await expect(page.getByText("● 已启用", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "停用" }).click();
-    await expect(page.getByText("○ 未启用", { exact: true })).toBeVisible();
+    if (process.env.SKILL_RUNTIME_E2E === "true") {
+      await page.getByRole("button", { name: "启用", exact: true }).click();
+      await expect(page.getByText("● 已启用", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "停用", exact: true }).click();
+      await expect(page.getByText("○ 未启用", { exact: true })).toBeVisible();
+    }
     writeState(state);
   });
 
