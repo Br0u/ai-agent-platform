@@ -3344,22 +3344,21 @@ secrets:
     const skillsReadme = read("apps/agent/src/agent_service/skills/README.md");
 
     for (const contract of [
-      "published",
-      "adminSessionToken",
       "modelAdminSessionToken",
       "artifactSha256",
       "revision",
+      "○ 未启用",
+      "● 已启用",
+      'name: "启用"',
+      'name: "停用"',
     ]) {
       expect(spec).toContain(contract);
     }
-    expect(spec).toContain("SKILL.md");
-    expect(spec).toContain("scripts/hello.py");
     expect(spec).toContain(".setInputFiles(archive)");
     expect(spec).toContain("modelAdminStaleSessionToken");
     expect(spec).toContain('error: { code: "reauth_required" }');
-    expect(spec).toContain("SKILL_REGISTRY_E2E_STORAGE_STATE_FILE");
-    expect(spec).toContain("storageState: storageStatePath()");
-    expect(spec.match(/browser\.newContext\(/gu)?.length).toBeGreaterThan(1);
+    expect(spec).toContain('redirectTo: "/staff/re-auth"');
+    expect(spec.match(/browser\.newContext\(/gu)?.length).toBe(1);
     expect(spec).not.toMatch(/https?:\/\/(?:github|gitlab|gitcode)\./u);
 
     expect(runner).toContain("SKILL_REGISTRY_E2E_PROJECT");
