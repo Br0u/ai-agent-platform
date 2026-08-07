@@ -39,7 +39,8 @@ NOW = datetime(2026, 7, 21, tzinfo=UTC)
 def build_zip(
     *,
     instructions: str = "# Demo\n",
-    script: bytes = b"#!/usr/bin/env python3\nimport third_party\nimport pathlib\n",
+    script: bytes | None = None,
+    python_reference: bytes | None = None,
     reference: bytes = b"# Guide\n",
 ) -> bytes:
     skill_md = (
@@ -47,9 +48,12 @@ def build_zip(
     ).encode()
     files = {
         "demo-skill/SKILL.md": skill_md,
-        "demo-skill/scripts/run.py": script,
         "demo-skill/references/guide.md": reference,
     }
+    if script is not None:
+        files["demo-skill/scripts/run.py"] = script
+    if python_reference is not None:
+        files["demo-skill/references/helper.py"] = python_reference
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path, content in files.items():
@@ -419,13 +423,14 @@ async def test_skill_set_service_rejects_non_bigint_activation_version(
 @pytest.mark.asyncio
 async def test_upload_uses_explicit_frozen_allowlist_and_stores_canonical_only() -> None:
     registry, repository, store = service()
+    archive = build_zip(python_reference=b"import third_party\nimport pathlib\n")
 
     with pytest.raises(RegistryError) as caught:
         await registry.upload_zip(
             actor=ACTOR,
             request_id=uuid4(),
             assertion_nonce=uuid4(),
-            archive=build_zip(),
+            archive=archive,
             target_skill_id=None,
         )
     assert caught.value.code == "SKILL_SCAN_BLOCKED"
@@ -437,7 +442,7 @@ async def test_upload_uses_explicit_frozen_allowlist_and_stores_canonical_only()
         actor=ACTOR,
         request_id=uuid4(),
         assertion_nonce=uuid4(),
-        archive=build_zip(),
+        archive=archive,
         target_skill_id=None,
     )
     assert not any(
@@ -445,7 +450,27 @@ async def test_upload_uses_explicit_frozen_allowlist_and_stores_canonical_only()
         for finding in allowed_repository.uploads[0].package.findings
     )
     assert detail.revision.state == "published"
-    assert allowed_store.artifacts[detail.revision.id] != build_zip()
+    assert allowed_store.artifacts[detail.revision.id] != archive
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_scripts_even_when_their_imports_are_allowed() -> None:
+    registry, repository, store = service(frozenset({"third_party"}))
+
+    with pytest.raises(RegistryError) as caught:
+        await registry.upload_zip(
+            actor=ACTOR,
+            request_id=uuid4(),
+            assertion_nonce=uuid4(),
+            archive=build_zip(
+                script=b"#!/usr/bin/env python3\nimport third_party\nprint('benign')\n"
+            ),
+            target_skill_id=None,
+        )
+
+    assert caught.value.code == "SKILL_SCAN_BLOCKED"
+    assert repository.uploads == []
+    assert store.artifacts == {}
 
 
 def test_scan_policy_rejects_mutable_or_implicit_allowlist() -> None:
@@ -460,22 +485,31 @@ async def test_detail_verifies_artifact_and_returns_previous_diff() -> None:
         actor=ACTOR,
         request_id=uuid4(),
         assertion_nonce=uuid4(),
-        archive=build_zip(instructions="# Version one\n"),
+        archive=build_zip(
+            instructions="# Version one\n",
+            python_reference=b"import third_party\nimport pathlib\n",
+        ),
         target_skill_id=None,
     )
     second = await registry.upload_zip(
         actor=ACTOR,
         request_id=uuid4(),
         assertion_nonce=uuid4(),
-        archive=build_zip(instructions="# Version two\n"),
+        archive=build_zip(
+            instructions="# Version two\n",
+            python_reference=b"import third_party\nimport pathlib\n",
+        ),
         target_skill_id=SKILL_ID,
     )
 
     detail = await registry.get_revision_detail(SKILL_ID, second.revision.id)
 
     assert detail.revision.manifest.license == "MIT"
-    assert [file.path for file in detail.scripts] == ["scripts/run.py"]
-    assert [file.path for file in detail.references] == ["references/guide.md"]
+    assert detail.scripts == ()
+    assert [file.path for file in detail.references] == [
+        "references/guide.md",
+        "references/helper.py",
+    ]
     assert detail.python_imports.modules == ("pathlib", "third_party")
     assert detail.python_imports.unavailable_modules == ()
     assert detail.previous_published_revision_id == first.revision.id

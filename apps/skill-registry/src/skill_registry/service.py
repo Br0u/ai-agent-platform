@@ -191,7 +191,7 @@ class SkillRegistryService:
             findings = ()
         if scan_failed:
             raise RegistryError("SKILL_SCAN_FAILED", "Skill package scan failed") from None
-        if any(finding.code in {"unsupported_import", "private_key"} for finding in findings):
+        if package.manifest.scripts or any(finding.blocking for finding in findings):
             raise RegistryError("SKILL_SCAN_BLOCKED", "Blocking findings prevent upload")
         package = replace(package, findings=findings)
         revision = await self._repository.create_upload_revision(

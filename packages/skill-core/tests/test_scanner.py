@@ -54,6 +54,7 @@ open("out.txt", "w").write(value)
     assert all(finding.line > 0 for finding in findings)
     assert all(secret not in finding.message for finding in findings)
     assert "safe" not in " ".join(finding.message.casefold() for finding in findings)
+    assert next(finding for finding in findings if finding.code == "private_key").blocking
 
 
 def test_imports_compare_dotted_first_segment_with_stdlib_and_explicit_allowlist(

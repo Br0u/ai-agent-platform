@@ -9,20 +9,13 @@ import json
 import logging
 import os
 from pathlib import Path
-import selectors
-import signal
 import stat
-import subprocess
-import time
 from typing import NoReturn, Protocol, cast
 from uuid import UUID
 
 from agno.skills import Skills
 from agno.skills.errors import SkillValidationError
 from agno.skills.loaders import LocalSkills
-from agno.skills.utils import ensure_executable, get_interpreter_command, parse_shebang
-from agno.exceptions import PathSecurityError
-from agno.utils.path_safety import safe_join_relative_path
 
 from agent_service.skill_runtime_types import RuntimeSetSnapshot
 from skill_core import SkillMaterializationError, materialize_canonical_skill
@@ -30,10 +23,6 @@ from skill_core import SkillMaterializationError, materialize_canonical_skill
 
 _DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _TOOL_RESULT_PAGE_CHARS = 12_000
-_SCRIPT_MAX_SECONDS = 30
-_SCRIPT_MAX_ARGUMENTS = 16
-_SCRIPT_ARGUMENT_MAX_CHARS = 1_024
-_SCRIPT_OUTPUT_MAX_BYTES = 48_000
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -42,101 +31,6 @@ class LoadedSkills(Protocol):
 
 
 SkillsFactory = Callable[[str], LoadedSkills]
-
-
-@dataclass(frozen=True, slots=True)
-class _BoundedScriptResult:
-    stdout: str
-    stderr: str
-    returncode: int
-    output_truncated: bool
-
-
-def _terminate_script(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
-    try:
-        if os.name == "nt":
-            process.kill()
-        else:
-            os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    finally:
-        try:
-            process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-
-
-def _run_script_bounded(
-    *,
-    script_path: Path,
-    args: list[str] | None,
-    timeout: int,
-    cwd: Path,
-) -> _BoundedScriptResult:
-    """Drain both pipes while retaining only a fixed combined output budget."""
-    if os.name == "nt":
-        interpreter = parse_shebang(script_path)
-        command = [
-            *(get_interpreter_command(interpreter) if interpreter else []),
-            str(script_path),
-            *(args or []),
-        ]
-    else:
-        ensure_executable(script_path)
-        command = [str(script_path), *(args or [])]
-
-    process = subprocess.Popen(
-        command,
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=os.name != "nt",
-    )
-    assert process.stdout is not None
-    assert process.stderr is not None
-    selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
-    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
-    buffers = {"stdout": bytearray(), "stderr": bytearray()}
-    retained = 0
-    output_truncated = False
-    deadline = time.monotonic() + timeout
-    try:
-        while selector.get_map():
-            remaining_time = deadline - time.monotonic()
-            if remaining_time <= 0:
-                _terminate_script(process)
-                raise subprocess.TimeoutExpired(command, timeout)
-            for key, _ in selector.select(remaining_time):
-                chunk = os.read(key.fd, 8_192)
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                    continue
-                remaining_output = max(0, _SCRIPT_OUTPUT_MAX_BYTES - retained)
-                kept = chunk[:remaining_output]
-                buffers[key.data].extend(kept)
-                retained += len(kept)
-                if len(kept) < len(chunk):
-                    output_truncated = True
-        returncode = process.wait(timeout=max(0.01, deadline - time.monotonic()))
-    except subprocess.TimeoutExpired:
-        _terminate_script(process)
-        raise
-    finally:
-        selector.close()
-        process.stdout.close()
-        process.stderr.close()
-
-    return _BoundedScriptResult(
-        stdout=buffers["stdout"].decode("utf-8", errors="replace"),
-        stderr=buffers["stderr"].decode("utf-8", errors="replace"),
-        returncode=returncode,
-        output_truncated=output_truncated,
-    )
 
 
 class PagedSkills(Skills):
@@ -154,8 +48,8 @@ class PagedSkills(Skills):
                 "call again with offset=next_offset."
             ),
             "get_skill_script": (
-                "Read one bounded script page, or execute the validated packaged script with "
-                "bounded timeout and output. For reads, continue with offset=next_offset."
+                "Read one bounded script page. If next_offset is not null, "
+                "call again with offset=next_offset."
             ),
         }
         for tool in tools:
@@ -173,8 +67,7 @@ class PagedSkills(Skills):
             + "## Bounded Skill Results\n"
             + "Instruction, reference, and script reads return bounded pages. "
             + "When next_offset is not null, continue with offset=next_offset only "
-            + "while the additional content is necessary. Script execution output "
-            + "is bounded and cannot be paged."
+            + "while the additional content is necessary."
         )
 
     @staticmethod
@@ -215,122 +108,17 @@ class PagedSkills(Skills):
         self,
         skill_name: str,
         script_path: str,
-        execute: bool = False,
-        args: list[str] | None = None,
-        timeout: int = _SCRIPT_MAX_SECONDS,
         offset: int = 0,
     ) -> str:
-        if type(execute) is not bool:
-            return json.dumps({"error": "Invalid execute flag"})
-        if args is not None and (
-            type(args) is not list
-            or len(args) > _SCRIPT_MAX_ARGUMENTS
-            or any(
-                type(argument) is not str
-                or len(argument) > _SCRIPT_ARGUMENT_MAX_CHARS
-                for argument in args
-            )
-        ):
-            return json.dumps({"error": "Invalid script arguments"})
-        if type(timeout) is not int or timeout <= 0:
-            return json.dumps({"error": "Invalid script timeout"})
-
-        if not execute:
-            parent_get_script = super()._get_skill_script
-            result = json.loads(
-                await asyncio.to_thread(
-                    parent_get_script,
-                    skill_name,
-                    script_path,
-                    execute=False,
-                    args=args,
-                    timeout=min(timeout, _SCRIPT_MAX_SECONDS),
-                )
-            )
-            return self._page_result(result, "content", offset)
-        if offset != 0:
-            return json.dumps({"error": "Execution output does not support offset"})
-
-        skill = self.get_skill(skill_name)
-        if skill is None:
-            return json.dumps(
-                {
-                    "error": f"Skill '{skill_name}' not found",
-                    "available_skills": ", ".join(self.get_skill_names()),
-                }
-            )
-        if script_path not in skill.scripts:
-            return json.dumps(
-                {
-                    "error": f"Script '{script_path}' not found in skill '{skill_name}'",
-                    "available_scripts": skill.scripts,
-                }
-            )
-        try:
-            script_file = safe_join_relative_path(
-                Path(skill.source_path) / "scripts",
+        result = json.loads(
+            await asyncio.to_thread(
+                super()._get_skill_script,
+                skill_name,
                 script_path,
+                execute=False,
             )
-        except (PathSecurityError, OSError):
-            return json.dumps(
-                {"error": "Invalid script path", "skill_name": skill_name}
-            )
-        bounded_timeout = min(timeout, _SCRIPT_MAX_SECONDS)
-        try:
-            script_result = await asyncio.to_thread(
-                _run_script_bounded,
-                script_path=script_file,
-                args=args,
-                timeout=bounded_timeout,
-                cwd=Path(skill.source_path),
-            )
-        except subprocess.TimeoutExpired:
-            return json.dumps(
-                {
-                    "error": (
-                        f"Script execution timed out after {bounded_timeout} seconds"
-                    ),
-                    "skill_name": skill_name,
-                    "script_path": script_path,
-                }
-            )
-        except FileNotFoundError:
-            return json.dumps(
-                {
-                    "error": "Interpreter or script not found",
-                    "skill_name": skill_name,
-                    "script_path": script_path,
-                }
-            )
-        except Exception:
-            return json.dumps(
-                {
-                    "error": "Script execution failed",
-                    "skill_name": skill_name,
-                    "script_path": script_path,
-                }
-            )
-
-        stdout = script_result.stdout
-        stderr = script_result.stderr
-        bounded_stdout = stdout[:_TOOL_RESULT_PAGE_CHARS]
-        remaining = _TOOL_RESULT_PAGE_CHARS - len(bounded_stdout)
-        bounded_stderr = stderr[:remaining]
-        return json.dumps(
-            {
-                "skill_name": skill_name,
-                "script_path": script_path,
-                "stdout": bounded_stdout,
-                "stderr": bounded_stderr,
-                "returncode": script_result.returncode,
-                "output_truncated": (
-                    getattr(script_result, "output_truncated", False)
-                    or len(bounded_stdout) < len(stdout)
-                    or len(bounded_stderr) < len(stderr)
-                ),
-            },
-            ensure_ascii=False,
         )
+        return self._page_result(result, "content", offset)
 
 
 class SkillMaterializerError(RuntimeError):

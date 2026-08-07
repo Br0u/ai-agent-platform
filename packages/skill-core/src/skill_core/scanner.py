@@ -31,15 +31,15 @@ _FILESYSTEM_WRITE = re.compile(
 )
 _EXTERNAL_URL = re.compile(r"https?://[^\s<>'\"]+")
 
-_LINE_PATTERNS: tuple[tuple[str, re.Pattern[str], str], ...] = (
-    ("possible_secret", _POSSIBLE_SECRET, "Possible credential-like assignment found."),
-    ("private_key", _PRIVATE_KEY, "Private-key marker found; upload blocked."),
-    ("network_access", _NETWORK, "Network-capable operation found."),
-    ("subprocess", _SUBPROCESS, "Subprocess-capable operation found."),
-    ("environment_read", _ENVIRONMENT, "Environment access found."),
-    ("dynamic_code", _DYNAMIC_CODE, "Dynamic code execution found."),
-    ("filesystem_write", _FILESYSTEM_WRITE, "Filesystem mutation found."),
-    ("external_url", _EXTERNAL_URL, "External URL found."),
+_LINE_PATTERNS: tuple[tuple[str, re.Pattern[str], str, bool], ...] = (
+    ("possible_secret", _POSSIBLE_SECRET, "Possible credential-like assignment found.", False),
+    ("private_key", _PRIVATE_KEY, "Private-key marker found; upload blocked.", True),
+    ("network_access", _NETWORK, "Network-capable operation found.", False),
+    ("subprocess", _SUBPROCESS, "Subprocess-capable operation found.", False),
+    ("environment_read", _ENVIRONMENT, "Environment access found.", False),
+    ("dynamic_code", _DYNAMIC_CODE, "Dynamic code execution found.", False),
+    ("filesystem_write", _FILESYSTEM_WRITE, "Filesystem mutation found.", False),
+    ("external_url", _EXTERNAL_URL, "External URL found.", False),
 )
 
 
@@ -56,7 +56,7 @@ def scan(
         if text is None:
             continue
         for line_number, line in enumerate(text.splitlines(), start=1):
-            for code, pattern, message in _LINE_PATTERNS:
+            for code, pattern, message, blocking in _LINE_PATTERNS:
                 if pattern.search(line):
                     findings.add(
                         SkillFinding(
@@ -64,6 +64,7 @@ def scan(
                             line=line_number,
                             code=code,
                             message=message,
+                            blocking=blocking,
                         )
                     )
         if _is_python(file.path, text):
