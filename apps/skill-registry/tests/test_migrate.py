@@ -507,8 +507,18 @@ def test_revision_drift_verifiers_compare_normalized_complete_definitions() -> N
     assert "'findings'" in normalized_storage_query
     assert "pg_get_constraintdef(constraint_row.oid, true)" in normalized_constraint_query
     assert "regexp_replace" in normalized_constraint_query
+    assert (
+        "skills_current_revision_fkey",
+        "skills",
+        "f",
+        True,
+        "FOREIGN KEY (current_revision_id, id) REFERENCES "
+        "skill_registry.skill_revisions(id, skill_id) ON DELETE RESTRICT "
+        "DEFERRABLE INITIALLY DEFERRED",
+    ) in EXPECTED_REGISTRY_CONSTRAINTS
+    assert "'skills_current_revision_fkey'" in normalized_constraint_query
     assert all(
-        len(row) == 5 and isinstance(row[4], str) and row[4].startswith("CHECK (")
+        len(row) == 5 and isinstance(row[4], str)
         for row in EXPECTED_REGISTRY_CONSTRAINTS
     )
     assert "pg_get_functiondef(function.oid)" in normalized_function_query

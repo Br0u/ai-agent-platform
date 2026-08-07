@@ -1510,10 +1510,16 @@ WITH version_state AS (
     AND to_regclass('skill_registry.active_agent_skill_sets') IS NOT NULL
     AND to_regclass('skill_registry.skill_set_control_events') IS NOT NULL
     AND EXISTS (
-      SELECT 1 FROM pg_constraint
-      WHERE conrelid = 'skill_registry.skills'::regclass
-        AND confrelid = 'skill_registry.skill_revisions'::regclass
-        AND contype = 'f' AND convalidated
+      SELECT 1 FROM pg_constraint AS constraint_row
+      WHERE constraint_row.conname = 'skills_current_revision_fkey'
+        AND constraint_row.conrelid = 'skill_registry.skills'::regclass
+        AND constraint_row.confrelid = 'skill_registry.skill_revisions'::regclass
+        AND constraint_row.contype = 'f'
+        AND constraint_row.convalidated
+        AND constraint_row.condeferrable
+        AND constraint_row.condeferred
+        AND pg_get_constraintdef(constraint_row.oid, true) =
+          'FOREIGN KEY (current_revision_id, id) REFERENCES skill_registry.skill_revisions(id, skill_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED'
     )
     AND EXISTS (
       SELECT 1 FROM pg_constraint

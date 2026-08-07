@@ -118,6 +118,15 @@ EXPECTED_REGISTRY_CONSTRAINTS = frozenset(
             True,
             _PG18_FINDINGS_CONSTRAINT,
         ),
+        (
+            "skills_current_revision_fkey",
+            "skills",
+            "f",
+            True,
+            "FOREIGN KEY (current_revision_id, id) REFERENCES "
+            "skill_registry.skill_revisions(id, skill_id) ON DELETE RESTRICT "
+            "DEFERRABLE INITIALLY DEFERRED",
+        ),
     }
 )
 
@@ -1584,7 +1593,8 @@ WHERE relation_schema.nspname = 'skill_registry'
   AND constraint_row.conname IN (
     'skill_revisions_findings_array',
     'skill_control_events_review_reason',
-    'skill_control_events_review_evidence'
+    'skill_control_events_review_evidence',
+    'skills_current_revision_fkey'
   )
 ORDER BY constraint_row.conname
 """

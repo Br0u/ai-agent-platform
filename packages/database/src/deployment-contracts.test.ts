@@ -5185,6 +5185,15 @@ exit 0
     expect(script).toContain("skill.current_revision_id");
     expect(script).toContain("agent_skill_sets_sync_current_revisions");
     expect(script).toContain("conrelid = 'skill_registry.skills'::regclass");
+    expect(script).toContain(
+      "constraint_row.conname = 'skills_current_revision_fkey'",
+    );
+    expect(script).toContain("constraint_row.convalidated");
+    expect(script).toContain("constraint_row.condeferrable");
+    expect(script).toContain("constraint_row.condeferred");
+    expect(script).toContain(
+      "FOREIGN KEY (current_revision_id, id) REFERENCES skill_registry.skill_revisions(id, skill_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED",
+    );
     expect(script).toContain("--file=/restore/manager-insert-check.sql");
     expect(script).toContain("--file=/restore/backup-insert-denied.sql");
     expect(script).toContain("--set=VERBOSITY=verbose");
