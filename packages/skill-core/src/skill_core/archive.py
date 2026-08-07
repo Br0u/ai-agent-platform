@@ -141,7 +141,7 @@ def _read_validated_files(
         raise SkillPackageError("ARCHIVE_TOO_MANY_FILES", "ZIP contains too many members")
     normalized_paths: dict[str, str] = {}
     folded_paths: dict[str, str] = {}
-    member_infos: list[tuple[str, zipfile.ZipInfo, int, int, bool]] = []
+    member_infos: list[tuple[str, zipfile.ZipInfo, int, int, bool, bool]] = []
     central_names = _read_raw_central_names(raw_archive, len(infos), source.start_dir)
     entry_bounds = _entry_bounds(infos, source.start_dir)
 
@@ -175,13 +175,28 @@ def _read_validated_files(
                 path=normalized,
             )
         member_infos.append(
-            (normalized, info, data_offset, entry_bounds[info.header_offset], is_directory)
+            (
+                normalized,
+                info,
+                data_offset,
+                entry_bounds[info.header_offset],
+                is_directory,
+                _is_macos_metadata_path(normalized),
+            )
         )
 
-    file_paths = tuple(path for path, _, _, _, is_directory in member_infos if not is_directory)
+    file_paths = tuple(
+        path
+        for path, _, _, _, is_directory, ignored in member_infos
+        if not is_directory and not ignored
+    )
     _reject_ancestor_file_conflicts(file_paths)
     slug = _find_skill_root(file_paths)
-    member_roots = {path.rstrip("/").split("/", 1)[0] for path, *_ in member_infos}
+    member_roots = {
+        path.rstrip("/").split("/", 1)[0]
+        for path, _, _, _, _, ignored in member_infos
+        if not ignored
+    }
     if member_roots != {slug}:
         raise SkillPackageError(
             "ARCHIVE_MULTIPLE_SKILL_ROOTS",
@@ -190,7 +205,7 @@ def _read_validated_files(
 
     extracted_size = 0
     result: list[SkillFile] = []
-    for full_path, info, data_offset, entry_bound, is_directory in member_infos:
+    for full_path, info, data_offset, entry_bound, is_directory, ignored in member_infos:
         content, actual_size = _read_member(
             raw_archive,
             info,
@@ -204,6 +219,8 @@ def _read_validated_files(
                 raise SkillPackageError(
                     "ARCHIVE_INVALID", "ZIP directory members must have empty content"
                 )
+            continue
+        if ignored:
             continue
         relative_path = full_path[len(slug) + 1 :]
         _reject_git_lfs_pointer(relative_path, content)
@@ -219,6 +236,11 @@ def _read_validated_files(
 
     result.sort(key=lambda file: file.path.encode("utf-8"))
     return tuple(result), slug, extracted_size
+
+
+def _is_macos_metadata_path(path: str) -> bool:
+    parts = path.rstrip("/").split("/")
+    return parts[0] == "__MACOSX" or (not path.endswith("/") and parts[-1] == ".DS_Store")
 
 
 def _validate_raw_local_header(
