@@ -686,6 +686,13 @@ describe("AssistantSkillRegistryPanel", () => {
     ).toBeDisabled();
     expect(screen.getByRole("button", { name: "停用" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "启用" })).toBeDisabled();
+    const deleteButtons = screen.getAllByRole("button", { name: "删除" });
+    expect(deleteButtons).toHaveLength(2);
+    expect(deleteButtons[0]).toBeDisabled();
+    expect(deleteButtons[1]).toBeDisabled();
+    const callsBeforeDeleteAttempt = vi.mocked(fetch).mock.calls.length;
+    deleteButtons[1].click();
+    expect(fetch).toHaveBeenCalledTimes(callsBeforeDeleteAttempt);
     expect(
       screen.getByRole("button", { name: "刷新 Skill 列表" }),
     ).toBeEnabled();
