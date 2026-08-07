@@ -228,7 +228,7 @@ async def test_archive_skill_requires_inactive_matching_digest() -> None:
     repository, connection = repository_with(
         [
             Reply("FOR UPDATE OF skill", one=(SKILL_ID,)),
-            Reply("latest.artifact_sha256", one=("a" * 64, False)),
+            Reply("artifact.artifact_sha256", one=("a" * 64, False)),
             Reply("UPDATE skill_registry.skills"),
             Reply("INSERT INTO skill_registry.skill_control_events"),
         ]
@@ -249,7 +249,7 @@ async def test_archive_skill_requires_inactive_matching_digest() -> None:
         query for query, _ in connection.script.executions if "FOR UPDATE OF skill" in query
     )
     validation_query = next(
-        query for query, _ in connection.script.executions if "latest.artifact_sha256" in query
+        query for query, _ in connection.script.executions if "artifact.artifact_sha256" in query
     )
     assert "manager_active_skill_set" not in lock_query
     assert "FROM skill_registry.manager_active_skill_set AS active_set" in validation_query
@@ -270,6 +270,7 @@ async def test_create_upload_revision_writes_complete_bundle_in_one_transaction(
             Reply("INSERT INTO skill_registry.skill_revisions", one=(NOW,)),
             Reply("INSERT INTO skill_registry.skill_revision_artifacts"),
             Reply("INSERT INTO skill_registry.skill_revision_files"),
+            Reply("UPDATE skill_registry.skills"),
             Reply("INSERT INTO skill_registry.skill_control_events"),
         ]
     )
@@ -285,6 +286,7 @@ async def test_create_upload_revision_writes_complete_bundle_in_one_transaction(
     assert connection.rolled_back is False
     queries = [query for query, _ in connection.script.executions]
     assert "ON CONFLICT (slug) WHERE archived_at IS NULL DO NOTHING" in queries[1]
+    assert "current_revision_id" in queries[-2]
     assert queries[-1].find("skill_control_events") >= 0
     artifact_parameters = connection.script.executions[4][1]
     assert artifact_parameters[-1] == package().archive
@@ -322,7 +324,7 @@ async def test_new_upload_uses_unique_slug_as_source_for_conflict_or_idempotence
             Reply("INSERT INTO skill_registry.skills", one=None),
             Reply("SELECT id FROM skill_registry.skills WHERE slug", one=(SKILL_ID,)),
             Reply("artifact_sha256 = %s", one=None),
-            Reply("ORDER BY revision.revision_no DESC", one=("a" * 64, True)),
+            Reply("revision.id = skill.current_revision_id", one=("a" * 64, True)),
         ]
     )
 
@@ -431,6 +433,8 @@ async def test_repository_queries_lists_files_and_previous_published_revision() 
     assert summaries[0].replacement_token == "a" * 64
     assert summaries[0].revision_id == REVISION_ID
     list_query = connection.script.executions[0][0]
+    assert "current_revision.id = skill.current_revision_id" in list_query
+    assert "ORDER BY latest_revision.revision_no DESC" not in list_query
     assert "FROM skill_registry.manager_active_skill_set AS active_set" in list_query
     assert "JOIN skill_registry.manager_skill_set_items AS active_item" in list_query
     assert "FROM skill_registry.active_agent_skill_sets" not in list_query
@@ -677,7 +681,7 @@ async def test_skill_set_repository_resolves_all_published_revisions_and_pages()
 
 
 @pytest.mark.asyncio
-async def test_skill_library_prefers_the_active_revision_over_a_newer_upload() -> None:
+async def test_skill_library_reads_the_authoritative_current_revision() -> None:
     repository, connection = repository_with(
         [
             Reply(
@@ -691,9 +695,8 @@ async def test_skill_library_prefers_the_active_revision_over_a_newer_upload() -
 
     query = connection.script.executions[0][0]
     assert "active_item.revision_id" in query
-    assert "COALESCE(" in query
-    assert "active_revision.revision_id" in query
-    assert "SELECT latest_revision.id" in query
+    assert "current_revision.id = skill.current_revision_id" in query
+    assert "SELECT latest_revision.id" not in query
 
 
 @pytest.mark.asyncio

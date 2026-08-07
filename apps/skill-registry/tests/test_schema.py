@@ -10,6 +10,7 @@ from skill_registry.schema import (
     SCHEMA_VERSION_2_SQL,
     SCHEMA_VERSION_4_SQL,
     SCHEMA_VERSION_5_SQL,
+    SCHEMA_VERSION_9_SQL,
 )
 
 
@@ -133,6 +134,21 @@ def test_schema_version_one_remains_the_exact_historical_registry_bootstrap() ->
     assert "%s" not in PREPARE_SCHEMA_SQL + SCHEMA_VERSION_1_SQL
 
 
+def test_schema_v9_adds_authoritative_current_revision_and_updates_it_on_activation() -> None:
+    sql = normalize_sql(SCHEMA_VERSION_9_SQL)
+
+    assert "ADD COLUMN current_revision_id uuid" in sql
+    assert "FOREIGN KEY (current_revision_id, id)" in sql
+    assert "REFERENCES skill_registry.skill_revisions(id, skill_id)" in sql
+    assert "DEFERRABLE INITIALLY DEFERRED" in sql
+    assert "ALTER COLUMN current_revision_id SET NOT NULL" in sql
+    assert (
+        "UPDATE skill_registry.skills AS skill SET current_revision_id = item.skill_revision_id"
+        in sql
+    )
+    assert "OLD.state = 'candidate' AND NEW.state = 'active'" in sql
+
+
 def test_schema_v2_renames_review_authorization_evidence() -> None:
     sql = normalize_sql(SCHEMA_VERSION_2_SQL)
 
@@ -237,7 +253,7 @@ def test_skill_set_views_expose_runtime_and_manager_boundaries_in_schema_v3() ->
 def test_schema_v4_replaces_runtime_file_index_with_canonical_utf8_order() -> None:
     sql = normalize_sql(SCHEMA_VERSION_4_SQL)
 
-    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 8
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 9
     assert "CREATE OR REPLACE VIEW skill_registry.runtime_skill_set_items" in sql
     assert "ORDER BY pg_catalog.convert_to(file.path, 'UTF8')" in sql
     assert (
@@ -254,7 +270,7 @@ def test_schema_v4_replaces_runtime_file_index_with_canonical_utf8_order() -> No
 def test_active_skill_names_are_unique_but_archived_names_are_reusable() -> None:
     sql = normalize_sql(getattr(registry_schema, "SCHEMA_VERSION_6_SQL", ""))
 
-    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 8
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 9
     assert "DROP CONSTRAINT skills_slug_key" in sql
     assert (
         "CREATE UNIQUE INDEX skills_active_slug_key "

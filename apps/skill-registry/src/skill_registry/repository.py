@@ -102,7 +102,14 @@ class PostgresSkillRegistryRepository:
                 async with connection.transaction():
                     async with connection.cursor() as cursor:
                         await self._assert_nonce_unused(cursor, command.assertion_nonce)
-                        skill_id, is_new = await self._resolve_upload_skill(cursor, command)
+                        candidate_skill_id = self._id_factory()
+                        revision_id = self._id_factory()
+                        skill_id, is_new = await self._resolve_upload_skill(
+                            cursor,
+                            command,
+                            candidate_skill_id=candidate_skill_id,
+                            candidate_revision_id=revision_id,
+                        )
                         duplicate = await self._find_digest_revision(
                             cursor, skill_id, command.package.sha256
                         )
@@ -140,7 +147,6 @@ class PostgresSkillRegistryRepository:
                                 )
                             revision_no = int(revision_row[0])
 
-                        revision_id = self._id_factory()
                         manifest_json = _manifest_to_json(command.package.manifest)
                         findings_json = [
                             _finding_to_json(item) for item in command.package.findings
@@ -189,6 +195,23 @@ class PostgresSkillRegistryRepository:
                                 ) VALUES (%s, %s, %s, %s, %s)""",
                                 (revision_id, file.path, file.sha256, file.size, media_type),
                             )
+                        await cursor.execute(
+                            """UPDATE skill_registry.skills AS skill
+                            SET current_revision_id = %s
+                            WHERE skill.id = %s
+                              AND (
+                                %s
+                                OR NOT EXISTS (
+                                  SELECT 1
+                                  FROM skill_registry.manager_active_skill_set AS active_set
+                                  JOIN skill_registry.manager_skill_set_items AS active_item
+                                    ON active_item.set_id = active_set.active_set_id
+                                  WHERE active_set.agent_id = 'maduoduo'
+                                    AND active_item.skill_id = skill.id
+                                )
+                              )""",
+                            (revision_id, skill_id, is_new),
+                        )
                         await self._insert_upload_event(
                             cursor,
                             command=command,
@@ -235,7 +258,7 @@ class PostgresSkillRegistryRepository:
                         if await cursor.fetchone() is None:
                             raise RegistryError("SKILL_NOT_FOUND", "Skill does not exist")
                         await cursor.execute(
-                            """SELECT latest.artifact_sha256,
+                            """SELECT artifact.artifact_sha256,
                               EXISTS (
                                 SELECT 1
                                 FROM skill_registry.manager_active_skill_set AS active_set
@@ -245,16 +268,11 @@ class PostgresSkillRegistryRepository:
                                   AND active_item.skill_id = skill.id
                               )
                             FROM skill_registry.skills AS skill
-                            JOIN LATERAL (
-                              SELECT artifact.artifact_sha256
-                              FROM skill_registry.skill_revisions AS revision
-                              JOIN skill_registry.skill_revision_artifacts AS artifact
-                                ON artifact.revision_id = revision.id
-                              WHERE revision.skill_id = skill.id
-                                AND revision.state = 'published'
-                              ORDER BY revision.revision_no DESC
-                              LIMIT 1
-                            ) AS latest ON true
+                            JOIN skill_registry.skill_revisions AS revision
+                              ON revision.id = skill.current_revision_id
+                                AND revision.skill_id = skill.id
+                            JOIN skill_registry.skill_revision_artifacts AS artifact
+                              ON artifact.revision_id = revision.id
                             WHERE skill.id = %s AND skill.archived_at IS NULL""",
                             (command.skill_id,),
                         )
@@ -322,24 +340,24 @@ class PostgresSkillRegistryRepository:
         )
 
     async def _resolve_upload_skill(
-        self, cursor: RepositoryCursor, command: CreateUploadRevision
+        self,
+        cursor: RepositoryCursor,
+        command: CreateUploadRevision,
+        *,
+        candidate_skill_id: UUID,
+        candidate_revision_id: UUID,
     ) -> tuple[UUID, bool]:
         if command.target_skill_id is not None:
             if command.expected_artifact_sha256 is None:
                 raise RegistryError("VALIDATION_ERROR", "Replacement token is required")
             await cursor.execute(
-                """SELECT skill.slug, latest.artifact_sha256
+                """SELECT skill.slug, artifact.artifact_sha256
                 FROM skill_registry.skills AS skill
-                JOIN LATERAL (
-                  SELECT artifact.artifact_sha256
-                  FROM skill_registry.skill_revisions AS revision
-                  JOIN skill_registry.skill_revision_artifacts AS artifact
-                    ON artifact.revision_id = revision.id
-                  WHERE revision.skill_id = skill.id
-                    AND revision.state = 'published'
-                  ORDER BY revision.revision_no DESC
-                  LIMIT 1
-                ) AS latest ON true
+                JOIN skill_registry.skill_revisions AS revision
+                  ON revision.id = skill.current_revision_id
+                    AND revision.skill_id = skill.id
+                JOIN skill_registry.skill_revision_artifacts AS artifact
+                  ON artifact.revision_id = revision.id
                 WHERE skill.id = %s AND skill.archived_at IS NULL
                 FOR UPDATE OF skill""",
                 (command.target_skill_id,),
@@ -356,13 +374,18 @@ class PostgresSkillRegistryRepository:
                 raise RegistryError("SKILL_CHANGED", "Target skill changed")
             return command.target_skill_id, False
 
-        candidate_skill_id = self._id_factory()
         await cursor.execute(
-            """INSERT INTO skill_registry.skills (id, slug, created_by)
-            VALUES (%s, %s, %s)
+            """INSERT INTO skill_registry.skills (
+              id, slug, created_by, current_revision_id
+            ) VALUES (%s, %s, %s, %s)
             ON CONFLICT (slug) WHERE archived_at IS NULL DO NOTHING
             RETURNING id""",
-            (candidate_skill_id, command.package.manifest.name, command.actor),
+            (
+                candidate_skill_id,
+                command.package.manifest.name,
+                command.actor,
+                candidate_revision_id,
+            ),
         )
         inserted = await cursor.fetchone()
         if inserted is not None:
@@ -390,12 +413,13 @@ class PostgresSkillRegistryRepository:
                 WHERE active_set.agent_id = 'maduoduo'
                   AND active_item.skill_id = revision.skill_id
               )
-            FROM skill_registry.skill_revisions AS revision
+            FROM skill_registry.skills AS skill
+            JOIN skill_registry.skill_revisions AS revision
+              ON revision.id = skill.current_revision_id
+                AND revision.skill_id = skill.id
             JOIN skill_registry.skill_revision_artifacts AS artifact
               ON artifact.revision_id = revision.id
-            WHERE revision.skill_id = %s AND revision.state = 'published'
-            ORDER BY revision.revision_no DESC
-            LIMIT 1""",
+            WHERE skill.id = %s AND skill.archived_at IS NULL""",
             (skill_id,),
         )
         row = await cursor.fetchone()
@@ -439,24 +463,11 @@ class PostgresSkillRegistryRepository:
                 AND active_item.skill_id = skill.id
               LIMIT 1
             ) AS active_revision ON true
-            JOIN LATERAL (
-              SELECT revision.id, revision.manifest, artifact.artifact_sha256,
-                revision.created_at
-              FROM skill_registry.skill_revisions AS revision
-              JOIN skill_registry.skill_revision_artifacts AS artifact
-                ON artifact.revision_id = revision.id
-              WHERE revision.id = COALESCE(
-                active_revision.revision_id,
-                (
-                  SELECT latest_revision.id
-                  FROM skill_registry.skill_revisions AS latest_revision
-                  WHERE latest_revision.skill_id = skill.id
-                    AND latest_revision.state = 'published'
-                  ORDER BY latest_revision.revision_no DESC
-                  LIMIT 1
-                )
-              )
-            ) AS current_revision ON true
+            JOIN skill_registry.skill_revisions AS current_revision
+              ON current_revision.id = skill.current_revision_id
+                AND current_revision.skill_id = skill.id
+            JOIN skill_registry.skill_revision_artifacts AS artifact
+              ON artifact.revision_id = current_revision.id
             WHERE skill.archived_at IS NULL
             ORDER BY skill.slug
             LIMIT %s OFFSET %s""",

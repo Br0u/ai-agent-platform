@@ -292,8 +292,10 @@ async def test_real_postgres_artifact_store_put_and_digest_verification() -> Non
     async with await connect(MANAGER_URL) as connection:
         async with connection.transaction():
             await connection.execute(
-                "INSERT INTO skill_registry.skills (id, slug, created_by) VALUES (%s, %s, %s)",
-                (skill_id, slug, actor),
+                """INSERT INTO skill_registry.skills (
+                  id, slug, created_by, current_revision_id
+                ) VALUES (%s, %s, %s, %s)""",
+                (skill_id, slug, actor, revision_id),
             )
             await connection.execute(
                 """INSERT INTO skill_registry.skill_revisions (

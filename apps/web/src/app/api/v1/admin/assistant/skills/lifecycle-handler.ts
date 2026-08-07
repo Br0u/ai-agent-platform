@@ -149,6 +149,48 @@ function parseRequestId(value: unknown): string | null {
     : null;
 }
 
+async function findSkill(
+  registry: CompleteSkillRegistryClient,
+  actor: string,
+  requestIdFactory: () => string,
+  skillId: string,
+) {
+  for (let offset = 0; offset <= 1_000_000; offset += 100) {
+    const page = await registry.listSkills({
+      actor,
+      requestId: requestIdFactory(),
+      limit: 100,
+      offset,
+    });
+    const skill = page.skills.find((item) => item.id === skillId);
+    if (skill !== undefined) return skill;
+    if (page.page.returned < 100) return null;
+  }
+  throw new SkillRegistryClientError("invalid_response");
+}
+
+async function listSkillRevisionIds(
+  registry: CompleteSkillRegistryClient,
+  actor: string,
+  requestIdFactory: () => string,
+  skillId: string,
+): Promise<Set<string>> {
+  const revisionIds = new Set<string>();
+  for (let offset = 0; offset <= 1_000_000; offset += 100) {
+    const page = await registry.listAvailableRevisions({
+      actor,
+      requestId: requestIdFactory(),
+      limit: 100,
+      offset,
+    });
+    for (const item of page.items) {
+      if (item.skillId === skillId) revisionIds.add(item.revisionId);
+    }
+    if (offset + page.items.length >= page.total) return revisionIds;
+  }
+  throw new SkillRegistryClientError("invalid_response");
+}
+
 export function createSkillLifecycleHandler(
   operation: SkillLifecycleOperation,
   overrides: Partial<Dependencies> = {},
@@ -170,48 +212,38 @@ export function createSkillLifecycleHandler(
         return errorResponse(fallbackRequestId, "validation_error", 400);
 
       const actor = context.actor.userId;
-      const [library, available, runtime] = await Promise.all([
-        dependencies.registry.listSkills({
+      const [skill, skillRevisionIds, runtime] = await Promise.all([
+        findSkill(
+          dependencies.registry,
           actor,
-          requestId: dependencies.requestIdFactory(),
-          limit: 100,
-          offset: 0,
-        }),
-        dependencies.registry.listAvailableRevisions({
+          dependencies.requestIdFactory,
+          skillId,
+        ),
+        listSkillRevisionIds(
+          dependencies.registry,
           actor,
-          requestId: dependencies.requestIdFactory(),
-          limit: 100,
-          offset: 0,
-        }),
+          dependencies.requestIdFactory,
+          skillId,
+        ),
         dependencies.registry.runtimeStatus({
           actor,
           requestId: dependencies.requestIdFactory(),
         }),
       ]);
-      const skill = library.skills.find((item) => item.id === skillId);
-      if (skill === undefined)
-        return errorResponse(requestId, "not_found", 404);
+      if (skill === null) return errorResponse(requestId, "not_found", 404);
 
-      const skillRevisionIds = new Set(
-        available.items
-          .filter((item) => item.skillId === skillId)
-          .map((item) => item.revisionId),
-      );
-      const latest = available.items.find((item) => item.skillId === skillId);
       const activeIds = runtime.active?.revisionIds ?? [];
       const withoutSkill = activeIds.filter((id) => !skillRevisionIds.has(id));
       let nextRevisionIds = withoutSkill;
       if (operation === "enable") {
-        if (latest === undefined)
+        if (!skillRevisionIds.has(skill.revisionId))
           return errorResponse(requestId, "state_conflict", 409);
-        nextRevisionIds = [...withoutSkill, latest.revisionId];
+        nextRevisionIds = [...withoutSkill, skill.revisionId];
       }
 
       const needsActivation =
         (operation === "enable" &&
-          (!skill.enabled ||
-            (latest !== undefined &&
-              !activeIds.includes(latest.revisionId)))) ||
+          (!skill.enabled || !activeIds.includes(skill.revisionId))) ||
         ((operation === "disable" || operation === "delete") && skill.enabled);
       if (needsActivation) {
         await dependencies.commands.applySkillSet(context, {

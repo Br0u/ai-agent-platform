@@ -8,7 +8,7 @@ from skill_registry.skill_set_schema import (
     SKILL_SET_TABLE_NAMES,
 )
 
-SKILL_REGISTRY_SCHEMA_VERSION = 8
+SKILL_REGISTRY_SCHEMA_VERSION = 9
 
 SKILL_TABLE_NAMES = frozenset(
     {
@@ -45,6 +45,7 @@ EXPECTED_RUNTIME_VIEW_GRANTS = frozenset(
 EXPECTED_MANAGER_COLUMN_GRANTS = frozenset(
     {
         ("skills", "archived_at", "UPDATE", False),
+        ("skills", "current_revision_id", "UPDATE", False),
         ("skill_revisions", "state", "UPDATE", False),
     }
 )
@@ -66,7 +67,10 @@ EXPECTED_SCHEMA_GRANTS = frozenset(
 EXPECTED_CONTROL_EVENT_TRANSACTION_COLUMN = frozenset({("transaction_id", "bigint", True, "")})
 
 EXPECTED_STORAGE_COLUMNS = frozenset(
-    {("skill_revisions", "findings", "jsonb", True, "'[]'::jsonb")}
+    {
+        ("skill_revisions", "findings", "jsonb", True, "'[]'::jsonb"),
+        ("skills", "current_revision_id", "uuid", True, ""),
+    }
 )
 
 EXPECTED_SKILL_INDEXES = frozenset({("skills_active_slug_key", True, "(archived_at IS NULL)")})
@@ -145,6 +149,7 @@ EXPECTED_FUNCTION_BOUNDARY = (
             "reject_archived_skill_activation",
             "reject_archived_skill_set_item",
             "stamp_control_event_transaction",
+            "sync_current_skill_revisions",
             "guard_agent_skill_set_update",
             "guard_active_agent_skill_set_update",
             "validate_agent_skill_set_contents",
@@ -321,6 +326,15 @@ EXPECTED_SECURITY_TRIGGERS = frozenset(
             "agent_skill_sets",
             "guard_agent_skill_set_update",
             19,
+            False,
+            False,
+            "A",
+        ),
+        (
+            "agent_skill_sets_sync_current_revisions",
+            "agent_skill_sets",
+            "sync_current_skill_revisions",
+            17,
             False,
             False,
             "A",
@@ -1231,6 +1245,105 @@ VALUES (8)
 ON CONFLICT (version) DO NOTHING;
 """
 
+SCHEMA_VERSION_9_SQL = """
+ALTER TABLE skill_registry.skills
+  ADD COLUMN current_revision_id uuid;
+
+UPDATE skill_registry.skills AS skill
+SET current_revision_id = COALESCE(
+  (
+    SELECT active_item.skill_revision_id
+    FROM skill_registry.active_agent_skill_sets AS active_set
+    JOIN skill_registry.agent_skill_set_items AS active_item
+      ON active_item.set_id = active_set.active_set_id
+    WHERE active_set.agent_id = 'maduoduo'
+      AND active_item.skill_id = skill.id
+  ),
+  (
+    SELECT revision.id
+    FROM skill_registry.skill_revisions AS revision
+    WHERE revision.skill_id = skill.id
+    ORDER BY (revision.state = 'published') DESC, revision.revision_no DESC
+    LIMIT 1
+  )
+);
+
+UPDATE skill_registry.skills AS skill
+SET archived_at = COALESCE(skill.archived_at, pg_catalog.clock_timestamp())
+FROM skill_registry.skill_revisions AS revision
+WHERE revision.id = skill.current_revision_id
+  AND revision.state <> 'published'
+  AND skill.archived_at IS NULL;
+
+ALTER TABLE skill_registry.skills
+  ALTER COLUMN current_revision_id SET NOT NULL,
+  ADD CONSTRAINT skills_current_revision_fkey
+    FOREIGN KEY (current_revision_id, id)
+    REFERENCES skill_registry.skill_revisions(id, skill_id)
+    ON DELETE RESTRICT
+    DEFERRABLE INITIALLY DEFERRED;
+
+CREATE OR REPLACE FUNCTION skill_registry.guard_skill_update()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, skill_registry
+AS $$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id
+    OR NEW.slug IS DISTINCT FROM OLD.slug
+    OR NEW.created_by IS DISTINCT FROM OLD.created_by
+    OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'skill identity fields are immutable'
+      USING ERRCODE = '42501';
+  END IF;
+  IF NEW.archived_at IS DISTINCT FROM OLD.archived_at
+    AND (OLD.archived_at IS NOT NULL OR NEW.archived_at IS NULL) THEN
+    RAISE EXCEPTION 'skill may be archived only once'
+      USING ERRCODE = '42501';
+  END IF;
+  IF OLD.archived_at IS NOT NULL
+    AND NEW.current_revision_id IS DISTINCT FROM OLD.current_revision_id THEN
+    RAISE EXCEPTION 'archived skill is immutable'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION skill_registry.sync_current_skill_revisions()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, skill_registry
+AS $$
+BEGIN
+  IF OLD.state = 'candidate' AND NEW.state = 'active' THEN
+    UPDATE skill_registry.skills AS skill
+    SET current_revision_id = item.skill_revision_id
+    FROM skill_registry.agent_skill_set_items AS item
+    WHERE item.set_id = NEW.id AND item.skill_id = skill.id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+ALTER FUNCTION skill_registry.sync_current_skill_revisions()
+  OWNER TO ai_agent_skill_registry_migrator;
+REVOKE ALL ON FUNCTION skill_registry.sync_current_skill_revisions() FROM PUBLIC;
+
+CREATE TRIGGER agent_skill_sets_sync_current_revisions
+AFTER UPDATE OF state ON skill_registry.agent_skill_sets
+FOR EACH ROW EXECUTE FUNCTION skill_registry.sync_current_skill_revisions();
+ALTER TABLE skill_registry.agent_skill_sets
+  ENABLE ALWAYS TRIGGER agent_skill_sets_sync_current_revisions;
+
+GRANT UPDATE (current_revision_id)
+  ON skill_registry.skills TO ai_agent_skill_registry_manager;
+
+INSERT INTO skill_registry.schema_versions (version)
+VALUES (9)
+ON CONFLICT (version) DO NOTHING;
+"""
+
 VERIFY_TABLES_SQL = """SELECT
   c.relname::text,
   pg_get_userbyid(c.relowner)::text
@@ -1438,6 +1551,7 @@ LEFT JOIN pg_attrdef AS d
 WHERE n.nspname = 'skill_registry'
   AND (
     (c.relname = 'skill_revisions' AND a.attname = 'findings')
+    OR (c.relname = 'skills' AND a.attname = 'current_revision_id')
     OR (
       c.relname = 'skill_control_events'
       AND a.attname IN (
