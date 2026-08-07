@@ -740,10 +740,27 @@ printf '%s\n' \
 printf '%s\n' "restore-owner-password" >"$owner_password_file"
 cat >"$manager_insert_check_file" <<'SQL'
 BEGIN;
-INSERT INTO skill_registry.skills (id, slug, created_by)
+SET CONSTRAINTS ALL DEFERRED;
+INSERT INTO skill_registry.skills (
+  id, slug, created_by, current_revision_id
+)
 VALUES (
   '00000000-0000-0000-0000-000000000091',
   'restore-role-check',
+  '00000000-0000-0000-0000-000000000092',
+  '00000000-0000-0000-0000-000000000095'
+);
+INSERT INTO skill_registry.skill_revisions (
+  id, skill_id, revision_no, state, source_type, manifest,
+  created_by
+)
+VALUES (
+  '00000000-0000-0000-0000-000000000095',
+  '00000000-0000-0000-0000-000000000091',
+  1,
+  'published',
+  'upload',
+  '{"name":"restore-role-check","description":"restore role check"}'::jsonb,
   '00000000-0000-0000-0000-000000000092'
 );
 ROLLBACK;
@@ -1171,23 +1188,47 @@ if ! run_bounded_docker \
   PGUSER=ai_agent_skill_registry_manager
   PGPASSWORD=$SKILL_REGISTRY_DATABASE_PASSWORD
   export PGUSER PGPASSWORD
-  [ "$(psql --no-psqlrc --no-password -Atqc "SELECT current_user")" = "$PGUSER" ]
+  [ "$(psql --no-psqlrc --no-password -Atqc "SELECT current_user")" = "$PGUSER" ] || {
+    echo "manager identity check failed" >&2
+    exit 1
+  }
   psql --no-psqlrc --no-password --set=ON_ERROR_STOP=1 \
-    --file=/restore/manager-insert-check.sql >/dev/null
+    --set=VERBOSITY=verbose \
+    --file=/restore/manager-insert-check.sql >/dev/null || {
+      echo "manager insert check failed" >&2
+      exit 1
+    }
 
   PGUSER=ai_agent_backup
   PGPASSWORD=$BACKUP_DATABASE_PASSWORD
   export PGUSER PGPASSWORD
-  [ "$(psql --no-psqlrc --no-password -Atqc "SELECT current_user")" = "$PGUSER" ]
+  [ "$(psql --no-psqlrc --no-password -Atqc "SELECT current_user")" = "$PGUSER" ] || {
+    echo "backup identity check failed" >&2
+    exit 1
+  }
   psql --no-psqlrc --no-password -Atqc \
-    "SELECT count(*) FROM skill_registry.skill_revisions" >/dev/null
+    "SELECT count(*) FROM skill_registry.skill_revisions" >/dev/null || {
+      echo "backup select check failed" >&2
+      exit 1
+    }
 
   PGUSER=ai_agent_skill_registry_runtime
   PGPASSWORD=$SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD
   export PGUSER PGPASSWORD
-  [ "$(psql --no-psqlrc --no-password -Atqc "SELECT current_user")" = "$PGUSER" ]
+  [ "$(psql --no-psqlrc --no-password -Atqc "SELECT current_user")" = "$PGUSER" ] || {
+    echo "runtime identity check failed" >&2
+    exit 1
+  }
 '; then
-  echo "restore drill failed registry role checks" >&2
+  positive_access_phase="$(
+    grep -Eo '(manager identity|manager insert|backup identity|backup select|runtime identity) check failed' \
+      "$docker_diagnostic_file" | tail -n 1
+  )"
+  positive_access_sqlstate="$(
+    grep -Eo '[0-9]{2}[A-Z0-9]{3}:' "$docker_diagnostic_file" |
+      tail -n 1 | tr -d ':'
+  )"
+  echo "restore drill failed registry role checks: ${positive_access_phase:-positive access}${positive_access_sqlstate:+ ($positive_access_sqlstate)}" >&2
   exit 1
 fi
 
@@ -1208,12 +1249,12 @@ if run_bounded_docker \
     --set=VERBOSITY=verbose -c \
     "DELETE FROM skill_registry.skills WHERE false" >/dev/null
 '; then
-  echo "restore drill failed registry role checks" >&2
+  echo "restore drill failed registry role checks: manager delete allowed" >&2
   exit 1
 fi
 if ! grep -q "42501" "$manager_delete_error_file" || \
    ! grep -q "permission denied" "$manager_delete_error_file"; then
-  echo "restore drill failed registry role checks" >&2
+  echo "restore drill failed registry role checks: manager delete diagnostic" >&2
   exit 1
 fi
 
@@ -1233,12 +1274,12 @@ if run_bounded_docker \
   psql --no-psqlrc --no-password --set=ON_ERROR_STOP=1 \
     --set=VERBOSITY=verbose --file=/restore/backup-insert-denied.sql >/dev/null
 '; then
-  echo "restore drill failed registry role checks" >&2
+  echo "restore drill failed registry role checks: backup insert allowed" >&2
   exit 1
 fi
 if ! grep -q "42501" "$backup_insert_error_file" || \
    ! grep -q "permission denied" "$backup_insert_error_file"; then
-  echo "restore drill failed registry role checks" >&2
+  echo "restore drill failed registry role checks: backup insert diagnostic" >&2
   exit 1
 fi
 
@@ -1259,12 +1300,12 @@ if run_bounded_docker \
     --set=VERBOSITY=verbose -c \
     "SELECT count(*) FROM skill_registry.skills" >/dev/null
 '; then
-  echo "restore drill failed registry role checks" >&2
+  echo "restore drill failed registry role checks: runtime select allowed" >&2
   exit 1
 fi
 if ! grep -q "42501" "$runtime_select_error_file" || \
    ! grep -q "permission denied" "$runtime_select_error_file"; then
-  echo "restore drill failed registry role checks" >&2
+  echo "restore drill failed registry role checks: runtime select diagnostic" >&2
   exit 1
 fi
 
@@ -1394,6 +1435,12 @@ WITH version_state AS (
          ON revision.id = file.revision_id
        WHERE revision.id IS NULL)
     + (SELECT COUNT(*)
+       FROM skill_registry.skills AS skill
+       LEFT JOIN skill_registry.skill_revisions AS revision
+         ON revision.id = skill.current_revision_id
+        AND revision.skill_id = skill.id
+       WHERE revision.id IS NULL)
+    + (SELECT COUNT(*)
        FROM skill_registry.skill_revision_artifacts AS artifact
        WHERE artifact.file_count <> (
          SELECT COUNT(*)
@@ -1412,6 +1459,7 @@ WITH version_state AS (
       ('agent_skill_set_items_reject_archived', 'agent_skill_set_items', 'reject_archived_skill_set_item', 'skill_registry', 7, false, false, 'A'),
       ('agent_skill_set_items_validate', 'agent_skill_set_items', 'validate_agent_skill_set_contents', 'skill_registry', 29, true, true, 'A'),
       ('agent_skill_sets_reject_archived_activation', 'agent_skill_sets', 'reject_archived_skill_activation', 'skill_registry', 19, false, false, 'A'),
+      ('agent_skill_sets_sync_current_revisions', 'agent_skill_sets', 'sync_current_skill_revisions', 'skill_registry', 17, false, false, 'A'),
       ('agent_skill_sets_guard_update', 'agent_skill_sets', 'guard_agent_skill_set_update', 'skill_registry', 19, false, false, 'A'),
       ('skills_guard_update', 'skills', 'guard_skill_update', 'skill_registry', 19, false, false, 'A'),
     ('skill_revisions_guard_insert', 'skill_revisions', 'guard_revision_insert', 'skill_registry', 7, false, false, 'A'),
@@ -1461,6 +1509,12 @@ WITH version_state AS (
     AND to_regclass('skill_registry.agent_skill_set_items') IS NOT NULL
     AND to_regclass('skill_registry.active_agent_skill_sets') IS NOT NULL
     AND to_regclass('skill_registry.skill_set_control_events') IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conrelid = 'skill_registry.skills'::regclass
+        AND confrelid = 'skill_registry.skill_revisions'::regclass
+        AND contype = 'f' AND convalidated
+    )
     AND EXISTS (
       SELECT 1 FROM pg_constraint
       WHERE conrelid = 'skill_registry.skill_revision_artifacts'::regclass
