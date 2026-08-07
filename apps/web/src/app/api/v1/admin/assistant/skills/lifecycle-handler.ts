@@ -95,9 +95,7 @@ function errorResponse(
       version: "1",
       requestId,
       error: { code },
-      ...(code === "reauth_required"
-        ? { redirectTo: "/staff/re-auth" }
-        : {}),
+      ...(code === "reauth_required" ? { redirectTo: "/staff/re-auth" } : {}),
     },
     { status, headers: NO_STORE },
   );
