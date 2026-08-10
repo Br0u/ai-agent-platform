@@ -980,6 +980,8 @@ ON CONFLICT (version) DO NOTHING;
 """
 
 SCHEMA_VERSION_5_SQL = """
+DROP TRIGGER skill_control_events_append_only
+  ON skill_registry.skill_control_events;
 DROP TRIGGER skill_revisions_require_review_event
   ON skill_registry.skill_revisions;
 DROP FUNCTION skill_registry.require_revision_review_event();
@@ -1020,6 +1022,12 @@ ALTER TABLE skill_registry.skill_control_events
       'revision_read'
     )
   );
+
+CREATE TRIGGER skill_control_events_append_only
+BEFORE UPDATE OR DELETE ON skill_registry.skill_control_events
+FOR EACH ROW EXECUTE FUNCTION skill_registry.deny_append_only_mutation();
+ALTER TABLE skill_registry.skill_control_events
+  ENABLE ALWAYS TRIGGER skill_control_events_append_only;
 
 CREATE OR REPLACE FUNCTION skill_registry.guard_revision_insert()
 RETURNS trigger

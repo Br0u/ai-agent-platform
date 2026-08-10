@@ -290,6 +290,27 @@ def test_archived_skills_cannot_enter_or_reenter_runtime_sets() -> None:
     assert "agent_skill_sets_reject_archived_activation" in trigger_migration
 
 
+def test_schema_v5_temporarily_removes_append_only_guard_for_review_cleanup() -> None:
+    sql = normalize_sql(SCHEMA_VERSION_5_SQL)
+
+    drop = "DROP TRIGGER skill_control_events_append_only ON skill_registry.skill_control_events"
+    delete = "DELETE FROM skill_registry.skill_control_events"
+    recreate = "CREATE TRIGGER skill_control_events_append_only"
+    assert sql.index(drop) < sql.index(delete) < sql.index(recreate)
+
+
+def test_schema_v5_recreates_revision_guards_as_always_triggers() -> None:
+    sql = normalize_sql(SCHEMA_VERSION_5_SQL)
+
+    for trigger in ("skill_revisions_guard_insert", "skill_revisions_guard_update"):
+        create = f"CREATE TRIGGER {trigger}"
+        enable = (
+            "ALTER TABLE skill_registry.skill_revisions "
+            f"ENABLE ALWAYS TRIGGER {trigger}"
+        )
+        assert sql.index(create) < sql.index(enable)
+
+
 def test_schema_has_permanent_identity_revision_and_nonce_uniqueness() -> None:
     sql = normalize_sql(SCHEMA_VERSION_1_SQL)
 
