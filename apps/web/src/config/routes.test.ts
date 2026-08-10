@@ -8,6 +8,13 @@ const requiredRoutes = [
   "/product/code-agent",
   "/product/aippt",
   "/product/aishrek",
+  "/product/model",
+  "/product/knowledge",
+  "/product/agents",
+  "/product/applications",
+  "/product/skills",
+  "/product/coding",
+  "/product/governance",
   "/product/[slug]",
   "/solutions",
   "/solutions/[slug]",
@@ -154,6 +161,29 @@ describe("routeRegistry", () => {
     }
 
     expect(matchRoute("/product/agent-studio")).toMatchObject({
+      path: "/product/[slug]",
+      status: "scaffold",
+    });
+  });
+
+  it("registers the seven platform centers before remaining product scaffolds", () => {
+    for (const path of [
+      "/product/model",
+      "/product/knowledge",
+      "/product/agents",
+      "/product/applications",
+      "/product/skills",
+      "/product/coding",
+      "/product/governance",
+    ]) {
+      expect(matchRoute(path)).toMatchObject({
+        path,
+        group: "public",
+        status: "live",
+      });
+    }
+
+    expect(matchRoute("/product/model-training")).toMatchObject({
       path: "/product/[slug]",
       status: "scaffold",
     });
