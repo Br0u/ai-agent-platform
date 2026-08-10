@@ -368,7 +368,7 @@ git commit -m "feat(home): render prototype homepage structure"
 - Modify: `apps/web/src/app/page.test.tsx`
 - Modify: `apps/web/e2e/home-reference-layout.spec.ts`
 
-- [ ] **Step 1: 先更新浏览器结构选择器**
+- [x] **Step 1: 先更新浏览器结构选择器**
 
 把旧的 `.home-platform-*`、`.home-enterprise-*`、`.home-resource-*` 断言改为：
 
@@ -379,7 +379,7 @@ git commit -m "feat(home): render prototype homepage structure"
 - `prefers-reduced-motion: reduce` 下无位移、漂浮和 reveal 动画。
 - Agent launcher 仍由 shell 渲染，位置和交互使用现有测试，不在本测试复制样式合同。
 
-- [ ] **Step 2: 运行 E2E 并确认 RED**
+- [x] **Step 2: 运行 E2E 并确认 RED**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec playwright test e2e/home-reference-layout.spec.ts
@@ -387,7 +387,7 @@ pnpm --filter @ai-agent-platform/web exec playwright test e2e/home-reference-lay
 
 Expected: FAIL，因为新 class 尚未实现。
 
-- [ ] **Step 3: 删除旧首页不再使用的 CSS**
+- [x] **Step 3: 删除旧首页不再使用的 CSS**
 
 删除只服务于旧六区首页的 selector 和 keyframe；保留以下已批准视觉基线：
 
@@ -405,11 +405,11 @@ Expected: FAIL，因为新 class 尚未实现。
 
 继续使用白色玻璃卡片、蓝紫渐变主按钮、浅蓝画布、柔和阴影、圆角卡片和现有 atmosphere/reveal 机制。不要把独立 HTML 中针对所有标签的全局覆盖选择器复制进正式站。
 
-- [ ] **Step 4: 为三个后续区块挂载 reveal 标记**
+- [x] **Step 4: 为三个后续区块挂载 reveal 标记**
 
 `agents`、`solutions`、`contact` 使用 `data-home-reveal="true"`；Hero 首屏直接出现。继续复用 `HomeRevealObserver`，不新增第二套 observer。
 
-- [ ] **Step 5: 补齐响应式和降级规则**
+- [x] **Step 5: 补齐响应式和降级规则**
 
 至少覆盖：
 
@@ -420,7 +420,7 @@ Expected: FAIL，因为新 class 尚未实现。
 @supports not (backdrop-filter: blur(1px)) { /* 不透明浅色面板回退 */ }
 ```
 
-- [ ] **Step 6: 运行首页单元测试和 E2E**
+- [x] **Step 6: 运行首页单元测试和 E2E**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/components/home-content.test.ts src/components/home-reveal.test.tsx src/app/page.test.tsx
@@ -429,7 +429,7 @@ pnpm --filter @ai-agent-platform/web exec playwright test e2e/home-reference-lay
 
 Expected: 全部通过；桌面、平板、移动端没有横向溢出和控制裁切。
 
-- [ ] **Step 7: 提交视觉实现**
+- [x] **Step 7: 提交视觉实现**
 
 ```bash
 git add apps/web/src/components/home.css apps/web/src/app/page.test.tsx apps/web/e2e/home-reference-layout.spec.ts
