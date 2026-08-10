@@ -66,6 +66,21 @@ test("keeps the prototype content contract and the shell-owned chat entry", asyn
   await expect(page.locator(".floating-assistant__launcher")).toHaveCount(1);
 });
 
+test("preserves the shell chat open, close, and workspace navigation", async ({
+  page,
+}) => {
+  await gotoHome(page);
+
+  await page.getByRole("button", { name: "打开码多多" }).click();
+  await expect(page.getByRole("dialog", { name: "码多多" })).toBeVisible();
+  await page.getByRole("button", { name: "关闭码多多", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "码多多" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "打开码多多" }).click();
+  await page.getByRole("button", { name: "展开码多多工作区" }).click();
+  await expect(page).toHaveURL(/\/assistant$/u);
+});
+
 test("keeps homepage links keyboard-accessible with usable targets", async ({
   page,
 }) => {

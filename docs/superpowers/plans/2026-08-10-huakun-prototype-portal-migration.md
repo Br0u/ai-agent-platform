@@ -444,7 +444,7 @@ git commit -m "feat(home): apply approved portal skin"
 **Files:**
 - No new source files
 
-- [ ] **Step 1: 运行完整 web 质量门槛**
+- [x] **Step 1: 运行完整 web 质量门槛**
 
 ```bash
 pnpm --filter @ai-agent-platform/web test
@@ -456,7 +456,7 @@ pnpm --filter @ai-agent-platform/web build
 
 Expected: 所有命令退出码为 0；如出现与基线无关的失败，不得把页面标记为完成。
 
-- [ ] **Step 2: 在真实浏览器验收首页与聊天入口**
+- [x] **Step 2: 在真实浏览器验收首页与聊天入口**
 
 检查 1440×1000、768×1024、390×844：
 
@@ -466,7 +466,7 @@ Expected: 所有命令退出码为 0；如出现与基线无关的失败，不�
 - 键盘焦点可见，44×44 点击目标达标。
 - reduced-motion 下内容全部可见且无位移动画。
 
-- [ ] **Step 3: 检查修改范围**
+- [x] **Step 3: 检查修改范围**
 
 ```bash
 git status --short
