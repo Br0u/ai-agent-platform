@@ -49,6 +49,8 @@ export const routeRegistry: PortalRoute[] = [
   publicRoute("/product/model-evaluation", "模型评估", "live"),
   publicRoute("/product/model-data", "数据准备", "live"),
   publicRoute("/product/model-deploy", "模型部署", "live"),
+  publicRoute("/product/agent-knowledge-base", "能力底座", "live"),
+  publicRoute("/product/knowledge-metrics", "数据源与指标", "live"),
   publicRoute("/product/[slug]", "产品模块详情"),
   publicRoute("/solutions", "解决方案", "live"),
   publicRoute("/solutions/[slug]", "解决方案详情", "live"),

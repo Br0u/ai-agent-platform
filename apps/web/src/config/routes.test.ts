@@ -22,6 +22,8 @@ const requiredRoutes = [
   "/product/model-evaluation",
   "/product/model-data",
   "/product/model-deploy",
+  "/product/agent-knowledge-base",
+  "/product/knowledge-metrics",
   "/product/[slug]",
   "/solutions",
   "/solutions/[slug]",
@@ -214,6 +216,25 @@ describe("routeRegistry", () => {
     }
 
     expect(matchRoute("/product/model-unknown")).toMatchObject({
+      path: "/product/[slug]",
+      status: "scaffold",
+    });
+  });
+
+  it("registers the capability foundation pages before remaining product scaffolds", () => {
+    expect(matchRoute("/product/agent-knowledge-base")).toEqual({
+      path: "/product/agent-knowledge-base",
+      title: "能力底座",
+      group: "public",
+      status: "live",
+    });
+    expect(matchRoute("/product/knowledge-metrics")).toEqual({
+      path: "/product/knowledge-metrics",
+      title: "数据源与指标",
+      group: "public",
+      status: "live",
+    });
+    expect(matchRoute("/product/foundation-unknown")).toMatchObject({
       path: "/product/[slug]",
       status: "scaffold",
     });
