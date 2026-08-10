@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useState, useSyncExternalStore } from "react";
 import { trialContent } from "./trial-content";
 
 type FormValues = {
@@ -14,12 +14,16 @@ type FormValues = {
 const emptyForm: FormValues = { name: "", company: "", contact: "", code: "" };
 const phonePattern = /^1[3-9]\d{9}$/;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const subscribe = () => () => {};
+const clientReady = () => true;
+const serverReady = () => false;
 
 function validContact(value: string) {
   return phonePattern.test(value) || emailPattern.test(value);
 }
 
 export function TrialExperience() {
+  const ready = useSyncExternalStore(subscribe, clientReady, serverReady);
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<FormValues>(emptyForm);
   const [demoCode, setDemoCode] = useState("");
@@ -66,7 +70,7 @@ export function TrialExperience() {
   }
 
   return (
-    <main className="trial">
+    <main className="trial" data-trial-ready={ready}>
       <section className="trial-hero">
         <div className="trial-frame trial-hero__layout">
           <div>
@@ -81,6 +85,7 @@ export function TrialExperience() {
             <div className="trial-actions">
               <button
                 className="trial-button trial-button--primary"
+                disabled={!ready}
                 onClick={() => reset(true)}
               >
                 立即填写申请
@@ -118,6 +123,7 @@ export function TrialExperience() {
           </div>
           <button
             className="trial-button trial-button--primary"
+            disabled={!ready}
             onClick={() => reset(true)}
           >
             {trialContent.cta.action}

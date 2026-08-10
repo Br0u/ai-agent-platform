@@ -130,6 +130,11 @@
   box-shadow: 0 14px 34px rgb(40 108 255 / 24%);
 }
 
+.trial-button:disabled {
+  cursor: wait;
+  opacity: 0.64;
+}
+
 .trial :is(a, button, input):focus-visible {
   outline: 3px solid var(--trial-violet);
   outline-offset: 3px;
