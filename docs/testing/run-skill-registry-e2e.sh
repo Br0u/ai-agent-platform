@@ -4,6 +4,7 @@ set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
+export PNPM_REGISTRY=${PNPM_REGISTRY:-https://registry.npmjs.org}
 
 runtime_mode=${SKILL_RUNTIME_E2E:-false}
 project=${SKILL_REGISTRY_E2E_PROJECT:-aap-skill-registry-e2e-$$}
@@ -32,6 +33,8 @@ owns_project=false
 success_message=
 original_stdout=3
 original_stderr=4
+failure_stage=initialization
+exec 3>&1 4>&2
 
 assert_zero_residue() {
   remaining_containers=$(docker ps -aq --filter "label=com.docker.compose.project=$project")
@@ -46,6 +49,8 @@ assert_zero_residue() {
 
 cleanup() {
   cleanup_status=$?
+  command_failed=false
+  [ "$cleanup_status" -eq 0 ] || command_failed=true
   trap '' INT TERM
   trap - EXIT
   cleanup_failed=false
@@ -108,6 +113,9 @@ cleanup() {
        [ -n "$failure_output" ]; then
     printf '%s\n' "$failure_output" >&$original_stderr
   fi
+  if [ "$command_failed" = true ]; then
+    printf 'Skill Registry E2E failed during: %s\n' "$failure_stage" >&$original_stderr
+  fi
   if [ "$cleanup_status" -eq 0 ] && [ -n "$success_message" ]; then
     printf '%s\n' "$success_message" >&$original_stdout
   fi
@@ -164,7 +172,6 @@ mkdir -p "$secret_directory" "$fixture_directory" "$restore_root" "$dump_directo
 chmod 700 "$temporary_directory" "$secret_directory" "$fixture_directory" "$restore_root" "$dump_directory"
 : >"$log_file"
 chmod 600 "$log_file"
-exec 3>&1 4>&2
 exec >"$log_file" 2>&1
 
 secret() {
@@ -475,8 +482,10 @@ run_skill_registry_playwright() {
       e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep "$1"
 }
 
+failure_stage=compose-validation
 compose config --quiet
 owns_project=true
+failure_stage=service-build-and-database-setup
 compose build migrate agent skill-registry web backup
 compose up -d --wait db
 run_job migrate
@@ -516,6 +525,7 @@ compose up -d --no-deps --wait agent skill-registry
 compose up -d --no-deps --wait web
 compose up -d --no-deps --wait proxy
 
+failure_stage=service-isolation-validation
 for service in db agent skill-registry web; do
   bindings=$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$(compose ps -q "$service")")
   case "$bindings" in
@@ -527,24 +537,31 @@ for service in db agent skill-registry web; do
   esac
 done
 
+failure_stage=lifecycle-acceptance
 run_skill_registry_playwright @lifecycle
 
+failure_stage=registry-restart-acceptance
 compose restart skill-registry
 compose up -d --no-deps --wait skill-registry
 run_skill_registry_playwright @restart
 
 if [ "$runtime_mode" = true ]; then
+  failure_stage=runtime-activation
   run_skill_registry_playwright @runtime-activate
   assert_skill_runtime_stream marker
+  failure_stage=agent-restart-persistence
   compose restart agent
   compose up -d --no-deps --wait agent
   assert_skill_runtime_stream marker
+  failure_stage=runtime-disable
   run_skill_registry_playwright @runtime-empty
   assert_skill_runtime_stream empty
+  failure_stage=runtime-reenable
   run_skill_registry_playwright @runtime-reenable
   assert_skill_runtime_stream marker
 fi
 
+failure_stage=final-state-validation
 state_values=$(node -e '
   const fs = require("node:fs");
   const state = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -589,6 +606,7 @@ EOF
   restore_skill_runtime_environment="RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID=$restore_active_set_id RESTORE_EXPECTED_SKILL_PREVIOUS_SET_ID=$restore_previous_set_id RESTORE_EXPECTED_SKILL_ACTIVATION_VERSION=$restore_activation_version"
 fi
 
+failure_stage=backup
 compose run --rm --no-deps backup
 backup_volume="${project}_backup_data"
 docker run --rm \
@@ -599,6 +617,7 @@ docker run --rm \
   'backup=$(find /backups -maxdepth 1 -type f -name "ai-agent-platform-*.dump.gpg" | sort | tail -n 1); test -n "$backup"; cp "$backup" /out/generated.dump.gpg; chown "$OUTPUT_UID:$OUTPUT_GID" /out/generated.dump.gpg; chmod 0600 /out/generated.dump.gpg'
 
 restore_output="$temporary_directory/restore-output.log"
+failure_stage=restore
 if ! env $restore_skill_runtime_environment \
   BACKUP_ENCRYPTION_KEY_FILE=$BACKUP_ENCRYPTION_KEY_FILE \
   BACKUP_CRYPTO_IMAGE="${project}-backup:latest" \
@@ -624,9 +643,11 @@ cat "$restore_output"
 
 # Reuse the Task 9 lifecycle gate; do not duplicate its timeout and controlled
 # failure container-reconciliation assertions here.
+failure_stage=restore-lifecycle
 docs/testing/run-restore-docker-lifecycle.sh timeout
 docs/testing/run-restore-docker-lifecycle.sh controlled-failure
 
+failure_stage=audit-leak-validation
 audit_leaks=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
   "SELECT count(*) FROM public.audit_logs WHERE metadata::text LIKE '%Skill Registry E2E local fixture.%' OR metadata::text LIKE '%hello from uploaded skill%'")
 [ "$audit_leaks" = 0 ] || {

@@ -21,6 +21,8 @@ import { describe, expect, it } from "vitest";
 
 const root = path.resolve(import.meta.dirname, "../../..");
 const read = (file: string) => readFileSync(path.join(root, file), "utf8");
+const readCiContract = () =>
+  `${read(".github/workflows/ci.yml")}\n${read("docs/testing/run-ci-gate.sh")}`;
 // Intentionally textual and conservative: comments and strings also reject tracing.
 const shellTracingDirective =
   /\bset[ \t]+(?:(?:-[A-Za-z]+[ \t]+)*-[A-Za-z]*x[A-Za-z]*(?=[^A-Za-z]|$)|(?:-[A-Za-z]+[ \t]+)*-o[ \t]+xtrace(?=[^A-Za-z]|$))/u;
@@ -1586,7 +1588,7 @@ exit 0
     expect(backupImage).toContain("coreutils");
     expect(backupImage).toContain("USER postgres");
     expect(backupImage).toContain("ENTRYPOINT");
-    const workflow = read(".github/workflows/ci.yml");
+    const workflow = readCiContract();
     expect(workflow).toContain("BACKUP_ENCRYPTION_KEY_FILE");
     expect(workflow).toContain(
       'backup_encryption_key="$(openssl rand -hex 32)"',
@@ -3201,7 +3203,7 @@ secrets:
   });
 
   it("runs the ordered, pinned AgentOS CI gates with masked fixtures", () => {
-    const workflow = read(".github/workflows/ci.yml");
+    const workflow = readCiContract();
     expect(workflow).toContain(
       "astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0",
     );
@@ -3226,12 +3228,11 @@ secrets:
       "Generate masked authentication and AgentOS fixtures",
       "Initialize least-privilege database roles",
       "db:prepare",
-      "Bootstrap Agno roles twice",
-      "Bootstrap Agent control roles twice",
+      "sh infra/postgres/03-agno-roles.sh",
+      "sh infra/postgres/04-agent-control-roles.sh",
       "uv --directory apps/agent sync --frozen",
-      "Run Agno migration twice",
-      "Run Agent control migration twice",
-      "agno-role-boundary.integration.test.ts",
+      "python -m agent_service.migrate",
+      "python -m agent_service.model_config_migrate",
       "uv --directory apps/agent run pytest",
       "uv --directory apps/agent run ruff check",
       "uv --directory apps/agent run mypy",
@@ -3241,6 +3242,7 @@ secrets:
     for (const gate of orderedGates) {
       expect(workflow).toContain(gate);
     }
+    expect(workflow).toContain("agno-role-boundary.integration.test.ts");
     for (const [previous, next] of orderedGates
       .slice(0, -1)
       .map((gate, index) => [gate, orderedGates[index + 1]] as const)) {
@@ -3258,8 +3260,35 @@ secrets:
     ).toHaveLength(2);
   });
 
-  it("runs the complete Skill Registry CI contract with isolated credentials", () => {
+  it("shares CI gates with local preflight", () => {
     const workflow = read(".github/workflows/ci.yml");
+    const runner = read("docs/testing/run-ci-gate.sh");
+    const packageScripts = JSON.parse(read("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+
+    expect(packageScripts.scripts?.["ci:fast"]).toBe(
+      "sh docs/testing/run-ci-gate.sh fast",
+    );
+    expect(packageScripts.scripts?.["ci:full"]).toBe(
+      "sh docs/testing/run-ci-gate.sh full",
+    );
+    expect(workflow).toContain("fail-fast: false");
+    for (const gate of ["web", "agent", "registry", "database", "deployment"]) {
+      expect(workflow).toContain(`- gate: ${gate}`);
+      expect(runner).toMatch(new RegExp(`(^|\\n)  ${gate}\\)`, "u"));
+    }
+    expect(workflow).toContain(
+      'run: sh docs/testing/run-ci-gate.sh "${{ matrix.gate }}"',
+    );
+    expect(workflow).not.toContain("needs: quality");
+    expect(runner).toContain("require_full_environment");
+    expect(runner).toContain("SKILL_REGISTRY_TEST_DATABASE_URL");
+    expect(runner).toContain("ROLE_BOUNDARY_DATABASE_URL");
+  });
+
+  it("runs the complete Skill Registry CI contract with isolated credentials", () => {
+    const workflow = readCiContract();
     const packageScripts = JSON.parse(read("package.json")) as {
       scripts?: Record<string, string>;
     };
@@ -3294,7 +3323,7 @@ secrets:
       "uv --directory apps/skill-registry run ruff check .",
       "uv --directory apps/skill-registry run mypy src tests",
       "docker build -t skill-registry-ci -f apps/skill-registry/Dockerfile .",
-      "docker inspect skill-registry-ci-smoke",
+      "container=skill-registry-ci-smoke",
       "--read-only",
       "/internal/health/ready",
       "/etc/aap/skill-runtime-imports.json",
@@ -3302,19 +3331,19 @@ secrets:
       expect(workflow).toContain(gate);
     }
     expect(workflow).toMatch(
-      /docker run[\s\S]*--name skill-registry-ci-smoke[\s\S]*--read-only/,
+      /docker run[\s\S]*--name "\$container"[\s\S]*--read-only/,
     );
     expect(workflow).toContain(
-      "docker exec skill-registry-ci-smoke sh -c 'test \"$(id -u):$(id -g)\" = 10002:10002'",
+      'docker exec "$container" sh -c \'test "$(id -u):$(id -g)" = 10002:10002\'',
     );
     expect(workflow).toContain(
-      "readonly_rootfs=\"$(docker inspect skill-registry-ci-smoke --format '{{.HostConfig.ReadonlyRootfs}}')\"",
+      "readonly_rootfs=$(docker inspect \"$container\" --format '{{.HostConfig.ReadonlyRootfs}}')",
     );
     expect(workflow).toContain(
-      "port_bindings=\"$(docker inspect skill-registry-ci-smoke --format '{{json .HostConfig.PortBindings}}')\"",
+      "port_bindings=$(docker inspect \"$container\" --format '{{json .HostConfig.PortBindings}}')",
     );
     expect(workflow).toContain(
-      `[ "$readonly_rootfs" != true ] || { [ "$port_bindings" != null ] && [ "$port_bindings" != '{}' ]; }`,
+      `[ "$readonly_rootfs" = true ] && { [ "$port_bindings" = null ] || [ "$port_bindings" = '{}' ]; }`,
     );
     expect(workflow).toContain("docker run --rm agent-service-ci python -c");
     expect(workflow).toContain(
@@ -3765,7 +3794,7 @@ cleanup
   });
 
   it("gates startup and every isolated browser acceptance chain in CI", () => {
-    const workflow = read(".github/workflows/ci.yml");
+    const workflow = readCiContract();
     const experience = read("docs/testing/run-assistant-experience-e2e.sh");
     const identity = read("docs/testing/run-identity-access-e2e.sh");
 
@@ -4621,7 +4650,7 @@ exit 0
   });
 
   it("defines the pinned PostgreSQL-backed CI and browser gates", () => {
-    const workflow = read(".github/workflows/ci.yml");
+    const workflow = readCiContract();
     expect(workflow).toContain("permissions:\n  contents: read");
     expect(workflow).toContain("node-version: 24");
     expect(workflow).toContain("version: 11.5.2");
@@ -4645,7 +4674,7 @@ exit 0
     expect(workflow).toContain("docker network create");
     expect(workflow).toContain("--network-alias web");
     expect(workflow).toContain("-e ALLOW_LOCAL_VALIDATION_HOSTS=false");
-    expect(workflow).toContain("trap cleanup EXIT");
+    expect(workflow).toContain("trap cleanup_nginx EXIT INT TERM");
     expect(workflow).toContain('docker network rm "$network"');
     expect(workflow).toMatch(
       /docker run --rm --network[\s\S]*nginx:1\.28\.3-alpine3\.23 nginx -t/u,
@@ -4850,7 +4879,7 @@ exit 0
   });
 
   it("uses a migration-safe CI database and initializes privilege roles first", () => {
-    const workflow = read(".github/workflows/ci.yml");
+    const workflow = readCiContract();
     expect(workflow).toContain("ai_agent_platform_identity_test_ci");
     expect(workflow).toContain("ai_agent_platform_ci");
     expect(workflow).toContain(
@@ -4864,10 +4893,10 @@ exit 0
       'DATABASE_URL="$MIGRATOR_DATABASE_URL" pnpm --filter @ai-agent-platform/database db:prepare',
     );
     expect(workflow).toContain(
-      'DATABASE_URL="$MIGRATOR_DATABASE_URL" pnpm --filter @ai-agent-platform/database db:seed-auth-e2e',
+      'DATABASE_URL="$MIGRATOR_DATABASE_URL" NODE_ENV=test pnpm --filter @ai-agent-platform/database db:seed-auth-e2e',
     );
-    expect(workflow).toContain(
-      'DATABASE_URL="$RUNTIME_DATABASE_URL" pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-smoke.spec.ts',
+    expect(workflow).toMatch(
+      /DATABASE_URL="\$RUNTIME_DATABASE_URL"[\s\\\n]+pnpm --filter @ai-agent-platform\/web exec playwright test e2e\/auth-smoke\.spec\.ts/u,
     );
     expect(workflow).toMatch(
       /MIGRATOR_DATABASE_URL=postgresql:\/\/ai_agent_migrator:[^\n]*\/ai_agent_platform_identity_test_ci/u,

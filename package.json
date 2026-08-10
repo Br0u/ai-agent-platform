@@ -16,6 +16,8 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "pnpm -r --if-present lint",
     "format:check": "pnpm -r --if-present format:check",
+    "ci:fast": "sh docs/testing/run-ci-gate.sh fast",
+    "ci:full": "sh docs/testing/run-ci-gate.sh full",
     "agent:test": "uv --directory apps/agent run pytest -q",
     "agent:lint": "uv --directory apps/agent run ruff check .",
     "agent:typecheck": "uv --directory apps/agent run mypy src tests",

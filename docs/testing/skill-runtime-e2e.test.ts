@@ -44,6 +44,10 @@ for (const evidence of [
   "assert_skill_runtime_stream marker",
   "assert_skill_runtime_stream empty",
   "RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID",
+  "Skill Registry E2E failed during: %s",
+  "failure_stage=registry-restart-acceptance",
+  "failure_stage=agent-restart-persistence",
+  "PNPM_REGISTRY=${PNPM_REGISTRY:-https://registry.npmjs.org}",
 ]) {
   assert(
     sharedRunner.includes(evidence),
