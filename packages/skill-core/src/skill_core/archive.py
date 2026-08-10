@@ -203,6 +203,7 @@ def _read_validated_files(
             "Every file must belong to the single skill root",
         )
 
+    validated_size = 0
     extracted_size = 0
     result: list[SkillFile] = []
     for full_path, info, data_offset, entry_bound, is_directory, ignored in member_infos:
@@ -211,9 +212,9 @@ def _read_validated_files(
             info,
             data_offset,
             entry_bound,
-            extracted_size,
+            validated_size,
         )
-        extracted_size += actual_size
+        validated_size += actual_size
         if is_directory:
             if content:
                 raise SkillPackageError(
@@ -222,6 +223,7 @@ def _read_validated_files(
             continue
         if ignored:
             continue
+        extracted_size += actual_size
         relative_path = full_path[len(slug) + 1 :]
         _reject_git_lfs_pointer(relative_path, content)
         _reject_nested_archive(relative_path, content)
