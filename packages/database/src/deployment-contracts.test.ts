@@ -3282,6 +3282,7 @@ secrets:
       'run: sh docs/testing/run-ci-gate.sh "${{ matrix.gate }}"',
     );
     expect(workflow).not.toContain("needs: quality");
+    expect(workflow).not.toContain("if: matrix.gate != 'web'");
     expect(runner).toContain("require_full_environment");
     expect(runner).toContain("SKILL_REGISTRY_TEST_DATABASE_URL");
     expect(runner).toContain("ROLE_BOUNDARY_DATABASE_URL");

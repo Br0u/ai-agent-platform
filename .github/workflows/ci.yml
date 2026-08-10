@@ -58,7 +58,6 @@ jobs:
             apps/skill-registry/uv.lock
       - run: pnpm install --frozen-lockfile
       - name: Generate masked authentication and AgentOS fixtures
-        if: matrix.gate != 'web'
         shell: bash
         run: |
           for name in POSTGRES_PASSWORD MIGRATOR_DATABASE_PASSWORD RUNTIME_DATABASE_PASSWORD BACKUP_DATABASE_PASSWORD \
@@ -106,7 +105,6 @@ jobs:
           echo "SKILL_REGISTRY_DATABASE_URL=$skill_registry_manager_url" >> "$GITHUB_ENV"
           echo "SKILL_REGISTRY_RUNTIME_DATABASE_URL=$skill_registry_runtime_url" >> "$GITHUB_ENV"
       - name: Create isolated CI databases
-        if: matrix.gate != 'web'
         shell: bash
         env:
           PGHOST: 127.0.0.1
@@ -116,7 +114,6 @@ jobs:
           psql --set=ON_ERROR_STOP=1 --command="CREATE DATABASE ai_agent_platform_identity_test_ci"
           psql --set=ON_ERROR_STOP=1 --command="CREATE DATABASE ai_agent_platform_identity_test_integration"
       - name: Initialize least-privilege database roles
-        if: matrix.gate != 'web'
         shell: bash
         env:
           POSTGRES_USER: ai_agent_owner
