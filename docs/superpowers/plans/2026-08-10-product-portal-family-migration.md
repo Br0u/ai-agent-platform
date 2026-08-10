@@ -314,6 +314,6 @@ git diff --cached --check
 git commit -m "test(products): 验收原型产品页族"
 ```
 
-- [ ] **Step 5: 下一批进入元启平台子中心**
+- [x] **Step 5: 下一批进入元启平台子中心**
 
 下一份计划从原型 `model → knowledge → agents → applications → skills → coding → governance` 开始；先检查现有 `/product/[slug]` 与独立旧页，再决定是使用显式页面还是类型化动态渲染。
