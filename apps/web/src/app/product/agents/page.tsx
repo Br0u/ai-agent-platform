@@ -1,4 +1,5 @@
 import { getPlatformCenter } from "@/components/platform-center-content";
+import { PlatformCenterDetail } from "@/components/platform-center-detail";
 import type { Metadata } from "next";
 
 const center = getPlatformCenter("agents")!;
@@ -9,9 +10,5 @@ export const metadata: Metadata = {
 };
 
 export default function AgentsCenterPage() {
-  return (
-    <main>
-      <h1>{center.hero.title}</h1>
-    </main>
-  );
+  return <PlatformCenterDetail slug="agents" />;
 }
