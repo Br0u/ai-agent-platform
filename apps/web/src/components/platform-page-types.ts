@@ -24,6 +24,11 @@ export type PlatformPage = {
     lead?: string;
     body?: string;
     visual?: string;
+    demo?: {
+      title: string;
+      messages: readonly string[];
+      note?: string;
+    };
     flow?: readonly string[];
     note?: string;
     actions?: readonly PortalAction[];
@@ -56,6 +61,7 @@ export type PlatformPage = {
         points?: readonly string[];
         visual?: string;
       }[];
+      flow?: readonly string[];
       visual?: string;
     }[];
   }[];
@@ -72,7 +78,7 @@ export type PlatformPage = {
       note?: string;
     };
     reason: readonly string[];
-    workflowLabel: string;
+    workflowLabel?: string;
     workflow?: readonly string[];
     outcomes: readonly { title: string; description: string }[];
     scenesLead: string;
