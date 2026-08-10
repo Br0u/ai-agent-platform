@@ -11,6 +11,16 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - gate: web
+          - gate: agent
+          - gate: registry
+          - gate: database
+          - gate: deployment
     services:
       postgres:
         image: postgres:18
@@ -83,13 +93,9 @@ jobs:
           skill_registry_migrator_url="postgresql+psycopg_async://ai_agent_skill_registry_migrator:${SKILL_REGISTRY_MIGRATOR_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
           skill_registry_manager_url="postgresql+psycopg_async://ai_agent_skill_registry_manager:${SKILL_REGISTRY_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
           skill_registry_runtime_url="postgresql+psycopg_async://ai_agent_skill_registry_runtime:${SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD}@127.0.0.1:5432/ai_agent_platform_identity_test_ci"
-          echo "::add-mask::$agno_migrator_url"
-          echo "::add-mask::$agno_runtime_url"
-          echo "::add-mask::$agent_control_migrator_url"
-          echo "::add-mask::$agent_control_runtime_url"
-          echo "::add-mask::$skill_registry_migrator_url"
-          echo "::add-mask::$skill_registry_manager_url"
-          echo "::add-mask::$skill_registry_runtime_url"
+          for value in "$agno_migrator_url" "$agno_runtime_url" "$agent_control_migrator_url" "$agent_control_runtime_url" "$skill_registry_migrator_url" "$skill_registry_manager_url" "$skill_registry_runtime_url"; do
+            echo "::add-mask::$value"
+          done
           echo "AGNO_MIGRATOR_DATABASE_URL=$agno_migrator_url" >> "$GITHUB_ENV"
           echo "AGNO_DATABASE_URL=$agno_runtime_url" >> "$GITHUB_ENV"
           echo "AGENT_CONTROL_MIGRATOR_DATABASE_URL=$agent_control_migrator_url" >> "$GITHUB_ENV"
@@ -112,167 +118,34 @@ jobs:
         env:
           POSTGRES_USER: ai_agent_owner
           POSTGRES_DB: ai_agent_platform_identity_test_ci
+          POSTGRES_HOST: 127.0.0.1
           PGHOST: 127.0.0.1
           ROLE_SQL_FILE: infra/postgres/01-roles.sql
-        run: sh infra/postgres/01-roles.sh
-      - run: DATABASE_URL="$MIGRATOR_DATABASE_URL" pnpm --filter @ai-agent-platform/database db:prepare
-      - name: Bootstrap Agno roles twice
-        shell: bash
-        env:
-          POSTGRES_HOST: 127.0.0.1
-          POSTGRES_USER: ai_agent_owner
-          POSTGRES_DB: ai_agent_platform_identity_test_ci
           AGNO_ROLE_SQL_FILE: infra/postgres/03-agno-roles.sql
-        run: |
-          sh infra/postgres/03-agno-roles.sh
-          sh infra/postgres/03-agno-roles.sh
-      - name: Bootstrap Agent control roles twice
-        shell: bash
-        env:
-          POSTGRES_HOST: 127.0.0.1
-          POSTGRES_USER: ai_agent_owner
-          POSTGRES_DB: ai_agent_platform_identity_test_ci
           AGENT_CONTROL_ROLE_SQL_FILE: infra/postgres/04-agent-control-roles.sql
-        run: |
-          sh infra/postgres/04-agent-control-roles.sh
-          sh infra/postgres/04-agent-control-roles.sh
-      - name: Bootstrap Skill Registry roles twice
-        shell: bash
-        env:
-          POSTGRES_HOST: 127.0.0.1
-          POSTGRES_USER: ai_agent_owner
-          POSTGRES_DB: ai_agent_platform_identity_test_ci
-          POSTGRES_PASSWORD: unused-trust-fixture
           SKILL_REGISTRY_ROLE_SQL_FILE: infra/postgres/05-skill-registry-roles.sql
+          POSTGRES_PASSWORD: unused-trust-fixture
         run: |
+          sh infra/postgres/01-roles.sh
+          DATABASE_URL="$MIGRATOR_DATABASE_URL" pnpm --filter @ai-agent-platform/database db:prepare
+          sh infra/postgres/03-agno-roles.sh
+          sh infra/postgres/03-agno-roles.sh
+          sh infra/postgres/04-agent-control-roles.sh
+          sh infra/postgres/04-agent-control-roles.sh
           sh infra/postgres/05-skill-registry-roles.sh
           sh infra/postgres/05-skill-registry-roles.sh
-      - name: Sync locked AgentOS dependencies
-        run: uv --directory apps/agent sync --frozen
-      - name: Run Agno migration twice
-        shell: bash
-        run: |
+          uv --directory apps/agent sync --frozen
           uv --directory apps/agent run python -m agent_service.migrate
           uv --directory apps/agent run python -m agent_service.migrate
-      - name: Run Agent control migration twice
-        shell: bash
-        run: |
           uv --directory apps/agent run python -m agent_service.model_config_migrate
           uv --directory apps/agent run python -m agent_service.model_config_migrate
-      - name: Run Skill Registry migration twice
-        shell: bash
-        run: |
           uv --directory apps/skill-registry run python -m skill_registry.migrate
           uv --directory apps/skill-registry run python -m skill_registry.migrate
-      - name: Verify Agno role-boundary and backup grants
-        run: pnpm --filter @ai-agent-platform/database exec vitest run src/agno-role-boundary.integration.test.ts
-      - name: Run AgentOS Python gates
+      - name: Run shared quality gate
         shell: bash
-        run: |
-          uv --directory apps/agent run pytest
-          uv --directory apps/agent run ruff check .
-          uv --directory apps/agent run mypy src tests
-      - name: Run Skill package and Registry Python gates
-        shell: bash
-        run: |
-          uv --directory packages/skill-core run pytest -q
-          uv --directory packages/skill-core run ruff check .
-          uv --directory packages/skill-core run mypy src tests
-          uv --directory apps/skill-registry run pytest -q -rs
-          uv --directory apps/skill-registry run ruff check .
-          uv --directory apps/skill-registry run mypy src tests
-      - run: docker build -t agent-service-ci -f apps/agent/Dockerfile .
-      - run: docker run --rm agent-service-ci uvicorn --version
-      - name: Import the exact Skill runtime allowlist in the Agent image
-        shell: bash
-        run: |
-          docker run --rm agent-service-ci python -c "import importlib,json,pathlib; manifest=json.loads(pathlib.Path('/etc/aap/skill-runtime-imports.json').read_text()); assert manifest == {'version': 1, 'pythonModules': ['agno', 'cryptography', 'pydantic']}; [importlib.import_module(name) for name in manifest['pythonModules']]"
-      - name: Build and smoke the private Skill Registry image
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker build -t skill-registry-ci -f apps/skill-registry/Dockerfile .
-          manager_url="${SKILL_REGISTRY_DATABASE_URL/127.0.0.1/host.docker.internal}"
-          cleanup_registry_smoke() {
-            docker rm -f skill-registry-ci-smoke >/dev/null 2>&1 || true
-          }
-          trap cleanup_registry_smoke EXIT
-          docker run -d --name skill-registry-ci-smoke --read-only \
-            --tmpfs /tmp:rw,noexec,nosuid,size=32m \
-            --add-host host.docker.internal:host-gateway \
-            -e SKILL_REGISTRY_DATABASE_URL="$manager_url" \
-            -e SKILL_REGISTRY_CONTROL_KEY="$SKILL_REGISTRY_CONTROL_KEY" \
-            -e SKILL_RUNTIME_IMPORTS_FILE=/etc/aap/skill-runtime-imports.json \
-            skill-registry-ci
-          ready=false
-          for attempt in {1..30}; do
-            readiness="$(docker exec skill-registry-ci-smoke python -c "import json,urllib.request; response=urllib.request.urlopen('http://127.0.0.1:7788/internal/health/ready',timeout=2); payload=json.load(response); response.close(); assert payload == {'live': True, 'ready': True}; print('ready')" 2>/dev/null || printf 'not-ready')"
-            if [ "$readiness" = "ready" ]; then
-              ready=true
-              break
-            fi
-            sleep 1
-          done
-          if [ "$ready" != true ]; then
-            printf '%s\n' "Skill Registry readiness probe timed out after 30 attempts" >&2
-            docker logs skill-registry-ci-smoke
-            exit 1
-          fi
-          docker exec skill-registry-ci-smoke sh -c 'test "$(id -u):$(id -g)" = 10002:10002'
-          readonly_rootfs="$(docker inspect skill-registry-ci-smoke --format '{{.HostConfig.ReadonlyRootfs}}')"
-          port_bindings="$(docker inspect skill-registry-ci-smoke --format '{{json .HostConfig.PortBindings}}')"
-          if [ "$readonly_rootfs" != true ] || { [ "$port_bindings" != null ] && [ "$port_bindings" != '{}' ]; }; then
-            printf '%s\n' "Skill Registry smoke container security flags are invalid" >&2
-            exit 1
-          fi
-      - run: docker build -t backup-service-ci -f infra/docker/backup.Dockerfile .
-      - run: docker run --rm --entrypoint gpg backup-service-ci --version
-      - run: pnpm test
-      - run: pnpm typecheck
-      - run: pnpm lint
-      - run: pnpm format:check
-      - name: Verify isolated Skill runtime acceptance contract
-        run: node docs/testing/skill-runtime-e2e.test.ts
-      - run: pnpm build
-      - name: Verify Assistant startup acceptance
-        run: pnpm --filter @ai-agent-platform/web test:assistant-startup
-      - run: pnpm restore:lifecycle:test
-      - run: DATABASE_URL="$MIGRATOR_DATABASE_URL" pnpm --filter @ai-agent-platform/database db:seed-auth-e2e
-        env:
-          NODE_ENV: test
-      - run: pnpm --filter @ai-agent-platform/web exec playwright install --with-deps chromium
-      - name: Run isolated Skill runtime acceptance
-        env:
-          RUN_SKILL_RUNTIME_E2E: "true"
-          SKILL_RUNTIME_E2E_PROJECT: aap-skill-runtime-e2e-${{ github.run_id }}-${{ github.run_attempt }}
-        run: bash docs/testing/run-skill-runtime-e2e.sh
-      - name: Run isolated backup and restore acceptance
-        run: bash docs/testing/run-agentos-backup-restore.sh
-      - run: DATABASE_URL="$RUNTIME_DATABASE_URL" pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-smoke.spec.ts
-      - run: docker build --target migrator -f apps/web/Dockerfile .
-      - run: docker build --target runner -f apps/web/Dockerfile .
-      - name: Validate Nginx configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          network="aap-nginx-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          upstream="aap-nginx-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          cleanup() {
-            docker rm -f "$upstream" >/dev/null 2>&1 || true
-            docker network rm "$network" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-          docker network create "$network"
-          docker run -d --name "$upstream" --network "$network" --network-alias web nginx:1.28.3-alpine3.23
-          docker run --rm --network "$network" \
-            -e PUBLIC_HOST=127.0.0.1 \
-            -e ALLOW_LOCAL_VALIDATION_HOSTS=false \
-            -v "$PWD/infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
-            -v "$PWD/infra/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro" \
-            nginx:1.28.3-alpine3.23 nginx -t
+        run: sh docs/testing/run-ci-gate.sh "${{ matrix.gate }}"
 
   isolated-acceptance:
-    needs: quality
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:

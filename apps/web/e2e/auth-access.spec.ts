@@ -304,15 +304,10 @@ test.describe("shared authorization state", () => {
     const reusePage = await reuse.newPage();
     await beginAdminChallenge(reusePage);
     await reusePage.getByLabel("恢复码").fill(recoveryCode);
-    const deniedPromise = reusePage.waitForResponse(
-      (response) =>
-        response.request().method() === "POST" &&
-        typeof response.request().headers()["next-action"] === "string",
-    );
     await reusePage.getByRole("button", { name: "使用恢复码" }).click();
-    const denied = await deniedPromise;
-    expect(denied.status()).toBe(200);
-    expect(await denied.text()).toContain("AUTH_INVALID_CREDENTIALS");
+    await expect(
+      reusePage.getByText("恢复码无效或已使用。", { exact: true }),
+    ).toBeVisible();
     await reuse.close();
   });
 
