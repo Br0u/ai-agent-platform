@@ -1,10 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import {
-  getPlatformCenter,
-  type PlatformCenter,
-} from "./platform-center-content";
+import { getPlatformCenter } from "./platform-center-content";
+import type { PlatformPage } from "./platform-page-types";
 import type { PortalAction } from "./product-portal-content";
 import "./product-portal.css";
 
@@ -74,7 +72,7 @@ function Visual({
 function Card({
   card,
 }: {
-  card: NonNullable<PlatformCenter["sections"][number]["cards"]>[number];
+  card: NonNullable<PlatformPage["sections"][number]["cards"]>[number];
 }) {
   return (
     <article
@@ -119,7 +117,7 @@ function ContentSection({
   slug,
 }: {
   index: number;
-  section: PlatformCenter["sections"][number];
+  section: PlatformPage["sections"][number];
   slug: string;
 }) {
   const headingId = `platform-center-${slug}-${index}-title`;
@@ -229,7 +227,7 @@ function ContentSection({
 function BusinessSection({
   business,
 }: {
-  business: NonNullable<PlatformCenter["business"]>;
+  business: NonNullable<PlatformPage["business"]>;
 }) {
   return (
     <section
