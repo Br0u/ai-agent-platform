@@ -1051,8 +1051,8 @@ const codingSubpages = [
       ],
     },
   },
-] satisfies readonly PlatformPage[];
+] as const satisfies readonly PlatformPage[];
 
-export function getCodingSubpage(slug: string) {
+export function getCodingSubpage(slug: string): PlatformPage | undefined {
   return codingSubpages.find((page) => page.slug === slug);
 }

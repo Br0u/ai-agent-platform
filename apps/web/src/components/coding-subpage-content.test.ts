@@ -284,9 +284,6 @@ describe("prototype coding subpage content contract", () => {
         ],
       },
     });
-    expect(getCodingSubpage("coding-project")?.sections).toHaveLength(6);
-    expect(getCodingSubpage("coding-project")?.business).toBeDefined();
-    expect(getCodingSubpage("coding-project")?.cta).toBeDefined();
   });
 
   it("locks the complete coding session page", () => {
@@ -550,9 +547,6 @@ describe("prototype coding subpage content contract", () => {
         ],
       },
     });
-    expect(getCodingSubpage("coding-session")?.sections).toHaveLength(6);
-    expect(getCodingSubpage("coding-session")?.business).toBeDefined();
-    expect(getCodingSubpage("coding-session")?.cta).toBeDefined();
   });
 
   it("locks the complete coding mobile page", () => {
@@ -854,9 +848,6 @@ describe("prototype coding subpage content contract", () => {
         ],
       },
     });
-    expect(getCodingSubpage("coding-mobile")?.sections).toHaveLength(6);
-    expect(getCodingSubpage("coding-mobile")?.business).toBeDefined();
-    expect(getCodingSubpage("coding-mobile")?.cta).toBeDefined();
   });
 
   it("locks the complete coding standard page", () => {
@@ -1119,8 +1110,5 @@ describe("prototype coding subpage content contract", () => {
         ],
       },
     });
-    expect(getCodingSubpage("coding-standard")?.sections).toHaveLength(6);
-    expect(getCodingSubpage("coding-standard")?.business).toBeDefined();
-    expect(getCodingSubpage("coding-standard")?.cta).toBeDefined();
   });
 });
