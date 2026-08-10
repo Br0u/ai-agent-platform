@@ -68,7 +68,7 @@
 - Create: `apps/web/src/components/product-portal-content.test.ts`
 - Create: `apps/web/src/components/product-portal-content.ts`
 
-- [ ] **Step 1: 先写五个页面的内容失败测试**
+- [x] **Step 1: 先写五个页面的内容失败测试**
 
 至少锁定：
 
@@ -89,7 +89,7 @@ expect(getStandaloneProduct("unknown")).toBeUndefined();
 
 三个详情页分别锁定 3 个产品介绍卡、4 个能力模块、核心体验流程、3 个应用场景和最终 CTA。
 
-- [ ] **Step 2: 运行测试并确认 RED**
+- [x] **Step 2: 运行测试并确认 RED**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/components/product-portal-content.test.ts
@@ -97,15 +97,15 @@ pnpm --filter @ai-agent-platform/web exec vitest run src/components/product-port
 
 Expected: FAIL，内容模块尚不存在。
 
-- [ ] **Step 3: 写最小类型化内容模块**
+- [x] **Step 3: 写最小类型化内容模块**
 
 - 内容只从五个原型页面迁移，不使用现有旧 `/product` 或旧码多多页文案补写。
 - 原型 `data-page` 统一转为正式 href；本批详情使用显式路由，后续元启子中心使用语义 scaffold 路由。
 - 不为未知 slug 提供回退内容。
 
-- [ ] **Step 4: 运行内容测试并确认 GREEN**
+- [x] **Step 4: 运行内容测试并确认 GREEN**
 
-- [ ] **Step 5: 提交内容合同**
+- [x] **Step 5: 提交内容合同**
 
 ```bash
 git add apps/web/src/components/product-portal-content.ts apps/web/src/components/product-portal-content.test.ts
@@ -123,7 +123,7 @@ git commit -m "feat(products): 锁定原型产品页内容"
 - Create: `apps/web/src/app/product/aippt/page.tsx`
 - Create: `apps/web/src/app/product/aishrek/page.tsx`
 
-- [ ] **Step 1: 先写路由失败测试**
+- [x] **Step 1: 先写路由失败测试**
 
 在 `/product/[slug]` 前加入并锁定：
 
@@ -136,17 +136,17 @@ git commit -m "feat(products): 锁定原型产品页内容"
 
 四个显式路由必须为 `live`；`/product/agent-studio` 继续匹配 `/product/[slug]` 且保持 `scaffold`。
 
-- [ ] **Step 2: 运行路由测试并确认 RED**
+- [x] **Step 2: 运行路由测试并确认 RED**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/config/routes.test.ts src/config/route-files.test.ts
 ```
 
-- [ ] **Step 3: 注册路由并创建最小显式入口**
+- [x] **Step 3: 注册路由并创建最小显式入口**
 
-- [ ] **Step 4: 运行路由测试并确认 GREEN**
+- [x] **Step 4: 运行路由测试并确认 GREEN**
 
-- [ ] **Step 5: 提交路由合同**
+- [x] **Step 5: 提交路由合同**
 
 ```bash
 git add apps/web/src/config/routes.ts apps/web/src/config/routes.test.ts apps/web/src/app/product/standalone/page.tsx apps/web/src/app/product/aippt/page.tsx apps/web/src/app/product/aishrek/page.tsx
@@ -167,25 +167,25 @@ git commit -m "feat(products): 注册独立产品路由"
 - Delete: `apps/web/src/components/product-sections.tsx`
 - Delete: `apps/web/src/components/product.css`
 
-- [ ] **Step 1: 写产品总览失败测试**
+- [x] **Step 1: 写产品总览失败测试**
 
 覆盖 Hero 原文、双路径标签、3 个核心问题、4 步落地链路、智能体重点卡、5 个非空元启中心、3 个独立产品和收口 CTA。页面内不得出现 `.floating-assistant`。
 
-- [ ] **Step 2: 运行测试并确认 RED**
+- [x] **Step 2: 运行测试并确认 RED**
 
-- [ ] **Step 3: 实现总览页与 metadata**
+- [x] **Step 3: 实现总览页与 metadata**
 
 保留原型顺序：Hero → 三个问题 → 全链路 → 元启中心 → 独立产品 → 业务价值 → CTA。原型空的 `<article class="center-row">` 不渲染，因其不承载任何内容。
 
-- [ ] **Step 4: 写共用产品门户 CSS**
+- [x] **Step 4: 写共用产品门户 CSS**
 
 复用已批准的浅蓝画布、白色玻璃卡片、蓝紫 CTA，且覆盖 900px、700px、`prefers-reduced-motion`、无 `backdrop-filter` 回退。
 
-- [ ] **Step 5: 确认旧总览组件无其他调用后直接删除**
+- [x] **Step 5: 确认旧总览组件无其他调用后直接删除**
 
-- [ ] **Step 6: 运行页面测试、类型和 lint**
+- [x] **Step 6: 运行页面测试、类型和 lint**
 
-- [ ] **Step 7: 提交产品总览**
+- [x] **Step 7: 提交产品总览**
 
 ```bash
 git add apps/web/src/app/product/page.tsx apps/web/src/components/product-portal-overview.tsx apps/web/src/components/product-portal-overview.test.tsx apps/web/src/components/product-portal.css apps/web/src/components/product-sections.tsx apps/web/src/components/product.css
@@ -201,15 +201,15 @@ git commit -m "feat(products): 迁移原型产品总览"
 - Create: `apps/web/src/components/standalone-product-center.tsx`
 - Modify: `apps/web/src/app/product/standalone/page.tsx`
 
-- [ ] **Step 1: 写中心页失败测试**
+- [x] **Step 1: 写中心页失败测试**
 
 覆盖 3 个产品卡、码多多“优先推荐”、4 列选型表、与元启的 2 种关系和 2 个收口 CTA。
 
-- [ ] **Step 2: 确认 RED 后实现语义表格与页面**
+- [x] **Step 2: 确认 RED 后实现语义表格与页面**
 
-- [ ] **Step 3: 运行页面、内容和类型测试**
+- [x] **Step 3: 运行页面、内容和类型测试**
 
-- [ ] **Step 4: 提交独立产品中心**
+- [x] **Step 4: 提交独立产品中心**
 
 ```bash
 git add apps/web/src/components/standalone-product-center.tsx apps/web/src/components/standalone-product-center.test.tsx apps/web/src/app/product/standalone/page.tsx
@@ -234,7 +234,7 @@ git commit -m "feat(products): 实现独立产品中心"
 - Delete: `apps/web/src/app/product/code-agent/mobius-strip-visual.tsx`
 - Delete: `apps/web/src/app/product/code-agent/mobius-strip-visual.test.tsx`
 
-- [ ] **Step 1: 写三个详情页与未知 slug 失败测试**
+- [x] **Step 1: 写三个详情页与未知 slug 失败测试**
 
 每个产品必须覆盖：
 
@@ -244,19 +244,19 @@ git commit -m "feat(products): 实现独立产品中心"
 - 码多多额外覆盖安全与部署保障 4 项；AIPPT 与 AISHREK 不渲染该独有区域。
 - 未知 slug 返回 `notFound()`，不回退到第一个产品。
 
-- [ ] **Step 2: 运行测试并确认 RED**
+- [x] **Step 2: 运行测试并确认 RED**
 
-- [ ] **Step 3: 实现最小共享渲染器**
+- [x] **Step 3: 实现最小共享渲染器**
 
 共享的是原型中已经重复的结构：Hero、产品介绍、能力组、核心体验、业务场景、CTA。码多多独有的安全保障使用一个可选数组，不新建子类或插件系统。
 
-- [ ] **Step 4: 为三个显式页面生成原型 metadata**
+- [x] **Step 4: 为三个显式页面生成原型 metadata**
 
-- [ ] **Step 5: 确认 Mobius 旧实现只有码多多旧页调用后直接删除**
+- [x] **Step 5: 确认 Mobius 旧实现只有码多多旧页调用后直接删除**
 
-- [ ] **Step 6: 运行三个页面、内容、路由、类型和 lint 测试**
+- [x] **Step 6: 运行三个页面、内容、路由、类型和 lint 测试**
 
-- [ ] **Step 7: 提交三个详情页**
+- [x] **Step 7: 提交三个详情页**
 
 ```bash
 git add apps/web/src/components/standalone-product-detail.tsx apps/web/src/components/standalone-product-detail.test.tsx apps/web/src/app/product/code-agent apps/web/src/app/product/aippt/page.tsx apps/web/src/app/product/aishrek/page.tsx
@@ -274,7 +274,7 @@ git commit -m "feat(products): 迁移三个独立产品详情"
 - Modify: `docs/superpowers/plans/2026-08-10-product-portal-family-migration.md`
 - Modify: `docs/superpowers/plans/2026-08-10-home-linked-conversion-routes.md`
 
-- [ ] **Step 1: 写五页 E2E**
+- [x] **Step 1: 写五页 E2E**
 
 - 五个 URL 返回 200 并显示各自原型 H1。
 - 五页的内部链接不得为 404 或 5xx。
@@ -282,7 +282,7 @@ git commit -m "feat(products): 迁移三个独立产品详情"
 - 桌面和移动端都只有 shell 的一个 `.floating-assistant__launcher`，可打开、关闭码多多。
 - 捕获 `/product`、`/product/code-agent`、`/product/aishrek` 的 1440 和 390 预览图到 `artifacts/playwright/product-portal/`。
 
-- [ ] **Step 2: 运行完整 web 门槛**
+- [x] **Step 2: 运行完整 web 门槛**
 
 ```bash
 pnpm --filter @ai-agent-platform/web test
@@ -295,7 +295,7 @@ pnpm --filter @ai-agent-platform/web exec playwright test e2e/product-portal-fam
 
 Expected: 所有必须门槛退出码为 0；Playwright 仅允许已声明的 project-specific skip。
 
-- [ ] **Step 3: 检查范围和旧路径残留**
+- [x] **Step 3: 检查范围和旧路径残留**
 
 ```bash
 rg -n "product-sections|MobiusStripVisual|mobius-strip" apps/web/src
@@ -306,7 +306,7 @@ git diff --name-only main...HEAD
 
 Expected: 无旧页调用或兼容层；只有当前迁移分支范围的变更。
 
-- [ ] **Step 4: 标记两份计划并提交验收**
+- [x] **Step 4: 标记两份计划并提交验收**
 
 ```bash
 git add apps/web/e2e/product-portal-family.spec.ts docs/superpowers/plans/2026-08-10-product-portal-family-migration.md docs/superpowers/plans/2026-08-10-home-linked-conversion-routes.md
