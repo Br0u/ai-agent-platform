@@ -31,6 +31,10 @@ const adminRoute = (
 export const routeRegistry: PortalRoute[] = [
   publicRoute("/", "首页", "live"),
   publicRoute("/product", "产品介绍", "live"),
+  publicRoute("/product/standalone", "独立产品中心", "live"),
+  publicRoute("/product/code-agent", "码多多 2.0", "live"),
+  publicRoute("/product/aippt", "AIPPT", "live"),
+  publicRoute("/product/aishrek", "AISHREK", "live"),
   publicRoute("/product/[slug]", "产品模块详情"),
   publicRoute("/solutions", "解决方案", "live"),
   publicRoute("/solutions/[slug]", "解决方案详情", "live"),

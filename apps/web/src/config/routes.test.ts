@@ -4,6 +4,10 @@ import { matchRoute, routeRegistry } from "./routes";
 const requiredRoutes = [
   "/",
   "/product",
+  "/product/standalone",
+  "/product/code-agent",
+  "/product/aippt",
+  "/product/aishrek",
   "/product/[slug]",
   "/solutions",
   "/solutions/[slug]",
@@ -132,6 +136,26 @@ describe("routeRegistry", () => {
       title: "申请体验",
       group: "public",
       status: "live",
+    });
+  });
+
+  it("registers standalone product pages before the remaining scaffold routes", () => {
+    for (const path of [
+      "/product/standalone",
+      "/product/code-agent",
+      "/product/aippt",
+      "/product/aishrek",
+    ]) {
+      expect(matchRoute(path)).toMatchObject({
+        path,
+        group: "public",
+        status: "live",
+      });
+    }
+
+    expect(matchRoute("/product/agent-studio")).toMatchObject({
+      path: "/product/[slug]",
+      status: "scaffold",
     });
   });
 
