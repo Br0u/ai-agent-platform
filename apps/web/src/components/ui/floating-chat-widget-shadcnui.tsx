@@ -208,7 +208,7 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
           </span>
           <div className="floating-assistant__message-content">
             <p>
-              你好，我是码多多。已启用的审核 Skill
+              你好，我是码多多。已启用的 Skill
               会按配置加载；知识库和网页正文读取尚未接入。
             </p>
           </div>

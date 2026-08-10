@@ -64,7 +64,7 @@ export type SkillRegistryAction =
   | "detail"
   | "file"
   | "upload"
-  | "review"
+  | "archive"
   | "skill_set_status"
   | "skill_set_available"
   | "skill_set_create"
@@ -73,7 +73,6 @@ export type SkillRegistryAction =
 export type SkillRegistryPermission =
   | "admin:assistant:skills"
   | "admin:assistant:skills:upload"
-  | "admin:assistant:skills:review"
   | "admin:assistant:skills:configure";
 export type SkillRegistryAssurance = "session" | "password+mfa";
 
@@ -85,18 +84,6 @@ export type SkillRegistryAssertionInput = {
   target: string;
   assurance: SkillRegistryAssurance;
   assuredAt: number | null;
-};
-
-export type SkillRegistryReviewInput = {
-  decision: "approve" | "reject";
-  expectedState: "pending_review";
-  reason: string | null;
-  attestations: {
-    contentReviewed: true;
-    usageRightsConfirmed: true;
-    executionRiskAccepted: true;
-    reviewerAuthorizationConfirmed: true;
-  };
 };
 
 export type SkillRegistryClient = {
@@ -124,15 +111,18 @@ export type SkillRegistryClient = {
     requestId: string;
     archive: Uint8Array;
     targetSkillId?: string;
+    expectedArtifactSha256?: string;
   }): Promise<AdminSkillRevisionResponse>;
-  reviewRevision(input: {
+};
+
+export type SkillRegistryArchiveClient = {
+  archiveSkill(input: {
     actor: string;
     requestId: string;
-    skillId: string;
-    revisionId: string;
     assuredAt: number;
-    input: SkillRegistryReviewInput;
-  }): Promise<AdminSkillRevisionResponse>;
+    skillId: string;
+    expectedArtifactSha256: string;
+  }): Promise<void>;
 };
 
 export type SkillRegistryRuntimeClient = {
@@ -168,7 +158,8 @@ export type SkillRegistryRuntimeClient = {
 };
 
 export type CompleteSkillRegistryClient = SkillRegistryClient &
-  SkillRegistryRuntimeClient;
+  SkillRegistryRuntimeClient &
+  SkillRegistryArchiveClient;
 
 export const SKILL_REGISTRY_DOMAIN_CODES = [
   "ARCHIVE_ENCRYPTED",
@@ -198,7 +189,7 @@ export const SKILL_REGISTRY_DOMAIN_CODES = [
   "REGISTRY_STORAGE_ERROR",
   "REGISTRY_UNAVAILABLE",
   "RESPONSE_TOO_LARGE",
-  "REVIEW_BLOCKED",
+  "SKILL_SCAN_BLOCKED",
   "REVISION_NOT_FOUND",
   "REVISION_STATE_CONFLICT",
   "SKILL_BINARY_FILE",
@@ -206,6 +197,8 @@ export const SKILL_REGISTRY_DOMAIN_CODES = [
   "SKILL_FILE_TOO_LARGE",
   "SKILL_NAME_CONFLICT",
   "SKILL_NOT_FOUND",
+  "SKILL_ACTIVE",
+  "SKILL_CHANGED",
   "SKILL_SCAN_FAILED",
   "SKILL_SCRIPT_SHEBANG_UNSUPPORTED",
   "VALIDATION_ERROR",
@@ -229,8 +222,28 @@ export type SkillRegistryClientErrorCode =
 const SKILL_REGISTRY_CLIENT_ERROR_BRAND = new WeakSet<object>();
 
 export class SkillRegistryClientError extends Error {
-  constructor(readonly code: SkillRegistryClientErrorCode) {
+  constructor(
+    readonly code: SkillRegistryClientErrorCode,
+    readonly conflictingSkillId: string | null = null,
+    readonly replacementToken: string | null = null,
+    readonly conflictingSkillEnabled: boolean | null = null,
+  ) {
     super("Skill Registry request failed");
+    Object.defineProperty(this, "conflictingSkillId", {
+      value: conflictingSkillId,
+      configurable: true,
+      enumerable: false,
+    });
+    Object.defineProperty(this, "replacementToken", {
+      value: replacementToken,
+      configurable: true,
+      enumerable: false,
+    });
+    Object.defineProperty(this, "conflictingSkillEnabled", {
+      value: conflictingSkillEnabled,
+      configurable: true,
+      enumerable: false,
+    });
     SKILL_REGISTRY_CLIENT_ERROR_BRAND.add(this);
     Object.defineProperty(this, "name", {
       value: "SkillRegistryClientError",
@@ -244,10 +257,10 @@ const ACTION_PERMISSION: Readonly<
   Record<SkillRegistryAction, SkillRegistryPermission>
 > = {
   list: "admin:assistant:skills",
-  detail: "admin:assistant:skills:review",
-  file: "admin:assistant:skills:review",
+  detail: "admin:assistant:skills",
+  file: "admin:assistant:skills",
   upload: "admin:assistant:skills:upload",
-  review: "admin:assistant:skills:review",
+  archive: "admin:assistant:skills:configure",
   skill_set_status: "admin:assistant:skills",
   skill_set_available: "admin:assistant:skills",
   skill_set_create: "admin:assistant:skills:configure",
@@ -255,6 +268,7 @@ const ACTION_PERMISSION: Readonly<
   skill_set_rollback: "admin:assistant:skills:configure",
 };
 const SKILL_SET_MUTATIONS: ReadonlySet<SkillRegistryAction> = new Set([
+  "archive",
   "skill_set_create",
   "skill_set_discard",
   "skill_set_rollback",
@@ -262,12 +276,10 @@ const SKILL_SET_MUTATIONS: ReadonlySet<SkillRegistryAction> = new Set([
 const BEARER = /^[A-Za-z0-9._~+/-]+=*$/u;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
 const MAX_ARCHIVE_BYTES = 5 * 1024 * 1024;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 3 * 1024 * 1024;
 const MAX_FILE_RESPONSE_BYTES = MAX_FILE_BYTES * 6 + 1024;
-const MAX_REVIEW_BODY_BYTES = 8 * 1024;
 const CONNECT_TIMEOUT_MS = 2_000;
 const RESPONSE_TIMEOUT_MS = 5_000;
 
@@ -598,23 +610,10 @@ function canonicalUuid(value: unknown): value is string {
   return typeof value === "string" && UUID.test(value);
 }
 
-function pairedSurrogates(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const unit = value.charCodeAt(index);
-    if (unit >= 0xd800 && unit <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (next < 0xdc00 || next > 0xdfff) return false;
-      index += 1;
-    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
-      return false;
-    }
-  }
-  return true;
-}
-
 function validTarget(action: SkillRegistryAction, target: string): boolean {
   if (action === "list") return target === "skills";
   if (action === "upload") return target === "new" || canonicalUuid(target);
+  if (action === "archive") return canonicalUuid(target);
   if (action === "skill_set_status" || action === "skill_set_create") {
     return target === "maduoduo";
   }
@@ -625,7 +624,7 @@ function validTarget(action: SkillRegistryAction, target: string): boolean {
     return agent === "maduoduo" && canonicalUuid(setId) && extra.length === 0;
   }
   const segments = target.split("/");
-  if (action === "detail" || action === "review") {
+  if (action === "detail") {
     return (
       segments.length === 2 &&
       canonicalUuid(segments[0]) &&
@@ -691,10 +690,7 @@ export function createSkillRegistryAssertionSigner(options: {
         ) {
           clientError("invalid_request");
         }
-        if (
-          value.action === "review" ||
-          SKILL_SET_MUTATIONS.has(value.action as SkillRegistryAction)
-        ) {
+        if (SKILL_SET_MUTATIONS.has(value.action as SkillRegistryAction)) {
           if (
             value.assurance !== "password+mfa" ||
             typeof value.assuredAt !== "number" ||
@@ -774,7 +770,66 @@ function cleanErrorCode(error: unknown): SkillRegistryClientErrorCode {
 }
 
 function sanitized(error: unknown): SkillRegistryClientError {
-  return new SkillRegistryClientError(cleanErrorCode(error));
+  const code = cleanErrorCode(error);
+  let conflictingSkillId: string | null = null;
+  let replacementToken: string | null = null;
+  let conflictingSkillEnabled: boolean | null = null;
+  try {
+    if (
+      code === "SKILL_NAME_CONFLICT" &&
+      typeof error === "object" &&
+      error !== null &&
+      SKILL_REGISTRY_CLIENT_ERROR_BRAND.has(error)
+    ) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(
+        error,
+        "conflictingSkillId",
+      );
+      if (
+        descriptor !== undefined &&
+        "value" in descriptor &&
+        !descriptor.enumerable &&
+        canonicalUuid(descriptor.value)
+      ) {
+        conflictingSkillId = descriptor.value;
+      }
+      const tokenDescriptor = Reflect.getOwnPropertyDescriptor(
+        error,
+        "replacementToken",
+      );
+      if (
+        tokenDescriptor !== undefined &&
+        "value" in tokenDescriptor &&
+        !tokenDescriptor.enumerable &&
+        typeof tokenDescriptor.value === "string" &&
+        /^[0-9a-f]{64}$/u.test(tokenDescriptor.value)
+      ) {
+        replacementToken = tokenDescriptor.value;
+      }
+      const enabledDescriptor = Reflect.getOwnPropertyDescriptor(
+        error,
+        "conflictingSkillEnabled",
+      );
+      if (
+        enabledDescriptor !== undefined &&
+        "value" in enabledDescriptor &&
+        !enabledDescriptor.enumerable &&
+        typeof enabledDescriptor.value === "boolean"
+      ) {
+        conflictingSkillEnabled = enabledDescriptor.value;
+      }
+    }
+  } catch {
+    conflictingSkillId = null;
+    replacementToken = null;
+    conflictingSkillEnabled = null;
+  }
+  return new SkillRegistryClientError(
+    code,
+    conflictingSkillId,
+    replacementToken,
+    conflictingSkillEnabled,
+  );
 }
 
 function strictNoStore(value: string | null): boolean {
@@ -1003,9 +1058,11 @@ const STATUS_BY_CODE: Readonly<Record<SkillRegistryDomainErrorCode, number>> = {
   REGISTRY_STORAGE_ERROR: 503,
   REGISTRY_UNAVAILABLE: 503,
   RESPONSE_TOO_LARGE: 503,
-  REVIEW_BLOCKED: 409,
+  SKILL_SCAN_BLOCKED: 400,
   REVISION_NOT_FOUND: 404,
   REVISION_STATE_CONFLICT: 409,
+  SKILL_ACTIVE: 409,
+  SKILL_CHANGED: 409,
   SKILL_BINARY_FILE: 400,
   SKILL_FILE_NOT_UTF8: 400,
   SKILL_FILE_TOO_LARGE: 400,
@@ -1024,8 +1081,21 @@ const STATUS_BY_CODE: Readonly<Record<SkillRegistryDomainErrorCode, number>> = {
 function readError(
   status: number,
   value: unknown,
-): SkillRegistryDomainErrorCode | null {
-  const response = exactRecord(value, [["error"]]);
+): {
+  code: SkillRegistryDomainErrorCode;
+  conflictingSkillId: string | null;
+  replacementToken: string | null;
+  conflictingSkillEnabled: boolean | null;
+} | null {
+  const response = exactRecord(value, [
+    ["error"],
+    [
+      "error",
+      "conflictingSkillId",
+      "replacementToken",
+      "conflictingSkillEnabled",
+    ],
+  ]);
   if (
     response === null ||
     typeof response.error !== "string" ||
@@ -1034,7 +1104,35 @@ function readError(
   ) {
     return null;
   }
-  return response.error as SkillRegistryDomainErrorCode;
+  const conflictingSkillId =
+    response.error === "SKILL_NAME_CONFLICT" &&
+    canonicalUuid(response.conflictingSkillId)
+      ? response.conflictingSkillId
+      : null;
+  const replacementToken =
+    response.error === "SKILL_NAME_CONFLICT" &&
+    typeof response.replacementToken === "string" &&
+    /^[0-9a-f]{64}$/u.test(response.replacementToken)
+      ? response.replacementToken
+      : null;
+  const conflictingSkillEnabled =
+    response.error === "SKILL_NAME_CONFLICT" &&
+    typeof response.conflictingSkillEnabled === "boolean"
+      ? response.conflictingSkillEnabled
+      : null;
+  if (
+    Object.hasOwn(response, "conflictingSkillId") &&
+    (conflictingSkillId === null ||
+      replacementToken === null ||
+      conflictingSkillEnabled === null)
+  )
+    return null;
+  return {
+    code: response.error as SkillRegistryDomainErrorCode,
+    conflictingSkillId,
+    replacementToken,
+    conflictingSkillEnabled,
+  };
 }
 
 function encodeFilePath(path: string): string {
@@ -1051,56 +1149,6 @@ function readCommandIdentity(
     canonicalUuid(command.requestId)
     ? command
     : null;
-}
-
-function readReviewInput(value: unknown): SkillRegistryReviewInput | null {
-  const input = exactRecord(value, [
-    ["decision", "expectedState", "reason", "attestations"],
-  ]);
-  const attestations = exactRecord(input?.attestations, [
-    [
-      "contentReviewed",
-      "usageRightsConfirmed",
-      "executionRiskAccepted",
-      "reviewerAuthorizationConfirmed",
-    ],
-  ]);
-  if (
-    input === null ||
-    attestations === null ||
-    (input.decision !== "approve" && input.decision !== "reject") ||
-    input.expectedState !== "pending_review" ||
-    attestations.contentReviewed !== true ||
-    attestations.usageRightsConfirmed !== true ||
-    attestations.executionRiskAccepted !== true ||
-    attestations.reviewerAuthorizationConfirmed !== true
-  ) {
-    return null;
-  }
-  if (
-    (input.decision === "approve" && input.reason !== null) ||
-    (input.decision === "reject" &&
-      (typeof input.reason !== "string" ||
-        input.reason !== input.reason.trim() ||
-        input.reason.length === 0 ||
-        Buffer.byteLength(input.reason, "utf8") > 2_048 ||
-        Array.from(input.reason).length > 500 ||
-        !pairedSurrogates(input.reason) ||
-        CONTROL_CHARACTER.test(input.reason)))
-  ) {
-    return null;
-  }
-  return {
-    decision: input.decision,
-    expectedState: "pending_review",
-    reason: input.reason as string | null,
-    attestations: {
-      contentReviewed: true,
-      usageRightsConfirmed: true,
-      executionRiskAccepted: true,
-      reviewerAuthorizationConfirmed: true,
-    },
-  };
 }
 
 function copyArchive(value: unknown): Uint8Array<ArrayBuffer> | null {
@@ -1232,9 +1280,14 @@ export function createSkillRegistryClient(options: {
       responseFullyConsumed = true;
       const parsed = parseStrictJson(body);
       if (response.status !== requestOptions.successStatus) {
-        const code = readError(response.status, parsed);
-        if (code === null) clientError("invalid_response");
-        throw new SkillRegistryClientError(code);
+        const error = readError(response.status, parsed);
+        if (error === null) clientError("invalid_response");
+        throw new SkillRegistryClientError(
+          error.code,
+          error.conflictingSkillId,
+          error.replacementToken,
+          error.conflictingSkillEnabled,
+        );
       }
       if (requestOptions.file) {
         const raw = exactRecord(parsed, [["version", "path", "content"]]);
@@ -1277,10 +1330,7 @@ export function createSkillRegistryClient(options: {
       permission: ACTION_PERMISSION[action],
       requestId: command.requestId,
       target,
-      assurance:
-        action === "review" || SKILL_SET_MUTATIONS.has(action)
-          ? "password+mfa"
-          : "session",
+      assurance: SKILL_SET_MUTATIONS.has(action) ? "password+mfa" : "session",
       assuredAt,
     };
   }
@@ -1404,7 +1454,13 @@ export function createSkillRegistryClient(options: {
       try {
         const snapshot = exactRecord(input, [
           ["actor", "requestId", "archive"],
-          ["actor", "requestId", "archive", "targetSkillId"],
+          [
+            "actor",
+            "requestId",
+            "archive",
+            "targetSkillId",
+            "expectedArtifactSha256",
+          ],
         ]);
         const archive =
           snapshot === null ? null : copyArchive(snapshot.archive);
@@ -1416,18 +1472,28 @@ export function createSkillRegistryClient(options: {
           !(
             snapshot.targetSkillId === undefined ||
             canonicalUuid(snapshot.targetSkillId)
-          )
+          ) ||
+          (snapshot.targetSkillId === undefined) !==
+            (snapshot.expectedArtifactSha256 === undefined) ||
+          (snapshot.expectedArtifactSha256 !== undefined &&
+            (typeof snapshot.expectedArtifactSha256 !== "string" ||
+              !/^[0-9a-f]{64}$/u.test(snapshot.expectedArtifactSha256)))
         ) {
           clientError("invalid_request");
         }
         const actor = snapshot.actor as string;
         const requestId = snapshot.requestId as string;
         const targetSkillId = snapshot.targetSkillId as string | undefined;
+        const expectedArtifactSha256 = snapshot.expectedArtifactSha256 as
+          | string
+          | undefined;
         const target = targetSkillId ?? "new";
         return await request({
           method: "POST",
           path: `/internal/skills/uploads${
-            targetSkillId === undefined ? "" : `?targetSkillId=${targetSkillId}`
+            targetSkillId === undefined
+              ? ""
+              : `?targetSkillId=${targetSkillId}&expectedArtifactSha256=${expectedArtifactSha256}`
           }`,
           requestId,
           assertion: assertion({ actor, requestId }, "upload", target),
@@ -1436,7 +1502,7 @@ export function createSkillRegistryClient(options: {
           successStatus: 201,
           read: parseAdminSkillRevisionResponse,
           validate: (value) =>
-            value.revision.state === "pending_review" &&
+            value.revision.state === "published" &&
             (targetSkillId === undefined ||
               value.revision.skillId === targetSkillId),
         });
@@ -1445,58 +1511,55 @@ export function createSkillRegistryClient(options: {
       }
     },
 
-    async reviewRevision(input) {
+    async archiveSkill(input) {
       try {
         const command = readCommandIdentity(input, [
           "actor",
           "requestId",
-          "skillId",
-          "revisionId",
           "assuredAt",
-          "input",
+          "skillId",
+          "expectedArtifactSha256",
         ]);
-        const reviewInput =
-          command === null ? null : readReviewInput(command.input);
         if (
           command === null ||
-          reviewInput === null ||
           !canonicalUuid(command.skillId) ||
-          !canonicalUuid(command.revisionId) ||
           typeof command.assuredAt !== "number" ||
-          !Number.isSafeInteger(command.assuredAt)
+          !Number.isSafeInteger(command.assuredAt) ||
+          typeof command.expectedArtifactSha256 !== "string" ||
+          !/^[0-9a-f]{64}$/u.test(command.expectedArtifactSha256)
         ) {
           clientError("invalid_request");
         }
-        const { actor, requestId, skillId, revisionId } = command as Record<
-          "actor" | "requestId" | "skillId" | "revisionId",
-          string
-        >;
-        const assuredAt = command.assuredAt as number;
-        const body = JSON.stringify(reviewInput);
-        if (Buffer.byteLength(body, "utf8") > MAX_REVIEW_BODY_BYTES) {
-          clientError("invalid_request");
-        }
-        const target = `${skillId}/${revisionId}`;
-        return await request({
+        const actor = command.actor as string;
+        const requestId = command.requestId as string;
+        const skillId = command.skillId as string;
+        const response = await request({
           method: "POST",
-          path: `/internal/skills/${skillId}/revisions/${revisionId}/review`,
+          path: `/internal/skills/${skillId}/archive`,
           requestId,
           assertion: assertion(
             { actor, requestId },
-            "review",
-            target,
-            assuredAt,
+            "archive",
+            skillId,
+            command.assuredAt as number,
           ),
           contentType: "application/json",
-          body,
+          body: JSON.stringify({
+            requestId,
+            expectedArtifactSha256: command.expectedArtifactSha256,
+          }),
           successStatus: 200,
-          read: parseAdminSkillRevisionResponse,
-          validate: (value) =>
-            value.revision.skillId === skillId &&
-            value.revision.id === revisionId &&
-            value.revision.state ===
-              (reviewInput.decision === "approve" ? "published" : "rejected"),
+          read: (value) => value,
+          validate: (value) => {
+            const parsed = exactRecord(value, [["version", "archivedSkillId"]]);
+            return (
+              parsed !== null &&
+              parsed.version === "1" &&
+              parsed.archivedSkillId === skillId
+            );
+          },
         });
+        if (response === null) clientError("invalid_response");
       } catch (error) {
         throw sanitized(error);
       }

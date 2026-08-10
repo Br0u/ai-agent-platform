@@ -47,7 +47,7 @@ REQUIRED_AGNO_TABLE_NAMES = (
 
 
 def build_migration_database(*, db_url: str, db_schema: str) -> AsyncPostgresDb:
-    return AsyncPostgresDb(db_url=db_url, db_schema=db_schema)
+    return AsyncPostgresDb(db_url=db_url, db_schema=db_schema, create_schema=False)
 
 
 def build_migration_manager(database: AsyncPostgresDb) -> MigrationRunner:
@@ -56,7 +56,7 @@ def build_migration_manager(database: AsyncPostgresDb) -> MigrationRunner:
 
 async def provision_agno_database(*, database_url: str, db_schema: str) -> None:
     """Initialize Agno tables through AgentOS's public provisioning lifecycle."""
-    bootstrap_database = AsyncPostgresDb(
+    bootstrap_database = build_migration_database(
         db_url=database_url,
         db_schema=db_schema,
     )

@@ -1,10 +1,17 @@
+from contextlib import asynccontextmanager
 from typing import cast
 
 import pytest
 from agno.db.postgres import AsyncPostgresDb
 
 from agent_service.config import MigrationSettings
-from agent_service.migrate import main, run_migration
+from agent_service import migrate
+from agent_service.migrate import (
+    build_migration_database,
+    main,
+    provision_agno_database,
+    run_migration,
+)
 
 
 MIGRATOR_URL = "postgresql+psycopg_async://migrator:migrator-password@db:5432/platform"
@@ -15,6 +22,61 @@ def settings() -> MigrationSettings:
     return MigrationSettings.model_validate(
         {"AGNO_MIGRATOR_DATABASE_URL": MIGRATOR_URL}
     )
+
+
+def test_migration_database_does_not_create_externally_managed_schema() -> None:
+    database = build_migration_database(db_url=MIGRATOR_URL, db_schema="agno")
+
+    assert database.create_schema is False
+
+
+@pytest.mark.asyncio
+async def test_provisioning_reuses_migration_database_and_runs_lifespan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    database = object()
+
+    def database_factory(*, db_url: str, db_schema: str) -> object:
+        assert db_url == MIGRATOR_URL
+        assert db_schema == "agno"
+        events.append("database")
+        return database
+
+    class Application:
+        class Router:
+            @asynccontextmanager
+            async def lifespan_context(self, received_application: "Application"):
+                assert received_application is application
+                events.append("provision")
+                yield
+
+        router = Router()
+
+    application = Application()
+
+    def agent_os_factory(**kwargs: object) -> object:
+        assert kwargs == {
+            "id": "ai-agent-platform-migrator",
+            "agents": [],
+            "db": database,
+            "auto_provision_dbs": True,
+            "telemetry": False,
+        }
+        events.append("agent-os")
+
+        class BootstrapOS:
+            def get_app(self) -> Application:
+                return application
+
+        return BootstrapOS()
+
+    monkeypatch.setattr(migrate, "build_migration_database", database_factory)
+    monkeypatch.setattr(migrate, "AgentOS", agent_os_factory)
+
+    await provision_agno_database(database_url=MIGRATOR_URL, db_schema="agno")
+
+    assert events == ["database", "agent-os", "provision"]
 
 
 @pytest.mark.asyncio

@@ -8,7 +8,7 @@ const CAPABILITIES = [
   {
     title: "Skill 加载",
     status: "Registry / Agent 运行时已接入",
-    description: "审核版本组成集合并激活后，由 Agent 按 exact revision 加载",
+    description: "上传到 Skill 库后可直接启用、停用或删除",
     available: true,
   },
   {
@@ -35,7 +35,7 @@ export function AssistantCapabilityRoadmap() {
         <div>
           <p>CAPABILITY ROADMAP</p>
           <h2 id="assistant-capability-roadmap-title">后续能力入口</h2>
-          <span>Skill 审核、配置和 Agent 运行时加载已接入。</span>
+          <span>Skill 上传、配置和 Agent 运行时加载已接入。</span>
         </div>
         <strong>部分接入</strong>
       </header>

@@ -1,4 +1,4 @@
-"""Frozen service and persistence contracts for reviewed skill revisions."""
+"""Frozen service and persistence contracts for uploaded skill revisions."""
 
 from __future__ import annotations
 
@@ -14,8 +14,7 @@ from skill_core.types import (
     SkillPackageDiff,
 )
 
-RevisionState = Literal["pending_review", "published", "rejected", "archived"]
-ReviewDecision = Literal["approve", "reject"]
+RevisionState = Literal["published", "archived"]
 AgentId = Literal["maduoduo"]
 SkillSetState = Literal["candidate", "active", "superseded", "failed", "discarded"]
 
@@ -23,8 +22,19 @@ SkillSetState = Literal["candidate", "active", "superseded", "failed", "discarde
 class RegistryError(RuntimeError):
     """Stable registry error that never includes source or credential material."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        conflicting_skill_id: UUID | None = None,
+        replacement_token: str | None = None,
+        conflicting_skill_enabled: bool | None = None,
+    ) -> None:
         self.code = code
+        self.conflicting_skill_id = conflicting_skill_id
+        self.replacement_token = replacement_token
+        self.conflicting_skill_enabled = conflicting_skill_enabled
         super().__init__(message)
 
 
@@ -44,37 +54,16 @@ class CreateUploadRevision:
     assertion_nonce: UUID
     package: CanonicalSkillPackage
     target_skill_id: UUID | None
+    expected_artifact_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class ReviewAttestations:
-    content_reviewed: bool
-    usage_rights_confirmed: bool
-    execution_risk_accepted: bool
-    reviewer_authorization_confirmed: bool
-
-    @property
-    def complete(self) -> bool:
-        values = (
-            self.content_reviewed,
-            self.usage_rights_confirmed,
-            self.execution_risk_accepted,
-            self.reviewer_authorization_confirmed,
-        )
-        return all(type(value) is bool and value is True for value in values)
-
-
-@dataclass(frozen=True, slots=True)
-class ReviewRevision:
-    revision_id: UUID
-    reviewer: UUID
+class ArchiveSkill:
+    actor: UUID
     request_id: UUID
     assertion_nonce: UUID
-    decision: ReviewDecision
-    expected_state: Literal["pending_review"]
-    reason: str | None
-    attestations: ReviewAttestations
-    skill_id: UUID | None = None
+    skill_id: UUID
+    expected_artifact_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,8 +78,6 @@ class StoredRevision:
     findings: tuple[SkillFinding, ...]
     created_by: UUID
     created_at: datetime
-    reviewed_by: UUID | None
-    reviewed_at: datetime | None
     artifact_sha256: str
     compressed_size: int
     extracted_size: int
@@ -106,19 +93,14 @@ class StoredFile:
 
 
 @dataclass(frozen=True, slots=True)
-class SkillSummary:
+class SkillLibraryItem:
     id: UUID
-    slug: str
-    latest_revision_no: int | None
-    latest_revision_id: UUID | None
-    latest_state: RevisionState | None
-    created_at: datetime
-    latest_source_type: str | None = None
-    latest_artifact_sha256: str | None = None
-    latest_created_by: UUID | None = None
-    latest_created_at: datetime | None = None
-    latest_reviewed_by: UUID | None = None
-    latest_reviewed_at: datetime | None = None
+    name: str
+    description: str
+    enabled: bool
+    uploaded_at: datetime
+    replacement_token: str
+    revision_id: UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,11 +199,11 @@ class PublishedRevisionPage:
 class SkillRegistryRepository(Protocol):
     async def create_upload_revision(self, command: CreateUploadRevision) -> StoredRevision: ...
 
-    async def review_revision(self, command: ReviewRevision) -> StoredRevision: ...
+    async def archive_skill(self, command: ArchiveSkill) -> None: ...
 
     async def list_skills(
         self, *, limit: int = 50, offset: int = 0
-    ) -> tuple[SkillSummary, ...]: ...
+    ) -> tuple[SkillLibraryItem, ...]: ...
 
     async def get_revision(self, skill_id: UUID, revision_id: UUID) -> StoredRevision: ...
 

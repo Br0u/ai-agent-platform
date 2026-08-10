@@ -102,7 +102,15 @@ export type AssistantSkillAuditMetadata<
   result: Result;
 };
 export type AssistantSkillRuntimeAuditMetadata = {
-  operation: "create" | "activate" | "discard" | "rollback";
+  operation:
+    | "create"
+    | "activate"
+    | "discard"
+    | "rollback"
+    | "enable"
+    | "disable"
+    | "replace"
+    | "delete";
   setId: string | null;
   activationVersion: number;
   revisionCount: number;
@@ -157,10 +165,6 @@ export type AuditMetadataByEvent = {
   >;
   "assistant.skill_upload_requested": AssistantSkillAuditMetadata<"requested">;
   "assistant.skill_upload_completed": AssistantSkillAuditMetadata<
-    "success" | "failure"
-  >;
-  "assistant.skill_review_requested": AssistantSkillAuditMetadata<"requested">;
-  "assistant.skill_review_completed": AssistantSkillAuditMetadata<
     "success" | "failure"
   >;
   "assistant.skill_runtime_changed": AssistantSkillRuntimeAuditMetadata;
@@ -559,7 +563,16 @@ function assistantSkillRuntimeAuditMetadata(value: unknown): SanitizedMetadata {
   return {
     operation: enumValue(
       metadata.operation,
-      ["create", "activate", "discard", "rollback"] as const,
+      [
+        "create",
+        "activate",
+        "discard",
+        "rollback",
+        "enable",
+        "disable",
+        "replace",
+        "delete",
+      ] as const,
       "metadata.operation",
     ),
     setId: metadata.setId,
@@ -649,10 +662,6 @@ export const AUDIT_EVENT_SCHEMAS: Readonly<
     assistantSkillAuditMetadata(value, "upload_requested"),
   "assistant.skill_upload_completed": (value) =>
     assistantSkillAuditMetadata(value, "upload_completed"),
-  "assistant.skill_review_requested": (value) =>
-    assistantSkillAuditMetadata(value, "review_requested"),
-  "assistant.skill_review_completed": (value) =>
-    assistantSkillAuditMetadata(value, "review_completed"),
   "assistant.skill_runtime_changed": assistantSkillRuntimeAuditMetadata,
   "document.created": documentAuditMetadata,
   "document.draft_saved": documentAuditMetadata,

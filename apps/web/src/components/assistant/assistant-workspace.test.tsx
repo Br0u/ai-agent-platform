@@ -188,7 +188,7 @@ describe("AssistantWorkspace", () => {
     expect(screen.getByText("安全占位模式，不创建服务端会话。")).toBeVisible();
     expect(
       screen.getByText(
-        "已启用的审核 Skill 会按配置加载；知识库和网页正文读取尚未接入。",
+        "已启用的 Skill 会按配置加载；知识库和网页正文读取尚未接入。",
       ),
     ).toBeVisible();
     expect(screen.getByTestId("assistant-service-state")).toHaveAttribute(
@@ -259,7 +259,7 @@ describe("AssistantWorkspace", () => {
       ).toBeVisible();
       expect(
         screen.getByText(
-          "已启用的审核 Skill 会按配置加载；知识库和网页正文读取尚未接入。",
+          "已启用的 Skill 会按配置加载；知识库和网页正文读取尚未接入。",
         ),
       ).toBeVisible();
       expect(screen.queryByText("安全占位模式，不创建服务端会话。")).toBeNull();

@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
-import asyncio
 import inspect
 import io
 import json
 import os
 from pathlib import Path
 import stat
-from types import SimpleNamespace
 from typing import Never
 from uuid import UUID
 import zipfile
@@ -40,12 +38,9 @@ def skill_package(
             f"---\nname: {slug}\ndescription: {slug} skill.\n---\n"
             f"{instructions if instructions is not None else f'# {slug}\n'}"
         ).encode(),
-        f"{slug}/scripts/run.py": (
-            script
-            if script is not None
-            else b"#!/usr/bin/env python3\nprint('ok')\n"
-        ),
     }
+    if script is not None:
+        files[f"{slug}/scripts/run.py"] = script
     if reference is not None:
         files[f"{slug}/references/large.md"] = reference.encode("utf-8")
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -197,141 +192,33 @@ async def test_instruction_and_script_read_tools_page_large_content(
 
 
 @pytest.mark.asyncio
-async def test_script_execution_clamps_timeout_arguments_and_combined_output(
+async def test_script_tool_is_read_only_even_for_historical_script_artifacts(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_run_script(*, script_path, args, timeout, cwd):
-        captured.update(
-            script_path=script_path,
-            args=args,
-            timeout=timeout,
-            cwd=cwd,
-        )
-        return SimpleNamespace(
-            stdout="o" * 10_000,
-            stderr="e" * 10_000,
-            returncode=0,
-        )
-
-    monkeypatch.setattr(
-        "agent_service.skill_materializer._run_script_bounded",
-        fake_run_script,
-    )
     builder, root_fd = materializer(tmp_path)
     try:
-        prepared = builder.prepare(snapshot(artifact("alpha", 0)))
+        prepared = builder.prepare(
+            snapshot(
+                artifact(
+                    "alpha",
+                    0,
+                    script=b"#!/usr/bin/env python3\nprint('never execute')\n",
+                )
+            )
+        )
     finally:
         os.close(root_fd)
 
-    assert prepared.skills is not None
-    script_tool = next(
-        tool for tool in prepared.skills.get_tools() if tool.name == "get_skill_script"
-    )
-    assert script_tool.entrypoint is not None
-    result = json.loads(
-        await script_tool.entrypoint(
-            "alpha",
-            "run.py",
-            execute=True,
-            args=["safe"],
-            timeout=999,
-        )
-    )
-
-    assert captured["timeout"] == 30
-    assert captured["args"] == ["safe"]
-    assert len(result["stdout"]) + len(result["stderr"]) == 12_000
-    assert result["output_truncated"] is True
-
-    invalid = json.loads(
-        await script_tool.entrypoint(
-            "alpha",
-            "run.py",
-            execute=True,
-            args=["x"] * 17,
-        )
-    )
-    assert invalid == {"error": "Invalid script arguments"}
-
-
-@pytest.mark.asyncio
-async def test_script_execution_drains_but_does_not_retain_unbounded_output(
-    tmp_path: Path,
-) -> None:
-    script = (
-        "#!/usr/bin/env python3\n"
-        "import sys\n"
-        "sys.stdout.write('o' * 1_000_000)\n"
-        "sys.stderr.write('e' * 1_000_000)\n"
-    ).encode()
-    builder, root_fd = materializer(tmp_path)
-    try:
-        prepared = builder.prepare(snapshot(artifact("alpha", 0, script=script)))
-    finally:
-        os.close(root_fd)
-
-    assert prepared.skills is not None
-    script_tool = next(
-        tool for tool in prepared.skills.get_tools() if tool.name == "get_skill_script"
-    )
-    assert script_tool.entrypoint is not None
-    result = json.loads(
-        await script_tool.entrypoint("alpha", "run.py", execute=True, timeout=5)
-    )
-
-    assert result["returncode"] == 0
-    assert len(result["stdout"]) + len(result["stderr"]) == 12_000
-    assert result["output_truncated"] is True
-
-
-@pytest.mark.asyncio
-async def test_script_execution_does_not_block_the_agent_event_loop(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    sequence: list[str] = []
-
-    def slow_run_script(**_kwargs):
-        sequence.append("script-start")
-        import time
-
-        time.sleep(0.05)
-        sequence.append("script-end")
-        return SimpleNamespace(
-            stdout="ok",
-            stderr="",
-            returncode=0,
-            output_truncated=False,
-        )
-
-    monkeypatch.setattr(
-        "agent_service.skill_materializer._run_script_bounded",
-        slow_run_script,
-    )
-    builder, root_fd = materializer(tmp_path)
-    try:
-        prepared = builder.prepare(snapshot(artifact("alpha", 0)))
-    finally:
-        os.close(root_fd)
     assert prepared.skills is not None
     script_tool = next(
         tool for tool in prepared.skills.get_tools() if tool.name == "get_skill_script"
     )
     assert script_tool.entrypoint is not None
     assert inspect.iscoroutinefunction(script_tool.entrypoint)
-
-    execution = asyncio.create_task(
-        script_tool.entrypoint("alpha", "run.py", execute=True)
-    )
-    ticker = asyncio.create_task(asyncio.sleep(0, result="event-loop-tick"))
-    tick = await ticker
-    sequence.append(tick)
-    await execution
-
-    assert sequence.index("event-loop-tick") < sequence.index("script-end")
+    assert "execute" not in inspect.signature(script_tool.entrypoint).parameters
+    assert "execute" not in (script_tool.description or "").casefold()
+    with pytest.raises(TypeError):
+        await script_tool.entrypoint("alpha", "run.py", execute=True)
 
 
 def test_explicit_empty_set_has_no_skills_or_skill_tools(tmp_path: Path) -> None:

@@ -12,22 +12,44 @@ if [ "$#" -ne 5 ] || [ -z "$backup_file" ] || [ ! -f "$backup_file" ] || \
   echo "usage: $0 ENCRYPTED_BUNDLE EXPECTED_USERS EXPECTED_AGNO_SESSIONS USER_FIXTURE_ID AGNO_SESSION_FIXTURE_ID" >&2
   exit 64
 fi
+expected_artifact_revision_id=
 expected_artifact_sha256=
-expected_artifact_sha256_required=false
-if [ "${RESTORE_EXPECTED_ARTIFACT_SHA256+x}" = x ]; then
-  expected_artifact_sha256=$RESTORE_EXPECTED_ARTIFACT_SHA256
-  case "$expected_artifact_sha256" in
-    ''|*[!0-9a-f]*)
+expected_artifact_required=false
+case "${RESTORE_EXPECTED_ARTIFACT_REVISION_ID+x}${RESTORE_EXPECTED_ARTIFACT_SHA256+x}" in
+  xx)
+    expected_artifact_revision_id=$RESTORE_EXPECTED_ARTIFACT_REVISION_ID
+    expected_artifact_sha256=$RESTORE_EXPECTED_ARTIFACT_SHA256
+    case "$expected_artifact_revision_id" in
+      ????????-????-????-????-????????????) ;;
+      *) echo "restore expected artifact revision is invalid" >&2; exit 64 ;;
+    esac
+    expected_artifact_revision_hex=$(printf '%s' "$expected_artifact_revision_id" | tr -d '-')
+    case "$expected_artifact_revision_hex" in
+      ''|*[!0-9a-f]*)
+        echo "restore expected artifact revision is invalid" >&2
+        exit 64
+        ;;
+    esac
+    if [ "${#expected_artifact_revision_hex}" -ne 32 ]; then
+      echo "restore expected artifact revision is invalid" >&2
+      exit 64
+    fi
+    unset expected_artifact_revision_hex
+    case "$expected_artifact_sha256" in
+      ''|*[!0-9a-f]*)
+        echo "restore expected artifact digest is invalid" >&2
+        exit 64
+        ;;
+    esac
+    if [ "${#expected_artifact_sha256}" -ne 64 ]; then
       echo "restore expected artifact digest is invalid" >&2
       exit 64
-      ;;
-  esac
-  if [ "${#expected_artifact_sha256}" -ne 64 ]; then
-    echo "restore expected artifact digest is invalid" >&2
-    exit 64
-  fi
-  expected_artifact_sha256_required=true
-fi
+    fi
+    expected_artifact_required=true
+    ;;
+  '') ;;
+  *) echo "restore expected artifact reference is incomplete" >&2; exit 64 ;;
+esac
 expected_skill_runtime_required=false
 if [ "${RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID+x}${RESTORE_EXPECTED_SKILL_PREVIOUS_SET_ID+x}${RESTORE_EXPECTED_SKILL_ACTIVATION_VERSION+x}" = xxx ]; then
   expected_skill_active_set_id=$RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID
@@ -682,9 +704,9 @@ if ! mkdir -p "$decrypt_work_directory" "$resource_registry_directory" >/dev/nul
   echo "restore drill temporary initialization failed" >&2
   exit 1
 fi
-if [ "$expected_artifact_sha256_required" = true ]; then
+if [ "$expected_artifact_required" = true ]; then
   if ! printf '%s\n' \
-    "SELECT count(*) FROM skill_registry.skill_revision_artifacts WHERE artifact_sha256 = '$expected_artifact_sha256';" \
+    "SELECT count(*) FROM skill_registry.skill_revision_artifacts WHERE revision_id = '$expected_artifact_revision_id'::uuid AND artifact_sha256 = '$expected_artifact_sha256';" \
     >"$expected_artifact_check_file" || \
      ! chmod 600 "$expected_artifact_check_file" >/dev/null 2>&1; then
     echo "restore drill temporary initialization failed" >&2
@@ -718,10 +740,27 @@ printf '%s\n' \
 printf '%s\n' "restore-owner-password" >"$owner_password_file"
 cat >"$manager_insert_check_file" <<'SQL'
 BEGIN;
-INSERT INTO skill_registry.skills (id, slug, created_by)
+SET CONSTRAINTS ALL DEFERRED;
+INSERT INTO skill_registry.skills (
+  id, slug, created_by, current_revision_id
+)
 VALUES (
   '00000000-0000-0000-0000-000000000091',
   'restore-role-check',
+  '00000000-0000-0000-0000-000000000092',
+  '00000000-0000-0000-0000-000000000095'
+);
+INSERT INTO skill_registry.skill_revisions (
+  id, skill_id, revision_no, state, source_type, manifest,
+  created_by
+)
+VALUES (
+  '00000000-0000-0000-0000-000000000095',
+  '00000000-0000-0000-0000-000000000091',
+  1,
+  'published',
+  'upload',
+  '{"name":"restore-role-check","description":"restore role check"}'::jsonb,
   '00000000-0000-0000-0000-000000000092'
 );
 ROLLBACK;
@@ -1149,23 +1188,47 @@ if ! run_bounded_docker \
   PGUSER=ai_agent_skill_registry_manager
   PGPASSWORD=$SKILL_REGISTRY_DATABASE_PASSWORD
   export PGUSER PGPASSWORD
-  [ "$(psql --no-psqlrc --no-password -Atqc "SELECT current_user")" = "$PGUSER" ]
+  [ "$(psql --no-psqlrc --no-password -Atqc "SELECT current_user")" = "$PGUSER" ] || {
+    echo "manager identity check failed" >&2
+    exit 1
+  }
   psql --no-psqlrc --no-password --set=ON_ERROR_STOP=1 \
-    --file=/restore/manager-insert-check.sql >/dev/null
+    --set=VERBOSITY=verbose \
+    --file=/restore/manager-insert-check.sql >/dev/null || {
+      echo "manager insert check failed" >&2
+      exit 1
+    }
 
   PGUSER=ai_agent_backup
   PGPASSWORD=$BACKUP_DATABASE_PASSWORD
   export PGUSER PGPASSWORD
-  [ "$(psql --no-psqlrc --no-password -Atqc "SELECT current_user")" = "$PGUSER" ]
+  [ "$(psql --no-psqlrc --no-password -Atqc "SELECT current_user")" = "$PGUSER" ] || {
+    echo "backup identity check failed" >&2
+    exit 1
+  }
   psql --no-psqlrc --no-password -Atqc \
-    "SELECT count(*) FROM skill_registry.skill_revisions" >/dev/null
+    "SELECT count(*) FROM skill_registry.skill_revisions" >/dev/null || {
+      echo "backup select check failed" >&2
+      exit 1
+    }
 
   PGUSER=ai_agent_skill_registry_runtime
   PGPASSWORD=$SKILL_REGISTRY_RUNTIME_DATABASE_PASSWORD
   export PGUSER PGPASSWORD
-  [ "$(psql --no-psqlrc --no-password -Atqc "SELECT current_user")" = "$PGUSER" ]
+  [ "$(psql --no-psqlrc --no-password -Atqc "SELECT current_user")" = "$PGUSER" ] || {
+    echo "runtime identity check failed" >&2
+    exit 1
+  }
 '; then
-  echo "restore drill failed registry role checks" >&2
+  positive_access_phase="$(
+    grep -Eo '(manager identity|manager insert|backup identity|backup select|runtime identity) check failed' \
+      "$docker_diagnostic_file" | tail -n 1
+  )"
+  positive_access_sqlstate="$(
+    grep -Eo '[0-9]{2}[A-Z0-9]{3}:' "$docker_diagnostic_file" |
+      tail -n 1 | tr -d ':'
+  )"
+  echo "restore drill failed registry role checks: ${positive_access_phase:-positive access}${positive_access_sqlstate:+ ($positive_access_sqlstate)}" >&2
   exit 1
 fi
 
@@ -1186,12 +1249,12 @@ if run_bounded_docker \
     --set=VERBOSITY=verbose -c \
     "DELETE FROM skill_registry.skills WHERE false" >/dev/null
 '; then
-  echo "restore drill failed registry role checks" >&2
+  echo "restore drill failed registry role checks: manager delete allowed" >&2
   exit 1
 fi
 if ! grep -q "42501" "$manager_delete_error_file" || \
    ! grep -q "permission denied" "$manager_delete_error_file"; then
-  echo "restore drill failed registry role checks" >&2
+  echo "restore drill failed registry role checks: manager delete diagnostic" >&2
   exit 1
 fi
 
@@ -1211,12 +1274,12 @@ if run_bounded_docker \
   psql --no-psqlrc --no-password --set=ON_ERROR_STOP=1 \
     --set=VERBOSITY=verbose --file=/restore/backup-insert-denied.sql >/dev/null
 '; then
-  echo "restore drill failed registry role checks" >&2
+  echo "restore drill failed registry role checks: backup insert allowed" >&2
   exit 1
 fi
 if ! grep -q "42501" "$backup_insert_error_file" || \
    ! grep -q "permission denied" "$backup_insert_error_file"; then
-  echo "restore drill failed registry role checks" >&2
+  echo "restore drill failed registry role checks: backup insert diagnostic" >&2
   exit 1
 fi
 
@@ -1237,12 +1300,12 @@ if run_bounded_docker \
     --set=VERBOSITY=verbose -c \
     "SELECT count(*) FROM skill_registry.skills" >/dev/null
 '; then
-  echo "restore drill failed registry role checks" >&2
+  echo "restore drill failed registry role checks: runtime select allowed" >&2
   exit 1
 fi
 if ! grep -q "42501" "$runtime_select_error_file" || \
    ! grep -q "permission denied" "$runtime_select_error_file"; then
-  echo "restore drill failed registry role checks" >&2
+  echo "restore drill failed registry role checks: runtime select diagnostic" >&2
   exit 1
 fi
 
@@ -1372,6 +1435,12 @@ WITH version_state AS (
          ON revision.id = file.revision_id
        WHERE revision.id IS NULL)
     + (SELECT COUNT(*)
+       FROM skill_registry.skills AS skill
+       LEFT JOIN skill_registry.skill_revisions AS revision
+         ON revision.id = skill.current_revision_id
+        AND revision.skill_id = skill.id
+       WHERE revision.id IS NULL)
+    + (SELECT COUNT(*)
        FROM skill_registry.skill_revision_artifacts AS artifact
        WHERE artifact.file_count <> (
          SELECT COUNT(*)
@@ -1387,12 +1456,14 @@ WITH version_state AS (
       ('active_agent_skill_sets_deny_delete', 'active_agent_skill_sets', 'deny_append_only_mutation', 'skill_registry', 11, false, false, 'A'),
       ('active_agent_skill_sets_guard_update', 'active_agent_skill_sets', 'guard_active_agent_skill_set_update', 'skill_registry', 19, false, false, 'A'),
       ('agent_skill_set_items_append_only', 'agent_skill_set_items', 'deny_append_only_mutation', 'skill_registry', 27, false, false, 'A'),
+      ('agent_skill_set_items_reject_archived', 'agent_skill_set_items', 'reject_archived_skill_set_item', 'skill_registry', 7, false, false, 'A'),
       ('agent_skill_set_items_validate', 'agent_skill_set_items', 'validate_agent_skill_set_contents', 'skill_registry', 29, true, true, 'A'),
+      ('agent_skill_sets_reject_archived_activation', 'agent_skill_sets', 'reject_archived_skill_activation', 'skill_registry', 19, false, false, 'A'),
+      ('agent_skill_sets_sync_current_revisions', 'agent_skill_sets', 'sync_current_skill_revisions', 'skill_registry', 17, false, false, 'A'),
       ('agent_skill_sets_guard_update', 'agent_skill_sets', 'guard_agent_skill_set_update', 'skill_registry', 19, false, false, 'A'),
       ('skills_guard_update', 'skills', 'guard_skill_update', 'skill_registry', 19, false, false, 'A'),
     ('skill_revisions_guard_insert', 'skill_revisions', 'guard_revision_insert', 'skill_registry', 7, false, false, 'A'),
     ('skill_revisions_guard_update', 'skill_revisions', 'guard_revision_update', 'skill_registry', 19, false, false, 'A'),
-    ('skill_revisions_require_review_event', 'skill_revisions', 'require_revision_review_event', 'skill_registry', 17, true, true, 'A'),
       ('skill_control_events_stamp_transaction', 'skill_control_events', 'stamp_control_event_transaction', 'skill_registry', 7, false, false, 'A'),
       ('skill_control_events_append_only', 'skill_control_events', 'deny_append_only_mutation', 'skill_registry', 27, false, false, 'A'),
       ('skill_set_control_events_append_only', 'skill_set_control_events', 'deny_append_only_mutation', 'skill_registry', 27, false, false, 'A'),
@@ -1438,6 +1509,18 @@ WITH version_state AS (
     AND to_regclass('skill_registry.agent_skill_set_items') IS NOT NULL
     AND to_regclass('skill_registry.active_agent_skill_sets') IS NOT NULL
     AND to_regclass('skill_registry.skill_set_control_events') IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM pg_constraint AS constraint_row
+      WHERE constraint_row.conname = 'skills_current_revision_fkey'
+        AND constraint_row.conrelid = 'skill_registry.skills'::regclass
+        AND constraint_row.confrelid = 'skill_registry.skill_revisions'::regclass
+        AND constraint_row.contype = 'f'
+        AND constraint_row.convalidated
+        AND constraint_row.condeferrable
+        AND constraint_row.condeferred
+        AND pg_get_constraintdef(constraint_row.oid, true) =
+          'FOREIGN KEY (current_revision_id, id) REFERENCES skill_registry.skill_revisions(id, skill_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED'
+    )
     AND EXISTS (
       SELECT 1 FROM pg_constraint
       WHERE conrelid = 'skill_registry.skill_revision_artifacts'::regclass
@@ -1507,7 +1590,7 @@ fi
 unset skill_registry_snapshot
 
 expected_artifact_match_count=0
-if [ "$expected_artifact_sha256_required" = true ]; then
+if [ "$expected_artifact_required" = true ]; then
   if ! run_database_scalar expected_artifact_match_count psql \
     --username="$owner" --dbname="$database" --no-psqlrc \
     --tuples-only --no-align --quiet --set=ON_ERROR_STOP=1 \
@@ -1607,7 +1690,7 @@ if [ "$migration_count" != "$expected_migrations" ] || \
    [ "$skill_artifact_digest_mismatch_count" != "0" ] || \
    [ "$skill_registry_integrity_mismatch_count" != "0" ] || \
    [ "$skill_registry_security_trigger_mismatch_count" != "0" ] || \
-   { [ "$expected_artifact_sha256_required" = true ] && \
+   { [ "$expected_artifact_required" = true ] && \
      [ "$expected_artifact_match_count" != "1" ]; } || \
    { [ "$expected_skill_runtime_required" = true ] && \
      { [ "$expected_skill_runtime_match_count" != "1" ] || \

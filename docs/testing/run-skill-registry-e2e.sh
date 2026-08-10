@@ -152,10 +152,10 @@ umask 077
 temporary_directory=$(mktemp -d "$runtime_tmp/aap-skill-registry-e2e.XXXXXX")
 secret_directory="$temporary_directory/secrets"
 fixture_directory="$temporary_directory/fixture"
-archive_file="$temporary_directory/skill-registry-e2e.zip"
+initial_archive_file="$temporary_directory/skill-registry-e2e-initial.zip"
+inactive_replacement_archive_file="$temporary_directory/skill-registry-e2e-inactive-replacement.zip"
+active_replacement_archive_file="$temporary_directory/skill-registry-e2e-active-replacement.zip"
 state_file="$temporary_directory/skill-registry-state.json"
-runtime_state_file="$temporary_directory/skill-runtime-state.json"
-storage_state_file="$temporary_directory/reviewer-storage-state.json"
 restore_root="$temporary_directory/restore"
 dump_directory="$temporary_directory/dump"
 env_file="$temporary_directory/e2e.env"
@@ -295,9 +295,9 @@ HTTP_PORT=$http_port
 PUBLIC_HOST=127.0.0.1
 ALLOW_LOCAL_VALIDATION_HOSTS=true
 FEATURE_EMAIL_VERIFICATION=false
-AGENT_ENABLED=$runtime_mode
-MODEL_PROVIDER=$(if [ "$runtime_mode" = true ]; then printf '%s' openai; fi)
-MODEL_ID=$(if [ "$runtime_mode" = true ]; then printf '%s' e2e-skill-runtime; fi)
+AGENT_ENABLED=true
+MODEL_PROVIDER=openai
+MODEL_ID=$(if [ "$runtime_mode" = true ]; then printf '%s' e2e-skill-runtime; else printf '%s' e2e-skill-registry; fi)
 MODEL_BASE_URL=
 BACKUP_RUN_ONCE=true
 BACKUP_INTERVAL_SECONDS=86400
@@ -327,13 +327,13 @@ set +a
 
 if [ "$runtime_mode" = true ]; then
   slug=deterministic-runtime
-  mkdir -p "$fixture_directory/$slug/scripts"
+  mkdir -p "$fixture_directory/$slug/references"
   cp docs/testing/fixtures/skills/deterministic/SKILL.md "$fixture_directory/$slug/SKILL.md"
-  cp docs/testing/fixtures/skills/deterministic/scripts/record.py "$fixture_directory/$slug/scripts/record.py"
-  fixture_members="SKILL.md scripts/record.py"
+  cp docs/testing/fixtures/skills/deterministic/references/marker.md "$fixture_directory/$slug/references/marker.md"
+  fixture_members="SKILL.md references/marker.md fixture-variant.txt"
 else
-  slug="e2e-reviewed-$(openssl rand -hex 6)"
-  mkdir -p "$fixture_directory/$slug/scripts"
+  slug="e2e-uploaded-$(openssl rand -hex 6)"
+  mkdir -p "$fixture_directory/$slug/references"
   cat >"$fixture_directory/$slug/SKILL.md" <<EOF
 ---
 name: $slug
@@ -341,15 +341,19 @@ description: Skill Registry E2E local fixture.
 license: MIT
 ---
 # Instructions
-Use the local script only during this isolated acceptance.
+Use the local reference only during this isolated acceptance.
 EOF
-  cat >"$fixture_directory/$slug/scripts/hello.py" <<'EOF'
-#!/usr/bin/env python3
-print("hello from reviewed skill")
+  cat >"$fixture_directory/$slug/references/hello.md" <<'EOF'
+hello from uploaded skill
 EOF
-  fixture_members="SKILL.md scripts/hello.py"
+  fixture_members="SKILL.md references/hello.md fixture-variant.txt"
 fi
-python3 - "$fixture_directory" "$slug" "$archive_file" $fixture_members <<'PY'
+
+create_archive() {
+  fixture_variant=$1
+  archive_output=$2
+  printf 'Skill Registry E2E fixture variant: %s\n' "$fixture_variant" >"$fixture_directory/$slug/fixture-variant.txt"
+  python3 - "$fixture_directory" "$slug" "$archive_output" $fixture_members <<'PY'
 import pathlib
 import sys
 import zipfile
@@ -361,7 +365,12 @@ with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
     for relative in sys.argv[4:]:
         archive.write(root / slug / relative, f"{slug}/{relative}")
 PY
-chmod 600 "$archive_file"
+  chmod 600 "$archive_output"
+}
+
+create_archive initial "$initial_archive_file"
+create_archive inactive-replacement "$inactive_replacement_archive_file"
+create_archive active-replacement "$active_replacement_archive_file"
 
 protected_patterns="$temporary_directory/protected-patterns"
 printf '%s\n' \
@@ -377,7 +386,10 @@ printf '%s\n' \
   "$role_target_session" "$admin_session" "$no_totp_admin_session" \
   "$model_admin_session" "$model_admin_stale_session" "$revoked_session" \
   "$replacement_password" "Skill Registry E2E local fixture." \
-  'print("hello from reviewed skill")' >"$protected_patterns"
+  "Skill Registry E2E fixture variant: initial" \
+  "Skill Registry E2E fixture variant: inactive-replacement" \
+  "Skill Registry E2E fixture variant: active-replacement" \
+  "hello from uploaded skill" >"$protected_patterns"
 chmod 600 "$protected_patterns"
 
 compose() {
@@ -395,7 +407,7 @@ import uuid
 expected = os.environ["AAP_SKILL_RUNTIME_EXPECTED"]
 security_key = open("/run/secrets/os_security_key", encoding="utf-8").read()
 boundary = f"----aap-skill-runtime-{uuid.uuid4().hex}"
-fields = {"message": "run the deterministic reviewed Skill", "stream": "true"}
+fields = {"message": "run the deterministic uploaded Skill", "stream": "true"}
 chunks = []
 for name, value in fields.items():
     chunks.extend(
@@ -425,16 +437,16 @@ with urllib.request.urlopen(request, timeout=30) as response:
 marker = "AAP_SKILL_RUNTIME_E2E_MARKER_v1"
 if expected == "marker":
     for required in (
-        "get_skill_script",
+        "get_skill_reference",
         "deterministic-runtime",
-        "record.py",
+        "marker.md",
         marker,
         "skill-tool-finished",
     ):
         if required not in raw:
             raise SystemExit(f"Skill stream missing {required}")
 elif expected == "empty":
-    if "empty-set-no-skill-tools" not in raw or "get_skill_script" in raw or marker in raw:
+    if "empty-set-no-skill-tools" not in raw or "get_skill_reference" in raw or marker in raw:
         raise SystemExit("empty Skill set exposed a Skill tool")
 else:
     raise SystemExit("invalid Skill runtime stream expectation")
@@ -443,6 +455,24 @@ PY
 
 run_job() {
   compose run --rm "$@"
+}
+
+run_skill_registry_playwright() {
+  env -i \
+    PATH="$PATH" \
+    HOME="${HOME:-/tmp}" \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    BASE_URL="$base_url" \
+    BETTER_AUTH_SECRET="$better_auth_secret" \
+    E2E_MODEL_ADMIN_SESSION_TOKEN="$model_admin_session" \
+    E2E_MODEL_ADMIN_STALE_SESSION_TOKEN="$model_admin_stale_session" \
+    SKILL_REGISTRY_E2E_INITIAL_ARCHIVE="$initial_archive_file" \
+    SKILL_REGISTRY_E2E_INACTIVE_REPLACEMENT_ARCHIVE="$inactive_replacement_archive_file" \
+    SKILL_REGISTRY_E2E_ACTIVE_REPLACEMENT_ARCHIVE="$active_replacement_archive_file" \
+    SKILL_REGISTRY_E2E_STATE_FILE="$state_file" \
+    SKILL_REGISTRY_E2E_SLUG="$slug" \
+    pnpm --filter @ai-agent-platform/web exec playwright test \
+      e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep "$1"
 }
 
 compose config --quiet
@@ -482,17 +512,6 @@ expected_uploader_permissions=$(printf '%s\n' \
   echo "workforce:admin is missing the Skill read/upload grant contract" >&2
   exit 1
 }
-uploader_review_permissions=$(compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -Atqc \
-  "SELECT count(*)
-     FROM public.user_roles ur
-     JOIN public.role_permissions rp ON rp.role_id = ur.role_id
-     JOIN public.permissions p ON p.id = rp.permission_id
-    WHERE ur.user_id = '10000000-0000-4000-8000-000000000003'::uuid
-      AND p.key = 'admin:assistant:skills:review'")
-[ "$uploader_review_permissions" = 0 ] || {
-  echo "workforce:admin unexpectedly has the Skill review grant" >&2
-  exit 1
-}
 compose up -d --no-deps --wait agent skill-registry
 compose up -d --no-deps --wait web
 compose up -d --no-deps --wait proxy
@@ -508,60 +527,41 @@ for service in db agent skill-registry web; do
   esac
 done
 
-export BETTER_AUTH_SECRET
-BETTER_AUTH_SECRET=$better_auth_secret
-export E2E_ADMIN_SESSION_TOKEN=$admin_session
-export E2E_MODEL_ADMIN_SESSION_TOKEN=$model_admin_session
-export E2E_CUSTOMER_PASSWORD=$customer_password
-export E2E_STAFF_PASSWORD=$staff_password
-export E2E_ADMIN_PASSWORD=$admin_password
-export E2E_PENDING_CUSTOMER_SESSION_TOKEN=$pending_customer_session
-export E2E_DISABLED_CUSTOMER_SESSION_TOKEN=$disabled_customer_session
-export E2E_STAFF_SESSION_TOKEN=$staff_session
-export E2E_ROLE_TARGET_SESSION_TOKEN=$role_target_session
-export E2E_NO_TOTP_ADMIN_SESSION_TOKEN=$no_totp_admin_session
-export E2E_MODEL_ADMIN_STALE_SESSION_TOKEN=$model_admin_stale_session
-export E2E_REVOKED_SESSION_TOKEN=$revoked_session
-export E2E_REPLACEMENT_PASSWORD=$replacement_password
-export SKILL_REGISTRY_E2E_ARCHIVE=$archive_file
-export SKILL_REGISTRY_E2E_STATE_FILE=$state_file
-export SKILL_REGISTRY_E2E_STORAGE_STATE_FILE=$storage_state_file
-export SKILL_REGISTRY_E2E_SLUG=$slug
-export SKILL_RUNTIME_E2E_STATE_FILE=$runtime_state_file
+run_skill_registry_playwright @lifecycle
 
-BASE_URL=$base_url pnpm --filter @ai-agent-platform/web exec playwright test \
-  e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep @lifecycle
+compose restart skill-registry
+compose up -d --no-deps --wait skill-registry
+run_skill_registry_playwright @restart
 
 if [ "$runtime_mode" = true ]; then
-  BASE_URL=$base_url pnpm --filter @ai-agent-platform/web exec playwright test \
-    e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep @runtime-activate
+  run_skill_registry_playwright @runtime-activate
   assert_skill_runtime_stream marker
   compose restart agent
   compose up -d --no-deps --wait agent
   assert_skill_runtime_stream marker
-  BASE_URL=$base_url pnpm --filter @ai-agent-platform/web exec playwright test \
-    e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep @runtime-empty
+  run_skill_registry_playwright @runtime-empty
   assert_skill_runtime_stream empty
-  BASE_URL=$base_url pnpm --filter @ai-agent-platform/web exec playwright test \
-    e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep @runtime-rollback
+  run_skill_registry_playwright @runtime-reenable
   assert_skill_runtime_stream marker
 fi
 
-artifact_sha=$(node -e 'const fs=require("node:fs"); const state=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(state.artifactSha256)' "$state_file")
-case "$artifact_sha" in
-  [0-9a-f][0-9a-f]*) ;;
-  *) echo "Skill Registry E2E state digest is invalid" >&2; exit 1 ;;
-esac
-[ "${#artifact_sha}" -eq 64 ] || {
-  echo "Skill Registry E2E state digest is invalid" >&2
+state_values=$(node -e '
+  const fs = require("node:fs");
+  const state = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const sha256 = /^[0-9a-f]{64}$/;
+  if (!uuid.test(state.revisionId) || !sha256.test(state.artifactSha256)) {
+    process.exit(1);
+  }
+  process.stdout.write(`${state.revisionId}|${state.artifactSha256}`);
+' "$state_file") || {
+  echo "Skill Registry E2E final state is invalid" >&2
   exit 1
 }
+IFS='|' read -r revision_id artifact_sha <<EOF
+$state_values
+EOF
 printf '%s\n' "$artifact_sha" >>"$protected_patterns"
-
-compose restart skill-registry
-compose up -d --no-deps --wait skill-registry
-BASE_URL=$base_url pnpm --filter @ai-agent-platform/web exec playwright test \
-  e2e/admin-skill-registry.spec.ts --project=desktop --workers=1 --grep @restart
 
 compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -c \
   "INSERT INTO agno.agno_sessions (session_id, session_type, created_at) VALUES ('$agno_fixture', 'agent', 0)" >/dev/null
@@ -569,7 +569,7 @@ user_count=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc "SELECT co
 agno_count=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc "SELECT count(*) FROM agno.agno_sessions")
 fixture_user=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc "SELECT id FROM public.users ORDER BY id LIMIT 1")
 artifact_count=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
-  "SELECT count(*) FROM skill_registry.skill_revision_artifacts WHERE artifact_sha256 = '$artifact_sha'")
+  "SELECT count(*) FROM skill_registry.skill_revision_artifacts WHERE revision_id = '$revision_id'::uuid AND artifact_sha256 = '$artifact_sha'")
 [ "$artifact_count" = 1 ] || {
   echo "published artifact digest was not persisted" >&2
   exit 1
@@ -603,6 +603,7 @@ if ! env $restore_skill_runtime_environment \
   BACKUP_ENCRYPTION_KEY_FILE=$BACKUP_ENCRYPTION_KEY_FILE \
   BACKUP_CRYPTO_IMAGE="${project}-backup:latest" \
   RESTORE_SKILL_REGISTRY_IMAGE="${project}-skill-registry:latest" \
+  RESTORE_EXPECTED_ARTIFACT_REVISION_ID=$revision_id \
   RESTORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha \
   RESTORE_TMP_ROOT="$restore_root" \
     infra/docker/restore-drill.sh \
@@ -627,9 +628,9 @@ docs/testing/run-restore-docker-lifecycle.sh timeout
 docs/testing/run-restore-docker-lifecycle.sh controlled-failure
 
 audit_leaks=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
-  "SELECT count(*) FROM public.audit_logs WHERE metadata::text LIKE '%Skill Registry E2E local fixture.%' OR metadata::text LIKE '%hello from reviewed skill%'")
+  "SELECT count(*) FROM public.audit_logs WHERE metadata::text LIKE '%Skill Registry E2E local fixture.%' OR metadata::text LIKE '%hello from uploaded skill%'")
 [ "$audit_leaks" = 0 ] || {
-  echo "audit metadata contains Skill source or script output" >&2
+  echo "audit metadata contains Skill source content" >&2
   exit 1
 }
 

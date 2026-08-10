@@ -36,7 +36,7 @@ _SET_COLUMNS = """skill_set.set_id, skill_set.agent_id, skill_set.state,
 
 
 class PostgresSkillSetRepository:
-    """Call only reviewed manager functions and read only manager views."""
+    """Call only restricted manager functions and read only manager views."""
 
     def __init__(self, connection_factory: RepositoryConnectionFactory) -> None:
         self._connection_factory = connection_factory
@@ -68,6 +68,7 @@ class PostgresSkillSetRepository:
                           AND artifact.skill_id = revision.skill_id
                         WHERE revision.id = ANY(%s)
                           AND revision.state = 'published'
+                          AND skill.archived_at IS NULL
                         ORDER BY revision.id""",
                         (list(revision_ids),),
                     )
@@ -228,7 +229,10 @@ class PostgresSkillSetRepository:
                         await cursor.execute(
                             """SELECT count(*)
                             FROM skill_registry.skill_revisions AS revision
-                            WHERE revision.state = 'published'"""
+                            JOIN skill_registry.skills AS skill
+                              ON skill.id = revision.skill_id
+                            WHERE revision.state = 'published'
+                              AND skill.archived_at IS NULL"""
                         )
                         count_row = await cursor.fetchone()
                         if count_row is None:
@@ -244,6 +248,7 @@ class PostgresSkillSetRepository:
                               ON artifact.revision_id = revision.id
                               AND artifact.skill_id = revision.skill_id
                             WHERE revision.state = 'published'
+                              AND skill.archived_at IS NULL
                             ORDER BY skill.slug, revision.revision_no DESC, revision.id
                             LIMIT %s OFFSET %s""",
                             (limit, offset),

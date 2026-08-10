@@ -5,10 +5,12 @@ import subprocess
 import skill_registry.schema as registry_schema
 from skill_registry.schema import (
     PREPARE_SCHEMA_SQL,
-    REVIEWED_SKILL_TABLE_NAMES,
+    SKILL_TABLE_NAMES,
     SCHEMA_VERSION_1_SQL,
     SCHEMA_VERSION_2_SQL,
     SCHEMA_VERSION_4_SQL,
+    SCHEMA_VERSION_5_SQL,
+    SCHEMA_VERSION_9_SQL,
 )
 
 
@@ -118,7 +120,7 @@ def test_role_bootstrap_resets_role_settings_and_seals_replication_bypass() -> N
 def test_schema_version_one_remains_the_exact_historical_registry_bootstrap() -> None:
     sql = normalize_sql(SCHEMA_VERSION_1_SQL)
 
-    assert REVIEWED_SKILL_TABLE_NAMES == frozenset(
+    assert SKILL_TABLE_NAMES == frozenset(
         {
             "skills",
             "skill_revisions",
@@ -127,9 +129,24 @@ def test_schema_version_one_remains_the_exact_historical_registry_bootstrap() ->
             "skill_control_events",
         }
     )
-    for table_name in REVIEWED_SKILL_TABLE_NAMES:
+    for table_name in SKILL_TABLE_NAMES:
         assert f"CREATE TABLE skill_registry.{table_name}" in sql
     assert "%s" not in PREPARE_SCHEMA_SQL + SCHEMA_VERSION_1_SQL
+
+
+def test_schema_v9_adds_authoritative_current_revision_and_updates_it_on_activation() -> None:
+    sql = normalize_sql(SCHEMA_VERSION_9_SQL)
+
+    assert "ADD COLUMN current_revision_id uuid" in sql
+    assert "FOREIGN KEY (current_revision_id, id)" in sql
+    assert "REFERENCES skill_registry.skill_revisions(id, skill_id)" in sql
+    assert "DEFERRABLE INITIALLY DEFERRED" in sql
+    assert "ALTER COLUMN current_revision_id SET NOT NULL" in sql
+    assert (
+        "UPDATE skill_registry.skills AS skill SET current_revision_id = item.skill_revision_id"
+        in sql
+    )
+    assert "OLD.state = 'candidate' AND NEW.state = 'active'" in sql
 
 
 def test_schema_v2_renames_review_authorization_evidence() -> None:
@@ -236,12 +253,62 @@ def test_skill_set_views_expose_runtime_and_manager_boundaries_in_schema_v3() ->
 def test_schema_v4_replaces_runtime_file_index_with_canonical_utf8_order() -> None:
     sql = normalize_sql(SCHEMA_VERSION_4_SQL)
 
-    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 4
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 9
     assert "CREATE OR REPLACE VIEW skill_registry.runtime_skill_set_items" in sql
     assert "ORDER BY pg_catalog.convert_to(file.path, 'UTF8')" in sql
-    assert "ALTER VIEW skill_registry.runtime_skill_set_items OWNER TO ai_agent_skill_registry_migrator" in sql
-    assert "GRANT SELECT ON skill_registry.runtime_skill_set_items TO ai_agent_skill_registry_runtime" in sql
+    assert (
+        "ALTER VIEW skill_registry.runtime_skill_set_items OWNER TO ai_agent_skill_registry_migrator"
+        in sql
+    )
+    assert (
+        "GRANT SELECT ON skill_registry.runtime_skill_set_items TO ai_agent_skill_registry_runtime"
+        in sql
+    )
     assert "INSERT INTO skill_registry.schema_versions (version) VALUES (4)" in sql
+
+
+def test_active_skill_names_are_unique_but_archived_names_are_reusable() -> None:
+    sql = normalize_sql(getattr(registry_schema, "SCHEMA_VERSION_6_SQL", ""))
+
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 9
+    assert "DROP CONSTRAINT skills_slug_key" in sql
+    assert (
+        "CREATE UNIQUE INDEX skills_active_slug_key "
+        "ON skill_registry.skills (slug) WHERE archived_at IS NULL"
+    ) in sql
+
+
+def test_archived_skills_cannot_enter_or_reenter_runtime_sets() -> None:
+    sql = normalize_sql(registry_schema.SCHEMA_VERSION_3_SQL)
+    trigger_migration = normalize_sql(registry_schema.SCHEMA_VERSION_7_SQL)
+    migration = normalize_sql(registry_schema.SCHEMA_VERSION_8_SQL)
+
+    assert "skill.archived_at IS NULL" in sql
+    assert sql.count("skill.archived_at IS NOT NULL") >= 2
+    assert migration.count("FOR SHARE OF skill") == 2
+    assert "agent_skill_set_items_reject_archived" in trigger_migration
+    assert "agent_skill_sets_reject_archived_activation" in trigger_migration
+
+
+def test_schema_v5_temporarily_removes_append_only_guard_for_review_cleanup() -> None:
+    sql = normalize_sql(SCHEMA_VERSION_5_SQL)
+
+    drop = "DROP TRIGGER skill_control_events_append_only ON skill_registry.skill_control_events"
+    delete = "DELETE FROM skill_registry.skill_control_events"
+    recreate = "CREATE TRIGGER skill_control_events_append_only"
+    assert sql.index(drop) < sql.index(delete) < sql.index(recreate)
+
+
+def test_schema_v5_recreates_revision_guards_as_always_triggers() -> None:
+    sql = normalize_sql(SCHEMA_VERSION_5_SQL)
+
+    for trigger in ("skill_revisions_guard_insert", "skill_revisions_guard_update"):
+        create = f"CREATE TRIGGER {trigger}"
+        enable = (
+            "ALTER TABLE skill_registry.skill_revisions "
+            f"ENABLE ALWAYS TRIGGER {trigger}"
+        )
+        assert sql.index(create) < sql.index(enable)
 
 
 def test_schema_has_permanent_identity_revision_and_nonce_uniqueness() -> None:
@@ -403,6 +470,13 @@ def test_security_functions_pin_search_path_and_triggers_are_always_enabled() ->
         "skill_revision_files_append_only",
         "skill_control_events_append_only",
     ):
+        assert f"ENABLE ALWAYS TRIGGER {trigger_name}" in sql
+
+
+def test_review_removal_keeps_recreated_revision_guards_always_enabled() -> None:
+    sql = normalize_sql(SCHEMA_VERSION_5_SQL)
+
+    for trigger_name in ("skill_revisions_guard_insert", "skill_revisions_guard_update"):
         assert f"ENABLE ALWAYS TRIGGER {trigger_name}" in sql
 
 

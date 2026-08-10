@@ -217,7 +217,7 @@ describe("FloatingChatWidget", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "你好，我是码多多。已启用的审核 Skill 会按配置加载；知识库和网页正文读取尚未接入。",
+        "你好，我是码多多。已启用的 Skill 会按配置加载；知识库和网页正文读取尚未接入。",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("如何开始了解平台？")).toBeInTheDocument();

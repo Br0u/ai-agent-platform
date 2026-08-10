@@ -12,12 +12,7 @@ export {
   pythonCasefoldAdminSkillPath,
 };
 
-export const ADMIN_SKILL_REVISION_STATES = [
-  "pending_review",
-  "published",
-  "rejected",
-  "archived",
-] as const;
+export const ADMIN_SKILL_REVISION_STATES = ["published", "archived"] as const;
 
 export const ADMIN_SKILL_FILE_KINDS = [
   "manifest",
@@ -46,7 +41,6 @@ export type AdminSkillFindingCode = (typeof ADMIN_SKILL_FINDING_CODES)[number];
 export type AdminSkillPermissionFlags = {
   canUpload: boolean;
   canManageConnections: boolean;
-  canReview: boolean;
   canConfigure: boolean;
 };
 
@@ -60,8 +54,6 @@ export type AdminSkillRevision = {
   artifactSha256: string;
   createdBy: string;
   createdAt: string;
-  reviewedBy: string | null;
-  reviewedAt: string | null;
 };
 
 export type AdminSkillRevisionResponse = {
@@ -71,23 +63,18 @@ export type AdminSkillRevisionResponse = {
 
 export type AdminSkillListResponse = {
   version: "1";
-  skills: Array<{
-    id: string;
-    name: string;
-    createdAt: string;
-    revision: null | {
-      id: string;
-      number: number;
-      state: AdminSkillRevisionState;
-      sourceType: "upload";
-      artifactSha256Prefix: string;
-      createdBy: string;
-      createdAt: string;
-      reviewedBy: string | null;
-      reviewedAt: string | null;
-    };
-  }>;
+  skills: AdminSkillLibraryItem[];
   page: { limit: number; offset: number; returned: number };
+};
+
+export type AdminSkillLibraryItem = {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  uploadedAt: string;
+  replacementToken: string;
+  revisionId: string;
 };
 
 export type AdminSkillRevisionDetailResponse = {
@@ -129,12 +116,6 @@ export type AdminSkillRevisionDetailResponse = {
       diff: string;
     }>;
   };
-  reviewAttestations: {
-    contentReviewed: true;
-    usageRightsConfirmed: true;
-    executionRiskAccepted: true;
-    reviewerAuthorizationConfirmed: true;
-  };
 };
 
 export type AdminSkillFileResponse = {
@@ -157,7 +138,6 @@ const PATH_CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
-const SHA256_PREFIX = /^[0-9a-f]{12}$/u;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const MODULE = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const MEDIA_TYPE = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u;
@@ -362,22 +342,6 @@ function enumValue<const Values extends readonly string[]>(
   );
 }
 
-function reviewMetadataMatchesState(
-  state: AdminSkillRevisionState,
-  createdAt: string,
-  reviewedBy: unknown,
-  reviewedAt: unknown,
-): boolean {
-  if (state === "pending_review") {
-    return reviewedBy === null && reviewedAt === null;
-  }
-  return (
-    canonicalUuid(reviewedBy) &&
-    canonicalTimestamp(reviewedAt) &&
-    reviewedAt >= createdAt
-  );
-}
-
 function readRevision(value: unknown): AdminSkillRevision | null {
   const item = exactRecord(value, [
     "id",
@@ -389,8 +353,6 @@ function readRevision(value: unknown): AdminSkillRevision | null {
     "artifactSha256",
     "createdBy",
     "createdAt",
-    "reviewedBy",
-    "reviewedAt",
   ]);
   if (
     item === null ||
@@ -403,13 +365,7 @@ function readRevision(value: unknown): AdminSkillRevision | null {
     typeof item.artifactSha256 !== "string" ||
     !SHA256.test(item.artifactSha256) ||
     !canonicalUuid(item.createdBy) ||
-    !canonicalTimestamp(item.createdAt) ||
-    !reviewMetadataMatchesState(
-      item.state,
-      item.createdAt,
-      item.reviewedBy,
-      item.reviewedAt,
-    )
+    !canonicalTimestamp(item.createdAt)
   ) {
     return null;
   }
@@ -423,8 +379,6 @@ function readRevision(value: unknown): AdminSkillRevision | null {
     artifactSha256: item.artifactSha256,
     createdBy: item.createdBy,
     createdAt: item.createdAt,
-    reviewedBy: item.reviewedBy as string | null,
-    reviewedAt: item.reviewedAt as string | null,
   };
 }
 
@@ -449,14 +403,12 @@ export function parseAdminSkillPermissionFlags(
   const flags = exactRecord(value, [
     "canUpload",
     "canManageConnections",
-    "canReview",
     "canConfigure",
   ]);
   if (
     flags === null ||
     typeof flags.canUpload !== "boolean" ||
     typeof flags.canManageConnections !== "boolean" ||
-    typeof flags.canReview !== "boolean" ||
     typeof flags.canConfigure !== "boolean"
   ) {
     return null;
@@ -464,7 +416,6 @@ export function parseAdminSkillPermissionFlags(
   return {
     canUpload: flags.canUpload,
     canManageConnections: flags.canManageConnections,
-    canReview: flags.canReview,
     canConfigure: flags.canConfigure,
   };
 }
@@ -498,64 +449,36 @@ export function parseAdminSkillListResponse(
   }
   const skills: AdminSkillListResponse["skills"] = [];
   for (const raw of rawSkills) {
-    const skill = exactRecord(raw, ["id", "name", "createdAt", "revision"]);
+    const skill = exactRecord(raw, [
+      "id",
+      "name",
+      "description",
+      "enabled",
+      "uploadedAt",
+      "replacementToken",
+      "revisionId",
+    ]);
     if (
       skill === null ||
       !canonicalUuid(skill.id) ||
       !skillName(skill.name) ||
-      !canonicalTimestamp(skill.createdAt)
+      !boundedText(skill.description, 4096, { empty: true }) ||
+      typeof skill.enabled !== "boolean" ||
+      !canonicalTimestamp(skill.uploadedAt) ||
+      typeof skill.replacementToken !== "string" ||
+      !SHA256.test(skill.replacementToken) ||
+      !canonicalUuid(skill.revisionId)
     ) {
       return null;
-    }
-    let revision: AdminSkillListResponse["skills"][number]["revision"] = null;
-    if (skill.revision !== null) {
-      const item = exactRecord(skill.revision, [
-        "id",
-        "number",
-        "state",
-        "sourceType",
-        "artifactSha256Prefix",
-        "createdBy",
-        "createdAt",
-        "reviewedBy",
-        "reviewedAt",
-      ]);
-      if (
-        item === null ||
-        !canonicalUuid(item.id) ||
-        !positiveInteger(item.number, 2_147_483_647) ||
-        !enumValue(item.state, ADMIN_SKILL_REVISION_STATES) ||
-        item.sourceType !== "upload" ||
-        typeof item.artifactSha256Prefix !== "string" ||
-        !SHA256_PREFIX.test(item.artifactSha256Prefix) ||
-        !canonicalUuid(item.createdBy) ||
-        !canonicalTimestamp(item.createdAt) ||
-        !reviewMetadataMatchesState(
-          item.state,
-          item.createdAt,
-          item.reviewedBy,
-          item.reviewedAt,
-        )
-      ) {
-        return null;
-      }
-      revision = {
-        id: item.id,
-        number: item.number,
-        state: item.state,
-        sourceType: "upload",
-        artifactSha256Prefix: item.artifactSha256Prefix,
-        createdBy: item.createdBy,
-        createdAt: item.createdAt,
-        reviewedBy: item.reviewedBy as string | null,
-        reviewedAt: item.reviewedAt as string | null,
-      };
     }
     skills.push({
       id: skill.id,
       name: skill.name,
-      createdAt: skill.createdAt,
-      revision,
+      description: skill.description,
+      enabled: skill.enabled,
+      uploadedAt: skill.uploadedAt,
+      replacementToken: skill.replacementToken,
+      revisionId: skill.revisionId,
     });
   }
   if (
@@ -584,8 +507,6 @@ function readDetailRevision(
     "artifactSha256",
     "createdBy",
     "createdAt",
-    "reviewedBy",
-    "reviewedAt",
     "description",
     "license",
     "compatibility",
@@ -605,8 +526,6 @@ function readDetailRevision(
     artifactSha256: item.artifactSha256,
     createdBy: item.createdBy,
     createdAt: item.createdAt,
-    reviewedBy: item.reviewedBy,
-    reviewedAt: item.reviewedAt,
   });
   const allowedTools = readStringArray(
     item.allowedTools,
@@ -654,7 +573,6 @@ export function parseAdminSkillRevisionDetailResponse(
       "findings",
       "previousPublishedRevisionId",
       "diff",
-      "reviewAttestations",
     ]);
     const revision = readDetailRevision(response?.revision);
     const rawFiles = exactArray(response?.files, MAX_FILES);
@@ -663,12 +581,6 @@ export function parseAdminSkillRevisionDetailResponse(
       "pythonModules",
       "unavailablePythonModules",
     ]);
-    const attestations = exactRecord(response?.reviewAttestations, [
-      "contentReviewed",
-      "usageRightsConfirmed",
-      "executionRiskAccepted",
-      "reviewerAuthorizationConfirmed",
-    ]);
     if (
       response?.version !== "1" ||
       revision === null ||
@@ -676,11 +588,6 @@ export function parseAdminSkillRevisionDetailResponse(
       revision.fileCount !== rawFiles.length ||
       rawFindings === null ||
       dependencies === null ||
-      attestations === null ||
-      attestations.contentReviewed !== true ||
-      attestations.usageRightsConfirmed !== true ||
-      attestations.executionRiskAccepted !== true ||
-      attestations.reviewerAuthorizationConfirmed !== true ||
       !(
         response.previousPublishedRevisionId === null ||
         canonicalUuid(response.previousPublishedRevisionId)
@@ -835,12 +742,6 @@ export function parseAdminSkillRevisionDetailResponse(
       findings,
       previousPublishedRevisionId: response.previousPublishedRevisionId,
       diff,
-      reviewAttestations: {
-        contentReviewed: true,
-        usageRightsConfirmed: true,
-        executionRiskAccepted: true,
-        reviewerAuthorizationConfirmed: true,
-      },
     };
   } catch {
     return null;

@@ -1,4 +1,4 @@
-"""Read-only reviewed artifact access and restricted Skill activation calls."""
+"""Read-only validated artifact access and restricted Skill activation calls."""
 
 from __future__ import annotations
 

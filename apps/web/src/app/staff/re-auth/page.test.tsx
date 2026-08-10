@@ -1,14 +1,22 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ requireWorkforce: vi.fn() }));
-vi.mock("@/server/auth/access", () => ({
+const mocks = vi.hoisted(() => ({
+  requireWorkforce: vi.fn(),
+  redirect: vi.fn(() => {
+    throw new Error("NEXT_REDIRECT");
+  }),
+}));
+vi.mock("@/server/auth/access", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/auth/access")>()),
   requireWorkforce: mocks.requireWorkforce,
 }));
+vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 vi.mock("@/server/auth/server-actions", () => ({
   reauthenticateStaffAction: vi.fn(),
 }));
 
+import { AuthAccessError } from "@/server/auth/access";
 import Page from "./page";
 
 afterEach(() => {
@@ -34,6 +42,22 @@ describe("staff re-authentication page", () => {
     expect(screen.getByLabelText("六位验证码")).toHaveAttribute(
       "autocomplete",
       "one-time-code",
+    );
+  });
+
+  it("uses a fresh staff login when the old session no longer exists", async () => {
+    mocks.requireWorkforce.mockRejectedValueOnce(
+      new AuthAccessError("AUTH_SESSION_REQUIRED", 401),
+    );
+
+    await expect(
+      Page({
+        searchParams: Promise.resolve({ returnTo: "/admin/assistant" }),
+      }),
+    ).rejects.toThrow("NEXT_REDIRECT");
+
+    expect(mocks.redirect).toHaveBeenCalledWith(
+      "/staff/login?returnTo=%2Fadmin%2Fassistant",
     );
   });
 });

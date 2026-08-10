@@ -473,6 +473,28 @@ def test_rejects_an_extra_top_level_empty_directory_as_another_root(zip_builder)
     assert_archive_error(archive, "ARCHIVE_MULTIPLE_SKILL_ROOTS")
 
 
+def test_ignores_macos_metadata_after_validating_but_excludes_it_from_canonical_size(
+    zip_builder,
+) -> None:
+    metadata = {
+        "demo-skill/.DS_Store": b"finder",
+        "__MACOSX/demo-skill/._.DS_Store": b"resource-fork",
+    }
+    archive = zip_builder(
+        {
+            "demo-skill/SKILL.md": DEFAULT_SKILL_MD,
+            **metadata,
+        }
+    )
+
+    canonical = canonicalize_skill_archive(archive)
+    recanonical = canonicalize_skill_archive(canonical.archive)
+
+    assert [file.path for file in canonical.files] == ["SKILL.md"]
+    assert canonical.extracted_size == len(DEFAULT_SKILL_MD)
+    assert recanonical == canonical
+
+
 def test_rejects_archive_without_skill_manifest(zip_builder) -> None:
     archive = zip_builder({"demo-skill/README.md": b"missing"})
     assert_archive_error(archive, "ARCHIVE_SKILL_ROOT_REQUIRED")

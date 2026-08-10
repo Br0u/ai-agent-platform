@@ -26,7 +26,7 @@ SkillRegistryAction = Literal[
     "detail",
     "file",
     "upload",
-    "review",
+    "archive",
     "skill_set_status",
     "skill_set_available",
     "skill_set_create",
@@ -36,7 +36,6 @@ SkillRegistryAction = Literal[
 SkillRegistryPermission = Literal[
     "admin:assistant:skills",
     "admin:assistant:skills:upload",
-    "admin:assistant:skills:review",
     "admin:assistant:skills:configure",
 ]
 Assurance = Literal["session", "password+mfa"]
@@ -61,10 +60,14 @@ _DETAIL_PATTERN: Final = re.compile(
 _FILE_PATTERN: Final = re.compile(
     rb"/internal/skills/(" + _UUID_PATTERN + rb")/revisions/(" + _UUID_PATTERN + rb")/files/(.+)\Z"
 )
-_REVIEW_PATTERN: Final = re.compile(
-    rb"/internal/skills/(" + _UUID_PATTERN + rb")/revisions/(" + _UUID_PATTERN + rb")/review\Z"
+_UPLOAD_QUERY_PATTERN: Final = re.compile(
+    rb"targetSkillId=("
+    + _UUID_PATTERN
+    + rb")&expectedArtifactSha256=[0-9a-f]{64}\Z"
 )
-_UPLOAD_QUERY_PATTERN: Final = re.compile(rb"targetSkillId=(" + _UUID_PATTERN + rb")\Z")
+_ARCHIVE_PATTERN: Final = re.compile(
+    rb"/internal/skills/(" + _UUID_PATTERN + rb")/archive\Z"
+)
 _SKILL_SET_DISCARD_PATTERN: Final = re.compile(
     rb"/internal/skill-sets/(" + _UUID_PATTERN + rb")/discard\Z"
 )
@@ -84,10 +87,10 @@ _ASSERTION_FIELDS: Final = frozenset(
 )
 _ACTION_PERMISSIONS: Final[dict[SkillRegistryAction, SkillRegistryPermission]] = {
     "list": "admin:assistant:skills",
-    "detail": "admin:assistant:skills:review",
-    "file": "admin:assistant:skills:review",
+    "detail": "admin:assistant:skills",
+    "file": "admin:assistant:skills",
     "upload": "admin:assistant:skills:upload",
-    "review": "admin:assistant:skills:review",
+    "archive": "admin:assistant:skills:configure",
     "skill_set_status": "admin:assistant:skills",
     "skill_set_available": "admin:assistant:skills",
     "skill_set_create": "admin:assistant:skills:configure",
@@ -98,10 +101,10 @@ _READ_ACTIONS: Final = frozenset(
     {"list", "detail", "file", "skill_set_status", "skill_set_available"}
 )
 _MFA_ACTIONS: Final = frozenset(
-    {"review", "skill_set_create", "skill_set_discard", "skill_set_rollback"}
+    {"archive", "skill_set_create", "skill_set_discard", "skill_set_rollback"}
 )
 _SKILL_SET_MUTATIONS: Final = frozenset(
-    {"skill_set_create", "skill_set_discard", "skill_set_rollback"}
+    {"archive", "skill_set_create", "skill_set_discard", "skill_set_rollback"}
 )
 _NO_STORE_HEADERS: Final = {"Cache-Control": "no-store"}
 
@@ -433,6 +436,9 @@ def match_request_target(scope: Scope) -> tuple[SkillRegistryAction | None, str 
             return "upload", "new"
         match = _UPLOAD_QUERY_PATTERN.fullmatch(query)
         return ("upload", match.group(1).decode()) if match is not None else (None, None)
+    archive = _ARCHIVE_PATTERN.fullmatch(path)
+    if method == "POST" and archive is not None and not query:
+        return "archive", archive.group(1).decode()
     detail = _DETAIL_PATTERN.fullmatch(path)
     if method == "GET" and detail is not None and not query:
         return "detail", f"{detail.group(1).decode()}/{detail.group(2).decode()}"
@@ -444,9 +450,6 @@ def match_request_target(scope: Scope) -> tuple[SkillRegistryAction | None, str 
                 "file",
                 f"{file_match.group(1).decode()}/{file_match.group(2).decode()}/{file_target}",
             )
-    review = _REVIEW_PATTERN.fullmatch(path)
-    if method == "POST" and review is not None and not query:
-        return "review", f"{review.group(1).decode()}/{review.group(2).decode()}"
     return None, None
 
 

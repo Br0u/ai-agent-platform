@@ -600,7 +600,7 @@ def _minimal_zip(slug: str) -> bytes:
     INTEGRATION_MANAGER_URL is None,
     reason="missing required registry PostgreSQL DSN: SKILL_REGISTRY_DATABASE_URL",
 )
-def test_real_postgres_app_upload_detail_review_and_readiness(tmp_path: Path) -> None:
+def test_real_postgres_app_upload_detail_and_readiness(tmp_path: Path) -> None:
     assert INTEGRATION_MANAGER_URL is not None
     app = create_app(
         settings=RegistrySettings(
@@ -610,7 +610,7 @@ def test_real_postgres_app_upload_detail_review_and_readiness(tmp_path: Path) ->
         ),
         policy_loader=lambda _: ScanPolicy(frozenset()),
     )
-    creator, reviewer = str(uuid4()), str(uuid4())
+    creator = str(uuid4())
     slug = f"app-pg-{uuid4().hex[:12]}"
 
     with TestClient(app) as client:
@@ -635,36 +635,10 @@ def test_real_postgres_app_upload_detail_review_and_readiness(tmp_path: Path) ->
             f"/internal/skills/{skill_id}/revisions/{revision_id}",
             headers=_signed_headers(
                 action="detail",
-                permission="admin:assistant:skills:review",
+                permission="admin:assistant:skills",
                 target=target,
-                actor=reviewer,
+                actor=creator,
             ),
         )
         assert detail.status_code == 200
-        assert detail.json()["revision"]["state"] == "pending_review"
-
-        reviewed = client.post(
-            f"/internal/skills/{skill_id}/revisions/{revision_id}/review",
-            headers=_signed_headers(
-                action="review",
-                permission="admin:assistant:skills:review",
-                target=target,
-                actor=reviewer,
-                assurance="password+mfa",
-                assured_at=int(time.time()),
-                content_type="application/json",
-            ),
-            json={
-                "decision": "approve",
-                "expectedState": "pending_review",
-                "reason": None,
-                "attestations": {
-                    "contentReviewed": True,
-                    "usageRightsConfirmed": True,
-                    "executionRiskAccepted": True,
-                    "reviewerAuthorizationConfirmed": True,
-                },
-            },
-        )
-        assert reviewed.status_code == 200
-        assert reviewed.json()["revision"]["state"] == "published"
+        assert detail.json()["revision"]["state"] == "published"

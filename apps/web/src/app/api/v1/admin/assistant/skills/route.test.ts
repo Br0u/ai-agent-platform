@@ -113,7 +113,6 @@ describe("admin skill list route", () => {
       permissions: {
         canUpload: false,
         canManageConnections: false,
-        canReview: false,
         canConfigure: false,
       },
     });

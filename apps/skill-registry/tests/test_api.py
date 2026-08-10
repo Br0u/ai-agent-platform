@@ -34,7 +34,7 @@ from skill_registry.types import (
     PythonImportSummary,
     RegistryError,
     RevisionDetail,
-    SkillSummary,
+    SkillLibraryItem,
     StoredFile,
     StoredRevision,
     StoredSkillSet,
@@ -103,7 +103,7 @@ def revision() -> StoredRevision:
         skill_id=SKILL_ID,
         skill_slug="demo-skill",
         revision_no=2,
-        state="pending_review",
+        state="published",
         source_type="upload",
         manifest=SkillManifest(
             name="demo-skill",
@@ -116,8 +116,6 @@ def revision() -> StoredRevision:
         findings=(SkillFinding("scripts/run.py", 1, "subprocess", "review", False),),
         created_by=ACTOR,
         created_at=NOW,
-        reviewed_by=None,
-        reviewed_at=None,
         artifact_sha256="a" * 64,
         compressed_size=100,
         extracted_size=200,
@@ -128,34 +126,30 @@ def revision() -> StoredRevision:
 class StubService:
     def __init__(self) -> None:
         self.uploaded: tuple[object, ...] | None = None
-        self.reviewed: object | None = None
         self.list_bounds: tuple[int, int] | None = None
         self.fail_with: RegistryError | None = None
         self.file_content = "# Guide\n"
 
-    async def list_skills(self, *, limit: int, offset: int) -> tuple[SkillSummary, ...]:
+    async def list_skills(self, *, limit: int, offset: int) -> tuple[SkillLibraryItem, ...]:
         self.list_bounds = (limit, offset)
-        item = revision()
         return (
-            SkillSummary(
-                SKILL_ID,
-                "demo-skill",
-                item.revision_no,
-                item.id,
-                item.state,
-                NOW,
-                latest_source_type=item.source_type,
-                latest_artifact_sha256=item.artifact_sha256,
-                latest_created_by=item.created_by,
-                latest_created_at=item.created_at,
-                latest_reviewed_by=item.reviewed_by,
-                latest_reviewed_at=item.reviewed_at,
+            SkillLibraryItem(
+                id=SKILL_ID,
+                name="demo-skill",
+                description="Demo",
+                enabled=True,
+                uploaded_at=NOW,
+                replacement_token="a" * 64,
+                revision_id=REVISION_ID,
             ),
         )
 
     async def upload_zip(self, **values: object) -> RevisionDetail:
         self.uploaded = tuple(values.values())
         return detail()
+
+    async def archive_skill(self, **values: object) -> None:
+        self.uploaded = tuple(values.values())
 
     async def get_revision_detail(self, skill_id: UUID, revision_id: UUID) -> RevisionDetail:
         if self.fail_with is not None:
@@ -170,11 +164,6 @@ class StubService:
             "references/guide.md",
         )
         return self.file_content
-
-    async def review_revision(self, command: object) -> StoredRevision:
-        self.reviewed = command
-        return replace(revision(), state="published", reviewed_by=ACTOR, reviewed_at=NOW)
-
 
 class SkillSetStubService:
     def __init__(self) -> None:
@@ -317,18 +306,11 @@ def test_list_is_bounded_metadata_only() -> None:
             {
                 "id": str(SKILL_ID),
                 "name": "demo-skill",
-                "createdAt": "2026-07-21T00:00:00.000Z",
-                "revision": {
-                    "id": str(REVISION_ID),
-                    "number": 2,
-                    "state": "pending_review",
-                    "sourceType": "upload",
-                    "artifactSha256Prefix": "aaaaaaaaaaaa",
-                    "createdBy": str(ACTOR),
-                    "createdAt": "2026-07-21T00:00:00.000Z",
-                    "reviewedBy": None,
-                    "reviewedAt": None,
-                },
+                "description": "Demo",
+                "enabled": True,
+                "uploadedAt": "2026-07-21T00:00:00.000Z",
+                "replacementToken": "a" * 64,
+                "revisionId": str(REVISION_ID),
             }
         ],
         "page": {"limit": 25, "offset": 10, "returned": 1},
@@ -372,14 +354,14 @@ def test_package_validation_errors_remain_stable_client_errors() -> None:
     assert b"private validation detail" not in too_large.body
 
 
-def test_detail_contains_review_metadata_without_source_content() -> None:
+def test_detail_contains_scan_metadata_without_source_content() -> None:
     service = StubService()
     target = f"{SKILL_ID}/{REVISION_ID}"
     response = TestClient(app_for(service)).get(
         f"/internal/skills/{SKILL_ID}/revisions/{REVISION_ID}",
         headers=assertion_headers(
             "detail",
-            "admin:assistant:skills:review",
+            "admin:assistant:skills",
             target,
             nonce=UUID("40000000-0000-4000-8000-000000000002"),
         ),
@@ -395,12 +377,6 @@ def test_detail_contains_review_metadata_without_source_content() -> None:
     assert payload["findings"][0]["code"] == "subprocess"
     assert payload["previousPublishedRevisionId"] is not None
     assert payload["diff"]["files"][0]["status"] == "modified"
-    assert set(payload["reviewAttestations"]) == {
-        "contentReviewed",
-        "usageRightsConfirmed",
-        "executionRiskAccepted",
-        "reviewerAuthorizationConfirmed",
-    }
     assert "secret source" not in response.text
 
 
@@ -411,7 +387,7 @@ def test_file_returns_only_service_verified_text() -> None:
         f"/internal/skills/{SKILL_ID}/revisions/{REVISION_ID}/files/references/guide.md",
         headers=assertion_headers(
             "file",
-            "admin:assistant:skills:review",
+            "admin:assistant:skills",
             target,
             nonce=UUID("40000000-0000-4000-8000-000000000003"),
         ),
@@ -434,7 +410,7 @@ def test_file_json_bound_allows_exact_maximum_escaped_text() -> None:
             f"/internal/skills/{SKILL_ID}/revisions/{REVISION_ID}/files/references/guide.md",
             headers=assertion_headers(
                 "file",
-                "admin:assistant:skills:review",
+                "admin:assistant:skills",
                 target,
                 nonce=UUID(f"40000000-0000-4000-8000-{index:012d}"),
             ),
@@ -452,7 +428,7 @@ def test_file_rejects_text_larger_than_two_mib() -> None:
         f"/internal/skills/{SKILL_ID}/revisions/{REVISION_ID}/files/references/guide.md",
         headers=assertion_headers(
             "file",
-            "admin:assistant:skills:review",
+            "admin:assistant:skills",
             target,
             nonce=UUID("40000000-0000-4000-8000-000000000032"),
         ),
@@ -462,7 +438,7 @@ def test_file_rejects_text_larger_than_two_mib() -> None:
     assert response.json() == {"error": "SKILL_FILE_TOO_LARGE"}
 
 
-def test_upload_and_review_forward_verified_assertion_context() -> None:
+def test_upload_forwards_verified_assertion_context() -> None:
     service = StubService()
     client = TestClient(app_for(service))
     upload = client.post(
@@ -481,42 +457,6 @@ def test_upload_and_review_forward_verified_assertion_context() -> None:
     assert upload.status_code == 201
     assert service.uploaded is not None
     assert b"PK demo" in service.uploaded
-
-    target = f"{SKILL_ID}/{REVISION_ID}"
-    review = client.post(
-        f"/internal/skills/{SKILL_ID}/revisions/{REVISION_ID}/review",
-        headers={
-            **assertion_headers(
-                "review",
-                "admin:assistant:skills:review",
-                target,
-                assurance="password+mfa",
-                assured_at=99,
-                nonce=UUID("40000000-0000-4000-8000-000000000005"),
-            ),
-            "Content-Type": "application/json",
-        },
-        content=json.dumps(
-            {
-                "decision": "approve",
-                "expectedState": "pending_review",
-                "reason": None,
-                "attestations": {
-                    "contentReviewed": True,
-                    "usageRightsConfirmed": True,
-                    "executionRiskAccepted": True,
-                    "reviewerAuthorizationConfirmed": True,
-                },
-            },
-            separators=(",", ":"),
-        ),
-    )
-    assert review.status_code == 200
-    assert service.reviewed is not None
-    assert getattr(service.reviewed, "reviewer") == ACTOR
-    assert getattr(service.reviewed, "skill_id") == SKILL_ID
-    assert getattr(service.reviewed, "attestations").reviewer_authorization_confirmed is True
-
 
 def test_upload_content_length_is_rejected_without_receiving_body() -> None:
     service = StubService()
@@ -697,7 +637,7 @@ def test_errors_return_only_stable_code_and_no_secret_exception_chain() -> None:
         f"/internal/skills/{SKILL_ID}/revisions/{REVISION_ID}",
         headers=assertion_headers(
             "detail",
-            "admin:assistant:skills:review",
+            "admin:assistant:skills",
             target,
             nonce=UUID("40000000-0000-4000-8000-000000000007"),
         ),

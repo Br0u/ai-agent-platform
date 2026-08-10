@@ -7,424 +7,943 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AdminSkillListResponse } from "@/features/assistant/admin-skill-contract";
-import {
-  AssistantSkillRegistryPanel,
-  type AdminSkillRegistrySnapshot,
-} from "./assistant-skill-registry-panel";
-
-const SKILL_ID = "33333333-3333-4333-8333-333333333333";
-const REVISION_ID = "44444444-4444-4444-8444-444444444444";
-const ACTOR_ID = "11111111-1111-4111-8111-111111111111";
-const REVIEWER_ID = "22222222-2222-4222-8222-222222222222";
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
-    resolve = next;
-  });
-  return { promise, resolve };
-}
-
-function listEnvelope(skills: AdminSkillListResponse["skills"]) {
-  return {
-    version: "1" as const,
-    skills,
-    page: { limit: 25, offset: 0, returned: skills.length },
-    permissions: {
-      canUpload: true,
-      canManageConnections: false,
-      canReview: true,
-      canConfigure: false,
-    },
-    requestId: "list-refresh",
-  };
-}
-
-function uploadEnvelope() {
-  return {
-    version: "1" as const,
-    revision: {
-      id: REVISION_ID,
-      skillId: SKILL_ID,
-      name: "safe-review",
-      number: 1,
-      state: "pending_review" as const,
-      sourceType: "upload" as const,
-      artifactSha256: "a".repeat(64),
-      createdBy: ACTOR_ID,
-      createdAt: "2026-07-21T08:00:00.000Z",
-      reviewedBy: null,
-      reviewedAt: null,
-    },
-    requestId: "upload-race",
-  };
-}
-
-function detailEnvelope() {
-  return {
-    version: "1" as const,
-    revision: {
-      ...uploadEnvelope().revision,
-      number: 2,
-      description: "review detail",
-      license: "Apache-2.0",
-      compatibility: "Agno 2.7.2",
-      allowedTools: [],
-      compressedSize: 100,
-      extractedSize: 100,
-      fileCount: 1,
-    },
-    files: [
-      {
-        path: "SKILL.md",
-        sha256: "b".repeat(64),
-        size: 100,
-        mediaType: "text/markdown",
-        kind: "manifest" as const,
-      },
-    ],
-    dependencies: { pythonModules: [], unavailablePythonModules: [] },
-    findings: [],
-    previousPublishedRevisionId: null,
-    diff: null,
-    reviewAttestations: {
-      contentReviewed: true as const,
-      usageRightsConfirmed: true as const,
-      executionRiskAccepted: true as const,
-      reviewerAuthorizationConfirmed: true as const,
-    },
-    requestId: "detail-race",
-  };
-}
-
-const list = {
-  version: "1",
-  skills: [
-    {
-      id: SKILL_ID,
-      name: "safe-review",
-      createdAt: "2026-07-21T08:00:00.000Z",
-      revision: {
-        id: REVISION_ID,
-        number: 2,
-        state: "pending_review",
-        sourceType: "upload",
-        artifactSha256Prefix: "aaaaaaaaaaaa",
-        createdBy: ACTOR_ID,
-        createdAt: "2026-07-21T08:00:00.000Z",
-        reviewedBy: null,
-        reviewedAt: null,
-      },
-    },
-  ],
-  page: { limit: 25, offset: 0, returned: 1 },
-} satisfies AdminSkillListResponse;
-
-const snapshot: AdminSkillRegistrySnapshot = {
-  capability: "available",
-  skills: list.skills,
-  page: list.page,
-};
-
-const readOnlyPermissions = {
-  canUpload: false,
-  canManageConnections: false,
-  canReview: false,
-  canConfigure: false,
-};
+import { AssistantSkillRegistryPanel } from "./assistant-skill-registry-panel";
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
+const enabledSkill = {
+  id: "33333333-3333-4333-8333-333333333333",
+  name: "safe-skill",
+  description: "A safe skill.",
+  enabled: true,
+  uploadedAt: "2026-07-21T08:00:00.000Z",
+  replacementToken: "a".repeat(64),
+  revisionId: "44444444-4444-4444-8444-444444444444",
+};
+const secondSkill = {
+  ...enabledSkill,
+  id: "55555555-5555-4555-8555-555555555555",
+  name: "second-skill",
+  enabled: false,
+  revisionId: "66666666-6666-4666-8666-666666666666",
+};
+const replacementRevisionId = "77777777-7777-4777-8777-777777777777";
+
 describe("AssistantSkillRegistryPanel", () => {
-  it("shows a read-only snapshot without exposing or requesting revision detail", () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
+  it("shows one clean Skill row without revision or candidate controls", () => {
     render(
       <AssistantSkillRegistryPanel
-        actorUserId={ACTOR_ID}
         canRead
-        initialPermissions={readOnlyPermissions}
-        initialSnapshot={snapshot}
+        initialPermissions={{
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        }}
+        initialSnapshot={{
+          capability: "available",
+          skills: [enabledSkill],
+        }}
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "Skill 库" })).toBeVisible();
-    expect(screen.getByText("safe-review")).toBeVisible();
-    expect(screen.getByText("pending_review")).toBeVisible();
+    expect(screen.getByText("● 已启用")).toBeVisible();
+    expect(screen.getByText("A safe skill.")).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: /查看.*详情/u }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /上传/u }),
-    ).not.toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
+      screen.getByText("上传时间：2026-07-21T08:00:00.000Z"),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "停用" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "删除" })).toBeVisible();
+    expect(screen.queryByText(/revision/u)).toBeNull();
+    expect(screen.queryByText(/候选/u)).toBeNull();
+    expect(screen.queryByText(/审核/u)).toBeNull();
   });
 
-  it("keeps the last good snapshot and announces a degraded refresh", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(new Response("no", { status: 503 })),
-    );
-    render(
-      <AssistantSkillRegistryPanel
-        actorUserId={ACTOR_ID}
-        canRead
-        initialPermissions={readOnlyPermissions}
-        initialSnapshot={snapshot}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "刷新 Skill 列表" }));
-
-    await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(/刷新失败.*旧数据/u),
-    );
-    expect(screen.getByText("safe-review")).toBeVisible();
-    expect(screen.queryByText("当前没有 Skill")).not.toBeInTheDocument();
-  });
-
-  it("adds an uploaded revision as pending_review and restores trigger focus", async () => {
+  it("navigates only for the exact versioned re-auth response", async () => {
+    const navigateToReauth = vi.fn();
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
         Response.json(
           {
             version: "1",
-            revision: {
-              id: REVISION_ID,
-              skillId: SKILL_ID,
-              name: "safe-review",
-              number: 1,
-              state: "pending_review",
-              sourceType: "upload",
-              artifactSha256: "a".repeat(64),
-              createdBy: ACTOR_ID,
-              createdAt: "2026-07-21T08:00:00.000Z",
-              reviewedBy: null,
-              reviewedAt: null,
-            },
-            requestId: "66666666-6666-4666-8666-666666666666",
+            requestId: "44444444-4444-4444-8444-444444444444",
+            error: { code: "reauth_required" },
+            redirectTo: "/staff/re-auth",
           },
-          { status: 201 },
+          { status: 401 },
         ),
       ),
     );
-    const uploadPermissions = { ...readOnlyPermissions, canUpload: true };
     render(
       <AssistantSkillRegistryPanel
-        actorUserId={ACTOR_ID}
         canRead
-        initialPermissions={uploadPermissions}
-        initialSnapshot={{
-          capability: "available",
-          skills: [],
-          page: { limit: 25, offset: 0, returned: 0 },
+        initialPermissions={{
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
         }}
+        initialSnapshot={{ capability: "available", skills: [enabledSkill] }}
+        navigateToReauth={navigateToReauth}
       />,
     );
 
-    const trigger = screen.getByRole("button", { name: "上传 Skill ZIP" });
-    fireEvent.click(trigger);
-    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
-      target: {
-        files: [
-          new File(["zip"], "safe-review.zip", { type: "application/zip" }),
-        ],
-      },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "提交审核" }));
+    fireEvent.click(screen.getByRole("button", { name: "停用" }));
 
-    expect(await screen.findByText("safe-review")).toBeVisible();
-    expect(screen.getByText("pending_review")).toBeVisible();
-    expect(screen.getByRole("status")).toHaveTextContent(/等待审核/u);
-    await waitFor(() => expect(trigger).toHaveFocus());
-    expect(document.body.textContent).not.toContain("已启用");
-  });
-
-  it("opens an existing Skill update with its target ID prefilled", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(Response.json(uploadEnvelope(), { status: 201 }));
-    vi.stubGlobal("fetch", fetchMock);
-    render(
-      <AssistantSkillRegistryPanel
-        actorUserId={ACTOR_ID}
-        canRead
-        initialPermissions={{ ...readOnlyPermissions, canUpload: true }}
-        initialSnapshot={snapshot}
-      />,
-    );
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "上传新版本 safe-review" }),
-    );
-    const target = screen.getByLabelText(/目标 Skill ID/u);
-    expect(target).toHaveValue(SKILL_ID);
-    expect(target).toHaveAttribute("readonly");
-    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
-      target: {
-        files: [
-          new File(["zip"], "safe-review-v2.zip", {
-            type: "application/zip",
-          }),
-        ],
-      },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "提交审核" }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    const body = fetchMock.mock.calls[0]?.[1]?.body as FormData;
-    expect(body.get("targetSkillId")).toBe(SKILL_ID);
-  });
-
-  it("does not let a late list refresh overwrite a completed upload", async () => {
-    const staleList = deferred<Response>();
-    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
-      void _init;
-      return String(input).includes("?limit=25")
-        ? staleList.promise
-        : Promise.resolve(Response.json(uploadEnvelope(), { status: 201 }));
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    render(
-      <AssistantSkillRegistryPanel
-        actorUserId={ACTOR_ID}
-        canRead
-        initialPermissions={{ ...readOnlyPermissions, canUpload: true }}
-        initialSnapshot={{
-          capability: "available",
-          skills: [],
-          page: { limit: 25, offset: 0, returned: 0 },
-        }}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "刷新 Skill 列表" }));
-    fireEvent.click(screen.getByRole("button", { name: "上传 Skill ZIP" }));
-    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
-      target: {
-        files: [
-          new File(["zip"], "safe-review.zip", { type: "application/zip" }),
-        ],
-      },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "提交审核" }));
-    expect(await screen.findByText("safe-review")).toBeVisible();
-    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
-
-    staleList.resolve(Response.json(listEnvelope([])));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(screen.getByText("safe-review")).toBeVisible();
-    expect(screen.getByText("pending_review")).toBeVisible();
-  });
-
-  it("does not let a late list refresh overwrite a completed review", async () => {
-    const staleList = deferred<Response>();
-    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
-      void _init;
-      const url = String(input);
-      if (url.includes("?limit=25")) return staleList.promise;
-      if (url.endsWith("/review")) {
-        return Promise.resolve(
-          Response.json({
-            version: "1",
-            revision: {
-              ...uploadEnvelope().revision,
-              number: 2,
-              state: "published",
-              reviewedBy: REVIEWER_ID,
-              reviewedAt: "2026-07-21T09:00:00.000Z",
-            },
-            requestId: "review-race",
-          }),
-        );
-      }
-      return Promise.resolve(Response.json(detailEnvelope()));
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    render(
-      <AssistantSkillRegistryPanel
-        actorUserId={REVIEWER_ID}
-        canRead
-        initialPermissions={{ ...readOnlyPermissions, canReview: true }}
-        initialSnapshot={snapshot}
-      />,
-    );
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "查看审核详情 safe-review" }),
-    );
-    expect(await screen.findByText("Apache-2.0")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "刷新 Skill 列表" }));
-    fireEvent.click(screen.getByRole("button", { name: "打开审核操作" }));
-    for (const label of [
-      "已逐项审阅内容和文件",
-      "已确认使用权和许可证",
-      "已评估并接受执行风险",
-      "确认当前账号具有审核权限",
-    ]) {
-      fireEvent.click(screen.getByLabelText(label));
-    }
-    fireEvent.click(screen.getByRole("button", { name: "批准发布" }));
     await waitFor(() =>
-      expect(screen.getAllByText("published").length).toBeGreaterThan(0),
-    );
-    const listRequest = fetchMock.mock.calls.find(([input]) =>
-      String(input).includes("?limit=25"),
-    );
-    expect(listRequest?.[1]?.signal?.aborted).toBe(true);
-
-    staleList.resolve(Response.json(listEnvelope(list.skills)));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(screen.getAllByText("published").length).toBeGreaterThan(0);
-    expect(screen.queryByText("pending_review")).toBeNull();
-  });
-
-  it("closes stale detail when refresh reports a changed revision state", async () => {
-    const publishedSkills = list.skills.map((skill) => ({
-      ...skill,
-      revision:
-        skill.revision === null
-          ? null
-          : {
-              ...skill.revision,
-              state: "published" as const,
-              reviewedBy: REVIEWER_ID,
-              reviewedAt: "2026-07-21T09:00:00.000Z",
-            },
-    }));
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL) =>
-        String(input).includes("?limit=25")
-          ? Promise.resolve(Response.json(listEnvelope(publishedSkills)))
-          : Promise.resolve(Response.json(detailEnvelope())),
+      expect(navigateToReauth).toHaveBeenCalledExactlyOnceWith(
+        "/staff/re-auth",
       ),
     );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "需要重新验证身份，正在前往验证页面。",
+    );
+  });
+
+  it("locks the affected Skill when mutation outcome cannot be confirmed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "44444444-4444-4444-8444-444444444444",
+              error: { code: "result_unknown" },
+            },
+            { status: 503 },
+          ),
+        )
+        .mockRejectedValueOnce(new Error("refresh failed")),
+    );
     render(
       <AssistantSkillRegistryPanel
-        actorUserId={REVIEWER_ID}
         canRead
-        initialPermissions={{ ...readOnlyPermissions, canReview: true }}
-        initialSnapshot={snapshot}
+        initialPermissions={{
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        }}
+        initialSnapshot={{ capability: "available", skills: [enabledSkill] }}
       />,
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "查看审核详情 safe-review" }),
+    fireEvent.click(screen.getByRole("button", { name: "停用" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "操作结果正在确认，请刷新后再试。",
+      ),
     );
-    expect(await screen.findByText("Apache-2.0")).toBeVisible();
+    expect(screen.getByRole("button", { name: "停用" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "删除" })).toBeDisabled();
+  });
+
+  it.each([
+    {
+      operation: "停用",
+      initial: enabledSkill,
+      stale: enabledSkill,
+      converged: { ...enabledSkill, enabled: false },
+      nextOperation: "启用",
+    },
+    {
+      operation: "启用",
+      initial: secondSkill,
+      stale: secondSkill,
+      converged: { ...secondSkill, enabled: true },
+      nextOperation: "停用",
+    },
+  ])(
+    "keeps an unknown $operation locked until the exact enabled state is observed",
+    async ({ operation, initial, stale, converged, nextOperation }) => {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(
+            Response.json(
+              {
+                version: "1",
+                requestId: "unknown",
+                error: { code: "result_unknown" },
+              },
+              { status: 503 },
+            ),
+          )
+          .mockResolvedValueOnce(
+            Response.json({
+              version: "1",
+              skills: [stale],
+              page: { limit: 100, offset: 0, returned: 1 },
+              requestId: "stale",
+              permissions: {
+                canUpload: true,
+                canManageConnections: false,
+                canConfigure: true,
+              },
+            }),
+          )
+          .mockResolvedValueOnce(
+            Response.json({
+              version: "1",
+              skills: [converged],
+              page: { limit: 100, offset: 0, returned: 1 },
+              requestId: "converged",
+              permissions: {
+                canUpload: true,
+                canManageConnections: false,
+                canConfigure: true,
+              },
+            }),
+          ),
+      );
+      render(
+        <AssistantSkillRegistryPanel
+          canRead
+          initialPermissions={{
+            canUpload: true,
+            canManageConnections: false,
+            canConfigure: true,
+          }}
+          initialSnapshot={{ capability: "available", skills: [initial] }}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: operation }));
+
+      await waitFor(() =>
+        expect(screen.getByRole("status")).toHaveTextContent(
+          "操作结果正在确认，请刷新后再试。",
+        ),
+      );
+      expect(screen.getByRole("button", { name: operation })).toBeDisabled();
+
+      fireEvent.click(screen.getByRole("button", { name: "刷新 Skill 列表" }));
+
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: nextOperation }),
+        ).toBeEnabled(),
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Skill 状态已确认。",
+      );
+    },
+  );
+
+  it("refreshes authoritative state before unlocking an unknown replacement", async () => {
+    let resolveRefresh!: (response: Response) => void;
+    const refresh = new Promise<Response>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "conflict",
+              error: { code: "state_conflict" },
+              conflictingSkillId: enabledSkill.id,
+              replacementToken: "a".repeat(64),
+              conflictingSkillEnabled: true,
+            },
+            { status: 409 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "unknown",
+              error: { code: "result_unknown" },
+            },
+            { status: 503 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            version: "1",
+            skills: Array.from({ length: 100 }, (_, index) => ({
+              ...enabledSkill,
+              id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+              name: `other-skill-${index}`,
+            })),
+            page: { limit: 100, offset: 0, returned: 100 },
+            requestId: "refresh-first-page",
+            permissions: {
+              canUpload: true,
+              canManageConnections: false,
+              canConfigure: true,
+            },
+          }),
+        )
+        .mockReturnValueOnce(refresh),
+    );
+    render(
+      <AssistantSkillRegistryPanel
+        canRead
+        initialPermissions={{
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        }}
+        initialSnapshot={{ capability: "available", skills: [enabledSkill] }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "上传 Skill ZIP" }));
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: { files: [new File(["zip"], "safe-skill.zip")] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "停用" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "上传 Skill ZIP" }),
+    ).toBeDisabled();
+    expect(fetch).toHaveBeenNthCalledWith(
+      3,
+      "/api/v1/admin/assistant/skills?limit=100&offset=0",
+      expect.anything(),
+    );
+    resolveRefresh!(
+      Response.json({
+        version: "1",
+        skills: [{ ...enabledSkill, revisionId: replacementRevisionId }],
+        page: { limit: 100, offset: 100, returned: 1 },
+        requestId: "refresh",
+        permissions: {
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        },
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "停用" })).toBeEnabled(),
+    );
+    expect(
+      screen.getByRole("button", { name: "上传 Skill ZIP" }),
+    ).toBeEnabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Skill 状态已确认。");
+  });
+
+  it("keeps replacement controls locked until a new enabled revision is observed", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "conflict",
+              error: { code: "state_conflict" },
+              conflictingSkillId: enabledSkill.id,
+              replacementToken: "a".repeat(64),
+              conflictingSkillEnabled: true,
+            },
+            { status: 409 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "unknown",
+              error: { code: "result_unknown" },
+            },
+            { status: 503 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            version: "1",
+            skills: [enabledSkill],
+            page: { limit: 100, offset: 0, returned: 1 },
+            requestId: "old-revision",
+            permissions: {
+              canUpload: true,
+              canManageConnections: false,
+              canConfigure: true,
+            },
+          }),
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            version: "1",
+            skills: [{ ...enabledSkill, revisionId: replacementRevisionId }],
+            page: { limit: 100, offset: 0, returned: 1 },
+            requestId: "replacement-observed",
+            permissions: {
+              canUpload: true,
+              canManageConnections: false,
+              canConfigure: true,
+            },
+          }),
+        ),
+    );
+    render(
+      <AssistantSkillRegistryPanel
+        canRead
+        initialPermissions={{
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        }}
+        initialSnapshot={{ capability: "available", skills: [enabledSkill] }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "上传 Skill ZIP" }));
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: { files: [new File(["zip"], "safe-skill.zip")] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "操作结果正在确认，请刷新后再试。",
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: "上传 Skill ZIP" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "停用" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "刷新 Skill 列表" }),
+    ).toBeEnabled();
+
     fireEvent.click(screen.getByRole("button", { name: "刷新 Skill 列表" }));
 
     await waitFor(() =>
       expect(
-        screen.queryByRole("heading", { name: "Revision 审核详情" }),
-      ).toBeNull(),
+        screen.getByRole("button", { name: "上传 Skill ZIP" }),
+      ).toBeEnabled(),
+    );
+    expect(screen.getByRole("button", { name: "停用" })).toBeEnabled();
+  });
+
+  it("reconciles an unknown replacement whose target is on a later page", async () => {
+    let uploadCalls = 0;
+    let listRound = 0;
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/skills/uploads")) {
+        uploadCalls += 1;
+        return uploadCalls === 1
+          ? Response.json(
+              {
+                version: "1",
+                requestId: "conflict",
+                error: { code: "state_conflict" },
+                conflictingSkillId: enabledSkill.id,
+                replacementToken: enabledSkill.replacementToken,
+                conflictingSkillEnabled: true,
+              },
+              { status: 409 },
+            )
+          : Response.json(
+              {
+                version: "1",
+                requestId: "unknown",
+                error: { code: "result_unknown" },
+              },
+              { status: 503 },
+            );
+      }
+      const offset = new URL(url, "https://example.test").searchParams.get(
+        "offset",
+      );
+      if (offset === "0") listRound += 1;
+      const skills =
+        offset === "0"
+          ? Array.from({ length: 100 }, (_, index) => ({
+              ...secondSkill,
+              id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+              name: `other-skill-${index}`,
+            }))
+          : [
+              listRound === 1
+                ? enabledSkill
+                : { ...enabledSkill, revisionId: replacementRevisionId },
+            ];
+      return Response.json({
+        version: "1",
+        skills,
+        page: {
+          limit: 100,
+          offset: Number(offset),
+          returned: skills.length,
+        },
+        requestId: `list-${listRound}-${offset}`,
+        permissions: {
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        },
+      });
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal("fetch", fetcher);
+    render(
+      <AssistantSkillRegistryPanel
+        canRead
+        initialPermissions={{
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        }}
+        initialSnapshot={{ capability: "available", skills: [secondSkill] }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "上传 Skill ZIP" }));
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: { files: [new File(["zip"], "safe-skill.zip")] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Skill 状态已确认。",
+      ),
+    );
+    expect(listRound).toBe(2);
+    expect(
+      screen.getByRole("button", { name: "上传 Skill ZIP" }),
+    ).toBeEnabled();
+  });
+
+  it("keeps replacement controls locked when target confirmation fails", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "conflict",
+              error: { code: "state_conflict" },
+              conflictingSkillId: enabledSkill.id,
+              replacementToken: "a".repeat(64),
+              conflictingSkillEnabled: true,
+            },
+            { status: 409 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "unknown",
+              error: { code: "result_unknown" },
+            },
+            { status: 503 },
+          ),
+        )
+        .mockRejectedValueOnce(new Error("Registry unavailable")),
+    );
+    render(
+      <AssistantSkillRegistryPanel
+        canRead
+        initialPermissions={{
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        }}
+        initialSnapshot={{ capability: "available", skills: [enabledSkill] }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "上传 Skill ZIP" }));
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: { files: [new File(["zip"], "safe-skill.zip")] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "操作结果正在确认，请刷新后再试。",
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: "上传 Skill ZIP" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "停用" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "刷新 Skill 列表" }),
+    ).toBeEnabled();
+  });
+
+  it("keeps unknown replacement A locked when mutation B is attempted", async () => {
+    let uploadCalls = 0;
+    let exactConfirmationCalls = 0;
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/${secondSkill.id}/enable`))
+        return Response.json({ version: "1" });
+      if (url.endsWith("/skills/uploads")) {
+        uploadCalls += 1;
+        return uploadCalls === 1
+          ? Response.json(
+              {
+                version: "1",
+                requestId: "conflict",
+                error: { code: "state_conflict" },
+                conflictingSkillId: enabledSkill.id,
+                replacementToken: "a".repeat(64),
+                conflictingSkillEnabled: true,
+              },
+              { status: 409 },
+            )
+          : Response.json(
+              {
+                version: "1",
+                requestId: "unknown",
+                error: { code: "result_unknown" },
+              },
+              { status: 503 },
+            );
+      }
+      if (url.includes("limit=100")) {
+        exactConfirmationCalls += 1;
+        return Response.json({
+          version: "1",
+          skills:
+            exactConfirmationCalls === 1
+              ? []
+              : [{ ...enabledSkill, revisionId: replacementRevisionId }],
+          page: {
+            limit: 100,
+            offset: 0,
+            returned: exactConfirmationCalls === 1 ? 0 : 1,
+          },
+          requestId: `confirm-${exactConfirmationCalls}`,
+          permissions: {
+            canUpload: true,
+            canManageConnections: false,
+            canConfigure: true,
+          },
+        });
+      }
+      return Response.json({
+        version: "1",
+        skills: [enabledSkill, secondSkill],
+        page: { limit: 25, offset: 0, returned: 2 },
+        requestId: "ordinary-refresh",
+        permissions: {
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        },
+      });
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal("fetch", fetcher);
+    render(
+      <AssistantSkillRegistryPanel
+        canRead
+        initialPermissions={{
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        }}
+        initialSnapshot={{
+          capability: "available",
+          skills: [enabledSkill, secondSkill],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "上传 Skill ZIP" }));
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: { files: [new File(["zip"], "safe-skill.zip")] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "操作结果正在确认，请刷新后再试。",
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: "上传 Skill ZIP" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "停用" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "启用" })).toBeDisabled();
+
+    const callsBeforeMutationAttempt = fetcher.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "启用" }));
+    expect(fetcher).toHaveBeenCalledTimes(callsBeforeMutationAttempt);
+    expect(
+      screen.getByRole("button", { name: "上传 Skill ZIP" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "停用" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "启用" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新 Skill 列表" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "上传 Skill ZIP" }),
+      ).toBeEnabled(),
+    );
+    expect(screen.getByRole("button", { name: "停用" })).toBeEnabled();
+  });
+
+  it("unlocks an unknown delete only after the terminal authoritative page confirms absence", async () => {
+    let resolveTerminalPage!: (response: Response) => void;
+    const terminalPage = new Promise<Response>((resolve) => {
+      resolveTerminalPage = resolve;
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "delete-unknown",
+              error: { code: "result_unknown" },
+            },
+            { status: 503 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            version: "1",
+            skills: Array.from({ length: 100 }, (_, index) => ({
+              ...enabledSkill,
+              id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+              name: `other-skill-${index}`,
+            })),
+            page: { limit: 100, offset: 0, returned: 100 },
+            requestId: "delete-first-page",
+            permissions: {
+              canUpload: true,
+              canManageConnections: false,
+              canConfigure: true,
+            },
+          }),
+        )
+        .mockReturnValueOnce(terminalPage),
+    );
+    render(
+      <AssistantSkillRegistryPanel
+        canRead
+        initialPermissions={{
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        }}
+        initialSnapshot={{ capability: "available", skills: [enabledSkill] }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenNthCalledWith(
+        3,
+        "/api/v1/admin/assistant/skills?limit=100&offset=100",
+        expect.anything(),
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: "上传 Skill ZIP" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "停用" })).toBeDisabled();
+
+    resolveTerminalPage!(
+      Response.json({
+        version: "1",
+        skills: [],
+        page: { limit: 100, offset: 100, returned: 0 },
+        requestId: "delete-confirmed-absent",
+        permissions: {
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        },
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByText(enabledSkill.name)).not.toBeInTheDocument(),
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/admin/assistant/skills?limit=100&offset=0",
+      expect.anything(),
+    );
+    expect(
+      screen.getByRole("button", { name: "上传 Skill ZIP" }),
+    ).toBeEnabled();
+  });
+
+  it("keeps an unknown delete unresolved when a later page still contains the target", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "delete-unknown",
+              error: { code: "result_unknown" },
+            },
+            { status: 503 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            version: "1",
+            skills: Array.from({ length: 100 }, (_, index) => ({
+              ...enabledSkill,
+              id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+              name: `other-skill-${index}`,
+            })),
+            page: { limit: 100, offset: 0, returned: 100 },
+            requestId: "delete-first-page",
+            permissions: {
+              canUpload: true,
+              canManageConnections: false,
+              canConfigure: true,
+            },
+          }),
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            version: "1",
+            skills: [enabledSkill],
+            page: { limit: 100, offset: 100, returned: 1 },
+            requestId: "delete-target-still-present",
+            permissions: {
+              canUpload: true,
+              canManageConnections: false,
+              canConfigure: true,
+            },
+          }),
+        ),
+    );
+    render(
+      <AssistantSkillRegistryPanel
+        canRead
+        initialPermissions={{
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        }}
+        initialSnapshot={{
+          capability: "available",
+          skills: [enabledSkill, secondSkill],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "删除" })[0]);
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenNthCalledWith(
+        3,
+        "/api/v1/admin/assistant/skills?limit=100&offset=100",
+        expect.anything(),
+      ),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "操作结果正在确认，请刷新后再试。",
+    );
+    expect(
+      screen.getByRole("button", { name: "上传 Skill ZIP" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "停用" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "启用" })).toBeDisabled();
+    const deleteButtons = screen.getAllByRole("button", { name: "删除" });
+    expect(deleteButtons).toHaveLength(2);
+    expect(deleteButtons[0]).toBeDisabled();
+    expect(deleteButtons[1]).toBeDisabled();
+    const callsBeforeDeleteAttempt = vi.mocked(fetch).mock.calls.length;
+    deleteButtons[1].click();
+    expect(fetch).toHaveBeenCalledTimes(callsBeforeDeleteAttempt);
+    expect(
+      screen.getByRole("button", { name: "刷新 Skill 列表" }),
+    ).toBeEnabled();
+  });
+
+  it("sends a confirmed replacement re-auth response to the exact staff route", async () => {
+    const navigateToReauth = vi.fn();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "conflict",
+              error: { code: "state_conflict" },
+              conflictingSkillId: enabledSkill.id,
+              replacementToken: "a".repeat(64),
+              conflictingSkillEnabled: true,
+            },
+            { status: 409 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              version: "1",
+              requestId: "reauth",
+              error: { code: "reauth_required" },
+              redirectTo: "/staff/re-auth",
+            },
+            { status: 401 },
+          ),
+        ),
+    );
+    render(
+      <AssistantSkillRegistryPanel
+        canRead
+        initialPermissions={{
+          canUpload: true,
+          canManageConnections: false,
+          canConfigure: true,
+        }}
+        initialSnapshot={{ capability: "available", skills: [enabledSkill] }}
+        navigateToReauth={navigateToReauth}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "上传 Skill ZIP" }));
+    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
+      target: { files: [new File(["zip"], "safe-skill.zip")] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "上传" }));
+
+    await waitFor(() =>
+      expect(navigateToReauth).toHaveBeenCalledExactlyOnceWith(
+        "/staff/re-auth",
+      ),
     );
   });
 });

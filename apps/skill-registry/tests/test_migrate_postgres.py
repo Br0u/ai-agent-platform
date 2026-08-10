@@ -2,6 +2,8 @@ import asyncio
 import os
 from pathlib import Path
 import re
+from types import TracebackType
+from typing import Any, cast
 from urllib.parse import unquote, urlsplit
 from uuid import UUID, uuid4
 
@@ -10,7 +12,9 @@ import pytest
 
 from skill_registry.config import MigrationSettings
 from skill_registry.migrate import run_migration
+from skill_registry.repository import PostgresSkillRegistryRepository, RepositoryConnection
 from skill_registry.schema import PREPARE_SCHEMA_SQL, SCHEMA_VERSION_1_SQL
+from skill_registry.types import ArchiveSkill, RegistryError
 
 
 ENVIRONMENT_URLS = {
@@ -89,6 +93,91 @@ async def _connect(database_url: str) -> psycopg.AsyncConnection[tuple[object, .
     )
 
 
+class _ArchiveLockGateCursor:
+    def __init__(
+        self,
+        cursor: Any,
+        locked: asyncio.Event,
+        release: asyncio.Event,
+    ) -> None:
+        self._cursor = cursor
+        self._locked = locked
+        self._release = release
+
+    async def __aenter__(self) -> "_ArchiveLockGateCursor":
+        await self._cursor.__aenter__()
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self._cursor.__aexit__(*args)
+
+    async def execute(self, query: str, parameters: tuple[object, ...] = ()) -> Any:
+        result = await self._cursor.execute(query, parameters)
+        if "FOR UPDATE OF skill" in query:
+            self._locked.set()
+            await self._release.wait()
+        return result
+
+    async def fetchone(self) -> tuple[Any, ...] | None:
+        return cast(tuple[Any, ...] | None, await self._cursor.fetchone())
+
+    async def fetchall(self) -> list[tuple[Any, ...]]:
+        return cast(list[tuple[Any, ...]], await self._cursor.fetchall())
+
+
+class _ArchiveLockGateConnection:
+    def __init__(
+        self,
+        connection: psycopg.AsyncConnection[tuple[object, ...]],
+        locked: asyncio.Event,
+        release: asyncio.Event,
+    ) -> None:
+        self._connection = connection
+        self._locked = locked
+        self._release = release
+
+    async def __aenter__(self) -> "_ArchiveLockGateConnection":
+        await self._connection.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        await self._connection.__aexit__(exc_type, exc, traceback)
+
+    def transaction(self) -> Any:
+        return self._connection.transaction()
+
+    def cursor(self) -> _ArchiveLockGateCursor:
+        return _ArchiveLockGateCursor(
+            self._connection.cursor(),
+            self._locked,
+            self._release,
+        )
+
+
+def _archive_repository(
+    connection: RepositoryConnection,
+) -> PostgresSkillRegistryRepository:
+    async def connector() -> RepositoryConnection:
+        return connection
+
+    return PostgresSkillRegistryRepository(connector)
+
+
+def _archive_command(skill_id: UUID, actor_id: UUID) -> ArchiveSkill:
+    return ArchiveSkill(
+        actor=actor_id,
+        request_id=uuid4(),
+        assertion_nonce=uuid4(),
+        skill_id=skill_id,
+        expected_artifact_sha256="a" * 64,
+    )
+
+
 async def _expect_database_error(
     connection: psycopg.AsyncConnection[tuple[object, ...]],
     error_type: type[psycopg.Error],
@@ -109,16 +198,30 @@ async def _insert_skill_revision(
     slug: str,
     nonce: UUID,
     findings: str = "[]",
+    state: str = "published",
+    historical_v1: bool = False,
 ) -> None:
-    await connection.execute(
-        "INSERT INTO skill_registry.skills (id, slug, created_by) VALUES (%s, %s, %s)",
-        (skill_id, slug, actor_id),
+    manifest = (
+        f'{{"name":"{slug}","description":"Integration test skill.",'
+        '"instructions":"","scripts":[],"references":[]}'
     )
+    if historical_v1:
+        await connection.execute(
+            "INSERT INTO skill_registry.skills (id, slug, created_by) VALUES (%s, %s, %s)",
+            (skill_id, slug, actor_id),
+        )
+    else:
+        await connection.execute(
+            """INSERT INTO skill_registry.skills (
+              id, slug, created_by, current_revision_id
+            ) VALUES (%s, %s, %s, %s)""",
+            (skill_id, slug, actor_id, revision_id),
+        )
     await connection.execute(
         """INSERT INTO skill_registry.skill_revisions (
           id, skill_id, revision_no, state, source_type, manifest, findings, created_by
-        ) VALUES (%s, %s, 1, 'pending_review', 'upload', '{}'::jsonb, %s::jsonb, %s)""",
-        (revision_id, skill_id, findings, actor_id),
+        ) VALUES (%s, %s, 1, %s, 'upload', %s::jsonb, %s::jsonb, %s)""",
+        (revision_id, skill_id, state, manifest, findings, actor_id),
     )
     await connection.execute(
         """INSERT INTO skill_registry.skill_revision_artifacts (
@@ -206,7 +309,6 @@ async def _create_published_revision(
     manager: psycopg.AsyncConnection[tuple[object, ...]],
     *,
     actor_id: UUID,
-    reviewer_id: UUID,
 ) -> tuple[UUID, UUID]:
     skill_id = uuid4()
     revision_id = uuid4()
@@ -218,19 +320,6 @@ async def _create_published_revision(
             actor_id=actor_id,
             slug=f"skill-set-{uuid4().hex[:16]}",
             nonce=uuid4(),
-        )
-    async with manager.transaction():
-        await _insert_review_event(
-            manager,
-            revision_id=revision_id,
-            reviewer_id=reviewer_id,
-            event_type="revision_published",
-        )
-        await manager.execute(
-            """UPDATE skill_registry.skill_revisions
-            SET state = 'published', reviewed_by = %s, reviewed_at = now()
-            WHERE id = %s""",
-            (reviewer_id, revision_id),
         )
     return skill_id, revision_id
 
@@ -361,7 +450,17 @@ async def test_real_registry_migration_and_role_boundary() -> None:
         version_rows = await owner.execute(
             "SELECT version FROM skill_registry.schema_versions ORDER BY version"
         )
-        assert await version_rows.fetchall() == [(1,), (2,), (3,), (4,)]
+        assert await version_rows.fetchall() == [
+            (1,),
+            (2,),
+            (3,),
+            (4,),
+            (5,),
+            (6,),
+            (7,),
+            (8,),
+            (9,),
+        ]
 
         await owner.execute(
             "GRANT ai_agent_skill_registry_manager TO ai_agent_skill_registry_migrator"
@@ -395,7 +494,6 @@ async def test_real_registry_migration_and_role_boundary() -> None:
         await run_migration(settings)
 
         actor_id = uuid4()
-        reviewer_id = uuid4()
         skill_id = uuid4()
         revision_id = uuid4()
         async with manager.transaction():
@@ -406,251 +504,6 @@ async def test_real_registry_migration_and_role_boundary() -> None:
                 actor_id=actor_id,
                 slug=f"manager-{uuid4()}",
                 nonce=uuid4(),
-            )
-
-        await _expect_database_error(
-            manager,
-            psycopg.errors.CheckViolation,
-            """INSERT INTO skill_registry.skill_control_events (
-              id, request_id, assertion_nonce, actor, event_type,
-              target_id, result_code
-            ) VALUES (%s, %s, %s, %s, 'revision_published', %s, 'ok')""",
-            (uuid4(), uuid4(), uuid4(), str(reviewer_id), revision_id),
-        )
-        for false_index in range(4):
-            evidence = [True, True, True, True]
-            evidence[false_index] = False
-            with pytest.raises(psycopg.errors.CheckViolation):
-                async with manager.transaction():
-                    await _insert_review_event(
-                        manager,
-                        revision_id=revision_id,
-                        reviewer_id=reviewer_id,
-                        event_type="revision_published",
-                        attestations=(
-                            evidence[0],
-                            evidence[1],
-                            evidence[2],
-                            evidence[3],
-                        ),
-                    )
-
-        for invalid_reason in (None, "", "   "):
-            await _expect_database_error(
-                manager,
-                psycopg.errors.CheckViolation,
-                """INSERT INTO skill_registry.skill_control_events (
-                  id, request_id, assertion_nonce, actor, event_type,
-                  target_id, result_code, review_reason,
-                  content_reviewed, usage_rights_confirmed,
-                  execution_risk_accepted, reviewer_authorization_confirmed
-                ) VALUES (
-                  %s, %s, %s, %s, 'revision_rejected', %s, 'ok', %s,
-                  true, true, true, true
-                )""",
-                (
-                    uuid4(),
-                    uuid4(),
-                    uuid4(),
-                    str(reviewer_id),
-                    revision_id,
-                    invalid_reason,
-                ),
-            )
-
-        await _expect_database_error(
-            manager,
-            psycopg.errors.CheckViolation,
-            """INSERT INTO skill_registry.skill_control_events (
-              id, request_id, assertion_nonce, actor, event_type,
-              target_id, result_code, review_reason
-            ) VALUES (%s, %s, %s, %s, 'revision_created', %s, 'ok', %s)""",
-            (
-                uuid4(),
-                uuid4(),
-                uuid4(),
-                str(actor_id),
-                revision_id,
-                "Review-only reason",
-            ),
-        )
-        await _expect_database_error(
-            manager,
-            psycopg.errors.CheckViolation,
-            """INSERT INTO skill_registry.skill_control_events (
-              id, request_id, assertion_nonce, actor, event_type,
-              target_id, result_code, content_reviewed
-            ) VALUES (%s, %s, %s, %s, 'revision_created', %s, 'ok', true)""",
-            (uuid4(), uuid4(), uuid4(), str(actor_id), revision_id),
-        )
-
-        for blocking_code in ("unsupported_import", "private_key"):
-            blocked_skill_id = uuid4()
-            blocked_revision_id = uuid4()
-            async with manager.transaction():
-                await _insert_skill_revision(
-                    manager,
-                    skill_id=blocked_skill_id,
-                    revision_id=blocked_revision_id,
-                    actor_id=actor_id,
-                    slug=f"blocked-{blocking_code.replace('_', '-')}-{uuid4().hex[:12]}",
-                    nonce=uuid4(),
-                    findings=(
-                        '[{"path":"SKILL.md","line":1,"code":"'
-                        + blocking_code
-                        + '","message":"blocked","blocking":true}]'
-                    ),
-                )
-            with pytest.raises(psycopg.errors.CheckViolation):
-                async with manager.transaction():
-                    await _insert_review_event(
-                        manager,
-                        revision_id=blocked_revision_id,
-                        reviewer_id=reviewer_id,
-                        event_type="revision_published",
-                    )
-                    await manager.execute(
-                        """UPDATE skill_registry.skill_revisions
-                        SET state = 'published', reviewed_by = %s, reviewed_at = now()
-                        WHERE id = %s""",
-                        (reviewer_id, blocked_revision_id),
-                    )
-            blocked_state = await manager.execute(
-                "SELECT state FROM skill_registry.skill_revisions WHERE id = %s",
-                (blocked_revision_id,),
-            )
-            assert await blocked_state.fetchone() == ("pending_review",)
-
-        for forbidden_initial_state in ("published", "rejected", "archived"):
-            await _expect_database_error(
-                manager,
-                psycopg.errors.CheckViolation,
-                """INSERT INTO skill_registry.skill_revisions (
-                  id, skill_id, revision_no, state, source_type, manifest,
-                  created_by, reviewed_by, reviewed_at
-                ) VALUES (%s, %s, 2, %s, 'upload', '{}'::jsonb, %s, %s, now())""",
-                (
-                    uuid4(),
-                    skill_id,
-                    forbidden_initial_state,
-                    actor_id,
-                    actor_id,
-                ),
-            )
-        await _expect_database_error(
-            manager,
-            psycopg.errors.CheckViolation,
-            """INSERT INTO skill_registry.skill_revisions (
-              id, skill_id, revision_no, state, source_type, manifest,
-              created_by, reviewed_by, reviewed_at
-            ) VALUES (%s, %s, 2, 'pending_review', 'upload', '{}'::jsonb, %s, %s, now())""",
-            (uuid4(), skill_id, actor_id, actor_id),
-        )
-
-        with pytest.raises(psycopg.errors.CheckViolation):
-            async with manager.transaction():
-                await manager.execute(
-                    """UPDATE skill_registry.skill_revisions
-                    SET state = 'published', reviewed_by = %s, reviewed_at = now()
-                    WHERE id = %s""",
-                    (reviewer_id, revision_id),
-                )
-
-        async with manager.transaction():
-            historical_event_id = await _insert_review_event(
-                manager,
-                revision_id=revision_id,
-                reviewer_id=reviewer_id,
-                event_type="revision_published",
-            )
-        historical_transaction = await manager.execute(
-            """SELECT transaction_id
-            FROM skill_registry.skill_control_events
-            WHERE id = %s""",
-            (historical_event_id,),
-        )
-        historical_transaction_row = await historical_transaction.fetchone()
-        assert historical_transaction_row is not None
-        historical_transaction_id = historical_transaction_row[0]
-        assert isinstance(historical_transaction_id, int)
-        await owner.execute("DROP SCHEMA IF EXISTS evil CASCADE")
-        await owner.execute("CREATE SCHEMA evil")
-        await owner.execute("GRANT USAGE ON SCHEMA evil TO ai_agent_skill_registry_manager")
-        await owner.execute(
-            """CREATE FUNCTION evil.txid_current()
-            RETURNS bigint
-            LANGUAGE sql
-            IMMUTABLE
-            AS $$ SELECT %s::bigint $$"""
-            % historical_transaction_id
-        )
-        await manager.execute("SET search_path = evil, pg_catalog")
-        with pytest.raises(psycopg.errors.CheckViolation):
-            async with manager.transaction():
-                await manager.execute(
-                    """UPDATE skill_registry.skill_revisions
-                    SET state = 'published', reviewed_by = %s, reviewed_at = now()
-                    WHERE id = %s""",
-                    (reviewer_id, revision_id),
-                )
-
-        for wrong_target, wrong_type, wrong_actor, wrong_result, error_code in (
-            (uuid4(), "revision_published", reviewer_id, "ok", None),
-            (revision_id, "revision_rejected", reviewer_id, "ok", None),
-            (revision_id, "revision_published", actor_id, "ok", None),
-            (revision_id, "revision_published", reviewer_id, "error", "review_failed"),
-        ):
-            with pytest.raises(psycopg.errors.CheckViolation):
-                async with manager.transaction():
-                    await _insert_review_event(
-                        manager,
-                        revision_id=wrong_target,
-                        reviewer_id=wrong_actor,
-                        event_type=wrong_type,
-                        result_code=wrong_result,
-                        error_code=error_code,
-                    )
-                    await manager.execute(
-                        """UPDATE skill_registry.skill_revisions
-                        SET state = 'published', reviewed_by = %s, reviewed_at = now()
-                        WHERE id = %s""",
-                        (reviewer_id, revision_id),
-                    )
-
-        async with manager.transaction():
-            await manager.execute(
-                """UPDATE skill_registry.skill_revisions
-                SET state = 'published', reviewed_by = %s, reviewed_at = now()
-                WHERE id = %s""",
-                (reviewer_id, revision_id),
-            )
-            await _insert_review_event(
-                manager,
-                revision_id=revision_id,
-                reviewer_id=reviewer_id,
-                event_type="revision_published",
-            )
-
-        before_event_revision_id = uuid4()
-        async with manager.transaction():
-            await manager.execute(
-                """INSERT INTO skill_registry.skill_revisions (
-                  id, skill_id, revision_no, state, source_type, manifest, created_by
-                ) VALUES (%s, %s, 2, 'pending_review', 'upload', '{}'::jsonb, %s)""",
-                (before_event_revision_id, skill_id, actor_id),
-            )
-        async with manager.transaction():
-            await _insert_review_event(
-                manager,
-                revision_id=before_event_revision_id,
-                reviewer_id=reviewer_id,
-                event_type="revision_rejected",
-            )
-            await manager.execute(
-                """UPDATE skill_registry.skill_revisions
-                SET state = 'rejected', reviewed_by = %s, reviewed_at = now()
-                WHERE id = %s""",
-                (reviewer_id, before_event_revision_id),
             )
 
         await _expect_database_error(
@@ -728,17 +581,23 @@ async def test_real_registry_migration_and_role_boundary() -> None:
 
             async def insert_loser() -> None:
                 async with second_manager.transaction():
-                    await second_manager.execute(
-                        """INSERT INTO skill_registry.skills (id, slug, created_by)
-                        VALUES (%s, %s, %s)""",
-                        (loser_id, shared_slug, actor_id),
+                    await _insert_skill_revision(
+                        second_manager,
+                        skill_id=loser_id,
+                        revision_id=uuid4(),
+                        actor_id=actor_id,
+                        slug=shared_slug,
+                        nonce=uuid4(),
                     )
 
             async with manager.transaction():
-                await manager.execute(
-                    """INSERT INTO skill_registry.skills (id, slug, created_by)
-                    VALUES (%s, %s, %s)""",
-                    (winner_id, shared_slug, actor_id),
+                await _insert_skill_revision(
+                    manager,
+                    skill_id=winner_id,
+                    revision_id=uuid4(),
+                    actor_id=actor_id,
+                    slug=shared_slug,
+                    nonce=uuid4(),
                 )
                 loser_task = asyncio.create_task(insert_loser())
                 await asyncio.sleep(0.05)
@@ -762,9 +621,13 @@ async def test_real_registry_migration_and_role_boundary() -> None:
         shared_nonce = uuid4()
         first_nonce_skill = uuid4()
         async with manager.transaction():
-            await manager.execute(
-                "INSERT INTO skill_registry.skills (id, slug, created_by) VALUES (%s, %s, %s)",
-                (first_nonce_skill, f"nonce-first-{uuid4()}", actor_id),
+            await _insert_skill_revision(
+                manager,
+                skill_id=first_nonce_skill,
+                revision_id=uuid4(),
+                actor_id=actor_id,
+                slug=f"nonce-first-{uuid4()}",
+                nonce=uuid4(),
             )
             await manager.execute(
                 """INSERT INTO skill_registry.skill_control_events (
@@ -778,10 +641,13 @@ async def test_real_registry_migration_and_role_boundary() -> None:
 
         async def replaying_transaction() -> None:
             async with manager.transaction():
-                await manager.execute(
-                    """INSERT INTO skill_registry.skills (id, slug, created_by)
-                    VALUES (%s, %s, %s)""",
-                    (rolled_back_skill, f"nonce-replay-{uuid4()}", actor_id),
+                await _insert_skill_revision(
+                    manager,
+                    skill_id=rolled_back_skill,
+                    revision_id=uuid4(),
+                    actor_id=actor_id,
+                    slug=f"nonce-replay-{uuid4()}",
+                    nonce=uuid4(),
                 )
                 await manager.execute(
                     """INSERT INTO skill_registry.skill_control_events (
@@ -810,7 +676,6 @@ async def test_real_registry_migration_and_role_boundary() -> None:
             "SET session_replication_role = replica",
         )
         await manager.execute("RESET search_path")
-        await owner.execute("DROP SCHEMA evil CASCADE")
 
         async with owner.transaction():
             await owner.execute("SET LOCAL ROLE ai_agent_backup")
@@ -858,7 +723,7 @@ async def test_activation_function_replays_and_reconcile_function_reports_truth(
     runtime = await _connect(urls["runtime"])
     actor_id = uuid4()
     try:
-        revision = await _create_published_revision(manager, actor_id=actor_id, reviewer_id=uuid4())
+        revision = await _create_published_revision(manager, actor_id=actor_id)
         candidate_id = await _seed_candidate_set(owner, actor_id=actor_id, revisions=(revision,))
         request_id = uuid4()
         nonce = uuid4()
@@ -909,6 +774,114 @@ async def test_activation_function_replays_and_reconcile_function_reports_truth(
                     "agent_build_failed",
                 ),
             )
+    finally:
+        await runtime.close()
+        await manager.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_failed_replacement_keeps_authoritative_revision_until_activation_succeeds() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    owner = await _connect(urls["test"])
+    manager = await _connect(urls["manager"])
+    runtime = await _connect(urls["runtime"])
+    actor_id = uuid4()
+    try:
+        skill_id, current_revision_id = await _create_published_revision(manager, actor_id=actor_id)
+        initial_set = await _seed_candidate_set(
+            owner,
+            actor_id=actor_id,
+            revisions=((skill_id, current_revision_id),),
+        )
+        await runtime.execute(
+            _activate_sql(),
+            (
+                "maduoduo",
+                initial_set,
+                0,
+                actor_id,
+                uuid4(),
+                uuid4(),
+                "1" * 64,
+            ),
+        )
+
+        replacement_revision_id = uuid4()
+        async with manager.transaction():
+            await manager.execute(
+                """INSERT INTO skill_registry.skill_revisions (
+                  id, skill_id, revision_no, state, source_type, manifest,
+                  findings, created_by
+                ) VALUES (
+                  %s, %s, 2, 'published', 'upload',
+                  (SELECT manifest FROM skill_registry.skill_revisions WHERE id = %s),
+                  '[]'::jsonb, %s
+                )""",
+                (
+                    replacement_revision_id,
+                    skill_id,
+                    current_revision_id,
+                    actor_id,
+                ),
+            )
+            await manager.execute(
+                """INSERT INTO skill_registry.skill_revision_artifacts (
+                  revision_id, skill_id, artifact_sha256, compressed_size,
+                  extracted_size, file_count, archive_bytes
+                ) VALUES (%s, %s, %s, 1, 1, 1, %s)""",
+                (replacement_revision_id, skill_id, "c" * 64, b"x"),
+            )
+
+        failed_set = await _seed_candidate_set(
+            owner,
+            actor_id=actor_id,
+            revisions=((skill_id, replacement_revision_id),),
+        )
+        failed = await runtime.execute(
+            _fail_sql(),
+            (
+                "maduoduo",
+                failed_set,
+                1,
+                actor_id,
+                uuid4(),
+                uuid4(),
+                "2" * 64,
+                "agent_build_failed",
+            ),
+        )
+        assert await failed.fetchone() == (True,)
+
+        async def repository_connection() -> RepositoryConnection:
+            return cast(RepositoryConnection, await _connect(urls["manager"]))
+
+        repository = PostgresSkillRegistryRepository(repository_connection)
+        assert (await repository.list_skills())[0].revision_id == current_revision_id
+
+        replacement_set = await _seed_candidate_set(
+            owner,
+            actor_id=actor_id,
+            revisions=((skill_id, replacement_revision_id),),
+        )
+        await runtime.execute(
+            _activate_sql(),
+            (
+                "maduoduo",
+                replacement_set,
+                1,
+                actor_id,
+                uuid4(),
+                uuid4(),
+                "3" * 64,
+            ),
+        )
+        assert (await repository.list_skills())[0].revision_id == replacement_revision_id
     finally:
         await runtime.close()
         await manager.close()
@@ -1010,6 +983,127 @@ async def test_activation_function_serializes_concurrent_cas() -> None:
     bool(MISSING_ENVIRONMENT),
     reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
 )
+async def test_repository_archive_serializes_candidate_creation_and_both_activation_orders() -> (
+    None
+):
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    owner = await _connect(urls["test"])
+    manager = await _connect(urls["manager"])
+    runtime = await _connect(urls["runtime"])
+    actor_id = uuid4()
+    try:
+        archive_first_skill_id, archive_first_revision_id = await _create_published_revision(
+            manager, actor_id=actor_id
+        )
+        archive_first_candidate_id = await _seed_candidate_set(
+            owner,
+            actor_id=actor_id,
+            revisions=((archive_first_skill_id, archive_first_revision_id),),
+        )
+        lock_acquired = asyncio.Event()
+        release_archive = asyncio.Event()
+        archive_connection = await _connect(urls["manager"])
+        gated_connection = _ArchiveLockGateConnection(
+            archive_connection,
+            lock_acquired,
+            release_archive,
+        )
+        archive_task = asyncio.create_task(
+            _archive_repository(cast(RepositoryConnection, gated_connection)).archive_skill(
+                _archive_command(archive_first_skill_id, actor_id)
+            )
+        )
+        await asyncio.wait_for(lock_acquired.wait(), timeout=1)
+        create_task = asyncio.create_task(
+            manager.execute(
+                _create_set_sql(),
+                (
+                    "maduoduo",
+                    [archive_first_revision_id],
+                    actor_id,
+                    uuid4(),
+                    uuid4(),
+                    "a" * 64,
+                ),
+            )
+        )
+        activate_task = asyncio.create_task(
+            runtime.execute(
+                _activate_sql(),
+                (
+                    "maduoduo",
+                    archive_first_candidate_id,
+                    0,
+                    actor_id,
+                    uuid4(),
+                    uuid4(),
+                    "b" * 64,
+                ),
+            )
+        )
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(create_task), timeout=0.1)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(activate_task), timeout=0.1)
+        release_archive.set()
+        await archive_task
+        with pytest.raises(psycopg.errors.CheckViolation):
+            await create_task
+        with pytest.raises(psycopg.errors.CheckViolation):
+            await activate_task
+
+        activation_first_skill_id, activation_first_revision_id = await _create_published_revision(
+            manager, actor_id=actor_id
+        )
+        activation_first_candidate_id = await _seed_candidate_set(
+            owner,
+            actor_id=actor_id,
+            revisions=((activation_first_skill_id, activation_first_revision_id),),
+        )
+        activation_first_archive = _archive_repository(
+            cast(RepositoryConnection, await _connect(urls["manager"]))
+        )
+        async with runtime.transaction():
+            activated = await runtime.execute(
+                _activate_sql(),
+                (
+                    "maduoduo",
+                    activation_first_candidate_id,
+                    0,
+                    actor_id,
+                    uuid4(),
+                    uuid4(),
+                    "c" * 64,
+                ),
+            )
+            assert await activated.fetchone() == (1,)
+            activation_first_archive_task = asyncio.create_task(
+                activation_first_archive.archive_skill(
+                    _archive_command(activation_first_skill_id, actor_id)
+                )
+            )
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(activation_first_archive_task), timeout=0.1)
+        with pytest.raises(RegistryError, match="Active Skill cannot be archived") as caught:
+            await activation_first_archive_task
+        assert caught.value.code == "SKILL_ACTIVE"
+        archived = await owner.execute(
+            "SELECT archived_at FROM skill_registry.skills WHERE id = %s",
+            (activation_first_skill_id,),
+        )
+        assert await archived.fetchone() == (None,)
+    finally:
+        await runtime.close()
+        await manager.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
 async def test_set_replay_concurrent_activation_returns_saved_result() -> None:
     urls = _validated_urls()
     await _reset_registry_schema(urls)
@@ -1062,12 +1156,8 @@ async def test_active_archive_guard_protects_active_and_immediate_previous() -> 
     runtime = await _connect(urls["runtime"])
     actor_id = uuid4()
     try:
-        first_revision = await _create_published_revision(
-            manager, actor_id=actor_id, reviewer_id=uuid4()
-        )
-        second_revision = await _create_published_revision(
-            manager, actor_id=actor_id, reviewer_id=uuid4()
-        )
+        first_revision = await _create_published_revision(manager, actor_id=actor_id)
+        second_revision = await _create_published_revision(manager, actor_id=actor_id)
         first_set = await _seed_candidate_set(owner, actor_id=actor_id, revisions=(first_revision,))
         second_set = await _seed_candidate_set(
             owner, actor_id=actor_id, revisions=(second_revision,)
@@ -1111,7 +1201,7 @@ async def test_active_archive_waits_for_activation_revision_lock_and_then_fails(
     actor_id = uuid4()
     archive_task: asyncio.Task[object] | None = None
     try:
-        revision = await _create_published_revision(manager, actor_id=actor_id, reviewer_id=uuid4())
+        revision = await _create_published_revision(manager, actor_id=actor_id)
         candidate_id = await _seed_candidate_set(owner, actor_id=actor_id, revisions=(revision,))
         async with runtime.transaction():
             await runtime.execute(
@@ -1207,8 +1297,8 @@ async def test_manager_create_preserves_order_replays_and_enforces_candidate_quo
     manager = await _connect(urls["manager"])
     actor_id = uuid4()
     try:
-        first = await _create_published_revision(manager, actor_id=actor_id, reviewer_id=uuid4())
-        second = await _create_published_revision(manager, actor_id=actor_id, reviewer_id=uuid4())
+        first = await _create_published_revision(manager, actor_id=actor_id)
+        second = await _create_published_revision(manager, actor_id=actor_id)
         request_id = uuid4()
         nonce = uuid4()
         parameters = (
@@ -1314,7 +1404,7 @@ async def test_manager_discard_is_audited_and_replayed_without_deleting_items() 
     manager = await _connect(urls["manager"])
     actor_id = uuid4()
     try:
-        revision = await _create_published_revision(manager, actor_id=actor_id, reviewer_id=uuid4())
+        revision = await _create_published_revision(manager, actor_id=actor_id)
         created_cursor = await manager.execute(
             _create_set_sql(),
             ("maduoduo", [revision[1]], actor_id, uuid4(), uuid4(), "8" * 64),
@@ -1351,8 +1441,8 @@ async def test_manager_clone_locks_expected_previous_and_preserves_item_order() 
     runtime = await _connect(urls["runtime"])
     actor_id = uuid4()
     try:
-        first = await _create_published_revision(manager, actor_id=actor_id, reviewer_id=uuid4())
-        second = await _create_published_revision(manager, actor_id=actor_id, reviewer_id=uuid4())
+        first = await _create_published_revision(manager, actor_id=actor_id)
+        second = await _create_published_revision(manager, actor_id=actor_id)
         previous_set = await _seed_candidate_set(
             owner, actor_id=actor_id, revisions=(second, first)
         )
@@ -1454,7 +1544,7 @@ async def test_backup_skill_set_access_is_read_only_and_cannot_execute_functions
     bool(MISSING_ENVIRONMENT),
     reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
 )
-async def test_real_registry_migrates_v1_history_to_v4_without_losing_evidence() -> None:
+async def test_real_registry_migrates_v1_history_to_v9_without_review_storage() -> None:
     urls = _validated_urls()
     owner = await _connect(urls["test"])
     migrator = await _connect(urls["migrator"])
@@ -1479,6 +1569,8 @@ async def test_real_registry_migrates_v1_history_to_v4_without_losing_evidence()
                 actor_id=actor_id,
                 slug=f"v1-history-{uuid4().hex[:12]}",
                 nonce=uuid4(),
+                state="pending_review",
+                historical_v1=True,
             )
         async with manager.transaction():
             historical_event_id = await _insert_review_event(
@@ -1501,7 +1593,17 @@ async def test_real_registry_migrates_v1_history_to_v4_without_losing_evidence()
         versions = await owner.execute(
             "SELECT version FROM skill_registry.schema_versions ORDER BY version"
         )
-        assert await versions.fetchall() == [(1,), (2,), (3,), (4,)]
+        assert await versions.fetchall() == [
+            (1,),
+            (2,),
+            (3,),
+            (4,),
+            (5,),
+            (6,),
+            (7,),
+            (8,),
+            (9,),
+        ]
         columns = await owner.execute(
             """SELECT column_name
             FROM information_schema.columns
@@ -1513,14 +1615,12 @@ async def test_real_registry_migrates_v1_history_to_v4_without_losing_evidence()
               )
             ORDER BY column_name"""
         )
-        assert await columns.fetchall() == [("reviewer_authorization_confirmed",)]
+        assert await columns.fetchall() == []
         evidence = await owner.execute(
-            """SELECT reviewer_authorization_confirmed
-            FROM skill_registry.skill_control_events
-            WHERE id = %s""",
+            "SELECT id FROM skill_registry.skill_control_events WHERE id = %s",
             (historical_event_id,),
         )
-        assert await evidence.fetchone() == (True,)
+        assert await evidence.fetchone() is None
     finally:
         await manager.close()
         await migrator.close()
@@ -1567,7 +1667,6 @@ async def test_real_registry_rejects_noncanonical_findings_from_manager_sql() ->
 
         valid_skill_id = uuid4()
         valid_revision_id = uuid4()
-        reviewer_id = uuid4()
         async with manager.transaction():
             await _insert_skill_revision(
                 manager,
@@ -1581,19 +1680,6 @@ async def test_real_registry_rejects_noncanonical_findings_from_manager_sql() ->
                     '"message":"reviewed","blocking":false}]'
                 ),
             )
-        async with manager.transaction():
-            await _insert_review_event(
-                manager,
-                revision_id=valid_revision_id,
-                reviewer_id=reviewer_id,
-                event_type="revision_published",
-            )
-            await manager.execute(
-                """UPDATE skill_registry.skill_revisions
-                SET state = 'published', reviewed_by = %s, reviewed_at = now()
-                WHERE id = %s""",
-                (reviewer_id, valid_revision_id),
-            )
         valid_state = await manager.execute(
             "SELECT state FROM skill_registry.skill_revisions WHERE id = %s",
             (valid_revision_id,),
@@ -1601,162 +1687,3 @@ async def test_real_registry_rejects_noncanonical_findings_from_manager_sql() ->
         assert await valid_state.fetchone() == ("published",)
     finally:
         await manager.close()
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(
-    bool(MISSING_ENVIRONMENT),
-    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
-)
-async def test_real_registry_publish_trigger_fails_closed_for_seeded_invalid_findings() -> None:
-    urls = _validated_urls()
-    owner = await _connect(urls["test"])
-    manager = await _connect(urls["manager"])
-    settings = MigrationSettings.model_validate({"database_url": urls["migrator"]})
-    revision_id = uuid4()
-    reviewer_id = uuid4()
-    try:
-        await owner.execute(
-            """ALTER TABLE skill_registry.skill_revisions
-            DROP CONSTRAINT skill_revisions_findings_array"""
-        )
-        async with manager.transaction():
-            await _insert_skill_revision(
-                manager,
-                skill_id=uuid4(),
-                revision_id=revision_id,
-                actor_id=uuid4(),
-                slug=f"seeded-invalid-{uuid4().hex[:12]}",
-                nonce=uuid4(),
-                findings='["unsupported_import"]',
-            )
-        with pytest.raises(psycopg.errors.CheckViolation) as caught:
-            async with manager.transaction():
-                await _insert_review_event(
-                    manager,
-                    revision_id=revision_id,
-                    reviewer_id=reviewer_id,
-                    event_type="revision_published",
-                )
-                await manager.execute(
-                    """UPDATE skill_registry.skill_revisions
-                    SET state = 'published', reviewed_by = %s, reviewed_at = now()
-                    WHERE id = %s""",
-                    (reviewer_id, revision_id),
-                )
-        assert caught.value.diag.message_primary == "skill findings schema is invalid"
-    finally:
-        await owner.execute(
-            """TRUNCATE TABLE
-              skill_registry.skill_set_control_events,
-              skill_registry.active_agent_skill_sets,
-              skill_registry.agent_skill_set_items,
-              skill_registry.agent_skill_sets,
-              skill_registry.skill_control_events,
-              skill_registry.skill_revision_files,
-              skill_registry.skill_revision_artifacts,
-              skill_registry.skill_revisions,
-              skill_registry.skills"""
-        )
-        await owner.execute(
-            """ALTER TABLE skill_registry.skill_revisions
-            DROP CONSTRAINT IF EXISTS skill_revisions_findings_array"""
-        )
-        await owner.execute(
-            """ALTER TABLE skill_registry.skill_revisions
-            ADD CONSTRAINT skill_revisions_findings_array
-            CHECK (skill_registry.validate_skill_findings(findings))"""
-        )
-        await manager.close()
-        await owner.close()
-    await run_migration(settings)
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(
-    bool(MISSING_ENVIRONMENT),
-    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
-)
-async def test_real_registry_migration_rejects_same_name_true_constraint_drift() -> None:
-    urls = _validated_urls()
-    owner = await _connect(urls["test"])
-    settings = MigrationSettings.model_validate({"database_url": urls["migrator"]})
-    try:
-        await run_migration(settings)
-        await owner.execute(
-            """ALTER TABLE skill_registry.skill_control_events
-            DROP CONSTRAINT skill_control_events_review_evidence"""
-        )
-        await owner.execute(
-            """ALTER TABLE skill_registry.skill_control_events
-            ADD CONSTRAINT skill_control_events_review_evidence CHECK (true)"""
-        )
-        with pytest.raises(RuntimeError, match="verification failed"):
-            await run_migration(settings)
-    finally:
-        await owner.execute(
-            """ALTER TABLE skill_registry.skill_control_events
-            DROP CONSTRAINT IF EXISTS skill_control_events_review_evidence"""
-        )
-        await owner.execute(
-            """ALTER TABLE skill_registry.skill_control_events
-            ADD CONSTRAINT skill_control_events_review_evidence CHECK (
-              (
-                event_type IN ('revision_published', 'revision_rejected')
-                AND content_reviewed IS TRUE
-                AND usage_rights_confirmed IS TRUE
-                AND execution_risk_accepted IS TRUE
-                AND reviewer_authorization_confirmed IS TRUE
-              )
-              OR (
-                event_type NOT IN ('revision_published', 'revision_rejected')
-                AND content_reviewed IS NULL
-                AND usage_rights_confirmed IS NULL
-                AND execution_risk_accepted IS NULL
-                AND reviewer_authorization_confirmed IS NULL
-              )
-            )"""
-        )
-        await owner.close()
-    await run_migration(settings)
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(
-    bool(MISSING_ENVIRONMENT),
-    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
-)
-async def test_real_registry_migration_rejects_keyword_only_review_function_drift() -> None:
-    urls = _validated_urls()
-    owner = await _connect(urls["test"])
-    settings = MigrationSettings.model_validate({"database_url": urls["migrator"]})
-    definition_cursor = await owner.execute(
-        """SELECT pg_get_functiondef(function.oid)
-        FROM pg_proc AS function
-        JOIN pg_namespace AS function_schema ON function_schema.oid = function.pronamespace
-        WHERE function_schema.nspname = 'skill_registry'
-          AND function.proname = 'require_revision_review_event'"""
-    )
-    definition_row = await definition_cursor.fetchone()
-    assert definition_row is not None
-    correct_definition = str(definition_row[0])
-    try:
-        await run_migration(settings)
-        await owner.execute(
-            """CREATE OR REPLACE FUNCTION skill_registry.require_revision_review_event()
-            RETURNS trigger
-            LANGUAGE plpgsql
-            SET search_path = pg_catalog, skill_registry
-            AS $function$
-            BEGIN
-              /* jsonb_array_elements(OLD.findings) unsupported_import private_key */
-              RETURN NEW;
-            END;
-            $function$"""
-        )
-        with pytest.raises(RuntimeError, match="verification failed"):
-            await run_migration(settings)
-    finally:
-        await owner.execute(correct_definition)
-        await owner.close()
-    await run_migration(settings)

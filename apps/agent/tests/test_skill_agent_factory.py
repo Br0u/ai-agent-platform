@@ -54,7 +54,7 @@ def test_factory_reuses_model_and_database_and_selects_generation_skills() -> No
     assert agent.db is database
     assert agent.skills is skills
     assert all("没有工具或操作权限" not in item for item in agent.instructions)
-    assert any("当前已审核 Skill" in item for item in agent.instructions)
+    assert any("当前已启用 Skill" in item for item in agent.instructions)
 
 
 def test_factory_explicit_empty_generation_exposes_no_skills() -> None:

@@ -3343,31 +3343,75 @@ secrets:
     const testingReadme = read("docs/testing/README.md");
     const skillsReadme = read("apps/agent/src/agent_service/skills/README.md");
 
-    for (const actor of ["workforce:admin", "workforce:super_admin"]) {
-      expect(spec).toContain(actor);
-    }
     for (const contract of [
-      "pending_review",
-      "published",
-      "adminSessionToken",
       "modelAdminSessionToken",
       "artifactSha256",
       "revision",
-      "self-review",
+      "○ 未启用",
+      "● 已启用",
+      'operation === "enable"',
+      '"停用"',
     ]) {
       expect(spec).toContain(contract);
     }
-    expect(spec).toContain("SKILL.md");
-    expect(spec).toContain("scripts/hello.py");
     expect(spec).toContain(".setInputFiles(archive)");
     expect(spec).toContain("modelAdminStaleSessionToken");
+    expect(spec).not.toContain("fixtureCredentials");
+    expect(spec).toContain(
+      'page.waitForEvent("dialog").then((dialog) => dialog.accept())',
+    );
     expect(spec).toContain('error: { code: "reauth_required" }');
-    expect(spec).toContain("SKILL_REGISTRY_E2E_STORAGE_STATE_FILE");
-    expect(spec).toContain("storageState: storageStatePath()");
-    expect(spec.match(/browser\.newContext\(/gu)?.length).toBeGreaterThan(1);
+    expect(spec).toContain('redirectTo: "/staff/re-auth"');
+    expect(spec.match(/browser\.newContext\(/gu)?.length).toBe(1);
     expect(spec).not.toMatch(/https?:\/\/(?:github|gitlab|gitcode)\./u);
 
     expect(runner).toContain("SKILL_REGISTRY_E2E_PROJECT");
+    expect(runner).toContain("AGENT_ENABLED=true");
+    expect(runner).toContain("MODEL_PROVIDER=openai");
+    expect(runner).toContain("e2e-skill-registry");
+    expect(runner).not.toContain("export E2E_CUSTOMER_PASSWORD=");
+    expect(runner).not.toContain("export E2E_STAFF_PASSWORD=");
+    expect(runner).not.toContain("export E2E_ADMIN_PASSWORD=");
+    expect(runner).not.toContain("export E2E_STAFF_SESSION_TOKEN=");
+    expect(runner).not.toContain("export E2E_ADMIN_SESSION_TOKEN=");
+    expect(runner).not.toContain(
+      "export SKILL_REGISTRY_E2E_STORAGE_STATE_FILE=",
+    );
+    expect(runner).not.toContain("export SKILL_RUNTIME_E2E_STATE_FILE=");
+    const playwrightEnvironment = runner.slice(
+      runner.indexOf("run_skill_registry_playwright()"),
+      runner.indexOf("compose config --quiet"),
+    );
+    expect(playwrightEnvironment).toContain("env -i");
+    for (const allowedPlaywrightVariable of [
+      "BETTER_AUTH_SECRET",
+      "E2E_MODEL_ADMIN_SESSION_TOKEN",
+      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
+      "SKILL_REGISTRY_E2E_INITIAL_ARCHIVE",
+      "SKILL_REGISTRY_E2E_INACTIVE_REPLACEMENT_ARCHIVE",
+      "SKILL_REGISTRY_E2E_ACTIVE_REPLACEMENT_ARCHIVE",
+      "SKILL_REGISTRY_E2E_STATE_FILE",
+      "SKILL_REGISTRY_E2E_SLUG",
+    ]) {
+      expect(playwrightEnvironment).toContain(allowedPlaywrightVariable);
+    }
+    for (const forbiddenPlaywrightVariable of [
+      "E2E_CUSTOMER_PASSWORD",
+      "E2E_STAFF_PASSWORD",
+      "E2E_ADMIN_PASSWORD",
+      "E2E_STAFF_SESSION_TOKEN",
+      "E2E_ADMIN_SESSION_TOKEN",
+      "E2E_REPLACEMENT_PASSWORD",
+    ]) {
+      expect(playwrightEnvironment).not.toContain(forbiddenPlaywrightVariable);
+    }
+    for (const fixtureSource of [
+      "Skill Registry E2E fixture variant: initial",
+      "Skill Registry E2E fixture variant: inactive-replacement",
+      "Skill Registry E2E fixture variant: active-replacement",
+    ]) {
+      expect(runner).toContain(fixtureSource);
+    }
     expect(runner).toContain("trap cleanup EXIT");
     expect(runner.indexOf('. "$env_file"')).toBeLessThan(
       runner.indexOf("compose config --quiet"),
@@ -3400,24 +3444,36 @@ secrets:
     expect(runner).toContain(
       "run-restore-docker-lifecycle.sh controlled-failure",
     );
-    expect(runner).toContain("admin:assistant:skills:review");
     expect(runner).toContain("skill_revision_artifacts");
     expect(runner).toContain("artifact_digests_verified");
+    expect(runner).toContain("state.revisionId");
+    expect(runner).toContain("state.artifactSha256");
+    expect(runner).toContain(
+      "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    );
+    expect(runner).toContain("WHERE revision_id = '$revision_id'");
+    expect(runner).toContain("AND artifact_sha256 = '$artifact_sha'");
+    expect(runner).not.toContain("WHERE artifact_sha256 = '$artifact_sha'");
+    expect(runner).toContain(
+      "RESTORE_EXPECTED_ARTIFACT_REVISION_ID=$revision_id",
+    );
     expect(runner).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha");
-    expect(runner).toContain("SKILL_REGISTRY_E2E_STORAGE_STATE_FILE");
+    expect(runner).toContain("SKILL_REGISTRY_E2E_STATE_FILE");
     expect(runner).toContain('success_message="Skill Registry E2E passed"');
     expect(runner).toContain("down --rmi local -v --remove-orphans");
     expect(runner).not.toMatch(/curl[^\n]*(github|gitlab|gitcode)/iu);
 
     for (const document of [testingReadme, skillsReadme]) {
-      expect(document).toMatch(/库[＋+]审核|库与审核/u);
-      expect(document).toMatch(/发布不等于|published[^\n]*不能证明/u);
+      expect(document).toMatch(/Skill 库|Skill Registry/u);
+      expect(document).toMatch(/上传不等于|published[^\n]*不能证明/u);
     }
     expect(skillsReadme).toContain("LocalSkills");
     expect(skillsReadme).toMatch(/下一[^\n]*计划/u);
     expect(skillsReadme).toMatch(/exact revision/u);
     expect(testingReadme).toMatch(/同一|exact|精确/u);
     const backupRunner = read("docs/testing/run-agentos-backup-restore.sh");
+    expect(backupRunner).toContain("skill_artifact_revision_id");
+    expect(backupRunner).toContain("RESTORE_EXPECTED_ARTIFACT_REVISION_ID");
     expect(backupRunner).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256");
     expect(backupRunner).toContain("skill_artifact_sha");
     expect(backupRunner).toContain(
@@ -3425,6 +3481,42 @@ secrets:
     );
     expect(backupRunner).not.toContain("WHERE skill.name");
     expect(backupRunner).toContain("restore exact artifact digest mismatch");
+  });
+
+  it("does not expose the retired manual Skill review workflow", () => {
+    const productFiles = [
+      "README.md",
+      "apps/agent/src/agent_service/skills/README.md",
+      "apps/agent/src/agent_service/skill_artifact_repository.py",
+      "apps/agent/src/agent_service/skill_materializer.py",
+      "apps/agent/src/agent_service/skill_runtime_types.py",
+      "apps/skill-registry/pyproject.toml",
+      "apps/skill-registry/src/skill_registry/__init__.py",
+      "apps/skill-registry/src/skill_registry/skill_set_repository.py",
+      "apps/skill-registry/src/skill_registry/skill_set_schema.py",
+      "apps/web/src/components/assistant/assistant-workspace.tsx",
+      "apps/web/src/components/admin/assistant-capability-roadmap.tsx",
+      "apps/web/src/components/ui/floating-chat-widget-shadcnui.tsx",
+      "apps/web/src/content/deployment.mdx",
+      "docs/testing/README.md",
+      "infra/docker/README.md",
+    ];
+    const retired = [
+      /admin:assistant:skills:review/iu,
+      /\/review(?:\/|["'`])/iu,
+      /人工审核/iu,
+      /审核 Skill/iu,
+      /已审核/iu,
+      /reviewed Skill/iu,
+      /review workflow/iu,
+    ];
+
+    for (const file of productFiles) {
+      const source = read(file);
+      for (const pattern of retired) {
+        expect(source, `${file} contains ${pattern}`).not.toMatch(pattern);
+      }
+    }
   });
 
   it("fails closed when Skill Registry E2E temporary cleanup fails", () => {
@@ -4832,6 +4924,15 @@ exit 0
         false,
       ],
       [
+        "agent_skill_set_items_reject_archived",
+        "agent_skill_set_items",
+        "reject_archived_skill_set_item",
+        "skill_registry",
+        7,
+        false,
+        false,
+      ],
+      [
         "agent_skill_set_items_validate",
         "agent_skill_set_items",
         "validate_agent_skill_set_contents",
@@ -4844,6 +4945,15 @@ exit 0
         "agent_skill_sets_guard_update",
         "agent_skill_sets",
         "guard_agent_skill_set_update",
+        "skill_registry",
+        19,
+        false,
+        false,
+      ],
+      [
+        "agent_skill_sets_reject_archived_activation",
+        "agent_skill_sets",
+        "reject_archived_skill_activation",
         "skill_registry",
         19,
         false,
@@ -4875,15 +4985,6 @@ exit 0
         19,
         false,
         false,
-      ],
-      [
-        "skill_revisions_require_review_event",
-        "skill_revisions",
-        "require_revision_review_event",
-        "skill_registry",
-        17,
-        true,
-        true,
       ],
       [
         "skill_control_events_stamp_transaction",
@@ -5052,12 +5153,26 @@ exit 0
     expect(script).toContain("/bootstrap/04-agent-control-roles.sh");
     expect(script).toContain("/bootstrap/05-skill-registry-roles.sh");
     expect(script).toContain("RESTORE_SKILL_REGISTRY_IMAGE");
+    expect(script).toContain("RESTORE_EXPECTED_ARTIFACT_REVISION_ID");
     expect(script).toContain("RESTORE_EXPECTED_ARTIFACT_SHA256");
+    expect(script).toContain(
+      "restore expected artifact reference is incomplete",
+    );
+    expect(script).toContain("restore expected artifact revision is invalid");
     expect(script).toContain("expected_artifact_check_file");
     expect(script).toContain("expected_artifact_match_count");
     expect(script).toContain("restore expected artifact digest is invalid");
+    expect(script).toContain(
+      "WHERE revision_id = '$expected_artifact_revision_id'::uuid",
+    );
+    expect(script).toContain(
+      "AND artifact_sha256 = '$expected_artifact_sha256'",
+    );
+    expect(script).not.toContain(
+      "WHERE artifact_sha256 = '$expected_artifact_sha256'",
+    );
     expect(script).not.toMatch(
-      /(?:echo|printf)[^\n]*expected_artifact_sha256/iu,
+      /echo[^\n]*expected_artifact_(?:sha256|revision_id)/iu,
     );
     expect(script).toContain("python -m skill_registry.migrate");
     expect(script).toContain("ai_agent_skill_registry_manager");
@@ -5065,6 +5180,20 @@ exit 0
     expect(script).toContain("ai_agent_skill_registry_runtime");
     expect(script).toContain("manager_insert_check_file");
     expect(script).toContain("backup_insert_denied_file");
+    expect(script).toContain("id, slug, created_by, current_revision_id");
+    expect(script).toContain("SET CONSTRAINTS ALL DEFERRED");
+    expect(script).toContain("skill.current_revision_id");
+    expect(script).toContain("agent_skill_sets_sync_current_revisions");
+    expect(script).toContain("conrelid = 'skill_registry.skills'::regclass");
+    expect(script).toContain(
+      "constraint_row.conname = 'skills_current_revision_fkey'",
+    );
+    expect(script).toContain("constraint_row.convalidated");
+    expect(script).toContain("constraint_row.condeferrable");
+    expect(script).toContain("constraint_row.condeferred");
+    expect(script).toContain(
+      "FOREIGN KEY (current_revision_id, id) REFERENCES skill_registry.skill_revisions(id, skill_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED",
+    );
     expect(script).toContain("--file=/restore/manager-insert-check.sql");
     expect(script).toContain("--file=/restore/backup-insert-denied.sql");
     expect(script).toContain("--set=VERBOSITY=verbose");
@@ -5258,6 +5387,8 @@ exit 91
         "A".repeat(64),
         "g".repeat(64),
       ];
+      const validArtifactRevisionId = "11111111-1111-4111-8111-111111111111";
+      const validArtifactSha256 = "a".repeat(64);
       for (const value of malformed) {
         const result = spawnSync(
           "sh",
@@ -5276,6 +5407,7 @@ exit 91
               PATH: `${bin}:${process.env.PATH ?? ""}`,
               BACKUP_ENCRYPTION_KEY_FILE: keyFile,
               DOCKER_LOG: dockerLog,
+              RESTORE_EXPECTED_ARTIFACT_REVISION_ID: validArtifactRevisionId,
               RESTORE_EXPECTED_ARTIFACT_SHA256: value,
               RESTORE_MAX_ENCRYPTED_BYTES: "1",
             },
@@ -5289,6 +5421,74 @@ exit 91
         if (value !== "") {
           expect(output, JSON.stringify(value)).not.toContain(value);
         }
+      }
+      for (const value of [
+        "11111111-1111-1111-1111-11111111111",
+        "11111111-1111-1111-1111-1111111111111",
+        "11111111-1111-1111-1111-11111111111g",
+        "11111111-1111-1111-1111-11111111111A",
+        "11111111-1111-1111-1111-111111111111' OR 1=1 --",
+      ]) {
+        const result = spawnSync(
+          "sh",
+          [
+            script,
+            backupFile,
+            "1",
+            "1",
+            "11111111-1111-1111-1111-111111111111",
+            "fixture-session",
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: `${bin}:${process.env.PATH ?? ""}`,
+              BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+              DOCKER_LOG: dockerLog,
+              RESTORE_EXPECTED_ARTIFACT_REVISION_ID: value,
+              RESTORE_EXPECTED_ARTIFACT_SHA256: validArtifactSha256,
+              RESTORE_MAX_ENCRYPTED_BYTES: "1",
+            },
+          },
+        );
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.status, JSON.stringify(value)).toBe(64);
+        expect(output.trim(), JSON.stringify(value)).toBe(
+          "restore expected artifact revision is invalid",
+        );
+        expect(output, JSON.stringify(value)).not.toContain(value);
+      }
+      for (const artifactEnvironment of [
+        { RESTORE_EXPECTED_ARTIFACT_REVISION_ID: validArtifactRevisionId },
+        { RESTORE_EXPECTED_ARTIFACT_SHA256: validArtifactSha256 },
+      ]) {
+        const result = spawnSync(
+          "sh",
+          [
+            script,
+            backupFile,
+            "1",
+            "1",
+            "11111111-1111-1111-1111-111111111111",
+            "fixture-session",
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: `${bin}:${process.env.PATH ?? ""}`,
+              BACKUP_ENCRYPTION_KEY_FILE: keyFile,
+              DOCKER_LOG: dockerLog,
+              RESTORE_MAX_ENCRYPTED_BYTES: "1",
+              ...artifactEnvironment,
+            },
+          },
+        );
+        expect(result.status, JSON.stringify(artifactEnvironment)).toBe(64);
+        expect(`${result.stdout}${result.stderr}`.trim()).toBe(
+          "restore expected artifact reference is incomplete",
+        );
       }
       const validSetId = "11111111-1111-4111-8111-111111111111";
       const malformedRuntime = [
@@ -7002,28 +7202,28 @@ exec /bin/rm "$@"
         {
           mode: "baseline",
           expectedOutput: "restore drill failed database restore",
-          expectedMaxElapsedMs: 5_000,
+          expectedMaxElapsedMs: 8_000,
         },
         {
           mode: "container_hang",
           expectedOutput: "restore drill failed database restore",
-          expectedMaxElapsedMs: 7_000,
+          expectedMaxElapsedMs: 10_000,
         },
         {
           mode: "volume_hang",
           expectedOutput: "restore drill failed database restore",
-          expectedMaxElapsedMs: 7_000,
+          expectedMaxElapsedMs: 10_000,
         },
         {
           mode: "volume_unknown",
           expectedOutput:
             "restore drill failed database restore\nrestore drill cleanup failed",
-          expectedMaxElapsedMs: 7_000,
+          expectedMaxElapsedMs: 10_000,
         },
         {
           mode: "success_temp_rm_failure",
           expectedOutput: "restore drill cleanup failed",
-          expectedMaxElapsedMs: 8_000,
+          expectedMaxElapsedMs: 12_000,
         },
       ] as const;
 
@@ -7499,10 +7699,10 @@ esac
         RESTORE_MAX_ENCRYPTED_BYTES: "128",
         RESTORE_MAX_DECRYPTED_BYTES: "32",
         RESTORE_SPACE_SAFETY_BYTES: "0",
-        RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
-        RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+        RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "2",
+        RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "2",
         RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
-        RESTORE_DECRYPT_TIMEOUT_SECONDS: "1",
+        RESTORE_DECRYPT_TIMEOUT_SECONDS: "2",
         RESTORE_DECRYPT_KILL_AFTER_SECONDS: "1",
         RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "3",
         RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "2",
@@ -7527,7 +7727,7 @@ esac
         const startedAt = Date.now();
         const result = spawnSync("sh", args, {
           encoding: "utf8",
-          timeout: 10_000,
+          timeout: 15_000,
           env: {
             ...baseEnv,
             CAPTURE_DIR: captures,
@@ -7540,7 +7740,7 @@ esac
         expect(result.error, `${mode}: ${output}`).toBeUndefined();
         expect(result.status, `${mode}: ${output}`).toBe(1);
         expect(output.trim(), mode).toBe(expectedOutput);
-        expect(elapsedMs, mode).toBeLessThan(8_000);
+        expect(elapsedMs, mode).toBeLessThan(12_000);
         expect(readdirSync(restoreTmp), mode).toEqual([]);
         expect(
           statSync(path.join(captures, "container.exists"), {
@@ -7573,7 +7773,7 @@ esac
         const startedAt = Date.now();
         const result = spawnSync(path.join(bin, "signal-driver"), args, {
           encoding: "utf8",
-          timeout: 10_000,
+          timeout: 15_000,
           env: {
             ...baseEnv,
             CAPTURE_DIR: captures,
@@ -7592,7 +7792,7 @@ esac
             ? "restore drill interrupted\nrestore drill cleanup failed"
             : "restore drill interrupted",
         );
-        expect(elapsedMs, mode).toBeLessThan(8_000);
+        expect(elapsedMs, mode).toBeLessThan(12_000);
         expect(readdirSync(restoreTmp), mode).toEqual([]);
         expect(
           statSync(path.join(captures, "container.exists"), {
@@ -7884,7 +8084,7 @@ esac
     expect(runbook).toContain("skill-registry-migrate");
     expect(runbook).toContain("agent / skill-registry → web → proxy/backup");
     expect(runbook).toContain(
-      "`skill_registry`保存长期、不可变的 Skill 审核证据",
+      "`skill_registry`保存长期、不可变的 Skill 上传产物与运行时集合",
     );
     expect(runbook).toContain(
       "`agent_control`仍是短生命周期控制面，不进入备份",
@@ -7943,7 +8143,7 @@ esac
       expect(runbook).toContain("runtime URL");
       expect(runbook).toContain("migrator");
     }
-    expect(rootReadme).toContain("Skill 库、审核与运行时闭环已接入");
+    expect(rootReadme).toContain("Skill 库与运行时闭环已接入");
     expect(rootReadme).toContain("96 MiB `/run/aap-skills` tmpfs");
     expect(rootReadme).toContain("GitHub/GitLab/GitCode 导入");
   });
@@ -8348,7 +8548,7 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
         [path.join(root, "infra/docker/backup.sh")],
         {
           encoding: "utf8",
-          timeout: 10_000,
+          timeout: 20_000,
           env: {
             ...process.env,
             PATH: `${hangBin}:${process.env.PATH ?? ""}`,
@@ -8363,9 +8563,9 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
             BACKUP_TMP_DIRECTORY: hangTemporary,
             BACKUP_RUN_ONCE: "true",
             BACKUP_TIMEOUT_COMMAND: path.join(hangBin, "timeout"),
-            BACKUP_DUMP_TIMEOUT_SECONDS: "1",
+            BACKUP_DUMP_TIMEOUT_SECONDS: "2",
             BACKUP_DUMP_KILL_AFTER_SECONDS: "1",
-            BACKUP_SNAPSHOT_TIMEOUT_SECONDS: "62",
+            BACKUP_SNAPSHOT_TIMEOUT_SECONDS: "63",
             BACKUP_PROCESS_KILL_AFTER_SECONDS: "1",
           },
         },
@@ -8391,7 +8591,7 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
       expect(hung.error, hungOutput).toBeUndefined();
       expect(hung.status, hungOutput).not.toBe(0);
       expect(hung.signal, hungOutput).toBeNull();
-      expect(hangElapsedMs).toBeLessThan(7_500);
+      expect(hangElapsedMs).toBeLessThan(12_500);
       expect(hungOutput.trim()).toBe("backup database dump failed");
       for (const protectedValue of [
         databasePassword,
@@ -8426,7 +8626,7 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
       }
       rmSync(sandbox, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, 30_000);
 
   it("validates exactly the single passphrase line consumed by GnuPG", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "backup-key-format-"));

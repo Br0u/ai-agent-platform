@@ -1,4 +1,4 @@
-"""Thin private HTTP boundary for reviewed skill revisions."""
+"""Thin private HTTP boundary for validated Skill revisions."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 import json
 import re
-from typing import Final, Literal, NoReturn, Protocol, cast
+from typing import Final, Protocol
 from uuid import UUID
 
 from fastapi import APIRouter, Request
@@ -17,18 +17,15 @@ from skill_core.types import MAX_ARCHIVE_BYTES, MAX_FILE_BYTES
 from skill_registry.auth import SkillRegistryAssertion
 from skill_registry.types import (
     RegistryError,
-    ReviewAttestations,
-    ReviewDecision,
-    ReviewRevision,
     RevisionDetail,
-    SkillSummary,
+    SkillLibraryItem,
     StoredFile,
     StoredRevision,
 )
 
 
 class RegistryAPIService(Protocol):
-    async def list_skills(self, *, limit: int, offset: int) -> tuple[SkillSummary, ...]: ...
+    async def list_skills(self, *, limit: int, offset: int) -> tuple[SkillLibraryItem, ...]: ...
 
     async def upload_zip(
         self,
@@ -38,40 +35,31 @@ class RegistryAPIService(Protocol):
         assertion_nonce: UUID,
         archive: bytes,
         target_skill_id: UUID | None,
+        expected_artifact_sha256: str | None,
     ) -> RevisionDetail: ...
 
     async def get_revision_detail(self, skill_id: UUID, revision_id: UUID) -> RevisionDetail: ...
 
     async def get_file_text(self, skill_id: UUID, revision_id: UUID, path: str) -> str: ...
 
-    async def review_revision(self, command: ReviewRevision) -> StoredRevision: ...
-
-
-ParsedReview = tuple[
-    ReviewDecision,
-    Literal["pending_review"],
-    str | None,
-    ReviewAttestations,
-]
+    async def archive_skill(
+        self,
+        *,
+        actor: UUID,
+        request_id: UUID,
+        assertion_nonce: UUID,
+        skill_id: UUID,
+        expected_artifact_sha256: str,
+    ) -> None: ...
 
 
 _NO_STORE_HEADERS: Final = {"Cache-Control": "no-store"}
 _ASSERTION_STATE_KEY: Final = "skill_registry_assertion"
-_REVIEW_BODY_MAX_BYTES: Final = 8 * 1024
 _RESPONSE_BODY_MAX_BYTES: Final = 3 * 1024 * 1024
 _FILE_RESPONSE_BODY_MAX_BYTES: Final = MAX_FILE_BYTES * 6 + 1024
 _CONTENT_LENGTH_MAX_DIGITS: Final = 20
 _PAGE_NUMBER_MAX_DIGITS: Final = 7
 _CONTENT_LENGTH_PATTERN: Final = re.compile(rb"0|[1-9][0-9]*\Z")
-_REVIEW_FIELDS: Final = frozenset({"decision", "expectedState", "reason", "attestations"})
-_ATTESTATION_FIELDS: Final = frozenset(
-    {
-        "contentReviewed",
-        "usageRightsConfirmed",
-        "executionRiskAccepted",
-        "reviewerAuthorizationConfirmed",
-    }
-)
 _STABLE_REGISTRY_CODES: Final = frozenset(
     {
         "ARCHIVE_ENCRYPTED",
@@ -97,10 +85,11 @@ _STABLE_REGISTRY_CODES: Final = frozenset(
         "FILE_NOT_FOUND",
         "MANIFEST_INVALID",
         "REGISTRY_STORAGE_ERROR",
-        "REVIEW_BLOCKED",
         "REVISION_NOT_FOUND",
-        "REVISION_STATE_CONFLICT",
+        "SKILL_SCAN_BLOCKED",
         "SKILL_BINARY_FILE",
+        "SKILL_ACTIVE",
+        "SKILL_CHANGED",
         "SKILL_FILE_NOT_UTF8",
         "SKILL_FILE_TOO_LARGE",
         "SKILL_NAME_CONFLICT",
@@ -129,8 +118,8 @@ def _registry_error(error: RegistryError) -> JSONResponse:
     elif code in {
         "ASSERTION_REPLAY",
         "SKILL_NAME_CONFLICT",
-        "REVISION_STATE_CONFLICT",
-        "REVIEW_BLOCKED",
+        "SKILL_CHANGED",
+        "SKILL_ACTIVE",
     }:
         status = 409
     elif code in {
@@ -146,6 +135,22 @@ def _registry_error(error: RegistryError) -> JSONResponse:
         status = 503
     else:
         status = 400
+    if (
+        code == "SKILL_NAME_CONFLICT"
+        and error.conflicting_skill_id is not None
+        and error.replacement_token is not None
+        and error.conflicting_skill_enabled is not None
+    ):
+        return JSONResponse(
+            {
+                "error": code,
+                "conflictingSkillId": str(error.conflicting_skill_id),
+                "replacementToken": error.replacement_token,
+                "conflictingSkillEnabled": error.conflicting_skill_enabled,
+            },
+            status_code=status,
+            headers=_NO_STORE_HEADERS,
+        )
     return _error(code, status_code=status)
 
 
@@ -172,38 +177,18 @@ def _revision_metadata(revision: StoredRevision) -> dict[str, object]:
         "artifactSha256": revision.artifact_sha256,
         "createdBy": str(revision.created_by),
         "createdAt": _iso(revision.created_at),
-        "reviewedBy": None if revision.reviewed_by is None else str(revision.reviewed_by),
-        "reviewedAt": _iso(revision.reviewed_at),
     }
 
 
-def _summary_content(summary: SkillSummary) -> dict[str, object]:
-    revision: dict[str, object] | None = None
-    if summary.latest_revision_id is not None:
-        revision = {
-            "id": str(summary.latest_revision_id),
-            "number": summary.latest_revision_no,
-            "state": summary.latest_state,
-            "sourceType": summary.latest_source_type,
-            "artifactSha256Prefix": (
-                None
-                if summary.latest_artifact_sha256 is None
-                else summary.latest_artifact_sha256[:12]
-            ),
-            "createdBy": (
-                None if summary.latest_created_by is None else str(summary.latest_created_by)
-            ),
-            "createdAt": _iso(summary.latest_created_at),
-            "reviewedBy": (
-                None if summary.latest_reviewed_by is None else str(summary.latest_reviewed_by)
-            ),
-            "reviewedAt": _iso(summary.latest_reviewed_at),
-        }
+def _summary_content(summary: SkillLibraryItem) -> dict[str, object]:
     return {
         "id": str(summary.id),
-        "name": summary.slug,
-        "createdAt": _iso(summary.created_at),
-        "revision": revision,
+        "name": summary.name,
+        "description": summary.description,
+        "enabled": summary.enabled,
+        "uploadedAt": _iso(summary.uploaded_at),
+        "replacementToken": summary.replacement_token,
+        "revisionId": str(summary.revision_id),
     }
 
 
@@ -274,12 +259,6 @@ def _detail_content(detail: RevisionDetail) -> dict[str, object]:
             else str(detail.previous_published_revision_id)
         ),
         "diff": package_diff,
-        "reviewAttestations": {
-            "contentReviewed": True,
-            "usageRightsConfirmed": True,
-            "executionRiskAccepted": True,
-            "reviewerAuthorizationConfirmed": True,
-        },
     }
 
 
@@ -345,73 +324,6 @@ async def _read_body(request: Request, maximum: int) -> bytes | None:
         chunk = b""
 
 
-def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    value: dict[str, object] = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError("duplicate field")
-        value[key] = item
-    return value
-
-
-def _reject_constant(_: str) -> NoReturn:
-    raise ValueError("invalid number")
-
-
-async def _read_review(request: Request) -> ParsedReview | None:
-    content_types = _header_values(request, b"content-type")
-    if content_types != [b"application/json"]:
-        return None
-    raw = await _read_body(request, _REVIEW_BODY_MAX_BYTES)
-    if raw is None:
-        return None
-    parsed: object | None = None
-    try:
-        parsed = json.loads(
-            raw,
-            object_pairs_hook=_strict_object,
-            parse_constant=_reject_constant,
-        )
-    except (UnicodeError, json.JSONDecodeError, TypeError, ValueError):
-        pass
-    finally:
-        raw = b""
-    if type(parsed) is not dict:
-        return None
-    payload = cast(dict[str, object], parsed)
-    if set(payload) != _REVIEW_FIELDS or type(payload["attestations"]) is not dict:
-        return None
-    attestations = cast(dict[str, object], payload["attestations"])
-    if set(attestations) != _ATTESTATION_FIELDS or any(
-        type(attestations[key]) is not bool for key in _ATTESTATION_FIELDS
-    ):
-        return None
-    decision = payload["decision"]
-    expected_state = payload["expectedState"]
-    reason = payload["reason"]
-    if (
-        type(decision) is not str
-        or decision not in ("approve", "reject")
-        or type(expected_state) is not str
-        or expected_state != "pending_review"
-        or (reason is not None and type(reason) is not str)
-    ):
-        return None
-    return (
-        cast(ReviewDecision, decision),
-        cast(Literal["pending_review"], expected_state),
-        reason,
-        ReviewAttestations(
-            content_reviewed=cast(bool, attestations["contentReviewed"]),
-            usage_rights_confirmed=cast(bool, attestations["usageRightsConfirmed"]),
-            execution_risk_accepted=cast(bool, attestations["executionRiskAccepted"]),
-            reviewer_authorization_confirmed=cast(
-                bool, attestations["reviewerAuthorizationConfirmed"]
-            ),
-        ),
-    )
-
-
 def _parse_uuid(value: str) -> UUID | None:
     try:
         parsed = UUID(value)
@@ -471,6 +383,37 @@ def build_skill_registry_router(
             }
         )
 
+    @router.post("/internal/skills/{skill_id}/archive", include_in_schema=False)
+    async def archive_skill(skill_id: UUID, request: Request) -> JSONResponse:
+        assertion = _request_assertion(request)
+        body = await _read_body(request, 512)
+        try:
+            payload = None if body is None else json.loads(body)
+        except (UnicodeError, json.JSONDecodeError):
+            payload = None
+        if (
+            assertion is None
+            or type(payload) is not dict
+            or set(payload) != {"requestId", "expectedArtifactSha256"}
+            or payload.get("requestId") != str(assertion.request_id)
+            or type(payload.get("expectedArtifactSha256")) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", payload["expectedArtifactSha256"]) is None
+        ):
+            return _error("VALIDATION_ERROR", status_code=400)
+        try:
+            await service_provider().archive_skill(
+                actor=assertion.actor,
+                request_id=assertion.request_id,
+                assertion_nonce=assertion.nonce,
+                skill_id=skill_id,
+                expected_artifact_sha256=payload["expectedArtifactSha256"],
+            )
+        except RegistryError as error:
+            return _registry_error(error)
+        except Exception:
+            return _error("REGISTRY_UNAVAILABLE", status_code=503)
+        return _bounded({"version": "1", "archivedSkillId": str(skill_id)})
+
     @router.post("/internal/skills/uploads", include_in_schema=False)
     async def upload_skill(request: Request) -> JSONResponse:
         assertion = _request_assertion(request)
@@ -487,7 +430,21 @@ def build_skill_registry_router(
             return _error("ARCHIVE_TOO_LARGE", status_code=413)
         target_raw = request.query_params.get("targetSkillId")
         target_skill_id = None if target_raw is None else _parse_uuid(target_raw)
-        if target_raw is not None and target_skill_id is None:
+        expected_artifact_sha256 = request.query_params.get("expectedArtifactSha256")
+        if (
+            (target_raw is not None and target_skill_id is None)
+            or (target_skill_id is None) != (expected_artifact_sha256 is None)
+            or (
+                expected_artifact_sha256 is not None
+                and (
+                    len(expected_artifact_sha256) != 64
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in expected_artifact_sha256
+                    )
+                )
+            )
+        ):
             return _error("VALIDATION_ERROR", status_code=400)
         try:
             try:
@@ -497,6 +454,7 @@ def build_skill_registry_router(
                     assertion_nonce=assertion.nonce,
                     archive=archive,
                     target_skill_id=target_skill_id,
+                    expected_artifact_sha256=expected_artifact_sha256,
                 )
             except RegistryError as error:
                 return _registry_error(error)
@@ -548,40 +506,5 @@ def build_skill_registry_router(
             {"version": "1", "path": file_path, "content": content},
             maximum_bytes=_FILE_RESPONSE_BODY_MAX_BYTES,
         )
-
-    @router.post(
-        "/internal/skills/{skill_id}/revisions/{revision_id}/review",
-        include_in_schema=False,
-    )
-    async def review_revision(skill_id: str, revision_id: str, request: Request) -> JSONResponse:
-        assertion = _request_assertion(request)
-        skill_uuid, revision_uuid = _parse_uuid(skill_id), _parse_uuid(revision_id)
-        if assertion is None or skill_uuid is None or revision_uuid is None:
-            return _error("VALIDATION_ERROR", status_code=400)
-        parsed = await _read_review(request)
-        if parsed is None:
-            return _error("VALIDATION_ERROR", status_code=400)
-        decision, expected_state, reason, attestations = parsed
-        try:
-            reviewed = await service_provider().review_revision(
-                ReviewRevision(
-                    revision_id=revision_uuid,
-                    reviewer=assertion.actor,
-                    request_id=assertion.request_id,
-                    assertion_nonce=assertion.nonce,
-                    decision=decision,
-                    expected_state=expected_state,
-                    reason=reason,
-                    attestations=attestations,
-                    skill_id=skill_uuid,
-                )
-            )
-        except RegistryError as error:
-            return _registry_error(error)
-        except Exception:
-            return _error("REGISTRY_UNAVAILABLE", status_code=503)
-        if reviewed.skill_id != skill_uuid:
-            return _error("REVISION_NOT_FOUND", status_code=404)
-        return _bounded({"version": "1", "revision": _revision_metadata(reviewed)})
 
     return router

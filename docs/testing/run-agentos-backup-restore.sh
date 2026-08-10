@@ -318,7 +318,7 @@ with zipfile.ZipFile(
             "SKILL.md",
             b"---\nname: backup-restore-skill-v1\ndescription: Backup acceptance.\nlicense: MIT\n---\n# Instructions\n",
         ),
-        ("scripts/hello.py", b"#!/usr/bin/env python3\nprint(1)\n"),
+        ("references/hello.md", b"# Backup restore reference\nRead-only fixture.\n"),
     ):
         info = zipfile.ZipInfo(
             f"{slug}/{relative}", (2026, 7, 22, 0, 0, 0)
@@ -365,7 +365,7 @@ request = urllib.request.Request(
 with urllib.request.urlopen(request, timeout=5) as response:
     result = json.load(response)
     assert response.status == 201
-    assert result["revision"]["state"] == "pending_review"
+    assert result["revision"]["state"] == "published"
 ' >/dev/null
 
 skill_revision_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
@@ -374,12 +374,15 @@ skill_artifact_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc
   "SELECT count(*) FROM skill_registry.skill_revision_artifacts")"
 skill_file_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
   "SELECT count(*) FROM skill_registry.skill_revision_files")"
-skill_artifact_sha="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
-  "SELECT artifact.artifact_sha256
+skill_artifact_identity="$(compose exec -T db psql -U "$owner" -d "$database" -AtF '|' -qc \
+  "SELECT artifact.revision_id, artifact.artifact_sha256
      FROM skill_registry.skill_revision_artifacts AS artifact
      JOIN skill_registry.skill_revisions AS revision ON revision.id = artifact.revision_id
      JOIN skill_registry.skills AS skill ON skill.id = revision.skill_id
     WHERE skill.slug = 'backup-restore-skill-v1'")"
+IFS='|' read -r skill_artifact_revision_id skill_artifact_sha <<EOF
+$skill_artifact_identity
+EOF
 if [ "$skill_revision_count" -le 0 ] || \
    [ "$skill_artifact_count" -le 0 ] || \
    [ "$skill_file_count" -le 0 ]; then
@@ -592,6 +595,7 @@ restore_output="$temp_dir/restore-output.log"
 if ! BACKUP_ENCRYPTION_KEY_FILE="$BACKUP_ENCRYPTION_KEY_FILE" \
   BACKUP_CRYPTO_IMAGE="$backup_crypto_image" \
   RESTORE_SKILL_REGISTRY_IMAGE="$skill_registry_image" \
+  RESTORE_EXPECTED_ARTIFACT_REVISION_ID="$skill_artifact_revision_id" \
   RESTORE_EXPECTED_ARTIFACT_SHA256="$skill_artifact_sha" \
   infra/docker/restore-drill.sh \
     "$dump_dir/generated.dump.gpg" \
@@ -617,6 +621,7 @@ mismatch_output="$temp_dir/restore-artifact-mismatch.log"
 if BACKUP_ENCRYPTION_KEY_FILE="$BACKUP_ENCRYPTION_KEY_FILE" \
   BACKUP_CRYPTO_IMAGE="$backup_crypto_image" \
   RESTORE_SKILL_REGISTRY_IMAGE="$skill_registry_image" \
+  RESTORE_EXPECTED_ARTIFACT_REVISION_ID="$skill_artifact_revision_id" \
   RESTORE_EXPECTED_ARTIFACT_SHA256="$different_artifact_sha" \
   infra/docker/restore-drill.sh \
     "$dump_dir/generated.dump.gpg" \

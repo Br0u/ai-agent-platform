@@ -5,11 +5,12 @@ import {
   parseAdminSkillPermissionFlags,
   type AdminSkillListResponse,
   type AdminSkillPermissionFlags,
-  type AdminSkillRevision,
 } from "@/features/assistant/admin-skill-contract";
 import { useEffect, useRef, useState } from "react";
-import { AssistantSkillRevisionDetail } from "./assistant-skill-revision-detail";
-import { AssistantSkillUploadDialog } from "./assistant-skill-upload-dialog";
+import {
+  AssistantSkillUploadDialog,
+  type AssistantSkillReplacementTarget,
+} from "./assistant-skill-upload-dialog";
 
 export type AdminSkillRegistrySnapshot = {
   capability: "available" | "degraded";
@@ -18,11 +19,68 @@ export type AdminSkillRegistrySnapshot = {
 };
 
 type Props = {
-  actorUserId: string;
   canRead: boolean;
   initialPermissions: AdminSkillPermissionFlags;
   initialSnapshot: AdminSkillRegistrySnapshot;
+  navigateToReauth?: (path: "/staff/re-auth") => void;
 };
+
+type UnresolvedSkillOperation = {
+  skillId: string;
+  expectedPresence: "present" | "absent";
+  expectedEnabled: boolean | null;
+  expectedRevision:
+    | { kind: "exact"; revisionId: string }
+    | { kind: "changed"; revisionId: string }
+    | null;
+};
+
+function navigateToStaffReauth(path: "/staff/re-auth") {
+  window.location.assign(path);
+}
+
+async function trustedMutationFailure(
+  response: Response,
+): Promise<"reauth_required" | "result_unknown" | null> {
+  try {
+    const value: unknown = await response.json();
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      Array.isArray(value) ||
+      Reflect.getPrototypeOf(value) !== Object.prototype
+    )
+      return null;
+    const keys = Reflect.ownKeys(value);
+    const hasRedirect = keys.includes("redirectTo");
+    if (keys.length !== (hasRedirect ? 4 : 3)) return null;
+    if (!["version", "requestId", "error"].every((key) => keys.includes(key)))
+      return null;
+    const envelope = value as Record<string, unknown>;
+    const error = envelope.error;
+    if (
+      envelope.version !== "1" ||
+      typeof envelope.requestId !== "string" ||
+      envelope.requestId.length === 0 ||
+      typeof error !== "object" ||
+      error === null ||
+      Array.isArray(error) ||
+      Reflect.getPrototypeOf(error) !== Object.prototype ||
+      Reflect.ownKeys(error).length !== 1
+    )
+      return null;
+    const code = Reflect.get(error, "code");
+    if (
+      code === "reauth_required" &&
+      hasRedirect &&
+      envelope.redirectTo === "/staff/re-auth"
+    )
+      return code;
+    return code === "result_unknown" && !hasRedirect ? code : null;
+  } catch {
+    return null;
+  }
+}
 
 function parseListEnvelope(value: unknown): {
   list: AdminSkillListResponse;
@@ -81,23 +139,18 @@ function isAbortError(value: unknown): boolean {
 }
 
 export function AssistantSkillRegistryPanel({
-  actorUserId,
   canRead,
   initialPermissions,
   initialSnapshot,
+  navigateToReauth = navigateToStaffReauth,
 }: Props) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [permissions, setPermissions] = useState(initialPermissions);
-  const [selection, setSelection] = useState<{
-    skillId: string;
-    revisionId: string;
-  } | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [uploadTarget, setUploadTarget] = useState<{
-    id: string;
-    name: string;
-  } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [mutatingSkillId, setMutatingSkillId] = useState<string | null>(null);
+  const [unresolvedOperation, setUnresolvedOperation] =
+    useState<UnresolvedSkillOperation | null>(null);
   const uploadTrigger = useRef<HTMLButtonElement>(null);
   const restoreUploadFocus = useRef(false);
   const listAbort = useRef<AbortController | null>(null);
@@ -123,29 +176,20 @@ export function AssistantSkillRegistryPanel({
     [],
   );
 
-  const invalidateListRequest = () => {
-    listGeneration.current += 1;
-    listAbort.current?.abort();
-    listAbort.current = null;
-    setRefreshing(false);
-  };
-
   const closeUpload = () => {
     restoreUploadFocus.current = true;
     setUploadOpen(false);
-    setUploadTarget(null);
   };
 
-  const openUpload = (
-    trigger: HTMLButtonElement,
-    target: { id: string; name: string } | null,
-  ) => {
+  const openUpload = (trigger: HTMLButtonElement) => {
     uploadTrigger.current = trigger;
-    setUploadTarget(target);
     setUploadOpen(true);
   };
 
-  const refresh = async () => {
+  const refresh = async (
+    announce = true,
+    expectation: UnresolvedSkillOperation | null = null,
+  ): Promise<boolean> => {
     const generation = listGeneration.current + 1;
     listGeneration.current = generation;
     listAbort.current?.abort();
@@ -154,57 +198,75 @@ export function AssistantSkillRegistryPanel({
     setRefreshing(true);
     setAnnouncement("");
     try {
-      const response = await fetch(
-        "/api/v1/admin/assistant/skills?limit=25&offset=0",
-        { cache: "no-store", signal: controller.signal },
-      );
-      if (controller.signal.aborted || generation !== listGeneration.current)
-        return;
-      if (!response.ok) throw new Error("list failed");
-      const parsed = parseListEnvelope(await response.json());
-      if (controller.signal.aborted || generation !== listGeneration.current)
-        return;
-      if (parsed === null) throw new Error("invalid list response");
-      setSnapshot({
-        capability: "available",
-        skills: parsed.list.skills,
-        page: parsed.list.page,
-      });
-      setPermissions(parsed.permissions);
-      setSelection((current) => {
-        if (current === null) return null;
-        const previousRevision = snapshot.skills.find(
-          (skill) => skill.id === current.skillId,
-        )?.revision;
-        const nextRevision = parsed.list.skills.find(
-          (skill) => skill.id === current.skillId,
-        )?.revision;
-        return previousRevision !== null &&
-          previousRevision !== undefined &&
-          nextRevision !== null &&
-          nextRevision !== undefined &&
-          previousRevision.id === current.revisionId &&
-          nextRevision.id === current.revisionId &&
-          previousRevision.number === nextRevision.number &&
-          previousRevision.state === nextRevision.state &&
-          previousRevision.createdBy === nextRevision.createdBy &&
-          previousRevision.artifactSha256Prefix ===
-            nextRevision.artifactSha256Prefix &&
-          previousRevision.reviewedBy === nextRevision.reviewedBy &&
-          previousRevision.reviewedAt === nextRevision.reviewedAt
-          ? current
-          : null;
-      });
-      setAnnouncement("Skill 列表已刷新。");
+      for (
+        let offset = 0;
+        offset <= 1_000_000;
+        offset += expectation === null ? 25 : 100
+      ) {
+        const limit = expectation === null ? 25 : 100;
+        const response = await fetch(
+          `/api/v1/admin/assistant/skills?limit=${limit}&offset=${offset}`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        if (controller.signal.aborted || generation !== listGeneration.current)
+          return false;
+        if (!response.ok) throw new Error("list failed");
+        const parsed = parseListEnvelope(await response.json());
+        if (controller.signal.aborted || generation !== listGeneration.current)
+          return false;
+        if (parsed === null) throw new Error("invalid list response");
+        const found =
+          expectation === null
+            ? undefined
+            : parsed.list.skills.find(
+                (skill) => skill.id === expectation.skillId,
+              );
+        const expectedSkillObserved =
+          found !== undefined &&
+          expectation !== null &&
+          expectation.expectedEnabled !== null &&
+          found.enabled === expectation.expectedEnabled &&
+          expectation.expectedRevision !== null &&
+          (expectation.expectedRevision.kind === "exact"
+            ? found.revisionId === expectation.expectedRevision.revisionId
+            : found.revisionId !== expectation.expectedRevision.revisionId);
+        const expectedResultObserved =
+          expectation === null ||
+          (expectation.expectedPresence === "present" &&
+            expectedSkillObserved) ||
+          (expectation.expectedPresence === "absent" &&
+            found === undefined &&
+            parsed.list.page.returned < limit);
+        if (expectedResultObserved) {
+          setSnapshot((current) => ({
+            capability: "available",
+            skills:
+              expectation?.expectedPresence === "absent"
+                ? current.skills.filter(
+                    (skill) => skill.id !== expectation.skillId,
+                  )
+                : parsed.list.skills,
+            page: parsed.list.page,
+          }));
+          setPermissions(parsed.permissions);
+          if (announce) setAnnouncement("Skill 列表已刷新。");
+          return true;
+        }
+        if (found !== undefined) return false;
+        if (parsed.list.page.returned < limit) return false;
+      }
+      return false;
     } catch (caught) {
       if (
         isAbortError(caught) ||
         controller.signal.aborted ||
         generation !== listGeneration.current
       )
-        return;
+        return false;
       setSnapshot((current) => ({ ...current, capability: "degraded" }));
-      setAnnouncement("刷新失败，Registry 处于 degraded；已保留旧数据。");
+      if (announce)
+        setAnnouncement("刷新失败，Registry 处于 degraded；已保留旧数据。");
+      return false;
     } finally {
       if (generation === listGeneration.current) {
         listAbort.current = null;
@@ -213,66 +275,143 @@ export function AssistantSkillRegistryPanel({
     }
   };
 
-  const uploaded = (revision: AdminSkillRevision) => {
-    invalidateListRequest();
-    setSnapshot((current) => {
-      const existing = current.skills.find(
-        (skill) => skill.id === revision.skillId,
-      );
-      const item: AdminSkillListResponse["skills"][number] = {
-        id: revision.skillId,
-        name: revision.name,
-        createdAt: existing?.createdAt ?? revision.createdAt,
-        revision: {
-          id: revision.id,
-          number: revision.number,
-          state: revision.state,
-          sourceType: "upload",
-          artifactSha256Prefix: revision.artifactSha256.slice(0, 12),
-          createdBy: revision.createdBy,
-          createdAt: revision.createdAt,
-          reviewedBy: revision.reviewedBy,
-          reviewedAt: revision.reviewedAt,
-        },
-      };
-      const limit = current.page?.limit ?? 25;
-      const skills = [
-        item,
-        ...current.skills.filter((skill) => skill.id !== revision.skillId),
-      ].slice(0, limit);
-      return {
-        capability: "available",
-        skills,
-        page: {
-          limit: current.page?.limit ?? 25,
-          offset: 0,
-          returned: skills.length,
-        },
-      };
-    });
-    setSelection(null);
+  const uploaded = () => {
     closeUpload();
-    setAnnouncement("上传完成：pending_review，等待审核。");
+    setAnnouncement("上传完成。");
+    void refresh();
   };
 
-  const revisionChanged = (revision: AdminSkillRevision) => {
-    invalidateListRequest();
-    setSnapshot((current) => ({
-      ...current,
-      skills: current.skills.map((skill) =>
-        skill.id !== revision.skillId || skill.revision?.id !== revision.id
-          ? skill
-          : {
-              ...skill,
-              revision: {
-                ...skill.revision,
-                state: revision.state,
-                reviewedBy: revision.reviewedBy,
-                reviewedAt: revision.reviewedAt,
-              },
-            },
-      ),
-    }));
+  const loadReplacementTarget = async (
+    skillId: string,
+  ): Promise<AssistantSkillReplacementTarget | null> => {
+    const cached = snapshot.skills.find((skill) => skill.id === skillId);
+    if (cached !== undefined) return cached;
+    for (let offset = 0; offset <= 1_000_000; offset += 100) {
+      const response = await fetch(
+        `/api/v1/admin/assistant/skills?limit=100&offset=${offset}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) return null;
+      const parsed = parseListEnvelope(await response.json());
+      if (parsed === null) return null;
+      const target = parsed.list.skills.find((skill) => skill.id === skillId);
+      if (target !== undefined) return target;
+      if (parsed.list.page.returned < 100) return null;
+    }
+    return null;
+  };
+
+  const replacementResultUnknown = async (
+    previous: AssistantSkillReplacementTarget,
+  ): Promise<void> => {
+    const expectation: UnresolvedSkillOperation = {
+      skillId: previous.id,
+      expectedPresence: "present",
+      expectedEnabled: previous.enabled,
+      expectedRevision: { kind: "changed", revisionId: previous.revisionId },
+    };
+    setUnresolvedOperation((current) => current ?? expectation);
+    closeUpload();
+    if (await refresh(false, expectation)) {
+      setUnresolvedOperation((current) =>
+        current === expectation ? null : current,
+      );
+      setAnnouncement("Skill 状态已确认。");
+    } else {
+      setAnnouncement("操作结果正在确认，请刷新后再试。");
+    }
+  };
+
+  const confirmUnresolvedOperation = async (): Promise<void> => {
+    if (unresolvedOperation === null) return;
+    const expectation = unresolvedOperation;
+    if (await refresh(false, expectation)) {
+      setUnresolvedOperation((current) =>
+        current === expectation ? null : current,
+      );
+      setAnnouncement("Skill 状态已确认。");
+    } else {
+      setAnnouncement("操作结果正在确认，请刷新后再试。");
+    }
+  };
+
+  const replacementReauthRequired = () => {
+    setAnnouncement("需要重新验证身份，正在前往验证页面。");
+    navigateToReauth("/staff/re-auth");
+  };
+
+  const mutate = async (
+    skill: AdminSkillListResponse["skills"][number],
+    operation: "enable" | "disable" | "delete",
+  ) => {
+    if (unresolvedOperation !== null || mutatingSkillId !== null) return;
+    if (
+      operation === "delete" &&
+      !window.confirm(
+        skill.enabled
+          ? `删除 ${skill.name} 会先停用并从 Skill 库移除，是否继续？`
+          : `确认从 Skill 库删除 ${skill.name}？`,
+      )
+    ) {
+      return;
+    }
+    setMutatingSkillId(skill.id);
+    setAnnouncement("");
+    try {
+      const response = await fetch(
+        `/api/v1/admin/assistant/skills/${skill.id}${
+          operation === "delete" ? "" : `/${operation}`
+        }`,
+        {
+          method: operation === "delete" ? "DELETE" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId: crypto.randomUUID() }),
+        },
+      );
+      if (!response.ok) {
+        const failure = await trustedMutationFailure(response);
+        if (failure === "reauth_required") {
+          setAnnouncement("需要重新验证身份，正在前往验证页面。");
+          navigateToReauth("/staff/re-auth");
+          return;
+        }
+        if (failure === "result_unknown") {
+          const expectation: UnresolvedSkillOperation = {
+            skillId: skill.id,
+            expectedPresence: operation === "delete" ? "absent" : "present",
+            expectedEnabled:
+              operation === "delete" ? null : operation === "enable",
+            expectedRevision:
+              operation === "delete"
+                ? null
+                : { kind: "exact", revisionId: skill.revisionId },
+          };
+          setUnresolvedOperation((current) => current ?? expectation);
+          if (await refresh(false, expectation)) {
+            setUnresolvedOperation((current) =>
+              current === expectation ? null : current,
+            );
+            setAnnouncement("Skill 状态已确认。");
+          } else {
+            setAnnouncement("操作结果正在确认，请刷新后再试。");
+          }
+          return;
+        }
+        throw new Error("mutation failed");
+      }
+      await refresh();
+      setAnnouncement(
+        operation === "enable"
+          ? "Skill 已启用。"
+          : operation === "disable"
+            ? "Skill 已停用。"
+            : "Skill 已删除。",
+      );
+    } catch {
+      setAnnouncement("操作失败，Skill 状态未确认。");
+    } finally {
+      setMutatingSkillId(null);
+    }
   };
 
   return (
@@ -282,9 +421,9 @@ export function AssistantSkillRegistryPanel({
     >
       <header className="assistant-skill-registry__heading">
         <div>
-          <p>REVIEWED SKILL REGISTRY</p>
+          <p>SKILL REGISTRY</p>
           <h2 id="assistant-skill-registry-title">Skill 库</h2>
-          <span>上传、扫描、审核与 Agent 运行时加载已接入。</span>
+          <span>上传、扫描与 Agent 运行时启用已接入。</span>
         </div>
         <strong>
           {snapshot.capability === "available"
@@ -298,7 +437,11 @@ export function AssistantSkillRegistryPanel({
         {canRead ? (
           <button
             disabled={refreshing}
-            onClick={() => void refresh()}
+            onClick={() =>
+              void (unresolvedOperation === null
+                ? refresh()
+                : confirmUnresolvedOperation())
+            }
             type="button"
           >
             刷新 Skill 列表
@@ -306,7 +449,8 @@ export function AssistantSkillRegistryPanel({
         ) : null}
         {canRead && permissions.canUpload ? (
           <button
-            onClick={(event) => openUpload(event.currentTarget, null)}
+            disabled={mutatingSkillId !== null || unresolvedOperation !== null}
+            onClick={(event) => openUpload(event.currentTarget)}
             type="button"
           >
             上传 Skill ZIP
@@ -332,47 +476,38 @@ export function AssistantSkillRegistryPanel({
           {snapshot.skills.map((skill) => (
             <li key={skill.id}>
               <div>
-                <strong>{skill.name}</strong>
-                {skill.revision ? (
-                  <span>
-                    revision #{skill.revision.number} ·{" "}
-                    <strong>{skill.revision.state}</strong> · digest{" "}
-                    {skill.revision.artifactSha256Prefix}
-                  </span>
-                ) : (
-                  <span>尚无 revision</span>
-                )}
+                <strong>{skill.enabled ? "● 已启用" : "○ 未启用"}</strong>
+                <span>{skill.name}</span>
+                <small>{skill.description}</small>
+                <time dateTime={skill.uploadedAt}>
+                  上传时间：{skill.uploadedAt}
+                </time>
               </div>
               <div>
-                {canRead && permissions.canUpload ? (
+                {canRead && permissions.canConfigure ? (
                   <button
-                    onClick={(event) =>
-                      openUpload(event.currentTarget, {
-                        id: skill.id,
-                        name: skill.name,
-                      })
+                    disabled={
+                      unresolvedOperation !== null ||
+                      mutatingSkillId === skill.id
+                    }
+                    onClick={() =>
+                      void mutate(skill, skill.enabled ? "disable" : "enable")
                     }
                     type="button"
                   >
-                    上传新版本 {skill.name}
+                    {skill.enabled ? "停用" : "启用"}
                   </button>
                 ) : null}
-                {canRead && permissions.canReview && skill.revision ? (
+                {canRead && permissions.canConfigure ? (
                   <button
-                    aria-expanded={selection?.revisionId === skill.revision.id}
-                    onClick={() =>
-                      setSelection((current) =>
-                        current?.revisionId === skill.revision?.id
-                          ? null
-                          : {
-                              skillId: skill.id,
-                              revisionId: skill.revision!.id,
-                            },
-                      )
+                    disabled={
+                      unresolvedOperation !== null ||
+                      mutatingSkillId === skill.id
                     }
+                    onClick={() => void mutate(skill, "delete")}
                     type="button"
                   >
-                    查看审核详情 {skill.name}
+                    删除
                   </button>
                 ) : null}
               </div>
@@ -380,20 +515,13 @@ export function AssistantSkillRegistryPanel({
           ))}
         </ul>
       )}
-      {selection && canRead && permissions.canReview ? (
-        <AssistantSkillRevisionDetail
-          actorUserId={actorUserId}
-          key={`${selection.skillId}:${selection.revisionId}`}
-          onRevisionChanged={revisionChanged}
-          revisionId={selection.revisionId}
-          skillId={selection.skillId}
-        />
-      ) : null}
       {uploadOpen && canRead && permissions.canUpload ? (
         <AssistantSkillUploadDialog
+          loadReplacementTarget={loadReplacementTarget}
           onClose={closeUpload}
           onUploaded={uploaded}
-          targetSkill={uploadTarget ?? undefined}
+          onReauthRequired={replacementReauthRequired}
+          onReplacementResultUnknown={replacementResultUnknown}
         />
       ) : null}
     </section>

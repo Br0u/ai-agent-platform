@@ -1,10 +1,11 @@
-"""Application service for upload, review material, and two-person review."""
+"""Application service for validated Skill uploads and runtime selection."""
 
 from __future__ import annotations
 
 import ast
 import hashlib
 import json
+import re
 import sys
 from dataclasses import replace
 from uuid import UUID
@@ -17,6 +18,7 @@ from skill_core.types import MAX_FILE_BYTES, CanonicalSkillPackage, SkillFile
 from skill_registry.artifact_store import ArtifactStoreError, SkillArtifactStore
 from skill_registry.types import (
     AgentId,
+    ArchiveSkill,
     ClonePreviousSkillSet,
     CreateSkillSet,
     CreateSkillSetResult,
@@ -25,13 +27,12 @@ from skill_registry.types import (
     PublishedRevisionPage,
     PythonImportSummary,
     RegistryError,
-    ReviewRevision,
     RevisionDetail,
     ScanPolicy,
     SkillRegistryRepository,
     SkillRuntimeStatus,
     SkillSetRepository,
-    SkillSummary,
+    SkillLibraryItem,
     StoredFile,
     StoredRevision,
 )
@@ -164,6 +165,7 @@ class SkillRegistryService:
         assertion_nonce: UUID,
         archive: bytes,
         target_skill_id: UUID | None,
+        expected_artifact_sha256: str | None = None,
     ) -> RevisionDetail:
         package_error_code: str | None = None
         package = None
@@ -189,6 +191,8 @@ class SkillRegistryService:
             findings = ()
         if scan_failed:
             raise RegistryError("SKILL_SCAN_FAILED", "Skill package scan failed") from None
+        if package.manifest.scripts or any(finding.blocking for finding in findings):
+            raise RegistryError("SKILL_SCAN_BLOCKED", "Blocking findings prevent upload")
         package = replace(package, findings=findings)
         revision = await self._repository.create_upload_revision(
             CreateUploadRevision(
@@ -197,14 +201,38 @@ class SkillRegistryService:
                 assertion_nonce=assertion_nonce,
                 package=package,
                 target_skill_id=target_skill_id,
+                expected_artifact_sha256=expected_artifact_sha256,
             )
         )
         return await self.get_revision_detail(revision.skill_id, revision.id)
 
-    async def list_skills(self, *, limit: int = 50, offset: int = 0) -> tuple[SkillSummary, ...]:
+    async def list_skills(
+        self, *, limit: int = 50, offset: int = 0
+    ) -> tuple[SkillLibraryItem, ...]:
         if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
             raise RegistryError("VALIDATION_ERROR", "Pagination bounds are invalid")
         return await self._repository.list_skills(limit=limit, offset=offset)
+
+    async def archive_skill(
+        self,
+        *,
+        actor: UUID,
+        request_id: UUID,
+        assertion_nonce: UUID,
+        skill_id: UUID,
+        expected_artifact_sha256: str,
+    ) -> None:
+        if re.fullmatch(r"[0-9a-f]{64}", expected_artifact_sha256) is None:
+            raise RegistryError("VALIDATION_ERROR", "Artifact digest is invalid")
+        await self._repository.archive_skill(
+            ArchiveSkill(
+                actor=actor,
+                request_id=request_id,
+                assertion_nonce=assertion_nonce,
+                skill_id=skill_id,
+                expected_artifact_sha256=expected_artifact_sha256,
+            )
+        )
 
     async def get_revision_detail(self, skill_id: UUID, revision_id: UUID) -> RevisionDetail:
         revision = await self._repository.get_revision(skill_id, revision_id)
@@ -247,11 +275,6 @@ class SkillRegistryService:
                 "SKILL_FILE_NOT_UTF8", "Skill file is not valid UTF-8 text"
             ) from None
         return text
-
-    async def review_revision(self, command: ReviewRevision) -> StoredRevision:
-        if command.skill_id is None or not command.attestations.complete:
-            raise RegistryError("VALIDATION_ERROR", "All review attestations are required")
-        return await self._repository.review_revision(command)
 
     async def _load_verified_package(
         self, revision: StoredRevision, files: tuple[StoredFile, ...]

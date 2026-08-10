@@ -1,1 +1,1 @@
-"""Reviewed skill registry service."""
+"""Validated skill registry service."""

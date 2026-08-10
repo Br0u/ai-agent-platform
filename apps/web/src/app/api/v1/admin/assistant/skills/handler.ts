@@ -10,25 +10,33 @@ import {
 } from "@/server/auth/access";
 import { createAuditWriter } from "@/server/auth/audit";
 import {
+  AdminSkillCommandError,
+  createAdminSkillCommands,
+  type AuthorizedSkillCommand,
+} from "@/server/assistant/admin-skill-commands";
+import {
+  AdminSkillLifecycleCommandError,
+  createAdminSkillLifecycleCommands,
+  type AuthorizedSkillLifecycleCommand,
+} from "@/server/assistant/admin-skill-lifecycle-commands";
+import {
+  createAgentSkillControlClient,
+  resolveAgentSkillControlSettings,
+} from "@/server/assistant/agent-skill-control-client";
+import {
   SensitiveActionError,
   requireSensitiveWorkforceActionEvidence,
 } from "@/server/auth/sensitive-action";
-import {
-  AdminSkillCommandError,
-  createAdminSkillCommands,
-  type AdminSkillReviewInput,
-  type AuthorizedSkillCommand,
-} from "@/server/assistant/admin-skill-commands";
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
 import {
   SkillRegistryClientError,
   createSkillRegistryClient,
   resolveSkillRegistrySettings,
+  type CompleteSkillRegistryClient,
   type SkillRegistryClient,
 } from "@/server/assistant/skill-registry-client";
 import {
   MutationRequestError,
-  requireTrustedJsonMutation,
   requireTrustedMultipartMutation,
 } from "@/server/http/require-trusted-mutation";
 import { cancelUnreadRequestBody } from "@/server/http/cancel-request-body";
@@ -37,16 +45,10 @@ import {
   readBoundedSkillUploadMultipart,
   type BoundedSkillUpload,
 } from "@/server/http/read-bounded-multipart";
-import {
-  readBoundedJson,
-  type JsonReadResult,
-} from "@/server/http/read-bounded-json";
 
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const MAX_REVIEW_BODY_BYTES = 8 * 1024;
-const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
 
 type PublicSkillErrorCode =
   | "authentication_required"
@@ -56,6 +58,7 @@ type PublicSkillErrorCode =
   | "payload_too_large"
   | "not_found"
   | "state_conflict"
+  | "result_unknown"
   | "registry_bad_gateway"
   | "registry_unavailable";
 
@@ -67,6 +70,7 @@ const ERROR_MESSAGES: Readonly<Record<PublicSkillErrorCode, string>> = {
   payload_too_large: "Skill upload is too large",
   not_found: "Skill revision was not found",
   state_conflict: "Skill revision state has changed",
+  result_unknown: "Skill replacement result is still being confirmed",
   registry_bad_gateway: "Skill Registry returned an invalid response",
   registry_unavailable: "Skill Registry is unavailable",
 };
@@ -86,7 +90,7 @@ type DynamicFileContext = {
 
 type SkillCommands = ReturnType<typeof createAdminSkillCommands>;
 
-function defaultRegistryClient(): SkillRegistryClient {
+function defaultRegistryClient(): CompleteSkillRegistryClient {
   return createSkillRegistryClient({
     settings: resolveSkillRegistrySettings({
       NODE_ENV: process.env.NODE_ENV,
@@ -95,6 +99,23 @@ function defaultRegistryClient(): SkillRegistryClient {
       SKILL_REGISTRY_CONTROL_KEY: process.env.SKILL_REGISTRY_CONTROL_KEY,
       OS_SECURITY_KEY: process.env.OS_SECURITY_KEY,
       AGENT_CONFIG_CONTROL_KEY: process.env.AGENT_CONFIG_CONTROL_KEY,
+    }),
+  });
+}
+
+function createDefaultLifecycleCommands() {
+  const registry = defaultRegistryClient();
+  return createAdminSkillLifecycleCommands({
+    requireTrustedMutation: requireTrustedMultipartMutation,
+    requireSensitiveAction: requireSensitiveWorkforceActionEvidence,
+    audit: createAuditWriter(),
+    registry,
+    agent: createAgentSkillControlClient({
+      settings: resolveAgentSkillControlSettings({
+        AGENTOS_INTERNAL_URL: process.env.AGENTOS_INTERNAL_URL,
+        OS_SECURITY_KEY: process.env.OS_SECURITY_KEY,
+        AGENT_CONFIG_CONTROL_KEY: process.env.AGENT_CONFIG_CONTROL_KEY,
+      }),
     }),
   });
 }
@@ -110,14 +131,10 @@ function createDefaultCommands(): SkillCommands {
     getFile: (input) => (client ??= defaultRegistryClient()).getFile(input),
     uploadSkill: (input) =>
       (client ??= defaultRegistryClient()).uploadSkill(input),
-    reviewRevision: (input) =>
-      (client ??= defaultRegistryClient()).reviewRevision(input),
   };
   return createAdminSkillCommands({
     requireTrustedUploadMutation: requireTrustedMultipartMutation,
-    requireTrustedJsonMutation,
     requirePermission,
-    requireSensitiveAction: requireSensitiveWorkforceActionEvidence,
     audit: { write: (input) => (audit ??= createAuditWriter()).write(input) },
     client: lazyClient,
   });
@@ -165,6 +182,21 @@ function classifyError(error: unknown): PublicError {
     }
     return { code: "registry_unavailable", status: 503 };
   }
+  if (error instanceof AdminSkillLifecycleCommandError) {
+    if (error.code === "authorization_failed") {
+      return { code: "permission_denied", status: 403 };
+    }
+    if (error.code === "validation_error") {
+      return { code: "validation_error", status: 400 };
+    }
+    if (error.code === "state_conflict") {
+      return { code: "state_conflict", status: 409 };
+    }
+    if (error.code === "result_unknown") {
+      return { code: "result_unknown", status: 503 };
+    }
+    return { code: "registry_unavailable", status: 503 };
+  }
   if (error instanceof SkillRegistryClientError) {
     if (error.code === "ARCHIVE_TOO_LARGE") {
       return { code: "payload_too_large", status: 413 };
@@ -178,8 +210,8 @@ function classifyError(error: unknown): PublicError {
     }
     if (
       error.code === "REVISION_STATE_CONFLICT" ||
-      error.code === "REVIEW_BLOCKED" ||
       error.code === "SKILL_NAME_CONFLICT" ||
+      error.code === "SKILL_CHANGED" ||
       error.code === "ASSERTION_REPLAY"
     ) {
       return { code: "state_conflict", status: 409 };
@@ -192,7 +224,8 @@ function classifyError(error: unknown): PublicError {
       error.code === "SKILL_BINARY_FILE" ||
       error.code === "SKILL_FILE_NOT_UTF8" ||
       error.code === "SKILL_FILE_TOO_LARGE" ||
-      error.code === "SKILL_SCRIPT_SHEBANG_UNSUPPORTED"
+      error.code === "SKILL_SCRIPT_SHEBANG_UNSUPPORTED" ||
+      error.code === "SKILL_SCAN_BLOCKED"
     ) {
       return { code: "validation_error", status: 400 };
     }
@@ -209,10 +242,27 @@ function classifyError(error: unknown): PublicError {
 
 function errorResponse(error: unknown, requestId: string): Response {
   const mapped = classifyError(error);
-  return Response.json(errorBody(requestId, mapped.code), {
-    status: mapped.status,
-    headers: NO_STORE_HEADERS,
-  });
+  const body = errorBody(requestId, mapped.code);
+  return Response.json(
+    {
+      ...body,
+      ...(error instanceof SkillRegistryClientError &&
+      error.code === "SKILL_NAME_CONFLICT" &&
+      error.conflictingSkillId !== null &&
+      error.replacementToken !== null &&
+      error.conflictingSkillEnabled !== null
+        ? {
+            conflictingSkillId: error.conflictingSkillId,
+            replacementToken: error.replacementToken,
+            conflictingSkillEnabled: error.conflictingSkillEnabled,
+          }
+        : {}),
+    },
+    {
+      status: mapped.status,
+      headers: NO_STORE_HEADERS,
+    },
+  );
 }
 
 function permissionFlags(actor: WorkforceActor): AdminSkillPermissionFlags {
@@ -221,7 +271,6 @@ function permissionFlags(actor: WorkforceActor): AdminSkillPermissionFlags {
     canManageConnections: actor.permissions.includes(
       "admin:assistant:skills:connections",
     ),
-    canReview: actor.permissions.includes("admin:assistant:skills:review"),
     canConfigure: actor.permissions.includes(
       "admin:assistant:skills:configure",
     ),
@@ -359,103 +408,6 @@ function exactFileParams(value: unknown): {
   }
 }
 
-function hasOnlyPairedSurrogates(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const unit = value.charCodeAt(index);
-    if (unit >= 0xd800 && unit <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (next < 0xdc00 || next > 0xdfff) return false;
-      index += 1;
-    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function parseReviewBody(
-  value: unknown,
-): Omit<AdminSkillReviewInput, "skillId" | "revisionId"> | null {
-  try {
-    if (typeof value !== "object" || value === null || Array.isArray(value))
-      return null;
-    const input = value as Record<string, unknown>;
-    const keys = Reflect.ownKeys(input);
-    const expected = ["decision", "reason", "expectedState", "attestations"];
-    if (
-      keys.length !== expected.length ||
-      keys.some((key) => typeof key !== "string" || !expected.includes(key))
-    )
-      return null;
-    for (const key of expected) {
-      const descriptor = Reflect.getOwnPropertyDescriptor(input, key);
-      if (
-        descriptor === undefined ||
-        !("value" in descriptor) ||
-        !descriptor.enumerable
-      )
-        return null;
-    }
-    const attestations = input.attestations;
-    if (
-      typeof attestations !== "object" ||
-      attestations === null ||
-      Array.isArray(attestations)
-    )
-      return null;
-    const attestationKeys = [
-      "contentReviewed",
-      "usageRightsConfirmed",
-      "executionRiskAccepted",
-      "reviewerAuthorizationConfirmed",
-    ];
-    const actualAttestationKeys = Reflect.ownKeys(attestations);
-    if (
-      actualAttestationKeys.length !== 4 ||
-      actualAttestationKeys.some(
-        (key) => typeof key !== "string" || !attestationKeys.includes(key),
-      )
-    )
-      return null;
-    for (const key of attestationKeys) {
-      const descriptor = Reflect.getOwnPropertyDescriptor(attestations, key);
-      if (
-        descriptor === undefined ||
-        !("value" in descriptor) ||
-        descriptor.value !== true
-      )
-        return null;
-    }
-    if (
-      (input.decision !== "approve" && input.decision !== "reject") ||
-      input.expectedState !== "pending_review" ||
-      (input.decision === "approve" && input.reason !== null) ||
-      (input.decision === "reject" &&
-        (typeof input.reason !== "string" ||
-          input.reason.trim() !== input.reason ||
-          input.reason.length === 0 ||
-          Array.from(input.reason).length > 500 ||
-          Buffer.byteLength(input.reason, "utf8") > 2_048 ||
-          !hasOnlyPairedSurrogates(input.reason) ||
-          CONTROL_CHARACTER.test(input.reason)))
-    )
-      return null;
-    return {
-      decision: input.decision,
-      reason: input.reason as string | null,
-      expectedState: "pending_review",
-      attestations: {
-        contentReviewed: true,
-        usageRightsConfirmed: true,
-        executionRiskAccepted: true,
-        reviewerAuthorizationConfirmed: true,
-      },
-    };
-  } catch {
-    return null;
-  }
-}
-
 const defaultReadDependencies = {
   access: { requirePermission },
   requestIdFactory: () => crypto.randomUUID(),
@@ -477,6 +429,26 @@ function registryRequestId(factory: () => string): string {
   } catch {
     throw new AdminSkillCommandError("registry_unavailable");
   }
+}
+
+async function findSkillForReplacement(
+  registry: Pick<CompleteSkillRegistryClient, "listSkills">,
+  actor: string,
+  requestIdFactory: () => string,
+  skillId: string,
+) {
+  for (let offset = 0; offset <= 1_000_000; offset += 100) {
+    const library = await registry.listSkills({
+      actor,
+      requestId: registryRequestId(requestIdFactory),
+      limit: 100,
+      offset,
+    });
+    const skill = library.skills.find((item) => item.id === skillId);
+    if (skill !== undefined) return skill;
+    if (library.page.returned < 100) return null;
+  }
+  throw new AdminSkillCommandError("registry_unavailable");
 }
 
 export function createAdminSkillListHandler(
@@ -536,7 +508,7 @@ export function createAdminSkillRevisionHandler(
     let actor: WorkforceActor;
     try {
       actor = await dependencies.access.requirePermission(
-        "admin:assistant:skills:review",
+        "admin:assistant:skills",
       );
     } catch (error) {
       return errorResponse(error, requestId);
@@ -585,7 +557,7 @@ export function createAdminSkillFileHandler(
     let actor: WorkforceActor;
     try {
       actor = await dependencies.access.requirePermission(
-        "admin:assistant:skills:review",
+        "admin:assistant:skills",
       );
     } catch (error) {
       return errorResponse(error, requestId);
@@ -643,6 +615,14 @@ export function createAdminSkillFileHandler(
 export function createAdminSkillUploadHandler(
   overrides: {
     commands?: Pick<SkillCommands, "authorize" | "upload">;
+    lifecycle?: Pick<
+      ReturnType<typeof createAdminSkillLifecycleCommands>,
+      "authorize" | "applySkillSet"
+    >;
+    registry?: Pick<
+      CompleteSkillRegistryClient,
+      "listSkills" | "runtimeStatus"
+    >;
     readMultipart?: (request: Request) => Promise<BoundedSkillUpload>;
     requestIdFactory?: () => string;
   } = {},
@@ -665,95 +645,66 @@ export function createAdminSkillUploadHandler(
     let input: BoundedSkillUpload | null = null;
     try {
       input = await readMultipart(request);
+      let replacement: {
+        lifecycle: Pick<
+          ReturnType<typeof createAdminSkillLifecycleCommands>,
+          "applySkillSet"
+        >;
+        context: AuthorizedSkillLifecycleCommand;
+        skillId: string;
+      } | null = null;
+      if (input.targetSkillId !== undefined) {
+        const lifecycle =
+          overrides.lifecycle ?? createDefaultLifecycleCommands();
+        replacement = {
+          lifecycle,
+          context: await lifecycle.authorize(request),
+          skillId: input.targetSkillId,
+        };
+      }
       const response = await commands.upload(context, input);
+      if (replacement !== null) {
+        const registry = overrides.registry ?? defaultRegistryClient();
+        const current = await findSkillForReplacement(
+          registry,
+          context.actor.userId,
+          requestIdFactory,
+          replacement.skillId,
+        );
+        if (current === null)
+          throw new SkillRegistryClientError("SKILL_NOT_FOUND");
+        if (current.revisionId === response.revision.id && !current.enabled) {
+          // The post-upload authoritative state confirms an inactive replacement.
+        } else {
+          const runtime = await registry.runtimeStatus({
+            actor: context.actor.userId,
+            requestId: registryRequestId(requestIdFactory),
+          });
+          if (
+            runtime.active === null ||
+            !current.enabled ||
+            !runtime.active.revisionIds.includes(current.revisionId)
+          ) {
+            throw new AdminSkillLifecycleCommandError("state_conflict");
+          }
+          if (current.revisionId !== response.revision.id) {
+            await replacement.lifecycle.applySkillSet(replacement.context, {
+              operation: "replace",
+              skillId: replacement.skillId,
+              expectedActivationVersion: runtime.activationVersion,
+              nextRevisionIds: runtime.active.revisionIds.map((revisionId) =>
+                revisionId === current.revisionId
+                  ? response.revision.id
+                  : revisionId,
+              ),
+              requestId: context.requestId,
+            });
+          }
+        }
+      }
       return Response.json(
         { ...response, requestId: context.requestId },
         { status: 201, headers: NO_STORE_HEADERS },
-      );
-    } catch (error) {
-      return errorResponse(error, context.requestId);
-    } finally {
-      input = null;
-    }
-  };
-}
-
-export function createAdminSkillReviewHandler(
-  overrides: {
-    commands?: Pick<SkillCommands, "authorize" | "review">;
-    readJson?: (
-      request: Request,
-      maximumBytes: number,
-    ) => Promise<JsonReadResult>;
-    requestIdFactory?: () => string;
-  } = {},
-) {
-  const readJson = overrides.readJson ?? readBoundedJson;
-  const requestIdFactory =
-    overrides.requestIdFactory ?? (() => crypto.randomUUID());
-  return async function POST(
-    request: Request,
-    routeContext: DynamicRevisionContext,
-  ): Promise<Response> {
-    const fallbackRequestId = publicRequestId(request, requestIdFactory);
-    let commands: Pick<SkillCommands, "authorize" | "review">;
-    let context: AuthorizedSkillCommand;
-    try {
-      commands = overrides.commands ?? createDefaultCommands();
-      context = await commands.authorize(request, "review");
-    } catch (error) {
-      await cancelUnreadRequestBody(request, error);
-      return errorResponse(error, fallbackRequestId);
-    }
-    let params: { skillId: string; revisionId: string } | null = null;
-    try {
-      params = exactRevisionParams(await routeContext.params);
-    } catch {
-      params = null;
-    }
-    if (params === null) {
-      const error = new AdminSkillCommandError("validation_error");
-      await cancelUnreadRequestBody(request, error);
-      return errorResponse(error, context.requestId);
-    }
-    const length = request.headers.get("content-length");
-    const oversized =
-      length !== null &&
-      /^\d+$/u.test(length) &&
-      Number(length) > MAX_REVIEW_BODY_BYTES;
-    if (oversized) {
-      await cancelUnreadRequestBody(request);
-      return Response.json(errorBody(context.requestId, "payload_too_large"), {
-        status: 413,
-        headers: NO_STORE_HEADERS,
-      });
-    }
-    let read: JsonReadResult;
-    let readFailure: unknown;
-    try {
-      read = await readJson(request, MAX_REVIEW_BODY_BYTES);
-    } catch (error) {
-      readFailure = error;
-      read = { ok: false };
-    }
-    if (!read.ok) {
-      await cancelUnreadRequestBody(request, readFailure);
-      return Response.json(errorBody(context.requestId, "validation_error"), {
-        status: 400,
-        headers: NO_STORE_HEADERS,
-      });
-    }
-    let input = parseReviewBody(read.value);
-    if (input === null)
-      return errorResponse(
-        new AdminSkillCommandError("validation_error"),
-        context.requestId,
-      );
-    try {
-      const response = await commands.review(context, { ...params, ...input });
-      return Response.json(
-        { ...response, requestId: context.requestId },
-        { headers: NO_STORE_HEADERS },
       );
     } catch (error) {
       return errorResponse(error, context.requestId);
@@ -767,4 +718,3 @@ export const adminSkillListHandler = createAdminSkillListHandler();
 export const adminSkillUploadHandler = createAdminSkillUploadHandler();
 export const adminSkillRevisionHandler = createAdminSkillRevisionHandler();
 export const adminSkillFileHandler = createAdminSkillFileHandler();
-export const adminSkillReviewHandler = createAdminSkillReviewHandler();
