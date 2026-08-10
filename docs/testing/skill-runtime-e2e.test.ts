@@ -40,7 +40,7 @@ const sharedRunner = read("docs/testing/run-skill-registry-e2e.sh");
 for (const evidence of [
   "@runtime-activate",
   "@runtime-empty",
-  "@runtime-rollback",
+  "@runtime-reenable",
   "assert_skill_runtime_stream marker",
   "assert_skill_runtime_stream empty",
   "RESTORE_EXPECTED_SKILL_ACTIVE_SET_ID",
@@ -52,16 +52,11 @@ for (const evidence of [
 }
 
 const skill = read("docs/testing/fixtures/skills/deterministic/SKILL.md");
-const recorder = read(
-  "docs/testing/fixtures/skills/deterministic/scripts/record.py",
+const marker = read(
+  "docs/testing/fixtures/skills/deterministic/references/marker.md",
 );
 assert.match(skill, /name:\s+deterministic-runtime/u);
-assert.match(recorder, /AAP_SKILL_RUNTIME_E2E_MARKER_v1/u);
-assert.equal(
-  statSync("docs/testing/fixtures/skills/deterministic/scripts/record.py")
-    .mode & 0o111,
-  0o111,
-);
+assert.match(marker, /AAP_SKILL_RUNTIME_E2E_MARKER_v1/u);
 
 const faults = read("apps/agent/tests/e2e_skill_runtime/faults.py");
 for (const mode of ["response_lost", "not_committed", "unreachable"]) {

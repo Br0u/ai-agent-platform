@@ -317,4 +317,26 @@ test.describe("Skill library lifecycle", () => {
       ],
     });
   });
+
+  for (const [tag, operation, enabled] of [
+    ["@runtime-activate", "enable", true],
+    ["@runtime-empty", "disable", false],
+    ["@runtime-reenable", "enable", true],
+  ] as const) {
+    test(`${tag} updates the runtime Skill set`, async ({ baseURL, page }) => {
+      if (!baseURL) throw new Error("baseURL is required");
+      const expected = readState();
+      await addSignedSession(
+        page.context(),
+        baseURL,
+        "workforce",
+        requiredEnvironment("E2E_MODEL_ADMIN_SESSION_TOKEN"),
+      );
+      await page.goto("/admin/assistant");
+      await mutate(page, expected.skillId, operation);
+      expect((await librarySkill(page, expected.skillId)).enabled).toBe(
+        enabled,
+      );
+    });
+  }
 });

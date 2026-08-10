@@ -529,6 +529,18 @@ done
 
 run_skill_registry_playwright @lifecycle
 
+if [ "$runtime_mode" = true ]; then
+  run_skill_registry_playwright @runtime-activate
+  assert_skill_runtime_stream marker
+  compose restart agent
+  compose up -d --no-deps --wait agent
+  assert_skill_runtime_stream marker
+  run_skill_registry_playwright @runtime-empty
+  assert_skill_runtime_stream empty
+  run_skill_registry_playwright @runtime-reenable
+  assert_skill_runtime_stream marker
+fi
+
 state_values=$(node -e '
   const fs = require("node:fs");
   const state = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
