@@ -819,9 +819,16 @@ async def test_failed_replacement_keeps_authoritative_revision_until_activation_
                   id, skill_id, revision_no, state, source_type, manifest,
                   findings, created_by
                 ) VALUES (
-                  %s, %s, 2, 'published', 'upload', '{}'::jsonb, '[]'::jsonb, %s
+                  %s, %s, 2, 'published', 'upload',
+                  (SELECT manifest FROM skill_registry.skill_revisions WHERE id = %s),
+                  '[]'::jsonb, %s
                 )""",
-                (replacement_revision_id, skill_id, actor_id),
+                (
+                    replacement_revision_id,
+                    skill_id,
+                    current_revision_id,
+                    actor_id,
+                ),
             )
             await manager.execute(
                 """INSERT INTO skill_registry.skill_revision_artifacts (
