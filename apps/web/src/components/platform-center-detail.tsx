@@ -147,7 +147,7 @@ function ContentSection({
 
   return (
     <section
-      className={`product-portal-section${section.tone === "soft" ? " product-portal-section--tint" : ""}`}
+      className={`product-portal-section${section.tone === "soft" ? " product-portal-section--tint" : ""}${section.demo ? " platform-center-section--with-demo" : ""}`}
       data-testid="platform-center-section"
       id={section.id}
       aria-labelledby={headingId}
@@ -343,9 +343,17 @@ function BusinessSection({
   );
 }
 
-export function PlatformPageDetail({ page: center }: { page: PlatformPage }) {
+export function PlatformPageDetail({
+  dense = true,
+  page: center,
+}: {
+  dense?: boolean;
+  page: PlatformPage;
+}) {
   return (
-    <main className="product-portal platform-center">
+    <main
+      className={`product-portal platform-center${dense ? " platform-center--dense" : ""}`}
+    >
       <section
         className="product-portal-hero"
         aria-labelledby="platform-center-title"
@@ -417,5 +425,5 @@ export function PlatformCenterDetail({ slug }: { slug: string }) {
     notFound();
   }
 
-  return <PlatformPageDetail page={center} />;
+  return <PlatformPageDetail dense={false} page={center} />;
 }

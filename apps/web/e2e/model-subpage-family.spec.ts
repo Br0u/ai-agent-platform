@@ -82,6 +82,37 @@ test("七个模型子页在桌面、平板和移动宽度无横向溢出", async
   }
 });
 
+test("产品详情在桌面使用高密度双栏并在移动端折回单栏", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await gotoModelPage(page, "/product/model-task-center");
+  await expect(page.locator("main.platform-center--dense")).toHaveCount(1);
+
+  const sectionFrame = page.locator(
+    "#task-training.platform-center-section--with-demo > .product-portal-frame",
+  );
+  const desktopLayout = await sectionFrame.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      columnCount: style.gridTemplateColumns.split(" ").filter(Boolean).length,
+      display: style.display,
+    };
+  });
+  expect(desktopLayout).toStrictEqual({ columnCount: 2, display: "grid" });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoModelPage(page, "/product/model-task-center");
+  const mobileColumnCount = await sectionFrame.evaluate(
+    (element) =>
+      getComputedStyle(element).gridTemplateColumns.split(" ").filter(Boolean)
+        .length,
+  );
+  expect(mobileColumnCount).toBe(1);
+});
+
 test("模型子页保留现有 Agent 聊天的打开与关闭行为", async ({ page }) => {
   for (const path of [
     "/product/model-assets",

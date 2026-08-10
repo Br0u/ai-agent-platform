@@ -95,6 +95,9 @@ describe("PlatformCenterDetail", () => {
         hasBusiness,
       );
       expect(Boolean(screen.queryByTestId("platform-center-cta"))).toBe(hasCta);
+      expect(container.querySelector("main")).not.toHaveClass(
+        "platform-center--dense",
+      );
       expect(container.querySelector(".floating-assistant")).toBeNull();
     },
   );

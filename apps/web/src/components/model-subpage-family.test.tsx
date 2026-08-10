@@ -24,6 +24,9 @@ describe("model subpage family", () => {
       Boolean(page.cta),
     );
     expect(container.querySelectorAll("h1")).toHaveLength(1);
+    expect(container.querySelector("main")).toHaveClass(
+      "platform-center--dense",
+    );
     expect(container.querySelector(".floating-assistant")).toBeNull();
   });
 
