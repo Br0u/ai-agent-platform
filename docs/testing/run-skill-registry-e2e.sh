@@ -529,6 +529,10 @@ done
 
 run_skill_registry_playwright @lifecycle
 
+compose restart skill-registry
+compose up -d --no-deps --wait skill-registry
+run_skill_registry_playwright @restart
+
 if [ "$runtime_mode" = true ]; then
   run_skill_registry_playwright @runtime-activate
   assert_skill_runtime_stream marker
@@ -558,10 +562,6 @@ IFS='|' read -r revision_id artifact_sha <<EOF
 $state_values
 EOF
 printf '%s\n' "$artifact_sha" >>"$protected_patterns"
-
-compose restart skill-registry
-compose up -d --no-deps --wait skill-registry
-run_skill_registry_playwright @restart
 
 compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -c \
   "INSERT INTO agno.agno_sessions (session_id, session_type, created_at) VALUES ('$agno_fixture', 'agent', 0)" >/dev/null
