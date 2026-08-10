@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { standaloneCenter } from "@/components/product-portal-content";
+import { StandaloneProductCenter } from "@/components/standalone-product-center";
 
 export const metadata: Metadata = {
   title: "独立产品中心 · 华鲲元启",
@@ -7,9 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function StandaloneProductCenterPage() {
-  return (
-    <main>
-      <h1>{standaloneCenter.hero.title}</h1>
-    </main>
-  );
+  return <StandaloneProductCenter />;
 }
