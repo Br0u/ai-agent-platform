@@ -287,7 +287,7 @@ git commit -m "feat(home): lock prototype homepage content"
 - Modify: `apps/web/src/components/home-sections.tsx`
 - Modify: `apps/web/src/app/page.tsx`
 
-- [ ] **Step 1: 把页面结构测试改成四区合同**
+- [x] **Step 1: 把页面结构测试改成四区合同**
 
 ```tsx
 expect(
@@ -307,7 +307,7 @@ expect(screen.getByRole("heading", {
 
 同时断言首页 DOM 中不存在 `.floating-assistant`；聊天浮窗属于 `SiteShell`，不能被复制进 `HomePage`。
 
-- [ ] **Step 2: 运行页面测试并确认 RED**
+- [x] **Step 2: 运行页面测试并确认 RED**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/app/page.test.tsx
@@ -315,7 +315,7 @@ pnpm --filter @ai-agent-platform/web exec vitest run src/app/page.test.tsx
 
 Expected: FAIL，当前仍渲染六区首页。
 
-- [ ] **Step 3: 用四个服务端组件替换旧区块**
+- [x] **Step 3: 用四个服务端组件替换旧区块**
 
 `home-sections.tsx` 只保留：
 
@@ -328,7 +328,7 @@ export function HomeContactSection() { /* address、待确认字段、CTA、note
 
 使用 `Link` 处理正式路由；不要复制原型的 `onclick`、`data-page` 路由脚本或内联样式。所有按钮必须是实际链接或有明确行为的 `button`。
 
-- [ ] **Step 4: 更新首页组合顺序**
+- [x] **Step 4: 更新首页组合顺序**
 
 ```tsx
 export default function HomePage() {
@@ -345,7 +345,7 @@ export default function HomePage() {
 }
 ```
 
-- [ ] **Step 5: 运行页面和 shell 回归测试**
+- [x] **Step 5: 运行页面和 shell 回归测试**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/app/page.test.tsx src/components/site-shell/site-shell.test.tsx src/components/ui/floating-chat-widget-shadcnui.test.tsx
@@ -353,7 +353,7 @@ pnpm --filter @ai-agent-platform/web exec vitest run src/app/page.test.tsx src/c
 
 Expected: 首页结构测试通过；现有聊天入口、Header 入口和门户 shell 测试保持通过。
 
-- [ ] **Step 6: 提交语义结构**
+- [x] **Step 6: 提交语义结构**
 
 ```bash
 git add apps/web/src/app/page.tsx apps/web/src/app/page.test.tsx apps/web/src/components/home-sections.tsx

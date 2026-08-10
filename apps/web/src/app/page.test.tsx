@@ -1,18 +1,13 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { homeCopy } from "../components/home-content";
-import HomePage from "./page";
 
-const headingText = (heading: {
-  before: string;
-  emphasis: string;
-  after: string;
-}) => `${heading.before}${heading.emphasis}${heading.after}`;
+import { homeContent } from "../components/home-content";
+import HomePage from "./page";
 
 afterEach(cleanup);
 
 describe("HomePage", () => {
-  it("renders the approved six-region homepage hierarchy", () => {
+  it("renders the prototype four-region hierarchy", () => {
     render(<HomePage />);
 
     const home = screen.getByRole("main", { name: "华鲲元启门户首页" });
@@ -24,183 +19,141 @@ describe("HomePage", () => {
 
     expect(atmosphere).toHaveAttribute("aria-hidden", "true");
     expect(atmosphere?.children).toHaveLength(3);
-    expect(regions).toStrictEqual([
-      "hero",
-      "platform",
-      "enterprise",
-      "solutions",
-      "resources",
-      "closing",
-    ]);
+    expect(regions).toStrictEqual(["hero", "agents", "solutions", "contact"]);
+    expect(home.querySelector('[data-home-region="platform"]')).toBeNull();
+    expect(home.querySelector('[data-home-region="enterprise"]')).toBeNull();
+    expect(home.querySelector('[data-home-region="resources"]')).toBeNull();
+    expect(home.querySelector('[data-home-region="closing"]')).toBeNull();
   });
 
-  it("marks only the four post-hero content regions for scroll reveal", () => {
+  it("reveals only the three post-hero regions", () => {
     render(<HomePage />);
 
     const home = screen.getByRole("main", { name: "华鲲元启门户首页" });
     const revealRegions = Array.from(
       home.querySelectorAll(':scope > [data-home-reveal="true"]'),
+      (region) => region.getAttribute("data-home-region"),
     );
 
-    expect(
-      revealRegions.map((region) => region.getAttribute("data-home-region")),
-    ).toStrictEqual(["platform", "enterprise", "solutions", "resources"]);
-
-    for (const regionName of ["hero", "closing"]) {
-      const region = home.querySelector(`[data-home-region="${regionName}"]`);
-
-      expect(region).not.toHaveAttribute("data-home-reveal");
-      expect(region?.querySelectorAll("[data-home-reveal-item]")).toHaveLength(
-        0,
-      );
-    }
-
-    const expectedMarkerCounts = {
-      platform: { text: 3, block: 10 },
-      enterprise: { text: 2, block: 4 },
-      solutions: { text: 3, block: 6 },
-      resources: { text: 3, block: 5 },
-    } as const;
-
-    for (const [regionName, counts] of Object.entries(expectedMarkerCounts)) {
-      const region = home.querySelector(`[data-home-region="${regionName}"]`);
-
-      expect(
-        region?.querySelectorAll('[data-home-reveal-item="text"]'),
-      ).toHaveLength(counts.text);
-      expect(
-        region?.querySelectorAll('[data-home-reveal-item="block"]'),
-      ).toHaveLength(counts.block);
-    }
+    expect(revealRegions).toStrictEqual(["agents", "solutions", "contact"]);
+    expect(home.querySelector('[data-home-region="hero"]')).not.toHaveAttribute(
+      "data-home-reveal",
+    );
   });
 
-  it("keeps the hero copy open and the product screenshot in a glass evidence panel", () => {
+  it("renders the hero copy, calls to action, and two featured products", () => {
     render(<HomePage />);
 
-    const hero = screen.getByRole("region", {
-      name: headingText(homeCopy.hero.heading),
-    });
-    const heroCopy = hero.querySelector(".home-hero__copy");
-    const evidence = hero.querySelector(".home-evidence");
+    const hero = screen.getByRole("region", { name: homeContent.hero.title });
 
-    expect(heroCopy).toBeInTheDocument();
-    expect(heroCopy).not.toHaveClass("home-glass-panel");
-    expect(evidence).toHaveClass("home-glass-panel");
-    expect(heroCopy?.nextElementSibling).toBe(evidence);
-    expect(screen.getByText(homeCopy.hero.technicalLine)).toBeVisible();
-    expect(screen.getByText(homeCopy.hero.productName)).toBeVisible();
-    expect(screen.getByText(homeCopy.hero.summary)).toBeVisible();
-    expect(screen.getByText(homeCopy.hero.evidenceLabel)).toBeVisible();
-    expect(screen.getAllByText(homeCopy.hero.evidenceProduct)).toHaveLength(2);
-    expect(screen.getByText(homeCopy.hero.evidenceCaption)).toBeVisible();
+    expect(within(hero).getByText(homeContent.hero.eyebrow)).toBeVisible();
     expect(
-      screen.getByRole("img", { name: "华鲲元启应用广场界面" }),
+      within(hero).getByRole("heading", {
+        level: 1,
+        name: homeContent.hero.title,
+      }),
     ).toBeVisible();
+    expect(within(hero).getByText(homeContent.hero.lead)).toBeVisible();
+    expect(hero.querySelectorAll(".home-value-tag")).toHaveLength(5);
+    expect(hero.querySelectorAll(".home-featured-card")).toHaveLength(2);
+
+    for (const action of homeContent.hero.actions) {
+      expect(
+        within(hero).getByRole("link", { name: action.label }),
+      ).toHaveAttribute("href", action.href);
+    }
+
+    for (const product of homeContent.featuredProducts) {
+      expect(
+        within(hero).getByRole("heading", { name: product.title }),
+      ).toBeVisible();
+      expect(within(hero).getByText(product.description)).toBeVisible();
+      expect(
+        within(hero).getByRole("link", { name: product.cta }),
+      ).toHaveAttribute("href", product.href);
+    }
+  });
+
+  it("renders all five agent capabilities as direct links", () => {
+    render(<HomePage />);
+
+    const region = screen.getByRole("region", {
+      name: homeContent.agents.title,
+    });
+
+    expect(within(region).getByText(homeContent.agents.eyebrow)).toBeVisible();
+    expect(within(region).getByText(homeContent.agents.lead)).toBeVisible();
+    expect(region.querySelectorAll(".home-agent-card")).toHaveLength(5);
+
+    for (const item of homeContent.agents.items) {
+      expect(
+        within(region).getByRole("heading", { name: item.title }),
+      ).toBeVisible();
+      expect(within(region).getByText(item.description)).toBeVisible();
+      expect(
+        within(region).getByRole("link", { name: item.cta }),
+      ).toHaveAttribute("href", item.href);
+    }
+  });
+
+  it("renders all six solution cards and the catalog link", () => {
+    render(<HomePage />);
+
+    const region = screen.getByRole("region", {
+      name: homeContent.solutions.title,
+    });
+
     expect(
-      screen.queryByRole("img", { name: "华鲲元启" }),
-    ).not.toBeInTheDocument();
-  });
+      within(region).getByText(homeContent.solutions.eyebrow),
+    ).toBeVisible();
+    expect(within(region).getByText(homeContent.solutions.lead)).toBeVisible();
+    expect(region.querySelectorAll(".home-solution-card")).toHaveLength(6);
 
-  it("renders the reference card and row counts with all fixed section copy", () => {
-    render(<HomePage />);
-
-    const home = screen.getByRole("main", { name: "华鲲元启门户首页" });
-
-    expect(home.querySelectorAll(".home-capability-card")).toHaveLength(4);
-    expect(home.querySelectorAll(".home-platform-row")).toHaveLength(4);
-    expect(home.querySelectorAll(".home-enterprise-row")).toHaveLength(4);
-    expect(home.querySelectorAll(".home-solution-row")).toHaveLength(5);
-    expect(home.querySelectorAll(".home-resource")).toHaveLength(4);
-    expect(screen.getByText("安全合规 · 数据可控")).toBeVisible();
-    expect(screen.getByText("基于华鲲元启的行业子能力")).toBeVisible();
-    expect(screen.getByText(homeCopy.resources.kicker)).toBeVisible();
-
-    for (const name of [
-      headingText(homeCopy.hero.heading),
-      headingText(homeCopy.platform.heading),
-      homeCopy.enterprise.heading,
-      headingText(homeCopy.solutions.heading),
-      headingText(homeCopy.resources.heading),
-    ]) {
-      expect(screen.getByRole("heading", { name })).toBeVisible();
+    for (const item of homeContent.solutions.items) {
+      expect(
+        within(region).getByRole("heading", { name: item.title }),
+      ).toBeVisible();
+      expect(within(region).getByText(item.description)).toBeVisible();
+      expect(
+        within(region).getByRole("link", { name: `${item.title}：查看方案` }),
+      ).toHaveAttribute("href", item.href);
     }
 
-    for (const copy of [
-      homeCopy.platform.intro,
-      homeCopy.solutions.intro,
-      homeCopy.resources.intro,
-    ]) {
-      expect(screen.getByText(copy)).toBeVisible();
-    }
+    expect(
+      within(region).getByRole("link", {
+        name: homeContent.solutions.allLabel,
+      }),
+    ).toHaveAttribute("href", homeContent.solutions.allHref);
   });
 
-  it("uses the supplied image asset for each platform connector", () => {
+  it("renders the exact contact placeholders and actions", () => {
     render(<HomePage />);
 
-    const home = screen.getByRole("main", { name: "华鲲元启门户首页" });
-    const connectors = Array.from(
-      home.querySelectorAll(".home-capability-connector"),
-    );
+    const region = screen.getByRole("region", {
+      name: homeContent.contact.title,
+    });
 
-    expect(connectors).toHaveLength(3);
-    for (const connector of connectors) {
-      const image = connector.querySelector("img");
+    expect(within(region).getByText(homeContent.contact.address)).toBeVisible();
+    expect(
+      within(region).getByText(homeContent.contact.businessEmail),
+    ).toBeVisible();
+    expect(within(region).getByText(homeContent.contact.hotline)).toBeVisible();
+    expect(
+      within(region).getByText(homeContent.contact.serviceHours),
+    ).toBeVisible();
+    expect(within(region).getByText(homeContent.contact.note)).toBeVisible();
 
-      expect(image).toBeInTheDocument();
-      expect(image).toHaveAttribute("alt", "");
-      expect(image?.getAttribute("src")).toContain("capability-connector");
-      expect(connector).not.toHaveTextContent("›");
+    for (const action of homeContent.contact.actions) {
+      expect(
+        within(region).getByRole("link", { name: action.label }),
+      ).toHaveAttribute("href", action.href);
     }
   });
 
-  it("keeps only calls to action and resources interactive", () => {
+  it("does not duplicate the shell-owned assistant or legacy brand", () => {
     render(<HomePage />);
 
-    const learnLinks = screen.getAllByRole("link", {
-      name: homeCopy.hero.primaryCta.label,
-    });
-    const docsLinks = screen.getAllByRole("link", {
-      name: homeCopy.hero.secondaryCta.label,
-    });
-
-    expect(learnLinks).toHaveLength(2);
-    expect(docsLinks).toHaveLength(2);
-    learnLinks.forEach((link) =>
-      expect(link).toHaveAttribute("href", "/product"),
-    );
-    docsLinks.forEach((link) => expect(link).toHaveAttribute("href", "/docs"));
-    expect(screen.getByRole("link", { name: /集成指南/ })).toHaveAttribute(
-      "href",
-      "/compatibility",
-    );
-
-    const platform = screen.getByRole("region", { name: "平台能力与开发流程" });
-    expect(within(platform).queryAllByRole("link")).toHaveLength(2);
-    const enterprise = document.querySelector(
-      '[data-home-region="enterprise"]',
-    );
-    const solutions = document.querySelector('[data-home-region="solutions"]');
-    expect(enterprise?.querySelectorAll("a, button")).toHaveLength(0);
-    expect(solutions?.querySelectorAll("a, button")).toHaveLength(0);
-  });
-
-  it("marks exactly three generated illustrations as decorative", () => {
-    render(<HomePage />);
-
-    const decorations = document.querySelectorAll(
-      'img[data-home-decoration="true"]',
-    );
-
-    expect(decorations).toHaveLength(3);
-    decorations.forEach((image) => {
-      expect(image).toHaveAttribute("alt", "");
-      expect(image).toHaveAttribute("aria-hidden", "true");
-    });
-  });
-
-  it("does not expose the legacy placeholder brand", () => {
-    render(<HomePage />);
-
+    expect(document.querySelector(".floating-assistant")).toBeNull();
     expect(screen.queryByText("AI Agent Platform")).not.toBeInTheDocument();
   });
 });
