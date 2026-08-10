@@ -124,6 +124,26 @@ test("keeps homepage links keyboard-accessible with usable targets", async ({
   }
 });
 
+test("keeps every homepage internal link free of 404 and server errors", async ({
+  page,
+}) => {
+  await gotoHome(page);
+
+  const hrefs = await page.locator("main.home a").evaluateAll((links) => [
+    ...new Set(
+      links
+        .map((link) => new URL((link as HTMLAnchorElement).href))
+        .filter((url) => url.origin === window.location.origin)
+        .map((url) => `${url.pathname}${url.search}`),
+    ),
+  ]);
+
+  for (const href of hrefs) {
+    const response = await page.request.get(href);
+    expect(response.status(), href).toBeLessThan(400);
+  }
+});
+
 test("uses the approved desktop composition", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop");
   await page.setViewportSize({ width: 1440, height: 1000 });

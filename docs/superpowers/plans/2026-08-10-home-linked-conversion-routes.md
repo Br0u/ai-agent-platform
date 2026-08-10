@@ -53,7 +53,7 @@
 - Create: `apps/web/src/components/solution-detail-content.test.ts`
 - Create: `apps/web/src/components/solution-detail-content.ts`
 
-- [ ] **Step 1: 写六个 slug 与原文失败测试**
+- [x] **Step 1: 写六个 slug 与原文失败测试**
 
 测试必须断言：
 
@@ -76,7 +76,7 @@ expect(getSolutionDetail("knowledge-service")).toMatchObject({
 
 行业方案分别锁定原型 `industrySolutionCatalog` 中的 `name`、`problem`、`audience`、`value`、`valueTags`，并锁定对应 `industryDetailBlueprints` 生成的组成与流程。
 
-- [ ] **Step 2: 运行测试并确认 RED**
+- [x] **Step 2: 运行测试并确认 RED**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/components/solution-detail-content.test.ts
@@ -84,11 +84,11 @@ pnpm --filter @ai-agent-platform/web exec vitest run src/components/solution-det
 
 Expected: FAIL，内容模块尚不存在。
 
-- [ ] **Step 3: 写最小类型化内容模块**
+- [x] **Step 3: 写最小类型化内容模块**
 
 只包含本批六个方案；使用 `kind: "common" | "industry"` 区分两套已存在的信息结构。`getSolutionDetail(slug)` 对未知 slug 返回 `undefined`，不提供回退页面。
 
-- [ ] **Step 4: 运行内容测试并确认 GREEN**
+- [x] **Step 4: 运行内容测试并确认 GREEN**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/components/solution-detail-content.test.ts
@@ -96,7 +96,7 @@ pnpm --filter @ai-agent-platform/web exec vitest run src/components/solution-det
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交内容合同**
+- [x] **Step 5: 提交内容合同**
 
 ```bash
 git add apps/web/src/components/solution-detail-content.ts apps/web/src/components/solution-detail-content.test.ts
@@ -112,7 +112,7 @@ git commit -m "feat(solutions): 锁定首页方案详情内容"
 - Create: `apps/web/src/app/solutions/[slug]/page.tsx`
 - Create: `apps/web/src/app/trial/page.tsx`
 
-- [ ] **Step 1: 先更新路由测试**
+- [x] **Step 1: 先更新路由测试**
 
 在 required routes 中加入：
 
@@ -123,7 +123,7 @@ git commit -m "feat(solutions): 锁定首页方案详情内容"
 
 并断言两个路由为 `live`，`matchRoute("/solutions/knowledge-service")` 匹配 `/solutions/[slug]`。
 
-- [ ] **Step 2: 运行路由测试并确认 RED**
+- [x] **Step 2: 运行路由测试并确认 RED**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/config/routes.test.ts src/config/route-files.test.ts
@@ -131,7 +131,7 @@ pnpm --filter @ai-agent-platform/web exec vitest run src/config/routes.test.ts s
 
 Expected: FAIL，路由和显式页面文件尚未注册完整。
 
-- [ ] **Step 3: 注册路由并创建最小页面入口**
+- [x] **Step 3: 注册路由并创建最小页面入口**
 
 `routes.ts` 加入：
 
@@ -142,7 +142,7 @@ publicRoute("/trial", "申请体验", "live"),
 
 页面文件先返回最小可识别内容，以便路由测试转绿；正式渲染在后续 TDD 任务替换。
 
-- [ ] **Step 4: 运行路由测试并确认 GREEN**
+- [x] **Step 4: 运行路由测试并确认 GREEN**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/config/routes.test.ts src/config/route-files.test.ts
@@ -150,7 +150,7 @@ pnpm --filter @ai-agent-platform/web exec vitest run src/config/routes.test.ts s
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交路由合同**
+- [x] **Step 5: 提交路由合同**
 
 ```bash
 git add apps/web/src/config/routes.ts apps/web/src/config/routes.test.ts apps/web/src/app/solutions/[slug]/page.tsx apps/web/src/app/trial/page.tsx
@@ -167,7 +167,7 @@ git commit -m "feat(portal): 注册方案详情与体验路由"
 - Create: `apps/web/src/app/solutions/[slug]/page.test.tsx`
 - Create: `apps/web/src/app/solutions/[slug]/solution-detail.css`
 
-- [ ] **Step 1: 写通用、行业、404 三类失败测试**
+- [x] **Step 1: 写通用、行业、404 三类失败测试**
 
 必须覆盖：
 
@@ -183,7 +183,7 @@ expect(screen.getAllByTestId("solution-flow-step")).toHaveLength(4);
 
 未知 slug 必须调用 `notFound()`，不得显示通用 placeholder。
 
-- [ ] **Step 2: 运行页面测试并确认 RED**
+- [x] **Step 2: 运行页面测试并确认 RED**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run 'src/app/solutions/[slug]/page.test.tsx'
@@ -191,7 +191,7 @@ pnpm --filter @ai-agent-platform/web exec vitest run 'src/app/solutions/[slug]/p
 
 Expected: FAIL，页面仍是最小入口。
 
-- [ ] **Step 3: 实现语义页面与 metadata**
+- [x] **Step 3: 实现语义页面与 metadata**
 
 - Hero：类型、标题、摘要、适用对象、标签、商务咨询、申请体验。
 - 问题区：只使用原型问题、影响与目标文案。
@@ -200,11 +200,11 @@ Expected: FAIL，页面仍是最小入口。
 - 产品能力：链接到现有正式路由或已注册产品路由。
 - 案例：仅保留原型“待授权补充 / 不虚构”边界，不创建新死链。
 
-- [ ] **Step 4: 写页面局部 CSS**
+- [x] **Step 4: 写页面局部 CSS**
 
 复用首页色值与卡片语言，但不抽取公共组件；至少覆盖 1180px、760px、reduced-motion 和无 `backdrop-filter` 回退。
 
-- [ ] **Step 5: 运行页面、路由和类型测试**
+- [x] **Step 5: 运行页面、路由和类型测试**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run 'src/app/solutions/[slug]/page.test.tsx' src/components/solution-detail-content.test.ts src/config/routes.test.ts src/config/route-files.test.ts
@@ -213,7 +213,7 @@ pnpm --filter @ai-agent-platform/web typecheck
 
 Expected: PASS。
 
-- [ ] **Step 6: 提交方案详情页**
+- [x] **Step 6: 提交方案详情页**
 
 ```bash
 git add apps/web/src/app/solutions/[slug]/page.tsx apps/web/src/app/solutions/[slug]/page.test.tsx apps/web/src/app/solutions/[slug]/solution-detail.css
@@ -231,7 +231,7 @@ git commit -m "feat(solutions): 渲染首页方案详情"
 - Modify: `apps/web/src/app/trial/page.tsx`
 - Create: `apps/web/src/app/trial/trial.css`
 
-- [ ] **Step 1: 写内容与交互失败测试**
+- [x] **Step 1: 写内容与交互失败测试**
 
 内容测试锁定 Hero、四个产品标签、三步流程、弹层字段与成功文案。交互测试覆盖：
 
@@ -244,7 +244,7 @@ git commit -m "feat(solutions): 渲染首页方案详情"
 7. 完整正确提交显示原型成功文案。
 8. 关闭后重开会重置表单和成功态。
 
-- [ ] **Step 2: 运行测试并确认 RED**
+- [x] **Step 2: 运行测试并确认 RED**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/components/trial-content.test.ts src/components/trial-experience.test.tsx
@@ -252,15 +252,15 @@ pnpm --filter @ai-agent-platform/web exec vitest run src/components/trial-conten
 
 Expected: FAIL，组件与内容尚不存在。
 
-- [ ] **Step 3: 写最小内容模块和客户端组件**
+- [x] **Step 3: 写最小内容模块和客户端组件**
 
 使用 React state 与原生表单，不新增依赖。联系方式正则沿用原型；演示码只存在组件内存，页面卸载或重开即清空。不得调用注册、邮件验证或客户会话 API。
 
-- [ ] **Step 4: 完成页面组合和 CSS**
+- [x] **Step 4: 完成页面组合和 CSS**
 
 Hero、体验流程、收口 CTA 与弹层保持原型顺序；应用首页批准的浅蓝画布、白色玻璃卡片、蓝紫按钮和响应式规则。
 
-- [ ] **Step 5: 运行体验页、路由和类型测试**
+- [x] **Step 5: 运行体验页、路由和类型测试**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/components/trial-content.test.ts src/components/trial-experience.test.tsx src/config/routes.test.ts src/config/route-files.test.ts
@@ -269,7 +269,7 @@ pnpm --filter @ai-agent-platform/web typecheck
 
 Expected: PASS。
 
-- [ ] **Step 6: 提交体验页**
+- [x] **Step 6: 提交体验页**
 
 ```bash
 git add apps/web/src/components/trial-content.ts apps/web/src/components/trial-content.test.ts apps/web/src/components/trial-experience.tsx apps/web/src/components/trial-experience.test.tsx apps/web/src/app/trial/page.tsx apps/web/src/app/trial/trial.css
@@ -285,7 +285,7 @@ git commit -m "feat(trial): 实现体验申请演示页"
 - Modify: `apps/web/e2e/home-reference-layout.spec.ts`
 - Create: `apps/web/e2e/home-linked-routes.spec.ts`
 
-- [ ] **Step 1: 写首页链接状态与新页面 E2E**
+- [x] **Step 1: 写首页链接状态与新页面 E2E**
 
 - 首页全部 `main.home a` 的内部 URL 最终响应不得为 404 或 5xx。
 - 六个方案详情均返回 200；通用和行业样本显示正确标题。
@@ -293,7 +293,7 @@ git commit -m "feat(trial): 实现体验申请演示页"
 - 1440×1000、768×1024、390×844 无横向溢出。
 - 页面仍只有 shell 提供的一套 Agent launcher；打开、关闭行为保持可用。
 
-- [ ] **Step 2: 构建并运行 E2E**
+- [x] **Step 2: 构建并运行 E2E**
 
 ```bash
 pnpm --filter @ai-agent-platform/web build
@@ -302,7 +302,7 @@ pnpm --filter @ai-agent-platform/web exec playwright test e2e/home-reference-lay
 
 Expected: PASS；首页原 7 个 404 消失。
 
-- [ ] **Step 3: 运行完整 web 门槛**
+- [x] **Step 3: 运行完整 web 门槛**
 
 ```bash
 pnpm --filter @ai-agent-platform/web test
@@ -314,7 +314,7 @@ pnpm --filter @ai-agent-platform/web build
 
 Expected: 全部退出码为 0。
 
-- [ ] **Step 4: 检查范围并提交 E2E**
+- [x] **Step 4: 检查范围并提交 E2E**
 
 ```bash
 git status --short
