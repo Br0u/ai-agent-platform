@@ -24,6 +24,10 @@ const requiredRoutes = [
   "/product/model-deploy",
   "/product/agent-knowledge-base",
   "/product/knowledge-metrics",
+  "/product/coding-project",
+  "/product/coding-session",
+  "/product/coding-mobile",
+  "/product/coding-standard",
   "/product/[slug]",
   "/solutions",
   "/solutions/[slug]",
@@ -235,6 +239,27 @@ describe("routeRegistry", () => {
       status: "live",
     });
     expect(matchRoute("/product/foundation-unknown")).toMatchObject({
+      path: "/product/[slug]",
+      status: "scaffold",
+    });
+  });
+
+  it("registers the four coding subpages before remaining product scaffolds", () => {
+    for (const [path, title] of [
+      ["/product/coding-project", "项目管理"],
+      ["/product/coding-session", "会话管理"],
+      ["/product/coding-mobile", "移动接入"],
+      ["/product/coding-standard", "编程规范"],
+    ] as const) {
+      expect(matchRoute(path)).toEqual({
+        path,
+        title,
+        group: "public",
+        status: "live",
+      });
+    }
+
+    expect(matchRoute("/product/coding-unknown")).toMatchObject({
       path: "/product/[slug]",
       status: "scaffold",
     });
