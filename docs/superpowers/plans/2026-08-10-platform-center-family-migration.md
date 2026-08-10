@@ -289,3 +289,5 @@ git commit -m "test(centers): 验收七个元启平台中心"
 - [x] **Step 5: 下一批进入各中心子页面**
 
 下一批按原型页面顺序迁移模型、知识、编程、智能体、应用、技能子页；先建立完整 URL 表并核对现有显式旧页，避免覆盖仍在使用的 `/product/knowledge-agent`、`/product/video-agent`、`/product/office-agent` 等页面。
+
+后续进度：七个模型子页已按 `2026-08-10-model-subpage-family-migration.md` 完成迁移与浏览器验收；下一批进入能力底座与编程子页面。
