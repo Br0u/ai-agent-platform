@@ -300,8 +300,14 @@ async def test_real_postgres_artifact_store_put_and_digest_verification() -> Non
             await connection.execute(
                 """INSERT INTO skill_registry.skill_revisions (
                   id, skill_id, revision_no, state, source_type, manifest, findings, created_by
-                ) VALUES (%s, %s, 1, 'published', 'upload', '{}'::jsonb, '[]'::jsonb, %s)""",
-                (revision_id, skill_id, actor),
+                ) VALUES (%s, %s, 1, 'published', 'upload', %s::jsonb, '[]'::jsonb, %s)""",
+                (
+                    revision_id,
+                    skill_id,
+                    f'{{"name":"{slug}","description":"PostgreSQL integration.",'
+                    '"instructions":"","scripts":[],"references":[]}',
+                    actor,
+                ),
             )
     store = PostgresSkillArtifactStore(manager_artifact_connection)
 
