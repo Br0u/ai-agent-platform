@@ -1279,6 +1279,7 @@
 @media (max-width: 900px) {
   .product-portal-hero__grid,
   .product-detail-hero,
+  .platform-center--dense .product-detail-hero,
   .product-portal-centers,
   .product-portal-business,
   .product-portal-product-list article,
