@@ -11,6 +11,7 @@ from skill_registry.schema import (
     SCHEMA_VERSION_4_SQL,
     SCHEMA_VERSION_5_SQL,
     SCHEMA_VERSION_9_SQL,
+    SCHEMA_VERSION_10_SQL,
 )
 
 
@@ -149,6 +150,16 @@ def test_schema_v9_adds_authoritative_current_revision_and_updates_it_on_activat
     assert "OLD.state = 'candidate' AND NEW.state = 'active'" in sql
 
 
+def test_schema_v10_guards_active_skill_identity() -> None:
+    sql = normalize_sql(SCHEMA_VERSION_10_SQL)
+
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 10
+    assert "active skill cannot be archived" in sql
+    assert "active skill current revision must match runtime set" in sql
+    assert "active_item.skill_revision_id IS DISTINCT FROM NEW.current_revision_id" in sql
+    assert "INSERT INTO skill_registry.schema_versions (version) VALUES (10)" in sql
+
+
 def test_schema_v2_renames_review_authorization_evidence() -> None:
     sql = normalize_sql(SCHEMA_VERSION_2_SQL)
 
@@ -253,7 +264,7 @@ def test_skill_set_views_expose_runtime_and_manager_boundaries_in_schema_v3() ->
 def test_schema_v4_replaces_runtime_file_index_with_canonical_utf8_order() -> None:
     sql = normalize_sql(SCHEMA_VERSION_4_SQL)
 
-    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 9
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 10
     assert "CREATE OR REPLACE VIEW skill_registry.runtime_skill_set_items" in sql
     assert "ORDER BY pg_catalog.convert_to(file.path, 'UTF8')" in sql
     assert (
@@ -270,7 +281,7 @@ def test_schema_v4_replaces_runtime_file_index_with_canonical_utf8_order() -> No
 def test_active_skill_names_are_unique_but_archived_names_are_reusable() -> None:
     sql = normalize_sql(getattr(registry_schema, "SCHEMA_VERSION_6_SQL", ""))
 
-    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 9
+    assert registry_schema.SKILL_REGISTRY_SCHEMA_VERSION == 10
     assert "DROP CONSTRAINT skills_slug_key" in sql
     assert (
         "CREATE UNIQUE INDEX skills_active_slug_key "
