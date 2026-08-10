@@ -69,6 +69,29 @@ function Visual({
   );
 }
 
+function Demo({
+  demo,
+  testId,
+}: {
+  demo: { title: string; messages: readonly string[]; note?: string };
+  testId?: string;
+}) {
+  return (
+    <aside className="product-portal-demo" data-testid={testId}>
+      <strong>{demo.title}</strong>
+      {demo.messages.map((message, index) => (
+        <p
+          className={index % 2 === 0 ? "is-user" : undefined}
+          key={`${index}-${message}`}
+        >
+          {message}
+        </p>
+      ))}
+      {demo.note ? <small>{demo.note}</small> : null}
+    </aside>
+  );
+}
+
 function Card({
   card,
 }: {
@@ -139,6 +162,10 @@ function ContentSection({
           ) : null}
         </header>
 
+        {section.demo ? (
+          <Demo demo={section.demo} testId="platform-page-demo" />
+        ) : null}
+
         {section.cards ? (
           <div className="platform-center-card-grid">
             {section.cards.map((card) => (
@@ -208,6 +235,9 @@ function ContentSection({
                   ))}
                 </div>
                 {group.subheading ? <h4>{group.subheading}</h4> : null}
+                {group.flow ? (
+                  <Flow items={group.flow} testId="platform-page-group-flow" />
+                ) : null}
                 {group.visual ? <Visual title={group.visual} /> : null}
               </article>
             ))}
@@ -261,18 +291,7 @@ function BusinessSection({
             </div>
           </div>
           {business.demo ? (
-            <aside className="product-portal-demo">
-              <strong>{business.demo.title}</strong>
-              {business.demo.messages.map((message, index) => (
-                <p
-                  className={index % 2 === 0 ? "is-user" : undefined}
-                  key={`${index}-${message}`}
-                >
-                  {message}
-                </p>
-              ))}
-              {business.demo.note ? <small>{business.demo.note}</small> : null}
-            </aside>
+            <Demo demo={business.demo} testId="platform-page-demo" />
           ) : business.visual ? (
             <Visual title={business.visual} />
           ) : null}
@@ -283,7 +302,9 @@ function BusinessSection({
             <Flow items={business.reason} />
             {business.workflow ? (
               <>
-                <h4>{business.workflowLabel}</h4>
+                {business.workflowLabel ? (
+                  <h4>{business.workflowLabel}</h4>
+                ) : null}
                 <Flow
                   items={business.workflow}
                   testId="platform-center-workflow"
@@ -322,13 +343,7 @@ function BusinessSection({
   );
 }
 
-export function PlatformCenterDetail({ slug }: { slug: string }) {
-  const center = getPlatformCenter(slug);
-
-  if (!center) {
-    notFound();
-  }
-
+export function PlatformPageDetail({ page: center }: { page: PlatformPage }) {
   return (
     <main className="product-portal platform-center">
       <section
@@ -353,17 +368,13 @@ export function PlatformCenterDetail({ slug }: { slug: string }) {
             />
           </div>
           {center.hero.visual.messages ? (
-            <aside className="product-portal-demo">
-              <strong>{center.hero.visual.title}</strong>
-              {center.hero.visual.messages.map((message, index) => (
-                <p
-                  className={index % 2 === 0 ? "is-user" : undefined}
-                  key={`${index}-${message}`}
-                >
-                  {message}
-                </p>
-              ))}
-            </aside>
+            <Demo
+              demo={{
+                title: center.hero.visual.title,
+                messages: center.hero.visual.messages,
+                note: center.hero.visual.note,
+              }}
+            />
           ) : (
             <Visual {...center.hero.visual} />
           )}
@@ -397,4 +408,14 @@ export function PlatformCenterDetail({ slug }: { slug: string }) {
       ) : null}
     </main>
   );
+}
+
+export function PlatformCenterDetail({ slug }: { slug: string }) {
+  const center = getPlatformCenter(slug);
+
+  if (!center) {
+    notFound();
+  }
+
+  return <PlatformPageDetail page={center} />;
 }

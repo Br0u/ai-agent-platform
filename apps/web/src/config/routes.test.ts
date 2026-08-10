@@ -15,6 +15,13 @@ const requiredRoutes = [
   "/product/skills",
   "/product/coding",
   "/product/governance",
+  "/product/model-optimization",
+  "/product/model-task-center",
+  "/product/model-assets",
+  "/product/model-training",
+  "/product/model-evaluation",
+  "/product/model-data",
+  "/product/model-deploy",
   "/product/[slug]",
   "/solutions",
   "/solutions/[slug]",
@@ -183,7 +190,30 @@ describe("routeRegistry", () => {
       });
     }
 
-    expect(matchRoute("/product/model-training")).toMatchObject({
+    expect(matchRoute("/product/agent-studio")).toMatchObject({
+      path: "/product/[slug]",
+      status: "scaffold",
+    });
+  });
+
+  it("registers the seven model subpages before remaining product scaffolds", () => {
+    for (const path of [
+      "/product/model-optimization",
+      "/product/model-task-center",
+      "/product/model-assets",
+      "/product/model-training",
+      "/product/model-evaluation",
+      "/product/model-data",
+      "/product/model-deploy",
+    ]) {
+      expect(matchRoute(path)).toMatchObject({
+        path,
+        group: "public",
+        status: "live",
+      });
+    }
+
+    expect(matchRoute("/product/model-unknown")).toMatchObject({
       path: "/product/[slug]",
       status: "scaffold",
     });
