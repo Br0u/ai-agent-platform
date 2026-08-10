@@ -27,29 +27,30 @@
 
 ## 文件职责
 
-| 文件 | 责任 |
-|---|---|
-| `apps/web/src/components/solution-detail-content.ts` | 六个方案的原型原文、类型与 slug 查询 |
+| 文件                                                      | 责任                                              |
+| --------------------------------------------------------- | ------------------------------------------------- |
+| `apps/web/src/components/solution-detail-content.ts`      | 六个方案的原型原文、类型与 slug 查询              |
 | `apps/web/src/components/solution-detail-content.test.ts` | 锁定六个 slug、标题、摘要、对象、问题、组成与流程 |
-| `apps/web/src/app/solutions/[slug]/page.tsx` | 生成 metadata、404 非法 slug、渲染通用/行业详情 |
-| `apps/web/src/app/solutions/[slug]/page.test.tsx` | 页面语义、链接、内容和非法 slug 合同 |
-| `apps/web/src/app/solutions/[slug]/solution-detail.css` | 详情页局部视觉、响应式、焦点与 reduced-motion |
-| `apps/web/src/components/trial-content.ts` | 体验页和弹层的原型固定文案 |
-| `apps/web/src/components/trial-content.test.ts` | 锁定体验流程与字段文案 |
-| `apps/web/src/components/trial-experience.tsx` | 页面内容、弹层、本地校验、演示验证码与成功态 |
-| `apps/web/src/components/trial-experience.test.tsx` | 弹层、校验、验证码、提交成功与重开重置 |
-| `apps/web/src/app/trial/page.tsx` | `/trial` metadata 与页面入口 |
-| `apps/web/src/app/trial/trial.css` | 体验页局部视觉与响应式 |
-| `apps/web/src/config/routes.ts` | 注册两个 live 路由模式 |
-| `apps/web/src/config/routes.test.ts` | 路由注册与动态匹配合同 |
-| `apps/web/e2e/home-reference-layout.spec.ts` | 首页链接全量非 404 验证 |
-| `apps/web/e2e/home-linked-routes.spec.ts` | 两类详情、体验交互、移动端和聊天入口验收 |
+| `apps/web/src/app/solutions/[slug]/page.tsx`              | 生成 metadata、404 非法 slug、渲染通用/行业详情   |
+| `apps/web/src/app/solutions/[slug]/page.test.tsx`         | 页面语义、链接、内容和非法 slug 合同              |
+| `apps/web/src/app/solutions/[slug]/solution-detail.css`   | 详情页局部视觉、响应式、焦点与 reduced-motion     |
+| `apps/web/src/components/trial-content.ts`                | 体验页和弹层的原型固定文案                        |
+| `apps/web/src/components/trial-content.test.ts`           | 锁定体验流程与字段文案                            |
+| `apps/web/src/components/trial-experience.tsx`            | 页面内容、弹层、本地校验、演示验证码与成功态      |
+| `apps/web/src/components/trial-experience.test.tsx`       | 弹层、校验、验证码、提交成功与重开重置            |
+| `apps/web/src/app/trial/page.tsx`                         | `/trial` metadata 与页面入口                      |
+| `apps/web/src/app/trial/trial.css`                        | 体验页局部视觉与响应式                            |
+| `apps/web/src/config/routes.ts`                           | 注册两个 live 路由模式                            |
+| `apps/web/src/config/routes.test.ts`                      | 路由注册与动态匹配合同                            |
+| `apps/web/e2e/home-reference-layout.spec.ts`              | 首页链接全量非 404 验证                           |
+| `apps/web/e2e/home-linked-routes.spec.ts`                 | 两类详情、体验交互、移动端和聊天入口验收          |
 
 ## Chunk 1: Content and route contracts
 
 ### Task 1: 锁定六个方案详情内容
 
 **Files:**
+
 - Create: `apps/web/src/components/solution-detail-content.test.ts`
 - Create: `apps/web/src/components/solution-detail-content.ts`
 
@@ -70,7 +71,8 @@ expect(solutionDetailSlugs).toStrictEqual([
 expect(getSolutionDetail("knowledge-service")).toMatchObject({
   kind: "common",
   title: "企业知识问答与知识服务",
-  summary: "将企业文档、制度、产品资料和专业知识转化为可检索、可问答的智能知识服务。",
+  summary:
+    "将企业文档、制度、产品资料和专业知识转化为可检索、可问答的智能知识服务。",
 });
 ```
 
@@ -107,6 +109,7 @@ git commit -m "feat(solutions): 锁定首页方案详情内容"
 ### Task 2: 注册方案详情与体验申请路由
 
 **Files:**
+
 - Modify: `apps/web/src/config/routes.ts`
 - Modify: `apps/web/src/config/routes.test.ts`
 - Create: `apps/web/src/app/solutions/[slug]/page.tsx`
@@ -163,6 +166,7 @@ git commit -m "feat(portal): 注册方案详情与体验路由"
 ### Task 3: 渲染通用和行业方案详情
 
 **Files:**
+
 - Modify: `apps/web/src/app/solutions/[slug]/page.tsx`
 - Create: `apps/web/src/app/solutions/[slug]/page.test.tsx`
 - Create: `apps/web/src/app/solutions/[slug]/solution-detail.css`
@@ -173,7 +177,9 @@ git commit -m "feat(portal): 注册方案详情与体验路由"
 
 ```ts
 render(await Page({ params: Promise.resolve({ slug: "knowledge-service" }) }));
-expect(screen.getByRole("heading", { level: 1, name: "企业知识问答与知识服务" })).toBeVisible();
+expect(
+  screen.getByRole("heading", { level: 1, name: "企业知识问答与知识服务" }),
+).toBeVisible();
 expect(screen.getAllByTestId("solution-component")).toHaveLength(6);
 
 render(await Page({ params: Promise.resolve({ slug: "finance-data" }) }));
@@ -224,6 +230,7 @@ git commit -m "feat(solutions): 渲染首页方案详情"
 ### Task 4: 实现体验申请演示页
 
 **Files:**
+
 - Create: `apps/web/src/components/trial-content.test.ts`
 - Create: `apps/web/src/components/trial-content.ts`
 - Create: `apps/web/src/components/trial-experience.test.tsx`
@@ -282,6 +289,7 @@ git commit -m "feat(trial): 实现体验申请演示页"
 ### Task 5: 消除首页死链并完成浏览器验收
 
 **Files:**
+
 - Modify: `apps/web/e2e/home-reference-layout.spec.ts`
 - Create: `apps/web/e2e/home-linked-routes.spec.ts`
 
@@ -324,6 +332,6 @@ git diff --cached --check
 git commit -m "test(portal): 验收首页转化路由"
 ```
 
-- [ ] **Step 5: 下一批进入产品页面族**
+- [x] **Step 5: 下一批进入产品页面族**
 
 下一份计划按 `products → key-products → code-agent → aippt → aishrek` 顺序迁移；第二个页面族完成后再比较真实重复，决定是否提取 `components/portal/`。
