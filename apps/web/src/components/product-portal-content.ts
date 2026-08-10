@@ -244,6 +244,7 @@ export const productOverview = {
           "代码补全、生成、解释与重构，帮助研发团队减少重复编码，更快理解和维护代码。",
         visual: "码多多 2.0 主界面截图素材槽位",
         href: "/product/code-agent",
+        action: "查看码多多 2.0 →",
       },
       {
         title: "AIPPT",
@@ -252,6 +253,7 @@ export const productOverview = {
           "根据主题或大纲完成结构规划、页面生成与风格匹配，缩短演示文稿制作时间。",
         visual: "AIPPT 生成前后界面截图素材槽位",
         href: "/product/aippt",
+        action: "查看 AIPPT →",
       },
       {
         title: "AISHREK",
@@ -260,6 +262,7 @@ export const productOverview = {
           "多格式导入、自动解读与对话式参数修改，让机械零件设计与改型高效完成。",
         visual: "AISHREK 机械设计工作台界面素材槽位",
         href: "/product/aishrek",
+        action: "查看 AISHREK →",
       },
     ],
   },
@@ -278,6 +281,14 @@ export const productOverview = {
       { title: "缩短上线周期", description: "成熟产品拿来即用" },
       { title: "安全合规可控", description: "平台治理与独立部署兼顾" },
     ],
+    demo: {
+      title: "元启 · 能力演示",
+      messages: [
+        "企业想快速上一个合同审查应用，怎么开始？",
+        "正在匹配可用的应用与能力……",
+        "可直接使用行业应用中心的合同智能审查，开箱即用；后续可在元启平台沉淀为专属能力。快速使用 · 深度建设双路径",
+      ],
+    },
     reason: ["模型", "知识", "智能体", "应用", "治理"],
     workflow: ["明确需求", "选路径", "落地使用", "沉淀复用"],
     outcomes: [
