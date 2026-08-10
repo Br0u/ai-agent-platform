@@ -67,21 +67,23 @@ async def seed_published_revision(
     assert OWNER_URL is not None
     value = value or package(f"runtime-pg-{uuid4().hex[:12]}")
     skill_id, revision_id, actor = uuid4(), uuid4(), uuid4()
-    review_request_id = uuid4()
+    request_id = uuid4()
     async with await psycopg.AsyncConnection.connect(
         psycopg_url(OWNER_URL)
     ) as connection:
         async with connection.transaction():
             await connection.execute(
-                "INSERT INTO skill_registry.skills (id, slug, created_by) VALUES (%s, %s, %s)",
-                (skill_id, value.slug, actor),
+                """INSERT INTO skill_registry.skills (
+                  id, slug, created_by, current_revision_id
+                ) VALUES (%s, %s, %s, %s)""",
+                (skill_id, value.slug, actor, revision_id),
             )
             await connection.execute(
                 """INSERT INTO skill_registry.skill_revisions (
                   id, skill_id, revision_no, state, source_type, manifest, findings,
                   created_by
                 ) VALUES (
-                  %s, %s, 1, 'pending_review', 'upload', %s, '[]'::jsonb, %s
+                  %s, %s, 1, 'published', 'upload', %s, '[]'::jsonb, %s
                 )""",
                 (
                     revision_id,
@@ -121,26 +123,17 @@ async def seed_published_revision(
             await connection.execute(
                 """INSERT INTO skill_registry.skill_control_events (
                   id, request_id, assertion_nonce, actor, event_type,
-                  target_id, result_code, content_reviewed,
-                  usage_rights_confirmed, execution_risk_accepted,
-                  reviewer_authorization_confirmed
+                  target_id, result_code
                 ) VALUES (
-                  %s, %s, %s, %s, 'revision_published', %s, 'ok',
-                  TRUE, TRUE, TRUE, TRUE
+                  %s, %s, %s, %s, 'revision_created', %s, 'ok'
                 )""",
                 (
                     uuid4(),
-                    review_request_id,
-                    review_request_id,
+                    request_id,
+                    request_id,
                     str(actor),
                     revision_id,
                 ),
-            )
-            await connection.execute(
-                """UPDATE skill_registry.skill_revisions
-                SET state = 'published', reviewed_by = %s, reviewed_at = now()
-                WHERE id = %s""",
-                (actor, revision_id),
             )
     return revision_id
 
