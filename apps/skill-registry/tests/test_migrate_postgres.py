@@ -13,7 +13,18 @@ import pytest
 from skill_registry.config import MigrationSettings
 from skill_registry.migrate import run_migration
 from skill_registry.repository import PostgresSkillRegistryRepository, RepositoryConnection
-from skill_registry.schema import PREPARE_SCHEMA_SQL, SCHEMA_VERSION_1_SQL
+from skill_registry.schema import (
+    PREPARE_SCHEMA_SQL,
+    SCHEMA_VERSION_1_SQL,
+    SCHEMA_VERSION_2_SQL,
+    SCHEMA_VERSION_3_SQL,
+    SCHEMA_VERSION_4_SQL,
+    SCHEMA_VERSION_5_SQL,
+    SCHEMA_VERSION_6_SQL,
+    SCHEMA_VERSION_7_SQL,
+    SCHEMA_VERSION_8_SQL,
+    SCHEMA_VERSION_9_SQL,
+)
 from skill_registry.types import ArchiveSkill, RegistryError
 
 
@@ -460,6 +471,7 @@ async def test_real_registry_migration_and_role_boundary() -> None:
             (7,),
             (8,),
             (9,),
+            (10,),
         ]
 
         await owner.execute(
@@ -882,6 +894,112 @@ async def test_failed_replacement_keeps_authoritative_revision_until_activation_
             ),
         )
         assert (await repository.list_skills())[0].revision_id == replacement_revision_id
+    finally:
+        await runtime.close()
+        await manager.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_manager_sql_cannot_archive_an_active_skill() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    owner = await _connect(urls["test"])
+    manager = await _connect(urls["manager"])
+    runtime = await _connect(urls["runtime"])
+    actor_id = uuid4()
+    try:
+        skill_id, revision_id = await _create_published_revision(manager, actor_id=actor_id)
+        candidate_id = await _seed_candidate_set(
+            owner,
+            actor_id=actor_id,
+            revisions=((skill_id, revision_id),),
+        )
+        await runtime.execute(
+            _activate_sql(),
+            ("maduoduo", candidate_id, 0, actor_id, uuid4(), uuid4(), "4" * 64),
+        )
+
+        with pytest.raises(psycopg.errors.CheckViolation):
+            await manager.execute(
+                "UPDATE skill_registry.skills SET archived_at = now() WHERE id = %s",
+                (skill_id,),
+            )
+
+        archived = await manager.execute(
+            "SELECT archived_at IS NOT NULL FROM skill_registry.skills WHERE id = %s",
+            (skill_id,),
+        )
+        assert await archived.fetchone() == (False,)
+    finally:
+        await runtime.close()
+        await manager.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_manager_sql_cannot_replace_an_active_skill_revision_pointer() -> None:
+    urls = _validated_urls()
+    await _reset_registry_schema(urls)
+    owner = await _connect(urls["test"])
+    manager = await _connect(urls["manager"])
+    runtime = await _connect(urls["runtime"])
+    actor_id = uuid4()
+    try:
+        skill_id, active_revision_id = await _create_published_revision(
+            manager,
+            actor_id=actor_id,
+        )
+        candidate_id = await _seed_candidate_set(
+            owner,
+            actor_id=actor_id,
+            revisions=((skill_id, active_revision_id),),
+        )
+        await runtime.execute(
+            _activate_sql(),
+            ("maduoduo", candidate_id, 0, actor_id, uuid4(), uuid4(), "5" * 64),
+        )
+
+        replacement_revision_id = uuid4()
+        async with manager.transaction():
+            await manager.execute(
+                """INSERT INTO skill_registry.skill_revisions (
+                  id, skill_id, revision_no, state, source_type, manifest,
+                  findings, created_by
+                ) VALUES (
+                  %s, %s, 2, 'published', 'upload',
+                  (SELECT manifest FROM skill_registry.skill_revisions WHERE id = %s),
+                  '[]'::jsonb, %s
+                )""",
+                (replacement_revision_id, skill_id, active_revision_id, actor_id),
+            )
+            await manager.execute(
+                """INSERT INTO skill_registry.skill_revision_artifacts (
+                  revision_id, skill_id, artifact_sha256, compressed_size,
+                  extracted_size, file_count, archive_bytes
+                ) VALUES (%s, %s, %s, 1, 1, 1, %s)""",
+                (replacement_revision_id, skill_id, "d" * 64, b"x"),
+            )
+
+        with pytest.raises(psycopg.errors.CheckViolation):
+            await manager.execute(
+                "UPDATE skill_registry.skills SET current_revision_id = %s WHERE id = %s",
+                (replacement_revision_id, skill_id),
+            )
+
+        current = await manager.execute(
+            "SELECT current_revision_id FROM skill_registry.skills WHERE id = %s",
+            (skill_id,),
+        )
+        assert await current.fetchone() == (active_revision_id,)
     finally:
         await runtime.close()
         await manager.close()
@@ -1544,7 +1662,7 @@ async def test_backup_skill_set_access_is_read_only_and_cannot_execute_functions
     bool(MISSING_ENVIRONMENT),
     reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
 )
-async def test_real_registry_migrates_v1_history_to_v9_without_review_storage() -> None:
+async def test_real_registry_migrates_v1_history_to_v10_without_review_storage() -> None:
     urls = _validated_urls()
     owner = await _connect(urls["test"])
     migrator = await _connect(urls["migrator"])
@@ -1603,6 +1721,7 @@ async def test_real_registry_migrates_v1_history_to_v9_without_review_storage() 
             (7,),
             (8,),
             (9,),
+            (10,),
         ]
         columns = await owner.execute(
             """SELECT column_name
@@ -1622,6 +1741,130 @@ async def test_real_registry_migrates_v1_history_to_v9_without_review_storage() 
         )
         assert await evidence.fetchone() is None
     finally:
+        await manager.close()
+        await migrator.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_real_registry_migrates_v6_archived_skill_to_v10() -> None:
+    urls = _validated_urls()
+    owner = await _connect(urls["test"])
+    migrator = await _connect(urls["migrator"])
+    manager = await _connect(urls["manager"])
+    try:
+        await owner.execute("DROP SCHEMA IF EXISTS skill_registry CASCADE")
+        await owner.execute(
+            "CREATE SCHEMA skill_registry AUTHORIZATION ai_agent_skill_registry_migrator"
+        )
+        await migrator.execute(PREPARE_SCHEMA_SQL)
+        for migration in (
+            SCHEMA_VERSION_1_SQL,
+            SCHEMA_VERSION_2_SQL,
+            SCHEMA_VERSION_3_SQL,
+            SCHEMA_VERSION_4_SQL,
+            SCHEMA_VERSION_5_SQL,
+            SCHEMA_VERSION_6_SQL,
+        ):
+            await migrator.execute(migration)
+
+        actor_id = uuid4()
+        skill_id = uuid4()
+        revision_id = uuid4()
+        async with manager.transaction():
+            await _insert_skill_revision(
+                manager,
+                skill_id=skill_id,
+                revision_id=revision_id,
+                actor_id=actor_id,
+                slug=f"v6-archived-{uuid4().hex[:12]}",
+                nonce=uuid4(),
+                historical_v1=True,
+            )
+            await manager.execute(
+                "UPDATE skill_registry.skill_revisions SET state = 'archived' WHERE id = %s",
+                (revision_id,),
+            )
+            await manager.execute(
+                "UPDATE skill_registry.skills SET archived_at = now() WHERE id = %s",
+                (skill_id,),
+            )
+
+        settings = MigrationSettings.model_validate({"database_url": urls["migrator"]})
+        await run_migration(settings)
+
+        migrated = await owner.execute(
+            """SELECT current_revision_id, archived_at IS NOT NULL
+            FROM skill_registry.skills WHERE id = %s""",
+            (skill_id,),
+        )
+        assert await migrated.fetchone() == (revision_id, True)
+    finally:
+        await manager.close()
+        await migrator.close()
+        await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    bool(MISSING_ENVIRONMENT),
+    reason=f"missing required registry PostgreSQL DSNs: {', '.join(MISSING_ENVIRONMENT)}",
+)
+async def test_real_registry_rejects_migration_with_archived_active_skill() -> None:
+    urls = _validated_urls()
+    owner = await _connect(urls["test"])
+    migrator = await _connect(urls["migrator"])
+    manager = await _connect(urls["manager"])
+    runtime = await _connect(urls["runtime"])
+    actor_id = uuid4()
+    try:
+        await owner.execute("DROP SCHEMA IF EXISTS skill_registry CASCADE")
+        await owner.execute(
+            "CREATE SCHEMA skill_registry AUTHORIZATION ai_agent_skill_registry_migrator"
+        )
+        await migrator.execute(PREPARE_SCHEMA_SQL)
+        for migration in (
+            SCHEMA_VERSION_1_SQL,
+            SCHEMA_VERSION_2_SQL,
+            SCHEMA_VERSION_3_SQL,
+            SCHEMA_VERSION_4_SQL,
+            SCHEMA_VERSION_5_SQL,
+            SCHEMA_VERSION_6_SQL,
+            SCHEMA_VERSION_7_SQL,
+            SCHEMA_VERSION_8_SQL,
+            SCHEMA_VERSION_9_SQL,
+        ):
+            await migrator.execute(migration)
+
+        skill_id, revision_id = await _create_published_revision(manager, actor_id=actor_id)
+        candidate_id = await _seed_candidate_set(
+            owner,
+            actor_id=actor_id,
+            revisions=((skill_id, revision_id),),
+        )
+        await runtime.execute(
+            _activate_sql(),
+            ("maduoduo", candidate_id, 0, actor_id, uuid4(), uuid4(), "6" * 64),
+        )
+        await manager.execute(
+            "UPDATE skill_registry.skills SET archived_at = now() WHERE id = %s",
+            (skill_id,),
+        )
+
+        settings = MigrationSettings.model_validate({"database_url": urls["migrator"]})
+        with pytest.raises(RuntimeError, match="verification failed"):
+            await run_migration(settings)
+
+        versions = await owner.execute(
+            "SELECT version FROM skill_registry.schema_versions ORDER BY version"
+        )
+        assert await versions.fetchall() == [(version,) for version in range(1, 10)]
+    finally:
+        await runtime.close()
         await manager.close()
         await migrator.close()
         await owner.close()

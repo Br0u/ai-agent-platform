@@ -8,7 +8,7 @@ from skill_registry.skill_set_schema import (
     SKILL_SET_TABLE_NAMES,
 )
 
-SKILL_REGISTRY_SCHEMA_VERSION = 9
+SKILL_REGISTRY_SCHEMA_VERSION = 10
 
 SKILL_TABLE_NAMES = frozenset(
     {
@@ -108,6 +108,34 @@ _PG18_REVISION_UPDATE_FUNCTION = (
     "NEW.state <> 'archived' THEN RAISE EXCEPTION 'invalid skill "
     "revision state transition' USING ERRCODE = '23514'; END IF; RETURN NEW; END; $function$"
 )
+_PG18_SKILL_UPDATE_FUNCTION = (
+    "CREATE OR REPLACE FUNCTION skill_registry.guard_skill_update() RETURNS trigger "
+    "LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'pg_catalog', 'skill_registry' "
+    "AS $function$ "
+    "BEGIN IF NEW.id IS DISTINCT FROM OLD.id OR NEW.slug IS DISTINCT FROM OLD.slug OR "
+    "NEW.created_by IS DISTINCT FROM OLD.created_by OR NEW.created_at IS DISTINCT FROM "
+    "OLD.created_at THEN RAISE EXCEPTION 'skill identity fields are immutable' USING "
+    "ERRCODE = '42501'; END IF; IF NEW.archived_at IS DISTINCT FROM OLD.archived_at AND "
+    "(OLD.archived_at IS NOT NULL OR NEW.archived_at IS NULL) THEN RAISE EXCEPTION "
+    "'skill may be archived only once' USING ERRCODE = '42501'; END IF; IF "
+    "OLD.archived_at IS NOT NULL AND OLD.current_revision_id IS NOT NULL AND "
+    "NEW.current_revision_id IS DISTINCT FROM OLD.current_revision_id THEN RAISE "
+    "EXCEPTION 'archived skill is immutable' USING ERRCODE = '42501'; END IF; IF "
+    "session_user = 'ai_agent_skill_registry_manager' AND OLD.archived_at IS NULL AND "
+    "NEW.archived_at IS NOT NULL AND EXISTS ( SELECT 1 FROM "
+    "skill_registry.active_agent_skill_sets AS active_set JOIN "
+    "skill_registry.agent_skill_set_items AS active_item ON active_item.set_id = "
+    "active_set.active_set_id WHERE active_item.skill_id = OLD.id ) THEN RAISE EXCEPTION "
+    "'active skill cannot be archived' USING ERRCODE = '23514'; END IF; IF session_user = "
+    "'ai_agent_skill_registry_manager' AND NEW.current_revision_id IS DISTINCT FROM "
+    "OLD.current_revision_id AND EXISTS ( SELECT 1 FROM "
+    "skill_registry.active_agent_skill_sets AS active_set JOIN "
+    "skill_registry.agent_skill_set_items AS active_item ON active_item.set_id = "
+    "active_set.active_set_id WHERE active_item.skill_id = OLD.id AND "
+    "active_item.skill_revision_id IS DISTINCT FROM NEW.current_revision_id ) THEN RAISE "
+    "EXCEPTION 'active skill current revision must match runtime set' USING ERRCODE = "
+    "'23514'; END IF; RETURN NEW; END; $function$"
+)
 
 EXPECTED_REGISTRY_CONSTRAINTS = frozenset(
     {
@@ -133,6 +161,7 @@ EXPECTED_REGISTRY_CONSTRAINTS = frozenset(
 EXPECTED_TRIGGER_GUARDS = frozenset(
     {
         ("guard_revision_update", _PG18_REVISION_UPDATE_FUNCTION),
+        ("guard_skill_update", _PG18_SKILL_UPDATE_FUNCTION),
         ("validate_skill_findings", _PG18_FINDINGS_FUNCTION),
     }
 )
@@ -154,7 +183,6 @@ EXPECTED_FUNCTION_BOUNDARY = (
             "deny_append_only_mutation",
             "guard_revision_insert",
             "guard_revision_update",
-            "guard_skill_update",
             "reject_archived_skill_activation",
             "reject_archived_skill_set_item",
             "stamp_control_event_transaction",
@@ -164,6 +192,19 @@ EXPECTED_FUNCTION_BOUNDARY = (
             "validate_agent_skill_set_contents",
         }
     )
+    | {
+        (
+            "guard_skill_update",
+            "ai_agent_skill_registry_migrator",
+            0,
+            "trigger",
+            "plpgsql",
+            True,
+            "search_path=pg_catalog, skill_registry",
+            True,
+            False,
+        )
+    }
     | {
         (
             "validate_skill_findings",
@@ -1285,6 +1326,7 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
   IF OLD.archived_at IS NOT NULL
+    AND OLD.current_revision_id IS NOT NULL
     AND NEW.current_revision_id IS DISTINCT FROM OLD.current_revision_id THEN
     RAISE EXCEPTION 'archived skill is immutable'
       USING ERRCODE = '42501';
@@ -1358,6 +1400,71 @@ GRANT UPDATE (current_revision_id)
 
 INSERT INTO skill_registry.schema_versions (version)
 VALUES (9)
+ON CONFLICT (version) DO NOTHING;
+"""
+
+SCHEMA_VERSION_10_SQL = """
+CREATE OR REPLACE FUNCTION skill_registry.guard_skill_update()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, skill_registry
+AS $$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id
+    OR NEW.slug IS DISTINCT FROM OLD.slug
+    OR NEW.created_by IS DISTINCT FROM OLD.created_by
+    OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'skill identity fields are immutable'
+      USING ERRCODE = '42501';
+  END IF;
+  IF NEW.archived_at IS DISTINCT FROM OLD.archived_at
+    AND (OLD.archived_at IS NOT NULL OR NEW.archived_at IS NULL) THEN
+    RAISE EXCEPTION 'skill may be archived only once'
+      USING ERRCODE = '42501';
+  END IF;
+  IF OLD.archived_at IS NOT NULL
+    AND OLD.current_revision_id IS NOT NULL
+    AND NEW.current_revision_id IS DISTINCT FROM OLD.current_revision_id THEN
+    RAISE EXCEPTION 'archived skill is immutable'
+      USING ERRCODE = '42501';
+  END IF;
+  IF session_user = 'ai_agent_skill_registry_manager'
+    AND OLD.archived_at IS NULL
+    AND NEW.archived_at IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM skill_registry.active_agent_skill_sets AS active_set
+      JOIN skill_registry.agent_skill_set_items AS active_item
+        ON active_item.set_id = active_set.active_set_id
+      WHERE active_item.skill_id = OLD.id
+    ) THEN
+    RAISE EXCEPTION 'active skill cannot be archived'
+      USING ERRCODE = '23514';
+  END IF;
+  IF session_user = 'ai_agent_skill_registry_manager'
+    AND NEW.current_revision_id IS DISTINCT FROM OLD.current_revision_id
+    AND EXISTS (
+      SELECT 1
+      FROM skill_registry.active_agent_skill_sets AS active_set
+      JOIN skill_registry.agent_skill_set_items AS active_item
+        ON active_item.set_id = active_set.active_set_id
+      WHERE active_item.skill_id = OLD.id
+        AND active_item.skill_revision_id IS DISTINCT FROM NEW.current_revision_id
+    ) THEN
+    RAISE EXCEPTION 'active skill current revision must match runtime set'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+ALTER FUNCTION skill_registry.guard_skill_update()
+  OWNER TO ai_agent_skill_registry_migrator;
+REVOKE ALL ON FUNCTION skill_registry.guard_skill_update() FROM PUBLIC;
+
+INSERT INTO skill_registry.schema_versions (version)
+VALUES (10)
 ON CONFLICT (version) DO NOTHING;
 """
 
@@ -1618,10 +1725,31 @@ JOIN pg_namespace AS function_schema ON function_schema.oid = function.pronamesp
 WHERE function_schema.nspname = 'skill_registry'
   AND function.proname IN (
     'guard_revision_update',
+    'guard_skill_update',
     'require_revision_review_event',
     'validate_skill_findings'
   )
 ORDER BY function.proname
+"""
+
+VERIFY_RUNTIME_DATA_INVARIANTS_SQL = """SELECT
+  active_set.agent_id::text,
+  active_item.skill_id,
+  active_item.skill_revision_id,
+  skill.current_revision_id,
+  skill.archived_at IS NOT NULL,
+  revision.state::text
+FROM skill_registry.active_agent_skill_sets AS active_set
+JOIN skill_registry.agent_skill_set_items AS active_item
+  ON active_item.set_id = active_set.active_set_id
+JOIN skill_registry.skills AS skill ON skill.id = active_item.skill_id
+JOIN skill_registry.skill_revisions AS revision
+  ON revision.id = active_item.skill_revision_id
+  AND revision.skill_id = active_item.skill_id
+WHERE skill.archived_at IS NOT NULL
+  OR revision.state <> 'published'
+  OR skill.current_revision_id IS DISTINCT FROM active_item.skill_revision_id
+ORDER BY active_set.agent_id, active_item.skill_id
 """
 
 VERIFY_FUNCTION_BOUNDARY_SQL = """SELECT
