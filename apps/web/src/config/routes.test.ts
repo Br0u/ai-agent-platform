@@ -6,6 +6,7 @@ const requiredRoutes = [
   "/product",
   "/product/[slug]",
   "/solutions",
+  "/solutions/[slug]",
   "/releases",
   "/releases/[version]",
   "/roadmap",
@@ -23,6 +24,7 @@ const requiredRoutes = [
   "/cases",
   "/pricing",
   "/assistant",
+  "/trial",
   "/contact",
   "/login",
   "/register",
@@ -113,6 +115,21 @@ describe("routeRegistry", () => {
     expect(matchRoute("/assistant")).toEqual({
       path: "/assistant",
       title: "AI 助理",
+      group: "public",
+      status: "live",
+    });
+  });
+
+  it("registers homepage conversion routes as live public routes", () => {
+    expect(matchRoute("/solutions/knowledge-service")).toEqual({
+      path: "/solutions/[slug]",
+      title: "解决方案详情",
+      group: "public",
+      status: "live",
+    });
+    expect(matchRoute("/trial")).toEqual({
+      path: "/trial",
+      title: "申请体验",
       group: "public",
       status: "live",
     });
