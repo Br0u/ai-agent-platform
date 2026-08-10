@@ -44,6 +44,9 @@ require_full_environment() {
 }
 
 run_web_gate() {
+  if [ -n "${TEST_DATABASE_URL:-}" ]; then
+    DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @ai-agent-platform/database db:migrate
+  fi
   pnpm --filter @ai-agent-platform/web test
   pnpm --filter @ai-agent-platform/document-content test
   pnpm --filter @ai-agent-platform/integrations test

@@ -3288,6 +3288,45 @@ secrets:
     expect(runner).toContain("ROLE_BOUNDARY_DATABASE_URL");
   });
 
+  it("migrates the isolated Web integration database before running Web tests", () => {
+    const sandbox = mkdtempSync(path.join(tmpdir(), "ci-web-gate-"));
+    const repo = path.join(sandbox, "repo");
+    const bin = path.join(sandbox, "bin");
+    const log = path.join(sandbox, "commands.log");
+    const runner = path.join(repo, "docs/testing/run-ci-gate.sh");
+    mkdirSync(path.dirname(runner), { recursive: true });
+    mkdirSync(bin, { recursive: true });
+    copyFileSync(path.join(root, "docs/testing/run-ci-gate.sh"), runner);
+    for (const command of ["node", "pnpm"]) {
+      writeFileSync(
+        path.join(bin, command),
+        `#!/bin/sh\nprintf '%s|%s|%s\\n' "\${DATABASE_URL:-}" "${command}" "$*" >>"$FAKE_COMMAND_LOG"\n`,
+        { mode: 0o755 },
+      );
+    }
+
+    try {
+      const testDatabaseUrl =
+        "postgresql://owner@db/ai_agent_platform_identity_test_integration";
+      const result = spawnSync("/bin/sh", [runner, "web"], {
+        cwd: repo,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          FAKE_COMMAND_LOG: log,
+          TEST_DATABASE_URL: testDatabaseUrl,
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(log, "utf8").trim().split("\n")[0]).toBe(
+        `${testDatabaseUrl}|pnpm|--filter @ai-agent-platform/database db:migrate`,
+      );
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
   it("runs the complete Skill Registry CI contract with isolated credentials", () => {
     const workflow = readCiContract();
     const packageScripts = JSON.parse(read("package.json")) as {
