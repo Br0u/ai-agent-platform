@@ -41,7 +41,7 @@
 | 3 | `key-products` | `/product/key-products` | 独立产品中心；是否保留独立路由需确认 | 需确认 |
 | 4 | `mdd-2` | `/product/code-agent` | 映射现有码多多路由 | 直接迁移 |
 | 5 | `aippt` | `/product/aippt` | 新增 AI PPT 产品页 | 需确认 |
-| 6 | `aishrek` | `/product/aishrek` | 新增 AISHREK 产品页 | 需确认 |
+| 6 | `aishrek` | `/product/aishrek` | 新增 AISHREK 产品页 | 直接迁移 |
 | 7 | `model-optimization` | `/product/model-optimization` | 模型优化总览 | 需确认 |
 | 8 | `model-task-center` | `/product/model-task-center` | 模型任务中心 | 需确认 |
 | 9 | `model` | `/product/model-engineering` | 模型工程总览；使用语义化 slug | 需确认 |
@@ -73,12 +73,12 @@
 | 35 | `skills-office` | `/product/skills/office` | 办公类技能 | 需确认 |
 | 36 | `governance` | `/product/governance` | 平台治理能力 | 需确认 |
 | 37 | `solutions` | `/solutions` | 解决方案总览 | 直接迁移 |
-| 38 | `solution-detail` | `/solutions/[slug]` | 原型占位壳不能上线；待具体方案内容确认后创建动态详情 | 保持现状 |
+| 38 | `solution-detail` | `/solutions/[slug]` | 使用原型动态方案内容创建独立详情路由；静态占位壳不能上线 | 直接迁移 |
 | 39 | `downloads` | `/downloads` | 替换当前 placeholder 前必须确认下载资源、权限和真实文件 | 需确认 |
 | 40 | `partners` | `/partners` | 原型只有“待确认”，当前不新增空正式页 | 保持现状 |
 | 41 | `pricing` | `/pricing` | 保留当前可用价格计算器，原型占位不覆盖 | 保持现状 |
 | 42 | `contact` | `/contact` | 保留价格查询参数能力，替换页面展示内容 | 直接迁移 |
-| 43 | `trial` | `/openlab#trial` 或 `/contact?intent=trial` | 两种正式入口只能选一个 | 需确认 |
+| 43 | `trial` | `/trial` | 保留原型独立体验申请页面 | 直接迁移 |
 
 ## 公共组件清单
 
@@ -135,18 +135,18 @@
 - Read: `/Users/brou/Downloads/华鲲官网首期低保真原型.html:54-125`
 - No source edits
 
-- [ ] **Step 1: 确认四个首页路由决定**
+- [x] **Step 1: 确认四个首页路由决定**
 
 在实施前由用户明确确认：
 
 1. AISHREK 使用 `/product/aishrek`。
-2. 六个首页方案卡是进入 `/solutions/[slug]` 详情，还是先映射到 `/solutions` 已有分类。
-3. “申请体验”进入 `/openlab#trial` 还是 `/contact?intent=trial`。
-4. 原型中的“商务合作邮箱待确认”“客服热线待确认”是否允许原样显示，还是在正式发布前隐藏整个字段。
+2. 六个首页方案卡进入 `/solutions/[slug]` 独立详情。
+3. “申请体验”保留独立 `/trial` 页面。
+4. “商务合作邮箱待确认”“客服热线待确认”在开发预览原样保留，但正式发布前必须补齐。
 
 Expected: 四项均有明确答案；没有答案就不开始写首页代码。
 
-- [ ] **Step 2: 创建专用 worktree**
+- [x] **Step 2: 创建专用 worktree**
 
 ```bash
 git worktree add .worktrees/huakun-prototype-migration -b brou/huakun-prototype-migration main
@@ -154,7 +154,7 @@ git worktree add .worktrees/huakun-prototype-migration -b brou/huakun-prototype-
 
 Expected: 新 worktree 位于 `.worktrees/huakun-prototype-migration`；`.worktrees/` 已由仓库 `.gitignore` 忽略，当前工作区保持不变。
 
-- [ ] **Step 3: 记录执行基线**
+- [x] **Step 3: 记录执行基线**
 
 ```bash
 git status --short --branch
@@ -169,7 +169,7 @@ Expected: worktree 初始状态干净；现有首页、reveal 和 shell 测试�
 - Modify: `apps/web/src/components/home-content.test.ts`
 - Modify: `apps/web/src/components/home-content.ts`
 
-- [ ] **Step 1: 先把现有内容测试改成新合同**
+- [x] **Step 1: 先把现有内容测试改成新合同**
 
 测试必须完整覆盖以下结构，所有文本逐字取自原型第 92–122 行：
 
@@ -238,7 +238,7 @@ expect(homeContent.contact).toMatchObject({
 
 CTA 的 `href` 另做精确断言，值使用 Task 1 已确认的正式路由。
 
-- [ ] **Step 2: 运行测试并确认 RED**
+- [x] **Step 2: 运行测试并确认 RED**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/components/home-content.test.ts
@@ -246,7 +246,7 @@ pnpm --filter @ai-agent-platform/web exec vitest run src/components/home-content
 
 Expected: FAIL，因为当前 `home-content.ts` 仍是旧六区内容结构。
 
-- [ ] **Step 3: 用最小类型化对象替换旧内容**
+- [x] **Step 3: 用最小类型化对象替换旧内容**
 
 `home-content.ts` 只导出页面实际使用的数据：
 
@@ -262,7 +262,7 @@ export const homeContent = {
 
 删除旧首页不再使用的 `capabilities`、`platformLayers`、`enterpriseProofs`、`solutions`、`resources` 导出，不做兼容别名。
 
-- [ ] **Step 4: 运行测试并确认 GREEN**
+- [x] **Step 4: 运行测试并确认 GREEN**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/components/home-content.test.ts
@@ -270,7 +270,7 @@ pnpm --filter @ai-agent-platform/web exec vitest run src/components/home-content
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交内容合同**
+- [x] **Step 5: 提交内容合同**
 
 ```bash
 git add apps/web/src/components/home-content.ts apps/web/src/components/home-content.test.ts
