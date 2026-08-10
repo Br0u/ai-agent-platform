@@ -79,7 +79,7 @@ describe("prototype platform center content contract", () => {
     expect(center?.sections[1]?.cards).toHaveLength(6);
     expect(
       center?.sections[2]?.cards?.map((card) => card.actions?.[0]?.href),
-    ).toStrictEqual(["/product/knowledge-agent", "/product/applications"]);
+    ).toStrictEqual(["/product/agent-knowledge", "/product/applications"]);
     expect(center?.sections[3]?.cards).toHaveLength(2);
     expect(center?.business).toBeUndefined();
     expect(center?.cta?.actions).toHaveLength(2);
@@ -99,6 +99,16 @@ describe("prototype platform center content contract", () => {
       ],
     );
     expect(center?.sections[2]?.cards).toHaveLength(2);
+    expect(
+      center?.sections[1]?.cards?.map((card) =>
+        card.actions?.map((action) => action.href),
+      ),
+    ).toStrictEqual([
+      ["/product/agent-knowledge", "/product/knowledge"],
+      ["/product/data-agent", "/product/knowledge-metrics"],
+      ["/product/agent-video"],
+      ["/product/agent-orchestration"],
+    ]);
     expect(center?.business?.scenes).toHaveLength(3);
     expect(center?.cta?.actions).toHaveLength(2);
   });

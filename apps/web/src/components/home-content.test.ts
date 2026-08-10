@@ -48,21 +48,21 @@ describe("prototype homepage content contract", () => {
           title: "知识问答",
           description: "预置问答模板，关联企业知识库即配即用，回答有据可查。",
           cta: "了解知识问答 →",
-          href: "/product/knowledge-agent#agent-k-qa",
+          href: "/product/agent-knowledge#agent-k-qa",
         },
         {
           badge: "理",
           title: "知识加工",
           description: "预置加工模板，上传资料即整理成可用内容，快速沉淀。",
           cta: "了解知识加工 →",
-          href: "/product/knowledge-agent#agent-k-processing",
+          href: "/product/agent-knowledge#agent-k-processing",
         },
         {
           badge: "谱",
           title: "知识图谱",
           description: "预置图谱模板，关联知识库生成图谱，即问即答。",
           cta: "了解知识图谱 →",
-          href: "/product/knowledge-agent#agent-k-graph",
+          href: "/product/agent-knowledge#agent-k-graph",
         },
         {
           badge: "数",
@@ -76,7 +76,7 @@ describe("prototype homepage content contract", () => {
           title: "视频检索",
           description: "预置检索模板，接入视频即可检索与实时预警。",
           cta: "了解视频检索 →",
-          href: "/product/video-agent#agent-video-search",
+          href: "/product/agent-video#agent-video-search",
         },
       ],
     });

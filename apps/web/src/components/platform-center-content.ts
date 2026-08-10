@@ -814,7 +814,7 @@ const platformCenters = [
             actions: [
               {
                 label: "查看知识智能体 →",
-                href: "/product/knowledge-agent",
+                href: "/product/agent-knowledge",
               },
             ],
           },
@@ -938,7 +938,7 @@ const platformCenters = [
             actions: [
               {
                 label: "进入企业知识助手 →",
-                href: "/product/knowledge-agent",
+                href: "/product/agent-knowledge",
               },
               {
                 label: "企业知识库底座 →",
@@ -982,7 +982,7 @@ const platformCenters = [
             actions: [
               {
                 label: "进入视频理解助手 →",
-                href: "/product/video-agent",
+                href: "/product/agent-video",
               },
             ],
           },
