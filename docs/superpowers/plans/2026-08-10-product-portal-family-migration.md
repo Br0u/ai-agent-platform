@@ -317,3 +317,5 @@ git commit -m "test(products): 验收原型产品页族"
 - [x] **Step 5: 下一批进入元启平台子中心**
 
 下一份计划从原型 `model → knowledge → agents → applications → skills → coding → governance` 开始；先检查现有 `/product/[slug]` 与独立旧页，再决定是使用显式页面还是类型化动态渲染。
+
+已由 `2026-08-10-platform-center-family-migration.md` 完成七个中心总览页；后续进入各中心子页面，现有独立旧页继续保留到对应页面逐一核对。

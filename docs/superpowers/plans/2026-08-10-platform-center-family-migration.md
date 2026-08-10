@@ -49,7 +49,7 @@
 - Create: `apps/web/src/components/platform-center-content.test.ts`
 - Create: `apps/web/src/components/platform-center-content.ts`
 
-- [ ] **Step 1: 先写内容失败测试**
+- [x] **Step 1: 先写内容失败测试**
 
 至少锁定七个 slug 与 Hero 原文：
 
@@ -90,7 +90,7 @@ expect(getPlatformCenter("unknown")).toBeUndefined();
 
 每页同时锁定原型实际存在的介绍、问题或能力卡、流程、业务价值、子页链接、素材槽位和 CTA 数量；可选区块不存在时保持 `undefined`，不填空对象。
 
-- [ ] **Step 2: 运行测试并确认 RED**
+- [x] **Step 2: 运行测试并确认 RED**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/components/platform-center-content.test.ts
@@ -98,13 +98,13 @@ pnpm --filter @ai-agent-platform/web exec vitest run src/components/platform-cen
 
 Expected: FAIL，内容模块尚不存在。
 
-- [ ] **Step 3: 写最小类型化内容模块**
+- [x] **Step 3: 写最小类型化内容模块**
 
 只建一个 `PlatformCenter` 类型，允许原型里确实缺失的区块为可选字段；不得创建插件系统、页面 DSL 或旧 `product-content.ts` 兼容适配器。所有 `data-page` 只转换为本计划已确认的语义 URL。
 
-- [ ] **Step 4: 运行内容测试并确认 GREEN**
+- [x] **Step 4: 运行内容测试并确认 GREEN**
 
-- [ ] **Step 5: 提交内容合同**
+- [x] **Step 5: 提交内容合同**
 
 ```bash
 git add apps/web/src/components/platform-center-content.ts apps/web/src/components/platform-center-content.test.ts
@@ -126,7 +126,7 @@ git commit -m "feat(centers): 锁定七个中心原型内容"
 - Create: `apps/web/src/app/product/coding/page.tsx`
 - Create: `apps/web/src/app/product/governance/page.tsx`
 
-- [ ] **Step 1: 先更新路由失败测试**
+- [x] **Step 1: 先更新路由失败测试**
 
 在 `/product/[slug]` 前加入七个精确路由并断言：
 
@@ -148,19 +148,19 @@ expect(matchRoute("/product/model-training")).toMatchObject({
 });
 ```
 
-- [ ] **Step 2: 运行路由测试并确认 RED**
+- [x] **Step 2: 运行路由测试并确认 RED**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/config/routes.test.ts src/config/route-files.test.ts
 ```
 
-- [ ] **Step 3: 注册路由并创建最小页面入口**
+- [x] **Step 3: 注册路由并创建最小页面入口**
 
 七个 `page.tsx` 先从 `getPlatformCenter(slug)` 读取原型标题与 metadata；不得复制文案到页面文件。
 
-- [ ] **Step 4: 运行路由测试并确认 GREEN**
+- [x] **Step 4: 运行路由测试并确认 GREEN**
 
-- [ ] **Step 5: 提交路由合同**
+- [x] **Step 5: 提交路由合同**
 
 ```bash
 git add apps/web/src/config/routes.ts apps/web/src/config/routes.test.ts apps/web/src/app/product/model apps/web/src/app/product/knowledge apps/web/src/app/product/agents apps/web/src/app/product/applications apps/web/src/app/product/skills apps/web/src/app/product/coding apps/web/src/app/product/governance
@@ -185,7 +185,7 @@ git commit -m "feat(centers): 注册七个中心路由"
 - Modify: `apps/web/src/app/product/coding/page.tsx`
 - Modify: `apps/web/src/app/product/governance/page.tsx`
 
-- [ ] **Step 1: 写七页与未知 slug 失败测试**
+- [x] **Step 1: 写七页与未知 slug 失败测试**
 
 每个中心必须覆盖：
 
@@ -196,21 +196,21 @@ git commit -m "feat(centers): 注册七个中心路由"
 - 页面内没有 `.floating-assistant`。
 - 未知 slug 调用 `notFound()`，不回退到任意中心。
 
-- [ ] **Step 2: 运行测试并确认 RED**
+- [x] **Step 2: 运行测试并确认 RED**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/components/platform-center-detail.test.tsx
 ```
 
-- [ ] **Step 3: 实现最小共享服务端渲染器**
+- [x] **Step 3: 实现最小共享服务端渲染器**
 
 共享 Hero、Section heading、卡片、流程、场景与 CTA 这些七页原型中已存在的结构。使用普通条件渲染处理可选区块；不要再创建通用 Portal DSL，也不要给没有某区块的页面补文案。
 
-- [ ] **Step 4: 扩展现有产品门户 CSS**
+- [x] **Step 4: 扩展现有产品门户 CSS**
 
 沿用 `product-portal.css` 的 token、按钮、卡片和素材槽位；只添加七中心需要的布局类。覆盖 900px、700px、无 `backdrop-filter` 与 `prefers-reduced-motion`。
 
-- [ ] **Step 5: 替换七个最小页面入口并生成 metadata**
+- [x] **Step 5: 替换七个最小页面入口并生成 metadata**
 
 每页只传静态 slug：
 
@@ -220,7 +220,7 @@ export default function ModelCenterPage() {
 }
 ```
 
-- [ ] **Step 6: 运行内容、组件、路由、类型和 lint 测试**
+- [x] **Step 6: 运行内容、组件、路由、类型和 lint 测试**
 
 ```bash
 pnpm --filter @ai-agent-platform/web exec vitest run src/components/platform-center-content.test.ts src/components/platform-center-detail.test.tsx src/config/routes.test.ts src/config/route-files.test.ts
@@ -228,7 +228,7 @@ pnpm --filter @ai-agent-platform/web typecheck
 pnpm --filter @ai-agent-platform/web lint
 ```
 
-- [ ] **Step 7: 提交七个中心页面**
+- [x] **Step 7: 提交七个中心页面**
 
 ```bash
 git add apps/web/src/components/platform-center-detail.tsx apps/web/src/components/platform-center-detail.test.tsx apps/web/src/components/product-portal.css apps/web/src/app/product/model/page.tsx apps/web/src/app/product/knowledge/page.tsx apps/web/src/app/product/agents/page.tsx apps/web/src/app/product/applications/page.tsx apps/web/src/app/product/skills/page.tsx apps/web/src/app/product/coding/page.tsx apps/web/src/app/product/governance/page.tsx
@@ -246,7 +246,7 @@ git commit -m "feat(centers): 迁移七个元启平台中心"
 - Modify: `docs/superpowers/plans/2026-08-10-platform-center-family-migration.md`
 - Modify: `docs/superpowers/plans/2026-08-10-product-portal-family-migration.md`
 
-- [ ] **Step 1: 写七页 E2E**
+- [x] **Step 1: 写七页 E2E**
 
 - 七个 URL 返回 200 并显示各自原型 H1。
 - 七页内部链接不得为 404 或 5xx；尚未迁移的子页允许是明确 scaffold，但不能报错。
@@ -254,7 +254,7 @@ git commit -m "feat(centers): 迁移七个元启平台中心"
 - 桌面与移动端仍只有 shell 的一个 `.floating-assistant__launcher`，可打开和关闭码多多。
 - 捕获 `/product/model`、`/product/agents`、`/product/coding` 的 1440 与 390 截图到 `artifacts/playwright/platform-centers/`。
 
-- [ ] **Step 2: 运行完整 Web 门槛**
+- [x] **Step 2: 运行完整 Web 门槛**
 
 ```bash
 pnpm --filter @ai-agent-platform/web test
@@ -267,7 +267,7 @@ pnpm --filter @ai-agent-platform/web exec playwright test e2e/platform-center-fa
 
 Expected: 所有必须门槛退出码为 0；Playwright 只允许声明过的 project-specific skip。若真实 `node:http` 测试因沙箱监听 `127.0.0.1` 报 `EPERM`，必须在获准的沙箱外重跑同一完整测试，不能改成跳过。
 
-- [ ] **Step 3: 检查边界与旧动态页仍在使用的依赖**
+- [x] **Step 3: 检查边界与旧动态页仍在使用的依赖**
 
 ```bash
 rg -n "product-content|ModuleDetailPage|module-detail" apps/web/src
@@ -278,7 +278,7 @@ git diff --name-only main...HEAD
 
 Expected: 七个新显式路由不再经过 `ModuleDetailPage`；旧模块仍有真实调用，因此本批不删除相关文件。
 
-- [ ] **Step 4: 标记计划并提交验收**
+- [x] **Step 4: 标记计划并提交验收**
 
 ```bash
 git add apps/web/e2e/platform-center-family.spec.ts docs/superpowers/plans/2026-08-10-platform-center-family-migration.md docs/superpowers/plans/2026-08-10-product-portal-family-migration.md
@@ -286,6 +286,6 @@ git diff --cached --check
 git commit -m "test(centers): 验收七个元启平台中心"
 ```
 
-- [ ] **Step 5: 下一批进入各中心子页面**
+- [x] **Step 5: 下一批进入各中心子页面**
 
 下一批按原型页面顺序迁移模型、知识、编程、智能体、应用、技能子页；先建立完整 URL 表并核对现有显式旧页，避免覆盖仍在使用的 `/product/knowledge-agent`、`/product/video-agent`、`/product/office-agent` 等页面。
