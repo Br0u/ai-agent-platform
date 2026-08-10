@@ -1266,6 +1266,33 @@ SCHEMA_VERSION_9_SQL = """
 ALTER TABLE skill_registry.skills
   ADD COLUMN current_revision_id uuid;
 
+CREATE OR REPLACE FUNCTION skill_registry.guard_skill_update()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, skill_registry
+AS $$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id
+    OR NEW.slug IS DISTINCT FROM OLD.slug
+    OR NEW.created_by IS DISTINCT FROM OLD.created_by
+    OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'skill identity fields are immutable'
+      USING ERRCODE = '42501';
+  END IF;
+  IF NEW.archived_at IS DISTINCT FROM OLD.archived_at
+    AND (OLD.archived_at IS NOT NULL OR NEW.archived_at IS NULL) THEN
+    RAISE EXCEPTION 'skill may be archived only once'
+      USING ERRCODE = '42501';
+  END IF;
+  IF OLD.archived_at IS NOT NULL
+    AND NEW.current_revision_id IS DISTINCT FROM OLD.current_revision_id THEN
+    RAISE EXCEPTION 'archived skill is immutable'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
 UPDATE skill_registry.skills AS skill
 SET current_revision_id = COALESCE(
   (
@@ -1299,33 +1326,6 @@ ALTER TABLE skill_registry.skills
     REFERENCES skill_registry.skill_revisions(id, skill_id)
     ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED;
-
-CREATE OR REPLACE FUNCTION skill_registry.guard_skill_update()
-RETURNS trigger
-LANGUAGE plpgsql
-SET search_path = pg_catalog, skill_registry
-AS $$
-BEGIN
-  IF NEW.id IS DISTINCT FROM OLD.id
-    OR NEW.slug IS DISTINCT FROM OLD.slug
-    OR NEW.created_by IS DISTINCT FROM OLD.created_by
-    OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
-    RAISE EXCEPTION 'skill identity fields are immutable'
-      USING ERRCODE = '42501';
-  END IF;
-  IF NEW.archived_at IS DISTINCT FROM OLD.archived_at
-    AND (OLD.archived_at IS NOT NULL OR NEW.archived_at IS NULL) THEN
-    RAISE EXCEPTION 'skill may be archived only once'
-      USING ERRCODE = '42501';
-  END IF;
-  IF OLD.archived_at IS NOT NULL
-    AND NEW.current_revision_id IS DISTINCT FROM OLD.current_revision_id THEN
-    RAISE EXCEPTION 'archived skill is immutable'
-      USING ERRCODE = '42501';
-  END IF;
-  RETURN NEW;
-END;
-$$;
 
 CREATE OR REPLACE FUNCTION skill_registry.sync_current_skill_revisions()
 RETURNS trigger

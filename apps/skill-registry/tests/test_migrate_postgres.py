@@ -201,6 +201,10 @@ async def _insert_skill_revision(
     state: str = "published",
     historical_v1: bool = False,
 ) -> None:
+    manifest = (
+        f'{{"name":"{slug}","description":"Integration test skill.",'
+        '"instructions":"","scripts":[],"references":[]}'
+    )
     if historical_v1:
         await connection.execute(
             "INSERT INTO skill_registry.skills (id, slug, created_by) VALUES (%s, %s, %s)",
@@ -216,8 +220,8 @@ async def _insert_skill_revision(
     await connection.execute(
         """INSERT INTO skill_registry.skill_revisions (
           id, skill_id, revision_no, state, source_type, manifest, findings, created_by
-        ) VALUES (%s, %s, 1, %s, 'upload', '{}'::jsonb, %s::jsonb, %s)""",
-        (revision_id, skill_id, state, findings, actor_id),
+        ) VALUES (%s, %s, 1, %s, 'upload', %s::jsonb, %s::jsonb, %s)""",
+        (revision_id, skill_id, state, manifest, findings, actor_id),
     )
     await connection.execute(
         """INSERT INTO skill_registry.skill_revision_artifacts (
@@ -672,7 +676,6 @@ async def test_real_registry_migration_and_role_boundary() -> None:
             "SET session_replication_role = replica",
         )
         await manager.execute("RESET search_path")
-        await owner.execute("DROP SCHEMA evil CASCADE")
 
         async with owner.transaction():
             await owner.execute("SET LOCAL ROLE ai_agent_backup")
