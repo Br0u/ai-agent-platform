@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
@@ -68,17 +68,15 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
 }
 
-async function cardGridColumnCount(page: Page) {
-  const grid = page
-    .locator(
-      "[data-testid='platform-center-section'] .platform-center-card-grid",
-    )
-    .first();
-  await expect(grid).toBeVisible();
-  return grid.evaluate(
-    (element) =>
-      getComputedStyle(element).gridTemplateColumns.split(" ").filter(Boolean)
-        .length,
+async function gridColumnCounts(page: Page, selector: string) {
+  const grids = page.locator(selector);
+  expect(await grids.count(), selector).toBeGreaterThan(0);
+  return grids.evaluateAll((elements) =>
+    elements.map(
+      (element) =>
+        getComputedStyle(element).gridTemplateColumns.split(" ").filter(Boolean)
+          .length,
+    ),
   );
 }
 
@@ -129,12 +127,25 @@ test("四个编程子页的内部链接和锚点均可达", async ({ page }) => 
     }
 
     for (const link of links.filter(({ hash }) => hash)) {
+      const expectedUrl = new URL(link.navigationTarget, page.url()).href;
       await gotoCodingPage(page, link.navigationTarget);
+      await expect(page).toHaveURL(expectedUrl);
       const targetExists = await page.evaluate((hash) => {
+        document
+          .querySelectorAll("[data-e2e-hash-target]")
+          .forEach((element) =>
+            element.removeAttribute("data-e2e-hash-target"),
+          );
         const id = decodeURIComponent(hash.slice(1));
-        return document.getElementById(id) !== null;
+        const target = document.getElementById(id);
+        if (!target) return false;
+        target.dataset.e2eHashTarget = "true";
+        return true;
       }, link.hash);
       expect(targetExists, `${path} → ${link.navigationTarget}`).toBe(true);
+      const target = page.locator('[data-e2e-hash-target="true"]');
+      await expect(target).toHaveCount(1);
+      await expect(target).toBeInViewport();
     }
   }
 });
@@ -153,15 +164,35 @@ test("四个编程子页在三档宽度保持高密度且内容完整", async ({
       await expectPageContent(page, title);
       await expectNoHorizontalOverflow(page);
 
-      const columnCount = await cardGridColumnCount(page);
+      const cardGridColumnCounts = await gridColumnCounts(
+        page,
+        ".platform-center-card-grid",
+      );
+      const demoFrameColumnCounts = await gridColumnCounts(
+        page,
+        ".platform-center-section--with-demo > .product-portal-frame",
+      );
       if (viewport.width === 1440) {
-        expect(
-          columnCount,
-          `${path} desktop card columns`,
-        ).toBeGreaterThanOrEqual(2);
+        for (const [index, columnCount] of cardGridColumnCounts.entries()) {
+          expect(
+            columnCount,
+            `${path} desktop card grid ${index + 1}`,
+          ).toBeGreaterThanOrEqual(2);
+        }
+        for (const [index, columnCount] of demoFrameColumnCounts.entries()) {
+          expect(
+            columnCount,
+            `${path} desktop demo frame ${index + 1}`,
+          ).toBeGreaterThanOrEqual(2);
+        }
       }
       if (viewport.width === 390) {
-        expect(columnCount, `${path} mobile card columns`).toBe(1);
+        for (const [index, columnCount] of cardGridColumnCounts.entries()) {
+          expect(columnCount, `${path} mobile card grid ${index + 1}`).toBe(1);
+        }
+        for (const [index, columnCount] of demoFrameColumnCounts.entries()) {
+          expect(columnCount, `${path} mobile demo frame ${index + 1}`).toBe(1);
+        }
       }
     }
   }
@@ -177,6 +208,12 @@ test("四个编程子页在桌面和移动端都能打开与关闭现有 Agent",
     await page.setViewportSize(viewport);
     for (const { path } of pages) {
       await gotoCodingPage(page, path);
+      await expect(
+        page.locator("main.platform-center .floating-assistant"),
+      ).toHaveCount(0);
+      await expect(page.locator(".floating-assistant__launcher")).toHaveCount(
+        1,
+      );
       await page.getByRole("button", { name: "打开码多多" }).click();
       await expect(page.getByRole("dialog", { name: "码多多" })).toBeVisible();
       await page
@@ -198,13 +235,22 @@ test("捕获四个编程子页桌面与移动端全页视觉证据", async ({ pa
 
   for (const viewport of [viewports[0], viewports[2]]) {
     await page.setViewportSize(viewport);
-    for (const { name, path } of pages) {
-      await gotoCodingPage(page, path);
+    for (const { name, path, title } of pages) {
+      const screenshotPath = resolve(
+        outputDirectory,
+        `${name}-${viewport.name}.png`,
+      );
+      await rm(screenshotPath, { force: true });
+      const response = await gotoCodingPage(page, path);
+      expect(response?.status(), `${path} screenshot`).toBe(200);
+      await expect(
+        page.getByRole("heading", { level: 1, name: title }),
+      ).toBeVisible();
       await page.evaluate(() => document.fonts.ready);
       await page.screenshot({
         animations: "disabled",
         fullPage: true,
-        path: resolve(outputDirectory, `${name}-${viewport.name}.png`),
+        path: screenshotPath,
       });
     }
   }
