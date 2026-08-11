@@ -143,7 +143,8 @@ export const portalNavigation: PortalNavigationItem[] = [
         label: "产品资料",
         items: [
           {
-            label: "快速了解产品定位与核心价值",
+            label:
+              "快速了解元启平台与码多多 2.0 的产品定位、核心能力与产品价值。",
             href: "/downloads#dl-materials",
           },
         ],
@@ -152,7 +153,7 @@ export const portalNavigation: PortalNavigationItem[] = [
         label: "软件资源下载",
         items: [
           {
-            label: "获取客户端安装包与版本信息",
+            label: "获取码多多 2.0 客户端安装包与版本信息，进入安装体验。",
             href: "/downloads#dl-software",
           },
         ],
@@ -161,7 +162,7 @@ export const portalNavigation: PortalNavigationItem[] = [
         label: "产品部署文档",
         items: [
           {
-            label: "安装部署与使用说明",
+            label: "安装部署与使用说明，降低产品体验门槛。",
             href: "/downloads#dl-deployment",
           },
         ],
@@ -170,7 +171,7 @@ export const portalNavigation: PortalNavigationItem[] = [
         label: "白皮书与技术资料",
         items: [
           {
-            label: "企业 AI 与智能体专业资料",
+            label: "企业 AI、大模型与智能体相关专业资料，增强产品可信度。",
             href: "/downloads#dl-whitepapers",
           },
         ],
