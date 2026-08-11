@@ -21,6 +21,7 @@ export type CommonSolutionDetail = {
   components: readonly string[];
   flow: readonly string[];
   products: readonly SolutionProduct[];
+  related: readonly SolutionDetailSlug[];
 };
 
 export type IndustrySolutionDetail = {
@@ -49,6 +50,7 @@ export type IndustrySolutionDetail = {
     media: string;
   }[];
   products: readonly SolutionProduct[];
+  related: readonly SolutionDetailSlug[];
 };
 
 export type CaseSolutionDetail = {
@@ -82,6 +84,8 @@ export type CaseSolutionDetail = {
   }[];
   results: readonly (readonly [string, string])[];
   materials: readonly (readonly [string, string])[];
+  commonKey: SolutionDetailSlug;
+  industryKey: SolutionDetailSlug;
 };
 
 export type SolutionDetail =
@@ -146,6 +150,7 @@ const industryReturnHrefs: Record<string, string> = {
 };
 
 export function getSolutionDetail(slug: string): SolutionDetail | undefined {
+  if (!Object.hasOwn(solutionDetails, slug)) return undefined;
   return solutionDetails[slug as SolutionDetailSlug];
 }
 

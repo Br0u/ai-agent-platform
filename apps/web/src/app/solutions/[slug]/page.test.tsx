@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -10,6 +10,388 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({ notFound: mocks.notFound }));
 
 import Page, { generateMetadata, generateStaticParams } from "./page";
+
+const commonRelatedExpected = [
+  [
+    "private-yuanqi",
+    [
+      [
+        "单机与集群算力规划方案",
+        "根据模型任务和业务规模规划单机或集群资源组织与运行方式。",
+        "/solutions/cluster-planning",
+      ],
+    ],
+  ],
+  [
+    "cluster-planning",
+    [
+      [
+        "算力监控与运行保障方案",
+        "对 CPU、内存、磁盘、网络和 AI 卡等资源状态进行统一观察和运行保障。",
+        "/solutions/compute-monitoring",
+      ],
+    ],
+  ],
+  [
+    "compute-monitoring",
+    [
+      [
+        "单机与集群算力规划方案",
+        "根据模型任务和业务规模规划单机或集群资源组织与运行方式。",
+        "/solutions/cluster-planning",
+      ],
+      [
+        "企业模型部署与调用",
+        "将已准备、训练或评估的模型部署为可管理、可调用的企业模型服务。",
+        "/solutions/model-deployment",
+      ],
+    ],
+  ],
+  [
+    "model-evaluation",
+    [
+      [
+        "企业模型部署与调用",
+        "将已准备、训练或评估的模型部署为可管理、可调用的企业模型服务。",
+        "/solutions/model-deployment",
+      ],
+      [
+        "企业知识库建设与持续运营",
+        "围绕文档、分片、QA、术语、知识图谱和质量测试形成持续运营的企业知识资产。",
+        "/solutions/knowledge-assets",
+      ],
+    ],
+  ],
+  [
+    "model-deployment",
+    [
+      [
+        "模型适配、训练与效果验证",
+        "围绕实际业务任务完成模型选择、数据准备、训练评估和持续优化。",
+        "/solutions/model-evaluation",
+      ],
+      [
+        "企业内部智能助手",
+        "组合企业知识、业务数据、模型和工具，为员工或岗位提供统一智能服务入口。",
+        "/solutions/enterprise-assistant",
+      ],
+    ],
+  ],
+  [
+    "knowledge-service",
+    [
+      [
+        "文档理解、知识检索与智能审核",
+        "组合文档解析、知识检索、智能体和流程能力，辅助完成复杂文档处理与审核。",
+        "/solutions/document-intelligence",
+      ],
+      [
+        "企业知识库建设与持续运营",
+        "围绕文档、分片、QA、术语、知识图谱和质量测试形成持续运营的企业知识资产。",
+        "/solutions/knowledge-assets",
+      ],
+      [
+        "企业内部智能助手",
+        "组合企业知识、业务数据、模型和工具，为员工或岗位提供统一智能服务入口。",
+        "/solutions/enterprise-assistant",
+      ],
+    ],
+  ],
+  [
+    "document-intelligence",
+    [
+      [
+        "企业知识问答与知识服务",
+        "将企业文档、制度、产品资料和专业知识转化为可检索、可问答的智能知识服务。",
+        "/solutions/knowledge-service",
+      ],
+      [
+        "非结构化数据处理与业务利用",
+        "将文档等非结构化内容解析为结构化数据，衔接查询、分析、数据问答和业务流程。",
+        "/solutions/unstructured-data",
+      ],
+      [
+        "业务流程自动化与智能协同",
+        "通过可视化流程将模型、知识、数据、工具和业务逻辑组合为可执行的智能工作流。",
+        "/solutions/process-automation",
+      ],
+    ],
+  ],
+  [
+    "data-insight",
+    [
+      [
+        "非结构化数据处理与业务利用",
+        "将文档等非结构化内容解析为结构化数据，衔接查询、分析、数据问答和业务流程。",
+        "/solutions/unstructured-data",
+      ],
+      [
+        "企业内部智能助手",
+        "组合企业知识、业务数据、模型和工具，为员工或岗位提供统一智能服务入口。",
+        "/solutions/enterprise-assistant",
+      ],
+      [
+        "业务流程自动化与智能协同",
+        "通过可视化流程将模型、知识、数据、工具和业务逻辑组合为可执行的智能工作流。",
+        "/solutions/process-automation",
+      ],
+    ],
+  ],
+  [
+    "knowledge-assets",
+    [
+      [
+        "企业知识问答与知识服务",
+        "将企业文档、制度、产品资料和专业知识转化为可检索、可问答的智能知识服务。",
+        "/solutions/knowledge-service",
+      ],
+      [
+        "文档理解、知识检索与智能审核",
+        "组合文档解析、知识检索、智能体和流程能力，辅助完成复杂文档处理与审核。",
+        "/solutions/document-intelligence",
+      ],
+      [
+        "非结构化数据处理与业务利用",
+        "将文档等非结构化内容解析为结构化数据，衔接查询、分析、数据问答和业务流程。",
+        "/solutions/unstructured-data",
+      ],
+    ],
+  ],
+  [
+    "unstructured-data",
+    [
+      [
+        "数据问答、分析与业务洞察",
+        "连接企业业务数据，通过自然语言问题生成查询并返回可理解的数据结果与分析线索。",
+        "/solutions/data-insight",
+      ],
+      [
+        "文档理解、知识检索与智能审核",
+        "组合文档解析、知识检索、智能体和流程能力，辅助完成复杂文档处理与审核。",
+        "/solutions/document-intelligence",
+      ],
+      [
+        "企业知识库建设与持续运营",
+        "围绕文档、分片、QA、术语、知识图谱和质量测试形成持续运营的企业知识资产。",
+        "/solutions/knowledge-assets",
+      ],
+    ],
+  ],
+  [
+    "process-automation",
+    [
+      [
+        "文档理解、知识检索与智能审核",
+        "组合文档解析、知识检索、智能体和流程能力，辅助完成复杂文档处理与审核。",
+        "/solutions/document-intelligence",
+      ],
+      [
+        "企业内部智能助手",
+        "组合企业知识、业务数据、模型和工具，为员工或岗位提供统一智能服务入口。",
+        "/solutions/enterprise-assistant",
+      ],
+      [
+        "多智能体协同与复杂任务处理",
+        "组合多个专业智能体及流程能力，协同完成单一智能体难以覆盖的复杂任务。",
+        "/solutions/multi-agent",
+      ],
+    ],
+  ],
+  [
+    "enterprise-assistant",
+    [
+      [
+        "企业知识问答与知识服务",
+        "将企业文档、制度、产品资料和专业知识转化为可检索、可问答的智能知识服务。",
+        "/solutions/knowledge-service",
+      ],
+      [
+        "数据问答、分析与业务洞察",
+        "连接企业业务数据，通过自然语言问题生成查询并返回可理解的数据结果与分析线索。",
+        "/solutions/data-insight",
+      ],
+      [
+        "业务流程自动化与智能协同",
+        "通过可视化流程将模型、知识、数据、工具和业务逻辑组合为可执行的智能工作流。",
+        "/solutions/process-automation",
+      ],
+    ],
+  ],
+  [
+    "multi-agent",
+    [
+      [
+        "业务流程自动化与智能协同",
+        "通过可视化流程将模型、知识、数据、工具和业务逻辑组合为可执行的智能工作流。",
+        "/solutions/process-automation",
+      ],
+      [
+        "企业内部智能助手",
+        "组合企业知识、业务数据、模型和工具，为员工或岗位提供统一智能服务入口。",
+        "/solutions/enterprise-assistant",
+      ],
+      [
+        "数据问答、分析与业务洞察",
+        "连接企业业务数据，通过自然语言问题生成查询并返回可理解的数据结果与分析线索。",
+        "/solutions/data-insight",
+      ],
+    ],
+  ],
+  [
+    "video-intelligence",
+    [
+      [
+        "企业内部智能助手",
+        "组合企业知识、业务数据、模型和工具，为员工或岗位提供统一智能服务入口。",
+        "/solutions/enterprise-assistant",
+      ],
+      [
+        "多智能体协同与复杂任务处理",
+        "组合多个专业智能体及流程能力，协同完成单一智能体难以覆盖的复杂任务。",
+        "/solutions/multi-agent",
+      ],
+    ],
+  ],
+] as const;
+
+const industryRelatedExpected = [
+  [
+    "government-knowledge",
+    [
+      ["政务数据问答与分析", "/solutions/government-data"],
+      ["政策公文理解与辅助审核", "/solutions/government-document"],
+      ["政务事项流程自动化与协同", "/solutions/government-process"],
+    ],
+  ],
+  [
+    "government-data",
+    [
+      ["政务知识问答与政策服务", "/solutions/government-knowledge"],
+      ["政策公文理解与辅助审核", "/solutions/government-document"],
+      ["政务事项流程自动化与协同", "/solutions/government-process"],
+    ],
+  ],
+  [
+    "government-document",
+    [
+      ["政务知识问答与政策服务", "/solutions/government-knowledge"],
+      ["政务数据问答与分析", "/solutions/government-data"],
+      ["政务事项流程自动化与协同", "/solutions/government-process"],
+    ],
+  ],
+  [
+    "government-process",
+    [
+      ["政务知识问答与政策服务", "/solutions/government-knowledge"],
+      ["政务数据问答与分析", "/solutions/government-data"],
+      ["政策公文理解与辅助审核", "/solutions/government-document"],
+    ],
+  ],
+  [
+    "finance-knowledge",
+    [
+      ["经营数据问答与业务分析", "/solutions/finance-data"],
+      ["金融文档理解与合规辅助审核", "/solutions/finance-document"],
+      ["金融客户服务智能助手", "/solutions/finance-assistant"],
+    ],
+  ],
+  [
+    "finance-data",
+    [
+      ["金融制度与产品知识服务", "/solutions/finance-knowledge"],
+      ["金融文档理解与合规辅助审核", "/solutions/finance-document"],
+      ["金融客户服务智能助手", "/solutions/finance-assistant"],
+    ],
+  ],
+  [
+    "finance-document",
+    [
+      ["金融制度与产品知识服务", "/solutions/finance-knowledge"],
+      ["经营数据问答与业务分析", "/solutions/finance-data"],
+      ["金融客户服务智能助手", "/solutions/finance-assistant"],
+    ],
+  ],
+  [
+    "finance-assistant",
+    [
+      ["金融制度与产品知识服务", "/solutions/finance-knowledge"],
+      ["经营数据问答与业务分析", "/solutions/finance-data"],
+      ["金融文档理解与合规辅助审核", "/solutions/finance-document"],
+    ],
+  ],
+  [
+    "healthcare-knowledge",
+    [
+      ["医院运营数据问答与分析", "/solutions/healthcare-data"],
+      ["医疗文档信息提取与辅助审核", "/solutions/healthcare-document"],
+      ["医院行政流程自动化与协同", "/solutions/healthcare-process"],
+    ],
+  ],
+  [
+    "healthcare-data",
+    [
+      ["医院知识与制度问答", "/solutions/healthcare-knowledge"],
+      ["医疗文档信息提取与辅助审核", "/solutions/healthcare-document"],
+      ["医院行政流程自动化与协同", "/solutions/healthcare-process"],
+    ],
+  ],
+  [
+    "healthcare-document",
+    [
+      ["医院知识与制度问答", "/solutions/healthcare-knowledge"],
+      ["医院运营数据问答与分析", "/solutions/healthcare-data"],
+      ["医院行政流程自动化与协同", "/solutions/healthcare-process"],
+    ],
+  ],
+  [
+    "healthcare-process",
+    [
+      ["医院知识与制度问答", "/solutions/healthcare-knowledge"],
+      ["医院运营数据问答与分析", "/solutions/healthcare-data"],
+      ["医疗文档信息提取与辅助审核", "/solutions/healthcare-document"],
+    ],
+  ],
+  [
+    "enterprise-knowledge",
+    [
+      ["企业经营数据分析与洞察", "/solutions/enterprise-data"],
+      ["企业文档理解与智能审核", "/solutions/enterprise-document"],
+      ["企业流程自动化与智能协同", "/solutions/enterprise-process"],
+    ],
+  ],
+  [
+    "enterprise-data",
+    [
+      ["企业内部知识助手", "/solutions/enterprise-knowledge"],
+      ["企业文档理解与智能审核", "/solutions/enterprise-document"],
+      ["企业流程自动化与智能协同", "/solutions/enterprise-process"],
+    ],
+  ],
+  [
+    "enterprise-document",
+    [
+      ["企业内部知识助手", "/solutions/enterprise-knowledge"],
+      ["企业经营数据分析与洞察", "/solutions/enterprise-data"],
+      ["企业流程自动化与智能协同", "/solutions/enterprise-process"],
+    ],
+  ],
+  [
+    "enterprise-process",
+    [
+      ["企业内部知识助手", "/solutions/enterprise-knowledge"],
+      ["企业经营数据分析与洞察", "/solutions/enterprise-data"],
+      ["企业文档理解与智能审核", "/solutions/enterprise-document"],
+    ],
+  ],
+  [
+    "enterprise-multi-agent",
+    [
+      ["企业内部知识助手", "/solutions/enterprise-knowledge"],
+      ["企业经营数据分析与洞察", "/solutions/enterprise-data"],
+      ["企业文档理解与智能审核", "/solutions/enterprise-document"],
+    ],
+  ],
+] as const;
 
 afterEach(() => {
   cleanup();
@@ -84,6 +466,37 @@ describe("SolutionDetailPage", () => {
     );
   });
 
+  it.each(commonRelatedExpected)(
+    "renders the exact related common solution cards for %s",
+    async (slug, expected) => {
+      render(await Page({ params: Promise.resolve({ slug }) }));
+
+      const related = within(screen.getByTestId("solution-related-list"));
+      expect(
+        related
+          .getAllByRole("link")
+          .map((link) => [link.textContent, link.getAttribute("href")]),
+      ).toStrictEqual(expected.map(([title, , href]) => [title, href]));
+      for (const [, summary] of expected) {
+        expect(related.getByText(summary, { exact: true })).toBeVisible();
+      }
+    },
+  );
+
+  it.each(industryRelatedExpected)(
+    "renders the exact related industry scenario links for %s",
+    async (slug, expected) => {
+      render(await Page({ params: Promise.resolve({ slug }) }));
+
+      const related = within(screen.getByTestId("solution-related-list"));
+      expect(
+        related
+          .getAllByRole("link")
+          .map((link) => [link.textContent, link.getAttribute("href")]),
+      ).toStrictEqual(expected);
+    },
+  );
+
   it("renders one H1 and explicit no-authorization copy for the pending case", async () => {
     render(
       await Page({
@@ -119,18 +532,6 @@ describe("SolutionDetailPage", () => {
     ]) {
       expect(screen.getByText(outcome, { exact: true })).toBeVisible();
     }
-    for (const media of [
-      "需求调研记录或场景清单素材槽位",
-      "知识资料盘点或数据评估素材槽位",
-      "项目总体架构或方案说明素材槽位",
-      "脱敏部署环境或产品配置素材槽位",
-      "知识库、智能体或应用配置素材槽位",
-      "测试过程或效果验证素材槽位",
-      "应用上线或培训交付素材槽位",
-      "运营反馈或持续优化素材槽位",
-    ]) {
-      expect(screen.getByText(media, { exact: true })).toBeVisible();
-    }
     expect(
       screen.getByText("没有统计口径和授权前不展示百分比、金额或排名。"),
     ).toBeVisible();
@@ -139,6 +540,120 @@ describe("SolutionDetailPage", () => {
       "/solutions?view=cases&mode=scenario#practice-cases-list",
     );
   });
+
+  it("restores the exact prototype case sections 02–05 and related solution cards", async () => {
+    render(
+      await Page({
+        params: Promise.resolve({ slug: "case-pending-enterprise-knowledge" }),
+      }),
+    );
+
+    expect(
+      screen.getAllByText(/^0[2-5]｜/).map((eyebrow) => eyebrow.textContent),
+    ).toStrictEqual([
+      "02｜客户背景、业务挑战与建设目标",
+      "03｜整体思路与实施过程",
+      "04｜项目成果与素材展示",
+      "05｜关联方案、相关案例与行动收口",
+    ]);
+    expect(
+      screen
+        .getAllByRole("heading", { level: 2 })
+        .map((heading) => heading.textContent),
+    ).toStrictEqual([
+      "为什么建设这个项目",
+      "从业务问题到场景上线的完整建设思路",
+      "用经授权的事实说明项目成果",
+      "本案例为哪些解决方案提供实践证明",
+      "希望建设类似项目？",
+    ]);
+    for (const copy of [
+      "点击挑战卡片，定位并高亮后续相应解决措施；当前内容均为结构占位。",
+      "围绕当前项目的业务目标，将企业知识与数据、模型和智能体能力组合为可使用的业务服务，并通过验证、上线和持续维护形成完整落地闭环。",
+      "说明项目从梳理到上线的主要阶段，不展开客户内部排期、人员安排和敏感交付细节。",
+      "页面只保留文字说明，不展示真实 IP 地址、数据库结构、接口地址、部署参数或内部项目资料。",
+      "量化成果必须标明统计口径或时间范围；没有可靠数据时不使用百分比、金额、排名或客户评价。",
+      "说明本案例与对应业务问题及通用方案的实际关联。",
+      "说明本案例在对应行业场景中的实践证明关系。",
+      "首期没有第二个已授权案例时不强行推荐；后续可按相同行业、业务场景或建设方式展示 2～3 个案例。",
+      "咨询表单将带入当前案例名称、行业、业务场景和关联产品能力。",
+    ]) {
+      expect(screen.getByText(copy, { exact: true })).toBeVisible();
+    }
+    expect(
+      screen.getByRole("heading", { level: 3, name: "核心建设内容" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { level: 3, name: "实施过程" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { level: 3, name: "项目素材与成果展示" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { level: 3, name: "相关案例" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { level: 3, name: "企业知识问答与知识服务" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { level: 3, name: "企业内部知识助手" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "查看通用场景方案 →" }),
+    ).toHaveAttribute("href", "/solutions/knowledge-service");
+    expect(
+      screen.getByRole("link", { name: "查看行业场景方案 →" }),
+    ).toHaveAttribute("href", "/solutions/enterprise-knowledge");
+  });
+
+  it("renders the exact four prototype-visible case approach stages", async () => {
+    render(
+      await Page({
+        params: Promise.resolve({ slug: "case-pending-enterprise-knowledge" }),
+      }),
+    );
+
+    const expected = [
+      ["需求与资料梳理", "明确业务问题、使用对象、知识资料和数据边界。"],
+      ["方案设计与能力准备", "确定知识处理、模型、智能体及应用的组合方式。"],
+      ["场景建设与验证", "完成知识处理、智能体配置、业务测试和效果修正。"],
+      [
+        "上线使用与持续优化",
+        "在授权范围内发布使用，并根据反馈维护知识和场景效果。",
+      ],
+    ] as const;
+    const stages = screen.getAllByTestId("case-approach-stage");
+    expect(stages).toHaveLength(4);
+    expected.forEach(([name, description], index) => {
+      expect(
+        within(stages[index]).getByText(name, { exact: true }),
+      ).toBeVisible();
+      expect(
+        within(stages[index]).getByText(description, { exact: true }),
+      ).toBeVisible();
+    });
+  });
+
+  it.each([
+    ["knowledge-service", "/contact?topic=企业知识问答与知识服务咨询"],
+    ["finance-data", "/contact?topic=金融｜经营数据问答与业务分析咨询"],
+    [
+      "case-pending-enterprise-knowledge",
+      "/contact?topic=案例详情结构占位（待授权案例）｜类似项目咨询",
+    ],
+  ] as const)(
+    "uses the exact prototype CTA topic for %s",
+    async (slug, href) => {
+      render(await Page({ params: Promise.resolve({ slug }) }));
+
+      expect(
+        screen
+          .getAllByRole("link")
+          .filter((link) => link.getAttribute("href")?.startsWith("/contact"))
+          .map((link) => link.getAttribute("href")),
+      ).toStrictEqual([href, href]);
+    },
+  );
 
   it("generates all 32 detail pages as static params", () => {
     expect(generateStaticParams()).toStrictEqual(
@@ -201,12 +716,15 @@ describe("SolutionDetailPage", () => {
     });
   });
 
-  it("returns not found for unknown solution slugs", async () => {
-    await expect(
-      Page({ params: Promise.resolve({ slug: "unknown-solution" }) }),
-    ).rejects.toThrow("NEXT_NOT_FOUND");
-    expect(mocks.notFound).toHaveBeenCalledTimes(1);
-  });
+  it.each(["unknown-solution", "toString", "constructor", "__proto__"])(
+    "returns not found for unregistered slug %s",
+    async (slug) => {
+      await expect(Page({ params: Promise.resolve({ slug }) })).rejects.toThrow(
+        "NEXT_NOT_FOUND",
+      );
+      expect(mocks.notFound).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("does not duplicate the shell-owned assistant", async () => {
     render(

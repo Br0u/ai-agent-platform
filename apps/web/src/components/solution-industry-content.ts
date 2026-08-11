@@ -499,9 +499,10 @@ const catalog = [
 
 type IndustrySolutionSlug = (typeof catalog)[number][0];
 
-export const industrySolutionDetails = Object.fromEntries(
-  catalog.map(
-    ([
+export const industrySolutionDetails = catalog.reduce(
+  (
+    details,
+    [
       slug,
       industry,
       family,
@@ -511,46 +512,52 @@ export const industrySolutionDetails = Object.fromEntries(
       summary,
       tags,
       productKeys,
-    ]) => {
-      const blueprint = blueprints[family];
-      return [
-        slug,
+    ],
+  ) => {
+    const blueprint = blueprints[family];
+    details[slug] = {
+      kind: "industry",
+      category: industryNames[industry],
+      title,
+      summary,
+      audience,
+      problem,
+      tags,
+      problems: [
         {
-          kind: "industry",
-          category: industryNames[industry],
-          title,
-          summary,
-          audience,
           problem,
-          tags,
-          problems: [
-            {
-              problem,
-              impact:
-                "现有方式使该场景较多依赖人工查询、整理或协调，具体行业影响需以正式材料为准。",
-              goal: summary,
-            },
-          ],
-          components: blueprint.components.map(
-            ([name, role, input, output, product]) => ({
-              name,
-              role,
-              input,
-              output,
-              product: products[product].name,
-            }),
-          ),
-          flow: blueprint.flow.map(([label, description]) => ({
-            label,
-            description,
-            media: `${title}｜${label}对应界面、流程或效果素材槽位`,
-          })),
-          products: productKeys.map((key) => ({
-            ...products[key],
-            href: familyProductHrefs[family][key] ?? products[key].href,
-          })),
+          impact:
+            "现有方式使该场景较多依赖人工查询、整理或协调，具体行业影响需以正式材料为准。",
+          goal: summary,
         },
-      ];
-    },
-  ),
-) as unknown as Record<IndustrySolutionSlug, IndustrySolutionDetail>;
+      ],
+      components: blueprint.components.map(
+        ([name, role, input, output, product]) => ({
+          name,
+          role,
+          input,
+          output,
+          product: products[product].name,
+        }),
+      ),
+      flow: blueprint.flow.map(([label, description]) => ({
+        label,
+        description,
+        media: `${title}｜${label}对应界面、流程或效果素材槽位`,
+      })),
+      products: productKeys.map((key) => ({
+        ...products[key],
+        href: familyProductHrefs[family][key] ?? products[key].href,
+      })),
+      related: catalog
+        .filter(
+          ([candidateSlug, candidateIndustry]) =>
+            candidateIndustry === industry && candidateSlug !== slug,
+        )
+        .slice(0, 3)
+        .map(([candidateSlug]) => candidateSlug),
+    } satisfies IndustrySolutionDetail;
+    return details;
+  },
+  {} as Record<IndustrySolutionSlug, IndustrySolutionDetail>,
+);

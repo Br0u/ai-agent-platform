@@ -94,6 +94,7 @@ test("覆盖原型总览内容并只保留 shell 的唯一 Agent 入口", async 
 test("通用、行业与待授权案例详情进入后返回精确 query 和 hash 状态", async ({
   page,
 }) => {
+  test.setTimeout(60_000);
   const journeys = [
     {
       start:
@@ -131,7 +132,37 @@ test("通用、行业与待授权案例详情进入后返回精确 query 和 has
       waitUntil: "domcontentloaded",
     });
     expect(response?.status(), journey.start).toBe(200);
-    await page.locator(`a[href="${journey.detail}"]`).first().click();
+    const overview = page.locator("main.solutions-page");
+    await expect(overview).toHaveAttribute("data-solution-view", journey.view);
+    const mobileDirectoryTrigger = page.getByRole("button", {
+      name: "解决方案目录",
+    });
+    if (await mobileDirectoryTrigger.isVisible()) {
+      await mobileDirectoryTrigger.click();
+    }
+    const directorySearch = overview.getByRole("searchbox", {
+      name: "在解决方案目录中筛选",
+    });
+    await expect
+      .poll(async () => {
+        if (await directorySearch.isVisible()) return true;
+
+        const expandDirectory = overview.getByRole("button", {
+          name: "展开解决方案目录",
+        });
+        if (await expandDirectory.isVisible()) {
+          await expandDirectory.click();
+        }
+
+        return directorySearch.isVisible();
+      })
+      .toBe(true);
+    await directorySearch.fill(journey.link);
+    const detailLink = overview
+      .locator(`a[href="${journey.detail}"]:visible`)
+      .first();
+    await expect(detailLink).toBeVisible();
+    await detailLink.click();
     await expect(page).toHaveURL(
       new RegExp(`${journey.detail.replace("?", "\\?")}$`),
     );
@@ -252,6 +283,16 @@ test("批准的列表 query 与 hash 被真实页面读取并落到精确目录�
       "data-solution-filter",
       route.filter,
     );
+    const mobileDirectoryTrigger = page.getByRole("button", {
+      exact: true,
+      name: "解决方案目录",
+    });
+    if (
+      (await mobileDirectoryTrigger.isVisible()) &&
+      (await mobileDirectoryTrigger.getAttribute("aria-expanded")) === "false"
+    ) {
+      await mobileDirectoryTrigger.click();
+    }
     await expect(
       page
         .locator('a[aria-current="location"]')

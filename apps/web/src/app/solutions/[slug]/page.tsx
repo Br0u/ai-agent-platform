@@ -18,9 +18,27 @@ type PageProps = {
 
 type ScenarioSolutionDetail = CommonSolutionDetail | IndustrySolutionDetail;
 
-function contactHref(title: string) {
-  return `/contact?topic=${title}咨询`;
+function contactHref(
+  detail: CommonSolutionDetail | IndustrySolutionDetail | CaseSolutionDetail,
+) {
+  const topic =
+    detail.kind === "industry"
+      ? `${detail.category}｜${detail.title}咨询`
+      : detail.kind === "case"
+        ? `${detail.title}｜类似项目咨询`
+        : `${detail.title}咨询`;
+  return `/contact?topic=${topic}`;
 }
+
+const caseApproachStages = [
+  ["需求与资料梳理", "明确业务问题、使用对象、知识资料和数据边界。"],
+  ["方案设计与能力准备", "确定知识处理、模型、智能体及应用的组合方式。"],
+  ["场景建设与验证", "完成知识处理、智能体配置、业务测试和效果修正。"],
+  [
+    "上线使用与持续优化",
+    "在授权范围内发布使用，并根据反馈维护知识和场景效果。",
+  ],
+] as const;
 
 function SolutionHero({ detail }: { detail: ScenarioSolutionDetail }) {
   return (
@@ -48,7 +66,7 @@ function SolutionHero({ detail }: { detail: ScenarioSolutionDetail }) {
           <div className="solution-detail-actions">
             <Link
               className="solution-detail-button solution-detail-button--primary"
-              href={contactHref(detail.title)}
+              href={contactHref(detail)}
             >
               {detail.kind === "common" ? "商务咨询" : "咨询当前行业场景"}
             </Link>
@@ -303,6 +321,26 @@ function ClosingSection({
             </p>
           </div>
         </div>
+        <div className="solution-detail-related">
+          <h2>{industry ? "相关行业场景" : "相关解决方案"}</h2>
+          <div
+            className="solution-detail-products"
+            data-testid="solution-related-list"
+          >
+            {detail.related.map((slug) => {
+              const related = getSolutionDetail(slug);
+              if (!related || related.kind === "case") return null;
+              return (
+                <article key={slug}>
+                  <h3>
+                    <Link href={`/solutions/${slug}`}>{related.title}</Link>
+                  </h3>
+                  {detail.kind === "common" ? <p>{related.summary}</p> : null}
+                </article>
+              );
+            })}
+          </div>
+        </div>
         <div className="solution-detail-cta">
           <div>
             <h2>
@@ -317,7 +355,7 @@ function ClosingSection({
           <div className="solution-detail-actions">
             <Link
               className="solution-detail-button solution-detail-button--primary"
-              href={contactHref(detail.title)}
+              href={contactHref(detail)}
             >
               咨询当前方案
             </Link>
@@ -341,6 +379,9 @@ function CasePage({
   detail: CaseSolutionDetail;
   returnHref: string;
 }) {
+  const common = getSolutionDetail(detail.commonKey);
+  const industry = getSolutionDetail(detail.industryKey);
+
   return (
     <main className="solution-detail" aria-label={`${detail.title}实践案例`}>
       <section className="solution-detail-hero">
@@ -358,6 +399,29 @@ function CasePage({
                   {scenario}
                 </span>
               ))}
+              {detail.products.map((product) => (
+                <span className="solution-detail-tag" key={product}>
+                  {product}
+                </span>
+              ))}
+            </div>
+            <div className="solution-detail-tags" aria-label="案例成果摘要">
+              {detail.outcomes.map((outcome) => (
+                <span className="solution-detail-tag" key={outcome}>
+                  {outcome}
+                </span>
+              ))}
+            </div>
+            <div className="solution-detail-actions">
+              <Link
+                className="solution-detail-button solution-detail-button--primary"
+                href={contactHref(detail)}
+              >
+                咨询类似项目
+              </Link>
+              <Link className="solution-detail-button" href="#case-related">
+                查看关联解决方案
+              </Link>
             </div>
           </div>
           <div className="solution-detail-visual">
@@ -369,8 +433,10 @@ function CasePage({
 
       <section className="solution-detail-section">
         <div className="solution-detail-frame">
-          <p className="solution-detail-eyebrow">02｜客户与项目背景</p>
-          <h2>案例基本信息</h2>
+          <p className="solution-detail-eyebrow">
+            02｜客户背景、业务挑战与建设目标
+          </p>
+          <h2>为什么建设这个项目</h2>
           <div className="solution-detail-components">
             {detail.profile.map(([label, value]) => (
               <article key={label}>
@@ -379,37 +445,29 @@ function CasePage({
               </article>
             ))}
           </div>
-          <h3 className="solution-detail-subheading">关联产品能力</h3>
-          <div className="solution-detail-tags" aria-label="案例关联产品能力">
-            {detail.products.map((product) => (
-              <span className="solution-detail-tag" key={product}>
-                {product}
-              </span>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="solution-detail-section">
-        <div className="solution-detail-frame">
-          <p className="solution-detail-eyebrow">03｜业务问题与建设措施</p>
-          <h2>从问题到建设措施</h2>
+          <h3 className="solution-detail-subheading">业务挑战与对应解决措施</h3>
+          <p>
+            点击挑战卡片，定位并高亮后续相应解决措施；当前内容均为结构占位。
+          </p>
           <div className="solution-detail-components">
             {detail.challenges.map((challenge, index) => (
               <article key={challenge.name}>
                 <span>{String(index + 1).padStart(2, "0")}</span>
                 <h3>{challenge.name}</h3>
-                <p>{challenge.problem}</p>
                 <p>
-                  <b>影响：</b>
+                  <b>问题表现：</b>
+                  {challenge.problem}
+                </p>
+                <p>
+                  <b>业务影响：</b>
                   {challenge.impact}
                 </p>
                 <p>
-                  <b>原有方式：</b>
+                  <b>原有局限：</b>
                   {challenge.limitation}
                 </p>
                 <p>
-                  <b>建设措施：</b>
+                  <b>建设目标：</b>
                   {challenge.measure}
                 </p>
               </article>
@@ -420,8 +478,12 @@ function CasePage({
 
       <section className="solution-detail-section">
         <div className="solution-detail-frame">
-          <p className="solution-detail-eyebrow">04｜方案架构与实施过程</p>
-          <h2>能力组合与项目阶段</h2>
+          <p className="solution-detail-eyebrow">03｜整体思路与实施过程</p>
+          <h2>从业务问题到场景上线的完整建设思路</h2>
+          <p>
+            围绕当前项目的业务目标，将企业知识与数据、模型和智能体能力组合为可使用的业务服务，并通过验证、上线和持续维护形成完整落地闭环。
+          </p>
+          <h3 className="solution-detail-subheading">核心建设内容</h3>
           <div className="solution-detail-components">
             {detail.architecture.map(([name, description]) => (
               <article key={name}>
@@ -430,36 +492,30 @@ function CasePage({
               </article>
             ))}
           </div>
-          <h3 className="solution-detail-subheading">项目实施过程</h3>
+          <h3 className="solution-detail-subheading">实施过程</h3>
+          <p>
+            说明项目从梳理到上线的主要阶段，不展开客户内部排期、人员安排和敏感交付细节。
+          </p>
           <ol className="solution-detail-flow solution-detail-flow--described">
-            {detail.stages.map((stage, index) => (
-              <li key={stage.name}>
+            {caseApproachStages.map(([name, description], index) => (
+              <li data-testid="case-approach-stage" key={name}>
                 <span>{String(index + 1).padStart(2, "0")}</span>
-                <b>{stage.name}</b>
-                <p>{stage.goal}</p>
-                <p>{stage.work}</p>
-                <small>
-                  华鲲：{stage.huakun}；客户：{stage.customer}；输出：
-                  {stage.output}
-                </small>
-                <small>{stage.media}</small>
+                <b>{name}</b>
+                <p>{description}</p>
               </li>
             ))}
           </ol>
+          <p className="solution-detail-note">
+            页面只保留文字说明，不展示真实 IP
+            地址、数据库结构、接口地址、部署参数或内部项目资料。
+          </p>
         </div>
       </section>
 
-      <section className="solution-detail-section solution-detail-closing">
+      <section className="solution-detail-section">
         <div className="solution-detail-frame">
-          <p className="solution-detail-eyebrow">05｜成果与公开边界</p>
-          <h2>案例成果待授权补充</h2>
-          <div className="solution-detail-tags" aria-label="案例成果结构占位">
-            {detail.outcomes.map((outcome) => (
-              <span className="solution-detail-tag" key={outcome}>
-                {outcome}
-              </span>
-            ))}
-          </div>
+          <p className="solution-detail-eyebrow">04｜项目成果与素材展示</p>
+          <h2>用经授权的事实说明项目成果</h2>
           <div className="solution-detail-products">
             {detail.results.map(([label, value]) => (
               <article key={label}>
@@ -468,7 +524,10 @@ function CasePage({
               </article>
             ))}
           </div>
-          <h3 className="solution-detail-subheading">待授权素材</h3>
+          <p className="solution-detail-note">
+            量化成果必须标明统计口径或时间范围；没有可靠数据时不使用百分比、金额、排名或客户评价。
+          </p>
+          <h3 className="solution-detail-subheading">项目素材与成果展示</h3>
           <div className="solution-detail-products">
             {detail.materials.map(([label, value]) => (
               <article key={label}>
@@ -477,19 +536,64 @@ function CasePage({
               </article>
             ))}
           </div>
-          <div className="solution-detail-actions">
-            <Link
-              className="solution-detail-button solution-detail-button--primary"
-              href={contactHref(detail.title)}
-            >
-              咨询类似项目
-            </Link>
-            <Link className="solution-detail-button" href="/trial">
-              申请体验
-            </Link>
-            <a className="solution-detail-link" href={returnHref}>
-              返回实践案例
-            </a>
+        </div>
+      </section>
+
+      <section
+        className="solution-detail-section solution-detail-closing"
+        id="case-related"
+      >
+        <div className="solution-detail-frame">
+          <p className="solution-detail-eyebrow">
+            05｜关联方案、相关案例与行动收口
+          </p>
+          <h2>本案例为哪些解决方案提供实践证明</h2>
+          <div className="solution-detail-products">
+            {common?.kind === "common" ? (
+              <article>
+                <span className="solution-detail-tag">通用场景方案</span>
+                <h3>{common.title}</h3>
+                <p>说明本案例与对应业务问题及通用方案的实际关联。</p>
+                <Link href={`/solutions/${detail.commonKey}`}>
+                  查看通用场景方案 →
+                </Link>
+              </article>
+            ) : null}
+            {industry?.kind === "industry" ? (
+              <article>
+                <span className="solution-detail-tag">行业场景方案</span>
+                <h3>{industry.title}</h3>
+                <p>说明本案例在对应行业场景中的实践证明关系。</p>
+                <Link href={`/solutions/${detail.industryKey}`}>
+                  查看行业场景方案 →
+                </Link>
+              </article>
+            ) : null}
+          </div>
+          <h3 className="solution-detail-subheading">相关案例</h3>
+          <p className="solution-detail-note">
+            首期没有第二个已授权案例时不强行推荐；后续可按相同行业、业务场景或建设方式展示
+            2～3 个案例。
+          </p>
+          <div className="solution-detail-cta">
+            <div>
+              <h2>希望建设类似项目？</h2>
+              <p>咨询表单将带入当前案例名称、行业、业务场景和关联产品能力。</p>
+            </div>
+            <div className="solution-detail-actions">
+              <Link
+                className="solution-detail-button solution-detail-button--primary"
+                href={contactHref(detail)}
+              >
+                咨询类似项目
+              </Link>
+              <Link className="solution-detail-button" href="/trial">
+                申请体验
+              </Link>
+              <a className="solution-detail-link" href={returnHref}>
+                返回实践案例
+              </a>
+            </div>
           </div>
         </div>
       </section>

@@ -105,6 +105,7 @@ export const commonSolutionDetails = {
       "能力验证",
       "上线交付",
     ],
+    related: ["cluster-planning"],
     products: products("private-yuanqi", [
       "model",
       "knowledge",
@@ -140,6 +141,7 @@ export const commonSolutionDetails = {
       "任务验证",
       "扩展建议",
     ],
+    related: ["compute-monitoring"],
     products: products("cluster-planning", ["model"]),
   },
   "compute-monitoring": {
@@ -170,6 +172,7 @@ export const commonSolutionDetails = {
       "异常定位",
       "运行优化",
     ],
+    related: ["cluster-planning", "model-deployment"],
     products: products("compute-monitoring", ["model"]),
   },
   "model-evaluation": {
@@ -204,6 +207,7 @@ export const commonSolutionDetails = {
       "效果评估",
       "优化与部署决策",
     ],
+    related: ["model-deployment", "knowledge-assets"],
     products: products("model-evaluation", ["model"]),
   },
   "model-deployment": {
@@ -238,6 +242,7 @@ export const commonSolutionDetails = {
       "智能体接入",
       "运行维护",
     ],
+    related: ["model-evaluation", "enterprise-assistant"],
     products: products("model-deployment", ["model", "agents", "applications"]),
   },
   "knowledge-service": {
@@ -276,6 +281,11 @@ export const commonSolutionDetails = {
       "知识检索与模型生成",
       "返回结果",
       "持续标注和优化",
+    ],
+    related: [
+      "document-intelligence",
+      "knowledge-assets",
+      "enterprise-assistant",
     ],
     products: products("knowledge-service", [
       "knowledge",
@@ -320,6 +330,7 @@ export const commonSolutionDetails = {
       "人工复核",
       "结果归档",
     ],
+    related: ["knowledge-service", "unstructured-data", "process-automation"],
     products: products("document-intelligence", [
       "knowledge",
       "agents",
@@ -362,6 +373,11 @@ export const commonSolutionDetails = {
       "结果返回",
       "反馈与优化",
     ],
+    related: [
+      "unstructured-data",
+      "enterprise-assistant",
+      "process-automation",
+    ],
     products: products("data-insight", ["knowledge", "agents", "applications"]),
   },
   "knowledge-assets": {
@@ -400,6 +416,11 @@ export const commonSolutionDetails = {
       "质量优化",
       "发布使用",
       "持续维护",
+    ],
+    related: [
+      "knowledge-service",
+      "document-intelligence",
+      "unstructured-data",
     ],
     products: products("knowledge-assets", [
       "knowledge",
@@ -443,6 +464,7 @@ export const commonSolutionDetails = {
       "查询与分析",
       "业务应用调用",
     ],
+    related: ["data-insight", "document-intelligence", "knowledge-assets"],
     products: products("unstructured-data", [
       "knowledge",
       "agents",
@@ -486,6 +508,7 @@ export const commonSolutionDetails = {
       "人工确认",
       "发布与持续优化",
     ],
+    related: ["document-intelligence", "enterprise-assistant", "multi-agent"],
     products: products("process-automation", [
       "model",
       "knowledge",
@@ -530,6 +553,7 @@ export const commonSolutionDetails = {
       "反馈标注",
       "持续优化",
     ],
+    related: ["knowledge-service", "data-insight", "process-automation"],
     products: products("enterprise-assistant", [
       "knowledge",
       "agents",
@@ -574,6 +598,7 @@ export const commonSolutionDetails = {
       "统一结果生成",
       "反馈与优化",
     ],
+    related: ["process-automation", "enterprise-assistant", "data-insight"],
     products: products("multi-agent", [
       "model",
       "knowledge",
@@ -616,6 +641,7 @@ export const commonSolutionDetails = {
       "结果分析",
       "应用调用",
     ],
+    related: ["enterprise-assistant", "multi-agent"],
     products: products("video-intelligence", [
       "model",
       "agents",

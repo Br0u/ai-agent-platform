@@ -140,5 +140,7 @@ export const caseSolutionDetails = {
       ["总体架构素材", "经简化和脱敏的项目架构图待授权补充。"],
       ["成果展示素材", "项目现场、统计图或授权视频待授权补充。"],
     ],
+    commonKey: "knowledge-service",
+    industryKey: "enterprise-knowledge",
   },
 } satisfies Record<string, CaseSolutionDetail>;

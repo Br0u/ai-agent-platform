@@ -1051,6 +1051,81 @@ const industryBlueprintExpected = [
   },
 ] as const;
 
+const caseStageDataExpected = [
+  [
+    "需求调研",
+    "确认业务问题、使用对象和项目边界。",
+    "访谈业务部门并梳理知识服务需求。",
+    "组织调研并形成需求与场景清单。",
+    "提供经确认的业务需求和参与人员。",
+    "需求清单与场景范围。",
+    "需求调研记录或场景清单素材槽位",
+  ],
+  [
+    "业务与数据梳理",
+    "确认可使用的知识资料和数据条件。",
+    "盘点资料、权限和更新方式。",
+    "提供知识数据评估方法。",
+    "确认资料范围和使用授权。",
+    "知识数据清单与评估结果。",
+    "知识资料盘点或数据评估素材槽位",
+  ],
+  [
+    "方案设计",
+    "形成项目方案、架构和能力组合。",
+    "设计知识处理、智能体和应用路径。",
+    "完成总体方案和架构设计。",
+    "确认业务边界与方案方向。",
+    "脱敏方案说明与架构图。",
+    "项目总体架构或方案说明素材槽位",
+  ],
+  [
+    "环境及产品部署",
+    "准备项目运行环境和元启能力。",
+    "完成环境、产品和访问配置。",
+    "提供部署与环境适配支持。",
+    "提供符合要求的环境和授权。",
+    "可验证的项目环境。",
+    "脱敏部署环境或产品配置素材槽位",
+  ],
+  [
+    "场景开发与配置",
+    "完成知识处理和智能体场景建设。",
+    "构建知识库、配置智能体并发布应用。",
+    "实施场景配置和联调。",
+    "提供业务规则并参与效果确认。",
+    "可调试的知识服务应用。",
+    "知识库、智能体或应用配置素材槽位",
+  ],
+  [
+    "测试与效果验证",
+    "验证功能、知识召回和业务适用性。",
+    "开展测试、标注和问题修正。",
+    "组织测试并持续调优。",
+    "提供测试问题和业务反馈。",
+    "测试记录与优化结果。",
+    "测试过程或效果验证素材槽位",
+  ],
+  [
+    "上线交付",
+    "将经确认能力交付实际使用。",
+    "完成上线检查、培训和交付。",
+    "提供上线与培训支持。",
+    "确认使用范围和运营责任。",
+    "上线应用与交付资料。",
+    "应用上线或培训交付素材槽位",
+  ],
+  [
+    "运营与持续优化",
+    "根据使用反馈维护知识和场景效果。",
+    "更新知识、观察反馈并迭代能力。",
+    "提供优化和扩展建议。",
+    "持续提供业务反馈和内容更新。",
+    "运营记录与迭代清单。",
+    "运营反馈或持续优化素材槽位",
+  ],
+] as const;
+
 describe("solution detail content", () => {
   it("registers the exact 14 common, 17 industry and one pending-case slugs", () => {
     expect(solutionDetailSlugs).toStrictEqual([
@@ -1243,6 +1318,25 @@ describe("solution detail content", () => {
     });
   });
 
+  it("preserves the exact eight source-data case stages independently of the four-step page summary", () => {
+    const detail = getSolutionDetail("case-pending-enterprise-knowledge");
+    expect(detail?.kind).toBe("case");
+    if (detail?.kind !== "case") return;
+    expect(
+      detail.stages.map(
+        ({ name, goal, work, huakun, customer, output, media }) => [
+          name,
+          goal,
+          work,
+          huakun,
+          customer,
+          output,
+          media,
+        ],
+      ),
+    ).toStrictEqual(caseStageDataExpected);
+  });
+
   it("returns each detail to its exact filtered query and landing hash", () => {
     const getSolutionReturnHref = (
       solutionDetailContent as typeof solutionDetailContent & {
@@ -1270,7 +1364,10 @@ describe("solution detail content", () => {
     );
   });
 
-  it("does not fall back for unknown solution slugs", () => {
-    expect(getSolutionDetail("unknown-solution")).toBeUndefined();
-  });
+  it.each(["unknown-solution", "toString", "constructor", "__proto__"])(
+    "does not expose prototype-chain entries for %s",
+    (slug) => {
+      expect(getSolutionDetail(slug)).toBeUndefined();
+    },
+  );
 });
