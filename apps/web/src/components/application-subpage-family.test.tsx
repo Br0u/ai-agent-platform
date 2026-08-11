@@ -154,15 +154,9 @@ describe("application subpage family", () => {
         expect(demo.getByText(text, { exact })).toBeVisible();
 
         const matches = within(container).getAllByText(text, { exact });
-        const minimalMatches = matches.filter(
-          (candidate) =>
-            !matches.some(
-              (match) => match !== candidate && candidate.contains(match),
-            ),
-        );
 
-        expect(minimalMatches.length).toBeGreaterThan(0);
-        for (const match of minimalMatches) {
+        expect(matches.length).toBeGreaterThan(0);
+        for (const match of matches) {
           expect(
             demoContainers.some((demoContainer) =>
               demoContainer.contains(match),
