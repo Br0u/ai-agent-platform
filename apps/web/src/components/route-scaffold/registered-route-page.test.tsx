@@ -1,5 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import DownloadsPage from "../../app/downloads/page";
 import {
   metadataForRegisteredRoute,
   RegisteredRoutePage,
@@ -20,9 +21,9 @@ describe("RegisteredRoutePage", () => {
   });
 
   it("preserves the disabled contract for external routes", () => {
-    render(<RegisteredRoutePage pathname="/downloads" />);
+    render(<RegisteredRoutePage pathname="/openlab" />);
 
-    expect(screen.getByRole("heading", { name: "下载中心" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "OpenLab" })).toBeVisible();
     expect(screen.getByText("功能尚未开放")).toBeVisible();
     expect(screen.getByText("FEATURE_DISABLED")).toBeVisible();
   });
@@ -47,28 +48,27 @@ describe("RegisteredRoutePage", () => {
     ).not.toBeNull();
   });
 
-  it("materializes the exact disabled download anchors without leaving the shell", () => {
-    const { container } = render(<RegisteredRoutePage pathname="/downloads" />);
+  it("renders downloads as the real live page instead of a feature shell", () => {
+    const { container } = render(<DownloadsPage />);
 
     expect(
       Array.from(container.querySelectorAll("section[id]"), (section) =>
         section.getAttribute("id"),
       ),
     ).toEqual([
-      "latest",
-      "desktop",
-      "architecture",
-      "containers",
-      "offline",
-      "sdk",
+      "dl-hero",
+      "dl-materials",
+      "dl-software",
+      "dl-deployment",
+      "dl-whitepapers",
+      "dl-cta",
     ]);
 
-    const anchorIndex = within(container).getByRole("navigation", {
-      name: "页面目录",
+    const directory = within(container).getByRole("navigation", {
+      name: "下载中心完整目录",
     });
-    expect(anchorIndex.closest(".feature-shell__inner")).not.toBeNull();
-    expect(anchorIndex.closest(".feature-shell")).not.toBeNull();
-    expect(container.querySelector("main > .scaffold-anchor-index")).toBeNull();
+    expect(directory.closest(".download-page")).not.toBeNull();
+    expect(container.querySelector(".feature-shell")).toBeNull();
   });
 
   it("renders optional route content after the anchor index inside the feature shell", () => {

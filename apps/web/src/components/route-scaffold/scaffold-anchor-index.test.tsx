@@ -34,15 +34,23 @@ describe("ScaffoldAnchorIndex", () => {
     expect(screen.getByText("页面目录")).toBeVisible();
   });
 
-  it("keeps placeholder download targets honest and action-free", () => {
+  it("keeps generic placeholder targets honest and action-free", () => {
     render(
-      <ScaffoldAnchorIndex anchors={navigationAnchorsForPath("/downloads")} />,
+      <ScaffoldAnchorIndex
+        anchors={[
+          {
+            id: "pending-download",
+            label: "待开放资源",
+            status: "placeholder",
+          },
+        ]}
+      />,
     );
 
-    expect(screen.getAllByText("尚未开放")).toHaveLength(6);
+    expect(screen.getAllByText("尚未开放")).toHaveLength(1);
     expect(
       screen.getAllByText("仅保留结构，未提供下载、申请或提交操作。"),
-    ).toHaveLength(6);
+    ).toHaveLength(1);
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByRole("form")).not.toBeInTheDocument();
     expect(

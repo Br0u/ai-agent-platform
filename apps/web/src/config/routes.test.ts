@@ -180,6 +180,15 @@ describe("routeRegistry", () => {
     });
   });
 
+  it("registers the download center as a live public route", () => {
+    expect(matchRoute("/downloads")).toEqual({
+      path: "/downloads",
+      title: "下载中心",
+      group: "public",
+      status: "live",
+    });
+  });
+
   it("registers the standalone assistant as a live public route", () => {
     expect(matchRoute("/assistant")).toEqual({
       path: "/assistant",

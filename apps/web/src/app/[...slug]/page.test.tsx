@@ -1,6 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import PortalPage, { generateMetadata } from "./page";
+import DownloadsPage, {
+  metadata as downloadsMetadata,
+} from "../downloads/page";
+import PortalPage from "./page";
 
 describe("PortalPage", () => {
   it("renders a scaffold route from URL segments", async () => {
@@ -14,22 +17,19 @@ describe("PortalPage", () => {
     expect(screen.getByText("页面结构已建立")).toBeVisible();
   });
 
-  it("renders disabled state for external feature routes", async () => {
-    const page = await PortalPage({
-      params: Promise.resolve({ slug: ["downloads"] }),
-    });
+  it("renders downloads through its real live page", () => {
+    render(<DownloadsPage />);
 
-    render(page);
-
-    expect(screen.getByRole("heading", { name: "下载中心" })).toBeVisible();
-    expect(screen.getByText("功能尚未开放")).toBeVisible();
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "从产品资料到安装体验，一站式获取华鲲资源",
+      }),
+    ).toBeVisible();
+    expect(screen.queryByText("功能尚未开放")).not.toBeInTheDocument();
   });
 
-  it("uses the PRD product brand in route metadata", async () => {
-    const metadata = await generateMetadata({
-      params: Promise.resolve({ slug: ["downloads"] }),
-    });
-
-    expect(metadata.title).toBe("下载中心 · AI Agent Platform");
+  it("uses the live download center metadata", () => {
+    expect(downloadsMetadata.title).toBe("下载中心 · 华鲲元启");
   });
 });
