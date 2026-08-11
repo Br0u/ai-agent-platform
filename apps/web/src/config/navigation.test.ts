@@ -9,39 +9,70 @@ import {
 import { matchRoute } from "./routes";
 
 const expectedPortal = [
+  { label: "首页", href: "/", children: [] },
   {
     label: "产品",
     href: "/product",
     children: [
       {
-        label: "产品矩阵",
+        label: "智能体中心",
         items: [
-          ["超融合", "/product/hci"],
-          ["元启AI开发平台", "/product/tgdataxai"],
-          ["视觉检索一体机", "/product/video-agent"],
+          ["知识智能体", "/product/agent-knowledge"],
           ["数据智能体", "/product/data-agent"],
-          ["智能导办一体机", "/product/knowledge-agent"],
-          ["办公智能体", "/product/office-agent"],
-          ["码多多", "/product/code-agent"],
+          ["视频智能体", "/product/agent-video"],
+          ["流程编排智能体", "/product/agent-orchestration"],
         ],
       },
       {
-        label: "核心模块",
+        label: "模型中心",
         items: [
-          ["AI Agent Studio", "/product/agent-studio"],
-          ["Knowledge Base", "/product/knowledge-base"],
-          ["Workflow", "/product/workflow"],
-          ["Model Gateway", "/product/model-gateway"],
-          ["Agent Runtime", "/product/agent-runtime"],
-          ["Observability", "/product/observability"],
+          ["模型花园", "/product/model-assets"],
+          ["模型训练", "/product/model-training"],
+          ["模型评估", "/product/model-evaluation"],
+          ["模型部署", "/product/model-deploy"],
+          ["任务中心", "/product/model-task-center"],
         ],
       },
       {
-        label: "版本",
+        label: "行业应用中心",
         items: [
-          ["版本列表", "/releases"],
-          ["Release Note", "/releases#release-notes"],
-          ["Roadmap", "/roadmap"],
+          ["通用文本写作", "/product/app-writing"],
+          ["投标智能助手", "/product/app-bidding"],
+          ["合同智能审查", "/product/app-contract"],
+        ],
+      },
+      {
+        label: "编程中心",
+        items: [
+          ["项目管理", "/product/coding-project"],
+          ["会话管理", "/product/coding-session"],
+          ["移动接入", "/product/coding-mobile"],
+          ["编程规范", "/product/coding-standard"],
+        ],
+      },
+      {
+        label: "技能中心",
+        items: [
+          ["编程类技能", "/product/skills-programming"],
+          ["应用类技能", "/product/skills-application"],
+          ["办公类技能", "/product/skills-office"],
+        ],
+      },
+      {
+        label: "安全中心",
+        items: [
+          ["用户管理", "/product/governance#gov-users"],
+          ["角色管理", "/product/governance#gov-roles"],
+          ["菜单管理", "/product/governance#gov-menu"],
+          ["行级权限", "/product/governance#gov-permission"],
+        ],
+      },
+      {
+        label: "独立产品中心",
+        items: [
+          ["码多多 2.0", "/product/code-agent"],
+          ["AIPPT", "/product/aippt"],
+          ["AISHREK", "/product/aishrek"],
         ],
       },
     ],
@@ -51,152 +82,54 @@ const expectedPortal = [
     href: "/solutions",
     children: [
       {
-        label: "场景方案",
+        label: "通用场景方案",
         items: [
-          ["智能办公", "/solutions#office"],
-          ["行业知识问答", "/solutions#knowledge"],
-          ["视觉检索", "/solutions#vision"],
+          ["基础设施与模型工程", "/solutions#solution-common-scenes"],
+          ["知识与数据智能", "/solutions#solution-common-scenes"],
+          ["智能体与业务应用", "/solutions#solution-common-scenes"],
         ],
       },
       {
-        label: "平台方案",
+        label: "行业解决方案",
         items: [
-          ["企业智能体开发", "/solutions#agent"],
-          ["数据分析与决策", "/solutions#data"],
-          ["国产化私有部署", "/solutions#private"],
+          ["政务", "/solutions#solution-industries-overview"],
+          ["金融", "/solutions#solution-industries-overview"],
+          ["医疗", "/solutions#solution-industries-overview"],
+          ["企业智能化", "/solutions#solution-industries-overview"],
+        ],
+      },
+      {
+        label: "实践案例",
+        items: [
+          ["按行业查看", "/solutions#solution-cases-overview"],
+          ["按业务场景查看", "/solutions#solution-cases-overview"],
         ],
       },
     ],
   },
   {
-    label: "文档",
-    href: "/docs",
-    children: [
-      {
-        label: "落地文档",
-        items: [
-          ["快速开始", "/docs/quick-start"],
-          ["部署指南", "/docs/deployment"],
-          ["升级手册", "/docs/upgrade"],
-          ["运维手册", "/docs/operations"],
-        ],
-      },
-      {
-        label: "开发与适配",
-        items: [
-          ["API 文档", "/docs/api"],
-          ["功能手册", "/docs#features"],
-          ["GPU / 硬件适配", "/docs/hardware"],
-          ["常见问题 FAQ", "/docs/faq"],
-        ],
-      },
-    ],
-  },
-  {
-    label: "下载",
+    label: "下载中心",
     href: "/downloads",
     children: [
       {
-        label: "安装与镜像",
-        items: [
-          ["最新版本", "/downloads#latest"],
-          ["Linux / Windows 安装包", "/downloads#desktop"],
-          ["ARM / x86 安装包", "/downloads#architecture"],
-          ["Docker / Helm", "/downloads#containers"],
-        ],
+        label: "产品资料",
+        items: [["快速了解产品定位与核心价值", "/downloads#dl-materials"]],
       },
       {
-        label: "离线与工具",
-        items: [
-          ["离线安装包", "/downloads#offline"],
-          ["SDK 工具包", "/downloads#sdk"],
-        ],
+        label: "软件资源下载",
+        items: [["获取客户端安装包与版本信息", "/downloads#dl-software"]],
+      },
+      {
+        label: "产品部署文档",
+        items: [["安装部署与使用说明", "/downloads#dl-deployment"]],
+      },
+      {
+        label: "白皮书与技术资料",
+        items: [["企业 AI 与智能体专业资料", "/downloads#dl-whitepapers"]],
       },
     ],
   },
-  {
-    label: "OpenLab",
-    href: "/openlab",
-    children: [
-      {
-        label: "试用授权",
-        items: [
-          ["试用申请", "/openlab#trial"],
-          ["实名认证", "/openlab#identity"],
-          ["License 获取指引", "/openlab#license-guide"],
-        ],
-      },
-    ],
-  },
-  {
-    label: "兼容性",
-    href: "/compatibility",
-    children: [
-      {
-        label: "环境适配",
-        items: [
-          ["硬件配置要求", "/compatibility#hardware"],
-          ["GPU 适配列表", "/compatibility#gpu"],
-          ["操作系统兼容", "/compatibility#os"],
-          ["浏览器兼容", "/compatibility#browser"],
-          ["依赖组件兼容", "/compatibility#dependencies"],
-        ],
-      },
-    ],
-  },
-  {
-    label: "Marketplace",
-    href: "/marketplace",
-    children: [
-      {
-        label: "资源类型",
-        items: [
-          ["Agent 应用", "/marketplace#agent"],
-          ["Workflow 工作流", "/marketplace#workflow"],
-          ["插件工具", "/marketplace#plugin"],
-          ["Prompt 模板", "/marketplace#prompt"],
-          ["知识库模板", "/marketplace#knowledge-base"],
-        ],
-      },
-    ],
-  },
-  {
-    label: "支持",
-    href: "/support",
-    children: [
-      {
-        label: "服务入口",
-        items: [
-          ["帮助中心", "/help"],
-          ["工单提交", "/support#tickets"],
-          ["Bug 反馈", "/support#bug"],
-          ["社群支持", "/support#community"],
-        ],
-      },
-      {
-        label: "商务服务",
-        items: [
-          ["价格计算", "/pricing"],
-          ["商务咨询", "/contact"],
-        ],
-      },
-    ],
-  },
-  {
-    label: "资讯",
-    href: "/blog",
-    children: [
-      {
-        label: "内容分类",
-        items: [
-          ["版本更新", "/blog#releases"],
-          ["技术教程", "/blog#tutorial"],
-          ["行业案例", "/cases"],
-          ["产品动态", "/blog#product"],
-        ],
-      },
-    ],
-  },
+  { label: "价格与服务", href: "/pricing", children: [] },
 ] as const;
 
 const expectedConsoleGroups = [
@@ -286,36 +219,31 @@ const expectedCmsGroups = [
 
 const expectedFooter = [
   {
-    label: "产品与版本",
+    label: "产品中心",
     items: [
       ["产品", "/product"],
-      ["版本列表", "/releases"],
-      ["Roadmap", "/roadmap"],
+      ["智能体中心", "/product/agents"],
+      ["模型中心", "/product/model"],
+      ["行业应用中心", "/product/applications"],
+      ["编程中心", "/product/coding"],
+      ["技能中心", "/product/skills"],
+      ["安全中心", "/product/governance"],
+      ["独立产品中心", "/product/standalone"],
     ],
   },
   {
-    label: "文档与部署",
+    label: "业务服务",
     items: [
-      ["文档", "/docs"],
-      ["部署指南", "/docs/deployment"],
-      ["兼容性", "/compatibility"],
+      ["解决方案", "/solutions"],
+      ["下载中心", "/downloads"],
+      ["价格与服务", "/pricing"],
     ],
   },
   {
-    label: "Marketplace 与资讯",
+    label: "联系与体验",
     items: [
-      ["Marketplace", "/marketplace"],
-      ["资讯", "/blog"],
-      ["客户案例", "/cases"],
-    ],
-  },
-  {
-    label: "支持与商务联系",
-    items: [
-      ["支持", "/support"],
-      ["帮助中心", "/help"],
-      ["价格计算", "/pricing"],
-      ["商务咨询", "/contact"],
+      ["联系我们", "/contact"],
+      ["申请体验", "/trial"],
     ],
   },
 ] as const;
@@ -355,12 +283,6 @@ const expectInternalTargets = (items: readonly LinkLike[]) => {
   }
 };
 
-const expectUniqueTargets = (items: readonly LinkLike[]) => {
-  const hrefs = items.filter((item) => !item.action).map((item) => item.href);
-
-  expect(new Set(hrefs).size).toBe(hrefs.length);
-};
-
 describe("portalNavigation", () => {
   it("preserves the exact parent, section, child label and href order", () => {
     expect(
@@ -384,23 +306,6 @@ describe("portalNavigation", () => {
     );
   });
 
-  it("marks external download and OpenLab capabilities as placeholders", () => {
-    for (const label of ["下载", "OpenLab"]) {
-      const parent = portalNavigation.find((item) => item.label === label);
-
-      expect(parent?.status).toBe("placeholder");
-      for (const child of parent?.children.flatMap((group) => group.items) ??
-        []) {
-        expect(child.status).toBe("placeholder");
-      }
-    }
-
-    for (const label of ["工单提交", "社群支持"]) {
-      const item = flattenPortal().find((link) => link.label === label);
-      expect(item?.status).toBe("placeholder");
-    }
-  });
-
   it("opens the existing data agent product entry", () => {
     const dataAgent = portalNavigation
       .flatMap((parent) => parent.children)
@@ -414,30 +319,9 @@ describe("portalNavigation", () => {
     expect(dataAgent?.status).toBeUndefined();
   });
 
-  it("marks solution and document children as live while preserving scaffolded areas", () => {
-    const solution = portalNavigation.find((item) => item.label === "解决方案");
-    for (const child of solution?.children.flatMap((group) => group.items) ??
-      []) {
-      expect(child.status).toBeUndefined();
-    }
-
-    for (const label of ["兼容性", "Marketplace", "资讯"]) {
-      const parent = portalNavigation.find((item) => item.label === label);
-
-      expect(parent).toBeDefined();
-      for (const child of parent?.children.flatMap((group) => group.items) ??
-        []) {
-        expect(child.status).toBe("scaffold");
-      }
-    }
-
-    const docs = portalNavigation.find((item) => item.label === "文档");
-    for (const child of docs?.children.flatMap((group) => group.items) ?? []) {
-      if (child.label === "功能手册") {
-        expect(child.status).toBe("scaffold");
-      } else {
-        expect(child.status).toBe("live");
-      }
+  it("publishes only live migrated public entries", () => {
+    for (const item of flattenPortal()) {
+      expect(item.status).toBeUndefined();
     }
   });
 });
@@ -553,7 +437,7 @@ describe("adminNavigation", () => {
 });
 
 describe("footerNavigation", () => {
-  it("preserves the exact four unique destination groups", () => {
+  it("preserves the exact migrated public destination groups", () => {
     expect(
       footerNavigation.map((group) => ({
         label: group.label,
@@ -564,7 +448,7 @@ describe("footerNavigation", () => {
 });
 
 describe("navigation targets", () => {
-  it("uses unique rooted internal hrefs and keeps actions href-free", () => {
+  it("uses rooted internal hrefs and keeps actions href-free", () => {
     const completeMenus = [
       flattenPortal(),
       flattenSidebar(consoleNavigation),
@@ -574,7 +458,6 @@ describe("navigation targets", () => {
 
     for (const menu of completeMenus) {
       expectInternalTargets(menu);
-      expectUniqueTargets(menu);
     }
   });
 
@@ -596,70 +479,50 @@ describe("navigation targets", () => {
 
   it("derives every configured hash target from the navigation sources", () => {
     const expectedAnchors = {
-      "/releases": [
-        { id: "release-notes", label: "Release Note", status: undefined },
+      "/product/governance": [
+        { id: "gov-users", label: "用户管理", status: undefined },
+        { id: "gov-roles", label: "角色管理", status: undefined },
+        { id: "gov-menu", label: "菜单管理", status: undefined },
+        { id: "gov-permission", label: "行级权限", status: undefined },
       ],
-      "/docs": [{ id: "features", label: "功能手册", status: "scaffold" }],
+      "/solutions": [
+        {
+          id: "solution-common-scenes",
+          label: "基础设施与模型工程",
+          status: undefined,
+        },
+        {
+          id: "solution-industries-overview",
+          label: "政务",
+          status: undefined,
+        },
+        {
+          id: "solution-cases-overview",
+          label: "按行业查看",
+          status: undefined,
+        },
+      ],
       "/downloads": [
-        { id: "latest", label: "最新版本", status: "placeholder" },
         {
-          id: "desktop",
-          label: "Linux / Windows 安装包",
-          status: "placeholder",
+          id: "dl-materials",
+          label: "快速了解产品定位与核心价值",
+          status: undefined,
         },
         {
-          id: "architecture",
-          label: "ARM / x86 安装包",
-          status: "placeholder",
+          id: "dl-software",
+          label: "获取客户端安装包与版本信息",
+          status: undefined,
         },
         {
-          id: "containers",
-          label: "Docker / Helm",
-          status: "placeholder",
+          id: "dl-deployment",
+          label: "安装部署与使用说明",
+          status: undefined,
         },
-        { id: "offline", label: "离线安装包", status: "placeholder" },
-        { id: "sdk", label: "SDK 工具包", status: "placeholder" },
-      ],
-      "/openlab": [
-        { id: "trial", label: "试用申请", status: "placeholder" },
-        { id: "identity", label: "实名认证", status: "placeholder" },
         {
-          id: "license-guide",
-          label: "License 获取指引",
-          status: "placeholder",
+          id: "dl-whitepapers",
+          label: "企业 AI 与智能体专业资料",
+          status: undefined,
         },
-      ],
-      "/compatibility": [
-        { id: "hardware", label: "硬件配置要求", status: "scaffold" },
-        { id: "gpu", label: "GPU 适配列表", status: "scaffold" },
-        { id: "os", label: "操作系统兼容", status: "scaffold" },
-        { id: "browser", label: "浏览器兼容", status: "scaffold" },
-        {
-          id: "dependencies",
-          label: "依赖组件兼容",
-          status: "scaffold",
-        },
-      ],
-      "/marketplace": [
-        { id: "agent", label: "Agent 应用", status: "scaffold" },
-        { id: "workflow", label: "Workflow 工作流", status: "scaffold" },
-        { id: "plugin", label: "插件工具", status: "scaffold" },
-        { id: "prompt", label: "Prompt 模板", status: "scaffold" },
-        {
-          id: "knowledge-base",
-          label: "知识库模板",
-          status: "scaffold",
-        },
-      ],
-      "/support": [
-        { id: "tickets", label: "工单提交", status: "placeholder" },
-        { id: "bug", label: "Bug 反馈", status: undefined },
-        { id: "community", label: "社群支持", status: "placeholder" },
-      ],
-      "/blog": [
-        { id: "releases", label: "版本更新", status: "scaffold" },
-        { id: "tutorial", label: "技术教程", status: "scaffold" },
-        { id: "product", label: "产品动态", status: "scaffold" },
       ],
       "/console/profile": [
         { id: "account-menu", label: "当前账号", status: undefined },
@@ -710,37 +573,6 @@ describe("navigation targets", () => {
         ),
         `${item.label}: ${url.pathname}#${id}`,
       ).toBe(true);
-    }
-  });
-
-  it("keeps duplicate hash sources consistent across navigation surfaces", () => {
-    const completeMenus = [
-      flattenPortal(),
-      flattenSidebar(consoleNavigation),
-      flattenSidebar(adminNavigation),
-      flattenFooter(),
-    ];
-    const sourcesByTarget = new Map<
-      string,
-      Array<{ label: string; status: LinkLike["status"] }>
-    >();
-
-    for (const item of completeMenus.flat()) {
-      if (!item.href) continue;
-
-      const url = new URL(item.href, "https://local.invalid");
-      if (!url.hash) continue;
-
-      const target = `${url.pathname}#${decodeURIComponent(url.hash.slice(1))}`;
-      const sources = sourcesByTarget.get(target) ?? [];
-      sources.push({ label: item.label, status: item.status });
-      sourcesByTarget.set(target, sources);
-    }
-
-    for (const [target, sources] of sourcesByTarget) {
-      if (sources.length < 2) continue;
-
-      expect(sources, target).toEqual(sources.map(() => sources[0]));
     }
   });
 });

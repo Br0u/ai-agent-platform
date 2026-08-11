@@ -471,6 +471,9 @@
   padding: var(--space-3) var(--space-4);
   border-top: 1px solid color-mix(in srgb, var(--color-primary) 24%, white);
   background: var(--color-surface);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
 }
 
 .mobile-navigation__action {
@@ -484,6 +487,12 @@
   background: var(--color-primary);
   font: 700 14px/1.2 var(--font-display);
   text-decoration: none;
+}
+
+.mobile-navigation__action--secondary {
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-surface);
 }
 
 .mobile-navigation__opener:focus-visible,

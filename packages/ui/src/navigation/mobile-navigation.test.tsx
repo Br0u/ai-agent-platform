@@ -11,6 +11,7 @@ import { MobileNavigation } from "./mobile-navigation";
 import type { PortalNavigationItem } from "./navigation-types";
 
 const items: PortalNavigationItem[] = [
+  { label: "首页", href: "/", children: [] },
   {
     label: "产品",
     href: "/product",
@@ -55,6 +56,7 @@ const items: PortalNavigationItem[] = [
       },
     ],
   },
+  { label: "价格与服务", href: "/pricing", children: [] },
 ];
 
 function renderNavigation(
@@ -62,6 +64,8 @@ function renderNavigation(
   props?: Partial<{
     actionLabel: string;
     actionHref: string;
+    secondaryActionLabel: string;
+    secondaryActionHref: string;
     directItemHrefs: string[];
     items: PortalNavigationItem[];
   }>,
@@ -88,6 +92,7 @@ function accordion(label: string) {
 afterEach(() => {
   cleanup();
   document.body.style.overflow = "";
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -105,7 +110,7 @@ describe("MobileNavigation", () => {
 
   it("opens a labeled modal dialog and renders every supplied group", () => {
     const eightGroups = Array.from({ length: 8 }, (_, index) => ({
-      ...items[0],
+      ...items[1],
       label: `分组 ${index + 1}`,
       href: `/group-${index + 1}`,
     }));
@@ -162,6 +167,52 @@ describe("MobileNavigation", () => {
     expect(
       within(dialog).queryByRole("button", { name: /文档/ }),
     ).not.toBeInTheDocument();
+  });
+
+  it("automatically renders empty-child parents as direct links", () => {
+    renderNavigation("/pricing");
+    const { dialog } = openNavigation();
+
+    expect(within(dialog).getByRole("link", { name: "首页" })).toHaveAttribute(
+      "href",
+      "/",
+    );
+    expect(
+      within(dialog).getByRole("link", { name: "价格与服务" }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(
+      within(dialog).queryByRole("button", { name: /首页|价格与服务/ }),
+    ).toBeNull();
+  });
+
+  it("renders distinct labels sharing one confirmed anchor without key warnings", () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const sharedAnchorItems: PortalNavigationItem[] = [
+      {
+        label: "解决方案",
+        href: "/solutions",
+        children: [
+          {
+            label: "通用场景方案",
+            items: [
+              { label: "知识与数据智能", href: "/solutions#scenes" },
+              { label: "智能体与业务应用", href: "/solutions#scenes" },
+            ],
+          },
+        ],
+      },
+    ];
+    renderNavigation("/", { items: sharedAnchorItems });
+    openNavigation();
+    fireEvent.click(accordion("解决方案"));
+
+    expect(screen.getByRole("link", { name: "知识与数据智能" })).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "智能体与业务应用" }),
+    ).toBeVisible();
+    expect(consoleError).not.toHaveBeenCalled();
   });
 
   it("moves initial focus to close and traps Tab in visible controls", () => {
@@ -314,6 +365,23 @@ describe("MobileNavigation", () => {
     expect(
       within(dialog).getByRole("link", { name: "进入工作台" }),
     ).toHaveAttribute("href", "/workspace");
+  });
+
+  it("renders configured secondary and primary actions in the drawer", () => {
+    renderNavigation("/", {
+      actionLabel: "申请体验",
+      actionHref: "/trial",
+      secondaryActionLabel: "联系我们",
+      secondaryActionHref: "/contact",
+    });
+    const { dialog } = openNavigation();
+
+    expect(
+      within(dialog).getByRole("link", { name: "联系我们" }),
+    ).toHaveAttribute("href", "/contact");
+    expect(
+      within(dialog).getByRole("link", { name: "申请体验" }),
+    ).toHaveAttribute("href", "/trial");
   });
 
   it("marks exact child and segment-safe parent current state", () => {
