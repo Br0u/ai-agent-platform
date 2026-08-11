@@ -1,6 +1,18 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
+import AgentKnowledgePage, {
+  metadata as agentKnowledgeMetadata,
+} from "../app/product/agent-knowledge/page";
+import AgentOrchestrationPage, {
+  metadata as agentOrchestrationMetadata,
+} from "../app/product/agent-orchestration/page";
+import AgentVideoPage, {
+  metadata as agentVideoMetadata,
+} from "../app/product/agent-video/page";
+import DataAgentPage, {
+  metadata as dataAgentMetadata,
+} from "../app/product/data-agent/page";
 import { agentSubpageSlugs, getAgentSubpage } from "./agent-subpage-content";
 import { PlatformPageDetail } from "./platform-center-detail";
 
@@ -94,7 +106,45 @@ const expected = {
   },
 } as const;
 
+const pageEntries = [
+  {
+    slug: "agent-knowledge",
+    Page: AgentKnowledgePage,
+    metadata: agentKnowledgeMetadata,
+  },
+  {
+    slug: "data-agent",
+    Page: DataAgentPage,
+    metadata: dataAgentMetadata,
+  },
+  {
+    slug: "agent-video",
+    Page: AgentVideoPage,
+    metadata: agentVideoMetadata,
+  },
+  {
+    slug: "agent-orchestration",
+    Page: AgentOrchestrationPage,
+    metadata: agentOrchestrationMetadata,
+  },
+] as const;
+
 describe("agent subpage family", () => {
+  it.each(pageEntries)(
+    "wires the $slug page to its content and metadata",
+    ({ slug, Page, metadata }) => {
+      const page = getAgentSubpage(slug)!;
+      const { container } = render(<Page />);
+
+      expect(
+        screen.getByRole("heading", { level: 1, name: expected[slug].h1 }),
+      ).toBeVisible();
+      expect(container.querySelectorAll("h1")).toHaveLength(1);
+      expect(metadata.title).toBe(page.hero.title);
+      expect(metadata.description).toBe(page.hero.lead);
+    },
+  );
+
   it.each(agentSubpageSlugs)("renders the complete dense %s page", (slug) => {
     const page = getAgentSubpage(slug)!;
     const { container } = render(<PlatformPageDetail page={page} />);
@@ -120,8 +170,13 @@ describe("agent subpage family", () => {
       const page = getAgentSubpage(slug)!;
       render(<PlatformPageDetail page={page} />);
 
+      const demos = screen.getAllByTestId("platform-page-demo");
       for (const text of expected[slug].demoTexts) {
-        expect(screen.getByText(text, { exact: false })).toBeVisible();
+        const match = demos
+          .map((demo) => within(demo).queryByText(text, { exact: false }))
+          .find((element) => element !== null);
+
+        expect(match).toBeVisible();
       }
 
       const [semanticName, semanticHref] = expected[slug].semanticLink;
