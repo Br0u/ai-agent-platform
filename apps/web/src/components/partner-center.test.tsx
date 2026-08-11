@@ -4,19 +4,20 @@ import { PartnerCenter } from "./partner-center";
 
 afterEach(() => {
   window.history.replaceState(null, "", "/");
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
-function useMobileViewport() {
+function useMedia({ mobile = false, reduced = false } = {}) {
   vi.stubGlobal(
     "matchMedia",
-    vi.fn().mockReturnValue({
-      matches: true,
-      media: "(max-width: 780px)",
+    vi.fn().mockImplementation((media: string) => ({
+      matches: media.includes("prefers-reduced-motion") ? reduced : mobile,
+      media,
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
-    }),
+    })),
   );
 }
 
@@ -193,8 +194,30 @@ describe("PartnerCenter", () => {
     ).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("independently collapses and expands directory groups with children", () => {
+    render(<PartnerCenter />);
+
+    const collapse = screen.getByRole("button", {
+      name: "收起商业模式目录",
+    });
+    fireEvent.click(collapse);
+    expect(
+      screen.queryByRole("link", { name: "合作模式" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "认证体系" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "收起伙伴政策目录" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    const expand = screen.getByRole("button", {
+      name: "展开商业模式目录",
+    });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(expand);
+    expect(screen.getByRole("link", { name: "合作模式" })).toBeVisible();
+  });
+
   it("isolates the 390 drawer, traps focus both ways and restores the trigger", () => {
-    useMobileViewport();
+    useMedia({ mobile: true });
     const { container } = render(<PartnerCenter />);
     const trigger = screen.getByRole("button", { name: "合作伙伴目录" });
     const directory = document.getElementById(
@@ -274,6 +297,54 @@ describe("PartnerCenter", () => {
     expect(document.querySelector(".partner-shell")).not.toHaveAttribute(
       "inert",
     );
+  });
+
+  it("shows the current directory source and exact copy confirmation", () => {
+    window.history.replaceState(null, "", "/partners?view=business#pb-tiers");
+    render(<PartnerCenter />);
+    fireEvent.click(screen.getAllByRole("button", { name: "咨询该模式" })[0]);
+
+    const dialog = screen.getByRole("dialog", {
+      name: "渠道分销模式咨询",
+    });
+    expect(within(dialog).getByText("来源：分润政策")).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "复制电话" }));
+    expect(screen.getByRole("status")).toHaveTextContent("联系信息已复制");
+  });
+
+  it("closes from the contact backdrop and restores the exact trigger", () => {
+    const { container } = render(<PartnerCenter />);
+    const trigger = within(container.querySelector("#po-hero")!).getByRole(
+      "button",
+      { name: "联系生态负责人" },
+    );
+    fireEvent.click(trigger);
+
+    fireEvent.click(container.querySelector(".partner-dialog-backdrop")!);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("highlights a cold hash target for 1.8 seconds", () => {
+    vi.useFakeTimers();
+    useMedia();
+    window.history.replaceState(null, "", "/partners?view=policy#pp-cert");
+    const { container } = render(<PartnerCenter />);
+    const target = container.querySelector("#pp-cert")!;
+
+    expect(target).toHaveClass("is-targeted");
+    vi.advanceTimersByTime(1_799);
+    expect(target).toHaveClass("is-targeted");
+    vi.advanceTimersByTime(1);
+    expect(target).not.toHaveClass("is-targeted");
+  });
+
+  it("does not animate target feedback when reduced motion is requested", () => {
+    useMedia({ reduced: true });
+    window.history.replaceState(null, "", "/partners?view=policy#pp-cert");
+    const { container } = render(<PartnerCenter />);
+
+    expect(container.querySelector("#pp-cert")).not.toHaveClass("is-targeted");
   });
 
   it("opens a cold #partner-contact dialog and restores Escape focus to a safe page entry", () => {

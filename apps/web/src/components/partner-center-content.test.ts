@@ -88,7 +88,7 @@ describe("partner center content", () => {
 
     for (const content of Object.values(partnerViewContent)) {
       expect(content.disclaimer).toContain("示意内容");
-      expect(content.disclaimer).toContain("正式上线后替换");
+      expect(content.disclaimer).toContain("上线后替换");
     }
   });
 

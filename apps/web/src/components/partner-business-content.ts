@@ -1,6 +1,7 @@
 import type {
   PartnerAction,
   PartnerClosingCta,
+  PartnerVisual,
 } from "./partner-center-content";
 
 export const partnerBusinessContent = {
@@ -13,8 +14,25 @@ export const partnerBusinessContent = {
     "年度承诺销售额 50 万元以上",
     "年度承诺销售额 1000 万元以上",
   ],
-  disclaimer:
-    "示意内容，合作等级与金额正式上线后替换，具体以双方签署协议为准。",
+  disclaimer: "示意内容，上线后替换为真实关系图",
+  visual: {
+    title: "三种模式 × 伙伴类型",
+    items: [
+      {
+        kind: "node",
+        title: "渠道分销模式",
+        detail: "代理商 · 系统集成商",
+      },
+      {
+        kind: "node",
+        title: "联合解决方案模式",
+        detail: "ISV · 系统集成商",
+      },
+      { kind: "node", title: "OEM / 白标模式", detail: "大型 ISV" },
+      { kind: "connector", title: "▼ 按能力匹配" },
+      { kind: "node", title: "元启平台", badge: "能力开放" },
+    ],
+  } satisfies PartnerVisual,
   heroActions: [
     { label: "查看合作模式", href: "/partners?view=business#pb-modes" },
     { label: "成为合作伙伴", href: "/partners?view=become#pbc-hero" },

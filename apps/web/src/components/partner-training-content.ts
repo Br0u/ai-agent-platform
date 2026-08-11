@@ -1,4 +1,4 @@
-import type { PartnerAction } from "./partner-center-content";
+import type { PartnerAction, PartnerVisual } from "./partner-center-content";
 
 export const partnerTrainingContent = {
   eyebrow: "合作伙伴｜伙伴培训",
@@ -6,7 +6,25 @@ export const partnerTrainingContent = {
   lead: "系统化的培训课程、清晰的认证路径、丰富的学习资源，帮助每一位伙伴快速掌握元启平台，赢得市场先机。",
   tags: ["200+ 课程", "三级认证", "五大资源"],
   claims: ["200+ 课程", "200+ 课时"],
-  disclaimer: "示意内容，正式上线后替换为真实学习平台界面。",
+  disclaimer: "示意内容，上线后替换为真实学习平台界面",
+  visual: {
+    title: "元启伙伴学院",
+    items: [
+      { kind: "media", title: "课程视频播放器" },
+      { kind: "progress", title: "平台产品介绍", value: "65%" },
+      {
+        kind: "progress",
+        title: "行业解决方案深度解析",
+        value: "30%",
+      },
+      { kind: "progress", title: "大客户销售策略", value: "10%" },
+      {
+        kind: "node",
+        title: "学习进度",
+        detail: "200+ 课时 · 随时随地学习",
+      },
+    ],
+  } satisfies PartnerVisual,
   heroActions: [
     { label: "查看课程体系", href: "/partners?view=training#pt-courses" },
     { label: "联系咨询", topic: "伙伴培训报名" },

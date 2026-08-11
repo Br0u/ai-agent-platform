@@ -1,4 +1,4 @@
-import type { PartnerAction } from "./partner-center-content";
+import type { PartnerAction, PartnerVisual } from "./partner-center-content";
 
 export const partnerFlow = [
   ["在线申请", "填写伙伴申请表，提交公司和团队基本信息", ""],
@@ -15,7 +15,17 @@ export const partnerBecomeContent = {
   lead: "选择合作方向，准备基础企业与能力信息，通过人工渠道进一步沟通。",
   tags: ["选择方向", "准备信息", "联系沟通", "确认合作"],
   claims: ["六步入驻流程", "5 个工作日"],
-  disclaimer: "示意内容，正式上线后替换为真实对接流程。",
+  disclaimer: "示意内容，上线后替换为真实对接流程",
+  visual: {
+    title: "合作对接流程",
+    items: [
+      { kind: "node", title: "选择方向", detail: "渠道 / 交付 / 技术" },
+      { kind: "connector", title: "▼" },
+      { kind: "node", title: "准备信息", detail: "公司 / 团队 / 意向" },
+      { kind: "connector", title: "▼" },
+      { kind: "node", title: "联系沟通", badge: "人工对接" },
+    ],
+  } satisfies PartnerVisual,
   heroActions: [
     { label: "立即申请", topic: "申请成为合作伙伴" },
     { label: "查看准入条件", href: "/partners?view=policy#pp-hero" },

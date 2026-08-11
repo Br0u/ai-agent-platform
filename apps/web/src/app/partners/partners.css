@@ -127,6 +127,28 @@
   font-weight: 700;
 }
 
+.partner-directory__group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 2px;
+}
+
+.partner-directory__group > a {
+  font-weight: 700;
+}
+
+.partner-directory__group > button {
+  min-height: 32px;
+  border-radius: 8px;
+}
+
+.partner-directory__group > button:hover,
+.partner-directory__group > button:focus-visible {
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 9%, transparent);
+}
+
 .partner-directory nav ul ul a {
   padding-left: 17px;
   font-size: 13px;
@@ -292,6 +314,85 @@
 .partner-visual strong {
   color: var(--color-ink);
   font-size: 20px;
+}
+
+.partner-visual__body {
+  display: grid;
+  width: 100%;
+  gap: 8px;
+}
+
+.partner-visual__node,
+.partner-visual__media,
+.partner-visual__progress {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  padding: 9px 12px;
+  background: var(--color-canvas);
+}
+
+.partner-visual__node b,
+.partner-visual__progress b {
+  color: var(--color-ink);
+}
+
+.partner-visual__node small,
+.partner-visual__progress small {
+  color: var(--color-muted);
+}
+
+.partner-visual__node > span {
+  justify-self: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  font-size: 12px;
+}
+
+.partner-visual__connector {
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.partner-visual__media {
+  place-items: center;
+  min-height: 70px;
+  color: var(--color-surface);
+  background: #0e1c2c;
+  font-size: 12px;
+}
+
+.partner-visual__progress > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.partner-visual__progress progress {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--color-primary);
+}
+
+.partner-main .is-targeted {
+  animation: partner-target-pulse 1.8s ease;
+}
+
+@keyframes partner-target-pulse {
+  0%,
+  100% {
+    background: transparent;
+  }
+
+  18%,
+  72% {
+    background: #fff7d6;
+    box-shadow: inset 4px 0 0 #f0bc42;
+  }
 }
 
 .partner-section > header {
@@ -550,6 +651,24 @@
   border: 1px solid var(--color-line);
   border-radius: 10px;
   padding: 16px;
+}
+
+.partner-toast {
+  position: fixed;
+  z-index: 150;
+  right: 22px;
+  bottom: 22px;
+  border-radius: 9px;
+  padding: 11px 15px;
+  color: var(--color-surface);
+  background: var(--color-ink);
+  box-shadow: 0 12px 32px rgb(15 28 43 / 24%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .partner-main .is-targeted {
+    animation: none;
+  }
 }
 
 @media (max-width: 1000px) {

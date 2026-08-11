@@ -1,6 +1,7 @@
 import type {
   PartnerAction,
   PartnerClosingCta,
+  PartnerVisual,
 } from "./partner-center-content";
 
 export const partnerPolicyContent = {
@@ -9,7 +10,17 @@ export const partnerPolicyContent = {
   lead: "清晰的准入标准、完善的认证体系、丰富的支持资源，为每一位伙伴提供明确的成长路径和坚实的后盾。",
   tags: ["三大类型", "三大认证", "五项支持"],
   claims: ["三大伙伴类型", "三大认证方向", "三级能力进阶", "五项支持资源"],
-  disclaimer: "示意内容，伙伴准入、认证等级与支持资源正式上线后替换。",
+  disclaimer: "示意内容，上线后替换为真实成长路径图",
+  visual: {
+    title: "伙伴成长路径",
+    items: [
+      { kind: "node", title: "伙伴准入", detail: "三大类型 · 明确条件" },
+      { kind: "connector", title: "▼" },
+      { kind: "node", title: "培训认证", detail: "销售 / 技术 / 交付" },
+      { kind: "connector", title: "▼" },
+      { kind: "node", title: "等级晋级", badge: "银牌 → 战略" },
+    ],
+  } satisfies PartnerVisual,
   heroActions: [
     { label: "查看准入条件", href: "/partners?view=policy#pp-types" },
     { label: "成为合作伙伴", href: "/partners?view=become#pbc-hero" },

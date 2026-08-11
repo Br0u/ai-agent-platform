@@ -30,6 +30,17 @@ export type PartnerClosingCta = {
   actions: readonly PartnerAction[];
 };
 
+export type PartnerVisualItem =
+  | { kind: "node"; title: string; detail?: string; badge?: string }
+  | { kind: "connector"; title: string }
+  | { kind: "media"; title: string }
+  | { kind: "progress"; title: string; value: string };
+
+export type PartnerVisual = {
+  title: string;
+  items: readonly PartnerVisualItem[];
+};
+
 export const partnerDirectory: readonly PartnerDirectoryNode[] = [
   {
     key: "overview",

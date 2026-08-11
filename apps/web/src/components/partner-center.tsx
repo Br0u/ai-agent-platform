@@ -21,6 +21,7 @@ import {
   type PartnerAction,
   type PartnerClosingCta,
   type PartnerDirectoryNode,
+  type PartnerVisual,
   type PartnerView,
   partnerViewContent,
 } from "./partner-center-content";
@@ -130,9 +131,13 @@ export function PartnerCenter() {
   const selectedType = location.type;
   const [query, setQuery] = useState("");
   const [directoryCollapsed, setDirectoryCollapsed] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [contactTopic, setContactTopic] = useState("");
+  const [copyToast, setCopyToast] = useState(false);
   const mobileTrigger = useRef<HTMLButtonElement>(null);
   const directory = useRef<HTMLElement>(null);
   const directorySearch = useRef<HTMLInputElement>(null);
@@ -140,6 +145,7 @@ export function PartnerCenter() {
   const contactClose = useRef<HTMLButtonElement>(null);
   const contactTrigger = useRef<HTMLElement | null>(null);
   const safeEntry = useRef<HTMLButtonElement>(null);
+  const copyToastTimer = useRef<number | null>(null);
   const restoreMobileFocus = useRef(false);
   const restoreContactFocus = useRef(false);
   const allowFocusReturn = useRef(false);
@@ -180,6 +186,17 @@ export function PartnerCenter() {
     contactTrigger.current = trigger;
     setMobileOpen(false);
     setContactTopic(topic);
+  };
+
+  const copyContact = (value: string) => {
+    navigator.clipboard?.writeText(value);
+    if (copyToastTimer.current !== null)
+      window.clearTimeout(copyToastTimer.current);
+    setCopyToast(true);
+    copyToastTimer.current = window.setTimeout(() => {
+      setCopyToast(false);
+      copyToastTimer.current = null;
+    }, 2_600);
   };
 
   const navigate = (href: string, record = true) => {
@@ -238,10 +255,31 @@ export function PartnerCenter() {
 
   useLayoutEffect(() => {
     if (visibleContactTopic) return;
-    document
-      .getElementById(location.hash.slice(1))
-      ?.scrollIntoView?.({ block: "start" });
+    const target = document.getElementById(location.hash.slice(1));
+    target?.scrollIntoView?.({ block: "start" });
+    if (
+      !target ||
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    )
+      return;
+    target.classList.add("is-targeted");
+    const timer = window.setTimeout(
+      () => target.classList.remove("is-targeted"),
+      1_800,
+    );
+    return () => {
+      window.clearTimeout(timer);
+      target.classList.remove("is-targeted");
+    };
   }, [location.hash, view, visibleContactTopic]);
+
+  useEffect(
+    () => () => {
+      if (copyToastTimer.current !== null)
+        window.clearTimeout(copyToastTimer.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!mobileOpen && !visibleContactTopic) return;
@@ -299,13 +337,44 @@ export function PartnerCenter() {
         <ul>
           {filteredDirectory.map((node) => (
             <li key={node.key}>
-              {link(node)}
               {node.children?.length ? (
-                <ul>
-                  {node.children.map((child) => (
-                    <li key={child.key}>{link(child)}</li>
-                  ))}
-                </ul>
+                <div className="partner-directory__group">
+                  {link(node)}
+                  <button
+                    type="button"
+                    aria-expanded={
+                      Boolean(normalizedQuery) || !collapsedGroups.has(node.key)
+                    }
+                    aria-label={`${
+                      !normalizedQuery && collapsedGroups.has(node.key)
+                        ? "展开"
+                        : "收起"
+                    }${node.label}目录`}
+                    onClick={() =>
+                      setCollapsedGroups((current) => {
+                        const next = new Set(current);
+                        if (next.has(node.key)) next.delete(node.key);
+                        else next.add(node.key);
+                        return next;
+                      })
+                    }
+                  >
+                    {!normalizedQuery && collapsedGroups.has(node.key)
+                      ? "›"
+                      : "⌄"}
+                  </button>
+                </div>
+              ) : (
+                link(node)
+              )}
+              {node.children?.length ? (
+                normalizedQuery || !collapsedGroups.has(node.key) ? (
+                  <ul>
+                    {node.children.map((child) => (
+                      <li key={child.key}>{link(child)}</li>
+                    ))}
+                  </ul>
+                ) : null
               ) : null}
             </li>
           ))}
@@ -430,7 +499,7 @@ export function PartnerCenter() {
             title={content.title}
             lead={content.lead}
             tags={content.tags}
-            claims={content.claims}
+            visual={content.visual}
             actions={content.heroActions}
             view={view}
             onContact={openContact}
@@ -464,7 +533,12 @@ export function PartnerCenter() {
       </div>
 
       {visibleContactTopic ? (
-        <div className="partner-dialog-backdrop">
+        <div
+          className="partner-dialog-backdrop"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeContact();
+          }}
+        >
           <div
             ref={contactDialog}
             className="partner-dialog"
@@ -498,15 +572,18 @@ export function PartnerCenter() {
                   )?.title
                 : "综合合作咨询"}
             </p>
+            <p>
+              来源：
+              {allPartnerDirectoryNodes.find((node) => node.key === activeKey)
+                ?.label ?? content.title}
+            </p>
             <div className="partner-contact-cards">
               <article>
                 <strong>生态合作电话</strong>
                 <p>{partnerContact.phone}</p>
                 <button
                   type="button"
-                  onClick={() =>
-                    navigator.clipboard?.writeText(partnerContact.phoneCopy)
-                  }
+                  onClick={() => copyContact(partnerContact.phoneCopy)}
                 >
                   复制电话
                 </button>
@@ -516,9 +593,7 @@ export function PartnerCenter() {
                 <p>{partnerContact.email}</p>
                 <button
                   type="button"
-                  onClick={() =>
-                    navigator.clipboard?.writeText(partnerContact.emailCopy)
-                  }
+                  onClick={() => copyContact(partnerContact.emailCopy)}
                 >
                   复制邮箱
                 </button>
@@ -532,6 +607,11 @@ export function PartnerCenter() {
           </div>
         </div>
       ) : null}
+      {copyToast ? (
+        <div className="partner-toast" role="status">
+          联系信息已复制
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -541,7 +621,7 @@ function Hero({
   title,
   lead,
   tags,
-  claims,
+  visual,
   actions,
   view,
   onContact,
@@ -551,7 +631,7 @@ function Hero({
   title: string;
   lead: string;
   tags: readonly string[];
-  claims: readonly string[];
+  visual: PartnerVisual;
   actions: readonly PartnerAction[];
   view: PartnerView;
   onContact: (topic: string, trigger: HTMLElement) => void;
@@ -577,11 +657,48 @@ function Hero({
           onNavigate={onNavigate}
         />
       </div>
-      <div className="partner-visual" aria-label="示意信息">
-        <strong>华鲲元启伙伴生态</strong>
-        {claims.map((claim) => (
-          <span key={claim}>{claim}</span>
-        ))}
+      <div className="partner-visual" aria-label={visual.title}>
+        <strong>{visual.title}</strong>
+        <div className="partner-visual__body">
+          {visual.items.map((item, index) => {
+            if (item.kind === "connector")
+              return (
+                <span
+                  className="partner-visual__connector"
+                  key={`${item.title}-${index}`}
+                >
+                  {item.title}
+                </span>
+              );
+            if (item.kind === "media")
+              return (
+                <div className="partner-visual__media" key={item.title}>
+                  {item.title}
+                </div>
+              );
+            if (item.kind === "progress")
+              return (
+                <div className="partner-visual__progress" key={item.title}>
+                  <span>
+                    <b>{item.title}</b>
+                    <small>{item.value}</small>
+                  </span>
+                  <progress
+                    aria-label={`${item.title} ${item.value}`}
+                    max={100}
+                    value={Number.parseInt(item.value, 10)}
+                  />
+                </div>
+              );
+            return (
+              <div className="partner-visual__node" key={item.title}>
+                <b>{item.title}</b>
+                {item.detail ? <small>{item.detail}</small> : null}
+                {item.badge ? <span>{item.badge}</span> : null}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </section>
   );

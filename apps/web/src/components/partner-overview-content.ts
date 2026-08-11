@@ -1,6 +1,7 @@
 import type {
   PartnerAction,
   PartnerClosingCta,
+  PartnerVisual,
 } from "./partner-center-content";
 
 export const partnerOverviewContent = {
@@ -9,7 +10,23 @@ export const partnerOverviewContent = {
   lead: "面向渠道、交付与技术伙伴，提供多元合作模式、清晰分润政策与全链路赋能支持，共同开拓企业 AI 市场。",
   tags: ["商业回报", "市场协同", "成长认证"],
   claims: ["200+ 伙伴", "500+ 企业客户", "10万+ AI 应用上线"],
-  disclaimer: "示意内容，正式上线后替换为真实生态关系图。",
+  disclaimer: "示意内容，上线后替换为真实生态关系图",
+  visual: {
+    title: "华鲲元启伙伴生态",
+    items: [
+      { kind: "node", title: "元启平台", badge: "200+ 伙伴" },
+      { kind: "connector", title: "▼" },
+      { kind: "node", title: "渠道代理伙伴", detail: "转售产品 · 本地服务" },
+      { kind: "node", title: "交付生态伙伴", detail: "项目交付 · 定制开发" },
+      { kind: "node", title: "技术合作伙伴", detail: "产品集成 · 联合创新" },
+      { kind: "connector", title: "▼" },
+      {
+        kind: "node",
+        title: "企业客户",
+        detail: "500+ 企业客户 · 10万+ AI 应用上线",
+      },
+    ],
+  } satisfies PartnerVisual,
   heroActions: [
     { label: "成为合作伙伴", href: "/partners?view=become#pbc-hero" },
     { label: "了解商业模式", href: "/partners?view=business#pb-hero" },
