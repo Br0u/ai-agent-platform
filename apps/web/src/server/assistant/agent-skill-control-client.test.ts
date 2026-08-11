@@ -98,7 +98,7 @@ describe("Agent Skill control client", () => {
     ).resolves.toMatchObject({ skillCapability: "unconfigured" });
   });
 
-  it("binds recent MFA, set ID, version, and body to one activation", async () => {
+  it("binds the session, set ID, version, and body to one activation", async () => {
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
       const request = new Request(input, init);
       expect(request.url).toBe(
@@ -111,8 +111,8 @@ describe("Agent Skill control client", () => {
       expect(decodeAssertion(request)).toMatchObject({
         action: "skill_runtime_activate",
         actor: ACTOR,
-        assurance: "password+mfa",
-        assuredAt: NOW - 100,
+        assurance: "session",
+        assuredAt: null,
         permission: "admin:assistant:skills:configure",
         requestId: REQUEST_ID,
         target: `maduoduo:${SET_ID}:7`,
@@ -130,7 +130,7 @@ describe("Agent Skill control client", () => {
         requestId: REQUEST_ID,
         setId: SET_ID,
         expectedActivationVersion: 7,
-        assuredAt: NOW - 100,
+        assuredAt: null,
       }),
     ).resolves.toEqual({
       requestId: REQUEST_ID,
@@ -165,7 +165,7 @@ describe("Agent Skill control client", () => {
         requestId: REQUEST_ID,
         setId: SET_ID,
         expectedActivationVersion: 7,
-        assuredAt: NOW,
+        assuredAt: null,
       }),
     ).rejects.toEqual(new AgentSkillControlClientError("activation_conflict"));
 
@@ -185,7 +185,7 @@ describe("Agent Skill control client", () => {
         requestId: REQUEST_ID,
         setId: SET_ID,
         expectedActivationVersion: 7,
-        assuredAt: NOW,
+        assuredAt: null,
       }),
     ).rejects.toMatchObject({ code: "invalid_response" });
   });

@@ -3,11 +3,6 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { assertE2EEnvironment, fixtureIdentities } from "./seed-auth-e2e";
-import {
-  parseAssertionMode,
-  recoveryCodeDigest,
-  verifyAtRestState,
-} from "./assert-auth-at-rest";
 
 describe("test-only auth E2E tools", () => {
   const fixtureEnvironment = () =>
@@ -21,19 +16,11 @@ describe("test-only auth E2E tools", () => {
         "E2E_STAFF_SESSION_TOKEN",
         "E2E_ROLE_TARGET_SESSION_TOKEN",
         "E2E_ADMIN_SESSION_TOKEN",
-        "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
         "E2E_MODEL_ADMIN_SESSION_TOKEN",
-        "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
         "E2E_REVOKED_SESSION_TOKEN",
         "E2E_REPLACEMENT_PASSWORD",
       ].map((name) => [name, randomBytes(32).toString("base64url")]),
     );
-  it("accepts the pnpm argument separator used by the documented command", () => {
-    expect(parseAssertionMode(["--", "--expect-present-hashed"])).toBe(
-      "--expect-present-hashed",
-    );
-    expect(parseAssertionMode(["--expect-consumed"])).toBe("--expect-consumed");
-  });
   it("binds credential account text and user UUID as distinct PostgreSQL parameters", () => {
     const source = readFileSync(
       new URL("./seed-auth-e2e.ts", import.meta.url),
@@ -57,9 +44,7 @@ describe("test-only auth E2E tools", () => {
       "E2E_STAFF_SESSION_TOKEN",
       "E2E_ROLE_TARGET_SESSION_TOKEN",
       "E2E_ADMIN_SESSION_TOKEN",
-      "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
       "E2E_MODEL_ADMIN_SESSION_TOKEN",
-      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
       "E2E_REVOKED_SESSION_TOKEN",
       "E2E_REPLACEMENT_PASSWORD",
     ]) {
@@ -97,10 +82,6 @@ describe("test-only auth E2E tools", () => {
         realm: "workforce",
         status: "active",
       },
-      noTotpAdmin: {
-        realm: "workforce",
-        status: "active",
-      },
       modelAdmin: {
         realm: "workforce",
         status: "active",
@@ -117,9 +98,6 @@ describe("test-only auth E2E tools", () => {
       new URL("./seed-auth-e2e.ts", import.meta.url),
       "utf8",
     );
-    expect(source).toContain(
-      "DELETE FROM two_factors WHERE user_id = ANY($1::uuid[])",
-    );
     expect(source).toContain("DELETE FROM user_roles WHERE user_id = $1");
     expect(source).toContain(
       "DELETE FROM organization_memberships WHERE user_id = ANY($1::uuid[])",
@@ -129,19 +107,11 @@ describe("test-only auth E2E tools", () => {
     );
     expect(source).not.toContain("DELETE FROM user_roles;");
     expect(source).not.toContain("DELETE FROM organization_memberships;");
-    expect(source).toContain(
-      "UPDATE users SET two_factor_enabled = false WHERE id = $1",
-    );
     expect(source).toContain("credentials.revokedSessionToken");
     expect(source).not.toMatch(/['"]e2e-[^'"]*session[^'"]*['"]/u);
     expect(source).toContain("support_operator");
     expect(source).toContain("credentials.modelAdminSessionToken");
-    expect(source).toContain("credentials.modelAdminStaleSessionToken");
-    expect(source).toContain("now() - interval '11 minutes'");
     expect(source).toContain("fixtureIdentities.modelAdmin");
-    expect(source).toContain(
-      `"UPDATE users SET two_factor_enabled = true WHERE id = $1",\n      [fixtureIdentities.modelAdmin.id],`,
-    );
     expect(source).not.toMatch(
       /fixtureIdentities\.admin[\s\S]{0,500}super_admin/u,
     );
@@ -153,41 +123,5 @@ describe("test-only auth E2E tools", () => {
     );
     expect(source).toContain("E2E Pending Fixture Company");
     expect(source).toContain("email_verification_status = 'pending'");
-  });
-
-  it("asserts hashed presence and consumed state without accepting plaintext", () => {
-    const code = "ABCDE-FGHIJ-KLMNO-PQRST";
-    const hash = recoveryCodeDigest(code);
-    expect(hash).toMatch(/^[a-f0-9]{64}$/u);
-    expect(
-      verifyAtRestState(
-        "--expect-present-hashed",
-        code,
-        JSON.stringify([hash]),
-        false,
-      ),
-    ).toBe(true);
-    expect(() =>
-      verifyAtRestState(
-        "--expect-present-hashed",
-        code,
-        JSON.stringify([code]),
-        false,
-      ),
-    ).toThrow("plaintext");
-    expect(verifyAtRestState("--expect-consumed", code, "[]", false)).toBe(
-      true,
-    );
-    expect(() =>
-      verifyAtRestState(
-        "--expect-consumed",
-        code,
-        JSON.stringify([hash]),
-        false,
-      ),
-    ).toThrow("still exists");
-    expect(() =>
-      verifyAtRestState("--expect-consumed", code, "[]", true),
-    ).toThrow("revoked fixture session");
   });
 });

@@ -1,11 +1,9 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import QRCode from "qrcode";
 
 import {
   createDefaultAuthActions,
-  createDefaultRecoveryChallengeActions,
   createDefaultStaffSecurityActions,
   type AuthActionState,
   type StaffSecurityActionState,
@@ -50,57 +48,6 @@ export async function changeStaffPasswordAction(
 ): Promise<StaffSecurityActionState> {
   const result =
     await createDefaultStaffSecurityActions().changePassword(formData);
-  if (result.kind === "success") redirect(result.redirectTo);
-  return result;
-}
-
-export async function enrollStaffTwoFactorAction(
-  formData: FormData,
-): Promise<StaffSecurityActionState> {
-  const result =
-    await createDefaultStaffSecurityActions().enrollTwoFactor(formData);
-  if (result.kind !== "enrollment") return result;
-  return {
-    ...result,
-    qrDataUrl: await QRCode.toDataURL(result.totpURI, {
-      errorCorrectionLevel: "M",
-      margin: 2,
-      width: 320,
-    }),
-  };
-}
-
-export async function verifyStaffTwoFactorAction(
-  formData: FormData,
-): Promise<StaffSecurityActionState> {
-  const result =
-    await createDefaultStaffSecurityActions().verifyTwoFactor(formData);
-  if (result.kind === "success") redirect(result.redirectTo);
-  return result;
-}
-
-export async function verifyStaffRecoveryCodeAction(
-  formData: FormData,
-): Promise<StaffSecurityActionState> {
-  const result = await createDefaultRecoveryChallengeActions().verify(formData);
-  if (result.kind === "success") redirect(result.redirectTo);
-  return result;
-}
-
-export async function removeStaffTwoFactorAction(
-  formData: FormData,
-): Promise<StaffSecurityActionState> {
-  const result =
-    await createDefaultStaffSecurityActions().removeTwoFactor(formData);
-  if (result.kind === "success") redirect(result.redirectTo);
-  return result;
-}
-
-export async function reauthenticateStaffAction(
-  formData: FormData,
-): Promise<StaffSecurityActionState> {
-  const result =
-    await createDefaultStaffSecurityActions().reauthenticate(formData);
   if (result.kind === "success") redirect(result.redirectTo);
   return result;
 }

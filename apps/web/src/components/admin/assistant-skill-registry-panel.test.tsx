@@ -61,47 +61,6 @@ describe("AssistantSkillRegistryPanel", () => {
     expect(screen.queryByText(/审核/u)).toBeNull();
   });
 
-  it("navigates only for the exact versioned re-auth response", async () => {
-    const navigateToReauth = vi.fn();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        Response.json(
-          {
-            version: "1",
-            requestId: "44444444-4444-4444-8444-444444444444",
-            error: { code: "reauth_required" },
-            redirectTo: "/staff/re-auth",
-          },
-          { status: 401 },
-        ),
-      ),
-    );
-    render(
-      <AssistantSkillRegistryPanel
-        canRead
-        initialPermissions={{
-          canUpload: true,
-          canManageConnections: false,
-          canConfigure: true,
-        }}
-        initialSnapshot={{ capability: "available", skills: [enabledSkill] }}
-        navigateToReauth={navigateToReauth}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "停用" }));
-
-    await waitFor(() =>
-      expect(navigateToReauth).toHaveBeenCalledExactlyOnceWith(
-        "/staff/re-auth",
-      ),
-    );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "需要重新验证身份，正在前往验证页面。",
-    );
-  });
-
   it("locks the affected Skill when mutation outcome cannot be confirmed", async () => {
     vi.stubGlobal(
       "fetch",
@@ -887,63 +846,5 @@ describe("AssistantSkillRegistryPanel", () => {
     expect(
       screen.getByRole("button", { name: "刷新 Skill 列表" }),
     ).toBeEnabled();
-  });
-
-  it("sends a confirmed replacement re-auth response to the exact staff route", async () => {
-    const navigateToReauth = vi.fn();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(
-          Response.json(
-            {
-              version: "1",
-              requestId: "conflict",
-              error: { code: "state_conflict" },
-              conflictingSkillId: enabledSkill.id,
-              replacementToken: "a".repeat(64),
-              conflictingSkillEnabled: true,
-            },
-            { status: 409 },
-          ),
-        )
-        .mockResolvedValueOnce(
-          Response.json(
-            {
-              version: "1",
-              requestId: "reauth",
-              error: { code: "reauth_required" },
-              redirectTo: "/staff/re-auth",
-            },
-            { status: 401 },
-          ),
-        ),
-    );
-    render(
-      <AssistantSkillRegistryPanel
-        canRead
-        initialPermissions={{
-          canUpload: true,
-          canManageConnections: false,
-          canConfigure: true,
-        }}
-        initialSnapshot={{ capability: "available", skills: [enabledSkill] }}
-        navigateToReauth={navigateToReauth}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "上传 Skill ZIP" }));
-    fireEvent.change(screen.getByLabelText("Skill ZIP 文件"), {
-      target: { files: [new File(["zip"], "safe-skill.zip")] },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "上传" }));
-
-    await waitFor(() =>
-      expect(navigateToReauth).toHaveBeenCalledExactlyOnceWith(
-        "/staff/re-auth",
-      ),
-    );
   });
 });

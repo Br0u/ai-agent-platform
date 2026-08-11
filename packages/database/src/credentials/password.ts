@@ -36,6 +36,7 @@ export async function verifyPassword(
   passwordHash: string,
   password: string,
 ): Promise<boolean> {
-  assertPasswordPolicy(password);
+  // Creation policy must not lock out an already-provisioned credential.
+  if (password.length > MAX_PASSWORD_CHARACTERS) assertPasswordPolicy(password);
   return verify(passwordHash, password, ARGON2ID_OPTIONS);
 }

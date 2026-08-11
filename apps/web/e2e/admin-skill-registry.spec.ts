@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -158,7 +157,6 @@ test.describe("Skill library lifecycle", () => {
 
   test("@lifecycle completes the simple Skill lifecycle through product controls", async ({
     baseURL,
-    browser,
     page,
   }) => {
     if (!baseURL) throw new Error("baseURL is required");
@@ -174,12 +172,7 @@ test.describe("Skill library lifecycle", () => {
     const modelAdminSessionToken = requiredEnvironment(
       "E2E_MODEL_ADMIN_SESSION_TOKEN",
     );
-    const modelAdminStaleSessionToken = requiredEnvironment(
-      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
-    );
     const slug = requiredEnvironment("SKILL_REGISTRY_E2E_SLUG");
-    const origin = new URL(baseURL).origin;
-
     await addSignedSession(
       page.context(),
       baseURL,
@@ -202,27 +195,6 @@ test.describe("Skill library lifecycle", () => {
         exact: true,
       }),
     ).toBeVisible();
-
-    const stale = await browser.newContext({ baseURL });
-    await addSignedSession(
-      stale,
-      baseURL,
-      "workforce",
-      modelAdminStaleSessionToken,
-    );
-    const denied = await stale.request.post(
-      `/api/v1/admin/assistant/skills/${initial.skillId}/enable`,
-      {
-        headers: { origin },
-        data: { requestId: randomUUID() },
-      },
-    );
-    expect(denied.status()).toBe(401);
-    await expect(denied.json()).resolves.toMatchObject({
-      error: { code: "reauth_required" },
-      redirectTo: "/staff/re-auth",
-    });
-    await stale.close();
 
     await mutate(page, initial.skillId, "enable");
     await expect(page.getByText("● 已启用", { exact: true })).toBeVisible();

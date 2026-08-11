@@ -178,11 +178,7 @@ function isExpectedNavigationCancellation(
         (url.pathname === "/api/v1/session/staff" && url.search === "")
       );
     }
-    return (
-      failure.method === "POST" &&
-      url.pathname === "/staff/two-factor" &&
-      url.searchParams.get("returnTo") === "/admin/assistant"
-    );
+    return false;
   } catch {
     return false;
   }
@@ -579,10 +575,6 @@ test("all authentication routes use the precision shell without overflow", async
     await tabTo(page, page.getByLabel(field));
   }
 
-  await page.goto("/staff/two-factor");
-  await expect(page.getByRole("heading", { name: "双因素认证" })).toBeVisible();
-  await tabTo(page, page.getByLabel("六位验证码").first());
-  await expectExactViewportWidth(page);
   await attachScreenshot(page, testInfo, "auth-shell");
   expectCleanEvidence(evidence, new URL(page.url()).origin);
 });
@@ -627,8 +619,6 @@ test("authenticated assistant operations and protected auth forms are usable", a
 
   for (const [url, heading, field] of [
     ["/staff/change-password", "修改初始密码", "当前密码"],
-    ["/staff/re-auth", "重新验证身份", "员工用户名或邮箱"],
-    ["/staff/two-factor", "双因素认证", "当前密码"],
   ] as const) {
     await page.goto(url);
     await expect(page.getByRole("heading", { name: heading })).toBeVisible();

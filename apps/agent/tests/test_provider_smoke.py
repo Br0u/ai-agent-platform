@@ -94,6 +94,7 @@ def test_provider_smoke_settings_are_model_only_and_always_required() -> None:
 
     assert settings.active_model.provider == "openai"
     assert settings.active_model.model_id == MODEL_ID
+    assert settings.active_model.api_key is not None
     assert settings.active_model.api_key.get_secret_value() == MODEL_API_KEY
     assert settings.active_model.base_url == MODEL_BASE_URL
     assert settings.active_model.timeout_seconds == 12

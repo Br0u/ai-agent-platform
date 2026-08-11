@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 
 import type { WorkforceActor } from "@/server/auth/access";
 import type { AuditWriteInput } from "@/server/auth/audit";
-import type { WorkforceAssuranceEvidence } from "@/server/auth/sensitive-action";
 import {
   AgentSkillControlClientError,
   type AgentSkillControlClient,
@@ -43,15 +42,13 @@ export class AdminSkillLifecycleCommandError extends Error {
 export type AuthorizedSkillLifecycleCommand = Readonly<{
   [AUTHORIZED]: true;
   actor: WorkforceActor;
-  assuredAt: number;
 }>;
 
 type Dependencies = {
   requireTrustedMutation(request: Request): void;
   requireSensitiveAction(
     permission: "admin:assistant:skills:configure",
-    options: { recentWithinSeconds: 600; mfaRequired: true },
-  ): Promise<WorkforceAssuranceEvidence>;
+  ): Promise<WorkforceActor>;
   audit: { write(input: AuditWriteInput): Promise<void> };
   registry: SkillRegistryRuntimeClient;
   agent: AgentSkillControlClient;
@@ -106,19 +103,15 @@ export function createAdminSkillLifecycleCommands(dependencies: Dependencies) {
       request: Request,
     ): Promise<AuthorizedSkillLifecycleCommand> {
       dependencies.requireTrustedMutation(request);
-      const evidence = await dependencies.requireSensitiveAction(
+      const actor = await dependencies.requireSensitiveAction(
         "admin:assistant:skills:configure",
-        { recentWithinSeconds: 600, mfaRequired: true },
       );
       const context = Object.freeze({
         [AUTHORIZED]: true as const,
         actor: Object.freeze({
-          ...evidence.actor,
-          permissions: Object.freeze([
-            ...evidence.actor.permissions,
-          ]) as string[],
+          ...actor,
+          permissions: Object.freeze([...actor.permissions]) as string[],
         }),
-        assuredAt: evidence.assuredAt,
       });
       grants.add(context);
       return context;
@@ -176,7 +169,7 @@ export function createAdminSkillLifecycleCommands(dependencies: Dependencies) {
         const candidate = await dependencies.registry.createSkillSet({
           actor,
           requestId: candidateRequestId,
-          assuredAt: context.assuredAt,
+          assuredAt: null,
           revisionIds: input.nextRevisionIds,
         });
         candidateId = candidate.set.id;
@@ -186,7 +179,7 @@ export function createAdminSkillLifecycleCommands(dependencies: Dependencies) {
             requestId: activationRequestId,
             setId: candidateId,
             expectedActivationVersion: input.expectedActivationVersion,
-            assuredAt: context.assuredAt,
+            assuredAt: null,
           });
           activationVersion = activated.activationVersion;
         } catch (error) {
@@ -200,7 +193,7 @@ export function createAdminSkillLifecycleCommands(dependencies: Dependencies) {
               .discardSkillSet({
                 actor,
                 requestId: derivedRequestId(input.requestId, "discard"),
-                assuredAt: context.assuredAt,
+                assuredAt: null,
                 setId: candidateId,
               })
               .catch(() => undefined);

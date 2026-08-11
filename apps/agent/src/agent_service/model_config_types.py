@@ -44,6 +44,7 @@ TEST_STATUSES: Final[tuple[TestStatus, ...]] = (
 ENDPOINT_ID_MAX_CODE_POINTS: Final = 64
 MODEL_API_KEY_MIN_CODE_POINTS: Final = 8
 MODEL_API_KEY_MAX_CODE_POINTS: Final = 4096
+KEYLESS_MODEL_API_KEY: Final = "aap-keyless-none"
 
 
 def _validate_model_id(value: str) -> str:

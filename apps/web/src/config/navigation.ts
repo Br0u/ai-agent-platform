@@ -395,7 +395,7 @@ export const consoleNavigation: SidebarNavigationConfig = {
   ],
 };
 
-export const adminNavigation: SidebarNavigationConfig = {
+const adminSecondaryNavigation: SidebarNavigationConfig = {
   groups: [
     {
       label: "运营概览",
@@ -538,6 +538,46 @@ export const adminNavigation: SidebarNavigationConfig = {
     { label: "返回公开门户", href: "/" },
     { label: "退出登录", action: "logout", disabled: false },
   ],
+};
+
+const ADMIN_CORE_HREFS = new Set([
+  "/admin/assistant",
+  "/admin/docs",
+  "/admin/users",
+]);
+
+export const adminNavigation: SidebarNavigationConfig = {
+  groups: [
+    {
+      label: "核心管理",
+      items: [
+        {
+          label: "Agent 管理",
+          href: "/admin/assistant",
+          permission: "admin:assistant",
+        },
+        {
+          label: "文档管理",
+          href: "/admin/docs",
+          permission: "admin:docs",
+        },
+        {
+          label: "用户管理",
+          href: "/admin/users",
+          permission: "admin:users",
+        },
+      ],
+    },
+    {
+      label: "其他功能",
+      collapsible: true,
+      defaultCollapsed: true,
+      items: adminSecondaryNavigation.groups
+        .flatMap((group) => group.items)
+        .filter((item) => !(item.href && ADMIN_CORE_HREFS.has(item.href))),
+    },
+  ],
+  utilities: adminSecondaryNavigation.utilities,
 };
 
 export const footerNavigation: NavigationSection[] = [

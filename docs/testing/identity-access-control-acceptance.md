@@ -48,17 +48,14 @@ CI 等价验证使用三个数据库：`ai_agent_platform_ci`仅供创建隔离�
 | 角色移除               | 下一次授权检查 401，相关会话被撤销                                                                                                                   |
 | 单会话撤销             | 被撤销 token 的 staff session API 返回`401 AUTH_SESSION_REQUIRED`，当前管理员会话同时保持 200                                                        |
 | 管理员替换临时密码     | 员工旧会话下一次检查 401                                                                                                                             |
-| 管理员 TOTP            | 注册前会话接口明确返回`403 AUTH_TOTP_SETUP_REQUIRED`且敏感表单不在响应中；完成真实 TOTP 后允许授权的会话撤销操作                                     |
-| 未配置 TOTP 的管理员   | 以独立管理员会话重放从已验证管理员页面截获的真实 Next Server Action，响应稳定返回`AUTH_TOTP_SETUP_REQUIRED`，目标会话保持 200                        |
-| 恢复码                 | 数据库只存在哈希；首次使用成功，第二次真实 Server Action 返回`AUTH_INVALID_CREDENTIALS`；消费后哈希与替换前会话均不存在                              |
 | 注册限流               | 重复无效提交出现 429                                                                                                                                 |
 | 邮箱重发禁用           | `501 EMAIL_VERIFICATION_DISABLED`                                                                                                                    |
 | 健康接口               | 游客访问均为 200                                                                                                                                     |
 | 响应式与控制台         | desktop/mobile 共 6 个无状态用例通过，无横向溢出或 console error                                                                                     |
 
-最终分段顺序结果：TOTP 1/1、恢复码 1/1、其余访问矩阵 11/11；无状态 desktop/mobile 6/6。TOTP 与恢复码共享真实 Nginx 认证限流桶，因此两段之间重启本地验收 proxy 以隔离用例，不降低生产限流。恢复码明文和浏览器 storage state 验收后已删除，均未进入 Git。
+当前验收覆盖权限、账号状态、会话撤销、密码替换和 desktop/mobile 无状态访问矩阵；浏览器 storage state 验收后删除，不进入 Git。
 
-生产 Cookie 属性由认证配置测试验证：客户与员工会话均为`HttpOnly`、`SameSite=Lax`；HTTPS/生产配置包含`Secure`。客户与员工使用不同 Cookie 名，不接受跨身份域复用。管理员未完成 TOTP 时的敏感操作拒绝、权限服务端复核、审计不可篡改、账号/IP 双层限流均由 Web/数据库自动化测试覆盖。
+生产 Cookie 属性由认证配置测试验证：客户与员工会话均为`HttpOnly`、`SameSite=Lax`；HTTPS/生产配置包含`Secure`。客户与员工使用不同 Cookie 名，不接受跨身份域复用。权限服务端复核、审计不可篡改、账号/IP 双层限流均由 Web/数据库自动化测试覆盖。
 
 认证账号/IP限流另有 7 项真实 PostgreSQL 集成测试，覆盖两个桶各自阈值、固定窗口重置、拒绝时整笔事务回滚、并发 upsert 不丢计数、数据库异常 fail-closed、每次最多 100 条的过期清理，以及长窗口内不提前清理。清理只匹配`auth:%`，不会删除 Better Auth 或注册限流命名空间。
 

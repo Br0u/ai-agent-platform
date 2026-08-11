@@ -35,7 +35,7 @@ export type AgentSkillControlClient = {
     requestId: string;
     setId: string;
     expectedActivationVersion: number;
-    assuredAt: number;
+    assuredAt: number | null;
   }): Promise<AdminAgentSkillActivationResponse>;
 };
 
@@ -213,32 +213,28 @@ export function createAgentSkillControlClient(options: {
   }): string {
     const now = clock();
     const nonce = nonceFactory();
-    const activation = input.action === "skill_runtime_activate";
     if (
       !UUID.test(input.actor) ||
       !UUID.test(input.requestId) ||
       !UUID.test(nonce) ||
       !Number.isSafeInteger(now) ||
       now < 0 ||
-      (activation
-        ? !Number.isSafeInteger(input.assuredAt) ||
-          (input.assuredAt as number) > now ||
-          (input.assuredAt as number) < now - 600
-        : input.assuredAt !== null)
+      input.assuredAt !== null
     ) {
       invalidRequest();
     }
     const payload = {
       action: input.action,
       actor: input.actor,
-      assurance: activation ? "password+mfa" : "session",
+      assurance: "session",
       assuredAt: input.assuredAt,
       expiresAt: now + 5,
       issuedAt: now,
       nonce,
-      permission: activation
-        ? "admin:assistant:skills:configure"
-        : "admin:assistant:skills",
+      permission:
+        input.action === "skill_runtime_activate"
+          ? "admin:assistant:skills:configure"
+          : "admin:assistant:skills",
       requestId: input.requestId,
       target: input.target,
     };
@@ -342,8 +338,7 @@ export function createAgentSkillControlClient(options: {
         typeof input.expectedActivationVersion !== "number" ||
         !Number.isSafeInteger(input.expectedActivationVersion) ||
         input.expectedActivationVersion < 0 ||
-        typeof input.assuredAt !== "number" ||
-        !Number.isSafeInteger(input.assuredAt)
+        input.assuredAt !== null
       ) {
         invalidRequest();
       }

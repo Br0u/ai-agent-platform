@@ -24,8 +24,10 @@ import {
   users,
 } from "@ai-agent-platform/database";
 
-import type { WorkforceActor } from "../auth/access";
-import { requireSensitiveWorkforceAction } from "../auth/sensitive-action";
+import {
+  requirePermission as requireSensitiveWorkforceAction,
+  type WorkforceActor,
+} from "../auth/access";
 
 export type RoleRealm = "workforce";
 export type RoleQuery = {

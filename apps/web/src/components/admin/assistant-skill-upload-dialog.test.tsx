@@ -48,7 +48,6 @@ describe("AssistantSkillUploadDialog", () => {
       <AssistantSkillUploadDialog
         loadReplacementTarget={vi.fn(async () => replacementTarget)}
         onClose={vi.fn()}
-        onReauthRequired={vi.fn()}
         onReplacementResultUnknown={vi.fn(async () => undefined)}
         onUploaded={onUploaded}
       />,
@@ -101,7 +100,6 @@ describe("AssistantSkillUploadDialog", () => {
       <AssistantSkillUploadDialog
         loadReplacementTarget={vi.fn(async () => replacementTarget)}
         onClose={vi.fn()}
-        onReauthRequired={vi.fn()}
         onReplacementResultUnknown={vi.fn(async () => undefined)}
         onUploaded={onUploaded}
       />,
@@ -165,7 +163,6 @@ describe("AssistantSkillUploadDialog", () => {
           enabled: false,
         }))}
         onClose={vi.fn()}
-        onReauthRequired={vi.fn()}
         onReplacementResultUnknown={vi.fn(async () => undefined)}
         onUploaded={onUploaded}
       />,
@@ -217,7 +214,6 @@ describe("AssistantSkillUploadDialog", () => {
       <AssistantSkillUploadDialog
         loadReplacementTarget={vi.fn(async () => replacementTarget)}
         onClose={vi.fn()}
-        onReauthRequired={vi.fn()}
         onReplacementResultUnknown={onReplacementResultUnknown}
         onUploaded={onUploaded}
       />,
@@ -273,7 +269,6 @@ describe("AssistantSkillUploadDialog", () => {
       <AssistantSkillUploadDialog
         loadReplacementTarget={vi.fn(async () => replacementTarget)}
         onClose={vi.fn()}
-        onReauthRequired={vi.fn()}
         onReplacementResultUnknown={vi.fn(async () => undefined)}
         onUploaded={onUploaded}
       />,

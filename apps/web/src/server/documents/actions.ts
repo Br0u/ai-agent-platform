@@ -10,10 +10,6 @@ import {
   type AuthAccessErrorCode,
 } from "../auth/access";
 import {
-  requireSensitiveWorkforceAction,
-  SensitiveActionError,
-} from "../auth/sensitive-action";
-import {
   createDocumentInputSchema,
   DOCUMENT_ERROR_CODES,
   mutateDocumentInputSchema,
@@ -26,30 +22,20 @@ import {
 import { createDatabaseDocumentRepository } from "./repository";
 import { createDocumentService, type DocumentActor } from "./service";
 
-const REAUTH_REDIRECT = "/staff/re-auth?returnTo=%2Fadmin%2Fdocs" as const;
 const LOGIN_REDIRECT = "/staff/login?returnTo=%2Fadmin%2Fdocs" as const;
 const PASSWORD_REDIRECT =
   "/staff/change-password?returnTo=%2Fadmin%2Fdocs" as const;
-const TOTP_REDIRECT = "/staff/two-factor?returnTo=%2Fadmin%2Fdocs" as const;
 const MAX_DATABASE_INTEGER = 2_147_483_647;
 const INVALID_FIELD_MESSAGE = "字段值无效";
 const DOCUMENT_DOMAIN_CODES = new Set<string>(DOCUMENT_ERROR_CODES);
-const SAFE_ERROR_NAMES = new Set([
-  "Error",
-  "AuthAccessError",
-  "DocumentError",
-  "SensitiveActionError",
-]);
+const SAFE_ERROR_NAMES = new Set(["Error", "AuthAccessError", "DocumentError"]);
 const SAFE_ERROR_CODE = /^(?:[0-9A-Z]{5}|[A-Z][A-Z0-9_]{1,63})$/u;
 
-type SensitiveActionCode = "AUTH_REAUTH_REQUIRED" | "AUTH_MFA_REQUIRED";
 type DocumentActionErrorCode = DocumentErrorCode | "DOCUMENT_INTERNAL_ERROR";
 type AuthenticationRequiredCode =
   | "AUTH_SESSION_REQUIRED"
   | "AUTH_REALM_MISMATCH";
-type AccountSetupRequiredCode =
-  | "AUTH_PASSWORD_CHANGE_REQUIRED"
-  | "AUTH_TOTP_SETUP_REQUIRED";
+type AccountSetupRequiredCode = "AUTH_PASSWORD_CHANGE_REQUIRED";
 type SafeAccessErrorCode = Exclude<
   AuthAccessErrorCode,
   | AuthenticationRequiredCode
@@ -72,17 +58,7 @@ export type DocumentActionState =
       code: "AUTH_PASSWORD_CHANGE_REQUIRED";
       redirectTo: typeof PASSWORD_REDIRECT;
     }
-  | {
-      kind: "account_setup_required";
-      code: "AUTH_TOTP_SETUP_REQUIRED";
-      redirectTo: typeof TOTP_REDIRECT;
-    }
-  | { kind: "access_error"; code: SafeAccessErrorCode }
-  | {
-      kind: "reauth_required";
-      code: SensitiveActionCode;
-      redirectTo: typeof REAUTH_REDIRECT;
-    };
+  | { kind: "access_error"; code: SafeAccessErrorCode };
 
 type DocumentActionService = {
   create(
@@ -347,22 +323,9 @@ function errorState(
           code: error.code,
           redirectTo: PASSWORD_REDIRECT,
         };
-      case "AUTH_TOTP_SETUP_REQUIRED":
-        return {
-          kind: "account_setup_required",
-          code: error.code,
-          redirectTo: TOTP_REDIRECT,
-        };
       default:
         return { kind: "access_error", code: error.code };
     }
-  }
-  if (error instanceof SensitiveActionError) {
-    return {
-      kind: "reauth_required",
-      code: error.code,
-      redirectTo: REAUTH_REDIRECT,
-    };
   }
   const code = errorCode(error);
   if (code && DOCUMENT_DOMAIN_CODES.has(code)) {
@@ -521,7 +484,7 @@ export function createDefaultDocumentActions() {
     service: createDocumentService(createDatabaseDocumentRepository()),
     access: {
       requirePermission,
-      requireSensitivePermission: requireSensitiveWorkforceAction,
+      requireSensitivePermission: requirePermission,
     },
     cache: { revalidatePath, updateTag },
     reportInternalError: reportDocumentInternalError,

@@ -13,14 +13,14 @@ import type {
 } from "@ai-agent-platform/integrations";
 import { createDisabledEmailVerificationProvider } from "@ai-agent-platform/integrations";
 
-import { AuthAccessError, type WorkforceActor } from "../auth/access";
+import {
+  AuthAccessError,
+  requirePermission,
+  type WorkforceActor,
+} from "../auth/access";
 import { commitResponseCookies } from "../auth/actions";
 import { createCustomerAuth, customerRealm } from "../auth/customer-auth";
 import { resolveTrustedRequestIp } from "../auth/shared-options";
-import {
-  SensitiveActionError,
-  requireSensitiveWorkforceAction,
-} from "../auth/sensitive-action";
 import {
   createDatabaseRegistrationRateLimiter,
   createDatabaseRegistrationRepository,
@@ -49,10 +49,6 @@ export type RegistrationActionState =
 export type ReviewActionState =
   | { kind: "validation_error"; fieldErrors: Record<string, string[]> }
   | { kind: "domain_error"; code: RegistrationErrorCode }
-  | {
-      kind: "reauth_required";
-      redirectTo: "/staff/re-auth?returnTo=%2Fadmin%2Fregistrations";
-    }
   | { kind: "success" };
 
 type SessionResult = {
@@ -377,11 +373,6 @@ export function createRegistrationActions(
           kind: "domain_error",
           code: "REGISTRATION_PERMISSION_DENIED",
         };
-      if (error instanceof SensitiveActionError)
-        return {
-          kind: "reauth_required",
-          redirectTo: "/staff/re-auth?returnTo=%2Fadmin%2Fregistrations",
-        };
       reportSafely(dependencies.reportInternalError, error);
       return {
         kind: "domain_error",
@@ -420,11 +411,6 @@ export function createRegistrationActions(
         return {
           kind: "domain_error",
           code: "REGISTRATION_PERMISSION_DENIED",
-        };
-      if (error instanceof SensitiveActionError)
-        return {
-          kind: "reauth_required",
-          redirectTo: "/staff/re-auth?returnTo=%2Fadmin%2Fregistrations",
         };
       reportSafely(dependencies.reportInternalError, error);
       return {
@@ -486,7 +472,7 @@ function createDefaultRegistrationActions() {
   const service = createDefaultRegistrationService();
   return createRegistrationActions({
     service,
-    access: { requireSensitiveAction: requireSensitiveWorkforceAction },
+    access: { requireSensitiveAction: requirePermission },
     provider: createDisabledEmailVerificationProvider(),
     getHeaders: nextHeaders,
     commitCookies: (realm, headers) =>

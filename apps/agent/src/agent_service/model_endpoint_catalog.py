@@ -38,6 +38,8 @@ class ModelEndpoint:
     label: str
     provider: ModelProvider
     base_url: str
+    api_key_required: bool = True
+    allow_insecure_http: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +49,8 @@ class EndpointOption:
     id: str
     label: str
     provider: ModelProvider
+    api_key_required: bool
+    insecure_http: bool
 
 
 _OFFICIAL_ENDPOINTS: Final[tuple[ModelEndpoint, ...]] = (
@@ -105,6 +109,8 @@ class _DeploymentEndpoint(BaseModel):
     provider: ModelProvider
     base_url: str
     enabled: bool
+    api_key_required: bool
+    allow_insecure_http: bool
 
 
 class _DeploymentEndpointFile(BaseModel):
@@ -158,6 +164,8 @@ class ModelEndpointCatalog:
                 id=endpoint.id,
                 label=endpoint.label,
                 provider=endpoint.provider,
+                api_key_required=endpoint.api_key_required,
+                insecure_http=endpoint.base_url.startswith("http://"),
             )
             for endpoint_id in self._ordered_ids
             if (endpoint := self._endpoints[endpoint_id]).provider == provider
@@ -247,16 +255,13 @@ def _validated_hostname(host: str) -> tuple[str, bool]:
         except UnicodeError:
             raise EndpointCatalogError("invalid endpoint catalog") from None
         labels = ascii_host.split(".")
-        if (
-            all(_NUMERIC_HOST_LABEL_PATTERN.fullmatch(label) for label in labels)
-            or any(
-                not label
-                or len(label) > 63
-                or label.startswith("-")
-                or label.endswith("-")
-                or re.fullmatch(r"[a-z0-9-]+", label) is None
-                for label in labels
-            )
+        if all(_NUMERIC_HOST_LABEL_PATTERN.fullmatch(label) for label in labels) or any(
+            not label
+            or len(label) > 63
+            or label.startswith("-")
+            or label.endswith("-")
+            or re.fullmatch(r"[a-z0-9-]+", label) is None
+            for label in labels
         ):
             raise EndpointCatalogError("invalid endpoint catalog")
         return ascii_host, False
@@ -266,9 +271,9 @@ def _validated_hostname(host: str) -> tuple[str, bool]:
     return address.compressed, address.version == 6
 
 
-def _normalize_base_url(value: str) -> str:
+def _normalize_base_url(value: str, *, allow_insecure_http: bool) -> str:
     if (
-        not value.startswith("https://")
+        not value.startswith(("https://", "http://"))
         or any(character.isspace() for character in value)
         or any(
             ord(character) <= 0x1F or 0x7F <= ord(character) <= 0x9F
@@ -286,7 +291,8 @@ def _normalize_base_url(value: str) -> str:
     except ValueError:
         raise EndpointCatalogError("invalid endpoint catalog") from None
     if (
-        parsed.scheme != "https"
+        parsed.scheme not in {"http", "https"}
+        or (parsed.scheme == "http" and not allow_insecure_http)
         or not parsed.netloc
         or parsed.username is not None
         or parsed.password is not None
@@ -299,10 +305,11 @@ def _normalize_base_url(value: str) -> str:
 
     host, is_ipv6 = _validated_hostname(parsed.hostname)
     normalized_host = f"[{host}]" if is_ipv6 else host
-    if port not in {None, 443}:
+    default_port = 80 if parsed.scheme == "http" else 443
+    if port not in {None, default_port}:
         normalized_host = f"{normalized_host}:{port}"
     normalized = SplitResult(
-        scheme="https",
+        scheme=parsed.scheme,
         netloc=normalized_host,
         path=parsed.path,
         query="",
@@ -326,7 +333,10 @@ def _parse_deployment_endpoints(path: Path) -> tuple[ModelEndpoint, ...]:
             if item.provider not in MODEL_PROVIDERS:
                 raise EndpointCatalogError("invalid endpoint catalog")
             label = _validate_label(item.label)
-            base_url = _normalize_base_url(item.base_url)
+            base_url = _normalize_base_url(
+                item.base_url,
+                allow_insecure_http=item.allow_insecure_http,
+            )
             if item.enabled:
                 endpoints.append(
                     ModelEndpoint(
@@ -334,6 +344,8 @@ def _parse_deployment_endpoints(path: Path) -> tuple[ModelEndpoint, ...]:
                         label=label,
                         provider=item.provider,
                         base_url=base_url,
+                        api_key_required=item.api_key_required,
+                        allow_insecure_http=item.allow_insecure_http,
                     )
                 )
         return tuple(endpoints)

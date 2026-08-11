@@ -91,6 +91,7 @@ describe("admin users page", () => {
     expect(screen.getByText("customer_member · 客户域")).toBeVisible();
     expect(screen.getAllByText("林青")).toHaveLength(1);
     expect(screen.getAllByRole("row")).toHaveLength(3);
+    screen.getByText("创建内部员工").click();
     for (const name of ["创建员工", "停用账号", "替换临时密码", "撤销此会话"])
       expect(screen.getByRole("button", { name })).toBeVisible();
     expect(

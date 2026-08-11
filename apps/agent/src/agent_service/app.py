@@ -25,6 +25,7 @@ from agent_service.config import (
 )
 from agent_service.database import build_database
 from agent_service.model_config_crypto import ModelConfigCipher
+from agent_service.model_config_types import KEYLESS_MODEL_API_KEY
 from agent_service.model_config_repository import (
     ModelConfigRepository,
     PostgresModelConfigRepository,
@@ -51,6 +52,8 @@ from agent_service.model_runtime_slot import (
     RuntimeModelMetadata,
 )
 from agent_service.model_runtime_types import ManagedModel
+
+
 from agent_service.runtime_logging import install_agno_log_redaction
 from agent_service.skill_activation_coordinator import (
     ActivateSkillRuntime,
@@ -105,7 +108,9 @@ class SkillRuntimeApplication(Protocol):
 
     async def probe(self) -> bool: ...
 
-    async def activate(self, command: ActivateSkillRuntime) -> SkillActivationResult: ...
+    async def activate(
+        self, command: ActivateSkillRuntime
+    ) -> SkillActivationResult: ...
 
     async def shutdown(self) -> None: ...
 
@@ -279,7 +284,11 @@ async def reconcile_runtime_model(
             active_settings = ActiveModelSettings(
                 provider=active.provider,
                 model_id=active.model_id,
-                api_key=api_key,
+                api_key=(
+                    None
+                    if api_key.get_secret_value() == KEYLESS_MODEL_API_KEY
+                    else api_key
+                ),
                 base_url=endpoint.base_url,
                 timeout_seconds=settings.model_run_timeout_seconds,
             )

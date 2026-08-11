@@ -53,8 +53,8 @@ def assertion(
         "requestId": request_id,
         "action": action,
         "target": target,
-        "assurance": "session" if status else "password+mfa",
-        "assuredAt": None if status else NOW,
+        "assurance": "session",
+        "assuredAt": None,
         "issuedAt": NOW,
         "expiresAt": NOW + 5,
         "nonce": NONCE,
@@ -273,7 +273,10 @@ def test_authentication_failure_does_not_enter_route_or_accept_body() -> None:
     with TestClient(app(coordinator)) as client:
         response = client.post(
             f"/internal/control/skill-runtime/{SET_ID}/activate",
-            headers={"Authorization": "Bearer wrong", "Content-Type": "application/json"},
+            headers={
+                "Authorization": "Bearer wrong",
+                "Content-Type": "application/json",
+            },
             content=b"x" * 9000,
         )
 

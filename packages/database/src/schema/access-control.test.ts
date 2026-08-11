@@ -83,11 +83,11 @@ describe("identity schema", () => {
         "status",
         "email_verification_status",
         "must_change_password",
-        "two_factor_enabled",
       ]),
     );
     expect(columnNames("users")).not.toContain("role_id");
     expect(columnNames("users")).not.toContain("password_hash");
+    expect(columnNames("users")).not.toContain("two_factor_enabled");
   });
 
   it("enforces case-insensitive identity lookup keys while keeping usernames optional", () => {
@@ -122,7 +122,7 @@ describe("identity schema", () => {
     ) => string;
 
     expect(normalizeEmail("  Ａlice@Example.COM  ")).toBe("alice@example.com");
-    expect(normalizeUsername("  Ａdmin.User  ")).toBe("admin.user");
+    expect(normalizeUsername("  Ａdmin.User  ")).toBe("Admin.User");
   });
 
   it("provides the optional display username expected by Better Auth", () => {
@@ -136,9 +136,9 @@ describe("identity schema", () => {
         "ip_address",
         "user_agent",
         "realm",
-        "mfa_verified_at",
       ]),
     );
+    expect(columnNames("sessions")).not.toContain("mfa_verified_at");
   });
 
   it("indexes the default append-only audit pagination order", () => {
@@ -175,20 +175,8 @@ describe("identity schema", () => {
     expect(columnNames("rateLimits")).toEqual(
       expect.arrayContaining(["key", "count", "last_request"]),
     );
-    expect(columnNames("twoFactors")).toEqual(
-      expect.arrayContaining([
-        "secret",
-        "backup_codes",
-        "user_id",
-        "verified",
-        "failed_verification_count",
-        "locked_until",
-      ]),
-    );
-
     expectForeignKey("accounts", "user_id", "users", "cascade");
     expectForeignKey("sessions", "user_id", "users", "cascade");
-    expectForeignKey("twoFactors", "user_id", "users", "cascade");
   });
 
   it("maps every Better Auth model and field to its exported Drizzle table", async () => {

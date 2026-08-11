@@ -35,8 +35,6 @@ function stateMessage(state: DocumentActionState): string {
       return "操作已完成。";
     case "validation_error":
       return "请检查标出的字段。";
-    case "reauth_required":
-      return "操作需要重新验证身份。";
     case "authentication_required":
       return "登录状态已失效，请重新登录。";
     case "account_setup_required":
@@ -54,13 +52,11 @@ function stateMessage(state: DocumentActionState): string {
 
 function ActionAnnouncement({ state }: { state: DocumentActionState }) {
   const recovery =
-    state.kind === "reauth_required"
-      ? { href: state.redirectTo, label: "继续验证" }
-      : state.kind === "authentication_required"
-        ? { href: state.redirectTo, label: "重新登录" }
-        : state.kind === "account_setup_required"
-          ? { href: state.redirectTo, label: "完成安全设置" }
-          : null;
+    state.kind === "authentication_required"
+      ? { href: state.redirectTo, label: "重新登录" }
+      : state.kind === "account_setup_required"
+        ? { href: state.redirectTo, label: "完成安全设置" }
+        : null;
   return (
     <p
       aria-live="polite"

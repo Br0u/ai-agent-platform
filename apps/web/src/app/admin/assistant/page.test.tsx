@@ -1,4 +1,10 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
 
@@ -96,7 +102,6 @@ const actor = {
   status: "active" as const,
   displayName: "Admin",
   mustChangePassword: false,
-  twoFactorEnabled: true,
   permissions: [
     "admin:assistant",
     "admin:assistant:configure",
@@ -150,12 +155,54 @@ const modelConfigs = {
     activeRevision: null,
   })),
   endpoints: {
-    openai: [{ id: "openai-default", label: "OpenAI 官方" }],
-    anthropic: [{ id: "anthropic-default", label: "Claude 官方" }],
-    google: [{ id: "google-default", label: "Gemini 官方" }],
-    dashscope: [{ id: "dashscope-default", label: "Qwen 官方" }],
-    deepseek: [{ id: "deepseek-default", label: "DeepSeek 官方" }],
-    minimax: [{ id: "minimax-default", label: "MiniMax 官方" }],
+    openai: [
+      {
+        id: "openai-default",
+        label: "OpenAI 官方",
+        apiKeyRequired: true,
+        insecureHttp: false,
+      },
+    ],
+    anthropic: [
+      {
+        id: "anthropic-default",
+        label: "Claude 官方",
+        apiKeyRequired: true,
+        insecureHttp: false,
+      },
+    ],
+    google: [
+      {
+        id: "google-default",
+        label: "Gemini 官方",
+        apiKeyRequired: true,
+        insecureHttp: false,
+      },
+    ],
+    dashscope: [
+      {
+        id: "dashscope-default",
+        label: "Qwen 官方",
+        apiKeyRequired: true,
+        insecureHttp: false,
+      },
+    ],
+    deepseek: [
+      {
+        id: "deepseek-default",
+        label: "DeepSeek 官方",
+        apiKeyRequired: true,
+        insecureHttp: false,
+      },
+    ],
+    minimax: [
+      {
+        id: "minimax-default",
+        label: "MiniMax 官方",
+        apiKeyRequired: true,
+        insecureHttp: false,
+      },
+    ],
   },
   runtime: {
     capability: "placeholder" as const,
@@ -241,10 +288,12 @@ describe("AdminAssistantPage", () => {
       /sk-fixture-secret|ciphertext|nonce|https?:\/\/|assertion/iu,
     );
     expect(screen.getByRole("heading", { name: "AI 助理运营" })).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
+    expect(screen.getByText("safe-review")).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
     expect(
       screen.getByRole("heading", { name: "受保护的助手测试控制台" }),
     ).toBeVisible();
-    expect(screen.getByText("safe-review")).toBeVisible();
   });
 
   it("starts status, sessions, models and Skill snapshot loading in parallel", async () => {
@@ -290,6 +339,8 @@ describe("AdminAssistantPage", () => {
 
     render(await AdminAssistantPage());
 
+    fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
+
     expect(mocks.createSkillListHandler).not.toHaveBeenCalled();
     expect(screen.getByText("degraded / 数据不可确认")).toBeVisible();
     expect(screen.getByText("当前账号没有 Skill 库读取权限。")).toBeVisible();
@@ -310,19 +361,20 @@ describe("AdminAssistantPage", () => {
     const runtimeRegion = screen
       .getByRole("heading", { name: "运行时状态" })
       .closest("section");
+    expect(runtimeRegion).not.toBeNull();
+    expect(
+      within(runtimeRegion!).getByText("Persistence").nextElementSibling,
+    ).toHaveTextContent("unavailable");
+
+    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
     const configurationRegion = screen
       .getByRole("heading", { name: "只读配置" })
       .closest("aside");
     const sessionsRegion = screen
       .getByRole("heading", { name: "会话持久化" })
       .closest("section");
-    expect(runtimeRegion).not.toBeNull();
     expect(configurationRegion).not.toBeNull();
     expect(sessionsRegion).not.toBeNull();
-
-    expect(
-      within(runtimeRegion!).getByText("Persistence").nextElementSibling,
-    ).toHaveTextContent("unavailable");
     expect(
       within(configurationRegion!).getByText("会话存储").nextElementSibling,
     ).toHaveTextContent("状态不可用");
@@ -358,6 +410,8 @@ describe("AdminAssistantPage", () => {
     await expect(pagePromise).resolves.toBeDefined();
     render(await pagePromise);
 
+    fireEvent.click(screen.getByRole("tab", { name: "模型配置" }));
+
     expect(screen.getByText("控制面暂不可用")).toBeVisible();
     expect(screen.getByText("模型配置控制面暂不可用。")).toBeVisible();
     expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
@@ -372,6 +426,8 @@ describe("AdminAssistantPage", () => {
     );
 
     render(await AdminAssistantPage());
+
+    fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
 
     expect(screen.getByText("degraded / 数据不可确认")).toBeVisible();
     expect(

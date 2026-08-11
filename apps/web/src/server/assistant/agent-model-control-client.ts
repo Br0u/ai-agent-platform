@@ -58,6 +58,8 @@ export type AgentModelConfigListResponse = {
     id: string;
     label: string;
     provider: AdminModelProvider;
+    apiKeyRequired: boolean;
+    insecureHttp: boolean;
   }>;
   bootstrap: null | {
     provider: AdminModelProvider;
@@ -489,13 +491,19 @@ function readEndpointOption(value: unknown): {
   id: string;
   label: string;
   provider: AdminModelProvider;
+  apiKeyRequired: boolean;
+  insecureHttp: boolean;
 } | null {
-  const snapshot = readExactDataRecord(value, [["id", "label", "provider"]]);
+  const snapshot = readExactDataRecord(value, [
+    ["id", "label", "provider", "apiKeyRequired", "insecureHttp"],
+  ]);
   if (
     snapshot === null ||
     !isEndpointId(snapshot.id) ||
     !isSafeText(snapshot.label, 80) ||
-    !isProvider(snapshot.provider)
+    !isProvider(snapshot.provider) ||
+    typeof snapshot.apiKeyRequired !== "boolean" ||
+    typeof snapshot.insecureHttp !== "boolean"
   ) {
     return null;
   }
@@ -503,6 +511,8 @@ function readEndpointOption(value: unknown): {
     id: snapshot.id,
     label: snapshot.label,
     provider: snapshot.provider,
+    apiKeyRequired: snapshot.apiKeyRequired,
+    insecureHttp: snapshot.insecureHttp,
   };
 }
 

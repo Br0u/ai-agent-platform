@@ -21,11 +21,7 @@ import {
   type Page,
 } from "@playwright/test";
 
-import {
-  addSignedSession,
-  fixtureCredentials,
-  totpFromUri,
-} from "./auth-fixtures";
+import { addSignedSession, fixtureCredentials } from "./auth-fixtures";
 import {
   ASSISTANT_STREAM_MEDIA_TYPE,
   formatAssistantStreamEvent,
@@ -863,29 +859,6 @@ function stableCookieCredential(cookieValue: string): string {
   return parsed.credential;
 }
 
-async function completeSeededAdminTwoFactor(context: BrowserContext) {
-  const page = await context.newPage();
-  await page.goto("/staff/two-factor?returnTo=%2Fadmin%2Fassistant");
-  const start = page.getByRole("button", { name: "开始设置" });
-  if (await start.isVisible()) {
-    await page.getByLabel("当前密码").fill(fixtureCredentials().adminPassword);
-    await start.click();
-    const uri = (
-      await page.locator("code").filter({ hasText: "otpauth://" }).textContent()
-    )?.trim();
-    if (!uri) throw new Error("TOTP enrollment URI is missing");
-    const totp = new URL(uri);
-    const totpSecret = totp.searchParams.get("secret");
-    if (!totpSecret) throw new Error("TOTP enrollment secret is missing");
-    appendDynamicProtectedValue(uri);
-    appendDynamicProtectedValue(totpSecret);
-    await page.getByLabel("六位验证码").fill(totpFromUri(uri));
-    await page.getByRole("button", { name: "验证并启用" }).click();
-    await expect(page).toHaveURL(/\/admin\/assistant$/u);
-  }
-  await page.close();
-}
-
 type BoundedReadinessObservation = {
   ready: boolean;
   description: string;
@@ -1626,7 +1599,6 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
     "workforce",
     credentials.adminSessionToken,
   );
-  await completeSeededAdminTwoFactor(admin);
   const adminStatusResponse = await admin.request.get(ADMIN_STATUS_PATH);
   expect(adminStatusResponse.status()).toBe(200);
   const adminStatus = await readSafeJson(adminStatusResponse, protectedValues);
@@ -1760,15 +1732,14 @@ test.describe("@agentos deterministic runtime", () => {
       admin,
       baseURL,
       "workforce",
-      credentials.noTotpAdminSessionToken,
+      credentials.adminSessionToken,
     );
-    await completeSeededAdminTwoFactor(admin);
 
     const adminStatusResponse = await admin.request.get(ADMIN_STATUS_PATH);
     expect(adminStatusResponse.status()).toBe(200);
     const adminStatus = await readSafeJson(adminStatusResponse, [
       ...protectedValues,
-      credentials.noTotpAdminSessionToken,
+      credentials.adminSessionToken,
     ]);
     assertSafeResponse(adminStatus, "AgentOS admin status").matches({
       version: "1",
@@ -1847,7 +1818,7 @@ test.describe("@agentos deterministic runtime", () => {
     expect(adminChatResponse.status()).toBe(200);
     const adminChat = await readSafeJson(adminChatResponse, [
       ...protectedValues,
-      credentials.noTotpAdminSessionToken,
+      credentials.adminSessionToken,
     ]);
     assertSafeResponse(adminChat, "AgentOS admin chat").matches({
       version: "1",
@@ -1869,7 +1840,7 @@ test.describe("@agentos deterministic runtime", () => {
     expect(sessionsResponse.status()).toBe(200);
     const sessions = await readSafeJson(sessionsResponse, [
       ...protectedValues,
-      credentials.noTotpAdminSessionToken,
+      credentials.adminSessionToken,
     ]);
     assertSafeResponse(sessions, "AgentOS admin sessions").matches({
       version: "1",
@@ -2132,7 +2103,6 @@ test.describe("@agentos deterministic runtime", () => {
       "workforce",
       credentials.adminSessionToken,
     );
-    await completeSeededAdminTwoFactor(admin);
     const adminStatusResponse = await admin.request.get(ADMIN_STATUS_PATH);
     expect(adminStatusResponse.status()).toBe(200);
     const adminStatus = await readSafeJson(adminStatusResponse, [
@@ -2292,7 +2262,6 @@ test.describe("@control deterministic model control", () => {
       return [
         ...runtimeProtectedValues(),
         credentials.modelAdminSessionToken,
-        credentials.modelAdminStaleSessionToken,
         ...Object.values(submittedLastFour),
       ].filter((value) => !allowedValues.has(value));
     };
@@ -2519,7 +2488,6 @@ test.describe("@control deterministic model control", () => {
       "workforce",
       credentials.adminSessionToken,
     );
-    await completeSeededAdminTwoFactor(admin);
     const adminPage = await admin.newPage();
     await adminPage.goto("/admin/assistant");
     await expect(
@@ -2556,41 +2524,6 @@ test.describe("@control deterministic model control", () => {
     await readControlJson(forbiddenReveal);
     await drainControlResponses();
     await admin.close();
-
-    const stale = await browser.newContext({ baseURL });
-    collectBrowserDiagnostics(stale);
-    await trackControlResponses(stale);
-    await addSignedSession(
-      stale,
-      baseURL,
-      "workforce",
-      credentials.modelAdminStaleSessionToken,
-    );
-    const stalePage = await stale.newPage();
-    await stalePage.goto("/admin/assistant");
-    const staleKey = registerKey("stale-forbidden", "F002");
-    await stalePage.getByLabel("Model ID").fill("e2e-stale-forbidden");
-    await stalePage.getByLabel(/新 API Key/u).fill(staleKey);
-    await stalePage.getByRole("button", { name: "保存草稿" }).click();
-    await expect(stalePage).toHaveURL(/\/staff\/re-auth$/u);
-    const staleResponse = await stale.request.put(
-      `${MODEL_CONFIG_PATH}/openai`,
-      {
-        headers: originHeaders,
-        data: {
-          modelId: "e2e-stale-forbidden",
-          endpointId: "openai-official",
-          apiKey: staleKey,
-          expectedRevision: 0,
-        },
-      },
-    );
-    expect(staleResponse.status()).toBe(401);
-    const staleBody = await readControlJson(staleResponse);
-    expect(JSON.stringify(staleBody)).toContain("reauth_required");
-    expect(JSON.stringify(staleBody)).toContain("/staff/re-auth");
-    await drainControlResponses();
-    await stale.close();
 
     for (const [index, fixture] of CONTROL_PROVIDERS.entries()) {
       registerKey(fixture.provider, `K${String(index + 1).padStart(3, "0")}`);
@@ -2899,10 +2832,7 @@ test.describe("@control deterministic model control", () => {
           "",
         );
       }
-      for (const token of [
-        credentials.modelAdminSessionToken,
-        credentials.modelAdminStaleSessionToken,
-      ]) {
+      for (const token of [credentials.modelAdminSessionToken]) {
         expect(response.rawJson).not.toContain(token);
       }
       for (const key of Object.values(submittedKeys)) {
@@ -2919,7 +2849,6 @@ test.describe("@control deterministic model control", () => {
     const terminalConsoleText = JSON.stringify(cumulativeConsoleMessages);
     for (const protectedValue of [
       credentials.modelAdminSessionToken,
-      credentials.modelAdminStaleSessionToken,
       ...Object.values(submittedKeys),
       ...Object.values(submittedLastFour),
     ]) {

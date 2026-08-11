@@ -98,6 +98,25 @@
   white-space: nowrap;
 }
 
+.sidebar-navigation__group summary {
+  display: flex;
+  cursor: pointer;
+  list-style: none;
+}
+
+.sidebar-navigation__group summary::-webkit-details-marker {
+  display: none;
+}
+
+.sidebar-navigation__group summary::after {
+  margin-left: auto;
+  content: "+";
+}
+
+.sidebar-navigation__group[open] summary::after {
+  content: "−";
+}
+
 .sidebar-navigation__items {
   display: grid;
   gap: 2px;

@@ -18,10 +18,6 @@ import {
 } from "@/server/auth/access";
 import { createAuditWriter } from "@/server/auth/audit";
 import {
-  SensitiveActionError,
-  requireSensitiveWorkforceAction,
-} from "@/server/auth/sensitive-action";
-import {
   AdminModelConfigCommandError,
   createAdminModelConfigCommands,
   type AuthorizedModelCommand,
@@ -101,7 +97,6 @@ type RevealDependencies = {
 type PublicModelConfigErrorCode =
   | "authentication_required"
   | "permission_denied"
-  | "reauth_required"
   | "validation_error"
   | "endpoint_not_allowed"
   | "configuration_conflict"
@@ -129,7 +124,6 @@ function errorBody(requestId: string, code: PublicModelConfigErrorCode) {
   const messages = {
     authentication_required: "Authentication required",
     permission_denied: "Permission denied",
-    reauth_required: "Recent password and MFA verification required",
     validation_error: "Invalid model configuration request",
     endpoint_not_allowed: "Model endpoint is not allowed",
     configuration_conflict: "Model configuration has changed",
@@ -156,7 +150,6 @@ function errorBody(requestId: string, code: PublicModelConfigErrorCode) {
         code === "storage_unavailable" ||
         code === "rate_limited",
     },
-    ...(code === "reauth_required" ? { redirectTo: "/staff/re-auth" } : {}),
   };
 }
 
@@ -184,7 +177,7 @@ function createDefaultCommands(): AdminModelConfigCommands {
   };
   return createAdminModelConfigCommands({
     requireTrustedMutation: requireTrustedJsonMutation,
-    requireSensitiveAction: requireSensitiveWorkforceAction,
+    requireSensitiveAction: requirePermission,
     audit: {
       write: (input) => (audit ??= createAuditWriter()).write(input),
     },
@@ -211,9 +204,6 @@ function commandErrorResponse(
     code =
       error.status === 401 ? "authentication_required" : "permission_denied";
     status = error.status;
-  } else if (error instanceof SensitiveActionError) {
-    code = "reauth_required";
-    status = 401;
   } else if (error instanceof AssistantRateLimitExceededError) {
     code = "rate_limited";
     status = 429;
@@ -295,7 +285,10 @@ export async function loadAdminModelConfigSnapshot(
         revision: config.revision,
         testStatus: config.testStatus,
         lastTestedAt: config.lastTestedAt,
-        apiKey: { configured: true, lastFour: config.apiKeyLastFour },
+        apiKey:
+          config.apiKeyLastFour === "none"
+            ? null
+            : { configured: true, lastFour: config.apiKeyLastFour },
         activeRevision:
           runtime.source === "dynamic" && runtime.provider === provider
             ? runtime.configRevision
@@ -315,6 +308,8 @@ export async function loadAdminModelConfigSnapshot(
     endpoints[endpoint.provider].push({
       id: endpoint.id,
       label: endpoint.label,
+      apiKeyRequired: endpoint.apiKeyRequired,
+      insecureHttp: endpoint.insecureHttp,
     });
   }
   const snapshot: AdminModelConfigSnapshot = {
@@ -472,10 +467,13 @@ export function createAdminModelConfigSaveHandler(
             revision: config.revision,
             testStatus: config.testStatus,
             lastTestedAt: config.lastTestedAt,
-            apiKey: {
-              configured: true,
-              lastFour: config.apiKeyLastFour,
-            },
+            apiKey:
+              config.apiKeyLastFour === "none"
+                ? null
+                : {
+                    configured: true,
+                    lastFour: config.apiKeyLastFour,
+                  },
             activeRevision: null,
           },
         },

@@ -108,7 +108,9 @@ class ProviderSmokeSettings(BaseSettings):
     def _require_model_api_key(cls, value: SecretStr | None) -> SecretStr:
         if value is None:
             raise ValueError("MODEL_API_KEY is required")
-        return _validate_model_api_key_value(value)
+        validated = _validate_model_api_key_value(value)
+        assert validated is not None
+        return validated
 
     @field_validator("model_base_url", mode="after")
     @classmethod
@@ -180,6 +182,8 @@ def _worker_environment(
     settings: ProviderSmokeSettings, status_fd: int
 ) -> dict[str, str]:
     active_model = settings.active_model
+    if active_model.api_key is None:
+        raise ValueError("MODEL_API_KEY is required")
     environment = dict(os.environ)
     environment.update(
         {

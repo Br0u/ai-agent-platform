@@ -29,6 +29,8 @@ export type AdminModelConfigItem = {
 export type AdminModelEndpointOption = {
   id: string;
   label: string;
+  apiKeyRequired: boolean;
+  insecureHttp: boolean;
 };
 
 export type AdminModelRuntimeMetadata = {
@@ -305,12 +307,13 @@ function readConfigItem(
       activeRevision: null,
     };
   }
-  const apiKey = readMaskedApiKey(snapshot.apiKey);
+  const apiKey =
+    snapshot.apiKey === null ? null : readMaskedApiKey(snapshot.apiKey);
   if (
     !isAdminModelId(snapshot.modelId) ||
     !isEndpointId(snapshot.endpointId) ||
     !isPositiveInteger(snapshot.revision) ||
-    apiKey === null
+    (snapshot.apiKey !== null && apiKey === null)
   ) {
     return null;
   }
@@ -331,15 +334,24 @@ function readConfigItem(
 }
 
 function readEndpointOption(value: unknown): AdminModelEndpointOption | null {
-  const snapshot = readExactDataRecord(value, [["id", "label"]]);
+  const snapshot = readExactDataRecord(value, [
+    ["id", "label", "apiKeyRequired", "insecureHttp"],
+  ]);
   if (
     snapshot === null ||
     !isEndpointId(snapshot.id) ||
-    !isSafeText(snapshot.label, ENDPOINT_LABEL_MAX_CODE_POINTS)
+    !isSafeText(snapshot.label, ENDPOINT_LABEL_MAX_CODE_POINTS) ||
+    typeof snapshot.apiKeyRequired !== "boolean" ||
+    typeof snapshot.insecureHttp !== "boolean"
   ) {
     return null;
   }
-  return { id: snapshot.id, label: snapshot.label };
+  return {
+    id: snapshot.id,
+    label: snapshot.label,
+    apiKeyRequired: snapshot.apiKeyRequired,
+    insecureHttp: snapshot.insecureHttp,
+  };
 }
 
 function readProviderEndpoints(

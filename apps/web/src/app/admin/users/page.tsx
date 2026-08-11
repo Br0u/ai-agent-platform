@@ -14,6 +14,7 @@ import {
 } from "@/server/admin/users";
 import { requirePermission } from "@/server/auth/access";
 import { parsePositivePage } from "../admin-page-values";
+import "./users-page.css";
 
 const realms = new Set(["customer", "workforce"]);
 const statuses = new Set(["pending_review", "active", "disabled", "rejected"]);
@@ -62,13 +63,41 @@ export default async function Page({
     query,
   );
   const pages = Math.max(1, Math.ceil(result.total / result.pageSize));
+  const visibleActive = result.items.filter(
+    (user) => user.status === "active",
+  ).length;
+  const visibleWorkforce = result.items.filter(
+    (user) => user.realm === "workforce",
+  ).length;
+  const visibleSessions = result.items.reduce(
+    (total, user) => total + user.sessions.length,
+    0,
+  );
   return (
-    <main className="admin-workbench">
-      <header>
+    <main className="admin-users-page admin-workbench">
+      <header className="admin-users-page__heading">
         <p>Identity Administration</p>
         <h1>用户管理</h1>
         <p>客户与内部员工账号、状态和会话管理。</p>
       </header>
+      <section aria-label="用户概览" className="admin-users-page__summary">
+        <article>
+          <span>全部账号</span>
+          <strong>{result.total}</strong>
+        </article>
+        <article>
+          <span>本页启用</span>
+          <strong>{visibleActive}</strong>
+        </article>
+        <article>
+          <span>本页员工</span>
+          <strong>{visibleWorkforce}</strong>
+        </article>
+        <article>
+          <span>活跃会话</span>
+          <strong>{visibleSessions}</strong>
+        </article>
+      </section>
       <form className="admin-filter">
         <label>
           搜索
@@ -102,7 +131,7 @@ export default async function Page({
         </label>
         <button>筛选</button>
       </form>
-      <details open>
+      <details className="admin-users-page__create">
         <summary>创建内部员工</summary>
         <AdminMutationForm action={createEmployeeAction}>
           <label>
@@ -132,101 +161,107 @@ export default async function Page({
           <button>创建员工</button>
         </AdminMutationForm>
       </details>
-      <table>
-        <thead>
-          <tr>
-            <th>用户</th>
-            <th>类型 / 状态</th>
-            <th>角色</th>
-            <th>会话</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {result.items.map((user) => (
-            <tr key={user.id}>
-              <td>
-                {user.name}
-                <br />
-                <small>{user.email}</small>
-              </td>
-              <td>
-                {user.realm === "customer" ? "客户" : "内部员工"} /{" "}
-                {user.status}
-              </td>
-              <td>
-                {user.roles.length ? (
-                  <ul>
-                    {user.roles.map((role) => (
-                      <li key={`${role.scope}:${role.name}`}>
-                        {role.name} ·{" "}
-                        {role.scope === "workforce"
-                          ? "内部员工域"
-                          : role.scope === "customer"
-                            ? "客户域"
-                            : "全局域"}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td>
-                {user.sessions.map((session) => (
-                  <AdminMutationForm
-                    action={revokeAdminSessionAction}
-                    key={session.id}
-                  >
+      <div className="admin-users-page__table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>用户</th>
+              <th>类型 / 状态</th>
+              <th>角色</th>
+              <th>会话</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {result.items.map((user) => (
+              <tr key={user.id}>
+                <td>
+                  {user.name}
+                  <br />
+                  <small>{user.email}</small>
+                </td>
+                <td>
+                  {user.realm === "customer" ? "客户" : "内部员工"} /{" "}
+                  {user.status}
+                </td>
+                <td>
+                  {user.roles.length ? (
+                    <ul>
+                      {user.roles.map((role) => (
+                        <li key={`${role.scope}:${role.name}`}>
+                          {role.name} ·{" "}
+                          {role.scope === "workforce"
+                            ? "内部员工域"
+                            : role.scope === "customer"
+                              ? "客户域"
+                              : "全局域"}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    "—"
+                  )}
+                </td>
+                <td>
+                  {user.sessions.map((session) => (
+                    <AdminMutationForm
+                      action={revokeAdminSessionAction}
+                      key={session.id}
+                    >
+                      <input type="hidden" name="userId" value={user.id} />
+                      <input type="hidden" name="realm" value={user.realm} />
+                      <input
+                        type="hidden"
+                        name="sessionId"
+                        value={session.id}
+                      />
+                      <time dateTime={session.createdAt}>
+                        {session.createdAt.slice(0, 10)}
+                      </time>{" "}
+                      <button>撤销此会话</button>
+                    </AdminMutationForm>
+                  ))}
+                </td>
+                <td>
+                  {user.realm === "workforce" ? (
+                    <>
+                      {user.status === "disabled" ? (
+                        <AdminMutationForm action={reactivateUserAction}>
+                          <input type="hidden" name="userId" value={user.id} />
+                          <button>恢复账号</button>
+                        </AdminMutationForm>
+                      ) : (
+                        <AdminMutationForm action={disableUserAction}>
+                          <input type="hidden" name="userId" value={user.id} />
+                          <button>停用账号</button>
+                        </AdminMutationForm>
+                      )}
+                      <AdminMutationForm action={replacePasswordAction}>
+                        <input type="hidden" name="userId" value={user.id} />
+                        <label>
+                          新临时密码
+                          <input
+                            required
+                            type="password"
+                            name="temporaryPassword"
+                          />
+                        </label>
+                        <button>替换临时密码</button>
+                      </AdminMutationForm>
+                    </>
+                  ) : null}
+                  <AdminMutationForm action={revokeAllAdminSessionsAction}>
                     <input type="hidden" name="userId" value={user.id} />
                     <input type="hidden" name="realm" value={user.realm} />
-                    <input type="hidden" name="sessionId" value={session.id} />
-                    <time dateTime={session.createdAt}>
-                      {session.createdAt.slice(0, 10)}
-                    </time>{" "}
-                    <button>撤销此会话</button>
+                    <button>撤销全部会话</button>
                   </AdminMutationForm>
-                ))}
-              </td>
-              <td>
-                {user.realm === "workforce" ? (
-                  <>
-                    {user.status === "disabled" ? (
-                      <AdminMutationForm action={reactivateUserAction}>
-                        <input type="hidden" name="userId" value={user.id} />
-                        <button>恢复账号</button>
-                      </AdminMutationForm>
-                    ) : (
-                      <AdminMutationForm action={disableUserAction}>
-                        <input type="hidden" name="userId" value={user.id} />
-                        <button>停用账号</button>
-                      </AdminMutationForm>
-                    )}
-                    <AdminMutationForm action={replacePasswordAction}>
-                      <input type="hidden" name="userId" value={user.id} />
-                      <label>
-                        新临时密码
-                        <input
-                          required
-                          type="password"
-                          name="temporaryPassword"
-                        />
-                      </label>
-                      <button>替换临时密码</button>
-                    </AdminMutationForm>
-                  </>
-                ) : null}
-                <AdminMutationForm action={revokeAllAdminSessionsAction}>
-                  <input type="hidden" name="userId" value={user.id} />
-                  <input type="hidden" name="realm" value={user.realm} />
-                  <button>撤销全部会话</button>
-                </AdminMutationForm>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <nav aria-label="用户分页">
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <nav aria-label="用户分页" className="admin-users-page__pagination">
         {query.page > 1 ? (
           <Link href={pageHref(query, query.page - 1)}>上一页</Link>
         ) : (

@@ -13,7 +13,7 @@ import {
   users,
 } from "@ai-agent-platform/database";
 
-import { requireSensitiveWorkforceAction } from "../auth/sensitive-action";
+import { requirePermission as requireSensitiveWorkforceAction } from "../auth/access";
 
 type SessionRealm = "customer" | "workforce";
 type StoredSession = {

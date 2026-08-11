@@ -23,10 +23,6 @@ import {
   createAgentSkillControlClient,
   resolveAgentSkillControlSettings,
 } from "@/server/assistant/agent-skill-control-client";
-import {
-  SensitiveActionError,
-  requireSensitiveWorkforceActionEvidence,
-} from "@/server/auth/sensitive-action";
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
 import {
   SkillRegistryClientError,
@@ -53,7 +49,6 @@ const UUID =
 type PublicSkillErrorCode =
   | "authentication_required"
   | "permission_denied"
-  | "reauth_required"
   | "validation_error"
   | "payload_too_large"
   | "not_found"
@@ -65,7 +60,6 @@ type PublicSkillErrorCode =
 const ERROR_MESSAGES: Readonly<Record<PublicSkillErrorCode, string>> = {
   authentication_required: "Authentication required",
   permission_denied: "Permission denied",
-  reauth_required: "Recent password and MFA verification required",
   validation_error: "Invalid skill request",
   payload_too_large: "Skill upload is too large",
   not_found: "Skill revision was not found",
@@ -107,7 +101,7 @@ function createDefaultLifecycleCommands() {
   const registry = defaultRegistryClient();
   return createAdminSkillLifecycleCommands({
     requireTrustedMutation: requireTrustedMultipartMutation,
-    requireSensitiveAction: requireSensitiveWorkforceActionEvidence,
+    requireSensitiveAction: requirePermission,
     audit: createAuditWriter(),
     registry,
     agent: createAgentSkillControlClient({
@@ -150,7 +144,6 @@ function errorBody(requestId: string, code: PublicSkillErrorCode) {
       retryable:
         code === "registry_bad_gateway" || code === "registry_unavailable",
     },
-    ...(code === "reauth_required" ? { redirectTo: "/staff/re-auth" } : {}),
   };
 }
 
@@ -169,9 +162,6 @@ function classifyError(error: unknown): PublicError {
         error.status === 401 ? "authentication_required" : "permission_denied",
       status: error.status,
     };
-  }
-  if (error instanceof SensitiveActionError) {
-    return { code: "reauth_required", status: 401 };
   }
   if (error instanceof AdminSkillCommandError) {
     if (error.code === "authorization_failed") {

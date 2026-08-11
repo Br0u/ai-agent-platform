@@ -190,8 +190,6 @@ def test_skill_set_reads_and_mutations_use_exact_permissions_assurance_and_nonce
         action="skill_set_create",
         permission="admin:assistant:skills:configure",
         target="maduoduo",
-        assurance="password+mfa",
-        assured_at=0,
         nonce=REQUEST_ID,
     )
     verified = authenticator().authenticate(
@@ -205,15 +203,14 @@ def test_skill_set_reads_and_mutations_use_exact_permissions_assurance_and_nonce
     for invalid in (
         signed_assertion(
             action="skill_set_create",
-            permission="admin:assistant:skills:configure",
+            permission="admin:assistant:skills",
             target="maduoduo",
             nonce=REQUEST_ID,
         ),
         signed_assertion(
             action="skill_set_create",
-            permission="admin:assistant:skills:upload",
+            permission="admin:assistant:skills:configure",
             target="maduoduo",
-            assurance="password+mfa",
             assured_at=0,
             nonce=REQUEST_ID,
         ),
@@ -221,8 +218,6 @@ def test_skill_set_reads_and_mutations_use_exact_permissions_assurance_and_nonce
             action="skill_set_create",
             permission="admin:assistant:skills:configure",
             target="maduoduo",
-            assurance="password+mfa",
-            assured_at=0,
         ),
     ):
         with pytest.raises(SkillRegistryAssertionError):
@@ -271,10 +266,7 @@ def test_skill_set_reads_and_mutations_use_exact_permissions_assurance_and_nonce
         (
             "POST",
             "/internal/skills/uploads",
-            (
-                f"targetSkillId={REQUEST_ID}&"
-                f"expectedArtifactSha256={'a' * 64}"
-            ).encode(),
+            (f"targetSkillId={REQUEST_ID}&expectedArtifactSha256={'a' * 64}").encode(),
             ("upload", REQUEST_ID),
         ),
     ],

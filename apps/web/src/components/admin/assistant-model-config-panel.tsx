@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
   type FormEvent,
-  type KeyboardEvent,
 } from "react";
 
 import {
@@ -25,14 +24,9 @@ import {
 
 type AssistantModelConfigPanelProps = {
   initialSnapshot: AdminModelConfigSnapshot;
-  navigateToReauth?: (path: "/staff/re-auth") => void;
 };
 
 type PendingAction = "save" | "activate" | "refresh" | null;
-
-function navigateToStaffReauth(path: "/staff/re-auth") {
-  window.location.assign(path);
-}
 
 type UnknownMutationDescriptor =
   | {
@@ -207,16 +201,10 @@ function parseActivation(
   };
 }
 
-type SafeError = { code: string; redirectTo: "/staff/re-auth" | null };
+type SafeError = { code: string };
 
 function parseSafeError(value: unknown): SafeError | null {
-  const hasRedirect = hasExactKeys(value, [
-    "version",
-    "requestId",
-    "error",
-    "redirectTo",
-  ]);
-  if (!hasRedirect && !hasExactKeys(value, ["version", "requestId", "error"])) {
+  if (!hasExactKeys(value, ["version", "requestId", "error"])) {
     return null;
   }
   const envelope = value as Record<string, unknown>;
@@ -228,16 +216,7 @@ function parseSafeError(value: unknown): SafeError | null {
   if (typeof error.code !== "string" || typeof error.retryable !== "boolean") {
     return null;
   }
-  if (hasRedirect) {
-    if (
-      error.code !== "reauth_required" ||
-      envelope.redirectTo !== "/staff/re-auth"
-    ) {
-      return null;
-    }
-    return { code: error.code, redirectTo: "/staff/re-auth" };
-  }
-  return { code: error.code, redirectTo: null };
+  return { code: error.code };
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -299,7 +278,6 @@ function safeRevealFailureMessage(error: ModelKeyRevealError | null): string {
       return "查看过于频繁，请稍后重试。";
     case "storage_unavailable":
     case "unavailable":
-    case "reauth_required":
     default:
       return "模型密钥暂时无法查看，请稍后重试。";
   }
@@ -323,7 +301,6 @@ function snapshotProvesMutation(
 
 export function AssistantModelConfigPanel({
   initialSnapshot,
-  navigateToReauth = navigateToStaffReauth,
 }: AssistantModelConfigPanelProps) {
   const initialConfig = initialSnapshot.configs.find(
     (config) => config.provider === "openai",
@@ -354,9 +331,6 @@ export function AssistantModelConfigPanel({
   const syncRequiredRef = useRef(false);
   const pageSuspendedRef = useRef(false);
   const selectedProviderRef = useRef<AdminModelProvider>("openai");
-  const providerTabs = useRef<
-    Partial<Record<AdminModelProvider, HTMLButtonElement>>
-  >({});
   const keyReveal = useModelKeyReveal(selectedProvider);
 
   const selectedConfig = useMemo(
@@ -365,11 +339,15 @@ export function AssistantModelConfigPanel({
     [selectedProvider, snapshot.configs],
   );
   const endpointOptions = snapshot.endpoints[selectedProvider];
+  const selectedEndpoint = endpointOptions.find(
+    (option) => option.id === endpointId,
+  );
   const writable = snapshot.canConfigure && snapshot.controlEnabled;
   const controlUnavailable =
     !snapshot.controlEnabled && snapshot.runtime.capability === "degraded";
   const canMutate = writable && !syncRequired && keyReveal.status !== "loading";
-  const keyRequired = selectedConfig.apiKey === null;
+  const keyRequired =
+    selectedEndpoint?.apiKeyRequired === true && selectedConfig.apiKey === null;
   const hasDynamicSavedKey =
     selectedConfig.revision !== null &&
     selectedConfig.apiKey?.configured === true;
@@ -479,30 +457,6 @@ export function AssistantModelConfigPanel({
     setSelectedProvider(provider);
   };
 
-  const handleProviderKeyDown = (
-    event: KeyboardEvent<HTMLButtonElement>,
-    provider: AdminModelProvider,
-  ) => {
-    const currentIndex = ADMIN_MODEL_PROVIDERS.indexOf(provider);
-    let nextIndex: number | null = null;
-    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
-      nextIndex = (currentIndex + 1) % ADMIN_MODEL_PROVIDERS.length;
-    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
-      nextIndex =
-        (currentIndex - 1 + ADMIN_MODEL_PROVIDERS.length) %
-        ADMIN_MODEL_PROVIDERS.length;
-    } else if (event.key === "Home") {
-      nextIndex = 0;
-    } else if (event.key === "End") {
-      nextIndex = ADMIN_MODEL_PROVIDERS.length - 1;
-    }
-    if (nextIndex === null) return;
-    event.preventDefault();
-    const nextProvider = ADMIN_MODEL_PROVIDERS[nextIndex]!;
-    selectProvider(nextProvider);
-    providerTabs.current[nextProvider]?.focus();
-  };
-
   const replaceSnapshot = useCallback((next: AdminModelConfigSnapshot) => {
     const provider = selectedProviderRef.current;
     const nextConfig = next.configs.find(
@@ -538,10 +492,10 @@ export function AssistantModelConfigPanel({
           keyLength > API_KEY_MAX_LENGTH ||
           /\s/u.test(apiKey) ||
           /[\u0000-\u001f\u007f-\u009f]/u.test(apiKey))) ||
-      (selectedConfig.apiKey === null && apiKey.length === 0)
+      (keyRequired && apiKey.length === 0)
     ) {
       setValidation(
-        selectedConfig.apiKey === null && apiKey.length === 0
+        keyRequired && apiKey.length === 0
           ? "首次配置必须填写 API Key。"
           : "API Key 格式无效。",
       );
@@ -557,11 +511,6 @@ export function AssistantModelConfigPanel({
   };
 
   const handleFailure = (error: SafeError | null) => {
-    if (error?.redirectTo === "/staff/re-auth") {
-      setAnnouncement("需要重新验证身份，正在前往验证页面。");
-      navigateToReauth("/staff/re-auth");
-      return;
-    }
     setAnnouncement(safeFailureMessage(error));
   };
 
@@ -601,8 +550,6 @@ export function AssistantModelConfigPanel({
         const error = parseSafeError(body);
         if (error === null) {
           requireSync();
-        } else if (error.redirectTo === "/staff/re-auth") {
-          handleFailure(error);
         } else if (UNCERTAIN_MUTATION_ERROR_CODES.has(error.code)) {
           requireSync();
         } else {
@@ -732,12 +679,6 @@ export function AssistantModelConfigPanel({
     };
   }, [abortForLifecycle, invalidateCopyFeedback, refresh]);
 
-  useEffect(() => {
-    if (keyReveal.error?.redirectTo === "/staff/re-auth") {
-      navigateToReauth("/staff/re-auth");
-    }
-  }, [keyReveal.error, navigateToReauth]);
-
   const testAndActivate = async () => {
     if (
       !writable ||
@@ -779,10 +720,6 @@ export function AssistantModelConfigPanel({
         const error = parseSafeError(body);
         if (error === null) {
           requireSync();
-          return;
-        }
-        if (error.redirectTo === "/staff/re-auth") {
-          handleFailure(error);
           return;
         }
         if (UNCERTAIN_MUTATION_ERROR_CODES.has(error.code)) {
@@ -900,68 +837,60 @@ export function AssistantModelConfigPanel({
       </header>
 
       <div className="assistant-model-config__layout">
-        <div
-          aria-label="云模型 Provider"
-          className="assistant-model-config__providers"
-          role="tablist"
-        >
-          {ADMIN_MODEL_PROVIDERS.map((provider) => {
-            const config = snapshot.configs.find(
-              (item) => item.provider === provider,
-            )!;
-            const deploymentRunning =
-              snapshot.runtime.source === "deployment" &&
-              snapshot.runtime.provider === provider;
-            const running = config.activeRevision !== null || deploymentRunning;
-            return (
-              <button
-                aria-controls={MODEL_EDITOR_ID}
-                aria-selected={provider === selectedProvider}
-                id={`assistant-model-provider-tab-${provider}`}
-                key={provider}
-                onClick={() => selectProvider(provider)}
-                onKeyDown={(event) => handleProviderKeyDown(event, provider)}
-                ref={(element) => {
-                  if (element === null) {
-                    delete providerTabs.current[provider];
-                  } else {
-                    providerTabs.current[provider] = element;
-                  }
-                }}
-                role="tab"
-                tabIndex={provider === selectedProvider ? 0 : -1}
-                type="button"
-              >
-                <span>
-                  <strong>{config.displayName}</strong>
-                  {running ? <em>运行中</em> : null}
-                </span>
-                <small>{statusText(config, snapshot.runtime)}</small>
-                {config.lastTestedAt === null ? null : (
-                  <time dateTime={config.lastTestedAt}>
-                    最近测试 {config.lastTestedAt}
-                  </time>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
         <form
-          aria-labelledby={`assistant-model-provider-tab-${selectedProvider}`}
+          aria-labelledby="assistant-model-editor-title"
           className="assistant-model-config__editor"
           id={MODEL_EDITOR_ID}
           onSubmit={save}
-          role="tabpanel"
         >
           <header>
-            <div>
+            <label className="assistant-model-config__provider-select">
+              <span>模型供应商</span>
+              <select
+                aria-label="模型供应商"
+                onChange={(event) =>
+                  selectProvider(event.target.value as AdminModelProvider)
+                }
+                value={selectedProvider}
+              >
+                {ADMIN_MODEL_PROVIDERS.map((provider) => {
+                  const config = snapshot.configs.find(
+                    (item) => item.provider === provider,
+                  )!;
+                  const running =
+                    config.activeRevision !== null ||
+                    (snapshot.runtime.source === "deployment" &&
+                      snapshot.runtime.provider === provider);
+                  return (
+                    <option key={provider} value={provider}>
+                      {config.displayName} · {running ? "运行中 · " : ""}
+                      {statusText(config, snapshot.runtime)}
+                    </option>
+                  );
+                })}
+              </select>
+              <small>
+                {ADMIN_MODEL_PROVIDERS.length} 个供应商 · 当前仅编辑一个配置
+              </small>
+            </label>
+            <div className="assistant-model-config__current-provider">
               <span>当前 Provider</span>
               <h3 id="assistant-model-editor-title">
                 <output aria-label="Provider">
                   {selectedConfig.displayName}
                 </output>
               </h3>
+              <output aria-label="当前供应商状态">
+                {statusText(selectedConfig, snapshot.runtime)}
+              </output>
+              {selectedConfig.lastTestedAt === null ? null : (
+                <time
+                  aria-label="最近测试时间"
+                  dateTime={selectedConfig.lastTestedAt}
+                >
+                  最近测试 {selectedConfig.lastTestedAt}
+                </time>
+              )}
             </div>
             <dl>
               <div>
@@ -1047,13 +976,16 @@ export function AssistantModelConfigPanel({
                 </button>
               ) : null}
             </div>
+            {selectedEndpoint?.insecureHttp ? (
+              <p className="assistant-model-config__validation" role="status">
+                此自定义地址使用明文 HTTP，请仅在可信网络中使用。
+              </p>
+            ) : null}
           </div>
 
           {keyReveal.error === null ? null : (
             <p className="assistant-model-config__validation" role="alert">
-              {keyReveal.error.code === "reauth_required"
-                ? "需要重新验证身份，正在前往验证页面。"
-                : safeRevealFailureMessage(keyReveal.error)}
+              {safeRevealFailureMessage(keyReveal.error)}
             </p>
           )}
 

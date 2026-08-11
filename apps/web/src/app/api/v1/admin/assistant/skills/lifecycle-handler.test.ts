@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { SensitiveActionError } from "@/server/auth/sensitive-action";
+import { AuthAccessError } from "@/server/auth/access";
 import { AdminSkillLifecycleCommandError } from "@/server/assistant/admin-skill-lifecycle-commands";
 import { createSkillLifecycleHandler } from "./lifecycle-handler";
 
@@ -12,13 +12,15 @@ const CURRENT_REVISION_ID = "55555555-5555-4555-8555-555555555555";
 const TOKEN = "a".repeat(64);
 
 describe("simple Skill lifecycle handler", () => {
-  it("returns the trusted re-auth destination when authorization is stale", async () => {
+  it("returns permission denied when authorization fails", async () => {
     const handler = createSkillLifecycleHandler("disable", {
       requestIdFactory: () => INTERNAL_ID,
       commands: {
         authorize: vi
           .fn()
-          .mockRejectedValue(new SensitiveActionError("AUTH_REAUTH_REQUIRED")),
+          .mockRejectedValue(
+            new AuthAccessError("AUTH_PERMISSION_DENIED", 403),
+          ),
       } as never,
       registry: {} as never,
     });
@@ -32,12 +34,11 @@ describe("simple Skill lifecycle handler", () => {
       { params: Promise.resolve({ skillId: SKILL_ID }) },
     );
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
       version: "1",
       requestId: INTERNAL_ID,
-      error: { code: "reauth_required" },
-      redirectTo: "/staff/re-auth",
+      error: { code: "permission_denied" },
     });
   });
 

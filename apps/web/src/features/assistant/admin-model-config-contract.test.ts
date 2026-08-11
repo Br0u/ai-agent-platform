@@ -43,12 +43,54 @@ function snapshot() {
       activeRevision: index === 0 ? 3 : null,
     })),
     endpoints: {
-      openai: [{ id: "openai-official", label: "OpenAI official" }],
-      anthropic: [{ id: "anthropic-official", label: "Anthropic official" }],
-      google: [{ id: "google-official", label: "Google Gemini official" }],
-      dashscope: [{ id: "dashscope-official", label: "DashScope official" }],
-      deepseek: [{ id: "deepseek-official", label: "DeepSeek official" }],
-      minimax: [{ id: "minimax-official", label: "MiniMax official" }],
+      openai: [
+        {
+          id: "openai-official",
+          label: "OpenAI official",
+          apiKeyRequired: true,
+          insecureHttp: false,
+        },
+      ],
+      anthropic: [
+        {
+          id: "anthropic-official",
+          label: "Anthropic official",
+          apiKeyRequired: true,
+          insecureHttp: false,
+        },
+      ],
+      google: [
+        {
+          id: "google-official",
+          label: "Google Gemini official",
+          apiKeyRequired: true,
+          insecureHttp: false,
+        },
+      ],
+      dashscope: [
+        {
+          id: "dashscope-official",
+          label: "DashScope official",
+          apiKeyRequired: true,
+          insecureHttp: false,
+        },
+      ],
+      deepseek: [
+        {
+          id: "deepseek-official",
+          label: "DeepSeek official",
+          apiKeyRequired: true,
+          insecureHttp: false,
+        },
+      ],
+      minimax: [
+        {
+          id: "minimax-official",
+          label: "MiniMax official",
+          apiKeyRequired: true,
+          insecureHttp: false,
+        },
+      ],
     },
     runtime: {
       capability: "available",

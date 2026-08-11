@@ -36,7 +36,7 @@ MODEL_API_KEY_FILE=/absolute/path/to/model_api_key \
 
 在隔离或生产批准的部署中设置 `AGENT_ENABLED=true`、`ASSISTANT_PROVIDER_MODE=agentos`，完成 control role bootstrap/migration 后：
 
-1. 使用有模型配置权限且最近 10 分钟内同时完成密码再认证和 TOTP 验证的账号进入 `/admin/assistant`；
+1. 使用有模型配置权限的账号进入 `/admin/assistant`；
 2. 只保存当前要验证的一家 Provider 的真实 Model ID、批准的 Endpoint 和真实 Key；
 3. 点击“测试并启用”，确认成功后记录 Provider、Model ID、时间、部署版本和执行人；
 4. 立即按组织的凭据保留策略处理测试 Key，不在截图、日志或工单中记录明文或末四位。

@@ -27,10 +27,6 @@ vi.mock("../auth/access", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../auth/access")>()),
   requirePermission: defaultWiring.requirePermission,
 }));
-vi.mock("../auth/sensitive-action", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../auth/sensitive-action")>()),
-  requireSensitiveWorkforceAction: defaultWiring.requireSensitive,
-}));
 vi.mock("./repository", () => ({
   createDatabaseDocumentRepository: defaultWiring.createRepository,
 }));
@@ -39,7 +35,6 @@ vi.mock("./service", () => ({
 }));
 
 import { AuthAccessError } from "../auth/access";
-import { SensitiveActionError } from "../auth/sensitive-action";
 import {
   createDefaultDocumentActions,
   createDocumentActions,
@@ -197,32 +192,6 @@ describe("document action authorization", () => {
     },
   );
 
-  it.each(["AUTH_REAUTH_REQUIRED", "AUTH_MFA_REQUIRED"] as const)(
-    "returns a fixed reauth destination for %s without calling the service",
-    async (code) => {
-      const value = harness();
-      value.access.requireSensitivePermission.mockRejectedValueOnce(
-        new SensitiveActionError(code),
-      );
-      const form = mutationForm();
-      form.set("returnTo", "https://attacker.example/steal");
-
-      const result = await value.actions.publishDocumentAction(
-        initialState,
-        form,
-      );
-
-      expect(result).toEqual({
-        kind: "reauth_required",
-        code,
-        redirectTo: "/staff/re-auth?returnTo=%2Fadmin%2Fdocs",
-      });
-      expect(value.service.publish).not.toHaveBeenCalled();
-      expect(value.reportInternalError).not.toHaveBeenCalled();
-      expect(JSON.stringify(result)).not.toContain("attacker.example");
-    },
-  );
-
   it("maps permission denial and stops before the service", async () => {
     const value = harness();
     value.access.requirePermission.mockRejectedValueOnce(
@@ -264,7 +233,6 @@ describe("document action authorization", () => {
       "AUTH_PASSWORD_CHANGE_REQUIRED",
       "/staff/change-password?returnTo=%2Fadmin%2Fdocs",
     ],
-    ["AUTH_TOTP_SETUP_REQUIRED", "/staff/two-factor?returnTo=%2Fadmin%2Fdocs"],
   ] as const)(
     "maps real %s to its fixed setup route",
     async (code, redirectTo) => {
@@ -706,7 +674,7 @@ describe("default document action wiring", () => {
     expect(defaultWiring.updateTag).not.toHaveBeenCalled();
   });
 
-  it("connects exported publish to sensitive access and public cache", async () => {
+  it("connects exported publish to permission access and public cache", async () => {
     const actions = createDefaultDocumentActions();
     await expect(
       actions.publishDocumentAction(initialState, mutationForm()),
@@ -716,7 +684,7 @@ describe("default document action wiring", () => {
     expect(defaultWiring.createService).toHaveBeenCalledWith({
       repository: true,
     });
-    expect(defaultWiring.requireSensitive).toHaveBeenCalledWith("admin:docs");
+    expect(defaultWiring.requirePermission).toHaveBeenCalledWith("admin:docs");
     expect(defaultWiring.service.publish).toHaveBeenCalledOnce();
     expect(defaultWiring.revalidatePath).toHaveBeenNthCalledWith(
       1,

@@ -8,7 +8,6 @@ const actor = {
   status: "active" as const,
   displayName: "Auditor",
   mustChangePassword: false,
-  twoFactorEnabled: true,
   permissions: ["admin:audit"],
 };
 

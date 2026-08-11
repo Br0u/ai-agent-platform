@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AdminModelConfigSaveInput } from "@/features/assistant/admin-model-config-contract";
 import type { WorkforceActor } from "../auth/access";
 import type { AuditWriteInput } from "../auth/audit";
-import { SensitiveActionError } from "../auth/sensitive-action";
+import { AuthAccessError } from "../auth/access";
 import { MutationRequestError } from "../http/require-trusted-mutation";
 import {
   AdminModelConfigCommandError,
@@ -29,7 +29,6 @@ const actor: WorkforceActor = {
   status: "active",
   displayName: "Admin",
   mustChangePassword: false,
-  twoFactorEnabled: true,
   permissions: ["admin:assistant:configure", "admin:assistant:secret:reveal"],
 };
 const savedConfig: AgentModelConfigMetadata = {
@@ -160,10 +159,7 @@ describe("admin model command authorization", () => {
       const context = await authorize(current.commands, action);
 
       expect(current.operations).toEqual(["trusted", "sensitive"]);
-      expect(current.requireSensitiveAction).toHaveBeenCalledWith(permission, {
-        recentWithinSeconds: 600,
-        mfaRequired: true,
-      });
+      expect(current.requireSensitiveAction).toHaveBeenCalledWith(permission);
       expect(current.requestIdFactory).toHaveBeenCalledOnce();
       expect(context).toMatchObject({ actor, requestId: REQUEST_ID, action });
       expect(Object.isFrozen(context)).toBe(true);
@@ -186,14 +182,14 @@ describe("admin model command authorization", () => {
     expect(current.client.saveModelConfig).not.toHaveBeenCalled();
   });
 
-  it("stops before request ID, audit or Agent work when recent assurance fails", async () => {
+  it("stops before request ID, audit or Agent work when permission fails", async () => {
     const current = fixture();
     current.requireSensitiveAction.mockRejectedValueOnce(
-      new SensitiveActionError("AUTH_MFA_REQUIRED"),
+      new AuthAccessError("AUTH_PERMISSION_DENIED", 403),
     );
 
     await expect(authorize(current.commands, "reveal")).rejects.toEqual(
-      new SensitiveActionError("AUTH_MFA_REQUIRED"),
+      new AuthAccessError("AUTH_PERMISSION_DENIED", 403),
     );
     expect(current.operations).toEqual(["trusted"]);
     expect(current.requestIdFactory).not.toHaveBeenCalled();

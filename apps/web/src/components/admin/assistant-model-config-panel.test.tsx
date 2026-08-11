@@ -9,15 +9,13 @@ import {
   within,
 } from "@testing-library/react";
 import { Profiler } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
   AdminModelConfigItem,
   AdminModelConfigSnapshot,
   AdminModelProvider,
 } from "@/features/assistant/admin-model-config-contract";
-
-const navigation = vi.hoisted(() => ({ push: vi.fn() }));
 
 import { AssistantModelConfigPanel } from "./assistant-model-config-panel";
 
@@ -56,12 +54,54 @@ function snapshot(
       emptyConfig(provider, displayName),
     ),
     endpoints: {
-      openai: [{ id: "openai-default", label: "OpenAI 官方" }],
-      anthropic: [{ id: "anthropic-default", label: "Claude 官方" }],
-      google: [{ id: "google-default", label: "Gemini 官方" }],
-      dashscope: [{ id: "dashscope-default", label: "Qwen 官方" }],
-      deepseek: [{ id: "deepseek-default", label: "DeepSeek 官方" }],
-      minimax: [{ id: "minimax-default", label: "MiniMax 官方" }],
+      openai: [
+        {
+          id: "openai-default",
+          label: "OpenAI 官方",
+          apiKeyRequired: true,
+          insecureHttp: false,
+        },
+      ],
+      anthropic: [
+        {
+          id: "anthropic-default",
+          label: "Claude 官方",
+          apiKeyRequired: true,
+          insecureHttp: false,
+        },
+      ],
+      google: [
+        {
+          id: "google-default",
+          label: "Gemini 官方",
+          apiKeyRequired: true,
+          insecureHttp: false,
+        },
+      ],
+      dashscope: [
+        {
+          id: "dashscope-default",
+          label: "Qwen 官方",
+          apiKeyRequired: true,
+          insecureHttp: false,
+        },
+      ],
+      deepseek: [
+        {
+          id: "deepseek-default",
+          label: "DeepSeek 官方",
+          apiKeyRequired: true,
+          insecureHttp: false,
+        },
+      ],
+      minimax: [
+        {
+          id: "minimax-default",
+          label: "MiniMax 官方",
+          apiKeyRequired: true,
+          insecureHttp: false,
+        },
+      ],
     },
     runtime: {
       capability: "placeholder",
@@ -115,21 +155,15 @@ function withSavedOpenAi(
   };
 }
 
-function safeError(
-  code: string,
-  options: { redirectTo?: string; retryable?: boolean } = {},
-) {
+function safeError(code: string) {
   return {
     version: "1",
     requestId: "11111111-1111-4111-8111-111111111111",
     error: {
       code,
       message: "raw provider detail must never render",
-      retryable: options.retryable ?? false,
+      retryable: false,
     },
-    ...(options.redirectTo === undefined
-      ? {}
-      : { redirectTo: options.redirectTo }),
   };
 }
 
@@ -205,10 +239,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-beforeEach(() => {
-  navigation.push.mockReset();
-});
-
 describe("AssistantModelConfigPanel", () => {
   it("renders the fixed six-Provider order and all dynamic status truths", () => {
     const value = snapshot();
@@ -261,22 +291,17 @@ describe("AssistantModelConfigPanel", () => {
 
     render(<AssistantModelConfigPanel initialSnapshot={value} />);
 
-    const tabs = screen.getAllByRole("tab");
-    expect(tabs.map((tab) => tab.textContent)).toEqual([
-      expect.stringContaining("OpenAI"),
-      expect.stringContaining("Claude"),
-      expect.stringContaining("Gemini"),
-      expect.stringContaining("Qwen / DashScope"),
-      expect.stringContaining("DeepSeek"),
-      expect.stringContaining("MiniMax"),
+    const providerSelect = screen.getByLabelText("模型供应商");
+    const options = within(providerSelect).getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual([
+      "OpenAI · 未配置",
+      "Claude · 已配置",
+      "Gemini · 测试失败",
+      "Qwen / DashScope · 运行中 · 已启用",
+      "DeepSeek · 运行中 · 当前草稿未启用 · 运行 rev 3",
+      "MiniMax · 运行中 · 当前草稿测试失败 · 仍运行 rev 2",
     ]);
-    expect(tabs[0]).toHaveTextContent("未配置");
-    expect(tabs[1]).toHaveTextContent("已配置");
-    expect(tabs[2]).toHaveTextContent("测试失败");
-    expect(tabs[3]).toHaveTextContent("已启用");
-    expect(tabs[4]).toHaveTextContent("当前草稿未启用 · 运行 rev 3");
-    expect(tabs[5]).toHaveTextContent("当前草稿测试失败 · 仍运行 rev 2");
-    expect(within(tabs[3]!).getByText("运行中")).toBeVisible();
+    expect(providerSelect).toHaveValue("openai");
   });
 
   it("reports a failed test on the currently active revision without hiding that it still runs", () => {
@@ -290,7 +315,7 @@ describe("AssistantModelConfigPanel", () => {
       />,
     );
 
-    expect(screen.getByRole("tab", { name: /OpenAI/u })).toHaveTextContent(
+    expect(screen.getByLabelText("当前供应商状态")).toHaveTextContent(
       "当前启用配置测试失败 · 仍运行 rev 2",
     );
   });
@@ -309,7 +334,7 @@ describe("AssistantModelConfigPanel", () => {
 
     render(<AssistantModelConfigPanel initialSnapshot={value} />);
 
-    expect(screen.getAllByRole("tab")[0]).toHaveTextContent(
+    expect(screen.getByLabelText("当前供应商状态")).toHaveTextContent(
       "部署配置正在运行 · 后台 Key 不可查看",
     );
     expect(screen.getByLabelText("新 API Key（必填）")).toHaveValue("");
@@ -414,7 +439,9 @@ describe("AssistantModelConfigPanel", () => {
     expect(document.documentElement.outerHTML).not.toContain(`value="${key}"`);
 
     commits.length = 0;
-    fireEvent.click(screen.getByRole("tab", { name: /Claude/u }));
+    fireEvent.change(screen.getByLabelText("模型供应商"), {
+      target: { value: "anthropic" },
+    });
     expect(screen.queryByText(key)).not.toBeInTheDocument();
     expect(
       commits
@@ -422,7 +449,9 @@ describe("AssistantModelConfigPanel", () => {
         .every((commit) => !commit.includes(key)),
     ).toBe(true);
 
-    fireEvent.click(screen.getByRole("tab", { name: /OpenAI/u }));
+    fireEvent.change(screen.getByLabelText("模型供应商"), {
+      target: { value: "openai" },
+    });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
     });
@@ -553,49 +582,6 @@ describe("AssistantModelConfigPanel", () => {
     );
   });
 
-  it("navigates only for the exact versioned reveal re-auth response", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        Response.json(
-          safeError("reauth_required", { redirectTo: "/staff/re-auth" }),
-          { status: 401 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        Response.json(
-          safeError("reauth_required", { redirectTo: "/untrusted" }),
-          { status: 401 },
-        ),
-      );
-    vi.stubGlobal("fetch", fetchMock);
-    const view = render(
-      <AssistantModelConfigPanel
-        initialSnapshot={{ ...withSavedOpenAi(), canReveal: true }}
-        navigateToReauth={navigation.push}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
-    await waitFor(() =>
-      expect(navigation.push).toHaveBeenCalledExactlyOnceWith("/staff/re-auth"),
-    );
-
-    view.unmount();
-    navigation.push.mockReset();
-    render(
-      <AssistantModelConfigPanel
-        initialSnapshot={{ ...withSavedOpenAi(), canReveal: true }}
-        navigateToReauth={navigation.push}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "模型密钥暂时无法查看，请稍后重试。",
-    );
-    expect(navigation.push).not.toHaveBeenCalled();
-  });
-
   it("warns before copying and writes to the clipboard only on an explicit click", async () => {
     const key = "COPY-SECRET-SENTINEL";
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -664,7 +650,9 @@ describe("AssistantModelConfigPanel", () => {
       fireEvent.click(screen.getByRole("button", { name: "复制 Key" }));
       expect(writeText).toHaveBeenCalledExactlyOnceWith(firstKey);
 
-      fireEvent.click(screen.getByRole("tab", { name: /Claude/u }));
+      fireEvent.change(screen.getByLabelText("模型供应商"), {
+        target: { value: "anthropic" },
+      });
       fireEvent.click(screen.getByRole("button", { name: "查看已保存 Key" }));
       expect(await screen.findByText(secondKey)).toBeVisible();
       await act(async () => {
@@ -751,12 +739,7 @@ describe("AssistantModelConfigPanel", () => {
   );
 
   it("keeps Provider and revision read-only while controlling only allowlisted inputs", () => {
-    render(
-      <AssistantModelConfigPanel
-        initialSnapshot={withSavedOpenAi()}
-        navigateToReauth={navigation.push}
-      />,
-    );
+    render(<AssistantModelConfigPanel initialSnapshot={withSavedOpenAi()} />);
 
     expect(screen.getByLabelText("Provider")).toHaveTextContent("OpenAI");
     expect(
@@ -809,43 +792,24 @@ describe("AssistantModelConfigPanel", () => {
     fireEvent.change(screen.getByLabelText("新 API Key（必填）"), {
       target: { value: "" },
     });
-    fireEvent.submit(screen.getByRole("tabpanel"));
+    fireEvent.submit(screen.getByRole("form"));
     expect(screen.getByRole("alert")).toHaveTextContent(
       "首次配置必须填写 API Key。",
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("implements roving tab focus and complete keyboard navigation", () => {
+  it("uses one native Provider selector and switches the editor", () => {
     render(<AssistantModelConfigPanel initialSnapshot={snapshot()} />);
-    const tabs = screen.getAllByRole("tab");
-    const panel = screen.getByRole("tabpanel");
+    const providerSelect = screen.getByLabelText("模型供应商");
 
-    expect(new Set(tabs.map((tab) => tab.id)).size).toBe(6);
-    expect(tabs[0]).toHaveAttribute("tabindex", "0");
-    expect(tabs.slice(1).every((tab) => tab.tabIndex === -1)).toBe(true);
-    expect(tabs[0]).toHaveAttribute("aria-controls", panel.id);
-    expect(panel).toHaveAttribute("aria-labelledby", tabs[0]!.id);
+    expect(providerSelect).toHaveValue("openai");
+    expect(within(providerSelect).getAllByRole("option")).toHaveLength(6);
+    fireEvent.change(providerSelect, { target: { value: "anthropic" } });
 
-    tabs[0]!.focus();
-    fireEvent.keyDown(tabs[0]!, { key: "ArrowRight" });
-    expect(tabs[1]).toHaveFocus();
-    expect(tabs[1]).toHaveAttribute("aria-selected", "true");
-    expect(tabs[1]).toHaveAttribute("tabindex", "0");
-    expect(panel).toHaveAttribute("aria-labelledby", tabs[1]!.id);
-
-    fireEvent.keyDown(tabs[1]!, { key: "End" });
-    expect(tabs[5]).toHaveFocus();
-    fireEvent.keyDown(tabs[5]!, { key: "ArrowRight" });
-    expect(tabs[0]).toHaveFocus();
-    fireEvent.keyDown(tabs[0]!, { key: "ArrowLeft" });
-    expect(tabs[5]).toHaveFocus();
-    fireEvent.keyDown(tabs[5]!, { key: "Home" });
-    expect(tabs[0]).toHaveFocus();
-    fireEvent.keyDown(tabs[0]!, { key: "ArrowDown" });
-    expect(tabs[1]).toHaveFocus();
-    fireEvent.keyDown(tabs[1]!, { key: "ArrowUp" });
-    expect(tabs[0]).toHaveFocus();
+    expect(providerSelect).toHaveValue("anthropic");
+    expect(screen.getByLabelText("Provider")).toHaveTextContent("Claude");
+    expect(screen.getByLabelText("Model ID")).toHaveValue("");
   });
 
   it("saves through the exact PUT boundary, prevents doubles, replaces metadata and refreshes once", async () => {
@@ -921,34 +885,14 @@ describe("AssistantModelConfigPanel", () => {
     expect(document.body.textContent).not.toContain("sk-new-9999");
   });
 
-  it("prompts refresh on 409 and redirects only for the exact re-auth contract", async () => {
+  it("prompts refresh on revision conflict", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
         Response.json(safeError("configuration_conflict"), { status: 409 }),
-      )
-      .mockResolvedValueOnce(
-        Response.json(
-          safeError("reauth_required", { redirectTo: "/staff/re-auth" }),
-          { status: 401 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        Response.json(
-          {
-            ...safeError("reauth_required"),
-            redirectTo: "https://evil.example.test/re-auth",
-          },
-          { status: 401 },
-        ),
       );
     vi.stubGlobal("fetch", fetchMock);
-    render(
-      <AssistantModelConfigPanel
-        initialSnapshot={withSavedOpenAi()}
-        navigateToReauth={navigation.push}
-      />,
-    );
+    render(<AssistantModelConfigPanel initialSnapshot={withSavedOpenAi()} />);
 
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
     expect(
@@ -956,17 +900,6 @@ describe("AssistantModelConfigPanel", () => {
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "刷新配置" })).toBeVisible();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-
-    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
-    await waitFor(() =>
-      expect(navigation.push).toHaveBeenCalledExactlyOnceWith("/staff/re-auth"),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
-    expect(
-      await screen.findByText("操作结果未知，必须刷新配置后才能继续。"),
-    ).toBeVisible();
-    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
-    expect(navigation.push).toHaveBeenCalledOnce();
     expect(document.body.textContent).not.toContain("raw provider detail");
   });
 
@@ -991,7 +924,9 @@ describe("AssistantModelConfigPanel", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     const signal = fetchMock.mock.calls[0]![1]?.signal as AbortSignal;
 
-    fireEvent.click(screen.getByRole("tab", { name: /Claude/u }));
+    fireEvent.change(screen.getByLabelText("模型供应商"), {
+      target: { value: "anthropic" },
+    });
     expect(signal.aborted).toBe(true);
     expect(screen.getByLabelText("新 API Key（必填）")).toHaveValue("");
     expect(
@@ -1239,9 +1174,7 @@ describe("AssistantModelConfigPanel", () => {
     await act(async () => Promise.resolve());
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(screen.getByRole("tab", { name: /OpenAI/u })).toHaveTextContent(
-      "已启用",
-    );
+    expect(screen.getByLabelText("当前供应商状态")).toHaveTextContent("已启用");
     expect(
       screen.getByText("操作结果未知，必须刷新配置后才能继续。"),
     ).toBeVisible();
@@ -1272,35 +1205,6 @@ describe("AssistantModelConfigPanel", () => {
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "测试并启用" })).toBeDisabled();
     expect(fetchMock).toHaveBeenCalledOnce();
-  });
-
-  it("navigates immediately on exact test re-auth without issuing a reconciliation GET", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        Response.json(
-          safeError("reauth_required", { redirectTo: "/staff/re-auth" }),
-          { status: 401 },
-        ),
-      );
-    vi.stubGlobal("fetch", fetchMock);
-    render(
-      <AssistantModelConfigPanel
-        initialSnapshot={withSavedOpenAi()}
-        navigateToReauth={navigation.push}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "测试并启用" }));
-
-    await waitFor(() =>
-      expect(navigation.push).toHaveBeenCalledExactlyOnceWith("/staff/re-auth"),
-    );
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(
-      screen.queryByText("操作结果未知，必须刷新配置后才能继续。"),
-    ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "测试并启用" })).toBeEnabled();
   });
 
   it("keeps unknown state across a failed refresh and prevents concurrent refreshes", async () => {
@@ -1363,7 +1267,9 @@ describe("AssistantModelConfigPanel", () => {
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
     const signal = fetchMock.mock.calls[1]![1]?.signal as AbortSignal;
 
-    fireEvent.click(screen.getByRole("tab", { name: /Claude/u }));
+    fireEvent.change(screen.getByLabelText("模型供应商"), {
+      target: { value: "anthropic" },
+    });
     expect(signal.aborted).toBe(false);
     resolveRefresh(
       Response.json(listResponse(withSavedOpenAi({ revision: 3 }))),
@@ -1566,10 +1472,8 @@ describe("AssistantModelConfigPanel", () => {
     expect(
       await screen.findByText("测试通过，已启用 OpenAI rev 2。"),
     ).toBeVisible();
-    expect(screen.getByRole("tab", { name: /OpenAI/u })).toHaveTextContent(
-      "已启用",
-    );
-    expect(screen.getByRole("tab", { name: /OpenAI/u })).toHaveTextContent(
+    expect(screen.getByLabelText("当前供应商状态")).toHaveTextContent("已启用");
+    expect(screen.getByLabelText("最近测试时间")).toHaveTextContent(
       "最近测试 2026-07-18T09:30:00.000Z",
     );
     expect(
@@ -1598,10 +1502,10 @@ describe("AssistantModelConfigPanel", () => {
     expect(
       await screen.findByText("模型测试失败，配置状态已刷新。"),
     ).toBeVisible();
-    expect(screen.getByRole("tab", { name: /OpenAI/u })).toHaveTextContent(
+    expect(screen.getByLabelText("当前供应商状态")).toHaveTextContent(
       "当前草稿测试失败 · 仍运行 rev 1",
     );
-    expect(screen.getByRole("tab", { name: /OpenAI/u })).toHaveTextContent(
+    expect(screen.getByLabelText("最近测试时间")).toHaveTextContent(
       "最近测试 2026-07-18T09:45:00.000Z",
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -1660,7 +1564,7 @@ describe("AssistantModelConfigPanel", () => {
       await screen.findByText("配置已发生变化，请刷新后重试。"),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "刷新配置" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: /OpenAI/u })).toHaveTextContent(
+    expect(screen.getByLabelText("当前供应商状态")).toHaveTextContent(
       "当前草稿未启用 · 运行 rev 1",
     );
     expect(screen.getByRole("button", { name: "保存草稿" })).toBeEnabled();

@@ -28,7 +28,9 @@ SET_ID = "44444444-4444-4444-8444-444444444444"
 NOW = 2_000_000_000
 
 
-def payload(*, action: str = "skill_runtime_status", **changes: object) -> dict[str, object]:
+def payload(
+    *, action: str = "skill_runtime_status", **changes: object
+) -> dict[str, object]:
     status = action == "skill_runtime_status"
     value: dict[str, object] = {
         "actor": ACTOR,
@@ -38,8 +40,8 @@ def payload(*, action: str = "skill_runtime_status", **changes: object) -> dict[
         "requestId": REQUEST_ID,
         "action": action,
         "target": "maduoduo" if status else f"maduoduo:{SET_ID}:7",
-        "assurance": "session" if status else "password+mfa",
-        "assuredAt": None if status else NOW - 300,
+        "assurance": "session",
+        "assuredAt": None,
         "issuedAt": NOW,
         "expiresAt": NOW + 5,
         "nonce": NONCE,
@@ -48,7 +50,9 @@ def payload(*, action: str = "skill_runtime_status", **changes: object) -> dict[
     return value
 
 
-def sign(value: dict[str, object], *, domain: bytes = SKILL_ASSERTION_KEY_DERIVATION_DOMAIN) -> str:
+def sign(
+    value: dict[str, object], *, domain: bytes = SKILL_ASSERTION_KEY_DERIVATION_DOMAIN
+) -> str:
     raw = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     derived = hmac.new(CONTROL_KEY.encode(), domain, hashlib.sha256).digest()
     signature = hmac.new(derived, raw, hashlib.sha256).digest()
@@ -72,7 +76,7 @@ def headers(assertion: str, *, key: str = CONTROL_KEY) -> list[tuple[bytes, byte
     ]
 
 
-def test_status_and_recent_mfa_activation_assertions_return_typed_context() -> None:
+def test_status_and_activation_session_assertions_return_typed_context() -> None:
     status = authenticator().authenticate(
         headers=headers(sign(payload())),
         action="skill_runtime_status",
@@ -98,23 +102,22 @@ def test_status_and_recent_mfa_activation_assertions_return_typed_context() -> N
         NOW + 5,
         UUID(NONCE),
     )
-    assert activation.assurance == "password+mfa"
-    assert activation.assured_at == NOW - 300
+    assert activation.assurance == "session"
+    assert activation.assured_at is None
 
 
 @pytest.mark.parametrize(
     "changes",
     [
         {"permission": "admin:assistant:skills"},
-        {"assurance": "session"},
-        {"assuredAt": None},
-        {"assuredAt": NOW - 601},
+        {"assurance": "password+mfa"},
+        {"assuredAt": NOW - 1},
         {"target": f"maduoduo:{SET_ID}:8"},
         {"requestId": "not-a-uuid"},
         {"expiresAt": NOW + 6},
     ],
 )
-def test_activation_rejects_wrong_permission_assurance_freshness_or_binding(
+def test_activation_rejects_wrong_permission_assurance_or_binding(
     changes: dict[str, object],
 ) -> None:
     assertion = sign(payload(action="skill_runtime_activate", **changes))

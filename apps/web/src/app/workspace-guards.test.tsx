@@ -73,7 +73,6 @@ describe("workspace guards", () => {
       "AUTH_PASSWORD_CHANGE_REQUIRED",
       "/staff/change-password?returnTo=%2Fadmin",
     ],
-    ["AUTH_TOTP_SETUP_REQUIRED", "/staff/two-factor?returnTo=%2Fadmin"],
   ] as const)(
     "redirects incomplete workforce setup without a loop: %s",
     async (code, destination) => {

@@ -57,6 +57,13 @@
       "when": 1784480751832,
       "tag": "0007_cms_document_seed",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786434064277,
+      "tag": "0008_sparkling_karnak",
+      "breakpoints": true
     }
   ]
 }

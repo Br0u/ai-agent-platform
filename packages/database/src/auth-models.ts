@@ -2,7 +2,6 @@ import {
   accounts,
   rateLimits,
   sessions,
-  twoFactors,
   users,
   verifications,
 } from "./schema/identity";
@@ -20,7 +19,6 @@ export const betterAuthModels = {
       image: "image",
       createdAt: "createdAt",
       updatedAt: "updatedAt",
-      twoFactorEnabled: "twoFactorEnabled",
       identityRealm: "identityRealm",
       status: "status",
       emailVerificationStatus: "emailVerificationStatus",
@@ -44,7 +42,6 @@ export const betterAuthModels = {
       userAgent: "userAgent",
       userId: "userId",
       realm: "realm",
-      mfaVerifiedAt: "mfaVerifiedAt",
     },
   },
   account: {
@@ -91,20 +88,6 @@ export const betterAuthModels = {
       lastRequest: "lastRequest",
     },
   },
-  twoFactor: {
-    exportName: "twoFactors",
-    tableName: "two_factors",
-    table: twoFactors,
-    fields: {
-      id: "id",
-      secret: "secret",
-      backupCodes: "backupCodes",
-      userId: "userId",
-      verified: "verified",
-      failedVerificationCount: "failedVerificationCount",
-      lockedUntil: "lockedUntil",
-    },
-  },
 } as const;
 
 export const betterAuthAdapterSchema = {
@@ -113,5 +96,4 @@ export const betterAuthAdapterSchema = {
   account: accounts,
   verification: verifications,
   rateLimit: rateLimits,
-  twoFactor: twoFactors,
 } as const;

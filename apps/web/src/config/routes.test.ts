@@ -28,8 +28,6 @@ const requiredRoutes = [
   "/register",
   "/staff/login",
   "/staff/change-password",
-  "/staff/two-factor",
-  "/staff/re-auth",
   "/console",
   "/console/onboarding",
   "/console/profile",

@@ -128,8 +128,6 @@ export type AuditMetadataByEvent = {
   "registration.approved": { role: CustomerRoleName };
   "registration.rejected": { category: RegistrationRejectionCategory };
   "auth.password_changed": { sessionsRevoked: number };
-  "auth.totp_enabled": Record<never, never>;
-  "auth.totp_disabled": Record<never, never>;
   "auth.recovery_code_used": Record<never, never>;
   "session.revoked": { revokedCount: number };
   "role.permissions_changed": { permissionCount: number };
@@ -630,8 +628,6 @@ export const AUDIT_EVENT_SCHEMAS: Readonly<
   "registration.rejected": (value) =>
     enumMetadata(value, "category", REGISTRATION_REJECTION_CATEGORIES),
   "auth.password_changed": sessionsRevokedMetadata,
-  "auth.totp_enabled": emptyMetadata,
-  "auth.totp_disabled": emptyMetadata,
   "auth.recovery_code_used": emptyMetadata,
   "session.revoked": (value) => countMetadata(value, "revokedCount"),
   "role.permissions_changed": (value) =>

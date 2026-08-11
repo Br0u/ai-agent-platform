@@ -29,7 +29,6 @@ const activeCustomer: LoginUser = {
   realm: "customer",
   status: "active",
   mustChangePassword: false,
-  twoFactorEnabled: false,
 };
 
 async function customerDatabase(): Promise<MemoryDB> {
@@ -44,7 +43,6 @@ async function customerDatabase(): Promise<MemoryDB> {
         image: null,
         createdAt: now,
         updatedAt: now,
-        twoFactorEnabled: false,
         identityRealm: "customer",
         status: "active",
         emailVerificationStatus: "verified",
@@ -68,7 +66,6 @@ async function customerDatabase(): Promise<MemoryDB> {
     session: [],
     verification: [],
     rateLimit: [],
-    twoFactor: [],
   };
 }
 
@@ -167,6 +164,7 @@ describe("Server Action cookie context", () => {
           findById: options.failLookup
             ? vi.fn().mockRejectedValue(new Error("lookup failed"))
             : vi.fn().mockResolvedValue(activeCustomer),
+          hasExactWorkforceUsername: vi.fn().mockResolvedValue(false),
         },
         audit: { write: vi.fn().mockResolvedValue(undefined) },
         reportInternalError: vi.fn(),
@@ -270,6 +268,7 @@ describe("Server Action cookie context", () => {
         },
         users: {
           findById: vi.fn().mockRejectedValue(new Error("lookup failed")),
+          hasExactWorkforceUsername: vi.fn().mockResolvedValue(false),
         },
         audit: { write: vi.fn() },
         reportInternalError: vi.fn(),

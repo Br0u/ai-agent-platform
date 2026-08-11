@@ -107,21 +107,21 @@ describePostgres("authentication PostgreSQL rate limiter", () => {
     const value = limiter(1);
     await value.consume({
       realm: "workforce",
-      operation: "reauth",
+      operation: "recovery",
       identifier: "first",
       ipAddress: "203.0.113.11",
     });
     await expect(
       value.consume({
         realm: "workforce",
-        operation: "reauth",
+        operation: "recovery",
         identifier: "rolled-back",
         ipAddress: "203.0.113.11",
       }),
     ).rejects.toBeInstanceOf(AuthRateLimitError);
     const rolledBackKey = authRateLimitKey(
       secret,
-      { realm: "workforce", operation: "reauth" },
+      { realm: "workforce", operation: "recovery" },
       "identifier",
       "rolled-back",
     );

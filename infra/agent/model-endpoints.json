@@ -1,4 +1,14 @@
 {
   "version": "1",
-  "endpoints": []
+  "endpoints": [
+    {
+      "id": "deepseek-v4-flash-code",
+      "label": "DeepSeek V4 Flash Code（自定义部署）",
+      "provider": "deepseek",
+      "base_url": "http://125.122.36.24:8810/v1",
+      "enabled": true,
+      "api_key_required": false,
+      "allow_insecure_http": true
+    }
+  ]
 }

@@ -24,6 +24,7 @@ from agent_service.model_config_repository import (
     StoredSealedConfig,
 )
 from agent_service.model_config_types import (
+    KEYLESS_MODEL_API_KEY,
     MODEL_PROVIDERS,
     ModelConfigDraft,
     ModelProvider,
@@ -339,54 +340,59 @@ class ModelControlService:
         if validated_draft is None:
             _validation_error()
         draft = validated_draft
-        endpoint_allowed = False
+        endpoint = None
         try:
-            self._endpoint_catalog.resolve(draft.endpoint_id, draft.provider)
-            endpoint_allowed = True
+            endpoint = self._endpoint_catalog.resolve(
+                draft.endpoint_id,
+                draft.provider,
+            )
         except EndpointNotAllowedError:
             pass
         except Exception:
             pass
-        if not endpoint_allowed:
+        if endpoint is None:
             _endpoint_not_allowed()
         config_id = self._uuid_factory()
         revision = draft.expected_revision + 1
         secret: SecretStr | None = draft.api_key
         if secret is None:
-            current = None
-            load_failure: str | None = None
-            try:
-                current = await self._repository.load_sealed(draft.provider)
-            except (ModelConfigConflictError, ModelConfigNotFoundError):
-                load_failure = "conflict"
-            except ModelConfigStorageError:
-                load_failure = "storage"
-            except Exception:
-                load_failure = "storage"
-            if load_failure == "storage":
-                _storage_unavailable()
-            if load_failure == "conflict" or current is None:
-                _conflict()
-            if (
-                type(current) is not StoredSealedConfig
-                or current.provider != draft.provider
-            ):
-                _storage_unavailable()
-            if current.revision != draft.expected_revision:
-                _conflict()
-            try:
-                secret = self._cipher.open(
-                    config_id=current.config_id,
-                    provider=current.provider,
-                    revision=current.revision,
-                    sealed=current.sealed,
-                )
-            except ModelConfigCryptoError:
-                pass
-            except Exception:
-                pass
-            if secret is None:
-                _encryption_unavailable()
+            if not endpoint.api_key_required:
+                secret = SecretStr(KEYLESS_MODEL_API_KEY)
+            else:
+                current = None
+                load_failure: str | None = None
+                try:
+                    current = await self._repository.load_sealed(draft.provider)
+                except (ModelConfigConflictError, ModelConfigNotFoundError):
+                    load_failure = "conflict"
+                except ModelConfigStorageError:
+                    load_failure = "storage"
+                except Exception:
+                    load_failure = "storage"
+                if load_failure == "storage":
+                    _storage_unavailable()
+                if load_failure == "conflict" or current is None:
+                    _conflict()
+                if (
+                    type(current) is not StoredSealedConfig
+                    or current.provider != draft.provider
+                ):
+                    _storage_unavailable()
+                if current.revision != draft.expected_revision:
+                    _conflict()
+                try:
+                    secret = self._cipher.open(
+                        config_id=current.config_id,
+                        provider=current.provider,
+                        revision=current.revision,
+                        sealed=current.sealed,
+                    )
+                except ModelConfigCryptoError:
+                    pass
+                except Exception:
+                    pass
+                if secret is None:
+                    _encryption_unavailable()
 
         sealed = None
         try:
@@ -534,7 +540,11 @@ class ModelControlService:
                 ActiveModelSettings(
                     provider=stored.provider,
                     model_id=stored.model_id,
-                    api_key=secret,
+                    api_key=(
+                        None
+                        if secret.get_secret_value() == KEYLESS_MODEL_API_KEY
+                        else secret
+                    ),
                     base_url=endpoint.base_url,
                     timeout_seconds=self._verification_timeout_seconds,
                 )

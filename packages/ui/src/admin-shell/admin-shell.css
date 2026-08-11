@@ -10,7 +10,12 @@
 .admin-shell__navigation {
   min-width: 0;
   color: var(--color-surface);
-  background: var(--color-admin-rail);
+  background:
+    linear-gradient(165deg, rgb(15 23 55 / 88%), rgb(30 36 78 / 76%)),
+    rgb(20 25 58 / 82%);
+  box-shadow: 16px 0 44px rgb(11 17 45 / 18%);
+  backdrop-filter: blur(24px) saturate(145%);
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
 }
 
 .admin-shell__navigation .sidebar-navigation,
@@ -25,7 +30,9 @@
 
 .admin-shell__navigation .sidebar-navigation__drawer {
   color: var(--color-surface);
-  background: var(--color-admin-rail);
+  background: rgb(20 25 58 / 92%);
+  backdrop-filter: blur(24px) saturate(145%);
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
 }
 
 .admin-shell__navigation
@@ -51,7 +58,8 @@
 
 .admin-shell__navigation .sidebar-navigation__item[aria-current="page"] {
   color: var(--color-surface);
-  background: var(--color-admin-rail-active);
+  border: 1px solid rgb(255 255 255 / 14%);
+  background: rgb(255 255 255 / 12%);
   box-shadow: inset 3px 0 0 var(--color-signal);
 }
 

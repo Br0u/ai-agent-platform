@@ -9,12 +9,10 @@ const REVEAL_ENDPOINT = "/api/v1/admin/assistant/model-configs";
 
 export type ModelKeyRevealError = {
   code:
-    | "reauth_required"
     | "permission_denied"
     | "rate_limited"
     | "storage_unavailable"
     | "unavailable";
-  redirectTo: "/staff/re-auth" | null;
 };
 
 type ModelKeyRevealState = {
@@ -54,14 +52,8 @@ function parseRevealKey(value: unknown): string | null {
 }
 
 function parseSafeError(value: unknown): ModelKeyRevealError {
-  const hasRedirect = hasExactKeys(value, [
-    "version",
-    "requestId",
-    "error",
-    "redirectTo",
-  ]);
-  if (!hasRedirect && !hasExactKeys(value, ["version", "requestId", "error"])) {
-    return { code: "unavailable", redirectTo: null };
+  if (!hasExactKeys(value, ["version", "requestId", "error"])) {
+    return { code: "unavailable" };
   }
   const envelope = value as Record<string, unknown>;
   if (
@@ -70,7 +62,7 @@ function parseSafeError(value: unknown): ModelKeyRevealError {
     envelope.requestId.trim().length === 0 ||
     !hasExactKeys(envelope.error, ["code", "message", "retryable"])
   ) {
-    return { code: "unavailable", redirectTo: null };
+    return { code: "unavailable" };
   }
   const error = envelope.error as Record<string, unknown>;
   if (
@@ -78,25 +70,18 @@ function parseSafeError(value: unknown): ModelKeyRevealError {
     typeof error.message !== "string" ||
     typeof error.retryable !== "boolean"
   ) {
-    return { code: "unavailable", redirectTo: null };
-  }
-  if (
-    hasRedirect &&
-    error.code === "reauth_required" &&
-    envelope.redirectTo === "/staff/re-auth"
-  ) {
-    return { code: "reauth_required", redirectTo: "/staff/re-auth" };
+    return { code: "unavailable" };
   }
   switch (error.code) {
     case "permission_denied":
     case "authentication_required":
-      return { code: "permission_denied", redirectTo: null };
+      return { code: "permission_denied" };
     case "rate_limited":
-      return { code: "rate_limited", redirectTo: null };
+      return { code: "rate_limited" };
     case "storage_unavailable":
-      return { code: "storage_unavailable", redirectTo: null };
+      return { code: "storage_unavailable" };
     default:
-      return { code: "unavailable", redirectTo: null };
+      return { code: "unavailable" };
   }
 }
 
@@ -182,7 +167,7 @@ export function useModelKeyReveal(
         const key = parseRevealKey(body);
         if (key === null) {
           setStatus("error");
-          setError({ code: "unavailable", redirectTo: null });
+          setError({ code: "unavailable" });
           return;
         }
         setPlaintext(key);
@@ -204,7 +189,7 @@ export function useModelKeyReveal(
         ) {
           controllerRef.current = null;
           setStatus("error");
-          setError({ code: "unavailable", redirectTo: null });
+          setError({ code: "unavailable" });
         }
       }
     },

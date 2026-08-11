@@ -6,7 +6,7 @@
 
 Skill 库与运行时交付分成两道门禁：Registry 验收负责本地 ZIP、静态安全扫描、不可变 published revision 和恢复；Runtime 验收负责把指定 exact revision 组成集合并由 Agent 真实加载。上传不等于启用，只有激活成功且 Agent Loaded 与 Registry Active 一致才算生效。
 
-运行 `pnpm skill-registry:e2e`。`run-skill-registry-e2e.sh` 创建独立 Compose project、临时 0600 secrets 和仅含 `SKILL.md`、`scripts/hello.py` 的本地 fixture；它不下载第三方 Skill。验收覆盖 `workforce:admin` 上传与自审拒绝、`workforce:super_admin` 的近期密码/TOTP 保障和发布、Registry 重启持久性，并要求加密备份恢复后恰好存在与本次上传完全相同的 artifact SHA-256，而不只是任意非空且自洽的 digest；同时复用 Task 9 的 restore lifecycle 门禁。只有临时目录、容器、network、volume 和本地镜像全部清理成功后才输出 `Skill Registry E2E passed`，任何清理失败都固定返回非零且不输出临时路径、Secret、ZIP/源码或浏览器 storage state。
+运行 `pnpm skill-registry:e2e`。`run-skill-registry-e2e.sh` 创建独立 Compose project、临时 0600 secrets 和仅含 `SKILL.md`、`scripts/hello.py` 的本地 fixture；它不下载第三方 Skill。验收覆盖 `workforce:admin` 上传与自审拒绝、`workforce:super_admin` 发布、Registry 重启持久性，并要求加密备份恢复后恰好存在与本次上传完全相同的 artifact SHA-256，而不只是任意非空且自洽的 digest；同时复用 Task 9 的 restore lifecycle 门禁。只有临时目录、容器、network、volume 和本地镜像全部清理成功后才输出 `Skill Registry E2E passed`，任何清理失败都固定返回非零且不输出临时路径、Secret、ZIP/源码或浏览器 storage state。
 
 运行 `pnpm skill-runtime:e2e` 执行完整运行时门禁。它复用同一隔离框架，但改用 `deterministic-runtime` fixture 和 acceptance-only Agent 镜像；验收必须在 AgentOS SSE 中看到 exact `get_skill_script` 调用、`execute=true` 参数、工具结果和 `AAP_SKILL_RUNTIME_E2E_MARKER_v1`，并覆盖无权限/无 MFA 拒绝、Agent 重启恢复、显式空集合、回滚及 active/previous/version 的备份恢复。生产 Agent 镜像不包含 fixture、fault route 或 acceptance composition root。
 
@@ -66,7 +66,7 @@ CI 在基础质量门禁通过后并行运行四条独立链路，映射关系�
 sh docs/testing/run-identity-access-e2e.sh
 ```
 
-鉴权入口复用 Assistant 隔离栈，按 desktop 单 worker 依次执行 TOTP 注册、重启并等待 `proxy`、恢复码消费、同时重启并等待 `web` 与 `proxy`、验证保存的管理员会话仍有效、其余共享安全状态、撤销该会话、再次重启并等待两项服务、验证会话被拒绝，再运行 desktop/mobile 无状态访问矩阵；三个保存会话阶段有独立 Playwright tag，不会被其余 `@security-state` 调用重复执行。随后销毁数据库卷并重新迁移、seed，最后执行 `proxy-auth-security.spec.ts`，避免前一阶段的会话变更或数据库/IP 限流污染代理断言。脚本只清理自己持有的 Compose 项目、锁、临时 secrets 与自行创建的 env 文件；identity 入口使用 `mktemp -d` 私有目录保存临时 env，已有调用方 `.env.e2e` 不会被删除。清理 Compose 资源、私有目录、secret 或锁失败，或清理后仍有本次项目 residue，都会使原本成功的运行失败；测试本身失败时仍尝试清理并保留该测试的退出码。
+鉴权入口复用 Assistant 隔离栈，按 desktop 单 worker 验证权限、账号状态、会话撤销和密码替换；重启并等待 `web` 与 `proxy` 后验证保存的管理员会话仍有效，再撤销该会话并重启验证持续失效，最后运行 desktop/mobile 无状态访问矩阵。三个保存会话阶段有独立 Playwright tag，不会被其余 `@security-state` 调用重复执行。随后销毁数据库卷并重新迁移、seed，最后执行 `proxy-auth-security.spec.ts`，避免前一阶段的会话变更或数据库/IP 限流污染代理断言。脚本只清理自己持有的 Compose 项目、锁、临时 secrets 与自行创建的 env 文件；identity 入口使用 `mktemp -d` 私有目录保存临时 env，已有调用方 `.env.e2e` 不会被删除。清理 Compose 资源、私有目录、secret 或锁失败，或清理后仍有本次项目 residue，都会使原本成功的运行失败；测试本身失败时仍尝试清理并保留该测试的退出码。
 
 ## CMS 文档完整验收
 

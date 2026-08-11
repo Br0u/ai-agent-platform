@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const wiring = vi.hoisted(() => ({
   requirePermission: vi.fn(),
-  requireSensitive: vi.fn(),
   createRepository: vi.fn(),
   createService: vi.fn(),
   revalidatePath: vi.fn(),
@@ -27,10 +26,6 @@ vi.mock("next/cache", () => ({
 vi.mock("../auth/access", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../auth/access")>()),
   requirePermission: wiring.requirePermission,
-}));
-vi.mock("../auth/sensitive-action", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../auth/sensitive-action")>()),
-  requireSensitiveWorkforceAction: wiring.requireSensitive,
 }));
 vi.mock("./repository", () => ({
   createDatabaseDocumentRepository: wiring.createRepository,
@@ -84,7 +79,6 @@ function mutationForm() {
 beforeEach(() => {
   vi.clearAllMocks();
   wiring.requirePermission.mockResolvedValue(actor);
-  wiring.requireSensitive.mockResolvedValue(actor);
   wiring.createRepository.mockReturnValue({ repository: true });
   wiring.createService.mockReturnValue(wiring.service);
   for (const method of Object.values(wiring.service)) {
@@ -145,13 +139,9 @@ describe("document server action boundary", () => {
       expect(wiring.createRepository).toHaveBeenCalledOnce();
       expect(wiring.createService).toHaveBeenCalledWith({ repository: true });
       expect(wiring.service[method]).toHaveBeenCalledOnce();
-      if (permission === "normal") {
-        expect(wiring.requirePermission).toHaveBeenCalledWith("admin:docs");
-        expect(wiring.requireSensitive).not.toHaveBeenCalled();
-      } else {
-        expect(wiring.requireSensitive).toHaveBeenCalledWith(permission);
-        expect(wiring.requirePermission).not.toHaveBeenCalled();
-      }
+      expect(wiring.requirePermission).toHaveBeenCalledWith(
+        permission === "normal" ? "admin:docs" : permission,
+      );
       expect(wiring.revalidatePath).toHaveBeenCalledWith("/admin/docs");
       if (publicInvalidation) {
         expect(wiring.updateTag).toHaveBeenCalledWith("documents");

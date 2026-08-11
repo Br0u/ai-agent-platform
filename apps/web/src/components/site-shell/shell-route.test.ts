@@ -9,7 +9,6 @@ describe("classifyShellRoute", () => {
     ["/login", "auth"],
     ["/register", "auth"],
     ["/staff/login", "auth"],
-    ["/staff/two-factor", "auth"],
     ["/console", "console"],
     ["/console/profile", "console"],
     ["/admin", "admin"],

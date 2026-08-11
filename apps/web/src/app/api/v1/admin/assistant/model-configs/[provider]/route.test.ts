@@ -6,7 +6,6 @@ import {
   type AuthorizedModelCommand,
 } from "@/server/assistant/admin-model-config-commands";
 import { MutationRequestError } from "@/server/http/require-trusted-mutation";
-import { SensitiveActionError } from "@/server/auth/sensitive-action";
 import { createAdminModelConfigSaveHandler } from "../handler";
 
 const CONTEXT = {
@@ -216,8 +215,6 @@ describe("PUT /api/v1/admin/assistant/model-configs/[provider]", () => {
       403,
       "permission_denied",
     ],
-    [new SensitiveActionError("AUTH_REAUTH_REQUIRED"), 401, "reauth_required"],
-    [new SensitiveActionError("AUTH_MFA_REQUIRED"), 401, "reauth_required"],
   ] as const)(
     "maps authorization failure %# before reading the body",
     async (error, status, code) => {

@@ -234,49 +234,33 @@ const expectedConsoleGroups = [
 
 const expectedCmsGroups = [
   {
-    label: "运营概览",
-    items: [["运营后台首页", "/admin"]],
-  },
-  {
-    label: "AI Operations",
-    items: [["AI 助理", "/admin/assistant"]],
-  },
-  {
-    label: "站点内容",
+    label: "核心管理",
     items: [
+      ["Agent 管理", "/admin/assistant"],
+      ["文档管理", "/admin/docs"],
+      ["用户管理", "/admin/users"],
+    ],
+  },
+  {
+    label: "其他功能",
+    items: [
+      ["运营后台首页", "/admin"],
       ["首页配置", "/admin/site#homepage"],
       ["导航管理", "/admin/navigation"],
       ["产品内容", "/admin/products"],
       ["版本与 Release Note", "/admin/releases"],
-      ["文档管理", "/admin/docs"],
       ["Blog / 产品动态", "/admin/blog"],
       ["客户案例", "/admin/cases"],
       ["FAQ", "/admin/faq"],
       ["兼容矩阵", "/admin/compatibility"],
       ["Marketplace", "/admin/marketplace"],
-    ],
-  },
-  {
-    label: "客户运营",
-    items: [
       ["客户注册审核", "/admin/registrations"],
       ["OpenLab 申请审核", "/admin/openlab"],
       ["License 管理", "/admin/licenses"],
       ["工单管理", "/admin/tickets"],
-    ],
-  },
-  {
-    label: "数据",
-    items: [
       ["门户访问", "/admin/analytics#portal"],
       ["下载与申请统计", "/admin/analytics#requests"],
       ["转化数据", "/admin/analytics#conversion"],
-    ],
-  },
-  {
-    label: "系统管理",
-    items: [
-      ["用户管理", "/admin/users"],
       ["角色权限", "/admin/roles"],
       ["操作审计", "/admin/audit-logs"],
       ["站点设置", "/admin/site#settings"],
@@ -485,6 +469,10 @@ describe("adminNavigation", () => {
         items: linkPairs(group.items),
       })),
     ).toEqual(expectedCmsGroups);
+    expect(adminNavigation.groups[1]).toMatchObject({
+      collapsible: true,
+      defaultCollapsed: true,
+    });
     expect(adminNavigation.utilities).toEqual([
       { label: "返回公开门户", href: "/" },
       { label: "退出登录", action: "logout", disabled: false },
@@ -507,7 +495,7 @@ describe("adminNavigation", () => {
     );
     expect(permissions).toEqual({
       运营后台首页: "admin:analytics",
-      "AI 助理": "admin:assistant",
+      "Agent 管理": "admin:assistant",
       首页配置: "admin:site",
       导航管理: "admin:navigation",
       产品内容: "admin:products",

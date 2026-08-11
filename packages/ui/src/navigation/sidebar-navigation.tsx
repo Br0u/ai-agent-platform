@@ -233,22 +233,35 @@ function NavigationContent({
       </div>
 
       <div className="sidebar-navigation__groups">
-        {groups.map((group) => (
-          <section className="sidebar-navigation__group" key={group.label}>
-            <h2>{group.label}</h2>
-            <div className="sidebar-navigation__items">
-              {group.items.map((item) => (
-                <NavigationItem
-                  currentHref={currentHref}
-                  item={item}
-                  key={item.href ?? item.action}
-                  logoutAction={logoutAction}
-                  onActivate={onActivate}
-                />
-              ))}
-            </div>
-          </section>
-        ))}
+        {groups.map((group) => {
+          const Group = group.collapsible ? "details" : "section";
+          return (
+            <Group
+              className="sidebar-navigation__group"
+              key={group.label}
+              {...(group.collapsible ? { open: !group.defaultCollapsed } : {})}
+            >
+              {group.collapsible ? (
+                <summary>
+                  <h2>{group.label}</h2>
+                </summary>
+              ) : (
+                <h2>{group.label}</h2>
+              )}
+              <div className="sidebar-navigation__items">
+                {group.items.map((item) => (
+                  <NavigationItem
+                    currentHref={currentHref}
+                    item={item}
+                    key={item.href ?? item.action}
+                    logoutAction={logoutAction}
+                    onActivate={onActivate}
+                  />
+                ))}
+              </div>
+            </Group>
+          );
+        })}
       </div>
 
       {utilities.length > 0 ? (

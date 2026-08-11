@@ -336,6 +336,8 @@ def build_model_control_router(
                         "id": endpoint.id,
                         "label": endpoint.label,
                         "provider": endpoint.provider,
+                        "apiKeyRequired": endpoint.api_key_required,
+                        "insecureHttp": endpoint.insecure_http,
                     }
                     for endpoint in result.endpoints
                 ],

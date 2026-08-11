@@ -37,7 +37,7 @@ export function normalizeIdentityEmail(value: string): string {
 }
 
 export function normalizeWorkforceUsername(value: string): string {
-  return value.normalize("NFKC").trim().toLowerCase();
+  return value.normalize("NFKC").trim();
 }
 
 export const users = pgTable(
@@ -54,7 +54,6 @@ export const users = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
-    twoFactorEnabled: boolean("two_factor_enabled").default(false).notNull(),
     identityRealm: identityRealm("identity_realm").notNull(),
     status: userStatus("status").default("pending_review").notNull(),
     emailVerificationStatus: emailVerificationStatus(
@@ -131,7 +130,6 @@ export const sessions = pgTable(
       .defaultNow()
       .notNull(),
     realm: identityRealm("realm").notNull(),
-    mfaVerifiedAt: timestamp("mfa_verified_at", { withTimezone: true }),
   },
   (table) => [index("sessions_user_id_idx").on(table.userId)],
 );
@@ -162,25 +160,4 @@ export const rateLimits = pgTable(
     lastRequest: bigint("last_request", { mode: "number" }).notNull(),
   },
   (table) => [index("rate_limits_last_request_idx").on(table.lastRequest)],
-);
-
-export const twoFactors = pgTable(
-  "two_factors",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    secret: text("secret").notNull(),
-    backupCodes: text("backup_codes").notNull(),
-    verified: boolean("verified").default(true).notNull(),
-    failedVerificationCount: integer("failed_verification_count")
-      .default(0)
-      .notNull(),
-    lockedUntil: timestamp("locked_until", { withTimezone: true }),
-  },
-  (table) => [
-    unique("two_factors_user_id_unique").on(table.userId),
-    index("two_factors_secret_idx").on(table.secret),
-  ],
 );

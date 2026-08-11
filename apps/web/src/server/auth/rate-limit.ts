@@ -10,7 +10,7 @@ type Database = ReturnType<typeof getDatabase>;
 
 export type AuthRateLimitInput = {
   realm: "customer" | "workforce";
-  operation: "login" | "reauth" | "recovery";
+  operation: "login" | "recovery";
   identifier: string;
   ipAddress?: string;
 };

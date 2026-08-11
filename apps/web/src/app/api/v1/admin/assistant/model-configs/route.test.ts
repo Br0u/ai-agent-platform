@@ -16,7 +16,6 @@ const ACTOR: WorkforceActor = {
   status: "active",
   displayName: "Admin",
   mustChangePassword: false,
-  twoFactorEnabled: true,
   permissions: [
     "admin:assistant",
     "admin:assistant:configure",
@@ -42,7 +41,7 @@ function client(): AgentModelControlClient {
           provider: "deepseek" as const,
           modelId: "deepseek-chat",
           endpointId: "deepseek-default",
-          apiKeyLastFour: "5678",
+          apiKeyLastFour: "none",
           revision: 3,
           testStatus: "passed" as const,
           lastTestedAt: "2026-07-18T01:02:03.000Z",
@@ -53,11 +52,15 @@ function client(): AgentModelControlClient {
           id: "openai-default",
           label: "OpenAI 官方",
           provider: "openai" as const,
+          apiKeyRequired: true,
+          insecureHttp: false,
         },
         {
           id: "deepseek-default",
           label: "DeepSeek 官方",
           provider: "deepseek" as const,
+          apiKeyRequired: true,
+          insecureHttp: false,
         },
       ],
       bootstrap: null,
@@ -161,7 +164,7 @@ describe("GET /api/v1/admin/assistant/model-configs", () => {
           revision: 3,
           testStatus: "passed",
           lastTestedAt: "2026-07-18T01:02:03.000Z",
-          apiKey: { configured: true, lastFour: "5678" },
+          apiKey: null,
           activeRevision: 3,
         },
         {
@@ -177,11 +180,25 @@ describe("GET /api/v1/admin/assistant/model-configs", () => {
         },
       ],
       endpoints: {
-        openai: [{ id: "openai-default", label: "OpenAI 官方" }],
+        openai: [
+          {
+            id: "openai-default",
+            label: "OpenAI 官方",
+            apiKeyRequired: true,
+            insecureHttp: false,
+          },
+        ],
         anthropic: [],
         google: [],
         dashscope: [],
-        deepseek: [{ id: "deepseek-default", label: "DeepSeek 官方" }],
+        deepseek: [
+          {
+            id: "deepseek-default",
+            label: "DeepSeek 官方",
+            apiKeyRequired: true,
+            insecureHttp: false,
+          },
+        ],
         minimax: [],
       },
       runtime: {

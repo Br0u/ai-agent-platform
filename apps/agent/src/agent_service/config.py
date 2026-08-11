@@ -78,7 +78,7 @@ class ActiveModelSettings:
 
     provider: ModelProvider
     model_id: str
-    api_key: SecretStr
+    api_key: SecretStr | None
     base_url: str | None
     timeout_seconds: int
 
@@ -87,7 +87,9 @@ def _validate_model_id_value(value: str) -> str:
     return validate_model_id(value)
 
 
-def _validate_model_api_key_value(value: SecretStr) -> SecretStr:
+def _validate_model_api_key_value(value: SecretStr | None) -> SecretStr | None:
+    if value is None:
+        return None
     secret = value.get_secret_value()
     if not secret or secret != secret.strip():
         raise ValueError(
@@ -105,12 +107,15 @@ def _validate_model_base_url_value(
 
     if provider is not None and provider not in _BASE_URL_PROVIDERS:
         raise ValueError("MODEL_BASE_URL is not supported for the selected provider")
-    if any(
-        character.isspace()
-        or ord(character) <= 0x1F
-        or 0x7F <= ord(character) <= 0x9F
-        for character in value
-    ) or "\\" in value:
+    if (
+        any(
+            character.isspace()
+            or ord(character) <= 0x1F
+            or 0x7F <= ord(character) <= 0x9F
+            for character in value
+        )
+        or "\\" in value
+    ):
         raise ValueError(
             "MODEL_BASE_URL must not contain whitespace, controls, or backslashes"
         )
@@ -159,7 +164,7 @@ class _ActiveModelInput(BaseModel):
 
     provider: ModelProvider
     model_id: str
-    api_key: SecretStr
+    api_key: SecretStr | None
     base_url: str | None = None
     timeout_seconds: int = Field(default=50, ge=1, le=50)
 
@@ -170,7 +175,7 @@ class _ActiveModelInput(BaseModel):
 
     @field_validator("api_key", mode="after")
     @classmethod
-    def _validate_model_api_key(cls, value: SecretStr) -> SecretStr:
+    def _validate_model_api_key(cls, value: SecretStr | None) -> SecretStr | None:
         return _validate_model_api_key_value(value)
 
     @field_validator("base_url", mode="after")
@@ -557,6 +562,7 @@ class RuntimeSettings(_AgentSettings):
     def active_model(self) -> ActiveModelSettings | None:
         """Backward-compatible alias for the deployment bootstrap model."""
         return self.bootstrap_model
+
 
 class MigrationSettings(_AgentSettings):
     """Credentials available only to the one-shot migration role."""

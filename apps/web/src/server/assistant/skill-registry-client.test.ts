@@ -932,7 +932,7 @@ describe("private Skill Registry client", () => {
       client.archiveSkill({
         actor: ACTOR,
         requestId: REQUEST_ID,
-        assuredAt: NOW,
+        assuredAt: null,
         skillId: SKILL_ID,
         expectedArtifactSha256: SHA256,
       }),
@@ -965,8 +965,8 @@ describe("private Skill Registry client", () => {
         "archive",
         "admin:assistant:skills:configure",
         SKILL_ID,
-        "password+mfa",
-        NOW,
+        "session",
+        null,
       ],
     ];
     for (const [

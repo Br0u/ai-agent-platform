@@ -1,8 +1,5 @@
+import { AuthAccessError, requirePermission } from "@/server/auth/access";
 import { createAuditWriter } from "@/server/auth/audit";
-import {
-  SensitiveActionError,
-  requireSensitiveWorkforceActionEvidence,
-} from "@/server/auth/sensitive-action";
 import {
   AdminSkillLifecycleCommandError,
   createAdminSkillLifecycleCommands,
@@ -69,7 +66,7 @@ function resolveDependencies(overrides: Partial<Dependencies>): Dependencies {
       overrides.commands ??
       createAdminSkillLifecycleCommands({
         requireTrustedMutation: requireTrustedJsonMutation,
-        requireSensitiveAction: requireSensitiveWorkforceActionEvidence,
+        requireSensitiveAction: requirePermission,
         audit: createAuditWriter(),
         registry,
         agent: defaultAgent(),
@@ -82,7 +79,6 @@ function errorResponse(
   requestId: string,
   code:
     | "permission_denied"
-    | "reauth_required"
     | "validation_error"
     | "not_found"
     | "state_conflict"
@@ -95,15 +91,14 @@ function errorResponse(
       version: "1",
       requestId,
       error: { code },
-      ...(code === "reauth_required" ? { redirectTo: "/staff/re-auth" } : {}),
     },
     { status, headers: NO_STORE },
   );
 }
 
 function mappedError(error: unknown, requestId: string): Response {
-  if (error instanceof SensitiveActionError) {
-    return errorResponse(requestId, "reauth_required", 401);
+  if (error instanceof AuthAccessError) {
+    return errorResponse(requestId, "permission_denied", error.status);
   }
   if (error instanceof MutationRequestError) {
     return errorResponse(requestId, "permission_denied", 403);
@@ -258,7 +253,7 @@ export function createSkillLifecycleHandler(
         await dependencies.registry.archiveSkill({
           actor,
           requestId: dependencies.requestIdFactory(),
-          assuredAt: context.assuredAt,
+          assuredAt: null,
           skillId,
           expectedArtifactSha256: skill.replacementToken,
         });
