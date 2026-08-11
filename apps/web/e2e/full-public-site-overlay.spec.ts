@@ -237,6 +237,24 @@ test("桌面 Header 与 390px 移动导航执行批准的八个公开入口", as
   await expect(drawer.getByRole("link", { name: "文档" })).toHaveCount(0);
 });
 
+test("代表公开页的唯一 Agent launcher 可打开关闭并恢复焦点", async ({
+  page,
+}) => {
+  for (const path of ["/", "/product/model-task-center", "/solutions"]) {
+    await gotoPublicPage(page, path);
+    const launcher = page.getByRole("button", { name: "打开码多多" });
+    await expect(launcher, path).toHaveCount(1);
+    await launcher.click();
+    const dialog = page.getByRole("dialog", { name: "码多多" });
+    await expect(dialog).toBeVisible();
+    await dialog
+      .getByRole("button", { name: "关闭码多多", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    await expect(launcher).toBeFocused();
+  }
+});
+
 test("43 个 prototype page key 在三档宽度承接、无横溢且同源内链可达", async ({
   page,
 }) => {
@@ -350,6 +368,129 @@ test("七种 solution view 均由真实列表或详情状态承接", async ({ pa
     await expect(main, key).toHaveCount(1);
     await expect(main.locator("h1")).toBeVisible();
     if (view) await expect(main).toHaveAttribute("data-solution-view", view);
+  }
+});
+
+test("全部 solution list filter query key 读取目录状态并落到批准锚点", async ({
+  page,
+}) => {
+  const filters = [
+    {
+      key: "scenarios-all",
+      href: "/solutions?view=scenarios#solution-scenarios-directory",
+      view: "scenarios",
+      filter: "all",
+      current: "通用场景方案",
+      target: "#solution-scenarios-directory",
+    },
+    {
+      key: "scenarios-infrastructure",
+      href: "/solutions?view=scenarios&category=infrastructure#solution-scenarios-directory",
+      view: "scenarios",
+      filter: "infrastructure",
+      current: "基础设施与模型工程",
+      target: "#solution-scenarios-directory",
+    },
+    {
+      key: "scenarios-knowledge",
+      href: "/solutions?view=scenarios&category=knowledge#solution-scenarios-directory",
+      view: "scenarios",
+      filter: "knowledge",
+      current: "知识与数据智能",
+      target: "#solution-scenarios-directory",
+    },
+    {
+      key: "scenarios-agents",
+      href: "/solutions?view=scenarios&category=agents#solution-scenarios-directory",
+      view: "scenarios",
+      filter: "agents",
+      current: "智能体与业务应用",
+      target: "#solution-scenarios-directory",
+    },
+    {
+      key: "industries-all",
+      href: "/solutions?view=industries#industry-solutions-list",
+      view: "industries",
+      filter: "all",
+      current: "行业解决方案",
+      target: "#industry-solutions-list",
+    },
+    {
+      key: "industries-government",
+      href: "/solutions?view=industries&industry=government#industry-solutions-list",
+      view: "industries",
+      filter: "government",
+      current: "政务",
+      target: "#industry-solutions-list",
+    },
+    {
+      key: "industries-finance",
+      href: "/solutions?view=industries&industry=finance#industry-solutions-list",
+      view: "industries",
+      filter: "finance",
+      current: "金融",
+      target: "#industry-solutions-list",
+    },
+    {
+      key: "industries-healthcare",
+      href: "/solutions?view=industries&industry=healthcare#industry-solutions-list",
+      view: "industries",
+      filter: "healthcare",
+      current: "医疗",
+      target: "#industry-solutions-list",
+    },
+    {
+      key: "industries-enterprise",
+      href: "/solutions?view=industries&industry=enterprise#industry-solutions-list",
+      view: "industries",
+      filter: "enterprise",
+      current: "企业智能化",
+      target: "#industry-solutions-list",
+    },
+    {
+      key: "cases-all",
+      href: "/solutions?view=cases&mode=all#practice-cases-hero",
+      view: "cases",
+      filter: "all",
+      current: "实践案例",
+      target: "#practice-cases-hero",
+    },
+    {
+      key: "cases-industry",
+      href: "/solutions?view=cases&mode=industry#practice-cases-list",
+      view: "cases",
+      filter: "industry",
+      current: "按行业查看",
+      target: "#practice-cases-list",
+    },
+    {
+      key: "cases-scenario",
+      href: "/solutions?view=cases&mode=scenario#practice-cases-list",
+      view: "cases",
+      filter: "scenario",
+      current: "按业务场景查看",
+      target: "#practice-cases-list",
+    },
+  ] as const;
+
+  for (const contract of filters) {
+    await gotoPublicPage(page, contract.href);
+    const currentUrl = new URL(page.url());
+    expect(
+      `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`,
+      contract.key,
+    ).toBe(contract.href);
+
+    const main = page.locator("main.solutions-page");
+    await expect(main).toHaveAttribute("data-solution-view", contract.view);
+    await expect(main).toHaveAttribute("data-solution-filter", contract.filter);
+    await expect(page.locator(contract.target), contract.key).toBeVisible();
+    await expect(
+      page
+        .locator('a[aria-current="location"]')
+        .filter({ hasText: contract.current }),
+      contract.key,
+    ).toHaveAttribute("href", contract.href);
   }
 });
 
