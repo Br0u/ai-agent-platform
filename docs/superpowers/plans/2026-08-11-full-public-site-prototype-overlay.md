@@ -719,7 +719,7 @@
 
   Expected: PASS；1440/900/390 三档无横溢，Header/移动抽屉/同源链接/全部 key 与 view/404/唯一 Agent/评审 chrome 排除均通过，代表页 1440/390 截图生成。
 
-- [ ] **Step 4: 重跑保留系统浏览器回归**
+- [x] **Step 4: 重跑保留系统浏览器回归**
 
   Run: `pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts e2e/auth-smoke.spec.ts e2e/assistant-experience.spec.ts e2e/assistant-runtime.spec.ts e2e/cms-documents.spec.ts --project=desktop`
 

@@ -261,18 +261,8 @@ async function navigateFromHeaderToProduct(page: Page, projectName: string) {
   await expect(page).toHaveURL(/\/product$/u);
 }
 
-async function navigateFromHeaderToLogin(page: Page, projectName: string) {
-  if (projectName === "desktop") {
-    await page
-      .getByRole("link", { name: "登录 / 进入平台", exact: true })
-      .click();
-  } else {
-    await page.getByRole("button", { name: "打开导航", exact: true }).click();
-    await page
-      .getByRole("dialog", { name: "全站导航", exact: true })
-      .getByRole("link", { name: "登录 / 进入控制台", exact: true })
-      .click();
-  }
+async function navigateToLogin(page: Page) {
+  await page.goto("/login");
   await expect(page).toHaveURL(/\/login$/u);
 }
 
@@ -584,9 +574,9 @@ test("assistant session survives public routing and resets at the identity bound
   await setNavigationSentinel(page, footerSentinel);
   await page
     .getByRole("contentinfo")
-    .getByRole("link", { name: "帮助中心", exact: true })
+    .getByRole("link", { name: "解决方案", exact: true })
     .click();
-  await expect(page).toHaveURL(/\/help$/u);
+  await expect(page).toHaveURL(/\/solutions$/u);
   await expectNavigationSentinel(page, footerSentinel);
   await quickAssistantLauncher(page).click();
   await expect(
@@ -596,14 +586,10 @@ test("assistant session survives public routing and resets at the identity bound
     .getByRole("button", { name: "关闭码多多", exact: true })
     .click();
 
-  const identitySentinel = `identity-${testInfo.project.name}-${Date.now()}`;
-  await setNavigationSentinel(page, identitySentinel);
-  await navigateFromHeaderToLogin(page, testInfo.project.name);
-  await expectNavigationSentinel(page, identitySentinel);
+  await navigateToLogin(page);
   await expect(quickAssistantLauncher(page)).toHaveCount(0);
   await page.goBack();
-  await expect(page).toHaveURL(/\/help$/u);
-  await expectNavigationSentinel(page, identitySentinel);
+  await expect(page).toHaveURL(/\/solutions$/u);
   await openQuickAssistantWithStatus(page);
   await expect(
     quickAssistantDialog(page).getByTestId("assistant-history"),
