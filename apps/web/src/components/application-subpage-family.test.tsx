@@ -139,21 +139,43 @@ describe("application subpage family", () => {
       expect(container.querySelector("main")).toHaveClass(
         "platform-center--dense",
       );
-      expect(container.querySelector("main .floating-assistant")).toBeNull();
+      expect(container.querySelectorAll(".floating-assistant")).toHaveLength(0);
     },
   );
 
   it.each(pageEntries)(
     "renders the $slug miniature UI only inside its demo",
     ({ slug, Page }) => {
-      render(<Page />);
-
+      const { container } = render(<Page />);
+      const demoContainers = screen.getAllByTestId("platform-page-demo");
       const demo = within(screen.getByTestId("platform-page-demo"));
-      expect(demo.getByText(expected[slug].demo.header)).toBeVisible();
-      expect(demo.getByText(expected[slug].demo.placeholder)).toBeVisible();
-      expect(demo.getByText("发送")).toBeVisible();
+
+      const expectOnlyInsideDemo = (text: string, exact: boolean) => {
+        expect(demo.getByText(text, { exact })).toBeVisible();
+
+        const matches = within(container).getAllByText(text, { exact });
+        const minimalMatches = matches.filter(
+          (candidate) =>
+            !matches.some(
+              (match) => match !== candidate && candidate.contains(match),
+            ),
+        );
+
+        expect(minimalMatches.length).toBeGreaterThan(0);
+        for (const match of minimalMatches) {
+          expect(
+            demoContainers.some((demoContainer) =>
+              demoContainer.contains(match),
+            ),
+          ).toBe(true);
+        }
+      };
+
+      expectOnlyInsideDemo(expected[slug].demo.header, true);
+      expectOnlyInsideDemo(expected[slug].demo.placeholder, true);
+      expectOnlyInsideDemo("发送", true);
       for (const text of expected[slug].demo.highlights) {
-        expect(demo.getByText(text, { exact: false })).toBeVisible();
+        expectOnlyInsideDemo(text, false);
       }
     },
   );
