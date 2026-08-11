@@ -35,6 +35,9 @@ const requiredRoutes = [
   "/product/app-writing",
   "/product/app-bidding",
   "/product/app-contract",
+  "/product/skills-programming",
+  "/product/skills-application",
+  "/product/skills-office",
   "/product/[slug]",
   "/solutions",
   "/solutions/[slug]",
@@ -317,6 +320,35 @@ describe("routeRegistry", () => {
     }
 
     expect(matchRoute("/product/app-unknown")).toEqual({
+      path: "/product/[slug]",
+      title: "产品模块详情",
+      group: "public",
+      status: "scaffold",
+    });
+  });
+
+  it("registers the three skill subpages before remaining product scaffolds", () => {
+    const dynamicProductIndex = routeRegistry.findIndex(
+      (route) => route.path === "/product/[slug]",
+    );
+
+    for (const [path, title] of [
+      ["/product/skills-programming", "编程类技能"],
+      ["/product/skills-application", "应用类技能"],
+      ["/product/skills-office", "办公类技能"],
+    ] as const) {
+      expect(matchRoute(path)).toEqual({
+        path,
+        title,
+        group: "public",
+        status: "live",
+      });
+      expect(
+        routeRegistry.findIndex((route) => route.path === path),
+      ).toBeLessThan(dynamicProductIndex);
+    }
+
+    expect(matchRoute("/product/skills-unknown")).toEqual({
       path: "/product/[slug]",
       title: "产品模块详情",
       group: "public",
