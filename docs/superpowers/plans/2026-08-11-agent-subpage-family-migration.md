@@ -172,7 +172,7 @@ git commit -m "feat(agents): 迁移四个智能体子页面"
 - 全部 card grid 与带 demo 的 section frame 在桌面保持多栏、390px 折回单栏。
 - 四页在 1440 与 390 均只有 shell 的一个 Agent launcher，可打开和关闭码多多，页面内无重复入口。
 - 捕获四页 1440 与 390 全页截图到 `artifacts/playwright/agent-subpages/`；截图前删除旧文件并断言 200 与精确 H1。
-- 现有 `/product/knowledge-agent`、`/product/video-agent`、`/product/office-agent` 各返回 200、URL 保持原路径不重定向，H1 分别为 `华鲲元启智能导办一体机`、`华鲲元启视觉检索一体机`、`办公智能体矩阵`；只做路径/H1 回归，不增加截图或完整响应式矩阵。
+- 现有 `/product/knowledge-agent`、`/product/video-agent`、`/product/office-agent` 各返回 200、URL 保持原路径不重定向；完整 H1 分别精确保持为 `华鲲元启智能导办一体机`、`华鲲元启视觉检索一体机`、`AI Agent PlatformOffice Agent 办公智能体矩阵`（办公页既有主标题为 `办公智能体矩阵`）。只做路径/H1 回归，不修改旧页组合标题，也不增加截图或完整响应式矩阵。
 
 - [x] **Step 2: build 后运行本批 E2E**
 
