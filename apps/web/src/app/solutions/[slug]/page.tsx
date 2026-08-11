@@ -6,6 +6,7 @@ import {
   type CommonSolutionDetail,
   type IndustrySolutionDetail,
 } from "@/components/solution-detail-content";
+import { solutionListRoutes } from "@/config/prototype-route-map";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -371,7 +372,7 @@ function ClosingSection({
                 </Link>
                 <Link
                   className="solution-detail-link"
-                  href="/solutions?view=cases&mode=all#practice-cases-list"
+                  href={solutionListRoutes.cases.all}
                 >
                   查看全部相关案例
                 </Link>

@@ -638,7 +638,7 @@ describe("SolutionDetailPage", () => {
         ["查看案例详情", "/solutions/case-pending-enterprise-knowledge"],
         [
           "查看全部相关案例",
-          "/solutions?view=cases&mode=all#practice-cases-list",
+          "/solutions?view=cases&mode=all#practice-cases-hero",
         ],
       ],
     ],
