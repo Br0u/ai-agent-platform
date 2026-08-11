@@ -96,6 +96,39 @@ test("四个编程子页返回完整内容并只使用 shell 聊天入口", asyn
       page.locator("main.platform-center .floating-assistant"),
     ).toHaveCount(0);
     await expect(page.locator(".floating-assistant__launcher")).toHaveCount(1);
+
+    if (path === "/product/coding-project") {
+      const demo = page
+        .getByTestId("platform-page-demo")
+        .filter({ hasText: "项目工作台 · 会话示例" });
+      const messages = demo.getByTestId("platform-demo-message");
+      await expect(messages).toHaveCount(3);
+      await expect(messages.nth(2)).toHaveAttribute(
+        "data-message-role",
+        "assistant",
+      );
+      await expect(
+        messages
+          .nth(2)
+          .locator(".product-portal-demo-cite")
+          .getByText("上下文：订单系统 · 已引用 8 条历史会话", {
+            exact: true,
+          }),
+      ).toBeVisible();
+    }
+
+    if (path === "/product/coding-session") {
+      await expect(
+        page.getByTestId("platform-page-demo").getByText("码多多 · 多轮对话", {
+          exact: true,
+        }),
+      ).toHaveCount(1);
+      await expect(
+        page
+          .getByTestId("platform-demo-message")
+          .filter({ hasText: "码多多 · 多轮对话" }),
+      ).toHaveCount(0);
+    }
   }
 });
 

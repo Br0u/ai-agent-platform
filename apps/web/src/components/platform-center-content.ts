@@ -993,7 +993,7 @@ const platformCenters = [
             text: "已创建实时布控，发现异常将立即预警。｜视频智能体",
           },
         ],
-        footer: { placeholder: "请输入你的问题…", action: "发送" },
+        footer: { placeholder: "输入你的需求…", action: "发送" },
       },
       reason: ["模型与知识底座", "智能体构建", "能力组合", "发布复用"],
       workflowLabel: "工作方式",

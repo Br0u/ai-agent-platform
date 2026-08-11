@@ -54,6 +54,95 @@ const allPlatformPages = [
   ...skillSubpageSlugs.map(getSkillSubpage),
 ].filter((page): page is PlatformPage => page !== undefined);
 
+const allPlatformDemos = allPlatformPages.flatMap(collectPageDemos);
+
+const expectedNestedCiteDemos = [
+  {
+    key: "coding-project:business",
+    title: "项目工作台 · 会话示例",
+    messageCount: 3,
+    cites: [{ index: 2, text: "上下文：订单系统 · 已引用 8 条历史会话" }],
+  },
+  {
+    key: "coding-session:hero",
+    title: "码多多 · 会话示例",
+    messageCount: 5,
+    cites: [{ index: 4, text: "上下文：已引用第 1 轮生成的代码" }],
+  },
+  {
+    key: "coding-session:section-2",
+    title: "码多多 · 多轮对话",
+    messageCount: 5,
+    cites: [{ index: 4, text: "上下文：引用第 1 轮的关单方案" }],
+  },
+  {
+    key: "coding-session:business",
+    title: "码多多 · 会话示例",
+    messageCount: 3,
+    cites: [{ index: 2, text: "会话：订单系统 · 快照 V2" }],
+  },
+  {
+    key: "coding-mobile:business",
+    title: "远程终端 · 会话示例",
+    messageCount: 3,
+    cites: [{ index: 2, text: "远程环境 · 数据不出域" }],
+  },
+  {
+    key: "coding-standard:business",
+    title: "码多多 · 质量校验",
+    messageCount: 3,
+    cites: [{ index: 2, text: "规范：企业规范 X · 已复检通过" }],
+  },
+  {
+    key: "agent-knowledge:business",
+    title: "企业知识助手",
+    messageCount: 5,
+    cites: [
+      { index: 2, text: "引用：《费用报销管理制度》" },
+      { index: 4, text: "引用：报销流程说明" },
+    ],
+  },
+  {
+    key: "agent-video:business",
+    title: "视频理解助手",
+    messageCount: 5,
+    cites: [
+      { index: 2, text: "预警：21:35 · 厂区南门" },
+      { index: 4, text: "检索范围：21:00–22:00" },
+    ],
+  },
+  {
+    key: "app-writing:business",
+    title: "通用文本写作助手",
+    messageCount: 6,
+    cites: [
+      { index: 2, text: "来源：公文写作经验库" },
+      { index: 5, text: "参考：已上传 5 份相关文件" },
+    ],
+  },
+  {
+    key: "app-bidding:business",
+    title: "智能投标助手",
+    messageCount: 5,
+    cites: [
+      { index: 2, text: "来源：招标文件智能解析" },
+      { index: 4, text: "对照：评标办法评分点" },
+    ],
+  },
+  {
+    key: "app-contract:business",
+    title: "合同智能审查助手",
+    messageCount: 5,
+    cites: [
+      { index: 2, text: "审查清单：保理合同 · 审查尺度：强势" },
+      {
+        index: 4,
+        text: "条款定位：违约处理条款 / 合同生效条款 / 回购义务条款",
+      },
+    ],
+  },
+] as const;
+
 const expectedFoundationCenters = {
   model: {
     slug: "model",
@@ -547,7 +636,11 @@ const expectedFoundationCenters = {
 
 describe("prototype platform center content contract", () => {
   it("keeps footer controls out of all demo messages and explicit roles complete", () => {
-    const demos = allPlatformPages.flatMap(collectPageDemos);
+    const demos = allPlatformDemos;
+    const sourceWindowHeads = ["码多多 · 会话示例", "码多多 · 多轮对话"];
+    const sourceCites = expectedNestedCiteDemos.flatMap(({ cites }) =>
+      cites.map(({ text }) => text),
+    );
 
     expect(demos).toHaveLength(61);
     for (const { demo } of demos) {
@@ -555,6 +648,12 @@ describe("prototype platform center content contract", () => {
         typeof message === "string" ? message : message.text,
       );
       expect(messageTexts).not.toContain("发送");
+      for (const head of sourceWindowHeads) {
+        expect(messageTexts).not.toContain(head);
+      }
+      for (const cite of sourceCites) {
+        expect(messageTexts).not.toContain(cite);
+      }
       if (demo.footer) {
         expect(messageTexts).not.toContain(demo.footer.placeholder);
         expect(messageTexts).not.toContain(demo.footer.action);
@@ -563,6 +662,11 @@ describe("prototype platform center content contract", () => {
         expect(
           demo.messages.every((message) => typeof message !== "string"),
         ).toBe(true);
+      }
+      for (const message of demo.messages) {
+        if (typeof message !== "string" && message.cite) {
+          expect(message.role).toBe("assistant");
+        }
       }
     }
 
@@ -595,7 +699,7 @@ describe("prototype platform center content contract", () => {
         {
           "footer": {
             "action": "发送",
-            "placeholder": "请输入你的问题…",
+            "placeholder": "输入你的需求…",
           },
           "key": "agents:business",
           "roles": [
@@ -718,7 +822,6 @@ describe("prototype platform center content contract", () => {
             "user",
             "assistant",
             "assistant",
-            "assistant",
           ],
         },
         {
@@ -728,11 +831,9 @@ describe("prototype platform center content contract", () => {
           },
           "key": "coding-session:hero",
           "roles": [
-            "assistant",
             "user",
             "assistant",
             "user",
-            "assistant",
             "assistant",
             "assistant",
           ],
@@ -744,11 +845,9 @@ describe("prototype platform center content contract", () => {
           },
           "key": "coding-session:section-2",
           "roles": [
-            "assistant",
             "user",
             "assistant",
             "user",
-            "assistant",
             "assistant",
             "assistant",
           ],
@@ -763,7 +862,6 @@ describe("prototype platform center content contract", () => {
             "user",
             "assistant",
             "assistant",
-            "assistant",
           ],
         },
         {
@@ -776,7 +874,6 @@ describe("prototype platform center content contract", () => {
             "user",
             "assistant",
             "assistant",
-            "assistant",
           ],
         },
         {
@@ -787,7 +884,6 @@ describe("prototype platform center content contract", () => {
           "key": "coding-standard:business",
           "roles": [
             "user",
-            "assistant",
             "assistant",
             "assistant",
           ],
@@ -811,9 +907,7 @@ describe("prototype platform center content contract", () => {
             "user",
             "assistant",
             "assistant",
-            "assistant",
             "user",
-            "assistant",
             "assistant",
           ],
         },
@@ -839,9 +933,7 @@ describe("prototype platform center content contract", () => {
             "user",
             "assistant",
             "assistant",
-            "assistant",
             "user",
-            "assistant",
             "assistant",
           ],
         },
@@ -855,9 +947,7 @@ describe("prototype platform center content contract", () => {
             "user",
             "assistant",
             "assistant",
-            "assistant",
             "user",
-            "assistant",
             "assistant",
             "assistant",
           ],
@@ -872,9 +962,7 @@ describe("prototype platform center content contract", () => {
             "user",
             "assistant",
             "assistant",
-            "assistant",
             "user",
-            "assistant",
             "assistant",
           ],
         },
@@ -888,9 +976,7 @@ describe("prototype platform center content contract", () => {
             "user",
             "assistant",
             "assistant",
-            "assistant",
             "user",
-            "assistant",
             "assistant",
           ],
         },
@@ -940,6 +1026,47 @@ describe("prototype platform center content contract", () => {
     `);
   });
 
+  it("nests every source cite in its assistant message and keeps window heads as titles", () => {
+    expect(
+      expectedNestedCiteDemos.map(({ key }) => {
+        const demo = allPlatformDemos.find((entry) => entry.key === key)?.demo;
+
+        return {
+          key,
+          title: demo?.title,
+          messageCount: demo?.messages.length,
+          cites: demo?.messages.flatMap((message, index) => {
+            if (typeof message === "string" || !("cite" in message)) {
+              return [];
+            }
+            return [{ index, text: message.cite }];
+          }),
+        };
+      }),
+    ).toStrictEqual(expectedNestedCiteDemos);
+
+    expect(
+      allPlatformDemos.flatMap(({ key, demo }) =>
+        demo.messages.flatMap((message, index) =>
+          typeof message !== "string" && message.cite
+            ? [{ key, index, text: message.cite }]
+            : [],
+        ),
+      ),
+    ).toStrictEqual(
+      expectedNestedCiteDemos.flatMap(({ key, cites }) =>
+        cites.map(({ index, text }) => ({ key, index, text })),
+      ),
+    );
+  });
+
+  it("keeps the agent center footer wording exact to the source prototype", () => {
+    expect(getPlatformCenter("agents")?.business?.demo?.footer).toStrictEqual({
+      placeholder: "输入你的需求…",
+      action: "发送",
+    });
+  });
+
   it.each(Object.entries(expectedFoundationCenters))(
     "locks the complete %s center",
     (slug, expected) => {
@@ -959,7 +1086,7 @@ describe("prototype platform center content contract", () => {
             "demo": {
               "footer": {
                 "action": "发送",
-                "placeholder": "请输入你的问题…",
+                "placeholder": "输入你的需求…",
               },
               "messages": [
                 {

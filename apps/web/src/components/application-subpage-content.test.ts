@@ -249,15 +249,15 @@ describe("prototype application subpage content contract", () => {
             {
               role: "assistant",
               text: "已生成大纲：一、总体要求；二、培训时间与地点；三、参训人员；四、培训内容。",
+              cite: "来源：公文写作经验库",
             },
-            { role: "assistant", text: "来源：公文写作经验库" },
             { role: "user", text: "按大纲生成全文，语气正式一些" },
             { role: "assistant", text: "正在分步生成全文……" },
             {
               role: "assistant",
               text: "已生成全文初稿，可继续扩写、简写或改写后定稿。",
+              cite: "参考：已上传 5 份相关文件",
             },
-            { role: "assistant", text: "参考：已上传 5 份相关文件" },
           ],
           footer: { placeholder: "请输入你的写作要求…", action: "发送" },
           note: "一句话 → 生成大纲 → 分步成稿 → 润色定稿",
@@ -511,14 +511,14 @@ describe("prototype application subpage content contract", () => {
             {
               role: "assistant",
               text: "已提取项目需求、资质门槛、评分标准与技术参数，识别 3 个得分关键点与 2 处潜在风险。",
+              cite: "来源：招标文件智能解析",
             },
-            { role: "assistant", text: "来源：招标文件智能解析" },
             { role: "user", text: "按评分结构生成标书大纲" },
             {
               role: "assistant",
               text: "已生成 8 个章节大纲，预计约 122 页，可逐章撰写、随时调整。",
+              cite: "对照：评标办法评分点",
             },
-            { role: "assistant", text: "对照：评标办法评分点" },
           ],
           footer: { placeholder: "请输入你的问题…", action: "发送" },
           note: "上传标书 → 智能解析 → 生成大纲 → 分章撰写 → 审查交付",
@@ -759,19 +759,13 @@ describe("prototype application subpage content contract", () => {
             {
               role: "assistant",
               text: "已按保理合同清单完成审查，检测 19 处合同风险：常规 4 处、次要 12 处、重要 3 处。",
-            },
-            {
-              role: "assistant",
-              text: "审查清单：保理合同 · 审查尺度：强势",
+              cite: "审查清单：保理合同 · 审查尺度：强势",
             },
             { role: "user", text: "重点标出重要风险，定位到条款" },
             {
               role: "assistant",
               text: "重要风险已标注并定位：违约金上限过低、生效条件不确定、回购义务缺失。",
-            },
-            {
-              role: "assistant",
-              text: "条款定位：违约处理条款 / 合同生效条款 / 回购义务条款",
+              cite: "条款定位：违约处理条款 / 合同生效条款 / 回购义务条款",
             },
           ],
           footer: { placeholder: "请输入你的审查问题…", action: "发送" },

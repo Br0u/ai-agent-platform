@@ -277,14 +277,14 @@ const agentSubpages = [
           {
             role: "assistant",
             text: "根据《费用报销管理制度》，差旅住宿标准为……",
+            cite: "引用：《费用报销管理制度》",
           },
-          { role: "assistant", text: "引用：《费用报销管理制度》" },
           { role: "user", text: "怎么申请？" },
           {
             role: "assistant",
             text: "在 OA 提交报销申请，附发票与行程单，由部门负责人审批。",
+            cite: "引用：报销流程说明",
           },
-          { role: "assistant", text: "引用：报销流程说明" },
         ],
         footer: { placeholder: "请输入你的问题…", action: "发送" },
       },
@@ -757,14 +757,14 @@ const agentSubpages = [
           {
             role: "assistant",
             text: "检测到 21:35 南门出现人员停留，已返回预警画面与时间点。",
+            cite: "预警：21:35 · 厂区南门",
           },
-          { role: "assistant", text: "预警：21:35 · 厂区南门" },
           { role: "user", text: "还有其它时间段异常吗？" },
           {
             role: "assistant",
             text: "22:00 前无其它异常事件，已复核完毕。",
+            cite: "检索范围：21:00–22:00",
           },
-          { role: "assistant", text: "检索范围：21:00–22:00" },
         ],
         footer: { placeholder: "请输入你的问题…", action: "发送" },
       },

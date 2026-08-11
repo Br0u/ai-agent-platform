@@ -113,6 +113,13 @@ test("七个元启平台中心返回原型标题并只使用 shell 聊天入口"
       ).toBeDisabled();
     }
 
+    if (path === "/product/agents") {
+      const demo = page
+        .getByTestId("platform-page-demo")
+        .filter({ hasText: "智能体中心 · 能力演示" });
+      await expect(demo.getByPlaceholder("输入你的需求…")).toBeDisabled();
+    }
+
     if (path === "/product/governance") {
       for (const id of [
         "gov-users",

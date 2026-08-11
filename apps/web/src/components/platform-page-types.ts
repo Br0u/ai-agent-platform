@@ -5,6 +5,7 @@ export type PlatformDemoMessage =
   | {
       role: "user" | "assistant";
       text: string;
+      cite?: string;
     };
 
 export type PlatformDemo = {

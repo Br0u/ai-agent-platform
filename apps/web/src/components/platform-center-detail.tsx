@@ -90,6 +90,9 @@ function Demo({ demo, testId }: { demo: PlatformDemo; testId?: string }) {
             key={`${index}-${text}`}
           >
             {text}
+            {typeof message !== "string" && message.cite ? (
+              <small className="product-portal-demo-cite">{message.cite}</small>
+            ) : null}
           </p>
         );
       })}

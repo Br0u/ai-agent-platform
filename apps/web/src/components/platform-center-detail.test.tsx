@@ -13,6 +13,7 @@ import AgentCenterPage, {
 import ApplicationCenterPage, {
   metadata as applicationCenterMetadata,
 } from "../app/product/applications/page";
+import CodingProjectPage from "../app/product/coding-project/page";
 import CodingCenterPage, {
   metadata as codingCenterMetadata,
 } from "../app/product/coding/page";
@@ -262,6 +263,30 @@ describe("PlatformCenterDetail", () => {
     expect(
       screen.queryByText("码多多 · 对话式开发界面素材槽位"),
     ).not.toBeInTheDocument();
+  });
+
+  it("renders a source cite inside its assistant message through the real coding project Page", () => {
+    render(<CodingProjectPage />);
+
+    const demo = within(screen.getByTestId("platform-center-business"))
+      .getAllByTestId("platform-page-demo")
+      .find((element) =>
+        element.textContent?.includes("项目工作台 · 会话示例"),
+      );
+    expect(demo).toBeDefined();
+    const messages = within(demo!).getAllByTestId("platform-demo-message");
+    expect(messages).toHaveLength(3);
+    expect(messages.map((message) => message.dataset.messageRole)).toEqual([
+      "user",
+      "assistant",
+      "assistant",
+    ]);
+    const finalAnswer = messages[2];
+    const cite = within(finalAnswer).getByText(
+      "上下文：订单系统 · 已引用 8 条历史会话",
+    );
+    expect(cite).toHaveClass("product-portal-demo-cite");
+    expect(cite.parentElement).toBe(finalAnswer);
   });
 
   it("renders the agent center source subheading and quoted data question", () => {

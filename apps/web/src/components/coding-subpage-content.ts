@@ -219,10 +219,7 @@ const codingSubpages = [
           {
             role: "assistant",
             text: "已识别支付模块的错误处理模式，生成统一异常处理方案与重构代码。",
-          },
-          {
-            role: "assistant",
-            text: "上下文：订单系统 · 已引用 8 条历史会话",
+            cite: "上下文：订单系统 · 已引用 8 条历史会话",
           },
         ],
         footer: { placeholder: "基于当前项目上下文提问…", action: "发送" },
@@ -279,9 +276,8 @@ const codingSubpages = [
         { label: "商务咨询", href: "/contact?topic=会话管理咨询" },
       ],
       visual: {
-        title: "多轮会话演示：AI 记得住前文，跨轮次引用已生成代码",
+        title: "码多多 · 会话示例",
         messages: [
-          { role: "assistant", text: "码多多 · 会话示例" },
           {
             role: "user",
             text: "为订单模块增加支付超时自动关单处理",
@@ -301,13 +297,11 @@ const codingSubpages = [
           {
             role: "assistant",
             text: "已生成单元测试，引用上一步的关单逻辑。",
-          },
-          {
-            role: "assistant",
-            text: "上下文：已引用第 1 轮生成的代码",
+            cite: "上下文：已引用第 1 轮生成的代码",
           },
         ],
         footer: { placeholder: "继续你的开发对话…", action: "发送" },
+        note: "多轮会话演示：AI 记得住前文，跨轮次引用已生成代码",
       },
     },
     sections: [
@@ -388,9 +382,8 @@ const codingSubpages = [
           },
         ],
         demo: {
-          title: "跨轮引用演示：AI 记得并引用前几轮的内容",
+          title: "码多多 · 多轮对话",
           messages: [
-            { role: "assistant", text: "码多多 · 多轮对话" },
             {
               role: "user",
               text: "为订单模块增加支付超时自动关单处理",
@@ -401,13 +394,11 @@ const codingSubpages = [
             {
               role: "assistant",
               text: "已将超时时间改为配置项，并保留原有逻辑。",
-            },
-            {
-              role: "assistant",
-              text: "上下文：引用第 1 轮的关单方案",
+              cite: "上下文：引用第 1 轮的关单方案",
             },
           ],
           footer: { placeholder: "继续对话…", action: "发送" },
+          note: "跨轮引用演示：AI 记得并引用前几轮的内容",
         },
         note: "解决：需求重复说明、对话不连贯、复杂任务聊不下去。",
       },
@@ -502,8 +493,8 @@ const codingSubpages = [
           {
             role: "assistant",
             text: "已恢复上下文：关单逻辑已完成，超时时间已配置化；当前可继续开发测试。",
+            cite: "会话：订单系统 · 快照 V2",
           },
-          { role: "assistant", text: "会话：订单系统 · 快照 V2" },
         ],
         footer: { placeholder: "输入你的开发需求…", action: "发送" },
       },
@@ -797,8 +788,8 @@ const codingSubpages = [
           {
             role: "assistant",
             text: "当前任务：开发实时指标看板；最近完成：数据同步断点续传。",
+            cite: "远程环境 · 数据不出域",
           },
-          { role: "assistant", text: "远程环境 · 数据不出域" },
         ],
         footer: { placeholder: "输入指令或需求…", action: "发送" },
       },
@@ -1049,8 +1040,8 @@ const codingSubpages = [
           {
             role: "assistant",
             text: "校验完成：发现 1 处安全风险（SQL 拼接）与 1 处性能建议，已给出修正代码。",
+            cite: "规范：企业规范 X · 已复检通过",
           },
-          { role: "assistant", text: "规范：企业规范 X · 已复检通过" },
         ],
         footer: { placeholder: "输入代码或需求…", action: "发送" },
       },

@@ -812,6 +812,14 @@
   background: linear-gradient(135deg, var(--portal-blue), var(--portal-violet));
 }
 
+.product-portal-demo-cite {
+  display: block;
+  margin-top: 5px;
+  color: inherit;
+  font-size: 0.72rem;
+  opacity: 0.72;
+}
+
 .product-portal-demo-footer {
   display: flex;
   gap: 10px;
