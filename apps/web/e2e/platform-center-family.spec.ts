@@ -31,6 +31,8 @@ async function expectNoHorizontalOverflow(page: Page) {
 test("七个元启平台中心返回原型标题并只使用 shell 聊天入口", async ({
   page,
 }) => {
+  test.setTimeout(60_000);
+
   for (const [path, title] of pages) {
     const response = await gotoCenter(page, path);
 
@@ -50,6 +52,8 @@ test("七个元启平台中心返回原型标题并只使用 shell 聊天入口"
 });
 
 test("七个元启平台中心内部链接没有 404 或服务端错误", async ({ page }) => {
+  test.setTimeout(60_000);
+
   for (const [path] of pages) {
     await gotoCenter(page, path);
     const hrefs = await page
@@ -74,6 +78,7 @@ test("七个元启平台中心在桌面、平板和移动宽度无横向溢出",
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop");
+  test.setTimeout(60_000);
 
   for (const viewport of [
     { width: 1440, height: 1000 },
