@@ -318,7 +318,7 @@ const agentSubpages = [
           actions: [
             {
               label: "查看文档理解方案 →",
-              href: "/solutions#knowledge",
+              href: "/solutions/knowledge-service",
             },
             {
               label: "查看实践案例 →",
@@ -802,7 +802,7 @@ const agentSubpages = [
           actions: [
             {
               label: "查看视频检索方案 →",
-              href: "/solutions#vision",
+              href: "/solutions/video-intelligence",
             },
             {
               label: "查看实践案例 →",
@@ -816,7 +816,7 @@ const agentSubpages = [
           actions: [
             {
               label: "查看视频检索方案 →",
-              href: "/solutions#vision",
+              href: "/solutions/video-intelligence",
             },
             {
               label: "查看实践案例 →",
@@ -830,7 +830,7 @@ const agentSubpages = [
           actions: [
             {
               label: "查看视频检索方案 →",
-              href: "/solutions#vision",
+              href: "/solutions/video-intelligence",
             },
             {
               label: "查看实践案例 →",

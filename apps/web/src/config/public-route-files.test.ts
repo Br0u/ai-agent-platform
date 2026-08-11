@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const appDirectory = resolve(process.cwd(), "src/app");
 
-const deletedPageFiles = [
+const deletedFiles = [
   "[...slug]/page.tsx",
   "releases/page.tsx",
   "releases/[version]/page.tsx",
@@ -22,6 +22,8 @@ const deletedPageFiles = [
   "product/office-agent/page.tsx",
   "product/tgdataxai/page.tsx",
   "product/video-agent/page.tsx",
+  "../components/product-content.test.ts",
+  "../components/product-content.ts",
 ] as const;
 
 const retainedPageFiles = [
@@ -44,8 +46,8 @@ const retainedPageFiles = [
 ] as const;
 
 describe("public route files", () => {
-  it("removes every public page outside the prototype", () => {
-    const remaining = deletedPageFiles.filter((file) =>
+  it("removes every public page and dead content file outside the prototype", () => {
+    const remaining = deletedFiles.filter((file) =>
       existsSync(resolve(appDirectory, file)),
     );
 

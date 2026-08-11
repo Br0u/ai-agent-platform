@@ -62,7 +62,7 @@ const expected = {
     h1: "视频理解与智能视觉助手：让视频从「被观看」变成「可理解」",
     sectionCount: 5,
     demoTexts: ["昨晚厂区南门 21 点到 22 点有无异常？", "发送"],
-    semanticLink: ["查看视频检索方案 →", "/solutions#vision"],
+    semanticLink: ["查看视频检索方案 →", "/solutions/video-intelligence"],
     anchors: [
       [
         "查看即时检索 →",

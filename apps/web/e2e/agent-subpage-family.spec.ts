@@ -33,19 +33,10 @@ const pages = [
   },
 ] as const;
 
-const legacyPages = [
-  {
-    expectedH1: "华鲲元启智能导办一体机",
-    path: "/product/knowledge-agent",
-  },
-  {
-    expectedH1: "华鲲元启视觉检索一体机",
-    path: "/product/video-agent",
-  },
-  {
-    expectedH1: "AI Agent PlatformOffice Agent 办公智能体矩阵",
-    path: "/product/office-agent",
-  },
+const deletedPages = [
+  "/product/knowledge-agent",
+  "/product/video-agent",
+  "/product/office-agent",
 ] as const;
 
 const viewports = [
@@ -126,7 +117,7 @@ test("四个智能体子页返回完整内容并只使用 shell 聊天入口", a
 
 test("四个智能体子页的内部链接和锚点均可达", async ({ page }) => {
   test.setTimeout(120_000);
-  const visitedHashTargets = new Set<string>();
+  const visitedNavigationTargets = new Set<string>();
 
   for (const { path } of pages) {
     await gotoAgentPage(page, path);
@@ -150,6 +141,9 @@ test("四个智能体子页的内部链接和锚点均可达", async ({ page }) 
     const requestTargets = [
       ...new Set(links.map((link) => link.requestTarget)),
     ];
+    links.forEach((link) =>
+      visitedNavigationTargets.add(link.navigationTarget),
+    );
 
     expect(requestTargets.length, `${path} same-origin links`).toBeGreaterThan(
       0,
@@ -162,7 +156,6 @@ test("四个智能体子页的内部链接和锚点均可达", async ({ page }) 
     const hashLinks = links.filter(({ hash }) => hash);
     expect(hashLinks.length, `${path} hash links`).toBeGreaterThan(0);
     for (const link of hashLinks) {
-      visitedHashTargets.add(link.navigationTarget);
       const expectedUrl = new URL(link.navigationTarget, page.url()).href;
       await gotoAgentPage(page, link.navigationTarget);
       await expect(page).toHaveURL(expectedUrl);
@@ -185,8 +178,11 @@ test("四个智能体子页的内部链接和锚点均可达", async ({ page }) 
     }
   }
 
-  expect([...visitedHashTargets]).toEqual(
-    expect.arrayContaining(["/solutions#knowledge", "/solutions#vision"]),
+  expect([...visitedNavigationTargets]).toEqual(
+    expect.arrayContaining([
+      "/solutions/knowledge-service",
+      "/solutions/video-intelligence",
+    ]),
   );
 });
 
@@ -272,15 +268,12 @@ test("四个智能体子页在桌面和移动端都能打开与关闭现有 Agen
   }
 });
 
-test("现有三个智能体一体机页面保留原路径和标题", async ({ page }) => {
-  for (const { expectedH1, path } of legacyPages) {
+test("原型外三个智能体一体机页面返回 404", async ({ page }) => {
+  for (const path of deletedPages) {
     const response = await gotoAgentPage(page, path);
 
-    expect(response?.status(), path).toBe(200);
+    expect(response?.status(), path).toBe(404);
     expect(new URL(page.url()).pathname).toBe(path);
-    const h1 = page.getByRole("heading", { level: 1 });
-    await expect(h1).toHaveCount(1);
-    await expect(h1).toHaveText(expectedH1);
   }
 });
 
