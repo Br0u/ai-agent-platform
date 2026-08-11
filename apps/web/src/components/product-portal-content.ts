@@ -55,7 +55,7 @@ export type StandaloneProduct = {
     action: PortalAction;
     items: readonly ProductFeature[];
   };
-  experience: {
+  experience?: {
     eyebrow: string;
     title: string;
     lead: string;
@@ -550,7 +550,7 @@ const standaloneProducts: Record<
           ],
           note: "解决：复杂任务直接生成代码导致逻辑碎片化。",
           visual:
-            "Plan · 决策与规划：需求拆解 · 依赖检测 · 技术选型校验（只读分析）→ Build · 执行与落地：代码生成 · 文件修改 · 测试运行 · 日志定位 · 补丁应用（读写执行）",
+            "Plan · 决策与规划：需求拆解 · 依赖检测 · 技术选型校验（只读分析） ↓ Build · 执行与落地：代码生成 · 文件修改 · 测试运行 · 日志定位 · 补丁应用（读写执行）",
         },
         {
           tag: "能力 03",
@@ -611,13 +611,6 @@ const standaloneProducts: Record<
           description: "智算服务器 + 推理框架插电即用",
         },
       ],
-    },
-    experience: {
-      eyebrow: "对话式工程落地演示",
-      title: "说需求 → 分析项目上下文 → 生成代码 → 运行验证",
-      lead: "描述需求，AI 理解任务目标、分析项目上下文、生成技术方案，并在本地工程中完成代码编写、修改、运行与验证，交付可运行的工程代码。",
-      flow: ["说需求", "分析项目上下文", "生成代码", "运行验证"],
-      visual: "此处预留真实产品截图位置",
     },
     business: {
       eyebrow: "业务场景",

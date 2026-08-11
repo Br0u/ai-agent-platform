@@ -42,10 +42,10 @@ const pages = [
       "不是又一个 AI 工具，而是企业级智能编码产品",
       "它怎么帮企业，把 AI 编程真正落地",
       "安全与部署保障，高密级代码资产也能放心用",
-      "说需求 → 分析项目上下文 → 生成代码 → 运行验证",
       "让企业 AI 编程，从能用变成好用",
       "开启企业级 AI 编程体验",
     ],
+    absentSections: ["说需求 → 分析项目上下文 → 生成代码 → 运行验证"],
     counts: {
       "detail-hero-tag": 4,
       "detail-introduction-card": 3,
@@ -138,6 +138,14 @@ test("五个原型 key 在正式路由执行完整页面合同", async ({ page }
         page.getByRole("heading", { exact: true, level: 2, name: title }),
         `${contract.key} section: ${title}`,
       ).toHaveCount(1);
+    }
+    for (const title of "absentSections" in contract
+      ? contract.absentSections
+      : []) {
+      await expect(
+        page.getByRole("heading", { exact: true, level: 2, name: title }),
+        `${contract.key} absent section: ${title}`,
+      ).toHaveCount(0);
     }
     for (const [testId, count] of Object.entries(contract.counts)) {
       await expect(

@@ -194,23 +194,27 @@ export function StandaloneProductDetail({ slug }: { slug: string }) {
         </section>
       ) : null}
 
-      <section
-        className="product-portal-section"
-        aria-labelledby="detail-experience-title"
-      >
-        <div className="product-portal-frame product-detail-experience">
-          <p className="product-portal-eyebrow">{product.experience.eyebrow}</p>
-          <h2 id="detail-experience-title">{product.experience.title}</h2>
-          <p>{product.experience.lead}</p>
-          <Flow
-            items={product.experience.flow}
-            testId="detail-experience-flow"
-          />
-          <div className="product-portal-visual">
-            {product.experience.visual}
+      {product.experience ? (
+        <section
+          className="product-portal-section"
+          aria-labelledby="detail-experience-title"
+        >
+          <div className="product-portal-frame product-detail-experience">
+            <p className="product-portal-eyebrow">
+              {product.experience.eyebrow}
+            </p>
+            <h2 id="detail-experience-title">{product.experience.title}</h2>
+            <p>{product.experience.lead}</p>
+            <Flow
+              items={product.experience.flow}
+              testId="detail-experience-flow"
+            />
+            <div className="product-portal-visual">
+              {product.experience.visual}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      ) : null}
 
       <section
         className="product-portal-section product-portal-section--tint"

@@ -659,7 +659,7 @@ describe("prototype product portal content contract", () => {
                   "note": "解决：复杂任务直接生成代码导致逻辑碎片化。",
                   "tag": "能力 02",
                   "title": "从规划到执行闭环",
-                  "visual": "Plan · 决策与规划：需求拆解 · 依赖检测 · 技术选型校验（只读分析）→ Build · 执行与落地：代码生成 · 文件修改 · 测试运行 · 日志定位 · 补丁应用（读写执行）",
+                  "visual": "Plan · 决策与规划：需求拆解 · 依赖检测 · 技术选型校验（只读分析） ↓ Build · 执行与落地：代码生成 · 文件修改 · 测试运行 · 日志定位 · 补丁应用（读写执行）",
                 },
                 {
                   "description": "私有化部署 + 零数据留存，敏感代码不离开企业基础设施；高危命令确认、操作日志审计与回滚，代码资产全程可控。",
@@ -733,18 +733,6 @@ describe("prototype product portal content contract", () => {
               ],
               "description": "立即体验码多多 2.0，或与华鲲团队沟通企业级部署方案。",
               "title": "开启企业级 AI 编程体验",
-            },
-            "experience": {
-              "eyebrow": "对话式工程落地演示",
-              "flow": [
-                "说需求",
-                "分析项目上下文",
-                "生成代码",
-                "运行验证",
-              ],
-              "lead": "描述需求，AI 理解任务目标、分析项目上下文、生成技术方案，并在本地工程中完成代码编写、修改、运行与验证，交付可运行的工程代码。",
-              "title": "说需求 → 分析项目上下文 → 生成代码 → 运行验证",
-              "visual": "此处预留真实产品截图位置",
             },
             "hero": {
               "actions": [
@@ -1535,12 +1523,20 @@ describe("prototype product portal content contract", () => {
     ]);
   });
 
+  it("locks the code-agent Plan and Build visual as a vertical structure", () => {
+    expect(
+      getStandaloneProduct("code-agent")?.capabilities.items[1]?.visual,
+    ).toBe(
+      "Plan · 决策与规划：需求拆解 · 依赖检测 · 技术选型校验（只读分析） ↓ Build · 执行与落地：代码生成 · 文件修改 · 测试运行 · 日志定位 · 补丁应用（读写执行）",
+    );
+  });
+
   it.each([
     {
       slug: "code-agent",
       title: "企业级的智能编码产品，代码不出域、说需求就落地",
       introductionTitle: "不是又一个 AI 工具，而是企业级智能编码产品",
-      flow: ["说需求", "分析项目上下文", "生成代码", "运行验证"],
+      flow: undefined,
       scene: "高密级代码资产企业",
       securityCount: 4,
     },
@@ -1574,7 +1570,7 @@ describe("prototype product portal content contract", () => {
       expect(
         product?.capabilities.items.every((item) => item.features.length >= 3),
       ).toBe(true);
-      expect(product?.experience.flow).toStrictEqual(flow);
+      expect(product?.experience?.flow).toStrictEqual(flow);
       expect(product?.business.scenes).toHaveLength(3);
       expect(
         product?.business.scenes.some((item) => item.title === scene),
