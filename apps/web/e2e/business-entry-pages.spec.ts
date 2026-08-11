@@ -77,6 +77,27 @@ test("downloads 执行完整内容、筛选和原型下载确认合同", async (
   const dialog = page.getByRole("dialog", { name: "确认下载安装包" });
   const close = dialog.getByRole("button", { name: "关闭" });
   const headerLink = page.locator(".site-header a").first();
+  const routeTransition = page.locator(".site-route-transition");
+  await expect
+    .poll(() =>
+      routeTransition.evaluate(
+        (element) => getComputedStyle(element).willChange,
+      ),
+    )
+    .toBe("auto");
+  const dialogBackdropBox = await page
+    .locator(".download-dialog-backdrop")
+    .boundingBox();
+  expect.soft(dialogBackdropBox?.y).toBe(0);
+  const softwareUrl = page.url();
+  const softwareHeaderBox = await headerLink.boundingBox();
+  expect(softwareHeaderBox).not.toBeNull();
+  await page.mouse.click(
+    softwareHeaderBox!.x + softwareHeaderBox!.width / 2,
+    softwareHeaderBox!.y + softwareHeaderBox!.height / 2,
+  );
+  await expect.soft(page).toHaveURL(softwareUrl);
+  await expect.soft(dialog).toHaveCount(1);
   await headerLink.focus();
   await expect.soft(close).toBeFocused();
   const launcher = page.getByRole("button", { name: "打开码多多" });
@@ -101,18 +122,49 @@ test("downloads 执行完整内容、筛选和原型下载确认合同", async (
   await confirm.click();
   await expect(dialog).toHaveCount(0);
   await expect(softwareTrigger).toBeFocused();
+  await expect
+    .poll(() =>
+      routeTransition.evaluate(
+        (element) => getComputedStyle(element).willChange,
+      ),
+    )
+    .toBe("opacity, transform");
   await expect(page.locator(".download-toast")).toHaveText(
     "已创建下载任务：原型阶段不实际下载，正式版提供安装包",
   );
+});
 
-  await page.getByRole("link", { name: "码多多 2.0 安装部署指南" }).click();
-  await expect
-    .poll(() =>
-      page
-        .locator('[data-download-key="mdd2-deploy"]')
-        .evaluate((target) => target.getBoundingClientRect().top),
-    )
-    .toBeGreaterThanOrEqual(80);
+test("downloads 资源锚点在 desktop 和 mobile 落入 sticky 可视区", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+
+  for (const viewport of [
+    { width: 1440, height: 1000, min: 80, max: 100 },
+    { width: 390, height: 844, min: 120, max: 145 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await gotoDownloads(page);
+    if (viewport.width === 390) {
+      await page
+        .getByRole("button", { name: "下载中心目录", exact: true })
+        .click();
+    }
+    await page.getByRole("link", { name: "码多多 2.0 安装部署指南" }).click();
+
+    const anchor = page.locator('[data-download-key="mdd2-deploy"]');
+    await expect(anchor).toBeInViewport();
+    await expect
+      .poll(() =>
+        anchor.evaluate((target) => target.getBoundingClientRect().top),
+      )
+      .toBeGreaterThanOrEqual(viewport.min);
+    await expect
+      .poll(() =>
+        anchor.evaluate((target) => target.getBoundingClientRect().top),
+      )
+      .toBeLessThanOrEqual(viewport.max);
+  }
 });
 
 test("downloads 在 1440 和 390 无横溢、保留唯一 Agent 并管理移动目录焦点", async ({
@@ -147,6 +199,20 @@ test("downloads 在 1440 和 390 无横溢、保留唯一 Agent 并管理移动�
   await trigger.click();
   const drawer = page.getByRole("dialog", { name: "下载中心目录" });
   await expect(drawer).toHaveAttribute("aria-modal", "true");
+  const drawerBackdropBox = await page
+    .locator(".download-directory-backdrop")
+    .boundingBox();
+  expect.soft(drawerBackdropBox?.y).toBe(0);
+  const directoryUrl = page.url();
+  const directoryHeaderLink = page.locator(".site-header a").first();
+  const directoryHeaderBox = await directoryHeaderLink.boundingBox();
+  expect(directoryHeaderBox).not.toBeNull();
+  await page.mouse.click(
+    directoryHeaderBox!.x + directoryHeaderBox!.width / 2,
+    directoryHeaderBox!.y + directoryHeaderBox!.height / 2,
+  );
+  await expect.soft(page).toHaveURL(directoryUrl);
+  await expect.soft(drawer).toHaveCount(1);
   const directorySearch = drawer.getByRole("searchbox", {
     name: "在下载中心目录中筛选",
   });
@@ -173,13 +239,6 @@ test("downloads 在 1440 和 390 无横溢、保留唯一 Agent 并管理移动�
   });
   await targetLink.click();
   await expect(drawer).toHaveCount(0);
-  await expect
-    .poll(() =>
-      page
-        .locator('[data-download-key="mdd2-deploy"]')
-        .evaluate((target) => target.getBoundingClientRect().top),
-    )
-    .toBeGreaterThanOrEqual(116);
 
   await trigger.click();
   await expect(directorySearch).toBeFocused();

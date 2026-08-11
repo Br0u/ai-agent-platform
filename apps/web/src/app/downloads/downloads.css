@@ -10,6 +10,9 @@
 ) {
   position: relative;
   z-index: 120;
+  animation: none;
+  transform: none;
+  will-change: auto;
 }
 
 .download-shell {
