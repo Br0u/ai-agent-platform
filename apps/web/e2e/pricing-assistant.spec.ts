@@ -321,21 +321,10 @@ async function sendSuccessfulAssistantMessage(page: Page) {
   return answer;
 }
 
-test("GET pricing and assistant APIs reject unsupported methods", async ({
-  request,
-}) => {
-  const deliberate405s = [];
-  for (const endpoint of [
-    "/api/v1/pricing/estimate",
-    "/api/v1/assistant/chat",
-  ]) {
-    const response = await request.get(endpoint);
-    deliberate405s.push({ endpoint, method: "GET", status: response.status() });
-  }
-  expect(deliberate405s).toEqual([
-    { endpoint: "/api/v1/pricing/estimate", method: "GET", status: 405 },
-    { endpoint: "/api/v1/assistant/chat", method: "GET", status: 405 },
-  ]);
+test("GET assistant API rejects unsupported methods", async ({ request }) => {
+  const response = await request.get("/api/v1/assistant/chat");
+
+  expect(response.status()).toBe(405);
 });
 
 test("assistant preset responses expose safe suggested actions", async ({

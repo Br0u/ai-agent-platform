@@ -1,7 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useState, useSyncExternalStore } from "react";
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { trialContent } from "./trial-content";
 
 type FormValues = {
@@ -17,6 +24,8 @@ const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const subscribe = () => () => {};
 const clientReady = () => true;
 const serverReady = () => false;
+const focusableSelector =
+  'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 function validContact(value: string) {
   return phonePattern.test(value) || emailPattern.test(value);
@@ -29,6 +38,19 @@ export function TrialExperience() {
   const [demoCode, setDemoCode] = useState("");
   const [message, setMessage] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const opener = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
+
+  useLayoutEffect(() => {
+    if (open) {
+      restoreFocus.current = false;
+      dialog.current?.querySelector<HTMLElement>(focusableSelector)?.focus();
+    } else if (restoreFocus.current) {
+      restoreFocus.current = false;
+      opener.current?.focus();
+    }
+  }, [open, submitted]);
 
   function reset(nextOpen: boolean) {
     setValues(emptyForm);
@@ -36,6 +58,41 @@ export function TrialExperience() {
     setMessage("");
     setSubmitted(false);
     setOpen(nextOpen);
+  }
+
+  function openDialog(trigger: HTMLButtonElement) {
+    opener.current = trigger;
+    restoreFocus.current = false;
+    reset(true);
+  }
+
+  function closeDialog() {
+    restoreFocus.current = true;
+    reset(false);
+  }
+
+  function handleDialogKeyDown(event: KeyboardEvent<HTMLDialogElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeDialog();
+      return;
+    }
+    if (event.key !== "Tab") return;
+
+    const focusable = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>(focusableSelector),
+    );
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (!first || !last) return;
+
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   function update(name: keyof FormValues, value: string) {
@@ -71,72 +128,79 @@ export function TrialExperience() {
 
   return (
     <main className="trial" data-trial-ready={ready}>
-      <section className="trial-hero">
-        <div className="trial-frame trial-hero__layout">
-          <div>
-            <p className="trial-eyebrow">{trialContent.hero.eyebrow}</p>
-            <h1>{trialContent.hero.title}</h1>
-            <p className="trial-lead">{trialContent.hero.lead}</p>
-            <div className="trial-tags" aria-label="可体验产品">
-              {trialContent.hero.tags.map((tag) => (
-                <span key={tag}>{tag}</span>
+      <div className="trial-content" inert={open ? true : undefined}>
+        <section className="trial-hero">
+          <div className="trial-frame trial-hero__layout">
+            <div>
+              <p className="trial-eyebrow">{trialContent.hero.eyebrow}</p>
+              <h1>{trialContent.hero.title}</h1>
+              <p className="trial-lead">{trialContent.hero.lead}</p>
+              <div className="trial-tags" aria-label="可体验产品">
+                {trialContent.hero.tags.map((tag) => (
+                  <span key={tag}>{tag}</span>
+                ))}
+              </div>
+              <div className="trial-actions">
+                <button
+                  className="trial-button trial-button--primary"
+                  disabled={!ready}
+                  onClick={(event) => openDialog(event.currentTarget)}
+                >
+                  立即填写申请
+                </button>
+                <Link
+                  className="trial-button"
+                  href="/contact?topic=体验申请咨询"
+                >
+                  联系我们
+                </Link>
+              </div>
+            </div>
+            <div className="trial-visual">{trialContent.hero.visual}</div>
+          </div>
+        </section>
+
+        <section className="trial-section" aria-labelledby="trial-flow-title">
+          <div className="trial-frame">
+            <p className="trial-eyebrow">{trialContent.flow.eyebrow}</p>
+            <h2 id="trial-flow-title">{trialContent.flow.title}</h2>
+            <ol className="trial-flow">
+              {trialContent.flow.steps.map((item) => (
+                <li key={item.step}>
+                  <span>{item.step}</span>
+                  <h3>{item.title}</h3>
+                  <p>{item.description}</p>
+                </li>
               ))}
-            </div>
-            <div className="trial-actions">
-              <button
-                className="trial-button trial-button--primary"
-                disabled={!ready}
-                onClick={() => reset(true)}
-              >
-                立即填写申请
-              </button>
-              <Link className="trial-button" href="/contact">
-                联系我们
-              </Link>
-            </div>
+            </ol>
           </div>
-          <div className="trial-visual">{trialContent.hero.visual}</div>
-        </div>
-      </section>
+        </section>
 
-      <section className="trial-section" aria-labelledby="trial-flow-title">
-        <div className="trial-frame">
-          <p className="trial-eyebrow">{trialContent.flow.eyebrow}</p>
-          <h2 id="trial-flow-title">{trialContent.flow.title}</h2>
-          <ol className="trial-flow">
-            {trialContent.flow.steps.map((item) => (
-              <li key={item.step}>
-                <span>{item.step}</span>
-                <h3>{item.title}</h3>
-                <p>{item.description}</p>
-              </li>
-            ))}
-          </ol>
-        </div>
-      </section>
-
-      <section className="trial-section trial-closing">
-        <div className="trial-frame trial-closing__panel">
-          <div>
-            <h2>{trialContent.cta.title}</h2>
-            <p>{trialContent.cta.description}</p>
+        <section className="trial-section trial-closing">
+          <div className="trial-frame trial-closing__panel">
+            <div>
+              <h2>{trialContent.cta.title}</h2>
+              <p>{trialContent.cta.description}</p>
+            </div>
+            <button
+              className="trial-button trial-button--primary"
+              disabled={!ready}
+              onClick={(event) => openDialog(event.currentTarget)}
+            >
+              {trialContent.cta.action}
+            </button>
           </div>
-          <button
-            className="trial-button trial-button--primary"
-            disabled={!ready}
-            onClick={() => reset(true)}
-          >
-            {trialContent.cta.action}
-          </button>
-        </div>
-      </section>
+        </section>
+      </div>
 
       {open ? (
         <div className="trial-dialog-backdrop">
           <dialog
+            ref={dialog}
             aria-labelledby="trial-dialog-title"
             aria-modal="true"
             className="trial-dialog"
+            onKeyDown={handleDialogKeyDown}
             open
           >
             {submitted ? (
@@ -146,7 +210,7 @@ export function TrialExperience() {
                 <p>{trialContent.success.description}</p>
                 <button
                   className="trial-button trial-button--primary"
-                  onClick={() => reset(false)}
+                  onClick={closeDialog}
                 >
                   {trialContent.success.action}
                 </button>
@@ -161,7 +225,7 @@ export function TrialExperience() {
                   <button
                     aria-label="关闭申请弹层"
                     className="trial-dialog__close"
-                    onClick={() => reset(false)}
+                    onClick={closeDialog}
                   >
                     ×
                   </button>
@@ -211,7 +275,7 @@ export function TrialExperience() {
                     <button
                       className="trial-button"
                       type="button"
-                      onClick={() => reset(false)}
+                      onClick={closeDialog}
                     >
                       {trialContent.form.cancel}
                     </button>

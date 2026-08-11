@@ -3,6 +3,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -27,6 +28,17 @@ beforeEach(() => {
 });
 
 describe("TrialExperience", () => {
+  it("接线立即填写和带咨询主题的联系我们入口", () => {
+    render(<TrialExperience />);
+
+    expect(screen.getByRole("button", { name: "立即填写申请" })).toBeEnabled();
+    expect(screen.getByRole("link", { name: "联系我们" })).toHaveAttribute(
+      "href",
+      "/contact?topic=体验申请咨询",
+    );
+    expect(screen.getByRole("button", { name: "填写申请信息" })).toBeEnabled();
+  });
+
   it("打开原型弹层并按顺序校验姓名和联系方式", () => {
     render(<TrialExperience />);
     const dialog = openDialog();
@@ -99,5 +111,33 @@ describe("TrialExperience", () => {
     expect(within(dialog).getByLabelText("姓名")).toHaveValue("");
     expect(screen.queryByText("提交成功")).toBeNull();
     expect(screen.queryByText(/100000/)).toBeNull();
+  });
+
+  it("弹层隔离背景、约束焦点并在 Escape 后回到触发按钮", async () => {
+    const { container } = render(<TrialExperience />);
+    const trigger = screen.getByRole("button", { name: "立即填写申请" });
+    fireEvent.click(trigger);
+
+    const dialog = screen.getByRole("dialog", {
+      name: "开启企业 AI 落地体验",
+    });
+    const close = within(dialog).getByRole("button", { name: "关闭申请弹层" });
+    const cancel = within(dialog).getByRole("button", { name: "取消" });
+    await waitFor(() => expect(document.activeElement).toBe(close));
+    expect(container.querySelector(".trial-content")).toHaveAttribute("inert");
+
+    cancel.focus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+    close.focus();
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(cancel);
+
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+    expect(container.querySelector(".trial-content")).not.toHaveAttribute(
+      "inert",
+    );
   });
 });

@@ -590,3 +590,145 @@ test("partners 在 1440 和 390 无横溢、锚点可见、抽屉隔离并保留
     path: resolve(outputDirectory, "partners-390.png"),
   });
 });
+
+test("pricing 和 contact 在 1440 与 390 执行原型内容和咨询主题合同", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+
+  for (const viewport of [
+    { width: 1440, height: 1000 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/pricing", { waitUntil: "domcontentloaded" });
+    await expect(
+      page.getByRole("heading", {
+        level: 1,
+        name: "价格与服务内容待后续确认",
+      }),
+    ).toHaveCount(1);
+    await expect(page.getByText("价格计算")).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+
+    await page.goto("/trial", { waitUntil: "domcontentloaded" });
+    await page
+      .getByRole("main")
+      .getByRole("link", { name: "联系我们", exact: true })
+      .click();
+    await expect
+      .poll(() => new URL(page.url()).searchParams.get("topic"))
+      .toBe("体验申请咨询");
+    await expect(
+      page.getByRole("heading", {
+        level: 1,
+        name: "期待与您交流，共创企业 AI 未来",
+      }),
+    ).toHaveCount(1);
+    await expect(page.getByText("当前咨询主题：体验申请咨询")).toBeVisible();
+    await expect(page.getByRole("list", { name: "咨询类型" })).toContainText(
+      "产品咨询方案交流体验申请商务合作",
+    );
+    await expect(
+      page.getByText("四川省成都市双流区新程南一路 19 号 · AI 创新中心 F6 栋"),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "进入产品中心" }),
+    ).toHaveAttribute("href", "/product");
+    await expect(
+      page.getByRole("link", { name: "查看解决方案" }),
+    ).toHaveAttribute("href", "/solutions");
+    await expect(
+      page.getByRole("link", { name: "了解合作伙伴" }),
+    ).toHaveAttribute("href", "/partners");
+    await expectNoHorizontalOverflow(page);
+
+    await page.getByRole("button", { name: "返回上一个浏览页面" }).click();
+    await expect(page).toHaveURL(/\/trial$/u);
+  }
+});
+
+test("trial 完成校验、成功、焦点约束和 Escape 回焦", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/trial", { waitUntil: "domcontentloaded" });
+
+  const trigger = page.getByRole("button", { name: "立即填写申请" });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "开启企业 AI 落地体验" });
+  const close = dialog.getByRole("button", { name: "关闭申请弹层" });
+  await expect(close).toBeFocused();
+  await expect(page.locator(".trial-content")).toHaveAttribute("inert", "");
+
+  await dialog.getByRole("button", { name: "提交申请" }).click();
+  await expect(dialog.getByRole("status")).toHaveText("请填写姓名");
+  await dialog.getByLabel("姓名").fill("测试用户");
+  await dialog.getByLabel("联系方式（手机号或邮箱）").fill("invalid");
+  await dialog.getByRole("button", { name: "提交申请" }).click();
+  await expect(dialog.getByRole("status")).toHaveText(
+    "请填写正确的手机号或邮箱",
+  );
+
+  await dialog.getByLabel("联系方式（手机号或邮箱）").fill("test@example.com");
+  await dialog.getByRole("button", { name: "获取验证码" }).click();
+  const codeMessage = await dialog.getByRole("status").textContent();
+  const code = codeMessage?.match(/\d{6}/u)?.[0];
+  expect(code).toBeTruthy();
+  await dialog.getByLabel("验证码", { exact: true }).fill(code!);
+  await dialog.getByRole("button", { name: "提交申请" }).click();
+  await expect(dialog.getByRole("status")).toHaveText("请填写所属公司");
+  await dialog.getByLabel("所属公司").fill("测试公司");
+  await dialog.getByRole("button", { name: "提交申请" }).click();
+  const successDialog = page.getByRole("dialog", { name: "提交成功" });
+  await expect(
+    successDialog.getByRole("heading", { level: 2, name: "提交成功" }),
+  ).toBeVisible();
+  await successDialog.getByRole("button", { name: "完成" }).click();
+  await expect(successDialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+
+  const closingTrigger = page.getByRole("button", { name: "填写申请信息" });
+  await closingTrigger.click();
+  await expect(close).toBeFocused();
+  const cancel = dialog.getByRole("button", { name: "取消" });
+  await cancel.focus();
+  await page.keyboard.press("Tab");
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(closingTrigger).toBeFocused();
+});
+
+test("pricing contact trial 在 1440 和 390 无横溢、保留唯一 Agent 并截图", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+  const outputDirectory = resolve(
+    process.cwd(),
+    "../../artifacts/playwright/business-entries",
+  );
+  await mkdir(outputDirectory, { recursive: true });
+
+  for (const viewport of [
+    { width: 1440, height: 1000, suffix: "1440" },
+    { width: 390, height: 844, suffix: "390" },
+  ]) {
+    await page.setViewportSize(viewport);
+    for (const [pathname, name] of [
+      ["/pricing", "pricing"],
+      ["/contact?topic=体验申请咨询", "contact"],
+      ["/trial", "trial"],
+    ] as const) {
+      await page.goto(pathname, { waitUntil: "domcontentloaded" });
+      await expectNoHorizontalOverflow(page);
+      await expect(page.locator(".floating-assistant__launcher")).toHaveCount(
+        1,
+      );
+      await page.evaluate(() => document.fonts.ready);
+      await page.screenshot({
+        animations: "disabled",
+        fullPage: true,
+        path: resolve(outputDirectory, `${name}-${viewport.suffix}.png`),
+      });
+    }
+  }
+});
