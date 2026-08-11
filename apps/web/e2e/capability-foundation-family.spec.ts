@@ -19,7 +19,7 @@ const pages = [
 
 const viewports = [
   { name: "1440", width: 1440, height: 1000 },
-  { name: "768", width: 768, height: 1024 },
+  { name: "1024", width: 1024, height: 900 },
   { name: "390", width: 390, height: 844 },
 ] as const;
 
@@ -35,9 +35,13 @@ async function expectContentVisible(
   title: string,
   sectionCount: number,
 ) {
-  await expect(
-    page.getByRole("heading", { level: 1, name: title }),
-  ).toBeVisible();
+  const heading = page.getByRole("heading", {
+    level: 1,
+    name: title,
+    exact: true,
+  });
+  await expect(heading).toHaveCount(1);
+  await expect(heading).toBeVisible();
 
   const sections = page.getByTestId("platform-center-section");
   await expect(sections).toHaveCount(sectionCount);
@@ -136,12 +140,12 @@ test("两页在桌面、平板和移动端保持高密度且内容完整", async
   }
 });
 
-test("两页在桌面和移动端都能打开与关闭现有 Agent 聊天", async ({
+test("两页在三档宽度都能打开与关闭现有 Agent 聊天", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop");
 
-  for (const viewport of [viewports[0], viewports[2]]) {
+  for (const viewport of viewports) {
     await page.setViewportSize(viewport);
     for (const { path } of pages) {
       await gotoCapabilityFoundation(page, path);
@@ -155,7 +159,7 @@ test("两页在桌面和移动端都能打开与关闭现有 Agent 聊天", asyn
   }
 });
 
-test("捕获两页桌面与移动端全页视觉证据", async ({ page }, testInfo) => {
+test("捕获两页三档宽度的全页视觉证据", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop");
   test.setTimeout(120_000);
   const outputDirectory = resolve(
@@ -164,7 +168,7 @@ test("捕获两页桌面与移动端全页视觉证据", async ({ page }, testIn
   );
   await mkdir(outputDirectory, { recursive: true });
 
-  for (const viewport of [viewports[0], viewports[2]]) {
+  for (const viewport of viewports) {
     await page.setViewportSize(viewport);
     for (const { name, path } of pages) {
       await gotoCapabilityFoundation(page, path);

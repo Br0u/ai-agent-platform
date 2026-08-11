@@ -28,6 +28,7 @@ export type PlatformPage = {
       title: string;
       messages: readonly string[];
       note?: string;
+      caption?: string;
     };
     flow?: readonly string[];
     note?: string;
@@ -76,6 +77,7 @@ export type PlatformPage = {
       title: string;
       messages: readonly string[];
       note?: string;
+      caption?: string;
     };
     reason: readonly string[];
     workflowLabel?: string;

@@ -73,7 +73,12 @@ function Demo({
   demo,
   testId,
 }: {
-  demo: { title: string; messages: readonly string[]; note?: string };
+  demo: {
+    title: string;
+    messages: readonly string[];
+    note?: string;
+    caption?: string;
+  };
   testId?: string;
 }) {
   return (
@@ -88,6 +93,9 @@ function Demo({
         </p>
       ))}
       {demo.note ? <small>{demo.note}</small> : null}
+      {demo.caption ? (
+        <p className="product-portal-demo-caption">{demo.caption}</p>
+      ) : null}
     </aside>
   );
 }

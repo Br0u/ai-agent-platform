@@ -1,6 +1,12 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import KnowledgeCenterPage, {
+  metadata as knowledgeCenterMetadata,
+} from "../app/product/knowledge/page";
+import ModelCenterPage, {
+  metadata as modelCenterMetadata,
+} from "../app/product/model/page";
 import {
   PlatformCenterDetail,
   PlatformPageDetail,
@@ -20,7 +26,42 @@ afterEach(() => {
   notFound.mockClear();
 });
 
+const routedCenters = [
+  {
+    slug: "model",
+    Page: ModelCenterPage,
+    metadata: modelCenterMetadata,
+    title: "企业模型工程，从资产管理到上线服务",
+    description:
+      "围绕企业最关心的三个问题组织能力：有哪些模型、模型怎么运行、模型怎么变强。模型花园与纳管统一资产管理，三种部署方式覆盖运行环境，数据工厂与训练评估让模型持续优化。",
+  },
+  {
+    slug: "knowledge",
+    Page: KnowledgeCenterPage,
+    metadata: knowledgeCenterMetadata,
+    title: "企业知识库：让企业文档变成 AI 能用的知识",
+    description:
+      "把制度、产品资料、技术文档等企业知识上传、解析、分片，沉淀为可检索、可问答、可溯源的 AI 知识底座，支撑知识智能体与上层应用。",
+  },
+] as const;
+
 describe("PlatformCenterDetail", () => {
+  it.each(routedCenters)(
+    "wires the $slug Page to its fixed content and metadata",
+    ({ Page, description, metadata, title }) => {
+      const { container } = render(<Page />);
+
+      expect(
+        screen.getAllByRole("heading", {
+          level: 1,
+          name: title,
+        }),
+      ).toHaveLength(1);
+      expect(container.querySelectorAll("h1")).toHaveLength(1);
+      expect(metadata).toMatchObject({ title, description });
+    },
+  );
+
   it.each([
     {
       slug: "model",
@@ -129,6 +170,43 @@ describe("PlatformCenterDetail", () => {
       expect(link).toHaveAttribute("href", "/product/app-writing");
     }
     expect(screen.getAllByTestId("platform-center-scene")).toHaveLength(3);
+  });
+
+  it("renders a demo cite and its following prototype caption separately", () => {
+    const page: PlatformPage = {
+      slug: "demo-caption-test",
+      name: "演示注释测试",
+      hero: {
+        eyebrow: "测试",
+        title: "演示注释测试",
+        lead: "验证引用与演示链路说明同时保留。",
+        tags: [],
+        actions: [],
+        visual: { title: "测试视觉" },
+      },
+      sections: [
+        {
+          eyebrow: "01｜演示",
+          title: "双注释演示",
+          demo: {
+            title: "评估任务 · 评测结果演示",
+            messages: ["正在执行自动评测……"],
+            note: "评测集：行业问答 1000 条",
+            caption: "选择模型与数据集 → 执行测评 → 输出结果 → 支撑决策",
+          },
+        },
+      ],
+    };
+
+    render(<PlatformPageDetail page={page} />);
+
+    const demo = screen.getByTestId("platform-page-demo");
+    expect(within(demo).getByText("评测集：行业问答 1000 条")).toBeVisible();
+    expect(
+      within(demo).getByText(
+        "选择模型与数据集 → 执行测评 → 输出结果 → 支撑决策",
+      ),
+    ).toHaveClass("product-portal-demo-caption");
   });
 
   it("renders governance anchors and the source scope note", () => {

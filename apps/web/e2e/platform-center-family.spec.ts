@@ -35,9 +35,13 @@ test("七个元启平台中心返回原型标题并只使用 shell 聊天入口"
     const response = await gotoCenter(page, path);
 
     expect(response?.status(), path).toBe(200);
-    await expect(
-      page.getByRole("heading", { level: 1, name: title }),
-    ).toBeVisible();
+    const heading = page.getByRole("heading", {
+      level: 1,
+      name: title,
+      exact: true,
+    });
+    await expect(heading).toHaveCount(1);
+    await expect(heading).toBeVisible();
     await expect(
       page.locator("main.platform-center .floating-assistant"),
     ).toHaveCount(0);
@@ -73,7 +77,7 @@ test("七个元启平台中心在桌面、平板和移动宽度无横向溢出",
 
   for (const viewport of [
     { width: 1440, height: 1000 },
-    { width: 768, height: 1024 },
+    { width: 1024, height: 900 },
     { width: 390, height: 844 },
   ]) {
     await page.setViewportSize(viewport);
@@ -107,6 +111,7 @@ test("捕获模型、智能体与编程中心的响应式视觉证据", async ({
 
   for (const viewport of [
     { name: "1440", width: 1440, height: 1000 },
+    { name: "1024", width: 1024, height: 900 },
     { name: "390", width: 390, height: 844 },
   ]) {
     await page.setViewportSize(viewport);

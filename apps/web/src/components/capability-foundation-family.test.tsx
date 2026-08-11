@@ -1,6 +1,12 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
+import AgentKnowledgeBasePage, {
+  metadata as agentKnowledgeBaseMetadata,
+} from "../app/product/agent-knowledge-base/page";
+import KnowledgeMetricsPage, {
+  metadata as knowledgeMetricsMetadata,
+} from "../app/product/knowledge-metrics/page";
 import {
   capabilityFoundationSlugs,
   getCapabilityFoundation,
@@ -9,7 +15,42 @@ import { PlatformPageDetail } from "./platform-center-detail";
 
 afterEach(cleanup);
 
+const routedPages = [
+  {
+    slug: "agent-knowledge-base",
+    Page: AgentKnowledgeBasePage,
+    metadata: agentKnowledgeBaseMetadata,
+    title: "能力底座：让智能体懂知识、懂数据",
+    description:
+      "企业知识库把文档变成可检索的知识，数据源与指标把数据变成可问数的底座——这是智能体「回答有据、问数有果」的底层支撑。",
+  },
+  {
+    slug: "knowledge-metrics",
+    Page: KnowledgeMetricsPage,
+    metadata: knowledgeMetricsMetadata,
+    title: "数据源与指标：让业务数据能被 AI 直接问数",
+    description:
+      "接入企业数据源、同步原始数据、开发统一指标，为数据智能体提供「看得懂、查得准」的数据底座，不懂 SQL 也能随问随答。",
+  },
+] as const;
+
 describe("capability foundation family", () => {
+  it.each(routedPages)(
+    "wires the $slug Page to its fixed content and metadata",
+    ({ Page, description, metadata, title }) => {
+      const { container } = render(<Page />);
+
+      expect(
+        screen.getAllByRole("heading", {
+          level: 1,
+          name: title,
+        }),
+      ).toHaveLength(1);
+      expect(container.querySelectorAll("h1")).toHaveLength(1);
+      expect(metadata).toMatchObject({ title, description });
+    },
+  );
+
   it.each(capabilityFoundationSlugs)("renders the complete %s page", (slug) => {
     const page = getCapabilityFoundation(slug)!;
     const { container } = render(<PlatformPageDetail page={page} />);
