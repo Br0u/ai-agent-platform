@@ -864,7 +864,10 @@ describe("prototype coding subpage content contract", () => {
             title: "私有化部署环境",
             description: "数据不出域的远程开发。",
             actions: [
-              { label: "查看私有化部署方案 →", href: "/solutions#private" },
+              {
+                label: "查看私有化部署方案 →",
+                href: "/solutions/private-yuanqi",
+              },
             ],
           },
         ],

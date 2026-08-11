@@ -261,7 +261,7 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看文档智能方案 →",
-              href: "/solutions/knowledge-service",
+              href: "/solutions/document-intelligence",
             },
             {
               label: "查看实践案例 →",
@@ -275,7 +275,7 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看相关方案 →",
-              href: "/solutions/knowledge-service",
+              href: "/solutions/document-intelligence",
             },
             {
               label: "查看实践案例 →",
@@ -289,7 +289,7 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看相关方案 →",
-              href: "/solutions/knowledge-service",
+              href: "/solutions/document-intelligence",
             },
             {
               label: "查看实践案例 →",
@@ -535,7 +535,7 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看文档智能方案 →",
-              href: "/solutions/knowledge-service",
+              href: "/solutions/document-intelligence",
             },
             {
               label: "查看实践案例 →",
@@ -549,7 +549,7 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看相关方案 →",
-              href: "/solutions/knowledge-service",
+              href: "/solutions/document-intelligence",
             },
             {
               label: "查看实践案例 →",
@@ -563,7 +563,7 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看相关方案 →",
-              href: "/solutions/knowledge-service",
+              href: "/solutions/document-intelligence",
             },
             {
               label: "查看实践案例 →",
@@ -796,7 +796,7 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看文档智能方案 →",
-              href: "/solutions/knowledge-service",
+              href: "/solutions/document-intelligence",
             },
             {
               label: "查看实践案例 →",
@@ -810,7 +810,7 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看相关方案 →",
-              href: "/solutions/knowledge-service",
+              href: "/solutions/document-intelligence",
             },
             {
               label: "查看实践案例 →",
@@ -824,7 +824,7 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看相关方案 →",
-              href: "/solutions/knowledge-service",
+              href: "/solutions/document-intelligence",
             },
             {
               label: "查看实践案例 →",

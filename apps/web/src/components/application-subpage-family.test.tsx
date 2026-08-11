@@ -198,7 +198,7 @@ describe("application subpage family", () => {
         ).toBeVisible();
       }
       for (const [name, href] of [
-        ["查看文档智能方案 →", "/solutions/knowledge-service"],
+        ["查看文档智能方案 →", "/solutions/document-intelligence"],
         [
           "查看实践案例 →",
           "/solutions?view=cases&mode=all#practice-cases-hero",

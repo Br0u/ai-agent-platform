@@ -471,7 +471,7 @@ const modelSubpages = [
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions#scene-model-evaluation",
+              href: "/solutions/model-evaluation",
             },
             {
               label: "查看实践案例 →",
@@ -485,7 +485,7 @@ const modelSubpages = [
           actions: [
             {
               label: "查看模型部署方案 →",
-              href: "/solutions#scene-model-deployment",
+              href: "/solutions/model-deployment",
             },
             {
               label: "查看实践案例 →",
@@ -499,7 +499,7 @@ const modelSubpages = [
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions#scene-model-evaluation",
+              href: "/solutions/model-evaluation",
             },
             {
               label: "查看实践案例 →",
@@ -781,7 +781,7 @@ const modelSubpages = [
           actions: [
             {
               label: "查看模型部署方案 →",
-              href: "/solutions#scene-model-deployment",
+              href: "/solutions/model-deployment",
             },
             {
               label: "查看实践案例 →",
@@ -795,7 +795,7 @@ const modelSubpages = [
           actions: [
             {
               label: "查看私有化部署方案 →",
-              href: "/solutions#scene-private-yuanqi",
+              href: "/solutions/private-yuanqi",
             },
             {
               label: "查看实践案例 →",
@@ -809,7 +809,7 @@ const modelSubpages = [
           actions: [
             {
               label: "查看模型评估方案 →",
-              href: "/solutions#scene-model-evaluation",
+              href: "/solutions/model-evaluation",
             },
             {
               label: "查看实践案例 →",
@@ -1200,7 +1200,7 @@ const modelSubpages = [
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions#scene-model-evaluation",
+              href: "/solutions/model-evaluation",
             },
             {
               label: "查看实践案例 →",
@@ -1214,7 +1214,7 @@ const modelSubpages = [
           actions: [
             {
               label: "查看模型部署方案 →",
-              href: "/solutions#scene-model-deployment",
+              href: "/solutions/model-deployment",
             },
             {
               label: "查看实践案例 →",
@@ -1228,7 +1228,7 @@ const modelSubpages = [
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions#scene-model-evaluation",
+              href: "/solutions/model-evaluation",
             },
             {
               label: "查看实践案例 →",
@@ -1499,7 +1499,7 @@ const modelSubpages = [
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions#scene-model-evaluation",
+              href: "/solutions/model-evaluation",
             },
             {
               label: "查看实践案例 →",
@@ -1513,7 +1513,7 @@ const modelSubpages = [
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions#scene-model-evaluation",
+              href: "/solutions/model-evaluation",
             },
             {
               label: "查看实践案例 →",
@@ -1527,7 +1527,7 @@ const modelSubpages = [
           actions: [
             {
               label: "查看模型部署方案 →",
-              href: "/solutions#scene-model-deployment",
+              href: "/solutions/model-deployment",
             },
             {
               label: "查看实践案例 →",

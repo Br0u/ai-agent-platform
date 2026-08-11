@@ -450,11 +450,11 @@ const expectedFoundationCenters = {
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions#scene-model-evaluation",
+              href: "/solutions/model-evaluation",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions#cases",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
             },
           ],
         },
@@ -464,11 +464,11 @@ const expectedFoundationCenters = {
           actions: [
             {
               label: "查看模型部署方案 →",
-              href: "/solutions#scene-model-deployment",
+              href: "/solutions/model-deployment",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions#cases",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
             },
           ],
         },
@@ -478,11 +478,11 @@ const expectedFoundationCenters = {
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions#scene-model-evaluation",
+              href: "/solutions/model-evaluation",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions#cases",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
             },
           ],
         },
@@ -1156,7 +1156,7 @@ describe("prototype platform center content contract", () => {
               {
                 "actions": [
                   {
-                    "href": "/solutions#scene-enterprise-assistant",
+                    "href": "/solutions/enterprise-assistant",
                     "label": "查看企业内部智能助手方案 →",
                   },
                 ],
@@ -1166,7 +1166,7 @@ describe("prototype platform center content contract", () => {
               {
                 "actions": [
                   {
-                    "href": "/solutions#scene-enterprise-assistant",
+                    "href": "/solutions/enterprise-assistant",
                     "label": "查看相关方案 →",
                   },
                 ],
@@ -1180,7 +1180,7 @@ describe("prototype platform center content contract", () => {
                     "label": "查看多智能体协同方案 →",
                   },
                   {
-                    "href": "/solutions#cases",
+                    "href": "/solutions?view=cases&mode=all#practice-cases-hero",
                     "label": "查看相关案例 →",
                   },
                 ],
@@ -1971,11 +1971,11 @@ describe("prototype platform center content contract", () => {
               {
                 "actions": [
                   {
-                    "href": "/solutions#scene-model-deployment",
+                    "href": "/solutions/model-deployment",
                     "label": "查看模型部署方案 →",
                   },
                   {
-                    "href": "/solutions#cases",
+                    "href": "/solutions?view=cases&mode=all#practice-cases-hero",
                     "label": "查看实践案例 →",
                   },
                 ],
@@ -1985,11 +1985,11 @@ describe("prototype platform center content contract", () => {
               {
                 "actions": [
                   {
-                    "href": "/solutions#scene-private-yuanqi",
+                    "href": "/solutions/private-yuanqi",
                     "label": "查看私有化部署方案 →",
                   },
                   {
-                    "href": "/solutions#cases",
+                    "href": "/solutions?view=cases&mode=all#practice-cases-hero",
                     "label": "查看实践案例 →",
                   },
                 ],
@@ -1999,11 +1999,11 @@ describe("prototype platform center content contract", () => {
               {
                 "actions": [
                   {
-                    "href": "/solutions#scene-model-deployment",
+                    "href": "/solutions/model-deployment",
                     "label": "查看相关方案 →",
                   },
                   {
-                    "href": "/solutions#cases",
+                    "href": "/solutions?view=cases&mode=all#practice-cases-hero",
                     "label": "查看实践案例 →",
                   },
                 ],
@@ -2163,7 +2163,7 @@ describe("prototype platform center content contract", () => {
                 {
                   "actions": [
                     {
-                      "href": "/solutions#scene-private-yuanqi",
+                      "href": "/solutions/private-yuanqi",
                       "label": "了解私有化部署方案 →",
                     },
                   ],

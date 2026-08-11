@@ -272,9 +272,12 @@ const platformCenters = [
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions#scene-model-evaluation",
+              href: "/solutions/model-evaluation",
             },
-            { label: "查看实践案例 →", href: "/solutions#cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
         {
@@ -283,9 +286,12 @@ const platformCenters = [
           actions: [
             {
               label: "查看模型部署方案 →",
-              href: "/solutions#scene-model-deployment",
+              href: "/solutions/model-deployment",
             },
-            { label: "查看实践案例 →", href: "/solutions#cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
         {
@@ -294,9 +300,12 @@ const platformCenters = [
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions#scene-model-evaluation",
+              href: "/solutions/model-evaluation",
             },
-            { label: "查看实践案例 →", href: "/solutions#cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
       ],
@@ -1018,7 +1027,7 @@ const platformCenters = [
           actions: [
             {
               label: "查看企业内部智能助手方案 →",
-              href: "/solutions#scene-enterprise-assistant",
+              href: "/solutions/enterprise-assistant",
             },
           ],
         },
@@ -1028,7 +1037,7 @@ const platformCenters = [
           actions: [
             {
               label: "查看相关方案 →",
-              href: "/solutions#scene-enterprise-assistant",
+              href: "/solutions/enterprise-assistant",
             },
           ],
         },
@@ -1040,7 +1049,10 @@ const platformCenters = [
               label: "查看多智能体协同方案 →",
               href: "/solutions/enterprise-multi-agent#scene-multi-agent",
             },
-            { label: "查看相关案例 →", href: "/solutions#cases" },
+            {
+              label: "查看相关案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
       ],
@@ -1171,7 +1183,7 @@ const platformCenters = [
             actions: [
               {
                 label: "了解私有化部署方案 →",
-                href: "/solutions#scene-private-yuanqi",
+                href: "/solutions/private-yuanqi",
               },
             ],
           },
@@ -1303,9 +1315,12 @@ const platformCenters = [
           actions: [
             {
               label: "查看模型部署方案 →",
-              href: "/solutions#scene-model-deployment",
+              href: "/solutions/model-deployment",
             },
-            { label: "查看实践案例 →", href: "/solutions#cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
         {
@@ -1314,9 +1329,12 @@ const platformCenters = [
           actions: [
             {
               label: "查看私有化部署方案 →",
-              href: "/solutions#scene-private-yuanqi",
+              href: "/solutions/private-yuanqi",
             },
-            { label: "查看实践案例 →", href: "/solutions#cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
         {
@@ -1325,9 +1343,12 @@ const platformCenters = [
           actions: [
             {
               label: "查看相关方案 →",
-              href: "/solutions#scene-model-deployment",
+              href: "/solutions/model-deployment",
             },
-            { label: "查看实践案例 →", href: "/solutions#cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
       ],

@@ -324,7 +324,7 @@ describe("prototype agent subpage content contract", () => {
             actions: [
               {
                 label: "查看文档理解方案 →",
-                href: "/solutions/knowledge-service",
+                href: "/solutions/document-intelligence",
               },
               {
                 label: "查看实践案例 →",
