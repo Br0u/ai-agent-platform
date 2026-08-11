@@ -47,7 +47,11 @@ async function expectPageContent(
   title: string,
   sectionCount: number,
 ) {
-  const h1 = page.getByRole("heading", { level: 1, name: title });
+  const h1 = page.getByRole("heading", {
+    exact: true,
+    level: 1,
+    name: title,
+  });
   await expect(h1).toBeVisible();
   await expect(page.locator("main h1")).toHaveCount(1);
 
@@ -84,7 +88,11 @@ async function expectNoHorizontalOverflow(page: Page) {
 
 async function gridColumnCounts(page: Page, selector: string) {
   const grids = page.locator(selector);
-  expect(await grids.count(), selector).toBeGreaterThan(0);
+  const count = await grids.count();
+  expect(count, selector).toBeGreaterThan(0);
+  for (let index = 0; index < count; index += 1) {
+    await expect(grids.nth(index)).toBeVisible();
+  }
   return grids.evaluateAll((elements) =>
     elements.map(
       (element) =>
@@ -281,7 +289,7 @@ test("捕获三个行业应用子页桌面与移动端全页视觉证据", async
       const response = await gotoApplicationPage(page, path);
       expect(response?.status(), `${path} screenshot`).toBe(200);
       await expect(
-        page.getByRole("heading", { level: 1, name: title }),
+        page.getByRole("heading", { exact: true, level: 1, name: title }),
       ).toBeVisible();
       await page.evaluate(() => document.fonts.ready);
       await page.screenshot({
