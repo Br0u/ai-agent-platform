@@ -35,14 +35,17 @@ const pages = [
 
 const legacyPages = [
   {
+    expectedH1: "华鲲元启智能导办一体机",
     path: "/product/knowledge-agent",
-    title: "华鲲元启智能导办一体机",
   },
   {
+    expectedH1: "华鲲元启视觉检索一体机",
     path: "/product/video-agent",
-    title: "华鲲元启视觉检索一体机",
   },
-  { path: "/product/office-agent", title: "办公智能体矩阵" },
+  {
+    expectedH1: "AI Agent PlatformOffice Agent 办公智能体矩阵",
+    path: "/product/office-agent",
+  },
 ] as const;
 
 const viewports = [
@@ -270,14 +273,14 @@ test("四个智能体子页在桌面和移动端都能打开与关闭现有 Agen
 });
 
 test("现有三个智能体一体机页面保留原路径和标题", async ({ page }) => {
-  for (const { path, title } of legacyPages) {
+  for (const { expectedH1, path } of legacyPages) {
     const response = await gotoAgentPage(page, path);
 
     expect(response?.status(), path).toBe(200);
     expect(new URL(page.url()).pathname).toBe(path);
     const h1 = page.getByRole("heading", { level: 1 });
     await expect(h1).toHaveCount(1);
-    await expect(h1).toContainText(title);
+    await expect(h1).toHaveText(expectedH1);
   }
 });
 
