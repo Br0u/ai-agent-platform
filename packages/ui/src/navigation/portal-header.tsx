@@ -45,7 +45,7 @@ export function PortalHeader({
           <Link className="site-contact" href="/contact">
             联系我们
           </Link>
-          <Link className="site-login" href="/trial">
+          <Link className="site-trial" href="/trial">
             申请体验
           </Link>
           <MobileNavigation

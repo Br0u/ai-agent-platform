@@ -44,7 +44,6 @@ export function MobileNavigation({
   actionHref = "/login",
   secondaryActionLabel,
   secondaryActionHref,
-  directItemHrefs = [],
   linkComponent: Link = "a",
 }: {
   items: PortalNavigationItem[];
@@ -53,7 +52,6 @@ export function MobileNavigation({
   actionHref?: string;
   secondaryActionLabel?: string;
   secondaryActionHref?: string;
-  directItemHrefs?: string[];
   linkComponent?: NavigationLinkComponent;
 }) {
   const baseId = useId();
@@ -209,10 +207,7 @@ export function MobileNavigation({
 
           <div className="mobile-navigation__body">
             {items.map((item, index) => {
-              if (
-                directItemHrefs.includes(item.href) ||
-                item.children.length === 0
-              ) {
+              if (item.children.length === 0) {
                 return (
                   <div className="mobile-navigation__group" key={item.href}>
                     <Link

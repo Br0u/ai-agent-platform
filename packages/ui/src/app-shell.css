@@ -58,7 +58,7 @@
 }
 
 .site-wordmark,
-.site-login,
+.site-trial,
 .site-contact {
   min-height: 44px;
   color: inherit;
@@ -185,7 +185,7 @@
   outline-offset: 3px;
 }
 
-.site-login {
+.site-trial {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -220,7 +220,7 @@
     transform: translateY(-1px);
   }
 
-  .site-login:hover {
+  .site-trial:hover {
     color: var(--color-surface);
     background: var(--color-ink);
     box-shadow: 0 8px 20px rgb(16 24 56 / 16%);
@@ -248,7 +248,7 @@
   }
 }
 
-.site-login:active {
+.site-trial:active {
   transform: scale(0.98);
 }
 
@@ -295,7 +295,7 @@
   }
 
   .site-navigation,
-  .site-login,
+  .site-trial,
   .site-contact {
     display: none;
   }
@@ -336,7 +336,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .site-wordmark,
-  .site-login,
+  .site-trial,
   .site-contact,
   .assistant-header-entry {
     transition: none;

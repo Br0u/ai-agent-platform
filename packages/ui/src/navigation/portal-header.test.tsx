@@ -108,14 +108,13 @@ describe("PortalHeader", () => {
   it("shows contact and trial on desktop and mobile without login or docs", () => {
     render(<PortalHeader activeHref="/" items={items} />);
 
+    const trial = screen.getByRole("link", { name: "申请体验" });
     expect(screen.getByRole("link", { name: "联系我们" })).toHaveAttribute(
       "href",
       "/contact",
     );
-    expect(screen.getByRole("link", { name: "申请体验" })).toHaveAttribute(
-      "href",
-      "/trial",
-    );
+    expect(trial).toHaveAttribute("href", "/trial");
+    expect(trial).toHaveClass("site-trial");
     expect(screen.queryByRole("link", { name: /登录/ })).toBeNull();
     expect(screen.queryByRole("link", { name: "文档" })).toBeNull();
 
