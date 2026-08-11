@@ -401,6 +401,19 @@ describe("portalNavigation", () => {
     }
   });
 
+  it("opens the existing data agent product entry", () => {
+    const dataAgent = portalNavigation
+      .flatMap((parent) => parent.children)
+      .flatMap((section) => section.items)
+      .find(
+        (item) =>
+          item.label === "数据智能体" && item.href === "/product/data-agent",
+      );
+
+    expect(dataAgent).toBeDefined();
+    expect(dataAgent?.status).toBeUndefined();
+  });
+
   it("marks solution and document children as live while preserving scaffolded areas", () => {
     const solution = portalNavigation.find((item) => item.label === "解决方案");
     for (const child of solution?.children.flatMap((group) => group.items) ??

@@ -28,6 +28,10 @@ const requiredRoutes = [
   "/product/coding-session",
   "/product/coding-mobile",
   "/product/coding-standard",
+  "/product/agent-knowledge",
+  "/product/data-agent",
+  "/product/agent-video",
+  "/product/agent-orchestration",
   "/product/[slug]",
   "/solutions",
   "/solutions/[slug]",
@@ -261,6 +265,29 @@ describe("routeRegistry", () => {
 
     expect(matchRoute("/product/coding-unknown")).toMatchObject({
       path: "/product/[slug]",
+      status: "scaffold",
+    });
+  });
+
+  it("registers the four agent subpages before remaining product scaffolds", () => {
+    for (const [path, title] of [
+      ["/product/agent-knowledge", "企业知识助手"],
+      ["/product/data-agent", "智能问数助手"],
+      ["/product/agent-video", "视频理解助手"],
+      ["/product/agent-orchestration", "复杂任务自动化引擎"],
+    ] as const) {
+      expect(matchRoute(path)).toEqual({
+        path,
+        title,
+        group: "public",
+        status: "live",
+      });
+    }
+
+    expect(matchRoute("/product/agent-unknown")).toEqual({
+      path: "/product/[slug]",
+      title: "产品模块详情",
+      group: "public",
       status: "scaffold",
     });
   });
