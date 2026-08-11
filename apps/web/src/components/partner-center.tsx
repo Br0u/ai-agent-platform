@@ -18,6 +18,8 @@ import {
   partnerDirectory,
   partnerHref,
   partnerNodeForLocation,
+  type PartnerAction,
+  type PartnerClosingCta,
   type PartnerDirectoryNode,
   type PartnerView,
   partnerViewContent,
@@ -55,7 +57,9 @@ function locationState(href: string) {
   const params = url.searchParams;
   const candidate = params.get("view") as PartnerView | null;
   const view =
-    candidate && candidate in partnerViewContent ? candidate : "overview";
+    candidate && Object.hasOwn(partnerViewContent, candidate)
+      ? candidate
+      : "overview";
   return {
     view,
     node: partnerNodeForLocation(view, url.hash),
@@ -135,6 +139,7 @@ export function PartnerCenter() {
   const contactDialog = useRef<HTMLDivElement>(null);
   const contactClose = useRef<HTMLButtonElement>(null);
   const contactTrigger = useRef<HTMLElement | null>(null);
+  const safeEntry = useRef<HTMLButtonElement>(null);
   const restoreMobileFocus = useRef(false);
   const restoreContactFocus = useRef(false);
   const allowFocusReturn = useRef(false);
@@ -182,10 +187,6 @@ export function PartnerCenter() {
     else window.history.replaceState(null, "", href);
     window.dispatchEvent(new Event(PARTNER_LOCATION_EVENT));
     setMobileOpen(false);
-    requestAnimationFrame(() => {
-      const target = document.getElementById(window.location.hash.slice(1));
-      target?.scrollIntoView?.({ block: "start" });
-    });
   };
 
   const onPartnerLink = (
@@ -231,9 +232,16 @@ export function PartnerCenter() {
       contactClose.current?.focus();
     } else if (restoreContactFocus.current) {
       restoreContactFocus.current = false;
-      contactTrigger.current?.focus();
+      (contactTrigger.current ?? safeEntry.current)?.focus();
     }
   }, [visibleContactTopic]);
+
+  useLayoutEffect(() => {
+    if (visibleContactTopic) return;
+    document
+      .getElementById(location.hash.slice(1))
+      ?.scrollIntoView?.({ block: "start" });
+  }, [location.hash, view, visibleContactTopic]);
 
   useEffect(() => {
     if (!mobileOpen && !visibleContactTopic) return;
@@ -336,6 +344,7 @@ export function PartnerCenter() {
           )}
         </div>
         <button
+          ref={safeEntry}
           type="button"
           onClick={() => navigate("/partners?view=overview#po-hero")}
         >
@@ -422,13 +431,20 @@ export function PartnerCenter() {
             lead={content.lead}
             tags={content.tags}
             claims={content.claims}
+            actions={content.heroActions}
             view={view}
             onContact={openContact}
             onNavigate={navigate}
           />
-          {view === "overview" ? <Overview onNavigate={navigate} /> : null}
-          {view === "business" ? <Business onContact={openContact} /> : null}
-          {view === "policy" ? <Policy onNavigate={navigate} /> : null}
+          {view === "overview" ? (
+            <Overview onContact={openContact} onNavigate={navigate} />
+          ) : null}
+          {view === "business" ? (
+            <Business onContact={openContact} onNavigate={navigate} />
+          ) : null}
+          {view === "policy" ? (
+            <Policy onContact={openContact} onNavigate={navigate} />
+          ) : null}
           {view === "training" ? <Training /> : null}
           {view === "become" ? (
             <Become
@@ -526,6 +542,7 @@ function Hero({
   lead,
   tags,
   claims,
+  actions,
   view,
   onContact,
   onNavigate,
@@ -535,6 +552,7 @@ function Hero({
   lead: string;
   tags: readonly string[];
   claims: readonly string[];
+  actions: readonly PartnerAction[];
   view: PartnerView;
   onContact: (topic: string, trigger: HTMLElement) => void;
   onNavigate: (href: string) => void;
@@ -553,37 +571,11 @@ function Hero({
             <span key={tag}>{tag}</span>
           ))}
         </div>
-        <div className="partner-actions">
-          {view === "overview" ? (
-            <button
-              type="button"
-              onClick={() => onNavigate("/partners?view=become#pbc-hero")}
-            >
-              成为合作伙伴
-            </button>
-          ) : null}
-          {view === "overview" || view === "training" || view === "become" ? (
-            <button
-              type="button"
-              onClick={(event) =>
-                onContact(
-                  view === "training"
-                    ? "伙伴培训报名"
-                    : view === "become"
-                      ? "申请成为合作伙伴"
-                      : "生态合作咨询",
-                  event.currentTarget,
-                )
-              }
-            >
-              {view === "become"
-                ? "立即申请"
-                : view === "training"
-                  ? "联系咨询"
-                  : "联系生态负责人"}
-            </button>
-          ) : null}
-        </div>
+        <PartnerActions
+          actions={actions}
+          onContact={onContact}
+          onNavigate={onNavigate}
+        />
       </div>
       <div className="partner-visual" aria-label="示意信息">
         <strong>华鲲元启伙伴生态</strong>
@@ -595,11 +587,79 @@ function Hero({
   );
 }
 
-function Overview({ onNavigate }: { onNavigate: (href: string) => void }) {
+function PartnerActions({
+  actions,
+  onContact,
+  onNavigate,
+}: {
+  actions: readonly PartnerAction[];
+  onContact: (topic: string, trigger: HTMLElement) => void;
+  onNavigate: (href: string) => void;
+}) {
+  return (
+    <div className="partner-actions">
+      {actions.map((action) =>
+        "topic" in action ? (
+          <button
+            type="button"
+            key={action.label}
+            onClick={(event) => onContact(action.topic, event.currentTarget)}
+          >
+            {action.label}
+          </button>
+        ) : action.href.startsWith("/partners") ? (
+          <button
+            type="button"
+            key={action.label}
+            onClick={() => onNavigate(action.href)}
+          >
+            {action.label}
+          </button>
+        ) : (
+          <a href={action.href} key={action.label}>
+            {action.label}
+          </a>
+        ),
+      )}
+    </div>
+  );
+}
+
+function ClosingCta({
+  content,
+  onContact,
+  onNavigate,
+}: {
+  content: PartnerClosingCta;
+  onContact: (topic: string, trigger: HTMLElement) => void;
+  onNavigate: (href: string) => void;
+}) {
+  return (
+    <section id={content.anchor} className="partner-section partner-cta">
+      <div>
+        <h2>{content.title}</h2>
+        <p>{content.lead}</p>
+      </div>
+      <PartnerActions
+        actions={content.actions}
+        onContact={onContact}
+        onNavigate={onNavigate}
+      />
+    </section>
+  );
+}
+
+function Overview({
+  onContact,
+  onNavigate,
+}: {
+  onContact: (topic: string, trigger: HTMLElement) => void;
+  onNavigate: (href: string) => void;
+}) {
   const content = partnerViewContent.overview;
   return (
     <>
-      <section className="partner-section partner-stats">
+      <section id="po-stats" className="partner-section partner-stats">
         {content.stats.map(([value, label]) => (
           <div key={label}>
             <strong>{value}</strong>
@@ -607,7 +667,7 @@ function Overview({ onNavigate }: { onNavigate: (href: string) => void }) {
           </div>
         ))}
       </section>
-      <section className="partner-section">
+      <section id="po-value" className="partner-section">
         <header>
           <h2>为什么选择华鲲生态</h2>
           <p>从商业模式到赋能支持，为伙伴提供清晰可预期的成长回报。</p>
@@ -623,7 +683,7 @@ function Overview({ onNavigate }: { onNavigate: (href: string) => void }) {
           ))}
         </CardGrid>
       </section>
-      <section className="partner-section">
+      <section id="po-modules" className="partner-section">
         <header>
           <h2>三大合作模块，从了解到落地</h2>
           <p>选择最适合你的合作方向，开始你的 AI 生态之旅。</p>
@@ -644,21 +704,28 @@ function Overview({ onNavigate }: { onNavigate: (href: string) => void }) {
           ))}
         </CardGrid>
       </section>
-      <section className="partner-section">
+      <section id="po-flow" className="partner-section">
         <header>
           <h2>合作流程一目了然</h2>
           <p>六步完成伙伴入驻，快速启动业务。</p>
         </header>
         <Flow />
       </section>
+      <ClosingCta
+        content={content.closingCta}
+        onContact={onContact}
+        onNavigate={onNavigate}
+      />
     </>
   );
 }
 
 function Business({
   onContact,
+  onNavigate,
 }: {
   onContact: (topic: string, trigger: HTMLElement) => void;
+  onNavigate: (href: string) => void;
 }) {
   const content = partnerViewContent.business;
   return (
@@ -704,7 +771,7 @@ function Business({
           ))}
         </CardGrid>
       </section>
-      <section className="partner-section">
+      <section id="pb-compare" className="partner-section">
         <header>
           <h2>模式对比一览</h2>
           <p>同一平台能力，不同合作深度与收益结构。</p>
@@ -720,24 +787,14 @@ function Business({
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <th>适合对象</th>
-                {content.modes.map((mode) => (
-                  <td key={mode.title}>{mode.fit}</td>
-                ))}
-              </tr>
-              <tr>
-                <th>合作方式</th>
-                {content.modes.map((mode) => (
-                  <td key={mode.title}>{mode.model}</td>
-                ))}
-              </tr>
-              <tr>
-                <th>收益构成</th>
-                {content.modes.map((mode) => (
-                  <td key={mode.title}>{mode.revenue}</td>
-                ))}
-              </tr>
+              {content.comparison.map(([label, ...values]) => (
+                <tr key={label}>
+                  <th>{label}</th>
+                  {values.map((value) => (
+                    <td key={value}>{value}</td>
+                  ))}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -788,24 +845,29 @@ function Business({
           ))}
         </CardGrid>
       </section>
-      <section className="partner-section">
+      <section id="pb-flow" className="partner-section">
         <header>
           <h2>加入流程</h2>
           <p>六步完成伙伴入驻，快速启动业务。</p>
         </header>
         <Flow />
-        <button
-          type="button"
-          onClick={(event) => onContact("商业模式咨询", event.currentTarget)}
-        >
-          咨询商业模式
-        </button>
       </section>
+      <ClosingCta
+        content={content.closingCta}
+        onContact={onContact}
+        onNavigate={onNavigate}
+      />
     </>
   );
 }
 
-function Policy({ onNavigate }: { onNavigate: (href: string) => void }) {
+function Policy({
+  onContact,
+  onNavigate,
+}: {
+  onContact: (topic: string, trigger: HTMLElement) => void;
+  onNavigate: (href: string) => void;
+}) {
   const content = partnerViewContent.policy;
   return (
     <>
@@ -842,6 +904,25 @@ function Policy({ onNavigate }: { onNavigate: (href: string) => void }) {
             </article>
           ))}
         </CardGrid>
+      </section>
+      <section
+        id="pp-choose"
+        className="partner-section partner-section--muted"
+      >
+        <header>
+          <h2>如何选择伙伴类型</h2>
+          <p>结合自身能力定位合作角色，三类能力可叠加。</p>
+        </header>
+        <CardGrid>
+          {content.choose.map(([condition, type, result]) => (
+            <article className="partner-card partner-path" key={type}>
+              <span>{condition}</span>
+              <strong>→</strong>
+              <h3>{type}</h3>
+              <p>{result}</p>
+            </article>
+          ))}
+        </CardGrid>
         <p className="partner-note">
           伙伴类型用于判断合作方向，不代表自动通过准入审核；同一企业可具备多项能力。
         </p>
@@ -872,6 +953,15 @@ function Policy({ onNavigate }: { onNavigate: (href: string) => void }) {
             </article>
           ))}
         </CardGrid>
+        <article className="partner-card partner-certification-value">
+          <h3>{content.certificationValue.title}</h3>
+          <p>{content.certificationValue.lead}</p>
+          <div className="partner-tags">
+            {content.certificationValue.points.map((point) => (
+              <span key={point}>{point}</span>
+            ))}
+          </div>
+        </article>
       </section>
       <section
         id="pp-resources"
@@ -893,6 +983,11 @@ function Policy({ onNavigate }: { onNavigate: (href: string) => void }) {
           ))}
         </CardGrid>
       </section>
+      <ClosingCta
+        content={content.closingCta}
+        onContact={onContact}
+        onNavigate={onNavigate}
+      />
     </>
   );
 }

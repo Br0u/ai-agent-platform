@@ -79,6 +79,94 @@ describe("PartnerCenter", () => {
     ).toBeVisible();
   });
 
+  it("falls back to overview for inherited object keys in the view query", () => {
+    for (const view of ["toString", "constructor", "__proto__"]) {
+      window.history.replaceState(null, "", `/partners?view=${view}#po-hero`);
+      const { unmount } = render(<PartnerCenter />);
+      expect(
+        screen.getByRole("heading", {
+          level: 1,
+          name: "共建企业 AI 生态，共享增长机遇",
+        }),
+      ).toBeVisible();
+      unmount();
+    }
+  });
+
+  it("renders the exact prototype hero actions for every view", () => {
+    const cases = [
+      [
+        "/partners?view=overview#po-hero",
+        "po-hero",
+        ["成为合作伙伴", "了解商业模式", "联系生态负责人"],
+      ],
+      [
+        "/partners?view=business#pb-hero",
+        "pb-hero",
+        ["查看合作模式", "成为合作伙伴"],
+      ],
+      [
+        "/partners?view=policy#pp-hero",
+        "pp-hero",
+        ["查看准入条件", "成为合作伙伴"],
+      ],
+      [
+        "/partners?view=training#pt-hero",
+        "pt-hero",
+        ["查看课程体系", "联系咨询"],
+      ],
+      [
+        "/partners?view=become#pbc-hero",
+        "pbc-hero",
+        ["立即申请", "查看准入条件"],
+      ],
+    ] as const;
+
+    for (const [href, anchor, labels] of cases) {
+      window.history.replaceState(null, "", href);
+      const { container, unmount } = render(<PartnerCenter />);
+      const hero = within(container.querySelector(`#${anchor}`)!);
+      expect(
+        hero.getAllByRole("button").map((button) => button.textContent),
+      ).toEqual(labels);
+      unmount();
+    }
+  });
+
+  it("renders the complete business and policy sections with working closing CTAs", () => {
+    window.history.replaceState(null, "", "/partners?view=business#pb-hero");
+    const business = render(<PartnerCenter />);
+    const comparison = screen.getByRole("table");
+    expect(within(comparison).getByText("合作深度")).toBeVisible();
+    expect(within(comparison).getByText("典型场景")).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "选择华鲲元启，选择共赢" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "申请成为伙伴" })).toBeVisible();
+    business.unmount();
+
+    window.history.replaceState(null, "", "/partners?view=policy#pp-hero");
+    render(<PartnerCenter />);
+    expect(
+      screen.getByRole("heading", { name: "如何选择伙伴类型" }),
+    ).toBeVisible();
+    expect(screen.getByText("拥有客户资源与销售能力")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "认证的价值" })).toBeVisible();
+    const policyTrigger = screen.getByRole("button", { name: "咨询伙伴政策" });
+    fireEvent.click(policyTrigger);
+    expect(screen.getByRole("dialog", { name: "伙伴政策咨询" })).toBeVisible();
+  });
+
+  it("renders the overview closing CTA", () => {
+    render(<PartnerCenter />);
+    expect(
+      screen.getByRole("heading", { name: "选择华鲲元启，选择共赢" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "了解元启平台 →" }),
+    ).toHaveAttribute("href", "/product");
+  });
+
   it("uses browser history for back and searches, clears and collapses the desktop directory", () => {
     const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
     render(<PartnerCenter />);
@@ -152,8 +240,11 @@ describe("PartnerCenter", () => {
   });
 
   it("opens the exact contact topic, isolates outside UI and restores focus after Escape", () => {
-    render(<PartnerCenter />);
-    const trigger = screen.getByRole("button", { name: "联系生态负责人" });
+    const { container } = render(<PartnerCenter />);
+    const trigger = within(container.querySelector("#po-hero")!).getByRole(
+      "button",
+      { name: "联系生态负责人" },
+    );
     fireEvent.click(trigger);
 
     const dialog = screen.getByRole("dialog", { name: "生态合作咨询" });
@@ -183,5 +274,20 @@ describe("PartnerCenter", () => {
     expect(document.querySelector(".partner-shell")).not.toHaveAttribute(
       "inert",
     );
+  });
+
+  it("opens a cold #partner-contact dialog and restores Escape focus to a safe page entry", () => {
+    window.history.replaceState(null, "", "/partners#partner-contact");
+    render(<PartnerCenter />);
+
+    expect(screen.getByRole("dialog", { name: "生态合作咨询" })).toBeVisible();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "返回合作伙伴总览" }),
+    ).toHaveFocus();
+    expect(
+      window.location.pathname + window.location.search + window.location.hash,
+    ).toBe("/partners?view=overview#po-hero");
   });
 });

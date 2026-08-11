@@ -1,3 +1,8 @@
+import type {
+  PartnerAction,
+  PartnerClosingCta,
+} from "./partner-center-content";
+
 export const partnerOverviewContent = {
   eyebrow: "合作伙伴｜生态总览",
   title: "共建企业 AI 生态，共享增长机遇",
@@ -5,6 +10,11 @@ export const partnerOverviewContent = {
   tags: ["商业回报", "市场协同", "成长认证"],
   claims: ["200+ 伙伴", "500+ 企业客户", "10万+ AI 应用上线"],
   disclaimer: "示意内容，正式上线后替换为真实生态关系图。",
+  heroActions: [
+    { label: "成为合作伙伴", href: "/partners?view=become#pbc-hero" },
+    { label: "了解商业模式", href: "/partners?view=business#pb-hero" },
+    { label: "联系生态负责人", topic: "生态合作咨询" },
+  ] satisfies readonly PartnerAction[],
   searchText:
     "商业回报 市场协同 成长认证 收益模式灵活 分润回报逐级提升 全链路赋能支持 认证与成长体系 商业模式 伙伴政策 伙伴培训 合作流程",
   stats: [
@@ -65,4 +75,14 @@ export const partnerOverviewContent = {
       href: "/partners?view=training#pt-hero",
     },
   ],
+  closingCta: {
+    anchor: "po-cta",
+    title: "选择华鲲元启，选择共赢",
+    lead: "立即申请成为华鲲合作伙伴，开启 AI 时代新机遇。",
+    actions: [
+      { label: "申请成为伙伴", href: "/partners?view=become#pbc-hero" },
+      { label: "联系生态负责人", topic: "生态合作咨询" },
+      { label: "了解元启平台 →", href: "/product" },
+    ],
+  } satisfies PartnerClosingCta,
 } as const;

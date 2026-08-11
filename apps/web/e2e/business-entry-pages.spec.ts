@@ -328,7 +328,9 @@ test("partners 执行五视图、15 key、筛选、history 和联系弹层合同
     page.getByRole("button", { name: "展开合作伙伴目录" }),
   ).toHaveAttribute("aria-expanded", "false");
 
-  const trigger = page.getByRole("button", { name: "联系生态负责人" });
+  const trigger = page
+    .locator("#po-hero")
+    .getByRole("button", { name: "联系生态负责人" });
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "生态合作咨询" });
   const close = dialog.getByRole("button", { name: "关闭" });
@@ -365,6 +367,82 @@ test("partners 执行五视图、15 key、筛选、history 和联系弹层合同
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
   await expect(page.locator(".partner-shell")).not.toHaveAttribute("inert", "");
+});
+
+test("partners 五视图分别冷启动 query/hash 并落入 sticky 可视区", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+
+  for (const viewport of [
+    { width: 1440, height: 1000, min: 145, max: 170 },
+    { width: 390, height: 844, min: 158, max: 185 },
+  ]) {
+    await page.setViewportSize(viewport);
+    for (const [view, hash, heading, targetHeading] of [
+      [
+        "overview",
+        "po-flow",
+        "共建企业 AI 生态，共享增长机遇",
+        "合作流程一目了然",
+      ],
+      [
+        "business",
+        "pb-tiers",
+        "多元化商业模式，匹配每一类伙伴",
+        "分润政策：四级伙伴体系",
+      ],
+      [
+        "policy",
+        "pp-cert",
+        "清晰的准入与认证体系，提供明确成长路径",
+        "认证体系",
+      ],
+      [
+        "training",
+        "pt-path",
+        "系统化培训与认证，快速掌握元启平台",
+        "三级认证路径",
+      ],
+      ["become", "pbc-types", "成为华鲲合作伙伴", "选择合作方向"],
+    ] as const) {
+      await gotoPartners(page, `?view=${view}#${hash}`);
+      await expect(page).toHaveURL(
+        new RegExp(`/partners\\?view=${view}#${hash}$`, "u"),
+      );
+      await expect(
+        page.getByRole("heading", { level: 1, name: heading }),
+      ).toHaveCount(1);
+      const target = page
+        .locator("section")
+        .filter({
+          has: page.getByRole("heading", { level: 2, name: targetHeading }),
+        })
+        .first();
+      await expect(target).toBeInViewport();
+      await expect
+        .poll(() =>
+          target.evaluate((element) => element.getBoundingClientRect().top),
+        )
+        .toBeGreaterThanOrEqual(viewport.min);
+      await expect
+        .poll(() =>
+          target.evaluate((element) => element.getBoundingClientRect().top),
+        )
+        .toBeLessThanOrEqual(viewport.max);
+    }
+  }
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await gotoPartners(page, "#partner-contact");
+  const dialog = page.getByRole("dialog", { name: "生态合作咨询" });
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "返回合作伙伴总览" }),
+  ).toBeFocused();
+  await expect(page).toHaveURL(/\/partners\?view=overview#po-hero$/u);
 });
 
 test("partners 在 1440 和 390 无横溢、锚点可见、抽屉隔离并保留唯一 Agent", async ({

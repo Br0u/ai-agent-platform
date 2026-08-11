@@ -252,8 +252,12 @@
 }
 
 .partner-actions button,
+.partner-actions a,
 .partner-section button,
 .partner-card button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 40px;
   border: 1px solid var(--color-line);
   border-radius: 8px;
@@ -262,6 +266,7 @@
   background: var(--color-surface);
   font: inherit;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .partner-actions button:first-child {
@@ -297,6 +302,22 @@
 .partner-section h2 {
   margin: 0 0 8px;
   font-size: clamp(26px, 3vw, 40px);
+}
+
+.partner-section--muted {
+  background: var(--color-surface);
+}
+
+.partner-cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.partner-certification-value {
+  margin-top: 18px;
+  border-color: var(--color-primary);
 }
 
 .partner-grid {
@@ -618,6 +639,11 @@
   .partner-flow,
   .partner-contact-cards {
     grid-template-columns: 1fr;
+  }
+
+  .partner-cta {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .partner-hero h1 {

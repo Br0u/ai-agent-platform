@@ -1,3 +1,5 @@
+import type { PartnerAction } from "./partner-center-content";
+
 export const partnerFlow = [
   ["在线申请", "填写伙伴申请表，提交公司和团队基本信息", ""],
   ["资质审核", "元启团队在 5 个工作日内完成资质审核并反馈结果", "5 个工作日"],
@@ -14,6 +16,10 @@ export const partnerBecomeContent = {
   tags: ["选择方向", "准备信息", "联系沟通", "确认合作"],
   claims: ["六步入驻流程", "5 个工作日"],
   disclaimer: "示意内容，正式上线后替换为真实对接流程。",
+  heroActions: [
+    { label: "立即申请", topic: "申请成为合作伙伴" },
+    { label: "查看准入条件", href: "/partners?view=policy#pp-hero" },
+  ] satisfies readonly PartnerAction[],
   searchText:
     "六步入驻流程 渠道代理伙伴 交付生态伙伴 技术合作伙伴 公司信息 团队信息 合作意向 在线申请 资质审核 签署协议 培训认证 业务启动 持续支持",
   flow: partnerFlow,

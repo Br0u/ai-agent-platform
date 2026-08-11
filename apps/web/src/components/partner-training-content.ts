@@ -1,3 +1,5 @@
+import type { PartnerAction } from "./partner-center-content";
+
 export const partnerTrainingContent = {
   eyebrow: "合作伙伴｜伙伴培训",
   title: "系统化培训与认证，快速掌握元启平台",
@@ -5,6 +7,10 @@ export const partnerTrainingContent = {
   tags: ["200+ 课程", "三级认证", "五大资源"],
   claims: ["200+ 课程", "200+ 课时"],
   disclaimer: "示意内容，正式上线后替换为真实学习平台界面。",
+  heroActions: [
+    { label: "查看课程体系", href: "/partners?view=training#pt-courses" },
+    { label: "联系咨询", topic: "伙伴培训报名" },
+  ] satisfies readonly PartnerAction[],
   searchText:
     "在线学习平台 线下实训营 认证考试 学习社区 销售课程 技术课程 交付课程 入门级 专业级 专家级 视频课程库 实验环境 文档中心 社区论坛 定期 Webinar",
   system: [

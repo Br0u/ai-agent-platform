@@ -19,6 +19,17 @@ export type PartnerDirectoryNode = {
   children?: readonly PartnerDirectoryNode[];
 };
 
+export type PartnerAction =
+  | { label: string; href: string }
+  | { label: string; topic: string };
+
+export type PartnerClosingCta = {
+  anchor: string;
+  title: string;
+  lead: string;
+  actions: readonly PartnerAction[];
+};
+
 export const partnerDirectory: readonly PartnerDirectoryNode[] = [
   {
     key: "overview",
@@ -137,16 +148,6 @@ export const partnerContact = {
   emailCopy: "生态合作邮箱待确认",
   qr: "联系二维码素材槽位",
   privacy: "首期通过人工渠道沟通，不提交或保存用户信息。",
-  topics: [
-    "生态合作咨询",
-    "渠道分销模式咨询",
-    "联合解决方案模式咨询",
-    "OEM/白标模式咨询",
-    "商业模式咨询",
-    "伙伴政策咨询",
-    "伙伴培训报名",
-    "申请成为合作伙伴",
-  ],
 } as const;
 
 export const allPartnerDirectoryNodes = partnerDirectory.flatMap((node) => [

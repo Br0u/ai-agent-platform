@@ -1,3 +1,8 @@
+import type {
+  PartnerAction,
+  PartnerClosingCta,
+} from "./partner-center-content";
+
 export const partnerPolicyContent = {
   eyebrow: "合作伙伴｜伙伴政策",
   title: "清晰的准入与认证体系，提供明确成长路径",
@@ -5,6 +10,10 @@ export const partnerPolicyContent = {
   tags: ["三大类型", "三大认证", "五项支持"],
   claims: ["三大伙伴类型", "三大认证方向", "三级能力进阶", "五项支持资源"],
   disclaimer: "示意内容，伙伴准入、认证等级与支持资源正式上线后替换。",
+  heroActions: [
+    { label: "查看准入条件", href: "/partners?view=policy#pp-types" },
+    { label: "成为合作伙伴", href: "/partners?view=become#pbc-hero" },
+  ] satisfies readonly PartnerAction[],
   searchText:
     "渠道代理伙伴 交付生态伙伴 技术合作伙伴 销售认证 技术认证 交付认证 伙伴门户 技术文档 营销工具包 测试环境 专属支持",
   types: [
@@ -43,6 +52,15 @@ export const partnerPolicyContent = {
         ["联合创新", "有意愿投入资源进行联合方案研发"],
       ],
     },
+  ],
+  choose: [
+    [
+      "拥有客户资源与销售能力",
+      "渠道代理伙伴",
+      "通过转售与本地服务获取销售分成",
+    ],
+    ["具备项目实施与集成能力", "交付生态伙伴", "承接项目交付与定制化开发"],
+    ["拥有技术产品与研发能力", "技术合作伙伴", "产品集成与联合创新"],
   ],
   certifications: [
     {
@@ -109,6 +127,16 @@ export const partnerPolicyContent = {
       ],
     },
   ],
+  certificationValue: {
+    title: "认证的价值",
+    lead: "认证不仅是能力证明，更直接关联商机与权益：",
+    points: [
+      "认证人员计入团队资质",
+      "等级晋级前置条件",
+      "优先参与联合打单",
+      "获得官方背书与宣传露出",
+    ],
+  },
   resources: [
     [
       "户",
@@ -141,4 +169,13 @@ export const partnerPolicyContent = {
       "伙伴成功经理 · 技术顾问 · 一对一服务",
     ],
   ],
+  closingCta: {
+    anchor: "pp-cta",
+    title: "加入华鲲元启伙伴网络",
+    lead: "立即申请，开启您的 AI 事业新篇章。",
+    actions: [
+      { label: "申请成为伙伴", href: "/partners?view=become#pbc-hero" },
+      { label: "咨询伙伴政策", topic: "伙伴政策咨询" },
+    ],
+  } satisfies PartnerClosingCta,
 } as const;

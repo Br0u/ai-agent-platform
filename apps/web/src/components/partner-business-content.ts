@@ -1,3 +1,8 @@
+import type {
+  PartnerAction,
+  PartnerClosingCta,
+} from "./partner-center-content";
+
 export const partnerBusinessContent = {
   eyebrow: "合作伙伴｜商业模式",
   title: "多元化商业模式，匹配每一类伙伴",
@@ -10,6 +15,10 @@ export const partnerBusinessContent = {
   ],
   disclaimer:
     "示意内容，合作等级与金额正式上线后替换，具体以双方签署协议为准。",
+  heroActions: [
+    { label: "查看合作模式", href: "/partners?view=business#pb-modes" },
+    { label: "成为合作伙伴", href: "/partners?view=become#pbc-hero" },
+  ] satisfies readonly PartnerAction[],
   searchText:
     "渠道分销模式 联合解决方案模式 OEM/白标模式 银牌伙伴 金牌伙伴 钻石伙伴 战略伙伴 市场支持 技术支持 培训赋能 商机共享 产品权益",
   modes: [
@@ -37,6 +46,28 @@ export const partnerBusinessContent = {
       revenue: "批量授权 + 技术支持",
       desc: "以您的品牌独立运营 AI 平台，元启提供底层技术支撑，享受批量授权优惠和专属技术支持。",
     },
+  ],
+  comparison: [
+    ["适合对象", "代理商、系统集成商", "ISV、系统集成商", "大型 ISV"],
+    [
+      "合作方式",
+      "产品转售 + 区域覆盖",
+      "产品嵌入 + 联合品牌",
+      "品牌定制 + 独立运营",
+    ],
+    [
+      "收益构成",
+      "销售分成 + 返点激励",
+      "技术分成 + 联合营销",
+      "批量授权 + 技术支持",
+    ],
+    ["合作深度", "产品销售与服务", "方案共建与联合品牌", "品牌定制与独立运营"],
+    [
+      "典型场景",
+      "区域市场拓展、客户转售",
+      "行业解决方案落地",
+      "自有品牌平台运营",
+    ],
   ],
   tiers: [
     {
@@ -145,4 +176,13 @@ export const partnerBusinessContent = {
       ["新功能优先体验", "定制需求优先排期", "专属产品顾问", "Roadmap 共议"],
     ],
   ],
+  closingCta: {
+    anchor: "pb-cta",
+    title: "选择华鲲元启，选择共赢",
+    lead: "立即申请成为华鲲合作伙伴，开启 AI 时代新机遇。",
+    actions: [
+      { label: "申请成为伙伴", href: "/partners?view=become#pbc-hero" },
+      { label: "咨询商业模式", topic: "商业模式咨询" },
+    ],
+  } satisfies PartnerClosingCta,
 } as const;
