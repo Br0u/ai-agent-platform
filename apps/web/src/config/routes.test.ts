@@ -172,10 +172,10 @@ describe("routeRegistry", () => {
     });
   });
 
-  it("registers the pricing calculator as a live public route", () => {
+  it("registers pricing and services as a live public route", () => {
     expect(matchRoute("/pricing")).toEqual({
       path: "/pricing",
-      title: "价格计算",
+      title: "价格与服务",
       group: "public",
       status: "live",
     });

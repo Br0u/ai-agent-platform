@@ -645,57 +645,117 @@ test("pricing 和 contact 在 1440 与 390 执行原型内容和咨询主题合�
 
     await page.getByRole("button", { name: "返回上一个浏览页面" }).click();
     await expect(page).toHaveURL(/\/trial$/u);
+
+    const coldPage = await page.context().newPage();
+    await coldPage.setViewportSize(viewport);
+    await coldPage.goto("/contact", { waitUntil: "domcontentloaded" });
+    await coldPage.getByRole("button", { name: "返回上一个浏览页面" }).click();
+    await expect(coldPage).toHaveURL(/\/$/u);
+    await coldPage.close();
   }
 });
 
-test("trial 完成校验、成功、焦点约束和 Escape 回焦", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto("/trial", { waitUntil: "domcontentloaded" });
+test("trial 在 1440 与 390 完成校验、成功、关闭和焦点约束", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
 
-  const trigger = page.getByRole("button", { name: "立即填写申请" });
-  await trigger.click();
-  const dialog = page.getByRole("dialog", { name: "开启企业 AI 落地体验" });
-  const close = dialog.getByRole("button", { name: "关闭申请弹层" });
-  await expect(close).toBeFocused();
-  await expect(page.locator(".trial-content")).toHaveAttribute("inert", "");
+  for (const viewport of [
+    { width: 1440, height: 1000 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/trial", { waitUntil: "domcontentloaded" });
 
-  await dialog.getByRole("button", { name: "提交申请" }).click();
-  await expect(dialog.getByRole("status")).toHaveText("请填写姓名");
-  await dialog.getByLabel("姓名").fill("测试用户");
-  await dialog.getByLabel("联系方式（手机号或邮箱）").fill("invalid");
-  await dialog.getByRole("button", { name: "提交申请" }).click();
-  await expect(dialog.getByRole("status")).toHaveText(
-    "请填写正确的手机号或邮箱",
-  );
+    const trigger = page.getByRole("button", { name: "立即填写申请" });
+    await trigger.click();
+    const dialog = page.getByRole("dialog", {
+      name: "开启企业 AI 落地体验",
+    });
+    const close = dialog.getByRole("button", { name: "关闭申请弹层" });
+    await expect(close).toBeFocused();
+    await expect(page.locator(".trial-content")).toHaveAttribute("inert", "");
+    const backdropBox = await page
+      .locator(".trial-dialog-backdrop")
+      .boundingBox();
+    expect(backdropBox?.y).toBe(0);
 
-  await dialog.getByLabel("联系方式（手机号或邮箱）").fill("test@example.com");
-  await dialog.getByRole("button", { name: "获取验证码" }).click();
-  const codeMessage = await dialog.getByRole("status").textContent();
-  const code = codeMessage?.match(/\d{6}/u)?.[0];
-  expect(code).toBeTruthy();
-  await dialog.getByLabel("验证码", { exact: true }).fill(code!);
-  await dialog.getByRole("button", { name: "提交申请" }).click();
-  await expect(dialog.getByRole("status")).toHaveText("请填写所属公司");
-  await dialog.getByLabel("所属公司").fill("测试公司");
-  await dialog.getByRole("button", { name: "提交申请" }).click();
-  const successDialog = page.getByRole("dialog", { name: "提交成功" });
-  await expect(
-    successDialog.getByRole("heading", { level: 2, name: "提交成功" }),
-  ).toBeVisible();
-  await successDialog.getByRole("button", { name: "完成" }).click();
-  await expect(successDialog).toHaveCount(0);
-  await expect(trigger).toBeFocused();
+    for (const outside of [
+      page.getByRole("banner").getByRole("link").first(),
+      page.getByRole("contentinfo").getByRole("link").first(),
+      page.locator(".floating-assistant__launcher"),
+    ]) {
+      await outside.focus();
+      await expect(close).toBeFocused();
+    }
 
-  const closingTrigger = page.getByRole("button", { name: "填写申请信息" });
-  await closingTrigger.click();
-  await expect(close).toBeFocused();
-  const cancel = dialog.getByRole("button", { name: "取消" });
-  await cancel.focus();
-  await page.keyboard.press("Tab");
-  await expect(close).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
-  await expect(closingTrigger).toBeFocused();
+    const launcherBox = await page
+      .locator(".floating-assistant__launcher")
+      .boundingBox();
+    expect(launcherBox).not.toBeNull();
+    await page.mouse.click(
+      launcherBox!.x + launcherBox!.width / 2,
+      launcherBox!.y + launcherBox!.height / 2,
+    );
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: "码多多" })).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+
+    await trigger.click();
+    await dialog.getByRole("button", { name: "提交申请" }).click();
+    await expect(dialog.getByRole("status")).toHaveText("请填写姓名");
+    await dialog.getByLabel("姓名").fill("测试用户");
+    await dialog.getByLabel("联系方式（手机号或邮箱）").fill("invalid");
+    await dialog.getByRole("button", { name: "提交申请" }).click();
+    await expect(dialog.getByRole("status")).toHaveText(
+      "请填写正确的手机号或邮箱",
+    );
+
+    await dialog
+      .getByLabel("联系方式（手机号或邮箱）")
+      .fill("test@example.com");
+    await dialog.getByRole("button", { name: "获取验证码" }).click();
+    const retry = dialog.getByRole("button", { name: "60 秒后重试" });
+    await expect(retry).toBeDisabled();
+    const codeInput = dialog.getByLabel("验证码", { exact: true });
+    await expect(codeInput).toHaveAttribute("inputmode", "numeric");
+    await expect(codeInput).toHaveAttribute("maxlength", "6");
+    const codeMessage = await dialog.getByRole("status").textContent();
+    const code = codeMessage?.match(/\d{6}/u)?.[0];
+    expect(code).toBeTruthy();
+    await codeInput.fill(code!);
+    await dialog.getByRole("button", { name: "提交申请" }).click();
+    await expect(dialog.getByRole("status")).toHaveText("请填写所属公司");
+    await dialog.getByLabel("所属公司").fill("测试公司");
+    await dialog.getByRole("button", { name: "提交申请" }).click();
+    const successDialog = page.getByRole("dialog", { name: "提交成功" });
+    await expect(
+      successDialog.getByRole("heading", { level: 2, name: "提交成功" }),
+    ).toBeVisible();
+    await successDialog.getByRole("button", { name: "完成" }).click();
+    await expect(successDialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+
+    const closingTrigger = page.getByRole("button", {
+      name: "填写申请信息",
+    });
+    await closingTrigger.click();
+    await expect(close).toBeFocused();
+    const cancel = dialog.getByRole("button", { name: "取消" });
+    await cancel.focus();
+    await page.keyboard.press("Tab");
+    await expect(close).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(closingTrigger).toBeFocused();
+
+    await trigger.click();
+    await page.locator(".trial-dialog-backdrop").click({
+      position: { x: 2, y: 2 },
+    });
+    await expect(dialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  }
 });
 
 test("pricing contact trial 在 1440 和 390 无横溢、保留唯一 Agent 并截图", async ({

@@ -14,6 +14,14 @@
     #f4f7ff;
 }
 
+.site-route-transition:has(.trial-dialog) {
+  position: relative;
+  z-index: 120;
+  animation: none;
+  transform: none;
+  will-change: auto;
+}
+
 .trial-frame {
   width: min(calc(100% - 48px), 1280px);
   margin-inline: auto;

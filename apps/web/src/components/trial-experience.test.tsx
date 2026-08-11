@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -6,6 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TrialExperience } from "./trial-experience";
 
@@ -20,6 +22,7 @@ function fill(label: string, value: string) {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -71,6 +74,37 @@ describe("TrialExperience", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "验证码不正确，请重新获取",
     );
+  });
+
+  it("发送验证码后执行六十秒倒计时并清理计时器", () => {
+    vi.useFakeTimers();
+    const { unmount } = render(<TrialExperience />);
+    const dialog = openDialog();
+    fill("联系方式（手机号或邮箱）", "test@example.com");
+
+    const send = within(dialog).getByRole("button", { name: "获取验证码" });
+    fireEvent.click(send);
+    expect(send).toBeDisabled();
+    expect(send).toHaveTextContent("60 秒后重试");
+    expect(within(dialog).getByLabelText("验证码")).toHaveAttribute(
+      "inputmode",
+      "numeric",
+    );
+    expect(within(dialog).getByLabelText("验证码")).toHaveAttribute(
+      "maxlength",
+      "6",
+    );
+
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(send).toHaveTextContent("59 秒后重试");
+    act(() => vi.advanceTimersByTime(59_000));
+    expect(send).toBeEnabled();
+    expect(send).toHaveTextContent("获取验证码");
+
+    fireEvent.click(send);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("校验所属公司后显示原型成功态", () => {
@@ -138,6 +172,39 @@ describe("TrialExperience", () => {
     expect(document.activeElement).toBe(trigger);
     expect(container.querySelector(".trial-content")).not.toHaveAttribute(
       "inert",
+    );
+  });
+
+  it("点击背景关闭并阻止焦点离开活动弹层", async () => {
+    const { container } = render(
+      <>
+        <button type="button">外部按钮</button>
+        <TrialExperience />
+      </>,
+    );
+    const trigger = screen.getByRole("button", { name: "立即填写申请" });
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", {
+      name: "开启企业 AI 落地体验",
+    });
+    const close = within(dialog).getByRole("button", { name: "关闭申请弹层" });
+
+    screen.getByRole("button", { name: "外部按钮" }).focus();
+    expect(document.activeElement).toBe(close);
+
+    fireEvent.click(container.querySelector(".trial-dialog-backdrop")!);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("让活动弹层脱离路由动画层并覆盖完整视口", () => {
+    const css = readFileSync("src/app/trial/trial.css", "utf8");
+
+    expect(css).toMatch(
+      /\.site-route-transition:has\(\.trial-dialog\)[^{]*\{[^}]*z-index:\s*120;[^}]*animation:\s*none;[^}]*transform:\s*none;[^}]*will-change:\s*auto;/su,
+    );
+    expect(css).toMatch(
+      /\.trial-dialog-backdrop\s*\{[^}]*position:\s*fixed;[^}]*inset:\s*0;/su,
     );
   });
 });

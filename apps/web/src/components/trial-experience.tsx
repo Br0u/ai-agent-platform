@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   type FormEvent,
   type KeyboardEvent,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -38,9 +39,44 @@ export function TrialExperience() {
   const [demoCode, setDemoCode] = useState("");
   const [message, setMessage] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [countdown, setCountdown] = useState(0);
   const dialog = useRef<HTMLDialogElement>(null);
   const opener = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(false);
+  const allowFocusReturn = useRef(false);
+  const countingDown = countdown > 0;
+
+  useEffect(() => {
+    if (!countingDown) return;
+
+    const timer = window.setInterval(
+      () => setCountdown((current) => Math.max(0, current - 1)),
+      1_000,
+    );
+    return () => window.clearInterval(timer);
+  }, [countingDown]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const containFocus = (event: FocusEvent) => {
+      if (
+        allowFocusReturn.current ||
+        dialog.current?.contains(event.target as Node)
+      ) {
+        return;
+      }
+      dialog.current?.querySelector<HTMLElement>(focusableSelector)?.focus();
+    };
+    document.addEventListener("focusin", containFocus);
+
+    return () => {
+      document.removeEventListener("focusin", containFocus);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [open]);
 
   useLayoutEffect(() => {
     if (open) {
@@ -57,17 +93,20 @@ export function TrialExperience() {
     setDemoCode("");
     setMessage("");
     setSubmitted(false);
+    setCountdown(0);
     setOpen(nextOpen);
   }
 
   function openDialog(trigger: HTMLButtonElement) {
     opener.current = trigger;
     restoreFocus.current = false;
+    allowFocusReturn.current = false;
     reset(true);
   }
 
   function closeDialog() {
     restoreFocus.current = true;
+    allowFocusReturn.current = true;
     reset(false);
   }
 
@@ -108,6 +147,7 @@ export function TrialExperience() {
 
     const code = String(Math.floor(100000 + Math.random() * 900000));
     setDemoCode(code);
+    setCountdown(60);
     setMessage(`验证码已发送：${code}（演示，正式版短信/邮件发送）`);
   }
 
@@ -194,7 +234,12 @@ export function TrialExperience() {
       </div>
 
       {open ? (
-        <div className="trial-dialog-backdrop">
+        <div
+          className="trial-dialog-backdrop"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeDialog();
+          }}
+        >
           <dialog
             ref={dialog}
             aria-labelledby="trial-dialog-title"
@@ -240,6 +285,10 @@ export function TrialExperience() {
                       <span className="trial-field__control">
                         <input
                           autoComplete="off"
+                          inputMode={
+                            field.name === "code" ? "numeric" : undefined
+                          }
+                          maxLength={field.name === "code" ? 6 : undefined}
                           name={field.name}
                           onChange={(event) =>
                             update(
@@ -251,8 +300,14 @@ export function TrialExperience() {
                           value={values[field.name as keyof FormValues]}
                         />
                         {field.name === "contact" ? (
-                          <button type="button" onClick={sendCode}>
-                            {trialContent.form.sendCode}
+                          <button
+                            disabled={countingDown}
+                            type="button"
+                            onClick={sendCode}
+                          >
+                            {countingDown
+                              ? `${countdown} 秒后重试`
+                              : trialContent.form.sendCode}
                           </button>
                         ) : null}
                       </span>
