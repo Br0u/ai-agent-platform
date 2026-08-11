@@ -778,7 +778,7 @@ const platformCenters = [
         actions: [
           {
             label: "查看企业知识问答方案 →",
-            href: "/solutions/knowledge-service#scene-knowledge-service",
+            href: "/solutions/knowledge-service",
           },
         ],
       },
@@ -1047,7 +1047,7 @@ const platformCenters = [
           actions: [
             {
               label: "查看多智能体协同方案 →",
-              href: "/solutions/enterprise-multi-agent#scene-multi-agent",
+              href: "/solutions/enterprise-multi-agent",
             },
             {
               label: "查看相关案例 →",

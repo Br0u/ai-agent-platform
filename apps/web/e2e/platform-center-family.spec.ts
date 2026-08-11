@@ -145,20 +145,44 @@ test("七个元启平台中心内部链接没有 404 或服务端错误", async 
 
   for (const [path] of pages) {
     await gotoCenter(page, path);
-    const hrefs = await page
+    const links = await page
       .locator("main.platform-center a")
       .evaluateAll((links) => [
-        ...new Set(
+        ...new Map(
           links
             .map((link) => new URL((link as HTMLAnchorElement).href))
             .filter((url) => url.origin === window.location.origin)
-            .map((url) => `${url.pathname}${url.search}`),
-        ),
+            .map((url) => [
+              `${url.pathname}${url.search}${url.hash}`,
+              {
+                hash: url.hash,
+                navigationTarget: `${url.pathname}${url.search}${url.hash}`,
+                requestTarget: `${url.pathname}${url.search}`,
+              },
+            ]),
+        ).values(),
       ]);
 
-    for (const href of hrefs) {
-      const response = await page.request.get(href);
-      expect(response.status(), `${path} → ${href}`).toBeLessThan(400);
+    for (const link of links) {
+      const response = await page.request.get(link.requestTarget);
+      expect(response.status(), `${path} → ${link.requestTarget}`).toBeLessThan(
+        400,
+      );
+      if (!link.hash) continue;
+
+      await gotoCenter(page, link.navigationTarget);
+      const currentUrl = new URL(page.url());
+      expect(`${currentUrl.pathname}${currentUrl.search}`).toBe(
+        link.requestTarget,
+      );
+      expect(currentUrl.hash).toBe(link.hash);
+      expect(
+        await page.evaluate((hash) => {
+          const id = decodeURIComponent(hash.slice(1));
+          return document.getElementById(id) !== null;
+        }, link.hash),
+        `${path} → ${link.navigationTarget}`,
+      ).toBe(true);
     }
   }
 });
