@@ -1,8 +1,10 @@
 import {
   getSolutionDetail,
+  getSolutionReturnHref,
+  solutionDetailSlugs,
+  type CaseSolutionDetail,
   type CommonSolutionDetail,
   type IndustrySolutionDetail,
-  type SolutionDetail,
 } from "@/components/solution-detail-content";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -11,13 +13,16 @@ import "./solution-detail.css";
 
 type PageProps = {
   params: Promise<{ slug: string }>;
+  searchParams?: Promise<{ mode?: string }>;
 };
+
+type ScenarioSolutionDetail = CommonSolutionDetail | IndustrySolutionDetail;
 
 function contactHref(title: string) {
   return `/contact?topic=${title}咨询`;
 }
 
-function SolutionHero({ detail }: { detail: SolutionDetail }) {
+function SolutionHero({ detail }: { detail: ScenarioSolutionDetail }) {
   return (
     <section className="solution-detail-hero">
       <div className="solution-detail-frame solution-detail-hero__layout">
@@ -232,7 +237,7 @@ function IndustrySections({ detail }: { detail: IndustrySolutionDetail }) {
   );
 }
 
-function ProductSupport({ detail }: { detail: SolutionDetail }) {
+function ProductSupport({ detail }: { detail: ScenarioSolutionDetail }) {
   return (
     <section
       className="solution-detail-section"
@@ -263,7 +268,13 @@ function ProductSupport({ detail }: { detail: SolutionDetail }) {
   );
 }
 
-function ClosingSection({ detail }: { detail: SolutionDetail }) {
+function ClosingSection({
+  detail,
+  returnHref,
+}: {
+  detail: ScenarioSolutionDetail;
+  returnHref: string;
+}) {
   const industry = detail.kind === "industry";
 
   return (
@@ -313,14 +324,181 @@ function ClosingSection({ detail }: { detail: SolutionDetail }) {
             <Link className="solution-detail-button" href="/trial">
               申请体验
             </Link>
-            <Link className="solution-detail-link" href="/solutions">
+            <a className="solution-detail-link" href={returnHref}>
               返回解决方案
-            </Link>
+            </a>
           </div>
         </div>
       </div>
     </section>
   );
+}
+
+function CasePage({
+  detail,
+  returnHref,
+}: {
+  detail: CaseSolutionDetail;
+  returnHref: string;
+}) {
+  return (
+    <main className="solution-detail" aria-label={`${detail.title}实践案例`}>
+      <section className="solution-detail-hero">
+        <div className="solution-detail-frame solution-detail-hero__layout">
+          <div>
+            <p className="solution-detail-eyebrow">实践案例｜待授权结构</p>
+            <h1>{detail.title}</h1>
+            <p className="solution-detail-lead">{detail.summary}</p>
+            <p className="solution-detail-note">{detail.authorizationNotice}</p>
+            <div className="solution-detail-tags" aria-label="案例基本信息">
+              <span className="solution-detail-tag">{detail.customer}</span>
+              <span className="solution-detail-tag">{detail.industry}</span>
+              {detail.scenarios.map((scenario) => (
+                <span className="solution-detail-tag" key={scenario}>
+                  {scenario}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="solution-detail-visual">
+            <span>客户 / 项目 / 应用效果素材</span>
+            <small>未获公开授权前不展示真实客户或项目素材</small>
+          </div>
+        </div>
+      </section>
+
+      <section className="solution-detail-section">
+        <div className="solution-detail-frame">
+          <p className="solution-detail-eyebrow">02｜客户与项目背景</p>
+          <h2>案例基本信息</h2>
+          <div className="solution-detail-components">
+            {detail.profile.map(([label, value]) => (
+              <article key={label}>
+                <h3>{label}</h3>
+                <p>{value}</p>
+              </article>
+            ))}
+          </div>
+          <h3 className="solution-detail-subheading">关联产品能力</h3>
+          <div className="solution-detail-tags" aria-label="案例关联产品能力">
+            {detail.products.map((product) => (
+              <span className="solution-detail-tag" key={product}>
+                {product}
+              </span>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="solution-detail-section">
+        <div className="solution-detail-frame">
+          <p className="solution-detail-eyebrow">03｜业务问题与建设措施</p>
+          <h2>从问题到建设措施</h2>
+          <div className="solution-detail-components">
+            {detail.challenges.map((challenge, index) => (
+              <article key={challenge.name}>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <h3>{challenge.name}</h3>
+                <p>{challenge.problem}</p>
+                <p>
+                  <b>影响：</b>
+                  {challenge.impact}
+                </p>
+                <p>
+                  <b>原有方式：</b>
+                  {challenge.limitation}
+                </p>
+                <p>
+                  <b>建设措施：</b>
+                  {challenge.measure}
+                </p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="solution-detail-section">
+        <div className="solution-detail-frame">
+          <p className="solution-detail-eyebrow">04｜方案架构与实施过程</p>
+          <h2>能力组合与项目阶段</h2>
+          <div className="solution-detail-components">
+            {detail.architecture.map(([name, description]) => (
+              <article key={name}>
+                <h3>{name}</h3>
+                <p>{description}</p>
+              </article>
+            ))}
+          </div>
+          <h3 className="solution-detail-subheading">项目实施过程</h3>
+          <ol className="solution-detail-flow solution-detail-flow--described">
+            {detail.stages.map((stage, index) => (
+              <li key={stage.name}>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <b>{stage.name}</b>
+                <p>{stage.goal}</p>
+                <p>{stage.work}</p>
+                <small>
+                  华鲲：{stage.huakun}；客户：{stage.customer}；输出：
+                  {stage.output}
+                </small>
+                <small>{stage.media}</small>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
+      <section className="solution-detail-section solution-detail-closing">
+        <div className="solution-detail-frame">
+          <p className="solution-detail-eyebrow">05｜成果与公开边界</p>
+          <h2>案例成果待授权补充</h2>
+          <div className="solution-detail-tags" aria-label="案例成果结构占位">
+            {detail.outcomes.map((outcome) => (
+              <span className="solution-detail-tag" key={outcome}>
+                {outcome}
+              </span>
+            ))}
+          </div>
+          <div className="solution-detail-products">
+            {detail.results.map(([label, value]) => (
+              <article key={label}>
+                <h3>{label}</h3>
+                <p>{value}</p>
+              </article>
+            ))}
+          </div>
+          <h3 className="solution-detail-subheading">待授权素材</h3>
+          <div className="solution-detail-products">
+            {detail.materials.map(([label, value]) => (
+              <article key={label}>
+                <h3>{label}</h3>
+                <p>{value}</p>
+              </article>
+            ))}
+          </div>
+          <div className="solution-detail-actions">
+            <Link
+              className="solution-detail-button solution-detail-button--primary"
+              href={contactHref(detail.title)}
+            >
+              咨询类似项目
+            </Link>
+            <Link className="solution-detail-button" href="/trial">
+              申请体验
+            </Link>
+            <a className="solution-detail-link" href={returnHref}>
+              返回实践案例
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+export function generateStaticParams() {
+  return solutionDetailSlugs.map((slug) => ({ slug }));
 }
 
 export async function generateMetadata({
@@ -336,10 +514,16 @@ export async function generateMetadata({
   };
 }
 
-export default async function Page({ params }: PageProps) {
+export default async function Page({ params, searchParams }: PageProps) {
   const detail = getSolutionDetail((await params).slug);
 
   if (!detail) notFound();
+
+  const returnHref = getSolutionReturnHref(detail, (await searchParams) ?? {});
+
+  if (detail.kind === "case") {
+    return <CasePage detail={detail} returnHref={returnHref} />;
+  }
 
   return (
     <main className="solution-detail" aria-label={`${detail.title}解决方案`}>
@@ -350,7 +534,7 @@ export default async function Page({ params }: PageProps) {
         <IndustrySections detail={detail} />
       )}
       <ProductSupport detail={detail} />
-      <ClosingSection detail={detail} />
+      <ClosingSection detail={detail} returnHref={returnHref} />
     </main>
   );
 }

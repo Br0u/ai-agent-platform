@@ -52,7 +52,21 @@ test("覆盖原型总览内容并只保留 shell 的唯一 Agent 入口", async 
     "/solutions?view=industries&industry=government#industry-solutions-list",
   );
   expect(hrefs).toContain("/solutions/knowledge-service");
+  expect(hrefs).toContain("/solutions/private-yuanqi");
+  expect(hrefs).toContain("/solutions/government-document");
+  expect(hrefs).toContain(
+    "/solutions/case-pending-enterprise-knowledge?mode=scenario",
+  );
   expect(hrefs).toContain("/solutions?view=cases&mode=all#practice-cases-hero");
+
+  const detailPathnames = new Set(
+    hrefs
+      .filter(
+        (href): href is string => href?.startsWith("/solutions/") ?? false,
+      )
+      .map((href) => new URL(href, "http://localhost").pathname),
+  );
+  expect(detailPathnames.size).toBe(32);
 
   const internalHrefs = await page
     .locator("main.solutions-page a[href]")
@@ -74,6 +88,81 @@ test("覆盖原型总览内容并只保留 shell 的唯一 Agent 入口", async 
       page.locator(url.hash),
       `${url.pathname}${url.search}${url.hash}`,
     ).toBeVisible();
+  }
+});
+
+test("通用、行业与待授权案例详情进入后返回精确 query 和 hash 状态", async ({
+  page,
+}) => {
+  const journeys = [
+    {
+      start:
+        "/solutions?view=scenarios&category=knowledge#solution-scenarios-directory",
+      detail: "/solutions/document-intelligence",
+      link: "文档理解、知识检索与智能审核",
+      title: "文档理解、知识检索与智能审核",
+      back: "返回解决方案",
+      view: "scenarios",
+      filter: "knowledge",
+    },
+    {
+      start:
+        "/solutions?view=industries&industry=finance#industry-solutions-list",
+      detail: "/solutions/finance-document",
+      link: "金融文档理解与合规辅助审核",
+      title: "金融文档理解与合规辅助审核",
+      back: "返回解决方案",
+      view: "industries",
+      filter: "finance",
+    },
+    {
+      start: "/solutions?view=cases&mode=scenario#practice-cases-list",
+      detail: "/solutions/case-pending-enterprise-knowledge?mode=scenario",
+      link: "案例详情结构占位（待授权案例）",
+      title: "案例详情结构占位（待授权案例）",
+      back: "返回实践案例",
+      view: "cases",
+      filter: "scenario",
+    },
+  ] as const;
+
+  for (const journey of journeys) {
+    const response = await page.goto(journey.start, {
+      waitUntil: "domcontentloaded",
+    });
+    expect(response?.status(), journey.start).toBe(200);
+    await page.locator(`a[href="${journey.detail}"]`).first().click();
+    await expect(page).toHaveURL(
+      new RegExp(`${journey.detail.replace("?", "\\?")}$`),
+    );
+    await expect(
+      page.getByRole("heading", {
+        level: 1,
+        exact: true,
+        name: journey.title,
+      }),
+    ).toHaveCount(1);
+    if (journey.view === "cases") {
+      await expect(
+        page.getByText(
+          "当前案例未获公开授权，不代表真实公开项目；客户、建设内容与成果均须在获得授权后替换。",
+        ),
+      ).toBeVisible();
+    }
+    const back = page.getByRole("link", { name: journey.back });
+    await expect(back).toHaveAttribute("href", journey.start);
+    await back.click();
+    await expect(page).toHaveURL(
+      new RegExp(`${journey.start.replaceAll("?", "\\?")}$`),
+    );
+    await expect(page.locator("main.solutions-page")).toHaveAttribute(
+      "data-solution-view",
+      journey.view,
+    );
+    await expect(page.locator("main.solutions-page")).toHaveAttribute(
+      "data-solution-filter",
+      journey.filter,
+    );
   }
 });
 

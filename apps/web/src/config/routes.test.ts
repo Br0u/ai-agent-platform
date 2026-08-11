@@ -1,6 +1,41 @@
 import { describe, expect, it } from "vitest";
 import { matchRoute, routeRegistry } from "./routes";
 
+const migratedSolutionSlugs = [
+  "private-yuanqi",
+  "cluster-planning",
+  "compute-monitoring",
+  "model-evaluation",
+  "model-deployment",
+  "knowledge-service",
+  "document-intelligence",
+  "data-insight",
+  "knowledge-assets",
+  "unstructured-data",
+  "process-automation",
+  "enterprise-assistant",
+  "multi-agent",
+  "video-intelligence",
+  "government-knowledge",
+  "government-data",
+  "government-document",
+  "government-process",
+  "finance-knowledge",
+  "finance-data",
+  "finance-document",
+  "finance-assistant",
+  "healthcare-knowledge",
+  "healthcare-data",
+  "healthcare-document",
+  "healthcare-process",
+  "enterprise-knowledge",
+  "enterprise-data",
+  "enterprise-document",
+  "enterprise-process",
+  "enterprise-multi-agent",
+  "case-pending-enterprise-knowledge",
+] as const;
+
 const requiredRoutes = [
   "/",
   "/product",
@@ -167,6 +202,17 @@ describe("routeRegistry", () => {
       group: "public",
       status: "live",
     });
+  });
+
+  it("resolves all 32 migrated solution and case details through the live route", () => {
+    for (const slug of migratedSolutionSlugs) {
+      expect(matchRoute(`/solutions/${slug}`)).toEqual({
+        path: "/solutions/[slug]",
+        title: "解决方案详情",
+        group: "public",
+        status: "live",
+      });
+    }
   });
 
   it("registers standalone product pages before the remaining scaffold routes", () => {
