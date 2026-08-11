@@ -1,6 +1,18 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
+import CodingMobilePage, {
+  metadata as codingMobileMetadata,
+} from "../app/product/coding-mobile/page";
+import CodingProjectPage, {
+  metadata as codingProjectMetadata,
+} from "../app/product/coding-project/page";
+import CodingSessionPage, {
+  metadata as codingSessionMetadata,
+} from "../app/product/coding-session/page";
+import CodingStandardPage, {
+  metadata as codingStandardMetadata,
+} from "../app/product/coding-standard/page";
 import { codingSubpageSlugs, getCodingSubpage } from "./coding-subpage-content";
 import { PlatformPageDetail } from "./platform-center-detail";
 
@@ -73,7 +85,48 @@ const expected = {
   },
 } as const;
 
+const pageEntries = [
+  {
+    slug: "coding-project",
+    Page: CodingProjectPage,
+    metadata: codingProjectMetadata,
+  },
+  {
+    slug: "coding-session",
+    Page: CodingSessionPage,
+    metadata: codingSessionMetadata,
+  },
+  {
+    slug: "coding-mobile",
+    Page: CodingMobilePage,
+    metadata: codingMobileMetadata,
+  },
+  {
+    slug: "coding-standard",
+    Page: CodingStandardPage,
+    metadata: codingStandardMetadata,
+  },
+] as const;
+
 describe("coding subpage family", () => {
+  it.each(pageEntries)(
+    "wires the $slug Page to its fixed content and metadata",
+    ({ slug, Page, metadata }) => {
+      const page = getCodingSubpage(slug)!;
+      const { container } = render(<Page />);
+
+      expect(
+        screen.getByRole("heading", {
+          level: 1,
+          name: expected[slug].h1,
+        }),
+      ).toBeVisible();
+      expect(container.querySelectorAll("h1")).toHaveLength(1);
+      expect(metadata.title).toBe(page.hero.title);
+      expect(metadata.description).toBe(page.hero.lead);
+    },
+  );
+
   it.each(codingSubpageSlugs)("renders the complete dense %s page", (slug) => {
     const page = getCodingSubpage(slug)!;
     const { container } = render(<PlatformPageDetail page={page} />);

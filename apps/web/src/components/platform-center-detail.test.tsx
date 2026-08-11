@@ -7,6 +7,21 @@ import KnowledgeCenterPage, {
 import ModelCenterPage, {
   metadata as modelCenterMetadata,
 } from "../app/product/model/page";
+import AgentCenterPage, {
+  metadata as agentCenterMetadata,
+} from "../app/product/agents/page";
+import ApplicationCenterPage, {
+  metadata as applicationCenterMetadata,
+} from "../app/product/applications/page";
+import CodingCenterPage, {
+  metadata as codingCenterMetadata,
+} from "../app/product/coding/page";
+import GovernanceCenterPage, {
+  metadata as governanceCenterMetadata,
+} from "../app/product/governance/page";
+import SkillCenterPage, {
+  metadata as skillCenterMetadata,
+} from "../app/product/skills/page";
 import {
   PlatformCenterDetail,
   PlatformPageDetail,
@@ -42,6 +57,46 @@ const routedCenters = [
     title: "企业知识库：让企业文档变成 AI 能用的知识",
     description:
       "把制度、产品资料、技术文档等企业知识上传、解析、分片，沉淀为可检索、可问答、可溯源的 AI 知识底座，支撑知识智能体与上层应用。",
+  },
+  {
+    slug: "agents",
+    Page: AgentCenterPage,
+    metadata: agentCenterMetadata,
+    title: "让企业拥有懂知识、懂业务、懂流程的 AI 助手",
+    description:
+      "把模型、知识、数据和流程组合成可对话、可执行、可发布的智能体：企业知识助手回答问题，问数助手解读数据，视频助手看懂画面，自动化引擎跑通复杂流程——让 AI 真正开始帮企业干活。",
+  },
+  {
+    slug: "applications",
+    Page: ApplicationCenterPage,
+    metadata: applicationCenterMetadata,
+    title: "成熟业务 AI 应用，拿来即用",
+    description:
+      "不用从零搭建模型、知识库和工作流。面向高频业务场景打磨好的 AI 应用，直接上手使用，快速验证价值，再决定要不要深入建设。",
+  },
+  {
+    slug: "skills",
+    Page: SkillCenterPage,
+    metadata: skillCenterMetadata,
+    title: "可复用的业务技能，拿来即用",
+    description:
+      "技能中心沉淀面向编程、应用与办公场景的可复用能力——智能体与行业应用按需组装，能力标准化、复用化，减少重复建设。",
+  },
+  {
+    slug: "coding",
+    Page: CodingCenterPage,
+    metadata: codingCenterMetadata,
+    title: "码多多：让智能编程走进企业日常开发",
+    description:
+      "基于元启平台的智能编程助手，自然语言驱动开发、Plan/Build 双模式工作流，私有化部署、代码不出域——让团队写得更快、改得更稳、交付更规范。",
+  },
+  {
+    slug: "governance",
+    Page: GovernanceCenterPage,
+    metadata: governanceCenterMetadata,
+    title: "平台用得安全，权限管得清楚",
+    description:
+      "从「谁在平台上」到「能看什么、能做什么、能碰哪些数据」，一条授权链路让权限边界清晰可控。",
   },
 ] as const;
 

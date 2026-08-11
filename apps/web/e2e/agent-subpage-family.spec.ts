@@ -50,7 +50,7 @@ const legacyPages = [
 
 const viewports = [
   { name: "1440", width: 1440, height: 1000 },
-  { name: "768", width: 768, height: 1024 },
+  { name: "1024", width: 1024, height: 900 },
   { name: "390", width: 390, height: 844 },
 ] as const;
 
@@ -284,9 +284,7 @@ test("现有三个智能体一体机页面保留原路径和标题", async ({ pa
   }
 });
 
-test("捕获四个智能体子页桌面与移动端全页视觉证据", async ({
-  page,
-}, testInfo) => {
+test("捕获四个智能体子页三档宽度全页视觉证据", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop");
   test.setTimeout(180_000);
   const outputDirectory = resolve(
@@ -295,7 +293,7 @@ test("捕获四个智能体子页桌面与移动端全页视觉证据", async ({
   );
   await mkdir(outputDirectory, { recursive: true });
 
-  for (const viewport of [viewports[0], viewports[2]]) {
+  for (const viewport of viewports) {
     await page.setViewportSize(viewport);
     for (const { name, path, title } of pages) {
       const screenshotPath = resolve(

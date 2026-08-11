@@ -98,9 +98,7 @@ test("元启平台中心保留现有 Agent 聊天的打开与关闭行为", asyn
   }
 });
 
-test("捕获模型、智能体与编程中心的响应式视觉证据", async ({
-  page,
-}, testInfo) => {
+test("捕获五个产品页面族中心的响应式视觉证据", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop");
   test.setTimeout(120_000);
   const outputDirectory = resolve(
@@ -116,9 +114,11 @@ test("捕获模型、智能体与编程中心的响应式视觉证据", async ({
   ]) {
     await page.setViewportSize(viewport);
     for (const [name, path] of [
-      ["model", "/product/model"],
       ["agents", "/product/agents"],
+      ["applications", "/product/applications"],
+      ["skills", "/product/skills"],
       ["coding", "/product/coding"],
+      ["governance", "/product/governance"],
     ] as const) {
       await gotoCenter(page, path);
       await page.evaluate(() => document.fonts.ready);

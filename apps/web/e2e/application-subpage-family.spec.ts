@@ -31,7 +31,7 @@ const pages = [
 
 const viewports = [
   { name: "1440", width: 1440, height: 1000 },
-  { name: "768", width: 768, height: 1024 },
+  { name: "1024", width: 1024, height: 900 },
   { name: "390", width: 390, height: 844 },
 ] as const;
 
@@ -267,9 +267,7 @@ test("三个行业应用子页在桌面和移动端都能打开与关闭现有 A
   }
 });
 
-test("捕获三个行业应用子页桌面与移动端全页视觉证据", async ({
-  page,
-}, testInfo) => {
+test("捕获三个行业应用子页三档宽度全页视觉证据", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop");
   test.setTimeout(180_000);
   const outputDirectory = resolve(
@@ -278,7 +276,7 @@ test("捕获三个行业应用子页桌面与移动端全页视觉证据", async
   );
   await mkdir(outputDirectory, { recursive: true });
 
-  for (const viewport of [viewports[0], viewports[2]]) {
+  for (const viewport of viewports) {
     await page.setViewportSize(viewport);
     for (const { name, path, title } of pages) {
       const screenshotPath = resolve(
