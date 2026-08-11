@@ -92,14 +92,18 @@ function ResourceCard({
   const fileLabel = material ? "下载资料" : "下载文档";
 
   return (
-    <article className="download-card" data-download-key={resource.key}>
+    <article
+      id={`dl-${resource.key}`}
+      className="download-card"
+      data-download-key={resource.key}
+    >
       <div className="download-card__cover">
         <strong>{product?.name ?? resource.title}</strong>
         <span>{resource.file}</span>
       </div>
       <div className="download-card__body">
         {product ? <span className="download-tag">{product.tag}</span> : null}
-        <h4>{resource.title}</h4>
+        <h3>{resource.title}</h3>
         <p>{resource.desc}</p>
         <div className="download-actions">
           <button
@@ -243,13 +247,15 @@ export function DownloadCenter() {
       >
         下载中心目录
       </button>
-      <button
-        type="button"
-        className="download-directory-backdrop"
-        aria-label="关闭下载中心目录"
-        data-open={mobileOpen}
-        onClick={() => closeMobileDirectory()}
-      />
+      {mobileOpen ? (
+        <button
+          type="button"
+          className="download-directory-backdrop"
+          aria-label="关闭下载中心目录"
+          data-open={mobileOpen}
+          onClick={() => closeMobileDirectory()}
+        />
+      ) : null}
       <div
         className="download-shell"
         data-directory-collapsed={directoryCollapsed}

@@ -17,6 +17,55 @@ function useMobileViewport() {
 }
 
 describe("DownloadCenter", () => {
+  it("resolves every resource directory href to exactly one DOM target", () => {
+    const { container } = render(<DownloadsPage />);
+    const directory = within(container).getByRole("navigation", {
+      name: "下载中心完整目录",
+    });
+
+    for (const href of [
+      "/downloads#dl-yuanqi-intro",
+      "/downloads#dl-yuanqi-features",
+      "/downloads#dl-yuanqi-arch",
+      "/downloads#dl-mdd2-intro",
+      "/downloads#dl-mdd2-features",
+      "/downloads#dl-mdd2-env",
+      "/downloads#dl-mdd2-client",
+      "/downloads#dl-mdd2-deploy",
+      "/downloads#dl-mdd2-usage",
+      "/downloads#dl-yuanqi-deploy",
+      "/downloads#dl-wp-ai",
+      "/downloads#dl-wp-llm",
+      "/downloads#dl-wp-agent",
+    ]) {
+      expect(directory.querySelectorAll(`a[href="${href}"]`)).toHaveLength(1);
+      expect(container.querySelectorAll(`#${href.split("#")[1]}`)).toHaveLength(
+        1,
+      );
+    }
+  });
+
+  it("uses level-three headings for every resource card", () => {
+    render(<DownloadsPage />);
+
+    for (const name of [
+      "元启 AI 开发赋能平台产品介绍",
+      "元启平台功能清单",
+      "元启平台架构说明",
+      "码多多 2.0 产品介绍",
+      "码多多 2.0 功能清单",
+      "码多多 2.0 支持环境说明",
+      "码多多 2.0 安装部署指南",
+      "码多多 2.0 使用说明",
+      "元启平台部署文档",
+      "企业 AI 落地白皮书",
+      "大模型应用实践白皮书",
+      "智能体与业务自动化技术资料",
+    ]) {
+      expect(screen.getByRole("heading", { level: 3, name })).toBeVisible();
+    }
+  });
+
   it("searches, clears and collapses the desktop directory", () => {
     render(<DownloadsPage />);
     const search = screen.getByRole("searchbox", {
@@ -41,7 +90,7 @@ describe("DownloadCenter", () => {
     ).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("opens the mobile directory as a focus-managed drawer and restores focus on Escape", () => {
+  it("keeps the closed backdrop non-interactive and manages drawer focus", () => {
     useMobileViewport();
     const { container } = render(<DownloadsPage />);
     const trigger = screen.getByRole("button", { name: "下载中心目录" });
@@ -51,8 +100,14 @@ describe("DownloadCenter", () => {
 
     expect(directory).toHaveAttribute("aria-hidden", "true");
     expect(directory).toHaveAttribute("inert");
+    expect(
+      screen.queryByRole("button", { name: "关闭下载中心目录" }),
+    ).not.toBeInTheDocument();
     fireEvent.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "下载中心目录" });
+    const backdrop = screen.getByRole("button", {
+      name: "关闭下载中心目录",
+    });
     expect(dialog).toHaveAttribute("aria-modal", "true");
     expect(container.querySelector(".download-main")).toHaveAttribute("inert");
     expect(
@@ -61,6 +116,20 @@ describe("DownloadCenter", () => {
       }),
     ).toHaveFocus();
 
+    fireEvent.click(backdrop);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveFocus();
+    expect(
+      screen.queryByRole("button", { name: "关闭下载中心目录" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    expect(
+      within(screen.getByRole("dialog", { name: "下载中心目录" })).getByRole(
+        "searchbox",
+        { name: "在下载中心目录中筛选" },
+      ),
+    ).toHaveFocus();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(trigger).toHaveFocus();

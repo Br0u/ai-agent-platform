@@ -28,8 +28,10 @@ describe("RegisteredRoutePage", () => {
     expect(screen.getByText("FEATURE_DISABLED")).toBeVisible();
   });
 
-  it("materializes the exact docs anchors inside the feature shell", () => {
-    const { container } = render(<RegisteredRoutePage pathname="/docs" />);
+  it("materializes the exact analytics anchors inside the feature shell", () => {
+    const { container } = render(
+      <RegisteredRoutePage pathname="/admin/analytics" />,
+    );
     const renderedPage = within(container);
 
     expect(
@@ -39,8 +41,7 @@ describe("RegisteredRoutePage", () => {
       Array.from(container.querySelectorAll("section[id]"), (section) =>
         section.getAttribute("id"),
       ),
-    ).toEqual(["features"]);
-    expect(container.querySelector("#overview")).not.toBeInTheDocument();
+    ).toEqual(["portal", "requests", "conversion"]);
     expect(
       renderedPage
         .getByRole("navigation", { name: "页面目录" })
@@ -73,7 +74,7 @@ describe("RegisteredRoutePage", () => {
 
   it("renders optional route content after the anchor index inside the feature shell", () => {
     const { container } = render(
-      <RegisteredRoutePage pathname="/docs">
+      <RegisteredRoutePage pathname="/admin/analytics">
         <section aria-label="route content">联系摘要</section>
       </RegisteredRoutePage>,
     );
