@@ -51,9 +51,9 @@ export type PlatformPage = {
     };
     groups?: readonly {
       id: string;
-      tag: string;
+      tag?: string;
       title: string;
-      lead: string;
+      lead?: string;
       subheading?: string;
       cards: readonly {
         title: string;

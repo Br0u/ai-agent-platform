@@ -215,9 +215,11 @@ function ContentSection({
           <div className="platform-center-groups">
             {section.groups.map((group) => (
               <article id={group.id} key={group.id}>
-                <span className="product-portal-tag">{group.tag}</span>
+                {group.tag ? (
+                  <span className="product-portal-tag">{group.tag}</span>
+                ) : null}
                 <h3>{group.title}</h3>
-                <p>{group.lead}</p>
+                {group.lead ? <p>{group.lead}</p> : null}
                 <div className="platform-center-card-grid">
                   {group.cards.map((card) => (
                     <div className="product-portal-card" key={card.title}>

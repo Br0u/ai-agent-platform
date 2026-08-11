@@ -1,7 +1,11 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { PlatformCenterDetail } from "./platform-center-detail";
+import {
+  PlatformCenterDetail,
+  PlatformPageDetail,
+} from "./platform-center-detail";
+import type { PlatformPage } from "./platform-page-types";
 
 const notFound = vi.hoisted(() =>
   vi.fn(() => {
@@ -137,6 +141,58 @@ describe("PlatformCenterDetail", () => {
       screen.getByText(
         "安全中心是元启平台内部的用户、权限与授权治理能力，不等同于独立网络安全产品或等保产品。",
       ),
+    ).toBeVisible();
+  });
+
+  it("omits empty group copy when tag and lead are absent", () => {
+    const page: PlatformPage = {
+      slug: "group-copy-test",
+      name: "能力组测试",
+      hero: {
+        eyebrow: "测试",
+        title: "能力组测试",
+        lead: "验证可选文案不会生成空节点。",
+        tags: [],
+        actions: [],
+        visual: { title: "测试视觉" },
+      },
+      sections: [
+        {
+          eyebrow: "能力分组",
+          title: "能力分组",
+          groups: [
+            {
+              id: "group-without-copy",
+              title: "质量保障",
+              cards: [
+                {
+                  title: "生成记录",
+                  description: "生成记录全程留存。",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const { container } = render(<PlatformPageDetail page={page} />);
+    const group = container.querySelector("#group-without-copy");
+
+    expect(group).toBeTruthy();
+    expect(group?.querySelector(":scope > .product-portal-tag")).toBeNull();
+    expect(group?.querySelector(":scope > p")).toBeNull();
+    expect(
+      within(group as HTMLElement).getByRole("heading", {
+        level: 3,
+        name: "质量保障",
+      }),
+    ).toBeVisible();
+    expect(
+      within(group as HTMLElement).getByRole("heading", {
+        level: 4,
+        name: "生成记录",
+      }),
     ).toBeVisible();
   });
 

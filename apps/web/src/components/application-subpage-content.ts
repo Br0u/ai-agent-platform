@@ -437,9 +437,7 @@ const applicationSubpages = [
         groups: [
           {
             id: "bidding-trace",
-            tag: "",
             title: "质量保障",
-            lead: "",
             cards: [
               {
                 title: "参考来源与知识库",
@@ -676,7 +674,6 @@ const applicationSubpages = [
         groups: [
           {
             id: "contract-trace",
-            tag: "",
             title: "质量保障",
             lead: "审查清单：预置清单内含条款说明与风险点，审查口径有据可依",
             cards: [
