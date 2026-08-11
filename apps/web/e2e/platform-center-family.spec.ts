@@ -86,15 +86,31 @@ test("七个元启平台中心返回原型标题并只使用 shell 聊天入口"
         .filter({ hasText: "码多多 · 对话式开发" });
       await expect(demo).toHaveCount(1);
       await expect(demo).toBeVisible();
+      const messages = demo.getByTestId("platform-demo-message");
+      await expect(messages).toHaveCount(3);
+      await expect(messages.nth(0)).toHaveAttribute(
+        "data-message-role",
+        "user",
+      );
+      await expect(messages.nth(1)).toHaveAttribute(
+        "data-message-role",
+        "assistant",
+      );
+      await expect(messages.nth(2)).toHaveAttribute(
+        "data-message-role",
+        "assistant",
+      );
       for (const copy of [
         "给这个接口补上参数校验和单元测试",
         "正在分析代码并生成修改方案……",
         "已生成修改后的代码与单元测试，并检查通过。｜Build 模式 · 修改已落地",
-        "输入你的开发需求…",
-        "发送",
       ]) {
         await expect(demo.getByText(copy, { exact: true })).toBeVisible();
       }
+      await expect(demo.getByPlaceholder("输入你的开发需求…")).toBeDisabled();
+      await expect(
+        demo.getByRole("button", { name: "发送", exact: true }),
+      ).toBeDisabled();
     }
 
     if (path === "/product/governance") {

@@ -93,9 +93,15 @@ const agentSubpages = [
         demo: {
           title: "使用示例",
           messages: [
-            "请假三天需要什么流程？",
-            "根据《考勤管理制度》，3 天以内请假由部门负责人审批即可。",
-            "参考依据：《考勤管理制度》第 5 条",
+            { role: "user", text: "请假三天需要什么流程？" },
+            {
+              role: "assistant",
+              text: "根据《考勤管理制度》，3 天以内请假由部门负责人审批即可。",
+            },
+            {
+              role: "assistant",
+              text: "参考依据：《考勤管理制度》第 5 条",
+            },
           ],
         },
         cards: [
@@ -266,16 +272,21 @@ const agentSubpages = [
       demo: {
         title: "企业知识助手",
         messages: [
-          "报销标准是什么？",
-          "正在检索企业知识……",
-          "根据《费用报销管理制度》，差旅住宿标准为……",
-          "引用：《费用报销管理制度》",
-          "怎么申请？",
-          "在 OA 提交报销申请，附发票与行程单，由部门负责人审批。",
-          "引用：报销流程说明",
-          "请输入你的问题…",
-          "发送",
+          { role: "user", text: "报销标准是什么？" },
+          { role: "assistant", text: "正在检索企业知识……" },
+          {
+            role: "assistant",
+            text: "根据《费用报销管理制度》，差旅住宿标准为……",
+          },
+          { role: "assistant", text: "引用：《费用报销管理制度》" },
+          { role: "user", text: "怎么申请？" },
+          {
+            role: "assistant",
+            text: "在 OA 提交报销申请，附发票与行程单，由部门负责人审批。",
+          },
+          { role: "assistant", text: "引用：报销流程说明" },
         ],
+        footer: { placeholder: "请输入你的问题…", action: "发送" },
       },
       reason: ["企业知识库", "检索增强", "模型生成", "引用溯源"],
       workflowLabel: "工作流程",
@@ -513,12 +524,14 @@ const agentSubpages = [
       demo: {
         title: "智能问数助手",
         messages: [
-          "查询去年销售额最高的区域",
-          "正在理解指标并查询数据……",
-          "华东区｜约 1.28 亿元｜同比增长 12%",
-          "请输入你的问题…",
-          "发送",
+          { role: "user", text: "查询去年销售额最高的区域" },
+          { role: "assistant", text: "正在理解指标并查询数据……" },
+          {
+            role: "assistant",
+            text: "华东区｜约 1.28 亿元｜同比增长 12%",
+          },
         ],
+        footer: { placeholder: "请输入你的问题…", action: "发送" },
         note: "数据来源：销售数据库",
       },
       reason: ["指标理解", "数据查询", "结果生成", "权限校验"],
@@ -739,16 +752,21 @@ const agentSubpages = [
       demo: {
         title: "视频理解助手",
         messages: [
-          "昨晚厂区南门 21 点到 22 点有无异常？",
-          "正在检索视频内容……",
-          "检测到 21:35 南门出现人员停留，已返回预警画面与时间点。",
-          "预警：21:35 · 厂区南门",
-          "还有其它时间段异常吗？",
-          "22:00 前无其它异常事件，已复核完毕。",
-          "检索范围：21:00–22:00",
-          "请输入你的问题…",
-          "发送",
+          { role: "user", text: "昨晚厂区南门 21 点到 22 点有无异常？" },
+          { role: "assistant", text: "正在检索视频内容……" },
+          {
+            role: "assistant",
+            text: "检测到 21:35 南门出现人员停留，已返回预警画面与时间点。",
+          },
+          { role: "assistant", text: "预警：21:35 · 厂区南门" },
+          { role: "user", text: "还有其它时间段异常吗？" },
+          {
+            role: "assistant",
+            text: "22:00 前无其它异常事件，已复核完毕。",
+          },
+          { role: "assistant", text: "检索范围：21:00–22:00" },
         ],
+        footer: { placeholder: "请输入你的问题…", action: "发送" },
       },
       reason: ["视频解析", "内容理解", "语义检索", "预警返回"],
       workflowLabel: "工作流程",

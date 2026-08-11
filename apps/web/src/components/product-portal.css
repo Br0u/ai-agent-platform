@@ -812,6 +812,34 @@
   background: linear-gradient(135deg, var(--portal-blue), var(--portal-violet));
 }
 
+.product-portal-demo-footer {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 15px;
+  border-top: 1px solid var(--portal-border);
+}
+
+.product-portal-demo-footer input {
+  min-width: 0;
+  flex: 1;
+  padding: 10px 13px;
+  border: 1px solid var(--portal-border);
+  border-radius: 12px;
+  color: var(--portal-muted);
+  background: rgb(255 255 255 / 72%);
+}
+
+.product-portal-demo-footer button {
+  flex: none;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--portal-blue), var(--portal-violet));
+  font-weight: 720;
+}
+
 .product-portal-demo .product-portal-demo-caption {
   max-width: none;
   margin: 12px 0 0;

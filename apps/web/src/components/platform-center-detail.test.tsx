@@ -240,12 +240,25 @@ describe("PlatformCenterDetail", () => {
       "给这个接口补上参数校验和单元测试",
       "正在分析代码并生成修改方案……",
       "已生成修改后的代码与单元测试，并检查通过。｜Build 模式 · 修改已落地",
-      "输入你的开发需求…",
-      "发送",
       "对话式编程：输入需求 → 生成代码 → 落地执行，全程可追溯",
     ]) {
       expect(within(demo!).getByText(copy, { exact: true })).toBeVisible();
     }
+    const messages = within(demo!).getAllByTestId("platform-demo-message");
+    expect(messages).toHaveLength(3);
+    expect(
+      messages.map((message) => message.getAttribute("data-message-role")),
+    ).toEqual(["user", "assistant", "assistant"]);
+    expect(
+      within(demo!).getByPlaceholderText("输入你的开发需求…"),
+    ).toBeDisabled();
+    expect(within(demo!).getByRole("button", { name: "发送" })).toBeDisabled();
+    expect(messages.map((message) => message.textContent)).not.toContain(
+      "输入你的开发需求…",
+    );
+    expect(messages.map((message) => message.textContent)).not.toContain(
+      "发送",
+    );
     expect(
       screen.queryByText("码多多 · 对话式开发界面素材槽位"),
     ).not.toBeInTheDocument();

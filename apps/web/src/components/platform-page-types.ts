@@ -1,5 +1,23 @@
 import type { PortalAction } from "./product-portal-content";
 
+export type PlatformDemoMessage =
+  | string
+  | {
+      role: "user" | "assistant";
+      text: string;
+    };
+
+export type PlatformDemo = {
+  title: string;
+  messages: readonly PlatformDemoMessage[];
+  footer?: {
+    placeholder: string;
+    action: string;
+  };
+  note?: string;
+  caption?: string;
+};
+
 export type PlatformPage = {
   slug: string;
   name: string;
@@ -13,7 +31,8 @@ export type PlatformPage = {
       title: string;
       description?: string;
       note?: string;
-      messages?: readonly string[];
+      messages?: PlatformDemo["messages"];
+      footer?: PlatformDemo["footer"];
     };
   };
   sections: readonly {
@@ -25,12 +44,7 @@ export type PlatformPage = {
     body?: string;
     subheading?: string;
     visual?: string;
-    demo?: {
-      title: string;
-      messages: readonly string[];
-      note?: string;
-      caption?: string;
-    };
+    demo?: PlatformDemo;
     flow?: readonly string[];
     note?: string;
     actions?: readonly PortalAction[];
@@ -74,12 +88,7 @@ export type PlatformPage = {
     points: readonly { title: string; description: string }[];
     values: readonly { title: string; description: string }[];
     visual?: string;
-    demo?: {
-      title: string;
-      messages: readonly string[];
-      note?: string;
-      caption?: string;
-    };
+    demo?: PlatformDemo;
     reason: readonly string[];
     workflowLabel?: string;
     workflow?: readonly string[];

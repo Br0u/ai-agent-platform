@@ -166,8 +166,18 @@ describe("application subpage family", () => {
       };
 
       expectOnlyInsideDemo(expected[slug].demo.header, true);
-      expectOnlyInsideDemo(expected[slug].demo.placeholder, true);
-      expectOnlyInsideDemo("发送", true);
+      const input = demo.getByPlaceholderText(expected[slug].demo.placeholder);
+      expect(input).toBeDisabled();
+      expect(
+        within(container).getAllByPlaceholderText(
+          expected[slug].demo.placeholder,
+        ),
+      ).toEqual([input]);
+      const sendButton = demo.getByRole("button", { name: "发送" });
+      expect(sendButton).toBeDisabled();
+      expect(
+        within(container).getAllByRole("button", { name: "发送" }),
+      ).toEqual([sendButton]);
       for (const text of expected[slug].demo.highlights) {
         expectOnlyInsideDemo(text, false);
       }

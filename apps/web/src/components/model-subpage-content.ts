@@ -318,11 +318,18 @@ const modelSubpages = [
         demo: {
           title: "评估任务 · 评测结果演示",
           messages: [
-            "对比两个候选模型的问答准确率",
-            "正在执行自动评测……",
-            "模型 A｜问答准确率 92%｜推荐上线",
-            "模型 B｜问答准确率 87%｜继续优化",
+            { role: "user", text: "对比两个候选模型的问答准确率" },
+            { role: "assistant", text: "正在执行自动评测……" },
+            {
+              role: "assistant",
+              text: "模型 A｜问答准确率 92%｜推荐上线",
+            },
+            {
+              role: "assistant",
+              text: "模型 B｜问答准确率 87%｜继续优化",
+            },
           ],
+          footer: { placeholder: "请输入你的问题…", action: "发送" },
           note: "评测集：行业问答 1000 条",
           caption: "选择模型与数据集 → 执行测评 → 输出结果 → 支撑决策",
         },
@@ -1082,11 +1089,21 @@ const modelSubpages = [
         demo: {
           title: "蒸馏训练 · 效果与成本演示",
           messages: [
-            "蒸馏后的模型效果和成本怎么样？",
-            "正在对比教师模型与学生模型……",
-            "教师模型｜问答准确率 94%｜推理成本高",
-            "学生模型｜问答准确率 90%｜推理成本更低",
+            { role: "user", text: "蒸馏后的模型效果和成本怎么样？" },
+            {
+              role: "assistant",
+              text: "正在对比教师模型与学生模型……",
+            },
+            {
+              role: "assistant",
+              text: "教师模型｜问答准确率 94%｜推理成本高",
+            },
+            {
+              role: "assistant",
+              text: "学生模型｜问答准确率 90%｜推理成本更低",
+            },
           ],
+          footer: { placeholder: "请输入你的问题…", action: "发送" },
           note: "蒸馏数据集：行业问答 1000 条",
           caption: "大模型（教师）→ 蒸馏 → 小模型（学生）→ 轻量部署",
         },
@@ -1382,10 +1399,20 @@ const modelSubpages = [
         demo: {
           title: "人工评测 · 业务把关演示",
           messages: [
-            "按客服业务口径标注这批回复的准确性",
-            "已生成待标注列表，共 12 条……",
-            "已完成标注 12 条，评测结果已生成，可反馈模型优化。",
+            {
+              role: "user",
+              text: "按客服业务口径标注这批回复的准确性",
+            },
+            {
+              role: "assistant",
+              text: "已生成待标注列表，共 12 条……",
+            },
+            {
+              role: "assistant",
+              text: "已完成标注 12 条，评测结果已生成，可反馈模型优化。",
+            },
           ],
+          footer: { placeholder: "输入评测指令…", action: "发送" },
           note: "业务口径：客服问答场景",
         },
         cards: [
@@ -1446,10 +1473,14 @@ const modelSubpages = [
       demo: {
         title: "模型效果评测",
         messages: [
-          "对比两个候选模型的问答准确率",
-          "正在执行自动评测……",
-          "华东区｜约 1.28 亿元｜同比增长 12%",
+          { role: "user", text: "对比两个候选模型的问答准确率" },
+          { role: "assistant", text: "正在执行自动评测……" },
+          {
+            role: "assistant",
+            text: "华东区｜约 1.28 亿元｜同比增长 12%",
+          },
         ],
+        footer: { placeholder: "请输入你的问题…", action: "发送" },
         note: "数据来源：销售数据库",
       },
       reason: ["评测任务", "自动/人工评测", "报告生成", "选型决策"],

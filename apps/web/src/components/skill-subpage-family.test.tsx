@@ -182,8 +182,16 @@ describe("skill subpage family", () => {
       for (const copy of expected[slug].business.messages) {
         expectOnlyInsideBusinessDemo(copy);
       }
-      expectOnlyInsideBusinessDemo("输入你的需求…");
-      expectOnlyInsideBusinessDemo("发送");
+      const input = demo.getByPlaceholderText("输入你的需求…");
+      expect(input).toBeDisabled();
+      expect(
+        within(container).getAllByPlaceholderText("输入你的需求…"),
+      ).toEqual([input]);
+      const sendButton = demo.getByRole("button", { name: "发送" });
+      expect(sendButton).toBeDisabled();
+      expect(
+        within(container).getAllByRole("button", { name: "发送" }),
+      ).toEqual([sendButton]);
     },
   );
 

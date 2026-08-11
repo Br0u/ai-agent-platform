@@ -1,9 +1,58 @@
 import { describe, expect, it } from "vitest";
 
+import { agentSubpageSlugs, getAgentSubpage } from "./agent-subpage-content";
+import {
+  applicationSubpageSlugs,
+  getApplicationSubpage,
+} from "./application-subpage-content";
+import {
+  capabilityFoundationSlugs,
+  getCapabilityFoundation,
+} from "./capability-foundation-content";
+import { codingSubpageSlugs, getCodingSubpage } from "./coding-subpage-content";
+import { getModelSubpage, modelSubpageSlugs } from "./model-subpage-content";
 import {
   getPlatformCenter,
   platformCenterSlugs,
 } from "./platform-center-content";
+import type { PlatformDemo, PlatformPage } from "./platform-page-types";
+import { getSkillSubpage, skillSubpageSlugs } from "./skill-subpage-content";
+
+function collectPageDemos(page: PlatformPage) {
+  const demos: { key: string; demo: PlatformDemo }[] = [];
+
+  if (page.hero.visual.messages) {
+    demos.push({
+      key: `${page.slug}:hero`,
+      demo: {
+        title: page.hero.visual.title,
+        messages: page.hero.visual.messages,
+        footer: page.hero.visual.footer,
+        note: page.hero.visual.note,
+      },
+    });
+  }
+  page.sections.forEach((section, index) => {
+    if (section.demo) {
+      demos.push({ key: `${page.slug}:section-${index}`, demo: section.demo });
+    }
+  });
+  if (page.business?.demo) {
+    demos.push({ key: `${page.slug}:business`, demo: page.business.demo });
+  }
+
+  return demos;
+}
+
+const allPlatformPages = [
+  ...platformCenterSlugs.map(getPlatformCenter),
+  ...capabilityFoundationSlugs.map(getCapabilityFoundation),
+  ...modelSubpageSlugs.map(getModelSubpage),
+  ...codingSubpageSlugs.map(getCodingSubpage),
+  ...agentSubpageSlugs.map(getAgentSubpage),
+  ...applicationSubpageSlugs.map(getApplicationSubpage),
+  ...skillSubpageSlugs.map(getSkillSubpage),
+].filter((page): page is PlatformPage => page !== undefined);
 
 const expectedFoundationCenters = {
   model: {
@@ -266,12 +315,24 @@ const expectedFoundationCenters = {
       demo: {
         title: "模型问答对比",
         messages: [
-          "我们公司的报销标准是什么？",
-          "很抱歉，我不了解贵公司的报销制度。｜通用模型 · 泛泛而谈",
-          "根据《费用报销管理制度》，差旅住宿标准为……｜优化后模型 · 有据可依",
-          "那出差补贴呢？",
-          "建议咨询相关部门确认。｜通用模型 · 不确定",
-          "根据《差旅管理办法》，出差补贴标准为……｜优化后模型 · 有据可依",
+          { role: "user", text: "我们公司的报销标准是什么？" },
+          {
+            role: "assistant",
+            text: "很抱歉，我不了解贵公司的报销制度。｜通用模型 · 泛泛而谈",
+          },
+          {
+            role: "assistant",
+            text: "根据《费用报销管理制度》，差旅住宿标准为……｜优化后模型 · 有据可依",
+          },
+          { role: "user", text: "那出差补贴呢？" },
+          {
+            role: "assistant",
+            text: "建议咨询相关部门确认。｜通用模型 · 不确定",
+          },
+          {
+            role: "assistant",
+            text: "根据《差旅管理办法》，出差补贴标准为……｜优化后模型 · 有据可依",
+          },
         ],
         note: "通用模型 vs 优化后模型：同一问题对比",
       },
@@ -485,6 +546,400 @@ const expectedFoundationCenters = {
 } as const;
 
 describe("prototype platform center content contract", () => {
+  it("keeps footer controls out of all demo messages and explicit roles complete", () => {
+    const demos = allPlatformPages.flatMap(collectPageDemos);
+
+    expect(demos).toHaveLength(61);
+    for (const { demo } of demos) {
+      const messageTexts = demo.messages.map((message) =>
+        typeof message === "string" ? message : message.text,
+      );
+      expect(messageTexts).not.toContain("发送");
+      if (demo.footer) {
+        expect(messageTexts).not.toContain(demo.footer.placeholder);
+        expect(messageTexts).not.toContain(demo.footer.action);
+      }
+      if (demo.messages.some((message) => typeof message !== "string")) {
+        expect(
+          demo.messages.every((message) => typeof message !== "string"),
+        ).toBe(true);
+      }
+    }
+
+    expect(
+      demos
+        .filter(({ demo }) =>
+          demo.messages.every((message) => typeof message !== "string"),
+        )
+        .map(({ key, demo }) => ({
+          key,
+          roles: demo.messages.map((message) =>
+            typeof message === "string" ? "invalid" : message.role,
+          ),
+          footer: demo.footer,
+        })),
+    ).toMatchInlineSnapshot(`
+      [
+        {
+          "footer": undefined,
+          "key": "model:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "user",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "请输入你的问题…",
+          },
+          "key": "agents:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "user",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "输入你的需求…",
+          },
+          "key": "skills:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "user",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "用自然语言描述你的开发需求…",
+          },
+          "key": "coding:hero",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "输入你的开发需求…",
+          },
+          "key": "coding:section-1",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "输入你的开发需求…",
+          },
+          "key": "coding:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "user",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "请输入你的问题…",
+          },
+          "key": "model-task-center:section-4",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "请输入你的问题…",
+          },
+          "key": "model-training:section-5",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "输入评测指令…",
+          },
+          "key": "model-evaluation:section-4",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "请输入你的问题…",
+          },
+          "key": "model-evaluation:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "基于当前项目上下文提问…",
+          },
+          "key": "coding-project:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "继续你的开发对话…",
+          },
+          "key": "coding-session:hero",
+          "roles": [
+            "assistant",
+            "user",
+            "assistant",
+            "user",
+            "assistant",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "继续对话…",
+          },
+          "key": "coding-session:section-2",
+          "roles": [
+            "assistant",
+            "user",
+            "assistant",
+            "user",
+            "assistant",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "输入你的开发需求…",
+          },
+          "key": "coding-session:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "输入指令或需求…",
+          },
+          "key": "coding-mobile:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "输入代码或需求…",
+          },
+          "key": "coding-standard:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": undefined,
+          "key": "agent-knowledge:section-2",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "请输入你的问题…",
+          },
+          "key": "agent-knowledge:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "assistant",
+            "user",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "请输入你的问题…",
+          },
+          "key": "data-agent:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "请输入你的问题…",
+          },
+          "key": "agent-video:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "assistant",
+            "user",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "请输入你的写作要求…",
+          },
+          "key": "app-writing:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "assistant",
+            "user",
+            "assistant",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "请输入你的问题…",
+          },
+          "key": "app-bidding:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "assistant",
+            "user",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "请输入你的审查问题…",
+          },
+          "key": "app-contract:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "assistant",
+            "user",
+            "assistant",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "输入你的需求…",
+          },
+          "key": "skills-programming:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "user",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "输入你的需求…",
+          },
+          "key": "skills-application:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "user",
+            "assistant",
+          ],
+        },
+        {
+          "footer": {
+            "action": "发送",
+            "placeholder": "输入你的需求…",
+          },
+          "key": "skills-office:business",
+          "roles": [
+            "user",
+            "assistant",
+            "assistant",
+            "user",
+            "assistant",
+          ],
+        },
+      ]
+    `);
+  });
+
   it.each(Object.entries(expectedFoundationCenters))(
     "locks the complete %s center",
     (slug, expected) => {
@@ -502,12 +957,31 @@ describe("prototype platform center content contract", () => {
         {
           "business": {
             "demo": {
+              "footer": {
+                "action": "发送",
+                "placeholder": "请输入你的问题…",
+              },
               "messages": [
-                "报销标准是什么？",
-                "正在检索企业知识……",
-                "根据《费用报销管理制度》，差旅住宿标准为……｜引用：企业知识库",
-                "帮我盯一下南门区域的异常",
-                "已创建实时布控，发现异常将立即预警。｜视频智能体",
+                {
+                  "role": "user",
+                  "text": "报销标准是什么？",
+                },
+                {
+                  "role": "assistant",
+                  "text": "正在检索企业知识……",
+                },
+                {
+                  "role": "assistant",
+                  "text": "根据《费用报销管理制度》，差旅住宿标准为……｜引用：企业知识库",
+                },
+                {
+                  "role": "user",
+                  "text": "帮我盯一下南门区域的异常",
+                },
+                {
+                  "role": "assistant",
+                  "text": "已创建实时布控，发现异常将立即预警。｜视频智能体",
+                },
               ],
               "title": "智能体中心 · 能力演示",
             },
@@ -1048,12 +1522,31 @@ describe("prototype platform center content contract", () => {
         {
           "business": {
             "demo": {
+              "footer": {
+                "action": "发送",
+                "placeholder": "输入你的需求…",
+              },
               "messages": [
-                "用会议纪要技能，把这段录音转成纪要",
-                "已调用会议纪要技能，正在转写……",
-                "已生成结构化纪要与任务清单。",
-                "再调用视频布控技能，盯一下南门区域",
-                "已创建布控任务并开始预警。",
+                {
+                  "role": "user",
+                  "text": "用会议纪要技能，把这段录音转成纪要",
+                },
+                {
+                  "role": "assistant",
+                  "text": "已调用会议纪要技能，正在转写……",
+                },
+                {
+                  "role": "assistant",
+                  "text": "已生成结构化纪要与任务清单。",
+                },
+                {
+                  "role": "user",
+                  "text": "再调用视频布控技能，盯一下南门区域",
+                },
+                {
+                  "role": "assistant",
+                  "text": "已创建布控任务并开始预警。",
+                },
               ],
               "title": "技能中心 · 组装演示",
             },
@@ -1278,12 +1771,31 @@ describe("prototype platform center content contract", () => {
         {
           "business": {
             "demo": {
+              "footer": {
+                "action": "发送",
+                "placeholder": "输入你的开发需求…",
+              },
               "messages": [
-                "为订单模块设计一个状态机，并生成代码",
-                "Plan 模式：正在生成设计方案……",
-                "方案已生成：待支付→已支付→已发货→已完成，含异常回退。｜方案确认后进入 Build",
-                "按方案生成代码并跑通测试",
-                "已生成代码与单元测试，执行通过。｜Build 模式 · 工具链落地执行",
+                {
+                  "role": "user",
+                  "text": "为订单模块设计一个状态机，并生成代码",
+                },
+                {
+                  "role": "assistant",
+                  "text": "Plan 模式：正在生成设计方案……",
+                },
+                {
+                  "role": "assistant",
+                  "text": "方案已生成：待支付→已支付→已发货→已完成，含异常回退。｜方案确认后进入 Build",
+                },
+                {
+                  "role": "user",
+                  "text": "按方案生成代码并跑通测试",
+                },
+                {
+                  "role": "assistant",
+                  "text": "已生成代码与单元测试，执行通过。｜Build 模式 · 工具链落地执行",
+                },
               ],
               "note": "需求 → 规划 → 生成 → 落地执行",
               "title": "码多多 · 开发助手",
@@ -1433,10 +1945,23 @@ describe("prototype platform center content contract", () => {
             ],
             "title": "码多多：让智能编程走进企业日常开发",
             "visual": {
+              "footer": {
+                "action": "发送",
+                "placeholder": "用自然语言描述你的开发需求…",
+              },
               "messages": [
-                "用 Python 写一个批量重命名文件的脚本",
-                "正在规划实现方案……",
-                "已生成完整代码：支持目录遍历、前缀/后缀规则、预览与回滚。｜Plan 模式 · 方案已确认",
+                {
+                  "role": "user",
+                  "text": "用 Python 写一个批量重命名文件的脚本",
+                },
+                {
+                  "role": "assistant",
+                  "text": "正在规划实现方案……",
+                },
+                {
+                  "role": "assistant",
+                  "text": "已生成完整代码：支持目录遍历、前缀/后缀规则、预览与回滚。｜Plan 模式 · 方案已确认",
+                },
               ],
               "title": "码多多 · 编程助手",
             },
@@ -1520,12 +2045,23 @@ describe("prototype platform center content contract", () => {
                 },
               ],
               "demo": {
+                "footer": {
+                  "action": "发送",
+                  "placeholder": "输入你的开发需求…",
+                },
                 "messages": [
-                  "给这个接口补上参数校验和单元测试",
-                  "正在分析代码并生成修改方案……",
-                  "已生成修改后的代码与单元测试，并检查通过。｜Build 模式 · 修改已落地",
-                  "输入你的开发需求…",
-                  "发送",
+                  {
+                    "role": "user",
+                    "text": "给这个接口补上参数校验和单元测试",
+                  },
+                  {
+                    "role": "assistant",
+                    "text": "正在分析代码并生成修改方案……",
+                  },
+                  {
+                    "role": "assistant",
+                    "text": "已生成修改后的代码与单元测试，并检查通过。｜Build 模式 · 修改已落地",
+                  },
                 ],
                 "note": "对话式编程：输入需求 → 生成代码 → 落地执行，全程可追溯",
                 "title": "码多多 · 对话式开发",

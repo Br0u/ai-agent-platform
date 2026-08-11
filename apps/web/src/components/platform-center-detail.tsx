@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { getPlatformCenter } from "./platform-center-content";
-import type { PlatformPage } from "./platform-page-types";
+import type { PlatformDemo, PlatformPage } from "./platform-page-types";
 import type { PortalAction } from "./product-portal-content";
 import "./product-portal.css";
 
@@ -69,29 +69,43 @@ function Visual({
   );
 }
 
-function Demo({
-  demo,
-  testId,
-}: {
-  demo: {
-    title: string;
-    messages: readonly string[];
-    note?: string;
-    caption?: string;
-  };
-  testId?: string;
-}) {
+function Demo({ demo, testId }: { demo: PlatformDemo; testId?: string }) {
   return (
     <aside className="product-portal-demo" data-testid={testId}>
       <strong>{demo.title}</strong>
-      {demo.messages.map((message, index) => (
-        <p
-          className={index % 2 === 0 ? "is-user" : undefined}
-          key={`${index}-${message}`}
-        >
-          {message}
-        </p>
-      ))}
+      {demo.messages.map((message, index) => {
+        const text = typeof message === "string" ? message : message.text;
+        const role =
+          typeof message === "string"
+            ? index % 2 === 0
+              ? "user"
+              : "assistant"
+            : message.role;
+
+        return (
+          <p
+            className={role === "user" ? "is-user" : undefined}
+            data-message-role={role}
+            data-testid="platform-demo-message"
+            key={`${index}-${text}`}
+          >
+            {text}
+          </p>
+        );
+      })}
+      {demo.footer ? (
+        <div className="product-portal-demo-footer">
+          <input
+            aria-label={demo.footer.placeholder}
+            disabled
+            placeholder={demo.footer.placeholder}
+            type="text"
+          />
+          <button disabled type="button">
+            {demo.footer.action}
+          </button>
+        </div>
+      ) : null}
       {demo.note ? <small>{demo.note}</small> : null}
       {demo.caption ? (
         <p className="product-portal-demo-caption">{demo.caption}</p>
@@ -392,6 +406,7 @@ export function PlatformPageDetail({
               demo={{
                 title: center.hero.visual.title,
                 messages: center.hero.visual.messages,
+                footer: center.hero.visual.footer,
                 note: center.hero.visual.note,
               }}
             />
