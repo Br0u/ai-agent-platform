@@ -1,7 +1,17 @@
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const { replace } = vi.hoisted(() => ({ replace: vi.fn() }));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace }),
+}));
 
 import ContactPage, { metadata } from "./page";
+
+afterEach(() => {
+  replace.mockReset();
+});
 
 describe("ContactPage", () => {
   it("逐字呈现原型联系信息与三个业务入口", async () => {

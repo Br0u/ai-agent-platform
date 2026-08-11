@@ -85,7 +85,7 @@ describe("TrialExperience", () => {
     const send = within(dialog).getByRole("button", { name: "获取验证码" });
     fireEvent.click(send);
     expect(send).toBeDisabled();
-    expect(send).toHaveTextContent("60 秒后重试");
+    expect(send).toHaveTextContent("60s 后重发");
     expect(within(dialog).getByLabelText("验证码")).toHaveAttribute(
       "inputmode",
       "numeric",
@@ -96,7 +96,7 @@ describe("TrialExperience", () => {
     );
 
     act(() => vi.advanceTimersByTime(1_000));
-    expect(send).toHaveTextContent("59 秒后重试");
+    expect(send).toHaveTextContent("59s 后重发");
     act(() => vi.advanceTimersByTime(59_000));
     expect(send).toBeEnabled();
     expect(send).toHaveTextContent("获取验证码");

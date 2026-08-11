@@ -715,7 +715,7 @@ test("trial 在 1440 与 390 完成校验、成功、关闭和焦点约束", asy
       .getByLabel("联系方式（手机号或邮箱）")
       .fill("test@example.com");
     await dialog.getByRole("button", { name: "获取验证码" }).click();
-    const retry = dialog.getByRole("button", { name: "60 秒后重试" });
+    const retry = dialog.getByRole("button", { name: "60s 后重发" });
     await expect(retry).toBeDisabled();
     const codeInput = dialog.getByLabel("验证码", { exact: true });
     await expect(codeInput).toHaveAttribute("inputmode", "numeric");

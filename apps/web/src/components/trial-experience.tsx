@@ -306,7 +306,7 @@ export function TrialExperience() {
                             onClick={sendCode}
                           >
                             {countingDown
-                              ? `${countdown} 秒后重试`
+                              ? `${countdown}s 后重发`
                               : trialContent.form.sendCode}
                           </button>
                         ) : null}
