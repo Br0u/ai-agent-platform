@@ -21,9 +21,9 @@ describe("RegisteredRoutePage", () => {
   });
 
   it("preserves the disabled contract for external routes", () => {
-    render(<RegisteredRoutePage pathname="/openlab" />);
+    render(<RegisteredRoutePage pathname="/console/openlab" />);
 
-    expect(screen.getByRole("heading", { name: "OpenLab" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "OpenLab进度" })).toBeVisible();
     expect(screen.getByText("功能尚未开放")).toBeVisible();
     expect(screen.getByText("FEATURE_DISABLED")).toBeVisible();
   });

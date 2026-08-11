@@ -280,7 +280,10 @@ describe("prototype application subpage content contract", () => {
             description: "通知、报告、通报等法定公文与办公材料。",
             actions: [
               { label: "查看文档智能方案 →", href: "/solutions#knowledge" },
-              { label: "查看实践案例 →", href: "/cases" },
+              {
+                label: "查看实践案例 →",
+                href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              },
             ],
           },
           {
@@ -288,7 +291,10 @@ describe("prototype application subpage content contract", () => {
             description: "工作汇报、会议纪要、总结材料快速成稿。",
             actions: [
               { label: "查看相关方案 →", href: "/solutions#knowledge" },
-              { label: "查看实践案例 →", href: "/cases" },
+              {
+                label: "查看实践案例 →",
+                href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              },
             ],
           },
           {
@@ -296,7 +302,10 @@ describe("prototype application subpage content contract", () => {
             description: "企业宣传稿、活动文案、日常内容的创作与润色。",
             actions: [
               { label: "查看相关方案 →", href: "/solutions#knowledge" },
-              { label: "查看实践案例 →", href: "/cases" },
+              {
+                label: "查看实践案例 →",
+                href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              },
             ],
           },
         ],
@@ -539,7 +548,10 @@ describe("prototype application subpage content contract", () => {
             description: "政府采购、行业入围类标书快速响应。",
             actions: [
               { label: "查看文档智能方案 →", href: "/solutions#knowledge" },
-              { label: "查看实践案例 →", href: "/cases" },
+              {
+                label: "查看实践案例 →",
+                href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              },
             ],
           },
           {
@@ -547,7 +559,10 @@ describe("prototype application subpage content contract", () => {
             description: "技术方案、商务应答分章编写。",
             actions: [
               { label: "查看相关方案 →", href: "/solutions#knowledge" },
-              { label: "查看实践案例 →", href: "/cases" },
+              {
+                label: "查看实践案例 →",
+                href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              },
             ],
           },
           {
@@ -555,7 +570,10 @@ describe("prototype application subpage content contract", () => {
             description: "咨询与集成方案类标书高效成稿。",
             actions: [
               { label: "查看相关方案 →", href: "/solutions#knowledge" },
-              { label: "查看实践案例 →", href: "/cases" },
+              {
+                label: "查看实践案例 →",
+                href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              },
             ],
           },
         ],
@@ -786,7 +804,10 @@ describe("prototype application subpage content contract", () => {
             description: "保理、租赁等金融合同按标准严格审查。",
             actions: [
               { label: "查看文档智能方案 →", href: "/solutions#knowledge" },
-              { label: "查看实践案例 →", href: "/cases" },
+              {
+                label: "查看实践案例 →",
+                href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              },
             ],
           },
           {
@@ -794,7 +815,10 @@ describe("prototype application subpage content contract", () => {
             description: "商务、采购、销售合同风险核查与条款优化。",
             actions: [
               { label: "查看相关方案 →", href: "/solutions#knowledge" },
-              { label: "查看实践案例 →", href: "/cases" },
+              {
+                label: "查看实践案例 →",
+                href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              },
             ],
           },
           {
@@ -802,7 +826,10 @@ describe("prototype application subpage content contract", () => {
             description: "劳务、租赁等合同条款合规性核查。",
             actions: [
               { label: "查看相关方案 →", href: "/solutions#knowledge" },
-              { label: "查看实践案例 →", href: "/cases" },
+              {
+                label: "查看实践案例 →",
+                href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              },
             ],
           },
         ],

@@ -199,7 +199,10 @@ describe("application subpage family", () => {
       }
       for (const [name, href] of [
         ["查看文档智能方案 →", "/solutions#knowledge"],
-        ["查看实践案例 →", "/cases"],
+        [
+          "查看实践案例 →",
+          "/solutions?view=cases&mode=all#practice-cases-hero",
+        ],
       ] as const) {
         const links = screen.getAllByRole("link", { name });
 

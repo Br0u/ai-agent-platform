@@ -73,25 +73,14 @@ const requiredRoutes = [
   "/product/skills-programming",
   "/product/skills-application",
   "/product/skills-office",
-  "/product/[slug]",
   "/solutions",
   "/solutions/[slug]",
-  "/releases",
-  "/releases/[version]",
-  "/roadmap",
   "/downloads",
   "/partners",
-  "/openlab",
   "/docs",
   "/docs/[category]",
-  "/compatibility",
-  "/marketplace",
-  "/marketplace/[slug]",
   "/support",
   "/help",
-  "/blog",
-  "/blog/[slug]",
-  "/cases",
   "/pricing",
   "/assistant",
   "/trial",
@@ -120,6 +109,7 @@ const requiredRoutes = [
   "/admin/products",
   "/admin/releases",
   "/admin/docs",
+  "/admin/docs/preview/[revisionId]",
   "/admin/blog",
   "/admin/cases",
   "/admin/faq",
@@ -135,8 +125,27 @@ const requiredRoutes = [
   "/admin/audit-logs",
 ] as const;
 
+const removedPublicRoutes = [
+  "/releases",
+  "/releases/2.0.0",
+  "/roadmap",
+  "/openlab",
+  "/compatibility",
+  "/marketplace",
+  "/marketplace/example",
+  "/blog",
+  "/blog/platform-release",
+  "/cases",
+  "/product/hci",
+  "/product/knowledge-agent",
+  "/product/office-agent",
+  "/product/tgdataxai",
+  "/product/video-agent",
+  "/product/agent-studio",
+] as const;
+
 describe("routeRegistry", () => {
-  it("covers every route committed in PRD V2.1 without duplicates", () => {
+  it("locks the final migrated and retained route registry without duplicates", () => {
     const paths = routeRegistry.map((route) => route.path);
 
     expect(paths).toEqual(requiredRoutes);
@@ -167,6 +176,12 @@ describe("routeRegistry", () => {
     expect(matchRoute("/admin/docs")).toEqual({
       path: "/admin/docs",
       title: "文档管理",
+      group: "admin",
+      status: "live",
+    });
+    expect(matchRoute("/admin/docs/preview/revision-1")).toEqual({
+      path: "/admin/docs/preview/[revisionId]",
+      title: "文档修订预览",
       group: "admin",
       status: "live",
     });
@@ -234,7 +249,7 @@ describe("routeRegistry", () => {
     }
   });
 
-  it("registers standalone product pages before the remaining scaffold routes", () => {
+  it("registers the standalone product pages and no product catch-all", () => {
     for (const path of [
       "/product/standalone",
       "/product/code-agent",
@@ -248,13 +263,10 @@ describe("routeRegistry", () => {
       });
     }
 
-    expect(matchRoute("/product/agent-studio")).toMatchObject({
-      path: "/product/[slug]",
-      status: "scaffold",
-    });
+    expect(matchRoute("/product/agent-studio")).toBeUndefined();
   });
 
-  it("registers the seven platform centers before remaining product scaffolds", () => {
+  it("registers the seven platform centers and no product catch-all", () => {
     for (const path of [
       "/product/model",
       "/product/knowledge",
@@ -271,13 +283,10 @@ describe("routeRegistry", () => {
       });
     }
 
-    expect(matchRoute("/product/agent-studio")).toMatchObject({
-      path: "/product/[slug]",
-      status: "scaffold",
-    });
+    expect(matchRoute("/product/agent-studio")).toBeUndefined();
   });
 
-  it("registers the seven model subpages before remaining product scaffolds", () => {
+  it("registers the seven model subpages and rejects unknown products", () => {
     for (const path of [
       "/product/model-optimization",
       "/product/model-task-center",
@@ -294,10 +303,7 @@ describe("routeRegistry", () => {
       });
     }
 
-    expect(matchRoute("/product/model-unknown")).toMatchObject({
-      path: "/product/[slug]",
-      status: "scaffold",
-    });
+    expect(matchRoute("/product/model-unknown")).toBeUndefined();
   });
 
   it("registers the capability foundation pages before remaining product scaffolds", () => {
@@ -313,10 +319,7 @@ describe("routeRegistry", () => {
       group: "public",
       status: "live",
     });
-    expect(matchRoute("/product/foundation-unknown")).toMatchObject({
-      path: "/product/[slug]",
-      status: "scaffold",
-    });
+    expect(matchRoute("/product/foundation-unknown")).toBeUndefined();
   });
 
   it("registers the four coding subpages before remaining product scaffolds", () => {
@@ -334,10 +337,7 @@ describe("routeRegistry", () => {
       });
     }
 
-    expect(matchRoute("/product/coding-unknown")).toMatchObject({
-      path: "/product/[slug]",
-      status: "scaffold",
-    });
+    expect(matchRoute("/product/coding-unknown")).toBeUndefined();
   });
 
   it("registers the four agent subpages before remaining product scaffolds", () => {
@@ -355,19 +355,10 @@ describe("routeRegistry", () => {
       });
     }
 
-    expect(matchRoute("/product/agent-unknown")).toEqual({
-      path: "/product/[slug]",
-      title: "产品模块详情",
-      group: "public",
-      status: "scaffold",
-    });
+    expect(matchRoute("/product/agent-unknown")).toBeUndefined();
   });
 
-  it("registers the three application subpages before remaining product scaffolds", () => {
-    const dynamicProductIndex = routeRegistry.findIndex(
-      (route) => route.path === "/product/[slug]",
-    );
-
+  it("registers the three application subpages and rejects unknown products", () => {
     for (const [path, title] of [
       ["/product/app-writing", "通用文本写作"],
       ["/product/app-bidding", "投标智能助手"],
@@ -379,24 +370,12 @@ describe("routeRegistry", () => {
         group: "public",
         status: "live",
       });
-      expect(
-        routeRegistry.findIndex((route) => route.path === path),
-      ).toBeLessThan(dynamicProductIndex);
     }
 
-    expect(matchRoute("/product/app-unknown")).toEqual({
-      path: "/product/[slug]",
-      title: "产品模块详情",
-      group: "public",
-      status: "scaffold",
-    });
+    expect(matchRoute("/product/app-unknown")).toBeUndefined();
   });
 
-  it("registers the three skill subpages before remaining product scaffolds", () => {
-    const dynamicProductIndex = routeRegistry.findIndex(
-      (route) => route.path === "/product/[slug]",
-    );
-
+  it("registers the three skill subpages and rejects unknown products", () => {
     for (const [path, title] of [
       ["/product/skills-programming", "编程类技能"],
       ["/product/skills-application", "应用类技能"],
@@ -408,17 +387,9 @@ describe("routeRegistry", () => {
         group: "public",
         status: "live",
       });
-      expect(
-        routeRegistry.findIndex((route) => route.path === path),
-      ).toBeLessThan(dynamicProductIndex);
     }
 
-    expect(matchRoute("/product/skills-unknown")).toEqual({
-      path: "/product/[slug]",
-      title: "产品模块详情",
-      group: "public",
-      status: "scaffold",
-    });
+    expect(matchRoute("/product/skills-unknown")).toBeUndefined();
   });
 
   it("registers the protected admin assistant as a live route", () => {
@@ -432,8 +403,13 @@ describe("routeRegistry", () => {
 
   it("matches exact and dynamic routes but rejects unknown paths", () => {
     expect(matchRoute("/docs")?.path).toBe("/docs");
-    expect(matchRoute("/product/agent-studio")?.path).toBe("/product/[slug]");
-    expect(matchRoute("/blog/platform-release")?.path).toBe("/blog/[slug]");
+    expect(matchRoute("/docs/operations")?.path).toBe("/docs/[category]");
     expect(matchRoute("/unknown")).toBeUndefined();
+  });
+
+  it("does not retain deleted public routes through the registry", () => {
+    for (const path of removedPublicRoutes) {
+      expect(matchRoute(path), path).toBeUndefined();
+    }
   });
 });

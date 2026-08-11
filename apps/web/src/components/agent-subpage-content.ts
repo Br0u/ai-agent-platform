@@ -306,7 +306,10 @@ const agentSubpages = [
               label: "查看知识服务方案 →",
               href: "/solutions/knowledge-service",
             },
-            { label: "查看实践案例 →", href: "/cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
         {
@@ -317,7 +320,10 @@ const agentSubpages = [
               label: "查看文档理解方案 →",
               href: "/solutions#knowledge",
             },
-            { label: "查看实践案例 →", href: "/cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
         {
@@ -328,7 +334,10 @@ const agentSubpages = [
               label: "查看知识服务方案 →",
               href: "/solutions/knowledge-service",
             },
-            { label: "查看实践案例 →", href: "/cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
       ],
@@ -552,7 +561,10 @@ const agentSubpages = [
               label: "查看数据问答方案 →",
               href: "/solutions/finance-data",
             },
-            { label: "查看实践案例 →", href: "/cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
         {
@@ -563,7 +575,10 @@ const agentSubpages = [
               label: "查看数据问答方案 →",
               href: "/solutions/finance-data",
             },
-            { label: "查看实践案例 →", href: "/cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
         {
@@ -574,7 +589,10 @@ const agentSubpages = [
               label: "查看数据问答方案 →",
               href: "/solutions/finance-data",
             },
-            { label: "查看实践案例 →", href: "/cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
       ],
@@ -786,7 +804,10 @@ const agentSubpages = [
               label: "查看视频检索方案 →",
               href: "/solutions#vision",
             },
-            { label: "查看实践案例 →", href: "/cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
         {
@@ -797,7 +818,10 @@ const agentSubpages = [
               label: "查看视频检索方案 →",
               href: "/solutions#vision",
             },
-            { label: "查看实践案例 →", href: "/cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
         {
@@ -808,7 +832,10 @@ const agentSubpages = [
               label: "查看视频检索方案 →",
               href: "/solutions#vision",
             },
-            { label: "查看实践案例 →", href: "/cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
       ],
@@ -1059,7 +1086,10 @@ const agentSubpages = [
               label: "查看流程自动化方案 →",
               href: "/solutions/process-automation",
             },
-            { label: "查看实践案例 →", href: "/cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
         {
@@ -1070,7 +1100,10 @@ const agentSubpages = [
               label: "查看多智能体方案 →",
               href: "/solutions/enterprise-multi-agent",
             },
-            { label: "查看实践案例 →", href: "/cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
         {
@@ -1081,7 +1114,10 @@ const agentSubpages = [
               label: "查看流程自动化方案 →",
               href: "/solutions/process-automation",
             },
-            { label: "查看实践案例 →", href: "/cases" },
+            {
+              label: "查看实践案例 →",
+              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+            },
           ],
         },
       ],
