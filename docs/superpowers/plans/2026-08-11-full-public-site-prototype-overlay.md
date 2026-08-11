@@ -98,27 +98,27 @@
 - Inspect: `apps/web/src/config/routes.ts`
 - Inspect: `apps/web/src/app/**/page.tsx`
 
-- [ ] **Step 1: 建立完整失败合同**
+- [x] **Step 1: 建立完整失败合同**
 
   测试导入尚不存在的 `prototype-route-map.ts`，精确断言：43 个 page key；14 个通用详情；3 个通用筛选；17 个行业详情；4 个行业筛选；1 个案例占位；7 个 solution view；15 个 partner key；13 个 download resource key。测试期望值使用本计划基线，不由实现动态生成。
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/config/prototype-route-map.test.ts`
 
   Expected: FAIL，唯一根因是无法解析尚不存在的 `./prototype-route-map`。
 
-- [ ] **Step 3: 建立只读生产映射清单**
+- [x] **Step 3: 建立只读生产映射清单**
 
   创建 `prototype-route-map.ts`，用 readonly object/array 导出上述映射。该清单供后续路由、内容合同和最终 E2E 共用，不负责渲染或跳转。
 
-- [ ] **Step 4: 运行 GREEN**
+- [x] **Step 4: 运行 GREEN**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/config/prototype-route-map.test.ts`
 
   Expected: PASS；所有计数和精确 key/path 均匹配。
 
-- [ ] **Step 5: 双向盘点实际路由并记录删除候选**
+- [x] **Step 5: 双向盘点实际路由并记录删除候选**
 
   Run: `rg --files apps/web/src/app | rg '/page\\.tsx$'`
 
@@ -126,7 +126,7 @@
 
   Expected: 输出形成两份清单；记录未注册旧产品页和原型外公开页，但此任务不声明它们已删除。删除失败合同只在 Chunk 6 创建。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
   Commit: `test(portal): 锁定原型全站路由映射`
 
@@ -148,17 +148,17 @@
 - Test: `apps/web/src/components/site-shell/site-shell.test.tsx`
 - Test: `apps/web/src/app/{login,register,docs,support,help}/**/*.test.tsx`
 
-- [ ] **Step 1: 整理现有 RED 合同**
+- [x] **Step 1: 整理现有 RED 合同**
 
   保留并补全 `navigation-overlay.test.ts`：此批先锁定所有已可达的生产父级与精确产品/方案/下载栏目；Footer 不含登录、文档、支持、帮助和删除候选。UI 组件测试用本地 fixture 锁定最终顺序首页、产品、解决方案、下载中心、合作伙伴、价格与服务及伙伴栏目渲染能力。`/partners` 在 Task 10 真实页面与 route 同批完成后才写入生产 `navigation.ts` 并升级 production exact 合同，禁止阶段性 404。
 
-- [ ] **Step 2: 补全 UI 失败合同**
+- [x] **Step 2: 补全 UI 失败合同**
 
   锁定无 children 的首页/价格直达链接没有空面板，产品等栏目仍有可访问 MegaMenu；桌面与移动均显示联系我们、申请体验；Agent entry 仍位于同一 `site-actions` 且唯一。
 
   同时记录迁移前保留系统基线：SiteShell portal/assistant/auth/console/admin variant、登录/注册/文档页面壳、support/help 内容入口。禁止通过修改这些页面来让公开导航测试通过。
 
-- [ ] **Step 3: 运行 RED**
+- [x] **Step 3: 运行 RED**
 
   Run: `pnpm --filter @ai-agent-platform/ui exec vitest run src/navigation/portal-header.test.tsx src/navigation/mega-menu.test.tsx src/navigation/mobile-navigation.test.tsx src/app-shell.test.tsx`
 
@@ -166,11 +166,11 @@
 
   Expected: 旧登录/文档导航合同或 Footer/直达项合同失败；不得因测试路径或环境失败。
 
-- [ ] **Step 4: 最小实现**
+- [x] **Step 4: 最小实现**
 
   用现有 `PortalNavigationItem.children` 空数组表示直达项；`MegaMenu` 仅为非空 children 渲染面板；移动抽屉支持双 CTA。删除 PortalHeader 的公开登录/文档入口，但不改 SiteShell 的 Agent 注入。对尚不可达的 `/partners` 只验证组件能渲染最终数据，不写入生产 navigation。
 
-- [ ] **Step 5: 更新旧测试并运行 GREEN**
+- [x] **Step 5: 更新旧测试并运行 GREEN**
 
   删除只服务旧导航的信息合同，不用由实现动态生成期望值。运行 Task 2 两条命令，要求全部 PASS。
 
@@ -178,7 +178,7 @@
 
   Expected: PASS；保留系统页面壳与 SiteShell variants 无变化。`git diff -- apps/web/src/components/site-shell apps/web/src/app/login apps/web/src/app/register apps/web/src/app/docs apps/web/src/app/support apps/web/src/app/help apps/web/src/app/assistant` 预期为空。
 
-- [ ] **Step 6: 静态检查并提交**
+- [x] **Step 6: 静态检查并提交**
 
   Run: `pnpm --filter @ai-agent-platform/ui typecheck && pnpm --filter @ai-agent-platform/ui lint && pnpm --filter @ai-agent-platform/ui format:check`
 
@@ -195,23 +195,23 @@
 - Test: `apps/web/e2e/home-reference-layout.spec.ts`
 - Test: `apps/web/e2e/home-linked-routes.spec.ts`
 
-- [ ] **Step 1: 对照原型建立首页完整对象合同**
+- [x] **Step 1: 对照原型建立首页完整对象合同**
 
   锁定 H1、章节顺序、能力总览、产品组合、方案入口、素材提示和 CTA 原文；明确排除顶部评审 note、评审 Logo 副标题、评审 Footer 和假聊天浮窗。
 
-- [ ] **Step 2: 运行目标测试确认现状**
+- [x] **Step 2: 运行目标测试确认现状**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/home-content.test.ts src/components/home-reveal.test.tsx`
 
   这是对基线 SHA 前已经迁移并提交的首页做回归审计，不伪造新的生产行为。若新增完整合同直接 GREEN，记录“既有实现已覆盖”并不改生产文件；若因原型字段缺失而 RED，记录精确 received/expected，最小修复后重跑同一命令至 PASS。
 
-- [ ] **Step 3: 运行浏览器验收**
+- [x] **Step 3: 运行浏览器验收**
 
   Run: `pnpm --filter @ai-agent-platform/web exec playwright test e2e/home-reference-layout.spec.ts e2e/home-linked-routes.spec.ts --project=desktop`
 
   验证 1440px、桌面中宽和 390px；唯一真实 Agent 入口存在。
 
-- [ ] **Step 4: 提交本批差异**
+- [x] **Step 4: 提交本批差异**
 
   Commit only if changed: `fix(home): 对齐原型首页内容合同`
 
@@ -231,21 +231,21 @@
 - Test: `apps/web/e2e/product-portal-family.spec.ts`
 - Test routes: `apps/web/src/app/product/page.tsx`, `apps/web/src/app/product/standalone/page.tsx`, `apps/web/src/app/product/{code-agent,aippt,aishrek}/page.tsx`
 
-- [ ] **Step 1: 扩充原型完整合同并记录现状**
+- [x] **Step 1: 扩充原型完整合同并记录现状**
 
   对 `products`、`key-products`、`mdd-2`、`aippt`、`aishrek` 逐字锁定 H1、sections、卡片字段、素材槽位、CTA 和路由映射。
 
-- [ ] **Step 2: 运行合同**
+- [x] **Step 2: 运行合同**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/product-portal-content.test.ts src/components/product-portal-overview.test.tsx src/components/standalone-product-center.test.tsx src/components/standalone-product-detail.test.tsx`
 
   Expected: 5 个 key 的完整对象、5 个真实 Page 接线全部 PASS；若新增字段断言失败，该失败即本任务 RED，必须记录为原型字段/顺序缺失，不接受环境错误。基线前已有真实 TDD 提交，不为已经正确的页面制造假 RED。
 
-- [ ] **Step 3: 仅在 RED 时做最小修复并重跑 GREEN**
+- [x] **Step 3: 仅在 RED 时做最小修复并重跑 GREEN**
 
   只修改实际失败的生产字段、渲染分支或薄页 slug。重跑 Step 2 原命令，Expected: PASS。
 
-- [ ] **Step 4: 浏览器验收与提交**
+- [x] **Step 4: 浏览器验收与提交**
 
   Run: `pnpm --filter @ai-agent-platform/web exec playwright test e2e/product-portal-family.spec.ts --project=desktop`
 
@@ -270,27 +270,27 @@
 - Test routes: `apps/web/src/app/product/model/page.tsx`, `knowledge/page.tsx`, `model-{optimization,task-center,assets,training,evaluation,data,deploy}/page.tsx`, `agent-knowledge-base/page.tsx`, `knowledge-metrics/page.tsx`
 - E2E: `apps/web/e2e/platform-center-family.spec.ts`, `model-subpage-family.spec.ts`, `capability-foundation-family.spec.ts`
 
-- [ ] **Step 1: 锁定 11 个页面合同**
+- [x] **Step 1: 锁定 11 个页面合同**
 
   覆盖 model、model-optimization、model-task-center、model-assets、model-training、model-evaluation、model-data、model-deploy、knowledge、agent-knowledge-base、knowledge-metrics。
 
-- [ ] **Step 2: 运行内容与真实 Page 接线合同**
+- [x] **Step 2: 运行内容与真实 Page 接线合同**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/platform-center-content.test.ts src/components/platform-center-detail.test.tsx src/components/model-subpage-content.test.ts src/components/model-subpage-family.test.tsx src/components/capability-foundation-content.test.ts src/components/capability-foundation-family.test.tsx`
 
   Expected: 11 个 key 的内容、metadata、唯一精确 H1 和薄页 slug 接线均被执行。若新增原型字段断言失败，记录为 RED；如果全部直接 PASS，说明基线前已迁移完整，不修改生产文件。
 
-- [ ] **Step 3: 仅修真实差异并复验**
+- [x] **Step 3: 仅修真实差异并复验**
 
   页面密度保持原型要求；不得把模型/知识页降级为首页式 Hero + 少量卡片。重跑 Step 2 原命令，Expected: PASS。
 
-- [ ] **Step 4: 三族浏览器验收**
+- [x] **Step 4: 三族浏览器验收**
 
   Run: `pnpm --filter @ai-agent-platform/web exec playwright test e2e/platform-center-family.spec.ts e2e/model-subpage-family.spec.ts e2e/capability-foundation-family.spec.ts --project=desktop`
 
   Expected: 11 个 key 均 200；精确 H1/内容、目录与交互、唯一 Agent；各 spec 显式覆盖 1440px/390px、无横向溢出和截图。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
   Commit only if changed: `fix(models): 完整对齐模型与能力底座`
 
@@ -310,33 +310,33 @@
 - E2E: `apps/web/e2e/platform-center-family.spec.ts`
 - Test routes: `apps/web/src/app/product/coding/page.tsx` + 4 coding 子页；`agents/page.tsx` + 4 agent 子页；`applications/page.tsx` + 3 application 子页；`skills/page.tsx` + 3 skill 子页；`governance/page.tsx`
 
-- [ ] **Step 1: 扩充 19 页完整内容合同**
+- [x] **Step 1: 扩充 19 页完整内容合同**
 
   编程 5 页：coding + 4 子页；智能体 5 页：agents + 4 子页；行业应用 4 页：applications + 3 子页；技能 4 页：skills + 3 子页；治理 1 页：governance。
 
-- [ ] **Step 2: 运行内容合同并记录 RED 或基线 PASS**
+- [x] **Step 2: 运行内容合同并记录 RED 或基线 PASS**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/coding-subpage-content.test.ts src/components/agent-subpage-content.test.ts src/components/application-subpage-content.test.ts src/components/skill-subpage-content.test.ts src/components/platform-center-content.test.ts`
 
   Expected: 19 页原型对象被锁定。新增字段若缺失则出现 received/expected RED；若直接 PASS，引用基线前各族 TDD 提交，不制造假失败。
 
-- [ ] **Step 3: 页面接线回归**
+- [x] **Step 3: 页面接线回归**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/coding-subpage-family.test.tsx src/components/agent-subpage-family.test.tsx src/components/application-subpage-family.test.tsx src/components/skill-subpage-family.test.tsx src/components/platform-center-detail.test.tsx`
 
   Expected: 19 个真实 Page 的固定 slug、metadata、唯一精确 H1、demo 边界和 governance 锚点均 PASS。
 
-- [ ] **Step 4: 最小修复与同命令 GREEN**
+- [x] **Step 4: 最小修复与同命令 GREEN**
 
   仅修 Step 2/3 的真实差异；保持每族不同的信息密度和微型 UI；Agent 浮窗不进入页面内容模型。重跑两条原命令，Expected: PASS。
 
-- [ ] **Step 5: 浏览器验收**
+- [x] **Step 5: 浏览器验收**
 
   Run: `pnpm --filter @ai-agent-platform/web exec playwright test e2e/coding-subpage-family.spec.ts e2e/agent-subpage-family.spec.ts e2e/application-subpage-family.spec.ts e2e/skill-subpage-family.spec.ts e2e/platform-center-family.spec.ts --project=desktop`
 
   Expected: 19 页均 200、精确 H1/内容、唯一 Agent；1440px/390px 无横向溢出并生成代表截图；governance 真实页面包含四个权限锚点。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
   Commit only if changed: `fix(product-families): 完整对齐四类产品页面`
 
@@ -354,21 +354,21 @@
 - Create: `apps/web/src/components/solution-overview.test.tsx`
 - Create: `apps/web/e2e/solution-overview-overlay.spec.ts`
 
-- [ ] **Step 1: 完成 RED 合同**
+- [x] **Step 1: 完成 RED 合同**
 
   逐字锁定 Hero、五个问题、关系图、六个通用场景、六步方法及详情、四个行业、五段产品支撑、治理横线、案例占位和 CTA；锁定目录 key/anchor。
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/app/solutions/page.test.tsx src/components/solution-overview-content.test.ts src/components/solution-overview.test.tsx`
 
   Expected: 旧六卡片页面缺完整内容和交互。
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
   内容常量与交互渲染分离；目录搜索、折叠、移动抽屉和方法步骤使用一个页面组件，不创建通用配置引擎。
 
-- [ ] **Step 4: 单测 GREEN 与 E2E**
+- [x] **Step 4: 单测 GREEN 与 E2E**
 
   Run the Step 2 command; expected PASS.
 
@@ -376,7 +376,7 @@
 
   Expected: spec 内显式切换 1440px、900px、390px；桌面目录搜索/折叠、390px 抽屉打开与 Escape 关闭/焦点恢复、方法 tab 键盘切换、reduced-motion、唯一 Agent 和截图全部 PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
   Commit: `feat(solutions): 覆盖解决方案总览与目录`
 
@@ -393,21 +393,21 @@
 - Modify: `apps/web/src/config/routes.test.ts`
 - Modify: `apps/web/e2e/solution-overview-overlay.spec.ts`
 
-- [ ] **Step 1: 从原型提取完整 catalog/key 合同**
+- [x] **Step 1: 从原型提取完整 catalog/key 合同**
 
   使用计划基线中的 14 个通用、17 个行业、1 个案例 key；精确锁定 query/hash 返回状态。对未确认案例保留明确占位，不制造客户和成果。
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/solution-detail-content.test.ts`
 
   Expected: 当前仅 6 个详情 slug，少于原型脚本 catalog。
 
-- [ ] **Step 3: 扩展最小内容模型和静态参数**
+- [x] **Step 3: 扩展最小内容模型和静态参数**
 
   复用现有 `[slug]` 页面；同一种详情只用一个渲染分支。按 common/industry/case 拆内容文件，避免单文件膨胀；聚合器只负责类型、slugs 和查询。列表筛选留在 `/solutions` 同页状态。
 
-- [ ] **Step 4: 运行 GREEN 与真实页面回归**
+- [x] **Step 4: 运行 GREEN 与真实页面回归**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/solution-detail-content.test.ts src/components/solution-overview-content.test.ts src/components/solution-overview.test.tsx src/app/solutions/page.test.tsx`
 
@@ -417,7 +417,7 @@
 
   Expected: 列表筛选、详情进入/返回、目录状态、绝对 pathname/query/hash、390px 抽屉与截图全部 PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
   Commit: `feat(solutions): 迁移方案与案例详情视图`
 
@@ -436,37 +436,37 @@
 - Modify: `apps/web/src/config/routes.ts`
 - Modify: `apps/web/src/config/routes.test.ts`
 
-- [ ] **Step 1: 建立下载数据 RED 合同**
+- [x] **Step 1: 建立下载数据 RED 合同**
 
   精确锁定 13 个资源 key、四个 section anchor、产品标签、标题、file/desc、`mdd2-client` 版本/系统/大小，以及所有“原型阶段不实际下载”提示。
 
-- [ ] **Step 2: 建立下载交互 RED 合同**
+- [x] **Step 2: 建立下载交互 RED 合同**
 
   测试目录搜索/清空、桌面折叠、移动抽屉、预览/文件 toast、软件下载确认弹层、checkbox 才能启用确认、Escape/关闭后焦点恢复。
 
-- [ ] **Step 3: 运行 RED**
+- [x] **Step 3: 运行 RED**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/download-center-content.test.ts src/components/download-center.test.tsx`
 
   Expected: FAIL；内容/组件模块尚不存在，或旧 RegisteredRoutePage scaffold 缺原型内容。不得以缺测试环境为 RED。
 
-- [ ] **Step 4: 最小实现并注册 live route**
+- [x] **Step 4: 最小实现并注册 live route**
 
   内容常量与 client 交互分离；下载/预览只显示原型明确占位，不请求真实文件。CSS 使用现站变量，高密度资源卡片桌面 3 列、390px 单列。
 
-- [ ] **Step 5: 运行 GREEN**
+- [x] **Step 5: 运行 GREEN**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/download-center-content.test.ts src/components/download-center.test.tsx src/config/routes.test.ts`
 
   Expected: PASS；真实 `/downloads` Page、metadata、目录、弹层与占位行为完整。
 
-- [ ] **Step 6: 浏览器验收**
+- [x] **Step 6: 浏览器验收**
 
   Run: `pnpm --filter @ai-agent-platform/web exec playwright test e2e/business-entry-pages.spec.ts --project=desktop --grep downloads`
 
   Expected: spec 显式覆盖 1440px/390px、目录抽屉、Escape/焦点恢复、无横溢、唯一 Agent 和两张截图。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
   Commit: `feat(downloads): 迁移下载中心`
 
@@ -491,25 +491,25 @@
 - Modify: `apps/web/src/config/navigation-overlay.test.ts`
 - Modify: `apps/web/e2e/business-entry-pages.spec.ts`
 
-- [ ] **Step 1: 建立五视图与 15 key RED 合同**
+- [x] **Step 1: 建立五视图与 15 key RED 合同**
 
   精确锁定 overview；business + modes/tiers/benefits；policy + types/cert/resources；training + system/courses/path/resources；become。锁定目录顺序、搜索字段、面包屑、联系 topic 和返回历史。
 
-- [ ] **Step 2: 锁定宣传边界**
+- [x] **Step 2: 锁定宣传边界**
 
   所有“200+ 伙伴、500+ 企业客户、10万+ AI 应用上线”等数字必须与“示意内容/正式上线后替换”提示在同一视图；无提示即测试失败。联系卡片保持电话、邮箱、二维码“待确认”。
 
-- [ ] **Step 3: 运行 RED**
+- [x] **Step 3: 运行 RED**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/partner-center-content.test.ts src/components/partner-center.test.tsx src/config/routes.test.ts`
 
   Expected: FAIL；`/partners` 页面/内容模块和 route 尚不存在。
 
-- [ ] **Step 4: 最小实现**
+- [x] **Step 4: 最小实现**
 
   使用一个 client shell 承接 query view/hash、目录搜索/折叠/移动抽屉、返回和联系 dialog；五组内容文件只存数据，不各自创建渲染器。真实 `/partners` Page 与 route 可达后，在同一步把合作伙伴写入生产 Header/Footer 最终顺序，避免任何提交点出现死链接。
 
-- [ ] **Step 5: 运行 GREEN**
+- [x] **Step 5: 运行 GREEN**
 
   Run the Step 3 command.
 
@@ -517,13 +517,13 @@
 
   Expected: PASS；15 key、五视图、真实 page/metadata、联系弹层和宣传边界完整；最终 Header/Footer 精确顺序通过，所有公开项均可达。
 
-- [ ] **Step 6: 浏览器验收**
+- [x] **Step 6: 浏览器验收**
 
   Run: `pnpm --filter @ai-agent-platform/web exec playwright test e2e/business-entry-pages.spec.ts --project=desktop --grep partners`
 
   Expected: 1440px/390px 下五视图、目录搜索/折叠、query/hash、Escape/焦点恢复、无横溢、唯一 Agent 与截图全部 PASS。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
   Commit: `feat(partners): 迁移合作伙伴中心`
 
@@ -546,45 +546,45 @@
 - Audit/Delete if unreferenced: `apps/web/src/app/api/v1/pricing/estimate/*`
 - Modify: `apps/web/e2e/business-entry-pages.spec.ts`
 
-- [ ] **Step 1: 写价格和联系页面 RED 合同**
+- [x] **Step 1: 写价格和联系页面 RED 合同**
 
   Pricing 精确只显示 H1“价格与服务内容待后续确认”，不得保留额外价格、模块或估算 UI。Contact 精确锁定 eyebrow/H1/lead、四个 value tags、地址、三个待确认/服务时间字段、返回按钮，以及产品/解决方案/伙伴三个 CTA。
 
-- [ ] **Step 2: 运行价格/联系 RED**
+- [x] **Step 2: 运行价格/联系 RED**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/app/pricing/page.test.tsx src/app/contact/page.test.tsx`
 
   Expected: FAIL；当前 pricing calculator 和 contact scaffold 与原型不符。
 
-- [ ] **Step 3: 最小覆盖价格和联系**
+- [x] **Step 3: 最小覆盖价格和联系**
 
   价格使用正式空状态，不保留低保真评审 chrome。Contact 保留 `topic` query 作为咨询上下文，但不再渲染已删除的 pricing summary。运行：
   `rg -n 'PricingCalculator|PricingContactSummary|pricing-query|pricing/estimate' apps/web/src --glob '!**/*.test.*'`
   Expected after replacement: 保留系统无调用；若输出仅来自待删除旧 pricing 文件，则用 apply_patch 精确删除该完整死链。
 
-- [ ] **Step 4: 运行价格/联系 GREEN**
+- [x] **Step 4: 运行价格/联系 GREEN**
 
   Run the Step 2 command.
 
   Expected: PASS；原型原文、metadata、query topic 和三个 CTA 完整。
 
-- [ ] **Step 5: 复核申请体验完整合同**
+- [x] **Step 5: 复核申请体验完整合同**
 
   现有 `trial-content.ts` 已包含原型 hero、4 tags、3 steps、CTA、4 fields、验证码、success。补真实 page 接线、立即填写/联系我们、dialog validation 和焦点合同。
 
-- [ ] **Step 6: 运行 trial 合同并按需 RED→GREEN**
+- [x] **Step 6: 运行 trial 合同并按需 RED→GREEN**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/trial-content.test.ts src/components/trial-experience.test.tsx`
 
   Expected: 原型完整合同 PASS；若新增页面接线或焦点断言失败，记录精确 RED，最小修复后重跑同一命令至 PASS。不修改服务端，因为当前体验表单仅本地原型状态，没有提交 API。
 
-- [ ] **Step 7: 浏览器验收**
+- [x] **Step 7: 浏览器验收**
 
   Run: `pnpm --filter @ai-agent-platform/web exec playwright test e2e/business-entry-pages.spec.ts --project=desktop --grep 'pricing|contact|trial'`
 
   Expected: 三页 1440px/390px，精确 H1/正文、contact query、trial 校验/成功/关闭焦点、唯一 Agent、无横溢和截图 PASS。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
   Commit: `feat(business): 覆盖价格联系与体验入口`
 
@@ -619,7 +619,7 @@
 - Modify: exact tests paired with the production files above
 - Preserve: `/support`, `/help`, `/docs/**`, `/assistant`, auth/staff/console/admin routes
 
-- [ ] **Step 1: 先锁保留系统的当前基线**
+- [x] **Step 1: 先锁保留系统的当前基线**
 
   在删除公开路由前先运行并保存以下结果，迁移结束必须以相同命令、相同行为再次通过：
 
@@ -629,17 +629,17 @@
 
   Expected: PASS；登录/注册/员工入口保持原页面壳，console/admin 保持原登录重定向或权限拒绝，docs CMS 与 assistant 关键交互保持原结果。不得把受保护路由改成公开 200。
 
-- [ ] **Step 2: 写删除边界 RED 合同**
+- [x] **Step 2: 写删除边界 RED 合同**
 
   `routes.test.ts` 精确锁最终公开 registry，同时保留 `/support`、`/help`、`/docs/**`、auth/staff/console/admin。独立的 `public-route-files.test.ts` 使用 Node `fs.existsSync` 校验待删除公开 `page.tsx` 不存在，并校验保留路由文件仍存在；不要把文件系统逻辑塞进 registry 单测。
 
-- [ ] **Step 3: 运行 RED**
+- [x] **Step 3: 运行 RED**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/config/routes.test.ts src/config/public-route-files.test.ts src/config/prototype-route-map.test.ts`
 
   Expected: FAIL；删除候选仍注册且对应公开 `page.tsx` 仍存在。保留路由断言应已通过。
 
-- [ ] **Step 4: 删除前做精确调用关系审计**
+- [x] **Step 4: 删除前做精确调用关系审计**
 
   Run:
 
@@ -657,11 +657,11 @@
 
   Expected: assistant/console/admin 依赖可保留；`navigation.ts` 的公开 Header/Footer 分组不得保留这些入口。
 
-- [ ] **Step 5: 使用 apply_patch 删除精确文件并更新注册表**
+- [x] **Step 5: 使用 apply_patch 删除精确文件并更新注册表**
 
   不使用 `rm`、`git clean`、reset 或通配删除。只删除清单中的公开页面与确认无保留调用的死代码；不删除同名 console/admin 实现，也不改 assistant provider 数据。
 
-- [ ] **Step 6: 运行删除 GREEN 与零残留审计**
+- [x] **Step 6: 运行删除 GREEN 与零残留审计**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/config/routes.test.ts src/config/public-route-files.test.ts src/config/prototype-route-map.test.ts src/config/navigation.test.ts src/components/product-content.test.ts src/components/solution-detail-content.test.ts src/components/agent-subpage-content.test.ts src/components/application-subpage-content.test.ts`
 
@@ -675,7 +675,7 @@
 
   Expected: exit 1 / 无输出。测试文件中的旧路径只允许存在于“应返回 404”的负向合同。
 
-- [ ] **Step 7: 重跑保留系统基线**
+- [x] **Step 7: 重跑保留系统基线**
 
   原样重跑 Step 1 两条命令。
 
@@ -687,7 +687,7 @@
 
   Expected: 仅计划明确允许的公开导航引用变化；上述保留系统生产实现无输出。若测试为适配新公开 Header 必须改，生产功能仍不得改。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
   Commit: `refactor(portal): 删除原型外公开路由`
 
