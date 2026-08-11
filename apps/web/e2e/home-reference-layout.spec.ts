@@ -176,6 +176,7 @@ test("adapts at tablet and mobile widths without clipping", async ({
   test.skip(testInfo.project.name !== "desktop");
 
   for (const viewport of [
+    { agentColumns: 2, solutionColumns: 2, width: 1024, height: 1000 },
     { agentColumns: 2, solutionColumns: 2, width: 768, height: 1024 },
     { agentColumns: 1, solutionColumns: 1, width: 390, height: 844 },
   ]) {
@@ -288,6 +289,7 @@ test("captures responsive visual evidence", async ({ page }, testInfo) => {
 
   for (const viewport of [
     { name: "home-1440", width: 1440, height: 1000 },
+    { name: "home-1024", width: 1024, height: 1000 },
     { name: "home-768", width: 768, height: 1024 },
     { name: "home-390", width: 390, height: 844 },
   ]) {
