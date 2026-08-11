@@ -156,15 +156,14 @@ const viewports = [
 async function gotoPublicPage(page: Page, href: string) {
   await page.emulateMedia({ reducedMotion: "reduce" });
   const response = await page.goto(href, { waitUntil: "domcontentloaded" });
+  const current = new URL(page.url());
+  const target = new URL(href, current);
   if (response) {
     expect(response.status(), href).toBe(200);
-  } else {
-    const current = new URL(page.url());
-    const target = new URL(href, current);
-    expect(`${current.pathname}${current.search}`, href).toBe(
-      `${target.pathname}${target.search}`,
-    );
   }
+  expect(`${current.pathname}${current.search}`, href).toBe(
+    `${target.pathname}${target.search}`,
+  );
   return response;
 }
 
