@@ -172,7 +172,7 @@ test("批准的列表 query 与 hash 被真实页面读取并落到精确目录�
   }
 });
 
-test("390px 抽屉用 Escape 关闭并把焦点还给触发器", async ({ page }) => {
+test("390px 抽屉隔离背景、双向循环焦点并在 Escape 后恢复", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await gotoSolutions(page);
 
@@ -180,18 +180,41 @@ test("390px 抽屉用 Escape 关闭并把焦点还给触发器", async ({ page }
     exact: true,
     name: "解决方案目录",
   });
+  const directory = page.locator(
+    `#${await trigger.getAttribute("aria-controls")}`,
+  );
+  await expect(directory).toBeHidden();
+  await expect(directory).toHaveAttribute("aria-hidden", "true");
+  await expect(directory).toHaveAttribute("inert", "");
   await trigger.click();
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  const dialog = page.getByRole("dialog", { name: "解决方案目录" });
+  await expect(dialog).toHaveAttribute("aria-modal", "true");
+  await expect(page.locator(".solution-content")).toHaveAttribute("inert", "");
+  await expect(trigger).toHaveAttribute("inert", "");
   await expect(
-    page.getByRole("searchbox", { name: "在解决方案目录中筛选" }),
-  ).toBeFocused();
-  await expect(
-    page.getByRole("complementary", { name: "解决方案目录" }),
-  ).toHaveAttribute("data-mobile-open", "true");
+    dialog.getByRole("button", { name: "收起解决方案目录" }),
+  ).toHaveCount(0);
+
+  const focusables = dialog.locator(
+    'a[href]:visible, button:not([disabled]):visible, input:not([disabled]):visible, [tabindex]:not([tabindex="-1"]):visible',
+  );
+  const first = focusables.first();
+  const last = focusables.last();
+  await expect(first).toBeFocused();
+  await last.focus();
+  await page.keyboard.press("Tab");
+  await expect(first).toBeFocused();
+  await first.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(last).toBeFocused();
 
   await page.keyboard.press("Escape");
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(trigger).toBeFocused();
+  await expect(directory).toBeHidden();
+  await expect(directory).toHaveAttribute("inert", "");
+  await expect(page.locator(".solution-content")).not.toHaveAttribute("inert");
 });
 
 test("方法 tab 支持键盘切换且 reduced-motion 不保留过渡", async ({ page }) => {

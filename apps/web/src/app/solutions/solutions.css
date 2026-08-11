@@ -618,12 +618,21 @@
     overflow: auto;
     border-right: 1px solid var(--color-line);
     box-shadow: 12px 0 34px rgb(18 30 67 / 22%);
+    visibility: hidden;
     transform: translateX(-105%);
-    transition: transform 180ms var(--ease-out);
+    transition:
+      transform 180ms var(--ease-out),
+      visibility 0s linear 180ms;
   }
 
   .solution-directory[data-mobile-open="true"] {
+    visibility: visible;
     transform: translateX(0);
+    transition-delay: 0s;
+  }
+
+  .solution-directory__desktop-collapse {
+    display: none;
   }
 
   .solution-shell[data-directory-collapsed="true"] .solution-directory__tools {

@@ -1,13 +1,37 @@
 "use client";
 
 import Link from "next/link";
-import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { solutionListRoutes } from "@/config/prototype-route-map";
 import {
   type SolutionDirectoryNode,
   solutionDirectory,
   solutionOverviewContent as content,
 } from "./solution-overview-content";
+
+const MOBILE_DIRECTORY_QUERY = "(max-width: 780px)";
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+function isActuallyFocusable(element: HTMLElement) {
+  return (
+    element.tabIndex >= 0 &&
+    !element.closest("[hidden]") &&
+    element.getAttribute("aria-hidden") !== "true"
+  );
+}
 
 function filterDirectory(
   nodes: readonly SolutionDirectoryNode[],
@@ -93,9 +117,13 @@ export function SolutionOverview({
   const [query, setQuery] = useState("");
   const [directoryCollapsed, setDirectoryCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const [activeMethod, setActiveMethod] = useState(0);
   const mobileTrigger = useRef<HTMLButtonElement>(null);
+  const directory = useRef<HTMLElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
+  const restoreMobileTriggerFocus = useRef(false);
+  const allowFocusReturn = useRef(false);
   const methodTabs = useRef<(HTMLButtonElement | null)[]>([]);
   const filteredDirectory = filterDirectory(
     solutionDirectory,
@@ -125,21 +153,84 @@ export function SolutionOverview({
             : `cases-${mode}`
           : "overview";
 
-  useEffect(() => {
-    if (mobileOpen) searchInput.current?.focus();
-  }, [mobileOpen]);
+  const closeMobileDirectory = (restoreFocus = true) => {
+    allowFocusReturn.current = true;
+    restoreMobileTriggerFocus.current = restoreFocus;
+    setMobileOpen(false);
+  };
+
+  const onDirectoryKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (!isMobile || !mobileOpen || event.key !== "Tab") return;
+
+    const focusables = Array.from(
+      directory.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ??
+        [],
+    ).filter(isActuallyFocusable);
+    const first = focusables[0];
+    const last = focusables.at(-1);
+
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last?.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first?.focus();
+    }
+  };
 
   useEffect(() => {
-    if (!mobileOpen) return;
-    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setMobileOpen(false);
-        mobileTrigger.current?.focus();
+    if (typeof window.matchMedia !== "function") return;
+
+    const mobileQuery = window.matchMedia(MOBILE_DIRECTORY_QUERY);
+    const updateViewport = (matches: boolean) => {
+      setIsMobile(matches);
+      if (!matches) setMobileOpen(false);
+    };
+    const handleChange = (event: MediaQueryListEvent) =>
+      updateViewport(event.matches);
+
+    updateViewport(mobileQuery.matches);
+    mobileQuery.addEventListener("change", handleChange);
+    return () => mobileQuery.removeEventListener("change", handleChange);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (isMobile && mobileOpen) {
+      allowFocusReturn.current = false;
+      searchInput.current?.focus();
+    } else if (restoreMobileTriggerFocus.current) {
+      restoreMobileTriggerFocus.current = false;
+      mobileTrigger.current?.focus();
+    }
+  }, [isMobile, mobileOpen]);
+
+  useEffect(() => {
+    if (!isMobile || !mobileOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") closeMobileDirectory();
+    };
+    const handleFocusIn = (event: FocusEvent) => {
+      if (
+        !allowFocusReturn.current &&
+        event.target instanceof Node &&
+        !directory.current?.contains(event.target)
+      ) {
+        searchInput.current?.focus();
       }
     };
-    document.addEventListener("keydown", closeOnEscape);
-    return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [mobileOpen]);
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("focusin", handleFocusIn);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("focusin", handleFocusIn);
+    };
+  }, [isMobile, mobileOpen]);
 
   const selectMethod = (index: number) => {
     setActiveMethod(index);
@@ -176,6 +267,7 @@ export function SolutionOverview({
         className="solution-directory-mobile"
         aria-controls="solution-directory"
         aria-expanded={mobileOpen}
+        inert={isMobile && mobileOpen ? true : undefined}
         onClick={() => setMobileOpen(true)}
       >
         解决方案目录
@@ -185,20 +277,23 @@ export function SolutionOverview({
         className="solution-directory-backdrop"
         aria-label="关闭解决方案目录"
         data-open={mobileOpen}
-        onClick={() => {
-          setMobileOpen(false);
-          mobileTrigger.current?.focus();
-        }}
+        onClick={() => closeMobileDirectory()}
       />
       <div
         className="solution-shell"
         data-directory-collapsed={directoryCollapsed}
       >
         <aside
+          ref={directory}
           id="solution-directory"
           className="solution-directory"
           aria-label="解决方案目录"
+          aria-hidden={isMobile && !mobileOpen ? "true" : undefined}
+          aria-modal={isMobile && mobileOpen ? "true" : undefined}
           data-mobile-open={mobileOpen}
+          inert={isMobile && !mobileOpen ? true : undefined}
+          onKeyDown={onDirectoryKeyDown}
+          role={isMobile && mobileOpen ? "dialog" : undefined}
         >
           <div className="solution-directory__tools">
             <input
@@ -211,6 +306,8 @@ export function SolutionOverview({
             />
             <button
               type="button"
+              className="solution-directory__desktop-collapse"
+              hidden={isMobile}
               aria-expanded={!directoryCollapsed}
               aria-label={
                 directoryCollapsed ? "展开解决方案目录" : "收起解决方案目录"
@@ -226,7 +323,7 @@ export function SolutionOverview({
                 {filteredDirectory.map((node) => (
                   <DirectoryBranch
                     activeInternalId={activeInternalId}
-                    closeMobile={() => setMobileOpen(false)}
+                    closeMobile={() => closeMobileDirectory(false)}
                     forceExpanded={Boolean(query.trim())}
                     key={node.internalId}
                     node={node}
@@ -244,7 +341,10 @@ export function SolutionOverview({
           </nav>
         </aside>
 
-        <div className="solution-content">
+        <div
+          className="solution-content"
+          inert={isMobile && mobileOpen ? true : undefined}
+        >
           <section id="solution-overview-hero" className="solution-hero">
             <div className="solution-hero__copy">
               <p className="solution-eyebrow">{content.hero.eyebrow}</p>

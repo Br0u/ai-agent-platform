@@ -5,10 +5,25 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SolutionOverview } from "./solution-overview";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+function useMobileViewport() {
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn().mockReturnValue({
+      matches: true,
+      media: "(max-width: 780px)",
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }),
+  );
+}
 
 describe("SolutionOverview", () => {
   it("renders the overview sections and only absolute internal links", () => {
@@ -99,17 +114,48 @@ describe("SolutionOverview", () => {
     ).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("closes the mobile drawer with Escape and restores focus", () => {
-    render(<SolutionOverview />);
+  it("makes the mobile directory modal, traps focus and restores the inert background on close", () => {
+    useMobileViewport();
+    const { container } = render(<SolutionOverview />);
     const trigger = screen.getByRole("button", { name: "解决方案目录" });
+    const directory = document.getElementById(
+      trigger.getAttribute("aria-controls")!,
+    );
+    const content = container.querySelector<HTMLElement>(".solution-content");
+
+    expect(directory).toHaveAttribute("aria-hidden", "true");
+    expect(directory).toHaveAttribute("inert");
+    expect(directory).not.toContainElement(
+      document.activeElement as HTMLElement,
+    );
     fireEvent.click(trigger);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const dialog = screen.getByRole("dialog", { name: "解决方案目录" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(content).toHaveAttribute("inert");
+    expect(trigger).toHaveAttribute("inert");
     expect(
-      screen.getByRole("complementary", { name: "解决方案目录" }),
-    ).toHaveAttribute("data-mobile-open", "true");
+      within(dialog).queryByRole("button", { name: "收起解决方案目录" }),
+    ).not.toBeInTheDocument();
+
+    const first = within(dialog).getByRole("searchbox", {
+      name: "在解决方案目录中筛选",
+    });
+    const last = within(dialog).getAllByRole("link", {
+      name: "案例详情结构占位（待授权案例）",
+    })[1];
+    expect(first).toHaveFocus();
+    last.focus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(first).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(last).toHaveFocus();
 
     fireEvent.keyDown(document, { key: "Escape" });
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(trigger).toHaveFocus();
+    expect(directory).toHaveAttribute("aria-hidden", "true");
+    expect(directory).toHaveAttribute("inert");
+    expect(content).not.toHaveAttribute("inert");
   });
 });
