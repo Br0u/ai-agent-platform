@@ -32,6 +32,9 @@ const requiredRoutes = [
   "/product/data-agent",
   "/product/agent-video",
   "/product/agent-orchestration",
+  "/product/app-writing",
+  "/product/app-bidding",
+  "/product/app-contract",
   "/product/[slug]",
   "/solutions",
   "/solutions/[slug]",
@@ -285,6 +288,35 @@ describe("routeRegistry", () => {
     }
 
     expect(matchRoute("/product/agent-unknown")).toEqual({
+      path: "/product/[slug]",
+      title: "产品模块详情",
+      group: "public",
+      status: "scaffold",
+    });
+  });
+
+  it("registers the three application subpages before remaining product scaffolds", () => {
+    const dynamicProductIndex = routeRegistry.findIndex(
+      (route) => route.path === "/product/[slug]",
+    );
+
+    for (const [path, title] of [
+      ["/product/app-writing", "通用文本写作"],
+      ["/product/app-bidding", "投标智能助手"],
+      ["/product/app-contract", "合同智能审查"],
+    ] as const) {
+      expect(matchRoute(path)).toEqual({
+        path,
+        title,
+        group: "public",
+        status: "live",
+      });
+      expect(
+        routeRegistry.findIndex((route) => route.path === path),
+      ).toBeLessThan(dynamicProductIndex);
+    }
+
+    expect(matchRoute("/product/app-unknown")).toEqual({
       path: "/product/[slug]",
       title: "产品模块详情",
       group: "public",
