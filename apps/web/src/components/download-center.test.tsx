@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import DownloadsPage from "../app/downloads/page";
@@ -66,6 +67,19 @@ describe("DownloadCenter", () => {
     }
   });
 
+  it("styles level-three resource headings and offsets every resource anchor", () => {
+    const css = readFileSync("src/app/downloads/downloads.css", "utf8");
+
+    expect(css).toMatch(/\.download-card h3\s*\{/u);
+    expect(css).not.toMatch(/\.download-card h4\s*\{/u);
+    expect(css).toMatch(
+      /\[data-download-key\]\s*\{[^}]*scroll-margin-top:\s*88px;/u,
+    );
+    expect(css).toMatch(
+      /@media \(max-width: 780px\)[\s\S]*?\[data-download-key\]\s*\{[^}]*scroll-margin-top:\s*132px;/u,
+    );
+  });
+
   it("searches, clears and collapses the desktop directory", () => {
     render(<DownloadsPage />);
     const search = screen.getByRole("searchbox", {
@@ -116,6 +130,22 @@ describe("DownloadCenter", () => {
       }),
     ).toHaveFocus();
 
+    const search = within(dialog).getByRole("searchbox", {
+      name: "在下载中心目录中筛选",
+    });
+    const last = within(dialog).getAllByRole("link").at(-1)!;
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    outside.focus();
+    expect(search).toHaveFocus();
+    last.focus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(search).toHaveFocus();
+    search.focus();
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(last).toHaveFocus();
+    outside.remove();
+
     fireEvent.click(backdrop);
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(trigger).toHaveFocus();
@@ -161,6 +191,24 @@ describe("DownloadCenter", () => {
     );
   });
 
+  it("keeps only the software dialog active if it opens from the mobile state", () => {
+    useMobileViewport();
+    render(<DownloadsPage />);
+    fireEvent.click(screen.getByRole("button", { name: "下载中心目录" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "下载安装码多多 2.0 桌面客户端",
+      }),
+    );
+
+    expect(
+      screen.getByRole("dialog", { name: "确认下载安装包" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("dialog", { name: "下载中心目录" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("requires software confirmation and restores its trigger after Escape or confirmation", () => {
     render(<DownloadsPage />);
     const trigger = screen.getByRole("button", {
@@ -171,6 +219,19 @@ describe("DownloadCenter", () => {
     const dialog = screen.getByRole("dialog", { name: "确认下载安装包" });
     const confirm = within(dialog).getByRole("button", { name: "确认下载" });
     expect(confirm).toBeDisabled();
+    const close = within(dialog).getByRole("button", { name: "关闭" });
+    const cancel = within(dialog).getByRole("button", { name: "取消" });
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    outside.focus();
+    expect(close).toHaveFocus();
+    cancel.focus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(close).toHaveFocus();
+    close.focus();
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(cancel).toHaveFocus();
+    outside.remove();
     fireEvent.click(
       within(dialog).getByRole("checkbox", {
         name: "我已了解该版本的适用环境和使用说明",

@@ -143,6 +143,7 @@ export function DownloadCenter() {
   const softwareClose = useRef<HTMLButtonElement>(null);
   const restoreMobileFocus = useRef(false);
   const restoreSoftwareFocus = useRef(false);
+  const allowFocusReturn = useRef(false);
   const normalizedQuery = query.trim().toLowerCase();
   const filteredGroups = directoryGroups.flatMap((group) => {
     if (!normalizedQuery) return [group];
@@ -156,11 +157,13 @@ export function DownloadCenter() {
   });
 
   const closeMobileDirectory = (restoreFocus = true) => {
+    allowFocusReturn.current = true;
     restoreMobileFocus.current = restoreFocus;
     setMobileOpen(false);
   };
 
   const closeSoftwareDialog = () => {
+    allowFocusReturn.current = true;
     restoreSoftwareFocus.current = true;
     setSoftwareOpen(false);
   };
@@ -181,6 +184,7 @@ export function DownloadCenter() {
 
   useLayoutEffect(() => {
     if (isMobile && mobileOpen) {
+      allowFocusReturn.current = false;
       restoreMobileFocus.current = false;
       directorySearch.current?.focus();
     } else if (restoreMobileFocus.current) {
@@ -191,6 +195,7 @@ export function DownloadCenter() {
 
   useLayoutEffect(() => {
     if (softwareOpen) {
+      allowFocusReturn.current = false;
       restoreSoftwareFocus.current = false;
       softwareClose.current?.focus();
     } else if (restoreSoftwareFocus.current) {
@@ -214,15 +219,32 @@ export function DownloadCenter() {
       if (softwareOpen) closeSoftwareDialog();
       else closeMobileDirectory();
     };
+    const onFocusIn = (event: FocusEvent) => {
+      const activeRoot = softwareOpen
+        ? softwareDialog.current
+        : directory.current;
+      if (
+        !allowFocusReturn.current &&
+        event.target instanceof Node &&
+        !activeRoot?.contains(event.target)
+      ) {
+        if (softwareOpen) softwareClose.current?.focus();
+        else directorySearch.current?.focus();
+      }
+    };
 
     document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("focusin", onFocusIn);
     return () => {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("focusin", onFocusIn);
     };
-  }, [mobileOpen, softwareOpen]);
+  }, [isMobile, mobileOpen, softwareOpen]);
 
   const openSoftwareDialog = () => {
+    allowFocusReturn.current = false;
+    setMobileOpen(false);
     setEnvironmentConfirmed(false);
     setSoftwareOpen(true);
   };
