@@ -23,6 +23,7 @@ export type PlatformPage = {
     title: string;
     lead?: string;
     body?: string;
+    subheading?: string;
     visual?: string;
     demo?: {
       title: string;

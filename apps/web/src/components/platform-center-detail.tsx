@@ -170,6 +170,8 @@ function ContentSection({
           ) : null}
         </header>
 
+        {section.subheading ? <h3>{section.subheading}</h3> : null}
+
         {section.demo ? (
           <Demo demo={section.demo} testId="platform-page-demo" />
         ) : null}

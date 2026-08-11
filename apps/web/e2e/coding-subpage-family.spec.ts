@@ -39,9 +39,13 @@ async function gotoCodingPage(page: Page, href: string) {
 }
 
 async function expectPageContent(page: Page, title: string) {
-  await expect(
-    page.getByRole("heading", { level: 1, name: title }),
-  ).toBeVisible();
+  const heading = page.getByRole("heading", {
+    level: 1,
+    name: title,
+    exact: true,
+  });
+  await expect(heading).toHaveCount(1);
+  await expect(heading).toBeVisible();
 
   const sections = page.getByTestId("platform-center-section");
   await expect(sections).toHaveCount(6);

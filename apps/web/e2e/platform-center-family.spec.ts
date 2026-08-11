@@ -3,13 +3,41 @@ import { resolve } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 const pages = [
-  ["/product/model", "企业模型工程，从资产管理到上线服务"],
-  ["/product/knowledge", "企业知识库：让企业文档变成 AI 能用的知识"],
-  ["/product/agents", "让企业拥有懂知识、懂业务、懂流程的 AI 助手"],
-  ["/product/applications", "成熟业务 AI 应用，拿来即用"],
-  ["/product/skills", "可复用的业务技能，拿来即用"],
-  ["/product/coding", "码多多：让智能编程走进企业日常开发"],
-  ["/product/governance", "平台用得安全，权限管得清楚"],
+  [
+    "/product/model",
+    "企业模型工程，从资产管理到上线服务",
+    "围绕企业最关心的三件事组织模型能力",
+  ],
+  [
+    "/product/knowledge",
+    "企业知识库：让企业文档变成 AI 能用的知识",
+    "通用模型看不懂你的文档，知识库让它「懂」",
+  ],
+  [
+    "/product/agents",
+    "让企业拥有懂知识、懂业务、懂流程的 AI 助手",
+    "智能体，是 AI 能力真正落到业务上的最后一公里",
+  ],
+  [
+    "/product/applications",
+    "成熟业务 AI 应用，拿来即用",
+    "成熟业务 AI 应用，拿来即用",
+  ],
+  [
+    "/product/skills",
+    "可复用的业务技能，拿来即用",
+    "可复用的业务技能，能力标准化",
+  ],
+  [
+    "/product/coding",
+    "码多多：让智能编程走进企业日常开发",
+    "研发提效的三个核心问题",
+  ],
+  [
+    "/product/governance",
+    "平台用得安全，权限管得清楚",
+    "让平台权限，边界清晰、管得清楚",
+  ],
 ] as const;
 
 async function gotoCenter(page: Page, path: string) {
@@ -33,7 +61,7 @@ test("七个元启平台中心返回原型标题并只使用 shell 聊天入口"
 }) => {
   test.setTimeout(60_000);
 
-  for (const [path, title] of pages) {
+  for (const [path, title, bodyTitle] of pages) {
     const response = await gotoCenter(page, path);
 
     expect(response?.status(), path).toBe(200);
@@ -44,6 +72,44 @@ test("七个元启平台中心返回原型标题并只使用 shell 聊天入口"
     });
     await expect(heading).toHaveCount(1);
     await expect(heading).toBeVisible();
+    const bodyHeading = page.getByRole("heading", {
+      level: 2,
+      name: bodyTitle,
+      exact: true,
+    });
+    await expect(bodyHeading).toHaveCount(1);
+    await expect(bodyHeading).toBeVisible();
+
+    if (path === "/product/coding") {
+      const demo = page
+        .getByTestId("platform-page-demo")
+        .filter({ hasText: "码多多 · 对话式开发" });
+      await expect(demo).toHaveCount(1);
+      await expect(demo).toBeVisible();
+      for (const copy of [
+        "给这个接口补上参数校验和单元测试",
+        "正在分析代码并生成修改方案……",
+        "已生成修改后的代码与单元测试，并检查通过。｜Build 模式 · 修改已落地",
+        "输入你的开发需求…",
+        "发送",
+      ]) {
+        await expect(demo.getByText(copy, { exact: true })).toBeVisible();
+      }
+    }
+
+    if (path === "/product/governance") {
+      for (const id of [
+        "gov-users",
+        "gov-roles",
+        "gov-menu",
+        "gov-permission",
+      ]) {
+        const anchor = page.locator(`#${id}`);
+        await expect(anchor).toHaveCount(1);
+        await expect(anchor).toBeVisible();
+      }
+    }
+
     await expect(
       page.locator("main.platform-center .floating-assistant"),
     ).toHaveCount(0);

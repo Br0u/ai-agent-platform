@@ -227,6 +227,44 @@ describe("PlatformCenterDetail", () => {
     expect(screen.getAllByTestId("platform-center-scene")).toHaveLength(3);
   });
 
+  it("renders the complete coding center conversational demo through its real Page", () => {
+    render(<CodingCenterPage />);
+
+    const demo = screen
+      .getAllByTestId("platform-page-demo")
+      .find((element) => element.textContent?.includes("码多多 · 对话式开发"));
+
+    expect(demo).toBeDefined();
+    for (const copy of [
+      "码多多 · 对话式开发",
+      "给这个接口补上参数校验和单元测试",
+      "正在分析代码并生成修改方案……",
+      "已生成修改后的代码与单元测试，并检查通过。｜Build 模式 · 修改已落地",
+      "输入你的开发需求…",
+      "发送",
+      "对话式编程：输入需求 → 生成代码 → 落地执行，全程可追溯",
+    ]) {
+      expect(within(demo!).getByText(copy, { exact: true })).toBeVisible();
+    }
+    expect(
+      screen.queryByText("码多多 · 对话式开发界面素材槽位"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the agent center source subheading and quoted data question", () => {
+    render(<AgentCenterPage />);
+
+    expect(
+      screen.getByRole("heading", {
+        level: 3,
+        name: "构建一次，处处可用",
+      }),
+    ).toBeVisible();
+    expect(
+      screen.getByText("「查询去年销售额最高的区域」", { exact: true }),
+    ).toBeVisible();
+  });
+
   it("renders a demo cite and its following prototype caption separately", () => {
     const page: PlatformPage = {
       slug: "demo-caption-test",
