@@ -49,11 +49,32 @@ test("覆盖原型总览内容并只保留 shell 的唯一 Agent 入口", async 
   expect(hrefs.length).toBeGreaterThan(0);
   expect(hrefs.every((href) => href?.startsWith("/"))).toBe(true);
   expect(hrefs).toContain(
-    "/solutions?view=industry&category=government#industry-solutions-list",
+    "/solutions?view=industries&industry=government#industry-solutions-list",
   );
-  expect(hrefs).toContain(
-    "/solutions/knowledge-service#scene-knowledge-service",
-  );
+  expect(hrefs).toContain("/solutions/knowledge-service");
+  expect(hrefs).toContain("/solutions?view=cases&mode=all#practice-cases-hero");
+
+  const internalHrefs = await page
+    .locator("main.solutions-page a[href]")
+    .evaluateAll((links) =>
+      links.map((link) => (link as HTMLAnchorElement).href),
+    );
+  const internalLinks = internalHrefs.map((href) => new URL(href));
+  const requestTargets = [
+    ...new Set(internalLinks.map((url) => `${url.pathname}${url.search}`)),
+  ];
+  for (const href of requestTargets) {
+    const response = await page.request.get(href);
+    expect(response.status(), href).toBeLessThan(400);
+  }
+  for (const url of internalLinks.filter(
+    (url) => url.pathname === "/solutions" && url.hash,
+  )) {
+    await expect(
+      page.locator(url.hash),
+      `${url.pathname}${url.search}${url.hash}`,
+    ).toBeVisible();
+  }
 });
 
 test("桌面目录支持搜索、清空和折叠", async ({ page }) => {
@@ -79,6 +100,20 @@ test("桌面目录支持搜索、清空和折叠", async ({ page }) => {
     await page.getByRole("button", { name: "清除筛选" }).click();
     await expect(search).toHaveValue("");
 
+    const branchToggle = page.getByRole("button", {
+      name: "展开或收起基础设施与模型工程",
+    });
+    await branchToggle.click();
+    await expect(branchToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(
+      page.getByRole("link", { name: "元启私有化部署方案" }),
+    ).toHaveCount(0);
+    await search.fill("元启私有化部署");
+    await expect(branchToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(
+      page.getByRole("link", { name: "元启私有化部署方案" }),
+    ).toBeVisible();
+
     await page.getByRole("button", { name: "收起解决方案目录" }).click();
     await expect(page.locator(".solution-shell")).toHaveAttribute(
       "data-directory-collapsed",
@@ -87,6 +122,53 @@ test("桌面目录支持搜索、清空和折叠", async ({ page }) => {
     await expect(
       page.getByRole("button", { name: "展开解决方案目录" }),
     ).toBeVisible();
+  }
+});
+
+test("批准的列表 query 与 hash 被真实页面读取并落到精确目录状态", async ({
+  page,
+}) => {
+  for (const route of [
+    {
+      href: "/solutions?view=scenarios&category=infrastructure#solution-scenarios-directory",
+      view: "scenarios",
+      filter: "infrastructure",
+      current: "基础设施与模型工程",
+      anchor: "#solution-scenarios-directory",
+    },
+    {
+      href: "/solutions?view=industries&industry=finance#industry-solutions-list",
+      view: "industries",
+      filter: "finance",
+      current: "金融",
+      anchor: "#industry-solutions-list",
+    },
+    {
+      href: "/solutions?view=cases&mode=all#practice-cases-hero",
+      view: "cases",
+      filter: "all",
+      current: "实践案例",
+      anchor: "#practice-cases-hero",
+    },
+  ]) {
+    const response = await page.goto(route.href, {
+      waitUntil: "domcontentloaded",
+    });
+    expect(response?.status(), route.href).toBe(200);
+    await expect(page.locator("main.solutions-page")).toHaveAttribute(
+      "data-solution-view",
+      route.view,
+    );
+    await expect(page.locator("main.solutions-page")).toHaveAttribute(
+      "data-solution-filter",
+      route.filter,
+    );
+    await expect(
+      page
+        .locator('a[aria-current="location"]')
+        .filter({ hasText: route.current }),
+    ).toBeVisible();
+    await expect(page.locator(route.anchor)).toBeVisible();
   }
 });
 

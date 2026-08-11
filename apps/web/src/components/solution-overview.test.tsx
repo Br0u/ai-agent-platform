@@ -26,6 +26,12 @@ describe("SolutionOverview", () => {
       "a[href]",
     )) {
       expect(link.getAttribute("href")).toMatch(/^\//);
+      const url = new URL(link.href);
+      if (url.pathname === "/solutions" && url.hash) {
+        expect(document.getElementById(url.hash.slice(1))).toBeInstanceOf(
+          HTMLElement,
+        );
+      }
     }
   });
 
@@ -76,6 +82,12 @@ describe("SolutionOverview", () => {
     expect(
       screen.queryByRole("link", { name: "元启私有化部署方案" }),
     ).not.toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: "元启私有化部署" } });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByRole("link", { name: "元启私有化部署方案" }),
+    ).toBeVisible();
   });
 
   it("collapses the desktop directory", () => {

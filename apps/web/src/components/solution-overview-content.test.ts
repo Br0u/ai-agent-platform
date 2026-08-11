@@ -2,7 +2,18 @@ import { describe, expect, it } from "vitest";
 import {
   solutionDirectory,
   solutionOverviewContent,
+  type SolutionDirectoryNode,
 } from "./solution-overview-content";
+import { solutionDetailSlugs } from "./solution-detail-content";
+
+function flattenDirectoryNodes(
+  nodes: readonly SolutionDirectoryNode[],
+): SolutionDirectoryNode[] {
+  return nodes.flatMap((node) => [
+    node,
+    ...flattenDirectoryNodes(node.children ?? []),
+  ]);
+}
 
 describe("solution overview prototype content", () => {
   it("locks the hero, problem selector, relationship map and actions verbatim", () => {
@@ -21,7 +32,7 @@ describe("solution overview prototype content", () => {
       actions: [
         ["查看通用场景方案", "/solutions#solution-common-scenes"],
         ["查看行业解决方案", "/solutions#solution-industries-overview"],
-        ["查看实践案例", "/solutions?view=cases#practice-cases-hero"],
+        ["查看实践案例", "/solutions?view=cases&mode=all#practice-cases-hero"],
       ],
       map: {
         label: "解决方案关系图素材槽位",
@@ -64,6 +75,7 @@ describe("solution overview prototype content", () => {
         id: "overview-scene-knowledge",
         key: "knowledge-service",
         anchor: "scene-knowledge-service",
+        href: "/solutions/knowledge-service",
         category: "知识与数据智能",
         title: "企业知识问答与知识服务",
         problem: "企业知识分散，查找、理解和复用效率不足。",
@@ -76,6 +88,7 @@ describe("solution overview prototype content", () => {
         id: "overview-scene-data",
         key: "data-insight",
         anchor: "scene-data-insight",
+        href: "/solutions?view=scenarios&category=knowledge#solution-scenarios-directory",
         category: "知识与数据智能",
         title: "数据问答、分析与业务洞察",
         problem: "业务数据查询依赖专业人员，数据获取和分析链路较长。",
@@ -88,6 +101,7 @@ describe("solution overview prototype content", () => {
         id: "overview-scene-document",
         key: "document-intelligence",
         anchor: "scene-document-intelligence",
+        href: "/solutions?view=scenarios&category=knowledge#solution-scenarios-directory",
         category: "知识与数据智能",
         title: "文档理解、知识检索与智能审核",
         problem: "大量复杂文档需要人工阅读、检索、比对和审核。",
@@ -100,6 +114,7 @@ describe("solution overview prototype content", () => {
         id: "overview-scene-process",
         key: "process-automation",
         anchor: "scene-process-automation",
+        href: "/solutions/process-automation",
         category: "智能体与业务应用",
         title: "业务流程自动化与智能协同",
         problem: "重复业务流程依赖人工衔接，多环节协同效率有限。",
@@ -112,6 +127,7 @@ describe("solution overview prototype content", () => {
         id: "overview-scene-assistant",
         key: "enterprise-assistant",
         anchor: "scene-enterprise-assistant",
+        href: "/solutions?view=scenarios&category=agents#solution-scenarios-directory",
         category: "智能体与业务应用",
         title: "企业内部智能助手",
         problem: "企业已有知识、数据和工具难以形成统一智能服务入口。",
@@ -124,6 +140,7 @@ describe("solution overview prototype content", () => {
         id: "overview-scene-multi-agent",
         key: "multi-agent",
         anchor: "scene-multi-agent",
+        href: "/solutions?view=scenarios&category=agents#solution-scenarios-directory",
         category: "智能体与业务应用",
         title: "多智能体协同与复杂任务处理",
         problem: "单一智能体难以覆盖跨知识、数据、流程和工具的复杂任务。",
@@ -256,7 +273,7 @@ describe("solution overview prototype content", () => {
       ],
       link: [
         "查看案例详情模板 →",
-        "/solutions/case-pending-enterprise-knowledge#case-pending-enterprise-knowledge",
+        "/solutions?view=cases&mode=all#case-pending-enterprise-knowledge",
       ],
     });
     expect(solutionOverviewContent.cta).toEqual({
@@ -269,6 +286,74 @@ describe("solution overview prototype content", () => {
       ],
       note: "商务咨询自动带入“解决方案咨询”；从具体方案或行业进入时，后续表单继续带入方案名称与行业来源。申请体验范围以实际开放能力为准。",
     });
+  });
+
+  it("preserves source directory keys and keeps React identity separate", () => {
+    const nodes = flattenDirectoryNodes(solutionDirectory);
+    const internalIds = nodes.map(
+      (node) => (node as typeof node & { internalId?: string }).internalId,
+    );
+
+    expect(internalIds.every(Boolean)).toBe(true);
+    expect(new Set(internalIds).size).toBe(nodes.length);
+    expect(solutionDirectory.map((node) => node.key)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(solutionDirectory[1]?.children?.map((node) => node.key)).toEqual([
+      "infrastructure",
+      "knowledge",
+      "agents",
+    ]);
+    expect(solutionDirectory[2]?.children?.map((node) => node.key)).toEqual([
+      "government",
+      "finance",
+      "healthcare",
+      "enterprise",
+    ]);
+    expect(solutionDirectory[3]?.children?.map((node) => node.key)).toEqual([
+      "industry",
+      "scenario",
+    ]);
+  });
+
+  it("routes only six live details directly and lands every pending detail on its approved list state", () => {
+    const detailNodes = flattenDirectoryNodes(solutionDirectory).filter(
+      (node) =>
+        ["detail", "industry-detail", "case-detail"].includes(
+          (node as typeof node & { view?: string }).view ?? "",
+        ),
+    );
+    const uniqueDetailKeys = new Set(detailNodes.map((node) => node.key));
+    const liveSlugs = new Set<string>(solutionDetailSlugs);
+
+    expect(uniqueDetailKeys.size).toBe(32);
+    for (const node of detailNodes) {
+      expect(node.key).toBeTruthy();
+      const url = new URL(node.href, "https://example.test");
+      if (liveSlugs.has(node.key!)) {
+        expect(`${url.pathname}${url.search}${url.hash}`).toBe(
+          `/solutions/${node.key}`,
+        );
+      } else {
+        expect(url.pathname).toBe("/solutions");
+        expect(["scenarios", "industries", "cases"]).toContain(
+          url.searchParams.get("view"),
+        );
+        expect(url.hash).toMatch(
+          /^#(solution-scenarios-directory|industry-solutions-list|case-pending-enterprise-knowledge)$/,
+        );
+      }
+    }
+
+    expect(
+      detailNodes
+        .filter((node) => liveSlugs.has(node.key!))
+        .map((node) => node.key)
+        .sort(),
+    ).toEqual([...solutionDetailSlugs].sort());
   });
 
   it("locks every directory key and anchor without importing detail content", () => {
@@ -285,231 +370,227 @@ describe("solution overview prototype content", () => {
       ]);
 
     expect(flatten(solutionDirectory)).toEqual([
-      ["overview", "", "/solutions"],
+      ["", "", "/solutions"],
       [
-        "common",
+        "",
         "solution-scenarios-directory",
-        "/solutions?view=common#solution-scenarios-directory",
+        "/solutions?view=scenarios#solution-scenarios-directory",
       ],
       [
         "infrastructure",
         "",
-        "/solutions?view=common&category=infrastructure#solution-scenarios-directory",
+        "/solutions?view=scenarios&category=infrastructure#solution-scenarios-directory",
       ],
       [
         "private-yuanqi",
         "scene-private-yuanqi",
-        "/solutions/private-yuanqi#scene-private-yuanqi",
+        "/solutions?view=scenarios&category=infrastructure#solution-scenarios-directory",
       ],
       [
         "cluster-planning",
         "scene-cluster-planning",
-        "/solutions/cluster-planning#scene-cluster-planning",
+        "/solutions?view=scenarios&category=infrastructure#solution-scenarios-directory",
       ],
       [
         "compute-monitoring",
         "scene-compute-monitoring",
-        "/solutions/compute-monitoring#scene-compute-monitoring",
+        "/solutions?view=scenarios&category=infrastructure#solution-scenarios-directory",
       ],
       [
         "model-evaluation",
         "scene-model-evaluation",
-        "/solutions/model-evaluation#scene-model-evaluation",
+        "/solutions?view=scenarios&category=infrastructure#solution-scenarios-directory",
       ],
       [
         "model-deployment",
         "scene-model-deployment",
-        "/solutions/model-deployment#scene-model-deployment",
+        "/solutions?view=scenarios&category=infrastructure#solution-scenarios-directory",
       ],
       [
         "knowledge",
         "",
-        "/solutions?view=common&category=knowledge#solution-scenarios-directory",
+        "/solutions?view=scenarios&category=knowledge#solution-scenarios-directory",
       ],
       [
         "knowledge-service",
         "scene-knowledge-service",
-        "/solutions/knowledge-service#scene-knowledge-service",
+        "/solutions/knowledge-service",
       ],
       [
         "document-intelligence",
         "scene-document-intelligence",
-        "/solutions/document-intelligence#scene-document-intelligence",
+        "/solutions?view=scenarios&category=knowledge#solution-scenarios-directory",
       ],
       [
         "data-insight",
         "scene-data-insight",
-        "/solutions/data-insight#scene-data-insight",
+        "/solutions?view=scenarios&category=knowledge#solution-scenarios-directory",
       ],
       [
         "unstructured-data",
         "scene-unstructured-data",
-        "/solutions/unstructured-data#scene-unstructured-data",
+        "/solutions?view=scenarios&category=knowledge#solution-scenarios-directory",
       ],
       [
         "knowledge-assets",
         "scene-knowledge-assets",
-        "/solutions/knowledge-assets#scene-knowledge-assets",
+        "/solutions?view=scenarios&category=knowledge#solution-scenarios-directory",
       ],
       [
         "agents",
         "",
-        "/solutions?view=common&category=agents#solution-scenarios-directory",
+        "/solutions?view=scenarios&category=agents#solution-scenarios-directory",
       ],
       [
         "process-automation",
         "scene-process-automation",
-        "/solutions/process-automation#scene-process-automation",
+        "/solutions/process-automation",
       ],
       [
         "video-intelligence",
         "scene-video-intelligence",
-        "/solutions/video-intelligence#scene-video-intelligence",
+        "/solutions?view=scenarios&category=agents#solution-scenarios-directory",
       ],
       [
         "enterprise-assistant",
         "scene-enterprise-assistant",
-        "/solutions/enterprise-assistant#scene-enterprise-assistant",
+        "/solutions?view=scenarios&category=agents#solution-scenarios-directory",
       ],
       [
         "multi-agent",
         "scene-multi-agent",
-        "/solutions/multi-agent#scene-multi-agent",
+        "/solutions?view=scenarios&category=agents#solution-scenarios-directory",
       ],
       [
-        "industry",
+        "",
         "industry-solutions-list",
-        "/solutions?view=industry#industry-solutions-list",
+        "/solutions?view=industries#industry-solutions-list",
       ],
       [
         "government",
         "",
-        "/solutions?view=industry&category=government#industry-solutions-list",
+        "/solutions?view=industries&industry=government#industry-solutions-list",
       ],
       [
         "government-knowledge",
         "industry-government-knowledge",
-        "/solutions/government-knowledge#industry-government-knowledge",
+        "/solutions/government-knowledge",
       ],
       [
         "government-document",
         "industry-government-document",
-        "/solutions/government-document#industry-government-document",
+        "/solutions?view=industries&industry=government#industry-solutions-list",
       ],
       [
         "government-data",
         "industry-government-data",
-        "/solutions/government-data#industry-government-data",
+        "/solutions?view=industries&industry=government#industry-solutions-list",
       ],
       [
         "government-process",
         "industry-government-process",
-        "/solutions/government-process#industry-government-process",
+        "/solutions?view=industries&industry=government#industry-solutions-list",
       ],
       [
         "finance",
         "",
-        "/solutions?view=industry&category=finance#industry-solutions-list",
+        "/solutions?view=industries&industry=finance#industry-solutions-list",
       ],
       [
         "finance-knowledge",
         "industry-finance-knowledge",
-        "/solutions/finance-knowledge#industry-finance-knowledge",
+        "/solutions?view=industries&industry=finance#industry-solutions-list",
       ],
       [
         "finance-document",
         "industry-finance-document",
-        "/solutions/finance-document#industry-finance-document",
+        "/solutions?view=industries&industry=finance#industry-solutions-list",
       ],
-      [
-        "finance-data",
-        "industry-finance-data",
-        "/solutions/finance-data#industry-finance-data",
-      ],
+      ["finance-data", "industry-finance-data", "/solutions/finance-data"],
       [
         "finance-assistant",
         "industry-finance-assistant",
-        "/solutions/finance-assistant#industry-finance-assistant",
+        "/solutions?view=industries&industry=finance#industry-solutions-list",
       ],
       [
         "healthcare",
         "",
-        "/solutions?view=industry&category=healthcare#industry-solutions-list",
+        "/solutions?view=industries&industry=healthcare#industry-solutions-list",
       ],
       [
         "healthcare-knowledge",
         "industry-healthcare-knowledge",
-        "/solutions/healthcare-knowledge#industry-healthcare-knowledge",
+        "/solutions/healthcare-knowledge",
       ],
       [
         "healthcare-document",
         "industry-healthcare-document",
-        "/solutions/healthcare-document#industry-healthcare-document",
+        "/solutions?view=industries&industry=healthcare#industry-solutions-list",
       ],
       [
         "healthcare-data",
         "industry-healthcare-data",
-        "/solutions/healthcare-data#industry-healthcare-data",
+        "/solutions?view=industries&industry=healthcare#industry-solutions-list",
       ],
       [
         "healthcare-process",
         "industry-healthcare-process",
-        "/solutions/healthcare-process#industry-healthcare-process",
+        "/solutions?view=industries&industry=healthcare#industry-solutions-list",
       ],
       [
         "enterprise",
         "",
-        "/solutions?view=industry&category=enterprise#industry-solutions-list",
+        "/solutions?view=industries&industry=enterprise#industry-solutions-list",
       ],
       [
         "enterprise-knowledge",
         "industry-enterprise-knowledge",
-        "/solutions/enterprise-knowledge#industry-enterprise-knowledge",
+        "/solutions?view=industries&industry=enterprise#industry-solutions-list",
       ],
       [
         "enterprise-data",
         "industry-enterprise-data",
-        "/solutions/enterprise-data#industry-enterprise-data",
+        "/solutions?view=industries&industry=enterprise#industry-solutions-list",
       ],
       [
         "enterprise-document",
         "industry-enterprise-document",
-        "/solutions/enterprise-document#industry-enterprise-document",
+        "/solutions?view=industries&industry=enterprise#industry-solutions-list",
       ],
       [
         "enterprise-process",
         "industry-enterprise-process",
-        "/solutions/enterprise-process#industry-enterprise-process",
+        "/solutions?view=industries&industry=enterprise#industry-solutions-list",
       ],
       [
         "enterprise-multi-agent",
         "industry-enterprise-multi-agent",
-        "/solutions/enterprise-multi-agent#industry-enterprise-multi-agent",
+        "/solutions/enterprise-multi-agent",
       ],
       [
-        "cases",
+        "",
         "practice-cases-hero",
-        "/solutions?view=cases#practice-cases-hero",
+        "/solutions?view=cases&mode=all#practice-cases-hero",
       ],
       [
-        "case-industry",
+        "industry",
         "practice-cases-list",
         "/solutions?view=cases&mode=industry#practice-cases-list",
       ],
       [
         "case-pending-enterprise-knowledge",
         "case-pending-enterprise-knowledge",
-        "/solutions/case-pending-enterprise-knowledge#case-pending-enterprise-knowledge",
+        "/solutions?view=cases&mode=industry#case-pending-enterprise-knowledge",
       ],
       [
-        "case-scenario",
+        "scenario",
         "practice-cases-list",
         "/solutions?view=cases&mode=scenario#practice-cases-list",
       ],
       [
         "case-pending-enterprise-knowledge",
         "case-pending-enterprise-knowledge",
-        "/solutions/case-pending-enterprise-knowledge#case-pending-enterprise-knowledge",
+        "/solutions?view=cases&mode=scenario#case-pending-enterprise-knowledge",
       ],
     ]);
   });

@@ -5,8 +5,10 @@ import SolutionsPage, { metadata } from "./page";
 afterEach(cleanup);
 
 describe("SolutionsPage prototype overlay", () => {
-  it("renders the exact overview structure and content", () => {
-    const { container } = render(<SolutionsPage />);
+  it("renders the exact overview structure and content", async () => {
+    const { container } = render(
+      await SolutionsPage({ searchParams: Promise.resolve({}) }),
+    );
 
     expect(
       screen.getByRole("heading", {
@@ -57,8 +59,10 @@ describe("SolutionsPage prototype overlay", () => {
     ).toBeVisible();
   });
 
-  it("keeps all overview links internal and uses the confirmed anchors", () => {
-    const { container } = render(<SolutionsPage />);
+  it("keeps all overview links internal and uses the confirmed anchors", async () => {
+    const { container } = render(
+      await SolutionsPage({ searchParams: Promise.resolve({}) }),
+    );
     const hrefs = Array.from(container.querySelectorAll("a[href]"), (link) =>
       link.getAttribute("href"),
     );
@@ -77,8 +81,36 @@ describe("SolutionsPage prototype overlay", () => {
     }
   });
 
-  it("keeps one real page H1 and the public metadata contract", () => {
-    const { container } = render(<SolutionsPage />);
+  it("reads approved solution query state and marks the exact directory target", async () => {
+    const { container } = render(
+      await SolutionsPage({
+        searchParams: Promise.resolve({
+          view: "industries",
+          industry: "finance",
+        }),
+      }),
+    );
+
+    expect(container.querySelector("main.solutions-page")).toHaveAttribute(
+      "data-solution-view",
+      "industries",
+    );
+    expect(container.querySelector("main.solutions-page")).toHaveAttribute(
+      "data-solution-filter",
+      "finance",
+    );
+    expect(
+      screen.getByRole("link", { name: "金融", current: "location" }),
+    ).toHaveAttribute(
+      "href",
+      "/solutions?view=industries&industry=finance#industry-solutions-list",
+    );
+  });
+
+  it("keeps one real page H1 and the public metadata contract", async () => {
+    const { container } = render(
+      await SolutionsPage({ searchParams: Promise.resolve({}) }),
+    );
     expect(container.querySelectorAll("h1")).toHaveLength(1);
     expect(metadata).toEqual({
       title: "解决方案 · AI Agent Platform",

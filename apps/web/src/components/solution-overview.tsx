@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { solutionListRoutes } from "@/config/prototype-route-map";
 import {
   type SolutionDirectoryNode,
   solutionDirectory,
@@ -24,36 +25,49 @@ function filterDirectory(
 function DirectoryBranch({
   node,
   closeMobile,
+  activeInternalId,
+  forceExpanded,
 }: {
   node: SolutionDirectoryNode;
   closeMobile: () => void;
+  activeInternalId: string;
+  forceExpanded: boolean;
 }) {
   const [expanded, setExpanded] = useState(true);
   const children = node.children ?? [];
+  const visiblyExpanded = forceExpanded || expanded;
 
   return (
     <li className="solution-directory__item">
       <div className="solution-directory__row">
-        <Link href={node.href} onClick={closeMobile}>
+        <Link
+          aria-current={
+            node.internalId === activeInternalId ? "location" : undefined
+          }
+          href={node.href}
+          onClick={closeMobile}
+        >
           {node.label}
         </Link>
         {children.length ? (
           <button
             type="button"
-            aria-expanded={expanded}
+            aria-expanded={visiblyExpanded}
             aria-label={`展开或收起${node.label}`}
             onClick={() => setExpanded((value) => !value)}
           >
-            {expanded ? "−" : "+"}
+            {visiblyExpanded ? "−" : "+"}
           </button>
         ) : null}
       </div>
       {children.length ? (
-        <ul hidden={!expanded}>
+        <ul hidden={!visiblyExpanded}>
           {children.map((child) => (
             <DirectoryBranch
+              activeInternalId={activeInternalId}
               closeMobile={closeMobile}
-              key={`${child.key}-${child.href}`}
+              forceExpanded={forceExpanded}
+              key={child.internalId}
               node={child}
             />
           ))}
@@ -63,7 +77,19 @@ function DirectoryBranch({
   );
 }
 
-export function SolutionOverview() {
+export type SolutionOverviewProps = {
+  view?: "overview" | "scenarios" | "industries" | "cases";
+  category?: "infrastructure" | "knowledge" | "agents";
+  industry?: "government" | "finance" | "healthcare" | "enterprise";
+  mode?: "all" | "industry" | "scenario";
+};
+
+export function SolutionOverview({
+  view = "overview",
+  category,
+  industry,
+  mode = "all",
+}: SolutionOverviewProps = {}) {
   const [query, setQuery] = useState("");
   const [directoryCollapsed, setDirectoryCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -76,6 +102,28 @@ export function SolutionOverview() {
     query.trim().toLowerCase(),
   );
   const method = content.methods[activeMethod];
+  const activeFilter =
+    view === "scenarios"
+      ? (category ?? "all")
+      : view === "industries"
+        ? (industry ?? "all")
+        : view === "cases"
+          ? mode
+          : undefined;
+  const activeInternalId =
+    view === "scenarios"
+      ? category
+        ? `scenario-category-${category}`
+        : "scenarios"
+      : view === "industries"
+        ? industry
+          ? `industry-category-${industry}`
+          : "industries"
+        : view === "cases"
+          ? mode === "all"
+            ? "cases"
+            : `cases-${mode}`
+          : "overview";
 
   useEffect(() => {
     if (mobileOpen) searchInput.current?.focus();
@@ -117,7 +165,11 @@ export function SolutionOverview() {
   };
 
   return (
-    <main className="solutions-page">
+    <main
+      className="solutions-page"
+      data-solution-filter={activeFilter}
+      data-solution-view={view}
+    >
       <button
         ref={mobileTrigger}
         type="button"
@@ -173,8 +225,10 @@ export function SolutionOverview() {
               <ul className="solution-directory__tree">
                 {filteredDirectory.map((node) => (
                   <DirectoryBranch
+                    activeInternalId={activeInternalId}
                     closeMobile={() => setMobileOpen(false)}
-                    key={`${node.key}-${node.href}`}
+                    forceExpanded={Boolean(query.trim())}
+                    key={node.internalId}
                     node={node}
                   />
                 ))}
@@ -257,14 +311,16 @@ export function SolutionOverview() {
             <div className="solution-section__heading">
               <div>
                 <p className="solution-eyebrow">02｜通用场景方案</p>
-                <h2>从常见业务问题进入对应解决方案</h2>
+                <h2 id="solution-scenarios-directory">
+                  从常见业务问题进入对应解决方案
+                </h2>
                 <p>
                   总览页优先展示六个客户容易理解的方案；其余模型、算力、知识资产、非结构化数据和视频检索方案保留在完整列表中。
                 </p>
               </div>
               <Link
                 className="solution-button"
-                href="/solutions?view=common#solution-scenarios-directory"
+                href={solutionListRoutes.scenarios.all}
               >
                 查看全部通用场景方案
               </Link>
@@ -296,9 +352,7 @@ export function SolutionOverview() {
                       <span key={item}>{item}</span>
                     ))}
                   </div>
-                  <Link href={`/solutions/${scene.key}#${scene.anchor}`}>
-                    查看解决方案 →
-                  </Link>
+                  <Link href={scene.href}>查看解决方案 →</Link>
                 </article>
               ))}
             </div>
@@ -366,14 +420,16 @@ export function SolutionOverview() {
             <div className="solution-section__heading">
               <div>
                 <p className="solution-eyebrow">04｜行业解决方案</p>
-                <h2>面向成熟行业继续细分具体业务场景</h2>
+                <h2 id="industry-solutions-list">
+                  面向成熟行业继续细分具体业务场景
+                </h2>
                 <p>
                   行业只作为分类，用户进入行业列表后选择具体行业场景方案；正式官网仅展示已经确认可对外推广的内容。
                 </p>
               </div>
               <Link
                 className="solution-button"
-                href="/solutions?view=industry#industry-solutions-list"
+                href={solutionListRoutes.industries.all}
               >
                 查看全部行业方案
               </Link>
@@ -397,9 +453,7 @@ export function SolutionOverview() {
                       {status}
                     </p>
                     <div className="solution-visual">{visual}</div>
-                    <Link
-                      href={`/solutions?view=industry&category=${key}#industry-solutions-list`}
-                    >
+                    <Link href={solutionListRoutes.industries[key]}>
                       {link}
                     </Link>
                   </article>
@@ -434,38 +488,42 @@ export function SolutionOverview() {
             <div className="solution-section__heading">
               <div>
                 <p className="solution-eyebrow">06｜实践案例</p>
-                <h2>通过真实实践验证解决方案价值</h2>
+                <h2 id="practice-cases-hero">通过真实实践验证解决方案价值</h2>
                 <p>案例资料、客户名称和成果数据仅在获得公开授权后展示。</p>
               </div>
               <Link
                 className="solution-button"
-                href="/solutions?view=cases#practice-cases-hero"
+                href={solutionListRoutes.cases.all}
               >
                 进入实践案例
               </Link>
             </div>
-            <article
-              id="solution-case-pending"
-              className="solution-case"
-              tabIndex={0}
-            >
-              <div className="solution-visual">
-                {content.case.visual.split("\n").map((line) => (
-                  <span key={line}>{line}</span>
-                ))}
-              </div>
-              <div>
-                <span className="solution-tag">{content.case.label}</span>
-                <h3>{content.case.title}</h3>
-                {content.case.fields.map(([label, value]) => (
-                  <p key={label}>
-                    <b>{label}</b>
-                    {value}
-                  </p>
-                ))}
-                <Link href={content.case.link[1]}>{content.case.link[0]}</Link>
-              </div>
-            </article>
+            <div id="practice-cases-list">
+              <article
+                id="case-pending-enterprise-knowledge"
+                className="solution-case"
+                tabIndex={0}
+              >
+                <div className="solution-visual">
+                  {content.case.visual.split("\n").map((line) => (
+                    <span key={line}>{line}</span>
+                  ))}
+                </div>
+                <div>
+                  <span className="solution-tag">{content.case.label}</span>
+                  <h3>{content.case.title}</h3>
+                  {content.case.fields.map(([label, value]) => (
+                    <p key={label}>
+                      <b>{label}</b>
+                      {value}
+                    </p>
+                  ))}
+                  <Link href={content.case.link[1]}>
+                    {content.case.link[0]}
+                  </Link>
+                </div>
+              </article>
+            </div>
           </section>
 
           <section id="solution-final-cta" className="solution-section">

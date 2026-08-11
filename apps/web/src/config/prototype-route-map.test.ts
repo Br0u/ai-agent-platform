@@ -8,6 +8,7 @@ import {
   industrySolutionFilterKeys,
   partnerKeys,
   prototypePageRoutes,
+  solutionListRoutes,
   solutionViewKeys,
 } from "./prototype-route-map";
 
@@ -117,6 +118,36 @@ describe("prototype route map", () => {
       "case-list",
       "case-detail",
     ]);
+  });
+
+  it("locks the approved solution list query and landing-anchor routes", () => {
+    expect(solutionListRoutes).toEqual({
+      scenarios: {
+        all: "/solutions?view=scenarios#solution-scenarios-directory",
+        infrastructure:
+          "/solutions?view=scenarios&category=infrastructure#solution-scenarios-directory",
+        knowledge:
+          "/solutions?view=scenarios&category=knowledge#solution-scenarios-directory",
+        agents:
+          "/solutions?view=scenarios&category=agents#solution-scenarios-directory",
+      },
+      industries: {
+        all: "/solutions?view=industries#industry-solutions-list",
+        government:
+          "/solutions?view=industries&industry=government#industry-solutions-list",
+        finance:
+          "/solutions?view=industries&industry=finance#industry-solutions-list",
+        healthcare:
+          "/solutions?view=industries&industry=healthcare#industry-solutions-list",
+        enterprise:
+          "/solutions?view=industries&industry=enterprise#industry-solutions-list",
+      },
+      cases: {
+        all: "/solutions?view=cases&mode=all#practice-cases-hero",
+        industry: "/solutions?view=cases&mode=industry#practice-cases-list",
+        scenario: "/solutions?view=cases&mode=scenario#practice-cases-list",
+      },
+    });
   });
 
   it("locks all partner script state keys", () => {
