@@ -749,11 +749,11 @@
 
   Expected: 包含已提交与当前未提交内容的整条迁移 diff 无空白错误；文件清单只包含计划范围；`git status` 只列即将提交的 E2E 和计划勾选。显式确认 assistant/chat、auth/register/staff/console/admin/docs/support/help 的生产实现无非必要差异，计划勾选均有新鲜证据。
 
-- [ ] **Step 7: 最终提交**
+- [x] **Step 7: 最终提交**
 
   Commit: `test(portal): 验收公开官网覆盖式迁移`
 
-- [ ] **Step 8: 提交后复核**
+- [x] **Step 8: 提交后复核**
 
   Run: `git diff --check 995c437...HEAD`
 
