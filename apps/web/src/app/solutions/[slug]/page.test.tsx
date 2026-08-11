@@ -440,6 +440,67 @@ describe("SolutionDetailPage", () => {
     );
   });
 
+  it("restores the exact common problem, architecture, and current-flow panel", async () => {
+    render(
+      await Page({ params: Promise.resolve({ slug: "knowledge-service" }) }),
+    );
+
+    const problems = screen
+      .getByRole("heading", {
+        level: 2,
+        name: "先明确问题、影响与建设目标",
+      })
+      .closest("section");
+    expect(problems).not.toBeNull();
+    const problemCards = within(problems!).getAllByRole("article");
+    expect(problemCards).toHaveLength(3);
+    expect(
+      problemCards.map(
+        (card) =>
+          within(card).getByText(/^(当前问题|业务影响|建设目标)$/).textContent,
+      ),
+    ).toStrictEqual(["当前问题", "业务影响", "建设目标"]);
+    for (const problem of [
+      "知识分散且更新频繁，查找路径长",
+      "传统关键词检索难以理解自然语言问题",
+      "回答质量、知识来源和持续维护缺少闭环",
+    ]) {
+      expect(
+        within(problemCards[0]).getByText(problem, { exact: true }),
+      ).toBeVisible();
+    }
+
+    const architecture = within(screen.getByTestId("solution-architecture"));
+    expect(
+      architecture.getAllByRole("link").map((link) => link.textContent),
+    ).toStrictEqual([
+      "业务使用入口",
+      "智能体或应用服务",
+      "知识、数据、流程与工具",
+      "模型与算力资源",
+    ]);
+    expect(
+      architecture.getByText("安全中心横向贯穿", { exact: true }),
+    ).toBeVisible();
+
+    const currentFlow = within(screen.getByTestId("solution-flow-current"));
+    expect(currentFlow.getByText("当前步骤", { exact: true })).toBeVisible();
+    expect(
+      currentFlow.getByText("企业资料接入", { exact: true }),
+    ).toBeVisible();
+    expect(currentFlow.getByText("步骤说明", { exact: true })).toBeVisible();
+    expect(
+      currentFlow.getByText("说明该步骤的参与角色、输入、处理逻辑和输出。", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(
+      currentFlow.getByText("企业资料接入对应产品界面或效果素材槽位", {
+        exact: true,
+      }),
+    ).toBeVisible();
+  });
+
   it("renders the complete industry solution structure", async () => {
     render(await Page({ params: Promise.resolve({ slug: "finance-data" }) }));
 
@@ -472,14 +533,24 @@ describe("SolutionDetailPage", () => {
       render(await Page({ params: Promise.resolve({ slug }) }));
 
       const related = within(screen.getByTestId("solution-related-list"));
-      expect(
-        related
-          .getAllByRole("link")
-          .map((link) => [link.textContent, link.getAttribute("href")]),
-      ).toStrictEqual(expected.map(([title, , href]) => [title, href]));
-      for (const [, summary] of expected) {
-        expect(related.getByText(summary, { exact: true })).toBeVisible();
-      }
+      const cards = related.getAllByRole("article");
+      expect(cards).toHaveLength(expected.length);
+      expected.forEach(([title, summary, href], index) => {
+        expect(
+          within(cards[index]).getByRole("heading", {
+            level: 3,
+            name: title,
+          }),
+        ).toBeVisible();
+        expect(
+          within(cards[index]).getByText(summary, { exact: true }),
+        ).toBeVisible();
+        expect(
+          within(cards[index]).getByRole("link", {
+            name: "查看相关方案 →",
+          }),
+        ).toHaveAttribute("href", href);
+      });
     },
   );
 
@@ -489,15 +560,78 @@ describe("SolutionDetailPage", () => {
       render(await Page({ params: Promise.resolve({ slug }) }));
 
       const related = within(screen.getByTestId("solution-related-list"));
-      expect(
-        related
-          .getAllByRole("link")
-          .map((link) => [link.textContent, link.getAttribute("href")]),
-      ).toStrictEqual(expected);
+      const cards = related.getAllByRole("article");
+      expect(cards).toHaveLength(expected.length);
+      expected.forEach(([title, href], index) => {
+        expect(
+          within(cards[index]).getByRole("heading", {
+            level: 3,
+            name: title,
+          }),
+        ).toBeVisible();
+        expect(
+          within(cards[index]).getByRole("link", {
+            name: "查看场景方案 →",
+          }),
+        ).toHaveAttribute("href", href);
+      });
     },
   );
 
-  it("renders one H1 and explicit no-authorization copy for the pending case", async () => {
+  it("restores the exact common and industry closing contracts", async () => {
+    render(
+      await Page({ params: Promise.resolve({ slug: "knowledge-service" }) }),
+    );
+
+    const commonClosing = screen
+      .getByText("06｜实践案例、相关方案与行动收口", { exact: true })
+      .closest("section");
+    expect(commonClosing).not.toBeNull();
+    expect(
+      within(commonClosing!).getByRole("heading", {
+        level: 2,
+        name: "相关实践案例",
+      }),
+    ).toBeVisible();
+    expect(
+      within(commonClosing!).getByRole("heading", {
+        level: 3,
+        name: "相关解决方案",
+      }),
+    ).toBeVisible();
+    expect(
+      within(commonClosing!).getAllByRole("link", {
+        name: "查看相关方案 →",
+      }),
+    ).toHaveLength(3);
+
+    cleanup();
+    render(await Page({ params: Promise.resolve({ slug: "finance-data" }) }));
+
+    const industryClosing = screen
+      .getByText("05｜案例、相关场景与下一步", { exact: true })
+      .closest("section");
+    expect(industryClosing).not.toBeNull();
+    expect(
+      within(industryClosing!).getByRole("heading", {
+        level: 2,
+        name: "相关行业实践案例",
+      }),
+    ).toBeVisible();
+    expect(
+      within(industryClosing!).getByRole("heading", {
+        level: 2,
+        name: "相关行业场景",
+      }),
+    ).toBeVisible();
+    expect(
+      within(industryClosing!).getAllByRole("link", {
+        name: "查看场景方案 →",
+      }),
+    ).toHaveLength(3);
+  });
+
+  it("renders one H1 and the exact content status for the pending case", async () => {
     render(
       await Page({
         params: Promise.resolve({ slug: "case-pending-enterprise-knowledge" }),
@@ -514,7 +648,16 @@ describe("SolutionDetailPage", () => {
     ).toBeVisible();
     expect(
       screen.getByText(
+        (_, element) =>
+          element?.tagName === "P" &&
+          element.textContent ===
+            "内容状态：低保真评审占位，不代表真实公开项目。客户名称、项目范围、图片和成果数据必须在获得公开授权后替换。",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
         "当前案例未获公开授权，不代表真实公开项目；客户、建设内容与成果均须在获得授权后替换。",
+        { exact: true },
       ),
     ).toBeVisible();
     for (const product of [
@@ -538,6 +681,64 @@ describe("SolutionDetailPage", () => {
     expect(screen.getByRole("link", { name: "返回实践案例" })).toHaveAttribute(
       "href",
       "/solutions?view=cases&mode=scenario#practice-cases-list",
+    );
+  });
+
+  it("restores the exact pending-case hero copy and positions", async () => {
+    render(
+      await Page({
+        params: Promise.resolve({ slug: "case-pending-enterprise-knowledge" }),
+        searchParams: Promise.resolve({ mode: "scenario" }),
+      }),
+    );
+
+    const hero = document.querySelector("main > .solution-detail-hero");
+    expect(hero).not.toBeNull();
+    const heroCopy = hero!.querySelector(
+      ".solution-detail-hero__layout > div:first-child",
+    );
+    expect(heroCopy).not.toBeNull();
+    expect(
+      within(heroCopy as HTMLElement).getByText("实践案例｜企业智能化", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(
+      within(heroCopy as HTMLElement).getByText(
+        (_, element) =>
+          element?.tagName === "P" &&
+          element.textContent === "客户：某企业客户（脱敏占位）",
+      ),
+    ).toBeVisible();
+    const actions = heroCopy!.querySelector(".solution-detail-actions");
+    expect(actions).not.toBeNull();
+    expect(
+      within(actions as HTMLElement)
+        .getAllByRole("link")
+        .map((link) => [link.textContent, link.getAttribute("href")]),
+    ).toStrictEqual([
+      [
+        "咨询类似项目",
+        "/contact?topic=案例详情结构占位（待授权案例）｜类似项目咨询",
+      ],
+      ["查看关联解决方案", "#case-related"],
+      [
+        "返回案例列表",
+        "/solutions?view=cases&mode=scenario#practice-cases-list",
+      ],
+    ]);
+    const status = within(heroCopy as HTMLElement).getByText(
+      (_, element) =>
+        element?.tagName === "P" &&
+        element.textContent ===
+          "内容状态：低保真评审占位，不代表真实公开项目。客户名称、项目范围、图片和成果数据必须在获得公开授权后替换。",
+    );
+    expect(status).toBeVisible();
+    expect(actions!.nextElementSibling).toBe(status);
+
+    const visual = hero!.querySelector(".solution-detail-visual");
+    expect(visual?.textContent).toBe(
+      "案例详情结构占位（待授权案例）案例主视觉 / 项目现场 / 产品效果素材槽位",
     );
   });
 

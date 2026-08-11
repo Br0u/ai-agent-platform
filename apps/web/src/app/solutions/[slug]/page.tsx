@@ -98,20 +98,18 @@ function CommonSections({ detail }: { detail: CommonSolutionDetail }) {
           <p className="solution-detail-eyebrow">03｜业务问题与适用对象</p>
           <h2 id="solution-problems-title">先明确问题、影响与建设目标</h2>
           <div className="solution-detail-problem-grid">
-            {detail.problems.map((problem) => (
-              <article data-testid="solution-problem" key={problem}>
-                <b>当前问题</b>
-                <p>{problem}</p>
-              </article>
-            ))}
-          </div>
-          <div className="solution-detail-outcomes">
-            <article>
+            <article data-testid="solution-problem">
+              <b>当前问题</b>
+              {detail.problems.map((problem) => (
+                <p key={problem}>{problem}</p>
+              ))}
+            </article>
+            <article data-testid="solution-problem">
               <b>业务影响</b>
               <p>信息、资源或流程使用链路较长，依赖人工查找、处理和协调。</p>
               <p>已有知识、数据和平台能力难以形成统一业务服务。</p>
             </article>
-            <article>
+            <article data-testid="solution-problem">
               <b>建设目标</b>
               <p>{detail.summary}</p>
               <p>形成可维护、可验证、可继续扩展的企业 AI 能力。</p>
@@ -138,7 +136,26 @@ function CommonSections({ detail }: { detail: CommonSolutionDetail }) {
           <p className="solution-detail-intro">
             仅组合当前场景需要的能力，不强制展示无关产品模块。
           </p>
-          <div className="solution-detail-components">
+          <div data-testid="solution-architecture">
+            <ol
+              className="solution-detail-flow solution-detail-flow--described"
+              aria-label="四层方案架构"
+            >
+              {[
+                ["业务使用入口", "#solution-components"],
+                ["智能体或应用服务", "#solution-components"],
+                ["知识、数据、流程与工具", "#solution-components"],
+                ["模型与算力资源", "#solution-products"],
+              ].map(([label, href]) => (
+                <li key={label}>
+                  <Link href={href}>{label}</Link>
+                </li>
+              ))}
+            </ol>
+            <p className="solution-detail-note">安全中心横向贯穿</p>
+          </div>
+          <h3 className="solution-detail-subheading">核心方案组成</h3>
+          <div className="solution-detail-components" id="solution-components">
             {detail.components.map((component, index) => (
               <article data-testid="solution-component" key={component}>
                 <span>{String(index + 1).padStart(2, "0")}</span>
@@ -166,6 +183,24 @@ function CommonSections({ detail }: { detail: CommonSolutionDetail }) {
               </li>
             ))}
           </ol>
+          <div
+            className="solution-detail-cta"
+            data-testid="solution-flow-current"
+          >
+            <div>
+              <div>
+                <b>当前步骤</b>
+                <p>{detail.flow[0]}</p>
+              </div>
+              <div>
+                <b>步骤说明</b>
+                <p>说明该步骤的参与角色、输入、处理逻辑和输出。</p>
+              </div>
+            </div>
+            <div className="solution-detail-case__visual">
+              {detail.flow[0]}对应产品界面或效果素材槽位
+            </div>
+          </div>
         </div>
       </section>
     </>
@@ -299,16 +334,28 @@ function ClosingSection({
     <section className="solution-detail-section solution-detail-closing">
       <div className="solution-detail-frame">
         <p className="solution-detail-eyebrow">
-          {industry ? "05" : "06"}｜实践案例、相关方案与行动收口
+          {industry
+            ? "05｜案例、相关场景与下一步"
+            : "06｜实践案例、相关方案与行动收口"}
         </p>
+        <h2>{industry ? "相关行业实践案例" : "相关实践案例"}</h2>
         <div className="solution-detail-case">
           <div className="solution-detail-case__visual">
+            {industry ? (
+              <>
+                {detail.title}
+                <br />
+              </>
+            ) : null}
             客户 / 项目 / 应用效果素材
             <br />
-            待公开授权后补充
+            {industry ? "槽位" : "待公开授权后补充"}
           </div>
           <div>
-            <h2>案例内容待授权补充</h2>
+            {industry ? (
+              <span className="solution-detail-tag">待公开授权</span>
+            ) : null}
+            <h3>案例内容待授权补充</h3>
             <p>
               {industry
                 ? "后续填写行业、业务问题、建设内容、使用产品能力和已经授权公开的成果摘要。"
@@ -322,7 +369,7 @@ function ClosingSection({
           </div>
         </div>
         <div className="solution-detail-related">
-          <h2>{industry ? "相关行业场景" : "相关解决方案"}</h2>
+          {industry ? <h2>相关行业场景</h2> : <h3>相关解决方案</h3>}
           <div
             className="solution-detail-products"
             data-testid="solution-related-list"
@@ -332,10 +379,11 @@ function ClosingSection({
               if (!related || related.kind === "case") return null;
               return (
                 <article key={slug}>
-                  <h3>
-                    <Link href={`/solutions/${slug}`}>{related.title}</Link>
-                  </h3>
+                  <h3>{related.title}</h3>
                   {detail.kind === "common" ? <p>{related.summary}</p> : null}
+                  <Link href={`/solutions/${slug}`}>
+                    {industry ? "查看场景方案 →" : "查看相关方案 →"}
+                  </Link>
                 </article>
               );
             })}
@@ -349,7 +397,9 @@ function ClosingSection({
                 : `需要进一步评估“${detail.title}”？`}
             </h2>
             <p>
-              咨询表单将带入方案名称、来源产品页面和浏览路径；私有化部署、数据接入和系统集成需求优先进入商务咨询。
+              {industry
+                ? "咨询表单自动带入行业、场景名称、来源产品页面和浏览路径。"
+                : "咨询表单将带入方案名称、来源产品页面和浏览路径；私有化部署、数据接入和系统集成需求优先进入商务咨询。"}
             </p>
           </div>
           <div className="solution-detail-actions">
@@ -357,7 +407,7 @@ function ClosingSection({
               className="solution-detail-button solution-detail-button--primary"
               href={contactHref(detail)}
             >
-              咨询当前方案
+              {industry ? "咨询当前行业场景" : "咨询当前方案"}
             </Link>
             <Link className="solution-detail-button" href="/trial">
               申请体验
@@ -387,13 +437,16 @@ function CasePage({
       <section className="solution-detail-hero">
         <div className="solution-detail-frame solution-detail-hero__layout">
           <div>
-            <p className="solution-detail-eyebrow">实践案例｜待授权结构</p>
+            <p className="solution-detail-eyebrow">
+              实践案例｜{detail.industry}
+            </p>
             <h1>{detail.title}</h1>
             <p className="solution-detail-lead">{detail.summary}</p>
-            <p className="solution-detail-note">{detail.authorizationNotice}</p>
+            <p>
+              <b>客户：</b>
+              {detail.customer}
+            </p>
             <div className="solution-detail-tags" aria-label="案例基本信息">
-              <span className="solution-detail-tag">{detail.customer}</span>
-              <span className="solution-detail-tag">{detail.industry}</span>
               {detail.scenarios.map((scenario) => (
                 <span className="solution-detail-tag" key={scenario}>
                   {scenario}
@@ -422,14 +475,25 @@ function CasePage({
               <Link className="solution-detail-button" href="#case-related">
                 查看关联解决方案
               </Link>
+              <a className="solution-detail-link" href={returnHref}>
+                返回案例列表
+              </a>
             </div>
+            <p className="solution-detail-note">
+              <b>内容状态：</b>
+              低保真评审占位，不代表真实公开项目。客户名称、项目范围、图片和成果数据必须在获得公开授权后替换。
+            </p>
           </div>
           <div className="solution-detail-visual">
-            <span>客户 / 项目 / 应用效果素材</span>
-            <small>未获公开授权前不展示真实客户或项目素材</small>
+            <span>{detail.title}</span>
+            <small>案例主视觉 / 项目现场 / 产品效果素材槽位</small>
           </div>
         </div>
       </section>
+
+      <div className="solution-detail-frame">
+        <p className="solution-detail-note">{detail.authorizationNotice}</p>
+      </div>
 
       <section className="solution-detail-section">
         <div className="solution-detail-frame">
