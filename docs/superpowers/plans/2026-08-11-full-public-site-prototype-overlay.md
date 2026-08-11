@@ -697,7 +697,7 @@
 - Create: `apps/web/e2e/full-public-site-overlay.spec.ts`
 - Modify: `docs/superpowers/plans/2026-08-11-full-public-site-prototype-overlay.md`（仅勾选已验证项）
 
-- [ ] **Step 1: 建立全站 E2E 清单**
+- [x] **Step 1: 建立全站 E2E 清单**
 
   覆盖导航、43 个页面 key、全部脚本生成 view/key、删除路由 404、唯一 Agent、评审 chrome 不存在。显式 `setViewportSize` 验收 1440px、900px、390px；代表页在 1440px/390px 截图。保留系统不统一断言 200：support/help/docs 锁原页面壳，auth/console/admin 锁 Task 12 记录的 redirect/permission 行为。
 
@@ -707,13 +707,13 @@
 
   Expected: 收集成功，测试数与清单一致。
 
-- [ ] **Step 2: 运行 production build**
+- [x] **Step 2: 运行 production build**
 
   Run: `pnpm --filter @ai-agent-platform/web build`
 
   Expected: exit 0，所有静态页生成完成。恢复仅由 build 触发的 `apps/web/next-env.d.ts` dev/prod types 自动变动。
 
-- [ ] **Step 3: 运行全站 Playwright GREEN**
+- [x] **Step 3: 运行全站 Playwright GREEN**
 
   Run: `pnpm --filter @ai-agent-platform/web exec playwright test e2e/full-public-site-overlay.spec.ts --project=desktop`
 
@@ -725,7 +725,7 @@
 
   Expected: PASS；结果与 Task 12 Step 1 基线一致。
 
-- [ ] **Step 5: 运行全量发布门槛**
+- [x] **Step 5: 运行全量发布门槛**
 
   Run: `pnpm --filter @ai-agent-platform/web test`
 
@@ -739,7 +739,7 @@
 
   Expected: 所有命令 exit 0；若 Web test 仅因沙箱本地监听 EPERM 失败，按原命令在授权环境重跑并记录两次结果，不把沙箱失败写成通过。
 
-- [ ] **Step 6: 提交前检查整条迁移范围与计划**
+- [x] **Step 6: 提交前检查整条迁移范围与计划**
 
   Run: `git diff --check 995c437`
 
