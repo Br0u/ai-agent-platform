@@ -361,11 +361,35 @@ function ClosingSection({
                 ? "后续填写行业、业务问题、建设内容、使用产品能力和已经授权公开的成果摘要。"
                 : "客户或行业、面临问题、使用方案、关联产品能力及公开成果均待授权。"}
             </p>
+            {!industry ? (
+              <div className="solution-detail-actions">
+                <Link
+                  className="solution-detail-button"
+                  href="/solutions/case-pending-enterprise-knowledge"
+                >
+                  查看案例详情
+                </Link>
+                <Link
+                  className="solution-detail-link"
+                  href="/solutions?view=cases&mode=all#practice-cases-list"
+                >
+                  查看全部相关案例
+                </Link>
+              </div>
+            ) : null}
             <p className="solution-detail-note">
               {industry
                 ? "正式官网没有可公开案例时隐藏案例区域，不虚构客户名称和成果数据。"
                 : "正式官网没有可公开案例时隐藏案例内容，不虚构客户名称、成果和数字。"}
             </p>
+            {industry ? (
+              <Link
+                className="solution-detail-link"
+                href="/solutions/case-pending-enterprise-knowledge"
+              >
+                查看相关案例 →
+              </Link>
+            ) : null}
           </div>
         </div>
         <div className="solution-detail-related">

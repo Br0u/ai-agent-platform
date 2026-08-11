@@ -631,6 +631,45 @@ describe("SolutionDetailPage", () => {
     ).toHaveLength(3);
   });
 
+  it.each([
+    [
+      "knowledge-service",
+      [
+        ["查看案例详情", "/solutions/case-pending-enterprise-knowledge"],
+        [
+          "查看全部相关案例",
+          "/solutions?view=cases&mode=all#practice-cases-list",
+        ],
+      ],
+    ],
+    [
+      "finance-data",
+      [["查看相关案例 →", "/solutions/case-pending-enterprise-knowledge"]],
+    ],
+  ] as const)(
+    "restores the exact prototype case-card actions for %s",
+    async (slug, expected) => {
+      render(await Page({ params: Promise.resolve({ slug }) }));
+
+      const closing = screen
+        .getByText(
+          slug === "knowledge-service"
+            ? "06｜实践案例、相关方案与行动收口"
+            : "05｜案例、相关场景与下一步",
+          { exact: true },
+        )
+        .closest("section");
+      expect(closing).not.toBeNull();
+      const card = closing!.querySelector(".solution-detail-case");
+      expect(card).not.toBeNull();
+      expect(
+        within(card as HTMLElement)
+          .getAllByRole("link")
+          .map((link) => [link.textContent, link.getAttribute("href")]),
+      ).toStrictEqual(expected);
+    },
+  );
+
   it("renders one H1 and the exact content status for the pending case", async () => {
     render(
       await Page({
