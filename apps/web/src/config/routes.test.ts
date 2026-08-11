@@ -80,6 +80,7 @@ const requiredRoutes = [
   "/releases/[version]",
   "/roadmap",
   "/downloads",
+  "/partners",
   "/openlab",
   "/docs",
   "/docs/[category]",
@@ -184,6 +185,15 @@ describe("routeRegistry", () => {
     expect(matchRoute("/downloads")).toEqual({
       path: "/downloads",
       title: "下载中心",
+      group: "public",
+      status: "live",
+    });
+  });
+
+  it("registers the partner center as a live public route", () => {
+    expect(matchRoute("/partners")).toEqual({
+      path: "/partners",
+      title: "合作伙伴",
       group: "public",
       status: "live",
     });

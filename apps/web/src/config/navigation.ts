@@ -178,6 +178,51 @@ export const portalNavigation: PortalNavigationItem[] = [
       },
     ],
   },
+  {
+    label: "合作伙伴",
+    href: "/partners",
+    description: "多元合作模式、清晰分润政策与全链路赋能。",
+    children: [
+      {
+        label: "商业模式",
+        items: [
+          { label: "合作模式", href: "/partners?view=business#pb-modes" },
+          { label: "分润政策", href: "/partners?view=business#pb-tiers" },
+          { label: "伙伴权益", href: "/partners?view=business#pb-benefits" },
+        ],
+      },
+      {
+        label: "伙伴政策",
+        items: [
+          {
+            label: "伙伴类型与准入条件",
+            href: "/partners?view=policy#pp-types",
+          },
+          { label: "认证体系", href: "/partners?view=policy#pp-cert" },
+          { label: "支持资源", href: "/partners?view=policy#pp-resources" },
+        ],
+      },
+      {
+        label: "伙伴培训",
+        items: [
+          { label: "培训体系", href: "/partners?view=training#pt-system" },
+          { label: "课程体系", href: "/partners?view=training#pt-courses" },
+          { label: "认证路径", href: "/partners?view=training#pt-path" },
+          { label: "学习资源", href: "/partners?view=training#pt-resources" },
+        ],
+      },
+      {
+        label: "合作对接",
+        items: [
+          { label: "成为合作伙伴", href: "/partners?view=become#pbc-hero" },
+          {
+            label: "联系生态负责人",
+            href: "/partners?view=overview#partner-contact",
+          },
+        ],
+      },
+    ],
+  },
   { label: "价格与服务", href: "/pricing", children: [] },
 ];
 
@@ -418,6 +463,7 @@ export const footerNavigation: NavigationSection[] = [
     items: [
       { label: "解决方案", href: "/solutions" },
       { label: "下载中心", href: "/downloads" },
+      { label: "合作伙伴", href: "/partners" },
       { label: "价格与服务", href: "/pricing" },
     ],
   },

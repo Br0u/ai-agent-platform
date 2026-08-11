@@ -149,6 +149,44 @@ const expectedPortal = [
       },
     ],
   },
+  {
+    label: "合作伙伴",
+    href: "/partners",
+    children: [
+      {
+        label: "商业模式",
+        items: [
+          ["合作模式", "/partners?view=business#pb-modes"],
+          ["分润政策", "/partners?view=business#pb-tiers"],
+          ["伙伴权益", "/partners?view=business#pb-benefits"],
+        ],
+      },
+      {
+        label: "伙伴政策",
+        items: [
+          ["伙伴类型与准入条件", "/partners?view=policy#pp-types"],
+          ["认证体系", "/partners?view=policy#pp-cert"],
+          ["支持资源", "/partners?view=policy#pp-resources"],
+        ],
+      },
+      {
+        label: "伙伴培训",
+        items: [
+          ["培训体系", "/partners?view=training#pt-system"],
+          ["课程体系", "/partners?view=training#pt-courses"],
+          ["认证路径", "/partners?view=training#pt-path"],
+          ["学习资源", "/partners?view=training#pt-resources"],
+        ],
+      },
+      {
+        label: "合作对接",
+        items: [
+          ["成为合作伙伴", "/partners?view=become#pbc-hero"],
+          ["联系生态负责人", "/partners?view=overview#partner-contact"],
+        ],
+      },
+    ],
+  },
   { label: "价格与服务", href: "/pricing", children: [] },
 ] as const;
 
@@ -256,6 +294,7 @@ const expectedFooter = [
     items: [
       ["解决方案", "/solutions"],
       ["下载中心", "/downloads"],
+      ["合作伙伴", "/partners"],
       ["价格与服务", "/pricing"],
     ],
   },

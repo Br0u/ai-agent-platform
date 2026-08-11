@@ -72,6 +72,7 @@ export const routeRegistry: PortalRoute[] = [
   publicRoute("/releases/[version]", "版本更新说明"),
   publicRoute("/roadmap", "产品路线图"),
   publicRoute("/downloads", "下载中心", "live"),
+  publicRoute("/partners", "合作伙伴", "live"),
   publicRoute("/openlab", "OpenLab", "placeholder"),
   publicRoute("/docs", "文档中心"),
   publicRoute("/docs/[category]", "文档分类详情", "live"),
