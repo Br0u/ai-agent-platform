@@ -9,9 +9,6 @@ export type { AssistantProviderReply } from "@/features/assistant/assistant-cont
 
 export type AssistantProviderInvocation = {
   request: AssistantRequest;
-  session:
-    | { kind: "persistent"; internalSessionId: string }
-    | { kind: "ephemeral" };
   signal?: AbortSignal;
 };
 

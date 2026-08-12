@@ -27,7 +27,6 @@ describe("PlaceholderAssistantProvider", () => {
       await expect(
         provider.reply({
           request: { message, context: { pathname: "/pricing" } },
-          session: { kind: "persistent", internalSessionId: "ignored-session" },
           signal: AbortSignal.abort(),
         }),
       ).resolves.toEqual({
@@ -44,7 +43,6 @@ describe("PlaceholderAssistantProvider", () => {
           message: "这个功能什么时候上线？",
           context: { pathname: "/product" },
         },
-        session: { kind: "ephemeral" },
       }),
     ).resolves.toEqual({
       content: "AI 服务尚未接入。你可以先查看帮助中心或联系商务顾问。",

@@ -13,18 +13,28 @@ import {
   type AgentOSRunDiagnostic,
 } from "./agentos-run-client";
 
-export type AgentOSCleanupFailureCategory =
-  | "ephemeral_session_cleanup_failed"
-  | "persistent_session_cleanup_failed";
-
+// Kept until the deprecated DELETE session route is removed.
 export type AgentOSCleanupFailureEvent = {
-  category: AgentOSCleanupFailureCategory;
+  category: "persistent_session_cleanup_failed";
   count: number;
 };
 
 export type AgentOSCleanupRecorder = (
   event: AgentOSCleanupFailureEvent,
 ) => void;
+
+export const defaultAgentOSCleanupRecorder: AgentOSCleanupRecorder = (
+  event,
+) => {
+  try {
+    console.warn("Assistant session cleanup failed", {
+      category: event.category,
+      count: event.count,
+    });
+  } catch {
+    // Observability must never replace the Cookie-clearing response.
+  }
+};
 
 export type AgentOSRunFailureEvent = {
   code: AgentOSRunClientErrorCode | "unexpected";
@@ -46,43 +56,23 @@ export const defaultAgentOSRunFailureRecorder: AgentOSRunFailureRecorder = (
   }
 };
 
-export const defaultAgentOSCleanupRecorder: AgentOSCleanupRecorder = (
-  event,
-) => {
-  try {
-    console.warn("Assistant session cleanup failed", {
-      category: event.category,
-      count: event.count,
-    });
-  } catch {
-    // Observability must never replace the user-visible result.
-  }
-};
-
 export class AgentOSAssistantProvider implements AssistantProvider {
-  private cleanupFailureCount = 0;
-
   constructor(
     private readonly options: {
       runClient: AgentOSRunClient;
       circuit: AgentOSExecutionCircuit;
-      randomUUID?: () => string;
-      cleanupRecorder?: AgentOSCleanupRecorder;
       runFailureRecorder?: AgentOSRunFailureRecorder;
     },
   ) {}
 
   private async *runStream(
     invocation: AssistantProviderInvocation,
-    sessionId: string,
-    includeSignal: boolean,
   ): AsyncIterable<string> {
     const message = `当前页面路径（仅作位置上下文，不代表已读取页面内容）：${invocation.request.context.pathname}\n\n用户问题：${invocation.request.message}`;
     const iterator = this.options.runClient
       .runAgentStream({
         message,
-        sessionId,
-        ...(includeSignal ? { signal: invocation.signal } : {}),
+        ...(invocation.signal ? { signal: invocation.signal } : {}),
       })
       [Symbol.asyncIterator]();
     type QueueItem =
@@ -150,42 +140,10 @@ export class AgentOSAssistantProvider implements AssistantProvider {
     }
   }
 
-  private recordCleanupFailure(): void {
-    this.cleanupFailureCount += 1;
-    try {
-      (this.options.cleanupRecorder ?? defaultAgentOSCleanupRecorder)({
-        category: "ephemeral_session_cleanup_failed",
-        count: this.cleanupFailureCount,
-      });
-    } catch {
-      // Cleanup recording cannot replace a reply or the original run error.
-    }
-  }
-
   async *streamReply(
     invocation: AssistantProviderInvocation,
   ): AsyncIterable<string> {
-    if (invocation.session.kind === "persistent") {
-      yield* this.runStream(
-        invocation,
-        invocation.session.internalSessionId,
-        true,
-      );
-      return;
-    }
-
-    const sessionId = (
-      this.options.randomUUID ?? (() => crypto.randomUUID())
-    )();
-    try {
-      yield* this.runStream(invocation, sessionId, false);
-    } finally {
-      try {
-        await this.options.runClient.deleteSession(sessionId);
-      } catch {
-        this.recordCleanupFailure();
-      }
-    }
+    yield* this.runStream(invocation);
   }
 
   async reply(

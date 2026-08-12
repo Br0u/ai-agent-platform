@@ -141,13 +141,9 @@ describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
           message: "如何开始了解平台？",
           context: { pathname: "/" },
         },
-        session: { kind: "persistent" },
         signal: expect.any(AbortSignal),
       });
-      expect(Object.keys(invocation.session).sort()).toEqual([
-        "internalSessionId",
-        "kind",
-      ]);
+      expect(invocation).not.toHaveProperty("session");
     }
 
     const ipKey = assistantRateLimitKey(

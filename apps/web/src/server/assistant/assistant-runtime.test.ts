@@ -207,8 +207,8 @@ describe("assistant server runtime", () => {
     const selected = await runtime.resolveProvider();
     await selected.provider.reply({
       request: { message: "问题", context: { pathname: "/docs" } },
-      session: { kind: "persistent", internalSessionId: "shared-session" },
     });
+    expect(sharedRunClient.deleteSession).not.toHaveBeenCalled();
     await runtime.deleteSession("shared-session");
     expect(runtime.inspect().persistence).toBe("agentos");
 
@@ -354,10 +354,6 @@ describe("assistant server runtime", () => {
     });
     const invocation = {
       request: { message: "问题", context: { pathname: "/" } },
-      session: {
-        kind: "persistent" as const,
-        internalSessionId: "internal-session",
-      },
     };
 
     const initialSelection = await runtime.resolveProvider();
@@ -417,10 +413,6 @@ describe("assistant server runtime", () => {
     const selected = await runtime.resolveProvider();
     const invocation = {
       request: { message: "问题", context: { pathname: "/" } },
-      session: {
-        kind: "persistent" as const,
-        internalSessionId: "internal-session",
-      },
     };
 
     for (let attempt = 0; attempt < 3; attempt += 1) {

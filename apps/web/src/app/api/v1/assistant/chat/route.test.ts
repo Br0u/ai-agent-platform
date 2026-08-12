@@ -187,10 +187,6 @@ describe("POST /api/v1/assistant/chat", () => {
         message: "如何开始了解平台？",
         context: { pathname: "/pricing" },
       },
-      session: {
-        kind: "persistent",
-        internalSessionId: "internal-replayable-value",
-      },
       signal: expect.any(AbortSignal),
     });
     expect(deps.resolveSession).toHaveBeenCalledExactlyOnceWith(
@@ -586,10 +582,6 @@ describe("POST /api/v1/assistant/chat", () => {
         message: "😀".repeat(500),
         context: { pathname: "/help" },
       },
-      session: {
-        kind: "persistent",
-        internalSessionId: "internal-replayable-value",
-      },
       signal: expect.any(AbortSignal),
     });
   });
@@ -608,10 +600,6 @@ describe("POST /api/v1/assistant/chat", () => {
       request: {
         message: "😀".repeat(500),
         context: { pathname: "/help" },
-      },
-      session: {
-        kind: "persistent",
-        internalSessionId: "internal-replayable-value",
       },
       signal: expect.any(AbortSignal),
     });

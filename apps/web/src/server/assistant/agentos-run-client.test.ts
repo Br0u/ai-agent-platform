@@ -94,7 +94,6 @@ describe("AgentOS run client", () => {
     const client = createAgentOSRunClient({ settings: settings(), fetcher });
     const stream = client.runAgentStream({
       message: "private prompt",
-      sessionId: "private-session",
     });
     const iterator = stream[Symbol.asyncIterator]();
 
@@ -113,6 +112,7 @@ describe("AgentOS run client", () => {
     const form = fetcher.mock.calls[0]?.[1]?.body as FormData;
     expect(form.get("stream")).toBe("true");
     expect(form.get("stream_events")).toBe("false");
+    expect(form.has("session_id")).toBe(false);
     expect(fetcher.mock.calls[0]?.[1]?.headers).toEqual({
       Accept: "text/event-stream",
       Authorization: `Bearer ${SECURITY_KEY}`,
@@ -152,7 +152,6 @@ describe("AgentOS run client", () => {
     const chunks: string[] = [];
     for await (const chunk of client.runAgentStream({
       message: "private prompt",
-      sessionId: "private-session",
     })) {
       chunks.push(chunk);
     }
@@ -222,7 +221,6 @@ describe("AgentOS run client", () => {
     const consume = async () => {
       for await (const chunk of client.runAgentStream({
         message: "private prompt",
-        sessionId: "private-session",
       })) {
         void chunk;
         // Consume the complete stream so terminal validation runs.
@@ -305,51 +303,29 @@ describe("AgentOS run client", () => {
     expect(JSON.stringify(error)).not.toContain("private abort reason");
   });
 
-  it("posts the exact multipart run contract without putting the session in URL or headers", async () => {
-    const internalSessionId = "opaque/internal?session#id";
+  it("posts the exact sessionless multipart run contract", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValue(jsonResponse({ content: "agent answer" }));
     const client = createAgentOSRunClient({ settings: settings(), fetcher });
 
     await expect(
-      client.runAgent({
-        message: "private prompt",
-        sessionId: internalSessionId,
-      }),
+      client.runAgent({ message: "private prompt" }),
     ).resolves.toEqual({ content: "agent answer" });
 
     expect(fetcher).toHaveBeenCalledOnce();
     const [url, init] = fetcher.mock.calls[0]!;
     expect(url).toBe(`${INTERNAL_URL}/agents/maduoduo/runs`);
-    expect(String(url)).not.toContain(internalSessionId);
     expect(init).toMatchObject({ method: "POST", redirect: "manual" });
     expect(init?.headers).toEqual({
       Accept: "application/json",
       Authorization: `Bearer ${SECURITY_KEY}`,
     });
-    expect(JSON.stringify(init?.headers)).not.toContain(internalSessionId);
     expect(init?.body).toBeInstanceOf(FormData);
     const form = init?.body as FormData;
-    expect([...form.keys()].sort()).toEqual([
-      "message",
-      "session_id",
-      "stream",
-    ]);
+    expect([...form.keys()].sort()).toEqual(["message", "stream"]);
     expect(form.get("message")).toBe("private prompt");
-    expect(form.get("stream")).toBe("false");
-    expect(form.get("session_id")).toBe(internalSessionId);
-  });
-
-  it("omits session_id when no internal session is supplied", async () => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(jsonResponse({ content: "ok" }));
-    const client = createAgentOSRunClient({ settings: settings(), fetcher });
-
-    await client.runAgent({ message: "hello" });
-
-    const form = fetcher.mock.calls[0]?.[1]?.body as FormData;
+    expect(form.get("stream")).toBe("true");
     expect(form.has("session_id")).toBe(false);
   });
 
@@ -419,7 +395,7 @@ describe("AgentOS run client", () => {
       });
 
       const error = await client
-        .runAgent({ message: "private prompt", sessionId: "private-session" })
+        .runAgent({ message: "private prompt" })
         .catch((value: unknown) => value);
 
       expect(error).toBeInstanceOf(AgentOSRunClientError);
@@ -546,9 +522,8 @@ describe("AgentOS run client", () => {
       fetcher,
     });
     const message = "private prompt";
-    const sessionId = "private-session-id";
     const result = client
-      .runAgent({ message, sessionId })
+      .runAgent({ message })
       .catch((value: unknown) => value);
     let settled = false;
     void result.then(() => {
@@ -571,7 +546,6 @@ describe("AgentOS run client", () => {
       "text/html",
       "private raw answer",
       message,
-      sessionId,
     ]) {
       expect(serialized).not.toContain(sensitive);
     }

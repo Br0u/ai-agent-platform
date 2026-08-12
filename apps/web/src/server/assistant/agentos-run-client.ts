@@ -29,7 +29,6 @@ export type AgentOSRunSettings = AgentOSTransportSettings & {
 
 export type AgentOSRunInput = {
   message: string;
-  sessionId?: string;
   signal?: AbortSignal;
 };
 
@@ -254,9 +253,6 @@ export function createAgentOSRunClient(options: {
       form.set("message", input.message);
       form.set("stream", "true");
       form.set("stream_events", "false");
-      if (input.sessionId !== undefined) {
-        form.set("session_id", input.sessionId);
-      }
 
       return parseAgentOSRunStream(
         transport.stream({
@@ -275,10 +271,7 @@ export function createAgentOSRunClient(options: {
     async runAgent(input) {
       const form = new FormData();
       form.set("message", input.message);
-      form.set("stream", "false");
-      if (input.sessionId !== undefined) {
-        form.set("session_id", input.sessionId);
-      }
+      form.set("stream", "true");
 
       try {
         const response = await transport.request({

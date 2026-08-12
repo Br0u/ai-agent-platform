@@ -4,10 +4,7 @@ import {
   createAgentOSClient,
   resolveAgentOSClientSettings,
 } from "./agentos-client";
-import {
-  AgentOSAssistantProvider,
-  type AgentOSCleanupRecorder,
-} from "./agentos-assistant-provider";
+import { AgentOSAssistantProvider } from "./agentos-assistant-provider";
 import {
   createAgentOSExecutionCircuit,
   type AgentOSExecutionCircuit,
@@ -200,7 +197,6 @@ type RuntimeOptions = {
   createHealthClient?: typeof createAgentOSClient;
   createRunClient?: typeof createAgentOSRunClient;
   createExecutionCircuit?: typeof createAgentOSExecutionCircuit;
-  cleanupRecorder?: AgentOSCleanupRecorder;
 };
 
 type AgentOSComposition = {
@@ -301,7 +297,6 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
     const provider = new AgentOSAssistantProvider({
       runClient,
       circuit: execution,
-      cleanupRecorder: options.cleanupRecorder,
     });
     agentos = {
       runClient,

@@ -153,10 +153,6 @@ export function createAssistantChatHandler(
             };
         const invocation = {
           request: assistantRequest,
-          session: {
-            kind: "persistent" as const,
-            internalSessionId: resolvedSession.internalSessionId,
-          },
           signal: request.signal,
         };
         if (

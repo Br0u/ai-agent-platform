@@ -92,7 +92,7 @@ describe("POST /api/v1/admin/assistant/chat", () => {
         message: "检查占位合同",
         context: { pathname: "/admin/assistant" },
       },
-      session: { kind: "ephemeral" },
+      signal: expect.any(AbortSignal),
     });
   });
 

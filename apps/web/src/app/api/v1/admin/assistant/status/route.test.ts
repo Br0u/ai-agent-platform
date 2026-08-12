@@ -782,10 +782,6 @@ describe("GET /api/v1/admin/assistant/status", () => {
     const selected = await realRuntime.resolveProvider();
     const invocation = {
       request: { message: "问题", context: { pathname: "/" } },
-      session: {
-        kind: "persistent" as const,
-        internalSessionId: "private-session",
-      },
     };
     for (let attempt = 0; attempt < 3; attempt += 1) {
       await selected.provider.reply(invocation).catch(() => undefined);
