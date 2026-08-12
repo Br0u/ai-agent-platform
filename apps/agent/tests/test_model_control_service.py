@@ -548,7 +548,7 @@ async def test_save_with_new_key_seals_one_new_revision_and_returns_metadata_onl
 
 
 @pytest.mark.asyncio
-async def test_save_persists_a_validated_custom_base_url() -> None:
+async def test_save_rejects_insecure_http_base_url_override() -> None:
     repository = SavingRepository()
     catalog = ModelEndpointCatalog(
         (
@@ -571,14 +571,13 @@ async def test_save_persists_a_validated_custom_base_url() -> None:
         expected_revision=0,
     )
 
-    result = await service(repository, catalog=catalog).save_model_config(
-        draft,
-        assertion(provider="deepseek"),
-    )
+    with pytest.raises(ModelControlEndpointError, match="^endpoint_not_allowed$"):
+        await service(repository, catalog=catalog).save_model_config(
+            draft,
+            assertion(provider="deepseek"),
+        )
 
-    [(command, _event)] = repository.saved
-    assert command.base_url == "http://125.122.36.24:9900/v1"
-    assert result.base_url == "http://125.122.36.24:9900/v1"
+    assert repository.calls == []
 
 
 @pytest.mark.asyncio

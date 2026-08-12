@@ -2490,6 +2490,7 @@ test.describe("@control deterministic model control", () => {
     );
     const adminPage = await admin.newPage();
     await adminPage.goto("/admin/assistant");
+    await adminPage.getByRole("tab", { name: "模型配置" }).click();
     await expect(
       adminPage.getByRole("heading", { name: "云模型配置" }),
     ).toBeVisible();

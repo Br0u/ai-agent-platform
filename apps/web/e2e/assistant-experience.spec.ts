@@ -604,7 +604,7 @@ test("authenticated assistant operations and protected auth forms are usable", a
   await expectExactViewportWidth(page);
 
   const adminAssistantLink = page.getByRole("link", {
-    name: "AI 助理",
+    name: "Agent 管理",
     exact: true,
   });
   if (testInfo.project.name === "mobile") {

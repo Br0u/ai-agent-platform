@@ -168,6 +168,8 @@ class ModelEndpointCatalog:
                 )
             except (EndpointCatalogError, ValueError):
                 raise EndpointNotAllowedError("endpoint not allowed") from None
+            if normalized.startswith("http://") and normalized != endpoint.base_url:
+                raise EndpointNotAllowedError("endpoint not allowed")
             return replace(endpoint, base_url=normalized)
         return endpoint
 

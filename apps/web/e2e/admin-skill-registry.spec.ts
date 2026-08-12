@@ -180,6 +180,7 @@ test.describe("Skill library lifecycle", () => {
       modelAdminSessionToken,
     );
     await page.goto("/admin/assistant");
+    await page.getByRole("tab", { name: "Skills" }).click();
 
     const initial = await upload(page, initialArchive);
     expect(initial.slug).toBe(slug);

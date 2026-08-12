@@ -971,7 +971,7 @@ async def test_reconciliation_prefers_exact_dynamic_active_revision() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconciliation_uses_saved_deployment_base_url() -> None:
+async def test_reconciliation_rejects_saved_insecure_http_override() -> None:
     settings = dynamic_settings(bootstrap=True)
     cipher = ModelConfigCipher(
         master_key=settings.model_config_encryption_key  # type: ignore[arg-type]
@@ -1001,7 +1001,9 @@ async def test_reconciliation_uses_saved_deployment_base_url() -> None:
         model_builder=build_model,
     )
 
-    assert built[0].base_url == "http://125.122.36.24:9900/v1"
+    assert built == []
+    assert slot.runtime_status().capability == "degraded"
+    assert slot.runtime_status().source is None
     await slot.shutdown()
 
 

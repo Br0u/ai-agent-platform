@@ -388,7 +388,7 @@ function isSafeDocumentLinkWithFragment(
 
   const [path, fragment, ...rest] = value.split("#");
   if (rest.length > 0 || !isNormalizedPath(path)) return false;
-  return fragment === undefined || isSafeFragment(fragment);
+  return fragment === undefined || isSafeGeneratedSlug(fragment);
 }
 
 export function isSafeDocumentImage(value: unknown): value is string {
