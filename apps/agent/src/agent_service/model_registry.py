@@ -472,8 +472,6 @@ def _build_google_model(
             location=None,
             client=sdk_client,
             include_thoughts=False,
-            thinking_budget=None,
-            thinking_level=None,
         )
         redirect_hooks = _attach_redirect_hooks(
             clients,

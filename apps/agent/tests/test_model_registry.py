@@ -651,7 +651,19 @@ def test_google_client_allows_exactly_one_attempt() -> None:
 @pytest.mark.parametrize("provider", ALL_PROVIDERS)
 def test_managed_models_disable_provider_reasoning_where_supported(
     provider: ModelProvider,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    captured_google_options: dict[str, object] = {}
+    if provider == "google":
+        google_models = import_module("agno.models.google")
+        gemini_type = google_models.Gemini
+
+        def capture_gemini_options(**options: object) -> Model:
+            captured_google_options.update(options)
+            return gemini_type(**options)
+
+        monkeypatch.setattr(google_models, "Gemini", capture_gemini_options)
+
     sync_client = httpx.Client(
         transport=httpx.MockTransport(lambda _request: httpx.Response(204)),
         follow_redirects=False,
@@ -674,9 +686,9 @@ def test_managed_models_disable_provider_reasoning_where_supported(
     elif provider == "anthropic":
         assert getattr(model, "thinking") is None
     elif provider == "google":
-        assert getattr(model, "include_thoughts") is False
-        assert getattr(model, "thinking_budget") is None
-        assert getattr(model, "thinking_level") is None
+        assert captured_google_options["include_thoughts"] is False
+        assert "thinking_budget" not in captured_google_options
+        assert "thinking_level" not in captured_google_options
     elif provider == "dashscope":
         assert getattr(model, "enable_thinking") is False
         assert getattr(model, "include_thoughts") is False
