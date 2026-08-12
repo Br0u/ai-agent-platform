@@ -12,6 +12,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useEffect } from "react";
 import type { AssistantStatusResponse } from "@/features/assistant/assistant-contract";
 import {
+  ASSISTANT_STREAM_MEDIA_TYPE,
+  formatAssistantStreamEvent,
+} from "@/features/assistant/assistant-stream";
+import {
   AssistantExperienceProvider,
   useAssistantExperience,
 } from "../assistant/assistant-experience-provider";
@@ -23,21 +27,18 @@ vi.mock("next/navigation", () => ({
   useRouter: () => router,
 }));
 
-const successfulReply = {
-  version: "1",
-  requestId: "request-1",
-  mode: "placeholder",
-  session: {
-    temporary: true,
-    expiresAt: "2026-07-13T12:00:00.000Z",
-  },
-  message: {
-    id: "message-1",
-    role: "assistant",
-    content: "你可以前往客户支持页面提交产品问题和相关信息。",
-  },
-  suggestedActions: [{ label: "客户支持", href: "/support" }],
-};
+function successfulReply(
+  content = "你可以前往客户支持页面提交产品问题和相关信息。",
+) {
+  return [
+    formatAssistantStreamEvent({ type: "answer_delta", content }),
+    formatAssistantStreamEvent({
+      type: "action",
+      action: { kind: "navigate", label: "客户支持", pathname: "/support" },
+    }),
+    formatAssistantStreamEvent({ type: "done" }),
+  ].join("");
+}
 
 const serviceStates = {
   available: {
@@ -119,9 +120,9 @@ beforeEach(() => {
     "fetch",
     vi.fn().mockImplementation(
       async () =>
-        new Response(JSON.stringify(successfulReply), {
+        new Response(successfulReply(), {
           status: 200,
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": ASSISTANT_STREAM_MEDIA_TYPE },
         }),
     ),
   );
@@ -336,16 +337,10 @@ describe("FloatingChatWidget", () => {
       vi.fn().mockImplementation(
         async () =>
           new Response(
-            JSON.stringify({
-              ...successfulReply,
-              message: {
-                ...successfulReply.message,
-                content: "## NPU\n\n**NPU** 是 AI 推理加速器。",
-              },
-            }),
+            successfulReply("## NPU\n\n**NPU** 是 AI 推理加速器。"),
             {
               status: 200,
-              headers: { "content-type": "application/json" },
+              headers: { "content-type": ASSISTANT_STREAM_MEDIA_TYPE },
             },
           ),
       ),
@@ -402,7 +397,10 @@ describe("FloatingChatWidget", () => {
         return chatAttempts === 1
           ? Promise.reject(new Error("offline"))
           : Promise.resolve(
-              new Response(JSON.stringify(successfulReply), { status: 200 }),
+              new Response(successfulReply(), {
+                status: 200,
+                headers: { "content-type": ASSISTANT_STREAM_MEDIA_TYPE },
+              }),
             );
       }
       return Promise.resolve(

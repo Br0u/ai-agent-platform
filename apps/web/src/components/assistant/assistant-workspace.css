@@ -50,7 +50,9 @@
 .assistant-workspace__header {
   position: relative;
   display: flex;
+  width: 100%;
   min-height: 64px;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
@@ -193,6 +195,7 @@
   display: flex;
   width: min(100%, 980px);
   min-height: 0;
+  min-width: 0;
   flex-direction: column;
   margin: 0 auto;
   padding: clamp(var(--space-6), 5vw, var(--space-12))

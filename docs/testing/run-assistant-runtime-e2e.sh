@@ -279,9 +279,11 @@ done
 
 export PUBLIC_HOST=127.0.0.1
 export ALLOW_LOCAL_VALIDATION_HOSTS=true
-export ASSISTANT_PUBLIC_ORIGIN="$assistant_e2e_origin"
-[ "$ASSISTANT_PUBLIC_ORIGIN" = "$assistant_e2e_origin" ] || {
-  echo "ASSISTANT_PUBLIC_ORIGIN must be the exact loopback E2E proxy" >&2
+# The page resolver runs inside the Web container. Its loopback is the
+# container-local Next server; the host-only proxy origin is unreachable there.
+export ASSISTANT_PUBLIC_ORIGIN="http://127.0.0.1:3000"
+[ "$ASSISTANT_PUBLIC_ORIGIN" = "http://127.0.0.1:3000" ] || {
+  echo "ASSISTANT_PUBLIC_ORIGIN must be the exact Web-container loopback" >&2
   exit 1
 }
 export ASSISTANT_PROVIDER_MODE=placeholder
@@ -496,6 +498,44 @@ scan_pattern_file() {
   esac
 }
 
+scan_evidence_file() {
+  match_mode=$1
+  pattern=$2
+  evidence_file=$3
+  leak_message=$4
+  case "$match_mode" in
+    fixed)
+      if grep -F -- "$pattern" "$evidence_file" >/dev/null 2>&1; then
+        scan_status=0
+      else
+        scan_status=$?
+      fi
+      ;;
+    extended)
+      if grep -E -- "$pattern" "$evidence_file" >/dev/null 2>&1; then
+        scan_status=0
+      else
+        scan_status=$?
+      fi
+      ;;
+    *)
+      echo "runtime evidence scanner mode is invalid" >&2
+      return 1
+      ;;
+  esac
+  case "$scan_status" in
+    0)
+      echo "$leak_message" >&2
+      return 1
+      ;;
+    1) ;;
+    *)
+      echo "runtime evidence scanner failed" >&2
+      return 1
+      ;;
+  esac
+}
+
 scan_logs() {
   phase=$1
   logs_file="$temp_dir/$phase-runtime.log"
@@ -545,6 +585,72 @@ reset_assistant_rate_limits() {
     --set=ON_ERROR_STOP=1 \
     --command="DELETE FROM public.rate_limits WHERE key LIKE 'assistant:%'" \
     >/dev/null
+}
+
+database_scalar() {
+  sql=$1
+  compose exec -T db psql \
+    --username="$POSTGRES_USER" \
+    --dbname="$POSTGRES_DB" \
+    --set=ON_ERROR_STOP=1 \
+    --tuples-only \
+    --no-align \
+    --command="$sql" | tr -d '[:space:]'
+}
+
+assert_stateless_runtime_evidence() {
+  agno_sessions_after=$(database_scalar "SELECT count(*) FROM agno.agno_sessions")
+  [ "$agno_sessions_after" = "$agno_sessions_before" ] || {
+    echo "assistant runtime persisted an AgentOS session" >&2
+    return 1
+  }
+
+  input_policy_count=$(database_scalar "SELECT count(*) FROM public.assistant_input_policy")
+  [ "$input_policy_count" = 1 ] || {
+    echo "assistant input policy must contain exactly one singleton row" >&2
+    return 1
+  }
+
+  assistant_rate_limit_count=$(database_scalar "SELECT count(*) FROM public.rate_limits WHERE key LIKE 'assistant:%'")
+  [ "$assistant_rate_limit_count" -gt 0 ] || {
+    echo "assistant acceptance did not persist required rate-limit evidence" >&2
+    return 1
+  }
+
+  database_dump="$temp_dir/stateless-runtime-data.sql"
+  compose exec -T db pg_dump \
+    --username="$POSTGRES_USER" \
+    --dbname="$POSTGRES_DB" \
+    --data-only \
+    --inserts \
+    --no-owner \
+    --no-privileges \
+    --exclude-table-data=public.assistant_input_policy >"$database_dump"
+  chmod 600 "$database_dump"
+
+  stateless_logs="$temp_dir/stateless-runtime.log"
+  compose logs --no-color >"$stateless_logs" 2>&1
+  chmod 600 "$stateless_logs"
+
+  for marker in \
+    "aap-stateless-question-20260812" \
+    "aap-stateless-answer-20260812" \
+    "aap-private-reasoning-20260812" \
+    "aap-immediate-block-20260812" \
+    "独立产品中心：成熟企业级 AI 产品，开箱即用"; do
+    for evidence_file in "$database_dump" "$stateless_logs"; do
+      scan_evidence_file fixed "$marker" "$evidence_file" \
+        "assistant marker persisted or leaked into runtime evidence"
+    done
+  done
+
+  for evidence_file in "$database_dump" "$stateless_logs"; do
+    scan_evidence_file extended '(^|[^[:alnum:]_])(run_id|session_id)([^[:alnum:]_]|$)' \
+      "$evidence_file" \
+      "assistant runtime evidence contains forbidden identity field names"
+  done
+
+  echo "Assistant runtime persistence passed: no session growth, no content persistence or log leakage, policy singleton and rate-limit rows present."
 }
 
 control_preflight=$(cat <<'PY'
@@ -716,6 +822,8 @@ BASE_URL="$assistant_e2e_origin" \
 scan_logs "placeholder"
 reset_assistant_rate_limits
 
+agno_sessions_before=$(database_scalar "SELECT count(*) FROM agno.agno_sessions")
+
 export AGENT_ENABLED=true
 export MODEL_API_KEY_FILE="$bootstrap_model_api_key_file"
 export MODEL_PROVIDER=openai
@@ -752,6 +860,7 @@ BASE_URL="$assistant_e2e_origin" \
   --grep @control
 
 scan_logs "dynamic-control"
+assert_stateless_runtime_evidence
 
 cleanup
 trap - EXIT

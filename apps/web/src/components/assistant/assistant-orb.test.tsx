@@ -50,6 +50,7 @@ afterEach(() => {
   thinkingOrbMock.render.mockClear();
   thinkingOrbMock.shouldThrow = false;
   reducedMotionMock.value = false;
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -119,6 +120,10 @@ describe("AssistantOrb", () => {
         "data-assistant-orb-size",
         String(size),
       );
+      expect(container.firstElementChild).toHaveAttribute(
+        "data-orb-state",
+        "solving",
+      );
       expect(thinkingOrbMock.render.mock.lastCall?.[0]).toEqual(
         expect.objectContaining({ size }),
       );
@@ -165,5 +170,59 @@ describe("AssistantOrb", () => {
       ).toHaveAttribute("data-assistant-orb-fallback", "true"),
     );
     expect(screen.queryByTestId("thinking-orb")).not.toBeInTheDocument();
+  });
+});
+
+describe("thinking-orbs visibility lifecycle", () => {
+  it("uses the dependency's native visibility listener to pause and resume animation", async () => {
+    let visibilityState: DocumentVisibilityState = "visible";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(
+      () => visibilityState,
+    );
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        addEventListener: vi.fn(),
+        matches: false,
+        removeEventListener: vi.fn(),
+      })),
+    );
+    const requestAnimationFrame = vi.fn(() => 17);
+    const cancelAnimationFrame = vi.fn();
+    vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
+    vi.stubGlobal("cancelAnimationFrame", cancelAnimationFrame);
+    const canvasContext = new Proxy(
+      {},
+      {
+        get(target, property) {
+          if (!(property in target)) {
+            Object.assign(target, { [property]: vi.fn() });
+          }
+          return Reflect.get(target, property);
+        },
+        set(target, property, value) {
+          return Reflect.set(target, property, value);
+        },
+      },
+    ) as CanvasRenderingContext2D;
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+      canvasContext,
+    );
+    const { ThinkingOrb: NativeThinkingOrb } =
+      await vi.importActual<typeof import("thinking-orbs")>("thinking-orbs");
+
+    render(<NativeThinkingOrb size={20} state="breathing" />);
+    await waitFor(() => expect(requestAnimationFrame).toHaveBeenCalled());
+    const animationStarts = requestAnimationFrame.mock.calls.length;
+
+    visibilityState = "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(17);
+
+    visibilityState = "visible";
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(requestAnimationFrame.mock.calls.length).toBeGreaterThan(
+      animationStarts,
+    );
   });
 });

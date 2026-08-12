@@ -9,6 +9,10 @@ import {
 } from "@playwright/test";
 
 import { addSignedSession, fixtureCredentials } from "./auth-fixtures";
+import {
+  ASSISTANT_STREAM_MEDIA_TYPE,
+  formatAssistantStreamEvent,
+} from "../src/features/assistant/assistant-stream";
 
 const VIEWPORTS = {
   desktop: { width: 1440, height: 1000 },
@@ -76,6 +80,9 @@ async function configure(
 }
 
 async function expectExactViewportWidth(page: Page) {
+  expect(await page.evaluate(() => window.innerWidth)).toBe(
+    page.viewportSize()?.width,
+  );
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth === window.innerWidth,
@@ -135,6 +142,53 @@ async function attachScreenshot(page: Page, testInfo: TestInfo, name: string) {
     body: await page.screenshot({ animations: "disabled", fullPage: true }),
     contentType: "image/png",
   });
+}
+
+async function installOrbDrawCounter(page: Page) {
+  await page.addInitScript(() => {
+    const nativeClearRect = CanvasRenderingContext2D.prototype.clearRect;
+    CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+      const canvas = this.canvas;
+      if (canvas.classList.contains("assistant-orb__canvas")) {
+        const count = Number.parseInt(canvas.dataset.orbDrawCount ?? "0", 10);
+        canvas.dataset.orbDrawCount = String(count + 1);
+      }
+      return nativeClearRect.apply(this, args);
+    };
+  });
+}
+
+async function orbDrawCount(orb: Locator) {
+  return orb
+    .locator("canvas")
+    .evaluate((canvas) =>
+      Number.parseInt(
+        (canvas as HTMLCanvasElement).dataset.orbDrawCount ?? "0",
+        10,
+      ),
+    );
+}
+
+async function expectOrbDrawing(orb: Locator) {
+  const initial = await orbDrawCount(orb);
+  await expect.poll(() => orbDrawCount(orb)).toBeGreaterThan(initial);
+}
+
+async function expectOrbPaused(orb: Locator) {
+  await expect
+    .poll(
+      async () => {
+        const before = await orbDrawCount(orb);
+        await new Promise((resolve) => setTimeout(resolve, 160));
+        return (await orbDrawCount(orb)) - before;
+      },
+      { timeout: 3_000 },
+    )
+    .toBe(0);
+}
+
+async function expectStaticOrbFrame(orb: Locator) {
+  await expectOrbPaused(orb);
 }
 
 function isExpectedUnusedPreloadWarning(
@@ -272,18 +326,30 @@ async function expectSingleDialog(page: Page, name: "码多多工作区" | "码�
   await expect(page.getByRole("dialog", { name })).toBeVisible();
 }
 
-function assistantPlaceholderResponse(content: string) {
-  return {
-    version: "1",
-    requestId: "assistant-dock-e2e",
-    mode: "placeholder",
-    message: {
-      id: "assistant-dock-message",
-      role: "assistant",
-      content,
-    },
-    suggestedActions: [],
-  };
+function assistantStreamResponse(
+  content: string,
+  options: {
+    activity?: { phase: "reading" | "analyzing" | "tool"; label: string };
+    action?: { label: string; pathname: string };
+  } = {},
+) {
+  return [
+    ...(options.activity === undefined
+      ? []
+      : [
+          formatAssistantStreamEvent({ type: "activity", ...options.activity }),
+        ]),
+    formatAssistantStreamEvent({ type: "answer_delta", content }),
+    ...(options.action === undefined
+      ? []
+      : [
+          formatAssistantStreamEvent({
+            type: "action",
+            action: { kind: "navigate", ...options.action },
+          }),
+        ]),
+    formatAssistantStreamEvent({ type: "done" }),
+  ].join("");
 }
 
 test("portal header, quick assistant, and standalone workspace are keyboard-safe", async ({
@@ -292,6 +358,21 @@ test("portal header, quick assistant, and standalone workspace are keyboard-safe
   test.setTimeout(45_000);
   await configure(page, testInfo);
   const evidence = collectEvidence(page);
+  await page.route(`**${ASSISTANT_CHAT_ENDPOINT}`, async (route) => {
+    expect(route.request().postDataJSON()).toEqual({
+      version: "2",
+      message: "如何开始了解平台？",
+      history: [],
+      page: { pathname: "/", search: "" },
+    });
+    await route.fulfill({
+      status: 200,
+      contentType: ASSISTANT_STREAM_MEDIA_TYPE,
+      body: assistantStreamResponse(
+        "你可以从快速开始文档了解平台结构和使用入口。",
+      ),
+    });
+  });
   await page.goto("/");
   await expectExactViewportWidth(page);
 
@@ -301,6 +382,7 @@ test("portal header, quick assistant, and standalone workspace are keyboard-safe
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/assistant$/u);
   await expect(page.getByRole("main", { name: "码多多工作区" })).toBeVisible();
+  await expectExactViewportWidth(page);
   const composer = page.getByRole("textbox", { name: "输入问题" });
   await focusWorkspaceComposer(page, composer);
   await page.getByRole("link", { name: "缩小码多多并返回主页面" }).click();
@@ -319,6 +401,15 @@ test("portal header, quick assistant, and standalone workspace are keyboard-safe
   });
   await expect(dialog).toBeVisible();
   await expect(quickClose).toBeFocused();
+  const presets = dialog.getByRole("group", { name: "常用问题" });
+  await expect(presets).toBeVisible();
+  const presetBoxes = await presets.getByRole("button").evaluateAll((buttons) =>
+    buttons.map((button) => {
+      const rect = button.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom };
+    }),
+  );
+  expect(new Set(presetBoxes.map((box) => Math.round(box.top))).size).toBe(1);
   await attachScreenshot(page, testInfo, "portal-drawer");
 
   const presetResponse = page.waitForResponse(
@@ -328,6 +419,7 @@ test("portal header, quick assistant, and standalone workspace are keyboard-safe
   );
   await page.getByRole("button", { name: "如何开始了解平台？" }).click();
   await presetResponse;
+  await expect(presets).toHaveCount(0);
   await expect(
     page
       .getByRole("log")
@@ -363,6 +455,7 @@ test("portal header, quick assistant, and standalone workspace are keyboard-safe
   await focusWorkspaceComposer(page, composer);
   await expectExactViewportWidth(page);
   await attachScreenshot(page, testInfo, "assistant-workspace");
+  await page.unroute(`**${ASSISTANT_CHAT_ENDPOINT}`);
   expectCleanEvidence(evidence, new URL(page.url()).origin);
 });
 
@@ -379,6 +472,7 @@ test("desktop quick launcher expands into the keyboard-focusable workspace", asy
   await expectSingleDialog(page, "码多多");
   await page.getByRole("button", { name: "展开码多多工作区" }).click();
   await expect(page).toHaveURL(/\/assistant$/u);
+  await expectExactViewportWidth(page);
   await expect(page.getByRole("main", { name: "码多多工作区" })).toBeVisible();
   const composer = page.getByRole("textbox", { name: "输入问题" });
   await focusWorkspaceComposer(page, composer);
@@ -411,6 +505,225 @@ test("workspace has no conversation rail at any responsive breakpoint", async ({
   expectCleanEvidence(evidence, new URL(page.url()).origin);
 });
 
+test("thinking orb pauses natively when offscreen and resumes", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop",
+    "desktop intersection contract",
+  );
+  await configure(page, testInfo);
+  await installOrbDrawCounter(page);
+  const evidence = collectEvidence(page);
+  await page.goto("/assistant");
+  const orb = page
+    .getByRole("main", { name: "码多多工作区" })
+    .locator(".assistant-workspace__header .assistant-orb");
+  await expect(orb).toHaveAttribute("data-orb-state", "breathing");
+  await expectOrbDrawing(orb);
+
+  await page.evaluate(() => {
+    const spacer = document.createElement("div");
+    spacer.style.height = "3000px";
+    spacer.setAttribute("data-testid", "orb-offscreen-spacer");
+    document.body.append(spacer);
+    window.scrollTo({ top: document.documentElement.scrollHeight });
+  });
+  await expect
+    .poll(() => orb.evaluate((node) => node.getBoundingClientRect().bottom))
+    .toBeLessThan(0);
+  await expectOrbPaused(orb);
+  await page.evaluate(() => window.scrollTo({ top: 0 }));
+  await expect
+    .poll(() => orb.evaluate((node) => node.getBoundingClientRect().top))
+    .toBeGreaterThanOrEqual(0);
+  await expectOrbDrawing(orb);
+
+  expectCleanEvidence(evidence, new URL(page.url()).origin);
+});
+
+if (process.env.RUN_HEADED_ORB_VISIBILITY_E2E === "true") {
+  test("thinking orb pauses natively when the page is hidden and resumes", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "desktop",
+      "desktop page visibility contract",
+    );
+    await configure(page, testInfo);
+    await installOrbDrawCounter(page);
+    const evidence = collectEvidence(page);
+    await page.goto("/assistant");
+    const orb = page
+      .getByRole("main", { name: "码多多工作区" })
+      .locator(".assistant-workspace__header .assistant-orb");
+    await expectOrbDrawing(orb);
+
+    const popup = page.waitForEvent("popup");
+    await page.evaluate(() => window.open("about:blank", "_blank"));
+    const foreground = await popup;
+    await foreground.bringToFront();
+    await expect
+      .poll(() => page.evaluate(() => document.visibilityState))
+      .toBe("hidden");
+    await expectOrbPaused(orb);
+    await foreground.close();
+    await page.bringToFront();
+    await expect
+      .poll(() => page.evaluate(() => document.visibilityState))
+      .toBe("visible");
+    await expectOrbDrawing(orb);
+    expectCleanEvidence(evidence, new URL(page.url()).origin);
+  });
+}
+
+test("streaming activity becomes a collapsed audit trail with safe actions", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(45_000);
+  await configure(page, testInfo, "reduce");
+  await installOrbDrawCounter(page);
+  const evidence = collectEvidence(page);
+  await page.addInitScript(
+    ({ chatPath }) => {
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const rawUrl =
+          typeof input === "string"
+            ? input
+            : input instanceof Request
+              ? input.url
+              : input.toString();
+        if (new URL(rawUrl, window.location.href).pathname !== chatPath) {
+          return nativeFetch(input, init);
+        }
+
+        const encoder = new TextEncoder();
+        const frame = (event: unknown) =>
+          encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              frame({
+                type: "activity",
+                phase: "reading",
+                label: "正在读取页面",
+              }),
+            );
+            window.setTimeout(() => {
+              controller.enqueue(
+                frame({
+                  type: "activity",
+                  phase: "analyzing",
+                  label: "正在分析需求",
+                }),
+              );
+            }, 1_200);
+            window.setTimeout(() => {
+              controller.enqueue(
+                frame({
+                  type: "activity",
+                  phase: "tool",
+                  label: "正在执行操作",
+                }),
+              );
+            }, 2_400);
+            window.setTimeout(() => {
+              controller.enqueue(
+                frame({
+                  type: "answer_delta",
+                  content: "安全回答包含 [外部说明](https://example.com)。",
+                }),
+              );
+              controller.enqueue(
+                frame({
+                  type: "action",
+                  action: {
+                    kind: "navigate",
+                    label: "查看价格",
+                    pathname: "/pricing",
+                  },
+                }),
+              );
+              controller.enqueue(frame({ type: "done" }));
+              controller.close();
+            }, 3_600);
+          },
+        });
+        return Promise.resolve(
+          new Response(stream, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        );
+      };
+    },
+    { chatPath: ASSISTANT_CHAT_ENDPOINT },
+  );
+
+  await page.goto("/product");
+  const idleOrb = page
+    .getByRole("button", { name: "打开码多多" })
+    .locator(".assistant-orb");
+  await expect(idleOrb).toHaveAttribute("data-orb-state", "breathing");
+  await expectStaticOrbFrame(idleOrb);
+  await activateAssistantWithStatus(page, () =>
+    page.getByRole("button", { name: "打开码多多" }).click(),
+  );
+  const dialog = page.getByRole("dialog", { name: "码多多" });
+  const input = dialog.getByRole("textbox", { name: "向码多多提问" });
+  await input.fill("请分析并给出安全跳转");
+  await dialog.getByRole("button", { name: "发送消息" }).click();
+
+  for (const state of [
+    {
+      label: "正在读取页面",
+      orbLabel: "码多多正在读取页面",
+      orbState: "searching",
+    },
+    {
+      label: "正在分析需求",
+      orbLabel: "码多多正在分析",
+      orbState: "solving",
+    },
+    {
+      label: "正在执行操作",
+      orbLabel: "码多多正在执行操作",
+      orbState: "working",
+    },
+  ]) {
+    const currentActivity = dialog
+      .getByRole("status", { name: "" })
+      .filter({ hasText: state.label });
+    await expect(currentActivity).toBeVisible();
+    await expect(currentActivity).toHaveAttribute("aria-live", "polite");
+    await expect(
+      currentActivity.getByRole("img", { name: state.orbLabel }),
+    ).toBeVisible();
+    const orb = currentActivity.locator(".assistant-orb");
+    await expect(orb).toHaveAttribute("data-orb-state", state.orbState);
+    await expectStaticOrbFrame(orb);
+  }
+
+  const auditTrail = dialog.locator("details.assistant-activity--completed");
+  await expect(auditTrail).toBeVisible();
+  await expect(auditTrail).not.toHaveAttribute("open", "");
+  await expect(auditTrail.getByText("已完成 3 个步骤")).toBeVisible();
+  await expect(dialog).toContainText("外部说明");
+  await expect(
+    dialog.getByRole("link", { name: "外部说明", exact: true }),
+  ).toHaveCount(0);
+  const action = dialog.getByRole("button", {
+    name: "查看价格",
+    exact: true,
+  });
+  await expect(action).toBeVisible();
+  await action.click();
+  await expect(page).toHaveURL(/\/pricing$/u);
+  await expectExactViewportWidth(page);
+  expectCleanEvidence(evidence, new URL(page.url()).origin);
+});
+
 test("workspace clears the current-page conversation", async ({
   page,
 }, testInfo) => {
@@ -421,10 +734,16 @@ test("workspace clears the current-page conversation", async ({
   const answer = "这条回复只属于当前页面。";
   await page.route(`**${ASSISTANT_CHAT_ENDPOINT}`, async (route) => {
     requestCount += 1;
+    expect(route.request().postDataJSON()).toEqual({
+      version: "2",
+      message: "这条问题只保留在当前页面",
+      history: [],
+      page: { pathname: "/pricing", search: "" },
+    });
     await route.fulfill({
       status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(assistantPlaceholderResponse(answer)),
+      contentType: ASSISTANT_STREAM_MEDIA_TYPE,
+      body: assistantStreamResponse(answer),
     });
   });
 
@@ -474,10 +793,16 @@ test("mobile quick launcher expands into a scrolling workspace", async ({
   const evidence = collectEvidence(page);
   const answer = `移动端长回复：${"工作区内容 ".repeat(140)}`;
   await page.route(`**${ASSISTANT_CHAT_ENDPOINT}`, async (route) => {
+    expect(route.request().postDataJSON()).toEqual({
+      version: "2",
+      message: "移动端滚动与软键盘验证",
+      history: [],
+      page: null,
+    });
     await route.fulfill({
       status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(assistantPlaceholderResponse(answer)),
+      contentType: ASSISTANT_STREAM_MEDIA_TYPE,
+      body: assistantStreamResponse(answer),
     });
   });
 

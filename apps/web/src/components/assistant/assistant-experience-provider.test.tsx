@@ -10,6 +10,10 @@ import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AssistantStatusResponse } from "@/features/assistant/assistant-contract";
 import {
+  ASSISTANT_STREAM_MEDIA_TYPE,
+  formatAssistantStreamEvent,
+} from "@/features/assistant/assistant-stream";
+import {
   AssistantExperienceProvider,
   useAssistantExperience,
 } from "./assistant-experience-provider";
@@ -96,6 +100,19 @@ const placeholderStatus: AssistantStatusResponse = {
   capability: "placeholder",
   message: "模型尚未配置，当前为安全占位模式。",
 };
+
+function successfulAssistantStream(content: string) {
+  return new Response(
+    [
+      formatAssistantStreamEvent({ type: "answer_delta", content }),
+      formatAssistantStreamEvent({ type: "done" }),
+    ].join(""),
+    {
+      status: 200,
+      headers: { "content-type": ASSISTANT_STREAM_MEDIA_TYPE },
+    },
+  );
+}
 
 function ServiceStateHarness() {
   const experience = useAssistantExperience();
@@ -186,23 +203,7 @@ describe("AssistantExperienceProvider", () => {
     window.history.replaceState(null, "", "/pricing?mode=full");
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        Response.json({
-          version: "1",
-          requestId: "normalized-path",
-          mode: "placeholder",
-          session: {
-            temporary: true,
-            expiresAt: "2026-07-15T12:00:00.000Z",
-          },
-          message: {
-            id: "normalized-message",
-            role: "assistant",
-            content: "规范路径回答",
-          },
-          suggestedActions: [],
-        }),
-      ),
+      vi.fn().mockResolvedValue(successfulAssistantStream("规范路径回答")),
     );
     render(
       <AssistantExperienceProvider pathname="/pricing/?mode=full#composer">
@@ -499,23 +500,11 @@ describe("AssistantExperienceProvider", () => {
   it("closes synchronously on pathname changes, clears memory, and does not restore old focus", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockImplementation(async () =>
-        Response.json({
-          version: "1",
-          requestId: "request-route-change",
-          mode: "placeholder",
-          session: {
-            temporary: true,
-            expiresAt: "2026-07-15T12:00:00.000Z",
-          },
-          message: {
-            id: "message-route-change",
-            role: "assistant",
-            content: "跨页保留回答",
-          },
-          suggestedActions: [],
-        }),
-      ),
+      vi
+        .fn()
+        .mockImplementation(async () =>
+          successfulAssistantStream("跨页保留回答"),
+        ),
     );
     const view = render(
       <AssistantExperienceProvider pathname="/pricing">

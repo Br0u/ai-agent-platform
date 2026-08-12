@@ -41,6 +41,9 @@ ASSISTANT_E2E_HTTP_PORT=18080 RUN_ASSISTANT_RUNTIME_E2E=true ./docs/testing/run-
 - Skill 卡片显示 Registry / Agent 运行时已接入；Knowledge、Tools/网页操作和本地算力卡片保持未接入，点击其禁用控件后请求数组必须严格为空。
 - 公开和 Admin 状态只暴露固定标识 `码多多（maduoduo）` 与安全能力字段，不泄漏内部 URL、提示词、凭据或供应商错误体。
 - 公开聊天响应必须精确不含服务端会话字段、不设置助手 Cookie；旧 public/Admin 会话端点必须返回 404。Admin 状态固定报告仅当前页面内存，未认证 WebSocket 403、执行熔断和恢复仍使用真实 AgentOS 路径。
+- V2 AgentOS 场景使用固定 sentinel 验证分片 `<THINK data-x>` 与私有推理不会进入公开 answer frame；仅 allowlist 内的 `suggest_navigation` 会产生点击后跳转 action，未知路径不渲染 action。
+- BFF 会从真实 `/product/standalone` 读取并界定公开页面正文；Admin、Console 和未登记 slug 不会把页面正文送入 Agent。后台保存唯一敏感词后，紧接着的公开命中请求必须在 Provider 调用前以 `422 input_blocked` 拒绝。
+- runtime runner 在 AgentOS 浏览器阶段前后比较 `agno.agno_sessions` 行数；数据库使用 `pg_dump --data-only --inserts`，避免把 COPY 元数据列名误判为持久化数据。排除预期的 `assistant_input_policy` 单例内容后，数据库值与容器日志都不得出现固定问题、答案、私有 CoT、即时阻断词或页面 marker，也不得出现按标识符边界匹配的裸 `run_id` / `session_id` 字段名。同时要求恰好一个策略单例和非零 assistant 限流行。
 - Skill 验收复用已上传并启用的 `deterministic-runtime`、`DeterministicSkillModel` 与现有 Compose/psql 生命周期，等待流中同时出现 `get_skill_reference`、参考文件 marker 和终态 `skill-tool-finished`；marker 缺失即失败。
 - `web`、`agent`、`db` 不发布主机端口，`proxy` 是唯一入口；默认宿主端口为 `8080`，可通过 `ASSISTANT_E2E_HTTP_PORT` 覆盖。结束后再次断言无本项目容器、卷、网络、本地镜像、临时 Secret/pattern/transcript 和项目锁。
 
@@ -60,6 +63,8 @@ RUN_SKILL_RUNTIME_E2E=true ./docs/testing/run-skill-runtime-e2e.sh
 ```
 
 PostgreSQL integration 和真实 Provider 测试只能在各自文档要求的变量缺失时跳过；跳过不等于数据库或真实 API 已验证。上述两个 Docker E2E 命令本身是发布门禁：未执行、Docker/数据库不可用、中途跳过或非零退出都不是 PASS。真实 Provider 冒烟不属于默认 CI，也不应在没有明确提供凭据时运行。
+
+平台只能验证自身数据库与日志不保留对话内容。第三方模型供应商是否保留请求及保留多久不在平台控制范围内，必须以所选供应商当时的服务条款和数据控制配置为准。
 
 ## 历史证据（不替代当前门禁）
 

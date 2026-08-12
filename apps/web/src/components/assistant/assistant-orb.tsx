@@ -98,6 +98,7 @@ export function AssistantOrb({ size, state }: AssistantOrbProps) {
     <span
       className="assistant-orb"
       data-assistant-orb-size={size}
+      data-orb-state={ORB_STATE_BY_ASSISTANT_STATE[state]}
       style={{ "--assistant-orb-size": `${size}px` } as CSSProperties}
     >
       {!canvasAvailable ? (

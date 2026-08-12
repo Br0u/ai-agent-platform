@@ -16,6 +16,20 @@ esac
 
 experience_grep=${AAP_ASSISTANT_EXPERIENCE_E2E_GREP:-}
 
+assistant_experience_http_port=${ASSISTANT_EXPERIENCE_E2E_HTTP_PORT:-8080}
+case "$assistant_experience_http_port" in
+  ''|*[!0-9]*)
+    echo "ASSISTANT_EXPERIENCE_E2E_HTTP_PORT must be an integer from 1 to 65535" >&2
+    exit 1
+    ;;
+esac
+if ! [ "$assistant_experience_http_port" -ge 1 ] 2>/dev/null ||
+   ! [ "$assistant_experience_http_port" -le 65535 ] 2>/dev/null; then
+  echo "ASSISTANT_EXPERIENCE_E2E_HTTP_PORT must be an integer from 1 to 65535" >&2
+  exit 1
+fi
+assistant_experience_origin="http://127.0.0.1:$assistant_experience_http_port"
+
 project=${AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT:-aap-assistant-e2e}
 case "$project" in
   aap-assistant-e2e|aap-assistant-e2e-*) ;;
@@ -66,7 +80,7 @@ agent_config_control_key
 skill_registry_control_key
 "
 project_lock_dir="/tmp/$project.assistant-e2e.lock"
-port_lock_dir="/tmp/aap-assistant-experience-e2e-port-8080.lock"
+port_lock_dir="/tmp/aap-assistant-experience-e2e-port-$assistant_experience_http_port.lock"
 
 lock_is_owned() {
   lock_dir=$1
@@ -237,7 +251,7 @@ command -v openssl >/dev/null 2>&1 || {
   exit 1
 }
 command -v lsof >/dev/null 2>&1 || {
-  echo "lsof is required to reserve TCP port 8080 safely" >&2
+  echo "lsof is required to reserve the E2E TCP port safely" >&2
   exit 1
 }
 
@@ -251,6 +265,37 @@ case "$runtime_tmp" in
 esac
 umask 077
 run_token=$(openssl rand -hex 16)
+
+ensure_artifact_directory() {
+  artifact_directory=$1
+  if [ -L "$artifact_directory" ]; then
+    echo "Playwright artifact path must not be a symlink" >&2
+    exit 1
+  fi
+  if [ -e "$artifact_directory" ]; then
+    if [ ! -d "$artifact_directory" ]; then
+      echo "Playwright artifact path must be a directory" >&2
+      exit 1
+    fi
+    return 0
+  fi
+  mkdir "$artifact_directory"
+}
+
+ensure_artifact_directory "$repo_root/artifacts"
+ensure_artifact_directory "$repo_root/artifacts/playwright"
+ensure_artifact_directory "$repo_root/artifacts/playwright/assistant-experience"
+playwright_artifact_root="$repo_root/artifacts/playwright/assistant-experience/$project-$run_token"
+if [ -e "$playwright_artifact_root" ] || [ -L "$playwright_artifact_root" ]; then
+  echo "Fresh Playwright artifact path already exists" >&2
+  exit 1
+fi
+mkdir "$playwright_artifact_root"
+playwright_output_dir="$playwright_artifact_root/test-results"
+playwright_report_dir="$playwright_artifact_root/report"
+playwright_json_report="$playwright_artifact_root/results.json"
+playwright_attachment_manifest="$playwright_artifact_root/attachments-manifest.json"
+
 if ! mkdir "$project_lock_dir" 2>/dev/null; then
   echo "E2E project lock exists; inspect and remove stale locks manually" >&2
   exit 1
@@ -260,7 +305,7 @@ printf '%s\n' "$run_token" >"$project_lock_dir/token"
 chmod 600 "$project_lock_dir/token"
 
 if ! mkdir "$port_lock_dir" 2>/dev/null; then
-  echo "E2E TCP port 8080 lock exists; another isolated run owns the port" >&2
+  echo "E2E TCP port $assistant_experience_http_port lock exists; another isolated run owns the port" >&2
   exit 1
 fi
 port_lock_acquired=true
@@ -276,8 +321,8 @@ if [ -n "$existing_containers$existing_volumes$existing_networks$existing_labele
   echo "E2E project resources already exist; refusing ownership" >&2
   exit 1
 fi
-if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "TCP port 8080 is already in use" >&2
+if lsof -nP -iTCP:"$assistant_experience_http_port" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "TCP port $assistant_experience_http_port is already in use" >&2
   exit 1
 fi
 
@@ -350,9 +395,9 @@ BACKUP_DATABASE_URL=postgresql://ai_agent_backup:$backup_password@db:5432/ai_age
 DATABASE_URL=postgresql://ai_agent_migrator:$migrator_password@db:5432/ai_agent_platform_e2e
 TEST_DATABASE_URL=postgresql://ai_agent_migrator:$migrator_password@db:5432/ai_agent_platform_e2e_test
 BETTER_AUTH_SECRET=$better_auth_secret
-BETTER_AUTH_URL=http://127.0.0.1:8080
-BETTER_AUTH_TRUSTED_ORIGINS=http://127.0.0.1:8080
-HTTP_PORT=8080
+BETTER_AUTH_URL=$assistant_experience_origin
+BETTER_AUTH_TRUSTED_ORIGINS=$assistant_experience_origin
+HTTP_PORT=$assistant_experience_http_port
 PUBLIC_HOST=127.0.0.1
 ALLOW_LOCAL_VALIDATION_HOSTS=true
 BACKUP_INTERVAL_SECONDS=86400
@@ -423,10 +468,12 @@ for name in $required_variables; do
   fi
 done
 
-export HTTP_PORT=8080
+export HTTP_PORT="$assistant_experience_http_port"
 export PUBLIC_HOST=127.0.0.1
 export ALLOW_LOCAL_VALIDATION_HOSTS=true
-export ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080
+export BETTER_AUTH_URL="$assistant_experience_origin"
+export BETTER_AUTH_TRUSTED_ORIGINS="$assistant_experience_origin"
+export ASSISTANT_PUBLIC_ORIGIN="$assistant_experience_origin"
 export ASSISTANT_PROVIDER_MODE=placeholder
 export AGENT_ENABLED=false
 export PNPM_REGISTRY=${PNPM_REGISTRY:-https://registry.npmjs.org}
@@ -477,11 +524,11 @@ materialize_secret SKILL_REGISTRY_CONTROL_KEY_FILE skill_registry_control_key "$
   echo "PUBLIC_HOST must be 127.0.0.1 for isolated E2E" >&2
   exit 1
 }
-[ "$BETTER_AUTH_URL" = "http://127.0.0.1:8080" ] || {
+[ "$BETTER_AUTH_URL" = "$assistant_experience_origin" ] || {
   echo "BETTER_AUTH_URL must use the E2E proxy" >&2
   exit 1
 }
-[ "$BETTER_AUTH_TRUSTED_ORIGINS" = "http://127.0.0.1:8080" ] || {
+[ "$BETTER_AUTH_TRUSTED_ORIGINS" = "$assistant_experience_origin" ] || {
   echo "BETTER_AUTH_TRUSTED_ORIGINS must use the E2E proxy" >&2
   exit 1
 }
@@ -506,24 +553,135 @@ restart_web_and_proxy() {
 }
 
 run_auth_access() {
-  BASE_URL=http://127.0.0.1:8080 \
+  BASE_URL="$assistant_experience_origin" \
     pnpm --filter @ai-agent-platform/web exec playwright test \
     e2e/auth-access.spec.ts "$@"
+}
+
+write_playwright_attachment_manifest() {
+  node - \
+    "$playwright_output_dir/.last-run.json" \
+    "$playwright_json_report" \
+    "$playwright_report_dir/data" \
+    "$playwright_attachment_manifest" <<'NODE'
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const [lastRunPath, jsonReportPath, htmlDataDirectory, manifestPath] =
+  process.argv.slice(2);
+const lastRun = JSON.parse(fs.readFileSync(lastRunPath, "utf8"));
+if (lastRun.status !== "passed" || lastRun.failedTests.length !== 0) {
+  throw new Error("Playwright .last-run.json did not record a clean pass");
+}
+
+const expectedNames = [
+  "desktop-admin-assistant",
+  "desktop-assistant-workspace",
+  "desktop-auth-shell",
+  "desktop-portal-drawer",
+  "mobile-admin-assistant",
+  "mobile-assistant-workspace",
+  "mobile-auth-shell",
+  "mobile-portal-drawer",
+];
+const attachments = [];
+const visit = (value) => {
+  if (Array.isArray(value)) {
+    for (const item of value) visit(item);
+    return;
+  }
+  if (value === null || typeof value !== "object") return;
+  if (Array.isArray(value.attachments)) {
+    attachments.push(...value.attachments);
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (key !== "attachments") visit(nested);
+  }
+};
+visit(JSON.parse(fs.readFileSync(jsonReportPath, "utf8")));
+
+const pngAttachments = attachments.filter(
+  (attachment) => attachment.contentType === "image/png",
+);
+const names = pngAttachments.map((attachment) => attachment.name).sort();
+if (JSON.stringify(names) !== JSON.stringify(expectedNames)) {
+  throw new Error(
+    `Expected exactly eight named PNG attachments, received ${JSON.stringify(names)}`,
+  );
+}
+
+const manifest = pngAttachments
+  .map((attachment) => {
+    let body;
+    if (typeof attachment.path === "string") {
+      const sourcePath = path.isAbsolute(attachment.path)
+        ? attachment.path
+        : path.resolve(path.dirname(jsonReportPath), attachment.path);
+      body = fs.readFileSync(sourcePath);
+    } else if (typeof attachment.body === "string") {
+      body = Buffer.from(attachment.body, "base64");
+    } else {
+      throw new Error(`PNG attachment ${attachment.name} has no body or path`);
+    }
+    const sha1 = crypto.createHash("sha1").update(body).digest("hex");
+    const hashFilename = `${sha1}.png`;
+    if (!fs.existsSync(path.join(htmlDataDirectory, hashFilename))) {
+      throw new Error(`HTML report is missing ${hashFilename}`);
+    }
+    return {
+      name: attachment.name,
+      hashFilename,
+      sha256: crypto.createHash("sha256").update(body).digest("hex"),
+    };
+  })
+  .sort((left, right) => left.name.localeCompare(right.name));
+
+fs.writeFileSync(
+  manifestPath,
+  `${JSON.stringify({ status: "passed", attachments: manifest }, null, 2)}\n`,
+  { flag: "wx" },
+);
+NODE
+}
+
+assert_playwright_run_passed() {
+  node - "$playwright_output_dir/.last-run.json" <<'NODE'
+const fs = require("node:fs");
+
+const lastRun = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (lastRun.status !== "passed" || lastRun.failedTests.length !== 0) {
+  throw new Error("Playwright .last-run.json did not record a clean pass");
+}
+NODE
 }
 
 provision_stack
 
 if [ "$suite" = "experience" ]; then
+  full_experience_acceptance=true
   if [ -n "$experience_grep" ]; then
+    full_experience_acceptance=false
     set -- --grep "$experience_grep"
   else
     set --
   fi
-  BASE_URL=http://127.0.0.1:8080 \
+  echo "Assistant experience E2E phase: V2 current-page memory, no rail, chips, activity, safe actions, reduced motion and 390px layout"
+  BASE_URL="$assistant_experience_origin" \
+    PLAYWRIGHT_OUTPUT_DIR="$playwright_output_dir" \
+    PLAYWRIGHT_HTML_OUTPUT_DIR="$playwright_report_dir" \
+    PLAYWRIGHT_JSON_OUTPUT_FILE="$playwright_json_report" \
     pnpm --filter @ai-agent-platform/web exec playwright test \
     e2e/assistant-experience.spec.ts \
     e2e/pricing-assistant.spec.ts \
     --workers=1 "$@"
+  if [ "$full_experience_acceptance" = true ]; then
+    write_playwright_attachment_manifest
+    echo "Assistant experience artifact manifest: $playwright_attachment_manifest"
+  else
+    assert_playwright_run_passed
+    echo "Focused Assistant experience run passed; full attachment manifest was not required."
+  fi
   exit 0
 fi
 
@@ -543,7 +701,7 @@ docker compose -p "$project" --env-file "$env_file" $compose_files \
   down -v --remove-orphans
 provision_stack
 
-BASE_URL=http://127.0.0.1:8080 \
+BASE_URL="$assistant_experience_origin" \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/proxy-auth-security.spec.ts \
   --project=desktop \

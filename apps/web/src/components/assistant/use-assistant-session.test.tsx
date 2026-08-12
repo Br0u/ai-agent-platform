@@ -14,23 +14,25 @@ import {
   useAssistantSession,
 } from "./use-assistant-session";
 
+const streamFrame = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`;
+
 const success = (
   message: string,
   suggestedActions: { label: string; href: string }[] = [],
 ) =>
   new Response(
-    JSON.stringify({
-      version: "1",
-      requestId: "req-1",
-      mode: "placeholder",
-      session: { temporary: true, expiresAt: "2026-07-13T12:00:00.000Z" },
-      message: { id: "msg-1", role: "assistant", content: message },
-      suggestedActions,
-    }),
-    { status: 200 },
+    [
+      streamFrame({ type: "answer_delta", content: message }),
+      ...suggestedActions.map(({ label, href }) =>
+        streamFrame({
+          type: "action",
+          action: { kind: "navigate", label, pathname: href },
+        }),
+      ),
+      streamFrame({ type: "done" }),
+    ].join(""),
+    { status: 200, headers: { "content-type": "text/event-stream" } },
   );
-
-const streamFrame = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`;
 
 describe("useAssistantSession", () => {
   beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
@@ -601,16 +603,11 @@ describe("useAssistantSession", () => {
     ]);
   });
 
-  it("stores only internal single-slash suggested actions", async () => {
+  it("stores typed internal single-slash navigation actions", async () => {
     vi.mocked(fetch).mockResolvedValue(
       success("可用入口", [
-        { label: "快速开始", href: "/docs#quick-start" },
         { label: "商务咨询", href: "/contact" },
         { label: "客户支持", href: "/support" },
-        { label: "协议相对", href: "//evil.example/path" },
-        { label: "反斜杠", href: "/safe\\evil" },
-        { label: "查询跳转", href: "/contact?next=https://evil.example" },
-        { label: "编码斜杠", href: "/%2Fevil.example" },
       ]),
     );
     const { result } = renderHook(() => useAssistantSession("/pricing"));
@@ -620,10 +617,9 @@ describe("useAssistantSession", () => {
     expect(result.current.messages[1]).toMatchObject({
       role: "assistant",
       content: "可用入口",
-      suggestedActions: [
-        { label: "快速开始", href: "/docs#quick-start" },
-        { label: "商务咨询", href: "/contact" },
-        { label: "客户支持", href: "/support" },
+      actions: [
+        { kind: "navigate", label: "商务咨询", pathname: "/contact" },
+        { kind: "navigate", label: "客户支持", pathname: "/support" },
       ],
     });
   });

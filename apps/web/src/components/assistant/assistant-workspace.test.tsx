@@ -12,6 +12,10 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantStatusResponse } from "@/features/assistant/assistant-contract";
 import {
+  ASSISTANT_STREAM_MEDIA_TYPE,
+  formatAssistantStreamEvent,
+} from "@/features/assistant/assistant-stream";
+import {
   AssistantExperienceProvider,
   useAssistantExperience,
 } from "./assistant-experience-provider";
@@ -59,15 +63,11 @@ function renderWorkspace() {
 
 function successfulPlaceholderReply(content = "当前仅提供安全占位答复。") {
   return new Response(
-    JSON.stringify({
-      version: "1",
-      requestId: "request-1",
-      mode: "placeholder",
-      session: { temporary: true, expiresAt: "2026-07-13T12:00:00.000Z" },
-      message: { id: "message-1", role: "assistant", content },
-      suggestedActions: [],
-    }),
-    { status: 200, headers: { "Content-Type": "application/json" } },
+    [
+      formatAssistantStreamEvent({ type: "answer_delta", content }),
+      formatAssistantStreamEvent({ type: "done" }),
+    ].join(""),
+    { status: 200, headers: { "Content-Type": ASSISTANT_STREAM_MEDIA_TYPE } },
   );
 }
 
@@ -609,7 +609,10 @@ describe("AssistantWorkspace", () => {
       /@media \(max-width: 560px\)\s*{[\s\S]*?\.assistant-workspace\s*{[^}]*--assistant-workspace-shell-offset:\s*65px;/,
     );
     expect(css).toMatch(
-      /\.assistant-workspace__conversation\s*\{[^}]*display:\s*flex;[^}]*min-height:\s*0;[^}]*flex-direction:\s*column;/s,
+      /\.assistant-workspace__conversation\s*\{[^}]*display:\s*flex;[^}]*width:\s*min\(100%, 980px\);[^}]*min-height:\s*0;[^}]*min-width:\s*0;[^}]*flex-direction:\s*column;/s,
+    );
+    expect(css).toMatch(
+      /\.assistant-workspace__header\s*\{[^}]*width:\s*100%;[^}]*min-height:\s*64px;[^}]*min-width:\s*0;/s,
     );
   });
 });

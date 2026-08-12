@@ -202,6 +202,22 @@ const secretSource = (
   typeof attachment === "string" ? attachment : attachment.source;
 
 describe("production deployment security contracts", () => {
+  it("keeps the release-age policy exception exact and limited to the approved orb", () => {
+    const workspace = read("pnpm-workspace.yaml");
+    const exclusionBlock = workspace.match(
+      /^minimumReleaseAgeExclude:\n((?: {2}- [^\n]+\n?)*)/mu,
+    );
+    const exclusions = exclusionBlock?.[1]
+      ?.split("\n")
+      .filter(Boolean)
+      .map((line) => line.replace(/^ {2}- /u, ""));
+
+    expect(exclusions).toEqual(["thinking-orbs@0.3.1"]);
+    expect(workspace.match(/minimumReleaseAgeExclude:/gu)).toHaveLength(1);
+    expect(workspace).not.toMatch(/minimumReleaseAge:\s*(?:0|false)/u);
+    expect(workspace).not.toMatch(/minimumReleaseAgeExclude:[\s\S]*?[~*^]/u);
+  });
+
   it("keeps runtime and backup roles on separate least-privilege matrices", () => {
     const sql = `${read("infra/postgres/01-roles.sql")}\n${read("infra/postgres/02-runtime-grants.sql")}`;
     expect(sql).toContain("ai_agent_migrator");
@@ -589,7 +605,7 @@ describe("production deployment security contracts", () => {
     expect(proxyService).toMatch(/^\s{4}ports:/mu);
   });
 
-  it("documents HTTPS production origin and exact loopback-only E2E origin", () => {
+  it("documents HTTPS production origin and a container-local E2E page origin", () => {
     const example = read(".env.example");
     const runbook = read("docs/deployment/server-readiness.md");
     const runner = read("docs/testing/run-assistant-runtime-e2e.sh");
@@ -607,6 +623,9 @@ describe("production deployment security contracts", () => {
       'assistant_e2e_origin="http://127.0.0.1:$assistant_e2e_http_port"',
     );
     expect(runner).toContain(
+      'export ASSISTANT_PUBLIC_ORIGIN="http://127.0.0.1:3000"',
+    );
+    expect(runner).not.toContain(
       'export ASSISTANT_PUBLIC_ORIGIN="$assistant_e2e_origin"',
     );
   });
@@ -847,6 +866,66 @@ describe("production deployment security contracts", () => {
     expect(script).not.toContain("AAP_RUNTIME_DYNAMIC_PATTERNS_FILE");
     expect(script).not.toContain("collect_agent_session_identities");
     expect(script).not.toContain("identity_audit_collector");
+    expect(script).toContain('"aap-private-reasoning-20260812"');
+    expect(script).toContain('"aap-immediate-block-20260812"');
+    expect(script).toContain("scan_evidence_file() {");
+    expect(script).toContain(
+      'scan_evidence_file fixed "$marker" "$evidence_file"',
+    );
+    expect(script).toContain(
+      "scan_evidence_file extended '(^|[^[:alnum:]_])(run_id|session_id)([^[:alnum:]_]|$)'",
+    );
+    expect(script).toMatch(
+      /pg_dump[\s\\\n]+--username="\$POSTGRES_USER"[\s\S]*?--data-only[\s\\\n]+--inserts[\s\\\n]+--no-owner/u,
+    );
+    expect(
+      script.match(
+        /for evidence_file in "\$database_dump" "\$stateless_logs"; do/gu,
+      ),
+    ).toHaveLength(2);
+    expect(script).toContain('grep -F -- "$pattern" "$evidence_file"');
+    expect(script).toContain('grep -E -- "$pattern" "$evidence_file"');
+    expect(script).toContain(
+      "(^|[^[:alnum:]_])(run_id|session_id)([^[:alnum:]_]|$)",
+    );
+    expect(script).toContain('"$evidence_file" >/dev/null 2>&1');
+    const scanEvidenceStart = script.indexOf("scan_evidence_file() {");
+    const scanEvidenceEnd = script.indexOf(
+      "\nscan_logs() {",
+      scanEvidenceStart,
+    );
+    expect(scanEvidenceStart).toBeGreaterThan(-1);
+    expect(scanEvidenceEnd).toBeGreaterThan(scanEvidenceStart);
+    const scanEvidenceFunction = script.slice(
+      scanEvidenceStart,
+      scanEvidenceEnd,
+    );
+    for (const mode of ["fixed", "extended"]) {
+      for (const expectation of [
+        { grepStatus: 0, functionStatus: 1, message: "leak" },
+        { grepStatus: 1, functionStatus: 0, message: "" },
+        {
+          grepStatus: 2,
+          functionStatus: 1,
+          message: "runtime evidence scanner failed",
+        },
+      ]) {
+        const scan = spawnSync(
+          "sh",
+          [
+            "-c",
+            `${scanEvidenceFunction}\ngrep() { return ${expectation.grepStatus}; }\nscan_evidence_file ${mode} needle /dev/null leak`,
+          ],
+          { encoding: "utf8" },
+        );
+        expect(scan.status).toBe(expectation.functionStatus);
+        if (expectation.message === "") {
+          expect(scan.stderr).toBe("");
+        } else {
+          expect(scan.stderr).toContain(expectation.message);
+        }
+      }
+    }
     expect(script).toContain(
       "compose exec -T agent /opt/aap/run-agent-with-secret-env.sh",
     );
@@ -3635,6 +3714,7 @@ cleanup
 
   it("runs both assistant browser suites from an owned isolated project", () => {
     const runner = read("docs/testing/run-assistant-experience-e2e.sh");
+    const playwrightConfig = read("apps/web/playwright.config.ts");
     const webDockerfile = read("apps/web/Dockerfile");
     const promptStyles = read(
       "apps/web/src/components/assistant/assistant-prompt-input.css",
@@ -3654,7 +3734,13 @@ cleanup
       'project_lock_dir="/tmp/$project.assistant-e2e.lock"',
     );
     expect(runner).toContain(
-      'port_lock_dir="/tmp/aap-assistant-experience-e2e-port-8080.lock"',
+      'port_lock_dir="/tmp/aap-assistant-experience-e2e-port-$assistant_experience_http_port.lock"',
+    );
+    expect(runner).toContain(
+      "assistant_experience_http_port=${ASSISTANT_EXPERIENCE_E2E_HTTP_PORT:-8080}",
+    );
+    expect(runner).toContain(
+      'assistant_experience_origin="http://127.0.0.1:$assistant_experience_http_port"',
     );
     expect(runner).not.toContain('lock_root="${runtime_tmp%/}');
     expect(runner).toContain('if ! mkdir "$project_lock_dir"');
@@ -3663,9 +3749,11 @@ cleanup
     expect(runner).toContain("owns_project=false");
     expect(runner).toContain('if [ "$owns_project" = true ]');
     expect(runner).toContain("down --rmi local -v --remove-orphans");
-    expect(runner).toContain("TCP port 8080 is already in use");
     expect(runner).toContain(
-      "export ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080",
+      "TCP port $assistant_experience_http_port is already in use",
+    );
+    expect(runner).toContain(
+      'export ASSISTANT_PUBLIC_ORIGIN="$assistant_experience_origin"',
     );
     expect(runner).toContain(
       "materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE",
@@ -3688,6 +3776,35 @@ cleanup
       /playwright test[\s\\\n]+e2e\/assistant-experience\.spec\.ts[\s\\\n]+e2e\/pricing-assistant\.spec\.ts/u,
     );
     expect(runner).toContain("--workers=1");
+    expect(runner).toContain(
+      'playwright_artifact_root="$repo_root/artifacts/playwright/assistant-experience/$project-$run_token"',
+    );
+    expect(runner).toContain('PLAYWRIGHT_OUTPUT_DIR="$playwright_output_dir"');
+    expect(runner).toContain(
+      'PLAYWRIGHT_HTML_OUTPUT_DIR="$playwright_report_dir"',
+    );
+    expect(runner).toContain(
+      'PLAYWRIGHT_JSON_OUTPUT_FILE="$playwright_json_report"',
+    );
+    expect(runner).toContain('"desktop-portal-drawer"');
+    expect(runner).toContain('"mobile-admin-assistant"');
+    expect(runner).toContain('lastRun.status !== "passed"');
+    expect(runner).toContain("`${sha1}.png`");
+    expect(runner).toContain("attachments-manifest.json");
+    expect(runner).toContain("full_experience_acceptance=true");
+    expect(runner).toContain("full_experience_acceptance=false");
+    expect(runner).toContain('if [ "$full_experience_acceptance" = true ]');
+    expect(runner).toContain("assert_playwright_run_passed");
+    expect(runner).toMatch(
+      /if \[ "\$full_experience_acceptance" = true \]; then\s+write_playwright_attachment_manifest[\s\S]*?else\s+assert_playwright_run_passed/u,
+    );
+    expect(playwrightConfig).toContain("process.env.PLAYWRIGHT_OUTPUT_DIR");
+    expect(playwrightConfig).toContain(
+      "process.env.PLAYWRIGHT_HTML_OUTPUT_DIR",
+    );
+    expect(playwrightConfig).toContain(
+      "process.env.PLAYWRIGHT_JSON_OUTPUT_FILE",
+    );
     expect(webDockerfile).toContain(
       "--mount=type=cache,id=ai-agent-platform-pnpm-store",
     );

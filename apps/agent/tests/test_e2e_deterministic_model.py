@@ -20,7 +20,14 @@ from e2e_agent.app import (
 )
 
 from e2e_agent.deterministic_model import (
+    ALLOWED_NAVIGATION_SENTINEL,
+    FORBIDDEN_NAVIGATION_SENTINEL,
     INVALID_RESPONSE_SENTINEL,
+    PAGE_CONTEXT_SENTINEL,
+    PRODUCT_PAGE_EXCERPT,
+    SAFE_ANSWER_SENTINEL,
+    SPLIT_REASONING_PRIVATE,
+    SPLIT_REASONING_SENTINEL,
     DeterministicModel,
     acceptance_model_close_count,
     build_acceptance_managed_model,
@@ -223,6 +230,76 @@ def test_deterministic_model_returns_blank_for_exact_invalid_sentinel() -> None:
     output = agent.run(INVALID_RESPONSE_SENTINEL)
 
     assert output.content == ""
+
+
+def test_deterministic_model_splits_private_thinking_from_safe_answer() -> None:
+    model = DeterministicModel()
+    messages = [Message(role="user", content=SPLIT_REASONING_SENTINEL)]
+
+    chunks = list(model.invoke_stream(messages, Message(role="assistant")))
+
+    assert [chunk.content for chunk in chunks] == [
+        "<THINK data-x>",
+        SPLIT_REASONING_PRIVATE,
+        "</THINK>",
+        SAFE_ANSWER_SENTINEL[:12],
+        SAFE_ANSWER_SENTINEL[12:],
+    ]
+
+
+def test_deterministic_model_reports_only_verified_product_page_context() -> None:
+    model = DeterministicModel()
+
+    present = model.invoke(
+        [
+            Message(
+                role="user",
+                content=f"服务器验证的当前公开页面：\n{PRODUCT_PAGE_EXCERPT}\n\n用户问题：\n{PAGE_CONTEXT_SENTINEL}",
+            )
+        ],
+        Message(role="assistant"),
+    )
+    absent = model.invoke(
+        [
+            Message(
+                role="user",
+                content=f"无已验证页面正文。\n\n用户问题：{PAGE_CONTEXT_SENTINEL}",
+            )
+        ],
+        Message(role="assistant"),
+    )
+
+    assert present.content == "verified-product-page-context"
+    assert absent.content == "no-public-page-context"
+
+
+@pytest.mark.parametrize(
+    ("question", "pathname"),
+    [
+        (ALLOWED_NAVIGATION_SENTINEL, "/pricing"),
+        (FORBIDDEN_NAVIGATION_SENTINEL, "/not-registered"),
+    ],
+)
+def test_deterministic_model_calls_navigation_with_exact_sentinel_path(
+    question: str,
+    pathname: str,
+) -> None:
+    model = DeterministicModel()
+
+    response = model.invoke(
+        [Message(role="user", content=question)], Message(role="assistant")
+    )
+
+    assert response.tool_calls == [
+        {
+            "id": "assistant-navigation-e2e-call",
+            "type": "function",
+            "function": {
+                "name": "suggest_navigation",
+                "arguments": f'{{"pathname":"{pathname}"}}',
+            },
+        }
+    ]
 
 
 def test_deterministic_model_recognizes_the_exact_bff_wrapped_sentinel() -> None:

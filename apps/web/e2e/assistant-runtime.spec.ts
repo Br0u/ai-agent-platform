@@ -48,6 +48,14 @@ const CHAT_BODY = {
   page: null,
 };
 const INVALID_RESPONSE_SENTINEL = "__aap_e2e_invalid_response__";
+const SPLIT_REASONING_SENTINEL = "aap-stateless-question-20260812";
+const SAFE_ANSWER_SENTINEL = "aap-stateless-answer-20260812";
+const PRIVATE_REASONING_SENTINEL = "aap-private-reasoning-20260812";
+const ALLOWED_NAVIGATION_SENTINEL = "__aap_e2e_allowed_navigation__";
+const FORBIDDEN_NAVIGATION_SENTINEL = "__aap_e2e_forbidden_navigation__";
+const PAGE_CONTEXT_SENTINEL = "__aap_e2e_page_context__";
+const IMMEDIATE_BLOCK_SENTINEL = "aap-immediate-block-20260812";
+const INPUT_POLICY_PATH = "/api/v1/admin/assistant/input-policy";
 const CONTROL_PROVIDERS = [
   { provider: "openai", label: "OpenAI", endpoint: "openai-official" },
   {
@@ -1421,6 +1429,116 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
 });
 
 test.describe("@agentos deterministic runtime", () => {
+  test("filters split reasoning and allows only verified public navigation", async ({
+    browser,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("BASE_URL is required");
+    const context = await browser.newContext({ baseURL });
+    const ask = async (
+      message: string,
+      page: { pathname: string; search: string } | null = null,
+    ) => {
+      const response = await context.request.post(CHAT_PATH, {
+        data: { version: "2", message, history: [], page },
+      });
+      expect(response.status()).toBe(200);
+      return readSafeAssistantStream(response, runtimeProtectedValues());
+    };
+
+    const reasoning = await ask(SPLIT_REASONING_SENTINEL);
+    expect(reasoning.message.content).toBe(SAFE_ANSWER_SENTINEL);
+    expect(JSON.stringify(reasoning)).not.toMatch(/<\/?think|<\/?analysis/iu);
+    expect(JSON.stringify(reasoning)).not.toContain(PRIVATE_REASONING_SENTINEL);
+
+    const allowed = await ask(ALLOWED_NAVIGATION_SENTINEL);
+    expect(allowed.actions).toEqual([
+      { kind: "navigate", pathname: "/pricing", label: "价格与服务" },
+    ]);
+    const forbidden = await ask(FORBIDDEN_NAVIGATION_SENTINEL);
+    expect(forbidden.actions).toEqual([]);
+    await context.close();
+  });
+
+  test("reads only a real allowed public page into the deterministic prompt", async ({
+    browser,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("BASE_URL is required");
+    const context = await browser.newContext({ baseURL });
+    const ask = async (pathname: string) => {
+      const response = await context.request.post(CHAT_PATH, {
+        data: {
+          version: "2",
+          message: PAGE_CONTEXT_SENTINEL,
+          history: [],
+          page: { pathname, search: "" },
+        },
+      });
+      expect(response.status()).toBe(200);
+      return (await readSafeAssistantStream(response, runtimeProtectedValues()))
+        .message.content;
+    };
+
+    await expect(ask("/product/standalone")).resolves.toBe(
+      "verified-product-page-context",
+    );
+    for (const pathname of [
+      "/admin/assistant",
+      "/console/onboarding",
+      "/not-registered",
+    ]) {
+      await expect(ask(pathname)).resolves.toBe("no-public-page-context");
+    }
+    await context.close();
+  });
+
+  test("applies an Admin sensitive term before any public provider run", async ({
+    browser,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("BASE_URL is required");
+    const credentials = fixtureCredentials();
+    const admin = await browser.newContext({ baseURL });
+    await addSignedSession(
+      admin,
+      baseURL,
+      "workforce",
+      credentials.modelAdminSessionToken,
+    );
+    const current = await admin.request.get(INPUT_POLICY_PATH);
+    expect(current.status()).toBe(200);
+    const snapshot = (await readSafeJson(
+      current,
+      runtimeProtectedValues(),
+    )) as { revision: number };
+    const saved = await admin.request.put(INPUT_POLICY_PATH, {
+      headers: { Origin: baseURL },
+      data: {
+        source: IMMEDIATE_BLOCK_SENTINEL,
+        expectedRevision: snapshot.revision,
+      },
+    });
+    expect(saved.status()).toBe(200);
+    const before = composeOutput(["logs", "--no-color", "agent"]);
+    const blocked = await admin.request.post(CHAT_PATH, {
+      data: {
+        version: "2",
+        message: `prefix-${IMMEDIATE_BLOCK_SENTINEL}-suffix`,
+        history: [],
+        page: null,
+      },
+    });
+    expect(blocked.status()).toBe(422);
+    const raw = await blocked.text();
+    expect(raw).not.toContain(IMMEDIATE_BLOCK_SENTINEL);
+    expect(JSON.parse(raw)).toMatchObject({
+      error: { code: "input_blocked", retryable: false },
+    });
+    expect(composeOutput(["logs", "--no-color", "agent"])).toBe(before);
+    await admin.close();
+  });
+
   test("reports only 码多多 as available for the public run", async ({
     browser,
     baseURL,
