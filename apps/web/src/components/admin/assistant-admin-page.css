@@ -402,9 +402,20 @@
   font-size: 12px;
 }
 
-.assistant-input-policy__heading > strong {
+.assistant-input-policy__metadata {
+  display: grid;
+  gap: 5px;
+  text-align: right;
+}
+
+.assistant-input-policy__metadata strong {
   color: var(--color-ai-accent);
   font: 700 10px/1.2 var(--font-mono);
+}
+
+.assistant-input-policy__metadata span {
+  margin: 0;
+  font: 650 10px/1.2 var(--font-mono);
 }
 
 .assistant-input-policy form {
@@ -1199,6 +1210,7 @@
 
   .assistant-model-config__heading,
   .assistant-skill-registry__heading,
+  .assistant-input-policy__heading,
   .assistant-capability-roadmap__heading,
   .assistant-model-config__editor > header,
   .assistant-model-config__editor > footer {
@@ -1207,6 +1219,7 @@
 
   .assistant-model-config__heading,
   .assistant-skill-registry__heading,
+  .assistant-input-policy__heading,
   .assistant-capability-roadmap__heading,
   .assistant-model-config__editor > footer {
     flex-direction: column;
@@ -1239,6 +1252,7 @@
   }
 
   .assistant-skill-registry__actions,
+  .assistant-input-policy__actions,
   .assistant-skill-registry__list > li,
   .assistant-skill-dialog__actions {
     align-items: stretch;
@@ -1255,6 +1269,15 @@
   }
 
   .assistant-model-config__editor > footer button {
+    width: 100%;
+  }
+
+  .assistant-input-policy__metadata {
+    width: 100%;
+    text-align: left;
+  }
+
+  .assistant-input-policy__actions button {
     width: 100%;
   }
 }

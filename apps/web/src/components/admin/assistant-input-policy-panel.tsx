@@ -13,6 +13,19 @@ import {
 
 const ENDPOINT = "/api/v1/admin/assistant/input-policy";
 
+function isConfigurableSnapshot(
+  value: unknown,
+): value is AdminInputPolicySnapshot & {
+  canConfigure: true;
+  terms: string[];
+} {
+  return (
+    isAdminInputPolicySnapshot(value) &&
+    value.canConfigure &&
+    value.terms !== undefined
+  );
+}
+
 export function AssistantInputPolicyPanel({
   initialSnapshot,
 }: {
@@ -21,6 +34,7 @@ export function AssistantInputPolicyPanel({
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [source, setSource] = useState(initialSnapshot.terms?.join("\n") ?? "");
   const [saving, setSaving] = useState(false);
+  const [refreshRequired, setRefreshRequired] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const normalized = useMemo(() => {
     try {
@@ -31,9 +45,35 @@ export function AssistantInputPolicyPanel({
     }
   }, [source]);
 
+  const reconcileUnknownOutcome = async () => {
+    try {
+      const response = await fetch(ENDPOINT, {
+        method: "GET",
+        cache: "no-store",
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok || !isConfigurableSnapshot(body)) {
+        throw new Error("Policy reconciliation failed");
+      }
+      setSnapshot(body);
+      setRefreshRequired(false);
+      setAnnouncement("已核对服务器最新版本，当前编辑已保留，可以重新保存。");
+    } catch {
+      setRefreshRequired(true);
+      setAnnouncement("无法确认保存结果，请刷新页面后再继续。");
+    }
+  };
+
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!snapshot.canConfigure || normalized === null || saving) return;
+    if (
+      !snapshot.canConfigure ||
+      normalized === null ||
+      saving ||
+      refreshRequired
+    ) {
+      return;
+    }
     setSaving(true);
     setAnnouncement("");
     try {
@@ -48,15 +88,18 @@ export function AssistantInputPolicyPanel({
       const body: unknown = await response.json().catch(() => null);
       if (response.status === 409) {
         setAnnouncement("服务器存在更新版本，请保留当前编辑并刷新页面后重试。");
-      } else if (response.ok && isAdminInputPolicySnapshot(body)) {
+      } else if (response.ok && isConfigurableSnapshot(body)) {
         setSnapshot(body);
         setSource(body.terms?.join("\n") ?? "");
+        setRefreshRequired(false);
         setAnnouncement("内容规则已保存。");
+      } else if (response.ok) {
+        await reconcileUnknownOutcome();
       } else {
         setAnnouncement("内容规则保存失败，请稍后重试。");
       }
     } catch {
-      setAnnouncement("内容规则保存失败，请稍后重试。");
+      await reconcileUnknownOutcome();
     } finally {
       setSaving(false);
     }
@@ -71,9 +114,16 @@ export function AssistantInputPolicyPanel({
         <div>
           <p>CONTENT POLICY / USER INPUT</p>
           <h2 id="assistant-input-policy-title">输入内容规则</h2>
-          <span>用户输入命中任一屏蔽词时，将在调用模型前停止提交。</span>
+          <span>
+            规则使用 NFKC
+            归一化、不区分大小写的连续子串匹配；命中时在调用模型前停止提交，不记录用户输入原文；保存规则时也不保留编辑源文本。
+          </span>
         </div>
-        <strong>当前版本 {snapshot.revision}</strong>
+        <div className="assistant-input-policy__metadata">
+          <strong>当前版本 {snapshot.revision}</strong>
+          <span>已配置 {snapshot.termCount} 个屏蔽词</span>
+          <span>更新时间 {snapshot.updatedAt ?? "尚未保存"}</span>
+        </div>
       </header>
 
       <form onSubmit={save}>
@@ -98,7 +148,7 @@ export function AssistantInputPolicyPanel({
           ) : snapshot.canConfigure ? (
             <span>输入超出规则限制</span>
           ) : (
-            <span>已配置 {snapshot.termCount} 个屏蔽词</span>
+            <span>只读模式</span>
           )}
         </div>
         <div className="assistant-input-policy__actions">
@@ -108,10 +158,15 @@ export function AssistantInputPolicyPanel({
               : "当前账号仅可查看规则数量，不能查看或修改具体词条。"}
           </small>
           <button
-            disabled={!snapshot.canConfigure || normalized === null || saving}
+            disabled={
+              !snapshot.canConfigure ||
+              normalized === null ||
+              saving ||
+              refreshRequired
+            }
             type="submit"
           >
-            {saving ? "保存中" : "保存内容规则"}
+            {saving ? "保存中" : "保存并立即生效"}
           </button>
         </div>
       </form>

@@ -322,6 +322,41 @@ describe("AssistantAdminPage", () => {
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   });
 
+  it("preserves the confirmed policy revision and draft across tab switches", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        ...inputPolicy,
+        revision: 4,
+        termCount: 1,
+        terms: ["confirmed"],
+        updatedAt: "2026-08-12T02:03:04.000Z",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AssistantAdminPage
+        modelConfigs={modelConfigs}
+        sessions={sessions}
+        status={status}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "内容规则" }));
+    fireEvent.change(screen.getByLabelText("屏蔽词（一行一个）"), {
+      target: { value: "Confirmed" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存并立即生效" }));
+    expect(await screen.findByText("当前版本 4")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
+    fireEvent.click(screen.getByRole("tab", { name: "内容规则" }));
+
+    expect(screen.getByText("当前版本 4")).toBeVisible();
+    expect(screen.getByLabelText("屏蔽词（一行一个）")).toHaveValue(
+      "confirmed",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("loads page styling from a dedicated stylesheet instead of inline CSS", () => {
     const component = readFileSync(
       "src/components/admin/assistant-admin-page.tsx",

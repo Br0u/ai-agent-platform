@@ -187,9 +187,9 @@ export function AssistantAdminPage({
         />
       ) : null}
 
-      {activeTab === "policy" ? (
+      <div hidden={activeTab !== "policy"}>
         <AssistantInputPolicyPanel initialSnapshot={inputPolicy} />
-      ) : null}
+      </div>
 
       {activeTab === "test" ? (
         <div className="assistant-admin__workspace">
