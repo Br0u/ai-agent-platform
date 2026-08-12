@@ -9408,8 +9408,8 @@ exec /usr/bin/mktemp "$@"
     expect(runner).toContain("E2E_STAFF_SESSION_TOKEN");
     expect(runner).toContain("content_revisions");
     expect(runner).toContain("content_routes");
-    expect(runner).toContain("(SELECT count FROM manifest_mismatches)");
-    expect(runner).not.toContain("(SELECT count(*) FROM manifest_mismatches)");
+    expect(runner).toContain("(SELECT count FROM seed_mismatches)");
+    expect(runner).toContain("(SELECT count FROM current_mismatches)");
     expect(runner).toContain("--project=desktop --project=mobile --workers=1");
     expect(runner).toContain("e2e/cms-documents.spec.ts");
     expect(runner).toContain("SOAK_SECONDS=${CMS_DOCUMENTS_SOAK_SECONDS:-600}");
