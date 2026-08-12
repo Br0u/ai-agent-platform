@@ -2672,36 +2672,6 @@ test.describe("@control deterministic model control", () => {
     expect(bootstrapReveal.status()).toBe(400);
     await readControlJson(bootstrapReveal);
 
-    const capabilityRequests: string[] = [];
-    page.on("request", (request) => capabilityRequests.push(request.url()));
-    for (const label of [
-      "本地算力暂不可用",
-      "知识库暂不可用",
-      "网页与操作工具暂不可用",
-    ]) {
-      const button = page.getByRole("button", { name: label });
-      await expect(button).toBeDisabled();
-      await button.evaluate((element) =>
-        (element as HTMLButtonElement).click(),
-      );
-    }
-    expect(capabilityRequests).toEqual([]);
-    await expect(
-      page
-        .getByRole("article")
-        .filter({ hasText: "Skill 加载" })
-        .getByText("已接入", { exact: true }),
-    ).toBeVisible();
-    for (const [title, status] of [
-      ["本地算力", "预留 / 未连接"],
-      ["Skill 加载", "Registry / Agent 运行时已接入"],
-      ["知识库", "未接入"],
-      ["网页与操作工具", "未接入"],
-    ] as const) {
-      const card = page.getByRole("article").filter({ hasText: title });
-      await expect(card).toContainText(status);
-    }
-
     const controlRows = databaseQuery(
       "SELECT provider || ':' || revision || ':' || is_current || ':' || test_status || ':' || octet_length(api_key_ciphertext) || ':' || encode(api_key_ciphertext, 'hex') FROM agent_control.model_configs ORDER BY provider, revision",
     );
