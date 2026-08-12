@@ -10,6 +10,8 @@ import psycopg
 from agent_service.config import ControlMigrationSettings
 from agent_service.model_config_schema import (
     EXPECTED_FUNCTION_BOUNDARY,
+    EXPECTED_MODEL_CONFIG_BASE_URL_COLUMN,
+    EXPECTED_MODEL_CONFIG_BASE_URL_CONSTRAINTS,
     EXPECTED_RUNTIME_GRANTS,
     EXPECTED_SCHEMA_GRANTS,
     EXPECTED_SCHEMA_VERSION_COLUMNS,
@@ -23,6 +25,8 @@ from agent_service.model_config_schema import (
     VERIFY_COLUMN_GRANTS_SQL,
     VERIFY_FORBIDDEN_TABLE_GRANTS_SQL,
     VERIFY_FUNCTION_BOUNDARY_SQL,
+    VERIFY_MODEL_CONFIG_BASE_URL_COLUMN_SQL,
+    VERIFY_MODEL_CONFIG_BASE_URL_CONSTRAINTS_SQL,
     VERIFY_PUBLIC_FUNCTION_GRANTS_SQL,
     VERIFY_RUNTIME_GRANTS_SQL,
     VERIFY_SCHEMA_OWNER_SQL,
@@ -92,6 +96,18 @@ async def _verify_migration(cursor: MigrationCursor) -> None:
         (str(row[0]), str(row[1]), row[2], row[3], row[4]) for row in constraint_rows
     )
     if actual_schema_version_constraints != EXPECTED_SCHEMA_VERSION_CONSTRAINTS:
+        raise RuntimeError("Agent control migration verification failed")
+
+    await cursor.execute(VERIFY_MODEL_CONFIG_BASE_URL_COLUMN_SQL)
+    base_url_column = await cursor.fetchone()
+    if base_url_column != EXPECTED_MODEL_CONFIG_BASE_URL_COLUMN:
+        raise RuntimeError("Agent control migration verification failed")
+
+    await cursor.execute(VERIFY_MODEL_CONFIG_BASE_URL_CONSTRAINTS_SQL)
+    base_url_constraints = tuple(
+        (str(row[0]), row[1]) for row in await cursor.fetchall()
+    )
+    if base_url_constraints != EXPECTED_MODEL_CONFIG_BASE_URL_CONSTRAINTS:
         raise RuntimeError("Agent control migration verification failed")
 
     await cursor.execute(VERIFY_FUNCTION_BOUNDARY_SQL)

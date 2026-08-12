@@ -228,6 +228,48 @@ WHERE n.nspname = 'agent_control'
   AND con.contype IN ('c', 'p')
 ORDER BY con.contype, pg_get_constraintdef(con.oid, true)
 """
+EXPECTED_VERIFY_MODEL_CONFIG_BASE_URL_COLUMN_SQL = """SELECT
+  a.attname::text,
+  format_type(a.atttypid, a.atttypmod)::text,
+  a.attnotnull,
+  COALESCE(pg_get_expr(d.adbin, d.adrelid), '')::text
+FROM pg_class AS c
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+JOIN pg_attribute AS a ON a.attrelid = c.oid
+LEFT JOIN pg_attrdef AS d
+  ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+WHERE n.nspname = 'agent_control'
+  AND c.relname = 'model_configs'
+  AND a.attname = 'base_url'
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+"""
+EXPECTED_VERIFY_MODEL_CONFIG_BASE_URL_CONSTRAINT_SQL = """SELECT
+  pg_get_constraintdef(con.oid, true)::text,
+  con.convalidated
+FROM pg_constraint AS con
+JOIN pg_class AS c ON c.oid = con.conrelid
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+JOIN pg_attribute AS a
+  ON a.attrelid = c.oid AND a.attname = 'base_url'
+WHERE n.nspname = 'agent_control'
+  AND c.relname = 'model_configs'
+  AND con.contype = 'c'
+  AND a.attnum = ANY(con.conkey)
+ORDER BY pg_get_constraintdef(con.oid, true)
+"""
+EXPECTED_MODEL_CONFIG_BASE_URL_COLUMN = [
+    ("base_url", "character varying(2048)", False, ""),
+]
+EXPECTED_MODEL_CONFIG_BASE_URL_CONSTRAINT = [
+    (
+        "CHECK (base_url IS NULL OR char_length(base_url::text) >= 8 "
+        "AND char_length(base_url::text) <= 2048 "
+        "AND base_url::text ~ '^https?://'::text "
+        "AND base_url::text !~ '[[:space:]]'::text)",
+        True,
+    )
+]
 
 
 def normalize_sql(value: str) -> str:
@@ -535,6 +577,10 @@ class FakeCursor:
             return (self.schema_owner,) if self.schema_owner is not None else None
         if self.current_query == SELECT_SCHEMA_VERSION_SQL:
             return (2,) if self.version_applied else None
+        if self.current_query == EXPECTED_VERIFY_MODEL_CONFIG_BASE_URL_COLUMN_SQL:
+            if self.security_drift == "model_config_base_url_column":
+                return None
+            return EXPECTED_MODEL_CONFIG_BASE_URL_COLUMN[0]
         if self.current_query == VERIFY_SCHEMA_PRIVILEGES_SQL:
             return (True, False)
         raise AssertionError(f"unexpected fetchone query: {self.current_query}")
@@ -557,6 +603,10 @@ class FakeCursor:
             if self.security_drift == "schema_version_constraint_duplicate":
                 return [constraint_rows[0], constraint_rows[0], constraint_rows[1]]
             return constraint_rows
+        if self.current_query == EXPECTED_VERIFY_MODEL_CONFIG_BASE_URL_CONSTRAINT_SQL:
+            if self.security_drift == "model_config_base_url_constraint":
+                return []
+            return list(EXPECTED_MODEL_CONFIG_BASE_URL_CONSTRAINT)
         if self.current_query == EXPECTED_VERIFY_FUNCTION_DEFINITION_SQL:
             function_definition_rows = set(EXPECTED_FUNCTION_DEFINITION)
             if self.security_drift == "function_owner":
@@ -700,6 +750,8 @@ async def test_run_migration_applies_version_one_and_verifies_boundary_in_one_tr
         VERIFY_TABLES_SQL,
         EXPECTED_VERIFY_SCHEMA_VERSION_COLUMNS_SQL,
         EXPECTED_VERIFY_SCHEMA_VERSION_CONSTRAINTS_SQL,
+        EXPECTED_VERIFY_MODEL_CONFIG_BASE_URL_COLUMN_SQL,
+        EXPECTED_VERIFY_MODEL_CONFIG_BASE_URL_CONSTRAINT_SQL,
         EXPECTED_VERIFY_FUNCTION_DEFINITION_SQL,
         EXPECTED_VERIFY_TRIGGER_DEFINITION_SQL,
         VERIFY_RUNTIME_GRANTS_SQL,
@@ -724,10 +776,12 @@ async def test_run_migration_skips_applied_version_but_reverifies_boundary() -> 
     await run_migration(settings, connector=connector)
 
     assert SCHEMA_VERSION_1_SQL not in cursor.queries
-    assert cursor.queries[-10:] == [
+    assert cursor.queries[-12:] == [
         VERIFY_TABLES_SQL,
         EXPECTED_VERIFY_SCHEMA_VERSION_COLUMNS_SQL,
         EXPECTED_VERIFY_SCHEMA_VERSION_CONSTRAINTS_SQL,
+        EXPECTED_VERIFY_MODEL_CONFIG_BASE_URL_COLUMN_SQL,
+        EXPECTED_VERIFY_MODEL_CONFIG_BASE_URL_CONSTRAINT_SQL,
         EXPECTED_VERIFY_FUNCTION_DEFINITION_SQL,
         EXPECTED_VERIFY_TRIGGER_DEFINITION_SQL,
         VERIFY_RUNTIME_GRANTS_SQL,
@@ -758,6 +812,8 @@ async def test_run_migration_skips_applied_version_but_reverifies_boundary() -> 
         "schema_version_columns",
         "schema_version_constraint_missing",
         "schema_version_constraint_duplicate",
+        "model_config_base_url_column",
+        "model_config_base_url_constraint",
     ],
 )
 async def test_applied_migration_fails_closed_on_security_boundary_drift(

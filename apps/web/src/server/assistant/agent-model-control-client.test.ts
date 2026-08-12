@@ -936,6 +936,46 @@ describe("private Agent model control client", () => {
     });
   });
 
+  it("accepts the Agent-normalized form of a saved custom URL", async () => {
+    const submittedBaseUrl = "https://MODELS.example.com:443/v1";
+    const normalizedBaseUrl = "https://models.example.com/v1";
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        version: "1",
+        config: {
+          provider: "deepseek",
+          modelId: "DeepSeek-V4-Flash-code",
+          endpointId: "deepseek-v4-flash-code",
+          baseUrl: normalizedBaseUrl,
+          apiKeyLastFour: "none",
+          revision: 1,
+          testStatus: "untested",
+          lastTestedAt: null,
+        },
+      }),
+    );
+    const client = createAgentModelControlClient({
+      settings: settings(),
+      fetcher,
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+
+    await expect(
+      client.saveModelConfig({
+        actor: ACTOR,
+        provider: "deepseek",
+        requestId: REQUEST_ID,
+        input: {
+          modelId: "DeepSeek-V4-Flash-code",
+          endpointId: "deepseek-v4-flash-code",
+          baseUrl: submittedBaseUrl,
+          expectedRevision: 0,
+        },
+      }),
+    ).resolves.toMatchObject({ config: { baseUrl: normalizedBaseUrl } });
+  });
+
   it("rejects forged extra mutation fields before fetch", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const client = createAgentModelControlClient({

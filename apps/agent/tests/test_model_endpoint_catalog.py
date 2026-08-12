@@ -121,7 +121,7 @@ def test_explicit_http_keyless_deployment_is_allowed(tmp_path: Path) -> None:
     assert catalog.public_snapshot("deepseek")[-1].insecure_http is True
 
 
-def test_deployment_endpoint_accepts_a_public_ip_override_only(tmp_path: Path) -> None:
+def test_deployment_endpoint_accepts_public_host_overrides_only(tmp_path: Path) -> None:
     path = write_endpoint_file(
         tmp_path,
         [
@@ -144,6 +144,14 @@ def test_deployment_endpoint_accepts_a_public_ip_override_only(tmp_path: Path) -
             base_url="http://125.122.36.24:9900/v1",
         ).base_url
         == "http://125.122.36.24:9900/v1"
+    )
+    assert (
+        catalog.resolve(
+            "deepseek-v4-flash-code",
+            "deepseek",
+            base_url="https://MODELS.example.com:443/v1",
+        ).base_url
+        == "https://models.example.com/v1"
     )
     with pytest.raises(EndpointNotAllowedError, match="^endpoint not allowed$"):
         catalog.resolve(

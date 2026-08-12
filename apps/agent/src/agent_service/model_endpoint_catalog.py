@@ -166,9 +166,6 @@ class ModelEndpointCatalog:
                     base_url,
                     allow_insecure_http=endpoint.allow_insecure_http,
                 )
-                host = urlsplit(normalized).hostname
-                if host is None or not ipaddress.ip_address(host).is_global:
-                    raise ValueError
             except (EndpointCatalogError, ValueError):
                 raise EndpointNotAllowedError("endpoint not allowed") from None
             return replace(endpoint, base_url=normalized)

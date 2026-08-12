@@ -97,6 +97,23 @@ EXPECTED_SCHEMA_VERSION_CONSTRAINTS = (
     ("p", "PRIMARY KEY (version)", False, False, True),
 )
 
+EXPECTED_MODEL_CONFIG_BASE_URL_COLUMN = (
+    "base_url",
+    "character varying(2048)",
+    False,
+    "",
+)
+
+EXPECTED_MODEL_CONFIG_BASE_URL_CONSTRAINTS = (
+    (
+        "CHECK (base_url IS NULL OR char_length(base_url::text) >= 8 "
+        "AND char_length(base_url::text) <= 2048 "
+        "AND base_url::text ~ '^https?://'::text "
+        "AND base_url::text !~ '[[:space:]]'::text)",
+        True,
+    ),
+)
+
 VERIFY_SCHEMA_OWNER_SQL = """SELECT pg_get_userbyid(n.nspowner)::text
 FROM pg_namespace AS n
 WHERE n.nspname = 'agent_control'
@@ -442,4 +459,36 @@ WHERE n.nspname = 'agent_control'
   AND c.relname = 'schema_versions'
   AND con.contype IN ('c', 'p')
 ORDER BY con.contype, pg_get_constraintdef(con.oid, true)
+"""
+
+VERIFY_MODEL_CONFIG_BASE_URL_COLUMN_SQL = """SELECT
+  a.attname::text,
+  format_type(a.atttypid, a.atttypmod)::text,
+  a.attnotnull,
+  COALESCE(pg_get_expr(d.adbin, d.adrelid), '')::text
+FROM pg_class AS c
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+JOIN pg_attribute AS a ON a.attrelid = c.oid
+LEFT JOIN pg_attrdef AS d
+  ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+WHERE n.nspname = 'agent_control'
+  AND c.relname = 'model_configs'
+  AND a.attname = 'base_url'
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+"""
+
+VERIFY_MODEL_CONFIG_BASE_URL_CONSTRAINTS_SQL = """SELECT
+  pg_get_constraintdef(con.oid, true)::text,
+  con.convalidated
+FROM pg_constraint AS con
+JOIN pg_class AS c ON c.oid = con.conrelid
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+JOIN pg_attribute AS a
+  ON a.attrelid = c.oid AND a.attname = 'base_url'
+WHERE n.nspname = 'agent_control'
+  AND c.relname = 'model_configs'
+  AND con.contype = 'c'
+  AND a.attnum = ANY(con.conkey)
+ORDER BY pg_get_constraintdef(con.oid, true)
 """

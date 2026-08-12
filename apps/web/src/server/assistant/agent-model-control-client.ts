@@ -447,6 +447,15 @@ function isCanonicalTimestamp(value: unknown): value is string {
   }
 }
 
+function equivalentBaseUrl(
+  actual: string | null,
+  submitted: string | undefined,
+): boolean {
+  if (actual === (submitted ?? null)) return true;
+  if (actual === null || submitted === undefined) return false;
+  return new URL(actual).href === new URL(submitted).href;
+}
+
 function readMetadata(value: unknown): AgentModelConfigMetadata | null {
   const snapshot = readExactDataRecord(value, [
     [
@@ -947,7 +956,7 @@ export function createAgentModelControlClient(options: {
               config.provider !== safe.provider ||
               config.modelId !== input.modelId ||
               config.endpointId !== input.endpointId ||
-              config.baseUrl !== (input.baseUrl ?? null) ||
+              !equivalentBaseUrl(config.baseUrl, input.baseUrl) ||
               config.revision !== input.expectedRevision + 1 ||
               config.testStatus !== "untested" ||
               (input.apiKey !== undefined &&
