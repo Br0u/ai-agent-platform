@@ -2540,6 +2540,7 @@ test.describe("@control deterministic model control", () => {
     );
     const page = await modelAdmin.newPage();
     await page.goto("/admin/assistant");
+    await page.getByRole("tab", { name: "模型配置" }).click();
     await expect(page.getByText("控制面已启用", { exact: true })).toBeVisible();
 
     for (const [index, fixture] of CONTROL_PROVIDERS.entries()) {
@@ -2743,6 +2744,7 @@ test.describe("@control deterministic model control", () => {
     await page.close();
     const disabledPage = await modelAdmin.newPage();
     await disabledPage.goto("/admin/assistant");
+    await disabledPage.getByRole("tab", { name: "模型配置" }).click();
     await expect(
       disabledPage.getByText("部署已关闭控制面", { exact: true }),
     ).toBeVisible();

@@ -306,6 +306,7 @@ test.describe("Skill library lifecycle", () => {
         requiredEnvironment("E2E_MODEL_ADMIN_SESSION_TOKEN"),
       );
       await page.goto("/admin/assistant");
+      await page.getByRole("tab", { name: "Skills" }).click();
       await mutate(page, expected.skillId, operation);
       expect((await librarySkill(page, expected.skillId)).enabled).toBe(
         enabled,
