@@ -507,3 +507,31 @@ describe("audit and content ownership", () => {
     expectForeignKey("content", "author_id", "users", "set null");
   });
 });
+
+describe("assistant input policy schema", () => {
+  it("stores the singleton policy, its revision, and its updating actor", () => {
+    expect(columnNames("assistantInputPolicy")).toEqual([
+      "id",
+      "terms",
+      "revision",
+      "updated_by",
+      "updated_at",
+    ]);
+    expect(column("assistantInputPolicy", "id")?.primary).toBe(true);
+    expect(column("assistantInputPolicy", "id")?.default).toBe(1);
+    expect(column("assistantInputPolicy", "terms")?.getSQLType()).toBe("jsonb");
+    expect(column("assistantInputPolicy", "terms")?.notNull).toBe(true);
+    expect(column("assistantInputPolicy", "revision")?.default).toBe(1);
+    expect(column("assistantInputPolicy", "revision")?.notNull).toBe(true);
+    expect(column("assistantInputPolicy", "updated_at")?.getSQLType()).toBe(
+      "timestamp with time zone",
+    );
+    expect(checkConstraintNames("assistantInputPolicy")).toEqual(
+      expect.arrayContaining([
+        "assistant_input_policy_id_singleton_check",
+        "assistant_input_policy_revision_positive_check",
+      ]),
+    );
+    expectForeignKey("assistantInputPolicy", "updated_by", "users", "restrict");
+  });
+});
