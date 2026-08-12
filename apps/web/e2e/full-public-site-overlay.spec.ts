@@ -236,6 +236,31 @@ test("桌面 Header 与 390px 移动导航执行批准的八个公开入口", as
   await expect(drawer.getByRole("link", { name: "文档" })).toHaveCount(0);
 });
 
+test("1296px 桌面导航下拉完整落在视口内", async ({ page }) => {
+  await page.setViewportSize({ width: 1296, height: 768 });
+  await gotoPublicPage(page, "/product/agents");
+
+  for (const label of ["产品", "解决方案", "下载中心", "合作伙伴"]) {
+    const trigger = page
+      .getByRole("banner")
+      .getByRole("link", { name: label, exact: true });
+    await trigger.focus();
+    await page.keyboard.press("ArrowDown");
+
+    const panelId = await trigger.getAttribute("aria-controls");
+    expect(panelId, label).not.toBeNull();
+    const panel = page.locator(`#${panelId}`);
+    await expect(panel, label).toBeVisible();
+    const panelBox = await panel.boundingBox();
+    expect(panelBox, label).not.toBeNull();
+    expect(panelBox!.x, label).toBeGreaterThanOrEqual(24);
+    expect(panelBox!.x + panelBox!.width, label).toBeLessThanOrEqual(1272);
+
+    await page.keyboard.press("Escape");
+    await expect(panel, label).toBeHidden();
+  }
+});
+
 test("代表公开页的唯一 Agent launcher 可打开关闭并恢复焦点", async ({
   page,
 }) => {

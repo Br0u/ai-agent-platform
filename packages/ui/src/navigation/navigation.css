@@ -515,7 +515,7 @@
 @media (min-width: 1181px) {
   /* Main-style product index: overview header with horizontal section columns. */
   .mega-menu {
-    position: relative;
+    position: static;
     display: block;
     color: var(--color-ink);
     font-family: var(--font-body);
@@ -577,7 +577,7 @@
   .mega-menu__panel {
     position: absolute;
     z-index: 30;
-    top: calc(100% + 10px);
+    top: 100%;
     left: 50%;
     width: min(1040px, calc(100vw - 48px));
     padding: 20px 24px 22px;
