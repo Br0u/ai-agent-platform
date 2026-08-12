@@ -2590,7 +2590,9 @@ test.describe("@control deterministic model control", () => {
     await expect(
       page.getByText("模型测试失败，配置状态已刷新。", { exact: true }),
     ).toBeVisible();
-    await expect(page.getByText(/仍运行 rev 1/u)).toBeVisible();
+    await expect(page.getByLabel("当前供应商状态")).toContainText(
+      "仍运行 rev 1",
+    );
     await ask("deterministic-model:e2e-openai-rev1:turn:1");
 
     recreateAgent(true);
