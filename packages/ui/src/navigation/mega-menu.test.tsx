@@ -13,6 +13,11 @@ import type { PortalNavigationItem } from "./navigation-types";
 
 const items: PortalNavigationItem[] = [
   {
+    label: "首页",
+    href: "/",
+    children: [],
+  },
+  {
     label: "产品",
     href: "/product",
     children: [
@@ -71,6 +76,29 @@ const items: PortalNavigationItem[] = [
       { label: "其他", items: [] },
     ],
   },
+  {
+    label: "合作伙伴",
+    href: "/partners",
+    children: [
+      {
+        label: "商业模式",
+        items: [{ label: "合作模式", href: "/partners#business-modes" }],
+      },
+      {
+        label: "伙伴政策",
+        items: [{ label: "认证体系", href: "/partners#policy-cert" }],
+      },
+      {
+        label: "伙伴培训",
+        items: [{ label: "培训体系", href: "/partners#training-system" }],
+      },
+      {
+        label: "合作对接",
+        items: [{ label: "成为合作伙伴", href: "/partners#become" }],
+      },
+    ],
+  },
+  { label: "价格与服务", href: "/pricing", children: [] },
 ];
 
 function renderMenu(activeHref = "/") {
@@ -91,6 +119,7 @@ describe("MegaMenu", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllTimers();
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -110,6 +139,35 @@ describe("MegaMenu", () => {
         document.getElementById(link.getAttribute("aria-controls")!),
       ).toBeInstanceOf(HTMLElement);
     }
+  });
+
+  it("renders empty-child parents as direct links without empty panels", () => {
+    renderMenu();
+
+    for (const [label, href] of [
+      ["首页", "/"],
+      ["价格与服务", "/pricing"],
+    ]) {
+      const direct = trigger(label);
+      expect(direct).toHaveAttribute("href", href);
+      expect(direct).not.toHaveAttribute("aria-controls");
+      expect(direct).not.toHaveAttribute("aria-expanded");
+      fireEvent.pointerEnter(direct);
+      expect(screen.queryByRole("region", { name: label })).toBeNull();
+    }
+  });
+
+  it("does not intercept ArrowDown or open a panel for direct parents", () => {
+    renderMenu();
+    const price = trigger("价格与服务");
+    price.focus();
+
+    const result = fireEvent.keyDown(price, { key: "ArrowDown" });
+
+    expect(result).toBe(true);
+    expect(price).toHaveFocus();
+    expect(price).not.toHaveAttribute("aria-expanded");
+    expect(screen.queryByRole("region", { name: "价格与服务" })).toBeNull();
   });
 
   it("navigates to the parent overview on direct click", () => {
@@ -210,15 +268,15 @@ describe("MegaMenu", () => {
 
   it("wraps trigger focus with ArrowRight and ArrowLeft", () => {
     renderMenu();
-    const productTrigger = trigger("产品");
-    const downloadTrigger = trigger("下载");
-    downloadTrigger.focus();
+    const homeTrigger = trigger("首页");
+    const priceTrigger = trigger("价格与服务");
+    priceTrigger.focus();
 
-    fireEvent.keyDown(downloadTrigger, { key: "ArrowRight" });
-    expect(productTrigger).toHaveFocus();
+    fireEvent.keyDown(priceTrigger, { key: "ArrowRight" });
+    expect(homeTrigger).toHaveFocus();
 
-    fireEvent.keyDown(productTrigger, { key: "ArrowLeft" });
-    expect(downloadTrigger).toHaveFocus();
+    fireEvent.keyDown(homeTrigger, { key: "ArrowLeft" });
+    expect(priceTrigger).toHaveFocus();
   });
 
   it("opens with ArrowDown and focuses the first overview link", () => {
@@ -318,6 +376,45 @@ describe("MegaMenu", () => {
     expect(screen.getByRole("link", { name: /Agent Studio/ })).toBeVisible();
     expect(screen.getByRole("heading", { name: "指南" })).toBeVisible();
     expect(screen.getByRole("link", { name: /配置指南/ })).toBeVisible();
+  });
+
+  it("renders distinct labels sharing one confirmed anchor without key warnings", () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const sharedAnchorItems: PortalNavigationItem[] = [
+      {
+        label: "解决方案",
+        href: "/solutions",
+        children: [
+          {
+            label: "通用场景方案",
+            items: [
+              { label: "知识与数据智能", href: "/solutions#scenes" },
+              { label: "智能体与业务应用", href: "/solutions#scenes" },
+            ],
+          },
+        ],
+      },
+    ];
+
+    render(<MegaMenu activeHref="/" items={sharedAnchorItems} />);
+    fireEvent.pointerEnter(trigger("解决方案"));
+
+    expect(screen.getByRole("link", { name: "知识与数据智能" })).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "智能体与业务应用" }),
+    ).toBeVisible();
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it("renders every partner section from a future-route fixture", () => {
+    renderMenu();
+    fireEvent.pointerEnter(trigger("合作伙伴"));
+
+    for (const heading of ["商业模式", "伙伴政策", "伙伴培训", "合作对接"]) {
+      expect(screen.getByRole("heading", { name: heading })).toBeVisible();
+    }
   });
 
   it("exports a reusable placeholder status badge", () => {

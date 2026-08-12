@@ -6,43 +6,84 @@ import type {
 } from "@ai-agent-platform/ui";
 
 export const portalNavigation: PortalNavigationItem[] = [
+  { label: "首页", href: "/", children: [] },
   {
     label: "产品",
     href: "/product",
+    description:
+      "一站式 AI 开发与部署平台，覆盖智能体、行业应用、模型、编程与安全，另有独立产品矩阵开箱即用。",
     children: [
       {
-        label: "产品矩阵",
+        label: "智能体中心",
         items: [
-          { label: "超融合", href: "/product/hci" },
-          { label: "元启AI开发平台", href: "/product/tgdataxai" },
-          { label: "视觉检索一体机", href: "/product/video-agent" },
+          { label: "知识智能体", href: "/product/agent-knowledge" },
+          { label: "数据智能体", href: "/product/data-agent" },
+          { label: "视频智能体", href: "/product/agent-video" },
+          { label: "流程编排智能体", href: "/product/agent-orchestration" },
+        ],
+      },
+      {
+        label: "模型中心",
+        items: [
+          { label: "模型花园", href: "/product/model-assets" },
+          { label: "模型训练", href: "/product/model-training" },
+          { label: "模型评估", href: "/product/model-evaluation" },
+          { label: "模型部署", href: "/product/model-deploy" },
+          { label: "任务中心", href: "/product/model-task-center" },
+        ],
+      },
+      {
+        label: "行业应用中心",
+        items: [
+          { label: "通用文本写作", href: "/product/app-writing" },
+          { label: "投标智能助手", href: "/product/app-bidding" },
+          { label: "合同智能审查", href: "/product/app-contract" },
+        ],
+      },
+      {
+        label: "编程中心",
+        items: [
+          { label: "项目管理", href: "/product/coding-project" },
+          { label: "会话管理", href: "/product/coding-session" },
+          { label: "移动接入", href: "/product/coding-mobile" },
+          { label: "编程规范", href: "/product/coding-standard" },
+        ],
+      },
+      {
+        label: "技能中心",
+        items: [
+          { label: "编程类技能", href: "/product/skills-programming" },
+          { label: "应用类技能", href: "/product/skills-application" },
+          { label: "办公类技能", href: "/product/skills-office" },
+        ],
+      },
+      {
+        label: "安全中心",
+        items: [
+          { label: "用户管理", href: "/product/governance#gov-users" },
+          { label: "角色管理", href: "/product/governance#gov-roles" },
+          { label: "菜单管理", href: "/product/governance#gov-menu" },
+          { label: "行级权限", href: "/product/governance#gov-permission" },
+        ],
+      },
+      {
+        label: "独立产品中心",
+        items: [
           {
-            label: "数据智能体",
-            href: "/product/data-agent",
-            status: "placeholder",
+            label: "码多多 2.0",
+            href: "/product/code-agent",
+            description: "企业级智能编程平台",
           },
-          { label: "智能导办一体机", href: "/product/knowledge-agent" },
-          { label: "办公智能体", href: "/product/office-agent" },
-          { label: "码多多", href: "/product/code-agent" },
-        ],
-      },
-      {
-        label: "核心模块",
-        items: [
-          { label: "AI Agent Studio", href: "/product/agent-studio" },
-          { label: "Knowledge Base", href: "/product/knowledge-base" },
-          { label: "Workflow", href: "/product/workflow" },
-          { label: "Model Gateway", href: "/product/model-gateway" },
-          { label: "Agent Runtime", href: "/product/agent-runtime" },
-          { label: "Observability", href: "/product/observability" },
-        ],
-      },
-      {
-        label: "版本",
-        items: [
-          { label: "版本列表", href: "/releases" },
-          { label: "Release Note", href: "/releases#release-notes" },
-          { label: "Roadmap", href: "/roadmap" },
+          {
+            label: "AIPPT",
+            href: "/product/aippt",
+            description: "智能演示文稿生成",
+          },
+          {
+            label: "AISHREK",
+            href: "/product/aishrek",
+            description: "AI 机械设计",
+          },
         ],
       },
     ],
@@ -50,276 +91,139 @@ export const portalNavigation: PortalNavigationItem[] = [
   {
     label: "解决方案",
     href: "/solutions",
+    description: "从业务问题进入 AI 解决方案。",
     children: [
       {
-        label: "场景方案",
-        items: [
-          { label: "智能办公", href: "/solutions#office" },
-          { label: "行业知识问答", href: "/solutions#knowledge" },
-          { label: "视觉检索", href: "/solutions#vision" },
-        ],
-      },
-      {
-        label: "平台方案",
-        items: [
-          { label: "企业智能体开发", href: "/solutions#agent" },
-          { label: "数据分析与决策", href: "/solutions#data" },
-          { label: "国产化私有部署", href: "/solutions#private" },
-        ],
-      },
-    ],
-  },
-  {
-    label: "文档",
-    href: "/docs",
-    children: [
-      {
-        label: "落地文档",
+        label: "通用场景方案",
         items: [
           {
-            label: "快速开始",
-            href: "/docs/quick-start",
-            status: "live",
+            label: "基础设施与模型工程",
+            href: "/solutions#solution-common-scenes",
           },
           {
-            label: "部署指南",
-            href: "/docs/deployment",
-            status: "live",
+            label: "知识与数据智能",
+            href: "/solutions#solution-common-scenes",
           },
           {
-            label: "升级手册",
-            href: "/docs/upgrade",
-            status: "live",
-          },
-          {
-            label: "运维手册",
-            href: "/docs/operations",
-            status: "live",
+            label: "智能体与业务应用",
+            href: "/solutions#solution-common-scenes",
           },
         ],
       },
       {
-        label: "开发与适配",
+        label: "行业解决方案",
         items: [
-          { label: "API 文档", href: "/docs/api", status: "live" },
-          { label: "功能手册", href: "/docs#features", status: "scaffold" },
+          { label: "政务", href: "/solutions#solution-industries-overview" },
+          { label: "金融", href: "/solutions#solution-industries-overview" },
+          { label: "医疗", href: "/solutions#solution-industries-overview" },
           {
-            label: "GPU / 硬件适配",
-            href: "/docs/hardware",
-            status: "live",
+            label: "企业智能化",
+            href: "/solutions#solution-industries-overview",
           },
+        ],
+      },
+      {
+        label: "实践案例",
+        items: [
+          { label: "按行业查看", href: "/solutions#solution-cases-overview" },
           {
-            label: "常见问题 FAQ",
-            href: "/docs/faq",
-            status: "live",
+            label: "按业务场景查看",
+            href: "/solutions#solution-cases-overview",
           },
         ],
       },
     ],
   },
   {
-    label: "下载",
+    label: "下载中心",
     href: "/downloads",
-    status: "placeholder",
+    description: "了解产品、获取资料、安装体验。",
     children: [
       {
-        label: "安装与镜像",
+        label: "产品资料",
         items: [
           {
-            label: "最新版本",
-            href: "/downloads#latest",
-            status: "placeholder",
-          },
-          {
-            label: "Linux / Windows 安装包",
-            href: "/downloads#desktop",
-            status: "placeholder",
-          },
-          {
-            label: "ARM / x86 安装包",
-            href: "/downloads#architecture",
-            status: "placeholder",
-          },
-          {
-            label: "Docker / Helm",
-            href: "/downloads#containers",
-            status: "placeholder",
+            label:
+              "快速了解元启平台与码多多 2.0 的产品定位、核心能力与产品价值。",
+            href: "/downloads#dl-materials",
           },
         ],
       },
       {
-        label: "离线与工具",
+        label: "软件资源下载",
         items: [
           {
-            label: "离线安装包",
-            href: "/downloads#offline",
-            status: "placeholder",
+            label: "获取码多多 2.0 客户端安装包与版本信息，进入安装体验。",
+            href: "/downloads#dl-software",
           },
+        ],
+      },
+      {
+        label: "产品部署文档",
+        items: [
           {
-            label: "SDK 工具包",
-            href: "/downloads#sdk",
-            status: "placeholder",
+            label: "安装部署与使用说明，降低产品体验门槛。",
+            href: "/downloads#dl-deployment",
+          },
+        ],
+      },
+      {
+        label: "白皮书与技术资料",
+        items: [
+          {
+            label: "企业 AI、大模型与智能体相关专业资料，增强产品可信度。",
+            href: "/downloads#dl-whitepapers",
           },
         ],
       },
     ],
   },
   {
-    label: "OpenLab",
-    href: "/openlab",
-    status: "placeholder",
+    label: "合作伙伴",
+    href: "/partners",
+    description: "多元合作模式、清晰分润政策与全链路赋能。",
     children: [
       {
-        label: "试用授权",
+        label: "商业模式",
+        items: [
+          { label: "合作模式", href: "/partners?view=business#pb-modes" },
+          { label: "分润政策", href: "/partners?view=business#pb-tiers" },
+          { label: "伙伴权益", href: "/partners?view=business#pb-benefits" },
+        ],
+      },
+      {
+        label: "伙伴政策",
         items: [
           {
-            label: "试用申请",
-            href: "/openlab#trial",
-            status: "placeholder",
+            label: "伙伴类型与准入条件",
+            href: "/partners?view=policy#pp-types",
           },
+          { label: "认证体系", href: "/partners?view=policy#pp-cert" },
+          { label: "支持资源", href: "/partners?view=policy#pp-resources" },
+        ],
+      },
+      {
+        label: "伙伴培训",
+        items: [
+          { label: "培训体系", href: "/partners?view=training#pt-system" },
+          { label: "课程体系", href: "/partners?view=training#pt-courses" },
+          { label: "认证路径", href: "/partners?view=training#pt-path" },
+          { label: "学习资源", href: "/partners?view=training#pt-resources" },
+        ],
+      },
+      {
+        label: "合作对接",
+        items: [
+          { label: "成为合作伙伴", href: "/partners?view=become#pbc-hero" },
           {
-            label: "实名认证",
-            href: "/openlab#identity",
-            status: "placeholder",
-          },
-          {
-            label: "License 获取指引",
-            href: "/openlab#license-guide",
-            status: "placeholder",
+            label: "联系生态负责人",
+            href: "/partners?view=overview#partner-contact",
           },
         ],
       },
     ],
   },
-  {
-    label: "兼容性",
-    href: "/compatibility",
-    children: [
-      {
-        label: "环境适配",
-        items: [
-          {
-            label: "硬件配置要求",
-            href: "/compatibility#hardware",
-            status: "scaffold",
-          },
-          {
-            label: "GPU 适配列表",
-            href: "/compatibility#gpu",
-            status: "scaffold",
-          },
-          {
-            label: "操作系统兼容",
-            href: "/compatibility#os",
-            status: "scaffold",
-          },
-          {
-            label: "浏览器兼容",
-            href: "/compatibility#browser",
-            status: "scaffold",
-          },
-          {
-            label: "依赖组件兼容",
-            href: "/compatibility#dependencies",
-            status: "scaffold",
-          },
-        ],
-      },
-    ],
-  },
-  {
-    label: "Marketplace",
-    href: "/marketplace",
-    children: [
-      {
-        label: "资源类型",
-        items: [
-          {
-            label: "Agent 应用",
-            href: "/marketplace#agent",
-            status: "scaffold",
-          },
-          {
-            label: "Workflow 工作流",
-            href: "/marketplace#workflow",
-            status: "scaffold",
-          },
-          {
-            label: "插件工具",
-            href: "/marketplace#plugin",
-            status: "scaffold",
-          },
-          {
-            label: "Prompt 模板",
-            href: "/marketplace#prompt",
-            status: "scaffold",
-          },
-          {
-            label: "知识库模板",
-            href: "/marketplace#knowledge-base",
-            status: "scaffold",
-          },
-        ],
-      },
-    ],
-  },
-  {
-    label: "支持",
-    href: "/support",
-    children: [
-      {
-        label: "服务入口",
-        items: [
-          { label: "帮助中心", href: "/help" },
-          {
-            label: "工单提交",
-            href: "/support#tickets",
-            status: "placeholder",
-          },
-          { label: "Bug 反馈", href: "/support#bug" },
-          {
-            label: "社群支持",
-            href: "/support#community",
-            status: "placeholder",
-          },
-        ],
-      },
-      {
-        label: "商务服务",
-        items: [
-          { label: "价格计算", href: "/pricing" },
-          { label: "商务咨询", href: "/contact" },
-        ],
-      },
-    ],
-  },
-  {
-    label: "资讯",
-    href: "/blog",
-    children: [
-      {
-        label: "内容分类",
-        items: [
-          {
-            label: "版本更新",
-            href: "/blog#releases",
-            status: "scaffold",
-          },
-          {
-            label: "技术教程",
-            href: "/blog#tutorial",
-            status: "scaffold",
-          },
-          { label: "行业案例", href: "/cases", status: "scaffold" },
-          {
-            label: "产品动态",
-            href: "/blog#product",
-            status: "scaffold",
-          },
-        ],
-      },
-    ],
-  },
+  { label: "价格与服务", href: "/pricing", children: [] },
 ];
 
 export const consoleNavigation: SidebarNavigationConfig = {
@@ -582,36 +486,32 @@ export const adminNavigation: SidebarNavigationConfig = {
 
 export const footerNavigation: NavigationSection[] = [
   {
-    label: "产品与版本",
+    label: "产品中心",
     items: [
       { label: "产品", href: "/product" },
-      { label: "版本列表", href: "/releases" },
-      { label: "Roadmap", href: "/roadmap" },
+      { label: "智能体中心", href: "/product/agents" },
+      { label: "模型中心", href: "/product/model" },
+      { label: "行业应用中心", href: "/product/applications" },
+      { label: "编程中心", href: "/product/coding" },
+      { label: "技能中心", href: "/product/skills" },
+      { label: "安全中心", href: "/product/governance" },
+      { label: "独立产品中心", href: "/product/standalone" },
     ],
   },
   {
-    label: "文档与部署",
+    label: "业务服务",
     items: [
-      { label: "文档", href: "/docs" },
-      { label: "部署指南", href: "/docs/deployment", status: "scaffold" },
-      { label: "兼容性", href: "/compatibility" },
+      { label: "解决方案", href: "/solutions" },
+      { label: "下载中心", href: "/downloads" },
+      { label: "合作伙伴", href: "/partners" },
+      { label: "价格与服务", href: "/pricing" },
     ],
   },
   {
-    label: "Marketplace 与资讯",
+    label: "联系与体验",
     items: [
-      { label: "Marketplace", href: "/marketplace" },
-      { label: "资讯", href: "/blog" },
-      { label: "客户案例", href: "/cases" },
-    ],
-  },
-  {
-    label: "支持与商务联系",
-    items: [
-      { label: "支持", href: "/support" },
-      { label: "帮助中心", href: "/help" },
-      { label: "价格计算", href: "/pricing" },
-      { label: "商务咨询", href: "/contact" },
+      { label: "联系我们", href: "/contact" },
+      { label: "申请体验", href: "/trial" },
     ],
   },
 ];
@@ -645,21 +545,9 @@ export function navigationAnchorsForPath(pathname: string): NavigationAnchor[] {
     const id = decodeURIComponent(url.hash.slice(1));
     if (!id) continue;
 
-    const anchor = { id, label: item.label, status: item.status };
-    const existing = anchorsById.get(id);
-
-    if (existing) {
-      if (
-        existing.label !== anchor.label ||
-        existing.status !== anchor.status
-      ) {
-        throw new Error(`Conflicting navigation anchor for ${pathname}#${id}`);
-      }
-
-      continue;
+    if (!anchorsById.has(id)) {
+      anchorsById.set(id, { id, label: item.label, status: item.status });
     }
-
-    anchorsById.set(id, anchor);
   }
 
   return [...anchorsById.values()];

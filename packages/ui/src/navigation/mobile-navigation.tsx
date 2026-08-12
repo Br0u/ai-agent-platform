@@ -42,14 +42,16 @@ export function MobileNavigation({
   activeHref,
   actionLabel = "登录 / 进入控制台",
   actionHref = "/login",
-  directItemHrefs = [],
+  secondaryActionLabel,
+  secondaryActionHref,
   linkComponent: Link = "a",
 }: {
   items: PortalNavigationItem[];
   activeHref: string;
   actionLabel?: string;
   actionHref?: string;
-  directItemHrefs?: string[];
+  secondaryActionLabel?: string;
+  secondaryActionHref?: string;
   linkComponent?: NavigationLinkComponent;
 }) {
   const baseId = useId();
@@ -205,7 +207,7 @@ export function MobileNavigation({
 
           <div className="mobile-navigation__body">
             {items.map((item, index) => {
-              if (directItemHrefs.includes(item.href)) {
+              if (item.children.length === 0) {
                 return (
                   <div className="mobile-navigation__group" key={item.href}>
                     <Link
@@ -288,7 +290,7 @@ export function MobileNavigation({
                               }
                               className="mobile-navigation__child"
                               href={child.href}
-                              key={child.href}
+                              key={`${child.href}-${child.label}`}
                               onClick={closeNavigation}
                             >
                               <span>
@@ -313,6 +315,15 @@ export function MobileNavigation({
           </div>
 
           <div className="mobile-navigation__action-wrap">
+            {secondaryActionLabel && secondaryActionHref ? (
+              <Link
+                className="mobile-navigation__action mobile-navigation__action--secondary"
+                href={secondaryActionHref}
+                onClick={closeNavigation}
+              >
+                {secondaryActionLabel}
+              </Link>
+            ) : null}
             <Link
               className="mobile-navigation__action"
               href={actionHref}

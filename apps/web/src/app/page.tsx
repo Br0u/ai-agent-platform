@@ -1,10 +1,8 @@
 import {
-  EnterpriseProof,
-  HeroEvidence,
-  PlatformOverview,
-  PrivateDeploymentClose,
-  ResourceTable,
-  SolutionIndex,
+  AgentCapabilityGrid,
+  HomeContactSection,
+  HomeHero,
+  HomeSolutionGrid,
 } from "../components/home-sections";
 import { HomeRevealObserver } from "../components/home-reveal";
 
@@ -16,12 +14,10 @@ export default function HomePage() {
         <span />
         <span />
       </div>
-      <HeroEvidence />
-      <PlatformOverview />
-      <EnterpriseProof />
-      <SolutionIndex />
-      <ResourceTable />
-      <PrivateDeploymentClose />
+      <HomeHero />
+      <AgentCapabilityGrid />
+      <HomeSolutionGrid />
+      <HomeContactSection />
       <HomeRevealObserver />
     </main>
   );
