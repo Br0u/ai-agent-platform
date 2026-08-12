@@ -140,80 +140,115 @@ describe("AssistantInputPolicyPanel", () => {
     expect(document.body.textContent).not.toContain("raw private detail");
   });
 
-  it.each(["invalid response", "lost response"])(
-    "reconciles an unknown PUT outcome after %s and preserves the editor",
-    async (failure) => {
-      const fetchMock = vi.fn();
-      if (failure === "invalid response") {
-        fetchMock.mockResolvedValueOnce(
-          Response.json({
-            version: "1",
-            revision: 4,
-            termCount: 2,
-            updatedAt: "2026-08-12T02:03:04.000Z",
-            canConfigure: false,
-          }),
-        );
-      } else {
-        fetchMock.mockRejectedValueOnce(new Error("connection lost"));
-      }
-      fetchMock.mockResolvedValueOnce(
-        Response.json(
-          snapshot({
-            revision: 4,
-            terms: ["server-confirmed", "敏感"],
-            updatedAt: "2026-08-12T02:03:04.000Z",
-          }),
-        ),
-      );
-      fetchMock.mockResolvedValueOnce(
-        Response.json(
-          snapshot({
-            revision: 5,
-            termCount: 1,
-            terms: ["保留这次编辑"],
-            updatedAt: "2026-08-12T03:04:05.000Z",
-          }),
-        ),
-      );
-      vi.stubGlobal("fetch", fetchMock);
-      render(<AssistantInputPolicyPanel initialSnapshot={snapshot()} />);
-      const textarea = screen.getByLabelText("屏蔽词（一行一个）");
-      fireEvent.change(textarea, { target: { value: "保留这次编辑" } });
-
-      fireEvent.click(screen.getByRole("button", { name: "保存并立即生效" }));
-
-      expect(
-        await screen.findByText(
-          "已核对服务器最新版本，当前编辑已保留，可以重新保存。",
-        ),
-      ).toBeVisible();
-      expect(fetchMock).toHaveBeenNthCalledWith(
-        2,
-        "/api/v1/admin/assistant/input-policy",
-        { method: "GET", cache: "no-store" },
-      );
-      expect(textarea).toHaveValue("保留这次编辑");
-      expect(screen.getByText("当前版本 4")).toBeVisible();
-      expect(
-        screen.getByRole("button", { name: "保存并立即生效" }),
-      ).toBeEnabled();
-
-      fireEvent.click(screen.getByRole("button", { name: "保存并立即生效" }));
-      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-      expect(fetchMock).toHaveBeenNthCalledWith(
-        3,
-        "/api/v1/admin/assistant/input-policy",
-        expect.objectContaining({
-          method: "PUT",
-          body: JSON.stringify({
-            source: "保留这次编辑",
-            expectedRevision: 4,
-          }),
+  it("adopts matching terms as a committed unknown outcome", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          version: "1",
+          revision: 4,
+          termCount: 1,
+          updatedAt: "2026-08-12T02:03:04.000Z",
+          canConfigure: false,
         }),
+      )
+      .mockResolvedValueOnce(
+        Response.json(
+          snapshot({
+            revision: 4,
+            termCount: 1,
+            terms: ["example"],
+            updatedAt: "2026-08-12T02:03:04.000Z",
+          }),
+        ),
       );
-    },
-  );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistantInputPolicyPanel initialSnapshot={snapshot()} />);
+    const textarea = screen.getByLabelText("屏蔽词（一行一个）");
+    fireEvent.change(textarea, { target: { value: " Ｅxample \nexample" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存并立即生效" }));
+
+    expect(await screen.findByText("内容规则已保存。")).toBeVisible();
+    expect(screen.getByText("当前版本 4")).toBeVisible();
+    expect(textarea).toHaveValue("example");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the original revision when reconciliation shows no commit", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("connection lost"))
+      .mockResolvedValueOnce(Response.json(snapshot()))
+      .mockResolvedValueOnce(
+        Response.json(
+          snapshot({ revision: 4, termCount: 1, terms: ["保留这次编辑"] }),
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistantInputPolicyPanel initialSnapshot={snapshot()} />);
+    const textarea = screen.getByLabelText("屏蔽词（一行一个）");
+    fireEvent.change(textarea, { target: { value: "保留这次编辑" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存并立即生效" }));
+
+    expect(
+      await screen.findByText(
+        "服务器未保存本次修改，当前编辑已保留，可以重试。",
+      ),
+    ).toBeVisible();
+    expect(textarea).toHaveValue("保留这次编辑");
+    expect(screen.getByText("当前版本 3")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "保存并立即生效" }),
+    ).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存并立即生效" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/v1/admin/assistant/input-policy",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          source: "保留这次编辑",
+          expectedRevision: 3,
+        }),
+      }),
+    );
+  });
+
+  it("locks saving when an advanced snapshot contains different terms", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("connection lost"))
+      .mockResolvedValueOnce(
+        Response.json(
+          snapshot({
+            revision: 4,
+            termCount: 1,
+            terms: ["他人修改"],
+            updatedAt: "2026-08-12T02:03:04.000Z",
+          }),
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistantInputPolicyPanel initialSnapshot={snapshot()} />);
+    const textarea = screen.getByLabelText("屏蔽词（一行一个）");
+    fireEvent.change(textarea, { target: { value: "保留这次编辑" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存并立即生效" }));
+
+    expect(
+      await screen.findByText(
+        "检测到其他管理员已更新规则，当前编辑已保留；请刷新页面并手动合并后再保存。",
+      ),
+    ).toBeVisible();
+    expect(textarea).toHaveValue("保留这次编辑");
+    expect(screen.getByText("当前版本 3")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "保存并立即生效" }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "保存并立即生效" }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 
   it("disables saving when an unknown outcome cannot be reconciled", async () => {
     const fetchMock = vi

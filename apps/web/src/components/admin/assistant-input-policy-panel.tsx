@@ -26,6 +26,13 @@ function isConfigurableSnapshot(
   );
 }
 
+function sameTerms(left: readonly string[], right: readonly string[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((term, index) => term === right[index])
+  );
+}
+
 export function AssistantInputPolicyPanel({
   initialSnapshot,
 }: {
@@ -45,7 +52,10 @@ export function AssistantInputPolicyPanel({
     }
   }, [source]);
 
-  const reconcileUnknownOutcome = async () => {
+  const reconcileUnknownOutcome = async (
+    confirmedRevision: number,
+    submittedTerms: readonly string[],
+  ) => {
     try {
       const response = await fetch(ENDPOINT, {
         method: "GET",
@@ -55,9 +65,20 @@ export function AssistantInputPolicyPanel({
       if (!response.ok || !isConfigurableSnapshot(body)) {
         throw new Error("Policy reconciliation failed");
       }
-      setSnapshot(body);
-      setRefreshRequired(false);
-      setAnnouncement("已核对服务器最新版本，当前编辑已保留，可以重新保存。");
+      if (sameTerms(body.terms, submittedTerms)) {
+        setSnapshot(body);
+        setSource(body.terms.join("\n"));
+        setRefreshRequired(false);
+        setAnnouncement("内容规则已保存。");
+      } else if (body.revision === confirmedRevision) {
+        setRefreshRequired(false);
+        setAnnouncement("服务器未保存本次修改，当前编辑已保留，可以重试。");
+      } else {
+        setRefreshRequired(true);
+        setAnnouncement(
+          "检测到其他管理员已更新规则，当前编辑已保留；请刷新页面并手动合并后再保存。",
+        );
+      }
     } catch {
       setRefreshRequired(true);
       setAnnouncement("无法确认保存结果，请刷新页面后再继续。");
@@ -76,6 +97,8 @@ export function AssistantInputPolicyPanel({
     }
     setSaving(true);
     setAnnouncement("");
+    const confirmedRevision = snapshot.revision;
+    const submittedTerms = normalized.terms;
     try {
       const response = await fetch(ENDPOINT, {
         method: "PUT",
@@ -94,12 +117,12 @@ export function AssistantInputPolicyPanel({
         setRefreshRequired(false);
         setAnnouncement("内容规则已保存。");
       } else if (response.ok) {
-        await reconcileUnknownOutcome();
+        await reconcileUnknownOutcome(confirmedRevision, submittedTerms);
       } else {
         setAnnouncement("内容规则保存失败，请稍后重试。");
       }
     } catch {
-      await reconcileUnknownOutcome();
+      await reconcileUnknownOutcome(confirmedRevision, submittedTerms);
     } finally {
       setSaving(false);
     }
