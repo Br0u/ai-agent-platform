@@ -23,11 +23,7 @@ import {
 import { placeholderAssistantProvider } from "@/server/assistant/placeholder-assistant-provider";
 import { getAssistantRuntime } from "@/server/assistant/assistant-runtime";
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
-import {
-  type AnonymousSessionManager,
-  type AssistantPublicSession,
-} from "@/server/assistant/anonymous-session";
-import { type AssistantActor } from "@/server/assistant/assistant-actor";
+import { resolveAssistantActor } from "@/server/assistant/assistant-actor";
 import {
   AssistantRateLimitExceededError,
   type AssistantRateLimitInput,
@@ -44,13 +40,6 @@ import {
   type AssistantInputPolicySnapshot,
 } from "@/server/assistant/assistant-input-policy";
 
-export type AssistantChatSessionResolution = {
-  publicSession: AssistantPublicSession;
-  internalSessionId: string;
-  actor: AssistantActor;
-  setCookie?: string;
-};
-
 interface AssistantChatHandlerDependencies {
   provider?: AssistantProvider;
   resolveProvider?: () => Promise<{
@@ -61,26 +50,13 @@ interface AssistantChatHandlerDependencies {
   clock: () => number;
   requestIdFactory: () => string;
   messageIdFactory: () => string;
-  resolveSession: (request: Request) => Promise<AssistantChatSessionResolution>;
+  resolveActor: typeof resolveAssistantActor;
   rateLimiter: AssistantRateLimiter;
   loadInputPolicy: () => Promise<AssistantInputPolicySnapshot>;
   pageResolver: Pick<PublicPageContextResolver, "load">;
   resolveTrustedClientIp: (
     request: Request,
   ) => ReturnType<typeof resolveTrustedClientIp>;
-}
-
-export function createAssistantChatSessionResolver(
-  manager: AnonymousSessionManager,
-  actorResolver: (request: Request) => Promise<AssistantActor>,
-) {
-  return async function resolveSession(
-    request: Request,
-  ): Promise<AssistantChatSessionResolution> {
-    const actor = await actorResolver(request);
-    const session = manager.resolve(request.headers, actor);
-    return { ...session, actor };
-  };
 }
 
 function loadAssistantInputPolicy() {
@@ -93,7 +69,7 @@ const defaultDependencies: AssistantChatHandlerDependencies = {
   clock: () => performance.now(),
   requestIdFactory: () => crypto.randomUUID(),
   messageIdFactory: () => crypto.randomUUID(),
-  resolveSession: (request) => getAssistantRuntime().resolveSession(request),
+  resolveActor: resolveAssistantActor,
   rateLimiter: {
     consume: (input) => getAssistantRuntime().rateLimiter.consume(input),
   },
@@ -107,11 +83,11 @@ const defaultDependencies: AssistantChatHandlerDependencies = {
 };
 
 function rateLimitInput(
-  session: AssistantChatSessionResolution,
+  actor: Awaited<ReturnType<typeof resolveAssistantActor>>,
   client: { mode: "trusted"; ipAddress: string } | { mode: "direct_global" },
 ): AssistantRateLimitInput {
-  return session.actor.kind === "customer"
-    ? { scope: "customer", actorId: session.actor.userId }
+  return actor.kind === "customer"
+    ? { scope: "customer", actorId: actor.userId }
     : client.mode === "trusted"
       ? { scope: "anonymous", ipAddress: client.ipAddress }
       : { scope: "anonymous", global: true };
@@ -130,7 +106,6 @@ export function createAssistantChatHandler(
     );
     let body: AssistantSuccessResponse | AssistantErrorResponse;
     let statusCode: 200 | 400 | 422 | 429 | 503;
-    let session: AssistantChatSessionResolution | undefined;
     let retryAfterSeconds: number | undefined;
 
     const input = await readBoundedJson(
@@ -146,15 +121,12 @@ export function createAssistantChatHandler(
       statusCode = 400;
     } else {
       try {
-        session = await dependencies.resolveSession(request);
-        const resolvedSession = session;
+        const actor = await dependencies.resolveActor(request);
         const client = dependencies.resolveTrustedClientIp(request);
         if (client.mode === "invalid_proxy") {
           throw new Error("Assistant proxy is misconfigured");
         }
-        await dependencies.rateLimiter.consume(
-          rateLimitInput(resolvedSession, client),
-        );
+        await dependencies.rateLimiter.consume(rateLimitInput(actor, client));
         const policy = await dependencies.loadInputPolicy();
         if (
           matchesAssistantInputPolicy(
@@ -315,9 +287,6 @@ export function createAssistantChatHandler(
               "Cache-Control": "no-store, no-transform",
               "Content-Type": `${ASSISTANT_STREAM_MEDIA_TYPE}; charset=utf-8`,
               "X-Accel-Buffering": "no",
-              ...(resolvedSession.setCookie
-                ? { "Set-Cookie": resolvedSession.setCookie }
-                : {}),
             },
           });
         }
@@ -335,7 +304,6 @@ export function createAssistantChatHandler(
           version: "1",
           requestId,
           mode: selected.mode,
-          session: session.publicSession,
           message: {
             id: messageId,
             role: "assistant",
@@ -370,7 +338,6 @@ export function createAssistantChatHandler(
         status: statusCode,
         headers: {
           "Cache-Control": "no-store",
-          ...(session?.setCookie ? { "Set-Cookie": session.setCookie } : {}),
           ...(retryAfterSeconds !== undefined
             ? { "Retry-After": String(retryAfterSeconds) }
             : {}),
@@ -384,7 +351,6 @@ export function createAssistantChatHandler(
         status: statusCode,
         headers: {
           "Cache-Control": "no-store",
-          ...(session?.setCookie ? { "Set-Cookie": session.setCookie } : {}),
         },
       });
     }

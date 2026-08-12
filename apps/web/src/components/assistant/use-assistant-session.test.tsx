@@ -740,8 +740,6 @@ describe("useAssistantSession", () => {
     const { result } = renderHook(() => useAssistantSession("/assistant"));
 
     await act(() => result.current.submit("会话何时过期"));
-
-    expect(result.current).not.toHaveProperty("sessionExpiresAt");
   });
 
   it("shows a rate-limit message and never automatically retries POST", async () => {

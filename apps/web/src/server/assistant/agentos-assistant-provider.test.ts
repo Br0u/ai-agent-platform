@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -28,7 +29,6 @@ function fixture(
           yield { type: "answer_delta" as const, content: "真实模型回答" };
         },
     ),
-    deleteSession: vi.fn(async () => undefined),
   };
   const circuit: AgentOSExecutionCircuit = {
     execute: vi.fn((operation) => operation()),
@@ -66,6 +66,23 @@ afterEach(() => {
 });
 
 describe("AgentOSAssistantProvider", () => {
+  it("contains no deprecated persistent-session cleanup compatibility", () => {
+    const source = readFileSync(
+      "src/server/assistant/agentos-assistant-provider.ts",
+      "utf8",
+    );
+
+    expect(source).not.toContain(["AgentOS", "Cleanup", "Recorder"].join(""));
+    expect(source).not.toContain(
+      ["persistent", "session", "cleanup", "failed"].join("_"),
+    );
+    expect(source).not.toContain(
+      ["Assistant session", "cleanup failed"].join(" "),
+    );
+    expect(source).not.toContain(["Cookie", "clearing"].join("-"));
+    expect(source).toContain("defaultAgentOSRunFailureRecorder");
+  });
+
   it("records only the safe run failure code and diagnostic before circuit sanitization", async () => {
     const runError = new AgentOSRunClientError(
       "invalid_response",
@@ -122,7 +139,6 @@ describe("AgentOSAssistantProvider", () => {
     expect(
       vi.mocked(runClient.runAgentStream).mock.calls[0]?.[0].message,
     ).toContain("用户问题：\n不要改写我的问题 ✅");
-    expect(runClient.deleteSession).not.toHaveBeenCalled();
   });
 
   it("runs without generating or cleaning a session when no signal is supplied", async () => {
@@ -138,7 +154,6 @@ describe("AgentOSAssistantProvider", () => {
     expect(runClient.runAgentStream).toHaveBeenCalledExactlyOnceWith({
       message: expect.stringContaining("未提供可验证的当前页面正文"),
     });
-    expect(runClient.deleteSession).not.toHaveBeenCalled();
   });
 
   it("filters reasoning tags and validates one owned navigation action", async () => {

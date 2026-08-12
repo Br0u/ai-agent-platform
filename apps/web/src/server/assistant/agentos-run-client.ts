@@ -12,12 +12,10 @@ import {
 import { ASSISTANT_CONTENT_MAX_CODE_POINTS } from "@/features/assistant/assistant-contract";
 
 export const AGENTOS_RUN_MAX_RESPONSE_BYTES = 4 * 1_024 * 1_024;
-export const AGENTOS_SESSION_DELETE_TIMEOUT_MS = 3_000;
 
 const DEFAULT_RUN_TIMEOUT_MS = 55_000;
 const MIN_RUN_TIMEOUT_MS = 51_000;
 const MAX_RUN_TIMEOUT_MS = 55_000;
-const SESSION_DELETE_MAX_RESPONSE_BYTES = 16 * 1_024;
 const NAVIGATION_MARKER_PREFIX = "aap.navigate.v1:";
 
 export type AgentOSRunEnvironment = AgentOSTransportEnvironment & {
@@ -45,7 +43,6 @@ export type AgentOSRunEvent =
 export type AgentOSRunClient = {
   runAgent(input: AgentOSRunInput): Promise<{ content: string }>;
   runAgentStream(input: AgentOSRunInput): AsyncIterable<AgentOSRunEvent>;
-  deleteSession(sessionId: string): Promise<void>;
 };
 
 export type AgentOSRunClientErrorCode =
@@ -340,23 +337,6 @@ export function createAgentOSRunClient(options: {
           throw new AgentOSRunClientError("invalid_response");
         }
         return { content: body.content };
-      } catch (error) {
-        throw sanitized(error);
-      }
-    },
-
-    async deleteSession(sessionId) {
-      if (sessionId === "" || sessionId === "." || sessionId === "..") {
-        throw new AgentOSRunClientError("invalid_response");
-      }
-      try {
-        await transport.request({
-          method: "DELETE",
-          path: `/sessions/${encodeURIComponent(sessionId)}`,
-          acceptedStatuses: [200, 204, 404],
-          timeoutMs: AGENTOS_SESSION_DELETE_TIMEOUT_MS,
-          maxResponseBytes: SESSION_DELETE_MAX_RESPONSE_BYTES,
-        });
       } catch (error) {
         throw sanitized(error);
       }

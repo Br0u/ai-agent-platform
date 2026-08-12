@@ -60,7 +60,6 @@ migrator_database_url
 runtime_database_url
 better_auth_secret
 os_security_key
-assistant_session_secret
 assistant_rate_limit_secret
 model_api_key
 agent_config_control_key
@@ -453,7 +452,6 @@ tighten_initdb_role_secret_permissions() {
 
 backup_encryption_key=$(secret)
 os_security_key=$(secret)
-assistant_session_secret=$(secret)
 assistant_rate_limit_secret=$(secret)
 model_api_key=$(secret)
 agent_config_control_key=$(secret)
@@ -470,7 +468,6 @@ materialize_secret MIGRATOR_DATABASE_URL_FILE migrator_database_url "$MIGRATOR_D
 materialize_secret RUNTIME_DATABASE_URL_FILE runtime_database_url "$RUNTIME_DATABASE_URL"
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECRET"
 materialize_secret OS_SECURITY_KEY_FILE os_security_key "$os_security_key"
-materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$assistant_session_secret"
 materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret "$assistant_rate_limit_secret"
 materialize_secret MODEL_API_KEY_FILE model_api_key "$model_api_key"
 materialize_secret AGENT_CONFIG_CONTROL_KEY_FILE agent_config_control_key "$agent_config_control_key"

@@ -16,29 +16,6 @@ import {
   type AgentOSRunDiagnostic,
 } from "./agentos-run-client";
 
-// Kept until the deprecated DELETE session route is removed.
-export type AgentOSCleanupFailureEvent = {
-  category: "persistent_session_cleanup_failed";
-  count: number;
-};
-
-export type AgentOSCleanupRecorder = (
-  event: AgentOSCleanupFailureEvent,
-) => void;
-
-export const defaultAgentOSCleanupRecorder: AgentOSCleanupRecorder = (
-  event,
-) => {
-  try {
-    console.warn("Assistant session cleanup failed", {
-      category: event.category,
-      count: event.count,
-    });
-  } catch {
-    // Observability must never replace the Cookie-clearing response.
-  }
-};
-
 export type AgentOSRunFailureEvent = {
   code: AgentOSRunClientErrorCode | "unexpected";
   diagnostic: AgentOSRunDiagnostic | null;

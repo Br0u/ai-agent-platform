@@ -39,8 +39,6 @@ export default defineConfig({
           "node -e \"const fs=require('node:fs'); for (const [source,target] of [['.next/static','.next/standalone/apps/web/.next/static'],['public','.next/standalone/apps/web/public']]) { fs.rmSync(target,{recursive:true,force:true}); fs.cpSync(source,target,{recursive:true}); }\" && node .next/standalone/apps/web/server.js",
         env: {
           ASSISTANT_PUBLIC_ORIGIN: baseURL,
-          ASSISTANT_SESSION_SECRET:
-            "playwright-only-session-secret-0123456789abcdef",
           HOSTNAME: "127.0.0.1",
           PORT: new URL(baseURL).port,
         },

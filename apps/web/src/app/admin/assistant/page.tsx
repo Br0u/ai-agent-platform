@@ -1,4 +1,3 @@
-import { loadAdminAssistantSessions } from "@/app/api/v1/admin/assistant/sessions/handler";
 import { loadAdminAssistantStatus } from "@/app/api/v1/admin/assistant/status/handler";
 import { loadAdminModelConfigSnapshot } from "@/app/api/v1/admin/assistant/model-configs/handler";
 import { loadAdminInputPolicySnapshot } from "@/app/api/v1/admin/assistant/input-policy/handler";
@@ -6,10 +5,7 @@ import { createAdminSkillListHandler } from "@/app/api/v1/admin/assistant/skills
 import { AssistantAdminPage } from "@/components/admin/assistant-admin-page";
 import type { AdminSkillRegistrySnapshot } from "@/components/admin/assistant-skill-registry-panel";
 import { metadataForRegisteredRoute } from "@/components/route-scaffold/registered-route-page";
-import type {
-  AdminAssistantSessionsSnapshot,
-  AdminAssistantStatusSnapshot,
-} from "@/features/assistant/admin-assistant-contract";
+import type { AdminAssistantStatusSnapshot } from "@/features/assistant/admin-assistant-contract";
 import {
   ADMIN_MODEL_PROVIDERS,
   type AdminModelConfigSnapshot,
@@ -180,15 +176,13 @@ export const metadata = metadataForRegisteredRoute(pathname);
 
 export default async function AdminAssistantPage() {
   const actor = await requirePermission("admin:assistant");
-  const [status, sessions, modelConfigs, inputPolicy, skillRegistry]: [
+  const [status, modelConfigs, inputPolicy, skillRegistry]: [
     AdminAssistantStatusSnapshot,
-    AdminAssistantSessionsSnapshot,
     AdminModelConfigSnapshot,
     AdminInputPolicySnapshot,
     LoadedSkillSnapshot,
   ] = await Promise.all([
     loadAdminAssistantStatus(),
-    loadAdminAssistantSessions(),
     loadAdminModelConfigSnapshot(actor).catch(() =>
       unavailableModelConfigSnapshot(actor.permissions),
     ),
@@ -201,7 +195,6 @@ export default async function AdminAssistantPage() {
       <AssistantAdminPage
         inputPolicy={inputPolicy}
         modelConfigs={modelConfigs}
-        sessions={sessions}
         skillCanRead={actor.permissions.includes("admin:assistant:skills")}
         skillPermissions={skillRegistry.permissions}
         skillSnapshot={skillRegistry.snapshot}

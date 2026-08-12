@@ -21,12 +21,11 @@ ASSISTANT_E2E_HTTP_PORT=18080 RUN_ASSISTANT_RUNTIME_E2E=true ./docs/testing/run-
 
 首次部署至少准备以下独立 `0600` 单行 Secret 文件：
 
-- `assistant_session_secret`、`assistant_rate_limit_secret`；
 - `agent_control_migrator_database_password`、`agent_control_database_password`；
 - `agent_control_migrator_database_url`、`agent_control_database_url`；
 - `model_config_encryption_key`、`agent_config_control_key`。
 
-它们必须位于仓库外或已忽略目录，不得进入 Compose 渲染输出、日志或 Git。AES 主密钥和内部控制 Key 不得与 `OS_SECURITY_KEY`、Better Auth、会话、限流或数据库密码复用。
+它们必须位于仓库外或已忽略目录，不得进入 Compose 渲染输出、日志或 Git。AES 主密钥和内部控制 Key 不得与 `OS_SECURITY_KEY`、Better Auth、限流或数据库密码复用。
 
 ## 自动验证范围
 
@@ -37,12 +36,12 @@ ASSISTANT_E2E_HTTP_PORT=18080 RUN_ASSISTANT_RUNTIME_E2E=true ./docs/testing/run-
 - AgentOS 和 dynamic-control 只注入验收镜像内的离线确定性模型，保留生产 verifier、鉴权、仓储、AES-GCM、Endpoint allowlist、活动指针、运行时槽和启动 reconciliation。验收 Agent 不连接 `model_egress`，并对任意 socket 外联 fail fast。
 - 六家 Provider 都通过 `/admin/assistant` 保存唯一夹具 Key。失败候选不替换旧活动模型；成功候选热切换时 Agent 容器不重启；主动重启后从动态活动指针恢复。
 - 验证普通管理员只读、当前 MFA 模型管理员可配置/查看、过期 MFA 跳转重新验证、revision 冲突、kill switch、bootstrap Key 不可查看，以及明文 Key 30 秒 DOM 清理。
-- 页面所有 `/api/v1/**` 响应，以及验收主动读取的 control/chat JSON 响应，都进入终态账本并默认 strict。只有精确的配置 list/save DTO 可显示对应末四位，只有精确 reveal 200 响应可显示对应完整 Key；会话 token、其他完整 Key 和独立末四位均不得出现。
+- 页面所有 `/api/v1/**` 响应，以及验收主动读取的 control/chat JSON 响应，都进入终态账本并默认 strict。只有精确的配置 list/save DTO 可显示对应末四位，只有精确 reveal 200 响应可显示对应完整 Key；其他完整 Key 和独立末四位均不得出现。助手聊天仅使用当前页面内存，不创建服务端会话。
 - Web 平台审计、Agent control event、浏览器控制台、HTTP 错误体、常驻容器日志和一次性任务 transcript 都不得包含完整 Key 或末四位。
 - Skill 卡片显示 Registry / Agent 运行时已接入；Knowledge、Tools/网页操作和本地算力卡片保持未接入，点击其禁用控件后请求数组必须严格为空。
 - 公开和 Admin 状态只暴露固定标识 `码多多（maduoduo）` 与安全能力字段，不泄漏内部 URL、提示词、凭据或供应商错误体。
-- 公开确定性运行和 Admin 确定性运行分别在请求前后直接查询 `agno.agno_sessions` 的有序 `session_id` 集合；集合或数量发生任何变化即失败，并打印各自的 `before` / `after` 数量。未认证 WebSocket 403、执行熔断和恢复仍使用真实 AgentOS 路径。
-- Skill 验收复用已上传并启用的 `deterministic-runtime`、`DeterministicSkillModel` 与现有 Compose/psql 生命周期。在 `@runtime-activate` 前取 session 数量，等待流中同时出现 `get_skill_reference`、参考文件 marker 和终态 `skill-tool-finished` 后再次计数；marker 缺失或数量不相等均失败。
+- 公开聊天响应必须精确不含服务端会话字段、不设置助手 Cookie；旧 public/Admin 会话端点必须返回 404。Admin 状态固定报告仅当前页面内存，未认证 WebSocket 403、执行熔断和恢复仍使用真实 AgentOS 路径。
+- Skill 验收复用已上传并启用的 `deterministic-runtime`、`DeterministicSkillModel` 与现有 Compose/psql 生命周期，等待流中同时出现 `get_skill_reference`、参考文件 marker 和终态 `skill-tool-finished`；marker 缺失即失败。
 - `web`、`agent`、`db` 不发布主机端口，`proxy` 是唯一入口；默认宿主端口为 `8080`，可通过 `ASSISTANT_E2E_HTTP_PORT` 覆盖。结束后再次断言无本项目容器、卷、网络、本地镜像、临时 Secret/pattern/transcript 和项目锁。
 
 ## 发布验收顺序

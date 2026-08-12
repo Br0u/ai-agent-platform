@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentOSClient } from "./agentos-client";
@@ -18,7 +19,6 @@ import {
 
 const VALID_ENVIRONMENT = {
   ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
-  ASSISTANT_SESSION_SECRET: "session-secret-0123456789abcdef0123456789",
   ASSISTANT_RATE_LIMIT_SECRET: "rate-secret-0123456789abcdef0123456789",
   ASSISTANT_PROVIDER_MODE: "placeholder",
   ASSISTANT_AGENTOS_READINESS_TTL_MS: "5000",
@@ -72,11 +72,33 @@ function runClient(): AgentOSRunClient {
       const result = await runAgent(request);
       yield { type: "answer_delta" as const, content: result.content };
     }),
-    deleteSession: vi.fn(async () => undefined),
   };
 }
 
 describe("assistant server runtime", () => {
+  it("never substitutes localhost for a missing production public origin", () => {
+    expect(() =>
+      createAssistantRuntime({
+        environment: {
+          ...VALID_ENVIRONMENT,
+          NODE_ENV: "production",
+          ASSISTANT_PUBLIC_ORIGIN: undefined,
+        },
+      }),
+    ).toThrow("ASSISTANT_PUBLIC_ORIGIN is required in production");
+  });
+
+  it("does not expose assistant session resolution or deletion", () => {
+    const source = readFileSync(
+      "src/server/assistant/assistant-runtime.ts",
+      "utf8",
+    );
+
+    expect(source).not.toContain(["resolve", "Session"].join(""));
+    expect(source).not.toContain(["delete", "Session"].join(""));
+    expect(source).not.toContain(["anonymous", "session"].join("-"));
+  });
+
   it.each([
     ["invalid provider mode", "ASSISTANT_PROVIDER_MODE", "raw-auto-mode"],
     ["invalid proxy mode", "TRUST_NGINX_PROXY", "raw-maybe-proxy"],
@@ -164,9 +186,6 @@ describe("assistant server runtime", () => {
     await expect(runtime.resolveProvider()).resolves.toMatchObject({
       mode: "placeholder",
     });
-    await expect(runtime.deleteSession("never-sent-remotely")).resolves.toBe(
-      undefined,
-    );
     expect(runtime.inspect()).toEqual({
       providerMode: "placeholder",
       persistence: "disabled",
@@ -279,17 +298,12 @@ describe("assistant server runtime", () => {
       },
       pageContext: null,
     });
-    expect(sharedRunClient.deleteSession).not.toHaveBeenCalled();
-    await runtime.deleteSession("shared-session");
-    expect(runtime.inspect().persistence).toBe("agentos");
+    expect(runtime.inspect().persistence).toBe("disabled");
 
     expect(createHealthClient).toHaveBeenCalledOnce();
     expect(createRunClient).toHaveBeenCalledOnce();
     expect(createRunClient.mock.calls[0]?.[0].settings.runTimeoutMs).toBe(
       51000,
-    );
-    expect(sharedRunClient.deleteSession).toHaveBeenCalledExactlyOnceWith(
-      "shared-session",
     );
   });
 
@@ -353,7 +367,7 @@ describe("assistant server runtime", () => {
 
       expect(runtime.inspect()).toEqual({
         providerMode: "agentos",
-        persistence: "unavailable",
+        persistence: "disabled",
         circuits: {
           readiness: { state: "closed", consecutiveFailures: 0 },
           execution: { state: "closed", consecutiveFailures: 0 },
@@ -508,7 +522,7 @@ describe("assistant server runtime", () => {
       readiness: { state: "closed", consecutiveFailures: 0 },
       execution: { state: "open", consecutiveFailures: 3 },
     });
-    expect(runtime.inspect().persistence).toBe("agentos");
+    expect(runtime.inspect().persistence).toBe("disabled");
     await expect(runtime.status()).resolves.toEqual({
       live: true,
       ready: false,
@@ -557,7 +571,7 @@ describe("assistant server runtime", () => {
       capability: "degraded",
       message: "助手基础服务暂不可用。",
     });
-    expect(runtime.inspect().persistence).toBe("agentos");
+    expect(runtime.inspect().persistence).toBe("disabled");
     expect(execute).not.toHaveBeenCalled();
   });
 

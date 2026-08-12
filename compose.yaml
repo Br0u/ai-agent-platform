@@ -452,7 +452,6 @@ services:
         BETTER_AUTH_SECRET=/run/secrets/better_auth_secret
         OS_SECURITY_KEY=/run/secrets/os_security_key
         AGENT_CONFIG_CONTROL_KEY=/run/secrets/agent_config_control_key
-        ASSISTANT_SESSION_SECRET=/run/secrets/assistant_session_secret
         ASSISTANT_RATE_LIMIT_SECRET=/run/secrets/assistant_rate_limit_secret
         SKILL_REGISTRY_CONTROL_KEY=/run/secrets/skill_registry_control_key
       SECRET_RUN_AS: node
@@ -474,7 +473,6 @@ services:
       - better_auth_secret
       - os_security_key
       - agent_config_control_key
-      - assistant_session_secret
       - assistant_rate_limit_secret
       - skill_registry_control_key
     volumes:
@@ -633,8 +631,6 @@ secrets:
     file: ${BETTER_AUTH_SECRET_FILE:-.secrets/better_auth_secret}
   os_security_key:
     file: ${OS_SECURITY_KEY_FILE:-.secrets/os_security_key}
-  assistant_session_secret:
-    file: ${ASSISTANT_SESSION_SECRET_FILE:-.secrets/assistant_session_secret}
   assistant_rate_limit_secret:
     file: ${ASSISTANT_RATE_LIMIT_SECRET_FILE:-.secrets/assistant_rate_limit_secret}
   model_api_key:

@@ -76,7 +76,7 @@ const SAFE_UNPROBED_READINESS: AssistantRuntimeReadinessStatus = {
 
 const SAFE_DEGRADED_INSPECTION: AssistantRuntimeInspection = {
   providerMode: "placeholder",
-  persistence: "unavailable",
+  persistence: "disabled",
   circuits: {
     readiness: { state: "closed", consecutiveFailures: 0 },
     execution: { state: "closed", consecutiveFailures: 0 },
@@ -352,6 +352,7 @@ function snapshot(
       capability: status.capability,
       selectedProvider,
       ...inspection,
+      persistence: "disabled",
       source: control.source,
       provider: control.provider,
       modelId: control.modelId,
@@ -377,12 +378,7 @@ function snapshot(
           ? model.configuration
           : "状态不可用",
       skills: "已接入",
-      sessionStorage:
-        inspection.persistence === "agentos"
-          ? "AgentOS 持久化已启用"
-          : inspection.persistence === "unavailable"
-            ? "状态不可用"
-            : "未启用",
+      pageMemory: "仅当前页面内存；刷新或离开后清空",
     },
     message:
       runtimeValid &&

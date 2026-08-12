@@ -54,7 +54,6 @@ export interface AssistantSuccessResponse {
   version: "1";
   requestId: string;
   mode: AssistantMode;
-  session: { temporary: true; expiresAt: string };
   message: AssistantResponseMessage;
   suggestedActions: AssistantSuggestedAction[];
 }
@@ -318,18 +317,12 @@ export function isAssistantSuccessResponse(
       "version",
       "requestId",
       "mode",
-      "session",
       "message",
       "suggestedActions",
     ]) ||
     input.version !== "1" ||
     !isAssistantRequestId(input.requestId) ||
     (input.mode !== "placeholder" && input.mode !== "agentos") ||
-    !isRecord(input.session) ||
-    !hasExactKeys(input.session, ["expiresAt", "temporary"]) ||
-    input.session.temporary !== true ||
-    typeof input.session.expiresAt !== "string" ||
-    !isCanonicalIsoDate(input.session.expiresAt) ||
     !isRecord(input.message) ||
     !hasExactKeys(input.message, ["id", "role", "content"]) ||
     !isAssistantMessageId(input.message.id) ||
@@ -399,13 +392,6 @@ export function isAssistantStreamEventData(
     hasExactKeys(input, ["type", "code", "message"]) &&
     input.code === "stream_interrupted" &&
     isNonBlankBoundedString(input.message, ASSISTANT_CONTENT_MAX_CODE_POINTS)
-  );
-}
-
-function isCanonicalIsoDate(value: string): boolean {
-  const timestamp = Date.parse(value);
-  return (
-    Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value
   );
 }
 

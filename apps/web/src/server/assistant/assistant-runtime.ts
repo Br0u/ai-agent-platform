@@ -22,14 +22,12 @@ import {
   resolveAgentOSRunSettings,
   type AgentOSRunClient,
 } from "./agentos-run-client";
-import { createAnonymousSessionManager } from "./anonymous-session";
-import { resolveAnonymousSessionSettings } from "./anonymous-session-config";
-import { resolveAssistantActor, type AssistantActor } from "./assistant-actor";
 import {
   resolveAssistantProviderSettings,
   selectAssistantProvider,
   type AssistantProviderMode,
 } from "./assistant-provider-selector";
+import { resolveAssistantPublicOrigin } from "./assistant-public-origin";
 import type { AssistantProvider } from "./assistant-provider";
 import {
   createDatabaseAssistantRateLimiter,
@@ -43,8 +41,8 @@ import {
 import { resolveTrustedClientIp } from "./trusted-client-ip";
 
 type AssistantRuntimeEnvironment = {
+  NODE_ENV?: string;
   ASSISTANT_PUBLIC_ORIGIN?: string;
-  ASSISTANT_SESSION_SECRET?: string;
   ASSISTANT_RATE_LIMIT_SECRET?: string;
   ASSISTANT_PROVIDER_MODE?: string;
   ASSISTANT_AGENTOS_READINESS_TTL_MS?: string;
@@ -61,8 +59,8 @@ function readRuntimeEnvironment(
   source: AssistantRuntimeEnvironment | NodeJS.ProcessEnv,
 ): AssistantRuntimeEnvironment {
   return {
+    NODE_ENV: source.NODE_ENV,
     ASSISTANT_PUBLIC_ORIGIN: source.ASSISTANT_PUBLIC_ORIGIN,
-    ASSISTANT_SESSION_SECRET: source.ASSISTANT_SESSION_SECRET,
     ASSISTANT_RATE_LIMIT_SECRET: source.ASSISTANT_RATE_LIMIT_SECRET,
     ASSISTANT_PROVIDER_MODE: source.ASSISTANT_PROVIDER_MODE,
     ASSISTANT_AGENTOS_READINESS_TTL_MS:
@@ -100,7 +98,7 @@ type SafeCircuitInspection = Pick<
 
 export type AssistantRuntimeInspection = {
   providerMode: AssistantProviderMode;
-  persistence: "disabled" | "agentos" | "unavailable";
+  persistence: "disabled";
   circuits: {
     readiness: SafeCircuitInspection;
     execution: SafeCircuitInspection;
@@ -110,13 +108,6 @@ export type AssistantRuntimeInspection = {
     probeTimeoutMs: number;
     failureThreshold: number;
   };
-};
-
-export type AssistantRuntimeSession = {
-  publicSession: { temporary: true; expiresAt: string };
-  internalSessionId: string;
-  actor: AssistantActor;
-  setCookie?: string;
 };
 
 export class AssistantRuntimeUnavailableError extends Error {
@@ -197,7 +188,6 @@ type RuntimeOptions = {
   environment?: AssistantRuntimeEnvironment;
   fetcher?: typeof fetch;
   createRateLimiter?: (secret: string | undefined) => AssistantRateLimiter;
-  resolveActor?: (request: Request) => Promise<AssistantActor>;
   createHealthClient?: typeof createAgentOSClient;
   createRunClient?: typeof createAgentOSRunClient;
   createExecutionCircuit?: typeof createAgentOSExecutionCircuit;
@@ -226,7 +216,7 @@ function uncomposedInspection(
 ): AssistantRuntimeInspection {
   return {
     providerMode,
-    persistence: providerMode === "agentos" ? "unavailable" : "disabled",
+    persistence: "disabled",
     circuits: {
       readiness: { ...CLOSED_CIRCUIT },
       execution: { ...CLOSED_CIRCUIT },
@@ -248,21 +238,11 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
       environment.ASSISTANT_PROVIDER_MODE ?? "placeholder",
   });
   const rateLimitSecret = environment.ASSISTANT_RATE_LIMIT_SECRET;
+  const publicOrigin = resolveAssistantPublicOrigin(environment);
   const trustNginxProxy = parseTrustNginxProxy(environment.TRUST_NGINX_PROXY);
-  const actorResolver = options.resolveActor ?? resolveAssistantActor;
-  let sessionManager:
-    | ReturnType<typeof createAnonymousSessionManager>
-    | undefined;
   let sharedRateLimiter: AssistantRateLimiter | undefined;
   let agentos: AgentOSComposition | undefined;
   let pageResolver: PublicPageContextResolver | undefined;
-
-  function getSessionManager() {
-    sessionManager ??= createAnonymousSessionManager({
-      settings: resolveAnonymousSessionSettings(environment),
-    });
-    return sessionManager;
-  }
 
   function getRateLimiter() {
     sharedRateLimiter ??=
@@ -275,9 +255,7 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
 
   function getPageResolver(): PublicPageContextResolver {
     pageResolver ??= createPublicPageContextResolver({
-      origin: new URL(
-        resolveAnonymousSessionSettings(environment).publicOrigin,
-      ),
+      origin: publicOrigin,
       fetch: options.fetcher ?? globalThis.fetch,
     });
     return pageResolver;
@@ -340,17 +318,6 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
       },
     } satisfies AssistantRateLimiter,
 
-    async resolveSession(request: Request): Promise<AssistantRuntimeSession> {
-      const actor = await actorResolver(request);
-      const session = getSessionManager().resolve(request.headers, actor);
-      return {
-        publicSession: session.publicSession,
-        internalSessionId: session.internalSessionId,
-        actor,
-        setCookie: session.setCookie,
-      };
-    },
-
     resolveTrustedClientIp(request: Request) {
       return resolveTrustedClientIp(request.headers, trustNginxProxy);
     },
@@ -397,7 +364,7 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
       }
       return {
         providerMode: "agentos",
-        persistence: "agentos",
+        persistence: "disabled",
         circuits: {
           readiness: safeInspection(composition.readiness.inspect()),
           execution: safeInspection(composition.execution.inspect()),
@@ -438,11 +405,6 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
         throw new AssistantRuntimeUnavailableError();
       }
       return { provider, mode: "agentos" };
-    },
-
-    async deleteSession(internalSessionId: string): Promise<void> {
-      if (providerSettings.mode === "placeholder") return;
-      await getAgentOSComposition().runClient.deleteSession(internalSessionId);
     },
   };
 }

@@ -18,17 +18,12 @@ import {
 import { createAssistantErrorResponse } from "@/features/assistant/assistant-contract";
 import type { AssistantProvider } from "@/server/assistant/assistant-provider";
 import { createAssistantInputPolicyRepository } from "@/server/assistant/assistant-input-policy";
-import { createAnonymousSessionManager } from "@/server/assistant/anonymous-session";
-import { resolveAnonymousSessionSettings } from "@/server/assistant/anonymous-session-config";
 import {
   assistantRateLimitKey,
   createDatabaseAssistantRateLimiter,
 } from "@/server/assistant/assistant-rate-limit";
 import { resolveTrustedClientIp } from "@/server/assistant/trusted-client-ip";
-import {
-  createAssistantChatHandler,
-  createAssistantChatSessionResolver,
-} from "./handler";
+import { createAssistantChatHandler } from "./handler";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const safeUrl = testDatabaseUrl
@@ -36,7 +31,6 @@ const safeUrl = testDatabaseUrl
   : undefined;
 const describePostgres = safeUrl ? describe.sequential : describe.skip;
 const RATE_SECRET = "handler-postgres-rate-secret-at-least-32-bytes";
-const SESSION_SECRET = "handler-session-secret-at-least-32-bytes";
 const TRUSTED_IP = "203.0.113.40";
 
 function chatRequest(cookie?: string) {
@@ -56,10 +50,6 @@ function chatRequest(cookie?: string) {
   });
 }
 
-function cookiePair(setCookie: string): string {
-  return setCookie.split(";", 1)[0] ?? "";
-}
-
 describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
   const pool = new Pool({ connectionString: safeUrl });
   const database = drizzle(pool, { schema: databaseSchema });
@@ -74,16 +64,7 @@ describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
 
   afterAll(async () => pool.end());
 
-  it("keeps the trusted-IP bucket across Cookie deletion and rejects before Provider work", async () => {
-    let randomValue = 0;
-    const manager = createAnonymousSessionManager({
-      settings: resolveAnonymousSessionSettings({
-        ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
-        ASSISTANT_SESSION_SECRET: SESSION_SECRET,
-      }),
-      now: () => 100_000,
-      randomBytes: (length) => new Uint8Array(length).fill(++randomValue),
-    });
+  it("keeps the trusted-IP bucket across stateless requests and rejects before Provider work", async () => {
     const reply = vi.fn<AssistantProvider["reply"]>(async () => ({
       content: "placeholder",
       suggestedActions: [],
@@ -95,9 +76,7 @@ describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
       clock: () => 100,
       requestIdFactory: () => "integration-request-id",
       messageIdFactory: () => "integration-message-id",
-      resolveSession: createAssistantChatSessionResolver(manager, async () => ({
-        kind: "anonymous",
-      })),
+      resolveActor: async () => ({ kind: "anonymous" as const }),
       rateLimiter: createDatabaseAssistantRateLimiter(database, {
         secret: RATE_SECRET,
         quotas: {
@@ -114,27 +93,19 @@ describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
 
     const first = await handler(chatRequest());
     expect(first.status).toBe(200);
-    const firstSetCookie = first.headers.get("set-cookie");
-    expect(firstSetCookie).toContain("__Host-aap_assistant_sid=");
+    expect(first.headers.get("set-cookie")).toBeNull();
 
-    const sameCookie = await handler(chatRequest(cookiePair(firstSetCookie!)));
-    expect(sameCookie.status).toBe(200);
+    const second = await handler(chatRequest());
+    expect(second.status).toBe(200);
 
-    const deletedCookie = await handler(chatRequest());
-    expect(deletedCookie.status).toBe(200);
-    expect(deletedCookie.headers.get("set-cookie")).toContain(
-      "__Host-aap_assistant_sid=",
-    );
+    const third = await handler(chatRequest());
+    expect(third.status).toBe(200);
 
-    const blockedRotatedCookie = await handler(
-      chatRequest("__Host-aap_assistant_sid=invalid"),
-    );
-    expect(blockedRotatedCookie.status).toBe(429);
-    expect(blockedRotatedCookie.headers.get("retry-after")).toBe("60");
-    expect(blockedRotatedCookie.headers.get("set-cookie")).toContain(
-      "__Host-aap_assistant_sid=",
-    );
-    await expect(blockedRotatedCookie.json()).resolves.toEqual(
+    const blocked = await handler(chatRequest());
+    expect(blocked.status).toBe(429);
+    expect(blocked.headers.get("retry-after")).toBe("60");
+    expect(blocked.headers.get("set-cookie")).toBeNull();
+    await expect(blocked.json()).resolves.toEqual(
       createAssistantErrorResponse("integration-request-id", "rate_limited"),
     );
     expect(reply).toHaveBeenCalledTimes(3);

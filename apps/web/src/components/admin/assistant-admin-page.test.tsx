@@ -8,10 +8,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import type { ComponentProps } from "react";
-import type {
-  AdminAssistantSessionsSnapshot,
-  AdminAssistantStatusSnapshot,
-} from "@/features/assistant/admin-assistant-contract";
+import type { AdminAssistantStatusSnapshot } from "@/features/assistant/admin-assistant-contract";
 import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
 import type { AdminInputPolicySnapshot } from "@/features/assistant/admin-input-policy-contract";
 import type { AdminSkillRegistrySnapshot } from "./assistant-skill-registry-panel";
@@ -67,28 +64,10 @@ const status = {
     defaultAgent: "码多多（占位）",
     model: "未配置",
     skills: "未接入",
-    sessionStorage: "未启用",
+    pageMemory: "仅当前页面内存；刷新或离开后清空",
   },
   message: "当前仅提供本地占位回复。",
 } satisfies AdminAssistantStatusSnapshot;
-
-const sessions = {
-  persistence: "disabled" as const,
-  listing: "not_available" as const,
-  message: "占位模式未持久化会话；管理列表不可用。",
-} satisfies AdminAssistantSessionsSnapshot;
-
-const agentosSessions = {
-  persistence: "agentos" as const,
-  listing: "not_available" as const,
-  message: "AgentOS 持久化已启用，但管理列表不在本阶段范围。",
-} satisfies AdminAssistantSessionsSnapshot;
-
-const unavailableSessions = {
-  persistence: "unavailable" as const,
-  listing: "not_available" as const,
-  message: "持久化状态不可用；管理列表不可用。",
-} satisfies AdminAssistantSessionsSnapshot;
 
 const modelConfigs = {
   version: "1",
@@ -231,11 +210,22 @@ afterEach(() => {
 });
 
 describe("AssistantAdminPage", () => {
+  it("keeps testing in current-page memory without a session prop or tab", () => {
+    const source = readFileSync(
+      "src/components/admin/assistant-admin-page.tsx",
+      "utf8",
+    );
+
+    expect(source).not.toMatch(/AdminAssistantSessions|sessions[,:]/u);
+    expect(source).not.toContain("测试与会话");
+    expect(source).not.toContain("会话持久化");
+    expect(source).toContain("当前页面内存");
+  });
+
   it("switches between the five focused Agent management tabs", () => {
     render(
       <AssistantAdminPage
         modelConfigs={modelConfigs}
-        sessions={sessions}
         skillCanRead
         skillPermissions={skillPermissions}
         skillSnapshot={skillSnapshot}
@@ -250,7 +240,7 @@ describe("AssistantAdminPage", () => {
     expect(screen.getByRole("heading", { name: "Skill 库" })).toBeVisible();
     fireEvent.click(screen.getByRole("tab", { name: "内容规则" }));
     expect(screen.getByRole("heading", { name: "输入内容规则" })).toBeVisible();
-    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
+    fireEvent.click(screen.getByRole("tab", { name: "测试" }));
     expect(
       screen.getByRole("heading", { name: "受保护的助手测试控制台" }),
     ).toBeVisible();
@@ -261,11 +251,7 @@ describe("AssistantAdminPage", () => {
 
   it("shows four honest status cells and read-only configuration", () => {
     const { container } = render(
-      <AssistantAdminPage
-        modelConfigs={modelConfigs}
-        sessions={sessions}
-        status={status}
-      />,
+      <AssistantAdminPage modelConfigs={modelConfigs} status={status} />,
     );
 
     expect(screen.getAllByTestId("assistant-status-cell")).toHaveLength(4);
@@ -304,20 +290,14 @@ describe("AssistantAdminPage", () => {
   });
 
   it("keeps the approved tab order and one page heading", () => {
-    render(
-      <AssistantAdminPage
-        modelConfigs={modelConfigs}
-        sessions={sessions}
-        status={status}
-      />,
-    );
+    render(<AssistantAdminPage modelConfigs={modelConfigs} status={status} />);
 
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "运行概览",
       "模型配置",
       "Skills",
       "内容规则",
-      "测试与会话",
+      "测试",
     ]);
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   });
@@ -333,13 +313,7 @@ describe("AssistantAdminPage", () => {
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    render(
-      <AssistantAdminPage
-        modelConfigs={modelConfigs}
-        sessions={sessions}
-        status={status}
-      />,
-    );
+    render(<AssistantAdminPage modelConfigs={modelConfigs} status={status} />);
     fireEvent.click(screen.getByRole("tab", { name: "内容规则" }));
     fireEvent.change(screen.getByLabelText("屏蔽词（一行一个）"), {
       target: { value: "Confirmed" },
@@ -372,32 +346,9 @@ describe("AssistantAdminPage", () => {
     expect(css).toContain(".assistant-admin__status-grid");
   });
 
-  it("keeps session audit disabled without a duplicate Skill management action", () => {
-    render(
-      <AssistantAdminPage
-        modelConfigs={modelConfigs}
-        sessions={sessions}
-        status={status}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
-
-    expect(screen.getByRole("button", { name: "会话审计" })).toBeDisabled();
-    expect(
-      screen.queryByRole("button", { name: "Skill 管理" }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText(sessions.message)).toBeVisible();
-    expect(screen.queryByText(/客户消息|消息原文/u)).not.toBeInTheDocument();
-  });
-
   it("preserves accessible controls in each tab", () => {
     const { container } = render(
-      <AssistantAdminPage
-        modelConfigs={modelConfigs}
-        sessions={sessions}
-        status={status}
-      />,
+      <AssistantAdminPage modelConfigs={modelConfigs} status={status} />,
     );
 
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
@@ -425,7 +376,7 @@ describe("AssistantAdminPage", () => {
       endpoint.compareDocumentPosition(apiKey) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
+    fireEvent.click(screen.getByRole("tab", { name: "测试" }));
     expect(screen.getByRole("textbox", { name: "测试问题" })).toBeVisible();
     expect(
       container.querySelectorAll(
@@ -446,79 +397,17 @@ describe("AssistantAdminPage", () => {
     );
   });
 
-  it("shows persistence and unavailable listing without a fake zero count", () => {
-    render(
-      <AssistantAdminPage
-        modelConfigs={modelConfigs}
-        sessions={sessions}
-        status={status}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
-
-    expect(screen.getByRole("heading", { name: "会话持久化" })).toBeVisible();
-    expect(screen.getByText("列表不可用")).toBeVisible();
-    expect(screen.getByText(/disabled.*not_available/iu)).toBeVisible();
-    expect(
-      screen.queryByRole("heading", { name: "最近会话" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText("00")).not.toBeInTheDocument();
-  });
-
-  it("states that AgentOS persistence is enabled while listing remains unavailable", () => {
-    render(
-      <AssistantAdminPage
-        modelConfigs={modelConfigs}
-        sessions={agentosSessions}
-        status={status}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
-
-    expect(screen.getByText(agentosSessions.message)).toBeVisible();
-    expect(screen.getByText(/agentos.*not_available/iu)).toBeVisible();
-    expect(screen.getByText("列表不可用")).toBeVisible();
-    expect(
-      screen.queryByText(/可审计|可列出|最近会话/u),
-    ).not.toBeInTheDocument();
-  });
-
-  it("shows a safe unavailable persistence state without fabricated sessions", () => {
-    render(
-      <AssistantAdminPage
-        modelConfigs={modelConfigs}
-        sessions={unavailableSessions}
-        status={status}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
-
-    expect(screen.getByText(unavailableSessions.message)).toBeVisible();
-    expect(screen.getByText(/unavailable.*not_available/iu)).toBeVisible();
-    expect(screen.getByText("列表不可用")).toBeVisible();
-    expect(
-      screen.queryByText(/raw|secret|最近会话|可审计/iu),
-    ).not.toBeInTheDocument();
-  });
-
   it("describes the protected test session truthfully for both provider modes", () => {
-    render(
-      <AssistantAdminPage
-        modelConfigs={modelConfigs}
-        sessions={sessions}
-        status={status}
-      />,
-    );
+    render(<AssistantAdminPage modelConfigs={modelConfigs} status={status} />);
 
-    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
+    fireEvent.click(screen.getByRole("tab", { name: "测试" }));
 
     expect(
       screen.getByRole("heading", { name: "受保护的助手测试控制台" }),
     ).toBeVisible();
-    expect(screen.getByText("临时会话，结束后清理")).toBeVisible();
+    expect(
+      screen.getByText("仅保留在当前页面内存；刷新或离开后清空"),
+    ).toBeVisible();
     expect(
       screen.getByText(
         "AgentOS 模式会调用已配置模型；占位模式返回安全占位回答。",
@@ -548,15 +437,9 @@ describe("AssistantAdminPage", () => {
       ),
     );
     vi.stubGlobal("fetch", fetchMock);
-    render(
-      <AssistantAdminPage
-        modelConfigs={modelConfigs}
-        sessions={sessions}
-        status={status}
-      />,
-    );
+    render(<AssistantAdminPage modelConfigs={modelConfigs} status={status} />);
 
-    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
+    fireEvent.click(screen.getByRole("tab", { name: "测试" }));
 
     fireEvent.change(screen.getByLabelText("测试问题"), {
       target: { value: "检查助手回答" },
@@ -576,15 +459,9 @@ describe("AssistantAdminPage", () => {
       "fetch",
       vi.fn().mockResolvedValue(new Response(null, { status: 503 })),
     );
-    render(
-      <AssistantAdminPage
-        modelConfigs={modelConfigs}
-        sessions={sessions}
-        status={status}
-      />,
-    );
+    render(<AssistantAdminPage modelConfigs={modelConfigs} status={status} />);
 
-    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
+    fireEvent.click(screen.getByRole("tab", { name: "测试" }));
 
     fireEvent.change(screen.getByLabelText("测试问题"), {
       target: { value: "检查失败状态" },
@@ -627,14 +504,8 @@ describe("AssistantAdminPage", () => {
         ),
       );
     vi.stubGlobal("fetch", fetchMock);
-    render(
-      <AssistantAdminPage
-        modelConfigs={modelConfigs}
-        sessions={sessions}
-        status={status}
-      />,
-    );
-    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
+    render(<AssistantAdminPage modelConfigs={modelConfigs} status={status} />);
+    fireEvent.click(screen.getByRole("tab", { name: "测试" }));
     const input = screen.getByLabelText("测试问题");
 
     fireEvent.change(input, { target: { value: "第一次测试" } });

@@ -19,27 +19,20 @@ import type {
   AssistantRequestLog,
   AssistantRequestLogger,
 } from "@/server/assistant/assistant-request-log";
-import type { ResolvedAnonymousSession } from "@/server/assistant/anonymous-session";
+import type { resolveAssistantActor } from "@/server/assistant/assistant-actor";
 import {
   AssistantRateLimitExceededError,
   AssistantRateLimitUnavailableError,
 } from "@/server/assistant/assistant-rate-limit";
 import type { PublicPageContext } from "@/server/assistant/public-page-context";
 import type { resolveTrustedClientIp } from "@/server/assistant/trusted-client-ip";
-import {
-  createAssistantChatHandler,
-  type AssistantChatSessionResolution,
-} from "./handler";
+import { createAssistantChatHandler } from "./handler";
 import * as route from "./route";
 
 const success: AssistantSuccessResponse = {
   version: "1",
   requestId: "generated-request-id",
   mode: "placeholder",
-  session: {
-    temporary: true,
-    expiresAt: "2026-07-13T12:00:00.000Z",
-  },
   message: { id: "generated-message-id", role: "assistant", content: "ok" },
   suggestedActions: [{ label: "帮助中心", href: "/help" }],
 };
@@ -142,32 +135,6 @@ function dependencies(options?: {
   };
   const times = options?.times ?? [100, 107];
   let timeIndex = 0;
-  const session: ResolvedAnonymousSession = {
-    publicSession: {
-      temporary: true,
-      expiresAt: "2026-07-13T12:00:00.000Z",
-    },
-    internalSessionId: "internal-replayable-value",
-    cookie: {
-      name: "__Host-aap_assistant_sid",
-      value: "raw-cookie-value",
-      options: {
-        httpOnly: true,
-        sameSite: "lax",
-        path: "/",
-        secure: true,
-      },
-    },
-    setCookie:
-      "__Host-aap_assistant_sid=raw-cookie-value; Path=/; HttpOnly; Secure; SameSite=Lax",
-    rotated: true,
-    refreshed: false,
-    safeMetadata: {
-      temporary: true,
-      expiresAt: "2026-07-13T12:00:00.000Z",
-      rotated: true,
-    },
-  };
   const rateLimiter = { consume: vi.fn(async () => undefined) };
   const loadInputPolicy = vi.fn(async () => ({
     terms: [] as string[],
@@ -185,10 +152,6 @@ function dependencies(options?: {
   const pageResolver = {
     load: vi.fn(async () => pageContext as PublicPageContext | null),
   };
-  const resolvedSession: AssistantChatSessionResolution = {
-    ...session,
-    actor: { kind: "anonymous" },
-  };
 
   return {
     provider,
@@ -201,9 +164,9 @@ function dependencies(options?: {
     clock: () => times[timeIndex++] ?? times.at(-1) ?? 0,
     requestIdFactory: () => "generated-request-id",
     messageIdFactory: () => "generated-message-id",
-    resolveSession: vi.fn(
-      async (): Promise<AssistantChatSessionResolution> => resolvedSession,
-    ),
+    resolveActor: vi.fn<typeof resolveAssistantActor>(async () => ({
+      kind: "anonymous" as const,
+    })),
     rateLimiter,
     loadInputPolicy,
     pageContext,
@@ -232,7 +195,7 @@ describe("POST /api/v1/assistant/chat", () => {
     const response = await createAssistantChatHandler(deps)(legacyRequest);
 
     expect(response.status).toBe(400);
-    expect(deps.resolveSession).not.toHaveBeenCalled();
+    expect(deps.resolveActor).not.toHaveBeenCalled();
     expect(deps.rateLimiter.consume).not.toHaveBeenCalled();
     expect(deps.loadInputPolicy).not.toHaveBeenCalled();
     expect(deps.resolveProvider).not.toHaveBeenCalled();
@@ -255,9 +218,6 @@ describe("POST /api/v1/assistant/chat", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(response.headers.get("set-cookie")).toContain(
-      "__Host-aap_assistant_sid=raw-cookie-value",
-    );
     await expect(response.json()).resolves.toEqual({
       ...success,
       requestId: "incoming-request-id",
@@ -272,7 +232,7 @@ describe("POST /api/v1/assistant/chat", () => {
       pageContext: deps.pageContext,
       signal: expect.any(AbortSignal),
     });
-    expect(deps.resolveSession).toHaveBeenCalledExactlyOnceWith(
+    expect(deps.resolveActor).toHaveBeenCalledExactlyOnceWith(
       expect.any(Request),
     );
     expect(deps.rateLimiter.consume).toHaveBeenCalledExactlyOnceWith({
@@ -389,13 +349,8 @@ describe("POST /api/v1/assistant/chat", () => {
         yield { type: "answer_delta" as const, content: "回答" };
       },
     };
-    deps.resolveSession.mockImplementation(async () => {
-      return {
-        publicSession: success.session,
-        internalSessionId: "internal-session",
-        actor: { kind: "anonymous" as const },
-        setCookie: "aap_assistant_sid_dev=value",
-      };
+    deps.resolveActor.mockImplementation(async () => {
+      return { kind: "anonymous" as const };
     });
     deps.rateLimiter.consume.mockImplementation(async () => {
       order.push("limit");
@@ -428,7 +383,7 @@ describe("POST /api/v1/assistant/chat", () => {
     expect(response.status).toBe(200);
     expect(body).toContain('"type":"answer_delta"');
     expect(order).toEqual(["limit", "policy", "page", "selector", "stream"]);
-    expect(deps.resolveSession).toHaveBeenCalledOnce();
+    expect(deps.resolveActor).toHaveBeenCalledOnce();
     expect(streamingProvider.reply).not.toHaveBeenCalled();
   });
 
@@ -604,11 +559,9 @@ describe("POST /api/v1/assistant/chat", () => {
 
   it("uses only the server-resolved customer actor for customer limits", async () => {
     const deps = dependencies();
-    deps.resolveSession.mockResolvedValue({
-      publicSession: success.session,
-      internalSessionId: "internal-session",
-      actor: { kind: "customer", userId: "server-customer-id" },
-      setCookie: "aap_assistant_sid_dev=value",
+    deps.resolveActor.mockResolvedValue({
+      kind: "customer",
+      userId: "server-customer-id",
     });
 
     const response = await createAssistantChatHandler(deps)(
@@ -640,11 +593,11 @@ describe("POST /api/v1/assistant/chat", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(deps.resolveSession).not.toHaveBeenCalled();
+    expect(deps.resolveActor).not.toHaveBeenCalled();
     expect(deps.rateLimiter.consume).not.toHaveBeenCalled();
   });
 
-  it("returns exact versioned 429 with Retry-After and refreshed Cookie", async () => {
+  it("returns exact versioned 429 with Retry-After", async () => {
     const deps = dependencies();
     deps.rateLimiter.consume.mockRejectedValue(
       new AssistantRateLimitExceededError(37),
@@ -656,9 +609,6 @@ describe("POST /api/v1/assistant/chat", () => {
 
     expect(response.status).toBe(429);
     expect(response.headers.get("retry-after")).toBe("37");
-    expect(response.headers.get("set-cookie")).toContain(
-      "__Host-aap_assistant_sid=raw-cookie-value",
-    );
     await expect(response.json()).resolves.toEqual(
       createAssistantErrorResponse("generated-request-id", "rate_limited"),
     );
@@ -688,7 +638,7 @@ describe("POST /api/v1/assistant/chat", () => {
     expect(deps.provider.reply).not.toHaveBeenCalled();
   });
 
-  it("returns a rotated Cookie and safe versioned 503 when explicit Provider selection is unavailable", async () => {
+  it("returns safe versioned 503 when explicit Provider selection is unavailable", async () => {
     const deps = dependencies();
     deps.resolveProvider.mockRejectedValue(
       new Error("http://agent:7777 private readiness failure"),
@@ -700,9 +650,6 @@ describe("POST /api/v1/assistant/chat", () => {
     const body = await response.json();
 
     expect(response.status).toBe(503);
-    expect(response.headers.get("set-cookie")).toContain(
-      "__Host-aap_assistant_sid=raw-cookie-value",
-    );
     expect(body).toEqual(
       createAssistantErrorResponse(
         "generated-request-id",
@@ -961,7 +908,7 @@ describe("POST /api/v1/assistant/chat", () => {
       createAssistantErrorResponse("generated-request-id", "validation_error"),
     );
     expect(deps.provider.reply).not.toHaveBeenCalled();
-    expect(deps.resolveSession).not.toHaveBeenCalled();
+    expect(deps.resolveActor).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -1134,10 +1081,6 @@ describe("POST /api/v1/assistant/chat", () => {
       version: "1",
       requestId: "generated-request-id",
       mode: "placeholder",
-      session: {
-        temporary: true,
-        expiresAt: "2026-07-13T12:00:00.000Z",
-      },
       message: {
         id: "generated-message-id",
         role: "assistant",
@@ -1277,7 +1220,7 @@ describe("POST /api/v1/assistant/chat", () => {
     const response = await createAssistantChatHandler(deps)(exact);
 
     expect(response.status).toBe(200);
-    expect(deps.resolveSession).toHaveBeenCalledOnce();
+    expect(deps.resolveActor).toHaveBeenCalledOnce();
     expect(deps.provider.reply).toHaveBeenCalledOnce();
   });
 
@@ -1293,7 +1236,7 @@ describe("POST /api/v1/assistant/chat", () => {
     await expect(response.json()).resolves.toEqual(
       createAssistantErrorResponse("generated-request-id", "validation_error"),
     );
-    expect(deps.resolveSession).not.toHaveBeenCalled();
+    expect(deps.resolveActor).not.toHaveBeenCalled();
     expect(deps.provider.reply).not.toHaveBeenCalled();
     expect(deps.logger.log).toHaveBeenCalledOnce();
   });
@@ -1356,10 +1299,6 @@ describe("POST /api/v1/assistant/chat", () => {
       version: "1",
       requestId: "req-1",
       mode: "placeholder",
-      session: {
-        temporary: true,
-        expiresAt: "2026-07-13T12:00:00.000Z",
-      },
       message: {
         id: "generated-message-id",
         role: "assistant",

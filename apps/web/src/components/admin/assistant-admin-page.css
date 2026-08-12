@@ -45,8 +45,7 @@
 .assistant-input-policy__heading p,
 .assistant-capability-roadmap__heading p,
 .assistant-admin__console p,
-.assistant-admin__configuration > p,
-.assistant-admin__sessions p {
+.assistant-admin__configuration > p {
   margin: 0 0 8px;
   color: var(--color-primary);
   font: 700 11px/1.2 var(--font-mono);
@@ -190,9 +189,7 @@
 }
 
 .assistant-admin__console,
-.assistant-admin__configuration,
-.assistant-admin__sessions,
-.assistant-admin__future-actions {
+.assistant-admin__configuration {
   border: 1px solid var(--color-workspace-line);
   background: var(--color-surface);
 }
@@ -210,8 +207,7 @@
 }
 
 .assistant-admin__console h2,
-.assistant-admin__configuration h2,
-.assistant-admin__sessions h2 {
+.assistant-admin__configuration h2 {
   margin: 0;
   font: 730 20px/1.2 var(--font-display);
 }
@@ -319,52 +315,6 @@
   margin: 0;
   text-align: right;
   font-size: 12px;
-  font-weight: 700;
-}
-
-.assistant-admin__sessions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 24px;
-}
-
-.assistant-admin__sessions span {
-  display: block;
-  max-width: 520px;
-  margin-top: 8px;
-  color: var(--color-muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.assistant-admin__sessions small {
-  display: block;
-  margin-top: 6px;
-  color: var(--color-ai-accent);
-  font: 650 9px/1.2 var(--font-mono);
-  text-transform: uppercase;
-}
-
-.assistant-admin__sessions > strong {
-  color: var(--color-ai-accent);
-  font: 760 42px/1 var(--font-display);
-}
-
-.assistant-admin__future-actions {
-  display: flex;
-  gap: 8px;
-  padding: 12px;
-}
-
-.assistant-admin__future-actions button {
-  min-height: 44px;
-  flex: 1;
-  border: 1px solid var(--color-workspace-line);
-  border-radius: 3px;
-  color: var(--color-muted);
-  background: var(--color-canvas);
   font-weight: 700;
 }
 

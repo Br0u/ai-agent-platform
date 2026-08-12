@@ -272,15 +272,11 @@ async function expectSingleDialog(page: Page, name: "码多多工作区" | "码�
   await expect(page.getByRole("dialog", { name })).toBeVisible();
 }
 
-function assistantSuccessResponse(content: string) {
+function assistantPlaceholderResponse(content: string) {
   return {
     version: "1",
     requestId: "assistant-dock-e2e",
     mode: "placeholder",
-    session: {
-      temporary: true,
-      expiresAt: "2099-01-01T00:00:00.000Z",
-    },
     message: {
       id: "assistant-dock-message",
       role: "assistant",
@@ -390,7 +386,7 @@ test("desktop quick launcher expands into the keyboard-focusable workspace", asy
   expectCleanEvidence(evidence, new URL(page.url()).origin);
 });
 
-test("workspace changes its conversation rail at the exact responsive breakpoint", async ({
+test("workspace has no conversation rail at any responsive breakpoint", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "desktop breakpoint contract");
@@ -402,42 +398,33 @@ test("workspace changes its conversation rail at the exact responsive breakpoint
   );
   await page.getByRole("button", { name: "展开码多多工作区" }).click();
   const workspace = page.getByRole("main", { name: "码多多工作区" });
-  const rail = page.getByRole("complementary", { name: "临时会话" });
   await expect(workspace).toBeVisible();
-  await page.setViewportSize({ width: 721, height: VIEWPORTS.desktop.height });
-  await expect(rail).toHaveAttribute("data-collapsed", "false");
-  await page.setViewportSize({ width: 720, height: VIEWPORTS.desktop.height });
-  await expect(rail).toHaveAttribute("data-collapsed", "true");
-  await page.setViewportSize({ width: 721, height: VIEWPORTS.desktop.height });
-  await expect(rail).toHaveAttribute("data-collapsed", "false");
+  for (const width of [721, 720]) {
+    await page.setViewportSize({ width, height: VIEWPORTS.desktop.height });
+    await expect(page.getByRole("complementary")).toHaveCount(0);
+    await expect(page.getByText("CONVERSATIONS", { exact: true })).toHaveCount(
+      0,
+    );
+    await expect(page.getByRole("button", { name: "新建会话" })).toHaveCount(0);
+  }
   await expectExactViewportWidth(page);
   expectCleanEvidence(evidence, new URL(page.url()).origin);
 });
 
-test("quick and standalone workspace keep one in-flight conversation", async ({
+test("workspace clears the current-page conversation", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "desktop continuity contract");
   await configure(page, testInfo, "reduce");
   const evidence = collectEvidence(page);
   let requestCount = 0;
-  let markRequestStarted!: () => void;
-  let releaseResponse!: () => void;
-  const requestStarted = new Promise<void>((resolve) => {
-    markRequestStarted = resolve;
-  });
-  const responseGate = new Promise<void>((resolve) => {
-    releaseResponse = resolve;
-  });
-  const answer = "这条回复跨越快速助手和完整工作区。";
+  const answer = "这条回复只属于当前页面。";
   await page.route(`**${ASSISTANT_CHAT_ENDPOINT}`, async (route) => {
     requestCount += 1;
-    markRequestStarted();
-    await responseGate;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(assistantSuccessResponse(answer)),
+      body: JSON.stringify(assistantPlaceholderResponse(answer)),
     });
   });
 
@@ -446,47 +433,33 @@ test("quick and standalone workspace keep one in-flight conversation", async ({
     page.getByRole("button", { name: "打开码多多" }).click(),
   );
   const quickInput = page.getByRole("textbox", { name: "向码多多提问" });
-  const question = "请保留这条跨形态问题";
+  const question = "这条问题只保留在当前页面";
   await quickInput.fill(question);
+  const response = page.waitForResponse(
+    (candidate) =>
+      candidate.url().endsWith(ASSISTANT_CHAT_ENDPOINT) &&
+      candidate.status() === 200,
+  );
   await page.getByRole("button", { name: "发送消息" }).click();
-  await requestStarted;
+  await response;
+  const quickLog = page.getByRole("log", { name: "码多多对话" });
+  await expect(quickLog).toContainText(question);
+  await expect(quickLog).toContainText(answer);
+
   await page.getByRole("button", { name: "展开码多多工作区" }).click();
   await expect(page).toHaveURL(/\/assistant$/u);
-  await expect(page.getByRole("textbox", { name: "输入问题" })).toHaveValue(
+  const composer = page.getByRole("textbox", { name: "输入问题" });
+  await expect(composer).toHaveValue("");
+  const messageLog = page.getByRole("log", { name: "码多多对话" });
+  await expect(messageLog).not.toContainText(question);
+  await expect(messageLog).not.toContainText(answer);
+
+  await composer.fill("刷新后也应清空的草稿");
+  await page.reload();
+  await expect(page.getByRole("textbox", { name: "输入问题" })).toHaveValue("");
+  await expect(page.getByRole("log", { name: "码多多对话" })).not.toContainText(
     question,
   );
-  releaseResponse();
-  const messageLog = page.getByRole("log", { name: "码多多对话" });
-  await expect(messageLog).toContainText(question);
-  await expect(messageLog).toContainText(answer);
-  expect(requestCount).toBe(1);
-
-  await page.getByRole("link", { name: "AI Agent Platform 首页" }).click();
-  await expect(page).toHaveURL(/\/$/u);
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  const launcher = page.getByRole("button", { name: "打开码多多" });
-  await expect(launcher).toBeVisible();
-
-  await launcher.click();
-  await expectSingleDialog(page, "码多多");
-  const quickDialog = page.getByRole("dialog", { name: "码多多" });
-  await expect(
-    quickDialog.getByRole("log", { name: "码多多对话" }),
-  ).toContainText(question);
-  await expect(
-    quickDialog.getByRole("log", { name: "码多多对话" }),
-  ).toContainText(answer);
-  expect(requestCount).toBe(1);
-
-  await quickDialog.getByRole("button", { name: "展开码多多工作区" }).click();
-  await expect(page).toHaveURL(/\/assistant$/u);
-  const reopenedWorkspace = page.getByRole("main", { name: "码多多工作区" });
-  await expect(
-    reopenedWorkspace.getByRole("log", { name: "码多多对话" }),
-  ).toContainText(question);
-  await expect(
-    reopenedWorkspace.getByRole("log", { name: "码多多对话" }),
-  ).toContainText(answer);
   expect(requestCount).toBe(1);
   await expectExactViewportWidth(page);
   await page.unroute(`**${ASSISTANT_CHAT_ENDPOINT}`);
@@ -504,7 +477,7 @@ test("mobile quick launcher expands into a scrolling workspace", async ({
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(assistantSuccessResponse(answer)),
+      body: JSON.stringify(assistantPlaceholderResponse(answer)),
     });
   });
 

@@ -20,7 +20,7 @@ AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT=aap-assistant-e2e-local \
 默认运行完整 Experience 套件。需要只复现某条 Experience 用例时，可安全传入 Playwright grep：
 
 ```bash
-AAP_ASSISTANT_EXPERIENCE_E2E_GREP='workspace changes its conversation rail' \
+AAP_ASSISTANT_EXPERIENCE_E2E_GREP='workspace clears the current-page conversation' \
   sh docs/testing/run-assistant-experience-e2e.sh
 ```
 
@@ -34,10 +34,10 @@ runner 同时运行 `e2e/assistant-experience.spec.ts` 与 `e2e/pricing-assistan
 
 - Header 的键盘操作导航到 `/assistant`，并可将焦点交给 workspace composer；测试同时确认可见焦点样式。
 - Quick 可打开、关闭、选择预设并显示安全服务状态；从 Quick 展开后进入 `/assistant` workspace。
-- Quick 与 workspace 在展开过程中保留同一草稿、消息和进行中的单次请求，覆盖会话连续性。
-- workspace 在精确 `721px ↔ 720px` 断点切换 conversation rail，不以遗留的 Dock separator 作为断言对象。
+- `workspace clears the current-page conversation` 验证草稿和消息只存在于当前 pathname 的 React 内存；跳转进入 workspace 或刷新后立即清空。
+- `workspace has no conversation rail at any responsive breakpoint` 在 `721px` 与 `720px` 都验证不存在 complementary rail、`CONVERSATIONS` 和“新建会话”。
 - 移动端覆盖 Quick 展开后的页面滚动、缩窄 viewport 后 composer 可用、输入区适配及无横向溢出。
-- 覆盖认证与管理员受保护操作、价格计算、助手预设、安全建议动作、客户端路由会话边界，以及 pricing/assistant API 的不支持方法处理。
+- 覆盖认证与管理员受保护操作、价格计算、助手预设、安全建议动作、客户端当前页面边界，以及 pricing/assistant API 的不支持方法处理。
 - 覆盖键盘可见焦点；原始附件 file input 标记为不可访问且不纳入移动端可交互控件尺寸检查，用户可见的附件按钮仍受尺寸与可用性约束。
 - 采集 console、page error、request failure 和意外 `404/429/5xx`；仅对白名单中的占位服务或限流响应放行。
 

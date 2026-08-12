@@ -17,6 +17,7 @@ import {
   request as requestFactory,
   test,
   type APIResponse,
+  type APIRequestContext,
   type BrowserContext,
   type Page,
 } from "@playwright/test";
@@ -153,17 +154,11 @@ function assertSafeResponse(actual: unknown, label: string) {
 
 const requestIdMatcher = safeRule((value) => typeof value === "string");
 const messageIdMatcher = safeRule((value) => typeof value === "string");
-const expiresAtMatcher = safeRule(
-  (value) =>
-    typeof value === "string" &&
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value),
-);
 const nginxRequestIdMatcher = safeRule(
   (value) => typeof value === "string" && /^[a-f0-9]{32}$/u.test(value),
 );
 
 const cumulativeConsoleMessages: string[] = [];
-let firstAssistantCookieCredential: string | undefined;
 
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
@@ -174,23 +169,6 @@ function requiredEnvironment(name: string): string {
 function optionalEnvironment(name: string): string[] {
   const value = process.env[name];
   return value ? [value] : [];
-}
-
-function appendDynamicProtectedValue(value: string): void {
-  if (value.length === 0 || value.includes("\n") || value.includes("\r")) {
-    throw new Error("dynamic protected value is invalid");
-  }
-  const patternsFile = requiredEnvironment("AAP_RUNTIME_DYNAMIC_PATTERNS_FILE");
-  let stats: ReturnType<typeof statSync>;
-  try {
-    stats = statSync(patternsFile);
-  } catch {
-    throw new Error("dynamic pattern file is invalid");
-  }
-  if (!stats.isFile() || (stats.mode & 0o777) !== 0o600) {
-    throw new Error("dynamic pattern file is invalid");
-  }
-  appendFileSync(patternsFile, `${value}\n`, { encoding: "utf8" });
 }
 
 function appendProtectedLedger(name: string, value: string): void {
@@ -265,7 +243,6 @@ function runtimeProtectedValues(): string[] {
     ...protectedFileValues("SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE"),
     ...protectedFileValues("BETTER_AUTH_SECRET_FILE"),
     ...protectedFileValues("OS_SECURITY_KEY_FILE"),
-    ...protectedFileValues("ASSISTANT_SESSION_SECRET_FILE"),
     ...protectedFileValues("ASSISTANT_RATE_LIMIT_SECRET_FILE"),
     ...protectedFileValues("MODEL_API_KEY_FILE"),
     ...protectedFileValues("MODEL_CONFIG_ENCRYPTION_KEY_FILE"),
@@ -288,30 +265,6 @@ function composeArgs(...args: string[]): string[] {
     "compose.e2e.yaml",
     ...args,
   ];
-}
-
-function agentSessionIds(): Set<string> {
-  const output = execFileSync(
-    "docker",
-    composeArgs(
-      "exec",
-      "-T",
-      "db",
-      "sh",
-      "-c",
-      'psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --tuples-only --no-align --command="SELECT session_id FROM agno.agno_sessions ORDER BY session_id"',
-    ),
-    {
-      cwd: path.resolve(process.cwd(), "../.."),
-      encoding: "utf8",
-      timeout: 30_000,
-    },
-  ).trim();
-  const sessionIds = new Set(output === "" ? [] : output.split("\n"));
-  for (const sessionId of sessionIds) {
-    appendDynamicProtectedValue(sessionId);
-  }
-  return sessionIds;
 }
 
 function internalUnauthenticatedWebSocketStatus(): number {
@@ -398,74 +351,7 @@ function agentContainerMetadata(): { id: string; startedAt: string } {
   return { id, startedAt };
 }
 
-const OPTIONAL_IDENTITY_AUDIT_COLLECTOR = String.raw`
-import os
-import re
-import stat
-import sys
-
-path = "/tmp/aap-session-identity-audit"
-pattern = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-)
-try:
-    descriptor = os.open(
-        path,
-        os.O_RDONLY
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_NONBLOCK", 0),
-    )
-except FileNotFoundError:
-    raise SystemExit(0)
-except OSError:
-    raise SystemExit("identity audit collection failed") from None
-
-try:
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise ValueError
-        if stat.S_IMODE(metadata.st_mode) != 0o600:
-            raise ValueError
-        payload = os.read(descriptor, 65537)
-        if len(payload) > 65536:
-            raise ValueError
-    finally:
-        os.close(descriptor)
-except Exception:
-    raise SystemExit("identity audit collection failed") from None
-
-if not payload:
-    raise SystemExit(0)
-try:
-    text = payload.decode("ascii")
-    identities = text.splitlines()
-    if not text.endswith("\n"):
-        raise ValueError
-    if any(pattern.fullmatch(identity) is None for identity in identities):
-        raise ValueError
-except Exception:
-    raise SystemExit("identity audit collection failed") from None
-sys.stdout.write(text)
-`.trim();
-
-function collectAgentSessionIdentityAudit(): void {
-  const output = composeOutput([
-    "exec",
-    "-T",
-    "agent",
-    "python",
-    "-c",
-    OPTIONAL_IDENTITY_AUDIT_COLLECTOR,
-  ]);
-  if (output.length === 0) return;
-  for (const identity of output.split("\n")) {
-    appendDynamicProtectedValue(identity);
-  }
-}
-
 function recreateAgent(enabled: boolean): void {
-  collectAgentSessionIdentityAudit();
   composeOutput(
     ["up", "-d", "--no-deps", "--force-recreate", "--wait", "agent"],
     { AGENT_ENABLED: enabled ? "true" : "false" },
@@ -582,10 +468,7 @@ async function readSafeJson(
   response: APIResponse,
   protectedValues: string[],
 ): Promise<unknown> {
-  const setCookie = response.headers()["set-cookie"];
-  if (setCookie?.includes("aap_assistant_sid_dev=")) {
-    cookieCredential(setCookie);
-  }
+  expectNoAssistantCookie(response.headers()["set-cookie"]);
   return parseSafeJson(await response.text(), protectedValues);
 }
 
@@ -748,10 +631,7 @@ async function readSafeAssistantStream(
   response: APIResponse,
   protectedValues: string[],
 ): Promise<ParsedAssistantStreamResponse> {
-  const setCookie = response.headers()["set-cookie"];
-  if (setCookie?.includes("aap_assistant_sid_dev=")) {
-    cookieCredential(setCookie);
-  }
+  expectNoAssistantCookie(response.headers()["set-cookie"]);
   return parseSafeAssistantStream(
     response.headers()["content-type"],
     await response.text(),
@@ -763,10 +643,7 @@ async function readSafeAssistantErrorStream(
   response: APIResponse,
   protectedValues: string[],
 ): Promise<ParsedAssistantStreamResponse> {
-  const setCookie = response.headers()["set-cookie"];
-  if (setCookie?.includes("aap_assistant_sid_dev=")) {
-    cookieCredential(setCookie);
-  }
+  expectNoAssistantCookie(response.headers()["set-cookie"]);
   return parseSafeAssistantErrorStream(
     response.headers()["content-type"],
     await response.text(),
@@ -800,56 +677,25 @@ function collectBrowserDiagnostics(context: BrowserContext) {
   context.on("page", registerPage);
 }
 
-function expectConsoleExcludesCredential(credential: string) {
+function expectNoAssistantCookie(setCookie: string | null | undefined): void {
   expect(
-    credential.length > 0,
-    "assistant cookie credential must be nonempty",
-  ).toBe(true);
-  const leaked = cumulativeConsoleMessages.some((message) =>
-    message.includes(credential),
-  );
-  expect(leaked, "assistant cookie credential leaked to console").toBe(false);
+    /(?:^|,\s*)aap_assistant_/u.test(setCookie ?? ""),
+    "assistant response must not set an assistant cookie",
+  ).toBe(false);
 }
 
-function requiredAssistantCookieCredential(): string {
-  const credential = firstAssistantCookieCredential;
-  expect(
-    Boolean(credential),
-    "first assistant cookie credential was not captured",
-  ).toBe(true);
-  if (!credential)
-    throw new Error("assistant cookie credential is unavailable");
-  return credential;
-}
-
-function cookieCredential(setCookie: string): string {
-  const match = setCookie.match(/(?:^|,\s*)aap_assistant_sid_dev=([^;]+)/u);
-  if (!match?.[1]) throw new Error("development assistant cookie is missing");
-  stableCookieCredential(match[1]);
-  return match[1];
-}
-
-function stableCookieCredential(cookieValue: string): string {
-  const payload = cookieValue.split(".")[0];
-  if (!payload) throw new Error("assistant cookie payload is missing");
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-  } catch {
-    throw new Error("assistant cookie payload is invalid");
+async function expectRemovedAssistantSessionRoutes(
+  request: APIRequestContext,
+): Promise<void> {
+  const publicPath = ["/api/v1/assistant", "session"].join("/");
+  const adminPath = ["/api/v1/admin/assistant", "sessions"].join("/");
+  for (const response of [
+    await request.delete(publicPath),
+    await request.get(adminPath),
+  ]) {
+    expect(response.status()).toBe(404);
+    expectNoAssistantCookie(response.headers()["set-cookie"]);
   }
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    !("credential" in parsed) ||
-    typeof parsed.credential !== "string" ||
-    parsed.credential.length === 0
-  ) {
-    throw new Error("assistant cookie credential is invalid");
-  }
-  appendDynamicProtectedValue(cookieValue);
-  appendDynamicProtectedValue(parsed.credential);
-  return parsed.credential;
 }
 
 type BoundedReadinessObservation = {
@@ -1368,7 +1214,6 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
     version: "1",
     requestId: "public-browser-runtime-e2e",
     mode: "placeholder",
-    session: { temporary: true, expiresAt: expiresAtMatcher },
     message: {
       id: messageIdMatcher,
       role: "assistant",
@@ -1376,35 +1221,8 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
     },
     suggestedActions: [{ label: "查看快速开始", href: "/docs#quick-start" }],
   });
-  const setCookie = (await browserResponse.headerValue("set-cookie")) ?? "";
-  expect(
-    setCookie.includes("aap_assistant_sid_dev="),
-    "assistant cookie is missing",
-  ).toBe(true);
-  expect(
-    setCookie.includes("HttpOnly"),
-    "assistant cookie is not HttpOnly",
-  ).toBe(true);
-  expect(
-    setCookie.includes("SameSite=Lax"),
-    "assistant cookie SameSite policy is invalid",
-  ).toBe(true);
-  expect(
-    setCookie.includes("Secure"),
-    "loopback assistant cookie unexpectedly requires Secure",
-  ).toBe(false);
-  const credential = cookieCredential(setCookie);
-  firstAssistantCookieCredential = credential;
-  expect(
-    firstAssistantCookieCredential.length > 0,
-    "first assistant cookie credential must be nonempty",
-  ).toBe(true);
-  expectNoProtectedValue(
-    chatBody,
-    [...protectedValues, credential],
-    chat.rawJson,
-  );
-  expectConsoleExcludesCredential(credential);
+  expectNoAssistantCookie(await browserResponse.headerValue("set-cookie"));
+  await expectRemovedAssistantSessionRoutes(context.request);
 
   const burst = await Promise.all(
     Array.from({ length: 11 }, () =>
@@ -1427,10 +1245,7 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
     rejected[0]!.headers()["retry-after"] === "60",
     "rate limit retry interval is invalid",
   ).toBe(true);
-  const rejection = await readSafeJson(rejected[0]!, [
-    ...protectedValues,
-    credential,
-  ]);
+  const rejection = await readSafeJson(rejected[0]!, protectedValues);
   assertSafeResponse(rejection, "placeholder rate limit").matches({
     version: "1",
     requestId: nginxRequestIdMatcher,
@@ -1446,35 +1261,6 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
     "Nginx must replace the untrusted request identifier",
   ).toBe(false);
 
-  const logs = execFileSync(
-    "docker",
-    [
-      "compose",
-      "-p",
-      requiredEnvironment("AAP_RUNTIME_E2E_PROJECT"),
-      "--env-file",
-      requiredEnvironment("AAP_RUNTIME_E2E_ENV_FILE"),
-      "-f",
-      "compose.yaml",
-      "-f",
-      "compose.e2e.yaml",
-      "logs",
-      "--no-color",
-      "web",
-      "agent",
-      "proxy",
-    ],
-    {
-      cwd: path.resolve(process.cwd(), "../.."),
-      encoding: "utf8",
-      timeout: 30_000,
-    },
-  );
-  expect(
-    logs.includes(credential),
-    "assistant cookie credential leaked to container logs",
-  ).toBe(false);
-  expectConsoleExcludesCredential(credential);
   await context.close();
 });
 
@@ -1484,13 +1270,11 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
 }) => {
   if (!baseURL) throw new Error("BASE_URL is required");
   const credentials = fixtureCredentials();
-  const assistantCredential = requiredAssistantCookieCredential();
   const protectedValues = [
     ...runtimeProtectedValues(),
     requiredEnvironment("BETTER_AUTH_SECRET"),
     credentials.staffSessionToken,
     credentials.adminSessionToken,
-    assistantCredential,
   ];
 
   const anonymous = await requestFactory.newContext({ baseURL });
@@ -1611,7 +1395,7 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
         defaultAgent: "码多多（占位）",
         model: "未配置",
         skills: "已接入",
-        sessionStorage: "未启用",
+        pageMemory: "仅当前页面内存；刷新或离开后清空",
       },
       message: "公开入口使用安全占位模式；AgentOS 基础设施尚未探测。",
     },
@@ -1633,12 +1417,11 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
     },
     suggestedActions: [{ label: "查看快速开始", href: "/docs#quick-start" }],
   });
-  expectConsoleExcludesCredential(assistantCredential);
   await admin.close();
 });
 
 test.describe("@agentos deterministic runtime", () => {
-  test("reports only 码多多 as available and leaves no session after the public run", async ({
+  test("reports only 码多多 as available for the public run", async ({
     browser,
     baseURL,
   }) => {
@@ -1666,7 +1449,6 @@ test.describe("@agentos deterministic runtime", () => {
       "public status exposed internal Agent data",
     ).toBe(false);
 
-    const sessionsBeforePublic = agentSessionIds();
     const publicChatResponse = await publicContext.request.post(CHAT_PATH, {
       data: CHAT_BODY,
     });
@@ -1676,29 +1458,17 @@ test.describe("@agentos deterministic runtime", () => {
       protectedValues,
     );
     assertSafeResponse(publicChat, "AgentOS public chat").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      mode: "agentos",
-      session: { temporary: true, expiresAt: expiresAtMatcher },
       message: {
-        id: messageIdMatcher,
         role: "assistant",
         content: "deterministic-turn:1",
       },
-      suggestedActions: [],
+      activities: safeRule((value) => Array.isArray(value)),
+      actions: [],
     });
-    const sessionsAfterPublic = agentSessionIds();
-    expect(
-      sessionsAfterPublic,
-      `public deterministic run changed Agent sessions: before=${sessionsBeforePublic.size} after=${sessionsAfterPublic.size}`,
-    ).toEqual(sessionsBeforePublic);
-    console.log(
-      `public deterministic Agent sessions: before=${sessionsBeforePublic.size} after=${sessionsAfterPublic.size}`,
-    );
     await publicContext.close();
   });
 
-  test("leaves no session after the Admin deterministic run", async ({
+  test("serves the Admin deterministic run with current-page memory", async ({
     browser,
     baseURL,
   }) => {
@@ -1731,7 +1501,7 @@ test.describe("@agentos deterministic runtime", () => {
           capability: "available",
           providerMode: "agentos",
           selectedProvider: "agentos",
-          persistence: "agentos",
+          persistence: "disabled",
           circuits: {
             readiness: { state: "closed", consecutiveFailures: 0 },
             execution: { state: "closed", consecutiveFailures: 0 },
@@ -1778,7 +1548,7 @@ test.describe("@agentos deterministic runtime", () => {
           defaultAgent: "码多多（maduoduo）",
           model: "OpenAI / e2e-deterministic（部署配置）",
           skills: "已接入",
-          sessionStorage: "AgentOS 持久化已启用",
+          pageMemory: "仅当前页面内存；刷新或离开后清空",
         },
         message: "AI 助理基础服务已就绪。",
       },
@@ -1790,7 +1560,6 @@ test.describe("@agentos deterministic runtime", () => {
       "admin status exposed internal Agent data",
     ).toBe(false);
 
-    const sessionsBefore = agentSessionIds();
     const adminChatResponse = await admin.request.post(ADMIN_CHAT_PATH, {
       data: CHAT_BODY,
     });
@@ -1810,14 +1579,6 @@ test.describe("@agentos deterministic runtime", () => {
       },
       suggestedActions: [],
     });
-    const sessionsAfterAdmin = agentSessionIds();
-    expect(
-      sessionsAfterAdmin,
-      `Admin deterministic run changed Agent sessions: before=${sessionsBefore.size} after=${sessionsAfterAdmin.size}`,
-    ).toEqual(sessionsBefore);
-    console.log(
-      `Admin deterministic Agent sessions: before=${sessionsBefore.size} after=${sessionsAfterAdmin.size}`,
-    );
     await admin.close();
   });
 
@@ -1858,16 +1619,12 @@ test.describe("@agentos deterministic runtime", () => {
       protectedValues,
     );
     assertSafeResponse(invalid, "AgentOS invalid SSE envelope").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      mode: "agentos",
-      session: { temporary: true, expiresAt: expiresAtMatcher },
       message: {
-        id: messageIdMatcher,
         role: "assistant",
         content: safeRule((value) => typeof value === "string"),
       },
-      suggestedActions: [],
+      activities: safeRule((value) => Array.isArray(value)),
+      actions: [],
     });
     assertNoPublicInvalidModelOutput(invalid);
 
@@ -1880,16 +1637,12 @@ test.describe("@agentos deterministic runtime", () => {
       protectedValues,
     );
     assertSafeResponse(recovered, "AgentOS bounded failure recovery").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      mode: "agentos",
-      session: { temporary: true, expiresAt: expiresAtMatcher },
       message: {
-        id: messageIdMatcher,
         role: "assistant",
         content: "deterministic-turn:1",
       },
-      suggestedActions: [],
+      activities: safeRule((value) => Array.isArray(value)),
+      actions: [],
     });
 
     const credentials = fixtureCredentials();
@@ -1920,7 +1673,7 @@ test.describe("@agentos deterministic runtime", () => {
           capability: "available",
           providerMode: "agentos",
           selectedProvider: "agentos",
-          persistence: "agentos",
+          persistence: "disabled",
           circuits: {
             readiness: { state: "closed", consecutiveFailures: 0 },
             execution: { state: "closed", consecutiveFailures: 0 },
@@ -1967,7 +1720,7 @@ test.describe("@agentos deterministic runtime", () => {
           defaultAgent: "码多多（maduoduo）",
           model: "OpenAI / e2e-deterministic（部署配置）",
           skills: "已接入",
-          sessionStorage: "AgentOS 持久化已启用",
+          pageMemory: "仅当前页面内存；刷新或离开后清空",
         },
         message: "AI 助理基础服务已就绪。",
       },
@@ -1986,7 +1739,6 @@ test.describe("@agentos deterministic runtime", () => {
         message: "AI 助理基础服务已就绪。",
       },
     );
-    agentSessionIds();
     await admin.close();
     await context.close();
   });
@@ -2076,10 +1828,7 @@ test.describe("@control deterministic model control", () => {
         allowedLastFour?: string[];
       } = {},
     ): Promise<unknown> => {
-      const setCookie = response.headers()["set-cookie"];
-      if (setCookie?.includes("aap_assistant_sid_dev=")) {
-        cookieCredential(setCookie);
-      }
+      expectNoAssistantCookie(response.headers()["set-cookie"]);
       const rawJson = await response.text();
       controlResponseLedger.push({
         exposure,
@@ -2101,10 +1850,7 @@ test.describe("@control deterministic model control", () => {
     const readControlAssistantStream = async (
       response: APIResponse,
     ): Promise<unknown> => {
-      const setCookie = response.headers()["set-cookie"];
-      if (setCookie?.includes("aap_assistant_sid_dev=")) {
-        cookieCredential(setCookie);
-      }
+      expectNoAssistantCookie(response.headers()["set-cookie"]);
       const rawStream = await response.text();
       controlResponseLedger.push({
         exposure: "strict",
@@ -2548,8 +2294,6 @@ test.describe("@control deterministic model control", () => {
     expect(JSON.stringify(finalAuditChat)).toContain(
       "deterministic-model:e2e-qwen-rev1:turn:1",
     );
-    collectAgentSessionIdentityAudit();
-
     await Promise.all(pendingControlResponses);
     expect(controlResponseCaptureFailures).toEqual([]);
     const expectedListLastFour = CONTROL_PROVIDERS.map(

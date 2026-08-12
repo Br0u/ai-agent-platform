@@ -74,7 +74,6 @@ Compose 已在隔离的 Web 服务中固定`TRUST_NGINX_PROXY=true`，不要通�
 | `AGENT_CONFIG_CONTROL_KEY`    | Web + Agent | 动态配置控制 Bearer Key，至少 32 UTF-8 bytes，必须与 `OS_SECURITY_KEY` 不同 |
 | `MODEL_CONFIG_ENCRYPTION_KEY` | 仅 Agent    | 64 个小写十六进制字符，即 32 bytes AES-256-GCM 主密钥                       |
 | `BETTER_AUTH_SECRET`          | 仅 Web      | 至少 32 字符，不得复用其他 Key                                              |
-| `ASSISTANT_SESSION_SECRET`    | 仅 Web      | 独立随机值，至少 32 bytes                                                   |
 | `ASSISTANT_RATE_LIMIT_SECRET` | 仅 Web      | 独立随机值，至少 32 bytes                                                   |
 
 建议生成：
@@ -96,7 +95,6 @@ OS_SECURITY_KEY_FILE=.secrets/os_security_key
 AGENT_CONFIG_CONTROL_KEY_FILE=.secrets/agent_config_control_key
 MODEL_CONFIG_ENCRYPTION_KEY_FILE=.secrets/model_config_encryption_key
 BETTER_AUTH_SECRET_FILE=.secrets/better_auth_secret
-ASSISTANT_SESSION_SECRET_FILE=.secrets/assistant_session_secret
 ASSISTANT_RATE_LIMIT_SECRET_FILE=.secrets/assistant_rate_limit_secret
 ```
 

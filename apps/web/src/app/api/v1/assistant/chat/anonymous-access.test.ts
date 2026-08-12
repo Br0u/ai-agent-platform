@@ -46,16 +46,6 @@ vi.mock("@/server/assistant/assistant-input-policy", async (importOriginal) => {
   };
 });
 
-const RUNTIME_SETTINGS_KEY =
-  "ai-agent-platform:assistant:anonymous-session-settings:v1";
-const VALID_SECRET = "0123456789abcdef0123456789abcdef";
-
-function clearRuntimeSettings(): void {
-  delete (globalThis as Record<PropertyKey, unknown>)[
-    Symbol.for(RUNTIME_SETTINGS_KEY)
-  ];
-}
-
 function request(options?: { cookie?: string; forgedActor?: boolean }) {
   return new Request("https://portal.example.com/api/v1/assistant/chat", {
     method: "POST",
@@ -81,9 +71,7 @@ async function loadPOST() {
 }
 
 beforeEach(() => {
-  clearRuntimeSettings();
   vi.stubEnv("ASSISTANT_PUBLIC_ORIGIN", "https://portal.example.com");
-  vi.stubEnv("ASSISTANT_SESSION_SECRET", VALID_SECRET);
   access.createAccessService.mockReturnValue({
     getCurrentActor: access.getCurrentActor,
   });
@@ -95,7 +83,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  clearRuntimeSettings();
   vi.clearAllMocks();
   vi.unstubAllEnvs();
   vi.resetModules();
@@ -107,11 +94,12 @@ describe("anonymous assistant access short-circuit", () => {
     const response = await (await loadPOST())(input);
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
+    const body = await response.json();
+    expect(body).toMatchObject({
       version: "1",
       mode: "placeholder",
-      session: { temporary: true },
     });
+    expect(body).not.toHaveProperty("session");
     expect(access.createAccessService).not.toHaveBeenCalled();
     expect(access.getCurrentActor).not.toHaveBeenCalled();
     expect(rateLimit.consume).toHaveBeenCalledExactlyOnceWith({

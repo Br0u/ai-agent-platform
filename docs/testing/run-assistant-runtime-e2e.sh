@@ -309,7 +309,6 @@ skill_registry_manager_password=$(secret)
 skill_registry_runtime_password=$(secret)
 backup_encryption_key=$(secret)
 os_security_key=$(secret)
-assistant_session_secret=$(secret)
 assistant_rate_limit_secret=$(secret)
 model_api_key=$(secret)
 model_config_encryption_key=$(secret)
@@ -367,7 +366,6 @@ materialize_secret SKILL_REGISTRY_DATABASE_URL_FILE skill_registry_database_url 
 materialize_secret SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE skill_registry_runtime_database_url "postgresql+psycopg_async://ai_agent_skill_registry_runtime:$skill_registry_runtime_password@db:5432/$POSTGRES_DB"
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECRET"
 materialize_secret OS_SECURITY_KEY_FILE os_security_key "$agent_runtime_token"
-materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$assistant_session_secret"
 materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret "$assistant_rate_limit_secret"
 materialize_secret MODEL_API_KEY_FILE model_api_key "$model_api_key"
 materialize_secret MODEL_CONFIG_ENCRYPTION_KEY_FILE model_config_encryption_key "$model_config_encryption_key"
@@ -414,7 +412,6 @@ protected_patterns_file="$temp_dir/protected-runtime-patterns"
     "postgresql+psycopg_async://ai_agent_skill_registry_runtime:$skill_registry_runtime_password@db:5432/$POSTGRES_DB" \
     "$backup_encryption_key" \
     "$agent_runtime_token" \
-    "$assistant_session_secret" \
     "$assistant_rate_limit_secret" \
     "$model_api_key" \
     "$model_config_encryption_key" \
@@ -443,7 +440,6 @@ protected_patterns_file="$temp_dir/protected-runtime-patterns"
     "$SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE" \
     "$BETTER_AUTH_SECRET_FILE" \
     "$OS_SECURITY_KEY_FILE" \
-    "$ASSISTANT_SESSION_SECRET_FILE" \
     "$ASSISTANT_RATE_LIMIT_SECRET_FILE" \
     "$MODEL_API_KEY_FILE" \
     "$MODEL_CONFIG_ENCRYPTION_KEY_FILE" \
@@ -452,20 +448,16 @@ protected_patterns_file="$temp_dir/protected-runtime-patterns"
 )
 chmod 600 "$protected_patterns_file"
 
-create_dynamic_patterns_file() {
+create_patterns_file() {
   patterns_file=$1
   (umask 077 && : >"$patterns_file")
   chmod 600 "$patterns_file"
 }
 
-placeholder_dynamic_patterns_file="$temp_dir/placeholder-dynamic-patterns"
-agentos_dynamic_patterns_file="$temp_dir/agentos-dynamic-patterns"
 model_keys_file="$temp_dir/model-key-full-patterns"
 model_key_last4_file="$temp_dir/model-key-last4-patterns"
-create_dynamic_patterns_file "$placeholder_dynamic_patterns_file"
-create_dynamic_patterns_file "$agentos_dynamic_patterns_file"
-create_dynamic_patterns_file "$model_keys_file"
-create_dynamic_patterns_file "$model_key_last4_file"
+create_patterns_file "$model_keys_file"
+create_patterns_file "$model_key_last4_file"
 printf '%s\n' "$model_keys_file" "$model_key_last4_file" >>"$protected_patterns_file"
 
 # Prove the fresh Agent can start with administrator-managed configuration only.
@@ -506,13 +498,10 @@ scan_pattern_file() {
 
 scan_logs() {
   phase=$1
-  dynamic_patterns_file=$2
   logs_file="$temp_dir/$phase-runtime.log"
   compose logs --no-color >"$logs_file" 2>&1
   scan_pattern_file "$protected_patterns_file" "$logs_file" \
     "sanitized container logs contain protected runtime data"
-  scan_pattern_file "$dynamic_patterns_file" "$logs_file" \
-    "sanitized container logs contain dynamic protected runtime data"
   scan_pattern_file "$model_keys_file" "$logs_file" \
     "sanitized container logs contain a model credential"
   scan_pattern_file "$model_key_last4_file" "$logs_file" \
@@ -538,10 +527,6 @@ run_compose_job() {
   fi
   scan_pattern_file "$protected_patterns_file" "$transcript_file" \
     "compose job transcript contains protected runtime data"
-  scan_pattern_file "$placeholder_dynamic_patterns_file" "$transcript_file" \
-    "compose job transcript contains placeholder protected data"
-  scan_pattern_file "$agentos_dynamic_patterns_file" "$transcript_file" \
-    "compose job transcript contains AgentOS protected data"
   scan_pattern_file "$model_keys_file" "$transcript_file" \
     "compose job transcript contains a model credential"
   scan_pattern_file "$model_key_last4_file" "$transcript_file" \
@@ -560,55 +545,6 @@ reset_assistant_rate_limits() {
     --set=ON_ERROR_STOP=1 \
     --command="DELETE FROM public.rate_limits WHERE key LIKE 'assistant:%'" \
     >/dev/null
-}
-
-identity_audit_collector=$(cat <<'PY'
-import os
-import re
-import stat
-import sys
-
-identity_audit_path = "/tmp/aap-session-identity-audit"
-identity_pattern = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-)
-try:
-    descriptor = os.open(
-        identity_audit_path,
-        os.O_RDONLY
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_NONBLOCK", 0),
-    )
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise ValueError
-        if stat.S_IMODE(metadata.st_mode) != 0o600:
-            raise ValueError
-        payload = os.read(descriptor, 65537)
-        if len(payload) > 65536:
-            raise ValueError
-    finally:
-        os.close(descriptor)
-    text = payload.decode("ascii")
-    identities = text.splitlines()
-    if text and not text.endswith("\n"):
-        raise ValueError
-    if any(identity_pattern.fullmatch(identity) is None for identity in identities):
-        raise ValueError
-except FileNotFoundError:
-    raise SystemExit(0) from None
-except Exception:
-    raise SystemExit("identity audit collection failed") from None
-sys.stdout.write(text)
-PY
-)
-
-collect_agent_session_identities() {
-  if ! compose exec -T agent python -c "$identity_audit_collector" >>"$agentos_dynamic_patterns_file"; then
-    echo "Agent session identity audit collection failed" >&2
-    return 1
-  fi
 }
 
 control_preflight=$(cat <<'PY'
@@ -767,7 +703,6 @@ export AAP_RUNTIME_E2E_PROJECT="$project"
 export AAP_RUNTIME_E2E_ENV_FILE="$env_file"
 export AAP_RUNTIME_MODEL_KEYS_FILE="$model_keys_file"
 export AAP_RUNTIME_MODEL_KEY_LAST4_FILE="$model_key_last4_file"
-export AAP_RUNTIME_DYNAMIC_PATTERNS_FILE="$placeholder_dynamic_patterns_file"
 BASE_URL="$assistant_e2e_origin" \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
@@ -778,7 +713,7 @@ BASE_URL="$assistant_e2e_origin" \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
   --grep-invert "@agentos|@guard|@control"
 
-scan_logs "placeholder" "$placeholder_dynamic_patterns_file"
+scan_logs "placeholder"
 reset_assistant_rate_limits
 
 export AGENT_ENABLED=true
@@ -797,16 +732,12 @@ run_compose_job "seed-auth-agentos" -e NODE_ENV=test migrate pnpm db:seed-auth-e
 compose up -d --no-deps --force-recreate --wait web
 compose up -d --no-deps --force-recreate --wait proxy
 
-export AAP_RUNTIME_DYNAMIC_PATTERNS_FILE="$agentos_dynamic_patterns_file"
-# This exact phase queries the sorted Agno session ID set immediately around
-# both public and Admin deterministic runs; Playwright fails on set/count drift.
 BASE_URL="$assistant_e2e_origin" \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
   --grep @agentos
 
-collect_agent_session_identities
-scan_logs "agentos-bootstrap" "$agentos_dynamic_patterns_file"
+scan_logs "agentos-bootstrap"
 reset_assistant_rate_limits
 
 # Recreate both runtime sides before exercising the dynamic-control path.
@@ -820,8 +751,7 @@ BASE_URL="$assistant_e2e_origin" \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
   --grep @control
 
-collect_agent_session_identities
-scan_logs "dynamic-control" "$agentos_dynamic_patterns_file"
+scan_logs "dynamic-control"
 
 cleanup
 trap - EXIT

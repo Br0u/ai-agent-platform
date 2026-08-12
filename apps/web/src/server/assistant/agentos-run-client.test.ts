@@ -1,8 +1,8 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   AGENTOS_RUN_MAX_RESPONSE_BYTES,
-  AGENTOS_SESSION_DELETE_TIMEOUT_MS,
   AgentOSRunClientError,
   createAgentOSRunClient,
   resolveAgentOSRunSettings,
@@ -78,6 +78,16 @@ describe("AgentOS run settings", () => {
 });
 
 describe("AgentOS run client", () => {
+  it("does not expose the deprecated assistant session deletion client", () => {
+    const source = readFileSync(
+      "src/server/assistant/agentos-run-client.ts",
+      "utf8",
+    );
+
+    expect(source).not.toContain(["delete", "Session"].join(""));
+    expect(source).not.toContain(["SESSION", "DELETE"].join("_"));
+  });
+
   it("exposes only trusted activity, answer, and owned navigation markers", async () => {
     const rawStream =
       'event: RunStarted\ndata: {"event":"RunStarted","run_id":"private"}\n\n' +
@@ -650,120 +660,5 @@ describe("AgentOS run client", () => {
     expect(error).toMatchObject({ code: "external_abort" });
     expect(reasonWasRead).toBe(false);
     expect(JSON.stringify(error)).not.toContain("private-run-abort-reason");
-  });
-});
-
-describe("AgentOS session deletion", () => {
-  it.each(["", ".", ".."])(
-    "rejects unsafe session path segment %j before fetch",
-    async (sessionId) => {
-      const fetcher = vi.fn<typeof fetch>();
-      const client = createAgentOSRunClient({ settings: settings(), fetcher });
-
-      const error = await client
-        .deleteSession(sessionId)
-        .catch((value: unknown) => value);
-
-      expect(error).toBeInstanceOf(AgentOSRunClientError);
-      expect(error).toMatchObject({ code: "invalid_response" });
-      expect(fetcher).not.toHaveBeenCalled();
-      const serialized = JSON.stringify(error);
-      expect(serialized).not.toContain(INTERNAL_URL);
-      if (sessionId.length > 0) expect(serialized).not.toContain(sessionId);
-    },
-  );
-
-  it.each([200, 204, 404])("treats HTTP %s as success", async (status) => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(new Response(null, { status }));
-    const client = createAgentOSRunClient({ settings: settings(), fetcher });
-
-    await expect(
-      client.deleteSession("opaque-session"),
-    ).resolves.toBeUndefined();
-  });
-
-  it("encodes an opaque session ID as exactly one path segment", async () => {
-    const sessionId = "opaque/session?secret# value";
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(new Response(null, { status: 204 }));
-    const client = createAgentOSRunClient({ settings: settings(), fetcher });
-
-    await client.deleteSession(sessionId);
-
-    expect(fetcher.mock.calls[0]?.[0]).toBe(
-      `${INTERNAL_URL}/sessions/opaque%2Fsession%3Fsecret%23%20value`,
-    );
-    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({
-      method: "DELETE",
-      body: undefined,
-    });
-  });
-
-  it.each([
-    [302, "redirect_rejected"],
-    [401, "authentication"],
-    [429, "rate_limited"],
-    [500, "server_error"],
-    [503, "server_error"],
-  ])("rejects HTTP %s deletion", async (status, code) => {
-    const response =
-      status === 302
-        ? new Response(null, {
-            status,
-            headers: { location: "https://evil.test" },
-          })
-        : new Response(null, { status });
-    const client = createAgentOSRunClient({
-      settings: settings(),
-      fetcher: vi.fn<typeof fetch>().mockResolvedValue(response),
-    });
-
-    await expect(
-      client.deleteSession("private-session-id"),
-    ).rejects.toMatchObject({ code });
-  });
-
-  it("uses the fixed 3000 ms cleanup deadline", async () => {
-    expect(AGENTOS_SESSION_DELETE_TIMEOUT_MS).toBe(3_000);
-    vi.useFakeTimers();
-    const client = createAgentOSRunClient({
-      settings: settings(),
-      fetcher: abortAwareFetcher(),
-    });
-    const assertion = expect(
-      client.deleteSession("private-session-id"),
-    ).rejects.toMatchObject({ code: "timeout" });
-
-    await vi.advanceTimersByTimeAsync(2_999);
-    await vi.advanceTimersByTimeAsync(1);
-
-    await assertion;
-  });
-
-  it("does not log or serialize the session ID on deletion failure", async () => {
-    const consoleSpies = [
-      vi.spyOn(console, "error").mockImplementation(() => undefined),
-      vi.spyOn(console, "warn").mockImplementation(() => undefined),
-      vi.spyOn(console, "log").mockImplementation(() => undefined),
-    ];
-    const sessionId = "private-session-id";
-    const client = createAgentOSRunClient({
-      settings: settings(),
-      fetcher: vi
-        .fn<typeof fetch>()
-        .mockResolvedValue(
-          new Response("private raw response", { status: 500 }),
-        ),
-    });
-
-    const error = await client.deleteSession(sessionId).catch((value) => value);
-
-    expect(error).toBeInstanceOf(AgentOSRunClientError);
-    expect(JSON.stringify(error)).not.toContain(sessionId);
-    expect(JSON.stringify(error)).not.toContain("private raw response");
-    expect(consoleSpies.every((spy) => spy.mock.calls.length === 0)).toBe(true);
   });
 });
