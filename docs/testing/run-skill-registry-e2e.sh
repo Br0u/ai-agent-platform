@@ -398,6 +398,18 @@ compose() {
   docker compose -p "$project" --env-file "$env_file" $compose_files "$@"
 }
 
+agent_session_count() {
+  count=$(compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -Atqc \
+    "SELECT count(*) FROM agno.agno_sessions")
+  case "$count" in
+    ''|*[!0-9]*)
+      echo "Agent session count is invalid" >&2
+      return 1
+      ;;
+  esac
+  printf '%s\n' "$count"
+}
+
 assert_skill_runtime_stream() {
   expected=$1
   compose exec -T -e AAP_SKILL_RUNTIME_EXPECTED="$expected" agent python - <<'PY'
@@ -539,8 +551,15 @@ run_skill_registry_playwright @restart
 
 if [ "$runtime_mode" = true ]; then
   failure_stage=runtime-activation
+  sessions_before_runtime=$(agent_session_count)
   run_skill_registry_playwright @runtime-activate
   assert_skill_runtime_stream marker
+  sessions_after_runtime=$(agent_session_count)
+  [ "$sessions_after_runtime" = "$sessions_before_runtime" ] || {
+    printf 'Skill runtime changed persisted Agent sessions: before=%s after=%s\n' \
+      "$sessions_before_runtime" "$sessions_after_runtime" >&2
+    exit 1
+  }
   failure_stage=agent-restart-persistence
   compose restart agent
   compose up -d --no-deps --wait agent
@@ -648,7 +667,7 @@ audit_leaks=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
 }
 
 if [ "$runtime_mode" = true ]; then
-  success_message="Skill runtime E2E passed"
+  success_message="Skill runtime E2E passed: Agent sessions before=$sessions_before_runtime after=$sessions_after_runtime"
 else
   success_message="Skill Registry E2E passed"
 fi

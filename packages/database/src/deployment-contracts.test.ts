@@ -605,9 +605,14 @@ describe("production deployment security contracts", () => {
     expect(runbook).toContain(
       "ASSISTANT_PUBLIC_ORIGIN=https://ai-agent.example.com",
     );
-    expect(runner).toContain("ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080");
     expect(runner).toContain(
-      '[ "$ASSISTANT_PUBLIC_ORIGIN" = "http://127.0.0.1:8080" ]',
+      "assistant_e2e_http_port=${ASSISTANT_E2E_HTTP_PORT:-8080}",
+    );
+    expect(runner).toContain(
+      'assistant_e2e_origin="http://127.0.0.1:$assistant_e2e_http_port"',
+    );
+    expect(runner).toContain(
+      'export ASSISTANT_PUBLIC_ORIGIN="$assistant_e2e_origin"',
     );
   });
 
@@ -934,6 +939,18 @@ describe("production deployment security contracts", () => {
       expect(execution.status).toBe(1);
       expect(execution.stdout).toBe("");
       expect(execution.stderr).toBe("identity audit collection failed\n");
+      const missing = path.join(collectorSandbox, "missing");
+      const emptyCollector = (collectorMatch?.groups?.source ?? "").replace(
+        'identity_audit_path = "/tmp/aap-session-identity-audit"',
+        `identity_audit_path = ${JSON.stringify(missing)}`,
+      );
+      const emptyExecution = spawnSync("python3", ["-c", emptyCollector], {
+        encoding: "utf8",
+        timeout: 500,
+      });
+      expect(emptyExecution.status).toBe(0);
+      expect(emptyExecution.stdout).toBe("");
+      expect(emptyExecution.stderr).toBe("");
     } finally {
       rmSync(collectorSandbox, { recursive: true, force: true });
     }
@@ -941,8 +958,11 @@ describe("production deployment security contracts", () => {
     expect(script).toContain('getattr(os, "O_NONBLOCK", 0)');
     expect(script).toContain("stat.S_ISREG(metadata.st_mode)");
     expect(script).toContain("stat.S_IMODE(metadata.st_mode) != 0o600");
-    expect(script).toContain("if not identities:");
+    expect(script).toContain('if text and not text.endswith("\\n"):');
     expect(script).toContain("identity_pattern.fullmatch(identity)");
+    expect(script).toContain(
+      "any(identity_pattern.fullmatch(identity) is None for identity in identities)",
+    );
     expect(script).toContain(
       'raise SystemExit("identity audit collection failed")',
     );
@@ -973,14 +993,19 @@ describe("production deployment security contracts", () => {
       "appendDynamicProtectedValue(parsed.credential)",
     );
     expect(browserAcceptance).toContain(
-      "expectNoProtectedValue(first, [firstSessionId])",
+      "const sessionsBeforePublic = agentSessionIds()",
     );
     expect(browserAcceptance).toContain(
-      "const newSessionId = replacementCandidates[0]",
+      "const sessionsAfterPublic = agentSessionIds()",
     );
     expect(browserAcceptance).toContain(
-      "expectNoProtectedValue(third, [newSessionId])",
+      "const sessionsBefore = agentSessionIds()",
     );
+    expect(browserAcceptance).toContain(
+      "const sessionsAfterAdmin = agentSessionIds()",
+    );
+    expect(browserAcceptance).not.toContain("ADMIN_SESSIONS_PATH");
+    expect(browserAcceptance).not.toContain("const SESSION_PATH");
     const invalidResponseIndex = browserAcceptance.indexOf(
       "const invalidResponse =",
     );
@@ -1024,7 +1049,7 @@ describe("production deployment security contracts", () => {
     ).toBeGreaterThan(recoveredResponseIndex);
     expect(
       browserAcceptance.indexOf(
-        'content: "deterministic-turn:2"',
+        'content: "deterministic-turn:1"',
         recoveredResponseIndex,
       ),
     ).toBeGreaterThan(recoveredResponseIndex);
@@ -1079,7 +1104,7 @@ describe("production deployment security contracts", () => {
       expect(script).toContain(`\"$${variable}\"`);
     }
     expect(script).toContain(
-      "guard, placeholder, AgentOS bootstrap, dynamic control, recovery, reveal and zero-residue cleanup",
+      "guard, placeholder, stateless public/Admin AgentOS runs, dynamic control, recovery, reveal and zero-residue cleanup",
     );
     expect(script).toContain("db_port_bindings=");
   });
@@ -1197,7 +1222,7 @@ describe("production deployment security contracts", () => {
     expect(browserAcceptance).toContain(
       "agent recreate did not restore ${provider}/${modelId}/rev ${configRevision}",
     );
-    expect(browserAcceptance).toContain(
+    expect(browserAcceptance).not.toContain(
       "await context.request.delete(SESSION_PATH)",
     );
     expect(browserAcceptance).toContain(
@@ -1510,9 +1535,6 @@ exit 0
     );
     expect(spec).toContain(
       "await readSafeJson(adminStatusResponse, protectedValues)",
-    );
-    expect(spec).toContain(
-      "await readSafeJson(sessionsResponse, protectedValues)",
     );
     expect(spec).toContain(
       "await readSafeJson(adminChatResponse, protectedValues)",
@@ -5142,8 +5164,8 @@ exit 0
     expect(script).toContain("--env-file");
     expect(script).not.toMatch(/docker run[^\n]*-e\s+POSTGRES_/u);
     expect(script).not.toContain("POSTGRES_PASSWORD=");
-    expect(script).toContain('expected_migrations="10"');
-    expect(script).toContain('expected_latest_migration="1786502675702"');
+    expect(script).toContain('expected_migrations="11"');
+    expect(script).toContain('expected_latest_migration="1786517193087"');
     expect(script).toContain("migration_count");
     expect(script).toContain("latest_migration");
     expect(script).toContain("users_email_lower_unique");
@@ -7130,8 +7152,8 @@ case "$command" in
         [ "$FAKE_DOCKER_MODE" = success_temp_rm_failure ] || exit 1
         case " $* " in
           *"BEGIN TRANSACTION READ ONLY"*) printf '%s\n' '1|1|1|1|1|1|0|0|0|t' ;;
-          *"SELECT count(*) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 10 ;;
-          *"SELECT max(created_at) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 1786502675702 ;;
+          *"SELECT count(*) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 11 ;;
+          *"SELECT max(created_at) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 1786517193087 ;;
           *"WHERE id = "*) printf '%s\n' 1 ;;
           *"WHERE session_id = "*) printf '%s\n' 1 ;;
           *"SELECT count(*) FROM public.users"*) printf '%s\n' 1 ;;

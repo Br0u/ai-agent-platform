@@ -32,10 +32,8 @@ import { ASSISTANT_CONTENT_MAX_CODE_POINTS } from "../src/features/assistant/ass
 import { parseAdminAssistantStatusResponse } from "../src/features/assistant/admin-assistant-contract";
 
 const CHAT_PATH = "/api/v1/assistant/chat";
-const SESSION_PATH = "/api/v1/assistant/session";
 const STATUS_PATH = "/api/v1/assistant/status";
 const ADMIN_STATUS_PATH = "/api/v1/admin/assistant/status";
-const ADMIN_SESSIONS_PATH = "/api/v1/admin/assistant/sessions";
 const ADMIN_CHAT_PATH = "/api/v1/admin/assistant/chat";
 const MODEL_CONFIG_PATH = "/api/v1/admin/assistant/model-configs";
 const CHAT_BODY = {
@@ -310,12 +308,6 @@ function agentSessionIds(): Set<string> {
     appendDynamicProtectedValue(sessionId);
   }
   return sessionIds;
-}
-
-function sameStringSet(left: Set<string>, right: Set<string>): boolean {
-  return (
-    left.size === right.size && [...left].every((value) => right.has(value))
-  );
 }
 
 function internalUnauthenticatedWebSocketStatus(): number {
@@ -1539,7 +1531,6 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
   const anonymous = await requestFactory.newContext({ baseURL });
   for (const [method, endpoint] of [
     ["get", ADMIN_STATUS_PATH],
-    ["get", ADMIN_SESSIONS_PATH],
     ["post", ADMIN_CHAT_PATH],
   ] as const) {
     const response =
@@ -1570,7 +1561,6 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
   );
   for (const [method, endpoint] of [
     ["get", ADMIN_STATUS_PATH],
-    ["get", ADMIN_SESSIONS_PATH],
     ["post", ADMIN_CHAT_PATH],
   ] as const) {
     const response =
@@ -1662,19 +1652,6 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
     },
   });
 
-  const sessionsResponse = await admin.request.get(ADMIN_SESSIONS_PATH);
-  expect(sessionsResponse.status()).toBe(200);
-  const sessions = await readSafeJson(sessionsResponse, protectedValues);
-  assertSafeResponse(sessions, "placeholder admin sessions").matches({
-    version: "1",
-    requestId: requestIdMatcher,
-    sessions: {
-      persistence: "disabled",
-      listing: "not_available",
-      message: "占位模式未持久化会话；管理列表不可用。",
-    },
-  });
-
   const adminChatResponse = await admin.request.post(ADMIN_CHAT_PATH, {
     data: CHAT_BODY,
   });
@@ -1696,7 +1673,7 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
 });
 
 test.describe("@agentos deterministic runtime", () => {
-  test("reports only 码多多 as available and cleans the real Admin ephemeral run", async ({
+  test("reports only 码多多 as available and leaves no session after the public run", async ({
     browser,
     baseURL,
   }) => {
@@ -1723,8 +1700,45 @@ test.describe("@agentos deterministic runtime", () => {
       ),
       "public status exposed internal Agent data",
     ).toBe(false);
-    await publicContext.close();
 
+    const sessionsBeforePublic = agentSessionIds();
+    const publicChatResponse = await publicContext.request.post(CHAT_PATH, {
+      data: CHAT_BODY,
+    });
+    expect(publicChatResponse.status()).toBe(200);
+    const publicChat = await readSafeAssistantStream(
+      publicChatResponse,
+      protectedValues,
+    );
+    assertSafeResponse(publicChat, "AgentOS public chat").matches({
+      version: "1",
+      requestId: requestIdMatcher,
+      mode: "agentos",
+      session: { temporary: true, expiresAt: expiresAtMatcher },
+      message: {
+        id: messageIdMatcher,
+        role: "assistant",
+        content: "deterministic-turn:1",
+      },
+      suggestedActions: [],
+    });
+    const sessionsAfterPublic = agentSessionIds();
+    expect(
+      sessionsAfterPublic,
+      `public deterministic run changed Agent sessions: before=${sessionsBeforePublic.size} after=${sessionsAfterPublic.size}`,
+    ).toEqual(sessionsBeforePublic);
+    console.log(
+      `public deterministic Agent sessions: before=${sessionsBeforePublic.size} after=${sessionsAfterPublic.size}`,
+    );
+    await publicContext.close();
+  });
+
+  test("leaves no session after the Admin deterministic run", async ({
+    browser,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("BASE_URL is required");
+    const protectedValues = runtimeProtectedValues();
     const credentials = fixtureCredentials();
     const admin = await browser.newContext({ baseURL });
     collectBrowserDiagnostics(admin);
@@ -1831,186 +1845,15 @@ test.describe("@agentos deterministic runtime", () => {
       },
       suggestedActions: [],
     });
+    const sessionsAfterAdmin = agentSessionIds();
     expect(
-      sameStringSet(agentSessionIds(), sessionsBefore),
-      "Admin ephemeral run changed the persisted Agent session identity set",
-    ).toBe(true);
-
-    const sessionsResponse = await admin.request.get(ADMIN_SESSIONS_PATH);
-    expect(sessionsResponse.status()).toBe(200);
-    const sessions = await readSafeJson(sessionsResponse, [
-      ...protectedValues,
-      credentials.adminSessionToken,
-    ]);
-    assertSafeResponse(sessions, "AgentOS admin sessions").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      sessions: {
-        persistence: "agentos",
-        listing: "not_available",
-        message: "AgentOS 持久化已启用，但管理列表不在本阶段范围。",
-      },
-    });
+      sessionsAfterAdmin,
+      `Admin deterministic run changed Agent sessions: before=${sessionsBefore.size} after=${sessionsAfterAdmin.size}`,
+    ).toEqual(sessionsBefore);
+    console.log(
+      `Admin deterministic Agent sessions: before=${sessionsBefore.size} after=${sessionsAfterAdmin.size}`,
+    );
     await admin.close();
-  });
-
-  test("keeps two real turns in one Cookie and starts over after DELETE", async ({
-    browser,
-    baseURL,
-  }) => {
-    if (!baseURL) throw new Error("BASE_URL is required");
-    const context = await browser.newContext({ baseURL });
-    collectBrowserDiagnostics(context);
-    const protectedValues = runtimeProtectedValues();
-    const sessionsBeforeFirstTurn = agentSessionIds();
-
-    const firstResponse = await context.request.post(CHAT_PATH, {
-      data: CHAT_BODY,
-    });
-    expect(firstResponse.status()).toBe(200);
-    const first = await readSafeAssistantStream(firstResponse, protectedValues);
-    assertSafeResponse(first, "AgentOS first turn").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      mode: "agentos",
-      session: { temporary: true, expiresAt: expiresAtMatcher },
-      message: {
-        id: messageIdMatcher,
-        role: "assistant",
-        content: "deterministic-turn:1",
-      },
-      suggestedActions: [],
-    });
-    const firstSetCookie = firstResponse.headers()["set-cookie"] ?? "";
-    const firstCredential = cookieCredential(firstSetCookie);
-    expectNoProtectedValue(first, [...protectedValues, firstCredential]);
-    const sessionsAfterFirstTurn = agentSessionIds();
-    const firstSessionCandidates = [...sessionsAfterFirstTurn].filter(
-      (sessionId) => !sessionsBeforeFirstTurn.has(sessionId),
-    );
-    expect(
-      firstSessionCandidates.length === 1,
-      "first browser context must create exactly one Agent session",
-    ).toBe(true);
-    const firstSessionId = firstSessionCandidates[0];
-    if (!firstSessionId) throw new Error("first Agent session was not created");
-    expectNoProtectedValue(first, [firstSessionId]);
-
-    const secondResponse = await context.request.post(CHAT_PATH, {
-      data: {
-        message: "请继续。",
-        context: { pathname: "/assistant" },
-      },
-    });
-    expect(secondResponse.status()).toBe(200);
-    const second = await readSafeAssistantStream(secondResponse, [
-      ...protectedValues,
-      firstCredential,
-    ]);
-    assertSafeResponse(second, "AgentOS second turn").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      mode: "agentos",
-      session: { temporary: true, expiresAt: expiresAtMatcher },
-      message: {
-        id: messageIdMatcher,
-        role: "assistant",
-        content: "deterministic-turn:2",
-      },
-      suggestedActions: [],
-    });
-    const stableCookie = (await context.cookies()).find(
-      (cookie) => cookie.name === "aap_assistant_sid_dev",
-    )?.value;
-    expect(
-      stableCookie !== undefined &&
-        stableCookieCredential(stableCookie) ===
-          stableCookieCredential(firstCredential),
-      "assistant Cookie credential changed between turn one and turn two",
-    ).toBe(true);
-
-    const independentContext = await browser.newContext({ baseURL });
-    collectBrowserDiagnostics(independentContext);
-    const independentResponse = await independentContext.request.post(
-      CHAT_PATH,
-      { data: CHAT_BODY },
-    );
-    expect(independentResponse.status()).toBe(200);
-    const independent = await readSafeAssistantStream(
-      independentResponse,
-      protectedValues,
-    );
-    assertSafeResponse(independent, "AgentOS independent turn").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      mode: "agentos",
-      session: { temporary: true, expiresAt: expiresAtMatcher },
-      message: {
-        id: messageIdMatcher,
-        role: "assistant",
-        content: "deterministic-turn:1",
-      },
-      suggestedActions: [],
-    });
-    await independentContext.close();
-
-    const deletion = await context.request.delete(SESSION_PATH);
-    expect(deletion.status()).toBe(204);
-    expect(
-      (await deletion.text()) === "",
-      "assistant session deletion returned a body",
-    ).toBe(true);
-    expect(
-      deletion.headers()["set-cookie"]?.includes("aap_assistant_sid_dev=") ===
-        true,
-      "assistant session deletion did not clear its cookie",
-    ).toBe(true);
-    const cookiesAfterDeletion = await context.cookies();
-    expect(
-      cookiesAfterDeletion.some(
-        (cookie) => cookie.name === "aap_assistant_sid_dev",
-      ),
-    ).toBe(false);
-    expect(
-      agentSessionIds().has(firstSessionId),
-      "DELETE must remove the original persisted Agent session",
-    ).toBe(false);
-    const sessionsAfterDeletion = agentSessionIds();
-
-    const thirdResponse = await context.request.post(CHAT_PATH, {
-      data: {
-        message: "新会话。",
-        context: { pathname: "/assistant" },
-      },
-    });
-    expect(thirdResponse.status()).toBe(200);
-    const third = await readSafeAssistantStream(thirdResponse, protectedValues);
-    assertSafeResponse(third, "AgentOS replacement turn").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      mode: "agentos",
-      session: { temporary: true, expiresAt: expiresAtMatcher },
-      message: {
-        id: messageIdMatcher,
-        role: "assistant",
-        content: "deterministic-turn:1",
-      },
-      suggestedActions: [],
-    });
-    const sessionsAfterNewTurn = agentSessionIds();
-    const replacementCandidates = [...sessionsAfterNewTurn].filter(
-      (sessionId) => !sessionsAfterDeletion.has(sessionId),
-    );
-    const newSessionId = replacementCandidates[0];
-    expect(
-      replacementCandidates.length === 1 && newSessionId !== firstSessionId,
-      "new turn after DELETE must create a different Agent session",
-    ).toBe(true);
-    if (!newSessionId)
-      throw new Error("replacement Agent session was not created");
-    expectNoProtectedValue(third, [newSessionId]);
-    expectConsoleExcludesCredential(firstCredential);
-    await context.close();
   });
 
   test("rejects an unauthenticated WebSocket and keeps Agent plus DB private", async ({
@@ -2060,11 +1903,6 @@ test.describe("@agentos deterministic runtime", () => {
       suggestedActions: [],
     });
     assertNoPublicInvalidModelOutput(invalid);
-    const invalidCookie = (await context.cookies()).find(
-      (cookie) => cookie.name === "aap_assistant_sid_dev",
-    )?.value;
-    if (!invalidCookie)
-      throw new Error("invalid stream did not establish an assistant Cookie");
 
     const recoveredResponse = await context.request.post(CHAT_PATH, {
       data: CHAT_BODY,
@@ -2082,18 +1920,10 @@ test.describe("@agentos deterministic runtime", () => {
       message: {
         id: messageIdMatcher,
         role: "assistant",
-        content: "deterministic-turn:2",
+        content: "deterministic-turn:1",
       },
       suggestedActions: [],
     });
-    expect(
-      stableCookieCredential(
-        (await context.cookies()).find(
-          (cookie) => cookie.name === "aap_assistant_sid_dev",
-        )?.value ?? "",
-      ) === stableCookieCredential(invalidCookie),
-      "bounded invalid stream changed the persisted assistant session",
-    ).toBe(true);
 
     const credentials = fixtureCredentials();
     const admin = await browser.newContext({ baseURL });
@@ -2408,8 +2238,6 @@ test.describe("@control deterministic model control", () => {
       }
       const body = await readControlAssistantStream(response);
       expect(JSON.stringify(body)).toContain(expectedMarker);
-      const deletion = await context.request.delete(SESSION_PATH);
-      expect(deletion.status()).toBe(204);
       await drainControlResponses();
       await context.close();
     };

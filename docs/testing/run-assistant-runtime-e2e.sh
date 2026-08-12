@@ -25,6 +25,20 @@ case "$project" in
     ;;
 esac
 
+assistant_e2e_http_port=${ASSISTANT_E2E_HTTP_PORT:-8080}
+case "$assistant_e2e_http_port" in
+  ''|*[!0-9]*)
+    echo "ASSISTANT_E2E_HTTP_PORT must be an integer from 1 to 65535" >&2
+    exit 1
+    ;;
+esac
+if ! [ "$assistant_e2e_http_port" -ge 1 ] 2>/dev/null ||
+   ! [ "$assistant_e2e_http_port" -le 65535 ] 2>/dev/null; then
+  echo "ASSISTANT_E2E_HTTP_PORT must be an integer from 1 to 65535" >&2
+  exit 1
+fi
+assistant_e2e_origin="http://127.0.0.1:$assistant_e2e_http_port"
+
 compose_files="-f compose.yaml -f compose.e2e.yaml"
 env_file="$repo_root/.env.e2e"
 temp_dir=
@@ -139,8 +153,8 @@ if [ -n "$existing_containers$existing_volumes$existing_networks$existing_labele
   release_lock
   exit 1
 fi
-if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "TCP port 8080 is already in use" >&2
+if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$assistant_e2e_http_port" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "TCP port $assistant_e2e_http_port is already in use" >&2
   release_lock
   exit 1
 fi
@@ -180,9 +194,9 @@ RUNTIME_DATABASE_URL=postgresql://ai_agent_runtime:$runtime_password@db:5432/ai_
 DATABASE_URL=postgresql://ai_agent_migrator:$migrator_password@db:5432/ai_agent_platform_runtime_e2e
 TEST_DATABASE_URL=postgresql://ai_agent_migrator:$migrator_password@db:5432/ai_agent_platform_runtime_e2e_test
 BETTER_AUTH_SECRET=$better_auth_secret
-BETTER_AUTH_URL=http://127.0.0.1:8080
-BETTER_AUTH_TRUSTED_ORIGINS=http://127.0.0.1:8080
-HTTP_PORT=8080
+BETTER_AUTH_URL=$assistant_e2e_origin
+BETTER_AUTH_TRUSTED_ORIGINS=$assistant_e2e_origin
+HTTP_PORT=$assistant_e2e_http_port
 PUBLIC_HOST=127.0.0.1
 ALLOW_LOCAL_VALIDATION_HOSTS=true
 BACKUP_INTERVAL_SECONDS=86400
@@ -223,6 +237,12 @@ set -a
 . "$env_file"
 set +a
 
+# The host port is run-scoped even when a pre-existing immutable E2E env file
+# was created with the default port. Compose gives these exports precedence.
+export BETTER_AUTH_URL="$assistant_e2e_origin"
+export BETTER_AUTH_TRUSTED_ORIGINS="$assistant_e2e_origin"
+export HTTP_PORT="$assistant_e2e_http_port"
+
 # Older local E2E env files predate the dedicated model-admin fixtures. Keep
 # them immutable and generate run-scoped tokens instead of appending secrets.
 if [ -z "${E2E_MODEL_ADMIN_SESSION_TOKEN-}" ]; then
@@ -248,20 +268,19 @@ for name in $required_variables; do
   fi
 done
 
-[ "$BETTER_AUTH_URL" = "http://127.0.0.1:8080" ] || {
+[ "$BETTER_AUTH_URL" = "$assistant_e2e_origin" ] || {
   echo "BETTER_AUTH_URL must use the E2E proxy" >&2
   exit 1
 }
-[ "$BETTER_AUTH_TRUSTED_ORIGINS" = "http://127.0.0.1:8080" ] || {
+[ "$BETTER_AUTH_TRUSTED_ORIGINS" = "$assistant_e2e_origin" ] || {
   echo "BETTER_AUTH_TRUSTED_ORIGINS must use the E2E proxy" >&2
   exit 1
 }
 
-export HTTP_PORT=8080
 export PUBLIC_HOST=127.0.0.1
 export ALLOW_LOCAL_VALIDATION_HOSTS=true
-export ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080
-[ "$ASSISTANT_PUBLIC_ORIGIN" = "http://127.0.0.1:8080" ] || {
+export ASSISTANT_PUBLIC_ORIGIN="$assistant_e2e_origin"
+[ "$ASSISTANT_PUBLIC_ORIGIN" = "$assistant_e2e_origin" ] || {
   echo "ASSISTANT_PUBLIC_ORIGIN must be the exact loopback E2E proxy" >&2
   exit 1
 }
@@ -573,12 +592,12 @@ try:
         os.close(descriptor)
     text = payload.decode("ascii")
     identities = text.splitlines()
-    if not identities:
-        raise ValueError
-    if not text.endswith("\n"):
+    if text and not text.endswith("\n"):
         raise ValueError
     if any(identity_pattern.fullmatch(identity) is None for identity in identities):
         raise ValueError
+except FileNotFoundError:
+    raise SystemExit(0) from None
 except Exception:
     raise SystemExit("identity audit collection failed") from None
 sys.stdout.write(text)
@@ -749,12 +768,12 @@ export AAP_RUNTIME_E2E_ENV_FILE="$env_file"
 export AAP_RUNTIME_MODEL_KEYS_FILE="$model_keys_file"
 export AAP_RUNTIME_MODEL_KEY_LAST4_FILE="$model_key_last4_file"
 export AAP_RUNTIME_DYNAMIC_PATTERNS_FILE="$placeholder_dynamic_patterns_file"
-BASE_URL=http://127.0.0.1:8080 \
+BASE_URL="$assistant_e2e_origin" \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
   --grep @guard
 
-BASE_URL=http://127.0.0.1:8080 \
+BASE_URL="$assistant_e2e_origin" \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
   --grep-invert "@agentos|@guard|@control"
@@ -779,7 +798,9 @@ compose up -d --no-deps --force-recreate --wait web
 compose up -d --no-deps --force-recreate --wait proxy
 
 export AAP_RUNTIME_DYNAMIC_PATTERNS_FILE="$agentos_dynamic_patterns_file"
-BASE_URL=http://127.0.0.1:8080 \
+# This exact phase queries the sorted Agno session ID set immediately around
+# both public and Admin deterministic runs; Playwright fails on set/count drift.
+BASE_URL="$assistant_e2e_origin" \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
   --grep @agentos
@@ -794,7 +815,7 @@ run_compose_job "seed-auth-control" -e NODE_ENV=test migrate pnpm db:seed-auth-e
 compose up -d --no-deps --force-recreate --wait web
 compose up -d --no-deps --force-recreate --wait proxy
 
-BASE_URL=http://127.0.0.1:8080 \
+BASE_URL="$assistant_e2e_origin" \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
   --grep @control
@@ -806,4 +827,4 @@ cleanup
 trap - EXIT
 assert_zero_residue
 
-echo "Assistant runtime E2E passed: guard, placeholder, AgentOS bootstrap, dynamic control, recovery, reveal and zero-residue cleanup."
+echo "Assistant runtime E2E passed: guard, placeholder, stateless public/Admin AgentOS runs, dynamic control, recovery, reveal and zero-residue cleanup."

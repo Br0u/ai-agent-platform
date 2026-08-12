@@ -47,6 +47,10 @@ for (const evidence of [
   "Skill Registry E2E failed during: %s",
   "failure_stage=registry-restart-acceptance",
   "failure_stage=agent-restart-persistence",
+  "agent_session_count()",
+  "sessions_before_runtime=$(agent_session_count)",
+  "sessions_after_runtime=$(agent_session_count)",
+  'Skill runtime changed persisted Agent sessions: before=%s after=%s',
   "PNPM_REGISTRY=${PNPM_REGISTRY:-https://registry.npmjs.org}",
 ]) {
   assert(
@@ -54,6 +58,16 @@ for (const evidence of [
     `missing runtime evidence: ${evidence}`,
   );
 }
+assert(
+  sharedRunner.indexOf("sessions_before_runtime=$(agent_session_count)") <
+    sharedRunner.indexOf("run_skill_registry_playwright @runtime-activate"),
+  "Skill runtime session count must be captured before activation/run",
+);
+assert(
+  sharedRunner.indexOf("sessions_after_runtime=$(agent_session_count)") >
+    sharedRunner.indexOf("assert_skill_runtime_stream marker"),
+  "Skill runtime session count must be captured after the terminal marker",
+);
 
 const skill = read("docs/testing/fixtures/skills/deterministic/SKILL.md");
 const marker = read(
