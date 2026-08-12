@@ -7,6 +7,16 @@ const access = vi.hoisted(() => ({
 const rateLimit = vi.hoisted(() => ({
   consume: vi.fn(async () => undefined),
 }));
+const inputPolicy = vi.hoisted(() => ({
+  createRepository: vi.fn(),
+  load: vi.fn(async () => ({
+    terms: [] as string[],
+    revision: 0,
+    updatedAt: null,
+    updatedBy: null,
+  })),
+  save: vi.fn(),
+}));
 
 vi.mock("@/server/auth/access", () => ({
   createAccessService: access.createAccessService,
@@ -22,6 +32,17 @@ vi.mock("@/server/assistant/assistant-rate-limit", async (importOriginal) => {
     createDatabaseAssistantRateLimiter: () => ({
       consume: rateLimit.consume,
     }),
+  };
+});
+
+vi.mock("@/server/assistant/assistant-input-policy", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/server/assistant/assistant-input-policy")
+    >();
+  return {
+    ...actual,
+    createAssistantInputPolicyRepository: inputPolicy.createRepository,
   };
 });
 
@@ -65,6 +86,10 @@ beforeEach(() => {
     getCurrentActor: access.getCurrentActor,
   });
   access.getCurrentActor.mockResolvedValue(null);
+  inputPolicy.createRepository.mockReturnValue({
+    load: inputPolicy.load,
+    save: inputPolicy.save,
+  });
 });
 
 afterEach(() => {
@@ -94,6 +119,8 @@ describe("anonymous assistant access short-circuit", () => {
       expect(rateLimit.consume).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ scope: "anonymous" }),
       );
+      expect(inputPolicy.createRepository).toHaveBeenCalledOnce();
+      expect(inputPolicy.load).toHaveBeenCalledOnce();
     },
   );
 
@@ -107,5 +134,7 @@ describe("anonymous assistant access short-circuit", () => {
     expect(rateLimit.consume).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ scope: "anonymous" }),
     );
+    expect(inputPolicy.createRepository).toHaveBeenCalledOnce();
+    expect(inputPolicy.load).toHaveBeenCalledOnce();
   });
 });

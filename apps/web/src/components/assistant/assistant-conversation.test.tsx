@@ -237,6 +237,7 @@ describe("AssistantConversation", () => {
     const failedSession = createSession({
       draft: "失败的问题",
       latestAnnouncement: "请求过于频繁，请稍后再试。",
+      lastFailedMessage: "失败的问题",
       requestStatus: "failed",
     });
     view.rerender(
@@ -255,6 +256,22 @@ describe("AssistantConversation", () => {
       "data-variant",
       "dock",
     );
+  });
+
+  it("does not offer retry for a blocked non-retryable request", () => {
+    renderConversation(
+      createSession({
+        draft: "等待用户修改的问题",
+        latestAnnouncement: "该问题无法提交，请调整表述",
+        lastFailedMessage: null,
+        requestStatus: "failed",
+      }),
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "该问题无法提交，请调整表述",
+    );
+    expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
   });
 
   it("uses one live region for request feedback instead of repeating a failure", () => {

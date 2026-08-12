@@ -57,7 +57,7 @@ interface AssistantChatHandlerDependencies {
   messageIdFactory: () => string;
   resolveSession: (request: Request) => Promise<AssistantChatSessionResolution>;
   rateLimiter: AssistantRateLimiter;
-  loadInputPolicy?: () => Promise<AssistantInputPolicySnapshot>;
+  loadInputPolicy: () => Promise<AssistantInputPolicySnapshot>;
   resolveTrustedClientIp: (request: Request) => string | undefined;
 }
 
@@ -139,9 +139,7 @@ export function createAssistantChatHandler(
         await dependencies.rateLimiter.consume(
           rateLimitInput(resolvedSession, ipAddress),
         );
-        const policy = await (
-          dependencies.loadInputPolicy ?? loadAssistantInputPolicy
-        )();
+        const policy = await dependencies.loadInputPolicy();
         if (
           matchesAssistantInputPolicy([assistantRequest.message], policy.terms)
         ) {

@@ -264,14 +264,16 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
         {session.requestStatus === "failed" ? (
           <div className="floating-assistant__error" role="alert">
             <span>{session.latestAnnouncement}</span>
-            <button
-              disabled={sending}
-              onClick={() => void session.retry()}
-              type="button"
-            >
-              <RotateCcw size={14} />
-              重试
-            </button>
+            {session.lastFailedMessage !== null ? (
+              <button
+                disabled={sending}
+                onClick={() => void session.retry()}
+                type="button"
+              >
+                <RotateCcw size={14} />
+                重试
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>

@@ -435,6 +435,38 @@ describe("FloatingChatWidget", () => {
     expect(screen.getAllByText("部署失败怎么办")).toHaveLength(1);
   });
 
+  it("does not offer retry after an input-blocked response", async () => {
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (input === "/api/v1/assistant/chat" && init?.method === "POST") {
+        return Promise.resolve(
+          Response.json(
+            {
+              version: "1",
+              requestId: "request-blocked",
+              error: {
+                code: "input_blocked",
+                message: "该问题无法提交，请调整表述",
+                retryable: false,
+              },
+            },
+            { status: 422 },
+          ),
+        );
+      }
+      return Promise.resolve(Response.json(serviceStates.placeholder));
+    });
+    openWidget();
+    const input = screen.getByRole("textbox", { name: "向码多多提问" });
+    fireEvent.change(input, { target: { value: "需要调整的问题" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
+
+    expect(
+      await screen.findByText("该问题无法提交，请调整表述"),
+    ).toBeInTheDocument();
+    expect(input).toHaveValue("需要调整的问题");
+    expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
+  });
+
   it("rejects input over 500 Unicode characters before sending", () => {
     openWidget();
     fireEvent.change(screen.getByRole("textbox", { name: "向码多多提问" }), {

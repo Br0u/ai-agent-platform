@@ -130,7 +130,8 @@ export function AssistantConversation({
           value={session.draft}
           variant={variant}
         />
-        {session.requestStatus === "failed" ? (
+        {session.requestStatus === "failed" &&
+        session.lastFailedMessage !== null ? (
           <button
             className="assistant-conversation__retry"
             onClick={() => void session.retry()}

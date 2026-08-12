@@ -13,6 +13,7 @@ import type {
   AssistantProvider,
   AssistantProviderReply,
 } from "@/server/assistant/assistant-provider";
+import * as inputPolicyRepository from "@/server/assistant/assistant-input-policy";
 import type {
   AssistantRequestLog,
   AssistantRequestLogger,
@@ -396,6 +397,30 @@ describe("POST /api/v1/assistant/chat", () => {
     expect(deps.loadInputPolicy).not.toHaveBeenCalled();
     expect(deps.resolveProvider).not.toHaveBeenCalled();
     expect(deps.provider.reply).not.toHaveBeenCalled();
+  });
+
+  it("never falls back to the global policy repository for custom handlers", async () => {
+    const globalRepository = vi
+      .spyOn(inputPolicyRepository, "createAssistantInputPolicyRepository")
+      .mockImplementation(() => {
+        throw new Error("global policy repository must not be used");
+      });
+    const deps = dependencies();
+
+    try {
+      const response = await createAssistantChatHandler(deps)(
+        request(
+          JSON.stringify({ message: "问题", context: { pathname: "/" } }),
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      expect(deps.loadInputPolicy).toHaveBeenCalledOnce();
+      expect(globalRepository).not.toHaveBeenCalled();
+      expect(deps.resolveProvider).toHaveBeenCalledOnce();
+    } finally {
+      globalRepository.mockRestore();
+    }
   });
 
   it("uses only the server-resolved customer actor for customer limits", async () => {

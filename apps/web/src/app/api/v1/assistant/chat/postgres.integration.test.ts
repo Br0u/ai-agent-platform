@@ -17,6 +17,7 @@ import {
 
 import { createAssistantErrorResponse } from "@/features/assistant/assistant-contract";
 import type { AssistantProvider } from "@/server/assistant/assistant-provider";
+import { createAssistantInputPolicyRepository } from "@/server/assistant/assistant-input-policy";
 import { createAnonymousSessionManager } from "@/server/assistant/anonymous-session";
 import { resolveAnonymousSessionSettings } from "@/server/assistant/anonymous-session-config";
 import {
@@ -66,7 +67,7 @@ describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
   });
 
   beforeEach(async () => {
-    await pool.query("TRUNCATE rate_limits");
+    await pool.query("TRUNCATE rate_limits, assistant_input_policy");
   });
 
   afterAll(async () => pool.end());
@@ -102,6 +103,8 @@ describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
         },
         now: () => 100_000,
       }),
+      loadInputPolicy: () =>
+        createAssistantInputPolicyRepository(database).load(),
       resolveTrustedClientIp: (request) =>
         resolveTrustedClientIp(request.headers, true),
     });
