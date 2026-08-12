@@ -227,8 +227,8 @@ owner="restore_owner"
 crypto_image="${BACKUP_CRYPTO_IMAGE:-ai-agent-platform-backup:latest}"
 skill_registry_image="${RESTORE_SKILL_REGISTRY_IMAGE:-ai-agent-platform-skill-registry:latest}"
 postgres_bootstrap_directory="$(CDPATH= cd -- "$script_directory/../postgres" && pwd)"
-expected_migrations="8"
-expected_latest_migration="1784480751832"
+expected_migrations="10"
+expected_latest_migration="1786502675702"
 temporary_directory=
 postgres_env_file=
 decrypted_bundle_candidate=

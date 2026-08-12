@@ -52,7 +52,6 @@ export class AdminModelConfigCommandError extends Error {
 
 type RequireSensitiveAction = (
   permission: PermissionKey,
-  options?: { recentWithinSeconds?: number; mfaRequired?: boolean },
 ) => Promise<WorkforceActor>;
 
 type CommandDependencies = {
@@ -183,7 +182,6 @@ export function createAdminModelConfigCommands(
       }
       const actor = await dependencies.requireSensitiveAction(
         ACTION_PERMISSION[action],
-        { recentWithinSeconds: 600, mfaRequired: true },
       );
       const issuedAt = readNow();
       if (issuedAt > Number.MAX_SAFE_INTEGER - AUTHORIZATION_TTL_MS) {

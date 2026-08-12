@@ -41,7 +41,6 @@ map "$configured_public_host_allowed:$local_validation_host_allowed" $host_allow
 }
 
 limit_req_zone $auth_post_key zone=auth_post_per_ip:10m rate=5r/m;
-limit_req_zone $public_api_post_key zone=pricing_estimate_per_ip:10m rate=10r/m;
 limit_req_zone $public_api_post_key zone=assistant_chat_per_ip:10m rate=30r/m;
 
 upstream web_upstream {
@@ -61,26 +60,13 @@ server {
   add_header X-Frame-Options SAMEORIGIN always;
   add_header Referrer-Policy strict-origin-when-cross-origin always;
 
-  location ~ ^/(?:login|register|staff/login|staff/two-factor|staff/re-auth)$ {
+  location ~ ^/(?:login|register|staff/login)$ {
     limit_req zone=auth_post_per_ip burst=5 nodelay;
     limit_req_status 429;
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options SAMEORIGIN always;
     add_header Referrer-Policy strict-origin-when-cross-origin always;
     add_header X-Auth-Rate-Limit $limit_req_status always;
-    proxy_http_version 1.1;
-    proxy_set_header Host $http_host;
-    proxy_set_header X-Forwarded-Host $http_host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $remote_addr;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_pass http://web_upstream;
-  }
-
-  location = /api/v1/pricing/estimate {
-    limit_req zone=pricing_estimate_per_ip burst=5 nodelay;
-    limit_req_status 429;
-    error_page 429 = @public_api_rate_limited;
     proxy_http_version 1.1;
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-Host $http_host;

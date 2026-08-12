@@ -1,0 +1,153 @@
+.admin-users-page {
+  display: grid;
+  gap: 24px;
+}
+
+.admin-users-page__heading p:first-child {
+  margin: 0 0 8px;
+  color: var(--color-primary);
+  font: 700 11px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.admin-users-page__heading h1 {
+  margin: 0;
+  font: 760 clamp(30px, 4vw, 48px) / 1 var(--font-display);
+}
+
+.admin-users-page__summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.admin-users-page__summary article,
+.admin-users-page__create,
+.admin-users-page__table-wrap,
+.admin-users-page .admin-filter {
+  border: 1px solid var(--color-workspace-line);
+  border-radius: 16px;
+  background: var(--color-surface);
+  box-shadow: 0 12px 34px rgb(20 27 61 / 6%);
+}
+
+.admin-users-page__summary article {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+}
+
+.admin-users-page__summary span {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.admin-users-page__summary strong {
+  font: 760 28px/1 var(--font-display);
+}
+
+.admin-users-page .admin-filter {
+  display: grid;
+  grid-template-columns:
+    minmax(220px, 1fr) repeat(2, minmax(140px, 0.35fr))
+    auto;
+  gap: 12px;
+  align-items: end;
+  padding: 16px;
+}
+
+.admin-users-page label {
+  display: grid;
+  gap: 6px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.admin-users-page :is(input, select, button) {
+  min-height: 40px;
+  border: 1px solid var(--color-workspace-line);
+  border-radius: 9px;
+  padding: 0 11px;
+  font: inherit;
+}
+
+.admin-users-page button {
+  cursor: pointer;
+  color: white;
+  background: var(--color-primary);
+}
+
+.admin-users-page__create {
+  padding: 16px;
+}
+
+.admin-users-page__create summary {
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.admin-users-page__create form {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  gap: 12px;
+  align-items: end;
+  margin-top: 16px;
+}
+
+.admin-users-page__table-wrap {
+  overflow-x: auto;
+}
+
+.admin-users-page table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.admin-users-page :is(th, td) {
+  padding: 16px;
+  border-bottom: 1px solid var(--color-workspace-line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.admin-users-page th {
+  color: var(--color-muted);
+  background: color-mix(in srgb, var(--color-canvas) 75%, white);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.admin-users-page td form {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+  margin-block: 6px;
+}
+
+.admin-users-page td button {
+  min-height: 32px;
+  white-space: nowrap;
+}
+
+.admin-users-page__pagination {
+  display: flex;
+  justify-content: flex-end;
+  gap: 18px;
+}
+
+@media (max-width: 900px) {
+  .admin-users-page__summary,
+  .admin-users-page .admin-filter,
+  .admin-users-page__create form {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .admin-users-page__summary,
+  .admin-users-page .admin-filter,
+  .admin-users-page__create form {
+    grid-template-columns: 1fr;
+  }
+}

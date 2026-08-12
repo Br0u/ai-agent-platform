@@ -19,7 +19,6 @@ const actor: WorkforceActor = {
   status: "active",
   displayName: "Admin",
   mustChangePassword: false,
-  twoFactorEnabled: true,
   permissions: ["admin:assistant:skills:configure"],
 };
 
@@ -91,10 +90,7 @@ function setup() {
   const audit = { write: vi.fn(async () => undefined) };
   const commands = createAdminSkillLifecycleCommands({
     requireTrustedMutation: vi.fn(),
-    requireSensitiveAction: vi.fn(async () => ({
-      actor,
-      assuredAt: 2_000_000_000,
-    })),
+    requireSensitiveAction: vi.fn(async () => actor),
     registry,
     agent,
     audit,

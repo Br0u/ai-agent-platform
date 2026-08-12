@@ -19,6 +19,7 @@ export type AdminModelConfigItem = {
   displayName: string;
   modelId: string | null;
   endpointId: string | null;
+  baseUrl: string | null;
   revision: number | null;
   testStatus: AdminModelTestStatus;
   lastTestedAt: string | null;
@@ -29,6 +30,9 @@ export type AdminModelConfigItem = {
 export type AdminModelEndpointOption = {
   id: string;
   label: string;
+  apiKeyRequired: boolean;
+  insecureHttp: boolean;
+  baseUrl: string | null;
 };
 
 export type AdminModelRuntimeMetadata = {
@@ -53,6 +57,7 @@ export type AdminModelConfigSnapshot = {
 export type AdminModelConfigSaveInput = {
   modelId: string;
   endpointId: string;
+  baseUrl?: string;
   apiKey?: string;
   expectedRevision: number;
 };
@@ -72,6 +77,7 @@ const DISPLAY_NAMES: Readonly<Record<AdminModelProvider, string>> = {
 const MODEL_ID_MAX_CODE_POINTS = 128;
 const ENDPOINT_ID_MAX_CODE_POINTS = 64;
 const ENDPOINT_LABEL_MAX_CODE_POINTS = 128;
+const BASE_URL_MAX_CODE_POINTS = 2_048;
 const API_KEY_MIN_CODE_POINTS = 8;
 const API_KEY_MAX_CODE_POINTS = 4_096;
 const ENDPOINTS_PER_PROVIDER_MAX = 64;
@@ -227,6 +233,33 @@ function isCanonicalTimestamp(value: unknown): value is string {
   }
 }
 
+export function isAdminModelBaseUrl(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    value !== value.trim() ||
+    value.length === 0 ||
+    Array.from(value).length > BASE_URL_MAX_CODE_POINTS ||
+    /\s/u.test(value) ||
+    CONTROL_CHARACTER.test(value) ||
+    !hasOnlyPairedSurrogates(value)
+  ) {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "https:" || url.protocol === "http:") &&
+      url.username.length === 0 &&
+      url.password.length === 0 &&
+      url.search.length === 0 &&
+      url.hash.length === 0 &&
+      url.hostname.length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isNullablePositiveInteger(value: unknown): value is number | null {
   return value === null || isPositiveInteger(value);
 }
@@ -258,6 +291,7 @@ function readConfigItem(
       "displayName",
       "modelId",
       "endpointId",
+      "baseUrl",
       "revision",
       "testStatus",
       "lastTestedAt",
@@ -286,6 +320,7 @@ function readConfigItem(
     if (
       snapshot.modelId !== null ||
       snapshot.endpointId !== null ||
+      snapshot.baseUrl !== null ||
       snapshot.revision !== null ||
       snapshot.lastTestedAt !== null ||
       snapshot.apiKey !== null ||
@@ -298,6 +333,7 @@ function readConfigItem(
       displayName: DISPLAY_NAMES[provider],
       modelId: null,
       endpointId: null,
+      baseUrl: null,
       revision: null,
       testStatus: "not_configured",
       lastTestedAt: null,
@@ -305,12 +341,14 @@ function readConfigItem(
       activeRevision: null,
     };
   }
-  const apiKey = readMaskedApiKey(snapshot.apiKey);
+  const apiKey =
+    snapshot.apiKey === null ? null : readMaskedApiKey(snapshot.apiKey);
   if (
     !isAdminModelId(snapshot.modelId) ||
     !isEndpointId(snapshot.endpointId) ||
+    !(snapshot.baseUrl === null || isAdminModelBaseUrl(snapshot.baseUrl)) ||
     !isPositiveInteger(snapshot.revision) ||
-    apiKey === null
+    (snapshot.apiKey !== null && apiKey === null)
   ) {
     return null;
   }
@@ -319,6 +357,7 @@ function readConfigItem(
     displayName: DISPLAY_NAMES[provider],
     modelId: snapshot.modelId,
     endpointId: snapshot.endpointId,
+    baseUrl: snapshot.baseUrl,
     revision: snapshot.revision,
     testStatus: snapshot.testStatus as Exclude<
       AdminModelTestStatus,
@@ -331,15 +370,26 @@ function readConfigItem(
 }
 
 function readEndpointOption(value: unknown): AdminModelEndpointOption | null {
-  const snapshot = readExactDataRecord(value, [["id", "label"]]);
+  const snapshot = readExactDataRecord(value, [
+    ["id", "label", "apiKeyRequired", "insecureHttp", "baseUrl"],
+  ]);
   if (
     snapshot === null ||
     !isEndpointId(snapshot.id) ||
-    !isSafeText(snapshot.label, ENDPOINT_LABEL_MAX_CODE_POINTS)
+    !isSafeText(snapshot.label, ENDPOINT_LABEL_MAX_CODE_POINTS) ||
+    typeof snapshot.apiKeyRequired !== "boolean" ||
+    typeof snapshot.insecureHttp !== "boolean" ||
+    !(snapshot.baseUrl === null || isAdminModelBaseUrl(snapshot.baseUrl))
   ) {
     return null;
   }
-  return { id: snapshot.id, label: snapshot.label };
+  return {
+    id: snapshot.id,
+    label: snapshot.label,
+    apiKeyRequired: snapshot.apiKeyRequired,
+    insecureHttp: snapshot.insecureHttp,
+    baseUrl: snapshot.baseUrl,
+  };
 }
 
 function readProviderEndpoints(
@@ -501,6 +551,8 @@ export function parseAdminModelConfigSaveInput(
   value: unknown,
 ): AdminModelConfigSaveInput | null {
   const snapshot = readExactDataRecord(value, [
+    ["modelId", "endpointId", "baseUrl", "apiKey", "expectedRevision"],
+    ["modelId", "endpointId", "baseUrl", "expectedRevision"],
     ["modelId", "endpointId", "apiKey", "expectedRevision"],
     ["modelId", "endpointId", "expectedRevision"],
   ]);
@@ -521,6 +573,8 @@ export function parseAdminModelConfigSaveInput(
   if (
     !isAdminModelId(snapshot.modelId) ||
     !isEndpointId(snapshot.endpointId) ||
+    (Object.hasOwn(snapshot, "baseUrl") &&
+      !isAdminModelBaseUrl(snapshot.baseUrl)) ||
     !isNonNegativeInteger(snapshot.expectedRevision)
   ) {
     return null;
@@ -528,6 +582,9 @@ export function parseAdminModelConfigSaveInput(
   return {
     modelId: snapshot.modelId,
     endpointId: snapshot.endpointId,
+    ...(typeof snapshot.baseUrl === "string"
+      ? { baseUrl: snapshot.baseUrl }
+      : {}),
     ...(typeof snapshot.apiKey === "string" ? { apiKey: snapshot.apiKey } : {}),
     expectedRevision: snapshot.expectedRevision,
   };

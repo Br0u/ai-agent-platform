@@ -105,6 +105,7 @@ const modelConfigs = {
     displayName,
     modelId: null,
     endpointId: null,
+    baseUrl: null,
     revision: null,
     testStatus: "not_configured" as const,
     lastTestedAt: null,
@@ -112,12 +113,60 @@ const modelConfigs = {
     activeRevision: null,
   })),
   endpoints: {
-    openai: [{ id: "openai-default", label: "OpenAI 官方" }],
-    anthropic: [{ id: "anthropic-default", label: "Claude 官方" }],
-    google: [{ id: "google-default", label: "Gemini 官方" }],
-    dashscope: [{ id: "dashscope-default", label: "Qwen 官方" }],
-    deepseek: [{ id: "deepseek-default", label: "DeepSeek 官方" }],
-    minimax: [{ id: "minimax-default", label: "MiniMax 官方" }],
+    openai: [
+      {
+        id: "openai-default",
+        label: "OpenAI 官方",
+        baseUrl: null,
+        apiKeyRequired: true,
+        insecureHttp: false,
+      },
+    ],
+    anthropic: [
+      {
+        id: "anthropic-default",
+        label: "Claude 官方",
+        baseUrl: null,
+        apiKeyRequired: true,
+        insecureHttp: false,
+      },
+    ],
+    google: [
+      {
+        id: "google-default",
+        label: "Gemini 官方",
+        baseUrl: null,
+        apiKeyRequired: true,
+        insecureHttp: false,
+      },
+    ],
+    dashscope: [
+      {
+        id: "dashscope-default",
+        label: "Qwen 官方",
+        baseUrl: null,
+        apiKeyRequired: true,
+        insecureHttp: false,
+      },
+    ],
+    deepseek: [
+      {
+        id: "deepseek-default",
+        label: "DeepSeek 官方",
+        baseUrl: null,
+        apiKeyRequired: true,
+        insecureHttp: false,
+      },
+    ],
+    minimax: [
+      {
+        id: "minimax-default",
+        label: "MiniMax 官方",
+        baseUrl: null,
+        apiKeyRequired: true,
+        insecureHttp: false,
+      },
+    ],
   },
   runtime: {
     capability: "placeholder",
@@ -171,7 +220,7 @@ afterEach(() => {
 });
 
 describe("AssistantAdminPage", () => {
-  it("places the Skill Registry after model configuration and before the roadmap", () => {
+  it("switches between the four focused Agent management tabs", () => {
     render(
       <AssistantAdminPage
         modelConfigs={modelConfigs}
@@ -183,16 +232,18 @@ describe("AssistantAdminPage", () => {
       />,
     );
 
-    const models = screen.getByRole("heading", { name: "云模型配置" });
-    const skills = screen.getByRole("heading", { name: "Skill 库" });
-    const roadmap = screen.getByRole("heading", { name: "后续能力入口" });
+    expect(screen.getByRole("heading", { name: "运行时状态" })).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "模型配置" }));
+    expect(screen.getByRole("heading", { name: "云模型配置" })).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
+    expect(screen.getByRole("heading", { name: "Skill 库" })).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
     expect(
-      models.compareDocumentPosition(skills) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+      screen.getByRole("heading", { name: "受保护的助手测试控制台" }),
+    ).toBeVisible();
     expect(
-      skills.compareDocumentPosition(roadmap) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+      screen.queryByRole("heading", { name: "后续能力入口" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows four honest status cells and read-only configuration", () => {
@@ -207,10 +258,8 @@ describe("AssistantAdminPage", () => {
     expect(screen.getAllByTestId("assistant-status-cell")).toHaveLength(4);
     expect(screen.getByText("AgentOS")).toBeVisible();
     expect(screen.getByText("会话数据库")).toBeVisible();
-    expect(screen.getAllByText("模型")).toHaveLength(2);
+    expect(screen.getByText("模型")).toBeVisible();
     expect(screen.getByText("公开入口")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "只读配置" })).toBeVisible();
-    expect(screen.getByText("码多多（占位）")).toBeVisible();
     expect(screen.getByRole("heading", { name: "运行时状态" })).toBeVisible();
     expect(
       screen.getByText("Readiness Circuit").nextElementSibling,
@@ -233,6 +282,7 @@ describe("AssistantAdminPage", () => {
     expect(
       screen.getByText("Failure Threshold").nextElementSibling,
     ).toHaveTextContent("3");
+    fireEvent.click(screen.getByRole("tab", { name: "模型配置" }));
     expect(container.querySelectorAll("input[type='password']")).toHaveLength(
       1,
     );
@@ -240,7 +290,7 @@ describe("AssistantAdminPage", () => {
     expect(container.textContent).not.toMatch(/timestamp|openedAt|raw error/iu);
   });
 
-  it("keeps the approved section order on the existing admin page", () => {
+  it("keeps the approved tab order and one page heading", () => {
     render(
       <AssistantAdminPage
         modelConfigs={modelConfigs}
@@ -249,45 +299,12 @@ describe("AssistantAdminPage", () => {
       />,
     );
 
-    const services = screen.getByRole("list", { name: "AI 助理服务状态" });
-    const runtime = screen.getByRole("heading", { name: "运行时状态" });
-    const models = screen.getByRole("heading", { name: "云模型配置" });
-    const roadmap = screen.getByRole("heading", { name: "后续能力入口" });
-    const consoleHeading = screen.getByRole("heading", {
-      name: "受保护的助手测试控制台",
-    });
-    const configuration = screen.getByRole("heading", { name: "只读配置" });
-    const sessionsHeading = screen.getByRole("heading", {
-      name: "会话持久化",
-    });
-    expect(
-      services.compareDocumentPosition(runtime) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      runtime.compareDocumentPosition(models) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      models.compareDocumentPosition(consoleHeading) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      models.compareDocumentPosition(roadmap) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      roadmap.compareDocumentPosition(consoleHeading) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      consoleHeading.compareDocumentPosition(configuration) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      configuration.compareDocumentPosition(sessionsHeading) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "运行概览",
+      "模型配置",
+      "Skills",
+      "测试与会话",
+    ]);
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   });
 
@@ -315,15 +332,9 @@ describe("AssistantAdminPage", () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
+
     expect(screen.getByRole("button", { name: "会话审计" })).toBeDisabled();
-    expect(screen.getAllByRole("button", { name: /暂不可用$/u })).toHaveLength(
-      3,
-    );
-    for (const action of screen.getAllByRole("button", {
-      name: /暂不可用$/u,
-    })) {
-      expect(action).toBeDisabled();
-    }
     expect(
       screen.queryByRole("button", { name: "Skill 管理" }),
     ).not.toBeInTheDocument();
@@ -331,7 +342,7 @@ describe("AssistantAdminPage", () => {
     expect(screen.queryByText(/客户消息|消息原文/u)).not.toBeInTheDocument();
   });
 
-  it("preserves page-level headings, form names, live regions and tab order", () => {
+  it("preserves accessible controls in each tab", () => {
     const { container } = render(
       <AssistantAdminPage
         modelConfigs={modelConfigs}
@@ -346,13 +357,15 @@ describe("AssistantAdminPage", () => {
       .map((heading) => heading.textContent);
     expect(new Set(h2Names).size).toBe(h2Names.length);
 
-    const providerTab = screen.getByRole("tab", { name: /OpenAI/u });
+    fireEvent.click(screen.getByRole("tab", { name: "模型配置" }));
+    const providerSelect = screen.getByRole("combobox", {
+      name: "模型供应商",
+    });
     const modelId = screen.getByRole("textbox", { name: "Model ID" });
     const endpoint = screen.getByRole("combobox", { name: "Endpoint" });
     const apiKey = screen.getByLabelText("新 API Key（必填）");
-    const question = screen.getByRole("textbox", { name: "测试问题" });
     expect(
-      providerTab.compareDocumentPosition(modelId) &
+      providerSelect.compareDocumentPosition(modelId) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
@@ -363,10 +376,8 @@ describe("AssistantAdminPage", () => {
       endpoint.compareDocumentPosition(apiKey) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(
-      apiKey.compareDocumentPosition(question) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
+    expect(screen.getByRole("textbox", { name: "测试问题" })).toBeVisible();
     expect(
       container.querySelectorAll(
         "[tabindex]:not([tabindex='0']):not([tabindex='-1'])",
@@ -374,7 +385,7 @@ describe("AssistantAdminPage", () => {
     ).toHaveLength(0);
     expect(
       container.querySelectorAll("[aria-live='polite']").length,
-    ).toBeGreaterThanOrEqual(2);
+    ).toBeGreaterThanOrEqual(1);
 
     const explicitAccessibleNames = Array.from(
       container.querySelectorAll<HTMLElement>("[aria-label], [title]"),
@@ -395,6 +406,8 @@ describe("AssistantAdminPage", () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
+
     expect(screen.getByRole("heading", { name: "会话持久化" })).toBeVisible();
     expect(screen.getByText("列表不可用")).toBeVisible();
     expect(screen.getByText(/disabled.*not_available/iu)).toBeVisible();
@@ -413,6 +426,8 @@ describe("AssistantAdminPage", () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
+
     expect(screen.getByText(agentosSessions.message)).toBeVisible();
     expect(screen.getByText(/agentos.*not_available/iu)).toBeVisible();
     expect(screen.getByText("列表不可用")).toBeVisible();
@@ -430,6 +445,8 @@ describe("AssistantAdminPage", () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
+
     expect(screen.getByText(unavailableSessions.message)).toBeVisible();
     expect(screen.getByText(/unavailable.*not_available/iu)).toBeVisible();
     expect(screen.getByText("列表不可用")).toBeVisible();
@@ -446,6 +463,8 @@ describe("AssistantAdminPage", () => {
         status={status}
       />,
     );
+
+    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
 
     expect(
       screen.getByRole("heading", { name: "受保护的助手测试控制台" }),
@@ -488,6 +507,8 @@ describe("AssistantAdminPage", () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
+
     fireEvent.change(screen.getByLabelText("测试问题"), {
       target: { value: "检查助手回答" },
     });
@@ -513,6 +534,8 @@ describe("AssistantAdminPage", () => {
         status={status}
       />,
     );
+
+    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
 
     fireEvent.change(screen.getByLabelText("测试问题"), {
       target: { value: "检查失败状态" },
@@ -562,6 +585,7 @@ describe("AssistantAdminPage", () => {
         status={status}
       />,
     );
+    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
     const input = screen.getByLabelText("测试问题");
 
     fireEvent.change(input, { target: { value: "第一次测试" } });

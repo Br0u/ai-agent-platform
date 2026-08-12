@@ -32,12 +32,6 @@ export async function requireAdminShell() {
     ) {
       redirect("/staff/change-password?returnTo=%2Fadmin");
     }
-    if (
-      error instanceof AuthAccessError &&
-      error.code === "AUTH_TOTP_SETUP_REQUIRED"
-    ) {
-      redirect("/staff/two-factor?returnTo=%2Fadmin");
-    }
     if (error instanceof AuthAccessError && LOGIN_ERROR_CODES.has(error.code)) {
       redirect("/staff/login?returnTo=%2Fadmin");
     }

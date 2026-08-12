@@ -12,7 +12,6 @@ const actor: WorkforceActor = {
   status: "active",
   displayName: "Reader",
   mustChangePassword: false,
-  twoFactorEnabled: true,
   permissions: ["admin:assistant:skills"],
 };
 

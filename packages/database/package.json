@@ -14,7 +14,6 @@
     "db:grant-runtime": "tsx src/grant-runtime-privileges.ts",
     "auth:create-super-admin": "tsx src/create-super-admin.ts",
     "db:seed-auth-e2e": "tsx src/seed-auth-e2e.ts",
-    "auth:assert-at-rest": "tsx src/assert-auth-at-rest.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src drizzle.config.ts --max-warnings=0",

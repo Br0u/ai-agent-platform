@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { navigationAnchorsForPath } from "@/config/navigation";
 import {
   ScaffoldAnchorIndex,
   ScaffoldEmptyState,
@@ -12,7 +11,11 @@ describe("ScaffoldAnchorIndex", () => {
   it("renders a semantic directory and real targets for scaffold sections", () => {
     const { container } = render(
       <ScaffoldAnchorIndex
-        anchors={navigationAnchorsForPath("/compatibility")}
+        anchors={[
+          { id: "hardware", label: "硬件配置要求", status: undefined },
+          { id: "gpu", label: "GPU 适配列表", status: undefined },
+          { id: "browser", label: "浏览器兼容", status: undefined },
+        ]}
       />,
     );
 
@@ -34,15 +37,23 @@ describe("ScaffoldAnchorIndex", () => {
     expect(screen.getByText("页面目录")).toBeVisible();
   });
 
-  it("keeps placeholder download targets honest and action-free", () => {
+  it("keeps generic placeholder targets honest and action-free", () => {
     render(
-      <ScaffoldAnchorIndex anchors={navigationAnchorsForPath("/downloads")} />,
+      <ScaffoldAnchorIndex
+        anchors={[
+          {
+            id: "pending-download",
+            label: "待开放资源",
+            status: "placeholder",
+          },
+        ]}
+      />,
     );
 
-    expect(screen.getAllByText("尚未开放")).toHaveLength(6);
+    expect(screen.getAllByText("尚未开放")).toHaveLength(1);
     expect(
       screen.getAllByText("仅保留结构，未提供下载、申请或提交操作。"),
-    ).toHaveLength(6);
+    ).toHaveLength(1);
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByRole("form")).not.toBeInTheDocument();
     expect(

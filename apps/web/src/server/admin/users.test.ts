@@ -285,11 +285,11 @@ describe("workforce user administration", () => {
     },
   );
 
-  it("stops before hashing or opening a mutation transaction when sensitive assurance is denied", async () => {
+  it("stops before hashing or opening a mutation transaction when permission is denied", async () => {
     const { hashPassword, repository, requireSensitiveAction, service } =
       fixture();
     requireSensitiveAction.mockRejectedValueOnce(
-      new Error("AUTH_REAUTH_REQUIRED"),
+      new Error("AUTH_PERMISSION_DENIED"),
     );
     await expect(
       service.createUser(superActor, {
@@ -299,23 +299,23 @@ describe("workforce user administration", () => {
         temporaryPassword: "Temporary#123",
         initialRole: "employee",
       }),
-    ).rejects.toThrow("AUTH_REAUTH_REQUIRED");
+    ).rejects.toThrow("AUTH_PERMISSION_DENIED");
     expect(hashPassword).not.toHaveBeenCalled();
     expect(repository.transaction).not.toHaveBeenCalled();
   });
 
   it.each(["addRole", "removeRole"] as const)(
-    "stops before opening a transaction when the sensitive guard denies %s",
+    "stops before opening a transaction when the permission guard denies %s",
     async (method) => {
       const { repository, requireSensitiveAction, service } = fixture();
       requireSensitiveAction.mockRejectedValueOnce(
-        new Error("AUTH_REAUTH_REQUIRED"),
+        new Error("AUTH_PERMISSION_DENIED"),
       );
       const operation =
         method === "addRole"
           ? service.addRole(superActor, "employee-1", "support_operator")
           : service.removeRole(superActor, "employee-1", "employee");
-      await expect(operation).rejects.toThrow("AUTH_REAUTH_REQUIRED");
+      await expect(operation).rejects.toThrow("AUTH_PERMISSION_DENIED");
       expect(repository.transaction).not.toHaveBeenCalled();
     },
   );
@@ -335,7 +335,7 @@ describe("workforce user administration", () => {
         realm: "workforce",
         status: "active",
         email: "ops@example.test",
-        username: "ops.user",
+        username: "OPS.USER",
         mustChangePassword: true,
         passwordHash: "argon-hash",
       }),

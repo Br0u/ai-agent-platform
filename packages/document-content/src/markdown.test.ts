@@ -155,6 +155,14 @@ describe("compileSafeDocument", () => {
     expect(json).toContain("#doc-content-section");
   });
 
+  it("preserves fragments that target another internal page", () => {
+    const json = JSON.stringify(
+      compile("[Downloads](/downloads#dl-mdd2-env)").renderModel,
+    );
+
+    expect(json).toContain('"href":"/downloads#dl-mdd2-env"');
+  });
+
   it("accepts normalized HTTPS links", () => {
     const json = JSON.stringify(
       compile(

@@ -43,6 +43,7 @@ function listResponse() {
         provider: "openai",
         modelId: "gpt-5-mini",
         endpointId: "openai-official",
+        baseUrl: null,
         apiKeyLastFour: "cdef",
         revision: 3,
         testStatus: "passed",
@@ -54,11 +55,17 @@ function listResponse() {
         id: "openai-official",
         label: "OpenAI official",
         provider: "openai",
+        apiKeyRequired: true,
+        insecureHttp: false,
+        baseUrl: null,
       },
       {
         id: "anthropic-official",
         label: "Anthropic official",
         provider: "anthropic",
+        apiKeyRequired: true,
+        insecureHttp: false,
+        baseUrl: null,
       },
     ],
     bootstrap: null,
@@ -85,6 +92,7 @@ function saveResponse() {
       provider: "openai",
       modelId: "gpt-5-mini",
       endpointId: "openai-official",
+      baseUrl: null,
       apiKeyLastFour: "cdef",
       revision: 3,
       testStatus: "untested",
@@ -883,6 +891,91 @@ describe("private Agent model control client", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("forwards and verifies a custom model base URL", async () => {
+    const baseUrl = "http://125.122.36.24:9900/v1";
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        version: "1",
+        config: {
+          provider: "deepseek",
+          modelId: "DeepSeek-V4-Flash-code",
+          endpointId: "deepseek-v4-flash-code",
+          baseUrl,
+          apiKeyLastFour: "none",
+          revision: 1,
+          testStatus: "untested",
+          lastTestedAt: null,
+        },
+      }),
+    );
+    const client = createAgentModelControlClient({
+      settings: settings(),
+      fetcher,
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+
+    await expect(
+      client.saveModelConfig({
+        actor: ACTOR,
+        provider: "deepseek",
+        requestId: REQUEST_ID,
+        input: {
+          modelId: "DeepSeek-V4-Flash-code",
+          endpointId: "deepseek-v4-flash-code",
+          baseUrl,
+          expectedRevision: 0,
+        },
+      }),
+    ).resolves.toMatchObject({ config: { baseUrl } });
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+      modelId: "DeepSeek-V4-Flash-code",
+      endpointId: "deepseek-v4-flash-code",
+      baseUrl,
+      expectedRevision: 0,
+    });
+  });
+
+  it("accepts the Agent-normalized form of a saved custom URL", async () => {
+    const submittedBaseUrl = "https://MODELS.example.com:443/v1";
+    const normalizedBaseUrl = "https://models.example.com/v1";
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        version: "1",
+        config: {
+          provider: "deepseek",
+          modelId: "DeepSeek-V4-Flash-code",
+          endpointId: "deepseek-v4-flash-code",
+          baseUrl: normalizedBaseUrl,
+          apiKeyLastFour: "none",
+          revision: 1,
+          testStatus: "untested",
+          lastTestedAt: null,
+        },
+      }),
+    );
+    const client = createAgentModelControlClient({
+      settings: settings(),
+      fetcher,
+      clock: () => NOW,
+      nonceFactory: () => NONCE,
+    });
+
+    await expect(
+      client.saveModelConfig({
+        actor: ACTOR,
+        provider: "deepseek",
+        requestId: REQUEST_ID,
+        input: {
+          modelId: "DeepSeek-V4-Flash-code",
+          endpointId: "deepseek-v4-flash-code",
+          baseUrl: submittedBaseUrl,
+          expectedRevision: 0,
+        },
+      }),
+    ).resolves.toMatchObject({ config: { baseUrl: normalizedBaseUrl } });
+  });
+
   it("rejects forged extra mutation fields before fetch", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const client = createAgentModelControlClient({
@@ -893,7 +986,7 @@ describe("private Agent model control client", () => {
       modelId: "gpt-5-mini",
       endpointId: "openai-official",
       expectedRevision: 0,
-      baseUrl: "https://private.example",
+      privateUrl: "https://private.example",
     };
 
     await expect(

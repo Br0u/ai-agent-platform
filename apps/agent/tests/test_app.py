@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 import inspect
+from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
@@ -96,9 +97,7 @@ class ReadySkillRuntime:
     async def probe(self) -> bool:
         return self.started
 
-    async def activate(
-        self, command: ActivateSkillRuntime
-    ) -> SkillActivationResult:
+    async def activate(self, command: ActivateSkillRuntime) -> SkillActivationResult:
         del command
         raise SkillActivationError("candidate_invalid")
 
@@ -154,6 +153,7 @@ def dynamic_settings(
         "MODEL_CONFIG_ENCRYPTION_KEY": ENCRYPTION_KEY,
         "AGENT_CONFIG_CONTROL_KEY": CONTROL_KEY,
         "AGENT_ENABLED": True,
+        "MODEL_BASE_URL": None,
         "MODEL_RUN_TIMEOUT_SECONDS": model_timeout_seconds,
     }
     if bootstrap:
@@ -171,6 +171,8 @@ def stored_active(
     *,
     provider: ModelProvider = "openai",
     model_id: str = "active-rev1",
+    endpoint_id: str | None = None,
+    base_url: str | None = None,
     revision: int = 1,
     activation_version: int = 7,
     cipher: ModelConfigCipher | None = None,
@@ -189,12 +191,13 @@ def stored_active(
         config_id=config_id,
         provider=provider,
         model_id=model_id,
-        endpoint_id=f"{provider}-official",
+        endpoint_id=endpoint_id or f"{provider}-official",
         revision=revision,
         test_status="passed",
         sealed=sealed,
         activation_version=activation_version,
         activated_at=datetime.now(UTC),
+        base_url=base_url,
     )
 
 
@@ -965,6 +968,43 @@ async def test_reconciliation_prefers_exact_dynamic_active_revision() -> None:
     )
     await slot.shutdown()
     assert closes == ["active-rev1"]
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_rejects_saved_insecure_http_override() -> None:
+    settings = dynamic_settings(bootstrap=True)
+    cipher = ModelConfigCipher(
+        master_key=settings.model_config_encryption_key  # type: ignore[arg-type]
+    )
+    active = stored_active(
+        cipher=cipher,
+        provider="deepseek",
+        endpoint_id="deepseek-v4-flash-code",
+        base_url="http://125.122.36.24:9900/v1",
+    )
+    built: list[ActiveModelSettings] = []
+    slot = ModelRuntimeSlot()
+    await slot.start()
+
+    def build_model(model_settings: ActiveModelSettings) -> ManagedModel:
+        built.append(model_settings)
+        return managed_model(model_settings.model_id, [])
+
+    await reconcile_runtime_model(
+        settings=settings,
+        slot=slot,
+        repository=ActiveRepository(active),
+        cipher=cipher,
+        endpoint_catalog=load_model_endpoint_catalog(
+            Path(__file__).resolve().parents[3] / "infra/agent/model-endpoints.json"
+        ),
+        model_builder=build_model,
+    )
+
+    assert built == []
+    assert slot.runtime_status().capability == "degraded"
+    assert slot.runtime_status().source is None
+    await slot.shutdown()
 
 
 @pytest.mark.asyncio

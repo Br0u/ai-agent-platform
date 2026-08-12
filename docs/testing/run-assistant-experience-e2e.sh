@@ -333,9 +333,7 @@ if [ ! -e "$env_file" ]; then
   staff_session=$(secret)
   role_target_session=$(secret)
   admin_session=$(secret)
-  no_totp_admin_session=$(secret)
   model_admin_session=$(secret)
-  model_admin_stale_session=$(secret)
   revoked_session=$(secret)
   replacement_password=$(secret)
 
@@ -369,9 +367,7 @@ E2E_DISABLED_CUSTOMER_SESSION_TOKEN=$disabled_customer_session
 E2E_STAFF_SESSION_TOKEN=$staff_session
 E2E_ROLE_TARGET_SESSION_TOKEN=$role_target_session
 E2E_ADMIN_SESSION_TOKEN=$admin_session
-E2E_NO_TOTP_ADMIN_SESSION_TOKEN=$no_totp_admin_session
 E2E_MODEL_ADMIN_SESSION_TOKEN=$model_admin_session
-E2E_MODEL_ADMIN_STALE_SESSION_TOKEN=$model_admin_stale_session
 E2E_REVOKED_SESSION_TOKEN=$revoked_session
 E2E_REPLACEMENT_PASSWORD=$replacement_password
 EOF
@@ -416,8 +412,7 @@ BACKUP_INTERVAL_SECONDS BACKUP_RETENTION_DAYS FEATURE_EMAIL_VERIFICATION
 E2E_CUSTOMER_PASSWORD E2E_STAFF_PASSWORD E2E_ADMIN_PASSWORD
 E2E_PENDING_CUSTOMER_SESSION_TOKEN E2E_DISABLED_CUSTOMER_SESSION_TOKEN
 E2E_STAFF_SESSION_TOKEN E2E_ROLE_TARGET_SESSION_TOKEN
-E2E_ADMIN_SESSION_TOKEN E2E_NO_TOTP_ADMIN_SESSION_TOKEN
-E2E_MODEL_ADMIN_SESSION_TOKEN E2E_MODEL_ADMIN_STALE_SESSION_TOKEN
+E2E_ADMIN_SESSION_TOKEN E2E_MODEL_ADMIN_SESSION_TOKEN
 E2E_REVOKED_SESSION_TOKEN E2E_REPLACEMENT_PASSWORD
 "
 
@@ -508,21 +503,9 @@ provision_stack() {
   docker compose -p "$project" --env-file "$env_file" $compose_files up -d --no-deps --wait web proxy
 }
 
-enable_seeded_admin_two_factor() {
-  docker compose -p "$project" --env-file "$env_file" $compose_files exec -T db \
-    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
-    "UPDATE users SET two_factor_enabled = true WHERE id = '10000000-0000-4000-8000-000000000003'::uuid" \
-    >/dev/null
-}
-
 restart_web_and_proxy() {
   docker compose -p "$project" --env-file "$env_file" $compose_files restart --no-deps web proxy
   docker compose -p "$project" --env-file "$env_file" $compose_files up -d --no-deps --wait web proxy
-}
-
-restart_proxy() {
-  docker compose -p "$project" --env-file "$env_file" $compose_files restart --no-deps proxy
-  docker compose -p "$project" --env-file "$env_file" $compose_files up -d --no-deps --wait proxy
 }
 
 run_auth_access() {
@@ -547,14 +530,11 @@ if [ "$suite" = "experience" ]; then
   exit 0
 fi
 
-run_auth_access --project=desktop --workers=1 --grep '@totp-enroll'
-restart_proxy
-run_auth_access --project=desktop --workers=1 --grep '@recovery-consume'
-restart_web_and_proxy
-run_auth_access --project=desktop --workers=1 --grep '@saved-admin-after-restart'
 run_auth_access --project=desktop --workers=1 \
   --grep '@security-state' \
-  --grep-invert '@totp-enroll|@recovery-consume|@saved-admin-after-restart|@saved-admin-revoke|@saved-admin-rejected-after-restart'
+  --grep-invert '@saved-admin-after-restart|@saved-admin-revoke|@saved-admin-rejected-after-restart'
+restart_web_and_proxy
+run_auth_access --project=desktop --workers=1 --grep '@saved-admin-after-restart'
 run_auth_access --project=desktop --workers=1 --grep '@saved-admin-revoke'
 restart_web_and_proxy
 run_auth_access --project=desktop --workers=1 \
@@ -565,7 +545,6 @@ run_auth_access --workers=1 \
 docker compose -p "$project" --env-file "$env_file" $compose_files \
   down -v --remove-orphans
 provision_stack
-enable_seeded_admin_two_factor
 
 BASE_URL=http://127.0.0.1:8080 \
   pnpm --filter @ai-agent-platform/web exec playwright test \

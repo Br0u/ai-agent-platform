@@ -4,6 +4,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 import {
   ADMIN_MODEL_PROVIDERS,
+  isAdminModelBaseUrl,
   isAdminModelId,
   parseAdminModelConfigRevisionInput,
   parseAdminModelConfigSaveInput,
@@ -45,6 +46,7 @@ export type AgentModelConfigMetadata = {
   provider: AdminModelProvider;
   modelId: string;
   endpointId: string;
+  baseUrl: string | null;
   apiKeyLastFour: string;
   revision: number;
   testStatus: "untested" | "passed" | "failed";
@@ -58,6 +60,9 @@ export type AgentModelConfigListResponse = {
     id: string;
     label: string;
     provider: AdminModelProvider;
+    apiKeyRequired: boolean;
+    insecureHttp: boolean;
+    baseUrl: string | null;
   }>;
   bootstrap: null | {
     provider: AdminModelProvider;
@@ -442,12 +447,22 @@ function isCanonicalTimestamp(value: unknown): value is string {
   }
 }
 
+function equivalentBaseUrl(
+  actual: string | null,
+  submitted: string | undefined,
+): boolean {
+  if (actual === (submitted ?? null)) return true;
+  if (actual === null || submitted === undefined) return false;
+  return new URL(actual).href === new URL(submitted).href;
+}
+
 function readMetadata(value: unknown): AgentModelConfigMetadata | null {
   const snapshot = readExactDataRecord(value, [
     [
       "provider",
       "modelId",
       "endpointId",
+      "baseUrl",
       "apiKeyLastFour",
       "revision",
       "testStatus",
@@ -459,6 +474,7 @@ function readMetadata(value: unknown): AgentModelConfigMetadata | null {
     !isProvider(snapshot.provider) ||
     !isAdminModelId(snapshot.modelId) ||
     !isEndpointId(snapshot.endpointId) ||
+    !(snapshot.baseUrl === null || isAdminModelBaseUrl(snapshot.baseUrl)) ||
     typeof snapshot.apiKeyLastFour !== "string" ||
     Array.from(snapshot.apiKeyLastFour).length !== 4 ||
     /\s/u.test(snapshot.apiKeyLastFour) ||
@@ -478,6 +494,7 @@ function readMetadata(value: unknown): AgentModelConfigMetadata | null {
     provider: snapshot.provider,
     modelId: snapshot.modelId,
     endpointId: snapshot.endpointId,
+    baseUrl: snapshot.baseUrl,
     apiKeyLastFour: snapshot.apiKeyLastFour,
     revision: snapshot.revision,
     testStatus: snapshot.testStatus as AgentModelConfigMetadata["testStatus"],
@@ -489,13 +506,21 @@ function readEndpointOption(value: unknown): {
   id: string;
   label: string;
   provider: AdminModelProvider;
+  apiKeyRequired: boolean;
+  insecureHttp: boolean;
+  baseUrl: string | null;
 } | null {
-  const snapshot = readExactDataRecord(value, [["id", "label", "provider"]]);
+  const snapshot = readExactDataRecord(value, [
+    ["id", "label", "provider", "apiKeyRequired", "insecureHttp", "baseUrl"],
+  ]);
   if (
     snapshot === null ||
     !isEndpointId(snapshot.id) ||
     !isSafeText(snapshot.label, 80) ||
-    !isProvider(snapshot.provider)
+    !isProvider(snapshot.provider) ||
+    typeof snapshot.apiKeyRequired !== "boolean" ||
+    typeof snapshot.insecureHttp !== "boolean" ||
+    !(snapshot.baseUrl === null || isAdminModelBaseUrl(snapshot.baseUrl))
   ) {
     return null;
   }
@@ -503,6 +528,9 @@ function readEndpointOption(value: unknown): {
     id: snapshot.id,
     label: snapshot.label,
     provider: snapshot.provider,
+    apiKeyRequired: snapshot.apiKeyRequired,
+    insecureHttp: snapshot.insecureHttp,
+    baseUrl: snapshot.baseUrl,
   };
 }
 
@@ -901,6 +929,7 @@ export function createAgentModelControlClient(options: {
         const payload = {
           modelId: input.modelId,
           endpointId: input.endpointId,
+          ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }),
           ...(input.apiKey === undefined ? {} : { apiKey: input.apiKey }),
           expectedRevision: input.expectedRevision,
         };
@@ -927,6 +956,7 @@ export function createAgentModelControlClient(options: {
               config.provider !== safe.provider ||
               config.modelId !== input.modelId ||
               config.endpointId !== input.endpointId ||
+              !equivalentBaseUrl(config.baseUrl, input.baseUrl) ||
               config.revision !== input.expectedRevision + 1 ||
               config.testStatus !== "untested" ||
               (input.apiKey !== undefined &&

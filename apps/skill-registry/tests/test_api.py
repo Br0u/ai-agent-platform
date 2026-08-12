@@ -165,6 +165,7 @@ class StubService:
         )
         return self.file_content
 
+
 class SkillSetStubService:
     def __init__(self) -> None:
         self.created: object | None = None
@@ -278,8 +279,8 @@ def skill_set_mutation_headers(action: str, target: str) -> dict[str, str]:
             "admin:assistant:skills:configure",
             target,
             nonce=REQUEST_ID,
-            assurance="password+mfa",
-            assured_at=99,
+            assurance="session",
+            assured_at=None,
         ),
         "Content-Type": "application/json",
     }
@@ -457,6 +458,7 @@ def test_upload_forwards_verified_assertion_context() -> None:
     assert upload.status_code == 201
     assert service.uploaded is not None
     assert b"PK demo" in service.uploaded
+
 
 def test_upload_content_length_is_rejected_without_receiving_body() -> None:
     service = StubService()

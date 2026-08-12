@@ -100,7 +100,7 @@ describe("secure super-admin bootstrap", () => {
     expect(hashPassword).toHaveBeenCalledWith("long-enough-password");
     expect(operations).toEqual([
       "tx",
-      "user:root@example.test:root",
+      "user:root@example.test:ROOT",
       "credential:user-1:argon2id-hash",
       "role:user-1:role-super-admin",
       "audit:bootstrap.super_admin_created:user-1",

@@ -15,7 +15,6 @@ const actor = {
   status: "active" as const,
   displayName: "Root",
   mustChangePassword: false,
-  twoFactorEnabled: true,
   permissions: ["admin:roles"],
 };
 

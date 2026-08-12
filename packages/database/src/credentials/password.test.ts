@@ -22,6 +22,21 @@ describe("password credentials", () => {
     await expect(verifyPassword(hash, "WrongPass#12")).resolves.toBe(false);
   });
 
+  it("verifies an existing credential shorter than the current creation policy", async () => {
+    const password = "Legacy#9A";
+    const hash = await import("@node-rs/argon2").then(({ hash }) =>
+      hash(password, {
+        algorithm: 2,
+        memoryCost: 64 * 1024,
+        timeCost: 3,
+        parallelism: 4,
+        outputLen: 32,
+      }),
+    );
+
+    await expect(verifyPassword(hash, password)).resolves.toBe(true);
+  });
+
   it("rejects an overlong password before Argon2 verification", async () => {
     const hash = await hashPassword("ValidPass#12");
 

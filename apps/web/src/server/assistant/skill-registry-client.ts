@@ -74,7 +74,7 @@ export type SkillRegistryPermission =
   | "admin:assistant:skills"
   | "admin:assistant:skills:upload"
   | "admin:assistant:skills:configure";
-export type SkillRegistryAssurance = "session" | "password+mfa";
+export type SkillRegistryAssurance = "session";
 
 export type SkillRegistryAssertionInput = {
   action: SkillRegistryAction;
@@ -119,7 +119,7 @@ export type SkillRegistryArchiveClient = {
   archiveSkill(input: {
     actor: string;
     requestId: string;
-    assuredAt: number;
+    assuredAt: number | null;
     skillId: string;
     expectedArtifactSha256: string;
   }): Promise<void>;
@@ -139,19 +139,19 @@ export type SkillRegistryRuntimeClient = {
   createSkillSet(input: {
     actor: string;
     requestId: string;
-    assuredAt: number;
+    assuredAt: number | null;
     revisionIds: string[];
   }): Promise<AdminSkillSetMutationResponse>;
   discardSkillSet(input: {
     actor: string;
     requestId: string;
-    assuredAt: number;
+    assuredAt: number | null;
     setId: string;
   }): Promise<AdminSkillSetMutationResponse>;
   clonePreviousSkillSet(input: {
     actor: string;
     requestId: string;
-    assuredAt: number;
+    assuredAt: number | null;
     expectedActivationVersion: number;
     expectedPreviousSetId: string;
   }): Promise<AdminSkillSetMutationResponse>;
@@ -690,17 +690,7 @@ export function createSkillRegistryAssertionSigner(options: {
         ) {
           clientError("invalid_request");
         }
-        if (SKILL_SET_MUTATIONS.has(value.action as SkillRegistryAction)) {
-          if (
-            value.assurance !== "password+mfa" ||
-            typeof value.assuredAt !== "number" ||
-            !Number.isSafeInteger(value.assuredAt) ||
-            value.assuredAt > issuedAt ||
-            value.assuredAt < issuedAt - 600
-          ) {
-            clientError("invalid_request");
-          }
-        } else if (value.assurance !== "session" || value.assuredAt !== null) {
+        if (value.assurance !== "session" || value.assuredAt !== null) {
           clientError("invalid_request");
         }
         const nonce = SKILL_SET_MUTATIONS.has(
@@ -1330,7 +1320,7 @@ export function createSkillRegistryClient(options: {
       permission: ACTION_PERMISSION[action],
       requestId: command.requestId,
       target,
-      assurance: SKILL_SET_MUTATIONS.has(action) ? "password+mfa" : "session",
+      assurance: "session",
       assuredAt,
     };
   }
@@ -1523,8 +1513,7 @@ export function createSkillRegistryClient(options: {
         if (
           command === null ||
           !canonicalUuid(command.skillId) ||
-          typeof command.assuredAt !== "number" ||
-          !Number.isSafeInteger(command.assuredAt) ||
+          command.assuredAt !== null ||
           typeof command.expectedArtifactSha256 !== "string" ||
           !/^[0-9a-f]{64}$/u.test(command.expectedArtifactSha256)
         ) {
@@ -1537,12 +1526,7 @@ export function createSkillRegistryClient(options: {
           method: "POST",
           path: `/internal/skills/${skillId}/archive`,
           requestId,
-          assertion: assertion(
-            { actor, requestId },
-            "archive",
-            skillId,
-            command.assuredAt as number,
-          ),
+          assertion: assertion({ actor, requestId }, "archive", skillId, null),
           contentType: "application/json",
           body: JSON.stringify({
             requestId,
@@ -1643,8 +1627,7 @@ export function createSkillRegistryClient(options: {
         if (
           command === null ||
           revisionIds === null ||
-          typeof command.assuredAt !== "number" ||
-          !Number.isSafeInteger(command.assuredAt)
+          command.assuredAt !== null
         ) {
           clientError("invalid_request");
         }
@@ -1663,7 +1646,7 @@ export function createSkillRegistryClient(options: {
             { actor, requestId },
             "skill_set_create",
             "maduoduo",
-            command.assuredAt as number,
+            null,
           ),
           contentType: "application/json",
           body,
@@ -1689,8 +1672,7 @@ export function createSkillRegistryClient(options: {
         if (
           command === null ||
           !canonicalUuid(command.setId) ||
-          typeof command.assuredAt !== "number" ||
-          !Number.isSafeInteger(command.assuredAt)
+          command.assuredAt !== null
         ) {
           clientError("invalid_request");
         }
@@ -1705,7 +1687,7 @@ export function createSkillRegistryClient(options: {
             { actor, requestId },
             "skill_set_discard",
             `maduoduo:${setId}`,
-            command.assuredAt as number,
+            null,
           ),
           contentType: "application/json",
           body: JSON.stringify({ requestId }),
@@ -1734,8 +1716,7 @@ export function createSkillRegistryClient(options: {
           typeof command.expectedActivationVersion !== "number" ||
           !Number.isSafeInteger(command.expectedActivationVersion) ||
           command.expectedActivationVersion < 1 ||
-          typeof command.assuredAt !== "number" ||
-          !Number.isSafeInteger(command.assuredAt)
+          command.assuredAt !== null
         ) {
           clientError("invalid_request");
         }
@@ -1749,7 +1730,7 @@ export function createSkillRegistryClient(options: {
             { actor, requestId },
             "skill_set_rollback",
             "maduoduo:previous",
-            command.assuredAt as number,
+            null,
           ),
           contentType: "application/json",
           body: JSON.stringify({

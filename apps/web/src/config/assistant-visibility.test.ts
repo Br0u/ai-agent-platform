@@ -5,15 +5,10 @@ describe("shouldShowAssistant", () => {
   it.each([
     "/",
     "/product",
-    "/product/agent-studio",
-    "/blog/platform-release",
     "/pricing",
     "/docs",
     "/support",
     "/help",
-    "/blog",
-    "/releases",
-    "/roadmap",
     "/contact",
     "/assistant",
   ])("allows the registered assistant route %s", (pathname) => {
@@ -31,6 +26,11 @@ describe("shouldShowAssistant", () => {
     "/admin",
     "/admin/products",
     "/product/one/more",
+    "/product/agent-studio",
+    "/blog/platform-release",
+    "/blog",
+    "/releases",
+    "/roadmap",
     "/assistant-old",
   ])("denies the assistant route %s", (pathname) => {
     expect(shouldShowAssistant(pathname)).toBe(false);

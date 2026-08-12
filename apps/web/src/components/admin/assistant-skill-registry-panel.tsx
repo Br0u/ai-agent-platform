@@ -22,7 +22,6 @@ type Props = {
   canRead: boolean;
   initialPermissions: AdminSkillPermissionFlags;
   initialSnapshot: AdminSkillRegistrySnapshot;
-  navigateToReauth?: (path: "/staff/re-auth") => void;
 };
 
 type UnresolvedSkillOperation = {
@@ -35,13 +34,9 @@ type UnresolvedSkillOperation = {
     | null;
 };
 
-function navigateToStaffReauth(path: "/staff/re-auth") {
-  window.location.assign(path);
-}
-
 async function trustedMutationFailure(
   response: Response,
-): Promise<"reauth_required" | "result_unknown" | null> {
+): Promise<"result_unknown" | null> {
   try {
     const value: unknown = await response.json();
     if (
@@ -52,8 +47,7 @@ async function trustedMutationFailure(
     )
       return null;
     const keys = Reflect.ownKeys(value);
-    const hasRedirect = keys.includes("redirectTo");
-    if (keys.length !== (hasRedirect ? 4 : 3)) return null;
+    if (keys.length !== 3) return null;
     if (!["version", "requestId", "error"].every((key) => keys.includes(key)))
       return null;
     const envelope = value as Record<string, unknown>;
@@ -70,13 +64,7 @@ async function trustedMutationFailure(
     )
       return null;
     const code = Reflect.get(error, "code");
-    if (
-      code === "reauth_required" &&
-      hasRedirect &&
-      envelope.redirectTo === "/staff/re-auth"
-    )
-      return code;
-    return code === "result_unknown" && !hasRedirect ? code : null;
+    return code === "result_unknown" ? code : null;
   } catch {
     return null;
   }
@@ -142,7 +130,6 @@ export function AssistantSkillRegistryPanel({
   canRead,
   initialPermissions,
   initialSnapshot,
-  navigateToReauth = navigateToStaffReauth,
 }: Props) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [permissions, setPermissions] = useState(initialPermissions);
@@ -335,11 +322,6 @@ export function AssistantSkillRegistryPanel({
     }
   };
 
-  const replacementReauthRequired = () => {
-    setAnnouncement("需要重新验证身份，正在前往验证页面。");
-    navigateToReauth("/staff/re-auth");
-  };
-
   const mutate = async (
     skill: AdminSkillListResponse["skills"][number],
     operation: "enable" | "disable" | "delete",
@@ -370,11 +352,6 @@ export function AssistantSkillRegistryPanel({
       );
       if (!response.ok) {
         const failure = await trustedMutationFailure(response);
-        if (failure === "reauth_required") {
-          setAnnouncement("需要重新验证身份，正在前往验证页面。");
-          navigateToReauth("/staff/re-auth");
-          return;
-        }
         if (failure === "result_unknown") {
           const expectation: UnresolvedSkillOperation = {
             skillId: skill.id,
@@ -520,7 +497,6 @@ export function AssistantSkillRegistryPanel({
           loadReplacementTarget={loadReplacementTarget}
           onClose={closeUpload}
           onUploaded={uploaded}
-          onReauthRequired={replacementReauthRequired}
           onReplacementResultUnknown={replacementResultUnknown}
         />
       ) : null}

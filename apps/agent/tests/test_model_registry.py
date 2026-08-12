@@ -146,11 +146,12 @@ def make_settings(
     provider: ModelProvider,
     *,
     base_url: str | None = None,
+    api_key: str | None = EXPLICIT_API_KEY,
 ) -> ActiveModelSettings:
     return ActiveModelSettings(
         provider=provider,
         model_id=MODEL_ID,
-        api_key=SecretStr(EXPLICIT_API_KEY),
+        api_key=None if api_key is None else SecretStr(api_key),
         base_url=base_url,
         timeout_seconds=TIMEOUT_SECONDS,
     )
@@ -208,9 +209,7 @@ def test_registry_does_not_eagerly_import_provider_modules() -> None:
     source_root = str(Path(__file__).resolve().parents[1] / "src")
     inherited_pythonpath = os.environ.get("PYTHONPATH")
     pythonpath = os.pathsep.join(
-        [source_root, inherited_pythonpath]
-        if inherited_pythonpath
-        else [source_root]
+        [source_root, inherited_pythonpath] if inherited_pythonpath else [source_root]
     )
     result = subprocess.run(
         [sys.executable, "-c", script],
@@ -388,12 +387,57 @@ def test_openai_compatible_requests_ignore_poisoned_custom_auth_headers(
     assert len(captured_requests) == 2
     for request in captured_requests:
         uses_explicit_authorization = (
-            request.headers.get("authorization")
-            == f"Bearer {EXPLICIT_API_KEY}"
+            request.headers.get("authorization") == f"Bearer {EXPLICIT_API_KEY}"
         )
         project_header_is_absent = "openai-project" not in request.headers
         assert uses_explicit_authorization
         assert project_header_is_absent
+
+
+def test_keyless_openai_compatible_requests_send_no_authorization() -> None:
+    captured_requests: list[httpx.Request] = []
+
+    def capture_request(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": "response-id",
+                "object": "chat.completion",
+                "created": 1,
+                "model": MODEL_ID,
+                "choices": [],
+            },
+        )
+
+    async def capture_async_request(
+        request: httpx.Request,
+    ) -> httpx.Response:
+        captured_requests.append(request)
+        return capture_request(request)
+
+    sync_client = httpx.Client(
+        transport=httpx.MockTransport(capture_request),
+        follow_redirects=False,
+    )
+    async_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(capture_async_request),
+        follow_redirects=False,
+    )
+    managed = model_registry.build_managed_model(
+        make_settings("deepseek", base_url=CUSTOM_BASE_URL, api_key=None),
+        http_client=sync_client,
+        http_async_client=async_client,
+    )
+
+    invoke_openai_compatible_client(get_client(managed.model), "deepseek")
+
+    assert len(captured_requests) == 1
+    assert "authorization" not in captured_requests[0].headers
+
+    asyncio.run(managed.aclose())
+    sync_client.close()
+    asyncio.run(async_client.aclose())
 
 
 def test_anthropic_clients_ignore_poisoned_endpoint_and_auth_token(
@@ -427,8 +471,7 @@ def test_anthropic_clients_ignore_poisoned_endpoint_and_auth_token(
     monkeypatch.setattr(httpx.AsyncClient, "send", capture_async_request)
     monkeypatch.setenv(
         "ANTHROPIC_CUSTOM_HEADERS",
-        "X-Api-Key: poison-anthropic-key\n"
-        "Authorization: Bearer poison-anthropic-auth",
+        "X-Api-Key: poison-anthropic-key\nAuthorization: Bearer poison-anthropic-auth",
     )
     model = model_registry.build_model(make_settings("anthropic"))
 
@@ -493,7 +536,9 @@ def test_gemini_client_ignores_poisoned_vertex_project_and_credentials(
 
     assert len(captured_requests) == 1
     request = captured_requests[0]
-    request_uses_explicit_key = request.headers.get("x-goog-api-key") == EXPLICIT_API_KEY
+    request_uses_explicit_key = (
+        request.headers.get("x-goog-api-key") == EXPLICIT_API_KEY
+    )
     assert request.url.host == "generativelanguage.googleapis.com"
     assert request.url.path == f"/v1beta/models/{MODEL_ID}:generateContent"
     assert "poison-google-project" not in str(request.url)
@@ -632,9 +677,10 @@ def test_openai_compatible_managed_model_locks_approved_url_and_http_clients(
 
     assert isinstance(managed, ManagedModel)
     assert normalized_base_url(get_client(managed.model)) == expected_base_url
-    assert normalized_base_url(
-        getattr(managed.model, "get_async_client")()
-    ) == expected_base_url
+    assert (
+        normalized_base_url(getattr(managed.model, "get_async_client")())
+        == expected_base_url
+    )
     assert sync_client.follow_redirects is False
     assert async_client.follow_redirects is False
 
@@ -655,9 +701,10 @@ def test_anthropic_managed_model_uses_approved_base_url_and_injected_clients() -
     )
 
     assert normalized_base_url(get_client(managed.model)) == CUSTOM_BASE_URL
-    assert normalized_base_url(
-        getattr(managed.model, "get_async_client")()
-    ) == CUSTOM_BASE_URL
+    assert (
+        normalized_base_url(getattr(managed.model, "get_async_client")())
+        == CUSTOM_BASE_URL
+    )
 
     asyncio.run(managed.aclose())
     assert not sync_client.is_closed

@@ -98,7 +98,6 @@ function parseWorkspaceSession(
     value.realm !== "workforce" ||
     value.status !== "active" ||
     typeof value.mustChangePassword !== "boolean" ||
-    typeof value.twoFactorEnabled !== "boolean" ||
     !Array.isArray(value.permissions) ||
     !value.permissions.every(
       (permission) =>

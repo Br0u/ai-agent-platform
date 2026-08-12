@@ -33,7 +33,6 @@ export type AuthoritativeUser = {
   displayName: string;
   emailVerificationStatus: EmailVerificationStatus;
   mustChangePassword: boolean;
-  twoFactorEnabled: boolean;
 };
 
 export type CustomerOrganization = {
@@ -65,7 +64,6 @@ export type WorkforceActor = ActorBase & {
   realm: "workforce";
   status: "active";
   mustChangePassword: boolean;
-  twoFactorEnabled: boolean;
   permissions: PermissionKey[];
 };
 
@@ -104,7 +102,6 @@ export type AuthAccessErrorCode =
   | "AUTH_ACCOUNT_NOT_ACTIVE"
   | "AUTH_PERMISSION_DENIED"
   | "AUTH_PASSWORD_CHANGE_REQUIRED"
-  | "AUTH_TOTP_SETUP_REQUIRED"
   | "AUTH_ORGANIZATION_REQUIRED"
   | "AUTH_ORGANIZATION_AMBIGUOUS"
   | "AUTH_ORGANIZATION_NOT_ACTIVE";
@@ -116,7 +113,6 @@ const ACCESS_MESSAGES: Readonly<Record<AuthAccessErrorCode, string>> = {
   AUTH_ACCOUNT_NOT_ACTIVE: "This account is not active",
   AUTH_PERMISSION_DENIED: "Permission denied",
   AUTH_PASSWORD_CHANGE_REQUIRED: "Password change required",
-  AUTH_TOTP_SETUP_REQUIRED: "Two-factor setup required",
   AUTH_ORGANIZATION_REQUIRED: "An active organization is required",
   AUTH_ORGANIZATION_AMBIGUOUS: "Organization membership is ambiguous",
   AUTH_ORGANIZATION_NOT_ACTIVE: "This organization is not active",
@@ -204,7 +200,6 @@ export function createDatabaseAccessRepository(
           name: true,
           emailVerificationStatus: true,
           mustChangePassword: true,
-          twoFactorEnabled: true,
         },
       });
 
@@ -216,7 +211,6 @@ export function createDatabaseAccessRepository(
             displayName: found.name,
             emailVerificationStatus: found.emailVerificationStatus,
             mustChangePassword: found.mustChangePassword,
-            twoFactorEnabled: found.twoFactorEnabled,
           }
         : null;
     },
@@ -321,7 +315,6 @@ export function createAccessService(
       status: "active",
       displayName: currentUser.displayName,
       mustChangePassword: currentUser.mustChangePassword,
-      twoFactorEnabled: currentUser.twoFactorEnabled,
       permissions: [
         ...new Set(
           await repository.findPermissionKeys(currentUser.id, "workforce"),
@@ -360,7 +353,7 @@ export function createAccessService(
   }
 
   async function requireWorkforce(options?: {
-    setupFlow?: "change-password" | "two-factor";
+    setupFlow?: "change-password";
   }): Promise<WorkforceActor> {
     const actor = await getCurrentActor("workforce");
     if (!actor) throw new AuthAccessError("AUTH_SESSION_REQUIRED", 401);
@@ -369,13 +362,6 @@ export function createAccessService(
     }
     if (actor.mustChangePassword && options?.setupFlow !== "change-password") {
       throw new AuthAccessError("AUTH_PASSWORD_CHANGE_REQUIRED", 403);
-    }
-    if (
-      !actor.mustChangePassword &&
-      !actor.twoFactorEnabled &&
-      options?.setupFlow !== "two-factor"
-    ) {
-      throw new AuthAccessError("AUTH_TOTP_SETUP_REQUIRED", 403);
     }
     return actor;
   }
@@ -425,7 +411,6 @@ export function toStaffSessionDto(actor: WorkforceActor): StaffSessionDto {
     status: "active",
     displayName: actor.displayName,
     mustChangePassword: actor.mustChangePassword,
-    twoFactorEnabled: actor.twoFactorEnabled,
     permissions: [...new Set(actor.permissions)].sort(),
   };
 }
@@ -443,7 +428,7 @@ export async function requireCustomer(options?: {
 }
 
 export async function requireWorkforce(options?: {
-  setupFlow?: "change-password" | "two-factor";
+  setupFlow?: "change-password";
 }): Promise<WorkforceActor> {
   return createAccessService().requireWorkforce(options);
 }

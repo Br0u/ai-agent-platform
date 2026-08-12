@@ -20,6 +20,7 @@ EXPECTED_FUNCTION_SOURCE = (
     "OR NEW.provider IS DISTINCT FROM OLD.provider "
     "OR NEW.model_id IS DISTINCT FROM OLD.model_id "
     "OR NEW.endpoint_id IS DISTINCT FROM OLD.endpoint_id "
+    "OR NEW.base_url IS DISTINCT FROM OLD.base_url "
     "OR NEW.api_key_ciphertext IS DISTINCT FROM OLD.api_key_ciphertext "
     "OR NEW.api_key_nonce IS DISTINCT FROM OLD.api_key_nonce "
     "OR NEW.api_key_last_four IS DISTINCT FROM OLD.api_key_last_four "
@@ -97,7 +98,7 @@ async def test_real_control_migration_is_idempotent_owned_and_enforces_boundarie
             await cursor.execute(
                 "SELECT version FROM agent_control.schema_versions ORDER BY version"
             )
-            assert await cursor.fetchall() == [(1,)]
+            assert await cursor.fetchall() == [(1,), (2,)]
 
             await cursor.execute(
                 """SELECT
@@ -139,6 +140,55 @@ async def test_real_control_migration_is_idempotent_owned_and_enforces_boundarie
             assert await cursor.fetchall() == [
                 ("c", "CHECK (version >= 1)", False, False, True),
                 ("p", "PRIMARY KEY (version)", False, False, True),
+            ]
+
+            await cursor.execute(
+                """SELECT
+                  a.attname::text,
+                  format_type(a.atttypid, a.atttypmod)::text,
+                  a.attnotnull,
+                  COALESCE(pg_get_expr(d.adbin, d.adrelid), '')::text
+                FROM pg_class AS c
+                JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                JOIN pg_attribute AS a ON a.attrelid = c.oid
+                LEFT JOIN pg_attrdef AS d
+                  ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+                WHERE n.nspname = 'agent_control'
+                  AND c.relname = 'model_configs'
+                  AND a.attname = 'base_url'
+                  AND a.attnum > 0
+                  AND NOT a.attisdropped"""
+            )
+            assert await cursor.fetchone() == (
+                "base_url",
+                "character varying(2048)",
+                False,
+                "",
+            )
+
+            await cursor.execute(
+                """SELECT
+                  pg_get_constraintdef(con.oid, true)::text,
+                  con.convalidated
+                FROM pg_constraint AS con
+                JOIN pg_class AS c ON c.oid = con.conrelid
+                JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                JOIN pg_attribute AS a
+                  ON a.attrelid = c.oid AND a.attname = 'base_url'
+                WHERE n.nspname = 'agent_control'
+                  AND c.relname = 'model_configs'
+                  AND con.contype = 'c'
+                  AND a.attnum = ANY(con.conkey)
+                ORDER BY pg_get_constraintdef(con.oid, true)"""
+            )
+            assert await cursor.fetchall() == [
+                (
+                    "CHECK (base_url IS NULL OR char_length(base_url::text) >= 8 "
+                    "AND char_length(base_url::text) <= 2048 "
+                    "AND base_url::text ~ '^https?://'::text "
+                    "AND base_url::text !~ '[[:space:]]'::text)",
+                    True,
+                )
             ]
 
             await cursor.execute(

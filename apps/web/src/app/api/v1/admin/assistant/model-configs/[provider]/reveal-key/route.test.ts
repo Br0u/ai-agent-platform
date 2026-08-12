@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { AuthAccessError } from "@/server/auth/access";
-import { SensitiveActionError } from "@/server/auth/sensitive-action";
 import {
   AdminModelConfigCommandError,
   type AuthorizedModelCommand,
@@ -102,41 +101,6 @@ describe("POST /api/v1/admin/assistant/model-configs/[provider]/reveal-key", () 
       key: KEY,
     });
   });
-
-  it.each([
-    [new SensitiveActionError("AUTH_REAUTH_REQUIRED"), 401],
-    [new SensitiveActionError("AUTH_MFA_REQUIRED"), 401],
-  ] as const)(
-    "maps %s to exact versioned re-auth without body read",
-    async (error, status) => {
-      const deps = dependencies();
-      deps.authorize.mockRejectedValue(error);
-      const readJson = vi.fn();
-      const POST = createAdminModelConfigRevealHandler({
-        commands: deps.commands,
-        readJson,
-        requestIdFactory: () => "reveal-public-request",
-      });
-
-      const response = await POST(request("{}"), {
-        params: Promise.resolve({ provider: "openai" }),
-      });
-
-      expect(response.status).toBe(status);
-      expectSecretHeaders(response);
-      await expect(response.json()).resolves.toEqual({
-        version: "1",
-        requestId: "reveal-public-request",
-        error: {
-          code: "reauth_required",
-          message: "Recent password and MFA verification required",
-          retryable: false,
-        },
-        redirectTo: "/staff/re-auth",
-      });
-      expect(readJson).not.toHaveBeenCalled();
-    },
-  );
 
   it.each([
     [new MutationRequestError(), 400, "validation_error"],

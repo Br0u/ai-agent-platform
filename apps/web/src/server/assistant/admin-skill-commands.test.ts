@@ -26,7 +26,6 @@ const actor: WorkforceActor = {
   status: "active",
   displayName: "Admin",
   mustChangePassword: false,
-  twoFactorEnabled: true,
   permissions: ["admin:assistant:skills:upload"],
 };
 

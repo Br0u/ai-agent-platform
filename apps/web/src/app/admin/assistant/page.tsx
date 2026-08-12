@@ -41,6 +41,7 @@ function unavailableModelConfigSnapshot(
       displayName: modelProviderNames[provider],
       modelId: null,
       endpointId: null,
+      baseUrl: null,
       revision: null,
       testStatus: "not_configured",
       lastTestedAt: null,

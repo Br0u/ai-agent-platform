@@ -19,7 +19,7 @@ describe("registered route files", () => {
     expect(missingRoutes).toEqual([]);
   });
 
-  it("covers the live pricing calculator with an explicit App Router page", () => {
+  it("covers the live pricing and services page with an explicit App Router page", () => {
     expect(existsSync(pageFileForRoute("/pricing"))).toBe(true);
   });
 

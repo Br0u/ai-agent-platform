@@ -30,6 +30,7 @@ _LIST_METADATA_SQL = """SELECT
   provider,
   model_id,
   endpoint_id,
+  base_url,
   api_key_last_four,
   revision,
   test_status,
@@ -44,6 +45,7 @@ _LOAD_CURRENT_SEALED_SQL = """SELECT
   provider,
   model_id,
   endpoint_id,
+  base_url,
   api_key_ciphertext,
   api_key_nonce,
   api_key_last_four,
@@ -59,6 +61,7 @@ _LOAD_EXACT_SEALED_SQL = """SELECT
   provider,
   model_id,
   endpoint_id,
+  base_url,
   api_key_ciphertext,
   api_key_nonce,
   api_key_last_four,
@@ -74,6 +77,7 @@ _LOAD_ACTIVE_SQL = """SELECT
   config.provider,
   config.model_id,
   config.endpoint_id,
+  config.base_url,
   config.api_key_ciphertext,
   config.api_key_nonce,
   config.api_key_last_four,
@@ -104,6 +108,7 @@ _INSERT_CONFIG_SQL = """INSERT INTO agent_control.model_configs (
   provider,
   model_id,
   endpoint_id,
+  base_url,
   api_key_ciphertext,
   api_key_nonce,
   api_key_last_four,
@@ -112,7 +117,7 @@ _INSERT_CONFIG_SQL = """INSERT INTO agent_control.model_configs (
   is_current,
   test_status,
   last_tested_at
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, true, 'untested', NULL)
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true, 'untested', NULL)
 """
 
 _INSERT_EVENT_SQL = """INSERT INTO agent_control.control_events (
@@ -284,6 +289,26 @@ def _validate_model_fields(
     return validated.provider, validated.model_id, validated.endpoint_id
 
 
+def _validate_base_url(value: object) -> str | None:
+    validated: ModelConfigDraft | None = None
+    try:
+        validated = ModelConfigDraft.model_validate(
+            {
+                "provider": "openai",
+                "model_id": "validation-model",
+                "endpoint_id": "openai-official",
+                "base_url": value,
+                "api_key": None,
+                "expected_revision": 0,
+            }
+        )
+    except ValidationError:
+        pass
+    if validated is None:
+        _invalid()
+    return validated.base_url
+
+
 def _validate_sealed(value: object) -> SealedSecret:
     if type(value) is not SealedSecret:
         _invalid()
@@ -315,6 +340,7 @@ class SaveSealedConfig:
     expected_revision: int
     sealed: SealedSecret = field(repr=False)
     assertion_nonce: UUID
+    base_url: str | None = None
 
     def __post_init__(self) -> None:
         config_id = _validate_uuid(self.config_id)
@@ -327,6 +353,7 @@ class SaveSealedConfig:
         expected_revision = _validate_non_negative_integer(self.expected_revision)
         sealed = _validate_sealed(self.sealed)
         assertion_nonce = _validate_uuid(self.assertion_nonce)
+        base_url = _validate_base_url(self.base_url)
         object.__setattr__(self, "config_id", config_id)
         object.__setattr__(self, "provider", provider)
         object.__setattr__(self, "model_id", model_id)
@@ -335,6 +362,7 @@ class SaveSealedConfig:
         object.__setattr__(self, "expected_revision", expected_revision)
         object.__setattr__(self, "sealed", sealed)
         object.__setattr__(self, "assertion_nonce", assertion_nonce)
+        object.__setattr__(self, "base_url", base_url)
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,6 +445,7 @@ class StoredSealedConfig:
     revision: int
     test_status: TestStatus
     sealed: SealedSecret = field(repr=False)
+    base_url: str | None = None
 
     def __post_init__(self) -> None:
         config_id = _validate_uuid(self.config_id)
@@ -429,6 +458,7 @@ class StoredSealedConfig:
         if self.test_status not in TEST_STATUSES:
             _invalid()
         sealed = _validate_sealed(self.sealed)
+        base_url = _validate_base_url(self.base_url)
         object.__setattr__(self, "config_id", config_id)
         object.__setattr__(self, "provider", provider)
         object.__setattr__(self, "model_id", model_id)
@@ -436,6 +466,7 @@ class StoredSealedConfig:
         object.__setattr__(self, "revision", revision)
         object.__setattr__(self, "test_status", cast(TestStatus, self.test_status))
         object.__setattr__(self, "sealed", sealed)
+        object.__setattr__(self, "base_url", base_url)
 
 
 @dataclass(frozen=True, slots=True)
@@ -451,6 +482,7 @@ class StoredActiveConfig:
     sealed: SealedSecret = field(repr=False)
     activation_version: int
     activated_at: datetime
+    base_url: str | None = None
 
     def __post_init__(self) -> None:
         config_id = _validate_uuid(self.config_id)
@@ -464,6 +496,7 @@ class StoredActiveConfig:
             _invalid()
         sealed = _validate_sealed(self.sealed)
         activation_version = _validate_positive_integer(self.activation_version)
+        base_url = _validate_base_url(self.base_url)
         if (
             type(self.activated_at) is not datetime
             or self.activated_at.tzinfo is None
@@ -478,6 +511,7 @@ class StoredActiveConfig:
         object.__setattr__(self, "test_status", cast(TestStatus, self.test_status))
         object.__setattr__(self, "sealed", sealed)
         object.__setattr__(self, "activation_version", activation_version)
+        object.__setattr__(self, "base_url", base_url)
 
 
 @dataclass(frozen=True, slots=True)
@@ -618,7 +652,7 @@ def _validated_psycopg_url(database_url: SecretStr | str) -> SecretStr:
 
 
 def _stored_sealed_from_row(row: tuple[Any, ...]) -> StoredSealedConfig:
-    if len(row) != 10:
+    if len(row) != 11:
         _storage()
     stored: StoredSealedConfig | None = None
     try:
@@ -627,14 +661,15 @@ def _stored_sealed_from_row(row: tuple[Any, ...]) -> StoredSealedConfig:
             provider=row[1],
             model_id=row[2],
             endpoint_id=row[3],
+            base_url=row[4],
             sealed=SealedSecret(
-                ciphertext=row[4],
-                nonce=row[5],
-                last_four=row[6],
-                key_version=row[7],
+                ciphertext=row[5],
+                nonce=row[6],
+                last_four=row[7],
+                key_version=row[8],
             ),
-            revision=row[8],
-            test_status=row[9],
+            revision=row[9],
+            test_status=row[10],
         )
     except ModelConfigValidationError:
         pass
@@ -644,7 +679,7 @@ def _stored_sealed_from_row(row: tuple[Any, ...]) -> StoredSealedConfig:
 
 
 def _metadata_from_row(row: tuple[Any, ...]) -> StoredModelConfigMetadata:
-    if len(row) != 7:
+    if len(row) != 8:
         _storage()
     metadata: StoredModelConfigMetadata | None = None
     try:
@@ -652,10 +687,11 @@ def _metadata_from_row(row: tuple[Any, ...]) -> StoredModelConfigMetadata:
             provider=row[0],
             model_id=row[1],
             endpoint_id=row[2],
-            api_key_last_four=row[3],
-            revision=row[4],
-            test_status=row[5],
-            last_tested_at=row[6],
+            base_url=row[3],
+            api_key_last_four=row[4],
+            revision=row[5],
+            test_status=row[6],
+            last_tested_at=row[7],
         )
     except (TypeError, ValueError):
         pass
@@ -880,9 +916,9 @@ class PostgresModelConfigRepository:
                     row = await cursor.fetchone()
                     if row is None:
                         return None
-                    if len(row) != 13 or row[8] != row[10]:
+                    if len(row) != 14 or row[9] != row[11]:
                         _storage()
-                    stored = _stored_sealed_from_row(row[:10])
+                    stored = _stored_sealed_from_row(row[:11])
                     active: StoredActiveConfig | None = None
                     try:
                         active = StoredActiveConfig(
@@ -890,11 +926,12 @@ class PostgresModelConfigRepository:
                             provider=stored.provider,
                             model_id=stored.model_id,
                             endpoint_id=stored.endpoint_id,
+                            base_url=stored.base_url,
                             sealed=stored.sealed,
                             revision=stored.revision,
                             test_status=stored.test_status,
-                            activation_version=row[11],
-                            activated_at=row[12],
+                            activation_version=row[12],
+                            activated_at=row[13],
                         )
                     except ModelConfigValidationError:
                         pass
@@ -1222,6 +1259,7 @@ class PostgresModelConfigRepository:
                             command.provider,
                             command.model_id,
                             command.endpoint_id,
+                            command.base_url,
                             command.sealed.ciphertext,
                             command.sealed.nonce,
                             command.sealed.last_four,
@@ -1252,6 +1290,7 @@ class PostgresModelConfigRepository:
                         provider=command.provider,
                         model_id=command.model_id,
                         endpoint_id=command.endpoint_id,
+                        base_url=command.base_url,
                         api_key_last_four=command.sealed.last_four,
                         revision=command.revision,
                         test_status="untested",

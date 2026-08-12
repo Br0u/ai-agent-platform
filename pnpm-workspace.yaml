@@ -2,6 +2,19 @@ packages:
   - apps/*
   - packages/*
 
+supportedArchitectures:
+  os:
+    - current
+    - linux
+  cpu:
+    - current
+    - arm64
+    - x64
+  libc:
+    - current
+    - glibc
+    - musl
+
 allowBuilds:
   esbuild: true
   sharp: true

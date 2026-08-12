@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { commitResponseCookies } from "../auth/actions";
 import { AuthAccessError } from "../auth/access";
-import { SensitiveActionError } from "../auth/sensitive-action";
 import { RegistrationError } from "./service";
 import {
   approveRegistrationAction,
@@ -436,7 +435,7 @@ describe("review actions", () => {
     expect(reportInternalError).not.toHaveBeenCalled();
   });
 
-  it("denies review before mutation when central sensitive assurance fails", async () => {
+  it("denies review before mutation when the permission guard fails", async () => {
     const { actions, access, service } = harness();
     access.requireSensitiveAction.mockRejectedValueOnce(
       new AuthAccessError("AUTH_PERMISSION_DENIED", 403),
@@ -451,22 +450,6 @@ describe("review actions", () => {
       code: "REGISTRATION_PERMISSION_DENIED",
     });
     expect(service.approveRegistration).not.toHaveBeenCalled();
-  });
-
-  it("returns the re-auth route when sensitive assurance is stale", async () => {
-    const { actions, access, service } = harness();
-    access.requireSensitiveAction.mockRejectedValueOnce(
-      new SensitiveActionError("AUTH_REAUTH_REQUIRED"),
-    );
-    const form = new FormData();
-    form.set("requestId", requestId);
-    form.set("reviewNote", "资料不完整");
-
-    await expect(actions.rejectRegistrationAction(form)).resolves.toEqual({
-      kind: "reauth_required",
-      redirectTo: "/staff/re-auth?returnTo=%2Fadmin%2Fregistrations",
-    });
-    expect(service.rejectRegistration).not.toHaveBeenCalled();
   });
 });
 

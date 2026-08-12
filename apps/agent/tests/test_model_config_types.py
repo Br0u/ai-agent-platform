@@ -125,6 +125,7 @@ def test_metadata_is_frozen_validated_and_has_no_secret_field() -> None:
         "provider",
         "model_id",
         "endpoint_id",
+        "base_url",
         "api_key_last_four",
         "revision",
         "test_status",

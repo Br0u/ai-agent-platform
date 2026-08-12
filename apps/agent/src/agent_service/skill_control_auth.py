@@ -19,7 +19,7 @@ SkillControlPermission = Literal[
     "admin:assistant:skills",
     "admin:assistant:skills:configure",
 ]
-SkillControlAssurance = Literal["session", "password+mfa"]
+SkillControlAssurance = Literal["session"]
 
 SKILL_ASSERTION_KEY_DERIVATION_DOMAIN: Final = (
     b"ai-agent-platform:skill-control-assertion:v1"
@@ -51,7 +51,7 @@ _ACTION_REQUIREMENTS: Final[
     "skill_runtime_status": ("admin:assistant:skills", "session"),
     "skill_runtime_activate": (
         "admin:assistant:skills:configure",
-        "password+mfa",
+        "session",
     ),
 }
 _BEARER_ERROR: Final = "skill control authentication failed"
@@ -314,12 +314,7 @@ class SkillControlAuthenticator:
             else type(asserted_target) is str
             and asserted_target.startswith(cast(str, target_prefix))
         )
-        assurance_valid = (
-            assured_at is None
-            if action == "skill_runtime_status"
-            else type(assured_at) is int
-            and now - 600 <= assured_at <= now + 2
-        )
+        assurance_valid = assured_at is None
         if (
             actor is None
             or request_id is None

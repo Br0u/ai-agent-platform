@@ -27,9 +27,9 @@ const expectedDocumentSeed = [
   ],
   [
     "019f79c8-9a00-7000-8000-000000000004",
-    "019f79c8-9a00-7000-9000-000000000004",
+    "019f79c8-9a00-7000-9000-000000000104",
     "operations",
-    "4142998b2dad762895a6913d69bf4b86f53a5761ab832b18846d6570ad9e5053",
+    "83a4f710414e8bd1801e99e9dde25f918c35db833f6bbc655f75b85a3bc3c9e9",
   ],
   [
     "019f79c8-9a00-7000-8000-000000000005",
@@ -91,6 +91,7 @@ describePostgres("concurrent production migrations", () => {
       publishedRevision: number;
       contentChecksum: string;
       revisionChecksum: string;
+      source: string;
       canonicalSlug: string;
       routeContentId: string;
     }>(
@@ -103,6 +104,7 @@ describePostgres("concurrent production migrations", () => {
          c.published_revision AS "publishedRevision",
          c.body->>'checksum' AS "contentChecksum",
          cr.body->>'checksum' AS "revisionChecksum",
+         cr.body->>'source' AS source,
          r.slug AS "canonicalSlug",
          r.content_id::text AS "routeContentId"
        FROM content c
@@ -135,7 +137,7 @@ describePostgres("concurrent production migrations", () => {
        WHERE c.type = 'document'`,
     );
     await verifier.end();
-    expect(journal.rows).toEqual([{ count: "8" }]);
+    expect(journal.rows).toEqual([{ count: "10" }]);
     expect(content.rows).toEqual(
       expectedDocumentSeed.map(([contentId, revisionId, slug, checksum]) => ({
         contentId,
@@ -143,13 +145,20 @@ describePostgres("concurrent production migrations", () => {
         slug,
         type: "document",
         status: "published",
-        publishedRevision: 1,
+        publishedRevision: slug === "operations" ? 2 : 1,
         contentChecksum: checksum,
         revisionChecksum: checksum,
+        source:
+          slug === "operations"
+            ? expect.stringContaining("/downloads#dl-mdd2-env")
+            : expect.any(String),
         canonicalSlug: slug,
         routeContentId: contentId,
       })),
     );
+    expect(
+      content.rows.find(({ slug }) => slug === "operations")?.source,
+    ).not.toContain("/compatibility");
     expect(revisions.rows).toEqual([{ count: "7" }]);
     expect(routes.rows).toEqual([
       { canonical: "7", reserved: "0", alias: "0", total: "7" },

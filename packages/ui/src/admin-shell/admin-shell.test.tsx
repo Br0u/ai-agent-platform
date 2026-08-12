@@ -151,7 +151,7 @@ describe("AdminShell", () => {
     );
   });
 
-  it("gives the mobile navigation drawer a complete dark surface contract", () => {
+  it("gives the mobile navigation drawer a dark frosted-glass contract", () => {
     const { container } = renderWithSidebar();
     fireEvent.click(screen.getByRole("button", { name: "打开后台功能导航" }));
 
@@ -164,7 +164,7 @@ describe("AdminShell", () => {
 
     const css = readFileSync("src/admin-shell/admin-shell.css", "utf8");
     expect(css).toMatch(
-      /\.admin-shell__navigation\s+\.sidebar-navigation__drawer\s*\{[\s\S]*?color:\s*var\(--color-surface\);[\s\S]*?background:\s*var\(--color-admin-rail\);/u,
+      /\.admin-shell__navigation\s+\.sidebar-navigation__drawer\s*\{[\s\S]*?color:\s*var\(--color-surface\);[\s\S]*?background:\s*rgb\(20 25 58 \/ 92%\);[\s\S]*?backdrop-filter:\s*blur\(24px\) saturate\(145%\);/u,
     );
     expect(css).toMatch(
       /\.admin-shell__navigation\s+\.sidebar-navigation__drawer\s+\.sidebar-navigation__close\s*\{[\s\S]*?color:\s*var\(--color-surface\);/u,

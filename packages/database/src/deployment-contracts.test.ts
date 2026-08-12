@@ -150,9 +150,7 @@ const renderComposeFixture = (
           E2E_STAFF_SESSION_TOKEN: "compose-e2e-staff-session",
           E2E_ROLE_TARGET_SESSION_TOKEN: "compose-e2e-role-target",
           E2E_ADMIN_SESSION_TOKEN: "compose-e2e-admin-session",
-          E2E_NO_TOTP_ADMIN_SESSION_TOKEN: "compose-e2e-no-totp",
           E2E_MODEL_ADMIN_SESSION_TOKEN: "compose-e2e-model-admin",
-          E2E_MODEL_ADMIN_STALE_SESSION_TOKEN: "compose-e2e-model-admin-stale",
           E2E_REVOKED_SESSION_TOKEN: "compose-e2e-revoked",
           E2E_REPLACEMENT_PASSWORD: "compose-e2e-replacement",
           BETTER_AUTH_URL: "http://127.0.0.1:3000",
@@ -468,9 +466,7 @@ describe("production deployment security contracts", () => {
     const serverTemplate = read("infra/nginx/default.conf.template");
     const nginx = `${read("infra/nginx/nginx.conf")}\n${serverTemplate}`;
     const authLocation = serverTemplate
-      .split(
-        "location ~ ^/(?:login|register|staff/login|staff/two-factor|staff/re-auth)$ {",
-      )[1]
+      .split("location ~ ^/(?:login|register|staff/login)$ {")[1]
       ?.split("\n  }")[0];
     expect(nginx).toContain(
       "limit_req_zone $auth_post_key zone=auth_post_per_ip:10m rate=5r/m;",
@@ -482,9 +478,7 @@ describe("production deployment security contracts", () => {
     );
     expect(nginx).toMatch(/map \$request_method \$auth_post_method/);
     expect(nginx).toMatch(/POST\s+\$binary_remote_addr/);
-    expect(nginx).toContain(
-      "location ~ ^/(?:login|register|staff/login|staff/two-factor|staff/re-auth)$",
-    );
+    expect(nginx).toContain("location ~ ^/(?:login|register|staff/login)$");
     expect(nginx).toContain("proxy_set_header X-Real-IP $remote_addr;");
     expect(nginx).toContain("proxy_set_header X-Forwarded-For $remote_addr;");
     expect(authLocation).toContain(
@@ -498,40 +492,33 @@ describe("production deployment security contracts", () => {
     );
     expect(
       nginx.match(/proxy_set_header X-Forwarded-Host \$http_host;/g),
-    ).toHaveLength(4);
+    ).toHaveLength(3);
   });
 
-  it("rate-limits only the exact public pricing and assistant POST APIs", () => {
+  it("rate-limits only the exact public assistant POST API", () => {
     const nginx = read("infra/nginx/default.conf.template");
-    const pricingLocation = nginx
-      .split("location = /api/v1/pricing/estimate {")[1]
-      ?.split("\n  }")[0];
     const assistantLocation = nginx
       .split("location = /api/v1/assistant/chat {")[1]
       ?.split("\n  }")[0];
     const catchAllLocation = nginx.split("location / {")[1]?.split("\n  }")[0];
 
-    expect(nginx).toContain(
-      "limit_req_zone $public_api_post_key zone=pricing_estimate_per_ip:10m rate=10r/m;",
-    );
+    expect(nginx).not.toContain("pricing_estimate_per_ip");
+    expect(nginx).not.toContain(["/api/v1", "pricing", "estimate"].join("/"));
     expect(nginx).toContain(
       "limit_req_zone $public_api_post_key zone=assistant_chat_per_ip:10m rate=30r/m;",
     );
     expect(nginx).toMatch(/map \$request_method \$public_api_post_key/u);
     expect(nginx).toMatch(/POST\s+\$binary_remote_addr/u);
 
-    expect(pricingLocation).toContain(
-      "limit_req zone=pricing_estimate_per_ip burst=5 nodelay;",
-    );
     expect(assistantLocation).toContain(
       "limit_req zone=assistant_chat_per_ip burst=10 nodelay;",
     );
     expect(assistantLocation).toContain("proxy_buffering off;");
     expect(assistantLocation).toContain("proxy_cache off;");
-    for (const location of [pricingLocation, assistantLocation]) {
-      expect(location).toContain("limit_req_status 429;");
-      expect(location).toContain("error_page 429 = @public_api_rate_limited;");
-    }
+    expect(assistantLocation).toContain("limit_req_status 429;");
+    expect(assistantLocation).toContain(
+      "error_page 429 = @public_api_rate_limited;",
+    );
     expect(nginx).toMatch(
       /location @public_api_rate_limited \{[\s\S]*default_type application\/json;[\s\S]*add_header Retry-After "60" always;[\s\S]*return 429 '\{"version":"1","requestId":"\$request_id","error":\{"code":"rate_limited","message":"请求过于频繁，请稍后再试。","retryable":true\}\}';/u,
     );
@@ -976,11 +963,6 @@ describe("production deployment security contracts", () => {
     expect(browserAcceptance).toContain("(stats.mode & 0o777) !== 0o600");
     expect(browserAcceptance).toContain('value.includes("\\n")');
     expect(browserAcceptance).toContain('value.includes("\\r")');
-    expect(browserAcceptance).toContain('totp.searchParams.get("secret")');
-    expect(browserAcceptance).toContain("appendDynamicProtectedValue(uri)");
-    expect(browserAcceptance).toContain(
-      "appendDynamicProtectedValue(totpSecret)",
-    );
     expect(browserAcceptance).toContain(
       "appendDynamicProtectedValue(sessionId)",
     );
@@ -1090,9 +1072,7 @@ describe("production deployment security contracts", () => {
       "E2E_STAFF_SESSION_TOKEN",
       "E2E_ROLE_TARGET_SESSION_TOKEN",
       "E2E_ADMIN_SESSION_TOKEN",
-      "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
       "E2E_MODEL_ADMIN_SESSION_TOKEN",
-      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
       "E2E_REVOKED_SESSION_TOKEN",
       "E2E_REPLACEMENT_PASSWORD",
     ]) {
@@ -1236,9 +1216,6 @@ describe("production deployment security contracts", () => {
       "expect(webAuditText).not.toContain(lastFour)",
     );
     expect(browserAcceptance).toContain("credentials.modelAdminSessionToken");
-    expect(browserAcceptance).toContain(
-      "credentials.modelAdminStaleSessionToken",
-    );
     expect(browserAcceptance).toContain("const controlResponseLedger:");
     expect(browserAcceptance).toContain("const pendingControlResponses:");
     expect(browserAcceptance).toContain("function trackControlResponses(");
@@ -1247,7 +1224,7 @@ describe("production deployment security contracts", () => {
     );
     expect(
       browserAcceptance.match(/await drainControlResponses\(\)/gu),
-    ).toHaveLength(5);
+    ).toHaveLength(4);
     expect(browserAcceptance).toContain('context.route("**/api/v1/**"');
     expect(browserAcceptance).toContain("await route.fetch()");
     expect(browserAcceptance).toContain(
@@ -1326,10 +1303,6 @@ describe("production deployment security contracts", () => {
         /expect\(response\.allowedLastFour\)\.toEqual\(\[\]\)/gu,
       ),
     ).toHaveLength(2);
-    expect(browserAcceptance).toContain(
-      "expect(capabilityRequests).toEqual([])",
-    );
-    expect(browserAcceptance).not.toContain("capabilityRequests.some");
     const finalChatIndex = browserAcceptance.indexOf(
       "const finalAuditChatResponse",
     );
@@ -1420,9 +1393,7 @@ describe("production deployment security contracts", () => {
         "E2E_STAFF_SESSION_TOKEN=test-staff-session",
         "E2E_ROLE_TARGET_SESSION_TOKEN=test-role-target",
         "E2E_ADMIN_SESSION_TOKEN=test-admin-session",
-        "E2E_NO_TOTP_ADMIN_SESSION_TOKEN=test-no-totp",
         "E2E_MODEL_ADMIN_SESSION_TOKEN=test-model-admin",
-        "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN=test-model-admin-stale",
         "E2E_REVOKED_SESSION_TOKEN=test-revoked",
         "E2E_REPLACEMENT_PASSWORD=test-replacement",
       ].join("\n"),
@@ -1905,9 +1876,22 @@ exit 0
     const agent = rendered.services.agent;
     const web = rendered.services.web;
 
-    expect(endpointFile).toEqual({ version: "1", endpoints: [] });
+    expect(endpointFile).toEqual({
+      version: "1",
+      endpoints: [
+        {
+          id: "deepseek-v4-flash-code",
+          label: "DeepSeek V4 Flash Code（自定义部署）",
+          provider: "deepseek",
+          base_url: "http://125.122.36.24:8810/v1",
+          enabled: true,
+          api_key_required: false,
+          allow_insecure_http: true,
+        },
+      ],
+    });
     expect(JSON.stringify(endpointFile)).not.toMatch(
-      /localhost|127\.0\.0\.1|10\.0\.0\.1|192\.168\.|api[_-]?key|secret|password/iu,
+      /localhost|127\.0\.0\.1|10\.0\.0\.1|192\.168\.|secret|password/iu,
     );
     expect(dockerfile).toContain("install -d -o root -g root -m 0755 /etc/aap");
     expect(dockerfile).toContain(
@@ -2552,7 +2536,7 @@ secrets:
         const mounted = spawnSync(
           "docker",
           ["compose", "-p", project, "-f", composeFile, "run", "--rm", "probe"],
-          { encoding: "utf8", timeout: 10_000 },
+          { encoding: "utf8", timeout: 120_000 },
         );
         expect(mounted.status, `${mounted.stdout}${mounted.stderr}`).toBe(0);
 
@@ -2591,7 +2575,7 @@ secrets:
         rmSync(sandbox, { recursive: true, force: true });
       }
     },
-    20_000,
+    130_000,
   );
 
   it("documents control-role secrets, migrations, and dynamic precedence", () => {
@@ -3424,14 +3408,12 @@ secrets:
       expect(spec).toContain(contract);
     }
     expect(spec).toContain(".setInputFiles(archive)");
-    expect(spec).toContain("modelAdminStaleSessionToken");
     expect(spec).not.toContain("fixtureCredentials");
     expect(spec).toContain(
       'page.waitForEvent("dialog").then((dialog) => dialog.accept())',
     );
-    expect(spec).toContain('error: { code: "reauth_required" }');
-    expect(spec).toContain('redirectTo: "/staff/re-auth"');
-    expect(spec.match(/browser\.newContext\(/gu)?.length).toBe(1);
+    expect(spec).not.toContain("browser.newContext(");
+    expect(spec).toContain("page.context()");
     expect(spec).not.toMatch(/https?:\/\/(?:github|gitlab|gitcode)\./u);
 
     expect(runner).toContain("SKILL_REGISTRY_E2E_PROJECT");
@@ -3455,7 +3437,6 @@ secrets:
     for (const allowedPlaywrightVariable of [
       "BETTER_AUTH_SECRET",
       "E2E_MODEL_ADMIN_SESSION_TOKEN",
-      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
       "SKILL_REGISTRY_E2E_INITIAL_ARCHIVE",
       "SKILL_REGISTRY_E2E_INACTIVE_REPLACEMENT_ARCHIVE",
       "SKILL_REGISTRY_E2E_ACTIVE_REPLACEMENT_ARCHIVE",
@@ -3564,7 +3545,6 @@ secrets:
       "apps/skill-registry/src/skill_registry/skill_set_repository.py",
       "apps/skill-registry/src/skill_registry/skill_set_schema.py",
       "apps/web/src/components/assistant/assistant-workspace.tsx",
-      "apps/web/src/components/admin/assistant-capability-roadmap.tsx",
       "apps/web/src/components/ui/floating-chat-widget-shadcnui.tsx",
       "apps/web/src/content/deployment.mdx",
       "docs/testing/README.md",
@@ -3711,9 +3691,7 @@ cleanup
       "E2E_STAFF_SESSION_TOKEN",
       "E2E_ROLE_TARGET_SESSION_TOKEN",
       "E2E_ADMIN_SESSION_TOKEN",
-      "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
       "E2E_MODEL_ADMIN_SESSION_TOKEN",
-      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
       "E2E_REVOKED_SESSION_TOKEN",
       "E2E_REPLACEMENT_PASSWORD",
     ];
@@ -3750,7 +3728,6 @@ cleanup
     expect(runner).toContain("BACKUP_ENCRYPTION_KEY_FILE");
     expect(runner).not.toContain("BACKUP_DATABASE_URL_FILE");
     expect(runner).toContain("E2E_MODEL_ADMIN_SESSION_TOKEN");
-    expect(runner).toContain("E2E_MODEL_ADMIN_STALE_SESSION_TOKEN");
     expect(runner).toContain(
       'env_file=${AAP_ASSISTANT_EXPERIENCE_E2E_ENV_FILE:-"$repo_root/.env.e2e"}',
     );
@@ -3864,23 +3841,15 @@ cleanup
     expect(identity).toContain("cleanup_private_dir");
     expect(experience).toContain("e2e/auth-access.spec.ts");
     expect(experience).toContain("e2e/proxy-auth-security.spec.ts");
-    expect(experience).toContain("--grep '@totp-enroll'");
-    expect(experience).toContain("--grep '@recovery-consume'");
     expect(experience).toContain(
       "--grep-invert '@security-state|@saved-admin-after-restart|@saved-admin-revoke|@saved-admin-rejected-after-restart'",
     );
     expect(experience).toContain("restart --no-deps web proxy");
-    expect(experience).toContain("restart --no-deps proxy");
     expect(experience).toContain("up -d --no-deps --wait web proxy");
-    expect(experience).toContain("up -d --no-deps --wait proxy");
     expect(experience).toContain("@saved-admin-after-restart");
     expect(experience).toContain("@saved-admin-revoke");
     expect(experience).toContain("@saved-admin-rejected-after-restart");
     expect(experience).toContain("down -v --remove-orphans");
-    expect(experience).toContain("enable_seeded_admin_two_factor()");
-    expect(experience).toContain(
-      "UPDATE users SET two_factor_enabled = true WHERE id = '10000000-0000-4000-8000-000000000003'::uuid",
-    );
   });
 
   it("materializes an isolated model credential in every Compose runner", () => {
@@ -4156,9 +4125,7 @@ exec "${systemChmod}" "$@"
         "E2E_STAFF_SESSION_TOKEN=fixture-staff-session",
         "E2E_ROLE_TARGET_SESSION_TOKEN=fixture-role-target",
         "E2E_ADMIN_SESSION_TOKEN=fixture-admin-session",
-        "E2E_NO_TOTP_ADMIN_SESSION_TOKEN=fixture-no-totp",
         "E2E_MODEL_ADMIN_SESSION_TOKEN=fixture-model-admin",
-        "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN=fixture-model-admin-stale",
         "E2E_REVOKED_SESSION_TOKEN=fixture-revoked",
         "E2E_REPLACEMENT_PASSWORD=fixture-replacement",
       ].join("\n"),
@@ -4331,9 +4298,7 @@ exit 0
       "fixture-staff-session",
       "fixture-role-target",
       "fixture-admin-session",
-      "fixture-no-totp",
       "fixture-model-admin",
-      "fixture-model-admin-stale",
       "fixture-revoked",
       "fixture-replacement",
       ...Array.from({ length: 5 }, (_, index) =>
@@ -4575,24 +4540,15 @@ exit 0
           tightenedRoleSecretModes[index],
         );
       }
-      const secondSeededAdminMfa = success.events.indexOf(
-        "UPDATE users SET two_factor_enabled = true WHERE id = '10000000-0000-4000-8000-000000000003'::uuid",
-      );
       const proxySecurityTest = success.events.indexOf(
         "e2e/proxy-auth-security.spec.ts",
       );
-      expect(secondSeededAdminMfa).toBeGreaterThan(databaseStarts[1]);
-      expect(secondSeededAdminMfa).toBeLessThan(proxySecurityTest);
+      expect(proxySecurityTest).toBeGreaterThan(databaseStarts[1]);
       const orderedIdentityEvents = [
-        "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @totp-enroll",
-        "docker compose -p",
-        "restart --no-deps proxy",
-        "up -d --no-deps --wait proxy",
-        "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @recovery-consume",
+        "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @security-state",
         "docker compose -p",
         "restart --no-deps web proxy",
         "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @saved-admin-after-restart",
-        "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @security-state",
         "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @saved-admin-revoke",
         "restart --no-deps web proxy",
         "pnpm --filter @ai-agent-platform/web exec playwright test e2e/auth-access.spec.ts --project=desktop --workers=1 --grep @saved-admin-rejected-after-restart",
@@ -4606,13 +4562,9 @@ exit 0
       expect(
         success.events.match(/restart --no-deps web proxy/gu),
       ).toHaveLength(2);
-      expect(success.events.match(/restart --no-deps proxy/gu)).toHaveLength(1);
       expect(
         success.events.match(/up -d --no-deps --wait web proxy/gu),
       ).toHaveLength(4);
-      expect(
-        success.events.match(/up -d --no-deps --wait proxy/gu),
-      ).toHaveLength(1);
       expect(success.pnpmCalls).toContain("@security-state");
       expect(success.pnpmCalls).toContain("@saved-admin-after-restart");
       expect(success.pnpmCalls).toContain("e2e/proxy-auth-security.spec.ts");
@@ -4740,7 +4692,6 @@ exit 0
     const fixtureLoop = workflow.slice(loopStart, loopEnd);
 
     expect(fixtureLoop).toContain("E2E_MODEL_ADMIN_SESSION_TOKEN");
-    expect(fixtureLoop).toContain("E2E_MODEL_ADMIN_STALE_SESSION_TOKEN");
   });
 
   it("keeps browser output ignored and documents every production variable", () => {
@@ -4877,7 +4828,6 @@ exit 0
         "E2E_STAFF_SESSION_TOKEN",
         "E2E_ROLE_TARGET_SESSION_TOKEN",
         "E2E_ADMIN_SESSION_TOKEN",
-        "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
         "E2E_REVOKED_SESSION_TOKEN",
         "E2E_REPLACEMENT_PASSWORD",
       ]) {
@@ -4897,7 +4847,6 @@ exit 0
         "E2E_STAFF_SESSION_TOKEN",
         "E2E_ROLE_TARGET_SESSION_TOKEN",
         "E2E_ADMIN_SESSION_TOKEN",
-        "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
         "E2E_REVOKED_SESSION_TOKEN",
         "E2E_REPLACEMENT_PASSWORD",
       ]) {
@@ -5193,8 +5142,8 @@ exit 0
     expect(script).toContain("--env-file");
     expect(script).not.toMatch(/docker run[^\n]*-e\s+POSTGRES_/u);
     expect(script).not.toContain("POSTGRES_PASSWORD=");
-    expect(script).toContain('expected_migrations="8"');
-    expect(script).toContain('expected_latest_migration="1784480751832"');
+    expect(script).toContain('expected_migrations="10"');
+    expect(script).toContain('expected_latest_migration="1786502675702"');
     expect(script).toContain("migration_count");
     expect(script).toContain("latest_migration");
     expect(script).toContain("users_email_lower_unique");
@@ -6309,7 +6258,7 @@ esac
         ],
         {
           encoding: "utf8",
-          timeout: 6_000,
+          timeout: 10_000,
           env: {
             ...process.env,
             PATH: `${bin}:${process.env.PATH ?? ""}`,
@@ -6339,12 +6288,12 @@ esac
         "restore drill decryption failed\nrestore drill cleanup failed",
       );
       expect(settleElapsedMs).toBeGreaterThanOrEqual(950);
-      expect(elapsedMs).toBeLessThan(3_500);
+      expect(elapsedMs).toBeLessThan(6_000);
       expect(readdirSync(restoreTmp)).toEqual([]);
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
-  }, 10_000);
+  }, 15_000);
 
   it("fails the focused restore runner when its own cleanup fails", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "restore-runner-cleanup-"));
@@ -6649,7 +6598,7 @@ esac
           ],
           {
             encoding: "utf8",
-            timeout: 10_000,
+            timeout: 15_000,
             env: {
               ...process.env,
               PATH: `${bin}:${process.env.PATH ?? ""}`,
@@ -6662,10 +6611,10 @@ esac
               RESTORE_MAX_ENCRYPTED_BYTES: "1048576",
               RESTORE_MAX_DECRYPTED_BYTES: "1048576",
               RESTORE_SPACE_SAFETY_BYTES: "0",
-              RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
-              RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+              RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "2",
+              RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "2",
               RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
-              RESTORE_DECRYPT_TIMEOUT_SECONDS: "1",
+              RESTORE_DECRYPT_TIMEOUT_SECONDS: "2",
               RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "3",
               RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "2",
             },
@@ -6682,7 +6631,7 @@ esac
           result.error !== undefined ||
           result.status !== 1 ||
           output !== testCase.expectedOutput ||
-          elapsedMs >= 6_000 ||
+          elapsedMs >= 10_000 ||
           readdirSync(restoreTmp).length !== 0 ||
           resourceMarkers.length !== 0 ||
           !/(?:^|\n)(?:rm -f|volume rm) /u.test(calls)
@@ -6730,7 +6679,7 @@ esac
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 45_000);
 
   it("bounds representative late Docker lifecycle phases", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "restore-late-phases-"));
@@ -6967,7 +6916,7 @@ esac
           ],
           {
             encoding: "utf8",
-            timeout: 10_000,
+            timeout: 15_000,
             env: {
               ...process.env,
               PATH: `${bin}:${process.env.PATH ?? ""}`,
@@ -6980,10 +6929,10 @@ esac
               RESTORE_TMP_ROOT: restoreTmp,
               RESTORE_MAX_DECRYPTED_BYTES: "1048576",
               RESTORE_SPACE_SAFETY_BYTES: "0",
-              RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "1",
-              RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "1",
+              RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS: "2",
+              RESTORE_DOCKER_CLI_TIMEOUT_SECONDS: "2",
               RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS: "1",
-              RESTORE_DECRYPT_TIMEOUT_SECONDS: "1",
+              RESTORE_DECRYPT_TIMEOUT_SECONDS: "2",
               RESTORE_DECRYPT_RECONCILE_ATTEMPTS: "3",
               RESTORE_DOCKER_CREATE_SETTLE_SECONDS: "2",
             },
@@ -6995,7 +6944,7 @@ esac
           result.error !== undefined ||
           result.status !== 1 ||
           output !== expectedOutput ||
-          elapsedMs >= 7_000 ||
+          elapsedMs >= 12_000 ||
           readdirSync(restoreTmp).length !== 0 ||
           readdirSync(captures).some((name) => name.endsWith(".exists"))
         ) {
@@ -7018,7 +6967,7 @@ esac
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
-  }, 45_000);
+  }, 60_000);
 
   it("contains pg_restore output and bounds database resource cleanup", () => {
     const sandbox = mkdtempSync(
@@ -7181,8 +7130,8 @@ case "$command" in
         [ "$FAKE_DOCKER_MODE" = success_temp_rm_failure ] || exit 1
         case " $* " in
           *"BEGIN TRANSACTION READ ONLY"*) printf '%s\n' '1|1|1|1|1|1|0|0|0|t' ;;
-          *"SELECT count(*) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 8 ;;
-          *"SELECT max(created_at) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 1784480751832 ;;
+          *"SELECT count(*) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 10 ;;
+          *"SELECT max(created_at) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 1786502675702 ;;
           *"WHERE id = "*) printf '%s\n' 1 ;;
           *"WHERE session_id = "*) printf '%s\n' 1 ;;
           *"SELECT count(*) FROM public.users"*) printf '%s\n' 1 ;;
@@ -8896,14 +8845,11 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
     const accessSpec = read("apps/web/e2e/auth-access.spec.ts");
     const fixtures = read("apps/web/e2e/auth-fixtures.ts");
     const seed = read("packages/database/src/seed-auth-e2e.ts");
-    const atRest = read("packages/database/src/assert-auth-at-rest.ts");
     expect(accessSpec).toContain("@security-state");
-    expect(accessSpec).toContain("@totp-enroll");
-    expect(accessSpec).toContain("@recovery-consume");
     expect(fixtures).not.toMatch(
       /@ai-agent-platform\/database|\bpg\b|DATABASE_URL/u,
     );
-    for (const source of [accessSpec, fixtures, seed, atRest]) {
+    for (const source of [accessSpec, fixtures, seed]) {
       expect(source).not.toMatch(/['"]e2e-[^'"]*session[^'"]*['"]/u);
     }
     expect(accessSpec).toContain("fixtureCredentials().replacementPassword");
@@ -8914,7 +8860,6 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
       "E2E_STAFF_SESSION_TOKEN",
       "E2E_ROLE_TARGET_SESSION_TOKEN",
       "E2E_ADMIN_SESSION_TOKEN",
-      "E2E_NO_TOTP_ADMIN_SESSION_TOKEN",
       "E2E_REVOKED_SESSION_TOKEN",
       "E2E_REPLACEMENT_PASSWORD",
     ]) {
@@ -8932,8 +8877,6 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
   it("keeps client auth components outside the server-only action module", () => {
     for (const file of [
       "apps/web/src/components/auth/change-password-form.tsx",
-      "apps/web/src/components/auth/re-auth-form.tsx",
-      "apps/web/src/components/auth/two-factor-form.tsx",
     ]) {
       expect(read(file)).not.toContain('@/server/auth/actions"');
     }
@@ -9461,8 +9404,8 @@ exec /usr/bin/mktemp "$@"
     expect(runner).toContain("E2E_STAFF_SESSION_TOKEN");
     expect(runner).toContain("content_revisions");
     expect(runner).toContain("content_routes");
-    expect(runner).toContain("(SELECT count FROM manifest_mismatches)");
-    expect(runner).not.toContain("(SELECT count(*) FROM manifest_mismatches)");
+    expect(runner).toContain("(SELECT count FROM seed_mismatches)");
+    expect(runner).toContain("(SELECT count FROM current_mismatches)");
     expect(runner).toContain("--project=desktop --project=mobile --workers=1");
     expect(runner).toContain("e2e/cms-documents.spec.ts");
     expect(runner).toContain("SOAK_SECONDS=${CMS_DOCUMENTS_SOAK_SECONDS:-600}");

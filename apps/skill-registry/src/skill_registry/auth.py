@@ -38,14 +38,13 @@ SkillRegistryPermission = Literal[
     "admin:assistant:skills:upload",
     "admin:assistant:skills:configure",
 ]
-Assurance = Literal["session", "password+mfa"]
+Assurance = Literal["session"]
 
 ASSERTION_KEY_DERIVATION_DOMAIN: Final = b"ai-agent-platform:skill-registry-assertion:v1"
 ASSERTION_HEADER_NAME: Final = b"x-skill-registry-assertion"
 ASSERTION_HEADER_MAX_BYTES: Final = 4096
 ASSERTION_PAYLOAD_MAX_BYTES: Final = 2048
 ASSERTION_TTL_SECONDS: Final = 5
-MFA_MAX_AGE_SECONDS: Final = 600
 READ_NONCE_WINDOW_SECONDS: Final = 5
 DEFAULT_NONCE_CAPACITY: Final = 4096
 
@@ -61,13 +60,9 @@ _FILE_PATTERN: Final = re.compile(
     rb"/internal/skills/(" + _UUID_PATTERN + rb")/revisions/(" + _UUID_PATTERN + rb")/files/(.+)\Z"
 )
 _UPLOAD_QUERY_PATTERN: Final = re.compile(
-    rb"targetSkillId=("
-    + _UUID_PATTERN
-    + rb")&expectedArtifactSha256=[0-9a-f]{64}\Z"
+    rb"targetSkillId=(" + _UUID_PATTERN + rb")&expectedArtifactSha256=[0-9a-f]{64}\Z"
 )
-_ARCHIVE_PATTERN: Final = re.compile(
-    rb"/internal/skills/(" + _UUID_PATTERN + rb")/archive\Z"
-)
+_ARCHIVE_PATTERN: Final = re.compile(rb"/internal/skills/(" + _UUID_PATTERN + rb")/archive\Z")
 _SKILL_SET_DISCARD_PATTERN: Final = re.compile(
     rb"/internal/skill-sets/(" + _UUID_PATTERN + rb")/discard\Z"
 )
@@ -99,9 +94,6 @@ _ACTION_PERMISSIONS: Final[dict[SkillRegistryAction, SkillRegistryPermission]] =
 }
 _READ_ACTIONS: Final = frozenset(
     {"list", "detail", "file", "skill_set_status", "skill_set_available"}
-)
-_MFA_ACTIONS: Final = frozenset(
-    {"archive", "skill_set_create", "skill_set_discard", "skill_set_rollback"}
 )
 _SKILL_SET_MUTATIONS: Final = frozenset(
     {"archive", "skill_set_create", "skill_set_discard", "skill_set_rollback"}
@@ -366,15 +358,7 @@ class SkillRegistryAuthenticator:
             or expires_at <= now
         ):
             _fail_assertion()
-        if action in _MFA_ACTIONS:
-            if (
-                assurance != "password+mfa"
-                or type(assured_at) is not int
-                or assured_at > now
-                or assured_at < now - MFA_MAX_AGE_SECONDS
-            ):
-                _fail_assertion()
-        elif assurance != "session" or assured_at is not None:
+        if assurance != "session" or assured_at is not None:
             _fail_assertion()
         if action in _SKILL_SET_MUTATIONS and nonce != request_id:
             _fail_assertion()

@@ -8,7 +8,6 @@ const safeDto = {
   status: "active" as const,
   displayName: "Staff",
   mustChangePassword: false,
-  twoFactorEnabled: true,
   permissions: ["admin:users", "support:tickets"],
 };
 
@@ -62,7 +61,7 @@ describe("GET /api/v1/session/staff", () => {
     const body = await response.json();
     expect(body).toEqual(safeDto);
     expect(JSON.stringify(body)).not.toMatch(
-      /token|passwordHash|sessionId|userId|totpSecret/i,
+      /token|passwordHash|sessionId|userId|authenticationSecret/i,
     );
   });
 });

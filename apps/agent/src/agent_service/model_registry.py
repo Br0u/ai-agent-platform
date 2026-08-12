@@ -17,9 +17,7 @@ from agent_service.model_runtime_types import ManagedModel
 _OPENAI_BASE_URL: Final = "https://api.openai.com/v1"
 _ANTHROPIC_BASE_URL: Final = "https://api.anthropic.com"
 _GEMINI_BASE_URL: Final = "https://generativelanguage.googleapis.com"
-_DASHSCOPE_BASE_URL: Final = (
-    "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-)
+_DASHSCOPE_BASE_URL: Final = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 _DEEPSEEK_BASE_URL: Final = "https://api.deepseek.com"
 _MINIMAX_BASE_URL: Final = "https://api.minimax.io/v1"
 
@@ -47,6 +45,8 @@ class _RedirectHookRegistration:
     asynchronous_client: httpx.AsyncClient
     sync_hook: Callable[[httpx.Response], None]
     asynchronous_hook: Callable[[httpx.Response], Awaitable[None]]
+    sync_request_hook: Callable[[httpx.Request], None] | None = None
+    asynchronous_request_hook: Callable[[httpx.Request], Awaitable[None]] | None = None
 
     def detach(self) -> None:
         sync_hooks = self.sync_client.event_hooks["response"]
@@ -60,6 +60,18 @@ class _RedirectHookRegistration:
             if hook is self.asynchronous_hook:
                 del asynchronous_hooks[index]
                 break
+        if self.sync_request_hook is not None:
+            for index, hook in enumerate(self.sync_client.event_hooks["request"]):
+                if hook is self.sync_request_hook:
+                    del self.sync_client.event_hooks["request"][index]
+                    break
+        if self.asynchronous_request_hook is not None:
+            for index, hook in enumerate(
+                self.asynchronous_client.event_hooks["request"]
+            ):
+                if hook is self.asynchronous_request_hook:
+                    del self.asynchronous_client.event_hooks["request"][index]
+                    break
 
 
 class ModelFactory(Protocol):
@@ -76,7 +88,11 @@ class ModelFactory(Protocol):
 
 
 def _api_key(settings: ActiveModelSettings) -> _RedactedApiKey:
-    return _RedactedApiKey(settings.api_key.get_secret_value())
+    return _RedactedApiKey(
+        "not-provided"
+        if settings.api_key is None
+        else settings.api_key.get_secret_value()
+    )
 
 
 def _openai_default_headers(api_key: _RedactedApiKey) -> dict[str, str]:
@@ -135,7 +151,11 @@ def _http_clients(
     )
 
 
-def _attach_redirect_hooks(clients: _HttpClients) -> _RedirectHookRegistration:
+def _attach_redirect_hooks(
+    clients: _HttpClients,
+    *,
+    strip_authorization: bool,
+) -> _RedirectHookRegistration:
     def reject_sync_redirect(response: httpx.Response) -> None:
         if response.is_redirect:
             raise ProviderRequestError("provider request failed")
@@ -144,17 +164,30 @@ def _attach_redirect_hooks(clients: _HttpClients) -> _RedirectHookRegistration:
         if response.is_redirect:
             raise ProviderRequestError("provider request failed")
 
+    def strip_sync_authorization(request: httpx.Request) -> None:
+        request.headers.pop("authorization", None)
+
+    async def strip_async_authorization(request: httpx.Request) -> None:
+        request.headers.pop("authorization", None)
+
     registration = _RedirectHookRegistration(
         sync_client=clients.sync,
         asynchronous_client=clients.asynchronous,
         sync_hook=reject_sync_redirect,
         asynchronous_hook=reject_async_redirect,
+        sync_request_hook=(strip_sync_authorization if strip_authorization else None),
+        asynchronous_request_hook=(
+            strip_async_authorization if strip_authorization else None
+        ),
     )
     clients.sync.event_hooks["response"].append(reject_sync_redirect)
     try:
-        clients.asynchronous.event_hooks["response"].append(
-            reject_async_redirect
-        )
+        clients.asynchronous.event_hooks["response"].append(reject_async_redirect)
+        if strip_authorization:
+            clients.sync.event_hooks["request"].append(strip_sync_authorization)
+            clients.asynchronous.event_hooks["request"].append(
+                strip_async_authorization
+            )
     except BaseException:
         registration.detach()
         raise
@@ -273,7 +306,10 @@ def _openai_compatible_managed_model(
             client=sync_sdk,
             async_client=async_sdk,
         )
-        redirect_hooks = _attach_redirect_hooks(clients)
+        redirect_hooks = _attach_redirect_hooks(
+            clients,
+            strip_authorization=settings.api_key is None,
+        )
 
         async def close_callback() -> None:
             try:
@@ -360,7 +396,10 @@ def _build_anthropic_model(
             client=sync_sdk,
             async_client=async_sdk,
         )
-        redirect_hooks = _attach_redirect_hooks(clients)
+        redirect_hooks = _attach_redirect_hooks(
+            clients,
+            strip_authorization=False,
+        )
 
         async def close_callback() -> None:
             try:
@@ -429,7 +468,10 @@ def _build_google_model(
             location=None,
             client=sdk_client,
         )
-        redirect_hooks = _attach_redirect_hooks(clients)
+        redirect_hooks = _attach_redirect_hooks(
+            clients,
+            strip_authorization=False,
+        )
 
         async def close_callback() -> None:
             try:
@@ -440,9 +482,11 @@ def _build_google_model(
                     ),
                     async_closers=(
                         sdk_client.aio.aclose,
-                        *((clients.asynchronous.aclose,)
-                          if clients.owns_asynchronous
-                          else ()),
+                        *(
+                            (clients.asynchronous.aclose,)
+                            if clients.owns_asynchronous
+                            else ()
+                        ),
                     ),
                 )
             finally:

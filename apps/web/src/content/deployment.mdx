@@ -92,7 +92,7 @@ docker compose up -d --wait proxy backup
 
 ### 完成第一次后台激活
 
-使用具有 `admin:assistant:configure` 权限且最近 10 分钟内同时完成密码再认证和 TOTP 验证的账号访问 `/admin/assistant`。选择 Provider 和部署允许的 Endpoint，填写 Model ID 与 Key，先“保存草稿”，再“测试并启用”。测试成功后活动指针和运行时才会切换；保存本身不会影响当前模型。
+使用具有 `admin:assistant:configure` 权限的账号访问 `/admin/assistant`。选择 Provider 和部署允许的 Endpoint，填写 Model ID；Endpoint 要求 Key 时再填写 Key。先“保存草稿”，再“测试并启用”。测试成功后活动指针和运行时才会切换；保存本身不会影响当前模型。
 
 Skill 上传和审核完成后，在同一页面的“码多多 Skill 配置”中选择已发布 revision，创建候选并激活。成功条件是 Registry Active、Agent Loaded 和 Activation Version 一致。空集合会关闭全部 Skill，必须二次确认；回滚只克隆并激活 immediate previous，不能任意选择历史集合。
 
@@ -126,14 +126,14 @@ Skill 回滚从后台执行 immediate previous；不要直接更新 `skill_regis
 ## Key 与 Endpoint 运维
 
 - `MODEL_CONFIG_ENCRYPTION_KEY` 是现有密文的 AES 主密钥。当前没有密钥轮换迁移工具；直接替换会导致已有动态配置无法解密，因此禁止原地更换。
-- 查看明文 Key 需要独立权限，并在最近 10 分钟内同时完成密码再认证和 TOTP 验证。浏览器只显示 30 秒；隐藏 DOM 不能撤回已复制到操作系统剪贴板的内容。
+- 查看明文 Key 需要独立权限。浏览器只显示 30 秒；隐藏 DOM 不能撤回已复制到操作系统剪贴板的内容。
 - 自定义云 Endpoint 只能通过部署文件 `infra/agent/model-endpoints.json` 加入 allowlist，随后重建/重启 Agent 并完成启动 reconciliation。后台不能任意输入 URL。
 - Loopback、私网、link-local 和其他本地地址继续被拒绝。本地算力未来通过独立正式入口接入，不伪装成自定义云 Endpoint。
 
 <Callout type="warning">
   不要把 `.env`、数据库密码、模型
   Key、`MODEL_CONFIG_ENCRYPTION_KEY`、`AGENT_CONFIG_CONTROL_KEY`、初始管理员密码或
-  TOTP 恢复码提交到 Git，也不要写入日志或工单。
+  Key 提交到 Git，也不要写入日志或工单。
 </Callout>
 
 ## 当前能力边界

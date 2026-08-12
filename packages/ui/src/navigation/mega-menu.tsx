@@ -97,6 +97,9 @@ export function MegaMenu({
     }
 
     if (event.key === "ArrowDown") {
+      if (items[index]?.children.length === 0) {
+        return;
+      }
       event.preventDefault();
       if (openIndex === index) {
         hoverOpenIndexRef.current = null;
@@ -162,22 +165,25 @@ export function MegaMenu({
           const panelId = `${baseId}-panel-${index}`;
           const triggerId = `${baseId}-trigger-${index}`;
           const isOpen = openIndex === index;
+          const hasPanel = item.children.length > 0;
 
           return (
             <Link
-              aria-controls={panelId}
+              aria-controls={hasPanel ? panelId : undefined}
               aria-current={
                 isNavigationParentActive(item, activeHref) ? "page" : undefined
               }
-              aria-expanded={isOpen}
+              aria-expanded={hasPanel ? isOpen : undefined}
               className="mega-menu__trigger"
               href={item.href}
               id={triggerId}
               key={item.href}
               onClick={close}
               onKeyDown={(event) => handleTriggerKeyDown(event, index)}
-              onPointerEnter={() => openFromPointer(index)}
-              onPointerLeave={scheduleClose}
+              onPointerEnter={() =>
+                hasPanel ? openFromPointer(index) : close()
+              }
+              onPointerLeave={hasPanel ? scheduleClose : undefined}
               ref={(element) => {
                 triggerRefs.current[index] = element;
               }}
@@ -190,6 +196,10 @@ export function MegaMenu({
       </div>
 
       {items.map((item, index) => {
+        if (item.children.length === 0) {
+          return null;
+        }
+
         const isOpen = openIndex === index;
         const sectionColumnCount = Math.min(
           4,
@@ -239,7 +249,7 @@ export function MegaMenu({
                             : undefined
                         }
                         href={child.href}
-                        key={child.href}
+                        key={`${child.href}-${child.label}`}
                       >
                         <span className="mega-menu__link-label">
                           <span>{child.label}</span>

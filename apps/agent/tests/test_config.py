@@ -103,6 +103,7 @@ def test_runtime_and_provider_smoke_accept_the_same_six_provider_inputs(
 
     assert runtime == smoke
     assert smoke.provider == provider
+    assert smoke.api_key is not None
     assert smoke.api_key.get_secret_value() == MODEL_API_KEY
 
 
@@ -769,6 +770,7 @@ def test_runtime_accepts_direct_model_field_names(
     assert settings.active_model is not None
     assert settings.active_model.provider == "openai"
     assert settings.active_model.model_id == "gpt-4.1-mini"
+    assert settings.active_model.api_key is not None
     assert settings.active_model.api_key.get_secret_value() == MODEL_API_KEY
     assert settings.active_model.base_url == "https://models.example.com/v1"
     assert settings.active_model.timeout_seconds == 25
@@ -797,6 +799,7 @@ def test_uppercase_aliases_win_over_conflicting_direct_field_names(
     assert settings.active_model is not None
     assert settings.active_model.provider == "openai"
     assert settings.active_model.model_id == "alias-model"
+    assert settings.active_model.api_key is not None
     assert settings.active_model.api_key.get_secret_value() == MODEL_API_KEY
     assert settings.active_model.base_url == "https://models.example.com/v1"
     assert settings.active_model.timeout_seconds == 25

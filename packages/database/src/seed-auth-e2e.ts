@@ -14,9 +14,7 @@ export type E2EEnvironment = {
   staffSessionToken: string;
   roleTargetSessionToken: string;
   adminSessionToken: string;
-  noTotpAdminSessionToken: string;
   modelAdminSessionToken: string;
-  modelAdminStaleSessionToken: string;
   revokedSessionToken: string;
   replacementPassword: string;
 };
@@ -70,14 +68,6 @@ export const fixtureIdentities = {
     status: "active",
     role: "admin",
   },
-  noTotpAdmin: {
-    id: "10000000-0000-4000-8000-000000000007",
-    email: "no-totp-admin.fixture@example.invalid",
-    username: "no-totp-admin.fixture",
-    realm: "workforce",
-    status: "active",
-    role: "admin",
-  },
   modelAdmin: {
     id: "10000000-0000-4000-8000-000000000008",
     email: "model-admin.fixture@example.invalid",
@@ -107,12 +97,7 @@ export function assertE2EEnvironment(
     ["E2E_STAFF_SESSION_TOKEN", env.E2E_STAFF_SESSION_TOKEN],
     ["E2E_ROLE_TARGET_SESSION_TOKEN", env.E2E_ROLE_TARGET_SESSION_TOKEN],
     ["E2E_ADMIN_SESSION_TOKEN", env.E2E_ADMIN_SESSION_TOKEN],
-    ["E2E_NO_TOTP_ADMIN_SESSION_TOKEN", env.E2E_NO_TOTP_ADMIN_SESSION_TOKEN],
     ["E2E_MODEL_ADMIN_SESSION_TOKEN", env.E2E_MODEL_ADMIN_SESSION_TOKEN],
-    [
-      "E2E_MODEL_ADMIN_STALE_SESSION_TOKEN",
-      env.E2E_MODEL_ADMIN_STALE_SESSION_TOKEN,
-    ],
     ["E2E_REVOKED_SESSION_TOKEN", env.E2E_REVOKED_SESSION_TOKEN],
     ["E2E_REPLACEMENT_PASSWORD", env.E2E_REPLACEMENT_PASSWORD],
   ] as const;
@@ -128,9 +113,7 @@ export function assertE2EEnvironment(
     staffSessionToken: env.E2E_STAFF_SESSION_TOKEN!,
     roleTargetSessionToken: env.E2E_ROLE_TARGET_SESSION_TOKEN!,
     adminSessionToken: env.E2E_ADMIN_SESSION_TOKEN!,
-    noTotpAdminSessionToken: env.E2E_NO_TOTP_ADMIN_SESSION_TOKEN!,
     modelAdminSessionToken: env.E2E_MODEL_ADMIN_SESSION_TOKEN!,
-    modelAdminStaleSessionToken: env.E2E_MODEL_ADMIN_STALE_SESSION_TOKEN!,
     revokedSessionToken: env.E2E_REVOKED_SESSION_TOKEN!,
     replacementPassword: env.E2E_REPLACEMENT_PASSWORD!,
   };
@@ -149,7 +132,7 @@ async function upsertIdentity(
      VALUES ($1, $2, $3, true, $4, $5, 'verified', $6, $6, false)
      ON CONFLICT (id) DO UPDATE SET
        name = EXCLUDED.name, email = EXCLUDED.email, email_verified = true,
-       image = NULL, two_factor_enabled = false, identity_realm = EXCLUDED.identity_realm,
+       image = NULL, identity_realm = EXCLUDED.identity_realm,
        status = EXCLUDED.status, email_verification_status = 'verified',
        username = EXCLUDED.username, display_username = EXCLUDED.display_username,
        must_change_password = false, last_login_at = NULL, updated_at = now()`,
@@ -194,10 +177,6 @@ export async function seedAuthE2EFixtures(
 
   await client.query("BEGIN");
   try {
-    await client.query(
-      "DELETE FROM two_factors WHERE user_id = ANY($1::uuid[])",
-      [fixtureUserIds],
-    );
     await upsertIdentity(
       client,
       fixtureIdentities.customer,
@@ -241,11 +220,6 @@ export async function seedAuthE2EFixtures(
     );
     await upsertIdentity(
       client,
-      fixtureIdentities.noTotpAdmin,
-      credentials.adminPassword,
-    );
-    await upsertIdentity(
-      client,
       fixtureIdentities.modelAdmin,
       credentials.adminPassword,
     );
@@ -259,22 +233,6 @@ export async function seedAuthE2EFixtures(
          AND token <> $2`,
       [fixtureUserIds, credentials.adminSessionToken],
     );
-    await client.query(
-      "UPDATE users SET two_factor_enabled = false WHERE id = $1",
-      [fixtureIdentities.admin.id],
-    );
-    await client.query(
-      "UPDATE users SET two_factor_enabled = true WHERE id = $1",
-      [fixtureIdentities.staff.id],
-    );
-    await client.query(
-      "UPDATE users SET two_factor_enabled = true WHERE id = $1",
-      [fixtureIdentities.roleTarget.id],
-    );
-    await client.query(
-      "UPDATE users SET two_factor_enabled = true WHERE id = $1",
-      [fixtureIdentities.modelAdmin.id],
-    );
     // Model a real revocation edge: the session exists first, then the account
     // is disabled. The database correctly forbids creating a new disabled-user
     // session.
@@ -283,22 +241,19 @@ export async function seedAuthE2EFixtures(
     ]);
     await client.query(
       `INSERT INTO sessions
-        (id, token, user_id, expires_at, ip_address, user_agent, realm, mfa_verified_at)
+        (id, token, user_id, expires_at, ip_address, user_agent, realm)
         VALUES
-         ('10000000-0000-4000-8000-000000000020', $1, $3, now() + interval '1 day', NULL, 'auth-e2e-admin-fixture', 'workforce', now()),
-         ('10000000-0000-4000-8000-000000000021', $2, $3, now() + interval '1 day', NULL, 'auth-e2e-revoked-fixture', 'workforce', now()),
-         ('10000000-0000-4000-8000-000000000022', $4, $5, now() + interval '1 day', NULL, 'auth-e2e-staff-fixture', 'workforce', now()),
-         ('10000000-0000-4000-8000-000000000023', $6, $7, now() + interval '1 day', NULL, 'auth-e2e-pending-customer-fixture', 'customer', NULL),
-         ('10000000-0000-4000-8000-000000000024', $8, $9, now() + interval '1 day', NULL, 'auth-e2e-disabled-customer-fixture', 'customer', NULL)
-         ,('10000000-0000-4000-8000-000000000025', $10, $11, now() + interval '1 day', NULL, 'auth-e2e-role-target-fixture', 'workforce', now())
-          ,('10000000-0000-4000-8000-000000000026', $12, $13, now() + interval '1 day', NULL, 'auth-e2e-no-totp-admin-fixture', 'workforce', NULL)
-          ,('10000000-0000-4000-8000-000000000027', $14, $16, now() + interval '1 day', NULL, 'auth-e2e-model-admin-fixture', 'workforce', now())
-          ,('10000000-0000-4000-8000-000000000028', $15, $16, now() + interval '1 day', NULL, 'auth-e2e-model-admin-stale-fixture', 'workforce', now() - interval '11 minutes')
+         ('10000000-0000-4000-8000-000000000020', $1, $3, now() + interval '1 day', NULL, 'auth-e2e-admin-fixture', 'workforce'),
+         ('10000000-0000-4000-8000-000000000021', $2, $3, now() + interval '1 day', NULL, 'auth-e2e-revoked-fixture', 'workforce'),
+         ('10000000-0000-4000-8000-000000000022', $4, $5, now() + interval '1 day', NULL, 'auth-e2e-staff-fixture', 'workforce'),
+         ('10000000-0000-4000-8000-000000000023', $6, $7, now() + interval '1 day', NULL, 'auth-e2e-pending-customer-fixture', 'customer'),
+         ('10000000-0000-4000-8000-000000000024', $8, $9, now() + interval '1 day', NULL, 'auth-e2e-disabled-customer-fixture', 'customer'),
+         ('10000000-0000-4000-8000-000000000025', $10, $11, now() + interval '1 day', NULL, 'auth-e2e-role-target-fixture', 'workforce'),
+         ('10000000-0000-4000-8000-000000000027', $12, $13, now() + interval '1 day', NULL, 'auth-e2e-model-admin-fixture', 'workforce')
        ON CONFLICT (token) DO UPDATE SET
          id = EXCLUDED.id, user_id = EXCLUDED.user_id, realm = EXCLUDED.realm,
          expires_at = EXCLUDED.expires_at, ip_address = EXCLUDED.ip_address,
-         user_agent = EXCLUDED.user_agent,
-         mfa_verified_at = EXCLUDED.mfa_verified_at, updated_at = now()`,
+         user_agent = EXCLUDED.user_agent, updated_at = now()`,
       [
         credentials.adminSessionToken,
         credentials.revokedSessionToken,
@@ -311,10 +266,7 @@ export async function seedAuthE2EFixtures(
         fixtureIdentities.disabledCustomer.id,
         credentials.roleTargetSessionToken,
         fixtureIdentities.roleTarget.id,
-        credentials.noTotpAdminSessionToken,
-        fixtureIdentities.noTotpAdmin.id,
         credentials.modelAdminSessionToken,
-        credentials.modelAdminStaleSessionToken,
         fixtureIdentities.modelAdmin.id,
       ],
     );

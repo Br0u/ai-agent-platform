@@ -56,6 +56,8 @@ def custom_endpoint(**overrides: object) -> dict[str, object]:
         "provider": "openai",
         "base_url": "https://models.example.com/v1",
         "enabled": True,
+        "api_key_required": True,
+        "allow_insecure_http": False,
     }
     values.update(overrides)
     return values
@@ -75,8 +77,15 @@ def test_public_snapshot_contains_only_safe_metadata() -> None:
 
     assert len(snapshot) == 6
     for item in snapshot:
-        assert set(asdict(item)) == {"id", "label", "provider"}
-        assert "url" not in repr(item).lower()
+        assert set(asdict(item)) == {
+            "id",
+            "label",
+            "provider",
+            "base_url",
+            "api_key_required",
+            "insecure_http",
+        }
+        assert item.base_url is None
 
 
 def test_deployment_file_adds_enabled_strict_https_endpoint(tmp_path: Path) -> None:
@@ -87,6 +96,75 @@ def test_deployment_file_adds_enabled_strict_https_endpoint(tmp_path: Path) -> N
     endpoint = catalog.resolve("openai-deployment", "openai")
     assert endpoint.base_url == "https://models.example.com/v1"
     assert any(item.id == "openai-deployment" for item in catalog.public_snapshot())
+
+
+def test_explicit_http_keyless_deployment_is_allowed(tmp_path: Path) -> None:
+    path = write_endpoint_file(
+        tmp_path,
+        [
+            custom_endpoint(
+                id="deepseek-v4-flash-code",
+                label="DeepSeek V4 Flash Code",
+                provider="deepseek",
+                base_url="http://125.122.36.24:8810/v1",
+                api_key_required=False,
+                allow_insecure_http=True,
+            )
+        ],
+    )
+
+    catalog = load_model_endpoint_catalog(path)
+    endpoint = catalog.resolve("deepseek-v4-flash-code", "deepseek")
+
+    assert endpoint.base_url == "http://125.122.36.24:8810/v1"
+    assert endpoint.api_key_required is False
+    assert catalog.public_snapshot("deepseek")[-1].insecure_http is True
+
+
+def test_deployment_endpoint_accepts_https_but_pins_http_overrides(
+    tmp_path: Path,
+) -> None:
+    path = write_endpoint_file(
+        tmp_path,
+        [
+            custom_endpoint(
+                id="deepseek-v4-flash-code",
+                provider="deepseek",
+                base_url="http://125.122.36.24:8810/v1",
+                allow_insecure_http=True,
+            )
+        ],
+    )
+    catalog = load_model_endpoint_catalog(path)
+
+    public = catalog.public_snapshot("deepseek")[-1]
+    assert public.base_url == "http://125.122.36.24:8810/v1"
+    with pytest.raises(EndpointNotAllowedError, match="^endpoint not allowed$"):
+        catalog.resolve(
+            "deepseek-v4-flash-code",
+            "deepseek",
+            base_url="http://125.122.36.24:9900/v1",
+        )
+    assert (
+        catalog.resolve(
+            "deepseek-v4-flash-code",
+            "deepseek",
+            base_url="https://MODELS.example.com:443/v1",
+        ).base_url
+        == "https://models.example.com/v1"
+    )
+    with pytest.raises(EndpointNotAllowedError, match="^endpoint not allowed$"):
+        catalog.resolve(
+            "deepseek-v4-flash-code",
+            "deepseek",
+            base_url="http://127.0.0.1:9900/v1",
+        )
+    with pytest.raises(EndpointNotAllowedError, match="^endpoint not allowed$"):
+        catalog.resolve(
+            "deepseek-official",
+            "deepseek",
+            base_url="https://125.122.36.24/v1",
+        )
 
 
 def test_disabled_deployment_endpoint_is_not_public_or_resolvable(

@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { AuthAccessError } from "@/server/auth/access";
-import { SensitiveActionError } from "@/server/auth/sensitive-action";
 import type { AuthorizedSkillCommand } from "@/server/assistant/admin-skill-commands";
 import type { AuthorizedSkillLifecycleCommand } from "@/server/assistant/admin-skill-lifecycle-commands";
 import { AdminSkillLifecycleCommandError } from "@/server/assistant/admin-skill-lifecycle-commands";
@@ -339,7 +338,7 @@ describe("admin skill upload route", () => {
     expect(lifecycle.applySkillSet).not.toHaveBeenCalled();
   });
 
-  it("requires recent configure assurance before any confirmed replacement upload", async () => {
+  it("stops before upload when configure permission is denied", async () => {
     const current = fixture();
     current.readMultipart.mockResolvedValueOnce({
       archive: new Uint8Array([0x50, 0x4b, 3, 4]),
@@ -348,7 +347,7 @@ describe("admin skill upload route", () => {
     });
     const lifecycle = {
       authorize: vi.fn(async () => {
-        throw new SensitiveActionError("AUTH_REAUTH_REQUIRED");
+        throw new AuthAccessError("AUTH_PERMISSION_DENIED", 403);
       }),
       applySkillSet: vi.fn(),
     };
@@ -363,10 +362,9 @@ describe("admin skill upload route", () => {
       new Request("https://admin.example.test/uploads", { method: "POST" }),
     );
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({
-      error: { code: "reauth_required" },
-      redirectTo: "/staff/re-auth",
+      error: { code: "permission_denied" },
     });
     expect(current.commands.upload).not.toHaveBeenCalled();
   });

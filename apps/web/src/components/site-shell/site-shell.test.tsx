@@ -159,7 +159,6 @@ beforeEach(() => {
             status: "active",
             displayName: "Operator",
             mustChangePassword: false,
-            twoFactorEnabled: true,
             permissions: [],
           }
         : {
@@ -257,7 +256,6 @@ describe("SiteShell", () => {
           permissions: ["admin:products"],
           displayName: "Operator",
           mustChangePassword: false,
-          twoFactorEnabled: true,
         }),
         { status: 200 },
       ),
@@ -299,7 +297,6 @@ describe("SiteShell", () => {
           ],
           displayName: "Model administrator",
           mustChangePassword: false,
-          twoFactorEnabled: true,
         }),
         { status: 200 },
       ),
@@ -329,7 +326,6 @@ describe("SiteShell", () => {
           permissions: ["admin:docs", "admin:docs:delete"],
           displayName: "Document administrator",
           mustChangePassword: false,
-          twoFactorEnabled: true,
         }),
         { status: 200 },
       ),
@@ -354,7 +350,6 @@ describe("SiteShell", () => {
           permissions: [permission],
           displayName,
           mustChangePassword: false,
-          twoFactorEnabled: true,
         }),
         { status: 200 },
       );
@@ -407,7 +402,6 @@ describe("SiteShell", () => {
           permissions: [],
           displayName,
           mustChangePassword: false,
-          twoFactorEnabled: true,
         }),
         { status: 200 },
       );
@@ -447,7 +441,6 @@ describe("SiteShell", () => {
         status: "active",
         displayName: "Operator",
         mustChangePassword: false,
-        twoFactorEnabled: true,
         permissions: [],
       },
     ],
@@ -458,7 +451,6 @@ describe("SiteShell", () => {
         status: "active",
         displayName: "Operator",
         mustChangePassword: false,
-        twoFactorEnabled: true,
         permissions: ["admin:unknown"],
       },
     ],

@@ -2,7 +2,6 @@
 
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 
 import {
   getDatabase,
@@ -13,11 +12,8 @@ import {
   users,
 } from "@ai-agent-platform/database";
 
+import { requirePermission } from "../auth/access";
 import { requireConsolePage } from "../auth/workspace-route-guards";
-import {
-  requireSensitiveWorkforceAction,
-  SensitiveActionError,
-} from "../auth/sensitive-action";
 import { AdminRoleError, createDefaultRolePermissionService } from "./roles";
 import {
   AdminSessionError,
@@ -53,26 +49,13 @@ async function runAdminMutation(
         ? error.code
         : undefined;
     if (
-      error instanceof SensitiveActionError ||
-      (error instanceof Error &&
-        error.name === "SensitiveActionError" &&
-        (error.message === "AUTH_REAUTH_REQUIRED" ||
-          error.message === "AUTH_MFA_REQUIRED"))
-    ) {
-      redirect(`/staff/re-auth?returnTo=${encodeURIComponent(returnTo)}`);
-      return { kind: "idle" };
-    }
-    if (
       error instanceof WorkforceMutationError ||
       error instanceof AdminRoleError ||
       error instanceof AdminSessionError
     ) {
       return { kind: "domain_error", code: error.code };
     }
-    if (
-      authoritativeCode === "AUTH_PERMISSION_DENIED" ||
-      authoritativeCode === "AUTH_TOTP_SETUP_REQUIRED"
-    ) {
+    if (authoritativeCode === "AUTH_PERMISSION_DENIED") {
       return { kind: "domain_error", code: authoritativeCode };
     }
     if (
@@ -252,7 +235,7 @@ export async function updateSiteSettingsAction(
     const field = required(formData, "field");
     if (field !== "supportMessage")
       throw new Error("ADMIN_INPUT_INVALID:field");
-    const actor = await requireSensitiveWorkforceAction("admin:site");
+    const actor = await requirePermission("admin:site");
     const database = getDatabase();
     await database.transaction(async (tx) => {
       const authorized = await tx

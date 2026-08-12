@@ -239,7 +239,7 @@ function hasEncodedDestination(node: StructuralNode, source: string): boolean {
 }
 
 function namespaceInternalFragment(url: string): string {
-  if (url.startsWith("https://")) return url;
+  if (!url.startsWith("#")) return url;
   const hashIndex = url.indexOf("#");
   if (hashIndex < 0) return url;
   const fragment = url.slice(hashIndex + 1);

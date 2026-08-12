@@ -93,8 +93,8 @@ describe("Skill Registry runtime client", () => {
       });
       expect(assertion(input)).toMatchObject({
         action: "skill_set_create",
-        assurance: "password+mfa",
-        assuredAt: NOW - 10,
+        assurance: "session",
+        assuredAt: null,
         nonce: REQUEST_ID,
         requestId: REQUEST_ID,
       });
@@ -117,7 +117,7 @@ describe("Skill Registry runtime client", () => {
       runtimeClient(transport).createSkillSet({
         actor: ACTOR,
         requestId: REQUEST_ID,
-        assuredAt: NOW - 10,
+        assuredAt: null,
         revisionIds: [REVISION],
       }),
     ).resolves.toMatchObject({ set: { id: SET_ID, state: "candidate" } });
@@ -171,13 +171,13 @@ describe("Skill Registry runtime client", () => {
     await client.discardSkillSet({
       actor: ACTOR,
       requestId: REQUEST_ID,
-      assuredAt: NOW,
+      assuredAt: null,
       setId: SET_ID,
     });
     await client.clonePreviousSkillSet({
       actor: ACTOR,
       requestId: REQUEST_ID,
-      assuredAt: NOW,
+      assuredAt: null,
       expectedActivationVersion: 3,
       expectedPreviousSetId: PREVIOUS,
     });

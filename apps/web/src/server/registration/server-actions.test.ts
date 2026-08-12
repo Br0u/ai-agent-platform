@@ -49,18 +49,4 @@ describe("registration review server actions", () => {
 
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
-
-  it("redirects stale sensitive review sessions to re-authentication", async () => {
-    mocks.approve.mockResolvedValue({
-      kind: "reauth_required",
-      redirectTo: "/staff/re-auth?returnTo=%2Fadmin%2Fregistrations",
-    });
-
-    await approveRegistration(previous, new FormData());
-
-    expect(mocks.redirect).toHaveBeenCalledWith(
-      "/staff/re-auth?returnTo=%2Fadmin%2Fregistrations",
-    );
-    expect(mocks.revalidatePath).not.toHaveBeenCalled();
-  });
 });

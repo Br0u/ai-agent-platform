@@ -1,6 +1,6 @@
 """Literal versioned SQL for the isolated Agent model control schema."""
 
-AGENT_CONTROL_SCHEMA_VERSION = 1
+AGENT_CONTROL_SCHEMA_VERSION = 2
 
 REQUIRED_TABLE_NAMES = frozenset(
     {"model_configs", "active_model_config", "control_events"}
@@ -44,6 +44,7 @@ EXPECTED_FUNCTION_BOUNDARY = frozenset(
             "OR NEW.provider IS DISTINCT FROM OLD.provider "
             "OR NEW.model_id IS DISTINCT FROM OLD.model_id "
             "OR NEW.endpoint_id IS DISTINCT FROM OLD.endpoint_id "
+            "OR NEW.base_url IS DISTINCT FROM OLD.base_url "
             "OR NEW.api_key_ciphertext IS DISTINCT FROM OLD.api_key_ciphertext "
             "OR NEW.api_key_nonce IS DISTINCT FROM OLD.api_key_nonce "
             "OR NEW.api_key_last_four IS DISTINCT FROM OLD.api_key_last_four "
@@ -96,6 +97,23 @@ EXPECTED_SCHEMA_VERSION_CONSTRAINTS = (
     ("p", "PRIMARY KEY (version)", False, False, True),
 )
 
+EXPECTED_MODEL_CONFIG_BASE_URL_COLUMN = (
+    "base_url",
+    "character varying(2048)",
+    False,
+    "",
+)
+
+EXPECTED_MODEL_CONFIG_BASE_URL_CONSTRAINTS = (
+    (
+        "CHECK (base_url IS NULL OR char_length(base_url::text) >= 8 "
+        "AND char_length(base_url::text) <= 2048 "
+        "AND base_url::text ~ '^https?://'::text "
+        "AND base_url::text !~ '[[:space:]]'::text)",
+        True,
+    ),
+)
+
 VERIFY_SCHEMA_OWNER_SQL = """SELECT pg_get_userbyid(n.nspowner)::text
 FROM pg_namespace AS n
 WHERE n.nspname = 'agent_control'
@@ -111,7 +129,8 @@ CREATE TABLE IF NOT EXISTS agent_control.schema_versions (
 SELECT_SCHEMA_VERSION_SQL = """
 SELECT version
 FROM agent_control.schema_versions
-WHERE version = 1
+ORDER BY version DESC
+LIMIT 1
 """
 
 SCHEMA_VERSION_1_SQL = """
@@ -215,6 +234,54 @@ GRANT SELECT, INSERT ON agent_control.control_events TO ai_agent_control;
 INSERT INTO agent_control.schema_versions (version)
 VALUES (1)
 ON CONFLICT (version) DO NOTHING;
+"""
+
+SCHEMA_VERSION_2_SQL = """
+ALTER TABLE agent_control.model_configs
+ADD COLUMN base_url varchar(2048)
+  CHECK (
+    base_url IS NULL
+    OR (
+      char_length(base_url) BETWEEN 8 AND 2048
+      AND base_url ~ '^https?://'
+      AND base_url !~ '[[:space:]]'
+    )
+  );
+
+CREATE OR REPLACE FUNCTION agent_control.guard_model_config_update()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id
+    OR NEW.provider IS DISTINCT FROM OLD.provider
+    OR NEW.model_id IS DISTINCT FROM OLD.model_id
+    OR NEW.endpoint_id IS DISTINCT FROM OLD.endpoint_id
+    OR NEW.base_url IS DISTINCT FROM OLD.base_url
+    OR NEW.api_key_ciphertext IS DISTINCT FROM OLD.api_key_ciphertext
+    OR NEW.api_key_nonce IS DISTINCT FROM OLD.api_key_nonce
+    OR NEW.api_key_last_four IS DISTINCT FROM OLD.api_key_last_four
+    OR NEW.encryption_key_version IS DISTINCT FROM OLD.encryption_key_version
+    OR NEW.revision IS DISTINCT FROM OLD.revision
+    OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'model config revision fields are immutable'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF OLD.is_current = false AND NEW.is_current = true THEN
+    RAISE EXCEPTION 'retired model config revisions cannot become current'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+ALTER FUNCTION agent_control.guard_model_config_update()
+  OWNER TO ai_agent_control_migrator;
+REVOKE ALL ON FUNCTION agent_control.guard_model_config_update() FROM PUBLIC;
+
+INSERT INTO agent_control.schema_versions (version)
+VALUES (2);
 """
 
 VERIFY_TABLES_SQL = """SELECT
@@ -392,4 +459,36 @@ WHERE n.nspname = 'agent_control'
   AND c.relname = 'schema_versions'
   AND con.contype IN ('c', 'p')
 ORDER BY con.contype, pg_get_constraintdef(con.oid, true)
+"""
+
+VERIFY_MODEL_CONFIG_BASE_URL_COLUMN_SQL = """SELECT
+  a.attname::text,
+  format_type(a.atttypid, a.atttypmod)::text,
+  a.attnotnull,
+  COALESCE(pg_get_expr(d.adbin, d.adrelid), '')::text
+FROM pg_class AS c
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+JOIN pg_attribute AS a ON a.attrelid = c.oid
+LEFT JOIN pg_attrdef AS d
+  ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+WHERE n.nspname = 'agent_control'
+  AND c.relname = 'model_configs'
+  AND a.attname = 'base_url'
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+"""
+
+VERIFY_MODEL_CONFIG_BASE_URL_CONSTRAINTS_SQL = """SELECT
+  pg_get_constraintdef(con.oid, true)::text,
+  con.convalidated
+FROM pg_constraint AS con
+JOIN pg_class AS c ON c.oid = con.conrelid
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+JOIN pg_attribute AS a
+  ON a.attrelid = c.oid AND a.attname = 'base_url'
+WHERE n.nspname = 'agent_control'
+  AND c.relname = 'model_configs'
+  AND con.contype = 'c'
+  AND a.attnum = ANY(con.conkey)
+ORDER BY pg_get_constraintdef(con.oid, true)
 """

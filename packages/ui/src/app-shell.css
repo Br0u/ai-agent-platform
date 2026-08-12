@@ -58,7 +58,8 @@
 }
 
 .site-wordmark,
-.site-login {
+.site-trial,
+.site-contact {
   min-height: 44px;
   color: inherit;
   font-family: var(--font-display);
@@ -184,7 +185,7 @@
   outline-offset: 3px;
 }
 
-.site-login {
+.site-trial {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -201,17 +202,33 @@
     box-shadow 160ms ease;
 }
 
+.site-contact {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 2px;
+  color: var(--color-ink);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .site-wordmark:hover {
     color: var(--color-primary);
     transform: translateY(-1px);
   }
 
-  .site-login:hover {
+  .site-trial:hover {
     color: var(--color-surface);
     background: var(--color-ink);
     box-shadow: 0 8px 20px rgb(16 24 56 / 16%);
     transform: translateY(-1px);
+  }
+
+  .site-contact:hover {
+    color: var(--color-primary);
   }
 
   .assistant-header-entry:hover {
@@ -231,7 +248,7 @@
   }
 }
 
-.site-login:active {
+.site-trial:active {
   transform: scale(0.98);
 }
 
@@ -278,7 +295,8 @@
   }
 
   .site-navigation,
-  .site-login {
+  .site-trial,
+  .site-contact {
     display: none;
   }
 }
@@ -318,7 +336,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .site-wordmark,
-  .site-login,
+  .site-trial,
+  .site-contact,
   .assistant-header-entry {
     transition: none;
   }

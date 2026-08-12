@@ -44,6 +44,8 @@ TEST_STATUSES: Final[tuple[TestStatus, ...]] = (
 ENDPOINT_ID_MAX_CODE_POINTS: Final = 64
 MODEL_API_KEY_MIN_CODE_POINTS: Final = 8
 MODEL_API_KEY_MAX_CODE_POINTS: Final = 4096
+MODEL_BASE_URL_MAX_CODE_POINTS: Final = 2048
+KEYLESS_MODEL_API_KEY: Final = "aap-keyless-none"
 
 
 def _validate_model_id(value: str) -> str:
@@ -78,6 +80,23 @@ def _validate_api_key(value: SecretStr | None) -> SecretStr | None:
     return value
 
 
+def _validate_base_url(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if (
+        not value.startswith(("https://", "http://"))
+        or value != value.strip()
+        or len(value) > MODEL_BASE_URL_MAX_CODE_POINTS
+        or any(character.isspace() for character in value)
+        or any(
+            ord(character) <= 0x1F or 0x7F <= ord(character) <= 0x9F
+            for character in value
+        )
+    ):
+        raise ValueError("invalid model base URL")
+    return value
+
+
 class ModelConfigDraft(BaseModel):
     """Strict secret-bearing command kept separate from response metadata."""
 
@@ -91,6 +110,7 @@ class ModelConfigDraft(BaseModel):
     provider: ModelProvider
     model_id: str
     endpoint_id: str
+    base_url: str | None = None
     api_key: SecretStr | None = Field(default=None, repr=False)
     expected_revision: int = Field(ge=0, strict=True)
 
@@ -103,6 +123,11 @@ class ModelConfigDraft(BaseModel):
     @classmethod
     def _validate_endpoint_id_field(cls, value: str) -> str:
         return _validate_endpoint_id(value)
+
+    @field_validator("base_url", mode="after")
+    @classmethod
+    def _validate_base_url_field(cls, value: str | None) -> str | None:
+        return _validate_base_url(value)
 
     @field_validator("api_key", mode="after")
     @classmethod
@@ -123,6 +148,7 @@ class StoredModelConfigMetadata:
     api_key_last_four: str
     revision: int
     test_status: TestStatus
+    base_url: str | None = None
     last_tested_at: datetime | None = None
 
     def __post_init__(self) -> None:
@@ -130,6 +156,7 @@ class StoredModelConfigMetadata:
             raise ValueError("invalid model provider")
         _validate_model_id(self.model_id)
         _validate_endpoint_id(self.endpoint_id)
+        _validate_base_url(self.base_url)
         if len(self.api_key_last_four) != 4 or any(
             character.isspace() for character in self.api_key_last_four
         ):

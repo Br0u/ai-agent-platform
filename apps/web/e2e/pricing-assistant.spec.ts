@@ -12,8 +12,6 @@ const ASSISTANT_API = "/api/v1/assistant/chat";
 const ASSISTANT_STATUS_API = "/api/v1/assistant/status";
 const VISIBLE_INTERACTIVE_CONTROL_SELECTOR =
   "button, a, textarea, input:not([aria-hidden='true'])";
-const CURRENCY_AMOUNT =
-  /(?:[¥￥$€£]\s*\d)|(?:(?:CNY|RMB|USD)\s*\d)|(?:\d+(?:\.\d+)?\s*元)/u;
 
 type BrowserDiagnostic =
   | {
@@ -243,14 +241,6 @@ async function openQuickAssistantWithStatus(page: Page) {
   return quickAssistantDialog(page);
 }
 
-async function selectRepresentativePricingModules(page: Page) {
-  await page.getByLabel("部署方式").selectOption("dedicated-cloud");
-  await page.getByLabel("使用规模").selectOption("enterprise");
-  await page.getByRole("checkbox", { name: "AI Agent Studio" }).check();
-  await page.getByRole("checkbox", { name: "Workflow" }).check();
-  await page.getByLabel("服务周期").selectOption("3y");
-}
-
 async function navigateFromHeaderToProduct(page: Page, projectName: string) {
   if (projectName === "desktop") {
     await page
@@ -271,18 +261,8 @@ async function navigateFromHeaderToProduct(page: Page, projectName: string) {
   await expect(page).toHaveURL(/\/product$/u);
 }
 
-async function navigateFromHeaderToLogin(page: Page, projectName: string) {
-  if (projectName === "desktop") {
-    await page
-      .getByRole("link", { name: "登录 / 进入平台", exact: true })
-      .click();
-  } else {
-    await page.getByRole("button", { name: "打开导航", exact: true }).click();
-    await page
-      .getByRole("dialog", { name: "全站导航", exact: true })
-      .getByRole("link", { name: "登录 / 进入控制台", exact: true })
-      .click();
-  }
+async function navigateToLogin(page: Page) {
+  await page.goto("/login");
   await expect(page).toHaveURL(/\/login$/u);
 }
 
@@ -321,21 +301,10 @@ async function sendSuccessfulAssistantMessage(page: Page) {
   return answer;
 }
 
-test("GET pricing and assistant APIs reject unsupported methods", async ({
-  request,
-}) => {
-  const deliberate405s = [];
-  for (const endpoint of [
-    "/api/v1/pricing/estimate",
-    "/api/v1/assistant/chat",
-  ]) {
-    const response = await request.get(endpoint);
-    deliberate405s.push({ endpoint, method: "GET", status: response.status() });
-  }
-  expect(deliberate405s).toEqual([
-    { endpoint: "/api/v1/pricing/estimate", method: "GET", status: 405 },
-    { endpoint: "/api/v1/assistant/chat", method: "GET", status: 405 },
-  ]);
+test("GET assistant API rejects unsupported methods", async ({ request }) => {
+  const response = await request.get("/api/v1/assistant/chat");
+
+  expect(response.status()).toBe(405);
 });
 
 test("assistant preset responses expose safe suggested actions", async ({
@@ -351,7 +320,7 @@ test("assistant preset responses expose safe suggested actions", async ({
       contentType: "application/json",
       body: JSON.stringify({
         version: "1",
-        requestId: `pricing-presets-${testInfo.project.name}`,
+        requestId: `assistant-presets-${testInfo.project.name}`,
         live: true,
         ready: false,
         capability: "placeholder",
@@ -379,90 +348,6 @@ test("assistant preset responses expose safe suggested actions", async ({
   }
   expect(statusRequests).toBe(1);
   await page.unroute(`**${ASSISTANT_STATUS_API}`);
-
-  expectOnlyDeliberateDiagnostics(diagnostics, {
-    applicationOrigin: new URL(page.url()).origin,
-  });
-});
-
-test("pricing quote flow and responsive layout remain exact", async ({
-  page,
-}, testInfo) => {
-  await configureProject(page, testInfo);
-  const diagnostics = collectBrowserDiagnostics(page);
-  await gotoPublicRoute(page, "/pricing");
-
-  await expect(
-    page.getByRole("heading", { level: 1, name: "价格计算", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("在线估算尚未开放，最终价格以商务报价为准", {
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(page.locator("main")).not.toContainText(CURRENCY_AMOUNT);
-
-  await selectRepresentativePricingModules(page);
-  await expect(page.locator("main")).not.toContainText(CURRENCY_AMOUNT);
-
-  const contact = page
-    .getByRole("main")
-    .getByRole("link", { name: "获取正式报价", exact: true });
-  const expectedContactHref =
-    "/contact?source=pricing&deployment=dedicated-cloud&scale=enterprise&modules=agent-studio%2Cworkflow&term=3y";
-  await expect(contact).toHaveAttribute("href", expectedContactHref);
-  await contact.click();
-  await expect(page).toHaveURL(
-    (url) => `${url.pathname}${url.search}` === expectedContactHref,
-  );
-  const summary = page
-    .getByRole("heading", { level: 2, name: "价格计算需求摘要" })
-    .locator("xpath=..");
-  for (const row of [
-    "部署方式：专有云",
-    "使用规模：企业级",
-    "功能模块：AI Agent Studio、Workflow",
-    "服务周期：三年",
-    "此摘要仅用于需求沟通，不是正式报价。",
-  ]) {
-    await expect(summary).toContainText(row);
-  }
-
-  await gotoPublicRoute(page, "/pricing");
-  await expectNoHorizontalOverflow(page);
-  const configBox = await page
-    .getByRole("region", { name: "需求配置" })
-    .boundingBox();
-  const summaryBox = await page
-    .getByRole("region", { name: "方案摘要" })
-    .boundingBox();
-  expect(configBox).not.toBeNull();
-  expect(summaryBox).not.toBeNull();
-
-  if (testInfo.project.name === "desktop") {
-    expect(configBox!.width / summaryBox!.width).toBeCloseTo(7 / 5, 1);
-    expect(Math.abs(configBox!.y - summaryBox!.y)).toBeLessThan(2);
-    const firstModule = page.getByRole("checkbox", {
-      name: "AI Agent Studio",
-    });
-    await firstModule.focus();
-    await page.keyboard.press("Tab");
-    const secondModule = page.getByRole("checkbox", {
-      name: "Knowledge Base",
-    });
-    await expect(secondModule).toBeFocused();
-    const outline = await secondModule
-      .locator("xpath=..")
-      .evaluate((element) => {
-        const style = getComputedStyle(element);
-        return { style: style.outlineStyle, width: style.outlineWidth };
-      });
-    expect(outline.style).not.toBe("none");
-    expect(outline.width).not.toBe("0px");
-  } else {
-    expect(summaryBox!.y).toBeGreaterThan(configBox!.y + configBox!.height);
-    expect(Math.abs(configBox!.width - summaryBox!.width)).toBeLessThan(2);
-  }
 
   expectOnlyDeliberateDiagnostics(diagnostics, {
     applicationOrigin: new URL(page.url()).origin,
@@ -658,15 +543,14 @@ test("assistant session survives public routing and resets at the identity bound
   await quickAssistantDialog(page)
     .getByRole("button", { name: "关闭码多多", exact: true })
     .click();
-  await selectRepresentativePricingModules(page);
-  const pricingSentinel = `pricing-${testInfo.project.name}-${Date.now()}`;
-  await setNavigationSentinel(page, pricingSentinel);
+  const contactSentinel = `contact-${testInfo.project.name}-${Date.now()}`;
+  await setNavigationSentinel(page, contactSentinel);
   await page
-    .getByRole("main")
-    .getByRole("link", { name: "获取正式报价", exact: true })
+    .getByRole("contentinfo")
+    .getByRole("link", { name: "联系我们", exact: true })
     .click();
-  await expect(page).toHaveURL(/\/contact\?source=pricing/u);
-  await expectNavigationSentinel(page, pricingSentinel);
+  await expect(page).toHaveURL(/\/contact$/u);
+  await expectNavigationSentinel(page, contactSentinel);
   await quickAssistantLauncher(page).click();
   await expect(
     quickAssistantDialog(page).getByTestId("assistant-history"),
@@ -690,9 +574,9 @@ test("assistant session survives public routing and resets at the identity bound
   await setNavigationSentinel(page, footerSentinel);
   await page
     .getByRole("contentinfo")
-    .getByRole("link", { name: "帮助中心", exact: true })
+    .getByRole("link", { name: "解决方案", exact: true })
     .click();
-  await expect(page).toHaveURL(/\/help$/u);
+  await expect(page).toHaveURL(/\/solutions$/u);
   await expectNavigationSentinel(page, footerSentinel);
   await quickAssistantLauncher(page).click();
   await expect(
@@ -702,14 +586,10 @@ test("assistant session survives public routing and resets at the identity bound
     .getByRole("button", { name: "关闭码多多", exact: true })
     .click();
 
-  const identitySentinel = `identity-${testInfo.project.name}-${Date.now()}`;
-  await setNavigationSentinel(page, identitySentinel);
-  await navigateFromHeaderToLogin(page, testInfo.project.name);
-  await expectNavigationSentinel(page, identitySentinel);
+  await navigateToLogin(page);
   await expect(quickAssistantLauncher(page)).toHaveCount(0);
   await page.goBack();
-  await expect(page).toHaveURL(/\/help$/u);
-  await expectNavigationSentinel(page, identitySentinel);
+  await expect(page).toHaveURL(/\/solutions$/u);
   await openQuickAssistantWithStatus(page);
   await expect(
     quickAssistantDialog(page).getByTestId("assistant-history"),

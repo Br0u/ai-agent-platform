@@ -9,7 +9,6 @@ import { createAuthMiddleware } from "better-auth/api";
 
 import {
   betterAuthModels,
-  assertPasswordPolicy,
   hashPassword,
   verifyPassword,
 } from "@ai-agent-platform/database";
@@ -187,26 +186,6 @@ export function createSharedAuthOptions(
         message: "Authentication endpoint is not available",
       });
     }
-
-    if (
-      context.path === "/sign-in/email" ||
-      context.path === "/sign-in/username"
-    ) {
-      const body =
-        context.body && typeof context.body === "object"
-          ? (context.body as Record<string, unknown>)
-          : undefined;
-      if (typeof body?.password === "string") {
-        try {
-          assertPasswordPolicy(body.password);
-        } catch {
-          throw new APIError("BAD_REQUEST", {
-            code: "AUTH_PASSWORD_POLICY_INVALID",
-            message: "Authentication request failed",
-          });
-        }
-      }
-    }
   });
 
   return {
@@ -220,7 +199,7 @@ export function createSharedAuthOptions(
     emailAndPassword: {
       enabled: true,
       disableSignUp: true,
-      minPasswordLength: 12,
+      minPasswordLength: 8,
       maxPasswordLength: 128,
       password: {
         hash: hashPassword,
@@ -290,12 +269,6 @@ export function createSharedAuthOptions(
           required: true,
           input: false,
           fieldName: betterAuthModels.session.fields.realm,
-        },
-        mfaVerifiedAt: {
-          type: "date",
-          required: false,
-          input: false,
-          fieldName: betterAuthModels.session.fields.mfaVerifiedAt,
         },
       },
     },

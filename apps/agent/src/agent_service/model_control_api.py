@@ -298,6 +298,7 @@ def _metadata_content(config: StoredModelConfigMetadata) -> dict[str, object]:
         "provider": config.provider,
         "modelId": config.model_id,
         "endpointId": config.endpoint_id,
+        "baseUrl": config.base_url,
         "apiKeyLastFour": config.api_key_last_four,
         "revision": config.revision,
         "testStatus": config.test_status,
@@ -336,6 +337,9 @@ def build_model_control_router(
                         "id": endpoint.id,
                         "label": endpoint.label,
                         "provider": endpoint.provider,
+                        "apiKeyRequired": endpoint.api_key_required,
+                        "insecureHttp": endpoint.insecure_http,
+                        "baseUrl": endpoint.base_url,
                     }
                     for endpoint in result.endpoints
                 ],
@@ -369,6 +373,7 @@ def build_model_control_router(
             if set(payload) - {
                 "modelId",
                 "endpointId",
+                "baseUrl",
                 "apiKey",
                 "expectedRevision",
             }:
@@ -382,6 +387,7 @@ def build_model_control_router(
                         "provider": provider,
                         "model_id": payload.get("modelId"),
                         "endpoint_id": payload.get("endpointId"),
+                        "base_url": payload.get("baseUrl"),
                         "api_key": (
                             None if api_key is None else SecretStr(cast(str, api_key))
                         ),

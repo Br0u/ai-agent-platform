@@ -206,9 +206,7 @@ disabled_customer_session=$(secret)
 staff_session=$(secret)
 role_target_session=$(secret)
 admin_session=$(secret)
-no_totp_admin_session=$(secret)
 model_admin_session=$(secret)
-model_admin_stale_session=$(secret)
 revoked_session=$(secret)
 replacement_password=$(secret)
 database=ai_agent_platform_skill_registry_e2e
@@ -317,9 +315,7 @@ E2E_DISABLED_CUSTOMER_SESSION_TOKEN=$disabled_customer_session
 E2E_STAFF_SESSION_TOKEN=$staff_session
 E2E_ROLE_TARGET_SESSION_TOKEN=$role_target_session
 E2E_ADMIN_SESSION_TOKEN=$admin_session
-E2E_NO_TOTP_ADMIN_SESSION_TOKEN=$no_totp_admin_session
 E2E_MODEL_ADMIN_SESSION_TOKEN=$model_admin_session
-E2E_MODEL_ADMIN_STALE_SESSION_TOKEN=$model_admin_stale_session
 E2E_REVOKED_SESSION_TOKEN=$revoked_session
 E2E_REPLACEMENT_PASSWORD=$replacement_password
 EOF
@@ -390,8 +386,7 @@ printf '%s\n' \
   "$agent_config_control_key" "$skill_registry_control_key" "$model_api_key" \
   "$customer_password" "$staff_password" "$admin_password" \
   "$pending_customer_session" "$disabled_customer_session" "$staff_session" \
-  "$role_target_session" "$admin_session" "$no_totp_admin_session" \
-  "$model_admin_session" "$model_admin_stale_session" "$revoked_session" \
+  "$role_target_session" "$admin_session" "$model_admin_session" "$revoked_session" \
   "$replacement_password" "Skill Registry E2E local fixture." \
   "Skill Registry E2E fixture variant: initial" \
   "Skill Registry E2E fixture variant: inactive-replacement" \
@@ -472,7 +467,6 @@ run_skill_registry_playwright() {
     BASE_URL="$base_url" \
     BETTER_AUTH_SECRET="$better_auth_secret" \
     E2E_MODEL_ADMIN_SESSION_TOKEN="$model_admin_session" \
-    E2E_MODEL_ADMIN_STALE_SESSION_TOKEN="$model_admin_stale_session" \
     SKILL_REGISTRY_E2E_INITIAL_ARCHIVE="$initial_archive_file" \
     SKILL_REGISTRY_E2E_INACTIVE_REPLACEMENT_ARCHIVE="$inactive_replacement_archive_file" \
     SKILL_REGISTRY_E2E_ACTIVE_REPLACEMENT_ARCHIVE="$active_replacement_archive_file" \
@@ -503,8 +497,6 @@ run_job --no-deps skill-registry-bootstrap
 run_job --no-deps skill-registry-migrate
 run_job --no-deps skill-registry-migrate
 run_job --no-deps -e NODE_ENV=test migrate pnpm db:seed-auth-e2e
-compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -c \
-  "UPDATE public.users SET two_factor_enabled = true WHERE id IN ('10000000-0000-4000-8000-000000000003'::uuid, '10000000-0000-4000-8000-000000000008'::uuid)" >/dev/null
 uploader_permissions=$(compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -Atqc \
   "SELECT p.key
      FROM public.user_roles ur

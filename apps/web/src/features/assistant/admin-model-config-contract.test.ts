@@ -36,6 +36,7 @@ function snapshot() {
       displayName: names[provider],
       modelId: index === 0 ? "gpt-5-mini" : null,
       endpointId: index === 0 ? "openai-official" : null,
+      baseUrl: null,
       revision: index === 0 ? 3 : null,
       testStatus: index === 0 ? "passed" : "not_configured",
       lastTestedAt: index === 0 ? "2026-07-18T01:02:03.000Z" : null,
@@ -43,12 +44,60 @@ function snapshot() {
       activeRevision: index === 0 ? 3 : null,
     })),
     endpoints: {
-      openai: [{ id: "openai-official", label: "OpenAI official" }],
-      anthropic: [{ id: "anthropic-official", label: "Anthropic official" }],
-      google: [{ id: "google-official", label: "Google Gemini official" }],
-      dashscope: [{ id: "dashscope-official", label: "DashScope official" }],
-      deepseek: [{ id: "deepseek-official", label: "DeepSeek official" }],
-      minimax: [{ id: "minimax-official", label: "MiniMax official" }],
+      openai: [
+        {
+          id: "openai-official",
+          label: "OpenAI official",
+          apiKeyRequired: true,
+          insecureHttp: false,
+          baseUrl: null,
+        },
+      ],
+      anthropic: [
+        {
+          id: "anthropic-official",
+          label: "Anthropic official",
+          apiKeyRequired: true,
+          insecureHttp: false,
+          baseUrl: null,
+        },
+      ],
+      google: [
+        {
+          id: "google-official",
+          label: "Google Gemini official",
+          apiKeyRequired: true,
+          insecureHttp: false,
+          baseUrl: null,
+        },
+      ],
+      dashscope: [
+        {
+          id: "dashscope-official",
+          label: "DashScope official",
+          apiKeyRequired: true,
+          insecureHttp: false,
+          baseUrl: null,
+        },
+      ],
+      deepseek: [
+        {
+          id: "deepseek-official",
+          label: "DeepSeek official",
+          apiKeyRequired: true,
+          insecureHttp: false,
+          baseUrl: null,
+        },
+      ],
+      minimax: [
+        {
+          id: "minimax-official",
+          label: "MiniMax official",
+          apiKeyRequired: true,
+          insecureHttp: false,
+          baseUrl: null,
+        },
+      ],
     },
     runtime: {
       capability: "available",

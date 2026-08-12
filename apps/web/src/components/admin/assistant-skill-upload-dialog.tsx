@@ -28,7 +28,6 @@ type Props = {
   onReplacementResultUnknown(
     target: AssistantSkillReplacementTarget,
   ): Promise<void>;
-  onReauthRequired(): void;
 };
 
 export type AssistantSkillReplacementTarget = Pick<
@@ -80,7 +79,7 @@ async function uploadError(response: Response): Promise<{
   conflictingSkillId: string | null;
   replacementToken: string | null;
   conflictingSkillEnabled: boolean | null;
-  outcome: "reauth_required" | "result_unknown" | null;
+  outcome: "result_unknown" | null;
 }> {
   const fallback = {
     message: GENERIC_UPLOAD_ERROR,
@@ -146,11 +145,6 @@ async function uploadError(response: Response): Promise<{
             : null,
         outcome: null,
       };
-    if (
-      code === "reauth_required" &&
-      Reflect.get(body, "redirectTo") === "/staff/re-auth"
-    )
-      return { ...fallback, outcome: "reauth_required" };
     if (code === "result_unknown")
       return { ...fallback, outcome: "result_unknown" };
     if (code === "registry_unavailable")
@@ -172,7 +166,6 @@ export function AssistantSkillUploadDialog({
   onClose,
   onUploaded,
   onReplacementResultUnknown,
-  onReauthRequired,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -258,10 +251,6 @@ export function AssistantSkillUploadDialog({
         });
         if (!response.ok) {
           const replacementFailure = await uploadError(response);
-          if (replacementFailure.outcome === "reauth_required") {
-            onReauthRequired();
-            return;
-          }
           if (replacementFailure.outcome === "result_unknown") {
             await onReplacementResultUnknown(replacementTarget);
             return;

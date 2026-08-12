@@ -3,12 +3,9 @@ import { expect, test } from "@playwright/test";
 import {
   addSignedSession,
   adminStatePath,
-  beginAdminChallenge,
   fixtureCredentials,
   identities,
   loginCustomer,
-  totpFromUri,
-  writeRecoveryCode,
   writeAdminState,
 } from "./auth-fixtures";
 
@@ -136,7 +133,7 @@ test.describe("shared authorization state", () => {
     ).not.toBeVisible();
   });
 
-  test("@security-state @totp-enroll admin enrolls TOTP, stores one recovery code, and revokes only the selected session", async ({
+  test("@security-state admin revokes only the selected session", async ({
     page,
     baseURL,
   }) => {
@@ -147,29 +144,8 @@ test.describe("shared authorization state", () => {
       "workforce",
       fixtureCredentials().adminSessionToken,
     );
-    const incomplete = await page
-      .context()
-      .request.get("/api/v1/session/staff");
-    expect(incomplete.status()).toBe(403);
-    await expect(incomplete.json()).resolves.toMatchObject({
-      error: { code: "AUTH_TOTP_SETUP_REQUIRED" },
-    });
-    const deniedPage = await page.context().request.get("/admin/users");
-    expect(await deniedPage.text()).not.toContain("替换临时密码");
-
-    await page.goto("/staff/two-factor?returnTo=%2Fadmin%2Fusers");
-    await page.getByLabel("当前密码").fill(fixtureCredentials().adminPassword);
-    await page.getByRole("button", { name: "开始设置" }).click();
-    const uri = (
-      await page.locator("code").filter({ hasText: "otpauth://" }).textContent()
-    )?.trim();
-    if (!uri) throw new Error("TOTP URI was not rendered");
-    const recoveryCodes = await page.locator("li code").allTextContents();
-    expect(recoveryCodes.length).toBeGreaterThan(0);
-    await writeRecoveryCode(recoveryCodes[0]!);
-    await page.getByLabel("六位验证码").fill(totpFromUri(uri));
-    await page.getByRole("button", { name: "验证并启用" }).click();
-    await expect(page).toHaveURL(/\/admin\/users/u);
+    await page.goto("/admin/users");
+    await expect(page.getByRole("heading", { name: "用户管理" })).toBeVisible();
 
     const revoked = await page.context().browser()!.newContext();
     await addSignedSession(
@@ -203,7 +179,7 @@ test.describe("shared authorization state", () => {
     await page.context().clearCookies();
   });
 
-  test("@security-state employee and no-TOTP admin cannot replay a real administrator mutation", async ({
+  test("@security-state employee cannot replay a real administrator mutation", async ({
     browser,
     baseURL,
   }) => {
@@ -263,52 +239,8 @@ test.describe("shared authorization state", () => {
     expect((await employee.request.get("/api/v1/session/staff")).status()).toBe(
       200,
     );
-    const noTotpAdmin = await browser.newContext();
-    await addSignedSession(
-      noTotpAdmin,
-      baseURL,
-      "workforce",
-      fixtureCredentials().noTotpAdminSessionToken,
-    );
-    const noTotpAttempt = await noTotpAdmin.request.post(captured.url(), {
-      data: actionBody,
-      headers: actionHeaders,
-      maxRedirects: 0,
-    });
-    expect(noTotpAttempt.status()).toBe(200);
-    expect(await noTotpAttempt.text()).toContain("AUTH_TOTP_SETUP_REQUIRED");
-    expect((await employee.request.get("/api/v1/session/staff")).status()).toBe(
-      200,
-    );
-    await noTotpAdmin.close();
     await employee.close();
     await admin.close();
-  });
-
-  test("@security-state @recovery-consume recovery code completes the challenge once and reuse fails", async ({
-    browser,
-  }) => {
-    const { readFile } = await import("node:fs/promises");
-    const { recoveryCodePath } = await import("./auth-fixtures");
-    const recoveryCode = (await readFile(recoveryCodePath, "utf8")).trim();
-    const first = await browser.newContext();
-    const firstPage = await first.newPage();
-    await beginAdminChallenge(firstPage);
-    await expect(firstPage).toHaveURL(/\/staff\/two-factor/u);
-    await firstPage.getByLabel("恢复码").fill(recoveryCode);
-    await firstPage.getByRole("button", { name: "使用恢复码" }).click();
-    await expect(firstPage).toHaveURL(/\/admin(?:\/|$)/u);
-    await first.close();
-
-    const reuse = await browser.newContext();
-    const reusePage = await reuse.newPage();
-    await beginAdminChallenge(reusePage);
-    await reusePage.getByLabel("恢复码").fill(recoveryCode);
-    await reusePage.getByRole("button", { name: "使用恢复码" }).click();
-    await expect(
-      reusePage.getByText("恢复码无效或已使用。", { exact: true }),
-    ).toBeVisible();
-    await reuse.close();
   });
 
   test("@security-state role removal is effective on the next authorization check", async ({
