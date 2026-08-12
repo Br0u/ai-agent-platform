@@ -280,6 +280,7 @@ async def reconcile_runtime_model(
             endpoint = endpoint_catalog.resolve(
                 active.endpoint_id,
                 active.provider,
+                base_url=active.base_url,
             )
             active_settings = ActiveModelSettings(
                 provider=active.provider,

@@ -148,6 +148,7 @@ def command(
     revision: int = 1,
     expected_revision: int = 0,
     sealed: SealedSecret = SEALED,
+    base_url: str | None = None,
 ) -> SaveSealedConfig:
     return SaveSealedConfig(
         config_id=config_id,
@@ -158,6 +159,7 @@ def command(
         expected_revision=expected_revision,
         sealed=sealed,
         assertion_nonce=ASSERTION_NONCE,
+        base_url=base_url,
     )
 
 
@@ -243,12 +245,14 @@ def sealed_row(
     config_id: UUID = CONFIG_ID,
     revision: int = 1,
     sealed: SealedSecret = SEALED,
+    base_url: str | None = None,
 ) -> tuple[object, ...]:
     return (
         config_id,
         "openai",
         "gpt-4.1-mini",
         "openai-default",
+        base_url,
         sealed.ciphertext,
         sealed.nonce,
         sealed.last_four,
@@ -409,6 +413,7 @@ async def test_list_metadata_selects_only_current_safe_projection() -> None:
                         "openai",
                         "gpt-4.1-mini",
                         "openai-default",
+                        None,
                         "s3cr",
                         1,
                         "untested",
@@ -559,6 +564,7 @@ async def test_save_first_revision_inserts_new_sealed_bytes_then_one_event() -> 
         "openai",
         "gpt-4.1-mini",
         "openai-default",
+        None,
         SEALED.ciphertext,
         SEALED.nonce,
         SEALED.last_four,
@@ -578,6 +584,28 @@ async def test_save_first_revision_inserts_new_sealed_bytes_then_one_event() -> 
         "success",
     )
     assert events == ["connect", "transaction:begin", "transaction:commit"]
+
+
+@pytest.mark.asyncio
+async def test_save_persists_the_custom_base_url_with_the_revision() -> None:
+    repository, cursor, _events = repository_with(
+        [
+            Reply("FOR UPDATE", one=None),
+            Reply("INSERT INTO agent_control.model_configs", rowcount=1),
+            Reply("INSERT INTO agent_control.control_events", rowcount=1),
+        ]
+    )
+    base_url = "http://125.122.36.24:9900/v1"
+
+    result = await repository.save_draft(
+        command(base_url=base_url),
+        event(),
+    )
+
+    assert result.base_url == base_url
+    params = cursor.executions[1][1]
+    assert isinstance(params, tuple)
+    assert params[4] == base_url
 
 
 @pytest.mark.asyncio
@@ -627,7 +655,8 @@ async def test_save_replacement_retires_head_then_inserts_new_identity_and_seal(
     replacement_params = cursor.executions[2][1]
     assert replacement_params is not None
     assert replacement_params[0] == REPLACEMENT_ID
-    assert replacement_params[4:8] == (
+    assert replacement_params[4:9] == (
+        None,
         NEW_SEALED.ciphertext,
         NEW_SEALED.nonce,
         NEW_SEALED.last_four,

@@ -140,6 +140,7 @@ class SavingRepository(ListingRepository):
             provider=command.provider,
             model_id=command.model_id,
             endpoint_id=command.endpoint_id,
+            base_url=command.base_url,
             api_key_last_four=command.sealed.last_four,
             revision=command.revision,
             test_status="untested",
@@ -418,12 +419,13 @@ def service(
     slot: object | None = None,
     model_builder: Callable[[ActiveModelSettings], ManagedModel] | None = None,
     verifier: Callable[..., Awaitable[ModelVerificationResult]] | None = None,
+    catalog: ModelEndpointCatalog | None = None,
     uuid_values: tuple[UUID, ...] = (CONFIG_ID, EVENT_ID),
 ) -> ModelControlService:
     return ModelControlService(
         repository=cast(ModelConfigRepository, repository),
         cipher=ModelConfigCipher(master_key=MASTER_KEY),
-        endpoint_catalog=endpoint_catalog(),
+        endpoint_catalog=catalog or endpoint_catalog(),
         slot=cast(ModelRuntimeSlot, slot or ModelRuntimeSlot()),
         bootstrap_model=bootstrap_model,
         control_enabled=control_enabled,
@@ -543,6 +545,40 @@ async def test_save_with_new_key_seals_one_new_revision_and_returns_metadata_onl
     )
     assert API_KEY not in repr(result)
     assert API_KEY not in repr(command)
+
+
+@pytest.mark.asyncio
+async def test_save_persists_a_validated_custom_base_url() -> None:
+    repository = SavingRepository()
+    catalog = ModelEndpointCatalog(
+        (
+            ModelEndpoint(
+                id="deepseek-v4-flash-code",
+                label="DeepSeek V4 Flash Code",
+                provider="deepseek",
+                base_url="http://125.122.36.24:8810/v1",
+                api_key_required=False,
+                allow_insecure_http=True,
+            ),
+        )
+    )
+    draft = ModelConfigDraft(
+        provider="deepseek",
+        model_id="DeepSeek-V4-Flash-code",
+        endpoint_id="deepseek-v4-flash-code",
+        base_url="http://125.122.36.24:9900/v1",
+        api_key=None,
+        expected_revision=0,
+    )
+
+    result = await service(repository, catalog=catalog).save_model_config(
+        draft,
+        assertion(provider="deepseek"),
+    )
+
+    [(command, _event)] = repository.saved
+    assert command.base_url == "http://125.122.36.24:9900/v1"
+    assert result.base_url == "http://125.122.36.24:9900/v1"
 
 
 @pytest.mark.asyncio

@@ -81,10 +81,11 @@ def test_public_snapshot_contains_only_safe_metadata() -> None:
             "id",
             "label",
             "provider",
+            "base_url",
             "api_key_required",
             "insecure_http",
         }
-        assert "url" not in repr(item).lower()
+        assert item.base_url is None
 
 
 def test_deployment_file_adds_enabled_strict_https_endpoint(tmp_path: Path) -> None:
@@ -118,6 +119,44 @@ def test_explicit_http_keyless_deployment_is_allowed(tmp_path: Path) -> None:
     assert endpoint.base_url == "http://125.122.36.24:8810/v1"
     assert endpoint.api_key_required is False
     assert catalog.public_snapshot("deepseek")[-1].insecure_http is True
+
+
+def test_deployment_endpoint_accepts_a_public_ip_override_only(tmp_path: Path) -> None:
+    path = write_endpoint_file(
+        tmp_path,
+        [
+            custom_endpoint(
+                id="deepseek-v4-flash-code",
+                provider="deepseek",
+                base_url="http://125.122.36.24:8810/v1",
+                allow_insecure_http=True,
+            )
+        ],
+    )
+    catalog = load_model_endpoint_catalog(path)
+
+    public = catalog.public_snapshot("deepseek")[-1]
+    assert public.base_url == "http://125.122.36.24:8810/v1"
+    assert (
+        catalog.resolve(
+            "deepseek-v4-flash-code",
+            "deepseek",
+            base_url="http://125.122.36.24:9900/v1",
+        ).base_url
+        == "http://125.122.36.24:9900/v1"
+    )
+    with pytest.raises(EndpointNotAllowedError, match="^endpoint not allowed$"):
+        catalog.resolve(
+            "deepseek-v4-flash-code",
+            "deepseek",
+            base_url="http://127.0.0.1:9900/v1",
+        )
+    with pytest.raises(EndpointNotAllowedError, match="^endpoint not allowed$"):
+        catalog.resolve(
+            "deepseek-official",
+            "deepseek",
+            base_url="https://125.122.36.24/v1",
+        )
 
 
 def test_disabled_deployment_endpoint_is_not_public_or_resolvable(

@@ -105,6 +105,7 @@ const modelConfigs = {
     displayName,
     modelId: null,
     endpointId: null,
+    baseUrl: null,
     revision: null,
     testStatus: "not_configured" as const,
     lastTestedAt: null,
@@ -116,6 +117,7 @@ const modelConfigs = {
       {
         id: "openai-default",
         label: "OpenAI 官方",
+        baseUrl: null,
         apiKeyRequired: true,
         insecureHttp: false,
       },
@@ -124,6 +126,7 @@ const modelConfigs = {
       {
         id: "anthropic-default",
         label: "Claude 官方",
+        baseUrl: null,
         apiKeyRequired: true,
         insecureHttp: false,
       },
@@ -132,6 +135,7 @@ const modelConfigs = {
       {
         id: "google-default",
         label: "Gemini 官方",
+        baseUrl: null,
         apiKeyRequired: true,
         insecureHttp: false,
       },
@@ -140,6 +144,7 @@ const modelConfigs = {
       {
         id: "dashscope-default",
         label: "Qwen 官方",
+        baseUrl: null,
         apiKeyRequired: true,
         insecureHttp: false,
       },
@@ -148,6 +153,7 @@ const modelConfigs = {
       {
         id: "deepseek-default",
         label: "DeepSeek 官方",
+        baseUrl: null,
         apiKeyRequired: true,
         insecureHttp: false,
       },
@@ -156,6 +162,7 @@ const modelConfigs = {
       {
         id: "minimax-default",
         label: "MiniMax 官方",
+        baseUrl: null,
         apiKeyRequired: true,
         insecureHttp: false,
       },

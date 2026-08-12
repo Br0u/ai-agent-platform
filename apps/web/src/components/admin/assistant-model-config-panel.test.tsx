@@ -37,6 +37,7 @@ function emptyConfig(
     displayName,
     modelId: null,
     endpointId: null,
+    baseUrl: null,
     revision: null,
     testStatus: "not_configured",
     lastTestedAt: null,
@@ -60,6 +61,7 @@ function snapshot(
           label: "OpenAI 官方",
           apiKeyRequired: true,
           insecureHttp: false,
+          baseUrl: null,
         },
       ],
       anthropic: [
@@ -68,6 +70,7 @@ function snapshot(
           label: "Claude 官方",
           apiKeyRequired: true,
           insecureHttp: false,
+          baseUrl: null,
         },
       ],
       google: [
@@ -76,6 +79,7 @@ function snapshot(
           label: "Gemini 官方",
           apiKeyRequired: true,
           insecureHttp: false,
+          baseUrl: null,
         },
       ],
       dashscope: [
@@ -84,6 +88,7 @@ function snapshot(
           label: "Qwen 官方",
           apiKeyRequired: true,
           insecureHttp: false,
+          baseUrl: null,
         },
       ],
       deepseek: [
@@ -92,6 +97,7 @@ function snapshot(
           label: "DeepSeek 官方",
           apiKeyRequired: true,
           insecureHttp: false,
+          baseUrl: null,
         },
       ],
       minimax: [
@@ -100,6 +106,7 @@ function snapshot(
           label: "MiniMax 官方",
           apiKeyRequired: true,
           insecureHttp: false,
+          baseUrl: null,
         },
       ],
     },
@@ -126,6 +133,7 @@ function savedOpenAi(
     displayName: "OpenAI",
     modelId: "gpt-5",
     endpointId: "openai-default",
+    baseUrl: null,
     revision: 2,
     testStatus: "untested",
     lastTestedAt: "2026-07-17T08:00:00.000Z",
@@ -810,6 +818,53 @@ describe("AssistantModelConfigPanel", () => {
     expect(providerSelect).toHaveValue("anthropic");
     expect(screen.getByLabelText("Provider")).toHaveTextContent("Claude");
     expect(screen.getByLabelText("Model ID")).toHaveValue("");
+  });
+
+  it("shows and submits an editable address for a customizable endpoint", () => {
+    const value = snapshot();
+    value.endpoints.deepseek = [
+      {
+        id: "deepseek-v4-flash-code",
+        label: "DeepSeek V4 Flash Code（自定义部署）",
+        apiKeyRequired: false,
+        insecureHttp: true,
+        baseUrl: "http://125.122.36.24:8810/v1",
+      },
+    ] as (typeof value.endpoints)["deepseek"];
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        Response.json(safeError("validation_error"), { status: 400 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistantModelConfigPanel initialSnapshot={value} />);
+
+    fireEvent.change(screen.getByLabelText("模型供应商"), {
+      target: { value: "deepseek" },
+    });
+    fireEvent.change(screen.getByLabelText("Model ID"), {
+      target: { value: "DeepSeek-V4-Flash-code" },
+    });
+    const address = screen.getByLabelText("自定义模型地址");
+    expect(address).toHaveValue("http://125.122.36.24:8810/v1");
+
+    fireEvent.change(address, {
+      target: { value: "http://125.122.36.24:9900/v1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/admin/assistant/model-configs/deepseek",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          modelId: "DeepSeek-V4-Flash-code",
+          endpointId: "deepseek-v4-flash-code",
+          baseUrl: "http://125.122.36.24:9900/v1",
+          expectedRevision: 0,
+        }),
+      }),
+    );
   });
 
   it("saves through the exact PUT boundary, prevents doubles, replaces metadata and refreshes once", async () => {

@@ -18,6 +18,7 @@ from agent_service.model_config_schema import (
     EXPECTED_TRIGGER_BOUNDARY,
     PREPARE_SCHEMA_SQL,
     SCHEMA_VERSION_1_SQL,
+    SCHEMA_VERSION_2_SQL,
     SELECT_SCHEMA_VERSION_SQL,
     VERIFY_COLUMN_GRANTS_SQL,
     VERIFY_FORBIDDEN_TABLE_GRANTS_SQL,
@@ -164,7 +165,7 @@ async def run_migration(
     *,
     connector: ConnectionFactory = connect_database,
 ) -> None:
-    """Apply schema version 1 and verify its exact runtime boundary."""
+    """Apply every pending Agent control schema version and verify the boundary."""
     migration_settings = settings or ControlMigrationSettings()
     database_url = _psycopg_url(migration_settings.database_url.get_secret_value())
     connection = await connector(database_url)
@@ -180,7 +181,10 @@ async def run_migration(
             applied_version = await cursor.fetchone()
             if applied_version is None:
                 await cursor.execute(SCHEMA_VERSION_1_SQL)
-            elif applied_version != (1,):
+                await cursor.execute(SCHEMA_VERSION_2_SQL)
+            elif applied_version == (1,):
+                await cursor.execute(SCHEMA_VERSION_2_SQL)
+            elif applied_version != (2,):
                 raise RuntimeError("Agent control migration verification failed")
             await _verify_migration(cursor)
 

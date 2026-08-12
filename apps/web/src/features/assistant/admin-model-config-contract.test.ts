@@ -36,6 +36,7 @@ function snapshot() {
       displayName: names[provider],
       modelId: index === 0 ? "gpt-5-mini" : null,
       endpointId: index === 0 ? "openai-official" : null,
+      baseUrl: null,
       revision: index === 0 ? 3 : null,
       testStatus: index === 0 ? "passed" : "not_configured",
       lastTestedAt: index === 0 ? "2026-07-18T01:02:03.000Z" : null,
@@ -49,6 +50,7 @@ function snapshot() {
           label: "OpenAI official",
           apiKeyRequired: true,
           insecureHttp: false,
+          baseUrl: null,
         },
       ],
       anthropic: [
@@ -57,6 +59,7 @@ function snapshot() {
           label: "Anthropic official",
           apiKeyRequired: true,
           insecureHttp: false,
+          baseUrl: null,
         },
       ],
       google: [
@@ -65,6 +68,7 @@ function snapshot() {
           label: "Google Gemini official",
           apiKeyRequired: true,
           insecureHttp: false,
+          baseUrl: null,
         },
       ],
       dashscope: [
@@ -73,6 +77,7 @@ function snapshot() {
           label: "DashScope official",
           apiKeyRequired: true,
           insecureHttp: false,
+          baseUrl: null,
         },
       ],
       deepseek: [
@@ -81,6 +86,7 @@ function snapshot() {
           label: "DeepSeek official",
           apiKeyRequired: true,
           insecureHttp: false,
+          baseUrl: null,
         },
       ],
       minimax: [
@@ -89,6 +95,7 @@ function snapshot() {
           label: "MiniMax official",
           apiKeyRequired: true,
           insecureHttp: false,
+          baseUrl: null,
         },
       ],
     },

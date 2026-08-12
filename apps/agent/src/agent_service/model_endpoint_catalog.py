@@ -1,7 +1,7 @@
 """Code-owned model endpoints plus a strict deployment allowlist."""
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import ipaddress
 import os
 from pathlib import Path
@@ -51,6 +51,7 @@ class EndpointOption:
     provider: ModelProvider
     api_key_required: bool
     insecure_http: bool
+    base_url: str | None
 
 
 _OFFICIAL_ENDPOINTS: Final[tuple[ModelEndpoint, ...]] = (
@@ -149,10 +150,28 @@ class ModelEndpointCatalog:
         self,
         endpoint_id: str,
         provider: ModelProvider,
+        *,
+        base_url: str | None = None,
     ) -> ModelEndpoint:
         endpoint = self._endpoints.get(endpoint_id)
         if endpoint is None or endpoint.provider != provider:
             raise EndpointNotAllowedError("endpoint not allowed")
+        if base_url is not None:
+            if endpoint_id in OFFICIAL_MODEL_ENDPOINTS:
+                raise EndpointNotAllowedError("endpoint not allowed")
+            if base_url == endpoint.base_url:
+                return endpoint
+            try:
+                normalized = _normalize_base_url(
+                    base_url,
+                    allow_insecure_http=endpoint.allow_insecure_http,
+                )
+                host = urlsplit(normalized).hostname
+                if host is None or not ipaddress.ip_address(host).is_global:
+                    raise ValueError
+            except (EndpointCatalogError, ValueError):
+                raise EndpointNotAllowedError("endpoint not allowed") from None
+            return replace(endpoint, base_url=normalized)
         return endpoint
 
     def public_snapshot(
@@ -166,6 +185,11 @@ class ModelEndpointCatalog:
                 provider=endpoint.provider,
                 api_key_required=endpoint.api_key_required,
                 insecure_http=endpoint.base_url.startswith("http://"),
+                base_url=(
+                    None
+                    if endpoint_id in OFFICIAL_MODEL_ENDPOINTS
+                    else endpoint.base_url
+                ),
             )
             for endpoint_id in self._ordered_ids
             if (endpoint := self._endpoints[endpoint_id]).provider == provider

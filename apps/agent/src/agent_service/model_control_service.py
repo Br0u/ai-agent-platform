@@ -331,6 +331,7 @@ class ModelControlService:
                     "provider": draft.provider,
                     "model_id": draft.model_id,
                     "endpoint_id": draft.endpoint_id,
+                    "base_url": draft.base_url,
                     "api_key": draft.api_key,
                     "expected_revision": draft.expected_revision,
                 }
@@ -345,6 +346,7 @@ class ModelControlService:
             endpoint = self._endpoint_catalog.resolve(
                 draft.endpoint_id,
                 draft.provider,
+                base_url=draft.base_url,
             )
         except EndpointNotAllowedError:
             pass
@@ -423,6 +425,7 @@ class ModelControlService:
                 expected_revision=draft.expected_revision,
                 sealed=sealed,
                 assertion_nonce=assertion.nonce,
+                base_url=(endpoint.base_url if draft.base_url is not None else None),
             )
             event = ControlEvent(
                 event_id=self._uuid_factory(),
@@ -524,6 +527,7 @@ class ModelControlService:
             endpoint = self._endpoint_catalog.resolve(
                 stored.endpoint_id,
                 stored.provider,
+                base_url=stored.base_url,
             )
         except EndpointNotAllowedError:
             pass

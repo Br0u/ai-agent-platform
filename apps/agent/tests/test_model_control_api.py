@@ -107,6 +107,7 @@ class RecordingService:
             provider=draft.provider,
             model_id=draft.model_id,
             endpoint_id=draft.endpoint_id,
+            base_url=draft.base_url,
             api_key_last_four="cdef",
             revision=draft.expected_revision + 1,
             test_status="untested",
@@ -155,6 +156,7 @@ class OversizedListService(RecordingService):
                     id=f"custom-endpoint-{index}",
                     label="x" * 80,
                     provider="openai",
+                    base_url=None,
                     api_key_required=True,
                     insecure_http=False,
                 )
@@ -280,6 +282,7 @@ def mutation_headers(
     *,
     action: str,
     permission: str,
+    provider: str = "openai",
     issued_at: int = NOW,
 ) -> dict[str, str]:
     return {
@@ -287,6 +290,7 @@ def mutation_headers(
         "X-Agent-Control-Assertion": signed_assertion(
             action=action,
             permission=permission,
+            provider=provider,
             issued_at=issued_at,
         ),
         "Content-Type": "application/json",
@@ -348,6 +352,7 @@ def test_list_returns_only_bounded_safe_metadata_with_the_control_bearer() -> No
                 "provider": "openai",
                 "modelId": "gpt-5-mini",
                 "endpointId": "openai-official",
+                "baseUrl": None,
                 "apiKeyLastFour": "cdef",
                 "revision": 3,
                 "testStatus": "passed",
@@ -359,6 +364,7 @@ def test_list_returns_only_bounded_safe_metadata_with_the_control_bearer() -> No
                 "id": "openai-official",
                 "label": "OpenAI official",
                 "provider": "openai",
+                "baseUrl": None,
                 "apiKeyRequired": True,
                 "insecureHttp": False,
             },
@@ -366,6 +372,7 @@ def test_list_returns_only_bounded_safe_metadata_with_the_control_bearer() -> No
                 "id": "anthropic-official",
                 "label": "Anthropic official",
                 "provider": "anthropic",
+                "baseUrl": None,
                 "apiKeyRequired": True,
                 "insecureHttp": False,
             },
@@ -373,6 +380,7 @@ def test_list_returns_only_bounded_safe_metadata_with_the_control_bearer() -> No
                 "id": "google-official",
                 "label": "Google Gemini official",
                 "provider": "google",
+                "baseUrl": None,
                 "apiKeyRequired": True,
                 "insecureHttp": False,
             },
@@ -380,6 +388,7 @@ def test_list_returns_only_bounded_safe_metadata_with_the_control_bearer() -> No
                 "id": "dashscope-official",
                 "label": "DashScope official",
                 "provider": "dashscope",
+                "baseUrl": None,
                 "apiKeyRequired": True,
                 "insecureHttp": False,
             },
@@ -387,6 +396,7 @@ def test_list_returns_only_bounded_safe_metadata_with_the_control_bearer() -> No
                 "id": "deepseek-official",
                 "label": "DeepSeek official",
                 "provider": "deepseek",
+                "baseUrl": None,
                 "apiKeyRequired": True,
                 "insecureHttp": False,
             },
@@ -394,6 +404,7 @@ def test_list_returns_only_bounded_safe_metadata_with_the_control_bearer() -> No
                 "id": "minimax-official",
                 "label": "MiniMax official",
                 "provider": "minimax",
+                "baseUrl": None,
                 "apiKeyRequired": True,
                 "insecureHttp": False,
             },
@@ -777,6 +788,7 @@ def test_save_accepts_one_strict_draft_and_passes_the_verified_assertion() -> No
             "provider": "openai",
             "modelId": "gpt-5-mini",
             "endpointId": "openai-official",
+            "baseUrl": None,
             "apiKeyLastFour": "cdef",
             "revision": 3,
             "testStatus": "untested",
@@ -798,6 +810,32 @@ def test_save_accepts_one_strict_draft_and_passes_the_verified_assertion() -> No
     assert str(assertion.request_id) == REQUEST_ID
     assert str(assertion.nonce) == NONCE
     assert "secret-api-key-cdef" not in response.text
+
+
+def test_save_accepts_and_forwards_a_custom_base_url() -> None:
+    service = RecordingService()
+    application = control_route_app(service)
+
+    with TestClient(application) as client:
+        response = client.put(
+            "/internal/control/model-configs/deepseek",
+            headers=mutation_headers(
+                action="save",
+                permission="admin:assistant:configure",
+                provider="deepseek",
+            ),
+            json={
+                "modelId": "DeepSeek-V4-Flash-code",
+                "endpointId": "deepseek-v4-flash-code",
+                "baseUrl": "http://125.122.36.24:9900/v1",
+                "expectedRevision": 0,
+            },
+        )
+
+    assert response.status_code == 200
+    [saved] = service.saved
+    assert saved[0].base_url == "http://125.122.36.24:9900/v1"
+    assert response.json()["config"]["baseUrl"] == ("http://125.122.36.24:9900/v1")
 
 
 @pytest.mark.parametrize(

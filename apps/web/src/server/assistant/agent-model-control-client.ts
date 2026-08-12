@@ -4,6 +4,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 import {
   ADMIN_MODEL_PROVIDERS,
+  isAdminModelBaseUrl,
   isAdminModelId,
   parseAdminModelConfigRevisionInput,
   parseAdminModelConfigSaveInput,
@@ -45,6 +46,7 @@ export type AgentModelConfigMetadata = {
   provider: AdminModelProvider;
   modelId: string;
   endpointId: string;
+  baseUrl: string | null;
   apiKeyLastFour: string;
   revision: number;
   testStatus: "untested" | "passed" | "failed";
@@ -60,6 +62,7 @@ export type AgentModelConfigListResponse = {
     provider: AdminModelProvider;
     apiKeyRequired: boolean;
     insecureHttp: boolean;
+    baseUrl: string | null;
   }>;
   bootstrap: null | {
     provider: AdminModelProvider;
@@ -450,6 +453,7 @@ function readMetadata(value: unknown): AgentModelConfigMetadata | null {
       "provider",
       "modelId",
       "endpointId",
+      "baseUrl",
       "apiKeyLastFour",
       "revision",
       "testStatus",
@@ -461,6 +465,7 @@ function readMetadata(value: unknown): AgentModelConfigMetadata | null {
     !isProvider(snapshot.provider) ||
     !isAdminModelId(snapshot.modelId) ||
     !isEndpointId(snapshot.endpointId) ||
+    !(snapshot.baseUrl === null || isAdminModelBaseUrl(snapshot.baseUrl)) ||
     typeof snapshot.apiKeyLastFour !== "string" ||
     Array.from(snapshot.apiKeyLastFour).length !== 4 ||
     /\s/u.test(snapshot.apiKeyLastFour) ||
@@ -480,6 +485,7 @@ function readMetadata(value: unknown): AgentModelConfigMetadata | null {
     provider: snapshot.provider,
     modelId: snapshot.modelId,
     endpointId: snapshot.endpointId,
+    baseUrl: snapshot.baseUrl,
     apiKeyLastFour: snapshot.apiKeyLastFour,
     revision: snapshot.revision,
     testStatus: snapshot.testStatus as AgentModelConfigMetadata["testStatus"],
@@ -493,9 +499,10 @@ function readEndpointOption(value: unknown): {
   provider: AdminModelProvider;
   apiKeyRequired: boolean;
   insecureHttp: boolean;
+  baseUrl: string | null;
 } | null {
   const snapshot = readExactDataRecord(value, [
-    ["id", "label", "provider", "apiKeyRequired", "insecureHttp"],
+    ["id", "label", "provider", "apiKeyRequired", "insecureHttp", "baseUrl"],
   ]);
   if (
     snapshot === null ||
@@ -503,7 +510,8 @@ function readEndpointOption(value: unknown): {
     !isSafeText(snapshot.label, 80) ||
     !isProvider(snapshot.provider) ||
     typeof snapshot.apiKeyRequired !== "boolean" ||
-    typeof snapshot.insecureHttp !== "boolean"
+    typeof snapshot.insecureHttp !== "boolean" ||
+    !(snapshot.baseUrl === null || isAdminModelBaseUrl(snapshot.baseUrl))
   ) {
     return null;
   }
@@ -513,6 +521,7 @@ function readEndpointOption(value: unknown): {
     provider: snapshot.provider,
     apiKeyRequired: snapshot.apiKeyRequired,
     insecureHttp: snapshot.insecureHttp,
+    baseUrl: snapshot.baseUrl,
   };
 }
 
@@ -911,6 +920,7 @@ export function createAgentModelControlClient(options: {
         const payload = {
           modelId: input.modelId,
           endpointId: input.endpointId,
+          ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }),
           ...(input.apiKey === undefined ? {} : { apiKey: input.apiKey }),
           expectedRevision: input.expectedRevision,
         };
@@ -937,6 +947,7 @@ export function createAgentModelControlClient(options: {
               config.provider !== safe.provider ||
               config.modelId !== input.modelId ||
               config.endpointId !== input.endpointId ||
+              config.baseUrl !== (input.baseUrl ?? null) ||
               config.revision !== input.expectedRevision + 1 ||
               config.testStatus !== "untested" ||
               (input.apiKey !== undefined &&

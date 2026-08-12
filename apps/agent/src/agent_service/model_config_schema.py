@@ -1,6 +1,6 @@
 """Literal versioned SQL for the isolated Agent model control schema."""
 
-AGENT_CONTROL_SCHEMA_VERSION = 1
+AGENT_CONTROL_SCHEMA_VERSION = 2
 
 REQUIRED_TABLE_NAMES = frozenset(
     {"model_configs", "active_model_config", "control_events"}
@@ -44,6 +44,7 @@ EXPECTED_FUNCTION_BOUNDARY = frozenset(
             "OR NEW.provider IS DISTINCT FROM OLD.provider "
             "OR NEW.model_id IS DISTINCT FROM OLD.model_id "
             "OR NEW.endpoint_id IS DISTINCT FROM OLD.endpoint_id "
+            "OR NEW.base_url IS DISTINCT FROM OLD.base_url "
             "OR NEW.api_key_ciphertext IS DISTINCT FROM OLD.api_key_ciphertext "
             "OR NEW.api_key_nonce IS DISTINCT FROM OLD.api_key_nonce "
             "OR NEW.api_key_last_four IS DISTINCT FROM OLD.api_key_last_four "
@@ -111,7 +112,8 @@ CREATE TABLE IF NOT EXISTS agent_control.schema_versions (
 SELECT_SCHEMA_VERSION_SQL = """
 SELECT version
 FROM agent_control.schema_versions
-WHERE version = 1
+ORDER BY version DESC
+LIMIT 1
 """
 
 SCHEMA_VERSION_1_SQL = """
@@ -215,6 +217,54 @@ GRANT SELECT, INSERT ON agent_control.control_events TO ai_agent_control;
 INSERT INTO agent_control.schema_versions (version)
 VALUES (1)
 ON CONFLICT (version) DO NOTHING;
+"""
+
+SCHEMA_VERSION_2_SQL = """
+ALTER TABLE agent_control.model_configs
+ADD COLUMN base_url varchar(2048)
+  CHECK (
+    base_url IS NULL
+    OR (
+      char_length(base_url) BETWEEN 8 AND 2048
+      AND base_url ~ '^https?://'
+      AND base_url !~ '[[:space:]]'
+    )
+  );
+
+CREATE OR REPLACE FUNCTION agent_control.guard_model_config_update()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id
+    OR NEW.provider IS DISTINCT FROM OLD.provider
+    OR NEW.model_id IS DISTINCT FROM OLD.model_id
+    OR NEW.endpoint_id IS DISTINCT FROM OLD.endpoint_id
+    OR NEW.base_url IS DISTINCT FROM OLD.base_url
+    OR NEW.api_key_ciphertext IS DISTINCT FROM OLD.api_key_ciphertext
+    OR NEW.api_key_nonce IS DISTINCT FROM OLD.api_key_nonce
+    OR NEW.api_key_last_four IS DISTINCT FROM OLD.api_key_last_four
+    OR NEW.encryption_key_version IS DISTINCT FROM OLD.encryption_key_version
+    OR NEW.revision IS DISTINCT FROM OLD.revision
+    OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'model config revision fields are immutable'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF OLD.is_current = false AND NEW.is_current = true THEN
+    RAISE EXCEPTION 'retired model config revisions cannot become current'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+ALTER FUNCTION agent_control.guard_model_config_update()
+  OWNER TO ai_agent_control_migrator;
+REVOKE ALL ON FUNCTION agent_control.guard_model_config_update() FROM PUBLIC;
+
+INSERT INTO agent_control.schema_versions (version)
+VALUES (2);
 """
 
 VERIFY_TABLES_SQL = """SELECT

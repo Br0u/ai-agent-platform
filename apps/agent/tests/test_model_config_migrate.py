@@ -17,6 +17,7 @@ from agent_service.model_config_schema import (
     PREPARE_SCHEMA_SQL,
     REQUIRED_TABLE_NAMES,
     SCHEMA_VERSION_1_SQL,
+    SCHEMA_VERSION_2_SQL,
     SELECT_SCHEMA_VERSION_SQL,
     VERIFY_FORBIDDEN_TABLE_GRANTS_SQL,
     VERIFY_FUNCTION_BOUNDARY_SQL,
@@ -26,6 +27,12 @@ from agent_service.model_config_schema import (
     VERIFY_TABLES_SQL,
     VERIFY_TRIGGER_BOUNDARY_SQL,
 )
+
+
+def test_schema_version_two_adds_an_immutable_custom_base_url() -> None:
+    assert AGENT_CONTROL_SCHEMA_VERSION == 2
+    assert "ADD COLUMN base_url varchar(2048)" in SCHEMA_VERSION_2_SQL
+    assert "NEW.base_url IS DISTINCT FROM OLD.base_url" in SCHEMA_VERSION_2_SQL
 
 
 MIGRATOR_URL = (
@@ -58,6 +65,7 @@ EXPECTED_FUNCTION_SOURCE = (
     "OR NEW.provider IS DISTINCT FROM OLD.provider "
     "OR NEW.model_id IS DISTINCT FROM OLD.model_id "
     "OR NEW.endpoint_id IS DISTINCT FROM OLD.endpoint_id "
+    "OR NEW.base_url IS DISTINCT FROM OLD.base_url "
     "OR NEW.api_key_ciphertext IS DISTINCT FROM OLD.api_key_ciphertext "
     "OR NEW.api_key_nonce IS DISTINCT FROM OLD.api_key_nonce "
     "OR NEW.api_key_last_four IS DISTINCT FROM OLD.api_key_last_four "
@@ -274,7 +282,7 @@ def test_schema_version_one_contains_the_exact_model_control_tables() -> None:
     for definition in expected_definitions:
         assert normalize_sql(definition) in sql
 
-    assert AGENT_CONTROL_SCHEMA_VERSION == 1
+    assert AGENT_CONTROL_SCHEMA_VERSION == 2
     assert REQUIRED_TABLE_NAMES == frozenset(
         {"model_configs", "active_model_config", "control_events"}
     )
@@ -526,7 +534,7 @@ class FakeCursor:
         if self.current_query == EXPECTED_VERIFY_SCHEMA_OWNER_SQL:
             return (self.schema_owner,) if self.schema_owner is not None else None
         if self.current_query == SELECT_SCHEMA_VERSION_SQL:
-            return (1,) if self.version_applied else None
+            return (2,) if self.version_applied else None
         if self.current_query == VERIFY_SCHEMA_PRIVILEGES_SQL:
             return (True, False)
         raise AssertionError(f"unexpected fetchone query: {self.current_query}")
@@ -688,6 +696,7 @@ async def test_run_migration_applies_version_one_and_verifies_boundary_in_one_tr
         PREPARE_SCHEMA_SQL,
         SELECT_SCHEMA_VERSION_SQL,
         SCHEMA_VERSION_1_SQL,
+        SCHEMA_VERSION_2_SQL,
         VERIFY_TABLES_SQL,
         EXPECTED_VERIFY_SCHEMA_VERSION_COLUMNS_SQL,
         EXPECTED_VERIFY_SCHEMA_VERSION_CONSTRAINTS_SQL,

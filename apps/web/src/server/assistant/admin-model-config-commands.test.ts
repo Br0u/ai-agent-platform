@@ -35,6 +35,7 @@ const savedConfig: AgentModelConfigMetadata = {
   provider: "openai",
   modelId: "gpt-5-mini",
   endpointId: "openai-official",
+  baseUrl: null,
   apiKeyLastFour: "udit",
   revision: 4,
   testStatus: "untested",

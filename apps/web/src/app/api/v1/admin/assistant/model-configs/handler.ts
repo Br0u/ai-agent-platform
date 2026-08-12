@@ -270,6 +270,7 @@ export async function loadAdminModelConfigSnapshot(
           displayName: DISPLAY_NAMES[provider],
           modelId: null,
           endpointId: null,
+          baseUrl: null,
           revision: null,
           testStatus: "not_configured",
           lastTestedAt: null,
@@ -282,6 +283,7 @@ export async function loadAdminModelConfigSnapshot(
         displayName: DISPLAY_NAMES[provider],
         modelId: config.modelId,
         endpointId: config.endpointId,
+        baseUrl: config.baseUrl,
         revision: config.revision,
         testStatus: config.testStatus,
         lastTestedAt: config.lastTestedAt,
@@ -310,6 +312,7 @@ export async function loadAdminModelConfigSnapshot(
       label: endpoint.label,
       apiKeyRequired: endpoint.apiKeyRequired,
       insecureHttp: endpoint.insecureHttp,
+      baseUrl: endpoint.baseUrl,
     });
   }
   const snapshot: AdminModelConfigSnapshot = {
@@ -464,6 +467,7 @@ export function createAdminModelConfigSaveHandler(
             displayName: DISPLAY_NAMES[config.provider],
             modelId: config.modelId,
             endpointId: config.endpointId,
+            baseUrl: config.baseUrl,
             revision: config.revision,
             testStatus: config.testStatus,
             lastTestedAt: config.lastTestedAt,

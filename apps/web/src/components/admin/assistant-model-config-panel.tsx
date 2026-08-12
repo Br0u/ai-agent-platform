@@ -12,6 +12,7 @@ import {
 
 import {
   ADMIN_MODEL_PROVIDERS,
+  isAdminModelBaseUrl,
   isAdminModelConfigSnapshot,
   type AdminModelConfigItem,
   type AdminModelConfigSnapshot,
@@ -36,6 +37,7 @@ type UnknownMutationDescriptor =
       expectedNextRevision: number;
       modelId: string;
       endpointId: string;
+      baseUrl: string | null;
       enteredAt: number;
       deadline: number;
     }
@@ -50,6 +52,7 @@ type UnknownMutationDescriptor =
 const LIST_ENDPOINT = "/api/v1/admin/assistant/model-configs";
 const MODEL_EDITOR_ID = "assistant-model-editor";
 const MODEL_ID_MAX_LENGTH = 128;
+const BASE_URL_MAX_LENGTH = 2_048;
 const API_KEY_MIN_LENGTH = 8;
 const API_KEY_MAX_LENGTH = 4_096;
 const SAVE_RECONCILIATION_WINDOW_MS = 10_000;
@@ -124,6 +127,7 @@ function parseSavedSnapshot(
       "displayName",
       "modelId",
       "endpointId",
+      "baseUrl",
       "revision",
       "testStatus",
       "lastTestedAt",
@@ -144,6 +148,7 @@ function parseSavedSnapshot(
     displayName: raw.displayName,
     modelId: raw.modelId,
     endpointId: raw.endpointId,
+    baseUrl: raw.baseUrl,
     revision: raw.revision,
     testStatus: raw.testStatus,
     lastTestedAt: raw.lastTestedAt,
@@ -295,8 +300,22 @@ function snapshotProvesMutation(
   return (
     config.revision === descriptor.expectedNextRevision &&
     config.modelId === descriptor.modelId &&
-    config.endpointId === descriptor.endpointId
+    config.endpointId === descriptor.endpointId &&
+    config.baseUrl === descriptor.baseUrl
   );
+}
+
+function configBaseUrl(
+  snapshot: AdminModelConfigSnapshot,
+  provider: AdminModelProvider,
+  config: AdminModelConfigItem,
+): string {
+  const endpointId =
+    config.endpointId ?? snapshot.endpoints[provider][0]?.id ?? "";
+  const endpoint = snapshot.endpoints[provider].find(
+    (option) => option.id === endpointId,
+  );
+  return config.baseUrl ?? endpoint?.baseUrl ?? "";
 }
 
 export function AssistantModelConfigPanel({
@@ -312,6 +331,9 @@ export function AssistantModelConfigPanel({
   const [modelId, setModelId] = useState(initialConfig.modelId ?? "");
   const [endpointId, setEndpointId] = useState(
     initialConfig.endpointId ?? initialSnapshot.endpoints.openai[0]?.id ?? "",
+  );
+  const [baseUrl, setBaseUrl] = useState(
+    configBaseUrl(initialSnapshot, "openai", initialConfig),
   );
   const [apiKey, setApiKey] = useState("");
   const [validation, setValidation] = useState("");
@@ -342,6 +364,7 @@ export function AssistantModelConfigPanel({
   const selectedEndpoint = endpointOptions.find(
     (option) => option.id === endpointId,
   );
+  const customEndpoint = typeof selectedEndpoint?.baseUrl === "string";
   const writable = snapshot.canConfigure && snapshot.controlEnabled;
   const controlUnavailable =
     !snapshot.controlEnabled && snapshot.runtime.capability === "degraded";
@@ -451,24 +474,29 @@ export function AssistantModelConfigPanel({
     setEndpointId(
       nextConfig.endpointId ?? snapshot.endpoints[provider][0]?.id ?? "",
     );
+    setBaseUrl(configBaseUrl(snapshot, provider, nextConfig));
     setValidation("");
     if (!syncRequiredRef.current) setAnnouncement("");
     selectedProviderRef.current = provider;
     setSelectedProvider(provider);
   };
 
-  const replaceSnapshot = useCallback((next: AdminModelConfigSnapshot) => {
-    const provider = selectedProviderRef.current;
-    const nextConfig = next.configs.find(
-      (config) => config.provider === provider,
-    )!;
-    setSnapshot(next);
-    setModelId(nextConfig.modelId ?? "");
-    setEndpointId(
-      nextConfig.endpointId ?? next.endpoints[provider][0]?.id ?? "",
-    );
-    setValidation("");
-  }, []);
+  const replaceSnapshot = useCallback(
+    (next: AdminModelConfigSnapshot) => {
+      const provider = selectedProviderRef.current;
+      const nextConfig = next.configs.find(
+        (config) => config.provider === provider,
+      )!;
+      setSnapshot(next);
+      setModelId(nextConfig.modelId ?? "");
+      setEndpointId(
+        nextConfig.endpointId ?? next.endpoints[provider][0]?.id ?? "",
+      );
+      setBaseUrl(configBaseUrl(next, provider, nextConfig));
+      setValidation("");
+    },
+    [setBaseUrl, setEndpointId, setModelId, setSnapshot, setValidation],
+  );
 
   const validateDraft = () => {
     const normalizedModelId = modelId.trim();
@@ -483,6 +511,11 @@ export function AssistantModelConfigPanel({
     }
     if (!endpointOptions.some((option) => option.id === endpointId)) {
       setValidation("请选择部署允许的 Endpoint。");
+      return null;
+    }
+    const normalizedBaseUrl = baseUrl.trim();
+    if (customEndpoint && !isAdminModelBaseUrl(normalizedBaseUrl)) {
+      setValidation("自定义模型地址必须是有效的 HTTP 或 HTTPS 地址。");
       return null;
     }
     const keyLength = Array.from(apiKey).length;
@@ -505,6 +538,7 @@ export function AssistantModelConfigPanel({
     return {
       modelId: normalizedModelId,
       endpointId,
+      ...(customEndpoint ? { baseUrl: normalizedBaseUrl } : {}),
       ...(apiKey.length === 0 ? {} : { apiKey }),
       expectedRevision: selectedConfig.revision ?? 0,
     };
@@ -532,6 +566,7 @@ export function AssistantModelConfigPanel({
       expectedNextRevision: input.expectedRevision + 1,
       modelId: input.modelId,
       endpointId: input.endpointId,
+      baseUrl: input.baseUrl ?? null,
       enteredAt,
       deadline: enteredAt + SAVE_RECONCILIATION_WINDOW_MS,
     };
@@ -929,7 +964,14 @@ export function AssistantModelConfigPanel({
               <span>Endpoint</span>
               <select
                 disabled={!writable}
-                onChange={(event) => setEndpointId(event.target.value)}
+                onChange={(event) => {
+                  const nextEndpointId = event.target.value;
+                  const nextEndpoint = endpointOptions.find(
+                    (option) => option.id === nextEndpointId,
+                  );
+                  setEndpointId(nextEndpointId);
+                  setBaseUrl(nextEndpoint?.baseUrl ?? "");
+                }}
                 value={endpointId}
               >
                 {endpointOptions.map((option) => (
@@ -939,6 +981,23 @@ export function AssistantModelConfigPanel({
                 ))}
               </select>
             </label>
+            {customEndpoint ? (
+              <label>
+                <span>自定义模型地址</span>
+                <input
+                  autoCapitalize="none"
+                  autoComplete="url"
+                  disabled={!writable}
+                  inputMode="url"
+                  maxLength={BASE_URL_MAX_LENGTH}
+                  onChange={(event) => setBaseUrl(event.target.value)}
+                  placeholder="https://models.example.com/v1"
+                  spellCheck={false}
+                  type="url"
+                  value={baseUrl}
+                />
+              </label>
+            ) : null}
             <label>
               <span>
                 {keyRequired ? "新 API Key（必填）" : "新 API Key（可选）"}
@@ -976,7 +1035,7 @@ export function AssistantModelConfigPanel({
                 </button>
               ) : null}
             </div>
-            {selectedEndpoint?.insecureHttp ? (
+            {customEndpoint && baseUrl.trim().startsWith("http://") ? (
               <p className="assistant-model-config__validation" role="status">
                 此自定义地址使用明文 HTTP，请仅在可信网络中使用。
               </p>
