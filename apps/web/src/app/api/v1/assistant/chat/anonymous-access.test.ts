@@ -64,8 +64,10 @@ function request(options?: { cookie?: string; forgedActor?: boolean }) {
       ...(options?.cookie ? { cookie: options.cookie } : {}),
     },
     body: JSON.stringify({
+      version: "2",
       message: "如何开始了解平台？",
-      context: { pathname: "/" },
+      history: [],
+      page: null,
       ...(options?.forgedActor
         ? { actorId: "attacker", userId: "attacker", actor: "customer" }
         : {}),
@@ -100,29 +102,33 @@ afterEach(() => {
 });
 
 describe("anonymous assistant access short-circuit", () => {
-  it.each([
-    ["no cookie", request()],
-    ["forged body actor", request({ forgedActor: true })],
-  ])(
-    "returns 200 for %s without constructing auth access",
-    async (_name, input) => {
-      const response = await (await loadPOST())(input);
+  it("returns 200 without a cookie or constructing auth access", async () => {
+    const input = request();
+    const response = await (await loadPOST())(input);
 
-      expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toMatchObject({
-        version: "1",
-        mode: "placeholder",
-        session: { temporary: true },
-      });
-      expect(access.createAccessService).not.toHaveBeenCalled();
-      expect(access.getCurrentActor).not.toHaveBeenCalled();
-      expect(rateLimit.consume).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({ scope: "anonymous" }),
-      );
-      expect(inputPolicy.createRepository).toHaveBeenCalledOnce();
-      expect(inputPolicy.load).toHaveBeenCalledOnce();
-    },
-  );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      version: "1",
+      mode: "placeholder",
+      session: { temporary: true },
+    });
+    expect(access.createAccessService).not.toHaveBeenCalled();
+    expect(access.getCurrentActor).not.toHaveBeenCalled();
+    expect(rateLimit.consume).toHaveBeenCalledExactlyOnceWith({
+      scope: "anonymous",
+      global: true,
+    });
+    expect(inputPolicy.createRepository).toHaveBeenCalledOnce();
+    expect(inputPolicy.load).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a forged body actor before auth and limiting", async () => {
+    const response = await (await loadPOST())(request({ forgedActor: true }));
+
+    expect(response.status).toBe(400);
+    expect(access.createAccessService).not.toHaveBeenCalled();
+    expect(rateLimit.consume).not.toHaveBeenCalled();
+  });
 
   it("server-validates a request carrying the customer auth cookie", async () => {
     const input = request({ cookie: "aap_customer_session=opaque" });
@@ -131,9 +137,10 @@ describe("anonymous assistant access short-circuit", () => {
     expect(response.status).toBe(200);
     expect(access.createAccessService).toHaveBeenCalledOnce();
     expect(access.getCurrentActor).toHaveBeenCalledExactlyOnceWith("customer");
-    expect(rateLimit.consume).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ scope: "anonymous" }),
-    );
+    expect(rateLimit.consume).toHaveBeenCalledExactlyOnceWith({
+      scope: "anonymous",
+      global: true,
+    });
     expect(inputPolicy.createRepository).toHaveBeenCalledOnce();
     expect(inputPolicy.load).toHaveBeenCalledOnce();
   });

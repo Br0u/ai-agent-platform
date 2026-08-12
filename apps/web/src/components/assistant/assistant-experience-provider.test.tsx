@@ -126,6 +126,7 @@ function ServiceStateHarness() {
 
 afterEach(() => {
   cleanup();
+  window.history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
 });
 
@@ -179,6 +180,47 @@ describe("AssistantExperienceProvider", () => {
     );
     await act(async () => Promise.resolve());
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("keys page memory and requests to the normalized pathname", async () => {
+    window.history.replaceState(null, "", "/pricing?mode=full");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({
+          version: "1",
+          requestId: "normalized-path",
+          mode: "placeholder",
+          session: {
+            temporary: true,
+            expiresAt: "2026-07-15T12:00:00.000Z",
+          },
+          message: {
+            id: "normalized-message",
+            role: "assistant",
+            content: "规范路径回答",
+          },
+          suggestedActions: [],
+        }),
+      ),
+    );
+    render(
+      <AssistantExperienceProvider pathname="/pricing/?mode=full#composer">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "发送跨页问题" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body)),
+    ).toEqual({
+      version: "2",
+      message: "跨页已发送问题",
+      history: [],
+      page: { pathname: "/pricing", search: "?mode=full" },
+    });
   });
 
   it("uses one closed to quick to dock to quick to closed state machine", () => {
@@ -412,7 +454,7 @@ describe("AssistantExperienceProvider", () => {
     expect(firstFocus).not.toHaveBeenCalled();
   });
 
-  it("derives a closed assistant workspace surface synchronously and keeps the session", async () => {
+  it("derives a closed assistant workspace surface and resets page memory", async () => {
     const view = render(
       <AssistantExperienceProvider pathname="/">
         <Harness />
@@ -429,9 +471,7 @@ describe("AssistantExperienceProvider", () => {
       </AssistantExperienceProvider>,
     );
     expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("closed");
-    expect(screen.getByRole("textbox", { name: "会话草稿" })).toHaveValue(
-      "保留中的问题",
-    );
+    expect(screen.getByRole("textbox", { name: "会话草稿" })).toHaveValue("");
     await act(async () => {
       await Promise.resolve();
     });
@@ -442,9 +482,7 @@ describe("AssistantExperienceProvider", () => {
       </AssistantExperienceProvider>,
     );
     expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("closed");
-    expect(screen.getByRole("textbox", { name: "会话草稿" })).toHaveValue(
-      "保留中的问题",
-    );
+    expect(screen.getByRole("textbox", { name: "会话草稿" })).toHaveValue("");
   });
 
   it("does not treat an assistant-prefixed portal route as the workspace", () => {
@@ -458,7 +496,7 @@ describe("AssistantExperienceProvider", () => {
     expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("quick");
   });
 
-  it("closes synchronously on ordinary pathname changes without clearing the session or restoring old focus", async () => {
+  it("closes synchronously on pathname changes, clears memory, and does not restore old focus", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockImplementation(async () =>
@@ -504,10 +542,8 @@ describe("AssistantExperienceProvider", () => {
     );
 
     expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("closed");
-    expect(screen.getByRole("textbox", { name: "会话草稿" })).toHaveValue(
-      "跨页保留草稿",
-    );
-    expect(screen.getByLabelText("会话消息")).toHaveTextContent("跨页保留回答");
+    expect(screen.getByRole("textbox", { name: "会话草稿" })).toHaveValue("");
+    expect(screen.getByLabelText("会话消息")).toBeEmptyDOMElement();
     expect(launcherFocus).not.toHaveBeenCalled();
     await act(async () => {
       await Promise.resolve();

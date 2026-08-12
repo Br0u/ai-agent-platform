@@ -91,77 +91,45 @@ describePostgres("assistant PostgreSQL rate limiter", () => {
     expect(row.rows).toEqual([{ count: 5 }]);
   });
 
-  it("rolls back the new session bucket when the stable IP bucket rejects", async () => {
-    const value = limiter(1);
-    await value.consume({
-      scope: "anonymous",
-      sessionId: "old-session",
-      ipAddress: "203.0.113.10",
-    });
+  it("allows five direct-global requests, blocks the sixth, and resets", async () => {
+    const value = limiter();
+    const input = { scope: "anonymous" as const, global: true as const };
 
-    await expect(
-      value.consume({
-        scope: "anonymous",
-        sessionId: "rotated-session",
-        ipAddress: "203.0.113.10",
-      }),
-    ).rejects.toBeInstanceOf(AssistantRateLimitExceededError);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await expect(value.consume(input)).resolves.toBeUndefined();
+    }
+    await expect(value.consume(input)).rejects.toBeInstanceOf(
+      AssistantRateLimitExceededError,
+    );
+    now += 60_000;
+    await expect(value.consume(input)).resolves.toBeUndefined();
 
     const rows = await pool.query<{ count: number; key: string }>(
-      "SELECT key, count FROM rate_limits WHERE key LIKE 'assistant:anonymous:%' ORDER BY key",
+      "SELECT key, count FROM rate_limits WHERE key LIKE 'assistant:anonymous:%'",
     );
-    expect(rows.rows).toEqual(
-      [
-        ["ip", "203.0.113.10", 1],
-        ["session", "old-session", 1],
-      ]
-        .map(([kind, raw, count]) => ({
-          key: assistantRateLimitKey(
-            SECRET,
-            "anonymous",
-            kind as "ip" | "session",
-            raw as string,
-          ),
-          count,
-        }))
-        .sort((left, right) => left.key.localeCompare(right.key)),
-    );
+    expect(rows.rows).toEqual([
+      {
+        key: assistantRateLimitKey(SECRET, "anonymous", "global", "direct"),
+        count: 1,
+      },
+    ]);
+    expect(rows.rows[0]?.key).not.toMatch(/session|203\.0\.113/u);
   });
 
-  it("does not increment an IP bucket when the session bucket rejects first", async () => {
-    const value = limiter(1);
-    await value.consume({
-      scope: "anonymous",
-      sessionId: "limited-session",
-      ipAddress: "203.0.113.20",
-    });
-    await expect(
-      value.consume({
-        scope: "anonymous",
-        sessionId: "limited-session",
-        ipAddress: "203.0.113.21",
-      }),
-    ).rejects.toBeInstanceOf(AssistantRateLimitExceededError);
+  it("stores only the HMAC of a trusted client IP", async () => {
+    const ipAddress = "203.0.113.20";
+    await limiter().consume({ scope: "anonymous", ipAddress });
 
-    const rows = await pool.query<{ count: number; key: string }>(
-      "SELECT key, count FROM rate_limits WHERE key LIKE 'assistant:anonymous:%' ORDER BY key",
+    const rows = await pool.query<{ key: string }>(
+      "SELECT key FROM rate_limits WHERE key LIKE 'assistant:anonymous:%'",
     );
-    expect(rows.rows).toEqual(
-      [
-        ["ip", "203.0.113.20", 1],
-        ["session", "limited-session", 1],
-      ]
-        .map(([kind, raw, count]) => ({
-          key: assistantRateLimitKey(
-            SECRET,
-            "anonymous",
-            kind as "ip" | "session",
-            raw as string,
-          ),
-          count,
-        }))
-        .sort((left, right) => left.key.localeCompare(right.key)),
-    );
+    expect(rows.rows).toEqual([
+      {
+        key: assistantRateLimitKey(SECRET, "anonymous", "ip", ipAddress),
+      },
+    ]);
+    expect(rows.rows[0]?.key).not.toContain(ipAddress);
+    expect(rows.rows[0]?.key).not.toContain("session");
   });
 
   it("resets a fixed window and returns a bounded retry duration", async () => {
@@ -179,7 +147,7 @@ describePostgres("assistant PostgreSQL rate limiter", () => {
     const expired = now - 25 * 60 * 60 * 1_000;
     await pool.query(
       `INSERT INTO rate_limits (key, count, last_request)
-       SELECT 'assistant:anonymous:session:expired-' || value, 1, $1
+       SELECT 'assistant:anonymous:ip:expired-' || value, 1, $1
        FROM generate_series(1, 150) AS value`,
       [expired],
     );

@@ -16,8 +16,11 @@ export type AssistantRateLimitScope =
 export type AssistantRateLimitInput =
   | {
       scope: "anonymous";
-      sessionId: string;
-      ipAddress?: string;
+      ipAddress: string;
+    }
+  | {
+      scope: "anonymous";
+      global: true;
     }
   | {
       scope: "customer" | "admin-test" | "admin-key-reveal";
@@ -41,6 +44,9 @@ export const ASSISTANT_RATE_LIMIT_QUOTAS: Readonly<
   "admin-test": { maximumAttempts: 20, windowMs: 60_000 },
   "admin-key-reveal": { maximumAttempts: 5, windowMs: 10 * 60_000 },
 };
+
+export const ASSISTANT_DIRECT_GLOBAL_RATE_LIMIT_QUOTA: Readonly<AssistantRateLimitQuota> =
+  { maximumAttempts: 5, windowMs: 60_000 };
 
 export const ASSISTANT_RATE_LIMIT_CLEANUP_BATCH_SIZE = 100;
 export const ASSISTANT_RATE_LIMIT_RETENTION_MS = 24 * 60 * 60 * 1_000;
@@ -81,7 +87,7 @@ export function buildAssistantRateLimitCleanupQuery(cutoff: number) {
 export function assistantRateLimitKey(
   secret: string,
   scope: AssistantRateLimitScope,
-  kind: "session" | "ip" | "actor",
+  kind: "ip" | "global" | "actor",
   value: string,
 ): string {
   const digest = createHmac("sha256", secret)
@@ -131,10 +137,9 @@ function keysForInput(
 ): string[] {
   if (input.scope === "anonymous") {
     return [
-      assistantRateLimitKey(secret, input.scope, "session", input.sessionId),
-      ...(input.ipAddress
-        ? [assistantRateLimitKey(secret, input.scope, "ip", input.ipAddress)]
-        : []),
+      "global" in input
+        ? assistantRateLimitKey(secret, input.scope, "global", "direct")
+        : assistantRateLimitKey(secret, input.scope, "ip", input.ipAddress),
     ];
   }
   return [assistantRateLimitKey(secret, input.scope, "actor", input.actorId)];
@@ -165,7 +170,10 @@ export function createDatabaseAssistantRateLimiter(
       if (!Number.isSafeInteger(now) || now < 0) {
         throw new TypeError("Assistant rate limit clock must return epoch ms");
       }
-      const quota = quotas[input.scope];
+      const quota =
+        input.scope === "anonymous" && "global" in input
+          ? ASSISTANT_DIRECT_GLOBAL_RATE_LIMIT_QUOTA
+          : quotas[input.scope];
       const windowStart = now - quota.windowMs;
       const keys = keysForInput(secret, input);
 

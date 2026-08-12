@@ -70,7 +70,7 @@ function runClient(): AgentOSRunClient {
     runAgent,
     runAgentStream: vi.fn(async function* (request) {
       const result = await runAgent(request);
-      yield result.content;
+      yield { type: "answer_delta" as const, content: result.content };
     }),
     deleteSession: vi.fn(async () => undefined),
   };
@@ -183,6 +183,71 @@ describe("assistant server runtime", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("owns one fixed-public-origin page resolver using the injected fetcher", async () => {
+    const fetcher = vi.fn<typeof fetch>(
+      async () =>
+        new Response("<title>产品</title><main>公开正文</main>", {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+    );
+    const runtime = createAssistantRuntime({
+      environment: VALID_ENVIRONMENT,
+      fetcher,
+    });
+
+    await expect(
+      runtime.pageResolver.load({ pathname: "/product", search: "" }),
+    ).resolves.toMatchObject({
+      pathname: "/product",
+      search: "",
+      title: "产品",
+      text: "公开正文",
+      links: [],
+    });
+    expect(fetcher).toHaveBeenCalledExactlyOnceWith(
+      new URL("https://portal.example.com/product"),
+      expect.objectContaining({
+        credentials: "omit",
+        method: "GET",
+        redirect: "manual",
+      }),
+    );
+    expect(fetcher.mock.calls[0]?.[1]).not.toHaveProperty("headers");
+  });
+
+  it("uses the direct-global anonymous identity and ignores spoofed forwarding headers", () => {
+    const runtime = createAssistantRuntime({ environment: VALID_ENVIRONMENT });
+
+    expect(
+      runtime.resolveTrustedClientIp(
+        new Request("https://portal.example.com", {
+          headers: {
+            "x-real-ip": "203.0.113.10",
+            "x-forwarded-for": "198.51.100.4",
+          },
+        }),
+      ),
+    ).toEqual({ mode: "direct_global" });
+  });
+
+  it("fails closed when trusted proxy mode omits or corrupts X-Real-IP", () => {
+    const runtime = createAssistantRuntime({
+      environment: { ...VALID_ENVIRONMENT, TRUST_NGINX_PROXY: "true" },
+    });
+
+    expect(
+      runtime.resolveTrustedClientIp(new Request("https://portal.example.com")),
+    ).toEqual({ mode: "invalid_proxy" });
+    expect(
+      runtime.resolveTrustedClientIp(
+        new Request("https://portal.example.com", {
+          headers: { "x-real-ip": "203.0.113.10, 198.51.100.4" },
+        }),
+      ),
+    ).toEqual({ mode: "invalid_proxy" });
+  });
+
   it("constructs one health client and one shared run client with the exact run timeout", async () => {
     const healthClient = availableHealthClient();
     const sharedRunClient = runClient();
@@ -206,7 +271,13 @@ describe("assistant server runtime", () => {
     await runtime.status();
     const selected = await runtime.resolveProvider();
     await selected.provider.reply({
-      request: { message: "问题", context: { pathname: "/docs" } },
+      request: {
+        version: "2",
+        message: "问题",
+        history: [],
+        page: { pathname: "/docs", search: "" },
+      },
+      pageContext: null,
     });
     expect(sharedRunClient.deleteSession).not.toHaveBeenCalled();
     await runtime.deleteSession("shared-session");
@@ -353,7 +424,13 @@ describe("assistant server runtime", () => {
         }),
     });
     const invocation = {
-      request: { message: "问题", context: { pathname: "/" } },
+      request: {
+        version: "2" as const,
+        message: "问题",
+        history: [],
+        page: { pathname: "/", search: "" },
+      },
+      pageContext: null,
     };
 
     const initialSelection = await runtime.resolveProvider();
@@ -412,7 +489,13 @@ describe("assistant server runtime", () => {
     });
     const selected = await runtime.resolveProvider();
     const invocation = {
-      request: { message: "问题", context: { pathname: "/" } },
+      request: {
+        version: "2" as const,
+        message: "问题",
+        history: [],
+        page: { pathname: "/", search: "" },
+      },
+      pageContext: null,
     };
 
     for (let attempt = 0; attempt < 3; attempt += 1) {

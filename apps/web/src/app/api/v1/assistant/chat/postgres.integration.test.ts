@@ -48,8 +48,10 @@ function chatRequest(cookie?: string) {
       ...(cookie ? { cookie } : {}),
     },
     body: JSON.stringify({
+      version: "2",
       message: "如何开始了解平台？",
-      context: { pathname: "/" },
+      history: [],
+      page: null,
     }),
   });
 }
@@ -105,6 +107,7 @@ describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
       }),
       loadInputPolicy: () =>
         createAssistantInputPolicyRepository(database).load(),
+      pageResolver: { load: vi.fn(async () => null) },
       resolveTrustedClientIp: (request) =>
         resolveTrustedClientIp(request.headers, true),
     });
@@ -138,9 +141,12 @@ describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
     for (const [invocation] of reply.mock.calls) {
       expect(invocation).toMatchObject({
         request: {
+          version: "2",
           message: "如何开始了解平台？",
-          context: { pathname: "/" },
+          history: [],
+          page: null,
         },
+        pageContext: null,
         signal: expect.any(AbortSignal),
       });
       expect(invocation).not.toHaveProperty("session");
@@ -163,10 +169,16 @@ describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
        WHERE key LIKE 'assistant:anonymous:session:%'
        ORDER BY count DESC`,
     );
-    expect(sessionBuckets.rows).toEqual([{ count: 2 }, { count: 1 }]);
+    expect(sessionBuckets.rows).toEqual([]);
     const allBuckets = await pool.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM rate_limits WHERE key LIKE 'assistant:%'",
     );
-    expect(allBuckets.rows).toEqual([{ count: "3" }]);
+    expect(allBuckets.rows).toEqual([{ count: "1" }]);
+    const storedKeys = await pool.query<{ key: string }>(
+      "SELECT key FROM rate_limits WHERE key LIKE 'assistant:%'",
+    );
+    expect(storedKeys.rows[0]?.key).not.toMatch(
+      /203\.0\.113\.40|internal|session/u,
+    );
   });
 });

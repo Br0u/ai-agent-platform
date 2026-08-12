@@ -8,6 +8,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ASSISTANT_CHAT_REQUEST_MAX_BYTES } from "@/features/assistant/assistant-contract";
 import {
   ASSISTANT_REQUEST_TIMEOUT_MS,
   useAssistantSession,
@@ -29,10 +30,13 @@ const success = (
     { status: 200 },
   );
 
+const streamFrame = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`;
+
 describe("useAssistantSession", () => {
   beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
   afterEach(() => {
     cleanup();
+    window.history.replaceState(null, "", "/");
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -150,8 +154,9 @@ describe("useAssistantSession", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("trims a valid Unicode message and sends the current pathname", async () => {
+  it("sends the exact V2 request with the current pathname and search", async () => {
     vi.mocked(fetch).mockResolvedValue(success("回答"));
+    window.history.replaceState(null, "", "/pricing?edition=enterprise");
     const { result } = renderHook(() => useAssistantSession("/pricing"));
 
     act(() => result.current.setDraft("  你好 👋  "));
@@ -163,8 +168,10 @@ describe("useAssistantSession", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          version: "2",
           message: "你好 👋",
-          context: { pathname: "/pricing" },
+          history: [],
+          page: { pathname: "/pricing", search: "?edition=enterprise" },
         }),
       }),
     );
@@ -176,6 +183,155 @@ describe("useAssistantSession", () => {
     ]);
     expect(result.current.draft).toBe("");
     expect(result.current.latestAnnouncement).toBe("回答");
+  });
+
+  it("sends only the last six complete turns in chronological order", async () => {
+    vi.mocked(fetch).mockImplementation(async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { message: string };
+      return success(`${request.message}的回答`);
+    });
+    const { result } = renderHook(() => useAssistantSession("/pricing"));
+
+    for (let index = 0; index < 7; index += 1) {
+      await act(() => result.current.submit(`问题${index}`));
+    }
+    await act(() => result.current.submit("当前问题"));
+
+    const body = JSON.parse(
+      String(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.body),
+    ) as { history: Array<{ role: string; content: string }> };
+    expect(body.history).toEqual(
+      Array.from({ length: 6 }, (_, offset) => offset + 1).flatMap((index) => [
+        { role: "user", content: `问题${index}` },
+        { role: "assistant", content: `问题${index}的回答` },
+      ]),
+    );
+  });
+
+  it("trims whole newest turns to every history and encoded-body bound", async () => {
+    vi.mocked(fetch).mockImplementation(async () =>
+      success("界".repeat(9_000)),
+    );
+    const { result } = renderHook(() => useAssistantSession("/pricing"));
+
+    for (let index = 0; index < 7; index += 1) {
+      await act(() => result.current.submit(`问题${index}`));
+    }
+
+    const encoded = String(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.body);
+    const body = JSON.parse(encoded) as {
+      history: Array<{ role: "user" | "assistant"; content: string }>;
+    };
+    expect(new TextEncoder().encode(encoded).byteLength).toBeLessThanOrEqual(
+      ASSISTANT_CHAT_REQUEST_MAX_BYTES,
+    );
+    expect(body.history.length).toBeLessThanOrEqual(12);
+    expect(body.history).toHaveLength(4);
+    expect(body.history.length % 2).toBe(0);
+    expect(
+      body.history.reduce(
+        (total, message) => total + Array.from(message.content).length,
+        0,
+      ),
+    ).toBeLessThanOrEqual(32_000);
+    expect(
+      body.history.every(
+        (message, index) =>
+          message.role === (index % 2 === 0 ? "user" : "assistant") &&
+          Array.from(message.content).length <= 8_000,
+      ),
+    ).toBe(true);
+    expect(body.history.at(-1)?.content).toBe("界".repeat(8_000));
+  });
+
+  it("drops invalid or non-public page context and reads search at send time", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(success("第一次"))
+      .mockResolvedValueOnce(success("第二次"))
+      .mockResolvedValueOnce(success("第三次"));
+    window.history.replaceState(null, "", "/admin/assistant?first=1");
+    const { result, rerender } = renderHook(
+      ({ pathname }) => useAssistantSession(pathname),
+      { initialProps: { pathname: "/admin/assistant" } },
+    );
+
+    await act(() => result.current.submit("后台页面"));
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body)).page,
+    ).toBeNull();
+
+    rerender({ pathname: "/pricing" });
+    window.history.replaceState(null, "", `/pricing?${"q".repeat(1_025)}`);
+    await act(() => result.current.submit("过长查询"));
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[1]?.[1]?.body)).page,
+    ).toBeNull();
+
+    window.history.replaceState(null, "", "/pricing?second=2");
+    await act(() => result.current.submit("最新查询"));
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[2]?.[1]?.body)).page,
+    ).toEqual({ pathname: "/pricing", search: "?second=2" });
+  });
+
+  it("preserves a bounded normalized Unicode pathname", async () => {
+    vi.mocked(fetch).mockResolvedValue(success("回答"));
+    const { result } = renderHook(() =>
+      useAssistantSession("/solutions/知识库"),
+    );
+
+    await act(() => result.current.submit("页面问题"));
+
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body)).page,
+    ).toEqual({ pathname: "/solutions/知识库", search: "" });
+  });
+
+  it("accepts pathname and search at their exact bounds and drops either overrun", async () => {
+    vi.mocked(fetch).mockResolvedValue(success("回答"));
+    const pathnameAtLimit = `/solutions/${"a".repeat(245)}`;
+    const { result, rerender } = renderHook(
+      ({ pathname }) => useAssistantSession(pathname),
+      { initialProps: { pathname: pathnameAtLimit } },
+    );
+    window.history.replaceState(null, "", `/pricing?${"q".repeat(1_023)}`);
+
+    await act(() => result.current.submit("边界"));
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body)).page,
+    ).toEqual({
+      pathname: pathnameAtLimit,
+      search: `?${"q".repeat(1_023)}`,
+    });
+
+    rerender({ pathname: `${pathnameAtLimit}a` });
+    await act(() => result.current.submit("路径超限"));
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[1]?.[1]?.body)).page,
+    ).toBeNull();
+
+    rerender({ pathname: "/pricing" });
+    window.history.replaceState(null, "", `/pricing?${"q".repeat(1_024)}`);
+    await act(() => result.current.submit("查询超限"));
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[2]?.[1]?.body)).page,
+    ).toBeNull();
+  });
+
+  it("uses the current search when explicitly retrying a failed request", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(success("恢复"));
+    window.history.replaceState(null, "", "/pricing?before=1");
+    const { result } = renderHook(() => useAssistantSession("/pricing"));
+
+    await act(() => result.current.submit("重试搜索"));
+    window.history.replaceState(null, "", "/pricing?after=2");
+    await act(() => result.current.retry());
+
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[1]?.[1]?.body)).page,
+    ).toEqual({ pathname: "/pricing", search: "?after=2" });
   });
 
   it("renders SSE deltas before the assistant response completes", async () => {
@@ -200,8 +356,39 @@ describe("useAssistantSession", () => {
     await act(async () => {
       controller.enqueue(
         encoder.encode(
-          'event: start\ndata: {"version":"1","requestId":"stream-1","mode":"agentos","session":{"temporary":true,"expiresAt":"2026-07-13T12:00:00.000Z"},"message":{"id":"message-1","role":"assistant"},"suggestedActions":[]}\n\n' +
-            'event: delta\ndata: {"content":"第一段"}\n\n',
+          streamFrame({
+            type: "activity",
+            phase: "analyzing",
+            label: "正在分析问题",
+          }),
+        ),
+      );
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(result.current.messages.at(-1)).toMatchObject({
+        role: "assistant",
+        content: "",
+        activities: [
+          { type: "activity", phase: "analyzing", label: "正在分析问题" },
+        ],
+      }),
+    );
+    expect(result.current.requestStatus).toBe("sending");
+
+    await act(async () => {
+      controller.enqueue(
+        encoder.encode(
+          streamFrame({ type: "answer_delta", content: "第一段" }) +
+            streamFrame({
+              type: "action",
+              action: {
+                kind: "navigate",
+                pathname: "/pricing",
+                label: "价格与服务",
+              },
+            }),
         ),
       );
       await Promise.resolve();
@@ -220,8 +407,8 @@ describe("useAssistantSession", () => {
     await act(async () => {
       controller.enqueue(
         encoder.encode(
-          'event: delta\ndata: {"content":"第二段"}\n\n' +
-            "event: done\ndata: {}\n\n",
+          streamFrame({ type: "answer_delta", content: "第二段" }) +
+            streamFrame({ type: "done" }),
         ),
       );
       controller.close();
@@ -230,10 +417,22 @@ describe("useAssistantSession", () => {
 
     expect(result.current.requestStatus).toBe("idle");
     expect(result.current.messages.at(-1)?.content).toBe("第一段第二段");
+    expect(result.current.messages.at(-1)).toMatchObject({
+      activities: [
+        { type: "activity", phase: "analyzing", label: "正在分析问题" },
+      ],
+      actions: [
+        {
+          kind: "navigate",
+          pathname: "/pricing",
+          label: "价格与服务",
+        },
+      ],
+    });
     expect(result.current.latestAnnouncement).toBe("第一段第二段");
   });
 
-  it("renews the request idle timeout whenever the response stream advances", async () => {
+  it("keeps one absolute deadline even while response chunks keep arriving", async () => {
     vi.useFakeTimers();
     const encoder = new TextEncoder();
     let controller!: ReadableStreamDefaultController<Uint8Array>;
@@ -256,24 +455,31 @@ describe("useAssistantSession", () => {
       pending = result.current.submit("持续输出");
     });
     await act(async () => {
+      await vi.advanceTimersByTimeAsync(40);
       controller.enqueue(
         encoder.encode(
-          'event: start\ndata: {"version":"1","requestId":"stream-idle","mode":"agentos","session":{"temporary":true,"expiresAt":"2026-07-13T12:00:00.000Z"},"message":{"id":"message-idle","role":"assistant"},"suggestedActions":[]}\n\n' +
-            'event: delta\ndata: {"content":"第一段"}\n\n',
+          streamFrame({ type: "answer_delta", content: "第一段" }),
         ),
       );
-      await vi.advanceTimersByTimeAsync(75);
+      await vi.advanceTimersByTimeAsync(40);
       controller.enqueue(
-        encoder.encode('event: delta\ndata: {"content":"第二段"}\n\n'),
+        encoder.encode(
+          streamFrame({ type: "answer_delta", content: "第二段" }),
+        ),
       );
-      await vi.advanceTimersByTimeAsync(75);
-      controller.enqueue(encoder.encode("event: done\ndata: {}\n\n"));
-      controller.close();
+      await vi.advanceTimersByTimeAsync(19);
+    });
+    expect(result.current.requestStatus).toBe("sending");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
       await pending;
     });
 
-    expect(result.current.requestStatus).toBe("idle");
+    expect(result.current.requestStatus).toBe("failed");
     expect(result.current.messages.at(-1)?.content).toBe("第一段第二段");
+    expect(result.current.messages.at(-1)).toMatchObject({ incomplete: true });
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("retains and marks a partial SSE answer when the stream fails", async () => {
@@ -299,8 +505,7 @@ describe("useAssistantSession", () => {
     await act(async () => {
       controller.enqueue(
         encoder.encode(
-          'event: start\ndata: {"version":"1","requestId":"stream-2","mode":"agentos","session":{"temporary":true,"expiresAt":"2026-07-13T12:00:00.000Z"},"message":{"id":"message-2","role":"assistant"},"suggestedActions":[]}\n\n' +
-            'event: delta\ndata: {"content":"不完整回答"}\n\n',
+          streamFrame({ type: "answer_delta", content: "不完整回答" }),
         ),
       );
       await Promise.resolve();
@@ -310,7 +515,15 @@ describe("useAssistantSession", () => {
     );
 
     await act(async () => {
-      controller.enqueue(encoder.encode("event: error\ndata: {}\n\n"));
+      controller.enqueue(
+        encoder.encode(
+          streamFrame({
+            type: "error",
+            code: "stream_interrupted",
+            message: "不可信内部错误",
+          }),
+        ),
+      );
       controller.close();
       await pending;
     });
@@ -323,6 +536,8 @@ describe("useAssistantSession", () => {
         role: "assistant",
         content: "不完整回答",
         suggestedActions: [],
+        activities: [],
+        actions: [],
         incomplete: true,
       },
     ]);
@@ -331,6 +546,59 @@ describe("useAssistantSession", () => {
       "发送失败，请重试或使用帮助中心或商务咨询。",
     );
     expect(result.current.latestAnnouncement).not.toContain("private");
+  });
+
+  it("rejects malformed structured frames without exposing their fields", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        streamFrame({
+          type: "activity",
+          phase: "analyzing",
+          label: "正在分析问题",
+          reasoning: "private chain of thought",
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+    );
+    const { result } = renderHook(() => useAssistantSession("/pricing"));
+
+    await act(() => result.current.submit("异常流"));
+
+    expect(result.current.requestStatus).toBe("failed");
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.latestAnnouncement).toBe(
+      "发送失败，请重试或使用帮助中心或商务咨询。",
+    );
+    expect(result.current.latestAnnouncement).not.toMatch(/private|thought/u);
+  });
+
+  it("excludes an incomplete turn while retaining a newer completed retry", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        new Response(
+          streamFrame({ type: "answer_delta", content: "未完成" }) +
+            streamFrame({
+              type: "error",
+              code: "stream_interrupted",
+              message: "回答中断，请重试。",
+            }),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      )
+      .mockResolvedValueOnce(success("重试完成"))
+      .mockResolvedValueOnce(success("下一轮回答"));
+    const { result } = renderHook(() => useAssistantSession("/pricing"));
+
+    await act(() => result.current.submit("原问题"));
+    await act(() => result.current.retry());
+    await act(() => result.current.submit("下一轮"));
+
+    expect(
+      JSON.parse(String(vi.mocked(fetch).mock.calls[2]?.[1]?.body)).history,
+    ).toEqual([
+      { role: "user", content: "原问题" },
+      { role: "assistant", content: "重试完成" },
+    ]);
   });
 
   it("stores only internal single-slash suggested actions", async () => {
@@ -416,7 +684,7 @@ describe("useAssistantSession", () => {
     });
   });
 
-  it("keeps an active request alive across pathname changes", async () => {
+  it("cancels an active request and clears all page memory on pathname changes", async () => {
     let resolve!: (response: Response) => void;
     vi.mocked(fetch).mockReturnValue(new Promise((done) => (resolve = done)));
     const { result, rerender } = renderHook(
@@ -432,27 +700,23 @@ describe("useAssistantSession", () => {
 
     rerender({ pathname: "/assistant" });
 
-    expect(result.current.requestStatus).toBe("sending");
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(result.current.requestStatus).toBe("idle");
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.draft).toBe("");
+    expect(result.current.lastFailedMessage).toBeNull();
+    expect(result.current.latestAnnouncement).toBe("");
+    expect(result.current.validationError).toBeNull();
     expect(
       JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body)),
     ).toEqual({
+      version: "2",
       message: "跨路由问题",
-      context: { pathname: "/pricing" },
+      history: [],
+      page: { pathname: "/pricing", search: "" },
     });
-
-    await act(async () => {
-      resolve(success("跨路由回答"));
-      await pending;
-    });
-
-    expect(result.current.requestStatus).toBe("idle");
-    expect(
-      result.current.messages.map(({ role, content }) => [role, content]),
-    ).toEqual([
-      ["user", "跨路由问题"],
-      ["assistant", "跨路由回答"],
-    ]);
+    await act(async () => resolve(success("已取消回答")));
+    await pending;
+    expect(result.current.messages).toEqual([]);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -471,13 +735,13 @@ describe("useAssistantSession", () => {
     );
   });
 
-  it("parses the canonical session expiry from a successful response", async () => {
+  it("does not expose legacy session expiry state", async () => {
     vi.mocked(fetch).mockResolvedValue(success("回答"));
     const { result } = renderHook(() => useAssistantSession("/assistant"));
 
     await act(() => result.current.submit("会话何时过期"));
 
-    expect(result.current.sessionExpiresAt).toBe("2026-07-13T12:00:00.000Z");
+    expect(result.current).not.toHaveProperty("sessionExpiresAt");
   });
 
   it("shows a rate-limit message and never automatically retries POST", async () => {
@@ -710,7 +974,7 @@ describe("useAssistantSession", () => {
     ]);
   });
 
-  it("retries the exact failed request pathname after navigation", async () => {
+  it("clears retry ownership after navigation", async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
       .mockResolvedValueOnce(success("原请求回答"));
@@ -723,22 +987,15 @@ describe("useAssistantSession", () => {
     rerender({ pathname: "/pricing" });
     await act(() => result.current.retry());
 
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(
-      vi
-        .mocked(fetch)
-        .mock.calls.map((call) => JSON.parse(String(call[1]?.body))),
-    ).toEqual([
-      { message: "原请求", context: { pathname: "/docs" } },
-      { message: "原请求", context: { pathname: "/docs" } },
-    ]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(result.current.lastFailedMessage).toBeNull();
   });
 
   it("preserves an edited draft when retrying the previous failed message", async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
       .mockResolvedValueOnce(success("A 的回答"));
-    const { result } = renderHook(() => useAssistantSession("/docs"));
+    const { result } = renderHook(() => useAssistantSession("/pricing"));
     act(() => result.current.setDraft("问题 A"));
     await act(() => result.current.submit());
     act(() => result.current.setDraft("问题 B"));
@@ -747,8 +1004,10 @@ describe("useAssistantSession", () => {
     expect(
       JSON.parse(String(vi.mocked(fetch).mock.calls[1]?.[1]?.body)),
     ).toEqual({
+      version: "2",
       message: "问题 A",
-      context: { pathname: "/docs" },
+      history: [],
+      page: { pathname: "/pricing", search: "" },
     });
     expect(
       result.current.messages.map(({ role, content }) => [role, content]),
@@ -849,6 +1108,23 @@ describe("useAssistantSession", () => {
     render(<Controller />);
     expect(screen.queryByText("旧回答")).not.toBeInTheDocument();
     expect(screen.queryByText("旧问题")).not.toBeInTheDocument();
+  });
+
+  it("keeps page memory only in React and never uses browser storage", async () => {
+    const localGet = vi.spyOn(Storage.prototype, "getItem");
+    const localSet = vi.spyOn(Storage.prototype, "setItem");
+    const localRemove = vi.spyOn(Storage.prototype, "removeItem");
+    vi.mocked(fetch).mockResolvedValue(success("内存回答"));
+    const { result } = renderHook(() => useAssistantSession("/pricing"));
+
+    await act(() => result.current.submit("只在内存"));
+
+    expect(localGet).not.toHaveBeenCalled();
+    expect(localSet).not.toHaveBeenCalled();
+    expect(localRemove).not.toHaveBeenCalled();
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).not.toHaveProperty(
+      "credentials",
+    );
   });
 
   it("ignores an older response after a timeout change gives ownership to a newer request", async () => {

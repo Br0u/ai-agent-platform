@@ -26,7 +26,13 @@ describe("PlaceholderAssistantProvider", () => {
     async (message, reply, actions) => {
       await expect(
         provider.reply({
-          request: { message, context: { pathname: "/pricing" } },
+          request: {
+            version: "2",
+            message,
+            history: [],
+            page: { pathname: "/pricing", search: "" },
+          },
+          pageContext: null,
           signal: AbortSignal.abort(),
         }),
       ).resolves.toEqual({
@@ -40,9 +46,12 @@ describe("PlaceholderAssistantProvider", () => {
     await expect(
       provider.reply({
         request: {
+          version: "2",
           message: "这个功能什么时候上线？",
-          context: { pathname: "/product" },
+          history: [],
+          page: { pathname: "/product", search: "" },
         },
+        pageContext: null,
       }),
     ).resolves.toEqual({
       content: "AI 服务尚未接入。你可以先查看帮助中心或联系商务顾问。",

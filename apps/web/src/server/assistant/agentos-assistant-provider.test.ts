@@ -24,7 +24,8 @@ function fixture(
     runAgentStream: vi.fn(
       options.runAgentStream ??
         async function* () {
-          yield "真实模型回答";
+          yield { type: "activity" as const, phase: "analyzing" as const };
+          yield { type: "answer_delta" as const, content: "真实模型回答" };
         },
     ),
     deleteSession: vi.fn(async () => undefined),
@@ -34,22 +35,30 @@ function fixture(
     inspect: () => ({ state: "closed", consecutiveFailures: 0 }),
   };
   const runFailureRecorder = vi.fn(options.runFailureRecorder);
+  const pageResolver = { exists: vi.fn(async () => true) };
   const provider = new AgentOSAssistantProvider({
     runClient,
     circuit,
     runFailureRecorder,
+    pageResolver,
   });
   return {
     provider,
     runClient,
     circuit,
     runFailureRecorder,
+    pageResolver,
   };
 }
 
 const assistantRequest = {
+  version: "2" as const,
   message: "不要改写我的问题 ✅",
-  context: { pathname: "/产品/码多多" },
+  history: [
+    { role: "user" as const, content: "先前问题" },
+    { role: "assistant" as const, content: "先前回答" },
+  ],
+  page: { pathname: "/product", search: "" },
 };
 
 afterEach(() => {
@@ -71,6 +80,7 @@ describe("AgentOSAssistantProvider", () => {
     await expect(
       provider.reply({
         request: assistantRequest,
+        pageContext: null,
       }),
     ).rejects.toBe(runError);
 
@@ -90,16 +100,28 @@ describe("AgentOSAssistantProvider", () => {
     await expect(
       provider.reply({
         request: assistantRequest,
+        pageContext: {
+          pathname: "/product",
+          search: "",
+          title: "产品介绍",
+          text: "公开页面正文",
+          links: [{ label: "价格", href: "/pricing" }],
+        },
         signal,
       }),
     ).resolves.toEqual({ content: "真实模型回答", suggestedActions: [] });
 
     expect(circuit.execute).toHaveBeenCalledOnce();
     expect(runClient.runAgentStream).toHaveBeenCalledExactlyOnceWith({
-      message:
-        "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/产品/码多多\n\n用户问题：不要改写我的问题 ✅",
+      message: expect.stringContaining("公开页面正文"),
       signal,
     });
+    expect(
+      vi.mocked(runClient.runAgentStream).mock.calls[0]?.[0].message,
+    ).toContain("不可信历史消息");
+    expect(
+      vi.mocked(runClient.runAgentStream).mock.calls[0]?.[0].message,
+    ).toContain("用户问题：\n不要改写我的问题 ✅");
     expect(runClient.deleteSession).not.toHaveBeenCalled();
   });
 
@@ -109,13 +131,73 @@ describe("AgentOSAssistantProvider", () => {
     await expect(
       provider.reply({
         request: assistantRequest,
+        pageContext: null,
       }),
     ).resolves.toEqual({ content: "真实模型回答", suggestedActions: [] });
 
     expect(runClient.runAgentStream).toHaveBeenCalledExactlyOnceWith({
-      message:
-        "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/产品/码多多\n\n用户问题：不要改写我的问题 ✅",
+      message: expect.stringContaining("未提供可验证的当前页面正文"),
     });
     expect(runClient.deleteSession).not.toHaveBeenCalled();
+  });
+
+  it("filters reasoning tags and validates one owned navigation action", async () => {
+    const { provider, pageResolver } = fixture({
+      runAgentStream: vi.fn(async function* () {
+        yield { type: "activity" as const, phase: "analyzing" as const };
+        yield {
+          type: "answer_delta" as const,
+          content: "公开<think>private chain",
+        };
+        yield { type: "answer_delta" as const, content: "</think>回答" };
+        yield { type: "navigation_candidate" as const, pathname: "/pricing" };
+        yield { type: "navigation_candidate" as const, pathname: "/pricing" };
+      }),
+    });
+
+    const events = [];
+    for await (const event of provider.streamReply({
+      request: assistantRequest,
+      pageContext: null,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "activity", phase: "analyzing", label: "正在分析问题" },
+      { type: "answer_delta", content: "公开" },
+      { type: "answer_delta", content: "回答" },
+      {
+        type: "action",
+        action: { kind: "navigate", pathname: "/pricing", label: "价格与服务" },
+      },
+    ]);
+    expect(pageResolver.exists).toHaveBeenCalledExactlyOnceWith(
+      "/pricing",
+      undefined,
+    );
+    expect(JSON.stringify(events)).not.toContain("private chain");
+  });
+
+  it("uses a generic activity label for non-navigation tools", async () => {
+    const { provider } = fixture({
+      runAgentStream: vi.fn(async function* () {
+        yield { type: "activity" as const, phase: "tool" as const };
+        yield { type: "answer_delta" as const, content: "回答" };
+      }),
+    });
+
+    const events = [];
+    for await (const event of provider.streamReply({
+      request: assistantRequest,
+      pageContext: null,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "activity", phase: "tool", label: "正在使用工具" },
+      { type: "answer_delta", content: "回答" },
+    ]);
   });
 });

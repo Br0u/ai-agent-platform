@@ -43,8 +43,16 @@ export function parseTrustedClientIp(value: string): string {
 export function resolveTrustedClientIp(
   headers: Headers,
   trustNginxProxy: boolean,
-): string | undefined {
-  if (!trustNginxProxy) return undefined;
+):
+  | { mode: "trusted"; ipAddress: string }
+  | { mode: "direct_global" }
+  | { mode: "invalid_proxy" } {
+  if (!trustNginxProxy) return { mode: "direct_global" };
   const value = headers.get("x-real-ip");
-  return value === null ? undefined : parseTrustedClientIp(value);
+  if (value === null) return { mode: "invalid_proxy" };
+  try {
+    return { mode: "trusted", ipAddress: parseTrustedClientIp(value) };
+  } catch {
+    return { mode: "invalid_proxy" };
+  }
 }

@@ -21,7 +21,6 @@ function createSession(
     requestStatus: "idle",
     lastFailedMessage: null,
     validationError: null,
-    sessionExpiresAt: null,
     setDraft: vi.fn(),
     submit: vi.fn(async () => undefined),
     retry: vi.fn(async () => undefined),
@@ -58,6 +57,8 @@ describe("AssistantConversation", () => {
           role: "assistant",
           content: "已收到的部分内容",
           suggestedActions: [],
+          activities: [],
+          actions: [],
           incomplete: true,
         },
       ],
@@ -86,6 +87,8 @@ describe("AssistantConversation", () => {
           role: "assistant",
           content: "请先查看部署指南。",
           suggestedActions: [{ label: "部署指南", href: "/docs/deployment" }],
+          activities: [],
+          actions: [],
         },
       ],
     });
@@ -120,6 +123,8 @@ describe("AssistantConversation", () => {
           content:
             "## 什么是 NPU？\n\n**NPU** 是 AI 加速器。\n\n| 项目 | 说明 |\n| --- | --- |\n| 用途 | 推理 |\n\n[查看资料](https://example.com/docs) [不安全链接](javascript:alert(1))\n\n<img src=x onerror=alert(1)><script>alert(1)</script>",
           suggestedActions: [],
+          activities: [],
+          actions: [],
         },
       ],
     });
@@ -315,6 +320,8 @@ describe("AssistantConversation", () => {
               { label: "部署指南", href: "/docs/deployment" },
               { label: "部署指南", href: "/docs/deployment" },
             ],
+            activities: [],
+            actions: [],
           },
         ],
       }),

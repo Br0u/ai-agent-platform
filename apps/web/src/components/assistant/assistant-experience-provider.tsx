@@ -86,7 +86,8 @@ export function AssistantExperienceProvider({
   initialServiceState?: AssistantStatusResponse;
   pathname: string;
 }) {
-  const session = useAssistantSession(pathname);
+  const normalizedPathname = normalizePathname(pathname);
+  const session = useAssistantSession(normalizedPathname);
   const {
     serviceState,
     refreshingServiceState,
@@ -112,7 +113,6 @@ export function AssistantExperienceProvider({
   const pendingQuickFocusVersion = useRef<number | null>(null);
   const composer = useRef<HTMLElement | null>(null);
   const nextSurfaceVersion = useRef(0);
-  const normalizedPathname = normalizePathname(pathname);
   const assistantWorkspace = normalizedPathname === "/assistant";
   const presentationMatchesPath = presentation.pathname === normalizedPathname;
   const surface =

@@ -28,7 +28,11 @@ import {
   parseAssistantStreamFrame,
   type AssistantStreamEvent,
 } from "../src/features/assistant/assistant-stream";
-import { ASSISTANT_CONTENT_MAX_CODE_POINTS } from "../src/features/assistant/assistant-contract";
+import {
+  ASSISTANT_CONTENT_MAX_CODE_POINTS,
+  type AssistantStreamActionEvent,
+  type AssistantStreamActivityEvent,
+} from "../src/features/assistant/assistant-contract";
 import { parseAdminAssistantStatusResponse } from "../src/features/assistant/admin-assistant-contract";
 
 const CHAT_PATH = "/api/v1/assistant/chat";
@@ -37,8 +41,10 @@ const ADMIN_STATUS_PATH = "/api/v1/admin/assistant/status";
 const ADMIN_CHAT_PATH = "/api/v1/admin/assistant/chat";
 const MODEL_CONFIG_PATH = "/api/v1/admin/assistant/model-configs";
 const CHAT_BODY = {
+  version: "2",
   message: "如何开始了解平台？",
-  context: { pathname: "/assistant" },
+  history: [],
+  page: null,
 };
 const INVALID_RESPONSE_SENTINEL = "__aap_e2e_invalid_response__";
 const CONTROL_PROVIDERS = [
@@ -74,12 +80,10 @@ type SafeShape =
   | SafeRule
   | SafeShape[]
   | { [key: string]: SafeShape };
-type AssistantStreamStart = Extract<AssistantStreamEvent, { event: "start" }>;
-type ParsedAssistantStreamResponse = Omit<
-  AssistantStreamStart["data"],
-  "message"
-> & {
-  message: AssistantStreamStart["data"]["message"] & { content: string };
+type ParsedAssistantStreamResponse = {
+  message: { role: "assistant"; content: string };
+  activities: AssistantStreamActivityEvent[];
+  actions: AssistantStreamActionEvent["action"][];
 };
 
 function safeRule(accepts: (value: unknown) => boolean): SafeRule {
@@ -619,16 +623,6 @@ function parseSafeAssistantStreamEvents(
   return events;
 }
 
-function reconstructAssistantStreamResponse(
-  start: AssistantStreamStart,
-  content: string,
-): ParsedAssistantStreamResponse {
-  return {
-    ...start.data,
-    message: { ...start.data.message, content },
-  };
-}
-
 function parseSafeAssistantStream(
   contentType: string | undefined,
   rawStream: string,
@@ -640,49 +634,50 @@ function parseSafeAssistantStream(
     protectedValues,
   );
 
-  let start: Extract<AssistantStreamEvent, { event: "start" }> | undefined;
   const content: string[] = [];
+  const activities: AssistantStreamActivityEvent[] = [];
+  const actions: AssistantStreamActionEvent["action"][] = [];
   let contentCodePoints = 0;
   let done = false;
   for (const event of events) {
-    if (start === undefined) {
-      if (event.event !== "start") {
-        throw new Error("assistant SSE response must begin with start");
-      }
-      start = event;
-      continue;
-    }
     if (done) {
       throw new Error("assistant SSE response contains events after done");
     }
-    if (event.event === "delta") {
-      contentCodePoints += Array.from(event.data.content).length;
+    if (event.type === "answer_delta") {
+      contentCodePoints += Array.from(event.content).length;
       if (contentCodePoints > ASSISTANT_CONTENT_MAX_CODE_POINTS) {
         throw new Error("assistant SSE response exceeds the content limit");
       }
-      content.push(event.data.content);
+      content.push(event.content);
       continue;
     }
-    if (event.event === "done") {
+    if (event.type === "activity") {
+      activities.push(event);
+      continue;
+    }
+    if (event.type === "action") {
+      actions.push(event.action);
+      continue;
+    }
+    if (event.type === "done") {
       done = true;
       continue;
     }
-    if (event.event === "error") {
+    if (event.type === "error") {
       throw new Error("assistant SSE response contains an error event");
     }
     throw new Error("assistant SSE response has an invalid event order");
   }
 
-  if (
-    start === undefined ||
-    content.length === 0 ||
-    content.join("").trim().length === 0 ||
-    !done
-  ) {
+  if (content.length === 0 || content.join("").trim().length === 0 || !done) {
     throw new Error("assistant SSE response is incomplete");
   }
 
-  const response = reconstructAssistantStreamResponse(start, content.join(""));
+  const response: ParsedAssistantStreamResponse = {
+    message: { role: "assistant", content: content.join("") },
+    activities,
+    actions,
+  };
   expectNoProtectedValue(response, protectedValues, rawStream);
   return response;
 }
@@ -697,48 +692,54 @@ function parseSafeAssistantErrorStream(
     rawStream,
     protectedValues,
   );
-  let start: Extract<AssistantStreamEvent, { event: "start" }> | undefined;
   const content: string[] = [];
+  const activities: AssistantStreamActivityEvent[] = [];
+  const actions: AssistantStreamActionEvent["action"][] = [];
   let contentCodePoints = 0;
   let errored = false;
   for (const event of events) {
-    if (start === undefined) {
-      if (event.event !== "start") {
-        throw new Error("assistant SSE error response must begin with start");
-      }
-      start = event;
-      continue;
-    }
     if (errored) {
       throw new Error(
         "assistant SSE error response contains events after error",
       );
     }
-    if (event.event === "delta") {
-      contentCodePoints += Array.from(event.data.content).length;
+    if (event.type === "answer_delta") {
+      contentCodePoints += Array.from(event.content).length;
       if (contentCodePoints > ASSISTANT_CONTENT_MAX_CODE_POINTS) {
         throw new Error(
           "assistant SSE error response exceeds the content limit",
         );
       }
-      content.push(event.data.content);
+      content.push(event.content);
       continue;
     }
-    if (event.event === "error") {
+    if (event.type === "activity") {
+      activities.push(event);
+      continue;
+    }
+    if (event.type === "action") {
+      actions.push(event.action);
+      continue;
+    }
+    if (event.type === "error") {
       errored = true;
       continue;
     }
-    if (event.event === "done") {
+    if (event.type === "done") {
       throw new Error("assistant SSE error response must not contain done");
     }
     throw new Error("assistant SSE error response has an invalid event order");
   }
 
-  if (start === undefined || !errored) {
+  if (!errored) {
     throw new Error("assistant SSE error response is incomplete");
   }
 
-  const response = reconstructAssistantStreamResponse(start, content.join(""));
+  const response: ParsedAssistantStreamResponse = {
+    message: { role: "assistant", content: content.join("") },
+    activities,
+    actions,
+  };
   expectNoProtectedValue(response, protectedValues, rawStream);
   return response;
 }
@@ -1093,25 +1094,23 @@ test.describe("@guard assistant response safety guard", () => {
   });
 
   test("reconstructs only complete safe AgentOS SSE responses", () => {
-    const start = {
-      event: "start" as const,
-      data: {
-        version: "1" as const,
-        requestId: "guard-sse-request",
-        mode: "agentos" as const,
-        session: {
-          temporary: true as const,
-          expiresAt: "2026-08-03T00:00:00.000Z",
-        },
-        message: { id: "guard-sse-message", role: "assistant" as const },
-        suggestedActions: [],
-      },
-    };
-    const done = { event: "done" as const, data: {} };
+    const done = { type: "done" as const };
     const valid = [
-      start,
-      { event: "delta" as const, data: { content: "safe " } },
-      { event: "delta" as const, data: { content: "stream" } },
+      {
+        type: "activity" as const,
+        phase: "analyzing" as const,
+        label: "正在分析问题",
+      },
+      { type: "answer_delta" as const, content: "safe " },
+      { type: "answer_delta" as const, content: "stream" },
+      {
+        type: "action" as const,
+        action: {
+          kind: "navigate" as const,
+          pathname: "/pricing",
+          label: "价格与服务",
+        },
+      },
       done,
     ]
       .map(formatAssistantStreamEvent)
@@ -1125,48 +1124,34 @@ test.describe("@guard assistant response safety guard", () => {
       ),
       "guard SSE reconstruction",
     ).matches({
-      version: "1",
-      requestId: "guard-sse-request",
-      mode: "agentos",
-      session: { temporary: true, expiresAt: "2026-08-03T00:00:00.000Z" },
-      message: {
-        id: "guard-sse-message",
-        role: "assistant",
-        content: "safe stream",
-      },
-      suggestedActions: [],
+      message: { role: "assistant", content: "safe stream" },
+      activities: [
+        { type: "activity", phase: "analyzing", label: "正在分析问题" },
+      ],
+      actions: [
+        { kind: "navigate", pathname: "/pricing", label: "价格与服务" },
+      ],
     });
 
     const invalidStreams = [
-      ["event: start\ndata: not-json\n\n", "invalid frame"],
+      ["data: not-json\n\n", "invalid frame"],
       [valid.trimEnd(), "trailing data"],
-      [
-        formatAssistantStreamEvent({
-          event: "delta",
-          data: { content: "out-of-order" },
-        }),
-        "start",
-      ],
+      [formatAssistantStreamEvent(done), "incomplete"],
       [
         [
-          formatAssistantStreamEvent(start),
-          formatAssistantStreamEvent({ event: "error", data: {} }),
+          formatAssistantStreamEvent({
+            type: "error",
+            code: "stream_interrupted",
+            message: "回答中断，请重试。",
+          }),
         ].join(""),
         "error event",
       ],
       [
         [
-          formatAssistantStreamEvent(start),
-          formatAssistantStreamEvent(done),
-        ].join(""),
-        "incomplete",
-      ],
-      [
-        [
-          formatAssistantStreamEvent(start),
           formatAssistantStreamEvent({
-            event: "delta",
-            data: { content: " \n" },
+            type: "answer_delta",
+            content: " \n",
           }),
           formatAssistantStreamEvent(done),
         ].join(""),
@@ -1174,14 +1159,13 @@ test.describe("@guard assistant response safety guard", () => {
       ],
       [
         [
-          formatAssistantStreamEvent(start),
           formatAssistantStreamEvent({
-            event: "delta",
-            data: { content: "x".repeat(ASSISTANT_CONTENT_MAX_CODE_POINTS) },
+            type: "answer_delta",
+            content: "x".repeat(ASSISTANT_CONTENT_MAX_CODE_POINTS),
           }),
           formatAssistantStreamEvent({
-            event: "delta",
-            data: { content: "y" },
+            type: "answer_delta",
+            content: "y",
           }),
           formatAssistantStreamEvent(done),
         ].join(""),
@@ -1203,10 +1187,9 @@ test.describe("@guard assistant response safety guard", () => {
       parseSafeAssistantStream(
         ASSISTANT_STREAM_MEDIA_TYPE,
         [
-          formatAssistantStreamEvent(start),
           formatAssistantStreamEvent({
-            event: "delta",
-            data: { content: protectedValue },
+            type: "answer_delta",
+            content: protectedValue,
           }),
           formatAssistantStreamEvent(done),
         ].join(""),
@@ -1222,26 +1205,15 @@ test.describe("@guard assistant response safety guard", () => {
   });
 
   test("accepts only a safe terminal AgentOS SSE error stream", () => {
-    const start = {
-      event: "start" as const,
-      data: {
-        version: "1" as const,
-        requestId: "guard-sse-error-request",
-        mode: "agentos" as const,
-        session: {
-          temporary: true as const,
-          expiresAt: "2026-08-03T00:00:00.000Z",
-        },
-        message: { id: "guard-sse-error-message", role: "assistant" as const },
-        suggestedActions: [],
-      },
+    const error = {
+      type: "error" as const,
+      code: "stream_interrupted" as const,
+      message: "回答中断，请重试。",
     };
-    const error = { event: "error" as const, data: {} };
     const rawErrorStream = [
-      formatAssistantStreamEvent(start),
       formatAssistantStreamEvent({
-        event: "delta" as const,
-        data: { content: "started before failure" },
+        type: "answer_delta" as const,
+        content: "started before failure",
       }),
       formatAssistantStreamEvent(error),
     ].join("");
@@ -1254,16 +1226,9 @@ test.describe("@guard assistant response safety guard", () => {
       ),
       "guard SSE error envelope",
     ).matches({
-      version: "1",
-      requestId: "guard-sse-error-request",
-      mode: "agentos",
-      session: { temporary: true, expiresAt: "2026-08-03T00:00:00.000Z" },
-      message: {
-        id: "guard-sse-error-message",
-        role: "assistant",
-        content: "started before failure",
-      },
-      suggestedActions: [],
+      message: { role: "assistant", content: "started before failure" },
+      activities: [],
+      actions: [],
     });
     expect(() =>
       parseSafeAssistantStream(ASSISTANT_STREAM_MEDIA_TYPE, rawErrorStream, []),
@@ -1271,24 +1236,26 @@ test.describe("@guard assistant response safety guard", () => {
 
     const invalidStreams = [
       [
-        [
-          formatAssistantStreamEvent(start),
-          formatAssistantStreamEvent({ event: "done", data: {} }),
-        ].join(""),
+        [formatAssistantStreamEvent({ type: "done" })].join(""),
         "must not contain done",
       ],
       [
         [
-          formatAssistantStreamEvent(start),
           formatAssistantStreamEvent(error),
           formatAssistantStreamEvent({
-            event: "delta",
-            data: { content: "after-error" },
+            type: "answer_delta",
+            content: "after-error",
           }),
         ].join(""),
         "events after error",
       ],
-      [formatAssistantStreamEvent(start), "incomplete"],
+      [
+        formatAssistantStreamEvent({
+          type: "answer_delta",
+          content: "partial",
+        }),
+        "incomplete",
+      ],
     ] as const;
     for (const [invalidRawStream, expectedFailure] of invalidStreams) {
       expect(() =>
@@ -1306,10 +1273,9 @@ test.describe("@guard assistant response safety guard", () => {
       parseSafeAssistantErrorStream(
         ASSISTANT_STREAM_MEDIA_TYPE,
         [
-          formatAssistantStreamEvent(start),
           formatAssistantStreamEvent({
-            event: "delta",
-            data: { content: protectedValue },
+            type: "answer_delta",
+            content: protectedValue,
           }),
           formatAssistantStreamEvent(error),
         ].join(""),
@@ -1326,10 +1292,9 @@ test.describe("@guard assistant response safety guard", () => {
     const forbiddenPartialError = parseSafeAssistantErrorStream(
       ASSISTANT_STREAM_MEDIA_TYPE,
       [
-        formatAssistantStreamEvent(start),
         formatAssistantStreamEvent({
-          event: "delta",
-          data: { content: INVALID_RESPONSE_SENTINEL },
+          type: "answer_delta",
+          content: INVALID_RESPONSE_SENTINEL,
         }),
         formatAssistantStreamEvent(error),
       ].join(""),
@@ -1881,8 +1846,10 @@ test.describe("@agentos deterministic runtime", () => {
 
     const invalidResponse = await context.request.post(CHAT_PATH, {
       data: {
+        version: "2",
         message: INVALID_RESPONSE_SENTINEL,
-        context: { pathname: "/assistant" },
+        history: [],
+        page: null,
       },
     });
     expect(invalidResponse.status()).toBe(200);

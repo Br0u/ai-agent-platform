@@ -36,6 +36,10 @@ import {
   type AssistantRateLimiter,
 } from "./assistant-rate-limit";
 import { placeholderAssistantProvider } from "./placeholder-assistant-provider";
+import {
+  createPublicPageContextResolver,
+  type PublicPageContextResolver,
+} from "./public-page-context";
 import { resolveTrustedClientIp } from "./trusted-client-ip";
 
 type AssistantRuntimeEnvironment = {
@@ -251,6 +255,7 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
     | undefined;
   let sharedRateLimiter: AssistantRateLimiter | undefined;
   let agentos: AgentOSComposition | undefined;
+  let pageResolver: PublicPageContextResolver | undefined;
 
   function getSessionManager() {
     sessionManager ??= createAnonymousSessionManager({
@@ -266,6 +271,16 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
         secret: rateLimitSecret,
       });
     return sharedRateLimiter;
+  }
+
+  function getPageResolver(): PublicPageContextResolver {
+    pageResolver ??= createPublicPageContextResolver({
+      origin: new URL(
+        resolveAnonymousSessionSettings(environment).publicOrigin,
+      ),
+      fetch: options.fetcher ?? globalThis.fetch,
+    });
+    return pageResolver;
   }
 
   function getAgentOSComposition(): AgentOSComposition {
@@ -297,6 +312,7 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
     const provider = new AgentOSAssistantProvider({
       runClient,
       circuit: execution,
+      pageResolver: getPageResolver(),
     });
     agentos = {
       runClient,
@@ -309,6 +325,15 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
   }
 
   return {
+    pageResolver: {
+      load(input: { pathname: string; search: string }, signal?: AbortSignal) {
+        return getPageResolver().load(input, signal);
+      },
+      exists(pathname: string, signal?: AbortSignal) {
+        return getPageResolver().exists(pathname, signal);
+      },
+    } satisfies PublicPageContextResolver,
+
     rateLimiter: {
       consume(input) {
         return getRateLimiter().consume(input);
@@ -326,7 +351,7 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
       };
     },
 
-    resolveTrustedClientIp(request: Request): string | undefined {
+    resolveTrustedClientIp(request: Request) {
       return resolveTrustedClientIp(request.headers, trustNginxProxy);
     },
 

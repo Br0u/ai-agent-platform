@@ -96,7 +96,7 @@ function runClient(runAgent?: AgentOSRunClient["runAgent"]): AgentOSRunClient {
     runAgent: runAgentMock,
     runAgentStream: vi.fn(async function* (request) {
       const result = await runAgentMock(request);
-      yield result.content;
+      yield { type: "answer_delta" as const, content: result.content };
     }),
     deleteSession: vi.fn(async () => undefined),
   };
@@ -781,7 +781,13 @@ describe("GET /api/v1/admin/assistant/status", () => {
     });
     const selected = await realRuntime.resolveProvider();
     const invocation = {
-      request: { message: "问题", context: { pathname: "/" } },
+      request: {
+        version: "2" as const,
+        message: "问题",
+        history: [],
+        page: { pathname: "/", search: "" },
+      },
+      pageContext: null,
     };
     for (let attempt = 0; attempt < 3; attempt += 1) {
       await selected.provider.reply(invocation).catch(() => undefined);

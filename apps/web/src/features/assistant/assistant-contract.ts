@@ -1,8 +1,16 @@
 export interface AssistantRequest {
+  version: "2";
   message: string;
-  context: {
+  history: AssistantHistoryMessage[];
+  page: {
     pathname: string;
-  };
+    search: string;
+  } | null;
+}
+
+export interface AssistantHistoryMessage {
+  role: "user" | "assistant";
+  content: string;
 }
 
 export interface AssistantSuggestedAction {
@@ -11,7 +19,12 @@ export interface AssistantSuggestedAction {
 }
 
 export const ASSISTANT_REQUEST_MESSAGE_MAX_CODE_POINTS = 500;
+export const ASSISTANT_HISTORY_CONTENT_MAX_CODE_POINTS = 8_000;
+export const ASSISTANT_HISTORY_MAX_CODE_POINTS = 32_000;
+export const ASSISTANT_HISTORY_MAX_MESSAGES = 12;
 export const ASSISTANT_PATHNAME_MAX_CODE_POINTS = 256;
+export const ASSISTANT_SEARCH_MAX_CODE_POINTS = 1_024;
+export const ASSISTANT_CHAT_REQUEST_MAX_BYTES = 64 * 1024;
 export const ASSISTANT_REQUEST_ID_MAX_CODE_POINTS = 128;
 export const ASSISTANT_MESSAGE_ID_MAX_CODE_POINTS = 128;
 export const ASSISTANT_CONTENT_MAX_CODE_POINTS = 32_768;
@@ -46,22 +59,42 @@ export interface AssistantSuccessResponse {
   suggestedActions: AssistantSuggestedAction[];
 }
 
-export interface AssistantStreamStartEvent {
-  version: "1";
-  requestId: string;
-  mode: "agentos";
-  session: { temporary: true; expiresAt: string };
-  message: Omit<AssistantResponseMessage, "content">;
-  suggestedActions: AssistantSuggestedAction[];
+export interface AssistantStreamActivityEvent {
+  type: "activity";
+  phase: "reading" | "analyzing" | "tool";
+  label: string;
 }
 
-export interface AssistantStreamDeltaEvent {
+export interface AssistantStreamAnswerDeltaEvent {
+  type: "answer_delta";
   content: string;
 }
 
-export type AssistantStreamDoneEvent = Record<string, never>;
+export interface AssistantStreamActionEvent {
+  type: "action";
+  action: {
+    kind: "navigate";
+    pathname: string;
+    label: string;
+  };
+}
 
-export type AssistantStreamErrorEvent = Record<string, never>;
+export interface AssistantStreamDoneEvent {
+  type: "done";
+}
+
+export interface AssistantStreamErrorEvent {
+  type: "error";
+  code: "stream_interrupted";
+  message: string;
+}
+
+export type AssistantStreamEventData =
+  | AssistantStreamActivityEvent
+  | AssistantStreamAnswerDeltaEvent
+  | AssistantStreamActionEvent
+  | AssistantStreamDoneEvent
+  | AssistantStreamErrorEvent;
 
 export type AssistantErrorCode =
   | "validation_error"
@@ -314,59 +347,59 @@ export function isAssistantSuccessResponse(
   return input.suggestedActions.every(isAssistantSuggestedAction);
 }
 
-export function isAssistantStreamStartEvent(
+export function isAssistantStreamEventData(
   input: unknown,
-): input is AssistantStreamStartEvent {
+): input is AssistantStreamEventData {
+  if (!isRecord(input) || typeof input.type !== "string") return false;
+
+  if (input.type === "activity") {
+    return (
+      hasExactKeys(input, ["type", "phase", "label"]) &&
+      (input.phase === "reading" ||
+        input.phase === "analyzing" ||
+        input.phase === "tool") &&
+      isNonBlankBoundedString(
+        input.label,
+        ASSISTANT_ACTION_LABEL_MAX_CODE_POINTS,
+      )
+    );
+  }
+  if (input.type === "answer_delta") {
+    return (
+      hasExactKeys(input, ["type", "content"]) &&
+      typeof input.content === "string" &&
+      input.content.length > 0 &&
+      hasAtMostCodePoints(input.content, ASSISTANT_CONTENT_MAX_CODE_POINTS)
+    );
+  }
+  if (input.type === "action") {
+    return (
+      hasExactKeys(input, ["type", "action"]) &&
+      isRecord(input.action) &&
+      hasExactKeys(input.action, ["kind", "pathname", "label"]) &&
+      input.action.kind === "navigate" &&
+      typeof input.action.pathname === "string" &&
+      hasAtMostCodePoints(
+        input.action.pathname,
+        ASSISTANT_PATHNAME_MAX_CODE_POINTS,
+      ) &&
+      isNormalizedPathname(input.action.pathname) &&
+      isSafeAssistantActionHref(input.action.pathname) &&
+      isNonBlankBoundedString(
+        input.action.label,
+        ASSISTANT_ACTION_LABEL_MAX_CODE_POINTS,
+      )
+    );
+  }
+  if (input.type === "done") {
+    return hasExactKeys(input, ["type"]);
+  }
   return (
-    isRecord(input) &&
-    hasExactKeys(input, [
-      "version",
-      "requestId",
-      "mode",
-      "session",
-      "message",
-      "suggestedActions",
-    ]) &&
-    input.version === "1" &&
-    isAssistantRequestId(input.requestId) &&
-    input.mode === "agentos" &&
-    isRecord(input.session) &&
-    hasExactKeys(input.session, ["expiresAt", "temporary"]) &&
-    input.session.temporary === true &&
-    typeof input.session.expiresAt === "string" &&
-    isCanonicalIsoDate(input.session.expiresAt) &&
-    isRecord(input.message) &&
-    hasExactKeys(input.message, ["id", "role"]) &&
-    isAssistantMessageId(input.message.id) &&
-    input.message.role === "assistant" &&
-    Array.isArray(input.suggestedActions) &&
-    input.suggestedActions.length <= ASSISTANT_MAX_SUGGESTED_ACTIONS &&
-    input.suggestedActions.every(isAssistantSuggestedAction)
+    input.type === "error" &&
+    hasExactKeys(input, ["type", "code", "message"]) &&
+    input.code === "stream_interrupted" &&
+    isNonBlankBoundedString(input.message, ASSISTANT_CONTENT_MAX_CODE_POINTS)
   );
-}
-
-export function isAssistantStreamDeltaEvent(
-  input: unknown,
-): input is AssistantStreamDeltaEvent {
-  return (
-    isRecord(input) &&
-    hasExactKeys(input, ["content"]) &&
-    typeof input.content === "string" &&
-    input.content.length > 0 &&
-    hasAtMostCodePoints(input.content, ASSISTANT_CONTENT_MAX_CODE_POINTS)
-  );
-}
-
-export function isAssistantStreamDoneEvent(
-  input: unknown,
-): input is AssistantStreamDoneEvent {
-  return isRecord(input) && hasExactKeys(input, []);
-}
-
-export function isAssistantStreamErrorEvent(
-  input: unknown,
-): input is AssistantStreamErrorEvent {
-  return isRecord(input) && hasExactKeys(input, []);
 }
 
 function isCanonicalIsoDate(value: string): boolean {
@@ -377,7 +410,14 @@ function isCanonicalIsoDate(value: string): boolean {
 }
 
 export function parseAssistantRequest(input: unknown): AssistantRequest | null {
-  if (!isRecord(input) || typeof input.message !== "string") return null;
+  if (
+    !isRecord(input) ||
+    !hasExactKeys(input, ["version", "message", "history", "page"]) ||
+    input.version !== "2" ||
+    typeof input.message !== "string"
+  ) {
+    return null;
+  }
 
   const message = input.message.trim();
   if (
@@ -387,15 +427,76 @@ export function parseAssistantRequest(input: unknown): AssistantRequest | null {
     return null;
   }
 
-  if (!isRecord(input.context)) return null;
-  const { pathname } = input.context;
   if (
-    typeof pathname !== "string" ||
-    !hasAtMostCodePoints(pathname, ASSISTANT_PATHNAME_MAX_CODE_POINTS) ||
-    !isNormalizedPathname(pathname)
+    !Array.isArray(input.history) ||
+    input.history.length > ASSISTANT_HISTORY_MAX_MESSAGES ||
+    input.history.length % 2 !== 0
   ) {
     return null;
   }
 
-  return { message, context: { pathname } };
+  let historyCodePoints = 0;
+  const history: AssistantHistoryMessage[] = [];
+  for (const [index, item] of input.history.entries()) {
+    const role = index % 2 === 0 ? "user" : "assistant";
+    if (
+      !isRecord(item) ||
+      !hasExactKeys(item, ["role", "content"]) ||
+      item.role !== role ||
+      !isNonBlankBoundedString(
+        item.content,
+        ASSISTANT_HISTORY_CONTENT_MAX_CODE_POINTS,
+      )
+    ) {
+      return null;
+    }
+    const content = item.content.trim();
+    historyCodePoints += Array.from(item.content).length;
+    if (historyCodePoints > ASSISTANT_HISTORY_MAX_CODE_POINTS) return null;
+    history.push({ role, content });
+  }
+
+  if (input.page === null) {
+    return { version: "2", message, history, page: null };
+  }
+  if (
+    !isRecord(input.page) ||
+    !hasExactKeys(input.page, ["pathname", "search"]) ||
+    typeof input.page.pathname !== "string" ||
+    !hasAtMostCodePoints(
+      input.page.pathname,
+      ASSISTANT_PATHNAME_MAX_CODE_POINTS,
+    ) ||
+    !isNormalizedPathname(input.page.pathname) ||
+    typeof input.page.search !== "string" ||
+    !hasAtMostCodePoints(input.page.search, ASSISTANT_SEARCH_MAX_CODE_POINTS) ||
+    !isNormalizedSearch(input.page.search)
+  ) {
+    return null;
+  }
+
+  return {
+    version: "2",
+    message,
+    history,
+    page: { pathname: input.page.pathname, search: input.page.search },
+  };
+}
+
+function isNormalizedSearch(search: string): boolean {
+  if (
+    (search !== "" && !search.startsWith("?")) ||
+    search.includes("#") ||
+    /[\u0000-\u001f\u007f]/u.test(search)
+  ) {
+    return false;
+  }
+
+  try {
+    return (
+      new URL(`/safe${search}`, "http://assistant.local").search === search
+    );
+  } catch {
+    return false;
+  }
 }

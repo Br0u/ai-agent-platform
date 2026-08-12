@@ -78,7 +78,72 @@ describe("AgentOS run settings", () => {
 });
 
 describe("AgentOS run client", () => {
-  it("requests Agno's content-only stream and accepts clean EOF after text", async () => {
+  it("exposes only trusted activity, answer, and owned navigation markers", async () => {
+    const rawStream =
+      'event: RunStarted\ndata: {"event":"RunStarted","run_id":"private"}\n\n' +
+      'event: ReasoningStep\ndata: {"event":"ReasoningStep","reasoning_content":"private chain"}\n\n' +
+      'event: ToolCallStarted\ndata: {"event":"ToolCallStarted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help"}}}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help"},"result":"aap.navigate.v1:%2Fhelp"}}\n\n' +
+      'event: RunContent\ndata: {"event":"RunContent","content":"公开回答","reasoning_content":"private"}\n\n' +
+      'event: Unknown\ndata: {"event":"Unknown","content":"private"}\n\n' +
+      'event: RunCompleted\ndata: {"event":"RunCompleted","content":"must not duplicate"}\n\n';
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(rawStream, {
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+    const client = createAgentOSRunClient({ settings: settings(), fetcher });
+
+    const events = [];
+    for await (const event of client.runAgentStream({ message: "private" })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "activity", phase: "analyzing" },
+      { type: "activity", phase: "tool", toolName: "suggest_navigation" },
+      { type: "navigation_candidate", pathname: "/help" },
+      { type: "answer_delta", content: "公开回答" },
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/private|chain|run_id/iu);
+    expect(
+      (fetcher.mock.calls[0]?.[1]?.body as FormData).get("stream_events"),
+    ).toBe("true");
+  });
+
+  it("rejects spoofed navigation completion shapes without leaking payloads", async () => {
+    const rawStream =
+      'event: RunStarted\ndata: {"event":"RunStarted"}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","result":"aap.navigate.v1:%2Fevil"}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help"},"result":"aap.navigate.v1:%2Fproduct"}}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help","extra":true},"result":"aap.navigate.v1:%2Fhelp"}}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help"},"result":"aap.navigate.v1:%2Fhelp%"}}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help"},"result":"aap.navigate.v1:%252Fhelp"}}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help"},"result":"aap.navigate.v1:%2Fhelpaap.navigate.v1:%2Fhelp"}}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help"},"result":"aap.navigate.v1:%2Fhelp trailing"}}\n\n' +
+      'event: RunContent\ndata: {"event":"RunContent","content":"安全回答"}\n\n' +
+      'event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n';
+    const client = createAgentOSRunClient({
+      settings: settings(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(rawStream, {
+          headers: { "content-type": "text/event-stream" },
+        }),
+      ),
+    });
+
+    const events = [];
+    for await (const event of client.runAgentStream({ message: "private" })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "activity", phase: "analyzing" },
+      { type: "answer_delta", content: "安全回答" },
+    ]);
+  });
+
+  it("requests Agno's event stream and accepts clean EOF after text", async () => {
     const encoder = new TextEncoder();
     let controller!: ReadableStreamDefaultController<Uint8Array>;
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
@@ -106,12 +171,16 @@ describe("AgentOS run client", () => {
     );
     await expect(iterator.next()).resolves.toEqual({
       done: false,
-      value: "第一段",
+      value: { type: "activity", phase: "analyzing" },
+    });
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: { type: "answer_delta", content: "第一段" },
     });
 
     const form = fetcher.mock.calls[0]?.[1]?.body as FormData;
     expect(form.get("stream")).toBe("true");
-    expect(form.get("stream_events")).toBe("false");
+    expect(form.get("stream_events")).toBe("true");
     expect(form.has("session_id")).toBe(false);
     expect(fetcher.mock.calls[0]?.[1]?.headers).toEqual({
       Accept: "text/event-stream",
@@ -126,7 +195,7 @@ describe("AgentOS run client", () => {
     controller.close();
     await expect(iterator.next()).resolves.toEqual({
       done: false,
-      value: "第二段",
+      value: { type: "answer_delta", content: "第二段" },
     });
     await expect(iterator.next()).resolves.toEqual({
       done: true,
@@ -149,44 +218,48 @@ describe("AgentOS run client", () => {
       ),
     });
 
-    const chunks: string[] = [];
+    const chunks = [];
     for await (const chunk of client.runAgentStream({
       message: "private prompt",
     })) {
       chunks.push(chunk);
     }
 
-    expect(chunks).toEqual(["NPU 正文"]);
+    expect(chunks).toEqual([
+      { type: "activity", phase: "analyzing" },
+      { type: "answer_delta", content: "NPU 正文" },
+    ]);
   });
 
   it("keeps large Skill tool events off the public run stream", async () => {
-    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
-      const form = init?.body as FormData;
+    const fetcher = vi.fn<typeof fetch>(async () => {
       const rawStream =
-        form.get("stream_events") === "false"
-          ? 'event: RunContent\ndata: {"event":"RunContent","content":"NPU 正文"}\n\n' +
-            'event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n'
-          : 'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","result":"' +
-            "x".repeat(AGENTOS_RUN_MAX_RESPONSE_BYTES) +
-            '"}\n\n' +
-            'event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n';
+        'event: RunStarted\ndata: {"event":"RunStarted"}\n\n' +
+        'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"private_skill","result":"' +
+        "x".repeat(256 * 1_024) +
+        '"}}\n\n' +
+        'event: RunContent\ndata: {"event":"RunContent","content":"NPU 正文"}\n\n' +
+        'event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n';
       return new Response(rawStream, {
         headers: { "content-type": "text/event-stream" },
       });
     });
     const client = createAgentOSRunClient({ settings: settings(), fetcher });
 
-    const chunks: string[] = [];
+    const chunks = [];
     for await (const chunk of client.runAgentStream({
       message: "使用大 Skill",
     })) {
       chunks.push(chunk);
     }
 
-    expect(chunks).toEqual(["NPU 正文"]);
+    expect(chunks).toEqual([
+      { type: "activity", phase: "analyzing" },
+      { type: "answer_delta", content: "NPU 正文" },
+    ]);
     expect(
       (fetcher.mock.calls[0]?.[1]?.body as FormData).get("stream_events"),
-    ).toBe("false");
+    ).toBe("true");
   });
 
   it.each([
@@ -462,10 +535,10 @@ describe("AgentOS run client", () => {
     });
 
     let content = "";
-    for await (const chunk of client.runAgentStream({
+    for await (const event of client.runAgentStream({
       message: "fragmented",
     })) {
-      content += chunk;
+      if (event.type === "answer_delta") content += event.content;
     }
 
     expect(content).toBe("x".repeat(32_768));

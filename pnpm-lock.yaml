@@ -43,6 +43,9 @@ importers:
       hast-util-to-jsx-runtime:
         specifier: 2.3.6
         version: 2.3.6
+      jsdom:
+        specifier: 27.0.1
+        version: 27.0.1
       lucide-react:
         specifier: 1.24.0
         version: 1.24.0(react@19.2.7)
@@ -107,9 +110,6 @@ importers:
       eslint-config-next:
         specifier: 16.2.10
         version: 16.2.10(eslint@9.39.1(jiti@2.7.0))(typescript@5.9.3)
-      jsdom:
-        specifier: 27.0.1
-        version: 27.0.1
       pg:
         specifier: 8.22.0
         version: 8.22.0

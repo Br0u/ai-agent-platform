@@ -494,8 +494,10 @@ describe("AssistantWorkspace", () => {
       "/api/v1/assistant/chat",
       expect.objectContaining({
         body: JSON.stringify({
+          version: "2",
           message: "如何开始了解平台？",
-          context: { pathname: "/assistant" },
+          history: [],
+          page: null,
         }),
       }),
     );
