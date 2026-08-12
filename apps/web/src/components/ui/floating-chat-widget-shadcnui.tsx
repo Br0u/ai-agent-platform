@@ -9,10 +9,8 @@ import {
 import {
   BriefcaseBusiness,
   LifeBuoy,
-  MessageSquare,
   PanelRightOpen,
   RotateCcw,
-  Sparkles,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -26,8 +24,10 @@ import {
   type RefObject,
 } from "react";
 import { ASSISTANT_PRESET_QUESTIONS } from "@/features/assistant/assistant-contract";
+import { AssistantActivity } from "../assistant/assistant-activity";
 import { useAssistantExperience } from "../assistant/assistant-experience-provider";
 import { AssistantMarkdown } from "../assistant/assistant-markdown";
+import { AssistantOrb } from "../assistant/assistant-orb";
 import {
   AssistantPromptInput,
   type AssistantPromptSubmit,
@@ -113,6 +113,10 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
   const titleId = useId();
   const prefersReducedMotion = useReducedMotion();
   const sending = session.requestStatus === "sending";
+  const currentAssistantMessage = session.messages.findLast(
+    (message) => message.role === "assistant",
+  );
+  const currentActivity = currentAssistantMessage?.activities.at(-1);
   const servicePresentation = getAssistantServicePresentation({
     serviceState,
     hasResolvedServiceState,
@@ -153,9 +157,7 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
       />
       <header className="floating-assistant__header">
         <div className="floating-assistant__identity">
-          <span aria-hidden="true" className="floating-assistant__avatar">
-            <Sparkles size={20} strokeWidth={2} />
-          </span>
+          <AssistantOrb size={20} state="idle" />
           <div>
             <h2 id={titleId}>码多多</h2>
             <p
@@ -194,18 +196,13 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
 
       <div
         aria-label="码多多对话"
-        aria-live="polite"
+        aria-live="off"
         className="floating-assistant__messages"
         data-testid="assistant-history"
         role="log"
       >
         <article className="floating-assistant__message floating-assistant__message--assistant">
-          <span
-            aria-hidden="true"
-            className="floating-assistant__message-avatar"
-          >
-            M
-          </span>
+          <AssistantOrb size={20} state="idle" />
           <div className="floating-assistant__message-content">
             <p>
               你好，我是码多多。已启用的 Skill
@@ -220,29 +217,45 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
             key={`${message.role}-${message.id}`}
           >
             {message.role === "assistant" ? (
-              <span
-                aria-hidden="true"
-                className="floating-assistant__message-avatar"
-              >
-                M
-              </span>
+              <AssistantOrb size={20} state="idle" />
             ) : null}
             <div className="floating-assistant__message-content">
               {message.role === "assistant" ? (
-                <AssistantMarkdown content={message.content} />
+                <>
+                  <AssistantActivity
+                    activities={message.activities}
+                    inProgress={
+                      sending && message.id === currentAssistantMessage?.id
+                    }
+                  />
+                  {message.content ? (
+                    <AssistantMarkdown content={message.content} />
+                  ) : null}
+                </>
               ) : (
                 <p>{message.content}</p>
               )}
               {message.role === "assistant" &&
-              message.suggestedActions.length > 0 ? (
+              (message.actions.length > 0 ||
+                message.suggestedActions.length > 0) ? (
                 <div className="floating-assistant__actions">
-                  {message.suggestedActions.map((action) => (
-                    <Link
-                      href={action.href}
-                      key={`${action.label}:${action.href}`}
+                  {[
+                    ...message.actions.map((action) => ({
+                      label: action.label,
+                      pathname: action.pathname,
+                    })),
+                    ...message.suggestedActions.map((action) => ({
+                      label: action.label,
+                      pathname: action.href,
+                    })),
+                  ].map((action, actionIndex) => (
+                    <button
+                      key={`${action.label}:${action.pathname}:${actionIndex}`}
+                      onClick={() => router.push(action.pathname)}
+                      type="button"
                     >
                       {action.label}
-                    </Link>
+                    </button>
                   ))}
                 </div>
               ) : null}
@@ -250,14 +263,13 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
           </article>
         ))}
 
-        {sending ? (
+        {sending && currentActivity === undefined ? (
           <div
             aria-label="码多多正在回复"
             className="floating-assistant__typing"
           >
-            <span />
-            <span />
-            <span />
+            <AssistantOrb size={20} state="analyzing" />
+            <span>正在处理</span>
           </div>
         ) : null}
 
@@ -278,18 +290,24 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
         ) : null}
       </div>
 
-      <div aria-label="常用问题" className="floating-assistant__presets">
-        {ASSISTANT_PRESET_QUESTIONS.map((question) => (
-          <button
-            disabled={sending}
-            key={question}
-            onClick={() => void session.submit(question)}
-            type="button"
-          >
-            {question}
-          </button>
-        ))}
-      </div>
+      {session.messages.length === 0 ? (
+        <div
+          aria-label="常用问题"
+          className="floating-assistant__prompt-chips"
+          role="group"
+        >
+          {ASSISTANT_PRESET_QUESTIONS.map((question) => (
+            <button
+              disabled={sending}
+              key={question}
+              onClick={() => void session.submit(question)}
+              type="button"
+            >
+              {question}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <footer className="floating-assistant__footer">
         <AssistantPromptInput
@@ -364,7 +382,11 @@ export function FloatingChatWidget({
             aria-hidden="true"
             className="floating-assistant__launcher-glow"
           />
-          {quickOpen ? <X size={24} /> : <MessageSquare size={24} />}
+          {quickOpen ? (
+            <X size={24} />
+          ) : (
+            <AssistantOrb size={20} state="idle" />
+          )}
         </motion.button>
       ) : null}
     </div>

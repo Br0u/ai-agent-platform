@@ -6,13 +6,7 @@ import {
   useIsPresent,
   useReducedMotion,
 } from "framer-motion";
-import {
-  ArrowUpRight,
-  ChevronRight,
-  Minimize2,
-  RefreshCw,
-  X,
-} from "lucide-react";
+import { ArrowUpRight, Minimize2, RefreshCw, X } from "lucide-react";
 import Link from "next/link";
 import {
   useEffect,
@@ -28,6 +22,7 @@ import { createPortal } from "react-dom";
 import { ASSISTANT_PRESET_QUESTIONS } from "@/features/assistant/assistant-contract";
 import { AssistantConversation } from "./assistant-conversation";
 import { useAssistantExperience } from "./assistant-experience-provider";
+import { AssistantOrb } from "./assistant-orb";
 import { getAssistantServicePresentation } from "./assistant-service-presentation";
 import { useAssistantDockSize } from "./use-assistant-dock-size";
 import "./assistant-dock.css";
@@ -495,8 +490,11 @@ function AssistantDockPanel({ instanceVersion }: { instanceVersion: number }) {
 
         <header className="assistant-dock__header">
           <div className="assistant-dock__title-block">
-            <p>AI ASSISTANT</p>
-            <h2>码多多</h2>
+            <AssistantOrb size={20} state="idle" />
+            <div>
+              <p>AI ASSISTANT</p>
+              <h2>码多多</h2>
+            </div>
           </div>
           <div className="assistant-dock__actions">
             <button
@@ -560,8 +558,12 @@ function AssistantDockPanel({ instanceVersion }: { instanceVersion: number }) {
             <section className="assistant-dock__welcome">
               <p>在当前页面继续探索</p>
               <h3>有什么可以帮你？</h3>
-              <div aria-label="常见问题">
-                {ASSISTANT_PRESET_QUESTIONS.slice(0, 2).map((question) => (
+              <div
+                aria-label="常用问题"
+                className="assistant-dock__prompt-chips"
+                role="group"
+              >
+                {ASSISTANT_PRESET_QUESTIONS.map((question) => (
                   <button
                     disabled={sending}
                     key={question}
@@ -569,7 +571,6 @@ function AssistantDockPanel({ instanceVersion }: { instanceVersion: number }) {
                     type="button"
                   >
                     <span>{question}</span>
-                    <ChevronRight aria-hidden="true" size={16} />
                   </button>
                 ))}
               </div>

@@ -11,6 +11,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AssistantSession } from "./use-assistant-session";
 import { AssistantConversation } from "./assistant-conversation";
 
+const router = vi.hoisted(() => ({ push: vi.fn() }));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => router,
+}));
+
+vi.mock("./assistant-orb", () => ({
+  AssistantOrb: ({ size, state }: { size: number; state: string }) => (
+    <span aria-label={`orb:${state}:${size}`} role="img" />
+  ),
+}));
+
 function createSession(
   overrides: Partial<AssistantSession> = {},
 ): AssistantSession {
@@ -46,7 +58,10 @@ function renderConversation(
   );
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  router.push.mockReset();
+});
 
 describe("AssistantConversation", () => {
   it("labels a retained partial answer as incomplete", () => {
@@ -104,9 +119,8 @@ describe("AssistantConversation", () => {
     expect(
       within(log).getByRole("article", { name: "码多多的消息" }),
     ).toHaveTextContent("请先查看部署指南。");
-    expect(
-      within(log).getByRole("navigation", { name: "建议操作" }),
-    ).toContainElement(within(log).getByRole("link", { name: "部署指南" }));
+    fireEvent.click(within(log).getByRole("button", { name: "部署指南" }));
+    expect(router.push).toHaveBeenCalledExactlyOnceWith("/docs/deployment");
     expect(screen.getByTestId("assistant-conversation")).toHaveAttribute(
       "data-variant",
       "workspace",
@@ -145,15 +159,8 @@ describe("AssistantConversation", () => {
       "STRONG",
     );
     expect(within(assistantMessage).getByRole("table")).toBeInTheDocument();
-    const referenceLink = within(assistantMessage).getByRole("link", {
-      name: "查看资料",
-    });
-    expect(referenceLink).toHaveAttribute("href", "https://example.com/docs");
-    expect(referenceLink).toHaveAttribute("target", "_blank");
-    expect(referenceLink).toHaveAttribute("rel", "noreferrer noopener");
-    expect(
-      within(assistantMessage).queryByRole("link", { name: "不安全链接" }),
-    ).toBeNull();
+    expect(within(assistantMessage).queryByRole("link")).toBeNull();
+    expect(assistantMessage).toHaveTextContent("查看资料 不安全链接");
     expect(assistantMessage.querySelector("img")).toBeNull();
     expect(assistantMessage.querySelector("script")).toBeNull();
     expect(userMessage.querySelector("strong")).toBeNull();
@@ -327,9 +334,71 @@ describe("AssistantConversation", () => {
       }),
     );
 
-    expect(screen.getAllByRole("link", { name: "部署指南" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "部署指南" })).toHaveLength(2);
     expect(consoleError).not.toHaveBeenCalled();
     consoleError.mockRestore();
+  });
+
+  it("shows current activity while streaming and collapses completed activity", () => {
+    const view = renderConversation(
+      createSession({
+        requestStatus: "sending",
+        messages: [
+          {
+            id: 1,
+            role: "assistant",
+            content: "",
+            suggestedActions: [],
+            activities: [
+              {
+                type: "activity",
+                phase: "reading",
+                label: "正在读取页面",
+              },
+            ],
+            actions: [],
+          },
+        ],
+      }),
+    );
+
+    expect(
+      screen.getByText("正在读取页面").closest('[role="status"]'),
+    ).toHaveTextContent("正在读取页面");
+    expect(screen.getByRole("img", { name: "orb:reading:20" })).toBeVisible();
+
+    view.rerender(
+      <AssistantConversation
+        ariaLabel="码多多对话"
+        registerComposer={() => () => undefined}
+        session={createSession({
+          messages: [
+            {
+              id: 1,
+              role: "assistant",
+              content: "读取完成",
+              suggestedActions: [],
+              activities: [
+                {
+                  type: "activity",
+                  phase: "reading",
+                  label: "正在读取页面",
+                },
+              ],
+              actions: [
+                { kind: "navigate", pathname: "/product", label: "产品中心" },
+              ],
+            },
+          ],
+        })}
+        variant="dock"
+      />,
+    );
+
+    const details = screen.getByText("已完成 1 个步骤").closest("details");
+    expect(details).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByRole("button", { name: "产品中心" }));
+    expect(router.push).toHaveBeenCalledExactlyOnceWith("/product");
   });
 
   it("registers the mounted composer and disposes that registration on unmount", () => {

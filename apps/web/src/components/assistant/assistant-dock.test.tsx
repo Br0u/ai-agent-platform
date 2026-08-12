@@ -249,6 +249,12 @@ describe("AssistantDock", () => {
     expect(
       within(dialog).getByRole("button", { name: "如何开始了解平台？" }),
     ).toBeInTheDocument();
+    const chips = within(dialog).getByRole("group", { name: "常用问题" });
+    expect(chips).toHaveClass("assistant-dock__prompt-chips");
+    expect(within(chips).getAllByRole("button")).toHaveLength(3);
+    expect(
+      within(dialog).getByRole("img", { name: "码多多已就绪" }),
+    ).toBeVisible();
     expect(document.activeElement).toBe(
       within(dialog).getByRole("textbox", { name: "输入问题" }),
     );

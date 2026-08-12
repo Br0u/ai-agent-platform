@@ -1,9 +1,11 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback } from "react";
 import type { AssistantSession } from "./use-assistant-session";
+import { AssistantActivity } from "./assistant-activity";
 import { AssistantMarkdown } from "./assistant-markdown";
+import { AssistantOrb } from "./assistant-orb";
 import {
   AssistantPromptInput,
   type AssistantPromptSubmit,
@@ -25,7 +27,11 @@ export function AssistantConversation({
   session,
   variant,
 }: AssistantConversationProps) {
+  const router = useRouter();
   const sending = session.requestStatus === "sending";
+  const currentAssistantMessageId = session.messages.findLast(
+    (message) => message.role === "assistant",
+  )?.id;
   const hasError = session.validationError !== null;
   const requestFailed = session.requestStatus === "failed";
   const liveAnnouncement =
@@ -66,10 +72,7 @@ export function AssistantConversation({
             key={message.id}
           >
             {message.role === "assistant" ? (
-              <span
-                aria-hidden="true"
-                className="assistant-conversation__assistant-mark"
-              />
+              <AssistantOrb size={20} state="idle" />
             ) : (
               <span
                 aria-hidden="true"
@@ -78,7 +81,17 @@ export function AssistantConversation({
             )}
             <div className="assistant-conversation__message-body">
               {message.role === "assistant" ? (
-                <AssistantMarkdown content={message.content} />
+                <>
+                  <AssistantActivity
+                    activities={message.activities}
+                    inProgress={
+                      sending && message.id === currentAssistantMessageId
+                    }
+                  />
+                  {message.content ? (
+                    <AssistantMarkdown content={message.content} />
+                  ) : null}
+                </>
               ) : (
                 <p>{message.content}</p>
               )}
@@ -88,15 +101,26 @@ export function AssistantConversation({
                 </small>
               ) : null}
               {message.role === "assistant" &&
-              message.suggestedActions.length > 0 ? (
+              (message.actions.length > 0 ||
+                message.suggestedActions.length > 0) ? (
                 <nav aria-label="建议操作">
-                  {message.suggestedActions.map((action, actionIndex) => (
-                    <Link
-                      href={action.href}
-                      key={`${action.label}:${action.href}:${actionIndex}`}
+                  {[
+                    ...message.actions.map((action) => ({
+                      label: action.label,
+                      pathname: action.pathname,
+                    })),
+                    ...message.suggestedActions.map((action) => ({
+                      label: action.label,
+                      pathname: action.href,
+                    })),
+                  ].map((action, actionIndex) => (
+                    <button
+                      key={`${action.label}:${action.pathname}:${actionIndex}`}
+                      onClick={() => router.push(action.pathname)}
+                      type="button"
                     >
                       {action.label}
-                    </Link>
+                    </button>
                   ))}
                 </nav>
               ) : null}

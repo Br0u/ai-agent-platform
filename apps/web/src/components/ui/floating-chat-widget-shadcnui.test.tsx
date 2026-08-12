@@ -315,18 +315,19 @@ describe("FloatingChatWidget", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          version: "2",
           message: "如何提交产品问题？",
-          context: { pathname: "/" },
+          history: [],
+          page: { pathname: "/", search: "" },
         }),
       }),
     );
     expect(
       await screen.findByText("你可以前往客户支持页面提交产品问题和相关信息。"),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "客户支持" })).toHaveAttribute(
-      "href",
-      "/support",
-    );
+    fireEvent.click(screen.getByRole("button", { name: "客户支持" }));
+    expect(router.push).toHaveBeenCalledWith("/support");
+    expect(screen.queryByRole("group", { name: "常用问题" })).toBeNull();
   });
 
   it("renders streamed assistant output as Markdown in the quick surface", async () => {
@@ -372,8 +373,10 @@ describe("FloatingChatWidget", () => {
         "/api/v1/assistant/chat",
         expect.objectContaining({
           body: JSON.stringify({
+            version: "2",
             message: "请介绍知识库能力",
-            context: { pathname: "/" },
+            history: [],
+            page: { pathname: "/", search: "" },
           }),
         }),
       ),
@@ -565,6 +568,25 @@ describe("FloatingChatWidget", () => {
     );
     expect(composerStylesheet).toMatch(
       /\.assistant-prompt-input__submit\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*40px;/u,
+    );
+  });
+
+  it("uses one in-flow horizontal chip strip and shared Orbs", () => {
+    openWidget();
+
+    const chips = screen.getByRole("group", { name: "常用问题" });
+    expect(chips).toHaveClass("floating-assistant__prompt-chips");
+    expect(chips.parentElement).toHaveClass("floating-assistant__panel");
+    expect(
+      screen.getAllByRole("img", { name: "码多多已就绪" }),
+    ).not.toHaveLength(0);
+
+    const stylesheet = readFileSync(
+      "src/components/ui/floating-chat-widget-shadcnui.css",
+      "utf8",
+    );
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__prompt-chips\s*\{[\s\S]*?display:\s*flex;[\s\S]*?overflow-x:\s*auto;[\s\S]*?scroll-snap-type:\s*x proximity;/u,
     );
   });
 });

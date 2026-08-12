@@ -40,38 +40,9 @@ type MarkdownAnchorProps = ComponentPropsWithoutRef<"a"> & {
   node?: unknown;
 };
 
-function safeAssistantUrl(value: string): string {
-  const url = value.trim();
-  if (!url) return "";
-
-  if (url.startsWith("#") || url.startsWith("?")) return url;
-  if (url.startsWith("/") && !url.startsWith("//") && !url.includes("\\")) {
-    return url;
-  }
-
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "https:" && !parsed.username && !parsed.password
-      ? parsed.href
-      : "";
-  } catch {
-    return "";
-  }
-}
-
-function AssistantMarkdownLink({ href, node, ...props }: MarkdownAnchorProps) {
+function AssistantMarkdownLink({ children, node }: MarkdownAnchorProps) {
   void node;
-  if (!href) return <>{props.children}</>;
-
-  const external = href.startsWith("https://");
-  return (
-    <a
-      {...props}
-      href={href}
-      rel={external ? "noreferrer noopener" : undefined}
-      target={external ? "_blank" : undefined}
-    />
-  );
+  return <>{children}</>;
 }
 
 const COMPONENTS = {
@@ -90,7 +61,6 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         components={COMPONENTS}
         remarkPlugins={REMARK_PLUGINS}
         skipHtml
-        urlTransform={safeAssistantUrl}
       >
         {content}
       </Markdown>

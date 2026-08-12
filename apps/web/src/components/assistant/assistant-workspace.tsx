@@ -2,18 +2,16 @@
 
 import { Minimize2, RefreshCw } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useLayoutEffect } from "react";
 import {
   ASSISTANT_PRESET_QUESTIONS,
   type AssistantStatusResponse,
 } from "@/features/assistant/assistant-contract";
 import { AssistantConversation } from "./assistant-conversation";
 import { useAssistantExperience } from "./assistant-experience-provider";
+import { AssistantOrb } from "./assistant-orb";
 import { getAssistantServicePresentation } from "./assistant-service-presentation";
 import "./assistant-workspace.css";
-
-const DESKTOP_RAIL_QUERY = "(min-width: 721px)";
-const NEW_SESSION_HELP_ID = "assistant-new-session-help";
 
 type AssistantWorkspaceProps = {
   initialServiceState: AssistantStatusResponse;
@@ -31,9 +29,6 @@ export function AssistantWorkspace({
     hasResolvedServiceState,
     refreshServiceState,
   } = useAssistantExperience();
-  const [isDesktop, setIsDesktop] = useState(false);
-  const [railOverride, setRailOverride] = useState<boolean | null>(null);
-  const railExpanded = railOverride ?? isDesktop;
   const sending = session.requestStatus === "sending";
   const displayedServiceState = hasResolvedServiceState
     ? currentServiceState
@@ -44,89 +39,21 @@ export function AssistantWorkspace({
     hasResolvedServiceState: true,
     refreshingServiceState: refreshingStatus,
   });
-  const sessionBoundary =
-    displayedServiceState.capability === "placeholder"
-      ? "安全占位模式，不创建服务端会话。"
-      : "已接入码多多，支持匿名多轮对话；同一浏览器会保留最近上下文。";
+  const sessionBoundary = "当前页面临时对话；刷新或离开后清空。";
 
   useLayoutEffect(() => {
     adoptServiceState(initialServiceState);
   }, [adoptServiceState, initialServiceState]);
 
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const mediaQuery = window.matchMedia(DESKTOP_RAIL_QUERY);
-    const synchronizeBreakpoint = (event?: MediaQueryListEvent) => {
-      setIsDesktop(event?.matches ?? mediaQuery.matches);
-    };
-
-    synchronizeBreakpoint();
-    mediaQuery.addEventListener("change", synchronizeBreakpoint);
-    return () =>
-      mediaQuery.removeEventListener("change", synchronizeBreakpoint);
-  }, []);
-
   return (
     <main aria-label="码多多工作区" className="assistant-workspace">
-      <aside
-        aria-label="临时会话"
-        className="assistant-workspace__rail"
-        data-collapsed={!railExpanded}
-      >
-        <div className="assistant-workspace__rail-head">
-          <span>CONVERSATIONS</span>
-          <button
-            aria-expanded={railExpanded}
-            aria-label={railExpanded ? "收起会话栏" : "展开会话栏"}
-            aria-controls="assistant-session-rail-content"
-            onClick={() => setRailOverride(!railExpanded)}
-            type="button"
-          >
-            {railExpanded ? "收起" : "展开"}
-          </button>
-        </div>
-        <div
-          data-testid="assistant-session-rail-content"
-          hidden={!railExpanded}
-          id="assistant-session-rail-content"
-        >
-          <button
-            aria-describedby={NEW_SESSION_HELP_ID}
-            aria-label="新建会话"
-            className="assistant-workspace__new-session"
-            disabled
-            type="button"
-          >
-            ＋ 新建会话
-          </button>
-          <p id={NEW_SESSION_HELP_ID}>暂不支持创建多个会话</p>
-          <div className="assistant-workspace__session-list">
-            <button
-              aria-label="私有化部署咨询（历史会话不可用）"
-              disabled
-              type="button"
-            >
-              <strong>私有化部署咨询</strong>
-              <span>历史会话不可用</span>
-            </button>
-            <button
-              aria-label="兼容性与 GPU 配置（历史会话不可用）"
-              disabled
-              type="button"
-            >
-              <strong>兼容性与 GPU 配置</strong>
-              <span>历史会话不可用</span>
-            </button>
-          </div>
-        </div>
-      </aside>
-
       <section className="assistant-workspace__surface">
         <header className="assistant-workspace__header">
           <div className="assistant-workspace__identity">
+            <AssistantOrb size={20} state="idle" />
             <span>
               <strong>码多多</strong>
-              <small>公开网页助手 · 匿名会话</small>
+              <small>公开网页助手 · 当前页面临时对话</small>
             </span>
           </div>
           <div className="assistant-workspace__header-actions">
@@ -174,18 +101,24 @@ export function AssistantWorkspace({
                 已启用的 Skill 会按配置加载；知识库和网页正文读取尚未接入。
               </span>
             </p>
-            <div aria-label="常见问题" className="assistant-workspace__presets">
-              {ASSISTANT_PRESET_QUESTIONS.map((question) => (
-                <button
-                  disabled={sending}
-                  key={question}
-                  onClick={() => void session.submit(question)}
-                  type="button"
-                >
-                  {question}
-                </button>
-              ))}
-            </div>
+            {session.messages.length === 0 ? (
+              <div
+                aria-label="常用问题"
+                className="assistant-workspace__prompt-chips"
+                role="group"
+              >
+                {ASSISTANT_PRESET_QUESTIONS.map((question) => (
+                  <button
+                    disabled={sending}
+                    key={question}
+                    onClick={() => void session.submit(question)}
+                    type="button"
+                  >
+                    {question}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </section>
 
           <AssistantConversation

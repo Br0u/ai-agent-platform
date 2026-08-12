@@ -17,9 +17,11 @@ import {
 } from "./assistant-experience-provider";
 import { AssistantWorkspace } from "./assistant-workspace";
 
-type MediaQueryController = {
-  setMatches: (matches: boolean) => void;
-};
+const router = vi.hoisted(() => ({ push: vi.fn() }));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => router,
+}));
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -27,53 +29,6 @@ function deferred<T>() {
     resolve = resolvePromise;
   });
   return { promise, resolve };
-}
-
-function installMatchMedia(initialMatches: boolean): MediaQueryController {
-  const listeners = new Set<(event: MediaQueryListEvent) => void>();
-  let matches = initialMatches;
-  const mediaQuery = {
-    get matches() {
-      return matches;
-    },
-    media: "(min-width: 721px)",
-    onchange: null,
-    addEventListener: (
-      type: string,
-      listener: (event: MediaQueryListEvent) => void,
-    ) => {
-      if (type === "change") listeners.add(listener);
-    },
-    removeEventListener: (
-      type: string,
-      listener: (event: MediaQueryListEvent) => void,
-    ) => {
-      if (type === "change") listeners.delete(listener);
-    },
-    addListener: (listener: (event: MediaQueryListEvent) => void) =>
-      listeners.add(listener),
-    removeListener: (listener: (event: MediaQueryListEvent) => void) =>
-      listeners.delete(listener),
-    dispatchEvent: () => true,
-  } as unknown as MediaQueryList;
-
-  vi.stubGlobal(
-    "matchMedia",
-    vi.fn(() => mediaQuery),
-  );
-
-  return {
-    setMatches(nextMatches) {
-      matches = nextMatches;
-      act(() => {
-        const event = {
-          matches,
-          media: mediaQuery.media,
-        } as MediaQueryListEvent;
-        listeners.forEach((listener) => listener(event));
-      });
-    },
-  };
 }
 
 const placeholderStatus: AssistantStatusResponse = {
@@ -116,11 +71,9 @@ function successfulPlaceholderReply(content = "当前仅提供安全占位答复
   );
 }
 
-let mediaQuery: MediaQueryController;
-
 beforeEach(() => {
+  router.push.mockReset();
   vi.stubGlobal("fetch", vi.fn());
-  mediaQuery = installMatchMedia(false);
 });
 afterEach(() => {
   cleanup();
@@ -178,14 +131,17 @@ describe("AssistantWorkspace", () => {
     expect(
       screen.getByRole("link", { name: "缩小码多多并返回主页面" }),
     ).toHaveAttribute("href", "/");
-    expect(screen.queryByRole("img")).toBeNull();
-    expect(screen.getByText("CONVERSATIONS")).toBeVisible();
+    expect(screen.getByRole("img", { name: "码多多已就绪" })).toBeVisible();
+    expect(screen.queryByText("CONVERSATIONS")).toBeNull();
+    expect(screen.queryByRole("complementary")).toBeNull();
     expect(screen.getByText(placeholderStatus.message)).toBeVisible();
     expect(
       container.querySelector(".assistant-workspace__identity"),
     ).toHaveTextContent("码多多");
-    expect(screen.getByText("公开网页助手 · 匿名会话")).toBeVisible();
-    expect(screen.getByText("安全占位模式，不创建服务端会话。")).toBeVisible();
+    expect(screen.getByText("公开网页助手 · 当前页面临时对话")).toBeVisible();
+    expect(
+      screen.getByText("当前页面临时对话；刷新或离开后清空。"),
+    ).toBeVisible();
     expect(
       screen.getByText(
         "已启用的 Skill 会按配置加载；知识库和网页正文读取尚未接入。",
@@ -208,29 +164,18 @@ describe("AssistantWorkspace", () => {
     );
   });
 
-  it("offers presets without inventing persisted messages or clickable history", () => {
-    installMatchMedia(true);
+  it("offers one document-flow chip strip without conversation controls", () => {
     renderWorkspace();
 
     expect(
       screen.queryByTestId("assistant-message-history"),
     ).toBeEmptyDOMElement();
+    expect(screen.queryByRole("button", { name: "新建会话" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /会话栏/u })).toBeNull();
+    const strip = screen.getByRole("group", { name: "常用问题" });
+    expect(strip).toHaveClass("assistant-workspace__prompt-chips");
     expect(
-      screen.getByRole("button", {
-        name: "私有化部署咨询（历史会话不可用）",
-      }),
-    ).toBeDisabled();
-    expect(
-      screen.getByRole("button", {
-        name: "兼容性与 GPU 配置（历史会话不可用）",
-      }),
-    ).toBeDisabled();
-    const newSession = screen.getByRole("button", { name: "新建会话" });
-    const availability = screen.getByText("暂不支持创建多个会话");
-    expect(newSession).toBeDisabled();
-    expect(newSession).toHaveAttribute("aria-describedby", availability.id);
-    expect(
-      screen.getByRole("button", { name: "如何开始了解平台？" }),
+      within(strip).getByRole("button", { name: "如何开始了解平台？" }),
     ).toBeEnabled();
   });
 
@@ -253,9 +198,7 @@ describe("AssistantWorkspace", () => {
       );
 
       expect(
-        screen.getByText(
-          "已接入码多多，支持匿名多轮对话；同一浏览器会保留最近上下文。",
-        ),
+        screen.getByText("当前页面临时对话；刷新或离开后清空。"),
       ).toBeVisible();
       expect(
         screen.getByText(
@@ -612,36 +555,20 @@ describe("AssistantWorkspace", () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 
-  it("starts collapsed on mobile and preserves a manual expansion across breakpoint changes", () => {
+  it("keeps the chip strip in flow and hides it after the first message", async () => {
+    vi.mocked(fetch).mockResolvedValue(successfulPlaceholderReply());
     renderWorkspace();
-    const toggle = screen.getByRole("button", { name: "展开会话栏" });
-    const railContent = screen.getByTestId("assistant-session-rail-content");
+    const strip = screen.getByRole("group", { name: "常用问题" });
 
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(railContent).toHaveAttribute("hidden");
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(toggle).toHaveAccessibleName("收起会话栏");
-    expect(railContent).not.toHaveAttribute("hidden");
-
-    mediaQuery.setMatches(true);
-    mediaQuery.setMatches(false);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(railContent).not.toHaveAttribute("hidden");
-  });
-
-  it("expands the session rail after mounting on desktop", async () => {
-    installMatchMedia(true);
-    renderWorkspace();
-
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "收起会话栏" }),
-      ).toHaveAttribute("aria-expanded", "true"),
+    expect(strip.parentElement).toHaveClass("assistant-workspace__welcome");
+    fireEvent.click(
+      within(strip).getByRole("button", { name: "如何开始了解平台？" }),
     );
-    expect(
-      screen.getByTestId("assistant-session-rail-content"),
-    ).not.toHaveAttribute("hidden");
+
+    await within(screen.getByTestId("assistant-message-history")).findByText(
+      "当前仅提供安全占位答复。",
+    );
+    expect(screen.queryByRole("group", { name: "常用问题" })).toBeNull();
   });
 
   it("maps workspace service capabilities to semantic status-light colors", () => {
