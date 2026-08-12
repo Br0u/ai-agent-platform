@@ -2545,9 +2545,7 @@ test.describe("@control deterministic model control", () => {
 
     for (const [index, fixture] of CONTROL_PROVIDERS.entries()) {
       const suffix = `K${String(index + 1).padStart(3, "0")}`;
-      await page
-        .getByRole("tab", { name: new RegExp(fixture.label, "u") })
-        .click();
+      await page.getByLabel("模型供应商").selectOption(fixture.provider);
       await page.getByLabel("Model ID").fill(modelIds[fixture.provider]!);
       await expect(page.getByLabel("Endpoint")).toHaveValue(fixture.endpoint);
       await page
@@ -2576,7 +2574,7 @@ test.describe("@control deterministic model control", () => {
       expect(listedText).not.toContain(submittedKeys[fixture.provider]!);
     }
 
-    await page.getByRole("tab", { name: /OpenAI/u }).click();
+    await page.getByLabel("模型供应商").selectOption("openai");
     await page.getByRole("button", { name: "测试并启用" }).click();
     await expect(
       page.getByText("测试通过，已启用 OpenAI rev 1。", { exact: true }),
@@ -2604,7 +2602,8 @@ test.describe("@control deterministic model control", () => {
     await ask("deterministic-model:e2e-openai-rev1:turn:1");
 
     await page.reload();
-    await page.getByRole("tab", { name: /Qwen \/ DashScope/u }).click();
+    await page.getByRole("tab", { name: "模型配置" }).click();
+    await page.getByLabel("模型供应商").selectOption("dashscope");
     const beforeSwitch = agentContainerMetadata();
     await page.getByRole("button", { name: "测试并启用" }).click();
     await expect(
@@ -2639,7 +2638,8 @@ test.describe("@control deterministic model control", () => {
     }
 
     await page.reload();
-    await page.getByRole("tab", { name: /Qwen \/ DashScope/u }).click();
+    await page.getByRole("tab", { name: "模型配置" }).click();
+    await page.getByLabel("模型供应商").selectOption("dashscope");
     await page.clock.install();
     await page.getByRole("button", { name: "查看已保存 Key" }).click();
     const revealed = page.getByLabel("临时显示的模型密钥");
