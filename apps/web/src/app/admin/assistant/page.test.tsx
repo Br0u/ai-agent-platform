@@ -7,12 +7,14 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
+import type { AdminInputPolicySnapshot } from "@/features/assistant/admin-input-policy-contract";
 
 const mocks = vi.hoisted(() => ({
   requirePermission: vi.fn(),
   loadStatus: vi.fn(),
   loadSessions: vi.fn(),
   loadModelConfigs: vi.fn(),
+  loadInputPolicy: vi.fn(),
   createSkillListHandler: vi.fn(),
   skillListHandler: vi.fn(),
 }));
@@ -28,6 +30,9 @@ vi.mock("@/app/api/v1/admin/assistant/sessions/handler", () => ({
 }));
 vi.mock("@/app/api/v1/admin/assistant/model-configs/handler", () => ({
   loadAdminModelConfigSnapshot: mocks.loadModelConfigs,
+}));
+vi.mock("@/app/api/v1/admin/assistant/input-policy/handler", () => ({
+  loadAdminInputPolicySnapshot: mocks.loadInputPolicy,
 }));
 vi.mock("@/app/api/v1/admin/assistant/skills/handler", () => ({
   createAdminSkillListHandler: mocks.createSkillListHandler,
@@ -224,6 +229,15 @@ const modelConfigs = {
   controlEnabled: true,
 } satisfies AdminModelConfigSnapshot;
 
+const inputPolicy = {
+  version: "1",
+  revision: 3,
+  termCount: 2,
+  terms: ["example", "敏感"],
+  updatedAt: "2026-08-12T01:02:03.000Z",
+  canConfigure: true,
+} satisfies AdminInputPolicySnapshot;
+
 const unavailableSessions = {
   persistence: "unavailable" as const,
   listing: "not_available" as const,
@@ -274,6 +288,7 @@ describe("AdminAssistantPage", () => {
     mocks.loadStatus.mockResolvedValue(status);
     mocks.loadSessions.mockResolvedValue(sessions);
     mocks.loadModelConfigs.mockResolvedValue(modelConfigs);
+    mocks.loadInputPolicy.mockResolvedValue(inputPolicy);
     mocks.createSkillListHandler.mockReturnValue(mocks.skillListHandler);
     mocks.skillListHandler.mockResolvedValue(Response.json(skillListResponse));
   });
@@ -289,6 +304,7 @@ describe("AdminAssistantPage", () => {
     expect(mocks.loadStatus).toHaveBeenCalledOnce();
     expect(mocks.loadSessions).toHaveBeenCalledOnce();
     expect(mocks.loadModelConfigs).toHaveBeenCalledExactlyOnceWith(actor);
+    expect(mocks.loadInputPolicy).toHaveBeenCalledExactlyOnceWith(actor);
     expect(mocks.createSkillListHandler).toHaveBeenCalledOnce();
     expect(mocks.skillListHandler).toHaveBeenCalledOnce();
     expect(serializedProps).not.toMatch(
@@ -297,20 +313,26 @@ describe("AdminAssistantPage", () => {
     expect(screen.getByRole("heading", { name: "AI 助理运营" })).toBeVisible();
     fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
     expect(screen.getByText("safe-review")).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "内容规则" }));
+    expect(screen.getByLabelText("屏蔽词（一行一个）")).toHaveValue(
+      "example\n敏感",
+    );
     fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
     expect(
       screen.getByRole("heading", { name: "受保护的助手测试控制台" }),
     ).toBeVisible();
   });
 
-  it("starts status, sessions, models and Skill snapshot loading in parallel", async () => {
+  it("starts status, sessions, models, policy and Skill snapshot loading in parallel", async () => {
     const pendingStatus = deferred<typeof status>();
     const pendingSessions = deferred<typeof sessions>();
     const pendingModels = deferred<AdminModelConfigSnapshot>();
+    const pendingPolicy = deferred<AdminInputPolicySnapshot>();
     const pendingSkills = deferred<Response>();
     mocks.loadStatus.mockReturnValueOnce(pendingStatus.promise);
     mocks.loadSessions.mockReturnValueOnce(pendingSessions.promise);
     mocks.loadModelConfigs.mockReturnValueOnce(pendingModels.promise);
+    mocks.loadInputPolicy.mockReturnValueOnce(pendingPolicy.promise);
     mocks.skillListHandler.mockReturnValueOnce(pendingSkills.promise);
 
     const page = AdminAssistantPage();
@@ -318,12 +340,14 @@ describe("AdminAssistantPage", () => {
       expect(mocks.loadStatus).toHaveBeenCalledOnce();
       expect(mocks.loadSessions).toHaveBeenCalledOnce();
       expect(mocks.loadModelConfigs).toHaveBeenCalledOnce();
+      expect(mocks.loadInputPolicy).toHaveBeenCalledOnce();
       expect(mocks.skillListHandler).toHaveBeenCalledOnce();
     });
 
     pendingStatus.resolve(status);
     pendingSessions.resolve(sessions);
     pendingModels.resolve(modelConfigs);
+    pendingPolicy.resolve(inputPolicy);
     pendingSkills.resolve(Response.json(skillListResponse));
     await expect(page).resolves.toBeDefined();
   });
@@ -335,6 +359,7 @@ describe("AdminAssistantPage", () => {
     expect(mocks.loadStatus).not.toHaveBeenCalled();
     expect(mocks.loadSessions).not.toHaveBeenCalled();
     expect(mocks.loadModelConfigs).not.toHaveBeenCalled();
+    expect(mocks.loadInputPolicy).not.toHaveBeenCalled();
     expect(mocks.createSkillListHandler).not.toHaveBeenCalled();
   });
 

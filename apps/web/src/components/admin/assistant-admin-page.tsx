@@ -7,16 +7,19 @@ import type {
 import { isAdminAssistantChatResponse } from "@/features/assistant/admin-assistant-contract";
 import { useAssistantSession } from "@/components/assistant/use-assistant-session";
 import { AssistantModelConfigPanel } from "@/components/admin/assistant-model-config-panel";
+import { AssistantInputPolicyPanel } from "@/components/admin/assistant-input-policy-panel";
 import {
   AssistantSkillRegistryPanel,
   type AdminSkillRegistrySnapshot,
 } from "@/components/admin/assistant-skill-registry-panel";
 import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
+import type { AdminInputPolicySnapshot } from "@/features/assistant/admin-input-policy-contract";
 import type { AdminSkillPermissionFlags } from "@/features/assistant/admin-skill-contract";
 import { useState, type FormEvent } from "react";
 import "./assistant-admin-page.css";
 
 type AssistantAdminPageProps = {
+  inputPolicy: AdminInputPolicySnapshot;
   modelConfigs: AdminModelConfigSnapshot;
   sessions: AdminAssistantSessionsSnapshot;
   skillCanRead: boolean;
@@ -36,6 +39,7 @@ const configurationLabels: Record<
 };
 
 export function AssistantAdminPage({
+  inputPolicy,
   modelConfigs,
   sessions,
   skillCanRead,
@@ -44,7 +48,7 @@ export function AssistantAdminPage({
   status,
 }: AssistantAdminPageProps) {
   const [activeTab, setActiveTab] = useState<
-    "overview" | "model" | "skills" | "test"
+    "overview" | "model" | "skills" | "policy" | "test"
   >("overview");
   const assistant = useAssistantSession("/admin/assistant", {
     endpoint: "/api/v1/admin/assistant/chat",
@@ -78,6 +82,7 @@ export function AssistantAdminPage({
             ["overview", "运行概览"],
             ["model", "模型配置"],
             ["skills", "Skills"],
+            ["policy", "内容规则"],
             ["test", "测试与会话"],
           ] as const
         ).map(([id, label]) => (
@@ -180,6 +185,10 @@ export function AssistantAdminPage({
           initialPermissions={skillPermissions}
           initialSnapshot={skillSnapshot}
         />
+      ) : null}
+
+      {activeTab === "policy" ? (
+        <AssistantInputPolicyPanel initialSnapshot={inputPolicy} />
       ) : null}
 
       {activeTab === "test" ? (

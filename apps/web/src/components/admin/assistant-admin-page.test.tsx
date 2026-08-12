@@ -13,6 +13,7 @@ import type {
   AdminAssistantStatusSnapshot,
 } from "@/features/assistant/admin-assistant-contract";
 import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
+import type { AdminInputPolicySnapshot } from "@/features/assistant/admin-input-policy-contract";
 import type { AdminSkillRegistrySnapshot } from "./assistant-skill-registry-panel";
 import { AssistantAdminPage as ProductionAssistantAdminPage } from "./assistant-admin-page";
 
@@ -193,12 +194,21 @@ const skillPermissions = {
   canConfigure: false,
 };
 
+const inputPolicy = {
+  version: "1",
+  revision: 3,
+  termCount: 2,
+  terms: ["example", "敏感"],
+  updatedAt: "2026-08-12T01:02:03.000Z",
+  canConfigure: true,
+} satisfies AdminInputPolicySnapshot;
+
 type PageProps = ComponentProps<typeof ProductionAssistantAdminPage>;
 
 function AssistantAdminPage(
   props: Omit<
     PageProps,
-    "skillCanRead" | "skillPermissions" | "skillSnapshot"
+    "inputPolicy" | "skillCanRead" | "skillPermissions" | "skillSnapshot"
   > &
     Partial<
       Pick<PageProps, "skillCanRead" | "skillPermissions" | "skillSnapshot">
@@ -206,6 +216,7 @@ function AssistantAdminPage(
 ) {
   return (
     <ProductionAssistantAdminPage
+      inputPolicy={inputPolicy}
       skillCanRead
       skillPermissions={skillPermissions}
       skillSnapshot={skillSnapshot}
@@ -220,7 +231,7 @@ afterEach(() => {
 });
 
 describe("AssistantAdminPage", () => {
-  it("switches between the four focused Agent management tabs", () => {
+  it("switches between the five focused Agent management tabs", () => {
     render(
       <AssistantAdminPage
         modelConfigs={modelConfigs}
@@ -237,6 +248,8 @@ describe("AssistantAdminPage", () => {
     expect(screen.getByRole("heading", { name: "云模型配置" })).toBeVisible();
     fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
     expect(screen.getByRole("heading", { name: "Skill 库" })).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "内容规则" }));
+    expect(screen.getByRole("heading", { name: "输入内容规则" })).toBeVisible();
     fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
     expect(
       screen.getByRole("heading", { name: "受保护的助手测试控制台" }),
@@ -303,6 +316,7 @@ describe("AssistantAdminPage", () => {
       "运行概览",
       "模型配置",
       "Skills",
+      "内容规则",
       "测试与会话",
     ]);
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
