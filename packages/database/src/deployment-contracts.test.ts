@@ -4075,6 +4075,7 @@ cleanup
       "rmdir",
       "sh",
       "stat",
+      "node",
     ]) {
       const resolved = spawnSync("/bin/sh", ["-c", `command -v ${command}`], {
         encoding: "utf8",
@@ -4157,6 +4158,10 @@ printf '%s\\n' "$count" >"$FAKE_OPENSSL_COUNT_FILE"
 if [ -n "\${FAKE_OPENSSL_FAIL_AFTER:-}" ] && [ "$count" -gt "$FAKE_OPENSSL_FAIL_AFTER" ]; then
   exit 45
 fi
+if [ -n "\${FAKE_OPENSSL_TOKEN:-}" ]; then
+  printf '%s%04d\\n' "$FAKE_OPENSSL_TOKEN" "$count"
+  exit 0
+fi
 printf "%064d\\n" "$count"
 `,
         { mode: 0o755 },
@@ -4219,6 +4224,10 @@ printf '%s\\n' "$*" >>"$FAKE_PNPM_LOG"
 printf 'pnpm %s\\n' "$*" >>"$FAKE_EVENT_LOG"
 [ "\${FAKE_REMOVE_CALLER_ENV:-false}" = true ] && rm -f "$FAKE_CALLER_ENV"
 [ "\${FAKE_PNPM_FAIL:-false}" = true ] && exit 44
+if [ -n "\${PLAYWRIGHT_OUTPUT_DIR:-}" ]; then
+  mkdir -p "$PLAYWRIGHT_OUTPUT_DIR"
+  printf '{"status":"passed","failedTests":[]}\\n' >"$PLAYWRIGHT_OUTPUT_DIR/.last-run.json"
+fi
 exit 0
 `,
       { mode: 0o755 },
@@ -4251,11 +4260,16 @@ exit 0
           PATH: bin,
           TMPDIR: temp,
           AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT: selectedProject,
+          AAP_ASSISTANT_EXPERIENCE_E2E_GREP: "focused-contract",
           FAKE_DOCKER_LOG: dockerLog,
           FAKE_DOCKER_DOWN_FILE: downFile,
           FAKE_DOCKER_FAIL: "",
           FAKE_OPENSSL_FAIL_AFTER: "",
           FAKE_OPENSSL_LOG: opensslLog,
+          FAKE_OPENSSL_TOKEN: createHash("sha256")
+            .update(name)
+            .digest("hex")
+            .slice(0, 60),
           FAKE_EVENT_LOG: eventLog,
           FAKE_PNPM_LOG: pnpmLog,
           FAKE_PNPM_FAIL: "false",
