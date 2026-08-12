@@ -253,6 +253,7 @@ def _openai_compatible_managed_model(
     settings: ActiveModelSettings,
     *,
     model_type: Callable[..., Model],
+    model_options: Mapping[str, object],
     default_base_url: str,
     http_client: httpx.Client | None,
     http_async_client: httpx.AsyncClient | None,
@@ -305,6 +306,7 @@ def _openai_compatible_managed_model(
             client_params=_openai_client_params(),
             client=sync_sdk,
             async_client=async_sdk,
+            **model_options,
         )
         redirect_hooks = _attach_redirect_hooks(
             clients,
@@ -342,6 +344,7 @@ def _build_openai_model(
     return _openai_compatible_managed_model(
         settings,
         model_type=OpenAIResponses,
+        model_options={"reasoning": None, "reasoning_summary": None, "store": False},
         default_base_url=_OPENAI_BASE_URL,
         http_client=http_client,
         http_async_client=http_async_client,
@@ -395,6 +398,7 @@ def _build_anthropic_model(
             timeout=settings.timeout_seconds,
             client=sync_sdk,
             async_client=async_sdk,
+            thinking=None,
         )
         redirect_hooks = _attach_redirect_hooks(
             clients,
@@ -467,6 +471,9 @@ def _build_google_model(
             project_id=None,
             location=None,
             client=sdk_client,
+            include_thoughts=False,
+            thinking_budget=None,
+            thinking_level=None,
         )
         redirect_hooks = _attach_redirect_hooks(
             clients,
@@ -512,6 +519,7 @@ def _build_dashscope_model(
     return _openai_compatible_managed_model(
         settings,
         model_type=DashScope,
+        model_options={"enable_thinking": False, "include_thoughts": False},
         default_base_url=_DASHSCOPE_BASE_URL,
         http_client=http_client,
         http_async_client=http_async_client,
@@ -530,6 +538,7 @@ def _build_deepseek_model(
     return _openai_compatible_managed_model(
         settings,
         model_type=DeepSeek,
+        model_options={"use_thinking": False},
         default_base_url=_DEEPSEEK_BASE_URL,
         http_client=http_client,
         http_async_client=http_async_client,
@@ -548,6 +557,7 @@ def _build_minimax_model(
     return _openai_compatible_managed_model(
         settings,
         model_type=MiniMax,
+        model_options={},
         default_base_url=_MINIMAX_BASE_URL,
         http_client=http_client,
         http_async_client=http_async_client,
