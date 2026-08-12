@@ -1,7 +1,6 @@
 """The single default Agent exposed by this service."""
 
 from agno.agent import Agent
-from agno.db.postgres import AsyncPostgresDb
 from agno.skills import Skills
 
 from agent_service.model_runtime_slot import ModelRuntimeSlot
@@ -30,23 +29,21 @@ MADUODUO_INSTRUCTIONS = (*MADUODUO_SAFETY_INSTRUCTIONS, NO_SKILL_INSTRUCTION)
 
 def build_default_agent(
     model: ModelRuntimeSlot,
-    database: AsyncPostgresDb,
     *,
     skills: Skills | None = None,
 ) -> Agent:
-    """Build 码多多 against the shared AgentOS runtime database."""
+    """Build one non-persisting 码多多 run."""
     return Agent(
         id="maduoduo",
         name="码多多",
         model=model,
-        db=database,
         instructions=[
             *MADUODUO_SAFETY_INSTRUCTIONS,
             NO_SKILL_INSTRUCTION if skills is None else ENABLED_SKILL_INSTRUCTION,
         ],
-        add_history_to_context=True,
-        num_history_runs=6,
-        max_tool_calls_from_history=2,
+        add_history_to_context=False,
+        store_events=False,
+        cache_session=False,
         tool_call_limit=8,
         tools=None,
         skills=skills,
