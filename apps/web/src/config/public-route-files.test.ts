@@ -36,8 +36,6 @@ const retainedPageFiles = [
   "register/page.tsx",
   "staff/login/page.tsx",
   "staff/change-password/page.tsx",
-  "staff/two-factor/page.tsx",
-  "staff/re-auth/page.tsx",
   "console/page.tsx",
   "console/onboarding/page.tsx",
   "admin/page.tsx",
