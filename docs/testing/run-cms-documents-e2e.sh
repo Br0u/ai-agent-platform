@@ -198,12 +198,19 @@ done
 pnpm --filter @ai-agent-platform/document-content seed:check ||
   fail "DOCUMENT_SEED_MANIFEST verification"
 
-manifest_values=$(pnpm --filter @ai-agent-platform/document-content exec \
+seed_manifest_values=$(pnpm --filter @ai-agent-platform/document-content exec \
   node --import tsx --input-type=module --eval '
   import { DOCUMENT_SEED_MANIFEST } from "./src/seed.ts";
   const quote = String.fromCharCode(39);
   process.stdout.write(DOCUMENT_SEED_MANIFEST.map(({ slug, bodyChecksum }) => `(${quote}${slug}${quote},${quote}${bodyChecksum}${quote})`).join(","));
 ') || fail "DOCUMENT_SEED_MANIFEST loading"
+manifest_values=$(pnpm --filter @ai-agent-platform/document-content exec \
+  node --import tsx --input-type=module --eval '
+  import { DOCUMENT_SEED_MANIFEST } from "./src/seed.ts";
+  const quote = String.fromCharCode(39);
+  const operationsChecksum = "83a4f710414e8bd1801e99e9dde25f918c35db833f6bbc655f75b85a3bc3c9e9";
+  process.stdout.write(DOCUMENT_SEED_MANIFEST.map(({ slug, bodyChecksum }) => `(${quote}${slug}${quote},${quote}${slug === "operations" ? operationsChecksum : bodyChecksum}${quote})`).join(","));
+') || fail "current document manifest loading"
 manifest_slugs=$(pnpm --filter @ai-agent-platform/document-content exec \
   node --import tsx --input-type=module --eval '
   import { DOCUMENT_SEED_MANIFEST } from "./src/seed.ts";
@@ -228,19 +235,29 @@ compose run --rm \
 
 seed_validation=$(compose exec -T db psql \
   -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F '|' -c "
-WITH manifest(slug, checksum) AS (VALUES $manifest_values),
+WITH seed_manifest(slug, checksum) AS (VALUES $seed_manifest_values),
+manifest(slug, checksum) AS (VALUES $manifest_values),
 document_content AS (
   SELECT c.*, m.checksum AS expected_checksum
   FROM content c JOIN manifest m ON m.slug = c.slug
   WHERE c.type = 'document'
-), manifest_mismatches AS (
+), seed_mismatches AS (
   SELECT count(*) AS count
-  FROM manifest m
+  FROM seed_manifest m
   LEFT JOIN content c ON c.type = 'document' AND c.slug = m.slug
   LEFT JOIN content_revisions cr ON cr.content_id = c.id AND cr.revision = 1
   WHERE c.id IS NULL OR cr.id IS NULL
-    OR c.body->>'checksum' IS DISTINCT FROM m.checksum
     OR cr.body->>'checksum' IS DISTINCT FROM m.checksum
+    OR cr.body->>'source' IS NULL OR cr.body->'renderModel' IS NULL
+), current_mismatches AS (
+  SELECT count(*) AS count
+  FROM document_content c
+  LEFT JOIN content_revisions cr
+    ON cr.content_id = c.id AND cr.revision = c.published_revision
+  WHERE c.status <> 'published' OR cr.id IS NULL
+    OR c.published_revision IS DISTINCT FROM CASE WHEN c.slug = 'operations' THEN 2 ELSE 1 END
+    OR c.body->>'checksum' IS DISTINCT FROM c.expected_checksum
+    OR cr.body->>'checksum' IS DISTINCT FROM c.expected_checksum
     OR c.body IS DISTINCT FROM cr.body
     OR c.body->>'source' IS NULL OR c.body->'renderModel' IS NULL
 )
@@ -250,29 +267,37 @@ SELECT
   (SELECT count(*) FROM content_routes r JOIN content c ON c.id = r.content_id WHERE c.type = 'document' AND r.state = 'canonical'),
   (SELECT count(*) FROM content_routes r JOIN content c ON c.id = r.content_id WHERE c.type = 'document' AND r.state = 'alias'),
   (SELECT count(*) FROM content_routes r JOIN content c ON c.id = r.content_id WHERE c.type = 'document' AND r.state = 'reserved'),
-  (SELECT count FROM manifest_mismatches),
-  (SELECT count(*) FROM document_content WHERE status <> 'published' OR published_revision <> 1);
+  (SELECT count FROM seed_mismatches),
+  (SELECT count FROM current_mismatches);
 ") || fail "seven-row PostgreSQL validation query"
 if [ "$seed_validation" != "7|7|7|0|0|0|0" ]; then
   seed_diagnostics=$(compose exec -T db psql \
     -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F '|' -c "
-WITH manifest(slug, checksum) AS (VALUES $manifest_values)
+WITH seed_manifest(slug, checksum) AS (VALUES $seed_manifest_values),
+manifest(slug, checksum) AS (VALUES $manifest_values)
 SELECT
   m.slug,
   c.id IS NOT NULL,
-  cr.id IS NOT NULL,
+  seed_cr.id IS NOT NULL,
+  current_cr.id IS NOT NULL,
+  seed_cr.body->>'checksum' IS NOT DISTINCT FROM sm.checksum,
   c.body->>'checksum' IS NOT DISTINCT FROM m.checksum,
-  cr.body->>'checksum' IS NOT DISTINCT FROM m.checksum,
-  c.body IS NOT DISTINCT FROM cr.body,
+  current_cr.body->>'checksum' IS NOT DISTINCT FROM m.checksum,
+  c.body IS NOT DISTINCT FROM current_cr.body,
   c.body->>'source' IS NOT NULL,
   c.body->'renderModel' IS NOT NULL
 FROM manifest m
+JOIN seed_manifest sm ON sm.slug = m.slug
 LEFT JOIN content c ON c.type = 'document' AND c.slug = m.slug
-LEFT JOIN content_revisions cr ON cr.content_id = c.id AND cr.revision = 1
-WHERE c.id IS NULL OR cr.id IS NULL
+LEFT JOIN content_revisions seed_cr ON seed_cr.content_id = c.id AND seed_cr.revision = 1
+LEFT JOIN content_revisions current_cr
+  ON current_cr.content_id = c.id AND current_cr.revision = c.published_revision
+WHERE c.id IS NULL OR c.status <> 'published' OR seed_cr.id IS NULL OR current_cr.id IS NULL
+  OR c.published_revision IS DISTINCT FROM CASE WHEN c.slug = 'operations' THEN 2 ELSE 1 END
   OR c.body->>'checksum' IS DISTINCT FROM m.checksum
-  OR cr.body->>'checksum' IS DISTINCT FROM m.checksum
-  OR c.body IS DISTINCT FROM cr.body
+  OR seed_cr.body->>'checksum' IS DISTINCT FROM sm.checksum
+  OR current_cr.body->>'checksum' IS DISTINCT FROM m.checksum
+  OR c.body IS DISTINCT FROM current_cr.body
   OR c.body->>'source' IS NULL OR c.body->'renderModel' IS NULL;
 ") || fail "seven-row PostgreSQL diagnostic query"
   fail "seven-row/revision/route/source-render checksum validation ($seed_validation; $seed_diagnostics)"
