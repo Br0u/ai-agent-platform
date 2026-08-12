@@ -126,6 +126,12 @@ function dependencies(options?: {
     },
   };
   const rateLimiter = { consume: vi.fn(async () => undefined) };
+  const loadInputPolicy = vi.fn(async () => ({
+    terms: [] as string[],
+    revision: 0,
+    updatedAt: null,
+    updatedBy: null,
+  }));
   const resolvedSession: AssistantChatSessionResolution = {
     ...session,
     actor: { kind: "anonymous" },
@@ -146,6 +152,7 @@ function dependencies(options?: {
       async (): Promise<AssistantChatSessionResolution> => resolvedSession,
     ),
     rateLimiter,
+    loadInputPolicy,
     resolveTrustedClientIp: vi.fn(() => "203.0.113.10"),
   };
 }
@@ -272,7 +279,7 @@ describe("POST /api/v1/assistant/chat", () => {
     ]);
   });
 
-  it("resolves the session, consumes the limiter, then invokes the provider", async () => {
+  it("resolves the session, consumes the limiter, loads policy, then invokes the provider", async () => {
     const order: string[] = [];
     const deps = dependencies({
       reply: async () => {
@@ -292,6 +299,10 @@ describe("POST /api/v1/assistant/chat", () => {
     deps.rateLimiter.consume.mockImplementation(async () => {
       order.push("limit");
     });
+    deps.loadInputPolicy.mockImplementation(async () => {
+      order.push("policy");
+      return { terms: [], revision: 0, updatedAt: null, updatedBy: null };
+    });
     deps.resolveProvider.mockImplementation(async () => {
       order.push("selector");
       return { provider: deps.provider, mode: "placeholder" };
@@ -302,7 +313,89 @@ describe("POST /api/v1/assistant/chat", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(order).toEqual(["session", "limit", "selector", "provider"]);
+    expect(order).toEqual([
+      "session",
+      "limit",
+      "policy",
+      "selector",
+      "provider",
+    ]);
+  });
+
+  it("returns exact 422 for a matching current message before provider resolution", async () => {
+    const deps = dependencies();
+    deps.loadInputPolicy.mockResolvedValue({
+      terms: ["敏感词"],
+      revision: 1,
+      updatedAt: null,
+      updatedBy: null,
+    });
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          message: "请解释这个敏感词",
+          context: { pathname: "/" },
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({
+      version: "1",
+      requestId: "generated-request-id",
+      error: {
+        code: "input_blocked",
+        message: "该问题无法提交，请调整表述",
+        retryable: false,
+      },
+    });
+    expect(deps.resolveProvider).not.toHaveBeenCalled();
+    expect(deps.provider.reply).not.toHaveBeenCalled();
+    expect(deps.records).toEqual([
+      { requestId: "generated-request-id", statusCode: 422, durationMs: 7 },
+    ]);
+  });
+
+  it("returns safe 503 when input policy storage fails before provider resolution", async () => {
+    const deps = dependencies();
+    deps.loadInputPolicy.mockRejectedValue(
+      new Error("policy storage leaked term 敏感词"),
+    );
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({ message: "普通问题", context: { pathname: "/" } }),
+      ),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).toEqual(
+      createAssistantErrorResponse(
+        "generated-request-id",
+        "assistant_unavailable",
+      ),
+    );
+    expect(JSON.stringify(body)).not.toMatch(/storage|敏感词/iu);
+    expect(deps.resolveProvider).not.toHaveBeenCalled();
+    expect(deps.provider.reply).not.toHaveBeenCalled();
+  });
+
+  it("keeps rate-limit failure ahead of input policy loading", async () => {
+    const deps = dependencies();
+    deps.rateLimiter.consume.mockRejectedValue(
+      new AssistantRateLimitExceededError(37),
+    );
+
+    const response = await createAssistantChatHandler(deps)(
+      request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
+    );
+
+    expect(response.status).toBe(429);
+    expect(deps.loadInputPolicy).not.toHaveBeenCalled();
+    expect(deps.resolveProvider).not.toHaveBeenCalled();
+    expect(deps.provider.reply).not.toHaveBeenCalled();
   });
 
   it("uses only the server-resolved customer actor for customer limits", async () => {

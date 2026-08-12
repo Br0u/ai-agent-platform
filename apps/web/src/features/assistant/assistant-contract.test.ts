@@ -39,6 +39,15 @@ describe("assistant platform contract", () => {
     expect(
       createAssistantErrorResponse("req-1", "validation_error").error.retryable,
     ).toBe(false);
+    expect(createAssistantErrorResponse("req-1", "input_blocked")).toEqual({
+      version: "1",
+      requestId: "req-1",
+      error: {
+        code: "input_blocked",
+        message: "该问题无法提交，请调整表述",
+        retryable: false,
+      },
+    });
   });
 
   it("requires a canonical expiry and exposes no session identifier", () => {

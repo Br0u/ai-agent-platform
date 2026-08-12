@@ -9,6 +9,7 @@ import {
   type AssistantErrorResponse,
   type AssistantSuccessResponse,
 } from "@/features/assistant/assistant-contract";
+import { matchesAssistantInputPolicy } from "@/features/assistant/assistant-input-policy";
 import {
   ASSISTANT_STREAM_MEDIA_TYPE,
   formatAssistantStreamEvent,
@@ -32,6 +33,10 @@ import {
   type AssistantRateLimiter,
 } from "@/server/assistant/assistant-rate-limit";
 import { readBoundedJson } from "@/server/http/read-bounded-json";
+import {
+  createAssistantInputPolicyRepository,
+  type AssistantInputPolicySnapshot,
+} from "@/server/assistant/assistant-input-policy";
 
 export type AssistantChatSessionResolution = {
   publicSession: AssistantPublicSession;
@@ -52,6 +57,7 @@ interface AssistantChatHandlerDependencies {
   messageIdFactory: () => string;
   resolveSession: (request: Request) => Promise<AssistantChatSessionResolution>;
   rateLimiter: AssistantRateLimiter;
+  loadInputPolicy?: () => Promise<AssistantInputPolicySnapshot>;
   resolveTrustedClientIp: (request: Request) => string | undefined;
 }
 
@@ -68,6 +74,10 @@ export function createAssistantChatSessionResolver(
   };
 }
 
+function loadAssistantInputPolicy() {
+  return createAssistantInputPolicyRepository().load();
+}
+
 const defaultDependencies: AssistantChatHandlerDependencies = {
   resolveProvider: () => getAssistantRuntime().resolveProvider(),
   logger: assistantRequestLogger,
@@ -78,6 +88,7 @@ const defaultDependencies: AssistantChatHandlerDependencies = {
   rateLimiter: {
     consume: (input) => getAssistantRuntime().rateLimiter.consume(input),
   },
+  loadInputPolicy: loadAssistantInputPolicy,
   resolveTrustedClientIp: (request) =>
     getAssistantRuntime().resolveTrustedClientIp(request),
 };
@@ -96,6 +107,8 @@ function rateLimitInput(
 }
 
 const MAX_REQUEST_BODY_BYTES = 16 * 1024;
+class AssistantInputBlockedError extends Error {}
+
 export function createAssistantChatHandler(
   dependencies: AssistantChatHandlerDependencies = defaultDependencies,
 ) {
@@ -106,7 +119,7 @@ export function createAssistantChatHandler(
       dependencies.requestIdFactory,
     );
     let body: AssistantSuccessResponse | AssistantErrorResponse;
-    let statusCode: 200 | 400 | 429 | 503;
+    let statusCode: 200 | 400 | 422 | 429 | 503;
     let session: AssistantChatSessionResolution | undefined;
     let retryAfterSeconds: number | undefined;
 
@@ -126,6 +139,14 @@ export function createAssistantChatHandler(
         await dependencies.rateLimiter.consume(
           rateLimitInput(resolvedSession, ipAddress),
         );
+        const policy = await (
+          dependencies.loadInputPolicy ?? loadAssistantInputPolicy
+        )();
+        if (
+          matchesAssistantInputPolicy([assistantRequest.message], policy.terms)
+        ) {
+          throw new AssistantInputBlockedError();
+        }
         const selected = dependencies.resolveProvider
           ? await dependencies.resolveProvider()
           : {
@@ -157,7 +178,9 @@ export function createAssistantChatHandler(
             })
             [Symbol.asyncIterator]();
           const abortStream = () => streamAbortController.abort();
-          request.signal.addEventListener("abort", abortStream, { once: true });
+          request.signal.addEventListener("abort", abortStream, {
+            once: true,
+          });
           if (request.signal.aborted) abortStream();
           let cancelled = false;
           let logged = false;
@@ -301,6 +324,9 @@ export function createAssistantChatHandler(
           body = createAssistantErrorResponse(requestId, "rate_limited");
           statusCode = 429;
           retryAfterSeconds = error.retryAfterSeconds;
+        } else if (error instanceof AssistantInputBlockedError) {
+          body = createAssistantErrorResponse(requestId, "input_blocked");
+          statusCode = 422;
         } else {
           body = createAssistantErrorResponse(
             requestId,

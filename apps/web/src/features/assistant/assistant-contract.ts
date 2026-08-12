@@ -18,6 +18,7 @@ export const ASSISTANT_CONTENT_MAX_CODE_POINTS = 32_768;
 export const ASSISTANT_MAX_SUGGESTED_ACTIONS = 8;
 export const ASSISTANT_ACTION_LABEL_MAX_CODE_POINTS = 120;
 export const ASSISTANT_ACTION_HREF_MAX_CODE_POINTS = 2_048;
+export const ASSISTANT_INPUT_BLOCKED_MESSAGE = "该问题无法提交，请调整表述";
 
 export const ASSISTANT_PRESET_QUESTIONS = [
   "如何开始了解平台？",
@@ -64,6 +65,7 @@ export type AssistantStreamErrorEvent = Record<string, never>;
 
 export type AssistantErrorCode =
   | "validation_error"
+  | "input_blocked"
   | "rate_limited"
   | "assistant_unavailable";
 
@@ -99,6 +101,7 @@ export function createAssistantErrorResponse(
 ): AssistantErrorResponse {
   const messages: Record<AssistantErrorCode, string> = {
     validation_error: "请输入 1 至 500 个字符的问题。",
+    input_blocked: ASSISTANT_INPUT_BLOCKED_MESSAGE,
     rate_limited: "请求过于频繁，请稍后再试。",
     assistant_unavailable: "助手服务暂不可用，请使用帮助中心或商务咨询。",
   };
@@ -109,7 +112,7 @@ export function createAssistantErrorResponse(
     error: {
       code,
       message: messages[code],
-      retryable: code !== "validation_error",
+      retryable: code !== "validation_error" && code !== "input_blocked",
     },
   };
 }

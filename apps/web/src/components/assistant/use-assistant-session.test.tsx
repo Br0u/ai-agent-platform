@@ -506,6 +506,102 @@ describe("useAssistantSession", () => {
     );
   });
 
+  it("shows the safe blocked message and preserves edits made while pending", async () => {
+    let resolve!: (response: Response) => void;
+    vi.mocked(fetch).mockReturnValue(new Promise((done) => (resolve = done)));
+    const { result } = renderHook(() => useAssistantSession("/assistant"));
+    act(() => result.current.setDraft("原问题"));
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = result.current.submit();
+    });
+    act(() => result.current.setDraft("等待时编辑的新问题"));
+    await act(async () => {
+      resolve(
+        Response.json(
+          {
+            version: "1",
+            requestId: "req-blocked",
+            error: {
+              code: "input_blocked",
+              message: "该问题无法提交，请调整表述",
+              retryable: false,
+            },
+          },
+          { status: 422 },
+        ),
+      );
+      await pending;
+    });
+
+    expect(result.current.requestStatus).toBe("failed");
+    expect(result.current.latestAnnouncement).toBe(
+      "该问题无法提交，请调整表述",
+    );
+    expect(result.current.draft).toBe("等待时编辑的新问题");
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.lastFailedMessage).toBeNull();
+  });
+
+  it.each([
+    [
+      "hostile message",
+      422,
+      {
+        version: "1",
+        requestId: "req-hostile",
+        error: {
+          code: "input_blocked",
+          message: "internal URL http://agent:7777 and secret key",
+          retryable: false,
+        },
+      },
+    ],
+    [
+      "extra key",
+      422,
+      {
+        version: "1",
+        requestId: "req-extra",
+        error: {
+          code: "input_blocked",
+          message: "该问题无法提交，请调整表述",
+          retryable: false,
+        },
+        extra: "unsafe",
+      },
+    ],
+    [
+      "other status",
+      400,
+      {
+        version: "1",
+        requestId: "req-status",
+        error: {
+          code: "input_blocked",
+          message: "该问题无法提交，请调整表述",
+          retryable: false,
+        },
+      },
+    ],
+  ])(
+    "keeps a malformed blocked response generic: %s",
+    async (_name, status, body) => {
+      vi.mocked(fetch).mockResolvedValue(Response.json(body, { status }));
+      const { result } = renderHook(() => useAssistantSession("/assistant"));
+
+      await act(() => result.current.submit("异常屏蔽响应"));
+
+      expect(result.current.latestAnnouncement).toBe(
+        "发送失败，请重试或使用帮助中心或商务咨询。",
+      );
+      expect(result.current.latestAnnouncement).not.toMatch(
+        /agent:7777|secret/u,
+      );
+    },
+  );
+
   it("never renders an untrusted error message from a malformed 429 body", async () => {
     vi.mocked(fetch).mockResolvedValue(
       Response.json(

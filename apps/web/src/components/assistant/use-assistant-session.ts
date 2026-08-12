@@ -2,6 +2,7 @@
 
 import {
   ASSISTANT_CONTENT_MAX_CODE_POINTS,
+  ASSISTANT_INPUT_BLOCKED_MESSAGE,
   isAssistantSuccessResponse,
   safeAssistantSuggestedActions,
   type AssistantSuccessResponse,
@@ -53,7 +54,14 @@ const PUBLIC_ASSISTANT_ENDPOINT = "/api/v1/assistant/chat";
 const REQUEST_CANCELLED = Symbol("assistant-request-cancelled");
 const REQUEST_TIMEOUT = Symbol("assistant-request-timeout");
 
-class SafeAssistantRequestFailure extends Error {}
+class SafeAssistantRequestFailure extends Error {
+  constructor(
+    message: string,
+    readonly retryable = true,
+  ) {
+    super(message);
+  }
+}
 
 export const ASSISTANT_REQUEST_TIMEOUT_MS = 60_000;
 
@@ -112,13 +120,13 @@ function safeFailureAnnouncement(
   input: unknown,
   fallback: string,
   unavailable: string,
-): string {
+): { message: string; retryable: boolean } {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    return fallback;
+    return { message: fallback, retryable: true };
   }
   const envelope = input as Record<string, unknown>;
   if (Object.keys(envelope).sort().join(",") !== "error,requestId,version") {
-    return fallback;
+    return { message: fallback, retryable: true };
   }
   const error = envelope.error;
   if (
@@ -129,26 +137,34 @@ function safeFailureAnnouncement(
     error === null ||
     Array.isArray(error)
   ) {
-    return fallback;
+    return { message: fallback, retryable: true };
   }
   const details = error as Record<string, unknown>;
   if (
     Object.keys(details).sort().join(",") !== "code,message,retryable" ||
     typeof details.retryable !== "boolean"
   ) {
-    return fallback;
+    return { message: fallback, retryable: true };
   }
   if (status === 429 && details.code === "rate_limited" && details.retryable) {
-    return "请求过于频繁，请稍后再试。";
+    return { message: "请求过于频繁，请稍后再试。", retryable: true };
   }
   if (
     status === 503 &&
     details.code === "assistant_unavailable" &&
     details.retryable
   ) {
-    return unavailable;
+    return { message: unavailable, retryable: true };
   }
-  return fallback;
+  if (
+    status === 422 &&
+    details.code === "input_blocked" &&
+    details.message === ASSISTANT_INPUT_BLOCKED_MESSAGE &&
+    details.retryable === false
+  ) {
+    return { message: ASSISTANT_INPUT_BLOCKED_MESSAGE, retryable: false };
+  }
+  return { message: fallback, retryable: true };
 }
 
 function responseMediaType(response: Response): string | null {
@@ -276,13 +292,15 @@ export function useAssistantSession(
             response.json().catch(() => null),
             control,
           ]);
+          const failure = safeFailureAnnouncement(
+            response.status,
+            body,
+            failureAnnouncement,
+            unavailableAnnouncement,
+          );
           throw new SafeAssistantRequestFailure(
-            safeFailureAnnouncement(
-              response.status,
-              body,
-              failureAnnouncement,
-              unavailableAnnouncement,
-            ),
+            failure.message,
+            failure.retryable,
           );
         }
 
@@ -478,7 +496,11 @@ export function useAssistantSession(
           return;
         }
         retainIncompleteStream();
-        setLastFailedRequest(payload);
+        setLastFailedRequest(
+          error instanceof SafeAssistantRequestFailure && !error.retryable
+            ? null
+            : payload,
+        );
         setLatestAnnouncement(
           error instanceof SafeAssistantRequestFailure
             ? error.message
