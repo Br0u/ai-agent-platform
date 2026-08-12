@@ -34,6 +34,11 @@ describe("assistant input policy normalization", () => {
     );
   });
 
+  it("uses context-independent Unicode case folding for substring matching", () => {
+    expect(matchesAssistantInputPolicy(["ΟΣΑ"], ["ΟΣ"])).toBe(true);
+    expect(matchesAssistantInputPolicy(["STRASSE"], ["Straße"])).toBe(true);
+  });
+
   it("rejects source input beyond the byte limit before normalization", () => {
     expect(
       normalizeAssistantInputTerms(

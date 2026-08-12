@@ -1,3 +1,5 @@
+import { pythonCasefoldAdminSkillPath } from "./admin-skill-python-casefold";
+
 export const ASSISTANT_INPUT_POLICY_MAX_SOURCE_BYTES = 32 * 1024;
 export const ASSISTANT_INPUT_POLICY_MAX_TERMS = 500;
 export const ASSISTANT_INPUT_POLICY_MAX_TERM_CODE_POINTS = 80;
@@ -16,7 +18,7 @@ export class AssistantInputPolicyValidationError extends Error {
 }
 
 function normalized(value: string): string {
-  return value.normalize("NFKC").toLocaleLowerCase("en-US");
+  return pythonCasefoldAdminSkillPath(value.normalize("NFKC"));
 }
 
 function byteLength(value: string): number {
