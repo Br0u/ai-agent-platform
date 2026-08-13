@@ -662,11 +662,9 @@ test("streaming activity becomes a collapsed audit trail with safe actions", asy
   );
 
   await page.goto("/product");
-  const idleOrb = page
-    .getByRole("button", { name: "打开码多多" })
-    .locator(".assistant-orb");
-  await expect(idleOrb).toHaveAttribute("data-orb-state", "breathing");
-  await expectStaticOrbFrame(idleOrb);
+  await expect(
+    page.getByRole("button", { name: "打开码多多" }).locator(".assistant-orb"),
+  ).toHaveCount(0);
   await activateAssistantWithStatus(page, () =>
     page.getByRole("button", { name: "打开码多多" }).click(),
   );
@@ -717,6 +715,7 @@ test("streaming activity becomes a collapsed audit trail with safe actions", asy
   await expect(
     dialog.getByRole("link", { name: "外部说明", exact: true }),
   ).toHaveCount(0);
+  await dialog.getByRole("button", { name: "查看价格" }).click();
   await expect(page).toHaveURL(/\/pricing$/u);
   await expectExactViewportWidth(page);
   expectCleanEvidence(evidence, new URL(page.url()).origin);
@@ -768,15 +767,12 @@ test("workspace clears the current-page conversation", async ({
   const composer = page.getByRole("textbox", { name: "输入问题" });
   await expect(composer).toHaveValue("");
   const messageLog = page.getByRole("log", { name: "码多多对话" });
-  await expect(messageLog).not.toContainText(question);
-  await expect(messageLog).not.toContainText(answer);
+  await expect(messageLog).toHaveCount(0);
 
   await composer.fill("刷新后也应清空的草稿");
   await page.reload();
   await expect(page.getByRole("textbox", { name: "输入问题" })).toHaveValue("");
-  await expect(page.getByRole("log", { name: "码多多对话" })).not.toContainText(
-    question,
-  );
+  await expect(page.getByRole("log", { name: "码多多对话" })).toHaveCount(0);
   expect(requestCount).toBe(1);
   await expectExactViewportWidth(page);
   await page.unroute(`**${ASSISTANT_CHAT_ENDPOINT}`);
@@ -827,12 +823,12 @@ test("mobile quick launcher expands into a scrolling workspace", async ({
   await response;
   const messageLog = page.getByRole("log", { name: "码多多对话" });
   await expect(messageLog).toContainText("移动端长回复");
-  const scrolling = await page.evaluate(() => {
-    window.scrollTo({ top: document.documentElement.scrollHeight });
+  const scrolling = await messageLog.evaluate((element) => {
+    element.scrollTo({ top: element.scrollHeight });
     return {
-      clientHeight: document.documentElement.clientHeight,
-      scrollHeight: document.documentElement.scrollHeight,
-      scrollTop: window.scrollY,
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      scrollTop: element.scrollTop,
     };
   });
   expect(scrolling.scrollHeight).toBeGreaterThan(scrolling.clientHeight);

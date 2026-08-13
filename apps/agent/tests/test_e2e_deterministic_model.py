@@ -242,7 +242,7 @@ def test_deterministic_model_splits_private_thinking_from_safe_answer() -> None:
         "<THINK data-x>",
         SPLIT_REASONING_PRIVATE,
         "</THINK>",
-        "aap.fina",
+        "\naap.fina",
         "l.v1:",
         SAFE_ANSWER_SENTINEL[:12],
         SAFE_ANSWER_SENTINEL[12:],

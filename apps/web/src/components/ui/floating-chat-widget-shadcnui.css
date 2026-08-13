@@ -399,7 +399,9 @@
   }
 
   .floating-assistant__panel button,
-  .floating-assistant__panel a {
+  .floating-assistant__panel a,
+  .floating-assistant__panel textarea,
+  .floating-assistant__panel input:not([aria-hidden="true"]) {
     min-width: 44px;
     min-height: 44px;
   }

@@ -609,7 +609,7 @@ describe("FloatingChatWidget", () => {
     );
 
     expect(stylesheet).toMatch(
-      /@media \(max-width: 640px\)[\s\S]*?\.floating-assistant__panel button,\s*\.floating-assistant__panel a\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/u,
+      /@media \(max-width: 640px\)[\s\S]*?\.floating-assistant__panel button,\s*\.floating-assistant__panel a,\s*\.floating-assistant__panel textarea,\s*\.floating-assistant__panel input:not\(\[aria-hidden="true"\]\)\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/u,
     );
     const composerStylesheet = readFileSync(
       "src/components/assistant/assistant-prompt-input.css",

@@ -49,7 +49,7 @@ class DeterministicModel(Model):
         elif question == SPLIT_REASONING_SENTINEL:
             content = (
                 f"<THINK data-x>{SPLIT_REASONING_PRIVATE}</THINK>"
-                f"{FINAL_ANSWER_MARKER}{SAFE_ANSWER_SENTINEL}"
+                f"\n{FINAL_ANSWER_MARKER}{SAFE_ANSWER_SENTINEL}"
             )
         elif question in {
             ALLOWED_NAVIGATION_SENTINEL,
@@ -123,7 +123,7 @@ class DeterministicModel(Model):
                 "<THINK data-x>",
                 SPLIT_REASONING_PRIVATE,
                 "</THINK>",
-                FINAL_ANSWER_MARKER[:8],
+                f"\n{FINAL_ANSWER_MARKER[:8]}",
                 FINAL_ANSWER_MARKER[8:],
                 SAFE_ANSWER_SENTINEL[:12],
                 SAFE_ANSWER_SENTINEL[12:],
@@ -145,7 +145,7 @@ class DeterministicModel(Model):
                 "<THINK data-x>",
                 SPLIT_REASONING_PRIVATE,
                 "</THINK>",
-                FINAL_ANSWER_MARKER[:8],
+                f"\n{FINAL_ANSWER_MARKER[:8]}",
                 FINAL_ANSWER_MARKER[8:],
                 SAFE_ANSWER_SENTINEL[:12],
                 SAFE_ANSWER_SENTINEL[12:],

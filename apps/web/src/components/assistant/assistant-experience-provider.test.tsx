@@ -231,7 +231,7 @@ describe("AssistantExperienceProvider", () => {
     });
   });
 
-  it("executes a validated navigation action without waiting for a second click", async () => {
+  it("keeps a validated navigation action pending until the user clicks it", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -267,8 +267,11 @@ describe("AssistantExperienceProvider", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送跨页问题" }));
 
     await waitFor(() =>
-      expect(router.push).toHaveBeenCalledExactlyOnceWith("/product"),
+      expect(screen.getByLabelText("会话消息")).toHaveTextContent(
+        "正在为你打开产品页面。",
+      ),
     );
+    expect(router.push).not.toHaveBeenCalled();
   });
 
   it("uses one closed to quick to dock to quick to closed state machine", () => {
