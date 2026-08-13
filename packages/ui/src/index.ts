@@ -8,6 +8,7 @@ export { AssetPlaceholder } from "./asset-placeholder";
 export { AuthShell, type AuthShellProps } from "./auth-shell/auth-shell";
 export {
   AssistantHeaderEntry,
+  AssistantHeaderMark,
   type AssistantHeaderEntryProps,
 } from "./navigation/assistant-header-entry";
 export { MegaMenu } from "./navigation/mega-menu";

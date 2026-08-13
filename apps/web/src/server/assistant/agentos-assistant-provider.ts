@@ -98,6 +98,8 @@ export class AgentOSAssistantProvider implements AssistantProvider {
     );
     const filter = new AssistantContentFilter();
     const seenActions = new Set<string>();
+    const pendingActions: AssistantProviderEvent[] = [];
+    const requestedNavigation = requestedNavigationPath(invocation);
     let hasSafeAnswer = false;
     try {
       while (true) {
@@ -113,6 +115,17 @@ export class AgentOSAssistantProvider implements AssistantProvider {
               "invalid_response",
               "stream_empty_content",
             );
+          }
+          for (const action of pendingActions) yield action;
+          if (
+            requestedNavigation !== null &&
+            !seenActions.has(requestedNavigation)
+          ) {
+            const action = await this.validatedNavigation(
+              requestedNavigation,
+              invocation.signal,
+            );
+            if (action !== null) yield action;
           }
           return;
         }
@@ -137,30 +150,35 @@ export class AgentOSAssistantProvider implements AssistantProvider {
               };
         } else if (!seenActions.has(event.pathname)) {
           seenActions.add(event.pathname);
-          const route = matchRoute(event.pathname);
-          if (
-            route?.group === "public" &&
-            route.status === "live" &&
-            (await this.options.pageResolver.exists(
-              event.pathname,
-              invocation.signal,
-            ))
-          ) {
-            yield {
-              type: "action",
-              action: {
-                kind: "navigate",
-                pathname: event.pathname,
-                label: route.title,
-              },
-            };
-          }
+          const action = await this.validatedNavigation(
+            event.pathname,
+            invocation.signal,
+          );
+          if (action !== null) pendingActions.push(action);
         }
       }
     } finally {
       await iterator.return?.();
       await execution.catch(() => undefined);
     }
+  }
+
+  private async validatedNavigation(
+    pathname: string,
+    signal?: AbortSignal,
+  ): Promise<AssistantProviderEvent | null> {
+    const route = matchRoute(pathname);
+    if (
+      route?.group !== "public" ||
+      route.status !== "live" ||
+      !(await this.options.pageResolver.exists(pathname, signal))
+    ) {
+      return null;
+    }
+    return {
+      type: "action",
+      action: { kind: "navigate", pathname, label: route.title },
+    };
   }
 
   private recordRunFailure(error: unknown): void {
@@ -202,6 +220,22 @@ export class AgentOSAssistantProvider implements AssistantProvider {
     }
     return { content, suggestedActions };
   }
+}
+
+const NAVIGATION_INTENT = /(?:了解|查看|打开|前往|进入|跳转到|去)/u;
+
+function requestedNavigationPath(
+  invocation: AssistantProviderInvocation,
+): string | null {
+  if (!NAVIGATION_INTENT.test(invocation.request.message)) return null;
+  const compactMessage = invocation.request.message.replace(/\s+/gu, "");
+  const matches = (invocation.pageContext?.links ?? [])
+    .filter((link) => {
+      const label = link.label.replace(/[\s→›»]+/gu, "");
+      return label.length >= 2 && compactMessage.includes(label);
+    })
+    .sort((left, right) => right.label.length - left.label.length);
+  return matches[0]?.href ?? null;
 }
 
 function buildAssistantPrompt(invocation: AssistantProviderInvocation): string {

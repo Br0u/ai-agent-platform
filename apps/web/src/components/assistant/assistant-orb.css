@@ -8,24 +8,8 @@
   flex: 0 0 var(--assistant-orb-size);
   place-items: center;
   overflow: hidden;
-  border: 1px solid rgb(255 255 255 / 68%);
   border-radius: 999px;
-  background:
-    radial-gradient(circle at 30% 24%, rgb(255 255 255 / 48%), transparent 29%),
-    linear-gradient(135deg, #2563eb 0%, #4f46e5 52%, #7c3aed 100%);
-  box-shadow:
-    0 0 0 1px rgb(79 70 229 / 12%),
-    0 8px 24px rgb(67 56 202 / 24%);
-  isolation: isolate;
-}
-
-.assistant-orb::before {
-  position: absolute;
-  inset: 8%;
-  border-radius: inherit;
-  background: radial-gradient(circle, rgb(255 255 255 / 12%), transparent 68%);
-  content: "";
-  pointer-events: none;
+  background: transparent;
 }
 
 .assistant-orb__canvas,
@@ -44,23 +28,12 @@
 
 .assistant-orb__fallback {
   z-index: 1;
-  background:
-    radial-gradient(
-      circle at 50% 50%,
-      transparent 42%,
-      rgb(255 255 255 / 82%) 44% 49%,
-      transparent 51%
-    ),
-    radial-gradient(
-      circle at 34% 32%,
-      rgb(255 255 255 / 70%) 0 4%,
-      transparent 5%
-    );
+  background: #4f46e5;
+  box-shadow: inset calc(var(--assistant-orb-size) * 0.22) 0 #7c3aed;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .assistant-orb,
-  .assistant-orb::before,
   .assistant-orb__canvas,
   .assistant-orb__fallback {
     animation: none !important;

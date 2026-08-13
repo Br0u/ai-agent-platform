@@ -317,28 +317,6 @@
   grid-template-columns: 20px minmax(0, 1fr);
 }
 
-.assistant-dock .assistant-activity,
-.assistant-dock .assistant-activity summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.assistant-dock .assistant-activity {
-  color: var(--color-muted);
-  font-size: 12px;
-}
-
-.assistant-dock .assistant-activity summary {
-  min-height: 32px;
-  cursor: pointer;
-}
-
-.assistant-dock .assistant-activity ol {
-  margin: 4px 0 8px 28px;
-  padding: 0;
-}
-
 .assistant-dock .assistant-conversation__message nav button {
   min-height: 36px;
   padding: 6px 11px;

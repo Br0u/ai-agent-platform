@@ -159,14 +159,14 @@ async function installOrbDrawCounter(page: Page) {
 }
 
 async function orbDrawCount(orb: Locator) {
-  return orb
-    .locator("canvas")
-    .evaluate((canvas) =>
-      Number.parseInt(
-        (canvas as HTMLCanvasElement).dataset.orbDrawCount ?? "0",
-        10,
-      ),
-    );
+  const canvas = orb.locator("canvas");
+  if ((await canvas.count()) === 0) return 0;
+  return canvas.evaluate((element) =>
+    Number.parseInt(
+      (element as HTMLCanvasElement).dataset.orbDrawCount ?? "0",
+      10,
+    ),
+  );
 }
 
 async function expectOrbDrawing(orb: Locator) {
@@ -518,7 +518,7 @@ test("thinking orb pauses natively when offscreen and resumes", async ({
   await page.goto("/assistant");
   const orb = page
     .getByRole("main", { name: "码多多工作区" })
-    .locator(".assistant-workspace__header .assistant-orb");
+    .locator(".assistant-workspace__utility .assistant-orb");
   await expect(orb).toHaveAttribute("data-orb-state", "breathing");
   await expectOrbDrawing(orb);
 
@@ -556,7 +556,7 @@ if (process.env.RUN_HEADED_ORB_VISIBILITY_E2E === "true") {
     await page.goto("/assistant");
     const orb = page
       .getByRole("main", { name: "码多多工作区" })
-      .locator(".assistant-workspace__header .assistant-orb");
+      .locator(".assistant-workspace__utility .assistant-orb");
     await expectOrbDrawing(orb);
 
     const popup = page.waitForEvent("popup");
@@ -674,6 +674,9 @@ test("streaming activity becomes a collapsed audit trail with safe actions", asy
   const input = dialog.getByRole("textbox", { name: "向码多多提问" });
   await input.fill("请分析并给出安全跳转");
   await dialog.getByRole("button", { name: "发送消息" }).click();
+  const streamedMessage = dialog
+    .locator(".floating-assistant__message--assistant")
+    .last();
 
   for (const state of [
     {
@@ -697,10 +700,11 @@ test("streaming activity becomes a collapsed audit trail with safe actions", asy
       .filter({ hasText: state.label });
     await expect(currentActivity).toBeVisible();
     await expect(currentActivity).toHaveAttribute("aria-live", "polite");
+    await expect(currentActivity.getByRole("img")).toHaveCount(0);
     await expect(
-      currentActivity.getByRole("img", { name: state.orbLabel }),
+      streamedMessage.getByRole("img", { name: state.orbLabel }),
     ).toBeVisible();
-    const orb = currentActivity.locator(".assistant-orb");
+    const orb = streamedMessage.locator(".assistant-orb");
     await expect(orb).toHaveAttribute("data-orb-state", state.orbState);
     await expectStaticOrbFrame(orb);
   }
@@ -713,12 +717,6 @@ test("streaming activity becomes a collapsed audit trail with safe actions", asy
   await expect(
     dialog.getByRole("link", { name: "外部说明", exact: true }),
   ).toHaveCount(0);
-  const action = dialog.getByRole("button", {
-    name: "查看价格",
-    exact: true,
-  });
-  await expect(action).toBeVisible();
-  await action.click();
   await expect(page).toHaveURL(/\/pricing$/u);
   await expectExactViewportWidth(page);
   expectCleanEvidence(evidence, new URL(page.url()).origin);

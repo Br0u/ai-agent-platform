@@ -1,18 +1,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AssistantOrb, type AssistantOrbState } from "./assistant-orb";
-
-type MockThinkingOrbProps = {
-  "aria-label": string;
-  paused: boolean;
-  size: 20 | 64;
-  state: string;
-};
-
-const thinkingOrbMock = vi.hoisted(() => ({
-  shouldThrow: false,
-  render: vi.fn(),
-}));
 
 const reducedMotionMock = vi.hoisted(() => ({ value: false }));
 
@@ -20,35 +9,35 @@ vi.mock("framer-motion", () => ({
   useReducedMotion: () => reducedMotionMock.value,
 }));
 
-vi.mock("thinking-orbs", () => ({
-  ThinkingOrb: (props: MockThinkingOrbProps) => {
-    thinkingOrbMock.render(props);
-    if (thinkingOrbMock.shouldThrow) {
-      throw new Error("canvas renderer failed");
-    }
-    return (
-      <canvas
-        aria-label={props["aria-label"]}
-        data-orb-size={props.size}
-        data-orb-state={props.state}
-        data-paused={String(props.paused)}
-        data-testid="thinking-orb"
-        role="img"
-      />
-    );
-  },
-}));
+function canvasContext() {
+  return new Proxy(
+    {},
+    {
+      get(target, property) {
+        if (!(property in target)) {
+          Object.assign(target, { [property]: vi.fn() });
+        }
+        return Reflect.get(target, property);
+      },
+      set(target, property, value) {
+        return Reflect.set(target, property, value);
+      },
+    },
+  ) as CanvasRenderingContext2D;
+}
 
-function enableCanvas() {
-  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
-    {} as CanvasRenderingContext2D,
+function enableCanvas(context = canvasContext()) {
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context);
+  vi.stubGlobal(
+    "requestAnimationFrame",
+    vi.fn(() => 17),
   );
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  return context;
 }
 
 afterEach(() => {
   cleanup();
-  thinkingOrbMock.render.mockClear();
-  thinkingOrbMock.shouldThrow = false;
   reducedMotionMock.value = false;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -85,6 +74,11 @@ describe("AssistantOrb", () => {
       orbState: "working",
       ariaLabel: "码多多正在执行操作",
     },
+    {
+      assistantState: "listening",
+      orbState: "listening",
+      ariaLabel: "码多多正在倾听",
+    },
   ])(
     "maps $assistantState to the $orbState animation and an accessible label",
     async ({ ariaLabel, assistantState, orbState }) => {
@@ -92,19 +86,21 @@ describe("AssistantOrb", () => {
 
       render(<AssistantOrb size={64} state={assistantState} />);
 
-      expect(
-        await screen.findByRole("img", { name: ariaLabel }),
-      ).toHaveAttribute("data-orb-state", orbState);
-      expect(thinkingOrbMock.render.mock.lastCall?.[0]).toEqual(
-        expect.objectContaining({
-          "aria-label": ariaLabel,
-          paused: false,
-          size: 64,
-          state: orbState,
-        }),
-      );
+      const orb = await screen.findByRole("img", { name: ariaLabel });
+      expect(orb).toHaveAttribute("data-orb-state", orbState);
+      expect(orb).toHaveAttribute("data-paused", "false");
     },
   );
+
+  it("runs the listening preset at the requested quarter speed", async () => {
+    enableCanvas();
+
+    render(<AssistantOrb size={20} speed={0.25} state="listening" />);
+
+    expect(
+      await screen.findByRole("img", { name: "码多多正在倾听" }),
+    ).toHaveAttribute("data-speed", "0.25");
+  });
 
   it.each([20, 64] as const)(
     "uses the tuned %ipx thinking-orbs preset",
@@ -115,7 +111,7 @@ describe("AssistantOrb", () => {
         <AssistantOrb size={size} state="analyzing" />,
       );
 
-      await screen.findByTestId("thinking-orb");
+      await screen.findByRole("img");
       expect(container.firstElementChild).toHaveAttribute(
         "data-assistant-orb-size",
         String(size),
@@ -124,9 +120,7 @@ describe("AssistantOrb", () => {
         "data-orb-state",
         "solving",
       );
-      expect(thinkingOrbMock.render.mock.lastCall?.[0]).toEqual(
-        expect.objectContaining({ size }),
-      );
+      expect(screen.getByRole("img")).toHaveClass("assistant-orb__canvas");
     },
   );
 
@@ -136,12 +130,32 @@ describe("AssistantOrb", () => {
 
     render(<AssistantOrb size={20} state="reading" />);
 
-    expect(await screen.findByTestId("thinking-orb")).toHaveAttribute(
+    expect(await screen.findByRole("img")).toHaveAttribute(
       "data-paused",
       "true",
     );
-    expect(thinkingOrbMock.render.mock.lastCall?.[0]).toEqual(
-      expect.objectContaining({ paused: true }),
+  });
+
+  it("renders brand colors on the orb points without an outer color mask", async () => {
+    const context = enableCanvas();
+
+    render(<AssistantOrb size={20} state="analyzing" />);
+
+    expect(await screen.findByRole("img")).toHaveAttribute(
+      "data-color-rendering",
+      "per-dot",
+    );
+    await waitFor(() => expect(context.fill).toHaveBeenCalled());
+    expect(String(context.fillStyle)).toMatch(
+      /^rgba\((37|[3-9]\d|1[01]\d|12[0-4]), /u,
+    );
+    const stylesheet = readFileSync(
+      "src/components/assistant/assistant-orb.css",
+      "utf8",
+    );
+    expect(stylesheet).not.toContain(".assistant-orb::before");
+    expect(stylesheet).toMatch(
+      /\.assistant-orb\s*\{[\s\S]*?background:\s*transparent;/u,
     );
   });
 
@@ -153,14 +167,14 @@ describe("AssistantOrb", () => {
     expect(
       await screen.findByRole("img", { name: "码多多正在读取页面" }),
     ).toHaveAttribute("data-assistant-orb-fallback", "true");
-    expect(screen.queryByTestId("thinking-orb")).not.toBeInTheDocument();
-    expect(thinkingOrbMock.render).not.toHaveBeenCalled();
+    expect(document.querySelector("canvas")).toBeNull();
   });
 
-  it("falls back safely when the third-party orb renderer throws", async () => {
-    enableCanvas();
-    thinkingOrbMock.shouldThrow = true;
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+  it("falls back safely when point rendering fails", async () => {
+    const context = enableCanvas();
+    vi.mocked(context.fill).mockImplementation(() => {
+      throw new Error("point renderer failed");
+    });
 
     render(<AssistantOrb size={20} state="tool" />);
 
@@ -169,12 +183,11 @@ describe("AssistantOrb", () => {
         screen.getByRole("img", { name: "码多多正在执行操作" }),
       ).toHaveAttribute("data-assistant-orb-fallback", "true"),
     );
-    expect(screen.queryByTestId("thinking-orb")).not.toBeInTheDocument();
   });
 });
 
-describe("thinking-orbs visibility lifecycle", () => {
-  it("uses the dependency's native visibility listener to pause and resume animation", async () => {
+describe("brand Orb visibility lifecycle", () => {
+  it("pauses and resumes the point renderer on document visibility", async () => {
     let visibilityState: DocumentVisibilityState = "visible";
     vi.spyOn(document, "visibilityState", "get").mockImplementation(
       () => visibilityState,
@@ -191,27 +204,11 @@ describe("thinking-orbs visibility lifecycle", () => {
     const cancelAnimationFrame = vi.fn();
     vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
     vi.stubGlobal("cancelAnimationFrame", cancelAnimationFrame);
-    const canvasContext = new Proxy(
-      {},
-      {
-        get(target, property) {
-          if (!(property in target)) {
-            Object.assign(target, { [property]: vi.fn() });
-          }
-          return Reflect.get(target, property);
-        },
-        set(target, property, value) {
-          return Reflect.set(target, property, value);
-        },
-      },
-    ) as CanvasRenderingContext2D;
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
-      canvasContext,
+      canvasContext(),
     );
-    const { ThinkingOrb: NativeThinkingOrb } =
-      await vi.importActual<typeof import("thinking-orbs")>("thinking-orbs");
 
-    render(<NativeThinkingOrb size={20} state="breathing" />);
+    render(<AssistantOrb size={20} state="idle" />);
     await waitFor(() => expect(requestAnimationFrame).toHaveBeenCalled());
     const animationStarts = requestAnimationFrame.mock.calls.length;
 

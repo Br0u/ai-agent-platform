@@ -1,4 +1,5 @@
 const MAX_REASONING_NESTING = 64;
+export const ASSISTANT_FINAL_ANSWER_MARKER = "aap.final.v1:";
 const REASONING_TAGS = ["think", "analysis"] as const;
 type ReasoningTag = (typeof REASONING_TAGS)[number];
 const TAG_CANDIDATES = REASONING_TAGS.flatMap((name) => [
@@ -8,12 +9,36 @@ const TAG_CANDIDATES = REASONING_TAGS.flatMap((name) => [
 
 export class AssistantContentFilter {
   private buffer = "";
+  private finalAnswerBuffer = "";
   private readonly hiddenTags: ReasoningTag[] = [];
   private failedClosed = false;
 
   push(chunk: string): string {
-    if (this.failedClosed) return "";
-    this.buffer += chunk;
+    this.finalAnswerBuffer += chunk;
+    return "";
+  }
+
+  finish(): string {
+    const markerIndex = this.findFinalAnswerMarker();
+    if (markerIndex === -1) {
+      this.reset();
+      return "";
+    }
+    this.buffer = this.finalAnswerBuffer.slice(
+      markerIndex + ASSISTANT_FINAL_ANSWER_MARKER.length,
+    );
+    const output = this.consumeVisibleContent();
+    const tail =
+      !this.failedClosed &&
+      this.hiddenTags.length === 0 &&
+      !this.hasPendingRecognizedTag()
+        ? this.buffer
+        : "";
+    this.reset();
+    return output + tail;
+  }
+
+  private consumeVisibleContent(): string {
     let output = "";
 
     while (this.buffer) {
@@ -72,17 +97,28 @@ export class AssistantContentFilter {
     return output;
   }
 
-  finish(): string {
-    const output =
-      !this.failedClosed &&
-      this.hiddenTags.length === 0 &&
-      !this.hasPendingRecognizedTag()
-        ? this.buffer
-        : "";
+  private findFinalAnswerMarker(): number {
+    let index = this.finalAnswerBuffer.indexOf(ASSISTANT_FINAL_ANSWER_MARKER);
+    while (index !== -1) {
+      const previous = this.finalAnswerBuffer[index - 1];
+      if (index === 0 || previous === "\n" || previous === "\r") {
+        return this.finalAnswerBuffer.lastIndexOf(
+          ASSISTANT_FINAL_ANSWER_MARKER,
+        );
+      }
+      index = this.finalAnswerBuffer.indexOf(
+        ASSISTANT_FINAL_ANSWER_MARKER,
+        index + ASSISTANT_FINAL_ANSWER_MARKER.length,
+      );
+    }
+    return -1;
+  }
+
+  private reset(): void {
     this.buffer = "";
+    this.finalAnswerBuffer = "";
     this.hiddenTags.length = 0;
     this.failedClosed = false;
-    return output;
   }
 
   private hasPendingRecognizedTag(): boolean {

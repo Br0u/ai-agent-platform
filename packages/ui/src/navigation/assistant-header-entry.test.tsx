@@ -1,6 +1,12 @@
 // @ts-expect-error Vitest provides Node at runtime; the package deliberately omits Node types.
 import { readFileSync } from "node:fs";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AssistantHeaderEntry } from "./assistant-header-entry";
 
@@ -70,10 +76,24 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
 describe("AssistantHeaderEntry", () => {
+  it("accepts a caller-provided visual mark", () => {
+    render(
+      <AssistantHeaderEntry
+        mark={<span data-testid="custom-assistant-mark" />}
+        onActivate={() => undefined}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: "打开 AI 助理" });
+    expect(screen.getByTestId("custom-assistant-mark")).toBe(button.firstChild);
+    expect(button.querySelector("canvas")).toBeNull();
+  });
+
   it("exposes one named control and activates it without exposing the canvas", () => {
     const onActivate = vi.fn();
     render(<AssistantHeaderEntry onActivate={onActivate} />);
@@ -117,6 +137,22 @@ describe("AssistantHeaderEntry", () => {
       initialMoveCount,
     );
     expect(context.setTransform).toHaveBeenCalled();
+  });
+
+  it("switches the navbar Orb animation variant on a random 4–7 second cadence", () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    render(<AssistantHeaderEntry onActivate={() => undefined} />);
+
+    const canvas = screen
+      .getByRole("button", { name: "打开 AI 助理" })
+      .querySelector("canvas");
+    expect(canvas).toHaveAttribute("data-animation-variant", "0");
+
+    act(() => vi.advanceTimersByTime(5_499));
+    expect(canvas).toHaveAttribute("data-animation-variant", "0");
+    act(() => vi.advanceTimersByTime(1));
+    expect(canvas).not.toHaveAttribute("data-animation-variant", "0");
   });
 
   it("stops scheduling frames when reduced motion is enabled", () => {

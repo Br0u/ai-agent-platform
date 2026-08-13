@@ -63,6 +63,7 @@ export function AssistantPromptInput({
   value,
   variant,
 }: AssistantPromptInputProps) {
+  const minimumTextareaHeight = variant === "quick" ? 40 : 58;
   const [attachments, setAttachments] = useState<AssistantPromptAttachment[]>(
     [],
   );
@@ -71,7 +72,7 @@ export function AssistantPromptInput({
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [previewAttachment, setPreviewAttachment] =
     useState<AssistantPromptAttachment | null>(null);
-  const [textareaHeight, setTextareaHeight] = useState(58);
+  const [textareaHeight, setTextareaHeight] = useState(minimumTextareaHeight);
   const attachmentsRef = useRef(attachments);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
@@ -131,11 +132,14 @@ export function AssistantPromptInput({
     const textarea = textareaRef.current;
     if (textarea === null) return;
     textarea.style.height = "0px";
-    const nextHeight = Math.min(Math.max(textarea.scrollHeight, 58), 160);
+    const nextHeight = Math.min(
+      Math.max(textarea.scrollHeight, minimumTextareaHeight),
+      160,
+    );
     textarea.style.height = `${nextHeight}px`;
     textarea.style.overflowY = textarea.scrollHeight > 160 ? "auto" : "hidden";
     setTextareaHeight(nextHeight);
-  }, [value, expanded]);
+  }, [value, expanded, minimumTextareaHeight]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -363,7 +367,7 @@ export function AssistantPromptInput({
               disabled={!canSubmit}
               type="submit"
             >
-              {disabled ? "发送中" : <ArrowUp aria-hidden="true" size={17} />}
+              <ArrowUp aria-hidden="true" size={17} />
             </button>
           </div>
 

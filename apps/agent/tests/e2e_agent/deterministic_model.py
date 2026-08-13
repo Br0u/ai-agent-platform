@@ -21,6 +21,7 @@ ALLOWED_NAVIGATION_SENTINEL = "__aap_e2e_allowed_navigation__"
 FORBIDDEN_NAVIGATION_SENTINEL = "__aap_e2e_forbidden_navigation__"
 PAGE_CONTEXT_SENTINEL = "__aap_e2e_page_context__"
 PRODUCT_PAGE_EXCERPT = "独立产品中心：成熟企业级 AI 产品，开箱即用"
+FINAL_ANSWER_MARKER = "aap.final.v1:"
 _close_counts: dict[str, int] = {}
 
 
@@ -47,14 +48,15 @@ class DeterministicModel(Model):
             content = ""
         elif question == SPLIT_REASONING_SENTINEL:
             content = (
-                f"<THINK data-x>{SPLIT_REASONING_PRIVATE}</THINK>{SAFE_ANSWER_SENTINEL}"
+                f"<THINK data-x>{SPLIT_REASONING_PRIVATE}</THINK>"
+                f"{FINAL_ANSWER_MARKER}{SAFE_ANSWER_SENTINEL}"
             )
         elif question in {
             ALLOWED_NAVIGATION_SENTINEL,
             FORBIDDEN_NAVIGATION_SENTINEL,
         }:
             if any(message.role == "tool" for message in messages):
-                content = "navigation-suggestion-finished"
+                content = f"{FINAL_ANSWER_MARKER}navigation-suggestion-finished"
             else:
                 pathname = (
                     "/pricing"
@@ -78,15 +80,18 @@ class DeterministicModel(Model):
                 )
         elif question == PAGE_CONTEXT_SENTINEL:
             prompt = user_messages[-1].get_content_string() if user_messages else ""
-            content = (
+            content = FINAL_ANSWER_MARKER + (
                 "verified-product-page-context"
                 if PRODUCT_PAGE_EXCERPT in prompt
                 else "no-public-page-context"
             )
         elif self.id == "e2e-deterministic":
-            content = f"deterministic-turn:{len(user_messages)}"
+            content = f"{FINAL_ANSWER_MARKER}deterministic-turn:{len(user_messages)}"
         else:
-            content = f"deterministic-model:{self.id}:turn:{len(user_messages)}"
+            content = (
+                f"{FINAL_ANSWER_MARKER}deterministic-model:{self.id}:"
+                f"turn:{len(user_messages)}"
+            )
         return ModelResponse(role="assistant", content=content)
 
     def invoke(
@@ -118,6 +123,8 @@ class DeterministicModel(Model):
                 "<THINK data-x>",
                 SPLIT_REASONING_PRIVATE,
                 "</THINK>",
+                FINAL_ANSWER_MARKER[:8],
+                FINAL_ANSWER_MARKER[8:],
                 SAFE_ANSWER_SENTINEL[:12],
                 SAFE_ANSWER_SENTINEL[12:],
             ]:
@@ -138,6 +145,8 @@ class DeterministicModel(Model):
                 "<THINK data-x>",
                 SPLIT_REASONING_PRIVATE,
                 "</THINK>",
+                FINAL_ANSWER_MARKER[:8],
+                FINAL_ANSWER_MARKER[8:],
                 SAFE_ANSWER_SENTINEL[:12],
                 SAFE_ANSWER_SENTINEL[12:],
             ]:

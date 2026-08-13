@@ -72,22 +72,29 @@ export function AssistantConversation({
             key={message.id}
           >
             {message.role === "assistant" ? (
-              <AssistantOrb size={20} state="idle" />
+              <AssistantOrb
+                size={20}
+                state={
+                  sending && message.id === currentAssistantMessageId
+                    ? (message.activities.at(-1)?.phase ?? "analyzing")
+                    : "completed"
+                }
+              />
             ) : (
               <span
                 aria-hidden="true"
                 className="assistant-conversation__user-mark"
               />
             )}
+            {message.role === "assistant" ? (
+              <AssistantActivity
+                activities={message.activities}
+                inProgress={sending && message.id === currentAssistantMessageId}
+              />
+            ) : null}
             <div className="assistant-conversation__message-body">
               {message.role === "assistant" ? (
                 <>
-                  <AssistantActivity
-                    activities={message.activities}
-                    inProgress={
-                      sending && message.id === currentAssistantMessageId
-                    }
-                  />
                   {message.content ? (
                     <AssistantMarkdown content={message.content} />
                   ) : null}

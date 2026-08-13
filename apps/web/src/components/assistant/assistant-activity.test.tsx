@@ -24,16 +24,19 @@ const activities = [
 afterEach(cleanup);
 
 describe("AssistantActivity", () => {
-  it("shows only the current phase with a working Orb and the sole live region", () => {
+  it("shows the safe execution chain while leaving animation to the message Orb", () => {
     render(<AssistantActivity activities={activities} inProgress />);
 
     const current = screen.getByRole("status");
     expect(current).toHaveAttribute("aria-live", "polite");
     expect(current).toHaveTextContent("正在分析问题");
-    expect(screen.queryByText("正在读取页面")).toBeNull();
+    const chain = screen.getByRole("list", { name: "执行步骤" });
+    expect(within(chain).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(chain).getByText("正在读取页面")).toBeInTheDocument();
     expect(
-      screen.getByRole("img", { name: "orb:analyzing:20" }),
-    ).toBeInTheDocument();
+      within(chain).getByText("正在分析问题").closest("li"),
+    ).toHaveAttribute("data-current", "true");
+    expect(screen.queryByRole("img")).toBeNull();
     expect(document.querySelectorAll("[aria-live]")).toHaveLength(1);
   });
 
@@ -50,9 +53,7 @@ describe("AssistantActivity", () => {
     expect(
       within(disclosure as HTMLElement).getByText("正在分析问题"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("img", { name: "orb:completed:20" }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("img")).toBeNull();
     expect(document.querySelectorAll("[aria-live]")).toHaveLength(0);
   });
 

@@ -9,6 +9,7 @@ import {
 import {
   BriefcaseBusiness,
   LifeBuoy,
+  MessageSquare,
   PanelRightOpen,
   RotateCcw,
   X,
@@ -206,7 +207,7 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
           <div className="floating-assistant__message-content">
             <p>
               你好，我是码多多。已启用的 Skill
-              会按配置加载；知识库和网页正文读取尚未接入。
+              会按配置加载；我可以读取当前公开页面并协助跳转。
             </p>
           </div>
         </article>
@@ -217,17 +218,26 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
             key={`${message.role}-${message.id}`}
           >
             {message.role === "assistant" ? (
-              <AssistantOrb size={20} state="idle" />
+              <AssistantOrb
+                size={20}
+                state={
+                  sending && message.id === currentAssistantMessage?.id
+                    ? (message.activities.at(-1)?.phase ?? "analyzing")
+                    : "completed"
+                }
+              />
+            ) : null}
+            {message.role === "assistant" ? (
+              <AssistantActivity
+                activities={message.activities}
+                inProgress={
+                  sending && message.id === currentAssistantMessage?.id
+                }
+              />
             ) : null}
             <div className="floating-assistant__message-content">
               {message.role === "assistant" ? (
                 <>
-                  <AssistantActivity
-                    activities={message.activities}
-                    inProgress={
-                      sending && message.id === currentAssistantMessage?.id
-                    }
-                  />
                   {message.content ? (
                     <AssistantMarkdown content={message.content} />
                   ) : null}
@@ -268,7 +278,6 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
             aria-label="码多多正在回复"
             className="floating-assistant__typing"
           >
-            <AssistantOrb size={20} state="analyzing" />
             <span>正在处理</span>
           </div>
         ) : null}
@@ -382,11 +391,7 @@ export function FloatingChatWidget({
             aria-hidden="true"
             className="floating-assistant__launcher-glow"
           />
-          {quickOpen ? (
-            <X size={24} />
-          ) : (
-            <AssistantOrb size={20} state="idle" />
-          )}
+          {quickOpen ? <X size={24} /> : <MessageSquare size={24} />}
         </motion.button>
       ) : null}
     </div>

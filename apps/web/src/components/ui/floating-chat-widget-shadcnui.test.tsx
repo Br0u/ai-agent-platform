@@ -218,7 +218,7 @@ describe("FloatingChatWidget", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "你好，我是码多多。已启用的 Skill 会按配置加载；知识库和网页正文读取尚未接入。",
+        "你好，我是码多多。已启用的 Skill 会按配置加载；我可以读取当前公开页面并协助跳转。",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("如何开始了解平台？")).toBeInTheDocument();
@@ -503,14 +503,19 @@ describe("FloatingChatWidget", () => {
     await waitFor(() => expect(launcher).toHaveFocus());
   });
 
-  it("hides the duplicate launcher while the mobile drawer is open", () => {
+  it("hides the duplicate launcher whenever the quick panel is open", () => {
+    openWidget();
+    expect(
+      screen.getByRole("button", { name: "关闭码多多入口", hidden: true }),
+    ).toHaveClass("is-open");
+
     const stylesheet = readFileSync(
       "src/components/ui/floating-chat-widget-shadcnui.css",
       "utf8",
     );
 
     expect(stylesheet).toContain(
-      ".floating-assistant__launcher.is-open {\n    display: none;\n  }",
+      ".floating-assistant__launcher.is-open {\n  display: none;\n}",
     );
     expect(stylesheet).toMatch(
       /\.floating-assistant__panel\.is-exiting\s*\{[\s\S]*?pointer-events:\s*none;/u,
@@ -531,6 +536,55 @@ describe("FloatingChatWidget", () => {
     );
     expect(stylesheet).toMatch(
       /\.floating-assistant__messages\s*\{[\s\S]*?min-height:\s*0;/u,
+    );
+    const messageRegion = stylesheet.match(
+      /\.floating-assistant__messages\s*\{([\s\S]*?)\}/u,
+    )?.[1];
+    expect(messageRegion).not.toMatch(/max-height:/u);
+    expect(messageRegion).not.toMatch(/background:/u);
+  });
+
+  it("restores the original MessageSquare bubble launcher", () => {
+    const { container } = render(
+      <AssistantExperienceProvider pathname="/">
+        <FloatingChatWidget />
+      </AssistantExperienceProvider>,
+    );
+    const launcher = screen.getByRole("button", { name: "打开码多多" });
+    expect(launcher.querySelector(".assistant-header-entry__mark")).toBeNull();
+    expect(launcher.querySelector(".assistant-orb")).toBeNull();
+    expect(launcher.querySelector(".lucide-message-square")).not.toBeNull();
+    expect(
+      container.querySelector(".floating-assistant__launcher-glow"),
+    ).not.toBeNull();
+
+    const stylesheet = readFileSync(
+      "src/components/ui/floating-chat-widget-shadcnui.css",
+      "utf8",
+    );
+    const launcherRule = stylesheet.match(
+      /\.floating-assistant__launcher\s*\{([\s\S]*?)\}/u,
+    )?.[1];
+    expect(launcherRule).toMatch(
+      /border:\s*1px solid rgb\(255 255 255 \/ 42%\);/u,
+    );
+    expect(launcherRule).toMatch(
+      /background:\s*linear-gradient\(145deg, var\(--color-primary\), #557ec1\);/u,
+    );
+    expect(launcherRule).toMatch(/box-shadow:/u);
+  });
+
+  it("keeps the quick composer denser than the full-page composer", () => {
+    const stylesheet = readFileSync(
+      "src/components/assistant/assistant-prompt-input.css",
+      "utf8",
+    );
+
+    expect(stylesheet).toMatch(
+      /\.assistant-prompt-input\[data-variant="quick"\]\s+\.assistant-prompt-input__surface\s*\{[\s\S]*?min-height:\s*58px;[\s\S]*?border-radius:\s*21px;/u,
+    );
+    expect(stylesheet).toMatch(
+      /\.assistant-prompt-input\[data-variant="quick"\]\s+\.assistant-prompt-input__toolbar\s*\{[\s\S]*?min-height:\s*36px;/u,
     );
   });
 
@@ -566,6 +620,9 @@ describe("FloatingChatWidget", () => {
     );
     expect(composerStylesheet).toMatch(
       /\.assistant-prompt-input__submit\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*40px;/u,
+    );
+    expect(composerStylesheet).toMatch(
+      /@media \(max-width: 640px\)[\s\S]*?\.assistant-prompt-input\[data-variant="quick"\][\s\S]*?:is\(\.assistant-prompt-input__attach, \.assistant-prompt-input__submit\)\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/u,
     );
   });
 

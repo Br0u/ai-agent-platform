@@ -363,9 +363,16 @@ describe("AssistantConversation", () => {
     );
 
     expect(
-      screen.getByText("正在读取页面").closest('[role="status"]'),
+      screen.getByRole("list", { name: "执行步骤" }).closest('[role="status"]'),
     ).toHaveTextContent("正在读取页面");
+    expect(screen.getAllByRole("img")).toHaveLength(1);
     expect(screen.getByRole("img", { name: "orb:reading:20" })).toBeVisible();
+    const assistantMessage = screen.getByRole("article", {
+      name: "码多多的消息",
+    });
+    expect(
+      assistantMessage.querySelector(".assistant-activity")?.parentElement,
+    ).toBe(assistantMessage);
 
     view.rerender(
       <AssistantConversation
@@ -397,6 +404,8 @@ describe("AssistantConversation", () => {
 
     const details = screen.getByText("已完成 1 个步骤").closest("details");
     expect(details).not.toHaveAttribute("open");
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+    expect(screen.getByRole("img", { name: "orb:completed:20" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "产品中心" }));
     expect(router.push).toHaveBeenCalledExactlyOnceWith("/product");
   });
@@ -439,10 +448,30 @@ describe("AssistantConversation", () => {
     );
 
     expect(css).toMatch(
-      /\.assistant-conversation__message\s*\{[\s\S]*?width:\s*fit-content;[\s\S]*?justify-self:\s*start;/u,
+      /\.assistant-conversation__messages\s*\{[\s\S]*?grid-auto-rows:\s*max-content;[\s\S]*?align-content:\s*start;/u,
     );
     expect(css).toMatch(
-      /\.assistant-conversation__message--user\s*\{[\s\S]*?justify-self:\s*end;[\s\S]*?margin-inline-start:\s*auto;/u,
+      /\.assistant-conversation__message--assistant\s*\{[\s\S]*?width:\s*min\(100%,\s*720px\);/u,
+    );
+    expect(css).toMatch(
+      /\.assistant-conversation__message--user\s*\{[\s\S]*?display:\s*flex;[\s\S]*?width:\s*fit-content;[\s\S]*?flex-direction:\s*row-reverse;[\s\S]*?justify-self:\s*end;/u,
+    );
+  });
+
+  it("keeps the activity chain and answer below the message Orb", () => {
+    const css = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/components/assistant/assistant-conversation.css",
+      ),
+      "utf8",
+    );
+
+    expect(css).toMatch(
+      /\.assistant-conversation__message--assistant\s*>\s*\.assistant-activity\s*\{[^}]*grid-column:\s*1\s*\/\s*-1;/s,
+    );
+    expect(css).toMatch(
+      /\.assistant-conversation__message--assistant\s*>\s*\.assistant-conversation__message-body\s*\{[^}]*grid-column:\s*1\s*\/\s*-1;/s,
     );
   });
 });

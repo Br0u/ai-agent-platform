@@ -207,7 +207,7 @@ def test_deterministic_model_runs_through_agno_without_network() -> None:
 
     output = agent.run("first user turn")
 
-    assert output.content == "deterministic-turn:1"
+    assert output.content == "aap.final.v1:deterministic-turn:1"
 
 
 def test_deterministic_model_counts_user_messages_in_the_agno_request() -> None:
@@ -221,7 +221,7 @@ def test_deterministic_model_counts_user_messages_in_the_agno_request() -> None:
 
     response = model.response(messages)
 
-    assert response.content == "deterministic-turn:2"
+    assert response.content == "aap.final.v1:deterministic-turn:2"
 
 
 def test_deterministic_model_returns_blank_for_exact_invalid_sentinel() -> None:
@@ -242,6 +242,8 @@ def test_deterministic_model_splits_private_thinking_from_safe_answer() -> None:
         "<THINK data-x>",
         SPLIT_REASONING_PRIVATE,
         "</THINK>",
+        "aap.fina",
+        "l.v1:",
         SAFE_ANSWER_SENTINEL[:12],
         SAFE_ANSWER_SENTINEL[12:],
     ]
@@ -269,8 +271,8 @@ def test_deterministic_model_reports_only_verified_product_page_context() -> Non
         Message(role="assistant"),
     )
 
-    assert present.content == "verified-product-page-context"
-    assert absent.content == "no-public-page-context"
+    assert present.content == "aap.final.v1:verified-product-page-context"
+    assert absent.content == "aap.final.v1:no-public-page-context"
 
 
 @pytest.mark.parametrize(
@@ -362,7 +364,7 @@ def test_deterministic_model_does_not_reparse_a_marker_inside_the_question() -> 
 
     response = model.response(messages)
 
-    assert response.content == "deterministic-turn:1"
+    assert response.content == "aap.final.v1:deterministic-turn:1"
 
 
 def test_deterministic_model_only_matches_the_latest_exact_user_question() -> None:
@@ -387,7 +389,7 @@ def test_deterministic_model_only_matches_the_latest_exact_user_question() -> No
 
     response = model.response(messages)
 
-    assert response.content == "deterministic-turn:2"
+    assert response.content == "aap.final.v1:deterministic-turn:2"
 
 
 def test_deterministic_model_does_not_match_a_sentinel_substring() -> None:
@@ -404,7 +406,7 @@ def test_deterministic_model_does_not_match_a_sentinel_substring() -> None:
 
     response = model.response(messages)
 
-    assert response.content == "deterministic-turn:1"
+    assert response.content == "aap.final.v1:deterministic-turn:1"
 
 
 def acceptance_settings(model_id: str) -> ActiveModelSettings:
@@ -423,7 +425,9 @@ def test_acceptance_builder_returns_owned_id_specific_offline_model() -> None:
     assert isinstance(managed, ManagedModel)
     assert isinstance(managed.model, DeterministicModel)
     response = managed.model.response([Message(role="user", content="hello")])
-    assert response.content == "deterministic-model:e2e-openai-rev1:turn:1"
+    assert response.content == (
+        "aap.final.v1:deterministic-model:e2e-openai-rev1:turn:1"
+    )
 
 
 def test_acceptance_failure_prefix_returns_empty_verification_response() -> None:

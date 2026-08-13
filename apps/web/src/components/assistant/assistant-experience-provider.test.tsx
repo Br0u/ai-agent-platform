@@ -18,6 +18,12 @@ import {
   useAssistantExperience,
 } from "./assistant-experience-provider";
 
+const router = vi.hoisted(() => ({ push: vi.fn() }));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => router,
+}));
+
 function Harness() {
   const experience = useAssistantExperience();
   const [exitVersion, setExitVersion] = useState(0);
@@ -144,6 +150,7 @@ function ServiceStateHarness() {
 afterEach(() => {
   cleanup();
   window.history.replaceState(null, "", "/");
+  router.push.mockReset();
   vi.unstubAllGlobals();
 });
 
@@ -222,6 +229,46 @@ describe("AssistantExperienceProvider", () => {
       history: [],
       page: { pathname: "/pricing", search: "?mode=full" },
     });
+  });
+
+  it("executes a validated navigation action without waiting for a second click", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          [
+            formatAssistantStreamEvent({
+              type: "answer_delta",
+              content: "正在为你打开产品页面。",
+            }),
+            formatAssistantStreamEvent({
+              type: "action",
+              action: {
+                kind: "navigate",
+                label: "产品",
+                pathname: "/product",
+              },
+            }),
+            formatAssistantStreamEvent({ type: "done" }),
+          ].join(""),
+          {
+            status: 200,
+            headers: { "content-type": ASSISTANT_STREAM_MEDIA_TYPE },
+          },
+        ),
+      ),
+    );
+    render(
+      <AssistantExperienceProvider pathname="/">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "发送跨页问题" }));
+
+    await waitFor(() =>
+      expect(router.push).toHaveBeenCalledExactlyOnceWith("/product"),
+    );
   });
 
   it("uses one closed to quick to dock to quick to closed state machine", () => {

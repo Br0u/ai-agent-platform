@@ -119,34 +119,39 @@ describe("AssistantWorkspace", () => {
     );
   });
 
-  it("uses the approved spatial direction and states the real placeholder capability", () => {
+  it("uses the approved clean workspace direction and states the real placeholder capability", () => {
     const { container } = renderWorkspace();
 
     expect(
       screen.getByRole("heading", {
         level: 1,
-        name: "从一个问题开始，找到适合企业的 AI 路径。",
+        name: "你好，今天想解决什么问题？",
       }),
     ).toBeVisible();
+    expect(screen.queryByText("MADUODUO / 01")).toBeNull();
+    expect(container.querySelector(".assistant-workspace__header")).toBeNull();
+    expect(
+      container.querySelector(".assistant-workspace__utility"),
+    ).not.toBeNull();
     expect(
       screen.getByRole("link", { name: "缩小码多多并返回主页面" }),
     ).toHaveAttribute("href", "/");
     expect(screen.getByRole("img", { name: "码多多已就绪" })).toBeVisible();
     expect(screen.queryByText("CONVERSATIONS")).toBeNull();
     expect(screen.queryByRole("complementary")).toBeNull();
-    expect(screen.getByText(placeholderStatus.message)).toBeVisible();
+    expect(screen.queryByText(placeholderStatus.message)).toBeNull();
     expect(
       container.querySelector(".assistant-workspace__identity"),
     ).toHaveTextContent("码多多");
     expect(screen.getByText("公开网页助手 · 当前页面临时对话")).toBeVisible();
     expect(
-      screen.getByText("当前页面临时对话；刷新或离开后清空。"),
-    ).toBeVisible();
+      screen.queryByText("当前页面临时对话；刷新或离开后清空。"),
+    ).toBeNull();
     expect(
-      screen.getByText(
-        "已启用的 Skill 会按配置加载；知识库和网页正文读取尚未接入。",
+      screen.queryByText(
+        "已启用的 Skill 会按配置加载；我可以读取当前公开页面并协助跳转。",
       ),
-    ).toBeVisible();
+    ).toBeNull();
     expect(screen.getByTestId("assistant-service-state")).toHaveAttribute(
       "data-capability",
       "placeholder",
@@ -165,7 +170,7 @@ describe("AssistantWorkspace", () => {
   });
 
   it("offers one document-flow chip strip without conversation controls", () => {
-    renderWorkspace();
+    const { container } = renderWorkspace();
 
     expect(
       screen.queryByTestId("assistant-message-history"),
@@ -177,6 +182,19 @@ describe("AssistantWorkspace", () => {
     expect(
       within(strip).getByRole("button", { name: "如何开始了解平台？" }),
     ).toBeEnabled();
+    const stylesheet = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/components/assistant/assistant-workspace.css",
+      ),
+      "utf8",
+    );
+    expect(stylesheet).toMatch(
+      /\.assistant-workspace__prompt-chips button\s*\{[\s\S]*?border:\s*0;[\s\S]*?background:\s*transparent;/u,
+    );
+    expect(
+      container.querySelector(".assistant-workspace__prompt-chips"),
+    ).not.toBeNull();
   });
 
   it.each([
@@ -198,13 +216,13 @@ describe("AssistantWorkspace", () => {
       );
 
       expect(
-        screen.getByText("当前页面临时对话；刷新或离开后清空。"),
-      ).toBeVisible();
+        screen.queryByText("当前页面临时对话；刷新或离开后清空。"),
+      ).toBeNull();
       expect(
-        screen.getByText(
-          "已启用的 Skill 会按配置加载；知识库和网页正文读取尚未接入。",
+        screen.queryByText(
+          "已启用的 Skill 会按配置加载；我可以读取当前公开页面并协助跳转。",
         ),
-      ).toBeVisible();
+      ).toBeNull();
       expect(screen.queryByText("安全占位模式，不创建服务端会话。")).toBeNull();
     },
   );
@@ -227,7 +245,7 @@ describe("AssistantWorkspace", () => {
 
     expect(screen.getByText("基础服务暂不可用")).toBeVisible();
     expect(screen.queryByText("模型未配置")).not.toBeInTheDocument();
-    expect(screen.getByText("助手基础服务暂不可用。")).toBeVisible();
+    expect(screen.queryByText("助手基础服务暂不可用。")).toBeNull();
   });
 
   it("manually refreshes status through the public versioned endpoint", async () => {
@@ -560,7 +578,9 @@ describe("AssistantWorkspace", () => {
     renderWorkspace();
     const strip = screen.getByRole("group", { name: "常用问题" });
 
-    expect(strip.parentElement).toHaveClass("assistant-workspace__welcome");
+    expect(strip.parentElement).toHaveClass(
+      "assistant-workspace__conversation",
+    );
     fireEvent.click(
       within(strip).getByRole("button", { name: "如何开始了解平台？" }),
     );
@@ -612,7 +632,22 @@ describe("AssistantWorkspace", () => {
       /\.assistant-workspace__conversation\s*\{[^}]*display:\s*flex;[^}]*width:\s*min\(100%, 980px\);[^}]*min-height:\s*0;[^}]*min-width:\s*0;[^}]*flex-direction:\s*column;/s,
     );
     expect(css).toMatch(
-      /\.assistant-workspace__header\s*\{[^}]*width:\s*100%;[^}]*min-height:\s*64px;[^}]*min-width:\s*0;/s,
+      /\.assistant-workspace__utility\s*\{[^}]*width:\s*min\(calc\(100% - 40px\), 960px\);[^}]*min-width:\s*0;/s,
+    );
+    expect(css).toMatch(
+      /\.assistant-workspace\s*\{[^}]*height:\s*calc\(100dvh - var\(--assistant-workspace-shell-offset\)\);[^}]*overflow:\s*hidden;/s,
+    );
+    expect(css).toMatch(
+      /\.assistant-workspace__surface\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;/s,
+    );
+    expect(css).toMatch(
+      /\.assistant-workspace__conversation\s*\{[^}]*overflow:\s*hidden;/s,
+    );
+    expect(css).toMatch(
+      /\.assistant-workspace__conversation\[data-has-messages="false"\]\s*\{[^}]*justify-content:\s*center;/s,
+    );
+    expect(css).toMatch(
+      /\.assistant-workspace__conversation\[data-has-messages="false"\]\s+\.assistant-conversation\s*\{[^}]*flex:\s*0 0 auto;/s,
     );
   });
 });

@@ -16,6 +16,7 @@ import {
   getAssistantRuntime,
   readSafeAssistantRuntimeStatus,
 } from "./assistant-runtime";
+import { ASSISTANT_FINAL_ANSWER_MARKER } from "./assistant-content-filter";
 
 const VALID_ENVIRONMENT = {
   ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
@@ -64,7 +65,7 @@ function availableHealthClient(): AgentOSClient {
 
 function runClient(): AgentOSRunClient {
   const runAgent = vi.fn<AgentOSRunClient["runAgent"]>(async () => ({
-    content: "码多多回答",
+    content: `${ASSISTANT_FINAL_ANSWER_MARKER}码多多回答`,
   }));
   return {
     runAgent,
@@ -425,7 +426,9 @@ describe("assistant server runtime", () => {
       .mockRejectedValueOnce(new AgentOSRunClientError("timeout"))
       .mockRejectedValueOnce(new AgentOSRunClientError("timeout"))
       .mockRejectedValueOnce(new AgentOSRunClientError("timeout"))
-      .mockResolvedValueOnce({ content: "恢复后的真实回答" });
+      .mockResolvedValueOnce({
+        content: `${ASSISTANT_FINAL_ANSWER_MARKER}恢复后的真实回答`,
+      });
     const runtime = createAssistantRuntime({
       environment: AGENTOS_ENVIRONMENT,
       createHealthClient: () => availableHealthClient(),

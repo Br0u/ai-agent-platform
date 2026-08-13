@@ -50,6 +50,45 @@
     0 0 32px rgb(118 128 216 / 12%);
 }
 
+.assistant-prompt-input[data-variant="quick"] .assistant-prompt-input__surface {
+  min-height: 58px;
+  grid-template-rows: minmax(40px, auto) auto auto;
+  padding: 6px 7px 5px 13px;
+  border-radius: 21px;
+}
+
+.assistant-prompt-input[data-variant="quick"][data-expanded="true"]
+  .assistant-prompt-input__surface {
+  min-height: 86px;
+}
+
+.assistant-prompt-input[data-variant="quick"] textarea {
+  min-height: 40px;
+  padding-block: 3px 2px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.assistant-prompt-input[data-variant="quick"] .assistant-prompt-input__toolbar {
+  min-height: 36px;
+  gap: 5px;
+}
+
+.assistant-prompt-input[data-variant="quick"]
+  :is(.assistant-prompt-input__attach, .assistant-prompt-input__submit) {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+}
+
+.assistant-prompt-input[data-variant="quick"]
+  .assistant-prompt-input__feedback {
+  min-height: 15px;
+  padding-inline: 3px;
+  font-size: 10px;
+}
+
 .assistant-prompt-input__surface:focus-within,
 .assistant-prompt-input[data-expanded="true"]
   .assistant-prompt-input__surface:focus-within {
@@ -166,6 +205,7 @@
 }
 
 .assistant-prompt-input__submit {
+  flex: 0 0 44px;
   width: 44px;
   height: 44px;
   color: #fff;
@@ -396,6 +436,18 @@
 
   .assistant-prompt-input__attachments {
     margin-inline: 14px;
+  }
+
+  .assistant-prompt-input[data-variant="quick"] textarea {
+    font-size: 16px;
+  }
+
+  .assistant-prompt-input[data-variant="quick"]
+    :is(.assistant-prompt-input__attach, .assistant-prompt-input__submit) {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
   }
 }
 

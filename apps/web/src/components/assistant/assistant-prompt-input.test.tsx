@@ -47,6 +47,19 @@ afterEach(() => {
 });
 
 describe("AssistantPromptInput", () => {
+  it("uses a compact textarea baseline only in the quick surface", () => {
+    const quick = renderPrompt({ variant: "quick" });
+    expect(screen.getByRole("textbox", { name: "输入问题" })).toHaveStyle({
+      height: "40px",
+    });
+    quick.unmount();
+
+    renderPrompt({ variant: "workspace" });
+    expect(screen.getByRole("textbox", { name: "输入问题" })).toHaveStyle({
+      height: "58px",
+    });
+  });
+
   it("submits controlled text and preserves the Shift+Enter contract", () => {
     const onSubmit = vi.fn();
     renderPrompt({ onSubmit });
@@ -68,6 +81,15 @@ describe("AssistantPromptInput", () => {
 
     expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
     expect(screen.getByText("501 / 500")).toBeInTheDocument();
+  });
+
+  it("keeps the sending state icon-only without wrapping status text", () => {
+    renderPrompt({ disabled: true, value: "问题" });
+
+    const submit = screen.getByRole("button", { name: "发送中" });
+    expect(submit).toBeDisabled();
+    expect(submit).toContainElement(submit.querySelector("svg"));
+    expect(screen.queryByText("发送中")).toBeNull();
   });
 
   it("adds image attachments, shows previews, and removes them safely", async () => {

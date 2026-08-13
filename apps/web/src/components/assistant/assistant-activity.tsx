@@ -1,7 +1,7 @@
 "use client";
 
 import type { AssistantStreamActivityEvent } from "@/features/assistant/assistant-contract";
-import { AssistantOrb } from "./assistant-orb";
+import "./assistant-activity.css";
 
 type AssistantActivityProps = {
   activities: readonly AssistantStreamActivityEvent[];
@@ -23,8 +23,19 @@ export function AssistantActivity({
         className="assistant-activity assistant-activity--working"
         role="status"
       >
-        <AssistantOrb size={20} state={current.phase} />
-        <span>{current.label}</span>
+        <strong>正在处理</strong>
+        <ol aria-label="执行步骤">
+          {activities.map((activity, index) => (
+            <li
+              data-current={
+                index === activities.length - 1 ? "true" : undefined
+              }
+              key={`${activity.phase}:${activity.label}:${index}`}
+            >
+              {activity.label}
+            </li>
+          ))}
+        </ol>
       </div>
     );
   }
@@ -32,10 +43,9 @@ export function AssistantActivity({
   return (
     <details className="assistant-activity assistant-activity--completed">
       <summary>
-        <AssistantOrb size={20} state="completed" />
         <span>已完成 {activities.length} 个步骤</span>
       </summary>
-      <ol>
+      <ol aria-label="执行步骤">
         {activities.map((activity, index) => (
           <li key={`${activity.phase}:${activity.label}:${index}`}>
             {activity.label}

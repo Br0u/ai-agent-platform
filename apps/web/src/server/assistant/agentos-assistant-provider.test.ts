@@ -7,6 +7,7 @@ import {
 } from "./agentos-run-client";
 import type { AgentOSExecutionCircuit } from "./agentos-execution-circuit";
 import { AgentOSAssistantProvider } from "./agentos-assistant-provider";
+import { ASSISTANT_FINAL_ANSWER_MARKER } from "./assistant-content-filter";
 
 function fixture(
   options: {
@@ -26,7 +27,10 @@ function fixture(
       options.runAgentStream ??
         async function* () {
           yield { type: "activity" as const, phase: "analyzing" as const };
-          yield { type: "answer_delta" as const, content: "真实模型回答" };
+          yield {
+            type: "answer_delta" as const,
+            content: `${ASSISTANT_FINAL_ANSWER_MARKER}真实模型回答`,
+          };
         },
     ),
   };
@@ -162,7 +166,7 @@ describe("AgentOSAssistantProvider", () => {
         yield { type: "activity" as const, phase: "analyzing" as const };
         yield {
           type: "answer_delta" as const,
-          content: "公开<think>private chain",
+          content: `不得显示的纯文本推理\n${ASSISTANT_FINAL_ANSWER_MARKER}公开<think>private chain`,
         };
         yield { type: "answer_delta" as const, content: "</think>回答" };
         yield { type: "navigation_candidate" as const, pathname: "/pricing" };
@@ -180,8 +184,7 @@ describe("AgentOSAssistantProvider", () => {
 
     expect(events).toEqual([
       { type: "activity", phase: "analyzing", label: "正在分析问题" },
-      { type: "answer_delta", content: "公开" },
-      { type: "answer_delta", content: "回答" },
+      { type: "answer_delta", content: "公开回答" },
       {
         type: "action",
         action: { kind: "navigate", pathname: "/pricing", label: "价格与服务" },
@@ -194,11 +197,51 @@ describe("AgentOSAssistantProvider", () => {
     expect(JSON.stringify(events)).not.toContain("private chain");
   });
 
+  it("uses a verified current-page link when an explicit navigation request omits the tool call", async () => {
+    const { provider, pageResolver } = fixture({
+      runAgentStream: vi.fn(async function* () {
+        yield {
+          type: "answer_delta" as const,
+          content: `${ASSISTANT_FINAL_ANSWER_MARKER}正在为你打开产品页面。`,
+        };
+      }),
+    });
+
+    const events = [];
+    for await (const event of provider.streamReply({
+      request: { ...assistantRequest, message: "我想了解产品" },
+      pageContext: {
+        pathname: "/",
+        search: "",
+        title: "首页",
+        text: "产品介绍",
+        links: [{ label: "产品", href: "/product" }],
+      },
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "answer_delta", content: "正在为你打开产品页面。" },
+      {
+        type: "action",
+        action: { kind: "navigate", pathname: "/product", label: "产品介绍" },
+      },
+    ]);
+    expect(pageResolver.exists).toHaveBeenCalledExactlyOnceWith(
+      "/product",
+      undefined,
+    );
+  });
+
   it("uses a generic activity label for non-navigation tools", async () => {
     const { provider } = fixture({
       runAgentStream: vi.fn(async function* () {
         yield { type: "activity" as const, phase: "tool" as const };
-        yield { type: "answer_delta" as const, content: "回答" };
+        yield {
+          type: "answer_delta" as const,
+          content: `${ASSISTANT_FINAL_ANSWER_MARKER}回答`,
+        };
       }),
     });
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import {
   createContext,
   useCallback,
@@ -86,6 +87,7 @@ export function AssistantExperienceProvider({
   initialServiceState?: AssistantStatusResponse;
   pathname: string;
 }) {
+  const router = useRouter();
   const normalizedPathname = normalizePathname(pathname);
   const session = useAssistantSession(normalizedPathname);
   const {
@@ -122,6 +124,14 @@ export function AssistantExperienceProvider({
   const surfaceInstanceVersion = presentation.version;
   const currentRoute = useRef({ assistantWorkspace, normalizedPathname });
   const hasResolvedServiceStateRef = useRef(hasResolvedServiceState);
+  const handledNavigation = useRef<string | null>(null);
+  const navigationMessage = session.messages.findLast(
+    (message) => message.role === "assistant" && message.actions.length > 0,
+  );
+  const navigationAction =
+    navigationMessage?.role === "assistant"
+      ? navigationMessage.actions.at(-1)
+      : undefined;
 
   useLayoutEffect(() => {
     currentRoute.current = { assistantWorkspace, normalizedPathname };
@@ -353,6 +363,26 @@ export function AssistantExperienceProvider({
     normalizedPathname,
     presentation.surface,
     presentationMatchesPath,
+  ]);
+
+  useEffect(() => {
+    if (
+      session.requestStatus !== "idle" ||
+      navigationAction === undefined ||
+      navigationMessage === undefined
+    ) {
+      return;
+    }
+    const key = `${normalizedPathname}:${navigationMessage.id}:${navigationAction.pathname}`;
+    if (handledNavigation.current === key) return;
+    handledNavigation.current = key;
+    router.push(navigationAction.pathname);
+  }, [
+    navigationAction,
+    navigationMessage,
+    normalizedPathname,
+    router,
+    session.requestStatus,
   ]);
 
   useEffect(() => {

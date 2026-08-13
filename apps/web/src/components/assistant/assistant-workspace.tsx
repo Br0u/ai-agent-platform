@@ -39,8 +39,6 @@ export function AssistantWorkspace({
     hasResolvedServiceState: true,
     refreshingServiceState: refreshingStatus,
   });
-  const sessionBoundary = "当前页面临时对话；刷新或离开后清空。";
-
   useLayoutEffect(() => {
     adoptServiceState(initialServiceState);
   }, [adoptServiceState, initialServiceState]);
@@ -48,7 +46,7 @@ export function AssistantWorkspace({
   return (
     <main aria-label="码多多工作区" className="assistant-workspace">
       <section className="assistant-workspace__surface">
-        <header className="assistant-workspace__header">
+        <div className="assistant-workspace__utility">
           <div className="assistant-workspace__identity">
             <AssistantOrb size={20} state="idle" />
             <span>
@@ -56,7 +54,7 @@ export function AssistantWorkspace({
               <small>公开网页助手 · 当前页面临时对话</small>
             </span>
           </div>
-          <div className="assistant-workspace__header-actions">
+          <div className="assistant-workspace__actions">
             <div
               aria-atomic="true"
               aria-busy={refreshingStatus}
@@ -88,38 +86,20 @@ export function AssistantWorkspace({
               <Minimize2 aria-hidden="true" size={17} />
             </Link>
           </div>
-        </header>
+        </div>
 
-        <div className="assistant-workspace__conversation">
-          <section className="assistant-workspace__welcome">
-            <p className="assistant-workspace__kicker">MADUODUO / 01</p>
-            <h1>从一个问题开始，找到适合企业的 AI 路径。</h1>
-            <p className="assistant-workspace__disclosure">
-              <span>{displayedServiceState.message}</span>
-              <span>{sessionBoundary}</span>
-              <span>
-                已启用的 Skill 会按配置加载；知识库和网页正文读取尚未接入。
-              </span>
-            </p>
-            {session.messages.length === 0 ? (
-              <div
-                aria-label="常用问题"
-                className="assistant-workspace__prompt-chips"
-                role="group"
-              >
-                {ASSISTANT_PRESET_QUESTIONS.map((question) => (
-                  <button
-                    disabled={sending}
-                    key={question}
-                    onClick={() => void session.submit(question)}
-                    type="button"
-                  >
-                    {question}
-                  </button>
-                ))}
+        <div
+          className="assistant-workspace__conversation"
+          data-has-messages={session.messages.length > 0 ? "true" : "false"}
+        >
+          {session.messages.length === 0 ? (
+            <section className="assistant-workspace__welcome">
+              <div className="assistant-workspace__welcome-orb">
+                <AssistantOrb size={64} speed={0.5} state="listening" />
               </div>
-            ) : null}
-          </section>
+              <h1>你好，今天想解决什么问题？</h1>
+            </section>
+          ) : null}
 
           <AssistantConversation
             ariaLabel="码多多对话"
@@ -127,6 +107,24 @@ export function AssistantWorkspace({
             session={session}
             variant="workspace"
           />
+          {session.messages.length === 0 ? (
+            <div
+              aria-label="常用问题"
+              className="assistant-workspace__prompt-chips"
+              role="group"
+            >
+              {ASSISTANT_PRESET_QUESTIONS.map((question) => (
+                <button
+                  disabled={sending}
+                  key={question}
+                  onClick={() => void session.submit(question)}
+                  type="button"
+                >
+                  {question}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
         <nav aria-label="其他服务" className="assistant-workspace__fallbacks">
           <Link href="/help">帮助中心</Link>
