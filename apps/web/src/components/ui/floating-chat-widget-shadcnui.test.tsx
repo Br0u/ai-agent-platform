@@ -624,6 +624,9 @@ describe("FloatingChatWidget", () => {
     expect(composerStylesheet).toMatch(
       /@media \(max-width: 640px\)[\s\S]*?\.assistant-prompt-input\[data-variant="quick"\][\s\S]*?:is\(\.assistant-prompt-input__attach, \.assistant-prompt-input__submit\)\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/u,
     );
+    expect(composerStylesheet).toMatch(
+      /@media \(max-width: 640px\)[\s\S]*?\.assistant-prompt-input\[data-variant="quick"\] textarea\s*\{[^}]*?min-height:\s*44px;/u,
+    );
   });
 
   it("uses one in-flow horizontal chip strip and shared Orbs", () => {

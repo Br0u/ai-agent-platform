@@ -439,6 +439,7 @@
   }
 
   .assistant-prompt-input[data-variant="quick"] textarea {
+    min-height: 44px;
     font-size: 16px;
   }
 
