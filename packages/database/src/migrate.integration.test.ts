@@ -136,8 +136,6 @@ describePostgres("concurrent production migrations", () => {
        JOIN content c ON c.id = r.content_id
        WHERE c.type = 'document'`,
     );
-    await verifier.end();
-    expect(journal.rows).toEqual([{ count: "10" }]);
     expect(content.rows).toEqual(
       expectedDocumentSeed.map(([contentId, revisionId, slug, checksum]) => ({
         contentId,
@@ -163,5 +161,32 @@ describePostgres("concurrent production migrations", () => {
     expect(routes.rows).toEqual([
       { canonical: "7", reserved: "0", alias: "0", total: "7" },
     ]);
+
+    const inputPolicy = await verifier.query<{
+      id: number;
+      terms: string[];
+      revision: number;
+    }>(
+      "INSERT INTO assistant_input_policy (id) VALUES (1) RETURNING id, terms, revision",
+    );
+    expect(inputPolicy.rows).toEqual([{ id: 1, terms: [], revision: 1 }]);
+
+    await verifier.query("DELETE FROM assistant_input_policy");
+    await expect(
+      verifier.query("INSERT INTO assistant_input_policy (id) VALUES (2)"),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "assistant_input_policy_id_singleton_check",
+    });
+    await expect(
+      verifier.query(
+        "INSERT INTO assistant_input_policy (id, revision) VALUES (1, 0)",
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "assistant_input_policy_revision_positive_check",
+    });
+    await verifier.end();
+    expect(journal.rows).toEqual([{ count: "11" }]);
   });
 });

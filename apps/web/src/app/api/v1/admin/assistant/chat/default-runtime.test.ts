@@ -34,8 +34,10 @@ it("uses the real default runtime in placeholder mode without an Agent ID", asyn
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+        version: "2",
         message: "检查默认占位 Provider",
-        context: { pathname: "/admin/assistant" },
+        history: [],
+        page: null,
       }),
     }),
   );

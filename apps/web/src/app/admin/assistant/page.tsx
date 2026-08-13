@@ -1,19 +1,17 @@
-import { loadAdminAssistantSessions } from "@/app/api/v1/admin/assistant/sessions/handler";
 import { loadAdminAssistantStatus } from "@/app/api/v1/admin/assistant/status/handler";
 import { loadAdminModelConfigSnapshot } from "@/app/api/v1/admin/assistant/model-configs/handler";
+import { loadAdminInputPolicySnapshot } from "@/app/api/v1/admin/assistant/input-policy/handler";
 import { createAdminSkillListHandler } from "@/app/api/v1/admin/assistant/skills/handler";
 import { AssistantAdminPage } from "@/components/admin/assistant-admin-page";
 import type { AdminSkillRegistrySnapshot } from "@/components/admin/assistant-skill-registry-panel";
 import { metadataForRegisteredRoute } from "@/components/route-scaffold/registered-route-page";
-import type {
-  AdminAssistantSessionsSnapshot,
-  AdminAssistantStatusSnapshot,
-} from "@/features/assistant/admin-assistant-contract";
+import type { AdminAssistantStatusSnapshot } from "@/features/assistant/admin-assistant-contract";
 import {
   ADMIN_MODEL_PROVIDERS,
   type AdminModelConfigSnapshot,
   type AdminModelProvider,
 } from "@/features/assistant/admin-model-config-contract";
+import type { AdminInputPolicySnapshot } from "@/features/assistant/admin-input-policy-contract";
 import {
   parseAdminSkillListResponse,
   parseAdminSkillPermissionFlags,
@@ -178,25 +176,25 @@ export const metadata = metadataForRegisteredRoute(pathname);
 
 export default async function AdminAssistantPage() {
   const actor = await requirePermission("admin:assistant");
-  const [status, sessions, modelConfigs, skillRegistry]: [
+  const [status, modelConfigs, inputPolicy, skillRegistry]: [
     AdminAssistantStatusSnapshot,
-    AdminAssistantSessionsSnapshot,
     AdminModelConfigSnapshot,
+    AdminInputPolicySnapshot,
     LoadedSkillSnapshot,
   ] = await Promise.all([
     loadAdminAssistantStatus(),
-    loadAdminAssistantSessions(),
     loadAdminModelConfigSnapshot(actor).catch(() =>
       unavailableModelConfigSnapshot(actor.permissions),
     ),
+    loadAdminInputPolicySnapshot(actor),
     loadAdminSkillSnapshot(actor).catch(() => unavailableSkillSnapshot(actor)),
   ]);
 
   return (
     <main>
       <AssistantAdminPage
+        inputPolicy={inputPolicy}
         modelConfigs={modelConfigs}
-        sessions={sessions}
         skillCanRead={actor.permissions.includes("admin:assistant:skills")}
         skillPermissions={skillRegistry.permissions}
         skillSnapshot={skillRegistry.snapshot}

@@ -12,4 +12,6 @@ cd "$repo_root"
 
 export SKILL_RUNTIME_E2E=true
 export SKILL_REGISTRY_E2E_PROJECT=${SKILL_RUNTIME_E2E_PROJECT:-aap-skill-runtime-e2e-$$}
+# The shared runner owns the isolated Compose/psql lifecycle and the marker-bound
+# before/after Agent session count assertion.
 exec docs/testing/run-skill-registry-e2e.sh

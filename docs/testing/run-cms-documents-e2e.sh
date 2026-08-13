@@ -182,7 +182,6 @@ materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECR
 materialize_secret OS_SECURITY_KEY_FILE os_security_key "$(secret)"
 materialize_secret AGENT_CONFIG_CONTROL_KEY_FILE agent_config_control_key "$(secret)"
 materialize_secret SKILL_REGISTRY_CONTROL_KEY_FILE skill_registry_control_key "$(secret)"
-materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$(secret)"
 materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret "$(secret)"
 
 for name in \

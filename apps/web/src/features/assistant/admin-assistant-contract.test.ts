@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -23,6 +24,15 @@ function adminResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe("admin assistant test contract", () => {
+  it("has no deprecated assistant sessions response contract", () => {
+    const source = readFileSync(
+      "src/features/assistant/admin-assistant-contract.ts",
+      "utf8",
+    );
+
+    expect(source).not.toMatch(/AdminAssistantSessions|sessions:/u);
+  });
+
   it("marks only transient administrator errors retryable", () => {
     expect(
       createAdminAssistantErrorResponse("req-1", "rate_limited").error
@@ -78,7 +88,7 @@ function statusResponse(runtimeOverrides: Record<string, unknown> = {}) {
         capability: "available",
         providerMode: "agentos",
         selectedProvider: "agentos",
-        persistence: "agentos",
+        persistence: "disabled",
         circuits: {
           readiness: { state: "closed", consecutiveFailures: 0 },
           execution: { state: "closed", consecutiveFailures: 0 },
@@ -126,7 +136,7 @@ function statusResponse(runtimeOverrides: Record<string, unknown> = {}) {
         defaultAgent: "码多多（maduoduo）",
         model: "DeepSeek / deepseek-chat（动态配置）",
         skills: "未接入",
-        sessionStorage: "AgentOS 持久化已启用",
+        pageMemory: "仅当前页面内存；刷新或离开后清空",
       },
       message: "AI 助理基础服务已就绪。",
     },

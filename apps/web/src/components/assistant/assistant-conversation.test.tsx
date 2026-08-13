@@ -11,6 +11,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AssistantSession } from "./use-assistant-session";
 import { AssistantConversation } from "./assistant-conversation";
 
+const router = vi.hoisted(() => ({ push: vi.fn() }));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => router,
+}));
+
+vi.mock("./assistant-orb", () => ({
+  AssistantOrb: ({ size, state }: { size: number; state: string }) => (
+    <span aria-label={`orb:${state}:${size}`} role="img" />
+  ),
+}));
+
 function createSession(
   overrides: Partial<AssistantSession> = {},
 ): AssistantSession {
@@ -21,7 +33,6 @@ function createSession(
     requestStatus: "idle",
     lastFailedMessage: null,
     validationError: null,
-    sessionExpiresAt: null,
     setDraft: vi.fn(),
     submit: vi.fn(async () => undefined),
     retry: vi.fn(async () => undefined),
@@ -47,7 +58,10 @@ function renderConversation(
   );
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  router.push.mockReset();
+});
 
 describe("AssistantConversation", () => {
   it("labels a retained partial answer as incomplete", () => {
@@ -58,6 +72,8 @@ describe("AssistantConversation", () => {
           role: "assistant",
           content: "已收到的部分内容",
           suggestedActions: [],
+          activities: [],
+          actions: [],
           incomplete: true,
         },
       ],
@@ -86,6 +102,8 @@ describe("AssistantConversation", () => {
           role: "assistant",
           content: "请先查看部署指南。",
           suggestedActions: [{ label: "部署指南", href: "/docs/deployment" }],
+          activities: [],
+          actions: [],
         },
       ],
     });
@@ -101,9 +119,8 @@ describe("AssistantConversation", () => {
     expect(
       within(log).getByRole("article", { name: "码多多的消息" }),
     ).toHaveTextContent("请先查看部署指南。");
-    expect(
-      within(log).getByRole("navigation", { name: "建议操作" }),
-    ).toContainElement(within(log).getByRole("link", { name: "部署指南" }));
+    fireEvent.click(within(log).getByRole("button", { name: "部署指南" }));
+    expect(router.push).toHaveBeenCalledExactlyOnceWith("/docs/deployment");
     expect(screen.getByTestId("assistant-conversation")).toHaveAttribute(
       "data-variant",
       "workspace",
@@ -120,6 +137,8 @@ describe("AssistantConversation", () => {
           content:
             "## 什么是 NPU？\n\n**NPU** 是 AI 加速器。\n\n| 项目 | 说明 |\n| --- | --- |\n| 用途 | 推理 |\n\n[查看资料](https://example.com/docs) [不安全链接](javascript:alert(1))\n\n<img src=x onerror=alert(1)><script>alert(1)</script>",
           suggestedActions: [],
+          activities: [],
+          actions: [],
         },
       ],
     });
@@ -140,15 +159,8 @@ describe("AssistantConversation", () => {
       "STRONG",
     );
     expect(within(assistantMessage).getByRole("table")).toBeInTheDocument();
-    const referenceLink = within(assistantMessage).getByRole("link", {
-      name: "查看资料",
-    });
-    expect(referenceLink).toHaveAttribute("href", "https://example.com/docs");
-    expect(referenceLink).toHaveAttribute("target", "_blank");
-    expect(referenceLink).toHaveAttribute("rel", "noreferrer noopener");
-    expect(
-      within(assistantMessage).queryByRole("link", { name: "不安全链接" }),
-    ).toBeNull();
+    expect(within(assistantMessage).queryByRole("link")).toBeNull();
+    expect(assistantMessage).toHaveTextContent("查看资料 不安全链接");
     expect(assistantMessage.querySelector("img")).toBeNull();
     expect(assistantMessage.querySelector("script")).toBeNull();
     expect(userMessage.querySelector("strong")).toBeNull();
@@ -237,6 +249,7 @@ describe("AssistantConversation", () => {
     const failedSession = createSession({
       draft: "失败的问题",
       latestAnnouncement: "请求过于频繁，请稍后再试。",
+      lastFailedMessage: "失败的问题",
       requestStatus: "failed",
     });
     view.rerender(
@@ -255,6 +268,22 @@ describe("AssistantConversation", () => {
       "data-variant",
       "dock",
     );
+  });
+
+  it("does not offer retry for a blocked non-retryable request", () => {
+    renderConversation(
+      createSession({
+        draft: "等待用户修改的问题",
+        latestAnnouncement: "该问题无法提交，请调整表述",
+        lastFailedMessage: null,
+        requestStatus: "failed",
+      }),
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "该问题无法提交，请调整表述",
+    );
+    expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
   });
 
   it("uses one live region for request feedback instead of repeating a failure", () => {
@@ -298,14 +327,87 @@ describe("AssistantConversation", () => {
               { label: "部署指南", href: "/docs/deployment" },
               { label: "部署指南", href: "/docs/deployment" },
             ],
+            activities: [],
+            actions: [],
           },
         ],
       }),
     );
 
-    expect(screen.getAllByRole("link", { name: "部署指南" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "部署指南" })).toHaveLength(2);
     expect(consoleError).not.toHaveBeenCalled();
     consoleError.mockRestore();
+  });
+
+  it("shows current activity while streaming and collapses completed activity", () => {
+    const view = renderConversation(
+      createSession({
+        requestStatus: "sending",
+        messages: [
+          {
+            id: 1,
+            role: "assistant",
+            content: "",
+            suggestedActions: [],
+            activities: [
+              {
+                type: "activity",
+                phase: "reading",
+                label: "正在读取页面",
+              },
+            ],
+            actions: [],
+          },
+        ],
+      }),
+    );
+
+    expect(
+      screen.getByRole("list", { name: "执行步骤" }).closest('[role="status"]'),
+    ).toHaveTextContent("正在读取页面");
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+    expect(screen.getByRole("img", { name: "orb:reading:20" })).toBeVisible();
+    const assistantMessage = screen.getByRole("article", {
+      name: "码多多的消息",
+    });
+    expect(
+      assistantMessage.querySelector(".assistant-activity")?.parentElement,
+    ).toBe(assistantMessage);
+
+    view.rerender(
+      <AssistantConversation
+        ariaLabel="码多多对话"
+        registerComposer={() => () => undefined}
+        session={createSession({
+          messages: [
+            {
+              id: 1,
+              role: "assistant",
+              content: "读取完成",
+              suggestedActions: [],
+              activities: [
+                {
+                  type: "activity",
+                  phase: "reading",
+                  label: "正在读取页面",
+                },
+              ],
+              actions: [
+                { kind: "navigate", pathname: "/product", label: "产品中心" },
+              ],
+            },
+          ],
+        })}
+        variant="dock"
+      />,
+    );
+
+    const details = screen.getByText("已完成 1 个步骤").closest("details");
+    expect(details).not.toHaveAttribute("open");
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+    expect(screen.getByRole("img", { name: "orb:completed:20" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "产品中心" }));
+    expect(router.push).toHaveBeenCalledExactlyOnceWith("/product");
   });
 
   it("registers the mounted composer and disposes that registration on unmount", () => {
@@ -346,10 +448,30 @@ describe("AssistantConversation", () => {
     );
 
     expect(css).toMatch(
-      /\.assistant-conversation__message\s*\{[\s\S]*?width:\s*fit-content;[\s\S]*?justify-self:\s*start;/u,
+      /\.assistant-conversation__messages\s*\{[\s\S]*?grid-auto-rows:\s*max-content;[\s\S]*?align-content:\s*start;/u,
     );
     expect(css).toMatch(
-      /\.assistant-conversation__message--user\s*\{[\s\S]*?justify-self:\s*end;[\s\S]*?margin-inline-start:\s*auto;/u,
+      /\.assistant-conversation__message--assistant\s*\{[\s\S]*?width:\s*min\(100%,\s*720px\);/u,
+    );
+    expect(css).toMatch(
+      /\.assistant-conversation__message--user\s*\{[\s\S]*?display:\s*flex;[\s\S]*?width:\s*fit-content;[\s\S]*?flex-direction:\s*row-reverse;[\s\S]*?justify-self:\s*end;/u,
+    );
+  });
+
+  it("keeps the activity chain and answer below the message Orb", () => {
+    const css = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/components/assistant/assistant-conversation.css",
+      ),
+      "utf8",
+    );
+
+    expect(css).toMatch(
+      /\.assistant-conversation__message--assistant\s*>\s*\.assistant-activity\s*\{[^}]*grid-column:\s*1\s*\/\s*-1;/s,
+    );
+    expect(css).toMatch(
+      /\.assistant-conversation__message--assistant\s*>\s*\.assistant-conversation__message-body\s*\{[^}]*grid-column:\s*1\s*\/\s*-1;/s,
     );
   });
 });

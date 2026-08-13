@@ -19,6 +19,7 @@ import {
   AssistantExperienceProvider,
   useAssistantExperience,
 } from "../assistant/assistant-experience-provider";
+import { AssistantOrb } from "../assistant/assistant-orb";
 import { FloatingChatWidget } from "../ui/floating-chat-widget-shadcnui";
 import { PortalNavigationLink } from "./portal-navigation-link";
 import { classifyShellRoute, type ShellRoute } from "./shell-route";
@@ -53,7 +54,6 @@ const ORGANIZATION_STATUSES = new Set([
 const ORGANIZATION_ROLES = new Set(["owner", "admin", "member"]);
 const ENVIRONMENT_STATUS =
   process.env.NEXT_PUBLIC_DEPLOYMENT_ENVIRONMENT?.trim() || "开发环境";
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -333,6 +333,7 @@ function AssistantEnabledShell({
         <span>
           <AssistantHeaderEntry
             isOpen={experience.surface !== "closed"}
+            mark={<AssistantOrb size={20} speed={0.5} state="listening" />}
             mode={variant === "assistant" ? "workspace" : "launcher"}
             onActivate={activateHeaderEntry}
           />

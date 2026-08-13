@@ -1,9 +1,21 @@
 "use client";
 
+import { matchRoute } from "@/config/routes";
 import {
+  ASSISTANT_CHAT_REQUEST_MAX_BYTES,
   ASSISTANT_CONTENT_MAX_CODE_POINTS,
+  ASSISTANT_HISTORY_CONTENT_MAX_CODE_POINTS,
+  ASSISTANT_HISTORY_MAX_CODE_POINTS,
+  ASSISTANT_HISTORY_MAX_MESSAGES,
+  ASSISTANT_INPUT_BLOCKED_MESSAGE,
+  ASSISTANT_PATHNAME_MAX_CODE_POINTS,
+  ASSISTANT_SEARCH_MAX_CODE_POINTS,
   isAssistantSuccessResponse,
   safeAssistantSuggestedActions,
+  type AssistantHistoryMessage,
+  type AssistantRequest,
+  type AssistantStreamActionEvent,
+  type AssistantStreamActivityEvent,
   type AssistantSuccessResponse,
   type AssistantSuggestedAction,
 } from "@/features/assistant/assistant-contract";
@@ -11,7 +23,13 @@ import {
   ASSISTANT_STREAM_MEDIA_TYPE,
   parseAssistantStreamFrame,
 } from "@/features/assistant/assistant-stream";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 type UserAssistantMessage = {
   id: number;
@@ -24,36 +42,44 @@ type ResponseAssistantMessage = {
   role: "assistant";
   content: string;
   suggestedActions: AssistantSuggestedAction[];
+  activities: AssistantStreamActivityEvent[];
+  actions: AssistantStreamActionEvent["action"][];
   incomplete?: boolean;
 };
 
 export type AssistantMessage = UserAssistantMessage | ResponseAssistantMessage;
-
 export type AssistantRequestStatus = "idle" | "sending" | "failed";
-
 export type AssistantValidationError = {
   code: "empty" | "too_long";
   message: string;
 };
 
-type AssistantRequestPayload = {
-  message: string;
-  context: { pathname: string };
-};
-
 type AssistantSuccessfulBody = Pick<
   AssistantSuccessResponse,
   "message" | "suggestedActions"
-> &
-  Partial<Pick<AssistantSuccessResponse, "session">>;
+>;
 
 const FAILURE_ANNOUNCEMENT = "发送失败，请重试或使用帮助中心或商务咨询。";
 const UNAVAILABLE_ANNOUNCEMENT = "助手服务暂不可用，请使用帮助中心或商务咨询。";
 const PUBLIC_ASSISTANT_ENDPOINT = "/api/v1/assistant/chat";
 const REQUEST_CANCELLED = Symbol("assistant-request-cancelled");
 const REQUEST_TIMEOUT = Symbol("assistant-request-timeout");
+const EXCLUDED_PAGE_ROUTES = new Set([
+  "/assistant",
+  "/login",
+  "/register",
+  "/staff/login",
+  "/staff/change-password",
+]);
 
-class SafeAssistantRequestFailure extends Error {}
+class SafeAssistantRequestFailure extends Error {
+  constructor(
+    message: string,
+    readonly retryable = true,
+  ) {
+    super(message);
+  }
+}
 
 export const ASSISTANT_REQUEST_TIMEOUT_MS = 60_000;
 
@@ -79,11 +105,18 @@ export type AssistantSession = {
   requestStatus: AssistantRequestStatus;
   lastFailedMessage: string | null;
   validationError: AssistantValidationError | null;
-  sessionExpiresAt: string | null;
   setDraft: (draft: string) => void;
   submit: (message?: string) => Promise<void>;
   retry: () => Promise<void>;
 };
+
+function codePointLength(value: string): number {
+  return Array.from(value).length;
+}
+
+function truncateCodePoints(value: string, maximum: number): string {
+  return Array.from(value.trim()).slice(0, maximum).join("");
+}
 
 function validateMessage(
   value: string,
@@ -91,12 +124,9 @@ function validateMessage(
   | { message: string; error: null }
   | { message: null; error: AssistantValidationError } {
   const message = value.trim();
-  const length = Array.from(message).length;
+  const length = codePointLength(message);
   if (length === 0) {
-    return {
-      message: null,
-      error: { code: "empty", message: "请输入问题。" },
-    };
+    return { message: null, error: { code: "empty", message: "请输入问题。" } };
   }
   if (length > 500) {
     return {
@@ -112,13 +142,13 @@ function safeFailureAnnouncement(
   input: unknown,
   fallback: string,
   unavailable: string,
-): string {
+): { message: string; retryable: boolean } {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    return fallback;
+    return { message: fallback, retryable: true };
   }
   const envelope = input as Record<string, unknown>;
   if (Object.keys(envelope).sort().join(",") !== "error,requestId,version") {
-    return fallback;
+    return { message: fallback, retryable: true };
   }
   const error = envelope.error;
   if (
@@ -129,26 +159,34 @@ function safeFailureAnnouncement(
     error === null ||
     Array.isArray(error)
   ) {
-    return fallback;
+    return { message: fallback, retryable: true };
   }
   const details = error as Record<string, unknown>;
   if (
     Object.keys(details).sort().join(",") !== "code,message,retryable" ||
     typeof details.retryable !== "boolean"
   ) {
-    return fallback;
+    return { message: fallback, retryable: true };
   }
   if (status === 429 && details.code === "rate_limited" && details.retryable) {
-    return "请求过于频繁，请稍后再试。";
+    return { message: "请求过于频繁，请稍后再试。", retryable: true };
   }
   if (
     status === 503 &&
     details.code === "assistant_unavailable" &&
     details.retryable
   ) {
-    return unavailable;
+    return { message: unavailable, retryable: true };
   }
-  return fallback;
+  if (
+    status === 422 &&
+    details.code === "input_blocked" &&
+    details.message === ASSISTANT_INPUT_BLOCKED_MESSAGE &&
+    details.retryable === false
+  ) {
+    return { message: ASSISTANT_INPUT_BLOCKED_MESSAGE, retryable: false };
+  }
+  return { message: fallback, retryable: true };
 }
 
 function responseMediaType(response: Response): string | null {
@@ -159,6 +197,124 @@ function responseMediaType(response: Response): string | null {
       ?.trim()
       .toLowerCase() ?? null
   );
+}
+
+function normalizedPathname(pathname: string): string | null {
+  if (
+    codePointLength(pathname) > ASSISTANT_PATHNAME_MAX_CODE_POINTS ||
+    !pathname.startsWith("/") ||
+    pathname.startsWith("//") ||
+    /[\\?#\u0000-\u001f\u007f]/u.test(pathname)
+  ) {
+    return null;
+  }
+  try {
+    const parsed = new URL(pathname, "http://assistant.local");
+    if (
+      parsed.origin !== "http://assistant.local" ||
+      (parsed.pathname !== pathname && parsed.pathname !== encodeURI(pathname))
+    ) {
+      return null;
+    }
+    return pathname.replace(/\/+$/u, "") || "/";
+  } catch {
+    return null;
+  }
+}
+
+function normalizedSearch(search: string): string | null {
+  if (
+    codePointLength(search) > ASSISTANT_SEARCH_MAX_CODE_POINTS ||
+    (search !== "" && !search.startsWith("?")) ||
+    search.includes("#") ||
+    /[\u0000-\u001f\u007f]/u.test(search)
+  ) {
+    return null;
+  }
+  try {
+    return new URL(`/safe${search}`, "http://assistant.local").search === search
+      ? search
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function currentPage(pathname: string): AssistantRequest["page"] {
+  const normalizedPath = normalizedPathname(pathname);
+  const search = normalizedSearch(window.location.search);
+  if (normalizedPath === null || search === null) return null;
+  const route = matchRoute(normalizedPath);
+  if (
+    route?.group !== "public" ||
+    route.status !== "live" ||
+    EXCLUDED_PAGE_ROUTES.has(normalizedPath)
+  ) {
+    return null;
+  }
+  return { pathname: normalizedPath, search };
+}
+
+function completeTurns(messages: readonly AssistantMessage[]) {
+  const turns: [AssistantHistoryMessage, AssistantHistoryMessage][] = [];
+  for (let index = 0; index + 1 < messages.length; index += 2) {
+    const user = messages[index];
+    const assistant = messages[index + 1];
+    if (user?.role !== "user" || assistant?.role !== "assistant") break;
+    if (assistant.incomplete) continue;
+    const userContent = truncateCodePoints(
+      user.content,
+      ASSISTANT_HISTORY_CONTENT_MAX_CODE_POINTS,
+    );
+    const assistantContent = truncateCodePoints(
+      assistant.content,
+      ASSISTANT_HISTORY_CONTENT_MAX_CODE_POINTS,
+    );
+    if (userContent && assistantContent) {
+      turns.push([
+        { role: "user", content: userContent },
+        { role: "assistant", content: assistantContent },
+      ]);
+    }
+  }
+  return turns;
+}
+
+function requestPayload(
+  message: string,
+  pathname: string,
+  messages: readonly AssistantMessage[],
+): AssistantRequest {
+  const page = currentPage(pathname);
+  let history: AssistantHistoryMessage[] = [];
+  let historyCodePoints = 0;
+  const turns = completeTurns(messages).slice(
+    -(ASSISTANT_HISTORY_MAX_MESSAGES / 2),
+  );
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index]!;
+    const turnCodePoints = turn.reduce(
+      (total, item) => total + codePointLength(item.content),
+      0,
+    );
+    const candidateHistory = [...turn, ...history];
+    const candidate: AssistantRequest = {
+      version: "2",
+      message,
+      history: candidateHistory,
+      page,
+    };
+    if (
+      historyCodePoints + turnCodePoints > ASSISTANT_HISTORY_MAX_CODE_POINTS ||
+      new TextEncoder().encode(JSON.stringify(candidate)).byteLength >
+        ASSISTANT_CHAT_REQUEST_MAX_BYTES
+    ) {
+      break;
+    }
+    history = candidateHistory;
+    historyCodePoints += turnCodePoints;
+  }
+  return { version: "2", message, history, page };
 }
 
 export function useAssistantSession(
@@ -178,15 +334,28 @@ export function useAssistantSession(
   const [latestAnnouncement, setLatestAnnouncement] = useState("");
   const [requestStatus, setRequestStatus] =
     useState<AssistantRequestStatus>("idle");
-  const [lastFailedRequest, setLastFailedRequest] =
-    useState<AssistantRequestPayload | null>(null);
+  const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(
+    null,
+  );
   const [validationError, setValidationError] =
     useState<AssistantValidationError | null>(null);
-  const [sessionExpiresAt, setSessionExpiresAt] = useState<string | null>(null);
+  const messagesRef = useRef<AssistantMessage[]>([]);
   const requestStatusRef = useRef<AssistantRequestStatus>("idle");
   const requestToken = useRef(0);
   const activeRequest = useRef<ActiveAssistantRequest | null>(null);
   const nextMessageId = useRef(1);
+  const previousPathname = useRef(pathname);
+
+  const replaceMessages = useCallback(
+    (update: (current: AssistantMessage[]) => AssistantMessage[]) => {
+      setMessages((current) => {
+        const next = update(current);
+        messagesRef.current = next;
+        return next;
+      });
+    },
+    [],
+  );
 
   const updateRequestStatus = useCallback((status: AssistantRequestStatus) => {
     requestStatusRef.current = status;
@@ -201,6 +370,21 @@ export function useAssistantSession(
     active.controller.abort();
     active.rejectControl(reason);
   }, []);
+
+  useLayoutEffect(() => {
+    if (previousPathname.current === pathname) return;
+    previousPathname.current = pathname;
+    requestToken.current += 1;
+    cancelActiveRequest(REQUEST_CANCELLED);
+    messagesRef.current = [];
+    setMessages([]);
+    setDraftState("");
+    setLatestAnnouncement("");
+    setLastFailedMessage(null);
+    setValidationError(null);
+    nextMessageId.current = 1;
+    updateRequestStatus("idle");
+  }, [cancelActiveRequest, pathname, updateRequestStatus]);
 
   useEffect(() => {
     requestToken.current += 1;
@@ -223,11 +407,11 @@ export function useAssistantSession(
       setValidationError(validation.error);
       if (validation.message === null) return;
       const message = validation.message;
-      const payload: AssistantRequestPayload = {
+      const payload = requestPayload(
         message,
-        context: { pathname: requestPathname },
-      };
-
+        requestPathname,
+        messagesRef.current,
+      );
       const token = ++requestToken.current;
       const controller = new AbortController();
       let rejectControl!: (reason: symbol) => void;
@@ -240,20 +424,8 @@ export function useAssistantSession(
         controller.abort();
         rejectControl(REQUEST_TIMEOUT);
       };
-      let timeoutId = setTimeout(expireRequest, timeoutMs);
-      activeRequest.current = {
-        controller,
-        rejectControl,
-        timeoutId,
-        token,
-      };
-      const renewTimeout = () => {
-        const active = activeRequest.current;
-        if (active?.token !== token || timedOut) return;
-        clearTimeout(timeoutId);
-        timeoutId = setTimeout(expireRequest, timeoutMs);
-        active.timeoutId = timeoutId;
-      };
+      const timeoutId = setTimeout(expireRequest, timeoutMs);
+      activeRequest.current = { controller, rejectControl, timeoutId, token };
       updateRequestStatus("sending");
       setLatestAnnouncement("");
       let streamedMessageIds: { user: number; assistant: number } | null = null;
@@ -276,13 +448,15 @@ export function useAssistantSession(
             response.json().catch(() => null),
             control,
           ]);
+          const failure = safeFailureAnnouncement(
+            response.status,
+            body,
+            failureAnnouncement,
+            unavailableAnnouncement,
+          );
           throw new SafeAssistantRequestFailure(
-            safeFailureAnnouncement(
-              response.status,
-              body,
-              failureAnnouncement,
-              unavailableAnnouncement,
-            ),
+            failure.message,
+            failure.retryable,
           );
         }
 
@@ -293,73 +467,83 @@ export function useAssistantSession(
           }
           const decoder = new TextDecoder("utf-8", { fatal: true });
           let buffer = "";
-          let started = false;
           let assistantInserted = false;
           let done = false;
           let content = "";
           let contentCodePoints = 0;
-          let suggestedActions: AssistantSuggestedAction[] = [];
+          const activities: AssistantStreamActivityEvent[] = [];
+          const actions: AssistantStreamActionEvent["action"][] = [];
+
+          const ensureStreamedAssistant = () => {
+            if (assistantInserted) return;
+            assistantInserted = true;
+            streamedMessageIds = {
+              user: nextMessageId.current++,
+              assistant: nextMessageId.current++,
+            };
+            replaceMessages((current) => [
+              ...current,
+              {
+                id: streamedMessageIds!.user,
+                role: "user",
+                content: message,
+              },
+              {
+                id: streamedMessageIds!.assistant,
+                role: "assistant",
+                content,
+                suggestedActions: [],
+                activities: [...activities],
+                actions: [...actions],
+              },
+            ]);
+          };
+
+          const updateStreamedAssistant = () => {
+            if (!assistantInserted || streamedMessageIds === null) return;
+            const assistantId = streamedMessageIds.assistant;
+            replaceMessages((current) =>
+              current.map((item) =>
+                item.id === assistantId && item.role === "assistant"
+                  ? {
+                      ...item,
+                      content,
+                      activities: [...activities],
+                      actions: [...actions],
+                    }
+                  : item,
+              ),
+            );
+          };
 
           const consumeFrame = (rawFrame: string) => {
             const event = parseAssistantStreamFrame(rawFrame);
             if (event === null || done) {
               throw new SafeAssistantRequestFailure(failureAnnouncement);
             }
-            if (event.event === "start") {
-              if (started) {
-                throw new SafeAssistantRequestFailure(failureAnnouncement);
-              }
-              started = true;
-              streamedMessageIds = {
-                user: nextMessageId.current++,
-                assistant: nextMessageId.current++,
-              };
-              suggestedActions = safeAssistantSuggestedActions(
-                event.data.suggestedActions,
-              );
-              setMessages((current) => [
-                ...current,
-                {
-                  id: streamedMessageIds!.user,
-                  role: "user",
-                  content: message,
-                },
-              ]);
-              setSessionExpiresAt(event.data.session.expiresAt);
+            if (event.type === "error") {
+              throw new SafeAssistantRequestFailure(failureAnnouncement);
+            }
+            if (event.type === "activity") {
+              activities.push(event);
+              ensureStreamedAssistant();
+              updateStreamedAssistant();
               return;
             }
-            if (!started || streamedMessageIds === null) {
-              throw new SafeAssistantRequestFailure(failureAnnouncement);
+            if (event.type === "action") {
+              actions.push(event.action);
+              ensureStreamedAssistant();
+              updateStreamedAssistant();
+              return;
             }
-            if (event.event === "error") {
-              throw new SafeAssistantRequestFailure(failureAnnouncement);
-            }
-            if (event.event === "delta") {
-              contentCodePoints += Array.from(event.data.content).length;
+            if (event.type === "answer_delta") {
+              contentCodePoints += codePointLength(event.content);
               if (contentCodePoints > ASSISTANT_CONTENT_MAX_CODE_POINTS) {
                 throw new SafeAssistantRequestFailure(failureAnnouncement);
               }
-              content += event.data.content;
-              if (!assistantInserted) {
-                assistantInserted = true;
-                setMessages((current) => [
-                  ...current,
-                  {
-                    id: streamedMessageIds!.assistant,
-                    role: "assistant",
-                    content,
-                    suggestedActions,
-                  },
-                ]);
-              } else {
-                setMessages((current) =>
-                  current.map((item) =>
-                    item.id === streamedMessageIds!.assistant
-                      ? { ...item, content }
-                      : item,
-                  ),
-                );
-              }
+              content += event.content;
+              ensureStreamedAssistant();
+              updateStreamedAssistant();
               return;
             }
             if (!assistantInserted || content.trim().length === 0) {
@@ -378,7 +562,6 @@ export function useAssistantSession(
                 streamCompleted = true;
                 break;
               }
-              renewTimeout();
               buffer += decoder.decode(chunk.value, { stream: true });
               buffer = buffer.replaceAll("\r\n", "\n");
               let boundary = buffer.indexOf("\n\n");
@@ -395,9 +578,7 @@ export function useAssistantSession(
               throw new SafeAssistantRequestFailure(failureAnnouncement);
             }
           } finally {
-            if (!streamCompleted) {
-              await reader.cancel().catch(() => undefined);
-            }
+            if (!streamCompleted) await reader.cancel().catch(() => undefined);
             reader.releaseLock();
           }
 
@@ -405,7 +586,7 @@ export function useAssistantSession(
             current.trim() === message ? "" : current,
           );
           setLatestAnnouncement(content);
-          setLastFailedRequest(null);
+          setLastFailedMessage(null);
           updateRequestStatus("idle");
         } else {
           const body = await Promise.race([
@@ -415,7 +596,7 @@ export function useAssistantSession(
           if (!successResponseGuard(body)) {
             throw new SafeAssistantRequestFailure(failureAnnouncement);
           }
-          setMessages((current) => [
+          replaceMessages((current) => [
             ...current,
             { id: nextMessageId.current++, role: "user", content: message },
             {
@@ -425,21 +606,22 @@ export function useAssistantSession(
               suggestedActions: safeAssistantSuggestedActions(
                 body.suggestedActions,
               ),
+              activities: [],
+              actions: [],
             },
           ]);
           setDraftState((current) =>
             current.trim() === message ? "" : current,
           );
           setLatestAnnouncement(body.message.content);
-          setLastFailedRequest(null);
-          if (body.session) setSessionExpiresAt(body.session.expiresAt);
+          setLastFailedMessage(null);
           updateRequestStatus("idle");
         }
       } catch (error) {
         const discardStreamedMessages = () => {
           if (streamedMessageIds === null) return;
           const ids = streamedMessageIds;
-          setMessages((current) =>
+          replaceMessages((current) =>
             current.filter(
               (item) => item.id !== ids.user && item.id !== ids.assistant,
             ),
@@ -448,10 +630,15 @@ export function useAssistantSession(
         const retainIncompleteStream = () => {
           if (streamedMessageIds === null) return;
           const assistantId = streamedMessageIds.assistant;
-          setMessages((current) =>
+          replaceMessages((current) =>
             current.map((item) =>
               item.role === "assistant" && item.id === assistantId
-                ? { ...item, suggestedActions: [], incomplete: true }
+                ? {
+                    ...item,
+                    suggestedActions: [],
+                    actions: [],
+                    incomplete: true,
+                  }
                 : item,
             ),
           );
@@ -478,7 +665,11 @@ export function useAssistantSession(
           return;
         }
         retainIncompleteStream();
-        setLastFailedRequest(payload);
+        setLastFailedMessage(
+          error instanceof SafeAssistantRequestFailure && !error.retryable
+            ? null
+            : message,
+        );
         setLatestAnnouncement(
           error instanceof SafeAssistantRequestFailure
             ? error.message
@@ -496,9 +687,10 @@ export function useAssistantSession(
     [
       endpoint,
       failureAnnouncement,
-      unavailableAnnouncement,
+      replaceMessages,
       successResponseGuard,
       timeoutMs,
+      unavailableAnnouncement,
       updateRequestStatus,
     ],
   );
@@ -508,16 +700,15 @@ export function useAssistantSession(
     [draft, pathname, send],
   );
   const retry = useCallback(async () => {
-    if (lastFailedRequest !== null) {
-      await send(lastFailedRequest.message, lastFailedRequest.context.pathname);
+    if (lastFailedMessage !== null) {
+      await send(lastFailedMessage, pathname);
     }
-  }, [lastFailedRequest, send]);
+  }, [lastFailedMessage, pathname, send]);
 
   const setDraft = useCallback((value: string) => {
     setDraftState(value);
-    const trimmedLength = Array.from(value.trim()).length;
     setValidationError(
-      trimmedLength > 500
+      codePointLength(value.trim()) > 500
         ? { code: "too_long", message: "问题不能超过 500 个字符。" }
         : null,
     );
@@ -528,9 +719,8 @@ export function useAssistantSession(
     messages,
     latestAnnouncement,
     requestStatus,
-    lastFailedMessage: lastFailedRequest?.message ?? null,
+    lastFailedMessage,
     validationError,
-    sessionExpiresAt,
     setDraft,
     submit,
     retry,

@@ -1,24 +1,23 @@
 "use client";
 
-import type {
-  AdminAssistantSessionsSnapshot,
-  AdminAssistantStatusSnapshot,
-} from "@/features/assistant/admin-assistant-contract";
+import type { AdminAssistantStatusSnapshot } from "@/features/assistant/admin-assistant-contract";
 import { isAdminAssistantChatResponse } from "@/features/assistant/admin-assistant-contract";
 import { useAssistantSession } from "@/components/assistant/use-assistant-session";
 import { AssistantModelConfigPanel } from "@/components/admin/assistant-model-config-panel";
+import { AssistantInputPolicyPanel } from "@/components/admin/assistant-input-policy-panel";
 import {
   AssistantSkillRegistryPanel,
   type AdminSkillRegistrySnapshot,
 } from "@/components/admin/assistant-skill-registry-panel";
 import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
+import type { AdminInputPolicySnapshot } from "@/features/assistant/admin-input-policy-contract";
 import type { AdminSkillPermissionFlags } from "@/features/assistant/admin-skill-contract";
 import { useState, type FormEvent } from "react";
 import "./assistant-admin-page.css";
 
 type AssistantAdminPageProps = {
+  inputPolicy: AdminInputPolicySnapshot;
   modelConfigs: AdminModelConfigSnapshot;
-  sessions: AdminAssistantSessionsSnapshot;
   skillCanRead: boolean;
   skillPermissions: AdminSkillPermissionFlags;
   skillSnapshot: AdminSkillRegistrySnapshot;
@@ -32,19 +31,19 @@ const configurationLabels: Record<
   defaultAgent: "默认 Agent",
   model: "模型",
   skills: "Skill",
-  sessionStorage: "会话存储",
+  pageMemory: "对话记忆",
 };
 
 export function AssistantAdminPage({
+  inputPolicy,
   modelConfigs,
-  sessions,
   skillCanRead,
   skillPermissions,
   skillSnapshot,
   status,
 }: AssistantAdminPageProps) {
   const [activeTab, setActiveTab] = useState<
-    "overview" | "model" | "skills" | "test"
+    "overview" | "model" | "skills" | "policy" | "test"
   >("overview");
   const assistant = useAssistantSession("/admin/assistant", {
     endpoint: "/api/v1/admin/assistant/chat",
@@ -78,7 +77,8 @@ export function AssistantAdminPage({
             ["overview", "运行概览"],
             ["model", "模型配置"],
             ["skills", "Skills"],
-            ["test", "测试与会话"],
+            ["policy", "内容规则"],
+            ["test", "测试"],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -182,6 +182,10 @@ export function AssistantAdminPage({
         />
       ) : null}
 
+      <div hidden={activeTab !== "policy"}>
+        <AssistantInputPolicyPanel initialSnapshot={inputPolicy} />
+      </div>
+
       {activeTab === "test" ? (
         <div className="assistant-admin__workspace">
           <section
@@ -193,7 +197,7 @@ export function AssistantAdminPage({
                 <p>PROTECTED TEST CONSOLE</p>
                 <h2 id="assistant-test-title">受保护的助手测试控制台</h2>
               </div>
-              <span>临时会话，结束后清理</span>
+              <span>仅保留在当前页面内存；刷新或离开后清空</span>
             </header>
             <form onSubmit={submitTest}>
               <label htmlFor="assistant-admin-question">测试问题</label>
@@ -250,30 +254,6 @@ export function AssistantAdminPage({
             </dl>
             <span>只读 · 待接入</span>
           </aside>
-
-          <section
-            aria-labelledby="assistant-sessions-title"
-            className="assistant-admin__sessions"
-          >
-            <div>
-              <p>SESSION STORAGE</p>
-              <h2 id="assistant-sessions-title">会话持久化</h2>
-              <span>{sessions.message}</span>
-              <small>
-                {sessions.persistence} / {sessions.listing}
-              </small>
-            </div>
-            <strong>列表不可用</strong>
-          </section>
-
-          <nav
-            aria-label="待接入管理能力"
-            className="assistant-admin__future-actions"
-          >
-            <button disabled type="button">
-              会话审计
-            </button>
-          </nav>
         </div>
       ) : null}
     </section>

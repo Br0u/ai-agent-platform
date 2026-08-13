@@ -12,12 +12,11 @@ import {
 import { ASSISTANT_CONTENT_MAX_CODE_POINTS } from "@/features/assistant/assistant-contract";
 
 export const AGENTOS_RUN_MAX_RESPONSE_BYTES = 4 * 1_024 * 1_024;
-export const AGENTOS_SESSION_DELETE_TIMEOUT_MS = 3_000;
 
 const DEFAULT_RUN_TIMEOUT_MS = 55_000;
 const MIN_RUN_TIMEOUT_MS = 51_000;
 const MAX_RUN_TIMEOUT_MS = 55_000;
-const SESSION_DELETE_MAX_RESPONSE_BYTES = 16 * 1_024;
+const NAVIGATION_MARKER_PREFIX = "aap.navigate.v1:";
 
 export type AgentOSRunEnvironment = AgentOSTransportEnvironment & {
   ASSISTANT_AGENTOS_RUN_TIMEOUT_MS?: string;
@@ -29,14 +28,21 @@ export type AgentOSRunSettings = AgentOSTransportSettings & {
 
 export type AgentOSRunInput = {
   message: string;
-  sessionId?: string;
   signal?: AbortSignal;
 };
 
+export type AgentOSRunEvent =
+  | {
+      type: "activity";
+      phase: "analyzing" | "tool";
+      toolName?: "suggest_navigation";
+    }
+  | { type: "answer_delta"; content: string }
+  | { type: "navigation_candidate"; pathname: string };
+
 export type AgentOSRunClient = {
   runAgent(input: AgentOSRunInput): Promise<{ content: string }>;
-  runAgentStream(input: AgentOSRunInput): AsyncIterable<string>;
-  deleteSession(sessionId: string): Promise<void>;
+  runAgentStream(input: AgentOSRunInput): AsyncIterable<AgentOSRunEvent>;
 };
 
 export type AgentOSRunClientErrorCode =
@@ -113,6 +119,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isOwnedNavigationMarker(result: unknown, pathname: string): boolean {
+  if (
+    typeof result !== "string" ||
+    !result.startsWith(NAVIGATION_MARKER_PREFIX)
+  ) {
+    return false;
+  }
+  const encoded = result.slice(NAVIGATION_MARKER_PREFIX.length);
+  try {
+    return (
+      decodeURIComponent(encoded) === pathname &&
+      result === `${NAVIGATION_MARKER_PREFIX}${encodeURIComponent(pathname)}`
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isBoundedContent(value: unknown): value is string {
   if (typeof value !== "string" || value.trim().length === 0) return false;
   let codePoints = 0;
@@ -163,14 +187,14 @@ function parseAgentOSEvent(frame: string): Record<string, unknown> {
 
 async function* parseAgentOSRunStream(
   source: AsyncIterable<Uint8Array>,
-): AsyncIterable<string> {
+): AsyncIterable<AgentOSRunEvent> {
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let buffer = "";
   let completed = false;
   let contentCodePoints = 0;
   let hasNonWhitespaceContent = false;
 
-  const consumeFrame = function* (frame: string): Iterable<string> {
+  const consumeFrame = function* (frame: string): Iterable<AgentOSRunEvent> {
     const event = parseAgentOSEvent(frame);
     if (completed) {
       throw new AgentOSRunClientError(
@@ -191,9 +215,32 @@ async function* parseAgentOSRunStream(
       completed = true;
       return;
     }
-    if (event.event !== "RunContent") return;
-    if (typeof event.content !== "string") {
-      if (typeof event.reasoning_content === "string") return;
+    if (event.event === "RunStarted") {
+      yield { type: "activity", phase: "analyzing" };
+      return;
+    }
+    if (event.event === "ToolCallStarted") {
+      const toolName = isRecord(event.tool) ? event.tool.tool_name : undefined;
+      yield toolName === "suggest_navigation"
+        ? { type: "activity", phase: "tool", toolName }
+        : { type: "activity", phase: "tool" };
+      return;
+    }
+    if (event.event === "ToolCallCompleted") {
+      const tool = isRecord(event.tool) ? event.tool : null;
+      const args = tool && isRecord(tool.tool_args) ? tool.tool_args : null;
+      if (
+        tool?.tool_name === "suggest_navigation" &&
+        args &&
+        Object.keys(args).length === 1 &&
+        typeof args.pathname === "string" &&
+        isOwnedNavigationMarker(tool.result, args.pathname)
+      ) {
+        yield { type: "navigation_candidate", pathname: args.pathname };
+      }
+      return;
+    }
+    if (event.event !== "RunContent" || typeof event.content !== "string") {
       return;
     }
     if (event.content.length === 0) return;
@@ -205,7 +252,7 @@ async function* parseAgentOSRunStream(
       );
     }
     hasNonWhitespaceContent ||= event.content.trim().length > 0;
-    yield event.content;
+    yield { type: "answer_delta", content: event.content };
   };
 
   try {
@@ -253,10 +300,7 @@ export function createAgentOSRunClient(options: {
       const form = new FormData();
       form.set("message", input.message);
       form.set("stream", "true");
-      form.set("stream_events", "false");
-      if (input.sessionId !== undefined) {
-        form.set("session_id", input.sessionId);
-      }
+      form.set("stream_events", "true");
 
       return parseAgentOSRunStream(
         transport.stream({
@@ -275,10 +319,7 @@ export function createAgentOSRunClient(options: {
     async runAgent(input) {
       const form = new FormData();
       form.set("message", input.message);
-      form.set("stream", "false");
-      if (input.sessionId !== undefined) {
-        form.set("session_id", input.sessionId);
-      }
+      form.set("stream", "true");
 
       try {
         const response = await transport.request({
@@ -296,23 +337,6 @@ export function createAgentOSRunClient(options: {
           throw new AgentOSRunClientError("invalid_response");
         }
         return { content: body.content };
-      } catch (error) {
-        throw sanitized(error);
-      }
-    },
-
-    async deleteSession(sessionId) {
-      if (sessionId === "" || sessionId === "." || sessionId === "..") {
-        throw new AgentOSRunClientError("invalid_response");
-      }
-      try {
-        await transport.request({
-          method: "DELETE",
-          path: `/sessions/${encodeURIComponent(sessionId)}`,
-          acceptedStatuses: [200, 204, 404],
-          timeoutMs: AGENTOS_SESSION_DELETE_TIMEOUT_MS,
-          maxResponseBytes: SESSION_DELETE_MAX_RESPONSE_BYTES,
-        });
       } catch (error) {
         throw sanitized(error);
       }

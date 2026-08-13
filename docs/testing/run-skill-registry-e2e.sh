@@ -192,7 +192,6 @@ registry_manager_password=$(secret)
 registry_runtime_password=$(secret)
 better_auth_secret=$(secret)
 os_security_key=$(secret)
-assistant_session_secret=$(secret)
 assistant_rate_limit_secret=$(secret)
 model_config_encryption_key=$(secret)
 agent_config_control_key=$(secret)
@@ -252,7 +251,6 @@ materialize_secret SKILL_REGISTRY_DATABASE_URL_FILE skill_registry_database_url 
 materialize_secret SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE skill_registry_runtime_database_url "postgresql+psycopg_async://ai_agent_skill_registry_runtime:$registry_runtime_password@db:5432/$database"
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$better_auth_secret"
 materialize_secret OS_SECURITY_KEY_FILE os_security_key "$os_security_key"
-materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$assistant_session_secret"
 materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret "$assistant_rate_limit_secret"
 materialize_secret MODEL_CONFIG_ENCRYPTION_KEY_FILE model_config_encryption_key "$model_config_encryption_key"
 materialize_secret AGENT_CONFIG_CONTROL_KEY_FILE agent_config_control_key "$agent_config_control_key"
@@ -287,7 +285,6 @@ SKILL_REGISTRY_DATABASE_URL_FILE=$SKILL_REGISTRY_DATABASE_URL_FILE
 SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE=$SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE
 BETTER_AUTH_SECRET_FILE=$BETTER_AUTH_SECRET_FILE
 OS_SECURITY_KEY_FILE=$OS_SECURITY_KEY_FILE
-ASSISTANT_SESSION_SECRET_FILE=$ASSISTANT_SESSION_SECRET_FILE
 ASSISTANT_RATE_LIMIT_SECRET_FILE=$ASSISTANT_RATE_LIMIT_SECRET_FILE
 MODEL_CONFIG_ENCRYPTION_KEY_FILE=$MODEL_CONFIG_ENCRYPTION_KEY_FILE
 AGENT_CONFIG_CONTROL_KEY_FILE=$AGENT_CONFIG_CONTROL_KEY_FILE
@@ -381,7 +378,6 @@ printf '%s\n' \
   "$backup_password" "$backup_encryption_key" "$agno_migrator_password" \
   "$agno_runtime_password" "$control_migrator_password" "$control_runtime_password" \
   "$registry_migrator_password" "$registry_manager_password" "$registry_runtime_password" \
-  "$better_auth_secret" "$os_security_key" "$assistant_session_secret" \
   "$assistant_rate_limit_secret" "$model_config_encryption_key" \
   "$agent_config_control_key" "$skill_registry_control_key" "$model_api_key" \
   "$customer_password" "$staff_password" "$admin_password" \
@@ -396,6 +392,18 @@ chmod 600 "$protected_patterns"
 
 compose() {
   docker compose -p "$project" --env-file "$env_file" $compose_files "$@"
+}
+
+agent_session_count() {
+  count=$(compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -Atqc \
+    "SELECT count(*) FROM agno.agno_sessions")
+  case "$count" in
+    ''|*[!0-9]*)
+      echo "Agent session count is invalid" >&2
+      return 1
+      ;;
+  esac
+  printf '%s\n' "$count"
 }
 
 assert_skill_runtime_stream() {
@@ -539,8 +547,15 @@ run_skill_registry_playwright @restart
 
 if [ "$runtime_mode" = true ]; then
   failure_stage=runtime-activation
+  sessions_before_runtime=$(agent_session_count)
   run_skill_registry_playwright @runtime-activate
   assert_skill_runtime_stream marker
+  sessions_after_runtime=$(agent_session_count)
+  [ "$sessions_after_runtime" = "$sessions_before_runtime" ] || {
+    printf 'Skill runtime changed persisted Agent sessions: before=%s after=%s\n' \
+      "$sessions_before_runtime" "$sessions_after_runtime" >&2
+    exit 1
+  }
   failure_stage=agent-restart-persistence
   compose restart agent
   compose up -d --no-deps --wait agent
@@ -648,7 +663,7 @@ audit_leaks=$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
 }
 
 if [ "$runtime_mode" = true ]; then
-  success_message="Skill runtime E2E passed"
+  success_message="Skill runtime E2E passed: Agent sessions before=$sessions_before_runtime after=$sessions_after_runtime"
 else
   success_message="Skill Registry E2E passed"
 fi

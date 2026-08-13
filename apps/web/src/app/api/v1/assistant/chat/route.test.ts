@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ASSISTANT_ACTION_HREF_MAX_CODE_POINTS,
   ASSISTANT_ACTION_LABEL_MAX_CODE_POINTS,
+  ASSISTANT_CHAT_REQUEST_MAX_BYTES,
   ASSISTANT_CONTENT_MAX_CODE_POINTS,
   ASSISTANT_MAX_SUGGESTED_ACTIONS,
   createAssistantErrorResponse,
@@ -13,29 +14,25 @@ import type {
   AssistantProvider,
   AssistantProviderReply,
 } from "@/server/assistant/assistant-provider";
+import * as inputPolicyRepository from "@/server/assistant/assistant-input-policy";
 import type {
   AssistantRequestLog,
   AssistantRequestLogger,
 } from "@/server/assistant/assistant-request-log";
-import type { ResolvedAnonymousSession } from "@/server/assistant/anonymous-session";
+import type { resolveAssistantActor } from "@/server/assistant/assistant-actor";
 import {
   AssistantRateLimitExceededError,
   AssistantRateLimitUnavailableError,
 } from "@/server/assistant/assistant-rate-limit";
-import {
-  createAssistantChatHandler,
-  type AssistantChatSessionResolution,
-} from "./handler";
+import type { PublicPageContext } from "@/server/assistant/public-page-context";
+import type { resolveTrustedClientIp } from "@/server/assistant/trusted-client-ip";
+import { createAssistantChatHandler } from "./handler";
 import * as route from "./route";
 
 const success: AssistantSuccessResponse = {
   version: "1",
   requestId: "generated-request-id",
   mode: "placeholder",
-  session: {
-    temporary: true,
-    expiresAt: "2026-07-13T12:00:00.000Z",
-  },
   message: { id: "generated-message-id", role: "assistant", content: "ok" },
   suggestedActions: [{ label: "帮助中心", href: "/help" }],
 };
@@ -46,13 +43,40 @@ const providerSuccess = {
 };
 
 function request(body: string, requestId?: string) {
+  let normalizedBody = body;
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed) &&
+      parsed.version === undefined
+    ) {
+      const { context, ...rest } = parsed;
+      normalizedBody = JSON.stringify({
+        version: "2",
+        history: [],
+        ...rest,
+        ...(context !== undefined
+          ? {
+              page:
+                typeof context === "object" && context !== null
+                  ? { ...context, search: "" }
+                  : context,
+            }
+          : {}),
+      });
+    }
+  } catch {
+    // Malformed JSON is passed through to the route.
+  }
   return new Request("http://localhost/api/v1/assistant/chat", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       ...(requestId !== undefined ? { "x-request-id": requestId } : {}),
     },
-    body,
+    body: normalizedBody,
   });
 }
 
@@ -74,7 +98,19 @@ function streamingRequest(chunks: string[]) {
 }
 
 function escapedEmojiBody(count: number) {
-  return `{"message":"${"\\ud83d\\ude00".repeat(count)}","context":{"pathname":"/help"}}`;
+  return `{"version":"2","message":"${"\\ud83d\\ude00".repeat(count)}","history":[],"page":{"pathname":"/help","search":""}}`;
+}
+
+function requestBodyAtBytes(byteLength: number) {
+  const body = JSON.stringify({
+    version: "2",
+    message: "问题",
+    history: [],
+    page: { pathname: "/help", search: "" },
+  });
+  const padding = byteLength - new TextEncoder().encode(body).byteLength;
+  if (padding < 0) throw new Error("Requested body boundary is too small");
+  return `${body}${" ".repeat(padding)}`;
 }
 
 function declaredRequest(body: string) {
@@ -99,36 +135,22 @@ function dependencies(options?: {
   };
   const times = options?.times ?? [100, 107];
   let timeIndex = 0;
-  const session: ResolvedAnonymousSession = {
-    publicSession: {
-      temporary: true,
-      expiresAt: "2026-07-13T12:00:00.000Z",
-    },
-    internalSessionId: "internal-replayable-value",
-    cookie: {
-      name: "__Host-aap_assistant_sid",
-      value: "raw-cookie-value",
-      options: {
-        httpOnly: true,
-        sameSite: "lax",
-        path: "/",
-        secure: true,
-      },
-    },
-    setCookie:
-      "__Host-aap_assistant_sid=raw-cookie-value; Path=/; HttpOnly; Secure; SameSite=Lax",
-    rotated: true,
-    refreshed: false,
-    safeMetadata: {
-      temporary: true,
-      expiresAt: "2026-07-13T12:00:00.000Z",
-      rotated: true,
-    },
-  };
   const rateLimiter = { consume: vi.fn(async () => undefined) };
-  const resolvedSession: AssistantChatSessionResolution = {
-    ...session,
-    actor: { kind: "anonymous" },
+  const loadInputPolicy = vi.fn(async () => ({
+    terms: [] as string[],
+    revision: 0,
+    updatedAt: null,
+    updatedBy: null,
+  }));
+  const pageContext: PublicPageContext = {
+    pathname: "/pricing",
+    search: "",
+    title: "价格与服务",
+    text: "公开页面正文",
+    links: [],
+  };
+  const pageResolver = {
+    load: vi.fn(async () => pageContext as PublicPageContext | null),
   };
 
   return {
@@ -142,15 +164,44 @@ function dependencies(options?: {
     clock: () => times[timeIndex++] ?? times.at(-1) ?? 0,
     requestIdFactory: () => "generated-request-id",
     messageIdFactory: () => "generated-message-id",
-    resolveSession: vi.fn(
-      async (): Promise<AssistantChatSessionResolution> => resolvedSession,
-    ),
+    resolveActor: vi.fn<typeof resolveAssistantActor>(async () => ({
+      kind: "anonymous" as const,
+    })),
     rateLimiter,
-    resolveTrustedClientIp: vi.fn(() => "203.0.113.10"),
+    loadInputPolicy,
+    pageContext,
+    pageResolver,
+    resolveTrustedClientIp: vi.fn<
+      (request: Request) => ReturnType<typeof resolveTrustedClientIp>
+    >(() => ({ mode: "trusted", ipAddress: "203.0.113.10" })),
   };
 }
 
 describe("POST /api/v1/assistant/chat", () => {
+  it("rejects a literal legacy V1 wire payload before dependencies", async () => {
+    const deps = dependencies();
+    const legacyRequest = new Request(
+      "http://localhost/api/v1/assistant/chat",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          message: "旧请求",
+          context: { pathname: "/help" },
+        }),
+      },
+    );
+
+    const response = await createAssistantChatHandler(deps)(legacyRequest);
+
+    expect(response.status).toBe(400);
+    expect(deps.resolveActor).not.toHaveBeenCalled();
+    expect(deps.rateLimiter.consume).not.toHaveBeenCalled();
+    expect(deps.loadInputPolicy).not.toHaveBeenCalled();
+    expect(deps.resolveProvider).not.toHaveBeenCalled();
+    expect(deps.provider.reply).not.toHaveBeenCalled();
+  });
+
   it("trims the message and passes a valid pathname to the provider", async () => {
     const deps = dependencies();
     const POST = createAssistantChatHandler(deps);
@@ -167,30 +218,25 @@ describe("POST /api/v1/assistant/chat", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(response.headers.get("set-cookie")).toContain(
-      "__Host-aap_assistant_sid=raw-cookie-value",
-    );
     await expect(response.json()).resolves.toEqual({
       ...success,
       requestId: "incoming-request-id",
     });
     expect(deps.provider.reply).toHaveBeenCalledExactlyOnceWith({
       request: {
+        version: "2",
         message: "如何开始了解平台？",
-        context: { pathname: "/pricing" },
+        history: [],
+        page: { pathname: "/pricing", search: "" },
       },
-      session: {
-        kind: "persistent",
-        internalSessionId: "internal-replayable-value",
-      },
+      pageContext: deps.pageContext,
       signal: expect.any(AbortSignal),
     });
-    expect(deps.resolveSession).toHaveBeenCalledExactlyOnceWith(
+    expect(deps.resolveActor).toHaveBeenCalledExactlyOnceWith(
       expect.any(Request),
     );
     expect(deps.rateLimiter.consume).toHaveBeenCalledExactlyOnceWith({
       scope: "anonymous",
-      sessionId: "internal-replayable-value",
       ipAddress: "203.0.113.10",
     });
     expect(deps.records).toEqual([
@@ -203,8 +249,21 @@ describe("POST /api/v1/assistant/chat", () => {
     const streamingProvider = {
       reply: vi.fn(async () => providerSuccess),
       async *streamReply() {
-        yield "第一段";
-        yield "第二段";
+        yield {
+          type: "activity" as const,
+          phase: "analyzing" as const,
+          label: "正在分析问题",
+        };
+        yield { type: "answer_delta" as const, content: "第一段" };
+        yield {
+          type: "action" as const,
+          action: {
+            kind: "navigate" as const,
+            pathname: "/pricing",
+            label: "价格与服务",
+          },
+        };
+        yield { type: "answer_delta" as const, content: "第二段" };
       },
     };
     deps.resolveProvider.mockResolvedValue({
@@ -227,10 +286,14 @@ describe("POST /api/v1/assistant/chat", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/event-stream");
     expect(response.headers.get("x-accel-buffering")).toBe("no");
-    expect(body).toContain("event: start\n");
-    expect(body).toContain('event: delta\ndata: {"content":"第一段"}\n\n');
-    expect(body).toContain('event: delta\ndata: {"content":"第二段"}\n\n');
-    expect(body).toContain("event: done\ndata: {}\n\n");
+    expect(body).toBe(
+      'data: {"type":"activity","phase":"reading","label":"已读取当前页面"}\n\n' +
+        'data: {"type":"activity","phase":"analyzing","label":"正在分析问题"}\n\n' +
+        'data: {"type":"answer_delta","content":"第一段"}\n\n' +
+        'data: {"type":"action","action":{"kind":"navigate","pathname":"/pricing","label":"价格与服务"}}\n\n' +
+        'data: {"type":"answer_delta","content":"第二段"}\n\n' +
+        'data: {"type":"done"}\n\n',
+    );
     expect(streamingProvider.reply).not.toHaveBeenCalled();
   });
 
@@ -239,7 +302,7 @@ describe("POST /api/v1/assistant/chat", () => {
     const streamingProvider = {
       reply: vi.fn(async () => providerSuccess),
       async *streamReply() {
-        yield "可见片段";
+        yield { type: "answer_delta" as const, content: "可见片段" };
         throw new Error("private URL key prompt and answer");
       },
     };
@@ -260,9 +323,13 @@ describe("POST /api/v1/assistant/chat", () => {
     );
     const body = await response.text();
 
-    expect(body).toContain('event: delta\ndata: {"content":"可见片段"}\n\n');
-    expect(body).toContain("event: error\ndata: {}\n\n");
-    expect(body).not.toMatch(/private|url|key|prompt|answer/iu);
+    expect(body).toContain(
+      'data: {"type":"answer_delta","content":"可见片段"}\n\n',
+    );
+    expect(body).toContain(
+      'data: {"type":"error","code":"stream_interrupted","message":"回答中断，请重试。"}\n\n',
+    );
+    expect(body).not.toMatch(/private|url|key|prompt/iu);
     expect(deps.records).toEqual([
       {
         requestId: "failed-stream-request",
@@ -272,46 +339,229 @@ describe("POST /api/v1/assistant/chat", () => {
     ]);
   });
 
-  it("resolves the session, consumes the limiter, then invokes the provider", async () => {
+  it("after valid V2 parsing, limits, loads policy, resolves the page, then streams", async () => {
     const order: string[] = [];
-    const deps = dependencies({
-      reply: async () => {
-        order.push("provider");
-        return providerSuccess;
+    const deps = dependencies();
+    const streamingProvider = {
+      reply: vi.fn(async () => providerSuccess),
+      async *streamReply() {
+        order.push("stream");
+        yield { type: "answer_delta" as const, content: "回答" };
       },
-    });
-    deps.resolveSession.mockImplementation(async () => {
-      order.push("session");
-      return {
-        publicSession: success.session,
-        internalSessionId: "internal-session",
-        actor: { kind: "anonymous" as const },
-        setCookie: "aap_assistant_sid_dev=value",
-      };
+    };
+    deps.resolveActor.mockImplementation(async () => {
+      return { kind: "anonymous" as const };
     });
     deps.rateLimiter.consume.mockImplementation(async () => {
       order.push("limit");
     });
+    deps.loadInputPolicy.mockImplementation(async () => {
+      order.push("policy");
+      return { terms: [], revision: 0, updatedAt: null, updatedBy: null };
+    });
+    deps.pageResolver.load.mockImplementation(async () => {
+      order.push("page");
+      return deps.pageContext;
+    });
     deps.resolveProvider.mockImplementation(async () => {
       order.push("selector");
-      return { provider: deps.provider, mode: "placeholder" };
+      return { provider: streamingProvider, mode: "agentos" };
     });
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          version: "2",
+          message: "问题",
+          history: [],
+          page: { pathname: "/product", search: "" },
+        }),
+      ),
+    );
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain('"type":"answer_delta"');
+    expect(order).toEqual(["limit", "policy", "page", "selector", "stream"]);
+    expect(deps.resolveActor).toHaveBeenCalledOnce();
+    expect(streamingProvider.reply).not.toHaveBeenCalled();
+  });
+
+  it("returns exact 422 for a matching current message before provider resolution", async () => {
+    const deps = dependencies();
+    deps.loadInputPolicy.mockResolvedValue({
+      terms: ["敏感词"],
+      revision: 1,
+      updatedAt: null,
+      updatedBy: null,
+    });
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          message: "请解释这个敏感词",
+          context: { pathname: "/" },
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({
+      version: "1",
+      requestId: "generated-request-id",
+      error: {
+        code: "input_blocked",
+        message: "该问题无法提交，请调整表述",
+        retryable: false,
+      },
+    });
+    expect(deps.resolveProvider).not.toHaveBeenCalled();
+    expect(deps.pageResolver.load).not.toHaveBeenCalled();
+    expect(deps.provider.reply).not.toHaveBeenCalled();
+    expect(deps.records).toEqual([
+      { requestId: "generated-request-id", statusCode: 422, durationMs: 7 },
+    ]);
+  });
+
+  it("blocks a matching user-history message without checking assistant history", async () => {
+    const order: string[] = [];
+    const deps = dependencies();
+    deps.rateLimiter.consume.mockImplementation(async () => {
+      order.push("limit");
+    });
+    deps.loadInputPolicy.mockImplementation(async () => {
+      order.push("policy");
+      return {
+        terms: ["历史敏感词"],
+        revision: 1,
+        updatedAt: null,
+        updatedBy: null,
+      };
+    });
+    deps.pageResolver.load.mockImplementation(async () => {
+      order.push("page");
+      return deps.pageContext;
+    });
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          version: "2",
+          message: "继续",
+          history: [
+            { role: "user", content: "包含历史敏感词" },
+            { role: "assistant", content: "普通回答" },
+          ],
+          page: null,
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(422);
+    expect(order).toEqual(["limit", "policy"]);
+    expect(deps.pageResolver.load).not.toHaveBeenCalled();
+    expect(deps.resolveProvider).not.toHaveBeenCalled();
+    expect(JSON.stringify(await response.json())).not.toContain("历史敏感词");
+  });
+
+  it("does not apply user-input policy terms to assistant-role history", async () => {
+    const deps = dependencies();
+    deps.loadInputPolicy.mockResolvedValue({
+      terms: ["仅助手内容"],
+      revision: 1,
+      updatedAt: null,
+      updatedBy: null,
+    });
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          version: "2",
+          message: "继续",
+          history: [
+            { role: "user", content: "普通问题" },
+            { role: "assistant", content: "包含仅助手内容" },
+          ],
+          page: null,
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.resolveProvider).toHaveBeenCalledOnce();
+  });
+
+  it("returns safe 503 when input policy storage fails before provider resolution", async () => {
+    const deps = dependencies();
+    deps.loadInputPolicy.mockRejectedValue(
+      new Error("policy storage leaked term 敏感词"),
+    );
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({ message: "普通问题", context: { pathname: "/" } }),
+      ),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).toEqual(
+      createAssistantErrorResponse(
+        "generated-request-id",
+        "assistant_unavailable",
+      ),
+    );
+    expect(JSON.stringify(body)).not.toMatch(/storage|敏感词/iu);
+    expect(deps.resolveProvider).not.toHaveBeenCalled();
+    expect(deps.pageResolver.load).not.toHaveBeenCalled();
+    expect(deps.provider.reply).not.toHaveBeenCalled();
+  });
+
+  it("keeps rate-limit failure ahead of input policy loading", async () => {
+    const deps = dependencies();
+    deps.rateLimiter.consume.mockRejectedValue(
+      new AssistantRateLimitExceededError(37),
+    );
 
     const response = await createAssistantChatHandler(deps)(
       request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
     );
 
-    expect(response.status).toBe(200);
-    expect(order).toEqual(["session", "limit", "selector", "provider"]);
+    expect(response.status).toBe(429);
+    expect(deps.loadInputPolicy).not.toHaveBeenCalled();
+    expect(deps.resolveProvider).not.toHaveBeenCalled();
+    expect(deps.provider.reply).not.toHaveBeenCalled();
+  });
+
+  it("never falls back to the global policy repository for custom handlers", async () => {
+    const globalRepository = vi
+      .spyOn(inputPolicyRepository, "createAssistantInputPolicyRepository")
+      .mockImplementation(() => {
+        throw new Error("global policy repository must not be used");
+      });
+    const deps = dependencies();
+
+    try {
+      const response = await createAssistantChatHandler(deps)(
+        request(
+          JSON.stringify({ message: "问题", context: { pathname: "/" } }),
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      expect(deps.loadInputPolicy).toHaveBeenCalledOnce();
+      expect(globalRepository).not.toHaveBeenCalled();
+      expect(deps.resolveProvider).toHaveBeenCalledOnce();
+    } finally {
+      globalRepository.mockRestore();
+    }
   });
 
   it("uses only the server-resolved customer actor for customer limits", async () => {
     const deps = dependencies();
-    deps.resolveSession.mockResolvedValue({
-      publicSession: success.session,
-      internalSessionId: "internal-session",
-      actor: { kind: "customer", userId: "server-customer-id" },
-      setCookie: "aap_assistant_sid_dev=value",
+    deps.resolveActor.mockResolvedValue({
+      kind: "customer",
+      userId: "server-customer-id",
     });
 
     const response = await createAssistantChatHandler(deps)(
@@ -330,7 +580,7 @@ describe("POST /api/v1/assistant/chat", () => {
     });
   });
 
-  it("ignores a body-supplied actor ID and limits only the server-resolved actor", async () => {
+  it("rejects a body-supplied actor ID before resolving dependencies", async () => {
     const deps = dependencies();
     const response = await createAssistantChatHandler(deps)(
       request(
@@ -342,18 +592,12 @@ describe("POST /api/v1/assistant/chat", () => {
       ),
     );
 
-    expect(response.status).toBe(200);
-    expect(deps.rateLimiter.consume).toHaveBeenCalledExactlyOnceWith({
-      scope: "anonymous",
-      sessionId: "internal-replayable-value",
-      ipAddress: "203.0.113.10",
-    });
-    expect(JSON.stringify(deps.rateLimiter.consume.mock.calls)).not.toContain(
-      "attacker-controlled",
-    );
+    expect(response.status).toBe(400);
+    expect(deps.resolveActor).not.toHaveBeenCalled();
+    expect(deps.rateLimiter.consume).not.toHaveBeenCalled();
   });
 
-  it("returns exact versioned 429 with Retry-After and refreshed Cookie", async () => {
+  it("returns exact versioned 429 with Retry-After", async () => {
     const deps = dependencies();
     deps.rateLimiter.consume.mockRejectedValue(
       new AssistantRateLimitExceededError(37),
@@ -365,9 +609,6 @@ describe("POST /api/v1/assistant/chat", () => {
 
     expect(response.status).toBe(429);
     expect(response.headers.get("retry-after")).toBe("37");
-    expect(response.headers.get("set-cookie")).toContain(
-      "__Host-aap_assistant_sid=raw-cookie-value",
-    );
     await expect(response.json()).resolves.toEqual(
       createAssistantErrorResponse("generated-request-id", "rate_limited"),
     );
@@ -397,7 +638,7 @@ describe("POST /api/v1/assistant/chat", () => {
     expect(deps.provider.reply).not.toHaveBeenCalled();
   });
 
-  it("returns a rotated Cookie and safe versioned 503 when explicit Provider selection is unavailable", async () => {
+  it("returns safe versioned 503 when explicit Provider selection is unavailable", async () => {
     const deps = dependencies();
     deps.resolveProvider.mockRejectedValue(
       new Error("http://agent:7777 private readiness failure"),
@@ -409,9 +650,6 @@ describe("POST /api/v1/assistant/chat", () => {
     const body = await response.json();
 
     expect(response.status).toBe(503);
-    expect(response.headers.get("set-cookie")).toContain(
-      "__Host-aap_assistant_sid=raw-cookie-value",
-    );
     expect(body).toEqual(
       createAssistantErrorResponse(
         "generated-request-id",
@@ -425,9 +663,7 @@ describe("POST /api/v1/assistant/chat", () => {
 
   it("fails closed before limiting or provider work for an invalid trusted proxy IP", async () => {
     const deps = dependencies();
-    deps.resolveTrustedClientIp.mockImplementation(() => {
-      throw new Error("invalid trusted IP");
-    });
+    deps.resolveTrustedClientIp.mockReturnValue({ mode: "invalid_proxy" });
 
     const response = await createAssistantChatHandler(deps)(
       request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
@@ -435,7 +671,168 @@ describe("POST /api/v1/assistant/chat", () => {
 
     expect(response.status).toBe(503);
     expect(deps.rateLimiter.consume).not.toHaveBeenCalled();
+    expect(deps.loadInputPolicy).not.toHaveBeenCalled();
+    expect(deps.pageResolver.load).not.toHaveBeenCalled();
     expect(deps.provider.reply).not.toHaveBeenCalled();
+  });
+
+  it("uses the fixed direct-global limiter input without session identity", async () => {
+    const deps = dependencies();
+    deps.resolveTrustedClientIp.mockReturnValue({ mode: "direct_global" });
+
+    const response = await createAssistantChatHandler(deps)(
+      request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.rateLimiter.consume).toHaveBeenCalledExactlyOnceWith({
+      scope: "anonymous",
+      global: true,
+    });
+    expect(JSON.stringify(deps.rateLimiter.consume.mock.calls)).not.toContain(
+      "internal-replayable-value",
+    );
+    expect(
+      JSON.stringify(vi.mocked(deps.provider.reply).mock.calls),
+    ).not.toContain("internal-replayable-value");
+  });
+
+  it("continues without page context or reading activity when page loading returns null", async () => {
+    const deps = dependencies();
+    const streamingProvider = {
+      reply: vi.fn(async () => providerSuccess),
+      async *streamReply() {
+        yield { type: "answer_delta" as const, content: "回答" };
+      },
+    };
+    deps.resolveProvider.mockResolvedValue({
+      provider: streamingProvider,
+      mode: "agentos",
+    });
+    deps.pageResolver.load.mockResolvedValue(null);
+
+    const response = await createAssistantChatHandler(deps)(
+      request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
+    );
+    const body = await response.text();
+
+    expect(body).not.toContain('"type":"activity"');
+    expect(body).toContain('"type":"answer_delta"');
+    expect(streamingProvider.reply).not.toHaveBeenCalled();
+  });
+
+  it("downgrades a rejected page load to null without reading activity", async () => {
+    const deps = dependencies();
+    const invocations: unknown[] = [];
+    const streamingProvider = {
+      reply: vi.fn(async () => providerSuccess),
+      async *streamReply(invocation: unknown) {
+        invocations.push(invocation);
+        yield { type: "answer_delta" as const, content: "回答" };
+      },
+    };
+    deps.resolveProvider.mockResolvedValue({
+      provider: streamingProvider,
+      mode: "agentos",
+    });
+    deps.pageResolver.load.mockRejectedValue(
+      new Error("private page reader failure"),
+    );
+
+    const response = await createAssistantChatHandler(deps)(
+      request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
+    );
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).not.toContain('"type":"activity"');
+    expect(body).toContain('"type":"answer_delta"');
+    expect(invocations).toEqual([
+      expect.objectContaining({ pageContext: null }),
+    ]);
+    expect(streamingProvider.reply).not.toHaveBeenCalled();
+  });
+
+  it("does not start provider work when the request aborts during page loading", async () => {
+    const deps = dependencies();
+    const streamingProvider = {
+      reply: vi.fn(async () => providerSuccess),
+      streamReply: vi.fn(async function* () {
+        yield { type: "answer_delta" as const, content: "不应调用" };
+      }),
+    };
+    deps.resolveProvider.mockResolvedValue({
+      provider: streamingProvider,
+      mode: "agentos",
+    });
+    const abortController = new AbortController();
+    deps.pageResolver.load.mockImplementation(async () => {
+      abortController.abort();
+      throw abortController.signal.reason;
+    });
+    const input = request(
+      JSON.stringify({ message: "问题", context: { pathname: "/" } }),
+    );
+    Object.defineProperty(input, "signal", { value: abortController.signal });
+
+    const response = await createAssistantChatHandler(deps)(input);
+
+    expect(response.status).toBe(503);
+    expect(deps.resolveProvider).not.toHaveBeenCalled();
+    expect(streamingProvider.streamReply).not.toHaveBeenCalled();
+  });
+
+  it("skips page loading and reading activity for an explicit null page", async () => {
+    const deps = dependencies();
+    const streamingProvider = {
+      reply: vi.fn(async () => providerSuccess),
+      async *streamReply() {
+        yield { type: "answer_delta" as const, content: "回答" };
+      },
+    };
+    deps.resolveProvider.mockResolvedValue({
+      provider: streamingProvider,
+      mode: "agentos",
+    });
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          version: "2",
+          message: "问题",
+          history: [],
+          page: null,
+        }),
+      ),
+    );
+    const body = await response.text();
+
+    expect(deps.pageResolver.load).not.toHaveBeenCalled();
+    expect(body).not.toContain('"type":"activity"');
+    expect(body).toContain('"type":"answer_delta"');
+  });
+
+  it("streams trusted reading activity before answer when page loading succeeds", async () => {
+    const deps = dependencies();
+    const streamingProvider = {
+      reply: vi.fn(async () => providerSuccess),
+      async *streamReply() {
+        yield { type: "answer_delta" as const, content: "回答" };
+      },
+    };
+    deps.resolveProvider.mockResolvedValue({
+      provider: streamingProvider,
+      mode: "agentos",
+    });
+
+    const response = await createAssistantChatHandler(deps)(
+      request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
+    );
+    const body = await response.text();
+
+    expect(body.indexOf('"type":"activity"')).toBeLessThan(
+      body.indexOf('"type":"answer_delta"'),
+    );
   });
 
   it("counts Unicode code points and accepts exactly 500 characters", async () => {
@@ -465,13 +862,12 @@ describe("POST /api/v1/assistant/chat", () => {
     expect(response.status).toBe(200);
     expect(deps.provider.reply).toHaveBeenCalledExactlyOnceWith({
       request: {
+        version: "2",
         message: "😀".repeat(500),
-        context: { pathname: "/help" },
+        history: [],
+        page: { pathname: "/help", search: "" },
       },
-      session: {
-        kind: "persistent",
-        internalSessionId: "internal-replayable-value",
-      },
+      pageContext: deps.pageContext,
       signal: expect.any(AbortSignal),
     });
   });
@@ -488,13 +884,12 @@ describe("POST /api/v1/assistant/chat", () => {
     expect(response.status).toBe(200);
     expect(deps.provider.reply).toHaveBeenCalledExactlyOnceWith({
       request: {
+        version: "2",
         message: "😀".repeat(500),
-        context: { pathname: "/help" },
+        history: [],
+        page: { pathname: "/help", search: "" },
       },
-      session: {
-        kind: "persistent",
-        internalSessionId: "internal-replayable-value",
-      },
+      pageContext: deps.pageContext,
       signal: expect.any(AbortSignal),
     });
   });
@@ -513,7 +908,7 @@ describe("POST /api/v1/assistant/chat", () => {
       createAssistantErrorResponse("generated-request-id", "validation_error"),
     );
     expect(deps.provider.reply).not.toHaveBeenCalled();
-    expect(deps.resolveSession).not.toHaveBeenCalled();
+    expect(deps.resolveActor).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -686,10 +1081,6 @@ describe("POST /api/v1/assistant/chat", () => {
       version: "1",
       requestId: "generated-request-id",
       mode: "placeholder",
-      session: {
-        temporary: true,
-        expiresAt: "2026-07-13T12:00:00.000Z",
-      },
       message: {
         id: "generated-message-id",
         role: "assistant",
@@ -820,12 +1211,24 @@ describe("POST /api/v1/assistant/chat", () => {
     );
   });
 
-  it("rejects a declared body over 16 KiB before parsing", async () => {
+  it("accepts an exact 64 KiB UTF-8 body and reaches dependencies", async () => {
     const deps = dependencies();
-    const oversized = request(
-      JSON.stringify({ message: "问题", context: { pathname: "/help" } }),
+    const exact = declaredRequest(
+      requestBodyAtBytes(ASSISTANT_CHAT_REQUEST_MAX_BYTES),
     );
-    oversized.headers.set("content-length", String(16 * 1024 + 1));
+
+    const response = await createAssistantChatHandler(deps)(exact);
+
+    expect(response.status).toBe(200);
+    expect(deps.resolveActor).toHaveBeenCalledOnce();
+    expect(deps.provider.reply).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a declared UTF-8 body one byte over 64 KiB before dependencies", async () => {
+    const deps = dependencies();
+    const oversized = declaredRequest(
+      requestBodyAtBytes(ASSISTANT_CHAT_REQUEST_MAX_BYTES + 1),
+    );
 
     const response = await createAssistantChatHandler(deps)(oversized);
 
@@ -833,29 +1236,7 @@ describe("POST /api/v1/assistant/chat", () => {
     await expect(response.json()).resolves.toEqual(
       createAssistantErrorResponse("generated-request-id", "validation_error"),
     );
-    expect(deps.provider.reply).not.toHaveBeenCalled();
-    expect(deps.logger.log).toHaveBeenCalledOnce();
-  });
-
-  it("rejects a chunked body over 16 KiB while streaming", async () => {
-    const deps = dependencies();
-    const oversized = `${JSON.stringify({
-      message: "问题",
-      context: { pathname: "/help" },
-    })}${" ".repeat(16 * 1024 + 1)}`;
-    const midpoint = Math.floor(oversized.length / 2);
-
-    const response = await createAssistantChatHandler(deps)(
-      streamingRequest([
-        oversized.slice(0, midpoint),
-        oversized.slice(midpoint),
-      ]),
-    );
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual(
-      createAssistantErrorResponse("generated-request-id", "validation_error"),
-    );
+    expect(deps.resolveActor).not.toHaveBeenCalled();
     expect(deps.provider.reply).not.toHaveBeenCalled();
     expect(deps.logger.log).toHaveBeenCalledOnce();
   });
@@ -918,10 +1299,6 @@ describe("POST /api/v1/assistant/chat", () => {
       version: "1",
       requestId: "req-1",
       mode: "placeholder",
-      session: {
-        temporary: true,
-        expiresAt: "2026-07-13T12:00:00.000Z",
-      },
       message: {
         id: "generated-message-id",
         role: "assistant",

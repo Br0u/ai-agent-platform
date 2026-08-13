@@ -12,6 +12,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useEffect } from "react";
 import type { AssistantStatusResponse } from "@/features/assistant/assistant-contract";
 import {
+  ASSISTANT_STREAM_MEDIA_TYPE,
+  formatAssistantStreamEvent,
+} from "@/features/assistant/assistant-stream";
+import {
   AssistantExperienceProvider,
   useAssistantExperience,
 } from "../assistant/assistant-experience-provider";
@@ -23,21 +27,18 @@ vi.mock("next/navigation", () => ({
   useRouter: () => router,
 }));
 
-const successfulReply = {
-  version: "1",
-  requestId: "request-1",
-  mode: "placeholder",
-  session: {
-    temporary: true,
-    expiresAt: "2026-07-13T12:00:00.000Z",
-  },
-  message: {
-    id: "message-1",
-    role: "assistant",
-    content: "你可以前往客户支持页面提交产品问题和相关信息。",
-  },
-  suggestedActions: [{ label: "客户支持", href: "/support" }],
-};
+function successfulReply(
+  content = "你可以前往客户支持页面提交产品问题和相关信息。",
+) {
+  return [
+    formatAssistantStreamEvent({ type: "answer_delta", content }),
+    formatAssistantStreamEvent({
+      type: "action",
+      action: { kind: "navigate", label: "客户支持", pathname: "/support" },
+    }),
+    formatAssistantStreamEvent({ type: "done" }),
+  ].join("");
+}
 
 const serviceStates = {
   available: {
@@ -119,9 +120,9 @@ beforeEach(() => {
     "fetch",
     vi.fn().mockImplementation(
       async () =>
-        new Response(JSON.stringify(successfulReply), {
+        new Response(successfulReply(), {
           status: 200,
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": ASSISTANT_STREAM_MEDIA_TYPE },
         }),
     ),
   );
@@ -217,7 +218,7 @@ describe("FloatingChatWidget", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "你好，我是码多多。已启用的 Skill 会按配置加载；知识库和网页正文读取尚未接入。",
+        "你好，我是码多多。已启用的 Skill 会按配置加载；我可以读取当前公开页面并协助跳转。",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("如何开始了解平台？")).toBeInTheDocument();
@@ -315,18 +316,19 @@ describe("FloatingChatWidget", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          version: "2",
           message: "如何提交产品问题？",
-          context: { pathname: "/" },
+          history: [],
+          page: { pathname: "/", search: "" },
         }),
       }),
     );
     expect(
       await screen.findByText("你可以前往客户支持页面提交产品问题和相关信息。"),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "客户支持" })).toHaveAttribute(
-      "href",
-      "/support",
-    );
+    fireEvent.click(screen.getByRole("button", { name: "客户支持" }));
+    expect(router.push).toHaveBeenCalledWith("/support");
+    expect(screen.queryByRole("group", { name: "常用问题" })).toBeNull();
   });
 
   it("renders streamed assistant output as Markdown in the quick surface", async () => {
@@ -335,16 +337,10 @@ describe("FloatingChatWidget", () => {
       vi.fn().mockImplementation(
         async () =>
           new Response(
-            JSON.stringify({
-              ...successfulReply,
-              message: {
-                ...successfulReply.message,
-                content: "## NPU\n\n**NPU** 是 AI 推理加速器。",
-              },
-            }),
+            successfulReply("## NPU\n\n**NPU** 是 AI 推理加速器。"),
             {
               status: 200,
-              headers: { "content-type": "application/json" },
+              headers: { "content-type": ASSISTANT_STREAM_MEDIA_TYPE },
             },
           ),
       ),
@@ -372,8 +368,10 @@ describe("FloatingChatWidget", () => {
         "/api/v1/assistant/chat",
         expect.objectContaining({
           body: JSON.stringify({
+            version: "2",
             message: "请介绍知识库能力",
-            context: { pathname: "/" },
+            history: [],
+            page: { pathname: "/", search: "" },
           }),
         }),
       ),
@@ -399,7 +397,10 @@ describe("FloatingChatWidget", () => {
         return chatAttempts === 1
           ? Promise.reject(new Error("offline"))
           : Promise.resolve(
-              new Response(JSON.stringify(successfulReply), { status: 200 }),
+              new Response(successfulReply(), {
+                status: 200,
+                headers: { "content-type": ASSISTANT_STREAM_MEDIA_TYPE },
+              }),
             );
       }
       return Promise.resolve(
@@ -433,6 +434,38 @@ describe("FloatingChatWidget", () => {
       expect.objectContaining({ method: "GET" }),
     );
     expect(screen.getAllByText("部署失败怎么办")).toHaveLength(1);
+  });
+
+  it("does not offer retry after an input-blocked response", async () => {
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (input === "/api/v1/assistant/chat" && init?.method === "POST") {
+        return Promise.resolve(
+          Response.json(
+            {
+              version: "1",
+              requestId: "request-blocked",
+              error: {
+                code: "input_blocked",
+                message: "该问题无法提交，请调整表述",
+                retryable: false,
+              },
+            },
+            { status: 422 },
+          ),
+        );
+      }
+      return Promise.resolve(Response.json(serviceStates.placeholder));
+    });
+    openWidget();
+    const input = screen.getByRole("textbox", { name: "向码多多提问" });
+    fireEvent.change(input, { target: { value: "需要调整的问题" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
+
+    expect(
+      await screen.findByText("该问题无法提交，请调整表述"),
+    ).toBeInTheDocument();
+    expect(input).toHaveValue("需要调整的问题");
+    expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
   });
 
   it("rejects input over 500 Unicode characters before sending", () => {
@@ -470,14 +503,19 @@ describe("FloatingChatWidget", () => {
     await waitFor(() => expect(launcher).toHaveFocus());
   });
 
-  it("hides the duplicate launcher while the mobile drawer is open", () => {
+  it("hides the duplicate launcher whenever the quick panel is open", () => {
+    openWidget();
+    expect(
+      screen.getByRole("button", { name: "关闭码多多入口", hidden: true }),
+    ).toHaveClass("is-open");
+
     const stylesheet = readFileSync(
       "src/components/ui/floating-chat-widget-shadcnui.css",
       "utf8",
     );
 
     expect(stylesheet).toContain(
-      ".floating-assistant__launcher.is-open {\n    display: none;\n  }",
+      ".floating-assistant__launcher.is-open {\n  display: none;\n}",
     );
     expect(stylesheet).toMatch(
       /\.floating-assistant__panel\.is-exiting\s*\{[\s\S]*?pointer-events:\s*none;/u,
@@ -498,6 +536,55 @@ describe("FloatingChatWidget", () => {
     );
     expect(stylesheet).toMatch(
       /\.floating-assistant__messages\s*\{[\s\S]*?min-height:\s*0;/u,
+    );
+    const messageRegion = stylesheet.match(
+      /\.floating-assistant__messages\s*\{([\s\S]*?)\}/u,
+    )?.[1];
+    expect(messageRegion).not.toMatch(/max-height:/u);
+    expect(messageRegion).not.toMatch(/background:/u);
+  });
+
+  it("restores the original MessageSquare bubble launcher", () => {
+    const { container } = render(
+      <AssistantExperienceProvider pathname="/">
+        <FloatingChatWidget />
+      </AssistantExperienceProvider>,
+    );
+    const launcher = screen.getByRole("button", { name: "打开码多多" });
+    expect(launcher.querySelector(".assistant-header-entry__mark")).toBeNull();
+    expect(launcher.querySelector(".assistant-orb")).toBeNull();
+    expect(launcher.querySelector(".lucide-message-square")).not.toBeNull();
+    expect(
+      container.querySelector(".floating-assistant__launcher-glow"),
+    ).not.toBeNull();
+
+    const stylesheet = readFileSync(
+      "src/components/ui/floating-chat-widget-shadcnui.css",
+      "utf8",
+    );
+    const launcherRule = stylesheet.match(
+      /\.floating-assistant__launcher\s*\{([\s\S]*?)\}/u,
+    )?.[1];
+    expect(launcherRule).toMatch(
+      /border:\s*1px solid rgb\(255 255 255 \/ 42%\);/u,
+    );
+    expect(launcherRule).toMatch(
+      /background:\s*linear-gradient\(145deg, var\(--color-primary\), #557ec1\);/u,
+    );
+    expect(launcherRule).toMatch(/box-shadow:/u);
+  });
+
+  it("keeps the quick composer denser than the full-page composer", () => {
+    const stylesheet = readFileSync(
+      "src/components/assistant/assistant-prompt-input.css",
+      "utf8",
+    );
+
+    expect(stylesheet).toMatch(
+      /\.assistant-prompt-input\[data-variant="quick"\]\s+\.assistant-prompt-input__surface\s*\{[\s\S]*?min-height:\s*58px;[\s\S]*?border-radius:\s*21px;/u,
+    );
+    expect(stylesheet).toMatch(
+      /\.assistant-prompt-input\[data-variant="quick"\]\s+\.assistant-prompt-input__toolbar\s*\{[\s\S]*?min-height:\s*36px;/u,
     );
   });
 
@@ -522,7 +609,7 @@ describe("FloatingChatWidget", () => {
     );
 
     expect(stylesheet).toMatch(
-      /@media \(max-width: 640px\)[\s\S]*?\.floating-assistant__panel button,\s*\.floating-assistant__panel a\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/u,
+      /@media \(max-width: 640px\)[\s\S]*?\.floating-assistant__panel button,\s*\.floating-assistant__panel a,\s*\.floating-assistant__panel textarea,\s*\.floating-assistant__panel input:not\(\[aria-hidden="true"\]\)\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/u,
     );
     const composerStylesheet = readFileSync(
       "src/components/assistant/assistant-prompt-input.css",
@@ -533,6 +620,31 @@ describe("FloatingChatWidget", () => {
     );
     expect(composerStylesheet).toMatch(
       /\.assistant-prompt-input__submit\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*40px;/u,
+    );
+    expect(composerStylesheet).toMatch(
+      /@media \(max-width: 640px\)[\s\S]*?\.assistant-prompt-input\[data-variant="quick"\][\s\S]*?:is\(\.assistant-prompt-input__attach, \.assistant-prompt-input__submit\)\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/u,
+    );
+    expect(composerStylesheet).toMatch(
+      /@media \(max-width: 640px\)[\s\S]*?\.assistant-prompt-input\[data-variant="quick"\] textarea\s*\{[^}]*?min-height:\s*44px;/u,
+    );
+  });
+
+  it("uses one in-flow horizontal chip strip and shared Orbs", () => {
+    openWidget();
+
+    const chips = screen.getByRole("group", { name: "常用问题" });
+    expect(chips).toHaveClass("floating-assistant__prompt-chips");
+    expect(chips.parentElement).toHaveClass("floating-assistant__panel");
+    expect(
+      screen.getAllByRole("img", { name: "码多多已就绪" }),
+    ).not.toHaveLength(0);
+
+    const stylesheet = readFileSync(
+      "src/components/ui/floating-chat-widget-shadcnui.css",
+      "utf8",
+    );
+    expect(stylesheet).toMatch(
+      /\.floating-assistant__prompt-chips\s*\{[\s\S]*?display:\s*flex;[\s\S]*?overflow-x:\s*auto;[\s\S]*?scroll-snap-type:\s*x proximity;/u,
     );
   });
 });

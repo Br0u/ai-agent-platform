@@ -55,12 +55,10 @@ cp .env.example .env
 export ASSISTANT_PUBLIC_ORIGIN=https://ai-agent.example.com
 # 分别生成平台、Agno、Agent control、Skill Registry 各角色密码，以及备份加密、Better Auth 和内部控制密钥；不要复用
 # BACKUP_ENCRYPTION_KEY_FILE 指向仓库外或已忽略的 0600 文件：恰好一行、无空白/CR、至少 32 字节；可有一个结尾换行
-# assistant_session_secret 与 assistant_rate_limit_secret 必须分别使用独立随机值（至少 32 bytes/字节），不得复用 Better Auth 或 AgentOS 密钥，也不要提交到 Git
+# assistant_rate_limit_secret 必须使用独立随机值（至少 32 bytes/字节），不得复用 Better Auth 或 AgentOS 密钥，也不要提交到 Git
 umask 077
-openssl rand -hex 32 > /secure/secrets/assistant_session_secret
 openssl rand -hex 32 > /secure/secrets/assistant_rate_limit_secret
-chmod 600 /secure/secrets/assistant_session_secret /secure/secrets/assistant_rate_limit_secret
-export ASSISTANT_SESSION_SECRET_FILE=/secure/secrets/assistant_session_secret
+chmod 600 /secure/secrets/assistant_rate_limit_secret
 export ASSISTANT_RATE_LIMIT_SECRET_FILE=/secure/secrets/assistant_rate_limit_secret
 # 生产 PUBLIC_HOST 必须改为对外域名
 pnpm secrets:preflight
@@ -82,7 +80,7 @@ docker compose ps
 
 同时把上述三个导出变量的值写入`.env`中的同名键（替换原值，不要追加重复键），确保退出当前 Shell 或服务器重启后仍使用生产域名和仓库外密钥路径。
 
-Web 仅接收平台运行时数据库 URL、Better Auth 密钥、AgentOS Bearer 密钥、助理会话密钥以及独立 Skill Registry 控制密钥。它不得接收数据库 owner、任何 migrator 或 Skill Registry 数据库凭据。`ASSISTANT_PUBLIC_ORIGIN`必须是对外 HTTPS 精确 origin；仅隔离验收脚本允许`http://127.0.0.1:8080`并签发开发 Cookie。
+Web 仅接收平台运行时数据库 URL、Better Auth 密钥、AgentOS Bearer 密钥、独立限流密钥以及独立 Skill Registry 控制密钥。它不得接收数据库 owner、任何 migrator 或 Skill Registry 数据库凭据。生产启动时必须显式提供`ASSISTANT_PUBLIC_ORIGIN`，且只能是无凭据、路径、查询或片段的精确 HTTPS origin；仅 loopback 开发与隔离验收允许 HTTP。
 
 数据库角色分离：平台 owner 只供初始化/受控升级；平台 migrator 只供迁移；平台 runtime 只供 Web；Agno migrator/runtime 只能访问`agno`；Agent control migrator/runtime 只能访问`agent_control`；Skill Registry manager、runtime、migrator 各自分离，Registry 常驻服务只持有 manager URL，Agent 只持有 Skill Registry runtime URL 且只能访问 runtime view/函数；backup 只读`public`、`drizzle`、`agno`、`skill_registry`。备份服务只接收非敏感连接字段和独立密码文件，不接收数据库 URL。运行时账号均无 schema 变更权限。`web`、`agent`和`skill-registry`都没有主机端口，唯一公开入口是 Nginx `proxy`。
 

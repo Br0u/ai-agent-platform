@@ -51,7 +51,7 @@ unset control_migrator_password control_runtime_password
 chmod 600 .secrets/agent_control_*_database_url
 ```
 
-两条 DSN 分别使用 `ai_agent_control_migrator` 和 `ai_agent_control`，密码必须与对应密码文件一致。`MODEL_CONFIG_ENCRYPTION_KEY`、`AGENT_CONFIG_CONTROL_KEY`、`OS_SECURITY_KEY`、认证密钥和会话密钥不得复用。
+两条 DSN 分别使用 `ai_agent_control_migrator` 和 `ai_agent_control`，密码必须与对应密码文件一致。`MODEL_CONFIG_ENCRYPTION_KEY`、`AGENT_CONFIG_CONTROL_KEY`、`OS_SECURITY_KEY` 和认证密钥不得复用。助手聊天不创建服务端会话，只在当前页面 React 内存中保留上下文。
 
 ### 初始化平台、AgentOS 和模型控制数据库
 

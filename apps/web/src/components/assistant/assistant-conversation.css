@@ -36,6 +36,8 @@
 .assistant-conversation__messages {
   display: grid;
   min-height: 0;
+  grid-auto-rows: max-content;
+  align-content: start;
   gap: var(--space-3);
   overflow-y: auto;
 }
@@ -68,7 +70,10 @@
 }
 
 .assistant-conversation__message--user {
-  grid-template-columns: minmax(0, 1fr) 12px;
+  display: flex;
+  width: fit-content;
+  max-width: min(86%, 720px);
+  flex-direction: row-reverse;
   justify-self: end;
   margin-inline-start: auto;
   border-radius: 22px 22px 8px 22px;
@@ -83,13 +88,8 @@
     inset 0 1px rgb(255 255 255 / 28%);
 }
 
-.assistant-conversation__message--user > :first-child {
-  grid-column: 2;
-}
-
-.assistant-conversation__message--user > :last-child {
-  grid-row: 1;
-  grid-column: 1;
+.assistant-conversation__message--assistant {
+  width: min(100%, 720px);
 }
 
 .assistant-conversation__assistant-mark,
@@ -115,6 +115,15 @@
 
 .assistant-conversation__message-body {
   min-width: 0;
+}
+
+.assistant-conversation__message--assistant > .assistant-activity {
+  grid-column: 1 / -1;
+}
+
+.assistant-conversation__message--assistant
+  > .assistant-conversation__message-body {
+  grid-column: 1 / -1;
 }
 
 .assistant-conversation__message-body > p {

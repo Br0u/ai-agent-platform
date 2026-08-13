@@ -59,6 +59,7 @@ const TARGET_TYPES = [
   "permission",
   "system",
   "assistant_model_config",
+  "assistant_input_policy",
   "assistant_skill_revision",
   "document",
 ] as const;
@@ -118,6 +119,11 @@ export type AssistantSkillRuntimeAuditMetadata = {
   activationRequestId: string | null;
   result: "success" | "failure";
 };
+export type AssistantInputPolicyAuditMetadata = {
+  revision: number;
+  termCount: number;
+  requestId: string;
+};
 export type AuditTargetType = (typeof TARGET_TYPES)[number];
 
 export type AuditMetadataByEvent = {
@@ -166,6 +172,7 @@ export type AuditMetadataByEvent = {
     "success" | "failure"
   >;
   "assistant.skill_runtime_changed": AssistantSkillRuntimeAuditMetadata;
+  "assistant.input_policy_updated": AssistantInputPolicyAuditMetadata;
   "document.created": DocumentAuditMetadata;
   "document.draft_saved": DocumentAuditMetadata;
   "document.published": DocumentAuditMetadata;
@@ -586,6 +593,31 @@ function assistantSkillRuntimeAuditMetadata(value: unknown): SanitizedMetadata {
   };
 }
 
+function assistantInputPolicyAuditMetadata(value: unknown): SanitizedMetadata {
+  const metadata = exactDataRecord(
+    value,
+    ["revision", "termCount", "requestId"],
+    "metadata",
+  );
+  const revision = metadata.revision;
+  const termCount = metadata.termCount;
+  if (
+    typeof revision !== "number" ||
+    !Number.isSafeInteger(revision) ||
+    revision < 1 ||
+    typeof termCount !== "number" ||
+    !Number.isSafeInteger(termCount) ||
+    termCount < 0
+  ) {
+    throw new AuditInputError("metadata");
+  }
+  return {
+    revision,
+    termCount,
+    requestId: boundedString(metadata.requestId, "metadata.requestId", 128),
+  };
+}
+
 function documentAuditMetadata(value: unknown): SanitizedMetadata {
   const metadata = assertExactKeys(
     value,
@@ -659,6 +691,7 @@ export const AUDIT_EVENT_SCHEMAS: Readonly<
   "assistant.skill_upload_completed": (value) =>
     assistantSkillAuditMetadata(value, "upload_completed"),
   "assistant.skill_runtime_changed": assistantSkillRuntimeAuditMetadata,
+  "assistant.input_policy_updated": assistantInputPolicyAuditMetadata,
   "document.created": documentAuditMetadata,
   "document.draft_saved": documentAuditMetadata,
   "document.published": documentAuditMetadata,

@@ -17,6 +17,7 @@ import {
   request as requestFactory,
   test,
   type APIResponse,
+  type APIRequestContext,
   type BrowserContext,
   type Page,
 } from "@playwright/test";
@@ -28,21 +29,33 @@ import {
   parseAssistantStreamFrame,
   type AssistantStreamEvent,
 } from "../src/features/assistant/assistant-stream";
-import { ASSISTANT_CONTENT_MAX_CODE_POINTS } from "../src/features/assistant/assistant-contract";
+import {
+  ASSISTANT_CONTENT_MAX_CODE_POINTS,
+  type AssistantStreamActionEvent,
+  type AssistantStreamActivityEvent,
+} from "../src/features/assistant/assistant-contract";
 import { parseAdminAssistantStatusResponse } from "../src/features/assistant/admin-assistant-contract";
 
 const CHAT_PATH = "/api/v1/assistant/chat";
-const SESSION_PATH = "/api/v1/assistant/session";
 const STATUS_PATH = "/api/v1/assistant/status";
 const ADMIN_STATUS_PATH = "/api/v1/admin/assistant/status";
-const ADMIN_SESSIONS_PATH = "/api/v1/admin/assistant/sessions";
 const ADMIN_CHAT_PATH = "/api/v1/admin/assistant/chat";
 const MODEL_CONFIG_PATH = "/api/v1/admin/assistant/model-configs";
 const CHAT_BODY = {
+  version: "2",
   message: "如何开始了解平台？",
-  context: { pathname: "/assistant" },
+  history: [],
+  page: null,
 };
 const INVALID_RESPONSE_SENTINEL = "__aap_e2e_invalid_response__";
+const SPLIT_REASONING_SENTINEL = "aap-stateless-question-20260812";
+const SAFE_ANSWER_SENTINEL = "aap-stateless-answer-20260812";
+const PRIVATE_REASONING_SENTINEL = "aap-private-reasoning-20260812";
+const ALLOWED_NAVIGATION_SENTINEL = "__aap_e2e_allowed_navigation__";
+const FORBIDDEN_NAVIGATION_SENTINEL = "__aap_e2e_forbidden_navigation__";
+const PAGE_CONTEXT_SENTINEL = "__aap_e2e_page_context__";
+const IMMEDIATE_BLOCK_SENTINEL = "aap-immediate-block-20260812";
+const INPUT_POLICY_PATH = "/api/v1/admin/assistant/input-policy";
 const CONTROL_PROVIDERS = [
   { provider: "openai", label: "OpenAI", endpoint: "openai-official" },
   {
@@ -76,12 +89,10 @@ type SafeShape =
   | SafeRule
   | SafeShape[]
   | { [key: string]: SafeShape };
-type AssistantStreamStart = Extract<AssistantStreamEvent, { event: "start" }>;
-type ParsedAssistantStreamResponse = Omit<
-  AssistantStreamStart["data"],
-  "message"
-> & {
-  message: AssistantStreamStart["data"]["message"] & { content: string };
+type ParsedAssistantStreamResponse = {
+  message: { role: "assistant"; content: string };
+  activities: AssistantStreamActivityEvent[];
+  actions: AssistantStreamActionEvent["action"][];
 };
 
 function safeRule(accepts: (value: unknown) => boolean): SafeRule {
@@ -151,17 +162,11 @@ function assertSafeResponse(actual: unknown, label: string) {
 
 const requestIdMatcher = safeRule((value) => typeof value === "string");
 const messageIdMatcher = safeRule((value) => typeof value === "string");
-const expiresAtMatcher = safeRule(
-  (value) =>
-    typeof value === "string" &&
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value),
-);
 const nginxRequestIdMatcher = safeRule(
   (value) => typeof value === "string" && /^[a-f0-9]{32}$/u.test(value),
 );
 
 const cumulativeConsoleMessages: string[] = [];
-let firstAssistantCookieCredential: string | undefined;
 
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
@@ -172,23 +177,6 @@ function requiredEnvironment(name: string): string {
 function optionalEnvironment(name: string): string[] {
   const value = process.env[name];
   return value ? [value] : [];
-}
-
-function appendDynamicProtectedValue(value: string): void {
-  if (value.length === 0 || value.includes("\n") || value.includes("\r")) {
-    throw new Error("dynamic protected value is invalid");
-  }
-  const patternsFile = requiredEnvironment("AAP_RUNTIME_DYNAMIC_PATTERNS_FILE");
-  let stats: ReturnType<typeof statSync>;
-  try {
-    stats = statSync(patternsFile);
-  } catch {
-    throw new Error("dynamic pattern file is invalid");
-  }
-  if (!stats.isFile() || (stats.mode & 0o777) !== 0o600) {
-    throw new Error("dynamic pattern file is invalid");
-  }
-  appendFileSync(patternsFile, `${value}\n`, { encoding: "utf8" });
 }
 
 function appendProtectedLedger(name: string, value: string): void {
@@ -263,7 +251,6 @@ function runtimeProtectedValues(): string[] {
     ...protectedFileValues("SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE"),
     ...protectedFileValues("BETTER_AUTH_SECRET_FILE"),
     ...protectedFileValues("OS_SECURITY_KEY_FILE"),
-    ...protectedFileValues("ASSISTANT_SESSION_SECRET_FILE"),
     ...protectedFileValues("ASSISTANT_RATE_LIMIT_SECRET_FILE"),
     ...protectedFileValues("MODEL_API_KEY_FILE"),
     ...protectedFileValues("MODEL_CONFIG_ENCRYPTION_KEY_FILE"),
@@ -286,36 +273,6 @@ function composeArgs(...args: string[]): string[] {
     "compose.e2e.yaml",
     ...args,
   ];
-}
-
-function agentSessionIds(): Set<string> {
-  const output = execFileSync(
-    "docker",
-    composeArgs(
-      "exec",
-      "-T",
-      "db",
-      "sh",
-      "-c",
-      'psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --tuples-only --no-align --command="SELECT session_id FROM agno.agno_sessions ORDER BY session_id"',
-    ),
-    {
-      cwd: path.resolve(process.cwd(), "../.."),
-      encoding: "utf8",
-      timeout: 30_000,
-    },
-  ).trim();
-  const sessionIds = new Set(output === "" ? [] : output.split("\n"));
-  for (const sessionId of sessionIds) {
-    appendDynamicProtectedValue(sessionId);
-  }
-  return sessionIds;
-}
-
-function sameStringSet(left: Set<string>, right: Set<string>): boolean {
-  return (
-    left.size === right.size && [...left].every((value) => right.has(value))
-  );
 }
 
 function internalUnauthenticatedWebSocketStatus(): number {
@@ -402,74 +359,7 @@ function agentContainerMetadata(): { id: string; startedAt: string } {
   return { id, startedAt };
 }
 
-const OPTIONAL_IDENTITY_AUDIT_COLLECTOR = String.raw`
-import os
-import re
-import stat
-import sys
-
-path = "/tmp/aap-session-identity-audit"
-pattern = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-)
-try:
-    descriptor = os.open(
-        path,
-        os.O_RDONLY
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_NONBLOCK", 0),
-    )
-except FileNotFoundError:
-    raise SystemExit(0)
-except OSError:
-    raise SystemExit("identity audit collection failed") from None
-
-try:
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise ValueError
-        if stat.S_IMODE(metadata.st_mode) != 0o600:
-            raise ValueError
-        payload = os.read(descriptor, 65537)
-        if len(payload) > 65536:
-            raise ValueError
-    finally:
-        os.close(descriptor)
-except Exception:
-    raise SystemExit("identity audit collection failed") from None
-
-if not payload:
-    raise SystemExit(0)
-try:
-    text = payload.decode("ascii")
-    identities = text.splitlines()
-    if not text.endswith("\n"):
-        raise ValueError
-    if any(pattern.fullmatch(identity) is None for identity in identities):
-        raise ValueError
-except Exception:
-    raise SystemExit("identity audit collection failed") from None
-sys.stdout.write(text)
-`.trim();
-
-function collectAgentSessionIdentityAudit(): void {
-  const output = composeOutput([
-    "exec",
-    "-T",
-    "agent",
-    "python",
-    "-c",
-    OPTIONAL_IDENTITY_AUDIT_COLLECTOR,
-  ]);
-  if (output.length === 0) return;
-  for (const identity of output.split("\n")) {
-    appendDynamicProtectedValue(identity);
-  }
-}
-
 function recreateAgent(enabled: boolean): void {
-  collectAgentSessionIdentityAudit();
   composeOutput(
     ["up", "-d", "--no-deps", "--force-recreate", "--wait", "agent"],
     { AGENT_ENABLED: enabled ? "true" : "false" },
@@ -586,10 +476,7 @@ async function readSafeJson(
   response: APIResponse,
   protectedValues: string[],
 ): Promise<unknown> {
-  const setCookie = response.headers()["set-cookie"];
-  if (setCookie?.includes("aap_assistant_sid_dev=")) {
-    cookieCredential(setCookie);
-  }
+  expectNoAssistantCookie(response.headers()["set-cookie"]);
   return parseSafeJson(await response.text(), protectedValues);
 }
 
@@ -627,16 +514,6 @@ function parseSafeAssistantStreamEvents(
   return events;
 }
 
-function reconstructAssistantStreamResponse(
-  start: AssistantStreamStart,
-  content: string,
-): ParsedAssistantStreamResponse {
-  return {
-    ...start.data,
-    message: { ...start.data.message, content },
-  };
-}
-
 function parseSafeAssistantStream(
   contentType: string | undefined,
   rawStream: string,
@@ -648,49 +525,50 @@ function parseSafeAssistantStream(
     protectedValues,
   );
 
-  let start: Extract<AssistantStreamEvent, { event: "start" }> | undefined;
   const content: string[] = [];
+  const activities: AssistantStreamActivityEvent[] = [];
+  const actions: AssistantStreamActionEvent["action"][] = [];
   let contentCodePoints = 0;
   let done = false;
   for (const event of events) {
-    if (start === undefined) {
-      if (event.event !== "start") {
-        throw new Error("assistant SSE response must begin with start");
-      }
-      start = event;
-      continue;
-    }
     if (done) {
       throw new Error("assistant SSE response contains events after done");
     }
-    if (event.event === "delta") {
-      contentCodePoints += Array.from(event.data.content).length;
+    if (event.type === "answer_delta") {
+      contentCodePoints += Array.from(event.content).length;
       if (contentCodePoints > ASSISTANT_CONTENT_MAX_CODE_POINTS) {
         throw new Error("assistant SSE response exceeds the content limit");
       }
-      content.push(event.data.content);
+      content.push(event.content);
       continue;
     }
-    if (event.event === "done") {
+    if (event.type === "activity") {
+      activities.push(event);
+      continue;
+    }
+    if (event.type === "action") {
+      actions.push(event.action);
+      continue;
+    }
+    if (event.type === "done") {
       done = true;
       continue;
     }
-    if (event.event === "error") {
+    if (event.type === "error") {
       throw new Error("assistant SSE response contains an error event");
     }
     throw new Error("assistant SSE response has an invalid event order");
   }
 
-  if (
-    start === undefined ||
-    content.length === 0 ||
-    content.join("").trim().length === 0 ||
-    !done
-  ) {
+  if (content.length === 0 || content.join("").trim().length === 0 || !done) {
     throw new Error("assistant SSE response is incomplete");
   }
 
-  const response = reconstructAssistantStreamResponse(start, content.join(""));
+  const response: ParsedAssistantStreamResponse = {
+    message: { role: "assistant", content: content.join("") },
+    activities,
+    actions,
+  };
   expectNoProtectedValue(response, protectedValues, rawStream);
   return response;
 }
@@ -705,48 +583,54 @@ function parseSafeAssistantErrorStream(
     rawStream,
     protectedValues,
   );
-  let start: Extract<AssistantStreamEvent, { event: "start" }> | undefined;
   const content: string[] = [];
+  const activities: AssistantStreamActivityEvent[] = [];
+  const actions: AssistantStreamActionEvent["action"][] = [];
   let contentCodePoints = 0;
   let errored = false;
   for (const event of events) {
-    if (start === undefined) {
-      if (event.event !== "start") {
-        throw new Error("assistant SSE error response must begin with start");
-      }
-      start = event;
-      continue;
-    }
     if (errored) {
       throw new Error(
         "assistant SSE error response contains events after error",
       );
     }
-    if (event.event === "delta") {
-      contentCodePoints += Array.from(event.data.content).length;
+    if (event.type === "answer_delta") {
+      contentCodePoints += Array.from(event.content).length;
       if (contentCodePoints > ASSISTANT_CONTENT_MAX_CODE_POINTS) {
         throw new Error(
           "assistant SSE error response exceeds the content limit",
         );
       }
-      content.push(event.data.content);
+      content.push(event.content);
       continue;
     }
-    if (event.event === "error") {
+    if (event.type === "activity") {
+      activities.push(event);
+      continue;
+    }
+    if (event.type === "action") {
+      actions.push(event.action);
+      continue;
+    }
+    if (event.type === "error") {
       errored = true;
       continue;
     }
-    if (event.event === "done") {
+    if (event.type === "done") {
       throw new Error("assistant SSE error response must not contain done");
     }
     throw new Error("assistant SSE error response has an invalid event order");
   }
 
-  if (start === undefined || !errored) {
+  if (!errored) {
     throw new Error("assistant SSE error response is incomplete");
   }
 
-  const response = reconstructAssistantStreamResponse(start, content.join(""));
+  const response: ParsedAssistantStreamResponse = {
+    message: { role: "assistant", content: content.join("") },
+    activities,
+    actions,
+  };
   expectNoProtectedValue(response, protectedValues, rawStream);
   return response;
 }
@@ -755,10 +639,7 @@ async function readSafeAssistantStream(
   response: APIResponse,
   protectedValues: string[],
 ): Promise<ParsedAssistantStreamResponse> {
-  const setCookie = response.headers()["set-cookie"];
-  if (setCookie?.includes("aap_assistant_sid_dev=")) {
-    cookieCredential(setCookie);
-  }
+  expectNoAssistantCookie(response.headers()["set-cookie"]);
   return parseSafeAssistantStream(
     response.headers()["content-type"],
     await response.text(),
@@ -770,10 +651,7 @@ async function readSafeAssistantErrorStream(
   response: APIResponse,
   protectedValues: string[],
 ): Promise<ParsedAssistantStreamResponse> {
-  const setCookie = response.headers()["set-cookie"];
-  if (setCookie?.includes("aap_assistant_sid_dev=")) {
-    cookieCredential(setCookie);
-  }
+  expectNoAssistantCookie(response.headers()["set-cookie"]);
   return parseSafeAssistantErrorStream(
     response.headers()["content-type"],
     await response.text(),
@@ -807,56 +685,25 @@ function collectBrowserDiagnostics(context: BrowserContext) {
   context.on("page", registerPage);
 }
 
-function expectConsoleExcludesCredential(credential: string) {
+function expectNoAssistantCookie(setCookie: string | null | undefined): void {
   expect(
-    credential.length > 0,
-    "assistant cookie credential must be nonempty",
-  ).toBe(true);
-  const leaked = cumulativeConsoleMessages.some((message) =>
-    message.includes(credential),
-  );
-  expect(leaked, "assistant cookie credential leaked to console").toBe(false);
+    /(?:^|,\s*)aap_assistant_/u.test(setCookie ?? ""),
+    "assistant response must not set an assistant cookie",
+  ).toBe(false);
 }
 
-function requiredAssistantCookieCredential(): string {
-  const credential = firstAssistantCookieCredential;
-  expect(
-    Boolean(credential),
-    "first assistant cookie credential was not captured",
-  ).toBe(true);
-  if (!credential)
-    throw new Error("assistant cookie credential is unavailable");
-  return credential;
-}
-
-function cookieCredential(setCookie: string): string {
-  const match = setCookie.match(/(?:^|,\s*)aap_assistant_sid_dev=([^;]+)/u);
-  if (!match?.[1]) throw new Error("development assistant cookie is missing");
-  stableCookieCredential(match[1]);
-  return match[1];
-}
-
-function stableCookieCredential(cookieValue: string): string {
-  const payload = cookieValue.split(".")[0];
-  if (!payload) throw new Error("assistant cookie payload is missing");
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-  } catch {
-    throw new Error("assistant cookie payload is invalid");
+async function expectRemovedAssistantSessionRoutes(
+  request: APIRequestContext,
+): Promise<void> {
+  const publicPath = ["/api/v1/assistant", "session"].join("/");
+  const adminPath = ["/api/v1/admin/assistant", "sessions"].join("/");
+  for (const response of [
+    await request.delete(publicPath),
+    await request.get(adminPath),
+  ]) {
+    expect(response.status()).toBe(404);
+    expectNoAssistantCookie(response.headers()["set-cookie"]);
   }
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    !("credential" in parsed) ||
-    typeof parsed.credential !== "string" ||
-    parsed.credential.length === 0
-  ) {
-    throw new Error("assistant cookie credential is invalid");
-  }
-  appendDynamicProtectedValue(cookieValue);
-  appendDynamicProtectedValue(parsed.credential);
-  return parsed.credential;
 }
 
 type BoundedReadinessObservation = {
@@ -1101,25 +948,23 @@ test.describe("@guard assistant response safety guard", () => {
   });
 
   test("reconstructs only complete safe AgentOS SSE responses", () => {
-    const start = {
-      event: "start" as const,
-      data: {
-        version: "1" as const,
-        requestId: "guard-sse-request",
-        mode: "agentos" as const,
-        session: {
-          temporary: true as const,
-          expiresAt: "2026-08-03T00:00:00.000Z",
-        },
-        message: { id: "guard-sse-message", role: "assistant" as const },
-        suggestedActions: [],
-      },
-    };
-    const done = { event: "done" as const, data: {} };
+    const done = { type: "done" as const };
     const valid = [
-      start,
-      { event: "delta" as const, data: { content: "safe " } },
-      { event: "delta" as const, data: { content: "stream" } },
+      {
+        type: "activity" as const,
+        phase: "analyzing" as const,
+        label: "正在分析问题",
+      },
+      { type: "answer_delta" as const, content: "safe " },
+      { type: "answer_delta" as const, content: "stream" },
+      {
+        type: "action" as const,
+        action: {
+          kind: "navigate" as const,
+          pathname: "/pricing",
+          label: "价格与服务",
+        },
+      },
       done,
     ]
       .map(formatAssistantStreamEvent)
@@ -1133,48 +978,34 @@ test.describe("@guard assistant response safety guard", () => {
       ),
       "guard SSE reconstruction",
     ).matches({
-      version: "1",
-      requestId: "guard-sse-request",
-      mode: "agentos",
-      session: { temporary: true, expiresAt: "2026-08-03T00:00:00.000Z" },
-      message: {
-        id: "guard-sse-message",
-        role: "assistant",
-        content: "safe stream",
-      },
-      suggestedActions: [],
+      message: { role: "assistant", content: "safe stream" },
+      activities: [
+        { type: "activity", phase: "analyzing", label: "正在分析问题" },
+      ],
+      actions: [
+        { kind: "navigate", pathname: "/pricing", label: "价格与服务" },
+      ],
     });
 
     const invalidStreams = [
-      ["event: start\ndata: not-json\n\n", "invalid frame"],
+      ["data: not-json\n\n", "invalid frame"],
       [valid.trimEnd(), "trailing data"],
-      [
-        formatAssistantStreamEvent({
-          event: "delta",
-          data: { content: "out-of-order" },
-        }),
-        "start",
-      ],
+      [formatAssistantStreamEvent(done), "incomplete"],
       [
         [
-          formatAssistantStreamEvent(start),
-          formatAssistantStreamEvent({ event: "error", data: {} }),
+          formatAssistantStreamEvent({
+            type: "error",
+            code: "stream_interrupted",
+            message: "回答中断，请重试。",
+          }),
         ].join(""),
         "error event",
       ],
       [
         [
-          formatAssistantStreamEvent(start),
-          formatAssistantStreamEvent(done),
-        ].join(""),
-        "incomplete",
-      ],
-      [
-        [
-          formatAssistantStreamEvent(start),
           formatAssistantStreamEvent({
-            event: "delta",
-            data: { content: " \n" },
+            type: "answer_delta",
+            content: " \n",
           }),
           formatAssistantStreamEvent(done),
         ].join(""),
@@ -1182,14 +1013,13 @@ test.describe("@guard assistant response safety guard", () => {
       ],
       [
         [
-          formatAssistantStreamEvent(start),
           formatAssistantStreamEvent({
-            event: "delta",
-            data: { content: "x".repeat(ASSISTANT_CONTENT_MAX_CODE_POINTS) },
+            type: "answer_delta",
+            content: "x".repeat(ASSISTANT_CONTENT_MAX_CODE_POINTS),
           }),
           formatAssistantStreamEvent({
-            event: "delta",
-            data: { content: "y" },
+            type: "answer_delta",
+            content: "y",
           }),
           formatAssistantStreamEvent(done),
         ].join(""),
@@ -1211,10 +1041,9 @@ test.describe("@guard assistant response safety guard", () => {
       parseSafeAssistantStream(
         ASSISTANT_STREAM_MEDIA_TYPE,
         [
-          formatAssistantStreamEvent(start),
           formatAssistantStreamEvent({
-            event: "delta",
-            data: { content: protectedValue },
+            type: "answer_delta",
+            content: protectedValue,
           }),
           formatAssistantStreamEvent(done),
         ].join(""),
@@ -1230,26 +1059,15 @@ test.describe("@guard assistant response safety guard", () => {
   });
 
   test("accepts only a safe terminal AgentOS SSE error stream", () => {
-    const start = {
-      event: "start" as const,
-      data: {
-        version: "1" as const,
-        requestId: "guard-sse-error-request",
-        mode: "agentos" as const,
-        session: {
-          temporary: true as const,
-          expiresAt: "2026-08-03T00:00:00.000Z",
-        },
-        message: { id: "guard-sse-error-message", role: "assistant" as const },
-        suggestedActions: [],
-      },
+    const error = {
+      type: "error" as const,
+      code: "stream_interrupted" as const,
+      message: "回答中断，请重试。",
     };
-    const error = { event: "error" as const, data: {} };
     const rawErrorStream = [
-      formatAssistantStreamEvent(start),
       formatAssistantStreamEvent({
-        event: "delta" as const,
-        data: { content: "started before failure" },
+        type: "answer_delta" as const,
+        content: "started before failure",
       }),
       formatAssistantStreamEvent(error),
     ].join("");
@@ -1262,16 +1080,9 @@ test.describe("@guard assistant response safety guard", () => {
       ),
       "guard SSE error envelope",
     ).matches({
-      version: "1",
-      requestId: "guard-sse-error-request",
-      mode: "agentos",
-      session: { temporary: true, expiresAt: "2026-08-03T00:00:00.000Z" },
-      message: {
-        id: "guard-sse-error-message",
-        role: "assistant",
-        content: "started before failure",
-      },
-      suggestedActions: [],
+      message: { role: "assistant", content: "started before failure" },
+      activities: [],
+      actions: [],
     });
     expect(() =>
       parseSafeAssistantStream(ASSISTANT_STREAM_MEDIA_TYPE, rawErrorStream, []),
@@ -1279,24 +1090,26 @@ test.describe("@guard assistant response safety guard", () => {
 
     const invalidStreams = [
       [
-        [
-          formatAssistantStreamEvent(start),
-          formatAssistantStreamEvent({ event: "done", data: {} }),
-        ].join(""),
+        [formatAssistantStreamEvent({ type: "done" })].join(""),
         "must not contain done",
       ],
       [
         [
-          formatAssistantStreamEvent(start),
           formatAssistantStreamEvent(error),
           formatAssistantStreamEvent({
-            event: "delta",
-            data: { content: "after-error" },
+            type: "answer_delta",
+            content: "after-error",
           }),
         ].join(""),
         "events after error",
       ],
-      [formatAssistantStreamEvent(start), "incomplete"],
+      [
+        formatAssistantStreamEvent({
+          type: "answer_delta",
+          content: "partial",
+        }),
+        "incomplete",
+      ],
     ] as const;
     for (const [invalidRawStream, expectedFailure] of invalidStreams) {
       expect(() =>
@@ -1314,10 +1127,9 @@ test.describe("@guard assistant response safety guard", () => {
       parseSafeAssistantErrorStream(
         ASSISTANT_STREAM_MEDIA_TYPE,
         [
-          formatAssistantStreamEvent(start),
           formatAssistantStreamEvent({
-            event: "delta",
-            data: { content: protectedValue },
+            type: "answer_delta",
+            content: protectedValue,
           }),
           formatAssistantStreamEvent(error),
         ].join(""),
@@ -1334,10 +1146,9 @@ test.describe("@guard assistant response safety guard", () => {
     const forbiddenPartialError = parseSafeAssistantErrorStream(
       ASSISTANT_STREAM_MEDIA_TYPE,
       [
-        formatAssistantStreamEvent(start),
         formatAssistantStreamEvent({
-          event: "delta",
-          data: { content: INVALID_RESPONSE_SENTINEL },
+          type: "answer_delta",
+          content: INVALID_RESPONSE_SENTINEL,
         }),
         formatAssistantStreamEvent(error),
       ].join(""),
@@ -1411,7 +1222,6 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
     version: "1",
     requestId: "public-browser-runtime-e2e",
     mode: "placeholder",
-    session: { temporary: true, expiresAt: expiresAtMatcher },
     message: {
       id: messageIdMatcher,
       role: "assistant",
@@ -1419,35 +1229,8 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
     },
     suggestedActions: [{ label: "查看快速开始", href: "/docs#quick-start" }],
   });
-  const setCookie = (await browserResponse.headerValue("set-cookie")) ?? "";
-  expect(
-    setCookie.includes("aap_assistant_sid_dev="),
-    "assistant cookie is missing",
-  ).toBe(true);
-  expect(
-    setCookie.includes("HttpOnly"),
-    "assistant cookie is not HttpOnly",
-  ).toBe(true);
-  expect(
-    setCookie.includes("SameSite=Lax"),
-    "assistant cookie SameSite policy is invalid",
-  ).toBe(true);
-  expect(
-    setCookie.includes("Secure"),
-    "loopback assistant cookie unexpectedly requires Secure",
-  ).toBe(false);
-  const credential = cookieCredential(setCookie);
-  firstAssistantCookieCredential = credential;
-  expect(
-    firstAssistantCookieCredential.length > 0,
-    "first assistant cookie credential must be nonempty",
-  ).toBe(true);
-  expectNoProtectedValue(
-    chatBody,
-    [...protectedValues, credential],
-    chat.rawJson,
-  );
-  expectConsoleExcludesCredential(credential);
+  expectNoAssistantCookie(await browserResponse.headerValue("set-cookie"));
+  await expectRemovedAssistantSessionRoutes(context.request);
 
   const burst = await Promise.all(
     Array.from({ length: 11 }, () =>
@@ -1470,10 +1253,7 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
     rejected[0]!.headers()["retry-after"] === "60",
     "rate limit retry interval is invalid",
   ).toBe(true);
-  const rejection = await readSafeJson(rejected[0]!, [
-    ...protectedValues,
-    credential,
-  ]);
+  const rejection = await readSafeJson(rejected[0]!, protectedValues);
   assertSafeResponse(rejection, "placeholder rate limit").matches({
     version: "1",
     requestId: nginxRequestIdMatcher,
@@ -1489,35 +1269,6 @@ test("public runtime is ready, placeholder chat is safe, and Nginx owns the firs
     "Nginx must replace the untrusted request identifier",
   ).toBe(false);
 
-  const logs = execFileSync(
-    "docker",
-    [
-      "compose",
-      "-p",
-      requiredEnvironment("AAP_RUNTIME_E2E_PROJECT"),
-      "--env-file",
-      requiredEnvironment("AAP_RUNTIME_E2E_ENV_FILE"),
-      "-f",
-      "compose.yaml",
-      "-f",
-      "compose.e2e.yaml",
-      "logs",
-      "--no-color",
-      "web",
-      "agent",
-      "proxy",
-    ],
-    {
-      cwd: path.resolve(process.cwd(), "../.."),
-      encoding: "utf8",
-      timeout: 30_000,
-    },
-  );
-  expect(
-    logs.includes(credential),
-    "assistant cookie credential leaked to container logs",
-  ).toBe(false);
-  expectConsoleExcludesCredential(credential);
   await context.close();
 });
 
@@ -1527,19 +1278,16 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
 }) => {
   if (!baseURL) throw new Error("BASE_URL is required");
   const credentials = fixtureCredentials();
-  const assistantCredential = requiredAssistantCookieCredential();
   const protectedValues = [
     ...runtimeProtectedValues(),
     requiredEnvironment("BETTER_AUTH_SECRET"),
     credentials.staffSessionToken,
     credentials.adminSessionToken,
-    assistantCredential,
   ];
 
   const anonymous = await requestFactory.newContext({ baseURL });
   for (const [method, endpoint] of [
     ["get", ADMIN_STATUS_PATH],
-    ["get", ADMIN_SESSIONS_PATH],
     ["post", ADMIN_CHAT_PATH],
   ] as const) {
     const response =
@@ -1570,7 +1318,6 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
   );
   for (const [method, endpoint] of [
     ["get", ADMIN_STATUS_PATH],
-    ["get", ADMIN_SESSIONS_PATH],
     ["post", ADMIN_CHAT_PATH],
   ] as const) {
     const response =
@@ -1656,22 +1403,9 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
         defaultAgent: "码多多（占位）",
         model: "未配置",
         skills: "已接入",
-        sessionStorage: "未启用",
+        pageMemory: "仅当前页面内存；刷新或离开后清空",
       },
       message: "公开入口使用安全占位模式；AgentOS 基础设施尚未探测。",
-    },
-  });
-
-  const sessionsResponse = await admin.request.get(ADMIN_SESSIONS_PATH);
-  expect(sessionsResponse.status()).toBe(200);
-  const sessions = await readSafeJson(sessionsResponse, protectedValues);
-  assertSafeResponse(sessions, "placeholder admin sessions").matches({
-    version: "1",
-    requestId: requestIdMatcher,
-    sessions: {
-      persistence: "disabled",
-      listing: "not_available",
-      message: "占位模式未持久化会话；管理列表不可用。",
     },
   });
 
@@ -1691,12 +1425,121 @@ test("protected assistant APIs enforce 401, 403, and safe admin success", async 
     },
     suggestedActions: [{ label: "查看快速开始", href: "/docs#quick-start" }],
   });
-  expectConsoleExcludesCredential(assistantCredential);
   await admin.close();
 });
 
 test.describe("@agentos deterministic runtime", () => {
-  test("reports only 码多多 as available and cleans the real Admin ephemeral run", async ({
+  test("filters split reasoning and allows only verified public navigation", async ({
+    browser,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("BASE_URL is required");
+    const context = await browser.newContext({ baseURL });
+    const ask = async (
+      message: string,
+      page: { pathname: string; search: string } | null = null,
+    ) => {
+      const response = await context.request.post(CHAT_PATH, {
+        data: { version: "2", message, history: [], page },
+      });
+      expect(response.status()).toBe(200);
+      return readSafeAssistantStream(response, runtimeProtectedValues());
+    };
+
+    const reasoning = await ask(SPLIT_REASONING_SENTINEL);
+    expect(reasoning.message.content).toBe(SAFE_ANSWER_SENTINEL);
+    expect(JSON.stringify(reasoning)).not.toMatch(/<\/?think|<\/?analysis/iu);
+    expect(JSON.stringify(reasoning)).not.toContain(PRIVATE_REASONING_SENTINEL);
+
+    const allowed = await ask(ALLOWED_NAVIGATION_SENTINEL);
+    expect(allowed.actions).toEqual([
+      { kind: "navigate", pathname: "/pricing", label: "价格与服务" },
+    ]);
+    const forbidden = await ask(FORBIDDEN_NAVIGATION_SENTINEL);
+    expect(forbidden.actions).toEqual([]);
+    await context.close();
+  });
+
+  test("reads only a real allowed public page into the deterministic prompt", async ({
+    browser,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("BASE_URL is required");
+    const context = await browser.newContext({ baseURL });
+    const ask = async (pathname: string) => {
+      const response = await context.request.post(CHAT_PATH, {
+        data: {
+          version: "2",
+          message: PAGE_CONTEXT_SENTINEL,
+          history: [],
+          page: { pathname, search: "" },
+        },
+      });
+      expect(response.status()).toBe(200);
+      return (await readSafeAssistantStream(response, runtimeProtectedValues()))
+        .message.content;
+    };
+
+    await expect(ask("/product/standalone")).resolves.toBe(
+      "verified-product-page-context",
+    );
+    for (const pathname of [
+      "/admin/assistant",
+      "/console/onboarding",
+      "/not-registered",
+    ]) {
+      await expect(ask(pathname)).resolves.toBe("no-public-page-context");
+    }
+    await context.close();
+  });
+
+  test("applies an Admin sensitive term before any public provider run", async ({
+    browser,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("BASE_URL is required");
+    const credentials = fixtureCredentials();
+    const admin = await browser.newContext({ baseURL });
+    await addSignedSession(
+      admin,
+      baseURL,
+      "workforce",
+      credentials.modelAdminSessionToken,
+    );
+    const current = await admin.request.get(INPUT_POLICY_PATH);
+    expect(current.status()).toBe(200);
+    const snapshot = (await readSafeJson(
+      current,
+      runtimeProtectedValues(),
+    )) as { revision: number };
+    const saved = await admin.request.put(INPUT_POLICY_PATH, {
+      headers: { Origin: baseURL },
+      data: {
+        source: IMMEDIATE_BLOCK_SENTINEL,
+        expectedRevision: snapshot.revision,
+      },
+    });
+    expect(saved.status()).toBe(200);
+    const before = composeOutput(["logs", "--no-color", "agent"]);
+    const blocked = await admin.request.post(CHAT_PATH, {
+      data: {
+        version: "2",
+        message: `prefix-${IMMEDIATE_BLOCK_SENTINEL}-suffix`,
+        history: [],
+        page: null,
+      },
+    });
+    expect(blocked.status()).toBe(422);
+    const raw = await blocked.text();
+    expect(raw).not.toContain(IMMEDIATE_BLOCK_SENTINEL);
+    expect(JSON.parse(raw)).toMatchObject({
+      error: { code: "input_blocked", retryable: false },
+    });
+    expect(composeOutput(["logs", "--no-color", "agent"])).toBe(before);
+    await admin.close();
+  });
+
+  test("reports only 码多多 as available for the public run", async ({
     browser,
     baseURL,
   }) => {
@@ -1723,8 +1566,32 @@ test.describe("@agentos deterministic runtime", () => {
       ),
       "public status exposed internal Agent data",
     ).toBe(false);
-    await publicContext.close();
 
+    const publicChatResponse = await publicContext.request.post(CHAT_PATH, {
+      data: CHAT_BODY,
+    });
+    expect(publicChatResponse.status()).toBe(200);
+    const publicChat = await readSafeAssistantStream(
+      publicChatResponse,
+      protectedValues,
+    );
+    assertSafeResponse(publicChat, "AgentOS public chat").matches({
+      message: {
+        role: "assistant",
+        content: "deterministic-turn:1",
+      },
+      activities: safeRule((value) => Array.isArray(value)),
+      actions: [],
+    });
+    await publicContext.close();
+  });
+
+  test("serves the Admin deterministic run with current-page memory", async ({
+    browser,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("BASE_URL is required");
+    const protectedValues = runtimeProtectedValues();
     const credentials = fixtureCredentials();
     const admin = await browser.newContext({ baseURL });
     collectBrowserDiagnostics(admin);
@@ -1752,7 +1619,7 @@ test.describe("@agentos deterministic runtime", () => {
           capability: "available",
           providerMode: "agentos",
           selectedProvider: "agentos",
-          persistence: "agentos",
+          persistence: "disabled",
           circuits: {
             readiness: { state: "closed", consecutiveFailures: 0 },
             execution: { state: "closed", consecutiveFailures: 0 },
@@ -1799,7 +1666,7 @@ test.describe("@agentos deterministic runtime", () => {
           defaultAgent: "码多多（maduoduo）",
           model: "OpenAI / e2e-deterministic（部署配置）",
           skills: "已接入",
-          sessionStorage: "AgentOS 持久化已启用",
+          pageMemory: "仅当前页面内存；刷新或离开后清空",
         },
         message: "AI 助理基础服务已就绪。",
       },
@@ -1811,7 +1678,6 @@ test.describe("@agentos deterministic runtime", () => {
       "admin status exposed internal Agent data",
     ).toBe(false);
 
-    const sessionsBefore = agentSessionIds();
     const adminChatResponse = await admin.request.post(ADMIN_CHAT_PATH, {
       data: CHAT_BODY,
     });
@@ -1831,186 +1697,7 @@ test.describe("@agentos deterministic runtime", () => {
       },
       suggestedActions: [],
     });
-    expect(
-      sameStringSet(agentSessionIds(), sessionsBefore),
-      "Admin ephemeral run changed the persisted Agent session identity set",
-    ).toBe(true);
-
-    const sessionsResponse = await admin.request.get(ADMIN_SESSIONS_PATH);
-    expect(sessionsResponse.status()).toBe(200);
-    const sessions = await readSafeJson(sessionsResponse, [
-      ...protectedValues,
-      credentials.adminSessionToken,
-    ]);
-    assertSafeResponse(sessions, "AgentOS admin sessions").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      sessions: {
-        persistence: "agentos",
-        listing: "not_available",
-        message: "AgentOS 持久化已启用，但管理列表不在本阶段范围。",
-      },
-    });
     await admin.close();
-  });
-
-  test("keeps two real turns in one Cookie and starts over after DELETE", async ({
-    browser,
-    baseURL,
-  }) => {
-    if (!baseURL) throw new Error("BASE_URL is required");
-    const context = await browser.newContext({ baseURL });
-    collectBrowserDiagnostics(context);
-    const protectedValues = runtimeProtectedValues();
-    const sessionsBeforeFirstTurn = agentSessionIds();
-
-    const firstResponse = await context.request.post(CHAT_PATH, {
-      data: CHAT_BODY,
-    });
-    expect(firstResponse.status()).toBe(200);
-    const first = await readSafeAssistantStream(firstResponse, protectedValues);
-    assertSafeResponse(first, "AgentOS first turn").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      mode: "agentos",
-      session: { temporary: true, expiresAt: expiresAtMatcher },
-      message: {
-        id: messageIdMatcher,
-        role: "assistant",
-        content: "deterministic-turn:1",
-      },
-      suggestedActions: [],
-    });
-    const firstSetCookie = firstResponse.headers()["set-cookie"] ?? "";
-    const firstCredential = cookieCredential(firstSetCookie);
-    expectNoProtectedValue(first, [...protectedValues, firstCredential]);
-    const sessionsAfterFirstTurn = agentSessionIds();
-    const firstSessionCandidates = [...sessionsAfterFirstTurn].filter(
-      (sessionId) => !sessionsBeforeFirstTurn.has(sessionId),
-    );
-    expect(
-      firstSessionCandidates.length === 1,
-      "first browser context must create exactly one Agent session",
-    ).toBe(true);
-    const firstSessionId = firstSessionCandidates[0];
-    if (!firstSessionId) throw new Error("first Agent session was not created");
-    expectNoProtectedValue(first, [firstSessionId]);
-
-    const secondResponse = await context.request.post(CHAT_PATH, {
-      data: {
-        message: "请继续。",
-        context: { pathname: "/assistant" },
-      },
-    });
-    expect(secondResponse.status()).toBe(200);
-    const second = await readSafeAssistantStream(secondResponse, [
-      ...protectedValues,
-      firstCredential,
-    ]);
-    assertSafeResponse(second, "AgentOS second turn").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      mode: "agentos",
-      session: { temporary: true, expiresAt: expiresAtMatcher },
-      message: {
-        id: messageIdMatcher,
-        role: "assistant",
-        content: "deterministic-turn:2",
-      },
-      suggestedActions: [],
-    });
-    const stableCookie = (await context.cookies()).find(
-      (cookie) => cookie.name === "aap_assistant_sid_dev",
-    )?.value;
-    expect(
-      stableCookie !== undefined &&
-        stableCookieCredential(stableCookie) ===
-          stableCookieCredential(firstCredential),
-      "assistant Cookie credential changed between turn one and turn two",
-    ).toBe(true);
-
-    const independentContext = await browser.newContext({ baseURL });
-    collectBrowserDiagnostics(independentContext);
-    const independentResponse = await independentContext.request.post(
-      CHAT_PATH,
-      { data: CHAT_BODY },
-    );
-    expect(independentResponse.status()).toBe(200);
-    const independent = await readSafeAssistantStream(
-      independentResponse,
-      protectedValues,
-    );
-    assertSafeResponse(independent, "AgentOS independent turn").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      mode: "agentos",
-      session: { temporary: true, expiresAt: expiresAtMatcher },
-      message: {
-        id: messageIdMatcher,
-        role: "assistant",
-        content: "deterministic-turn:1",
-      },
-      suggestedActions: [],
-    });
-    await independentContext.close();
-
-    const deletion = await context.request.delete(SESSION_PATH);
-    expect(deletion.status()).toBe(204);
-    expect(
-      (await deletion.text()) === "",
-      "assistant session deletion returned a body",
-    ).toBe(true);
-    expect(
-      deletion.headers()["set-cookie"]?.includes("aap_assistant_sid_dev=") ===
-        true,
-      "assistant session deletion did not clear its cookie",
-    ).toBe(true);
-    const cookiesAfterDeletion = await context.cookies();
-    expect(
-      cookiesAfterDeletion.some(
-        (cookie) => cookie.name === "aap_assistant_sid_dev",
-      ),
-    ).toBe(false);
-    expect(
-      agentSessionIds().has(firstSessionId),
-      "DELETE must remove the original persisted Agent session",
-    ).toBe(false);
-    const sessionsAfterDeletion = agentSessionIds();
-
-    const thirdResponse = await context.request.post(CHAT_PATH, {
-      data: {
-        message: "新会话。",
-        context: { pathname: "/assistant" },
-      },
-    });
-    expect(thirdResponse.status()).toBe(200);
-    const third = await readSafeAssistantStream(thirdResponse, protectedValues);
-    assertSafeResponse(third, "AgentOS replacement turn").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      mode: "agentos",
-      session: { temporary: true, expiresAt: expiresAtMatcher },
-      message: {
-        id: messageIdMatcher,
-        role: "assistant",
-        content: "deterministic-turn:1",
-      },
-      suggestedActions: [],
-    });
-    const sessionsAfterNewTurn = agentSessionIds();
-    const replacementCandidates = [...sessionsAfterNewTurn].filter(
-      (sessionId) => !sessionsAfterDeletion.has(sessionId),
-    );
-    const newSessionId = replacementCandidates[0];
-    expect(
-      replacementCandidates.length === 1 && newSessionId !== firstSessionId,
-      "new turn after DELETE must create a different Agent session",
-    ).toBe(true);
-    if (!newSessionId)
-      throw new Error("replacement Agent session was not created");
-    expectNoProtectedValue(third, [newSessionId]);
-    expectConsoleExcludesCredential(firstCredential);
-    await context.close();
   });
 
   test("rejects an unauthenticated WebSocket and keeps Agent plus DB private", async ({
@@ -2038,8 +1725,10 @@ test.describe("@agentos deterministic runtime", () => {
 
     const invalidResponse = await context.request.post(CHAT_PATH, {
       data: {
+        version: "2",
         message: INVALID_RESPONSE_SENTINEL,
-        context: { pathname: "/assistant" },
+        history: [],
+        page: null,
       },
     });
     expect(invalidResponse.status()).toBe(200);
@@ -2048,23 +1737,14 @@ test.describe("@agentos deterministic runtime", () => {
       protectedValues,
     );
     assertSafeResponse(invalid, "AgentOS invalid SSE envelope").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      mode: "agentos",
-      session: { temporary: true, expiresAt: expiresAtMatcher },
       message: {
-        id: messageIdMatcher,
         role: "assistant",
         content: safeRule((value) => typeof value === "string"),
       },
-      suggestedActions: [],
+      activities: safeRule((value) => Array.isArray(value)),
+      actions: [],
     });
     assertNoPublicInvalidModelOutput(invalid);
-    const invalidCookie = (await context.cookies()).find(
-      (cookie) => cookie.name === "aap_assistant_sid_dev",
-    )?.value;
-    if (!invalidCookie)
-      throw new Error("invalid stream did not establish an assistant Cookie");
 
     const recoveredResponse = await context.request.post(CHAT_PATH, {
       data: CHAT_BODY,
@@ -2075,25 +1755,13 @@ test.describe("@agentos deterministic runtime", () => {
       protectedValues,
     );
     assertSafeResponse(recovered, "AgentOS bounded failure recovery").matches({
-      version: "1",
-      requestId: requestIdMatcher,
-      mode: "agentos",
-      session: { temporary: true, expiresAt: expiresAtMatcher },
       message: {
-        id: messageIdMatcher,
         role: "assistant",
-        content: "deterministic-turn:2",
+        content: "deterministic-turn:1",
       },
-      suggestedActions: [],
+      activities: safeRule((value) => Array.isArray(value)),
+      actions: [],
     });
-    expect(
-      stableCookieCredential(
-        (await context.cookies()).find(
-          (cookie) => cookie.name === "aap_assistant_sid_dev",
-        )?.value ?? "",
-      ) === stableCookieCredential(invalidCookie),
-      "bounded invalid stream changed the persisted assistant session",
-    ).toBe(true);
 
     const credentials = fixtureCredentials();
     const admin = await browser.newContext({ baseURL });
@@ -2123,7 +1791,7 @@ test.describe("@agentos deterministic runtime", () => {
           capability: "available",
           providerMode: "agentos",
           selectedProvider: "agentos",
-          persistence: "agentos",
+          persistence: "disabled",
           circuits: {
             readiness: { state: "closed", consecutiveFailures: 0 },
             execution: { state: "closed", consecutiveFailures: 0 },
@@ -2170,7 +1838,7 @@ test.describe("@agentos deterministic runtime", () => {
           defaultAgent: "码多多（maduoduo）",
           model: "OpenAI / e2e-deterministic（部署配置）",
           skills: "已接入",
-          sessionStorage: "AgentOS 持久化已启用",
+          pageMemory: "仅当前页面内存；刷新或离开后清空",
         },
         message: "AI 助理基础服务已就绪。",
       },
@@ -2189,7 +1857,6 @@ test.describe("@agentos deterministic runtime", () => {
         message: "AI 助理基础服务已就绪。",
       },
     );
-    agentSessionIds();
     await admin.close();
     await context.close();
   });
@@ -2279,10 +1946,7 @@ test.describe("@control deterministic model control", () => {
         allowedLastFour?: string[];
       } = {},
     ): Promise<unknown> => {
-      const setCookie = response.headers()["set-cookie"];
-      if (setCookie?.includes("aap_assistant_sid_dev=")) {
-        cookieCredential(setCookie);
-      }
+      expectNoAssistantCookie(response.headers()["set-cookie"]);
       const rawJson = await response.text();
       controlResponseLedger.push({
         exposure,
@@ -2304,10 +1968,7 @@ test.describe("@control deterministic model control", () => {
     const readControlAssistantStream = async (
       response: APIResponse,
     ): Promise<unknown> => {
-      const setCookie = response.headers()["set-cookie"];
-      if (setCookie?.includes("aap_assistant_sid_dev=")) {
-        cookieCredential(setCookie);
-      }
+      expectNoAssistantCookie(response.headers()["set-cookie"]);
       const rawStream = await response.text();
       controlResponseLedger.push({
         exposure: "strict",
@@ -2408,8 +2069,6 @@ test.describe("@control deterministic model control", () => {
       }
       const body = await readControlAssistantStream(response);
       expect(JSON.stringify(body)).toContain(expectedMarker);
-      const deletion = await context.request.delete(SESSION_PATH);
-      expect(deletion.status()).toBe(204);
       await drainControlResponses();
       await context.close();
     };
@@ -2753,8 +2412,6 @@ test.describe("@control deterministic model control", () => {
     expect(JSON.stringify(finalAuditChat)).toContain(
       "deterministic-model:e2e-qwen-rev1:turn:1",
     );
-    collectAgentSessionIdentityAudit();
-
     await Promise.all(pendingControlResponses);
     expect(controlResponseCaptureFailures).toEqual([]);
     const expectedListLastFour = CONTROL_PROVIDERS.map(

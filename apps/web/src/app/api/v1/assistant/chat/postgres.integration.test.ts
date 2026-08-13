@@ -17,17 +17,13 @@ import {
 
 import { createAssistantErrorResponse } from "@/features/assistant/assistant-contract";
 import type { AssistantProvider } from "@/server/assistant/assistant-provider";
-import { createAnonymousSessionManager } from "@/server/assistant/anonymous-session";
-import { resolveAnonymousSessionSettings } from "@/server/assistant/anonymous-session-config";
+import { createAssistantInputPolicyRepository } from "@/server/assistant/assistant-input-policy";
 import {
   assistantRateLimitKey,
   createDatabaseAssistantRateLimiter,
 } from "@/server/assistant/assistant-rate-limit";
 import { resolveTrustedClientIp } from "@/server/assistant/trusted-client-ip";
-import {
-  createAssistantChatHandler,
-  createAssistantChatSessionResolver,
-} from "./handler";
+import { createAssistantChatHandler } from "./handler";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const safeUrl = testDatabaseUrl
@@ -35,7 +31,6 @@ const safeUrl = testDatabaseUrl
   : undefined;
 const describePostgres = safeUrl ? describe.sequential : describe.skip;
 const RATE_SECRET = "handler-postgres-rate-secret-at-least-32-bytes";
-const SESSION_SECRET = "handler-session-secret-at-least-32-bytes";
 const TRUSTED_IP = "203.0.113.40";
 
 function chatRequest(cookie?: string) {
@@ -47,14 +42,12 @@ function chatRequest(cookie?: string) {
       ...(cookie ? { cookie } : {}),
     },
     body: JSON.stringify({
+      version: "2",
       message: "如何开始了解平台？",
-      context: { pathname: "/" },
+      history: [],
+      page: null,
     }),
   });
-}
-
-function cookiePair(setCookie: string): string {
-  return setCookie.split(";", 1)[0] ?? "";
 }
 
 describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
@@ -66,21 +59,12 @@ describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
   });
 
   beforeEach(async () => {
-    await pool.query("TRUNCATE rate_limits");
+    await pool.query("TRUNCATE rate_limits, assistant_input_policy");
   });
 
   afterAll(async () => pool.end());
 
-  it("keeps the trusted-IP bucket across Cookie deletion and rejects before Provider work", async () => {
-    let randomValue = 0;
-    const manager = createAnonymousSessionManager({
-      settings: resolveAnonymousSessionSettings({
-        ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
-        ASSISTANT_SESSION_SECRET: SESSION_SECRET,
-      }),
-      now: () => 100_000,
-      randomBytes: (length) => new Uint8Array(length).fill(++randomValue),
-    });
+  it("keeps the trusted-IP bucket across stateless requests and rejects before Provider work", async () => {
     const reply = vi.fn<AssistantProvider["reply"]>(async () => ({
       content: "placeholder",
       suggestedActions: [],
@@ -92,9 +76,7 @@ describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
       clock: () => 100,
       requestIdFactory: () => "integration-request-id",
       messageIdFactory: () => "integration-message-id",
-      resolveSession: createAssistantChatSessionResolver(manager, async () => ({
-        kind: "anonymous",
-      })),
+      resolveActor: async () => ({ kind: "anonymous" as const }),
       rateLimiter: createDatabaseAssistantRateLimiter(database, {
         secret: RATE_SECRET,
         quotas: {
@@ -102,49 +84,43 @@ describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
         },
         now: () => 100_000,
       }),
+      loadInputPolicy: () =>
+        createAssistantInputPolicyRepository(database).load(),
+      pageResolver: { load: vi.fn(async () => null) },
       resolveTrustedClientIp: (request) =>
         resolveTrustedClientIp(request.headers, true),
     });
 
     const first = await handler(chatRequest());
     expect(first.status).toBe(200);
-    const firstSetCookie = first.headers.get("set-cookie");
-    expect(firstSetCookie).toContain("__Host-aap_assistant_sid=");
+    expect(first.headers.get("set-cookie")).toBeNull();
 
-    const sameCookie = await handler(chatRequest(cookiePair(firstSetCookie!)));
-    expect(sameCookie.status).toBe(200);
+    const second = await handler(chatRequest());
+    expect(second.status).toBe(200);
 
-    const deletedCookie = await handler(chatRequest());
-    expect(deletedCookie.status).toBe(200);
-    expect(deletedCookie.headers.get("set-cookie")).toContain(
-      "__Host-aap_assistant_sid=",
-    );
+    const third = await handler(chatRequest());
+    expect(third.status).toBe(200);
 
-    const blockedRotatedCookie = await handler(
-      chatRequest("__Host-aap_assistant_sid=invalid"),
-    );
-    expect(blockedRotatedCookie.status).toBe(429);
-    expect(blockedRotatedCookie.headers.get("retry-after")).toBe("60");
-    expect(blockedRotatedCookie.headers.get("set-cookie")).toContain(
-      "__Host-aap_assistant_sid=",
-    );
-    await expect(blockedRotatedCookie.json()).resolves.toEqual(
+    const blocked = await handler(chatRequest());
+    expect(blocked.status).toBe(429);
+    expect(blocked.headers.get("retry-after")).toBe("60");
+    expect(blocked.headers.get("set-cookie")).toBeNull();
+    await expect(blocked.json()).resolves.toEqual(
       createAssistantErrorResponse("integration-request-id", "rate_limited"),
     );
     expect(reply).toHaveBeenCalledTimes(3);
     for (const [invocation] of reply.mock.calls) {
       expect(invocation).toMatchObject({
         request: {
+          version: "2",
           message: "如何开始了解平台？",
-          context: { pathname: "/" },
+          history: [],
+          page: null,
         },
-        session: { kind: "persistent" },
+        pageContext: null,
         signal: expect.any(AbortSignal),
       });
-      expect(Object.keys(invocation.session).sort()).toEqual([
-        "internalSessionId",
-        "kind",
-      ]);
+      expect(invocation).not.toHaveProperty("session");
     }
 
     const ipKey = assistantRateLimitKey(
@@ -164,10 +140,16 @@ describePostgres("assistant BFF PostgreSQL rate-limit integration", () => {
        WHERE key LIKE 'assistant:anonymous:session:%'
        ORDER BY count DESC`,
     );
-    expect(sessionBuckets.rows).toEqual([{ count: 2 }, { count: 1 }]);
+    expect(sessionBuckets.rows).toEqual([]);
     const allBuckets = await pool.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM rate_limits WHERE key LIKE 'assistant:%'",
     );
-    expect(allBuckets.rows).toEqual([{ count: "3" }]);
+    expect(allBuckets.rows).toEqual([{ count: "1" }]);
+    const storedKeys = await pool.query<{ key: string }>(
+      "SELECT key FROM rate_limits WHERE key LIKE 'assistant:%'",
+    );
+    expect(storedKeys.rows[0]?.key).not.toMatch(
+      /203\.0\.113\.40|internal|session/u,
+    );
   });
 });

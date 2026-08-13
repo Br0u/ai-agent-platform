@@ -9,7 +9,6 @@ const secretFiles = {
   BETTER_AUTH_SECRET: "better_auth_secret",
   OS_SECURITY_KEY: "os_security_key",
   AGENT_CONFIG_CONTROL_KEY: "agent_config_control_key",
-  ASSISTANT_SESSION_SECRET: "assistant_session_secret",
   ASSISTANT_RATE_LIMIT_SECRET: "assistant_rate_limit_secret",
   SKILL_REGISTRY_CONTROL_KEY: "skill_registry_control_key",
 } as const;
@@ -62,7 +61,6 @@ describe("loadDevWebEnvironment", () => {
       BETTER_AUTH_SECRET: "local-auth-secret".repeat(4),
       OS_SECURITY_KEY: "os_security_key-value",
       AGENT_CONFIG_CONTROL_KEY: "agent_config_control_key-value",
-      ASSISTANT_SESSION_SECRET: "assistant_session_secret-value",
       ASSISTANT_RATE_LIMIT_SECRET: "assistant_rate_limit_secret-value",
       SKILL_REGISTRY_CONTROL_KEY: "skill_registry_control_key-value",
     });

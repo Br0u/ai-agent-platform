@@ -1,8 +1,8 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   AGENTOS_RUN_MAX_RESPONSE_BYTES,
-  AGENTOS_SESSION_DELETE_TIMEOUT_MS,
   AgentOSRunClientError,
   createAgentOSRunClient,
   resolveAgentOSRunSettings,
@@ -78,7 +78,82 @@ describe("AgentOS run settings", () => {
 });
 
 describe("AgentOS run client", () => {
-  it("requests Agno's content-only stream and accepts clean EOF after text", async () => {
+  it("does not expose the deprecated assistant session deletion client", () => {
+    const source = readFileSync(
+      "src/server/assistant/agentos-run-client.ts",
+      "utf8",
+    );
+
+    expect(source).not.toContain(["delete", "Session"].join(""));
+    expect(source).not.toContain(["SESSION", "DELETE"].join("_"));
+  });
+
+  it("exposes only trusted activity, answer, and owned navigation markers", async () => {
+    const rawStream =
+      'event: RunStarted\ndata: {"event":"RunStarted","run_id":"private"}\n\n' +
+      'event: ReasoningStep\ndata: {"event":"ReasoningStep","reasoning_content":"private chain"}\n\n' +
+      'event: ToolCallStarted\ndata: {"event":"ToolCallStarted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help"}}}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help"},"result":"aap.navigate.v1:%2Fhelp"}}\n\n' +
+      'event: RunContent\ndata: {"event":"RunContent","content":"公开回答","reasoning_content":"private"}\n\n' +
+      'event: Unknown\ndata: {"event":"Unknown","content":"private"}\n\n' +
+      'event: RunCompleted\ndata: {"event":"RunCompleted","content":"must not duplicate"}\n\n';
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(rawStream, {
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+    const client = createAgentOSRunClient({ settings: settings(), fetcher });
+
+    const events = [];
+    for await (const event of client.runAgentStream({ message: "private" })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "activity", phase: "analyzing" },
+      { type: "activity", phase: "tool", toolName: "suggest_navigation" },
+      { type: "navigation_candidate", pathname: "/help" },
+      { type: "answer_delta", content: "公开回答" },
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/private|chain|run_id/iu);
+    expect(
+      (fetcher.mock.calls[0]?.[1]?.body as FormData).get("stream_events"),
+    ).toBe("true");
+  });
+
+  it("rejects spoofed navigation completion shapes without leaking payloads", async () => {
+    const rawStream =
+      'event: RunStarted\ndata: {"event":"RunStarted"}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","result":"aap.navigate.v1:%2Fevil"}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help"},"result":"aap.navigate.v1:%2Fproduct"}}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help","extra":true},"result":"aap.navigate.v1:%2Fhelp"}}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help"},"result":"aap.navigate.v1:%2Fhelp%"}}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help"},"result":"aap.navigate.v1:%252Fhelp"}}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help"},"result":"aap.navigate.v1:%2Fhelpaap.navigate.v1:%2Fhelp"}}\n\n' +
+      'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"suggest_navigation","tool_args":{"pathname":"/help"},"result":"aap.navigate.v1:%2Fhelp trailing"}}\n\n' +
+      'event: RunContent\ndata: {"event":"RunContent","content":"安全回答"}\n\n' +
+      'event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n';
+    const client = createAgentOSRunClient({
+      settings: settings(),
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(rawStream, {
+          headers: { "content-type": "text/event-stream" },
+        }),
+      ),
+    });
+
+    const events = [];
+    for await (const event of client.runAgentStream({ message: "private" })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "activity", phase: "analyzing" },
+      { type: "answer_delta", content: "安全回答" },
+    ]);
+  });
+
+  it("requests Agno's event stream and accepts clean EOF after text", async () => {
     const encoder = new TextEncoder();
     let controller!: ReadableStreamDefaultController<Uint8Array>;
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
@@ -94,7 +169,6 @@ describe("AgentOS run client", () => {
     const client = createAgentOSRunClient({ settings: settings(), fetcher });
     const stream = client.runAgentStream({
       message: "private prompt",
-      sessionId: "private-session",
     });
     const iterator = stream[Symbol.asyncIterator]();
 
@@ -107,12 +181,17 @@ describe("AgentOS run client", () => {
     );
     await expect(iterator.next()).resolves.toEqual({
       done: false,
-      value: "第一段",
+      value: { type: "activity", phase: "analyzing" },
+    });
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: { type: "answer_delta", content: "第一段" },
     });
 
     const form = fetcher.mock.calls[0]?.[1]?.body as FormData;
     expect(form.get("stream")).toBe("true");
-    expect(form.get("stream_events")).toBe("false");
+    expect(form.get("stream_events")).toBe("true");
+    expect(form.has("session_id")).toBe(false);
     expect(fetcher.mock.calls[0]?.[1]?.headers).toEqual({
       Accept: "text/event-stream",
       Authorization: `Bearer ${SECURITY_KEY}`,
@@ -126,7 +205,7 @@ describe("AgentOS run client", () => {
     controller.close();
     await expect(iterator.next()).resolves.toEqual({
       done: false,
-      value: "第二段",
+      value: { type: "answer_delta", content: "第二段" },
     });
     await expect(iterator.next()).resolves.toEqual({
       done: true,
@@ -149,45 +228,48 @@ describe("AgentOS run client", () => {
       ),
     });
 
-    const chunks: string[] = [];
+    const chunks = [];
     for await (const chunk of client.runAgentStream({
       message: "private prompt",
-      sessionId: "private-session",
     })) {
       chunks.push(chunk);
     }
 
-    expect(chunks).toEqual(["NPU 正文"]);
+    expect(chunks).toEqual([
+      { type: "activity", phase: "analyzing" },
+      { type: "answer_delta", content: "NPU 正文" },
+    ]);
   });
 
   it("keeps large Skill tool events off the public run stream", async () => {
-    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
-      const form = init?.body as FormData;
+    const fetcher = vi.fn<typeof fetch>(async () => {
       const rawStream =
-        form.get("stream_events") === "false"
-          ? 'event: RunContent\ndata: {"event":"RunContent","content":"NPU 正文"}\n\n' +
-            'event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n'
-          : 'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","result":"' +
-            "x".repeat(AGENTOS_RUN_MAX_RESPONSE_BYTES) +
-            '"}\n\n' +
-            'event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n';
+        'event: RunStarted\ndata: {"event":"RunStarted"}\n\n' +
+        'event: ToolCallCompleted\ndata: {"event":"ToolCallCompleted","tool":{"tool_name":"private_skill","result":"' +
+        "x".repeat(256 * 1_024) +
+        '"}}\n\n' +
+        'event: RunContent\ndata: {"event":"RunContent","content":"NPU 正文"}\n\n' +
+        'event: RunCompleted\ndata: {"event":"RunCompleted"}\n\n';
       return new Response(rawStream, {
         headers: { "content-type": "text/event-stream" },
       });
     });
     const client = createAgentOSRunClient({ settings: settings(), fetcher });
 
-    const chunks: string[] = [];
+    const chunks = [];
     for await (const chunk of client.runAgentStream({
       message: "使用大 Skill",
     })) {
       chunks.push(chunk);
     }
 
-    expect(chunks).toEqual(["NPU 正文"]);
+    expect(chunks).toEqual([
+      { type: "activity", phase: "analyzing" },
+      { type: "answer_delta", content: "NPU 正文" },
+    ]);
     expect(
       (fetcher.mock.calls[0]?.[1]?.body as FormData).get("stream_events"),
-    ).toBe("false");
+    ).toBe("true");
   });
 
   it.each([
@@ -222,7 +304,6 @@ describe("AgentOS run client", () => {
     const consume = async () => {
       for await (const chunk of client.runAgentStream({
         message: "private prompt",
-        sessionId: "private-session",
       })) {
         void chunk;
         // Consume the complete stream so terminal validation runs.
@@ -305,51 +386,29 @@ describe("AgentOS run client", () => {
     expect(JSON.stringify(error)).not.toContain("private abort reason");
   });
 
-  it("posts the exact multipart run contract without putting the session in URL or headers", async () => {
-    const internalSessionId = "opaque/internal?session#id";
+  it("posts the exact sessionless multipart run contract", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValue(jsonResponse({ content: "agent answer" }));
     const client = createAgentOSRunClient({ settings: settings(), fetcher });
 
     await expect(
-      client.runAgent({
-        message: "private prompt",
-        sessionId: internalSessionId,
-      }),
+      client.runAgent({ message: "private prompt" }),
     ).resolves.toEqual({ content: "agent answer" });
 
     expect(fetcher).toHaveBeenCalledOnce();
     const [url, init] = fetcher.mock.calls[0]!;
     expect(url).toBe(`${INTERNAL_URL}/agents/maduoduo/runs`);
-    expect(String(url)).not.toContain(internalSessionId);
     expect(init).toMatchObject({ method: "POST", redirect: "manual" });
     expect(init?.headers).toEqual({
       Accept: "application/json",
       Authorization: `Bearer ${SECURITY_KEY}`,
     });
-    expect(JSON.stringify(init?.headers)).not.toContain(internalSessionId);
     expect(init?.body).toBeInstanceOf(FormData);
     const form = init?.body as FormData;
-    expect([...form.keys()].sort()).toEqual([
-      "message",
-      "session_id",
-      "stream",
-    ]);
+    expect([...form.keys()].sort()).toEqual(["message", "stream"]);
     expect(form.get("message")).toBe("private prompt");
-    expect(form.get("stream")).toBe("false");
-    expect(form.get("session_id")).toBe(internalSessionId);
-  });
-
-  it("omits session_id when no internal session is supplied", async () => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(jsonResponse({ content: "ok" }));
-    const client = createAgentOSRunClient({ settings: settings(), fetcher });
-
-    await client.runAgent({ message: "hello" });
-
-    const form = fetcher.mock.calls[0]?.[1]?.body as FormData;
+    expect(form.get("stream")).toBe("true");
     expect(form.has("session_id")).toBe(false);
   });
 
@@ -419,7 +478,7 @@ describe("AgentOS run client", () => {
       });
 
       const error = await client
-        .runAgent({ message: "private prompt", sessionId: "private-session" })
+        .runAgent({ message: "private prompt" })
         .catch((value: unknown) => value);
 
       expect(error).toBeInstanceOf(AgentOSRunClientError);
@@ -486,10 +545,10 @@ describe("AgentOS run client", () => {
     });
 
     let content = "";
-    for await (const chunk of client.runAgentStream({
+    for await (const event of client.runAgentStream({
       message: "fragmented",
     })) {
-      content += chunk;
+      if (event.type === "answer_delta") content += event.content;
     }
 
     expect(content).toBe("x".repeat(32_768));
@@ -546,9 +605,8 @@ describe("AgentOS run client", () => {
       fetcher,
     });
     const message = "private prompt";
-    const sessionId = "private-session-id";
     const result = client
-      .runAgent({ message, sessionId })
+      .runAgent({ message })
       .catch((value: unknown) => value);
     let settled = false;
     void result.then(() => {
@@ -571,7 +629,6 @@ describe("AgentOS run client", () => {
       "text/html",
       "private raw answer",
       message,
-      sessionId,
     ]) {
       expect(serialized).not.toContain(sensitive);
     }
@@ -603,120 +660,5 @@ describe("AgentOS run client", () => {
     expect(error).toMatchObject({ code: "external_abort" });
     expect(reasonWasRead).toBe(false);
     expect(JSON.stringify(error)).not.toContain("private-run-abort-reason");
-  });
-});
-
-describe("AgentOS session deletion", () => {
-  it.each(["", ".", ".."])(
-    "rejects unsafe session path segment %j before fetch",
-    async (sessionId) => {
-      const fetcher = vi.fn<typeof fetch>();
-      const client = createAgentOSRunClient({ settings: settings(), fetcher });
-
-      const error = await client
-        .deleteSession(sessionId)
-        .catch((value: unknown) => value);
-
-      expect(error).toBeInstanceOf(AgentOSRunClientError);
-      expect(error).toMatchObject({ code: "invalid_response" });
-      expect(fetcher).not.toHaveBeenCalled();
-      const serialized = JSON.stringify(error);
-      expect(serialized).not.toContain(INTERNAL_URL);
-      if (sessionId.length > 0) expect(serialized).not.toContain(sessionId);
-    },
-  );
-
-  it.each([200, 204, 404])("treats HTTP %s as success", async (status) => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(new Response(null, { status }));
-    const client = createAgentOSRunClient({ settings: settings(), fetcher });
-
-    await expect(
-      client.deleteSession("opaque-session"),
-    ).resolves.toBeUndefined();
-  });
-
-  it("encodes an opaque session ID as exactly one path segment", async () => {
-    const sessionId = "opaque/session?secret# value";
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(new Response(null, { status: 204 }));
-    const client = createAgentOSRunClient({ settings: settings(), fetcher });
-
-    await client.deleteSession(sessionId);
-
-    expect(fetcher.mock.calls[0]?.[0]).toBe(
-      `${INTERNAL_URL}/sessions/opaque%2Fsession%3Fsecret%23%20value`,
-    );
-    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({
-      method: "DELETE",
-      body: undefined,
-    });
-  });
-
-  it.each([
-    [302, "redirect_rejected"],
-    [401, "authentication"],
-    [429, "rate_limited"],
-    [500, "server_error"],
-    [503, "server_error"],
-  ])("rejects HTTP %s deletion", async (status, code) => {
-    const response =
-      status === 302
-        ? new Response(null, {
-            status,
-            headers: { location: "https://evil.test" },
-          })
-        : new Response(null, { status });
-    const client = createAgentOSRunClient({
-      settings: settings(),
-      fetcher: vi.fn<typeof fetch>().mockResolvedValue(response),
-    });
-
-    await expect(
-      client.deleteSession("private-session-id"),
-    ).rejects.toMatchObject({ code });
-  });
-
-  it("uses the fixed 3000 ms cleanup deadline", async () => {
-    expect(AGENTOS_SESSION_DELETE_TIMEOUT_MS).toBe(3_000);
-    vi.useFakeTimers();
-    const client = createAgentOSRunClient({
-      settings: settings(),
-      fetcher: abortAwareFetcher(),
-    });
-    const assertion = expect(
-      client.deleteSession("private-session-id"),
-    ).rejects.toMatchObject({ code: "timeout" });
-
-    await vi.advanceTimersByTimeAsync(2_999);
-    await vi.advanceTimersByTimeAsync(1);
-
-    await assertion;
-  });
-
-  it("does not log or serialize the session ID on deletion failure", async () => {
-    const consoleSpies = [
-      vi.spyOn(console, "error").mockImplementation(() => undefined),
-      vi.spyOn(console, "warn").mockImplementation(() => undefined),
-      vi.spyOn(console, "log").mockImplementation(() => undefined),
-    ];
-    const sessionId = "private-session-id";
-    const client = createAgentOSRunClient({
-      settings: settings(),
-      fetcher: vi
-        .fn<typeof fetch>()
-        .mockResolvedValue(
-          new Response("private raw response", { status: 500 }),
-        ),
-    });
-
-    const error = await client.deleteSession(sessionId).catch((value) => value);
-
-    expect(error).toBeInstanceOf(AgentOSRunClientError);
-    expect(JSON.stringify(error)).not.toContain(sessionId);
-    expect(JSON.stringify(error)).not.toContain("private raw response");
-    expect(consoleSpies.every((spy) => spy.mock.calls.length === 0)).toBe(true);
   });
 });

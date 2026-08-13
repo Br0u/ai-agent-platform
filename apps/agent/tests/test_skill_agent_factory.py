@@ -12,7 +12,9 @@ import pytest
 from agent_service.config import RuntimeSettings
 from agent_service.database import build_database
 from agent_service.model_runtime_slot import ModelRuntimeSlot
+from agent_service.navigation_tool import suggest_navigation
 from agent_service.skill_agent_factory import (
+    NonPersistingSkillAgentFactory,
     build_skill_agent_factory,
     runtime_generation_context,
 )
@@ -34,7 +36,7 @@ def dependencies() -> tuple[ModelRuntimeSlot, AsyncPostgresDb]:
     return ModelRuntimeSlot(), build_database(settings)
 
 
-def test_factory_reuses_model_and_database_and_selects_generation_skills() -> None:
+def test_factory_reuses_model_and_selects_generation_skills_without_persistence() -> None:
     slot, database = dependencies()
     skills = Skills(loaders=[])
     generation = RuntimeGeneration(
@@ -51,9 +53,13 @@ def test_factory_reuses_model_and_database_and_selects_generation_skills() -> No
 
     assert agent.id == factory.id == "maduoduo"
     assert agent.model is slot
-    assert agent.db is database
+    assert agent.db is None
+    assert agent.store_events is False
+    assert agent.add_history_to_context is False
     assert agent.skills is skills
+    assert agent.tools == [suggest_navigation]
     assert all("没有工具或操作权限" not in item for item in agent.instructions)
+    assert any("suggest_navigation" in item for item in agent.instructions)
     assert any("当前已启用 Skill" in item for item in agent.instructions)
 
 
@@ -72,8 +78,8 @@ def test_factory_explicit_empty_generation_exposes_no_skills() -> None:
         agent = factory.resolve(RequestContext(), Agent)
 
     assert agent.skills is None
-    assert agent.tools == []
-    assert any("没有工具或操作权限" in item for item in agent.instructions)
+    assert agent.tools == [suggest_navigation]
+    assert any("除此之外，你没有其他工具或操作权限" in item for item in agent.instructions)
 
 
 def test_factory_fails_closed_without_middleware_generation_context() -> None:
@@ -81,4 +87,21 @@ def test_factory_fails_closed_without_middleware_generation_context() -> None:
     factory = build_skill_agent_factory(slot, database)
 
     with pytest.raises(FactoryContextRequired):
+        factory.resolve(RequestContext(), Agent)
+
+
+def test_factory_rejects_a_pre_set_different_agent_id_before_initialization() -> None:
+    class UnexpectedInitializationAgent(Agent):
+        def initialize_agent(self, debug_mode: bool | None = None) -> None:
+            raise AssertionError("mismatched agent must not be initialized")
+
+    slot, database = dependencies()
+    agent = UnexpectedInitializationAgent(id="different", model=slot)
+    factory = NonPersistingSkillAgentFactory(
+        id="maduoduo",
+        db=database,
+        factory=lambda _: agent,
+    )
+
+    with pytest.raises(RuntimeError, match="agent id does not match"):
         factory.resolve(RequestContext(), Agent)

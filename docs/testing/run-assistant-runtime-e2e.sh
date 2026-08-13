@@ -25,6 +25,20 @@ case "$project" in
     ;;
 esac
 
+assistant_e2e_http_port=${ASSISTANT_E2E_HTTP_PORT:-8080}
+case "$assistant_e2e_http_port" in
+  ''|*[!0-9]*)
+    echo "ASSISTANT_E2E_HTTP_PORT must be an integer from 1 to 65535" >&2
+    exit 1
+    ;;
+esac
+if ! [ "$assistant_e2e_http_port" -ge 1 ] 2>/dev/null ||
+   ! [ "$assistant_e2e_http_port" -le 65535 ] 2>/dev/null; then
+  echo "ASSISTANT_E2E_HTTP_PORT must be an integer from 1 to 65535" >&2
+  exit 1
+fi
+assistant_e2e_origin="http://127.0.0.1:$assistant_e2e_http_port"
+
 compose_files="-f compose.yaml -f compose.e2e.yaml"
 env_file="$repo_root/.env.e2e"
 temp_dir=
@@ -139,8 +153,8 @@ if [ -n "$existing_containers$existing_volumes$existing_networks$existing_labele
   release_lock
   exit 1
 fi
-if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "TCP port 8080 is already in use" >&2
+if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$assistant_e2e_http_port" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "TCP port $assistant_e2e_http_port is already in use" >&2
   release_lock
   exit 1
 fi
@@ -180,9 +194,9 @@ RUNTIME_DATABASE_URL=postgresql://ai_agent_runtime:$runtime_password@db:5432/ai_
 DATABASE_URL=postgresql://ai_agent_migrator:$migrator_password@db:5432/ai_agent_platform_runtime_e2e
 TEST_DATABASE_URL=postgresql://ai_agent_migrator:$migrator_password@db:5432/ai_agent_platform_runtime_e2e_test
 BETTER_AUTH_SECRET=$better_auth_secret
-BETTER_AUTH_URL=http://127.0.0.1:8080
-BETTER_AUTH_TRUSTED_ORIGINS=http://127.0.0.1:8080
-HTTP_PORT=8080
+BETTER_AUTH_URL=$assistant_e2e_origin
+BETTER_AUTH_TRUSTED_ORIGINS=$assistant_e2e_origin
+HTTP_PORT=$assistant_e2e_http_port
 PUBLIC_HOST=127.0.0.1
 ALLOW_LOCAL_VALIDATION_HOSTS=true
 BACKUP_INTERVAL_SECONDS=86400
@@ -223,6 +237,12 @@ set -a
 . "$env_file"
 set +a
 
+# The host port is run-scoped even when a pre-existing immutable E2E env file
+# was created with the default port. Compose gives these exports precedence.
+export BETTER_AUTH_URL="$assistant_e2e_origin"
+export BETTER_AUTH_TRUSTED_ORIGINS="$assistant_e2e_origin"
+export HTTP_PORT="$assistant_e2e_http_port"
+
 # Older local E2E env files predate the dedicated model-admin fixtures. Keep
 # them immutable and generate run-scoped tokens instead of appending secrets.
 if [ -z "${E2E_MODEL_ADMIN_SESSION_TOKEN-}" ]; then
@@ -248,21 +268,22 @@ for name in $required_variables; do
   fi
 done
 
-[ "$BETTER_AUTH_URL" = "http://127.0.0.1:8080" ] || {
+[ "$BETTER_AUTH_URL" = "$assistant_e2e_origin" ] || {
   echo "BETTER_AUTH_URL must use the E2E proxy" >&2
   exit 1
 }
-[ "$BETTER_AUTH_TRUSTED_ORIGINS" = "http://127.0.0.1:8080" ] || {
+[ "$BETTER_AUTH_TRUSTED_ORIGINS" = "$assistant_e2e_origin" ] || {
   echo "BETTER_AUTH_TRUSTED_ORIGINS must use the E2E proxy" >&2
   exit 1
 }
 
-export HTTP_PORT=8080
 export PUBLIC_HOST=127.0.0.1
 export ALLOW_LOCAL_VALIDATION_HOSTS=true
-export ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080
-[ "$ASSISTANT_PUBLIC_ORIGIN" = "http://127.0.0.1:8080" ] || {
-  echo "ASSISTANT_PUBLIC_ORIGIN must be the exact loopback E2E proxy" >&2
+# The page resolver runs inside the Web container. Its loopback is the
+# container-local Next server; the host-only proxy origin is unreachable there.
+export ASSISTANT_PUBLIC_ORIGIN="http://127.0.0.1:3000"
+[ "$ASSISTANT_PUBLIC_ORIGIN" = "http://127.0.0.1:3000" ] || {
+  echo "ASSISTANT_PUBLIC_ORIGIN must be the exact Web-container loopback" >&2
   exit 1
 }
 export ASSISTANT_PROVIDER_MODE=placeholder
@@ -290,7 +311,6 @@ skill_registry_manager_password=$(secret)
 skill_registry_runtime_password=$(secret)
 backup_encryption_key=$(secret)
 os_security_key=$(secret)
-assistant_session_secret=$(secret)
 assistant_rate_limit_secret=$(secret)
 model_api_key=$(secret)
 model_config_encryption_key=$(secret)
@@ -348,7 +368,6 @@ materialize_secret SKILL_REGISTRY_DATABASE_URL_FILE skill_registry_database_url 
 materialize_secret SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE skill_registry_runtime_database_url "postgresql+psycopg_async://ai_agent_skill_registry_runtime:$skill_registry_runtime_password@db:5432/$POSTGRES_DB"
 materialize_secret BETTER_AUTH_SECRET_FILE better_auth_secret "$BETTER_AUTH_SECRET"
 materialize_secret OS_SECURITY_KEY_FILE os_security_key "$agent_runtime_token"
-materialize_secret ASSISTANT_SESSION_SECRET_FILE assistant_session_secret "$assistant_session_secret"
 materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE assistant_rate_limit_secret "$assistant_rate_limit_secret"
 materialize_secret MODEL_API_KEY_FILE model_api_key "$model_api_key"
 materialize_secret MODEL_CONFIG_ENCRYPTION_KEY_FILE model_config_encryption_key "$model_config_encryption_key"
@@ -395,7 +414,6 @@ protected_patterns_file="$temp_dir/protected-runtime-patterns"
     "postgresql+psycopg_async://ai_agent_skill_registry_runtime:$skill_registry_runtime_password@db:5432/$POSTGRES_DB" \
     "$backup_encryption_key" \
     "$agent_runtime_token" \
-    "$assistant_session_secret" \
     "$assistant_rate_limit_secret" \
     "$model_api_key" \
     "$model_config_encryption_key" \
@@ -424,7 +442,6 @@ protected_patterns_file="$temp_dir/protected-runtime-patterns"
     "$SKILL_REGISTRY_RUNTIME_DATABASE_URL_FILE" \
     "$BETTER_AUTH_SECRET_FILE" \
     "$OS_SECURITY_KEY_FILE" \
-    "$ASSISTANT_SESSION_SECRET_FILE" \
     "$ASSISTANT_RATE_LIMIT_SECRET_FILE" \
     "$MODEL_API_KEY_FILE" \
     "$MODEL_CONFIG_ENCRYPTION_KEY_FILE" \
@@ -433,20 +450,16 @@ protected_patterns_file="$temp_dir/protected-runtime-patterns"
 )
 chmod 600 "$protected_patterns_file"
 
-create_dynamic_patterns_file() {
+create_patterns_file() {
   patterns_file=$1
   (umask 077 && : >"$patterns_file")
   chmod 600 "$patterns_file"
 }
 
-placeholder_dynamic_patterns_file="$temp_dir/placeholder-dynamic-patterns"
-agentos_dynamic_patterns_file="$temp_dir/agentos-dynamic-patterns"
 model_keys_file="$temp_dir/model-key-full-patterns"
 model_key_last4_file="$temp_dir/model-key-last4-patterns"
-create_dynamic_patterns_file "$placeholder_dynamic_patterns_file"
-create_dynamic_patterns_file "$agentos_dynamic_patterns_file"
-create_dynamic_patterns_file "$model_keys_file"
-create_dynamic_patterns_file "$model_key_last4_file"
+create_patterns_file "$model_keys_file"
+create_patterns_file "$model_key_last4_file"
 printf '%s\n' "$model_keys_file" "$model_key_last4_file" >>"$protected_patterns_file"
 
 # Prove the fresh Agent can start with administrator-managed configuration only.
@@ -485,15 +498,50 @@ scan_pattern_file() {
   esac
 }
 
+scan_evidence_file() {
+  match_mode=$1
+  pattern=$2
+  evidence_file=$3
+  leak_message=$4
+  case "$match_mode" in
+    fixed)
+      if grep -F -- "$pattern" "$evidence_file" >/dev/null 2>&1; then
+        scan_status=0
+      else
+        scan_status=$?
+      fi
+      ;;
+    extended)
+      if grep -E -- "$pattern" "$evidence_file" >/dev/null 2>&1; then
+        scan_status=0
+      else
+        scan_status=$?
+      fi
+      ;;
+    *)
+      echo "runtime evidence scanner mode is invalid" >&2
+      return 1
+      ;;
+  esac
+  case "$scan_status" in
+    0)
+      echo "$leak_message" >&2
+      return 1
+      ;;
+    1) ;;
+    *)
+      echo "runtime evidence scanner failed" >&2
+      return 1
+      ;;
+  esac
+}
+
 scan_logs() {
   phase=$1
-  dynamic_patterns_file=$2
   logs_file="$temp_dir/$phase-runtime.log"
   compose logs --no-color >"$logs_file" 2>&1
   scan_pattern_file "$protected_patterns_file" "$logs_file" \
     "sanitized container logs contain protected runtime data"
-  scan_pattern_file "$dynamic_patterns_file" "$logs_file" \
-    "sanitized container logs contain dynamic protected runtime data"
   scan_pattern_file "$model_keys_file" "$logs_file" \
     "sanitized container logs contain a model credential"
   scan_pattern_file "$model_key_last4_file" "$logs_file" \
@@ -519,10 +567,6 @@ run_compose_job() {
   fi
   scan_pattern_file "$protected_patterns_file" "$transcript_file" \
     "compose job transcript contains protected runtime data"
-  scan_pattern_file "$placeholder_dynamic_patterns_file" "$transcript_file" \
-    "compose job transcript contains placeholder protected data"
-  scan_pattern_file "$agentos_dynamic_patterns_file" "$transcript_file" \
-    "compose job transcript contains AgentOS protected data"
   scan_pattern_file "$model_keys_file" "$transcript_file" \
     "compose job transcript contains a model credential"
   scan_pattern_file "$model_key_last4_file" "$transcript_file" \
@@ -543,53 +587,70 @@ reset_assistant_rate_limits() {
     >/dev/null
 }
 
-identity_audit_collector=$(cat <<'PY'
-import os
-import re
-import stat
-import sys
+database_scalar() {
+  sql=$1
+  compose exec -T db psql \
+    --username="$POSTGRES_USER" \
+    --dbname="$POSTGRES_DB" \
+    --set=ON_ERROR_STOP=1 \
+    --tuples-only \
+    --no-align \
+    --command="$sql" | tr -d '[:space:]'
+}
 
-identity_audit_path = "/tmp/aap-session-identity-audit"
-identity_pattern = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-)
-try:
-    descriptor = os.open(
-        identity_audit_path,
-        os.O_RDONLY
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_NONBLOCK", 0),
-    )
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise ValueError
-        if stat.S_IMODE(metadata.st_mode) != 0o600:
-            raise ValueError
-        payload = os.read(descriptor, 65537)
-        if len(payload) > 65536:
-            raise ValueError
-    finally:
-        os.close(descriptor)
-    text = payload.decode("ascii")
-    identities = text.splitlines()
-    if not identities:
-        raise ValueError
-    if not text.endswith("\n"):
-        raise ValueError
-    if any(identity_pattern.fullmatch(identity) is None for identity in identities):
-        raise ValueError
-except Exception:
-    raise SystemExit("identity audit collection failed") from None
-sys.stdout.write(text)
-PY
-)
-
-collect_agent_session_identities() {
-  if ! compose exec -T agent python -c "$identity_audit_collector" >>"$agentos_dynamic_patterns_file"; then
-    echo "Agent session identity audit collection failed" >&2
+assert_stateless_runtime_evidence() {
+  agno_sessions_after=$(database_scalar "SELECT count(*) FROM agno.agno_sessions")
+  [ "$agno_sessions_after" = "$agno_sessions_before" ] || {
+    echo "assistant runtime persisted an AgentOS session" >&2
     return 1
-  fi
+  }
+
+  input_policy_count=$(database_scalar "SELECT count(*) FROM public.assistant_input_policy")
+  [ "$input_policy_count" = 1 ] || {
+    echo "assistant input policy must contain exactly one singleton row" >&2
+    return 1
+  }
+
+  assistant_rate_limit_count=$(database_scalar "SELECT count(*) FROM public.rate_limits WHERE key LIKE 'assistant:%'")
+  [ "$assistant_rate_limit_count" -gt 0 ] || {
+    echo "assistant acceptance did not persist required rate-limit evidence" >&2
+    return 1
+  }
+
+  database_dump="$temp_dir/stateless-runtime-data.sql"
+  compose exec -T db pg_dump \
+    --username="$POSTGRES_USER" \
+    --dbname="$POSTGRES_DB" \
+    --data-only \
+    --inserts \
+    --no-owner \
+    --no-privileges \
+    --exclude-table-data=public.assistant_input_policy >"$database_dump"
+  chmod 600 "$database_dump"
+
+  stateless_logs="$temp_dir/stateless-runtime.log"
+  compose logs --no-color >"$stateless_logs" 2>&1
+  chmod 600 "$stateless_logs"
+
+  for marker in \
+    "aap-stateless-question-20260812" \
+    "aap-stateless-answer-20260812" \
+    "aap-private-reasoning-20260812" \
+    "aap-immediate-block-20260812" \
+    "独立产品中心：成熟企业级 AI 产品，开箱即用"; do
+    for evidence_file in "$database_dump" "$stateless_logs"; do
+      scan_evidence_file fixed "$marker" "$evidence_file" \
+        "assistant marker persisted or leaked into runtime evidence"
+    done
+  done
+
+  for evidence_file in "$database_dump" "$stateless_logs"; do
+    scan_evidence_file extended '(^|[^[:alnum:]_])(run_id|session_id)([^[:alnum:]_]|$)' \
+      "$evidence_file" \
+      "assistant runtime evidence contains forbidden identity field names"
+  done
+
+  echo "Assistant runtime persistence passed: no session growth, no content persistence or log leakage, policy singleton and rate-limit rows present."
 }
 
 control_preflight=$(cat <<'PY'
@@ -748,19 +809,20 @@ export AAP_RUNTIME_E2E_PROJECT="$project"
 export AAP_RUNTIME_E2E_ENV_FILE="$env_file"
 export AAP_RUNTIME_MODEL_KEYS_FILE="$model_keys_file"
 export AAP_RUNTIME_MODEL_KEY_LAST4_FILE="$model_key_last4_file"
-export AAP_RUNTIME_DYNAMIC_PATTERNS_FILE="$placeholder_dynamic_patterns_file"
-BASE_URL=http://127.0.0.1:8080 \
+BASE_URL="$assistant_e2e_origin" \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
   --grep @guard
 
-BASE_URL=http://127.0.0.1:8080 \
+BASE_URL="$assistant_e2e_origin" \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
   --grep-invert "@agentos|@guard|@control"
 
-scan_logs "placeholder" "$placeholder_dynamic_patterns_file"
+scan_logs "placeholder"
 reset_assistant_rate_limits
+
+agno_sessions_before=$(database_scalar "SELECT count(*) FROM agno.agno_sessions")
 
 export AGENT_ENABLED=true
 export MODEL_API_KEY_FILE="$bootstrap_model_api_key_file"
@@ -778,14 +840,12 @@ run_compose_job "seed-auth-agentos" -e NODE_ENV=test migrate pnpm db:seed-auth-e
 compose up -d --no-deps --force-recreate --wait web
 compose up -d --no-deps --force-recreate --wait proxy
 
-export AAP_RUNTIME_DYNAMIC_PATTERNS_FILE="$agentos_dynamic_patterns_file"
-BASE_URL=http://127.0.0.1:8080 \
+BASE_URL="$assistant_e2e_origin" \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
   --grep @agentos
 
-collect_agent_session_identities
-scan_logs "agentos-bootstrap" "$agentos_dynamic_patterns_file"
+scan_logs "agentos-bootstrap"
 reset_assistant_rate_limits
 
 # Recreate both runtime sides before exercising the dynamic-control path.
@@ -794,16 +854,16 @@ run_compose_job "seed-auth-control" -e NODE_ENV=test migrate pnpm db:seed-auth-e
 compose up -d --no-deps --force-recreate --wait web
 compose up -d --no-deps --force-recreate --wait proxy
 
-BASE_URL=http://127.0.0.1:8080 \
+BASE_URL="$assistant_e2e_origin" \
   pnpm --filter @ai-agent-platform/web exec playwright test \
   e2e/assistant-runtime.spec.ts --project=desktop --workers=1 \
   --grep @control
 
-collect_agent_session_identities
-scan_logs "dynamic-control" "$agentos_dynamic_patterns_file"
+scan_logs "dynamic-control"
+assert_stateless_runtime_evidence
 
 cleanup
 trap - EXIT
 assert_zero_residue
 
-echo "Assistant runtime E2E passed: guard, placeholder, AgentOS bootstrap, dynamic control, recovery, reveal and zero-residue cleanup."
+echo "Assistant runtime E2E passed: guard, placeholder, stateless public/Admin AgentOS runs, dynamic control, recovery, reveal and zero-residue cleanup."

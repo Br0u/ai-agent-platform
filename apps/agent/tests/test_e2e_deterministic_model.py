@@ -20,7 +20,14 @@ from e2e_agent.app import (
 )
 
 from e2e_agent.deterministic_model import (
+    ALLOWED_NAVIGATION_SENTINEL,
+    FORBIDDEN_NAVIGATION_SENTINEL,
     INVALID_RESPONSE_SENTINEL,
+    PAGE_CONTEXT_SENTINEL,
+    PRODUCT_PAGE_EXCERPT,
+    SAFE_ANSWER_SENTINEL,
+    SPLIT_REASONING_PRIVATE,
+    SPLIT_REASONING_SENTINEL,
     DeterministicModel,
     acceptance_model_close_count,
     build_acceptance_managed_model,
@@ -200,7 +207,7 @@ def test_deterministic_model_runs_through_agno_without_network() -> None:
 
     output = agent.run("first user turn")
 
-    assert output.content == "deterministic-turn:1"
+    assert output.content == "aap.final.v1:deterministic-turn:1"
 
 
 def test_deterministic_model_counts_user_messages_in_the_agno_request() -> None:
@@ -214,7 +221,7 @@ def test_deterministic_model_counts_user_messages_in_the_agno_request() -> None:
 
     response = model.response(messages)
 
-    assert response.content == "deterministic-turn:2"
+    assert response.content == "aap.final.v1:deterministic-turn:2"
 
 
 def test_deterministic_model_returns_blank_for_exact_invalid_sentinel() -> None:
@@ -223,6 +230,78 @@ def test_deterministic_model_returns_blank_for_exact_invalid_sentinel() -> None:
     output = agent.run(INVALID_RESPONSE_SENTINEL)
 
     assert output.content == ""
+
+
+def test_deterministic_model_splits_private_thinking_from_safe_answer() -> None:
+    model = DeterministicModel()
+    messages = [Message(role="user", content=SPLIT_REASONING_SENTINEL)]
+
+    chunks = list(model.invoke_stream(messages, Message(role="assistant")))
+
+    assert [chunk.content for chunk in chunks] == [
+        "<THINK data-x>",
+        SPLIT_REASONING_PRIVATE,
+        "</THINK>",
+        "\naap.fina",
+        "l.v1:",
+        SAFE_ANSWER_SENTINEL[:12],
+        SAFE_ANSWER_SENTINEL[12:],
+    ]
+
+
+def test_deterministic_model_reports_only_verified_product_page_context() -> None:
+    model = DeterministicModel()
+
+    present = model.invoke(
+        [
+            Message(
+                role="user",
+                content=f"服务器验证的当前公开页面：\n{PRODUCT_PAGE_EXCERPT}\n\n用户问题：\n{PAGE_CONTEXT_SENTINEL}",
+            )
+        ],
+        Message(role="assistant"),
+    )
+    absent = model.invoke(
+        [
+            Message(
+                role="user",
+                content=f"无已验证页面正文。\n\n用户问题：{PAGE_CONTEXT_SENTINEL}",
+            )
+        ],
+        Message(role="assistant"),
+    )
+
+    assert present.content == "aap.final.v1:verified-product-page-context"
+    assert absent.content == "aap.final.v1:no-public-page-context"
+
+
+@pytest.mark.parametrize(
+    ("question", "pathname"),
+    [
+        (ALLOWED_NAVIGATION_SENTINEL, "/pricing"),
+        (FORBIDDEN_NAVIGATION_SENTINEL, "/not-registered"),
+    ],
+)
+def test_deterministic_model_calls_navigation_with_exact_sentinel_path(
+    question: str,
+    pathname: str,
+) -> None:
+    model = DeterministicModel()
+
+    response = model.invoke(
+        [Message(role="user", content=question)], Message(role="assistant")
+    )
+
+    assert response.tool_calls == [
+        {
+            "id": "assistant-navigation-e2e-call",
+            "type": "function",
+            "function": {
+                "name": "suggest_navigation",
+                "arguments": f'{{"pathname":"{pathname}"}}',
+            },
+        }
+    ]
 
 
 def test_deterministic_model_recognizes_the_exact_bff_wrapped_sentinel() -> None:
@@ -285,7 +364,7 @@ def test_deterministic_model_does_not_reparse_a_marker_inside_the_question() -> 
 
     response = model.response(messages)
 
-    assert response.content == "deterministic-turn:1"
+    assert response.content == "aap.final.v1:deterministic-turn:1"
 
 
 def test_deterministic_model_only_matches_the_latest_exact_user_question() -> None:
@@ -310,7 +389,7 @@ def test_deterministic_model_only_matches_the_latest_exact_user_question() -> No
 
     response = model.response(messages)
 
-    assert response.content == "deterministic-turn:2"
+    assert response.content == "aap.final.v1:deterministic-turn:2"
 
 
 def test_deterministic_model_does_not_match_a_sentinel_substring() -> None:
@@ -327,7 +406,7 @@ def test_deterministic_model_does_not_match_a_sentinel_substring() -> None:
 
     response = model.response(messages)
 
-    assert response.content == "deterministic-turn:1"
+    assert response.content == "aap.final.v1:deterministic-turn:1"
 
 
 def acceptance_settings(model_id: str) -> ActiveModelSettings:
@@ -346,7 +425,9 @@ def test_acceptance_builder_returns_owned_id_specific_offline_model() -> None:
     assert isinstance(managed, ManagedModel)
     assert isinstance(managed.model, DeterministicModel)
     response = managed.model.response([Message(role="user", content="hello")])
-    assert response.content == "deterministic-model:e2e-openai-rev1:turn:1"
+    assert response.content == (
+        "aap.final.v1:deterministic-model:e2e-openai-rev1:turn:1"
+    )
 
 
 def test_acceptance_failure_prefix_returns_empty_verification_response() -> None:

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -5,25 +6,17 @@ import {
   type AgentOSRunClient,
 } from "./agentos-run-client";
 import type { AgentOSExecutionCircuit } from "./agentos-execution-circuit";
-import {
-  AgentOSAssistantProvider,
-  defaultAgentOSCleanupRecorder,
-  type AgentOSCleanupFailureEvent,
-  type AgentOSCleanupRecorder,
-} from "./agentos-assistant-provider";
+import { AgentOSAssistantProvider } from "./agentos-assistant-provider";
+import { ASSISTANT_FINAL_ANSWER_MARKER } from "./assistant-content-filter";
 
 function fixture(
   options: {
     runAgent?: AgentOSRunClient["runAgent"];
     runAgentStream?: AgentOSRunClient["runAgentStream"];
-    deleteSession?: AgentOSRunClient["deleteSession"];
-    randomUUID?: () => string;
-    cleanupRecorder?: AgentOSCleanupRecorder;
     runFailureRecorder?: (event: {
       code: string;
       diagnostic: string | null;
     }) => void;
-    useDefaultCleanupRecorder?: boolean;
   } = {},
 ) {
   const runClient: AgentOSRunClient = {
@@ -33,36 +26,43 @@ function fixture(
     runAgentStream: vi.fn(
       options.runAgentStream ??
         async function* () {
-          yield "真实模型回答";
+          yield { type: "activity" as const, phase: "analyzing" as const };
+          yield {
+            type: "answer_delta" as const,
+            content: `${ASSISTANT_FINAL_ANSWER_MARKER}真实模型回答`,
+          };
         },
     ),
-    deleteSession: vi.fn(options.deleteSession ?? (async () => undefined)),
   };
   const circuit: AgentOSExecutionCircuit = {
     execute: vi.fn((operation) => operation()),
     inspect: () => ({ state: "closed", consecutiveFailures: 0 }),
   };
-  const cleanupRecorder = vi.fn(options.cleanupRecorder);
   const runFailureRecorder = vi.fn(options.runFailureRecorder);
+  const pageResolver = { exists: vi.fn(async () => true) };
   const provider = new AgentOSAssistantProvider({
     runClient,
     circuit,
-    randomUUID: options.randomUUID ?? (() => "ephemeral-internal-id"),
-    ...(options.useDefaultCleanupRecorder ? {} : { cleanupRecorder }),
     runFailureRecorder,
+    pageResolver,
   });
   return {
     provider,
     runClient,
     circuit,
-    cleanupRecorder,
     runFailureRecorder,
+    pageResolver,
   };
 }
 
 const assistantRequest = {
+  version: "2" as const,
   message: "不要改写我的问题 ✅",
-  context: { pathname: "/产品/码多多" },
+  history: [
+    { role: "user" as const, content: "先前问题" },
+    { role: "assistant" as const, content: "先前回答" },
+  ],
+  page: { pathname: "/product", search: "" },
 };
 
 afterEach(() => {
@@ -70,6 +70,23 @@ afterEach(() => {
 });
 
 describe("AgentOSAssistantProvider", () => {
+  it("contains no deprecated persistent-session cleanup compatibility", () => {
+    const source = readFileSync(
+      "src/server/assistant/agentos-assistant-provider.ts",
+      "utf8",
+    );
+
+    expect(source).not.toContain(["AgentOS", "Cleanup", "Recorder"].join(""));
+    expect(source).not.toContain(
+      ["persistent", "session", "cleanup", "failed"].join("_"),
+    );
+    expect(source).not.toContain(
+      ["Assistant session", "cleanup failed"].join(" "),
+    );
+    expect(source).not.toContain(["Cookie", "clearing"].join("-"));
+    expect(source).toContain("defaultAgentOSRunFailureRecorder");
+  });
+
   it("records only the safe run failure code and diagnostic before circuit sanitization", async () => {
     const runError = new AgentOSRunClientError(
       "invalid_response",
@@ -84,10 +101,7 @@ describe("AgentOSAssistantProvider", () => {
     await expect(
       provider.reply({
         request: assistantRequest,
-        session: {
-          kind: "persistent",
-          internalSessionId: "private-session",
-        },
+        pageContext: null,
       }),
     ).rejects.toBe(runError);
 
@@ -100,37 +114,19 @@ describe("AgentOSAssistantProvider", () => {
     );
   });
 
-  it("projects default cleanup logs onto the fixed safe event shape", () => {
-    const warning = vi
-      .spyOn(console, "warn")
-      .mockImplementation(() => undefined);
-    const augmentedEvent = {
-      category: "persistent_session_cleanup_failed",
-      count: 7,
-      raw: "private Cookie session prompt reply URL and key",
-    } as AgentOSCleanupFailureEvent & { raw: string };
-
-    defaultAgentOSCleanupRecorder(augmentedEvent);
-
-    expect(warning).toHaveBeenCalledExactlyOnceWith(
-      "Assistant session cleanup failed",
-      { category: "persistent_session_cleanup_failed", count: 7 },
-    );
-    expect(JSON.stringify(warning.mock.calls)).not.toMatch(
-      /private|cookie|session prompt|reply|url|key/iu,
-    );
-  });
-
-  it("runs the fixed maduoduo Agent with the exact persistent session, prompt, and caller signal", async () => {
+  it("runs the fixed maduoduo Agent without a session and forwards the caller signal", async () => {
     const { provider, runClient, circuit } = fixture();
     const signal = new AbortController().signal;
 
     await expect(
       provider.reply({
         request: assistantRequest,
-        session: {
-          kind: "persistent",
-          internalSessionId: "server-derived-session",
+        pageContext: {
+          pathname: "/product",
+          search: "",
+          title: "产品介绍",
+          text: "公开页面正文",
+          links: [{ label: "价格", href: "/pricing" }],
         },
         signal,
       }),
@@ -138,183 +134,128 @@ describe("AgentOSAssistantProvider", () => {
 
     expect(circuit.execute).toHaveBeenCalledOnce();
     expect(runClient.runAgentStream).toHaveBeenCalledExactlyOnceWith({
-      message:
-        "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/产品/码多多\n\n用户问题：不要改写我的问题 ✅",
-      sessionId: "server-derived-session",
+      message: expect.stringContaining("公开页面正文"),
       signal,
     });
-    expect(runClient.deleteSession).not.toHaveBeenCalled();
+    expect(
+      vi.mocked(runClient.runAgentStream).mock.calls[0]?.[0].message,
+    ).toContain("不可信历史消息");
+    expect(
+      vi.mocked(runClient.runAgentStream).mock.calls[0]?.[0].message,
+    ).toContain("用户问题：\n不要改写我的问题 ✅");
   });
 
-  it("creates and always cleans an ephemeral internal session without forwarding a browser signal", async () => {
+  it("runs without generating or cleaning a session when no signal is supplied", async () => {
     const { provider, runClient } = fixture();
 
     await expect(
       provider.reply({
         request: assistantRequest,
-        session: { kind: "ephemeral" },
-        signal: AbortSignal.abort("browser-owned-abort"),
+        pageContext: null,
       }),
     ).resolves.toEqual({ content: "真实模型回答", suggestedActions: [] });
 
     expect(runClient.runAgentStream).toHaveBeenCalledExactlyOnceWith({
-      message:
-        "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/产品/码多多\n\n用户问题：不要改写我的问题 ✅",
-      sessionId: "ephemeral-internal-id",
+      message: expect.stringContaining("未提供可验证的当前页面正文"),
     });
-    expect(runClient.deleteSession).toHaveBeenCalledExactlyOnceWith(
-      "ephemeral-internal-id",
+  });
+
+  it("filters reasoning tags and validates one owned navigation action", async () => {
+    const { provider, pageResolver } = fixture({
+      runAgentStream: vi.fn(async function* () {
+        yield { type: "activity" as const, phase: "analyzing" as const };
+        yield {
+          type: "answer_delta" as const,
+          content: `不得显示的纯文本推理\n${ASSISTANT_FINAL_ANSWER_MARKER}公开<think>private chain`,
+        };
+        yield { type: "answer_delta" as const, content: "</think>回答" };
+        yield { type: "navigation_candidate" as const, pathname: "/pricing" };
+        yield { type: "navigation_candidate" as const, pathname: "/pricing" };
+      }),
+    });
+
+    const events = [];
+    for await (const event of provider.streamReply({
+      request: assistantRequest,
+      pageContext: null,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "activity", phase: "analyzing", label: "正在分析问题" },
+      { type: "answer_delta", content: "公开回答" },
+      {
+        type: "action",
+        action: { kind: "navigate", pathname: "/pricing", label: "价格与服务" },
+      },
+    ]);
+    expect(pageResolver.exists).toHaveBeenCalledExactlyOnceWith(
+      "/pricing",
+      undefined,
+    );
+    expect(JSON.stringify(events)).not.toContain("private chain");
+  });
+
+  it("uses a verified current-page link when an explicit navigation request omits the tool call", async () => {
+    const { provider, pageResolver } = fixture({
+      runAgentStream: vi.fn(async function* () {
+        yield {
+          type: "answer_delta" as const,
+          content: `${ASSISTANT_FINAL_ANSWER_MARKER}正在为你打开产品页面。`,
+        };
+      }),
+    });
+
+    const events = [];
+    for await (const event of provider.streamReply({
+      request: { ...assistantRequest, message: "我想了解产品" },
+      pageContext: {
+        pathname: "/",
+        search: "",
+        title: "首页",
+        text: "产品介绍",
+        links: [{ label: "产品", href: "/product" }],
+      },
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "answer_delta", content: "正在为你打开产品页面。" },
+      {
+        type: "action",
+        action: { kind: "navigate", pathname: "/product", label: "产品介绍" },
+      },
+    ]);
+    expect(pageResolver.exists).toHaveBeenCalledExactlyOnceWith(
+      "/product",
+      undefined,
     );
   });
 
-  it("uses the platform UUID generator without losing its receiver", async () => {
-    const runClient: AgentOSRunClient = {
-      runAgent: vi.fn(async () => ({ content: "真实模型回答" })),
-      runAgentStream: vi.fn(async function* () {
-        yield "真实模型回答";
-      }),
-      deleteSession: vi.fn(async () => undefined),
-    };
-    const circuit: AgentOSExecutionCircuit = {
-      execute: vi.fn((operation) => operation()),
-      inspect: () => ({ state: "closed", consecutiveFailures: 0 }),
-    };
-    const provider = new AgentOSAssistantProvider({ runClient, circuit });
-
-    await expect(
-      provider.reply({
-        request: assistantRequest,
-        session: { kind: "ephemeral" },
-      }),
-    ).resolves.toMatchObject({ content: "真实模型回答" });
-
-    const sessionId = vi.mocked(runClient.runAgentStream).mock.calls[0]?.[0]
-      .sessionId;
-    expect(sessionId).toMatch(/^[0-9a-f-]{36}$/u);
-    expect(runClient.deleteSession).toHaveBeenCalledExactlyOnceWith(sessionId);
-  });
-
-  it.each(["timeout", "transport_error"] as const)(
-    "cleans the ephemeral session after a %s run failure and preserves the sanitized run error",
-    async (code) => {
-      const runError = Object.assign(new Error("safe run failure"), { code });
-      const { provider, runClient } = fixture({
-        runAgentStream: vi.fn(async function* () {
-          throw runError;
-        }),
-      });
-
-      await expect(
-        provider.reply({
-          request: assistantRequest,
-          session: { kind: "ephemeral" },
-        }),
-      ).rejects.toBe(runError);
-      expect(runClient.deleteSession).toHaveBeenCalledExactlyOnceWith(
-        "ephemeral-internal-id",
-      );
-    },
-  );
-
-  it("does not replace a valid reply when cleanup fails and records only a stable category/count", async () => {
-    const { provider, cleanupRecorder } = fixture({
-      deleteSession: vi
-        .fn()
-        .mockRejectedValue(
-          new Error("raw session-id prompt reply url and secret"),
-        ),
-    });
-
-    await expect(
-      provider.reply({
-        request: assistantRequest,
-        session: { kind: "ephemeral" },
-      }),
-    ).resolves.toEqual({ content: "真实模型回答", suggestedActions: [] });
-    expect(cleanupRecorder).toHaveBeenCalledExactlyOnceWith({
-      category: "ephemeral_session_cleanup_failed",
-      count: 1,
-    });
-    expect(JSON.stringify(cleanupRecorder.mock.calls)).not.toMatch(
-      /ephemeral-internal-id|不要改写|真实模型回答|raw|url|secret/iu,
-    );
-  });
-
-  it("does not replace the original run failure when cleanup also fails", async () => {
-    const runError = Object.assign(new Error("safe run failure"), {
-      code: "timeout",
-    });
-    const { provider, cleanupRecorder } = fixture({
-      runAgentStream: vi.fn(async function* () {
-        throw runError;
-      }),
-      deleteSession: vi.fn().mockRejectedValue(new Error("raw cleanup cause")),
-    });
-
-    await expect(
-      provider.reply({
-        request: assistantRequest,
-        session: { kind: "ephemeral" },
-      }),
-    ).rejects.toBe(runError);
-    expect(cleanupRecorder).toHaveBeenCalledExactlyOnceWith({
-      category: "ephemeral_session_cleanup_failed",
-      count: 1,
-    });
-  });
-
-  it("uses the production cleanup recorder by default without exposing cleanup inputs", async () => {
-    const warning = vi.spyOn(console, "warn").mockImplementation(() => {
-      throw new Error("raw logger failure");
-    });
+  it("uses a generic activity label for non-navigation tools", async () => {
     const { provider } = fixture({
-      useDefaultCleanupRecorder: true,
-      deleteSession: vi
-        .fn()
-        .mockRejectedValue(
-          new Error("raw session-id prompt reply URL and secret"),
-        ),
-    });
-
-    await expect(
-      provider.reply({
-        request: assistantRequest,
-        session: { kind: "ephemeral" },
-      }),
-    ).resolves.toEqual({ content: "真实模型回答", suggestedActions: [] });
-    expect(warning).toHaveBeenCalledExactlyOnceWith(
-      "Assistant session cleanup failed",
-      { category: "ephemeral_session_cleanup_failed", count: 1 },
-    );
-    expect(JSON.stringify(warning.mock.calls)).not.toMatch(
-      /ephemeral-internal-id|不要改写|真实模型回答|raw|url|secret/iu,
-    );
-  });
-
-  it("keeps the original run failure when the default cleanup logger throws", async () => {
-    const warning = vi.spyOn(console, "warn").mockImplementation(() => {
-      throw new Error("raw logger failure");
-    });
-    const runError = Object.assign(new Error("safe run failure"), {
-      code: "timeout",
-    });
-    const { provider } = fixture({
-      useDefaultCleanupRecorder: true,
       runAgentStream: vi.fn(async function* () {
-        throw runError;
+        yield { type: "activity" as const, phase: "tool" as const };
+        yield {
+          type: "answer_delta" as const,
+          content: `${ASSISTANT_FINAL_ANSWER_MARKER}回答`,
+        };
       }),
-      deleteSession: vi.fn().mockRejectedValue(new Error("raw cleanup cause")),
     });
 
-    await expect(
-      provider.reply({
-        request: assistantRequest,
-        session: { kind: "ephemeral" },
-      }),
-    ).rejects.toBe(runError);
-    expect(warning).toHaveBeenCalledExactlyOnceWith(
-      "Assistant session cleanup failed",
-      { category: "ephemeral_session_cleanup_failed", count: 1 },
-    );
+    const events = [];
+    for await (const event of provider.streamReply({
+      request: assistantRequest,
+      pageContext: null,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "activity", phase: "tool", label: "正在使用工具" },
+      { type: "answer_delta", content: "回答" },
+    ]);
   });
 });

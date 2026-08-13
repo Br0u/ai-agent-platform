@@ -648,6 +648,62 @@ def test_google_client_allows_exactly_one_attempt() -> None:
     assert client._api_client._http_options.retry_options.attempts == 1
 
 
+@pytest.mark.parametrize("provider", ALL_PROVIDERS)
+def test_managed_models_disable_provider_reasoning_where_supported(
+    provider: ModelProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_google_options: dict[str, object] = {}
+    if provider == "google":
+        google_models = import_module("agno.models.google")
+        gemini_type = google_models.Gemini
+
+        def capture_gemini_options(**options: object) -> Model:
+            captured_google_options.update(options)
+            return gemini_type(**options)
+
+        monkeypatch.setattr(google_models, "Gemini", capture_gemini_options)
+
+    sync_client = httpx.Client(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(204)),
+        follow_redirects=False,
+    )
+    async_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(204)),
+        follow_redirects=False,
+    )
+    managed = model_registry.build_managed_model(
+        make_settings(provider),
+        http_client=sync_client,
+        http_async_client=async_client,
+    )
+    model = managed.model
+
+    if provider == "openai":
+        assert getattr(model, "reasoning") is None
+        assert getattr(model, "reasoning_summary") is None
+        assert getattr(model, "store") is False
+    elif provider == "anthropic":
+        assert getattr(model, "thinking") is None
+    elif provider == "google":
+        assert captured_google_options["include_thoughts"] is False
+        assert "thinking_budget" not in captured_google_options
+        assert "thinking_level" not in captured_google_options
+    elif provider == "dashscope":
+        assert getattr(model, "enable_thinking") is False
+        assert getattr(model, "include_thoughts") is False
+    elif provider == "deepseek":
+        assert getattr(model, "use_thinking") is False
+    else:
+        assert provider == "minimax"
+        assert not hasattr(model, "enable_thinking")
+        assert not hasattr(model, "use_thinking")
+
+    asyncio.run(managed.aclose())
+    sync_client.close()
+    asyncio.run(async_client.aclose())
+
+
 @pytest.mark.parametrize(
     ("provider", "expected_base_url"),
     (

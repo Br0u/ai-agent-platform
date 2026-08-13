@@ -5,12 +5,19 @@ import {
   ASSISTANT_ACTION_LABEL_MAX_CODE_POINTS,
   ASSISTANT_CONTENT_MAX_CODE_POINTS,
   ASSISTANT_MAX_SUGGESTED_ACTIONS,
+  ASSISTANT_HISTORY_CONTENT_MAX_CODE_POINTS,
+  ASSISTANT_HISTORY_MAX_CODE_POINTS,
+  ASSISTANT_HISTORY_MAX_MESSAGES,
   ASSISTANT_MESSAGE_ID_MAX_CODE_POINTS,
+  ASSISTANT_PATHNAME_MAX_CODE_POINTS,
   ASSISTANT_REQUEST_ID_MAX_CODE_POINTS,
+  ASSISTANT_REQUEST_MESSAGE_MAX_CODE_POINTS,
+  ASSISTANT_SEARCH_MAX_CODE_POINTS,
   createAssistantErrorResponse,
   isAssistantProviderReply,
   isAssistantStatusResponse,
   isAssistantSuccessResponse,
+  parseAssistantRequest,
   type AssistantStatusResponse,
   type AssistantSuccessResponse,
 } from "./assistant-contract";
@@ -20,7 +27,6 @@ function success(overrides: Record<string, unknown> = {}) {
     version: "1",
     requestId: "req-1",
     mode: "placeholder",
-    session: { temporary: true, expiresAt: "2026-07-13T12:00:00.000Z" },
     message: { id: "msg-1", role: "assistant", content: "回答" },
     suggestedActions: [{ label: "帮助中心", href: "/help" }],
     ...overrides,
@@ -28,6 +34,177 @@ function success(overrides: Record<string, unknown> = {}) {
 }
 
 describe("assistant platform contract", () => {
+  const validRequest = {
+    version: "2",
+    message: "当前问题",
+    history: [
+      { role: "user", content: "上一问" },
+      { role: "assistant", content: "上一答" },
+    ],
+    page: { pathname: "/product", search: "?tab=agent" },
+  };
+
+  it("parses the exact V2 request and trims message content", () => {
+    expect(
+      parseAssistantRequest({ ...validRequest, message: "  当前问题  " }),
+    ).toEqual(validRequest);
+    expect(parseAssistantRequest({ ...validRequest, page: null })).toEqual({
+      ...validRequest,
+      page: null,
+    });
+  });
+
+  it("accepts six complete turns at every Unicode boundary", () => {
+    const remaining =
+      ASSISTANT_HISTORY_MAX_CODE_POINTS -
+      ASSISTANT_HISTORY_CONTENT_MAX_CODE_POINTS;
+    const base = Math.floor(remaining / (ASSISTANT_HISTORY_MAX_MESSAGES - 1));
+    const history = Array.from(
+      { length: ASSISTANT_HISTORY_MAX_MESSAGES },
+      (_, index) => ({
+        role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+        content: "😀".repeat(
+          index === 0
+            ? ASSISTANT_HISTORY_CONTENT_MAX_CODE_POINTS
+            : base +
+                (index <= remaining % (ASSISTANT_HISTORY_MAX_MESSAGES - 1)
+                  ? 1
+                  : 0),
+        ),
+      }),
+    );
+
+    expect(
+      parseAssistantRequest({
+        version: "2",
+        message: "😀".repeat(ASSISTANT_REQUEST_MESSAGE_MAX_CODE_POINTS),
+        history,
+        page: {
+          pathname: `/${"a".repeat(ASSISTANT_PATHNAME_MAX_CODE_POINTS - 1)}`,
+          search: `?${"a".repeat(ASSISTANT_SEARCH_MAX_CODE_POINTS - 1)}`,
+        },
+      }),
+    ).not.toBeNull();
+  });
+
+  it.each([
+    ["V1 request", { message: "问题", context: { pathname: "/" } }],
+    ["extra request key", { ...validRequest, extra: true }],
+    [
+      "extra history key",
+      {
+        ...validRequest,
+        history: [{ role: "assistant", content: "回答", reasoning: "秘密" }],
+      },
+    ],
+    [
+      "system role",
+      {
+        ...validRequest,
+        history: [{ role: "system", content: "指令" }],
+      },
+    ],
+    [
+      "assistant-first history",
+      {
+        ...validRequest,
+        history: [
+          { role: "assistant", content: "回答" },
+          { role: "user", content: "问题" },
+        ],
+      },
+    ],
+    [
+      "user-last history",
+      {
+        ...validRequest,
+        history: [{ role: "user", content: "问题" }],
+      },
+    ],
+    [
+      "too many history messages",
+      {
+        ...validRequest,
+        history: Array.from(
+          { length: ASSISTANT_HISTORY_MAX_MESSAGES + 2 },
+          (_, index) => ({
+            role: index % 2 === 0 ? "user" : "assistant",
+            content: "内容",
+          }),
+        ),
+      },
+    ],
+    [
+      "overlong current message",
+      {
+        ...validRequest,
+        message: "😀".repeat(ASSISTANT_REQUEST_MESSAGE_MAX_CODE_POINTS + 1),
+      },
+    ],
+    [
+      "overlong history message",
+      {
+        ...validRequest,
+        history: [
+          {
+            role: "user",
+            content: "😀".repeat(ASSISTANT_HISTORY_CONTENT_MAX_CODE_POINTS + 1),
+          },
+          { role: "assistant", content: "回答" },
+        ],
+      },
+    ],
+    [
+      "overlong history aggregate",
+      {
+        ...validRequest,
+        history: Array.from({ length: 6 }, (_, index) => ({
+          role: index % 2 === 0 ? "user" : "assistant",
+          content: "😀".repeat(ASSISTANT_HISTORY_MAX_CODE_POINTS / 6 + 1),
+        })),
+      },
+    ],
+    [
+      "overlong history aggregate hidden in surrounding whitespace",
+      {
+        ...validRequest,
+        history: Array.from({ length: 6 }, (_, index) => ({
+          role: index % 2 === 0 ? "user" : "assistant",
+          content: `${" ".repeat(5_400)}内容`,
+        })),
+      },
+    ],
+    [
+      "overlong pathname",
+      {
+        ...validRequest,
+        page: {
+          pathname: `/${"😀".repeat(ASSISTANT_PATHNAME_MAX_CODE_POINTS)}`,
+          search: "",
+        },
+      },
+    ],
+    [
+      "overlong search",
+      {
+        ...validRequest,
+        page: {
+          pathname: "/",
+          search: `?${"😀".repeat(ASSISTANT_SEARCH_MAX_CODE_POINTS)}`,
+        },
+      },
+    ],
+    [
+      "extra page key",
+      {
+        ...validRequest,
+        page: { pathname: "/", search: "", href: "https://evil.example" },
+      },
+    ],
+  ])("rejects %s", (_name, input) => {
+    expect(parseAssistantRequest(input)).toBeNull();
+  });
+
   it("marks transient errors retryable and validation errors terminal", () => {
     expect(
       createAssistantErrorResponse("req-1", "rate_limited").error.retryable,
@@ -39,25 +216,21 @@ describe("assistant platform contract", () => {
     expect(
       createAssistantErrorResponse("req-1", "validation_error").error.retryable,
     ).toBe(false);
+    expect(createAssistantErrorResponse("req-1", "input_blocked")).toEqual({
+      version: "1",
+      requestId: "req-1",
+      error: {
+        code: "input_blocked",
+        message: "该问题无法提交，请调整表述",
+        retryable: false,
+      },
+    });
   });
 
-  it("requires a canonical expiry and exposes no session identifier", () => {
+  it("accepts the exact success envelope without session metadata", () => {
     expect(isAssistantSuccessResponse(success())).toBe(true);
     expect(
-      isAssistantSuccessResponse(
-        success({ session: { temporary: true, expiresAt: "not-a-date" } }),
-      ),
-    ).toBe(false);
-    expect(
-      isAssistantSuccessResponse(
-        success({
-          session: {
-            temporary: true,
-            expiresAt: "2026-07-13T12:00:00.000Z",
-            id: "must-not-be-public",
-          },
-        }),
-      ),
+      isAssistantSuccessResponse(success({ session: { temporary: true } })),
     ).toBe(false);
   });
 
@@ -66,7 +239,6 @@ describe("assistant platform contract", () => {
       version: "1",
       requestId: "req-1",
       mode: "agentos",
-      session: { temporary: true, expiresAt: "2026-07-13T12:00:00.000Z" },
       message: { id: "msg-1", role: "assistant", content: "回答" },
       suggestedActions: [],
     } satisfies AssistantSuccessResponse;

@@ -14,7 +14,9 @@ describe("trusted assistant client IP", () => {
       forwarded: "for=192.0.2.1",
     });
 
-    expect(resolveTrustedClientIp(headers, false)).toBeUndefined();
+    expect(resolveTrustedClientIp(headers, false)).toEqual({
+      mode: "direct_global",
+    });
   });
 
   it.each([
@@ -25,11 +27,13 @@ describe("trusted assistant client IP", () => {
   ])("accepts one canonicalizable %s X-Real-IP", (_name, raw, expected) => {
     expect(
       resolveTrustedClientIp(new Headers({ "x-real-ip": raw }), true),
-    ).toBe(expected);
+    ).toEqual({ mode: "trusted", ipAddress: expected });
   });
 
-  it("returns no IP when trusted proxy mode receives no X-Real-IP", () => {
-    expect(resolveTrustedClientIp(new Headers(), true)).toBeUndefined();
+  it("fails closed when trusted proxy mode receives no X-Real-IP", () => {
+    expect(resolveTrustedClientIp(new Headers(), true)).toEqual({
+      mode: "invalid_proxy",
+    });
   });
 
   it.each([
@@ -42,9 +46,9 @@ describe("trusted assistant client IP", () => {
     ["IPv4-mapped dotted IPv6", "::ffff:192.0.2.1"],
     ["IPv4-mapped hexadecimal IPv6", "::ffff:c000:201"],
   ])("rejects an ambiguous or invalid %s", (_name, value) => {
-    expect(() =>
+    expect(
       resolveTrustedClientIp(new Headers({ "x-real-ip": value }), true),
-    ).toThrow(InvalidTrustedClientIpError);
+    ).toEqual({ mode: "invalid_proxy" });
   });
 
   it.each([" 203.0.113.10", "203.0.113.10 "])(
@@ -62,6 +66,6 @@ describe("trusted assistant client IP", () => {
         new Headers({ "x-forwarded-for": "203.0.113.10" }),
         true,
       ),
-    ).toBeUndefined();
+    ).toEqual({ mode: "invalid_proxy" });
   });
 });

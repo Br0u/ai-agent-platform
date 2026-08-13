@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import "../app-shell.css";
 import {
   createMobiusMesh,
@@ -14,6 +14,11 @@ const TWO_PI = Math.PI * 2;
 const YAW_PERIOD_MS = 11_000;
 const FOCAL_LENGTH = 7.5;
 const HEADER_MESH = createMobiusMesh();
+const HEADER_ANIMATION_VARIANTS = [
+  { hue: 0, pitch: 0, speed: 1 },
+  { hue: 18, pitch: 0.7, speed: 1.18 },
+  { hue: -14, pitch: 1.4, speed: 0.84 },
+] as const;
 
 type ProjectedVertex = {
   x: number;
@@ -61,6 +66,7 @@ function projectFace(
   face: MobiusFace,
   mesh: MobiusMesh,
   projectedVertices: ProjectedVertex[],
+  hueOffset: number,
 ): ProjectedTriangle {
   const points: [ProjectedVertex, ProjectedVertex, ProjectedVertex] = [
     projectedVertices[face[0]],
@@ -75,7 +81,7 @@ function projectFace(
   const averageU = (vertices[0].u + vertices[1].u + vertices[2].u) / 3;
   const averageV = (vertices[0].v + vertices[1].v + vertices[2].v) / 3;
   const normalizedU = (((averageU % TWO_PI) + TWO_PI) % TWO_PI) / TWO_PI;
-  const hue = 222 + normalizedU * 68 + averageV * 6;
+  const hue = 222 + normalizedU * 68 + averageV * 6 + hueOffset;
   const saturation = 78 + averageV * 4;
   const lightness = 48 + averageV * 10;
 
@@ -92,13 +98,18 @@ function drawAssistantMobius(
   width: number,
   height: number,
   elapsedMs: number,
+  animationVariant: number,
 ): void {
   context.clearRect(0, 0, width, height);
   if (width <= 0 || height <= 0) return;
 
-  const yaw = ((elapsedMs % YAW_PERIOD_MS) / YAW_PERIOD_MS) * TWO_PI;
-  const pitch = 0.2 + Math.sin(elapsedMs / 2_600) * 0.075;
-  const verticalFloat = Math.sin(elapsedMs / 2_100) * height * 0.035;
+  const variant =
+    HEADER_ANIMATION_VARIANTS[animationVariant] ?? HEADER_ANIMATION_VARIANTS[0];
+  const variantTime = elapsedMs * variant.speed;
+  const yaw = ((variantTime % YAW_PERIOD_MS) / YAW_PERIOD_MS) * TWO_PI;
+  const pitch = 0.2 + Math.sin(variantTime / 2_600 + variant.pitch) * 0.075;
+  const verticalFloat =
+    Math.sin(variantTime / 2_100 + variant.pitch) * height * 0.035;
   const scale = mobiusScaleForViewport(width, height);
   const projectedVertices = mesh.vertices.map((vertex) =>
     projectVertex(
@@ -112,7 +123,7 @@ function drawAssistantMobius(
     ),
   );
   const triangles = mesh.faces
-    .map((face) => projectFace(face, mesh, projectedVertices))
+    .map((face) => projectFace(face, mesh, projectedVertices, variant.hue))
     .sort((first, second) => first.depth - second.depth);
 
   for (const triangle of triangles) {
@@ -162,19 +173,26 @@ function drawAssistantMobius(
   context.globalAlpha = 1;
 }
 
-export type AssistantHeaderEntryProps = {
-  isOpen?: boolean;
-  mode?: "launcher" | "workspace";
-  onActivate: (trigger: HTMLButtonElement) => void;
-};
-
-export function AssistantHeaderEntry({
-  isOpen = false,
-  mode = "launcher",
-  onActivate,
-}: AssistantHeaderEntryProps) {
+export function AssistantHeaderMark() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const workspaceMode = mode === "workspace";
+  const [animationVariant, setAnimationVariant] = useState(0);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(
+      () =>
+        setAnimationVariant(
+          (current) =>
+            (current +
+              1 +
+              Math.floor(
+                Math.random() * (HEADER_ANIMATION_VARIANTS.length - 1),
+              )) %
+            HEADER_ANIMATION_VARIANTS.length,
+        ),
+      4_000 + Math.random() * 3_000,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [animationVariant]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -198,7 +216,14 @@ export function AssistantHeaderEntry({
       context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
 
       if (reducedMotion) {
-        drawAssistantMobius(context, HEADER_MESH, width, height, 0);
+        drawAssistantMobius(
+          context,
+          HEADER_MESH,
+          width,
+          height,
+          0,
+          animationVariant,
+        );
       }
     };
 
@@ -213,6 +238,7 @@ export function AssistantHeaderEntry({
         width,
         height,
         time - animationStart,
+        animationVariant,
       );
 
       if (!reducedMotion) {
@@ -264,7 +290,32 @@ export function AssistantHeaderEntry({
       resizeObserver?.disconnect();
       mediaQuery.removeEventListener?.("change", handleMotionChange);
     };
-  }, []);
+  }, [animationVariant]);
+
+  return (
+    <canvas
+      aria-hidden="true"
+      className="assistant-header-entry__mark"
+      data-animation-variant={animationVariant}
+      ref={canvasRef}
+    />
+  );
+}
+
+export type AssistantHeaderEntryProps = {
+  isOpen?: boolean;
+  mark?: ReactNode;
+  mode?: "launcher" | "workspace";
+  onActivate: (trigger: HTMLButtonElement) => void;
+};
+
+export function AssistantHeaderEntry({
+  isOpen = false,
+  mark,
+  mode = "launcher",
+  onActivate,
+}: AssistantHeaderEntryProps) {
+  const workspaceMode = mode === "workspace";
 
   return (
     <button
@@ -275,11 +326,7 @@ export function AssistantHeaderEntry({
       onClick={(event) => onActivate(event.currentTarget)}
       type="button"
     >
-      <canvas
-        aria-hidden="true"
-        className="assistant-header-entry__mark"
-        ref={canvasRef}
-      />
+      {mark ?? <AssistantHeaderMark />}
       <span className="assistant-header-entry__label">
         {workspaceMode ? "继续提问" : "AI 助理"}
       </span>

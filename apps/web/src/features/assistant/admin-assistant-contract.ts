@@ -35,7 +35,7 @@ export type AdminAssistantStatusSnapshot = {
     capability: "placeholder" | "available" | "degraded";
     providerMode: AssistantMode;
     selectedProvider: AssistantMode | "unavailable";
-    persistence: "disabled" | "agentos" | "unavailable";
+    persistence: "disabled";
     circuits: {
       readiness: {
         state: "closed" | "open" | "half-open";
@@ -63,14 +63,8 @@ export type AdminAssistantStatusSnapshot = {
     defaultAgent: string;
     model: string;
     skills: string;
-    sessionStorage: string;
+    pageMemory: string;
   };
-  message: string;
-};
-
-export type AdminAssistantSessionsSnapshot = {
-  persistence: "disabled" | "agentos" | "unavailable";
-  listing: "not_available";
   message: string;
 };
 
@@ -78,12 +72,6 @@ export type AdminAssistantStatusResponse = {
   version: "1";
   requestId: string;
   status: AdminAssistantStatusSnapshot;
-};
-
-export type AdminAssistantSessionsResponse = {
-  version: "1";
-  requestId: string;
-  sessions: AdminAssistantSessionsSnapshot;
 };
 
 export type AdminAssistantChatResponse = {
@@ -295,9 +283,7 @@ function readAdminRuntimeMetadata(
     (snapshot.selectedProvider !== "placeholder" &&
       snapshot.selectedProvider !== "agentos" &&
       snapshot.selectedProvider !== "unavailable") ||
-    (snapshot.persistence !== "disabled" &&
-      snapshot.persistence !== "agentos" &&
-      snapshot.persistence !== "unavailable")
+    snapshot.persistence !== "disabled"
   ) {
     return null;
   }
@@ -507,7 +493,7 @@ export function parseAdminAssistantStatusResponse(
       "defaultAgent",
       "model",
       "skills",
-      "sessionStorage",
+      "pageMemory",
     ]);
     if (
       configuration === null ||
@@ -524,7 +510,7 @@ export function parseAdminAssistantStatusResponse(
         ASSISTANT_CONTENT_MAX_CODE_POINTS,
       ) ||
       !isBoundedString(
-        configuration.sessionStorage,
+        configuration.pageMemory,
         ASSISTANT_CONTENT_MAX_CODE_POINTS,
       )
     ) {
@@ -541,7 +527,7 @@ export function parseAdminAssistantStatusResponse(
           defaultAgent: configuration.defaultAgent,
           model: configuration.model,
           skills: configuration.skills,
-          sessionStorage: configuration.sessionStorage,
+          pageMemory: configuration.pageMemory,
         },
         message: status.message,
       },

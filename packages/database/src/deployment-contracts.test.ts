@@ -44,7 +44,6 @@ const composeSecretKeys = [
   "AGNO_DATABASE_URL",
   "BETTER_AUTH_SECRET",
   "OS_SECURITY_KEY",
-  "ASSISTANT_SESSION_SECRET",
   "ASSISTANT_RATE_LIMIT_SECRET",
   "MODEL_API_KEY",
   "AGENT_CONTROL_MIGRATOR_DATABASE_PASSWORD",
@@ -203,6 +202,22 @@ const secretSource = (
   typeof attachment === "string" ? attachment : attachment.source;
 
 describe("production deployment security contracts", () => {
+  it("keeps the release-age policy exception exact and limited to the approved orb", () => {
+    const workspace = read("pnpm-workspace.yaml");
+    const exclusionBlock = workspace.match(
+      /^minimumReleaseAgeExclude:\n((?: {2}- [^\n]+\n?)*)/mu,
+    );
+    const exclusions = exclusionBlock?.[1]
+      ?.split("\n")
+      .filter(Boolean)
+      .map((line) => line.replace(/^ {2}- /u, ""));
+
+    expect(exclusions).toEqual(["thinking-orbs@0.3.1"]);
+    expect(workspace.match(/minimumReleaseAgeExclude:/gu)).toHaveLength(1);
+    expect(workspace).not.toMatch(/minimumReleaseAge:\s*(?:0|false)/u);
+    expect(workspace).not.toMatch(/minimumReleaseAgeExclude:[\s\S]*?[~*^]/u);
+  });
+
   it("keeps runtime and backup roles on separate least-privilege matrices", () => {
     const sql = `${read("infra/postgres/01-roles.sql")}\n${read("infra/postgres/02-runtime-grants.sql")}`;
     expect(sql).toContain("ai_agent_migrator");
@@ -551,16 +566,12 @@ describe("production deployment security contracts", () => {
       "OS_SECURITY_KEY=/run/secrets/os_security_key",
     );
     expect(webService).toContain(
-      "ASSISTANT_SESSION_SECRET=/run/secrets/assistant_session_secret",
-    );
-    expect(webService).toContain(
       "ASSISTANT_RATE_LIMIT_SECRET=/run/secrets/assistant_rate_limit_secret",
     );
     for (const secret of [
       "runtime_database_url",
       "better_auth_secret",
       "os_security_key",
-      "assistant_session_secret",
       "assistant_rate_limit_secret",
     ]) {
       expect(webService).toContain(`- ${secret}`);
@@ -594,7 +605,7 @@ describe("production deployment security contracts", () => {
     expect(proxyService).toMatch(/^\s{4}ports:/mu);
   });
 
-  it("documents HTTPS production origin and exact loopback-only E2E origin", () => {
+  it("documents HTTPS production origin and a container-local E2E page origin", () => {
     const example = read(".env.example");
     const runbook = read("docs/deployment/server-readiness.md");
     const runner = read("docs/testing/run-assistant-runtime-e2e.sh");
@@ -605,9 +616,17 @@ describe("production deployment security contracts", () => {
     expect(runbook).toContain(
       "ASSISTANT_PUBLIC_ORIGIN=https://ai-agent.example.com",
     );
-    expect(runner).toContain("ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080");
     expect(runner).toContain(
-      '[ "$ASSISTANT_PUBLIC_ORIGIN" = "http://127.0.0.1:8080" ]',
+      "assistant_e2e_http_port=${ASSISTANT_E2E_HTTP_PORT:-8080}",
+    );
+    expect(runner).toContain(
+      'assistant_e2e_origin="http://127.0.0.1:$assistant_e2e_http_port"',
+    );
+    expect(runner).toContain(
+      'export ASSISTANT_PUBLIC_ORIGIN="http://127.0.0.1:3000"',
+    );
+    expect(runner).not.toContain(
+      'export ASSISTANT_PUBLIC_ORIGIN="$assistant_e2e_origin"',
     );
   });
 
@@ -652,13 +671,9 @@ describe("production deployment security contracts", () => {
       ?.split("\n## ")[0];
 
     expect(firstDeployment).toBeDefined();
-    expect(firstDeployment).toContain("assistant_session_secret");
     expect(firstDeployment).toContain("assistant_rate_limit_secret");
     expect(firstDeployment).toContain(
       "export ASSISTANT_PUBLIC_ORIGIN=https://ai-agent.example.com",
-    );
-    expect(firstDeployment).toContain(
-      "export ASSISTANT_SESSION_SECRET_FILE=/secure/secrets/assistant_session_secret",
     );
     expect(firstDeployment).toContain(
       "export ASSISTANT_RATE_LIMIT_SECRET_FILE=/secure/secrets/assistant_rate_limit_secret",
@@ -677,9 +692,6 @@ describe("production deployment security contracts", () => {
   it("defines a failure-safe isolated assistant runtime acceptance", () => {
     const script = read("docs/testing/run-assistant-runtime-e2e.sh");
     const browserAcceptance = read("apps/web/e2e/assistant-runtime.spec.ts");
-    const acceptanceCompose = read("compose.e2e.yaml");
-    const productionCompose = read("compose.yaml");
-    const acceptanceAgentApp = read("apps/agent/tests/e2e_agent/app.py");
 
     expect(script).toContain('[ "${RUN_ASSISTANT_RUNTIME_E2E:-}" = true ]');
     expect(script).toContain(
@@ -753,8 +765,6 @@ describe("production deployment security contracts", () => {
     expect(script).toContain('chmod 600 "$transcript_file"');
     for (const patternsFile of [
       "protected_patterns_file",
-      "placeholder_dynamic_patterns_file",
-      "agentos_dynamic_patterns_file",
       "model_keys_file",
       "model_key_last4_file",
     ]) {
@@ -853,47 +863,69 @@ describe("production deployment security contracts", () => {
     expect(script).toContain('case "$scan_status" in');
     expect(script).toContain("1) ;;");
     expect(script).toContain('echo "runtime log scanner failed" >&2');
+    expect(script).not.toContain("AAP_RUNTIME_DYNAMIC_PATTERNS_FILE");
+    expect(script).not.toContain("collect_agent_session_identities");
+    expect(script).not.toContain("identity_audit_collector");
+    expect(script).toContain('"aap-private-reasoning-20260812"');
+    expect(script).toContain('"aap-immediate-block-20260812"');
+    expect(script).toContain("scan_evidence_file() {");
     expect(script).toContain(
-      'placeholder_dynamic_patterns_file="$temp_dir/placeholder-dynamic-patterns"',
-    );
-    expect(script).toContain(
-      'agentos_dynamic_patterns_file="$temp_dir/agentos-dynamic-patterns"',
-    );
-    expect(script).toContain(
-      'create_dynamic_patterns_file "$placeholder_dynamic_patterns_file"',
-    );
-    expect(script).toContain(
-      'create_dynamic_patterns_file "$agentos_dynamic_patterns_file"',
-    );
-    expect(script.match(/AAP_RUNTIME_DYNAMIC_PATTERNS_FILE=/gu)).toHaveLength(
-      2,
+      'scan_evidence_file fixed "$marker" "$evidence_file"',
     );
     expect(script).toContain(
-      'export AAP_RUNTIME_DYNAMIC_PATTERNS_FILE="$placeholder_dynamic_patterns_file"',
+      "scan_evidence_file extended '(^|[^[:alnum:]_])(run_id|session_id)([^[:alnum:]_]|$)'",
     );
+    expect(script).toMatch(
+      /pg_dump[\s\\\n]+--username="\$POSTGRES_USER"[\s\S]*?--data-only[\s\\\n]+--inserts[\s\\\n]+--no-owner/u,
+    );
+    expect(
+      script.match(
+        /for evidence_file in "\$database_dump" "\$stateless_logs"; do/gu,
+      ),
+    ).toHaveLength(2);
+    expect(script).toContain('grep -F -- "$pattern" "$evidence_file"');
+    expect(script).toContain('grep -E -- "$pattern" "$evidence_file"');
     expect(script).toContain(
-      'export AAP_RUNTIME_DYNAMIC_PATTERNS_FILE="$agentos_dynamic_patterns_file"',
+      "(^|[^[:alnum:]_])(run_id|session_id)([^[:alnum:]_]|$)",
     );
-    expect(script).toContain(
-      'scan_logs "placeholder" "$placeholder_dynamic_patterns_file"',
+    expect(script).toContain('"$evidence_file" >/dev/null 2>&1');
+    const scanEvidenceStart = script.indexOf("scan_evidence_file() {");
+    const scanEvidenceEnd = script.indexOf(
+      "\nscan_logs() {",
+      scanEvidenceStart,
     );
-    expect(script).toContain(
-      'scan_logs "agentos-bootstrap" "$agentos_dynamic_patterns_file"',
+    expect(scanEvidenceStart).toBeGreaterThan(-1);
+    expect(scanEvidenceEnd).toBeGreaterThan(scanEvidenceStart);
+    const scanEvidenceFunction = script.slice(
+      scanEvidenceStart,
+      scanEvidenceEnd,
     );
-    expect(script).toContain(
-      'scan_logs "dynamic-control" "$agentos_dynamic_patterns_file"',
-    );
-    expect(acceptanceCompose).toContain(
-      "AAP_SESSION_IDENTITY_AUDIT_FILE: /tmp/aap-session-identity-audit",
-    );
-    expect(productionCompose).not.toContain("AAP_SESSION_IDENTITY_AUDIT_FILE");
-    expect(acceptanceAgentApp).toContain(
-      'os.environ.get("AAP_SESSION_IDENTITY_AUDIT_FILE")',
-    );
-    expect(script).toContain("collect_agent_session_identities() {");
-    expect(script).toContain(
-      'compose exec -T agent python -c "$identity_audit_collector" >>"$agentos_dynamic_patterns_file"',
-    );
+    for (const mode of ["fixed", "extended"]) {
+      for (const expectation of [
+        { grepStatus: 0, functionStatus: 1, message: "leak" },
+        { grepStatus: 1, functionStatus: 0, message: "" },
+        {
+          grepStatus: 2,
+          functionStatus: 1,
+          message: "runtime evidence scanner failed",
+        },
+      ]) {
+        const scan = spawnSync(
+          "sh",
+          [
+            "-c",
+            `${scanEvidenceFunction}\ngrep() { return ${expectation.grepStatus}; }\nscan_evidence_file ${mode} needle /dev/null leak`,
+          ],
+          { encoding: "utf8" },
+        );
+        expect(scan.status).toBe(expectation.functionStatus);
+        if (expectation.message === "") {
+          expect(scan.stderr).toBe("");
+        } else {
+          expect(scan.stderr).toContain(expectation.message);
+        }
+      }
+    }
     expect(script).toContain(
       "compose exec -T agent /opt/aap/run-agent-with-secret-env.sh",
     );
@@ -904,83 +936,13 @@ describe("production deployment security contracts", () => {
     expect(script).toContain(
       `--command="DELETE FROM public.rate_limits WHERE key LIKE 'assistant:%'"`,
     );
-    expect(script).toContain(
-      'identity_audit_path = "/tmp/aap-session-identity-audit"',
+    expect(browserAcceptance).not.toContain(
+      "AAP_RUNTIME_DYNAMIC_PATTERNS_FILE",
     );
-    const collectorMatch = script.match(
-      /identity_audit_collector=\$\(cat <<'PY'\n(?<source>[\s\S]*?)\nPY\n\)/u,
-    );
-    expect(collectorMatch?.groups?.source).toBeDefined();
-    const collectorSandbox = mkdtempSync(
-      path.join(tmpdir(), "identity-audit-collector-"),
-    );
-    try {
-      const fifo = path.join(collectorSandbox, "fifo");
-      const makeFifo = spawnSync(
-        "python3",
-        ["-c", "import os, sys; os.mkfifo(sys.argv[1])", fifo],
-        { encoding: "utf8" },
-      );
-      expect(makeFifo.status).toBe(0);
-      const collector = (collectorMatch?.groups?.source ?? "").replace(
-        'identity_audit_path = "/tmp/aap-session-identity-audit"',
-        `identity_audit_path = ${JSON.stringify(fifo)}`,
-      );
-      const execution = spawnSync("python3", ["-c", collector], {
-        encoding: "utf8",
-        timeout: 500,
-      });
-      expect(execution.error).toBeUndefined();
-      expect(execution.status).toBe(1);
-      expect(execution.stdout).toBe("");
-      expect(execution.stderr).toBe("identity audit collection failed\n");
-    } finally {
-      rmSync(collectorSandbox, { recursive: true, force: true });
-    }
-    expect(script).toContain('getattr(os, "O_NOFOLLOW", 0)');
-    expect(script).toContain('getattr(os, "O_NONBLOCK", 0)');
-    expect(script).toContain("stat.S_ISREG(metadata.st_mode)");
-    expect(script).toContain("stat.S_IMODE(metadata.st_mode) != 0o600");
-    expect(script).toContain("if not identities:");
-    expect(script).toContain("identity_pattern.fullmatch(identity)");
-    expect(script).toContain(
-      'raise SystemExit("identity audit collection failed")',
-    );
-    expect(script).not.toContain('echo "$identity"');
-    const agentosRunIndex = script.indexOf("--grep @agentos");
-    const identityCollectionIndex = script.indexOf(
-      "collect_agent_session_identities",
-      agentosRunIndex,
-    );
-    const agentosScanIndex = script.indexOf(
-      'scan_logs "agentos-bootstrap"',
-      identityCollectionIndex,
-    );
-    expect(identityCollectionIndex).toBeGreaterThan(agentosRunIndex);
-    expect(agentosScanIndex).toBeGreaterThan(identityCollectionIndex);
-    expect(browserAcceptance).toContain('"AAP_RUNTIME_DYNAMIC_PATTERNS_FILE"');
-    expect(browserAcceptance).toContain("appendFileSync(");
-    expect(browserAcceptance).toContain("(stats.mode & 0o777) !== 0o600");
-    expect(browserAcceptance).toContain('value.includes("\\n")');
-    expect(browserAcceptance).toContain('value.includes("\\r")');
-    expect(browserAcceptance).toContain(
-      "appendDynamicProtectedValue(sessionId)",
-    );
-    expect(browserAcceptance).toContain(
-      "appendDynamicProtectedValue(cookieValue)",
-    );
-    expect(browserAcceptance).toContain(
-      "appendDynamicProtectedValue(parsed.credential)",
-    );
-    expect(browserAcceptance).toContain(
-      "expectNoProtectedValue(first, [firstSessionId])",
-    );
-    expect(browserAcceptance).toContain(
-      "const newSessionId = replacementCandidates[0]",
-    );
-    expect(browserAcceptance).toContain(
-      "expectNoProtectedValue(third, [newSessionId])",
-    );
+    expect(browserAcceptance).not.toContain("agentSessionIds");
+    expect(browserAcceptance).not.toContain("aap_assistant_sid_dev");
+    expect(browserAcceptance).not.toContain("ADMIN_SESSIONS_PATH");
+    expect(browserAcceptance).not.toContain("const SESSION_PATH");
     const invalidResponseIndex = browserAcceptance.indexOf(
       "const invalidResponse =",
     );
@@ -1024,7 +986,7 @@ describe("production deployment security contracts", () => {
     ).toBeGreaterThan(recoveredResponseIndex);
     expect(
       browserAcceptance.indexOf(
-        'content: "deterministic-turn:2"',
+        'content: "deterministic-turn:1"',
         recoveredResponseIndex,
       ),
     ).toBeGreaterThan(recoveredResponseIndex);
@@ -1048,16 +1010,11 @@ describe("production deployment security contracts", () => {
     );
     expect(readyStatusIndex).toBeGreaterThan(readyAdminStatusIndex);
     expect(readyPublicStatusIndex).toBeGreaterThan(readyStatusIndex);
-    const finalSessionSnapshotIndex = browserAcceptance.indexOf(
-      "agentSessionIds();",
-      readyStatusIndex,
-    );
     const finalContextCloseIndex = browserAcceptance.indexOf(
       "await context.close();",
       readyStatusIndex,
     );
-    expect(finalSessionSnapshotIndex).toBeGreaterThan(readyStatusIndex);
-    expect(finalSessionSnapshotIndex).toBeLessThan(finalContextCloseIndex);
+    expect(finalContextCloseIndex).toBeGreaterThan(readyStatusIndex);
     for (const variable of [
       "POSTGRES_PASSWORD",
       "MIGRATOR_DATABASE_PASSWORD",
@@ -1079,7 +1036,7 @@ describe("production deployment security contracts", () => {
       expect(script).toContain(`\"$${variable}\"`);
     }
     expect(script).toContain(
-      "guard, placeholder, AgentOS bootstrap, dynamic control, recovery, reveal and zero-residue cleanup",
+      "guard, placeholder, stateless public/Admin AgentOS runs, dynamic control, recovery, reveal and zero-residue cleanup",
     );
     expect(script).toContain("db_port_bindings=");
   });
@@ -1167,12 +1124,7 @@ describe("production deployment security contracts", () => {
     expect(browserAcceptance).toContain("e2e-fail-openai-rev2");
     expect(browserAcceptance).toContain("page.clock.fastForward(30_000)");
     expect(browserAcceptance).toContain("recreateAgent(false)");
-    expect(browserAcceptance).toContain(
-      "function collectAgentSessionIdentityAudit(): void",
-    );
-    expect(browserAcceptance).toMatch(
-      /function recreateAgent\(enabled: boolean\): void \{\s*collectAgentSessionIdentityAudit\(\);/u,
-    );
+    expect(browserAcceptance).not.toContain("collectAgentSessionIdentityAudit");
     expect(browserAcceptance).toContain(
       "const waitForRestoredDynamicModel = async",
     );
@@ -1197,7 +1149,7 @@ describe("production deployment security contracts", () => {
     expect(browserAcceptance).toContain(
       "agent recreate did not restore ${provider}/${modelId}/rev ${configRevision}",
     );
-    expect(browserAcceptance).toContain(
+    expect(browserAcceptance).not.toContain(
       "await context.request.delete(SESSION_PATH)",
     );
     expect(browserAcceptance).toContain(
@@ -1488,40 +1440,65 @@ exit 0
     }
   }, 15_000);
 
-  it("keeps the first assistant credential out of every browser diagnostic and admin payload", () => {
+  it("keeps the browser runtime contract stateless and free of assistant cookies", () => {
     const spec = read("apps/web/e2e/assistant-runtime.spec.ts");
 
-    expect(spec).toContain(
-      "let firstAssistantCookieCredential: string | undefined;",
-    );
+    expect(spec).not.toContain("firstAssistantCookieCredential");
+    expect(spec).not.toContain("aap_assistant_sid_dev");
+    expect(spec).not.toContain("sessionStorage");
+    expect(spec).not.toContain('persistence: "agentos"');
+    expect(spec).not.toContain("agentSessionIds");
+    expect(spec).toContain('pageMemory: "仅当前页面内存；刷新或离开后清空"');
+    expect(spec).toContain("expectNoAssistantCookie");
+    expect(spec).toContain("expectRemovedAssistantSessionRoutes");
     expect(spec).toContain(
       "function collectBrowserDiagnostics(context: BrowserContext)",
     );
     expect(spec).toContain('context.on("page", registerPage);');
     expect(spec).toContain('page.on("console", (message) =>');
     expect(spec).not.toContain('message.type() === "warning"');
-    expect(spec).toContain("function expectConsoleExcludesCredential(");
     expect(spec).toContain("function readSafeJson(");
-    expect(spec).toContain(
-      "const assistantCredential = requiredAssistantCookieCredential();",
-    );
-    expect(spec).toMatch(
-      /const protectedValues = \[[\s\S]*assistantCredential,[\s\S]*\];/u,
-    );
     expect(spec).toContain(
       "await readSafeJson(adminStatusResponse, protectedValues)",
     );
     expect(spec).toContain(
-      "await readSafeJson(sessionsResponse, protectedValues)",
-    );
-    expect(spec).toContain(
       "await readSafeJson(adminChatResponse, protectedValues)",
     );
-    expect(spec).toContain(
-      "expectConsoleExcludesCredential(assistantCredential);",
+  });
+
+  it("keeps CI, Admin CSS, and experience acceptance on the stateless cut", () => {
+    const workflow = read(".github/workflows/ci.yml");
+    const gate = read("docs/testing/run-ci-gate.sh");
+    const readiness = read("docs/deployment/server-readiness.md");
+    const adminCss = read(
+      "apps/web/src/components/admin/assistant-admin-page.css",
     );
-    expect(spec).not.toMatch(
-      /(?:console\.[a-z]+|attach)\([^\n]*firstAssistantCookieCredential/iu,
+    const experience = read("apps/web/e2e/assistant-experience.spec.ts");
+    const experienceDoc = read(
+      "docs/testing/assistant-experience-acceptance.md",
+    );
+
+    expect(workflow).not.toContain(
+      ["ASSISTANT", "SESSION", "SECRET"].join("_"),
+    );
+    expect(gate).toContain("SKILL_REGISTRY_CONTROL_KEY");
+    expect(gate).toContain("OS_SECURITY_KEY");
+    expect(readiness).not.toContain("助理会话密钥");
+    expect(readiness).not.toContain("开发 Cookie");
+    expect(adminCss).not.toContain("assistant-admin__sessions");
+    expect(adminCss).not.toContain("assistant-admin__future-actions");
+    expect(experience).toContain(
+      'test("workspace has no conversation rail at any responsive breakpoint"',
+    );
+    expect(experience).toContain(
+      'test("workspace clears the current-page conversation"',
+    );
+    expect(experience).not.toContain("assistantSuccessResponse");
+    expect(experienceDoc).toContain(
+      "workspace has no conversation rail at any responsive breakpoint",
+    );
+    expect(experienceDoc).toContain(
+      "workspace clears the current-page conversation",
     );
   });
 
@@ -3198,7 +3175,6 @@ secrets:
       "AGNO_MIGRATOR_DATABASE_URL",
       "AGNO_DATABASE_URL",
       "OS_SECURITY_KEY",
-      "ASSISTANT_SESSION_SECRET",
       "ASSISTANT_RATE_LIMIT_SECRET",
     ]) {
       expect(workflow).toContain(key);
@@ -3738,6 +3714,7 @@ cleanup
 
   it("runs both assistant browser suites from an owned isolated project", () => {
     const runner = read("docs/testing/run-assistant-experience-e2e.sh");
+    const playwrightConfig = read("apps/web/playwright.config.ts");
     const webDockerfile = read("apps/web/Dockerfile");
     const promptStyles = read(
       "apps/web/src/components/assistant/assistant-prompt-input.css",
@@ -3757,7 +3734,13 @@ cleanup
       'project_lock_dir="/tmp/$project.assistant-e2e.lock"',
     );
     expect(runner).toContain(
-      'port_lock_dir="/tmp/aap-assistant-experience-e2e-port-8080.lock"',
+      'port_lock_dir="/tmp/aap-assistant-experience-e2e-port-$assistant_experience_http_port.lock"',
+    );
+    expect(runner).toContain(
+      "assistant_experience_http_port=${ASSISTANT_EXPERIENCE_E2E_HTTP_PORT:-8080}",
+    );
+    expect(runner).toContain(
+      'assistant_experience_origin="http://127.0.0.1:$assistant_experience_http_port"',
     );
     expect(runner).not.toContain('lock_root="${runtime_tmp%/}');
     expect(runner).toContain('if ! mkdir "$project_lock_dir"');
@@ -3766,12 +3749,11 @@ cleanup
     expect(runner).toContain("owns_project=false");
     expect(runner).toContain('if [ "$owns_project" = true ]');
     expect(runner).toContain("down --rmi local -v --remove-orphans");
-    expect(runner).toContain("TCP port 8080 is already in use");
     expect(runner).toContain(
-      "export ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080",
+      "TCP port $assistant_experience_http_port is already in use",
     );
     expect(runner).toContain(
-      "materialize_secret ASSISTANT_SESSION_SECRET_FILE",
+      'export ASSISTANT_PUBLIC_ORIGIN="$assistant_experience_origin"',
     );
     expect(runner).toContain(
       "materialize_secret ASSISTANT_RATE_LIMIT_SECRET_FILE",
@@ -3794,6 +3776,35 @@ cleanup
       /playwright test[\s\\\n]+e2e\/assistant-experience\.spec\.ts[\s\\\n]+e2e\/pricing-assistant\.spec\.ts/u,
     );
     expect(runner).toContain("--workers=1");
+    expect(runner).toContain(
+      'playwright_artifact_root="$repo_root/artifacts/playwright/assistant-experience/$project-$run_token"',
+    );
+    expect(runner).toContain('PLAYWRIGHT_OUTPUT_DIR="$playwright_output_dir"');
+    expect(runner).toContain(
+      'PLAYWRIGHT_HTML_OUTPUT_DIR="$playwright_report_dir"',
+    );
+    expect(runner).toContain(
+      'PLAYWRIGHT_JSON_OUTPUT_FILE="$playwright_json_report"',
+    );
+    expect(runner).toContain('"desktop-portal-drawer"');
+    expect(runner).toContain('"mobile-admin-assistant"');
+    expect(runner).toContain('lastRun.status !== "passed"');
+    expect(runner).toContain("`${sha1}.png`");
+    expect(runner).toContain("attachments-manifest.json");
+    expect(runner).toContain("full_experience_acceptance=true");
+    expect(runner).toContain("full_experience_acceptance=false");
+    expect(runner).toContain('if [ "$full_experience_acceptance" = true ]');
+    expect(runner).toContain("assert_playwright_run_passed");
+    expect(runner).toMatch(
+      /if \[ "\$full_experience_acceptance" = true \]; then\s+write_playwright_attachment_manifest[\s\S]*?else\s+assert_playwright_run_passed/u,
+    );
+    expect(playwrightConfig).toContain("process.env.PLAYWRIGHT_OUTPUT_DIR");
+    expect(playwrightConfig).toContain(
+      "process.env.PLAYWRIGHT_HTML_OUTPUT_DIR",
+    );
+    expect(playwrightConfig).toContain(
+      "process.env.PLAYWRIGHT_JSON_OUTPUT_FILE",
+    );
     expect(webDockerfile).toContain(
       "--mount=type=cache,id=ai-agent-platform-pnpm-store",
     );
@@ -4064,6 +4075,7 @@ cleanup
       "rmdir",
       "sh",
       "stat",
+      "node",
     ]) {
       const resolved = spawnSync("/bin/sh", ["-c", `command -v ${command}`], {
         encoding: "utf8",
@@ -4146,6 +4158,10 @@ printf '%s\\n' "$count" >"$FAKE_OPENSSL_COUNT_FILE"
 if [ -n "\${FAKE_OPENSSL_FAIL_AFTER:-}" ] && [ "$count" -gt "$FAKE_OPENSSL_FAIL_AFTER" ]; then
   exit 45
 fi
+if [ -n "\${FAKE_OPENSSL_TOKEN:-}" ]; then
+  printf '%s%04d\\n' "$FAKE_OPENSSL_TOKEN" "$count"
+  exit 0
+fi
 printf "%064d\\n" "$count"
 `,
         { mode: 0o755 },
@@ -4208,6 +4224,10 @@ printf '%s\\n' "$*" >>"$FAKE_PNPM_LOG"
 printf 'pnpm %s\\n' "$*" >>"$FAKE_EVENT_LOG"
 [ "\${FAKE_REMOVE_CALLER_ENV:-false}" = true ] && rm -f "$FAKE_CALLER_ENV"
 [ "\${FAKE_PNPM_FAIL:-false}" = true ] && exit 44
+if [ -n "\${PLAYWRIGHT_OUTPUT_DIR:-}" ]; then
+  mkdir -p "$PLAYWRIGHT_OUTPUT_DIR"
+  printf '{"status":"passed","failedTests":[]}\\n' >"$PLAYWRIGHT_OUTPUT_DIR/.last-run.json"
+fi
 exit 0
 `,
       { mode: 0o755 },
@@ -4240,11 +4260,16 @@ exit 0
           PATH: bin,
           TMPDIR: temp,
           AAP_ASSISTANT_EXPERIENCE_E2E_PROJECT: selectedProject,
+          AAP_ASSISTANT_EXPERIENCE_E2E_GREP: "focused-contract",
           FAKE_DOCKER_LOG: dockerLog,
           FAKE_DOCKER_DOWN_FILE: downFile,
           FAKE_DOCKER_FAIL: "",
           FAKE_OPENSSL_FAIL_AFTER: "",
           FAKE_OPENSSL_LOG: opensslLog,
+          FAKE_OPENSSL_TOKEN: createHash("sha256")
+            .update(name)
+            .digest("hex")
+            .slice(0, 60),
           FAKE_EVENT_LOG: eventLog,
           FAKE_PNPM_LOG: pnpmLog,
           FAKE_PNPM_FAIL: "false",
@@ -5142,8 +5167,8 @@ exit 0
     expect(script).toContain("--env-file");
     expect(script).not.toMatch(/docker run[^\n]*-e\s+POSTGRES_/u);
     expect(script).not.toContain("POSTGRES_PASSWORD=");
-    expect(script).toContain('expected_migrations="10"');
-    expect(script).toContain('expected_latest_migration="1786502675702"');
+    expect(script).toContain('expected_migrations="11"');
+    expect(script).toContain('expected_latest_migration="1786517193087"');
     expect(script).toContain("migration_count");
     expect(script).toContain("latest_migration");
     expect(script).toContain("users_email_lower_unique");
@@ -7130,8 +7155,8 @@ case "$command" in
         [ "$FAKE_DOCKER_MODE" = success_temp_rm_failure ] || exit 1
         case " $* " in
           *"BEGIN TRANSACTION READ ONLY"*) printf '%s\n' '1|1|1|1|1|1|0|0|0|t' ;;
-          *"SELECT count(*) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 10 ;;
-          *"SELECT max(created_at) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 1786502675702 ;;
+          *"SELECT count(*) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 11 ;;
+          *"SELECT max(created_at) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 1786517193087 ;;
           *"WHERE id = "*) printf '%s\n' 1 ;;
           *"WHERE session_id = "*) printf '%s\n' 1 ;;
           *"SELECT count(*) FROM public.users"*) printf '%s\n' 1 ;;
@@ -8764,7 +8789,6 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
     expect(script).toContain(".dump.gpg");
     expect(script).toContain("BACKUP_ENCRYPTION_KEY_FILE");
     expect(script).toContain("ASSISTANT_PUBLIC_ORIGIN=http://127.0.0.1:8080");
-    expect(script).toContain("ASSISTANT_SESSION_SECRET_FILE");
     expect(script).toContain("ASSISTANT_RATE_LIMIT_SECRET_FILE");
     expect(script).toContain("AGENT_CONTROL_MIGRATOR_DATABASE_URL_FILE");
     expect(script).toContain("SKILL_REGISTRY_MIGRATOR_DATABASE_URL_FILE");
@@ -8836,7 +8860,6 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
     expect(config).toContain("['public','.next/standalone/apps/web/public']");
     expect(config).toContain("fs.cpSync(source,target,{recursive:true})");
     expect(config).toContain("ASSISTANT_PUBLIC_ORIGIN: baseURL");
-    expect(config).toContain("ASSISTANT_SESSION_SECRET:");
     expect(config).toContain('HOSTNAME: "127.0.0.1"');
     expect(config).toContain("PORT: new URL(baseURL).port");
     expect(config).not.toContain(".env.local");

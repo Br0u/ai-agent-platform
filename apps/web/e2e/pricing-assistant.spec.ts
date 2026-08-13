@@ -261,30 +261,6 @@ async function navigateFromHeaderToProduct(page: Page, projectName: string) {
   await expect(page).toHaveURL(/\/product$/u);
 }
 
-async function navigateToLogin(page: Page) {
-  await page.goto("/login");
-  await expect(page).toHaveURL(/\/login$/u);
-}
-
-async function setNavigationSentinel(page: Page, value: string) {
-  await page.evaluate((sentinel) => {
-    (
-      window as Window & { __portalNavigationSentinel?: string }
-    ).__portalNavigationSentinel = sentinel;
-    document.documentElement.dataset.portalNavigationSentinel = sentinel;
-  }, value);
-}
-
-async function expectNavigationSentinel(page: Page, value: string) {
-  expect(
-    await page.evaluate(() => ({
-      window: (window as Window & { __portalNavigationSentinel?: string })
-        .__portalNavigationSentinel,
-      document: document.documentElement.dataset.portalNavigationSentinel,
-    })),
-  ).toEqual({ window: value, document: value });
-}
-
 async function sendSuccessfulAssistantMessage(page: Page) {
   const question = "如何开始了解平台？";
   const answer = "你可以从快速开始文档了解平台结构和使用入口。";
@@ -307,7 +283,7 @@ test("GET assistant API rejects unsupported methods", async ({ request }) => {
   expect(response.status()).toBe(405);
 });
 
-test("assistant preset responses expose safe suggested actions", async ({
+test("assistant preset responses expose router-controlled action buttons", async ({
   page,
 }, testInfo) => {
   await configureProject(page, testInfo);
@@ -331,21 +307,21 @@ test("assistant preset responses expose safe suggested actions", async ({
   await gotoPublicRoute(page, "/pricing");
   const dialog = await openQuickAssistantWithStatus(page);
 
-  for (const [question, label, href] of [
-    ["如何开始了解平台？", "查看快速开始", "/docs#quick-start"],
-    ["如何获取部署支持？", "联系商务", "/contact"],
-    ["如何提交产品问题？", "前往客户支持", "/support"],
-  ] as const) {
-    const response = page.waitForResponse(
-      (candidate) =>
-        candidate.url().endsWith(ASSISTANT_API) && candidate.status() === 200,
-    );
-    await dialog.getByRole("button", { name: question, exact: true }).click();
-    await response;
-    await expect(
-      dialog.getByRole("link", { name: label, exact: true }),
-    ).toHaveAttribute("href", href);
-  }
+  const presets = dialog.getByRole("group", { name: "常用问题" });
+  const response = page.waitForResponse(
+    (candidate) =>
+      candidate.url().endsWith(ASSISTANT_API) && candidate.status() === 200,
+  );
+  await presets
+    .getByRole("button", { name: "如何获取部署支持？", exact: true })
+    .click();
+  await response;
+  await expect(presets).toHaveCount(0);
+  await expect(
+    dialog.getByRole("link", { name: "联系商务", exact: true }),
+  ).toHaveCount(0);
+  await dialog.getByRole("button", { name: "联系商务", exact: true }).click();
+  await expect(page).toHaveURL(/\/contact$/u);
   expect(statusRequests).toBe(1);
   await page.unroute(`**${ASSISTANT_STATUS_API}`);
 
@@ -531,7 +507,7 @@ test("assistant visibility, accessibility, and failure recovery are resilient", 
   });
 });
 
-test("assistant session survives public routing and resets at the identity boundary", async ({
+test("assistant current-page memory clears on pathname changes and reload", async ({
   page,
 }, testInfo) => {
   await configureProject(page, testInfo);
@@ -543,18 +519,15 @@ test("assistant session survives public routing and resets at the identity bound
   await quickAssistantDialog(page)
     .getByRole("button", { name: "关闭码多多", exact: true })
     .click();
-  const contactSentinel = `contact-${testInfo.project.name}-${Date.now()}`;
-  await setNavigationSentinel(page, contactSentinel);
   await page
     .getByRole("contentinfo")
     .getByRole("link", { name: "联系我们", exact: true })
     .click();
   await expect(page).toHaveURL(/\/contact$/u);
-  await expectNavigationSentinel(page, contactSentinel);
   await quickAssistantLauncher(page).click();
   await expect(
     quickAssistantDialog(page).getByTestId("assistant-history"),
-  ).toContainText(answer);
+  ).not.toContainText(answer);
 
   if (testInfo.project.name === "mobile") {
     await quickAssistantDialog(page)
@@ -564,33 +537,6 @@ test("assistant session survives public routing and resets at the identity bound
   await navigateFromHeaderToProduct(page, testInfo.project.name);
   await expect(quickAssistantDialog(page)).toHaveCount(0);
   await quickAssistantLauncher(page).click();
-  await expect(
-    quickAssistantDialog(page).getByTestId("assistant-history"),
-  ).toContainText(answer);
-  await quickAssistantDialog(page)
-    .getByRole("button", { name: "关闭码多多", exact: true })
-    .click();
-  const footerSentinel = `footer-${testInfo.project.name}-${Date.now()}`;
-  await setNavigationSentinel(page, footerSentinel);
-  await page
-    .getByRole("contentinfo")
-    .getByRole("link", { name: "解决方案", exact: true })
-    .click();
-  await expect(page).toHaveURL(/\/solutions$/u);
-  await expectNavigationSentinel(page, footerSentinel);
-  await quickAssistantLauncher(page).click();
-  await expect(
-    quickAssistantDialog(page).getByTestId("assistant-history"),
-  ).toContainText(answer);
-  await quickAssistantDialog(page)
-    .getByRole("button", { name: "关闭码多多", exact: true })
-    .click();
-
-  await navigateToLogin(page);
-  await expect(quickAssistantLauncher(page)).toHaveCount(0);
-  await page.goBack();
-  await expect(page).toHaveURL(/\/solutions$/u);
-  await openQuickAssistantWithStatus(page);
   await expect(
     quickAssistantDialog(page).getByTestId("assistant-history"),
   ).not.toContainText(answer);

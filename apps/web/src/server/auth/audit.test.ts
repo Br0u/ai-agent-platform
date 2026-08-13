@@ -47,6 +47,12 @@ const completedAssistantModelAuditMetadata = {
   result: "success",
 } as const;
 
+const assistantInputPolicyAuditMetadata = {
+  revision: 1,
+  termCount: 2,
+  requestId: "request-1",
+} as const;
+
 const completedAssistantSkillAuditEvents = [
   "assistant.skill_upload_completed",
 ] as const satisfies readonly AuditEvent[];
@@ -136,6 +142,7 @@ function expectInvalidAssistantModelAuditMetadata(
 describe("audit writer", () => {
   it("exports the complete current event schema and stores valid typed values", async () => {
     expect(Object.keys(AUDIT_EVENT_SCHEMAS).sort()).toEqual([
+      "assistant.input_policy_updated",
       "assistant.model_config_activated",
       "assistant.model_config_activation_requested",
       "assistant.model_config_save_requested",
@@ -190,6 +197,43 @@ describe("audit writer", () => {
       metadata: { reason: "invalid_credentials" },
     });
   });
+
+  it("stores exact assistant input-policy audit metadata", async () => {
+    const { repository, writer } = fixture();
+    const input = {
+      event: "assistant.input_policy_updated",
+      actor: { realm: "workforce", userId: "super-1" },
+      target: { type: "assistant_input_policy", id: "1" },
+      ipAddress: "192.0.2.10",
+      userAgent: "browser",
+      metadata: assistantInputPolicyAuditMetadata,
+    } satisfies AuditWriteInput;
+
+    await writer.write(input);
+
+    expect(repository.insert).toHaveBeenCalledWith({
+      action: "assistant.input_policy_updated",
+      actorRealm: "workforce",
+      actorUserId: "super-1",
+      targetType: "assistant_input_policy",
+      targetId: "1",
+      metadata: assistantInputPolicyAuditMetadata,
+      ipAddress: "192.0.2.10",
+      userAgent: "browser",
+    });
+  });
+
+  it.each(["terms", "source", "message", "matched"])(
+    "rejects assistant input-policy metadata field %s",
+    (field) => {
+      expect(() =>
+        AUDIT_EVENT_SCHEMAS["assistant.input_policy_updated"]({
+          ...assistantInputPolicyAuditMetadata,
+          [field]: "must-not-be-stored",
+        }),
+      ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
+    },
+  );
 
   it("writes database audit records through the supplied transaction", async () => {
     const values = vi.fn().mockResolvedValue(undefined);

@@ -5,14 +5,16 @@ import {
   screen,
   within,
 } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminModelConfigSnapshot } from "@/features/assistant/admin-model-config-contract";
+import type { AdminInputPolicySnapshot } from "@/features/assistant/admin-input-policy-contract";
 
 const mocks = vi.hoisted(() => ({
   requirePermission: vi.fn(),
   loadStatus: vi.fn(),
-  loadSessions: vi.fn(),
   loadModelConfigs: vi.fn(),
+  loadInputPolicy: vi.fn(),
   createSkillListHandler: vi.fn(),
   skillListHandler: vi.fn(),
 }));
@@ -23,11 +25,11 @@ vi.mock("@/server/auth/access", () => ({
 vi.mock("@/app/api/v1/admin/assistant/status/handler", () => ({
   loadAdminAssistantStatus: mocks.loadStatus,
 }));
-vi.mock("@/app/api/v1/admin/assistant/sessions/handler", () => ({
-  loadAdminAssistantSessions: mocks.loadSessions,
-}));
 vi.mock("@/app/api/v1/admin/assistant/model-configs/handler", () => ({
   loadAdminModelConfigSnapshot: mocks.loadModelConfigs,
+}));
+vi.mock("@/app/api/v1/admin/assistant/input-policy/handler", () => ({
+  loadAdminInputPolicySnapshot: mocks.loadInputPolicy,
 }));
 vi.mock("@/app/api/v1/admin/assistant/skills/handler", () => ({
   createAdminSkillListHandler: mocks.createSkillListHandler,
@@ -85,15 +87,9 @@ const status = {
     defaultAgent: "码多多（占位）",
     model: "未配置",
     skills: "未接入",
-    sessionStorage: "未启用",
+    pageMemory: "仅当前页面内存；刷新或离开后清空",
   },
   message: "当前仅提供本地占位回复。",
-};
-
-const sessions = {
-  persistence: "disabled" as const,
-  listing: "not_available" as const,
-  message: "占位模式未持久化会话；管理列表不可用。",
 };
 
 const actor = {
@@ -224,11 +220,14 @@ const modelConfigs = {
   controlEnabled: true,
 } satisfies AdminModelConfigSnapshot;
 
-const unavailableSessions = {
-  persistence: "unavailable" as const,
-  listing: "not_available" as const,
-  message: "持久化状态不可用；管理列表不可用。",
-};
+const inputPolicy = {
+  version: "1",
+  revision: 3,
+  termCount: 2,
+  terms: ["example", "敏感"],
+  updatedAt: "2026-08-12T01:02:03.000Z",
+  canConfigure: true,
+} satisfies AdminInputPolicySnapshot;
 
 const unavailableStatus = {
   ...status,
@@ -252,7 +251,7 @@ const unavailableStatus = {
   ),
   configuration: {
     ...status.configuration,
-    sessionStorage: "状态不可用",
+    pageMemory: "仅当前页面内存；刷新或离开后清空",
   },
   message: "助手基础服务暂不可用。",
 };
@@ -268,12 +267,18 @@ function deferred<T>() {
 afterEach(cleanup);
 
 describe("AdminAssistantPage", () => {
+  it("does not load or pass a deprecated assistant sessions snapshot", () => {
+    const source = readFileSync("src/app/admin/assistant/page.tsx", "utf8");
+
+    expect(source).not.toMatch(/loadAdminAssistantSessions|sessions=/u);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.requirePermission.mockResolvedValue(actor);
     mocks.loadStatus.mockResolvedValue(status);
-    mocks.loadSessions.mockResolvedValue(sessions);
     mocks.loadModelConfigs.mockResolvedValue(modelConfigs);
+    mocks.loadInputPolicy.mockResolvedValue(inputPolicy);
     mocks.createSkillListHandler.mockReturnValue(mocks.skillListHandler);
     mocks.skillListHandler.mockResolvedValue(Response.json(skillListResponse));
   });
@@ -287,8 +292,8 @@ describe("AdminAssistantPage", () => {
       "admin:assistant",
     );
     expect(mocks.loadStatus).toHaveBeenCalledOnce();
-    expect(mocks.loadSessions).toHaveBeenCalledOnce();
     expect(mocks.loadModelConfigs).toHaveBeenCalledExactlyOnceWith(actor);
+    expect(mocks.loadInputPolicy).toHaveBeenCalledExactlyOnceWith(actor);
     expect(mocks.createSkillListHandler).toHaveBeenCalledOnce();
     expect(mocks.skillListHandler).toHaveBeenCalledOnce();
     expect(serializedProps).not.toMatch(
@@ -297,33 +302,37 @@ describe("AdminAssistantPage", () => {
     expect(screen.getByRole("heading", { name: "AI 助理运营" })).toBeVisible();
     fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
     expect(screen.getByText("safe-review")).toBeVisible();
-    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
+    fireEvent.click(screen.getByRole("tab", { name: "内容规则" }));
+    expect(screen.getByLabelText("屏蔽词（一行一个）")).toHaveValue(
+      "example\n敏感",
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "测试" }));
     expect(
       screen.getByRole("heading", { name: "受保护的助手测试控制台" }),
     ).toBeVisible();
   });
 
-  it("starts status, sessions, models and Skill snapshot loading in parallel", async () => {
+  it("starts status, models, policy and Skill snapshot loading in parallel", async () => {
     const pendingStatus = deferred<typeof status>();
-    const pendingSessions = deferred<typeof sessions>();
     const pendingModels = deferred<AdminModelConfigSnapshot>();
+    const pendingPolicy = deferred<AdminInputPolicySnapshot>();
     const pendingSkills = deferred<Response>();
     mocks.loadStatus.mockReturnValueOnce(pendingStatus.promise);
-    mocks.loadSessions.mockReturnValueOnce(pendingSessions.promise);
     mocks.loadModelConfigs.mockReturnValueOnce(pendingModels.promise);
+    mocks.loadInputPolicy.mockReturnValueOnce(pendingPolicy.promise);
     mocks.skillListHandler.mockReturnValueOnce(pendingSkills.promise);
 
     const page = AdminAssistantPage();
     await vi.waitFor(() => {
       expect(mocks.loadStatus).toHaveBeenCalledOnce();
-      expect(mocks.loadSessions).toHaveBeenCalledOnce();
       expect(mocks.loadModelConfigs).toHaveBeenCalledOnce();
+      expect(mocks.loadInputPolicy).toHaveBeenCalledOnce();
       expect(mocks.skillListHandler).toHaveBeenCalledOnce();
     });
 
     pendingStatus.resolve(status);
-    pendingSessions.resolve(sessions);
     pendingModels.resolve(modelConfigs);
+    pendingPolicy.resolve(inputPolicy);
     pendingSkills.resolve(Response.json(skillListResponse));
     await expect(page).resolves.toBeDefined();
   });
@@ -333,8 +342,8 @@ describe("AdminAssistantPage", () => {
 
     await expect(AdminAssistantPage()).rejects.toThrow("denied");
     expect(mocks.loadStatus).not.toHaveBeenCalled();
-    expect(mocks.loadSessions).not.toHaveBeenCalled();
     expect(mocks.loadModelConfigs).not.toHaveBeenCalled();
+    expect(mocks.loadInputPolicy).not.toHaveBeenCalled();
     expect(mocks.createSkillListHandler).not.toHaveBeenCalled();
   });
 
@@ -359,9 +368,8 @@ describe("AdminAssistantPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders one consistent unavailable persistence truth table when runtime resolution fails", async () => {
+  it("reports current-page memory when runtime resolution fails", async () => {
     mocks.loadStatus.mockResolvedValueOnce(unavailableStatus);
-    mocks.loadSessions.mockResolvedValueOnce(unavailableSessions);
 
     render(await AdminAssistantPage());
 
@@ -373,34 +381,14 @@ describe("AdminAssistantPage", () => {
       within(runtimeRegion!).getByText("Persistence").nextElementSibling,
     ).toHaveTextContent("unavailable");
 
-    fireEvent.click(screen.getByRole("tab", { name: "测试与会话" }));
+    fireEvent.click(screen.getByRole("tab", { name: "测试" }));
     const configurationRegion = screen
       .getByRole("heading", { name: "只读配置" })
       .closest("aside");
-    const sessionsRegion = screen
-      .getByRole("heading", { name: "会话持久化" })
-      .closest("section");
     expect(configurationRegion).not.toBeNull();
-    expect(sessionsRegion).not.toBeNull();
     expect(
-      within(configurationRegion!).getByText("会话存储").nextElementSibling,
-    ).toHaveTextContent("状态不可用");
-    expect(
-      within(sessionsRegion!).getByText("持久化状态不可用；管理列表不可用。"),
-    ).toBeVisible();
-    expect(
-      within(sessionsRegion!).getByText(/unavailable.*not_available/iu),
-    ).toBeVisible();
-    expect(within(sessionsRegion!).getByText("列表不可用")).toBeVisible();
-    expect(
-      within(configurationRegion!).queryByText("未启用"),
-    ).not.toBeInTheDocument();
-    expect(
-      within(configurationRegion!).queryByText("AgentOS 持久化已启用"),
-    ).not.toBeInTheDocument();
-    expect(
-      within(sessionsRegion!).queryByText(/持久化已启用|未启用/u),
-    ).not.toBeInTheDocument();
+      within(configurationRegion!).getByText("对话记忆").nextElementSibling,
+    ).toHaveTextContent("仅当前页面内存；刷新或离开后清空");
     expect(document.body.textContent).not.toMatch(
       /agent:7777|security|secret/iu,
     );

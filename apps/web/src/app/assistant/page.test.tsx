@@ -6,6 +6,11 @@ import AssistantPage, { metadata } from "./page";
 const runtime = vi.hoisted(() => ({
   readSafeAssistantRuntimeStatus: vi.fn(),
 }));
+const router = vi.hoisted(() => ({ push: vi.fn() }));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => router,
+}));
 
 vi.mock("@/server/assistant/assistant-runtime", () => ({
   readSafeAssistantRuntimeStatus: runtime.readSafeAssistantRuntimeStatus,
@@ -13,6 +18,7 @@ vi.mock("@/server/assistant/assistant-runtime", () => ({
 
 describe("AssistantPage", () => {
   beforeEach(() => {
+    router.push.mockReset();
     runtime.readSafeAssistantRuntimeStatus.mockResolvedValue({
       live: true,
       ready: true,

@@ -25,6 +25,7 @@
     "drizzle-orm": "0.45.2",
     "framer-motion": "12.42.2",
     "hast-util-to-jsx-runtime": "2.3.6",
+    "jsdom": "27.0.1",
     "lucide-react": "1.24.0",
     "next": "16.2.10",
     "next-view-transitions": "0.3.5",
@@ -35,6 +36,7 @@
     "react-markdown": "10.1.0",
     "remark-gfm": "4.0.1",
     "server-only": "0.0.1",
+    "thinking-orbs": "0.3.1",
     "zod": "4.4.3"
   },
   "devDependencies": {
@@ -48,7 +50,6 @@
     "@types/react-dom": "19.2.2",
     "eslint": "9.39.1",
     "eslint-config-next": "16.2.10",
-    "jsdom": "27.0.1",
     "pg": "8.22.0",
     "prettier": "3.6.2",
     "tailwindcss": "4.3.2",

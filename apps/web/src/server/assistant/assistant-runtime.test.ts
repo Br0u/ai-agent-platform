@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentOSClient } from "./agentos-client";
@@ -15,10 +16,10 @@ import {
   getAssistantRuntime,
   readSafeAssistantRuntimeStatus,
 } from "./assistant-runtime";
+import { ASSISTANT_FINAL_ANSWER_MARKER } from "./assistant-content-filter";
 
 const VALID_ENVIRONMENT = {
   ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
-  ASSISTANT_SESSION_SECRET: "session-secret-0123456789abcdef0123456789",
   ASSISTANT_RATE_LIMIT_SECRET: "rate-secret-0123456789abcdef0123456789",
   ASSISTANT_PROVIDER_MODE: "placeholder",
   ASSISTANT_AGENTOS_READINESS_TTL_MS: "5000",
@@ -64,19 +65,41 @@ function availableHealthClient(): AgentOSClient {
 
 function runClient(): AgentOSRunClient {
   const runAgent = vi.fn<AgentOSRunClient["runAgent"]>(async () => ({
-    content: "码多多回答",
+    content: `${ASSISTANT_FINAL_ANSWER_MARKER}码多多回答`,
   }));
   return {
     runAgent,
     runAgentStream: vi.fn(async function* (request) {
       const result = await runAgent(request);
-      yield result.content;
+      yield { type: "answer_delta" as const, content: result.content };
     }),
-    deleteSession: vi.fn(async () => undefined),
   };
 }
 
 describe("assistant server runtime", () => {
+  it("never substitutes localhost for a missing production public origin", () => {
+    expect(() =>
+      createAssistantRuntime({
+        environment: {
+          ...VALID_ENVIRONMENT,
+          NODE_ENV: "production",
+          ASSISTANT_PUBLIC_ORIGIN: undefined,
+        },
+      }),
+    ).toThrow("ASSISTANT_PUBLIC_ORIGIN is required in production");
+  });
+
+  it("does not expose assistant session resolution or deletion", () => {
+    const source = readFileSync(
+      "src/server/assistant/assistant-runtime.ts",
+      "utf8",
+    );
+
+    expect(source).not.toContain(["resolve", "Session"].join(""));
+    expect(source).not.toContain(["delete", "Session"].join(""));
+    expect(source).not.toContain(["anonymous", "session"].join("-"));
+  });
+
   it.each([
     ["invalid provider mode", "ASSISTANT_PROVIDER_MODE", "raw-auto-mode"],
     ["invalid proxy mode", "TRUST_NGINX_PROXY", "raw-maybe-proxy"],
@@ -164,9 +187,6 @@ describe("assistant server runtime", () => {
     await expect(runtime.resolveProvider()).resolves.toMatchObject({
       mode: "placeholder",
     });
-    await expect(runtime.deleteSession("never-sent-remotely")).resolves.toBe(
-      undefined,
-    );
     expect(runtime.inspect()).toEqual({
       providerMode: "placeholder",
       persistence: "disabled",
@@ -181,6 +201,71 @@ describe("assistant server runtime", () => {
       },
     });
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("owns one fixed-public-origin page resolver using the injected fetcher", async () => {
+    const fetcher = vi.fn<typeof fetch>(
+      async () =>
+        new Response("<title>产品</title><main>公开正文</main>", {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+    );
+    const runtime = createAssistantRuntime({
+      environment: VALID_ENVIRONMENT,
+      fetcher,
+    });
+
+    await expect(
+      runtime.pageResolver.load({ pathname: "/product", search: "" }),
+    ).resolves.toMatchObject({
+      pathname: "/product",
+      search: "",
+      title: "产品",
+      text: "公开正文",
+      links: [],
+    });
+    expect(fetcher).toHaveBeenCalledExactlyOnceWith(
+      new URL("https://portal.example.com/product"),
+      expect.objectContaining({
+        credentials: "omit",
+        method: "GET",
+        redirect: "manual",
+      }),
+    );
+    expect(fetcher.mock.calls[0]?.[1]).not.toHaveProperty("headers");
+  });
+
+  it("uses the direct-global anonymous identity and ignores spoofed forwarding headers", () => {
+    const runtime = createAssistantRuntime({ environment: VALID_ENVIRONMENT });
+
+    expect(
+      runtime.resolveTrustedClientIp(
+        new Request("https://portal.example.com", {
+          headers: {
+            "x-real-ip": "203.0.113.10",
+            "x-forwarded-for": "198.51.100.4",
+          },
+        }),
+      ),
+    ).toEqual({ mode: "direct_global" });
+  });
+
+  it("fails closed when trusted proxy mode omits or corrupts X-Real-IP", () => {
+    const runtime = createAssistantRuntime({
+      environment: { ...VALID_ENVIRONMENT, TRUST_NGINX_PROXY: "true" },
+    });
+
+    expect(
+      runtime.resolveTrustedClientIp(new Request("https://portal.example.com")),
+    ).toEqual({ mode: "invalid_proxy" });
+    expect(
+      runtime.resolveTrustedClientIp(
+        new Request("https://portal.example.com", {
+          headers: { "x-real-ip": "203.0.113.10, 198.51.100.4" },
+        }),
+      ),
+    ).toEqual({ mode: "invalid_proxy" });
   });
 
   it("constructs one health client and one shared run client with the exact run timeout", async () => {
@@ -206,19 +291,20 @@ describe("assistant server runtime", () => {
     await runtime.status();
     const selected = await runtime.resolveProvider();
     await selected.provider.reply({
-      request: { message: "问题", context: { pathname: "/docs" } },
-      session: { kind: "persistent", internalSessionId: "shared-session" },
+      request: {
+        version: "2",
+        message: "问题",
+        history: [],
+        page: { pathname: "/docs", search: "" },
+      },
+      pageContext: null,
     });
-    await runtime.deleteSession("shared-session");
-    expect(runtime.inspect().persistence).toBe("agentos");
+    expect(runtime.inspect().persistence).toBe("disabled");
 
     expect(createHealthClient).toHaveBeenCalledOnce();
     expect(createRunClient).toHaveBeenCalledOnce();
     expect(createRunClient.mock.calls[0]?.[0].settings.runTimeoutMs).toBe(
       51000,
-    );
-    expect(sharedRunClient.deleteSession).toHaveBeenCalledExactlyOnceWith(
-      "shared-session",
     );
   });
 
@@ -282,7 +368,7 @@ describe("assistant server runtime", () => {
 
       expect(runtime.inspect()).toEqual({
         providerMode: "agentos",
-        persistence: "unavailable",
+        persistence: "disabled",
         circuits: {
           readiness: { state: "closed", consecutiveFailures: 0 },
           execution: { state: "closed", consecutiveFailures: 0 },
@@ -340,7 +426,9 @@ describe("assistant server runtime", () => {
       .mockRejectedValueOnce(new AgentOSRunClientError("timeout"))
       .mockRejectedValueOnce(new AgentOSRunClientError("timeout"))
       .mockRejectedValueOnce(new AgentOSRunClientError("timeout"))
-      .mockResolvedValueOnce({ content: "恢复后的真实回答" });
+      .mockResolvedValueOnce({
+        content: `${ASSISTANT_FINAL_ANSWER_MARKER}恢复后的真实回答`,
+      });
     const runtime = createAssistantRuntime({
       environment: AGENTOS_ENVIRONMENT,
       createHealthClient: () => availableHealthClient(),
@@ -353,11 +441,13 @@ describe("assistant server runtime", () => {
         }),
     });
     const invocation = {
-      request: { message: "问题", context: { pathname: "/" } },
-      session: {
-        kind: "persistent" as const,
-        internalSessionId: "internal-session",
+      request: {
+        version: "2" as const,
+        message: "问题",
+        history: [],
+        page: { pathname: "/", search: "" },
       },
+      pageContext: null,
     };
 
     const initialSelection = await runtime.resolveProvider();
@@ -416,11 +506,13 @@ describe("assistant server runtime", () => {
     });
     const selected = await runtime.resolveProvider();
     const invocation = {
-      request: { message: "问题", context: { pathname: "/" } },
-      session: {
-        kind: "persistent" as const,
-        internalSessionId: "internal-session",
+      request: {
+        version: "2" as const,
+        message: "问题",
+        history: [],
+        page: { pathname: "/", search: "" },
       },
+      pageContext: null,
     };
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -433,7 +525,7 @@ describe("assistant server runtime", () => {
       readiness: { state: "closed", consecutiveFailures: 0 },
       execution: { state: "open", consecutiveFailures: 3 },
     });
-    expect(runtime.inspect().persistence).toBe("agentos");
+    expect(runtime.inspect().persistence).toBe("disabled");
     await expect(runtime.status()).resolves.toEqual({
       live: true,
       ready: false,
@@ -482,7 +574,7 @@ describe("assistant server runtime", () => {
       capability: "degraded",
       message: "助手基础服务暂不可用。",
     });
-    expect(runtime.inspect().persistence).toBe("agentos");
+    expect(runtime.inspect().persistence).toBe("disabled");
     expect(execute).not.toHaveBeenCalled();
   });
 

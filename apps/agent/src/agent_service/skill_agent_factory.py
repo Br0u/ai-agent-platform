@@ -21,6 +21,18 @@ _CURRENT_GENERATION: ContextVar[RuntimeGeneration | None] = ContextVar(
 )
 
 
+class NonPersistingSkillAgentFactory(AgentFactory):
+    def _post_resolve(self, component: Agent) -> None:
+        if component.id is not None and component.id != self.id:
+            raise RuntimeError("assistant agent id does not match factory id")
+        component.id = self.id
+        component.db = None
+        component.store_events = False
+        component.initialize_agent()
+        if component.db is not None or component.store_events or component.id != self.id:
+            raise RuntimeError("assistant agent persistence must remain disabled")
+
+
 def current_runtime_generation() -> RuntimeGeneration | None:
     return _CURRENT_GENERATION.get()
 
@@ -56,9 +68,9 @@ def build_skill_agent_factory(
         generation = current_runtime_generation()
         if generation is None:
             raise FactoryContextRequired("runtime generation context is required")
-        return build_default_agent(model, database, skills=generation.skills)
+        return build_default_agent(model, skills=generation.skills)
 
-    return AgentFactory(
+    return NonPersistingSkillAgentFactory(
         id="maduoduo",
         name="码多多",
         db=database,

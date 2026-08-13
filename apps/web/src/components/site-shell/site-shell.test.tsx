@@ -34,6 +34,16 @@ const mocks = vi.hoisted(() => ({
   replace: vi.fn(),
 }));
 
+vi.mock("../assistant/assistant-orb", () => ({
+  AssistantOrb: ({ speed, state }: { speed?: number; state: string }) => (
+    <span
+      className="assistant-orb"
+      data-assistant-speed={speed}
+      data-assistant-state={state}
+    />
+  ),
+}));
+
 vi.mock("next/navigation", () => ({
   usePathname: () => mocks.pathname,
   useRouter: () => ({ push: mocks.push, replace: mocks.replace }),
@@ -68,10 +78,12 @@ vi.mock("@ai-agent-platform/ui", () => ({
   },
   AssistantHeaderEntry: ({
     isOpen,
+    mark,
     mode = "launcher",
     onActivate,
   }: {
     isOpen: boolean;
+    mark?: ReactNode;
     mode?: "launcher" | "workspace";
     onActivate: (trigger: HTMLButtonElement) => void;
   }) => {
@@ -85,10 +97,14 @@ vi.mock("@ai-agent-platform/ui", () => ({
         onClick={(event) => onActivate(event.currentTarget)}
         type="button"
       >
+        {mark}
         {mode === "workspace" ? "继续提问" : "打开 AI 助理"}
       </button>
     );
   },
+  AssistantHeaderMark: () => (
+    <canvas aria-hidden="true" className="assistant-header-entry__mark" />
+  ),
 }));
 
 import {
@@ -554,7 +570,9 @@ describe("SiteShell", () => {
     renderAt("/pricing");
 
     expect(useAssistantSession).toHaveBeenCalledOnce();
-    expect(screen.getByRole("button", { name: "打开 AI 助理" })).toBeVisible();
+    const headerEntry = screen.getByRole("button", { name: "打开 AI 助理" });
+    expect(headerEntry).toBeVisible();
+    expect(headerEntry.querySelector(".assistant-orb")).not.toBeNull();
     expect(screen.getByRole("button", { name: "打开码多多" })).toBeVisible();
     expect(
       screen.getByRole("button", { name: "打开 AI 助理" }),
@@ -565,6 +583,20 @@ describe("SiteShell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "打开码多多" }));
     expect(screen.getByRole("dialog", { name: "码多多" })).toBeInTheDocument();
+  });
+
+  it("uses a half-speed listening Orb in the navbar", () => {
+    renderAt("/pricing");
+
+    const headerEntry = screen.getByRole("button", { name: "打开 AI 助理" });
+    expect(headerEntry.querySelector(".assistant-orb")).toHaveAttribute(
+      "data-assistant-state",
+      "listening",
+    );
+    expect(headerEntry.querySelector(".assistant-orb")).toHaveAttribute(
+      "data-assistant-speed",
+      "0.5",
+    );
   });
 
   it("does not mount a side assistant surface from the portal entry", () => {
@@ -584,9 +616,6 @@ describe("SiteShell", () => {
     expect(
       screen.getByRole("button", { name: "聚焦 AI 助理提问框" }),
     ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "聚焦 AI 助理提问框" }),
-    ).toHaveAttribute("data-open", "false");
     expect(mocks.assistantEntryMode).toBe("workspace");
     expect(screen.queryByRole("button", { name: "打开码多多" })).toBeNull();
     const composer = screen.getByRole("textbox", {

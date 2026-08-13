@@ -10,6 +10,7 @@ import {
   type AdminAssistantErrorResponse,
 } from "@/features/assistant/admin-assistant-contract";
 import {
+  ASSISTANT_CHAT_REQUEST_MAX_BYTES,
   isAssistantMessageId,
   isAssistantProviderReply,
   parseAssistantRequest,
@@ -55,7 +56,6 @@ const defaultDependencies: AdminAssistantChatDependencies = {
 };
 
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
-const MAX_REQUEST_BODY_BYTES = 16 * 1024;
 
 export function createAdminAssistantChatHandler(
   overrides: Partial<AdminAssistantChatDependencies> = {},
@@ -94,7 +94,10 @@ export function createAdminAssistantChatHandler(
     let body: AdminAssistantChatResponse | AdminAssistantErrorResponse;
     let statusCode: 200 | 400 | 429 | 503;
     let retryAfterSeconds: number | undefined;
-    const input = await readBoundedJson(request, MAX_REQUEST_BODY_BYTES);
+    const input = await readBoundedJson(
+      request,
+      ASSISTANT_CHAT_REQUEST_MAX_BYTES,
+    );
     const assistantRequest = input.ok
       ? parseAssistantRequest(input.value)
       : null;
@@ -113,7 +116,8 @@ export function createAdminAssistantChatHandler(
           : await dependencies.resolveProvider();
         const providerResponse = await selected.provider.reply({
           request: assistantRequest,
-          session: { kind: "ephemeral" },
+          pageContext: null,
+          signal: request.signal,
         });
         if (!isAssistantProviderReply(providerResponse)) {
           throw new TypeError("Invalid assistant provider response");

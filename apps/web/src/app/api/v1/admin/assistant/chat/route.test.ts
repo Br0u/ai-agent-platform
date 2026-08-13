@@ -30,6 +30,7 @@ vi.mock("@/server/assistant/assistant-runtime", () => ({
 }));
 
 import type { AssistantProvider } from "@/server/assistant/assistant-provider";
+import { ASSISTANT_CHAT_REQUEST_MAX_BYTES } from "@/features/assistant/assistant-contract";
 import { AssistantRateLimitExceededError } from "@/server/assistant/assistant-rate-limit";
 import { createAdminAssistantChatHandler } from "./handler";
 
@@ -41,9 +42,35 @@ function request(requestId?: string) {
       ...(requestId === undefined ? {} : { "x-request-id": requestId }),
     },
     body: JSON.stringify({
+      version: "2",
       message: "检查占位合同",
-      context: { pathname: "/admin/assistant" },
+      history: [],
+      page: null,
     }),
+  });
+}
+
+function requestBodyAtBytes(byteLength: number) {
+  const body = JSON.stringify({
+    version: "2",
+    message: "检查占位合同",
+    history: [],
+    page: null,
+  });
+  const padding = byteLength - new TextEncoder().encode(body).byteLength;
+  if (padding < 0) throw new Error("Requested body boundary is too small");
+  return `${body}${" ".repeat(padding)}`;
+}
+
+function declaredRequestAtBytes(byteLength: number) {
+  const body = requestBodyAtBytes(byteLength);
+  return new Request("http://localhost/api/v1/admin/assistant/chat", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "content-length": String(new TextEncoder().encode(body).byteLength),
+    },
+    body,
   });
 }
 
@@ -89,10 +116,13 @@ describe("POST /api/v1/admin/assistant/chat", () => {
     expect(runtime.resolveProvider).toHaveBeenCalledOnce();
     expect(runtime.reply).toHaveBeenCalledExactlyOnceWith({
       request: {
+        version: "2",
         message: "检查占位合同",
-        context: { pathname: "/admin/assistant" },
+        history: [],
+        page: null,
       },
-      session: { kind: "ephemeral" },
+      pageContext: null,
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -161,7 +191,7 @@ describe("POST /api/v1/admin/assistant/chat", () => {
     expect(JSON.stringify(body)).not.toMatch(/private|secret/iu);
   });
 
-  it("orders access, actor-scoped limiter, and Provider while ignoring a body actor", async () => {
+  it("orders access, actor-scoped limiter, and Provider using the authoritative actor", async () => {
     const callOrder: string[] = [];
     const assistantProvider = provider();
     vi.mocked(assistantProvider.reply).mockImplementation(async () => {
@@ -196,9 +226,10 @@ describe("POST /api/v1/admin/assistant/chat", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        actorId: "forged-admin",
+        version: "2",
         message: "检查占位合同",
-        context: { pathname: "/admin/assistant" },
+        history: [],
+        page: null,
       }),
     });
 
@@ -264,14 +295,65 @@ describe("POST /api/v1/admin/assistant/chat", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          version: "2",
           message: " ",
-          context: { pathname: "/admin/assistant" },
+          history: [],
+          page: null,
         }),
       }),
     );
 
     expect(response.status).toBe(400);
     expect(access.requirePermission).toHaveBeenCalledOnce();
+    expect(limiter.consume).not.toHaveBeenCalled();
+    expect(assistantProvider.reply).not.toHaveBeenCalled();
+  });
+
+  it("accepts an exact shared 64 KiB request and reaches the Admin Provider", async () => {
+    const assistantProvider = provider();
+    const limiter = { consume: vi.fn().mockResolvedValue(undefined) };
+    const POST = createAdminAssistantChatHandler({
+      access: {
+        requirePermission: vi.fn().mockResolvedValue({
+          userId: "admin-1",
+          realm: "workforce",
+        }),
+      },
+      rateLimiter: limiter,
+      provider: assistantProvider,
+      requestIdFactory: () => "exact-boundary",
+      messageIdFactory: () => "exact-message",
+    });
+
+    const response = await POST(
+      declaredRequestAtBytes(ASSISTANT_CHAT_REQUEST_MAX_BYTES),
+    );
+
+    expect(response.status).toBe(200);
+    expect(limiter.consume).toHaveBeenCalledOnce();
+    expect(assistantProvider.reply).toHaveBeenCalledOnce();
+  });
+
+  it("rejects one byte over the shared 64 KiB limit before Admin Provider work", async () => {
+    const assistantProvider = provider();
+    const limiter = { consume: vi.fn() };
+    const POST = createAdminAssistantChatHandler({
+      access: {
+        requirePermission: vi.fn().mockResolvedValue({
+          userId: "admin-1",
+          realm: "workforce",
+        }),
+      },
+      rateLimiter: limiter,
+      provider: assistantProvider,
+      requestIdFactory: () => "over-boundary",
+    });
+
+    const response = await POST(
+      declaredRequestAtBytes(ASSISTANT_CHAT_REQUEST_MAX_BYTES + 1),
+    );
+
+    expect(response.status).toBe(400);
     expect(limiter.consume).not.toHaveBeenCalled();
     expect(assistantProvider.reply).not.toHaveBeenCalled();
   });

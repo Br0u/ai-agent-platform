@@ -1,0 +1,42 @@
+.assistant-orb {
+  --assistant-orb-size: 64px;
+
+  position: relative;
+  display: inline-grid;
+  width: var(--assistant-orb-size);
+  height: var(--assistant-orb-size);
+  flex: 0 0 var(--assistant-orb-size);
+  place-items: center;
+  overflow: hidden;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.assistant-orb__canvas,
+.assistant-orb__fallback {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: inherit;
+}
+
+.assistant-orb__canvas {
+  z-index: 1;
+}
+
+.assistant-orb__fallback {
+  z-index: 1;
+  background: #4f46e5;
+  box-shadow: inset calc(var(--assistant-orb-size) * 0.22) 0 #7c3aed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-orb,
+  .assistant-orb__canvas,
+  .assistant-orb__fallback {
+    animation: none !important;
+    transition: none !important;
+  }
+}

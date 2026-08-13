@@ -43,6 +43,9 @@ importers:
       hast-util-to-jsx-runtime:
         specifier: 2.3.6
         version: 2.3.6
+      jsdom:
+        specifier: 27.0.1
+        version: 27.0.1
       lucide-react:
         specifier: 1.24.0
         version: 1.24.0(react@19.2.7)
@@ -73,6 +76,9 @@ importers:
       server-only:
         specifier: 0.0.1
         version: 0.0.1
+      thinking-orbs:
+        specifier: 0.3.1
+        version: 0.3.1(react@19.2.7)
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -107,9 +113,6 @@ importers:
       eslint-config-next:
         specifier: 16.2.10
         version: 16.2.10(eslint@9.39.1(jiti@2.7.0))(typescript@5.9.3)
-      jsdom:
-        specifier: 27.0.1
-        version: 27.0.1
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -4753,6 +4756,11 @@ packages:
   tapable@2.3.3:
     resolution: {integrity: sha512-uxc/zpqFg6x7C8vOE7lh6Lbda8eEL9zmVm/PLeTPBRhh1xCgdWaQ+J1CUieGpIfm2HdtsUpRv+HshiasBMcc6A==}
     engines: {node: '>=6'}
+
+  thinking-orbs@0.3.1:
+    resolution: {integrity: sha512-3BG1aeB1RUTxItCml/BBuIz5JRM4kZqGuyx+vouv0fXTtcR9ZNoKjWGneHPx94y74GxgArwJZ1qbJR5dt54kSw==}
+    peerDependencies:
+      react: '>=18.0.0'
 
   tiny-glob@0.2.9:
     resolution: {integrity: sha512-g/55ssRPUjShh+xkfx9UPDXqhckHEsHr4Vd9zX55oSdGZc/MD0m3sferOkwWtp98bv+kcVfEHtRJgBVJzelrzg==}
@@ -10124,6 +10132,10 @@ snapshots:
   tailwindcss@4.3.2: {}
 
   tapable@2.3.3: {}
+
+  thinking-orbs@0.3.1(react@19.2.7):
+    dependencies:
+      react: 19.2.7
 
   tiny-glob@0.2.9:
     dependencies:

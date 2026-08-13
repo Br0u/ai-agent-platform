@@ -2,13 +2,15 @@ import {
   createAssistantErrorResponse,
   isAssistantMessageId,
   isAssistantProviderReply,
-  isAssistantStreamDeltaEvent,
+  isAssistantStreamEventData,
   parseAssistantRequest,
   safeAssistantSuggestedActions,
+  ASSISTANT_CHAT_REQUEST_MAX_BYTES,
   ASSISTANT_CONTENT_MAX_CODE_POINTS,
   type AssistantErrorResponse,
   type AssistantSuccessResponse,
 } from "@/features/assistant/assistant-contract";
+import { matchesAssistantInputPolicy } from "@/features/assistant/assistant-input-policy";
 import {
   ASSISTANT_STREAM_MEDIA_TYPE,
   formatAssistantStreamEvent,
@@ -21,24 +23,22 @@ import {
 import { placeholderAssistantProvider } from "@/server/assistant/placeholder-assistant-provider";
 import { getAssistantRuntime } from "@/server/assistant/assistant-runtime";
 import { resolveAssistantRequestId } from "@/server/assistant/assistant-request-id";
-import {
-  type AnonymousSessionManager,
-  type AssistantPublicSession,
-} from "@/server/assistant/anonymous-session";
-import { type AssistantActor } from "@/server/assistant/assistant-actor";
+import { resolveAssistantActor } from "@/server/assistant/assistant-actor";
 import {
   AssistantRateLimitExceededError,
   type AssistantRateLimitInput,
   type AssistantRateLimiter,
 } from "@/server/assistant/assistant-rate-limit";
+import type {
+  PublicPageContext,
+  PublicPageContextResolver,
+} from "@/server/assistant/public-page-context";
+import type { resolveTrustedClientIp } from "@/server/assistant/trusted-client-ip";
 import { readBoundedJson } from "@/server/http/read-bounded-json";
-
-export type AssistantChatSessionResolution = {
-  publicSession: AssistantPublicSession;
-  internalSessionId: string;
-  actor: AssistantActor;
-  setCookie?: string;
-};
+import {
+  createAssistantInputPolicyRepository,
+  type AssistantInputPolicySnapshot,
+} from "@/server/assistant/assistant-input-policy";
 
 interface AssistantChatHandlerDependencies {
   provider?: AssistantProvider;
@@ -50,22 +50,17 @@ interface AssistantChatHandlerDependencies {
   clock: () => number;
   requestIdFactory: () => string;
   messageIdFactory: () => string;
-  resolveSession: (request: Request) => Promise<AssistantChatSessionResolution>;
+  resolveActor: typeof resolveAssistantActor;
   rateLimiter: AssistantRateLimiter;
-  resolveTrustedClientIp: (request: Request) => string | undefined;
+  loadInputPolicy: () => Promise<AssistantInputPolicySnapshot>;
+  pageResolver: Pick<PublicPageContextResolver, "load">;
+  resolveTrustedClientIp: (
+    request: Request,
+  ) => ReturnType<typeof resolveTrustedClientIp>;
 }
 
-export function createAssistantChatSessionResolver(
-  manager: AnonymousSessionManager,
-  actorResolver: (request: Request) => Promise<AssistantActor>,
-) {
-  return async function resolveSession(
-    request: Request,
-  ): Promise<AssistantChatSessionResolution> {
-    const actor = await actorResolver(request);
-    const session = manager.resolve(request.headers, actor);
-    return { ...session, actor };
-  };
+function loadAssistantInputPolicy() {
+  return createAssistantInputPolicyRepository().load();
 }
 
 const defaultDependencies: AssistantChatHandlerDependencies = {
@@ -74,28 +69,32 @@ const defaultDependencies: AssistantChatHandlerDependencies = {
   clock: () => performance.now(),
   requestIdFactory: () => crypto.randomUUID(),
   messageIdFactory: () => crypto.randomUUID(),
-  resolveSession: (request) => getAssistantRuntime().resolveSession(request),
+  resolveActor: resolveAssistantActor,
   rateLimiter: {
     consume: (input) => getAssistantRuntime().rateLimiter.consume(input),
+  },
+  loadInputPolicy: loadAssistantInputPolicy,
+  pageResolver: {
+    load: (input, signal) =>
+      getAssistantRuntime().pageResolver.load(input, signal),
   },
   resolveTrustedClientIp: (request) =>
     getAssistantRuntime().resolveTrustedClientIp(request),
 };
 
 function rateLimitInput(
-  session: AssistantChatSessionResolution,
-  ipAddress: string | undefined,
+  actor: Awaited<ReturnType<typeof resolveAssistantActor>>,
+  client: { mode: "trusted"; ipAddress: string } | { mode: "direct_global" },
 ): AssistantRateLimitInput {
-  return session.actor.kind === "customer"
-    ? { scope: "customer", actorId: session.actor.userId }
-    : {
-        scope: "anonymous",
-        sessionId: session.internalSessionId,
-        ...(ipAddress ? { ipAddress } : {}),
-      };
+  return actor.kind === "customer"
+    ? { scope: "customer", actorId: actor.userId }
+    : client.mode === "trusted"
+      ? { scope: "anonymous", ipAddress: client.ipAddress }
+      : { scope: "anonymous", global: true };
 }
 
-const MAX_REQUEST_BODY_BYTES = 16 * 1024;
+class AssistantInputBlockedError extends Error {}
+
 export function createAssistantChatHandler(
   dependencies: AssistantChatHandlerDependencies = defaultDependencies,
 ) {
@@ -106,11 +105,13 @@ export function createAssistantChatHandler(
       dependencies.requestIdFactory,
     );
     let body: AssistantSuccessResponse | AssistantErrorResponse;
-    let statusCode: 200 | 400 | 429 | 503;
-    let session: AssistantChatSessionResolution | undefined;
+    let statusCode: 200 | 400 | 422 | 429 | 503;
     let retryAfterSeconds: number | undefined;
 
-    const input = await readBoundedJson(request, MAX_REQUEST_BODY_BYTES);
+    const input = await readBoundedJson(
+      request,
+      ASSISTANT_CHAT_REQUEST_MAX_BYTES,
+    );
     const assistantRequest = input.ok
       ? parseAssistantRequest(input.value)
       : null;
@@ -120,12 +121,37 @@ export function createAssistantChatHandler(
       statusCode = 400;
     } else {
       try {
-        session = await dependencies.resolveSession(request);
-        const resolvedSession = session;
-        const ipAddress = dependencies.resolveTrustedClientIp(request);
-        await dependencies.rateLimiter.consume(
-          rateLimitInput(resolvedSession, ipAddress),
-        );
+        const actor = await dependencies.resolveActor(request);
+        const client = dependencies.resolveTrustedClientIp(request);
+        if (client.mode === "invalid_proxy") {
+          throw new Error("Assistant proxy is misconfigured");
+        }
+        await dependencies.rateLimiter.consume(rateLimitInput(actor, client));
+        const policy = await dependencies.loadInputPolicy();
+        if (
+          matchesAssistantInputPolicy(
+            [
+              assistantRequest.message,
+              ...assistantRequest.history
+                .filter((message) => message.role === "user")
+                .map((message) => message.content),
+            ],
+            policy.terms,
+          )
+        ) {
+          throw new AssistantInputBlockedError();
+        }
+        let pageContext: PublicPageContext | null = null;
+        if (assistantRequest.page) {
+          try {
+            pageContext = await dependencies.pageResolver.load(
+              assistantRequest.page,
+              request.signal,
+            );
+          } catch {
+            if (request.signal.aborted) throw request.signal.reason;
+          }
+        }
         const selected = dependencies.resolveProvider
           ? await dependencies.resolveProvider()
           : {
@@ -134,10 +160,7 @@ export function createAssistantChatHandler(
             };
         const invocation = {
           request: assistantRequest,
-          session: {
-            kind: "persistent" as const,
-            internalSessionId: resolvedSession.internalSessionId,
-          },
+          pageContext,
           signal: request.signal,
         };
         if (
@@ -157,7 +180,9 @@ export function createAssistantChatHandler(
             })
             [Symbol.asyncIterator]();
           const abortStream = () => streamAbortController.abort();
-          request.signal.addEventListener("abort", abortStream, { once: true });
+          request.signal.addEventListener("abort", abortStream, {
+            once: true,
+          });
           if (request.signal.aborted) abortStream();
           let cancelled = false;
           let logged = false;
@@ -176,24 +201,17 @@ export function createAssistantChatHandler(
           };
           const stream = new ReadableStream<Uint8Array>({
             start(controller) {
-              controller.enqueue(
-                encoder.encode(
-                  formatAssistantStreamEvent({
-                    event: "start",
-                    data: {
-                      version: "1",
-                      requestId,
-                      mode: "agentos",
-                      session: resolvedSession.publicSession,
-                      message: {
-                        id: messageId,
-                        role: "assistant",
-                      },
-                      suggestedActions: [],
-                    },
-                  }),
-                ),
-              );
+              if (pageContext) {
+                controller.enqueue(
+                  encoder.encode(
+                    formatAssistantStreamEvent({
+                      type: "activity",
+                      phase: "reading",
+                      label: "已读取当前页面",
+                    }),
+                  ),
+                );
+              }
               void (async () => {
                 let contentCodePoints = 0;
                 let hasNonWhitespaceContent = false;
@@ -201,22 +219,25 @@ export function createAssistantChatHandler(
                   while (true) {
                     const next = await iterator.next();
                     if (next.done) break;
-                    const delta = { content: next.value };
-                    if (!isAssistantStreamDeltaEvent(delta)) {
-                      throw new TypeError("Invalid assistant stream delta");
+                    const event = next.value;
+                    if (
+                      !isAssistantStreamEventData(event) ||
+                      (event.type === "activity" && event.phase === "reading")
+                    ) {
+                      throw new TypeError("Invalid assistant provider event");
                     }
-                    contentCodePoints += Array.from(delta.content).length;
-                    if (contentCodePoints > ASSISTANT_CONTENT_MAX_CODE_POINTS) {
-                      throw new TypeError("Assistant stream is too large");
+                    if (event.type === "answer_delta") {
+                      contentCodePoints += Array.from(event.content).length;
+                      if (
+                        contentCodePoints > ASSISTANT_CONTENT_MAX_CODE_POINTS
+                      ) {
+                        throw new TypeError("Assistant stream is too large");
+                      }
+                      hasNonWhitespaceContent ||=
+                        event.content.trim().length > 0;
                     }
-                    hasNonWhitespaceContent ||= delta.content.trim().length > 0;
                     controller.enqueue(
-                      encoder.encode(
-                        formatAssistantStreamEvent({
-                          event: "delta",
-                          data: delta,
-                        }),
-                      ),
+                      encoder.encode(formatAssistantStreamEvent(event)),
                     );
                   }
                   if (!hasNonWhitespaceContent) {
@@ -224,7 +245,7 @@ export function createAssistantChatHandler(
                   }
                   controller.enqueue(
                     encoder.encode(
-                      formatAssistantStreamEvent({ event: "done", data: {} }),
+                      formatAssistantStreamEvent({ type: "done" }),
                     ),
                   );
                   controller.close();
@@ -235,8 +256,9 @@ export function createAssistantChatHandler(
                       controller.enqueue(
                         encoder.encode(
                           formatAssistantStreamEvent({
-                            event: "error",
-                            data: {},
+                            type: "error",
+                            code: "stream_interrupted",
+                            message: "回答中断，请重试。",
                           }),
                         ),
                       );
@@ -265,9 +287,6 @@ export function createAssistantChatHandler(
               "Cache-Control": "no-store, no-transform",
               "Content-Type": `${ASSISTANT_STREAM_MEDIA_TYPE}; charset=utf-8`,
               "X-Accel-Buffering": "no",
-              ...(resolvedSession.setCookie
-                ? { "Set-Cookie": resolvedSession.setCookie }
-                : {}),
             },
           });
         }
@@ -285,7 +304,6 @@ export function createAssistantChatHandler(
           version: "1",
           requestId,
           mode: selected.mode,
-          session: session.publicSession,
           message: {
             id: messageId,
             role: "assistant",
@@ -301,6 +319,9 @@ export function createAssistantChatHandler(
           body = createAssistantErrorResponse(requestId, "rate_limited");
           statusCode = 429;
           retryAfterSeconds = error.retryAfterSeconds;
+        } else if (error instanceof AssistantInputBlockedError) {
+          body = createAssistantErrorResponse(requestId, "input_blocked");
+          statusCode = 422;
         } else {
           body = createAssistantErrorResponse(
             requestId,
@@ -317,7 +338,6 @@ export function createAssistantChatHandler(
         status: statusCode,
         headers: {
           "Cache-Control": "no-store",
-          ...(session?.setCookie ? { "Set-Cookie": session.setCookie } : {}),
           ...(retryAfterSeconds !== undefined
             ? { "Retry-After": String(retryAfterSeconds) }
             : {}),
@@ -331,7 +351,6 @@ export function createAssistantChatHandler(
         status: statusCode,
         headers: {
           "Cache-Control": "no-store",
-          ...(session?.setCookie ? { "Set-Cookie": session.setCookie } : {}),
         },
       });
     }
