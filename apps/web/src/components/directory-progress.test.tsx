@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   calculatePageProgress,
   DirectoryProgressRail,
+  isAtPageBottom,
   selectActiveAnchor,
   useDirectoryProgress,
 } from "./directory-progress";
@@ -97,6 +98,13 @@ describe("calculatePageProgress", () => {
   });
 });
 
+describe("isAtPageBottom", () => {
+  it("activates the final anchor within one pixel before the bottom", () => {
+    expect(isAtPageBottom(1_600, 1_599.5)).toBe(true);
+    expect(isAtPageBottom(1_600, 1_598.9)).toBe(false);
+  });
+});
+
 describe("selectActiveAnchor", () => {
   it("uses DOM order instead of visual positions or input order", () => {
     appendAnchor("first", -20);
@@ -148,7 +156,7 @@ describe("selectActiveAnchor", () => {
     ).toBe("second");
   });
 
-  it("tolerates subpixel rounding at the sticky header boundary", () => {
+  it("does not select an anchor until it crosses the sticky header", () => {
     appendAnchor("first", 20);
     appendAnchor("second", 65.1);
 
@@ -157,7 +165,7 @@ describe("selectActiveAnchor", () => {
         atBottom: false,
         headerOffset: 65,
       }),
-    ).toBe("second");
+    ).toBe("first");
   });
 
   it("uses the final anchor at the bottom when its short section never crosses the header", () => {

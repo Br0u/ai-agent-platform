@@ -33,6 +33,10 @@ export function calculatePageProgress({
   return Math.min(1, Math.max(0, scrollY / scrollRange));
 }
 
+export function isAtPageBottom(scrollRange: number, scrollY: number) {
+  return scrollRange > 0 && Math.abs(scrollRange - scrollY) <= 1;
+}
+
 function getAnchors(anchorIds: readonly string[]) {
   const anchors = new Map<string, HTMLElement>();
 
@@ -60,7 +64,7 @@ export function selectActiveAnchor(
   let activeId = anchors[0][0];
 
   for (const [id, anchor] of anchors) {
-    if (anchor.getBoundingClientRect().top <= headerOffset + 1) activeId = id;
+    if (anchor.getBoundingClientRect().top <= headerOffset) activeId = id;
   }
 
   return activeId;
@@ -97,7 +101,7 @@ export function useDirectoryProgress(
       const scrollY = window.scrollY;
       const scrollRange = scrollHeight - window.innerHeight;
       const activeId = selectActiveAnchor(ids, {
-        atBottom: scrollRange > 0 && Math.abs(scrollRange - scrollY) <= 1,
+        atBottom: isAtPageBottom(scrollRange, scrollY),
         atTop: scrollY <= 0,
         headerOffset: getHeaderOffset(),
       });

@@ -40,6 +40,52 @@ async function gotoSolutions(page: Page) {
   await expect(page).toHaveURL(/\/solutions\/finance-compliance$/u);
 }
 
+async function expectNoHorizontalOverflow(page: Page) {
+  const dimensions = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+}
+
+async function expectMobileSolutionDirectoryContract(page: Page) {
+  const trigger = page.getByRole("button", {
+    name: "解决方案目录",
+    exact: true,
+  });
+  await expectNoHorizontalOverflow(page);
+  await trigger.click();
+
+  const dialog = page.getByRole("dialog", { name: "解决方案目录" });
+  const search = dialog.getByRole("searchbox", {
+    name: "在解决方案目录中筛选",
+  });
+  await expect(dialog).toHaveAttribute("aria-modal", "true");
+  await expect(search).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => document.body.style.overflow))
+    .toBe("hidden");
+
+  const focusables = dialog.locator(
+    'a[href]:visible, button:not([disabled]):visible, input:not([disabled]):visible, [tabindex]:not([tabindex="-1"]):visible',
+  );
+  const last = focusables.last();
+  await last.focus();
+  await page.keyboard.press("Tab");
+  await expect(search).toBeFocused();
+  await search.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(last).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => document.body.style.overflow))
+    .toBe("");
+  await expectNoHorizontalOverflow(page);
+}
+
 test("V3 默认进入首个方案并渲染严格详情结构", async ({ page }) => {
   await gotoSolutions(page);
   await expect(
@@ -219,11 +265,17 @@ test("解决方案目录在桌面显示静默进度并在移动断点改用抽�
       "52px",
     );
     await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
-    const widths = await page.evaluate(() => ({
-      client: document.documentElement.clientWidth,
-      scroll: document.documentElement.scrollWidth,
-    }));
-    expect(widths.scroll).toBeLessThanOrEqual(widths.client);
+    await expectNoHorizontalOverflow(page);
+
+    if (viewport.width === 901) {
+      await page.getByRole("button", { name: "展开解决方案目录" }).click();
+      await expect(page.locator(".solution-directory")).toHaveCSS(
+        "width",
+        "240px",
+      );
+      await expect(page.getByTestId("directory-progress-rail")).toHaveCount(0);
+      await expectNoHorizontalOverflow(page);
+    }
   }
 
   await page.setViewportSize({ width: 1440, height: 980 });
@@ -257,6 +309,7 @@ test("解决方案目录在桌面显示静默进度并在移动断点改用抽�
     await gotoSolutions(page);
     await expect(page.getByTestId("directory-progress-rail")).not.toBeVisible();
     await expect(directory).not.toHaveCSS("width", "52px");
+    await expectMobileSolutionDirectoryContract(page);
   }
 
   await page.setViewportSize({ width: 390, height: 844 });

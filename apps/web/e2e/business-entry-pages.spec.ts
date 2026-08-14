@@ -32,6 +32,53 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
 }
 
+async function expectMobileDirectoryContract(
+  page: Page,
+  {
+    dialogName,
+    searchName,
+    triggerName,
+  }: {
+    dialogName: string;
+    searchName: string;
+    triggerName: string;
+  },
+) {
+  const trigger = page.getByRole("button", {
+    name: triggerName,
+    exact: true,
+  });
+  await expectNoHorizontalOverflow(page);
+  await trigger.click();
+
+  const dialog = page.getByRole("dialog", { name: dialogName });
+  const search = dialog.getByRole("searchbox", { name: searchName });
+  await expect(dialog).toHaveAttribute("aria-modal", "true");
+  await expect(search).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => document.body.style.overflow))
+    .toBe("hidden");
+
+  await page.locator(".site-header a").first().focus();
+  await expect(search).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => document.body.style.overflow))
+    .toBe("");
+  await expectNoHorizontalOverflow(page);
+}
+
+async function scrollWithinOnePixelOfBottom(page: Page) {
+  await page.evaluate((distance) => {
+    const scrollRange =
+      document.documentElement.scrollHeight - window.innerHeight;
+    window.scrollTo(0, Math.max(0, scrollRange - distance));
+  }, 0.5);
+}
+
 test("downloads 执行完整内容、筛选和原型下载确认合同", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await gotoDownloads(page);
@@ -198,8 +245,22 @@ test("下载与合作目录在桌面静默折叠且移动端不显示进度轨",
     await page.setViewportSize({ width, height: 844 });
     await gotoDownloads(page);
     await expect(page.getByTestId("directory-progress-rail")).not.toBeVisible();
+    if (width !== 390) {
+      await expectMobileDirectoryContract(page, {
+        dialogName: "下载中心目录",
+        searchName: "在下载中心目录中筛选",
+        triggerName: "下载中心目录",
+      });
+    }
     await gotoPartners(page);
     await expect(page.getByTestId("directory-progress-rail")).not.toBeVisible();
+    if (width !== 390) {
+      await expectMobileDirectoryContract(page, {
+        dialogName: "合作伙伴目录",
+        searchName: "在合作伙伴目录中筛选",
+        triggerName: "合作伙伴目录",
+      });
+    }
   }
 });
 
@@ -223,7 +284,7 @@ test("下载与合作目录按页面位置标注当前锚点且不改写地址",
   await expect(
     downloadDirectory.getByRole("link", { name: "产品部署文档" }),
   ).toHaveAttribute("aria-current", "location");
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await scrollWithinOnePixelOfBottom(page);
   await expect(
     downloadDirectory.getByRole("link", { name: "元启·技术白皮书" }),
   ).toHaveAttribute("aria-current", "location");
@@ -241,17 +302,53 @@ test("下载与合作目录按页面位置标注当前锚点且不改写地址",
       0,
       anchor.getBoundingClientRect().top +
         window.scrollY -
-        (header?.getBoundingClientRect().bottom ?? 0),
+        (header?.getBoundingClientRect().bottom ?? 0) +
+        1,
     );
   });
   await expect(
     partnerDirectory.getByRole("link", { name: "认证路径" }),
   ).toHaveAttribute("aria-current", "location");
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await scrollWithinOnePixelOfBottom(page);
   await expect(
     partnerDirectory.getByRole("link", { name: "学习资源" }),
   ).toHaveAttribute("aria-current", "location");
   expect(page.url()).toBe(partnerUrl);
+});
+
+test("合作目录在活动子项滚入后重新展开其已折叠祖先", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await gotoPartners(page, "?view=business#pb-hero");
+  await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
+
+  const directory = page.getByRole("navigation", {
+    name: "合作伙伴完整目录",
+  });
+  const groupToggle = directory.getByRole("button", {
+    name: "收起商业模式目录",
+  });
+  await groupToggle.click();
+  await expect(directory.getByRole("link", { name: "分润政策" })).toHaveCount(
+    0,
+  );
+
+  await page.locator("#pb-tiers").evaluate((anchor) => {
+    const header = document.querySelector("header");
+    window.scrollTo(
+      0,
+      anchor.getBoundingClientRect().top +
+        window.scrollY -
+        (header?.getBoundingClientRect().bottom ?? 0) +
+        1,
+    );
+  });
+
+  await expect(
+    directory.getByRole("link", { name: "分润政策" }),
+  ).toHaveAttribute("aria-current", "location");
+  await expect(
+    directory.getByRole("button", { name: "收起商业模式目录" }),
+  ).toHaveAttribute("aria-expanded", "true");
 });
 
 test("downloads 资源锚点在 desktop 和 mobile 落入 sticky 可视区", async ({

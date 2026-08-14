@@ -140,6 +140,50 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
 }
 
+async function scrollWithinOnePixelOfBottom(page: Page) {
+  await page.evaluate((distance) => {
+    const scrollRange =
+      document.documentElement.scrollHeight - window.innerHeight;
+    window.scrollTo(0, Math.max(0, scrollRange - distance));
+  }, 0.5);
+}
+
+async function expectMobileProductDirectoryContract(page: Page) {
+  const trigger = page.getByRole("button", { name: "打开产品目录" });
+  await expectNoHorizontalOverflow(page);
+  await trigger.click();
+
+  const dialog = page.getByRole("dialog", { name: "产品目录" });
+  const search = dialog.getByRole("searchbox", {
+    name: "在产品目录中筛选",
+  });
+  await expect(dialog).toHaveAttribute("aria-modal", "true");
+  await expect
+    .poll(() => page.evaluate(() => document.body.style.overflow))
+    .toBe("hidden");
+
+  const first = dialog.getByRole("button", { name: "关闭产品目录" });
+  const focusables = dialog.locator(
+    "a[href]:visible, button:not([disabled]):visible, input:not([disabled]):visible",
+  );
+  const last = focusables.last();
+  await last.focus();
+  await page.keyboard.press("Tab");
+  await expect(first).toBeFocused();
+  await first.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(last).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => document.body.style.overflow))
+    .toBe("");
+  await expectNoHorizontalOverflow(page);
+  await expect(search).toHaveCount(0);
+}
+
 const detailVisualContracts = [
   { path: "/product/code-agent", imageCount: 5 },
   { path: "/product/aippt", imageCount: 5 },
@@ -319,6 +363,7 @@ test("产品目录在桌面静默折叠并在移动断点移除进度轨", async
       page.getByRole("button", { name: "打开产品目录" }),
     ).toBeVisible();
     await expectNoHorizontalOverflow(page);
+    if (width !== 390) await expectMobileProductDirectoryContract(page);
   }
 });
 
@@ -402,7 +447,7 @@ test("产品能力滚动同步目录位置且不改写地址", async ({ page }) 
   ).toHaveAttribute("aria-current", "location");
   expect(page.url()).toBe(initialUrl);
 
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await scrollWithinOnePixelOfBottom(page);
   await expect(
     directory.getByRole("link", { name: "研发生态协同" }),
   ).toHaveAttribute("aria-current", "location");
