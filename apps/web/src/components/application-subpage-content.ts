@@ -261,11 +261,11 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看文档智能方案 →",
-              href: "/solutions/document-intelligence",
+              href: "/solutions/finance-compliance",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -275,11 +275,11 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看相关方案 →",
-              href: "/solutions/document-intelligence",
+              href: "/solutions/finance-compliance",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -289,11 +289,11 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看相关方案 →",
-              href: "/solutions/document-intelligence",
+              href: "/solutions/finance-compliance",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -535,11 +535,11 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看文档智能方案 →",
-              href: "/solutions/document-intelligence",
+              href: "/solutions/finance-compliance",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -549,11 +549,11 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看相关方案 →",
-              href: "/solutions/document-intelligence",
+              href: "/solutions/finance-compliance",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -563,11 +563,11 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看相关方案 →",
-              href: "/solutions/document-intelligence",
+              href: "/solutions/finance-compliance",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -796,11 +796,11 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看文档智能方案 →",
-              href: "/solutions/document-intelligence",
+              href: "/solutions/finance-compliance",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -810,11 +810,11 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看相关方案 →",
-              href: "/solutions/document-intelligence",
+              href: "/solutions/finance-compliance",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -824,11 +824,11 @@ const applicationSubpages = [
           actions: [
             {
               label: "查看相关方案 →",
-              href: "/solutions/document-intelligence",
+              href: "/solutions/finance-compliance",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },

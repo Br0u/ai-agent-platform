@@ -1,27 +1,27 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import KnowledgeCenterPage, {
-  metadata as knowledgeCenterMetadata,
-} from "../app/product/knowledge/page";
-import ModelCenterPage, {
-  metadata as modelCenterMetadata,
-} from "../app/product/model/page";
 import AgentCenterPage, {
-  metadata as agentCenterMetadata,
+  metadata as agentMetadata,
 } from "../app/product/agents/page";
 import ApplicationCenterPage, {
-  metadata as applicationCenterMetadata,
+  metadata as applicationMetadata,
 } from "../app/product/applications/page";
 import CodingProjectPage from "../app/product/coding-project/page";
 import CodingCenterPage, {
-  metadata as codingCenterMetadata,
+  metadata as codingMetadata,
 } from "../app/product/coding/page";
 import GovernanceCenterPage, {
-  metadata as governanceCenterMetadata,
+  metadata as governanceMetadata,
 } from "../app/product/governance/page";
+import KnowledgeCenterPage, {
+  metadata as knowledgeMetadata,
+} from "../app/product/knowledge/page";
+import ModelCenterPage, {
+  metadata as modelMetadata,
+} from "../app/product/model/page";
 import SkillCenterPage, {
-  metadata as skillCenterMetadata,
+  metadata as skillMetadata,
 } from "../app/product/skills/page";
 import {
   PlatformCenterDetail,
@@ -46,156 +46,116 @@ const routedCenters = [
   {
     slug: "model",
     Page: ModelCenterPage,
-    metadata: modelCenterMetadata,
-    title: "企业模型工程，从资产管理到上线服务",
+    metadata: modelMetadata,
+    title: "模型中心：覆盖模型全生命周期的企业模型工程",
     description:
-      "围绕企业最关心的三个问题组织能力：有哪些模型、模型怎么运行、模型怎么变强。模型花园与纳管统一资产管理，三种部署方式覆盖运行环境，数据工厂与训练评估让模型持续优化。",
+      "模型花园与纳管统一资产管理，数据、训练、评估持续优化，三种部署方式让模型服务上线，任务中心统一调度运行，让模型从「能用」到「更懂业务、更好用」。",
+    tags: 4,
+    capabilities: 4,
+    images: 5,
   },
   {
     slug: "knowledge",
     Page: KnowledgeCenterPage,
-    metadata: knowledgeCenterMetadata,
+    metadata: knowledgeMetadata,
     title: "企业知识库：让企业文档变成 AI 能用的知识",
     description:
       "把制度、产品资料、技术文档等企业知识上传、解析、分片，沉淀为可检索、可问答、可溯源的 AI 知识底座，支撑知识智能体与上层应用。",
+    tags: 4,
+    capabilities: 0,
+    images: 0,
   },
   {
     slug: "agents",
     Page: AgentCenterPage,
-    metadata: agentCenterMetadata,
-    title: "让企业拥有懂知识、懂业务、懂流程的 AI 助手",
+    metadata: agentMetadata,
+    title: "智能体中心：零代码快速搭建，低代码灵活编排",
     description:
-      "把模型、知识、数据和流程组合成可对话、可执行、可发布的智能体：企业知识助手回答问题，问数助手解读数据，视频助手看懂画面，自动化引擎跑通复杂流程——让 AI 真正开始帮企业干活。",
+      "预置知识、数据、视频与流程编排四类智能体，常规场景零代码快速搭建、即配即用，复杂业务低代码流程编排，构建可对话、可发布、可复用的企业 AI 智能体。",
+    tags: 4,
+    capabilities: 4,
+    images: 8,
   },
   {
     slug: "applications",
     Page: ApplicationCenterPage,
-    metadata: applicationCenterMetadata,
-    title: "成熟业务 AI 应用，拿来即用",
+    metadata: applicationMetadata,
+    title: "行业应用中心：高频业务场景，成熟应用开箱即用",
     description:
-      "不用从零搭建模型、知识库和工作流。面向高频业务场景打磨好的 AI 应用，直接上手使用，快速验证价值，再决定要不要深入建设。",
+      "面向高频业务场景打磨成熟的 AI 应用，无需从零搭建模型、知识库与工作流，直接上手使用、快速验证价值。",
+    tags: 3,
+    capabilities: 3,
+    images: 3,
   },
   {
     slug: "skills",
     Page: SkillCenterPage,
-    metadata: skillCenterMetadata,
-    title: "可复用的业务技能，拿来即用",
+    metadata: skillMetadata,
+    title: "技能中心：专业能力标准封装，统一管理、随取随用",
     description:
-      "技能中心沉淀面向编程、应用与办公场景的可复用能力——智能体与行业应用按需组装，能力标准化、复用化，减少重复建设。",
+      "技能中心面向编程、应用与办公场景，将专业能力沉淀为标准化的可复用技能，通过技能货架统一发布与管理、按需安装与调用，随取随用。",
+    tags: 3,
+    capabilities: 3,
+    images: 1,
   },
   {
     slug: "coding",
     Page: CodingCenterPage,
-    metadata: codingCenterMetadata,
-    title: "码多多：让智能编程走进企业日常开发",
+    metadata: codingMetadata,
+    title: "码多多：自然语言驱动开发，双模式执行与工具链落地",
     description:
-      "基于元启平台的智能编程助手，自然语言驱动开发、Plan/Build 双模式工作流，私有化部署、代码不出域——让团队写得更快、改得更稳、交付更规范。",
+      "以自然语言对话覆盖从需求理解、代码生成到真实环境落地的完整开发链路；深度集成 VS Code，支持命令行与终端 UI 多端接入。",
+    tags: 3,
+    capabilities: 3,
+    images: 2,
   },
   {
     slug: "governance",
     Page: GovernanceCenterPage,
-    metadata: governanceCenterMetadata,
-    title: "平台用得安全，权限管得清楚",
+    metadata: governanceMetadata,
+    title: "权限中心：用户角色授权统一管理，权限边界清晰可控",
     description:
-      "从「谁在平台上」到「能看什么、能做什么、能碰哪些数据」，一条授权链路让权限边界清晰可控。",
+      "从「谁在平台上」到「能看什么、能做什么、能碰哪些数据」，一条授权链路让权限边界清晰可控：用户、角色、菜单与行级权限四道关口逐层收敛，操作与数据双权限管控。",
+    tags: 4,
+    capabilities: 1,
+    images: 1,
   },
 ] as const;
 
 describe("PlatformCenterDetail", () => {
   it.each(routedCenters)(
-    "wires the $slug Page to its fixed content and metadata",
+    "wires the $slug route to its V2 content and metadata",
     ({ Page, description, metadata, title }) => {
       const { container } = render(<Page />);
 
       expect(
-        screen.getAllByRole("heading", {
-          level: 1,
-          name: title,
-        }),
-      ).toHaveLength(1);
+        screen.getByRole("heading", { level: 1, name: title }),
+      ).toBeVisible();
       expect(container.querySelectorAll("h1")).toHaveLength(1);
       expect(metadata).toMatchObject({ title, description });
     },
   );
 
-  it.each([
-    {
-      slug: "model",
-      title: "企业模型工程，从资产管理到上线服务",
-      sectionCount: 5,
-      tagCount: 4,
-      hasBusiness: true,
-      hasCta: false,
-    },
-    {
-      slug: "knowledge",
-      title: "企业知识库：让企业文档变成 AI 能用的知识",
-      sectionCount: 4,
-      tagCount: 4,
-      hasBusiness: false,
-      hasCta: true,
-    },
-    {
-      slug: "agents",
-      title: "让企业拥有懂知识、懂业务、懂流程的 AI 助手",
-      sectionCount: 3,
-      tagCount: 4,
-      hasBusiness: true,
-      hasCta: true,
-    },
-    {
-      slug: "applications",
-      title: "成熟业务 AI 应用，拿来即用",
-      sectionCount: 3,
-      tagCount: 4,
-      hasBusiness: true,
-      hasCta: true,
-    },
-    {
-      slug: "skills",
-      title: "可复用的业务技能，拿来即用",
-      sectionCount: 3,
-      tagCount: 3,
-      hasBusiness: true,
-      hasCta: true,
-    },
-    {
-      slug: "coding",
-      title: "码多多：让智能编程走进企业日常开发",
-      sectionCount: 3,
-      tagCount: 4,
-      hasBusiness: true,
-      hasCta: true,
-    },
-    {
-      slug: "governance",
-      title: "平台用得安全，权限管得清楚",
-      sectionCount: 3,
-      tagCount: 4,
-      hasBusiness: true,
-      hasCta: true,
-    },
-  ])(
+  it.each(routedCenters)(
     "renders the complete $slug center structure",
-    ({ hasBusiness, hasCta, sectionCount, slug, tagCount, title }) => {
+    ({ capabilities, images, slug, tags }) => {
       const { container } = render(<PlatformCenterDetail slug={slug} />);
 
-      expect(
-        screen.getByRole("heading", { level: 1, name: title }),
-      ).toBeVisible();
       expect(screen.getAllByTestId("platform-center-hero-tag")).toHaveLength(
-        tagCount,
+        tags,
       );
       expect(screen.getAllByTestId("platform-center-hero-action")).toHaveLength(
         2,
       );
       expect(screen.getAllByTestId("platform-center-section")).toHaveLength(
-        sectionCount,
+        slug === "knowledge" ? 4 : 1,
       );
-      expect(Boolean(screen.queryByTestId("platform-center-business"))).toBe(
-        hasBusiness,
-      );
-      expect(Boolean(screen.queryByTestId("platform-center-cta"))).toBe(hasCta);
+      expect(
+        screen.queryAllByTestId("platform-center-capability"),
+      ).toHaveLength(capabilities);
+      expect(screen.queryAllByRole("img")).toHaveLength(images);
+      expect(screen.queryByTestId("platform-center-business")).toBeNull();
+      expect(screen.getByTestId("platform-center-cta")).toBeVisible();
       expect(container.querySelector("main")).not.toHaveClass(
         "platform-center--dense",
       );
@@ -203,69 +163,46 @@ describe("PlatformCenterDetail", () => {
     },
   );
 
-  it("renders source links, flows, visual slots and optional sections", () => {
-    const { rerender } = render(<PlatformCenterDetail slug="model" />);
+  it("renders the V2 agent center copy, screenshots and no obsolete business stage", () => {
+    const { container } = render(<AgentCenterPage />);
 
     expect(
-      screen.getByRole("link", { name: "查看模型花园 →" }),
-    ).toHaveAttribute("href", "/product/model-assets#assets-garden");
-    expect(screen.getAllByTestId("platform-center-table-row")).toHaveLength(3);
-    expect(screen.getByText("模型花园模型卡片列表截图素材槽位")).toBeVisible();
+      screen.getByRole("heading", {
+        level: 3,
+        name: "常规场景 · 零代码快速搭建",
+      }),
+    ).toBeVisible();
     expect(
-      within(screen.getByTestId("platform-center-workflow"))
-        .getAllByRole("listitem")
-        .map((item) => item.textContent),
-    ).toEqual(["模型接入", "数据训练", "效果评估", "部署使用"]);
-
-    rerender(<PlatformCenterDetail slug="applications" />);
-
-    expect(screen.queryByTestId("platform-center-workflow")).toBeNull();
-    for (const link of screen.getAllByRole("link", {
-      name: "查看通用文本写作 →",
-    })) {
-      expect(link).toHaveAttribute("href", "/product/app-writing");
-    }
-    expect(screen.getAllByTestId("platform-center-scene")).toHaveLength(3);
-  });
-
-  it("renders the complete coding center conversational demo through its real Page", () => {
-    render(<CodingCenterPage />);
-
-    const demo = screen
-      .getAllByTestId("platform-page-demo")
-      .find((element) => element.textContent?.includes("码多多 · 对话式开发"));
-
-    expect(demo).toBeDefined();
-    for (const copy of [
-      "码多多 · 对话式开发",
-      "给这个接口补上参数校验和单元测试",
-      "正在分析代码并生成修改方案……",
-      "已生成修改后的代码与单元测试，并检查通过。｜Build 模式 · 修改已落地",
-      "对话式编程：输入需求 → 生成代码 → 落地执行，全程可追溯",
-    ]) {
-      expect(within(demo!).getByText(copy, { exact: true })).toBeVisible();
-    }
-    const messages = within(demo!).getAllByTestId("platform-demo-message");
-    expect(messages).toHaveLength(3);
+      screen.getByText(
+        "以自然语言提出查询需求，自动生成数据查询，结果以表格或图表呈现。",
+        { exact: true },
+      ),
+    ).toBeVisible();
     expect(
-      messages.map((message) => message.getAttribute("data-message-role")),
-    ).toEqual(["user", "assistant", "assistant"]);
+      screen.getByRole("img", { name: "智能体中心架构图" }),
+    ).toHaveAttribute("src", expect.stringContaining("hero.png"));
+    expect(container.querySelector(".product-portal-reason-grid")).toBeNull();
+    expect(container.querySelector(".product-portal-scenes")).toBeNull();
+    expect(container.querySelector(".product-portal-demo")).toBeNull();
     expect(
-      within(demo!).getByPlaceholderText("输入你的开发需求…"),
-    ).toBeDisabled();
-    expect(within(demo!).getByRole("button", { name: "发送" })).toBeDisabled();
-    expect(messages.map((message) => message.textContent)).not.toContain(
-      "输入你的开发需求…",
-    );
-    expect(messages.map((message) => message.textContent)).not.toContain(
-      "发送",
-    );
-    expect(
-      screen.queryByText("码多多 · 对话式开发界面素材槽位"),
+      screen.queryByText("让企业拥有懂知识、懂业务、懂流程的 AI 助手"),
     ).not.toBeInTheDocument();
   });
 
-  it("renders a source cite inside its assistant message through the real coding project Page", () => {
+  it("renders governance directory anchors on the actual controls", () => {
+    const { container } = render(<GovernanceCenterPage />);
+
+    for (const id of ["gov-users", "gov-roles", "gov-menu", "gov-permission"]) {
+      expect(container.querySelector(`#${id}`)).toBeTruthy();
+    }
+    expect(
+      screen.queryByText(
+        "安全中心是元启平台内部的用户、权限与授权治理能力，不等同于独立网络安全产品或等保产品。",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps citations nested in assistant messages on existing subpages", () => {
     render(<CodingProjectPage />);
 
     const demo = within(screen.getByTestId("platform-center-business"))
@@ -274,138 +211,50 @@ describe("PlatformCenterDetail", () => {
         element.textContent?.includes("项目工作台 · 会话示例"),
       );
     expect(demo).toBeDefined();
-    const messages = within(demo!).getAllByTestId("platform-demo-message");
-    expect(messages).toHaveLength(3);
-    expect(messages.map((message) => message.dataset.messageRole)).toEqual([
-      "user",
-      "assistant",
-      "assistant",
-    ]);
-    const finalAnswer = messages[2];
-    const cite = within(finalAnswer).getByText(
-      "上下文：订单系统 · 已引用 8 条历史会话",
-    );
-    expect(cite).toHaveClass("product-portal-demo-cite");
-    expect(cite.parentElement).toBe(finalAnswer);
+    const finalAnswer = within(demo!).getAllByTestId(
+      "platform-demo-message",
+    )[2]!;
+    expect(
+      within(finalAnswer).getByText("上下文：订单系统 · 已引用 8 条历史会话"),
+    ).toHaveClass("product-portal-demo-cite");
   });
 
-  it("renders the agent center source subheading and quoted data question", () => {
-    render(<AgentCenterPage />);
-
-    expect(
-      screen.getByRole("heading", {
-        level: 3,
-        name: "构建一次，处处可用",
-      }),
-    ).toBeVisible();
-    expect(
-      screen.getByText("「查询去年销售额最高的区域」", { exact: true }),
-    ).toBeVisible();
-  });
-
-  it("renders a demo cite and its following prototype caption separately", () => {
+  it("omits optional copy and actions instead of rendering empty wrappers", () => {
     const page: PlatformPage = {
-      slug: "demo-caption-test",
-      name: "演示注释测试",
+      slug: "optional-test",
+      name: "可选内容测试",
       hero: {
-        eyebrow: "测试",
-        title: "演示注释测试",
-        lead: "验证引用与演示链路说明同时保留。",
+        title: "可选内容测试",
+        lead: "只渲染现有内容。",
         tags: [],
         actions: [],
-        visual: { title: "测试视觉" },
       },
-      sections: [
+      sections: [{ title: "无额外文案" }],
+      capabilities: [
         {
-          eyebrow: "01｜演示",
-          title: "双注释演示",
-          demo: {
-            title: "评估任务 · 评测结果演示",
-            messages: ["正在执行自动评测……"],
-            note: "评测集：行业问答 1000 条",
-            caption: "选择模型与数据集 → 执行测评 → 输出结果 → 支撑决策",
-          },
-        },
-      ],
-    };
-
-    render(<PlatformPageDetail page={page} />);
-
-    const demo = screen.getByTestId("platform-page-demo");
-    expect(within(demo).getByText("评测集：行业问答 1000 条")).toBeVisible();
-    expect(
-      within(demo).getByText(
-        "选择模型与数据集 → 执行测评 → 输出结果 → 支撑决策",
-      ),
-    ).toHaveClass("product-portal-demo-caption");
-  });
-
-  it("renders governance anchors and the source scope note", () => {
-    const { container } = render(<PlatformCenterDetail slug="governance" />);
-
-    for (const id of ["gov-users", "gov-roles", "gov-menu", "gov-permission"]) {
-      expect(container.querySelector(`#${id}`)).toBeTruthy();
-    }
-    expect(
-      screen.getByText(
-        "安全中心是元启平台内部的用户、权限与授权治理能力，不等同于独立网络安全产品或等保产品。",
-      ),
-    ).toBeVisible();
-  });
-
-  it("omits empty group copy when tag and lead are absent", () => {
-    const page: PlatformPage = {
-      slug: "group-copy-test",
-      name: "能力组测试",
-      hero: {
-        eyebrow: "测试",
-        title: "能力组测试",
-        lead: "验证可选文案不会生成空节点。",
-        tags: [],
-        actions: [],
-        visual: { title: "测试视觉" },
-      },
-      sections: [
-        {
-          eyebrow: "能力分组",
-          title: "能力分组",
-          groups: [
-            {
-              id: "group-without-copy",
-              title: "质量保障",
-              cards: [
-                {
-                  title: "生成记录",
-                  description: "生成记录全程留存。",
-                },
-              ],
-            },
-          ],
+          id: "empty-actions",
+          title: "无操作能力",
+          lead: "没有操作按钮。",
+          steps: [],
+          actions: [],
         },
       ],
     };
 
     const { container } = render(<PlatformPageDetail page={page} />);
-    const group = container.querySelector("#group-without-copy");
 
-    expect(group).toBeTruthy();
-    expect(group?.querySelector(":scope > .product-portal-tag")).toBeNull();
-    expect(group?.querySelector(":scope > p")).toBeNull();
-    expect(
-      within(group as HTMLElement).getByRole("heading", {
-        level: 3,
-        name: "质量保障",
-      }),
-    ).toBeVisible();
-    expect(
-      within(group as HTMLElement).getByRole("heading", {
-        level: 4,
-        name: "生成记录",
-      }),
-    ).toBeVisible();
+    expect(container.querySelector(".product-detail-hero")).toHaveClass(
+      "has-no-media",
+    );
+    expect(container.querySelectorAll(".product-portal-actions")).toHaveLength(
+      0,
+    );
+    expect(container.querySelectorAll(".product-portal-eyebrow")).toHaveLength(
+      0,
+    );
   });
 
-  it("uses notFound for unknown platform center slugs", () => {
+  it("uses notFound for unknown center slugs", () => {
     expect(() => render(<PlatformCenterDetail slug="unknown" />)).toThrow(
       "NEXT_NOT_FOUND",
     );

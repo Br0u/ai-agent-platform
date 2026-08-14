@@ -1,693 +1,29 @@
-import {
-  getSolutionDetail,
-  getSolutionReturnHref,
-  solutionDetailSlugs,
-  type CaseSolutionDetail,
-  type CommonSolutionDetail,
-  type IndustrySolutionDetail,
-} from "@/components/solution-detail-content";
-import { solutionListRoutes } from "@/config/prototype-route-map";
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import {
+  getSolutionDetail,
+  solutionDetailSlugs,
+} from "@/components/solution-detail-content";
+import { SolutionOverview } from "@/components/solution-overview";
+import "../solutions.css";
 import "./solution-detail.css";
 
-type PageProps = {
-  params: Promise<{ slug: string }>;
-  searchParams?: Promise<{ mode?: string }>;
+type PageProps = { params: Promise<{ slug: string }> };
+
+const productRoutes: Record<string, string> = {
+  agents: "/product/agents",
+  applications: "/product/applications",
+  coding: "/product/coding",
+  governance: "/product/governance",
+  knowledge: "/product/agents",
+  model: "/product/model",
 };
 
-type ScenarioSolutionDetail = CommonSolutionDetail | IndustrySolutionDetail;
-
-function contactHref(
-  detail: CommonSolutionDetail | IndustrySolutionDetail | CaseSolutionDetail,
-) {
-  const topic =
-    detail.kind === "industry"
-      ? `${detail.category}｜${detail.title}咨询`
-      : detail.kind === "case"
-        ? `${detail.title}｜类似项目咨询`
-        : `${detail.title}咨询`;
-  return `/contact?topic=${topic}`;
-}
-
-const caseApproachStages = [
-  ["需求与资料梳理", "明确业务问题、使用对象、知识资料和数据边界。"],
-  ["方案设计与能力准备", "确定知识处理、模型、智能体及应用的组合方式。"],
-  ["场景建设与验证", "完成知识处理、智能体配置、业务测试和效果修正。"],
-  [
-    "上线使用与持续优化",
-    "在授权范围内发布使用，并根据反馈维护知识和场景效果。",
-  ],
-] as const;
-
-function SolutionHero({ detail }: { detail: ScenarioSolutionDetail }) {
-  return (
-    <section className="solution-detail-hero">
-      <div className="solution-detail-frame solution-detail-hero__layout">
-        <div>
-          <p className="solution-detail-eyebrow">
-            {detail.kind === "common"
-              ? `${detail.category}｜通用场景方案`
-              : `行业解决方案｜${detail.category}`}
-          </p>
-          <h1>{detail.title}</h1>
-          <p className="solution-detail-lead">{detail.summary}</p>
-          <p className="solution-detail-audience">
-            <b>适用对象：</b>
-            {detail.audience}
-          </p>
-          <div className="solution-detail-tags" aria-label="方案价值">
-            {detail.tags.map((tag) => (
-              <span className="solution-detail-tag" key={tag}>
-                {tag}
-              </span>
-            ))}
-          </div>
-          <div className="solution-detail-actions">
-            <Link
-              className="solution-detail-button solution-detail-button--primary"
-              href={contactHref(detail)}
-            >
-              {detail.kind === "common" ? "商务咨询" : "咨询当前行业场景"}
-            </Link>
-            <Link className="solution-detail-button" href="/trial">
-              申请体验
-            </Link>
-            <Link className="solution-detail-link" href="#solution-products">
-              查看相关产品能力 →
-            </Link>
-          </div>
-        </div>
-        <div className="solution-detail-visual">
-          <span>{detail.title}</span>
-          <small>总体架构 / 应用效果主视觉素材槽位</small>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function CommonSections({ detail }: { detail: CommonSolutionDetail }) {
-  return (
-    <>
-      <section
-        className="solution-detail-section"
-        aria-labelledby="solution-problems-title"
-      >
-        <div className="solution-detail-frame">
-          <p className="solution-detail-eyebrow">03｜业务问题与适用对象</p>
-          <h2 id="solution-problems-title">先明确问题、影响与建设目标</h2>
-          <div className="solution-detail-problem-grid">
-            <article data-testid="solution-problem">
-              <b>当前问题</b>
-              {detail.problems.map((problem) => (
-                <p key={problem}>{problem}</p>
-              ))}
-            </article>
-            <article data-testid="solution-problem">
-              <b>业务影响</b>
-              <p>信息、资源或流程使用链路较长，依赖人工查找、处理和协调。</p>
-              <p>已有知识、数据和平台能力难以形成统一业务服务。</p>
-            </article>
-            <article data-testid="solution-problem">
-              <b>建设目标</b>
-              <p>{detail.summary}</p>
-              <p>形成可维护、可验证、可继续扩展的企业 AI 能力。</p>
-            </article>
-          </div>
-          <h3 className="solution-detail-subheading">重点适用场景</h3>
-          <div className="solution-detail-scenarios">
-            {detail.scenarios.map((scenario) => (
-              <span key={scenario}>{scenario}</span>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section
-        className="solution-detail-section"
-        aria-labelledby="solution-components-title"
-      >
-        <div className="solution-detail-frame">
-          <p className="solution-detail-eyebrow">
-            04｜核心方案组成与业务运行流程
-          </p>
-          <h2 id="solution-components-title">方案如何组合并实际运行</h2>
-          <p className="solution-detail-intro">
-            仅组合当前场景需要的能力，不强制展示无关产品模块。
-          </p>
-          <div data-testid="solution-architecture">
-            <ol
-              className="solution-detail-flow solution-detail-flow--described"
-              aria-label="四层方案架构"
-            >
-              {[
-                ["业务使用入口", "#solution-components"],
-                ["智能体或应用服务", "#solution-components"],
-                ["知识、数据、流程与工具", "#solution-components"],
-                ["模型与算力资源", "#solution-products"],
-              ].map(([label, href]) => (
-                <li key={label}>
-                  <Link href={href}>{label}</Link>
-                </li>
-              ))}
-            </ol>
-            <p className="solution-detail-note">安全中心横向贯穿</p>
-          </div>
-          <h3 className="solution-detail-subheading">核心方案组成</h3>
-          <div className="solution-detail-components" id="solution-components">
-            {detail.components.map((component, index) => (
-              <article data-testid="solution-component" key={component}>
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <h3>{component}</h3>
-                <p>
-                  <b>模块作用：</b>说明该模块在“{detail.title}”中的职责和价值。
-                </p>
-                <p>
-                  <b>输入与输出：</b>
-                  预留输入条件、处理过程和输出结果说明位置。
-                </p>
-                <p>
-                  <b>关联产品能力：</b>
-                  {detail.products[index % detail.products.length].name}
-                </p>
-              </article>
-            ))}
-          </div>
-          <h3 className="solution-detail-subheading">业务运行流程</h3>
-          <ol className="solution-detail-flow">
-            {detail.flow.map((step, index) => (
-              <li data-testid="solution-flow-step" key={step}>
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <b>{step}</b>
-              </li>
-            ))}
-          </ol>
-          <div
-            className="solution-detail-cta"
-            data-testid="solution-flow-current"
-          >
-            <div>
-              <div>
-                <b>当前步骤</b>
-                <p>{detail.flow[0]}</p>
-              </div>
-              <div>
-                <b>步骤说明</b>
-                <p>说明该步骤的参与角色、输入、处理逻辑和输出。</p>
-              </div>
-            </div>
-            <div className="solution-detail-case__visual">
-              {detail.flow[0]}对应产品界面或效果素材槽位
-            </div>
-          </div>
-        </div>
-      </section>
-    </>
-  );
-}
-
-function IndustrySections({ detail }: { detail: IndustrySolutionDetail }) {
-  return (
-    <>
-      <section
-        className="solution-detail-section"
-        aria-labelledby="solution-problems-title"
-      >
-        <div className="solution-detail-frame">
-          <p className="solution-detail-eyebrow">02｜业务问题与适用对象</p>
-          <h2 id="solution-problems-title">从行业问题到场景目标</h2>
-          <div className="solution-detail-industry-problems">
-            {detail.problems.map((item) => (
-              <article data-testid="solution-problem" key={item.problem}>
-                <div>
-                  <b>问题</b>
-                  <p>{item.problem}</p>
-                </div>
-                <div>
-                  <b>影响</b>
-                  <p>{item.impact}</p>
-                </div>
-                <div>
-                  <b>目标</b>
-                  <p>{item.goal}</p>
-                </div>
-              </article>
-            ))}
-          </div>
-          <p className="solution-detail-note">
-            <b>适用范围：</b>
-            {detail.audience}。
-            <span>
-              页面不虚构客户痛点、量化结果或行业判断；医疗场景只用于信息处理、知识服务、运营及行政辅助。
-            </span>
-          </p>
-        </div>
-      </section>
-
-      <section
-        className="solution-detail-section"
-        aria-labelledby="solution-components-title"
-      >
-        <div className="solution-detail-frame">
-          <p className="solution-detail-eyebrow">03｜核心方案组成与运行流程</p>
-          <h2 id="solution-components-title">组合能力完成当前行业场景</h2>
-          <p className="solution-detail-intro">
-            核心组成说明方案如何形成，不重复产品后台全部功能；每张卡片只保留作用、输入、输出和关联能力。
-          </p>
-          <div className="solution-detail-components solution-detail-components--industry">
-            {detail.components.map((component, index) => (
-              <article data-testid="solution-component" key={component.name}>
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <h3>{component.name}</h3>
-                <p>{component.role}</p>
-                <p>
-                  <b>输入：</b>
-                  {component.input}
-                </p>
-                <p>
-                  <b>输出：</b>
-                  {component.output}
-                </p>
-                <small>{component.product}</small>
-              </article>
-            ))}
-          </div>
-          <h3 className="solution-detail-subheading">业务运行流程</h3>
-          <ol className="solution-detail-flow solution-detail-flow--described">
-            {detail.flow.map((step, index) => (
-              <li data-testid="solution-flow-step" key={step.label}>
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <b>{step.label}</b>
-                <p>{step.description}</p>
-                <small>{step.media}</small>
-              </li>
-            ))}
-          </ol>
-        </div>
-      </section>
-    </>
-  );
-}
-
-function ProductSupport({ detail }: { detail: ScenarioSolutionDetail }) {
-  return (
-    <section
-      className="solution-detail-section"
-      id="solution-products"
-      aria-labelledby="solution-products-title"
-    >
-      <div className="solution-detail-frame">
-        <p className="solution-detail-eyebrow">05｜华鲲产品能力支撑</p>
-        <h2 id="solution-products-title">当前方案实际使用的产品能力</h2>
-        <p className="solution-detail-intro">
-          仅说明产品能力在本方案中的作用，完整功能和界面进入对应产品页面查看。
-        </p>
-        <div className="solution-detail-products">
-          {detail.products.map((product) => (
-            <article data-testid="solution-product" key={product.href}>
-              <h3>{product.name}</h3>
-              <p>{product.role}</p>
-              <p>
-                <b>在本方案中的作用：</b>支撑“{detail.title}
-                ”对应模块与业务流程。
-              </p>
-              <Link href={product.href}>查看对应产品能力 →</Link>
-            </article>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function ClosingSection({
-  detail,
-  returnHref,
-}: {
-  detail: ScenarioSolutionDetail;
-  returnHref: string;
-}) {
-  const industry = detail.kind === "industry";
-
-  return (
-    <section className="solution-detail-section solution-detail-closing">
-      <div className="solution-detail-frame">
-        <p className="solution-detail-eyebrow">
-          {industry
-            ? "05｜案例、相关场景与下一步"
-            : "06｜实践案例、相关方案与行动收口"}
-        </p>
-        <h2>{industry ? "相关行业实践案例" : "相关实践案例"}</h2>
-        <div className="solution-detail-case">
-          <div className="solution-detail-case__visual">
-            {industry ? (
-              <>
-                {detail.title}
-                <br />
-              </>
-            ) : null}
-            客户 / 项目 / 应用效果素材
-            <br />
-            {industry ? "槽位" : "待公开授权后补充"}
-          </div>
-          <div>
-            {industry ? (
-              <span className="solution-detail-tag">待公开授权</span>
-            ) : null}
-            <h3>案例内容待授权补充</h3>
-            <p>
-              {industry
-                ? "后续填写行业、业务问题、建设内容、使用产品能力和已经授权公开的成果摘要。"
-                : "客户或行业、面临问题、使用方案、关联产品能力及公开成果均待授权。"}
-            </p>
-            {!industry ? (
-              <div className="solution-detail-actions">
-                <Link
-                  className="solution-detail-button"
-                  href="/solutions/case-pending-enterprise-knowledge"
-                >
-                  查看案例详情
-                </Link>
-                <Link
-                  className="solution-detail-link"
-                  href={solutionListRoutes.cases.all}
-                >
-                  查看全部相关案例
-                </Link>
-              </div>
-            ) : null}
-            <p className="solution-detail-note">
-              {industry
-                ? "正式官网没有可公开案例时隐藏案例区域，不虚构客户名称和成果数据。"
-                : "正式官网没有可公开案例时隐藏案例内容，不虚构客户名称、成果和数字。"}
-            </p>
-            {industry ? (
-              <Link
-                className="solution-detail-link"
-                href="/solutions/case-pending-enterprise-knowledge"
-              >
-                查看相关案例 →
-              </Link>
-            ) : null}
-          </div>
-        </div>
-        <div className="solution-detail-related">
-          {industry ? <h2>相关行业场景</h2> : <h3>相关解决方案</h3>}
-          <div
-            className="solution-detail-products"
-            data-testid="solution-related-list"
-          >
-            {detail.related.map((slug) => {
-              const related = getSolutionDetail(slug);
-              if (!related || related.kind === "case") return null;
-              return (
-                <article key={slug}>
-                  <h3>{related.title}</h3>
-                  {detail.kind === "common" ? <p>{related.summary}</p> : null}
-                  <Link href={`/solutions/${slug}`}>
-                    {industry ? "查看场景方案 →" : "查看相关方案 →"}
-                  </Link>
-                </article>
-              );
-            })}
-          </div>
-        </div>
-        <div className="solution-detail-cta">
-          <div>
-            <h2>
-              {industry
-                ? `沟通“${detail.title}”的实际建设需求`
-                : `需要进一步评估“${detail.title}”？`}
-            </h2>
-            <p>
-              {industry
-                ? "咨询表单自动带入行业、场景名称、来源产品页面和浏览路径。"
-                : "咨询表单将带入方案名称、来源产品页面和浏览路径；私有化部署、数据接入和系统集成需求优先进入商务咨询。"}
-            </p>
-          </div>
-          <div className="solution-detail-actions">
-            <Link
-              className="solution-detail-button solution-detail-button--primary"
-              href={contactHref(detail)}
-            >
-              {industry ? "咨询当前行业场景" : "咨询当前方案"}
-            </Link>
-            <Link className="solution-detail-button" href="/trial">
-              申请体验
-            </Link>
-            <a className="solution-detail-link" href={returnHref}>
-              返回解决方案
-            </a>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function CasePage({
-  detail,
-  returnHref,
-}: {
-  detail: CaseSolutionDetail;
-  returnHref: string;
-}) {
-  const common = getSolutionDetail(detail.commonKey);
-  const industry = getSolutionDetail(detail.industryKey);
-
-  return (
-    <main className="solution-detail" aria-label={`${detail.title}实践案例`}>
-      <section className="solution-detail-hero">
-        <div className="solution-detail-frame solution-detail-hero__layout">
-          <div>
-            <p className="solution-detail-eyebrow">
-              实践案例｜{detail.industry}
-            </p>
-            <h1>{detail.title}</h1>
-            <p className="solution-detail-lead">{detail.summary}</p>
-            <p>
-              <b>客户：</b>
-              {detail.customer}
-            </p>
-            <div className="solution-detail-tags" aria-label="案例基本信息">
-              {detail.scenarios.map((scenario) => (
-                <span className="solution-detail-tag" key={scenario}>
-                  {scenario}
-                </span>
-              ))}
-              {detail.products.map((product) => (
-                <span className="solution-detail-tag" key={product}>
-                  {product}
-                </span>
-              ))}
-            </div>
-            <div className="solution-detail-tags" aria-label="案例成果摘要">
-              {detail.outcomes.map((outcome) => (
-                <span className="solution-detail-tag" key={outcome}>
-                  {outcome}
-                </span>
-              ))}
-            </div>
-            <div className="solution-detail-actions">
-              <Link
-                className="solution-detail-button solution-detail-button--primary"
-                href={contactHref(detail)}
-              >
-                咨询类似项目
-              </Link>
-              <Link className="solution-detail-button" href="#case-related">
-                查看关联解决方案
-              </Link>
-              <a className="solution-detail-link" href={returnHref}>
-                返回案例列表
-              </a>
-            </div>
-            <p className="solution-detail-note">
-              <b>内容状态：</b>
-              低保真评审占位，不代表真实公开项目。客户名称、项目范围、图片和成果数据必须在获得公开授权后替换。
-            </p>
-          </div>
-          <div className="solution-detail-visual">
-            <span>{detail.title}</span>
-            <small>案例主视觉 / 项目现场 / 产品效果素材槽位</small>
-          </div>
-        </div>
-      </section>
-
-      <div className="solution-detail-frame">
-        <p className="solution-detail-note">{detail.authorizationNotice}</p>
-      </div>
-
-      <section className="solution-detail-section">
-        <div className="solution-detail-frame">
-          <p className="solution-detail-eyebrow">
-            02｜客户背景、业务挑战与建设目标
-          </p>
-          <h2>为什么建设这个项目</h2>
-          <div className="solution-detail-components">
-            {detail.profile.map(([label, value]) => (
-              <article key={label}>
-                <h3>{label}</h3>
-                <p>{value}</p>
-              </article>
-            ))}
-          </div>
-          <h3 className="solution-detail-subheading">业务挑战与对应解决措施</h3>
-          <p>
-            点击挑战卡片，定位并高亮后续相应解决措施；当前内容均为结构占位。
-          </p>
-          <div className="solution-detail-components">
-            {detail.challenges.map((challenge, index) => (
-              <article key={challenge.name}>
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <h3>{challenge.name}</h3>
-                <p>
-                  <b>问题表现：</b>
-                  {challenge.problem}
-                </p>
-                <p>
-                  <b>业务影响：</b>
-                  {challenge.impact}
-                </p>
-                <p>
-                  <b>原有局限：</b>
-                  {challenge.limitation}
-                </p>
-                <p>
-                  <b>建设目标：</b>
-                  {challenge.measure}
-                </p>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="solution-detail-section">
-        <div className="solution-detail-frame">
-          <p className="solution-detail-eyebrow">03｜整体思路与实施过程</p>
-          <h2>从业务问题到场景上线的完整建设思路</h2>
-          <p>
-            围绕当前项目的业务目标，将企业知识与数据、模型和智能体能力组合为可使用的业务服务，并通过验证、上线和持续维护形成完整落地闭环。
-          </p>
-          <h3 className="solution-detail-subheading">核心建设内容</h3>
-          <div className="solution-detail-components">
-            {detail.architecture.map(([name, description]) => (
-              <article key={name}>
-                <h3>{name}</h3>
-                <p>{description}</p>
-              </article>
-            ))}
-          </div>
-          <h3 className="solution-detail-subheading">实施过程</h3>
-          <p>
-            说明项目从梳理到上线的主要阶段，不展开客户内部排期、人员安排和敏感交付细节。
-          </p>
-          <ol className="solution-detail-flow solution-detail-flow--described">
-            {caseApproachStages.map(([name, description], index) => (
-              <li data-testid="case-approach-stage" key={name}>
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <b>{name}</b>
-                <p>{description}</p>
-              </li>
-            ))}
-          </ol>
-          <p className="solution-detail-note">
-            页面只保留文字说明，不展示真实 IP
-            地址、数据库结构、接口地址、部署参数或内部项目资料。
-          </p>
-        </div>
-      </section>
-
-      <section className="solution-detail-section">
-        <div className="solution-detail-frame">
-          <p className="solution-detail-eyebrow">04｜项目成果与素材展示</p>
-          <h2>用经授权的事实说明项目成果</h2>
-          <div className="solution-detail-products">
-            {detail.results.map(([label, value]) => (
-              <article key={label}>
-                <h3>{label}</h3>
-                <p>{value}</p>
-              </article>
-            ))}
-          </div>
-          <p className="solution-detail-note">
-            量化成果必须标明统计口径或时间范围；没有可靠数据时不使用百分比、金额、排名或客户评价。
-          </p>
-          <h3 className="solution-detail-subheading">项目素材与成果展示</h3>
-          <div className="solution-detail-products">
-            {detail.materials.map(([label, value]) => (
-              <article key={label}>
-                <h3>{label}</h3>
-                <p>{value}</p>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section
-        className="solution-detail-section solution-detail-closing"
-        id="case-related"
-      >
-        <div className="solution-detail-frame">
-          <p className="solution-detail-eyebrow">
-            05｜关联方案、相关案例与行动收口
-          </p>
-          <h2>本案例为哪些解决方案提供实践证明</h2>
-          <div className="solution-detail-products">
-            {common?.kind === "common" ? (
-              <article>
-                <span className="solution-detail-tag">通用场景方案</span>
-                <h3>{common.title}</h3>
-                <p>说明本案例与对应业务问题及通用方案的实际关联。</p>
-                <Link href={`/solutions/${detail.commonKey}`}>
-                  查看通用场景方案 →
-                </Link>
-              </article>
-            ) : null}
-            {industry?.kind === "industry" ? (
-              <article>
-                <span className="solution-detail-tag">行业场景方案</span>
-                <h3>{industry.title}</h3>
-                <p>说明本案例在对应行业场景中的实践证明关系。</p>
-                <Link href={`/solutions/${detail.industryKey}`}>
-                  查看行业场景方案 →
-                </Link>
-              </article>
-            ) : null}
-          </div>
-          <h3 className="solution-detail-subheading">相关案例</h3>
-          <p className="solution-detail-note">
-            首期没有第二个已授权案例时不强行推荐；后续可按相同行业、业务场景或建设方式展示
-            2～3 个案例。
-          </p>
-          <div className="solution-detail-cta">
-            <div>
-              <h2>希望建设类似项目？</h2>
-              <p>咨询表单将带入当前案例名称、行业、业务场景和关联产品能力。</p>
-            </div>
-            <div className="solution-detail-actions">
-              <Link
-                className="solution-detail-button solution-detail-button--primary"
-                href={contactHref(detail)}
-              >
-                咨询类似项目
-              </Link>
-              <Link className="solution-detail-button" href="/trial">
-                申请体验
-              </Link>
-              <a className="solution-detail-link" href={returnHref}>
-                返回实践案例
-              </a>
-            </div>
-          </div>
-        </div>
-      </section>
-    </main>
-  );
+function capabilityHref(product: string, anchor?: string) {
+  const href = productRoutes[product] ?? "/product";
+  return anchor ? `${href}#${anchor}` : href;
 }
 
 export function generateStaticParams() {
@@ -698,36 +34,191 @@ export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
   const detail = getSolutionDetail((await params).slug);
-
-  if (!detail) return { title: "解决方案未找到 · 华鲲" };
-
-  return {
-    title: `${detail.title} · 华鲲解决方案`,
-    description: detail.summary,
-  };
+  if (!detail) return {};
+  return { title: `${detail.title} · 华鲲元启`, description: detail.summary };
 }
 
-export default async function Page({ params, searchParams }: PageProps) {
+export default async function SolutionDetailPage({ params }: PageProps) {
   const detail = getSolutionDetail((await params).slug);
-
   if (!detail) notFound();
 
-  const returnHref = getSolutionReturnHref(detail, (await searchParams) ?? {});
-
-  if (detail.kind === "case") {
-    return <CasePage detail={detail} returnHref={returnHref} />;
-  }
-
   return (
-    <main className="solution-detail" aria-label={`${detail.title}解决方案`}>
-      <SolutionHero detail={detail} />
-      {detail.kind === "common" ? (
-        <CommonSections detail={detail} />
-      ) : (
-        <IndustrySections detail={detail} />
-      )}
-      <ProductSupport detail={detail} />
-      <ClosingSection detail={detail} returnHref={returnHref} />
-    </main>
+    <SolutionOverview>
+      <article className="solution-detail-page">
+        <section className="solution-detail-hero">
+          <div>
+            <h1>{detail.title}</h1>
+            <p className="solution-detail-lead">{detail.summary}</p>
+            <p className="solution-detail-audience">
+              <b>适用对象：</b>
+              {detail.audience}
+            </p>
+            <div className="solution-detail-tags" aria-label="方案价值">
+              {detail.tags.map((tag) => (
+                <span key={tag}>{tag}</span>
+              ))}
+            </div>
+            <div className="solution-detail-actions">
+              <Link
+                className="solution-detail-button solution-detail-button--primary"
+                href={`/contact?topic=${detail.category}｜${detail.title}咨询`}
+              >
+                商务咨询
+              </Link>
+              <Link className="solution-detail-button" href="/trial">
+                申请体验
+              </Link>
+            </div>
+          </div>
+          <figure className="solution-detail-image solution-detail-image--hero">
+            <Image
+              fill
+              priority
+              alt={`${detail.title}首屏`}
+              src={detail.images.main}
+              sizes="(max-width: 780px) 100vw, 44vw"
+            />
+          </figure>
+        </section>
+
+        <section className="solution-detail-section solution-detail-scene">
+          <div>
+            <h2>业务场景与问题</h2>
+            <p className="solution-detail-lead">{detail.summary}</p>
+            <p>
+              <b>业务痛点：</b>
+              {detail.problem}
+            </p>
+            <p>
+              <b>建设目标：</b>
+              {detail.summary}
+            </p>
+            <p>
+              <b>适用对象：</b>
+              {detail.audience}
+            </p>
+            <p>
+              围绕{detail.category}行业的实际业务运行，本方案将
+              {detail.summary}
+              ，通过平台能力组合形成可落地、可复用的智能化应用，帮助企业解决高频业务问题、提升作业效率、降低人工与风险成本。
+            </p>
+          </div>
+          <figure className="solution-detail-image">
+            <Image
+              fill
+              alt={`${detail.title}场景`}
+              src={detail.images.scene}
+              sizes="(max-width: 780px) 100vw, 42vw"
+            />
+          </figure>
+        </section>
+
+        <section className="solution-detail-section">
+          <h2>核心能力构成</h2>
+          <p className="solution-detail-lead">
+            本方案由以下核心能力组合构成，各能力相互协同，完整支撑
+            {detail.title}的业务闭环。
+          </p>
+          <div className="solution-detail-capabilities">
+            {detail.capabilities.map((capability, index) => (
+              <article key={capability.name}>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <h3>{capability.name}</h3>
+                <p>{capability.desc}</p>
+                <div>
+                  {capability.tags.map((tag) => (
+                    <span key={tag}>{tag}</span>
+                  ))}
+                </div>
+                <p>
+                  依托{" "}
+                  <Link
+                    href={capabilityHref(capability.product, capability.anchor)}
+                  >
+                    {capability.anchorLabel ?? "平台能力"} →
+                  </Link>
+                </p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="solution-detail-section">
+          <h2>落地效果与价值</h2>
+          <div className="solution-detail-result">
+            <div>
+              {detail.case ? (
+                <>
+                  <h3>
+                    {detail.case.client} · {detail.title}
+                  </h3>
+                  <p>
+                    <b>业务挑战：</b>
+                    {detail.case.problem}
+                  </p>
+                  <p>
+                    <b>建设内容：</b>
+                    {detail.case.solution}
+                  </p>
+                  <p>
+                    <b>落地效果：</b>
+                    {detail.case.effect}
+                  </p>
+                  {detail.case.closing ? <p>{detail.case.closing}</p> : null}
+                </>
+              ) : (
+                <p>
+                  {detail.summary}，通过组合{detail.category}
+                  行业场景所需的能力，实现业务问题的自动化、智能化处理，形成可复制、可推广的解决方案。
+                </p>
+              )}
+            </div>
+            {detail.images.result ? (
+              <figure className="solution-detail-image">
+                <Image
+                  fill
+                  alt={`${detail.title}效果`}
+                  src={detail.images.result}
+                  sizes="(max-width: 780px) 100vw, 42vw"
+                />
+              </figure>
+            ) : (
+              <div className="solution-detail-metrics">
+                {(
+                  detail.metrics ?? [
+                    {
+                      title: "落地效果",
+                      desc: "通过平台能力组合实现业务落地。",
+                    },
+                  ]
+                ).map((metric) => (
+                  <article key={metric.title}>
+                    <b>{metric.title}</b>
+                    <span>{metric.desc}</span>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="solution-detail-section">
+          <div className="solution-detail-cta">
+            <div>
+              <h2>需要落地行业 AI 解决方案？</h2>
+              <p>
+                如需了解金融、铁路、电力、半导体、公安、应急等行业的场景方案与落地实践，欢迎与华鲲团队联系。
+              </p>
+            </div>
+            <Link
+              className="solution-detail-button solution-detail-button--primary"
+              href="/contact?topic=解决方案咨询"
+            >
+              联系我们
+            </Link>
+          </div>
+        </section>
+      </article>
+    </SolutionOverview>
   );
 }

@@ -16,1364 +16,840 @@ import StandalonePage, {
 
 import {
   getStandaloneProduct,
-  productOverview,
   standaloneCenter,
   standaloneProductSlugs,
 } from "./product-portal-content";
+import { StandaloneProductCenter } from "./standalone-product-center";
 
 describe("prototype product portal content contract", () => {
   it("locks the complete literal content objects and field order", () => {
     expect({
-      productOverview,
       standaloneCenter,
       standaloneProducts: standaloneProductSlugs.map((slug) =>
         getStandaloneProduct(slug),
       ),
     }).toMatchInlineSnapshot(`
       {
-        "productOverview": {
-          "business": {
-            "demo": {
-              "messages": [
-                "企业想快速上一个合同审查应用，怎么开始？",
-                "正在匹配可用的应用与能力……",
-                "可直接使用行业应用中心的合同智能审查，开箱即用；后续可在元启平台沉淀为专属能力。快速使用 · 深度建设双路径",
-              ],
-              "title": "元启 · 能力演示",
-            },
-            "eyebrow": "业务场景",
-            "lead": "要长期沉淀企业 AI 能力，用元启平台深度建设；要快速解决单点需求，选独立产品直接使用。",
-            "outcomes": [
-              {
-                "description": "深度与快速按需选择",
-                "title": "降低门槛",
-              },
-              {
-                "description": "成熟产品开箱即用",
-                "title": "提效明显",
-              },
-              {
-                "description": "治理与独立部署兼顾",
-                "title": "安全可控",
-              },
-            ],
-            "points": [
-              {
-                "description": "元启六大中心，能力完整可组合",
-                "title": "深度建设",
-              },
-              {
-                "description": "独立产品开箱即用，见效快",
-                "title": "快速使用",
-              },
-              {
-                "description": "模型、知识、智能体随业务积累",
-                "title": "能力可沉淀",
-              },
-              {
-                "description": "权限、数据、算力统一管理",
-                "title": "治理可控",
-              },
-            ],
-            "reason": [
-              "模型",
-              "知识",
-              "智能体",
-              "应用",
-              "治理",
-            ],
-            "scenes": [
-              {
-                "action": {
-                  "href": "/product/agents",
-                  "label": "了解智能体中心 →",
-                },
-                "description": "需要长期沉淀模型、知识与应用。",
-                "title": "企业深度建设 AI 能力",
-              },
-              {
-                "action": {
-                  "href": "/product/applications",
-                  "label": "了解行业应用中心 →",
-                },
-                "description": "合同审查、智能写作等拿来即用。",
-                "title": "单点需求快速落地",
-              },
-              {
-                "action": {
-                  "href": "/product/standalone",
-                  "label": "查看独立产品中心 →",
-                },
-                "description": "码多多 2.0、AIPPT、AISHREK 独立部署。",
-                "title": "独立产品单独使用",
-              },
-            ],
-            "scenesLead": "覆盖企业深度建设、单点快速落地、平台与独立产品组合使用等场景。",
-            "title": "深度建设与快速使用，两条路都值得走",
-            "values": [
-              {
-                "description": "深度与快速按需选择",
-                "title": "降低落地门槛",
-              },
-              {
-                "description": "成熟产品拿来即用",
-                "title": "缩短上线周期",
-              },
-              {
-                "description": "平台治理与独立部署兼顾",
-                "title": "安全合规可控",
-              },
-            ],
-            "workflow": [
-              "明确需求",
-              "选路径",
-              "落地使用",
-              "沉淀复用",
-            ],
-          },
-          "centers": {
-            "eyebrow": "七大中心",
-            "featured": {
-              "action": {
-                "href": "/product/agents",
-                "label": "进入智能体中心 →",
-              },
-              "description": "将模型、知识、数据、工具与流程组合成可对话、可执行、可发布的智能体：知识助手回答业务问题，问数助手解读数据，视频助手看懂画面，自动化引擎跑通复杂流程。",
-              "position": "让企业拥有懂知识、懂业务、懂流程的 AI 助手。",
-              "tag": "核心 · 重重点",
-              "title": "智能体中心",
-              "visual": "智能体对话与流程编排界面截图素材槽位",
-            },
-            "items": [
-              {
-                "action": {
-                  "href": "/product/model",
-                  "label": "查看模型中心 →",
-                },
-                "description": "统一管理企业模型资产，回答「有哪些模型、怎么运行、怎么变强」。",
-                "position": "模型资产管理、部署与优化",
-                "title": "模型中心",
-              },
-              {
-                "action": {
-                  "href": "/product/applications",
-                  "label": "查看行业应用中心 →",
-                },
-                "description": "通用文本写作、投标智能助手、合同智能审查，拿来即用。",
-                "position": "开箱即用的业务 AI 应用",
-                "title": "行业应用中心",
-              },
-              {
-                "action": {
-                  "href": "/product/skills",
-                  "label": "了解技能中心 →",
-                },
-                "description": "可复用的业务技能，覆盖模型评测、工作流生成、视频分析、安全防护与会议提效，拿来即用。",
-                "position": "编程、应用、办公三类技能",
-                "title": "技能中心",
-              },
-              {
-                "action": {
-                  "href": "/product/coding",
-                  "label": "查看编程中心 →",
-                },
-                "description": "项目管理、会话管理、移动接入、编程规范，让智能编程贴近真实工程化开发。",
-                "position": "码多多 1.0 智能编程",
-                "title": "编程中心",
-              },
-              {
-                "action": {
-                  "href": "/product/governance",
-                  "label": "查看安全中心 →",
-                },
-                "description": "横向支撑各中心，让平台用得安全、权限管得清楚。",
-                "position": "用户、角色、权限与授权治理",
-                "title": "安全中心",
-              },
-            ],
-            "lead": "进入对应中心，了解它解决什么问题、具备哪些能力、大致怎么用。",
-            "title": "元启平台六大中心，覆盖企业 AI 全生命周期",
-          },
-          "chain": {
-            "eyebrow": "企业 AI 落地全链路",
-            "items": [
-              {
-                "action": {
-                  "href": "/product/model",
-                  "label": "了解模型中心 →",
-                },
-                "description": "统一管理模型资产，训练、评估、部署一站式",
-                "number": "01",
-                "title": "模型",
-              },
-              {
-                "action": {
-                  "href": "/product/knowledge",
-                  "label": "了解知识底座 →",
-                },
-                "description": "企业知识库与数据底座，让 AI 懂你的业务",
-                "number": "02",
-                "title": "知识",
-              },
-              {
-                "action": {
-                  "href": "/product/agents",
-                  "label": "了解智能体中心 →",
-                },
-                "description": "把能力组合成能对话、能干活的业务助手",
-                "number": "03",
-                "title": "智能体",
-              },
-              {
-                "action": {
-                  "href": "/product/applications",
-                  "label": "了解行业应用中心 →",
-                },
-                "description": "封装为可直接使用的应用，交付给业务与用户",
-                "number": "04",
-                "title": "应用",
-              },
-            ],
-            "lead": "传统做法需要企业自己拼装模型、数据、开发等多个工具；元启把整条链路一体化，每个环节既可单独使用，也可组合成完整能力。",
-            "note": "模型、知识、智能体、应用各环节由安全中心统一治理，人员、角色、数据权限清晰可控。",
-            "title": "从模型到应用，一条链路走通",
-          },
-          "challenges": {
-            "eyebrow": "为什么需要元启",
-            "items": [
-              {
-                "action": {
-                  "href": "/product/model",
-                  "label": "了解模型中心 →",
-                },
-                "answer": "模型花园统一选型与纳管，三种部署方式覆盖本地 / 专网 / 云端，让模型真正跑起来。",
-                "number": "问题 01",
-                "problem": "模型那么多，不知道选哪个、适不适合自己；部署环境复杂，运行与运维成本难控。",
-                "title": "模型怎么落地？",
-              },
-              {
-                "action": {
-                  "href": "/product/agents",
-                  "label": "了解智能体中心 →",
-                },
-                "answer": "企业知识库把文档沉淀为可检索、可问答的知识，配合知识智能体，让员工像问人一样问 AI，回答有据可依。",
-                "number": "问题 02",
-                "problem": "制度、产品资料、技术文档分散各处，文档利用率低，专业知识难以沉淀。",
-                "title": "企业知识怎么被 AI 理解？",
-              },
-              {
-                "action": {
-                  "href": "/product/agents",
-                  "label": "了解智能体中心 →",
-                },
-                "answer": "智能体 + 流程编排让业务人员也能构建 AI 助手与自动化流程；行业应用提供开箱即用的成熟应用，缩短上线周期。",
-                "number": "问题 03",
-                "problem": "开发门槛高、场景适配慢、重复建设多，一个需求一套方案。",
-                "title": "AI 应用怎么快速落地？",
-              },
-            ],
-            "lead": "通用大模型解决不了企业专属问题。元启把企业 AI 落地的三大难题，变成一步步可落地的答案。",
-            "title": "企业 AI 落地，元启回答三个核心问题",
-          },
-          "cta": {
-            "actions": [
-              {
-                "href": "/trial",
-                "label": "申请体验",
-                "variant": "primary",
-              },
-              {
-                "href": "/solutions",
-                "label": "查看解决方案",
-              },
-              {
-                "href": "/downloads",
-                "label": "查看产品资料",
-              },
-              {
-                "href": "/contact",
-                "label": "商务咨询",
-              },
-            ],
-            "description": "不确定从哪开始？可以先申请体验，或按业务问题查看解决方案，也可以直接下载产品资料。",
-            "title": "从你的目标出发，继续了解",
-          },
-          "hero": {
-            "actions": [
-              {
-                "href": "#products-challenges",
-                "label": "了解元启平台",
-                "variant": "primary",
-              },
-              {
-                "href": "#products-independent",
-                "label": "查看独立产品",
-              },
-              {
-                "href": "/trial",
-                "label": "申请体验",
-              },
-            ],
-            "eyebrow": "产品｜产品总览",
-            "lead": "元启平台以模型、知识、智能体、应用与治理六大中心，帮助企业深度构建专属 AI 能力；独立产品中心提供码多多 2.0、AIPPT、AISHREK 等可独立部署的产品，满足明确的单点 AI 需求。深度建设用元启，快速使用选独立产品。",
-            "paths": [
-              {
-                "description": "模型 · 知识 · 智能体 · 应用 · 治理",
-                "label": "深度建设",
-                "title": "元启 AI 开发赋能平台",
-              },
-              {
-                "description": "码多多 2.0 · AIPPT · AISHREK",
-                "label": "快速使用",
-                "title": "独立产品中心",
-              },
-            ],
-            "tags": [
-              "深度构建 · 元启平台",
-              "快速使用 · 独立产品",
-              "统一运营 · 平台治理",
-            ],
-            "title": "让企业 AI 落地，深度建设与快速使用双路径",
-          },
-          "independent": {
-            "eyebrow": "快速使用",
-            "items": [
-              {
-                "action": "查看码多多 2.0 →",
-                "description": "代码补全、生成、解释与重构，帮助研发团队减少重复编码，更快理解和维护代码。",
-                "href": "/product/code-agent",
-                "position": "企业级智能编程平台",
-                "title": "码多多 2.0",
-                "visual": "码多多 2.0 主界面截图素材槽位",
-              },
-              {
-                "action": "查看 AIPPT →",
-                "description": "根据主题或大纲完成结构规划、页面生成与风格匹配，缩短演示文稿制作时间。",
-                "href": "/product/aippt",
-                "position": "智能演示文稿生成",
-                "title": "AIPPT",
-                "visual": "AIPPT 生成前后界面截图素材槽位",
-              },
-              {
-                "action": "查看 AISHREK →",
-                "description": "多格式导入、自动解读与对话式参数修改，让机械零件设计与改型高效完成。",
-                "href": "/product/aishrek",
-                "position": "AI 机械设计",
-                "title": "AISHREK",
-                "visual": "AISHREK 机械设计工作台界面素材槽位",
-              },
-            ],
-            "lead": "无需先建设完整平台，每个独立产品都可单独部署、单独使用，按明确目标直接选用。",
-            "title": "独立产品中心：每个产品，单独可用",
-          },
-        },
         "standaloneCenter": {
-          "comparison": {
-            "columns": [
-              "产品",
-              "给谁用",
-              "解决什么问题",
-              "典型形态",
-            ],
-            "eyebrow": "02｜怎么选",
-            "note": "产品详情、功能清单与交付形态以正式产品资料与商务沟通为准；如需了解能力细节或申请试用，可直接商务咨询。",
-            "rows": [
-              [
-                "码多多 2.0",
-                "研发团队、程序员",
-                "编码效率低、重复代码多、上手新框架成本高",
-                "IDE 插件 / 编程平台",
-              ],
-              [
-                "AIPPT",
-                "市场、售前、管理者",
-                "演示文稿制作耗时、风格不统一、表达不专业",
-                "Web 应用 / 插件",
-              ],
-              [
-                "AISHREK",
-                "机械设计、工艺与研发团队",
-                "设计文件格式多样难解析、参数修改依赖专业软件、验证交付链路割裂",
-                "平台 / 服务化接口",
-              ],
-            ],
-            "title": "按你的岗位与目标选择产品",
-          },
           "cta": {
             "actions": [
-              {
-                "href": "/trial",
-                "label": "申请体验",
-                "variant": "primary",
-              },
-              {
-                "href": "/contact?topic=独立产品选型咨询",
-                "label": "商务咨询",
-              },
-            ],
-            "description": "留下你的使用场景，华鲲团队将为你安排体验与选型沟通。",
-            "title": "想先试用某个独立产品？",
-          },
-          "hero": {
-            "actions": [
-              {
-                "href": "/trial",
-                "label": "申请体验",
-                "variant": "primary",
-              },
               {
                 "href": "/contact?topic=独立产品咨询",
-                "label": "商务咨询",
+                "label": "联系我们",
+                "variant": "primary",
               },
             ],
-            "eyebrow": "产品｜独立产品中心",
-            "lead": "独立于元启平台、可单独部署与购买的企业级 AI 产品矩阵。每个产品面向一个明确的业务场景，当前覆盖智能编程、演示文稿与机械设计，后续将持续扩展。",
+            "description": "如需了解或采购码多多 2.0、AIPPT、AISHREK，欢迎与华鲲团队联系，获取产品详情与选型建议。",
+            "title": "需要为业务引入成熟 AI 产品？",
+          },
+          "faqs": [
+            {
+              "answer": "独立安装、下载即用，开箱即可体验完整能力。",
+              "description": "独立产品面向明确业务场景打磨成熟，无需先建设完整平台。",
+              "number": "问题 01",
+              "tags": [
+                "即装即用",
+                "无需配置",
+              ],
+              "title": "为什么即装即用？",
+            },
+            {
+              "answer": "支持单独采购、独立安装、下载即用，互不依赖。",
+              "description": "每个产品独立交付，按业务需求单独采购与安装使用。",
+              "number": "问题 02",
+              "tags": [
+                "单独采购",
+                "独立使用",
+                "互不依赖",
+              ],
+              "title": "能否按需采购单个产品？",
+            },
+            {
+              "answer": "开箱即用、快速交付，快速验证并落地业务价值。",
+              "description": "无需复杂配置与二次开发，输入需求即可获得可交付成果。",
+              "number": "问题 03",
+              "tags": [
+                "快速交付",
+                "验证价值",
+              ],
+              "title": "如何快速落地？",
+            },
+          ],
+          "hero": {
+            "actions": [
+              {
+                "href": "/contact?topic=独立产品咨询",
+                "label": "联系我们",
+                "variant": "primary",
+              },
+            ],
+            "lead": "面向明确业务场景的成熟企业级 AI 产品：独立安装、下载即用，无需复杂配置即可获得完整能力；当前覆盖智能编码、演示文稿创作与机械设计，后续将持续扩展。",
             "tags": [
-              "码多多 2.0",
+              "码里奥",
               "AIPPT",
               "AISHREK",
             ],
-            "title": "独立产品中心：成熟企业级 AI 产品，开箱即用",
+            "title": "独立产品中心：成熟企业级 AI 产品，独立安装、下载即用",
           },
+          "introduction": {
+            "lead": "每个独立产品聚焦一个高频业务场景，输入需求即可获得可交付成果，无需复杂配置与二次开发，快速验证并落地业务价值。",
+            "title": "独立产品中心：面向明确场景、即装即用的企业级 AI 产品",
+          },
+          "note": "产品功能清单与交付形态以正式产品资料与商务沟通为准，欢迎联系我们获取详情。",
           "products": [
             {
               "action": {
                 "href": "/product/code-agent",
-                "label": "查看码多多 2.0 →",
+                "label": "查看产品详情 →",
               },
-              "benefits": [
-                "智能代码补全与生成",
-                "多语言、多 IDE 支持",
-                "企业级安全与权限管控",
-              ],
-              "description": "面向研发团队的智能编程平台，提供代码补全、生成、重构与解释等能力，让开发人员把精力留给更有价值的设计与业务。",
-              "recommended": "优先推荐",
+              "description": "以自然语言驱动工程落地，描述需求即可生成、修改与运行代码，支持多智能体与 MCP 生态协同。",
               "slug": "code-agent",
-              "tag": "企业级智能编程平台",
-              "title": "码多多 2.0",
+              "tag": "智能编码",
+              "title": "码里奥",
             },
             {
               "action": {
                 "href": "/product/aippt",
-                "label": "查看 AIPPT →",
+                "label": "查看产品详情 →",
               },
-              "benefits": [
-                "一句话生成演示文稿",
-                "大纲与版式智能规划",
-                "多风格模板与导出",
-              ],
-              "description": "面向办公人群的智能演示文稿生成平台，输入主题或大纲，自动生成结构完整、风格统一的演示文稿。",
+              "description": "输入创作需求或上传参考资料，自动生成结构完整、风格统一的演示文稿，支持在线编辑修改与多格式交付。",
               "slug": "aippt",
-              "tag": "智能演示文稿",
+              "tag": "演示文稿",
               "title": "AIPPT",
             },
             {
               "action": {
                 "href": "/product/aishrek",
-                "label": "查看 AISHREK →",
+                "label": "查看产品详情 →",
               },
-              "benefits": [
-                "多格式导入与自动解读",
-                "对话式参数修改",
-                "联动检查与仿真出图",
-              ],
-              "description": "面向机械设计场景的 AI 建模工作台，多格式导入、对话改参、联动检查与仿真出图，让零件设计与改型高效交付。",
+              "description": "导入设计文件、自然语言驱动改型，支持通用建模与原生精密双模式，完成装配协作与工程交付。",
               "slug": "aishrek",
-              "tag": "AI 机械设计",
+              "tag": "机械设计",
               "title": "AISHREK",
             },
           ],
-          "relations": {
-            "eyebrow": "03｜与元启平台的关系",
-            "items": [
-              {
-                "description": "每个产品可单独部署与采购，不依赖元启平台，适合已有系统、希望快速引入单点 AI 能力的组织。",
-                "title": "独立部署、独立使用",
-                "visual": "独立产品独立部署架构示意图素材槽位",
-              },
-              {
-                "action": {
-                  "href": "/product/coding",
-                  "label": "了解编程中心（码多多 1.0）→",
-                },
-                "description": "码多多 2.0 可与元启编程中心能力互补；AIPPT、AISHREK 可作为智能体与行业应用的能力组件，共同服务业务。",
-                "title": "与元启组合、能力互通",
-                "visual": "独立产品与元启平台组合关系图素材槽位",
-              },
-            ],
-            "lead": "独立产品是「拿来即用」的成熟能力，元启平台是「按需构建」的开发底座，二者可以灵活组合。",
-            "title": "既可独立使用，也可与元启平台组合",
-          },
+          "values": [
+            {
+              "description": "每个产品可独立安装、下载即用，无需依赖其他平台，开箱即可体验完整能力。",
+              "tag": "独立安装",
+              "title": "下载即用、开箱即用",
+            },
+            {
+              "description": "面向智能编码、演示文稿创作与机械设计等高频场景，输入需求直接产出可交付成果。",
+              "tag": "场景聚焦",
+              "title": "输入需求、直接交付",
+            },
+          ],
         },
         "standaloneProducts": [
           {
-            "business": {
-              "demo": {
-                "messages": [
-                  "为订单模块设计状态机并生成代码",
-                  "Plan：正在生成设计方案……",
-                  "方案已生成：待支付→已支付→已发货→已完成，含异常回退。方案确认后进入 Build",
-                  "按方案生成代码并跑通测试",
-                  "已生成代码与单元测试，运行通过。Build：已落地 3 个文件",
+            "capabilities": [
+              {
+                "action": {
+                  "href": "/contact?topic=码多多 2.0 咨询",
+                  "label": "联系我们",
+                  "variant": "primary",
+                },
+                "contextNote": "应用示例：视频分析场景中调度视频检索接口识别违规行为，联动知识库生成处置报告。",
+                "id": "mdd2-skill",
+                "image": {
+                  "alt": "Skill 技能与多智能体协同界面",
+                  "height": 516,
+                  "src": "/assets/product/code-agent/skill.png",
+                  "width": 864,
+                },
+                "lead": "将企业流程、工具与知识封装为可复用技能，支持技能调用、导入与自动选择，并与技能中心三类技能贯通复用。",
+                "steps": [
+                  {
+                    "description": "对话中直接调用已配置技能，编码规范、工具接口与业务知识随取随用，无需重复配置即可完成任务。",
+                    "tags": [
+                      "技能调用",
+                      "随取随用",
+                      "无需配置",
+                    ],
+                    "title": "STEP 01｜技能调用",
+                  },
+                  {
+                    "description": "导入企业自建或技能中心发布的技能，按需组装进当前会话，快速扩展 AI 可调用的能力边界。",
+                    "tags": [
+                      "技能导入",
+                      "按需组装",
+                      "能力扩展",
+                    ],
+                    "title": "STEP 02｜技能导入",
+                  },
+                  {
+                    "description": "AI 根据对话内容与任务类型自动匹配最合适的技能，复杂任务自动编排多个技能协同完成。",
+                    "tags": [
+                      "自动匹配",
+                      "任务理解",
+                      "协同编排",
+                    ],
+                    "title": "STEP 03｜自动选技能",
+                  },
                 ],
-                "note": "需求 → 规划 → 生成 → 落地验证",
-                "title": "码多多 2.0 · 能力演示",
+                "title": "Skill 技能生态：可复用技能，随需调用与编排",
               },
-              "eyebrow": "业务场景",
-              "lead": "说需求就落地、规划执行闭环、代码不出域、融入研发生态——把 AI 编程真正用起来。",
-              "outcomes": [
-                {
-                  "description": "需求到落地，缩短开发交付周期",
-                  "title": "研发提效",
+              {
+                "action": {
+                  "href": "/contact?topic=码多多 2.0 咨询",
+                  "label": "联系我们",
+                  "variant": "primary",
                 },
-                {
-                  "description": "工程级生成，代码可运行可验证",
-                  "title": "质量更稳",
+                "contextNote": "MCP 生态：连接数据库、API、知识库、制品库与自动化运维工具。",
+                "id": "mdd2-mcp",
+                "image": {
+                  "alt": "MCP 工具集成界面",
+                  "height": 516,
+                  "src": "/assets/product/code-agent/mcp.png",
+                  "width": 864,
                 },
-                {
-                  "description": "代码不出域，满足高密级要求",
-                  "title": "安全合规",
-                },
-              ],
-              "points": [
-                {
-                  "description": "自然语言直达工程级代码",
-                  "title": "说需求就落地",
-                },
-                {
-                  "description": "Plan/Build 双模式，复杂任务不乱",
-                  "title": "规划执行闭环",
-                },
-                {
-                  "description": "私有化部署，资产安全可控",
-                  "title": "代码不出域",
-                },
-                {
-                  "description": "技能、多智能体、MCP、多模型",
-                  "title": "融入研发生态",
-                },
-              ],
-              "reason": [
-                "自然语言理解",
-                "项目上下文关联",
-                "工程级执行",
-                "安全可控",
-              ],
-              "scenes": [
-                {
-                  "action": {
-                    "href": "/product/coding",
-                    "label": "了解编程中心 →",
+                "lead": "通过 MCP 标准化调用企业数据库、API 与微服务，将研发系统、制品仓库与配置中心纳入 AI 编程流程。",
+                "steps": [
+                  {
+                    "description": "通过 MCP 协议标准化接入企业数据库、第三方 API 与自定义微服务，统一调用方式、无需为每个系统单独适配。",
+                    "tags": [
+                      "MCP 协议",
+                      "标准化接入",
+                      "统一调用",
+                    ],
+                    "title": "STEP 01｜标准化接入",
                   },
-                  "description": "多业务系统并行开发，需要统一的 AI 编程能力与代码资产管理。",
-                  "title": "企业研发团队",
-                },
-                {
-                  "action": {
-                    "href": "/product/coding-project",
-                    "label": "了解项目工程能力 →",
+                  {
+                    "description": "连接研发系统、制品仓库、配置中心等既有工具，让 AI 直接读取代码、制品与配置，融入真实研发链路。",
+                    "tags": [
+                      "研发系统",
+                      "制品仓库",
+                      "配置中心",
+                    ],
+                    "title": "STEP 02｜生态互联",
                   },
-                  "description": "多客户项目交付，需要快速理解工程、高质量交付代码。",
-                  "title": "工程交付团队",
-                },
-                {
-                  "action": {
-                    "href": "/contact?topic=码多多 2.0 私有化部署咨询",
-                    "label": "咨询部署方案 →",
+                  {
+                    "description": "可调用能力随接入工具持续扩展，覆盖更多研发环节，让 AI 编程更贴合企业实际流程。",
+                    "tags": [
+                      "能力扩展",
+                      "覆盖研发环节",
+                    ],
+                    "title": "STEP 03｜能力扩展",
                   },
-                  "description": "金融、政务、医疗等对代码安全与合规有严格要求的组织。",
-                  "title": "高密级代码资产企业",
+                ],
+                "title": "MCP 工具集成：打破工具边界，连接企业系统",
+              },
+              {
+                "action": {
+                  "href": "/contact?topic=码多多 2.0 咨询",
+                  "label": "联系我们",
+                  "variant": "primary",
                 },
-              ],
-              "scenesLead": "面向企业研发、工程交付与高密级代码资产保护等场景。",
-              "title": "让企业 AI 编程，从能用变成好用",
-              "values": [
-                {
-                  "description": "从需求到可运行结果，缩短周期",
-                  "title": "开发更快",
+                "contextNote": "应用示例：输入「为现有服务增加接口鉴权」，系统结合工程结构生成完整实现。",
+                "id": "mdd2-dev",
+                "image": {
+                  "alt": "自然语言开发界面",
+                  "height": 1030,
+                  "src": "/assets/product/code-agent/natural-language.png",
+                  "width": 1920,
                 },
-                {
-                  "description": "工程级落地，代码可运行可验证",
-                  "title": "交付更稳",
+                "lead": "以自然语言描述开发需求，结合工程结构直接生成完整文件，并自动补充依赖与调用示例。",
+                "steps": [
+                  {
+                    "description": "以自然语言描述开发需求，系统理解任务目标与当前工程上下文，明确要新增或修改的文件范围。",
+                    "tags": [
+                      "自然语言输入",
+                      "任务理解",
+                      "工程上下文",
+                    ],
+                    "title": "STEP 01｜需求理解",
+                  },
+                  {
+                    "description": "结合工程结构生成完整可运行文件，自动补充依赖配置、接口定义与调用示例，开箱即用。",
+                    "tags": [
+                      "完整文件生成",
+                      "依赖配置",
+                      "调用示例",
+                    ],
+                    "title": "STEP 02｜工程生成",
+                  },
+                  {
+                    "description": "通过多轮对话继续调整需求与代码，修改即时落盘，让生成结果持续贴合工程实际。",
+                    "tags": [
+                      "多轮交互",
+                      "即时落盘",
+                      "持续完善",
+                    ],
+                    "title": "STEP 03｜多轮完善",
+                  },
+                ],
+                "title": "自然语言开发：描述需求，直接生成工程文件",
+              },
+              {
+                "action": {
+                  "href": "/contact?topic=码多多 2.0 咨询",
+                  "label": "联系我们",
+                  "variant": "primary",
                 },
-                {
-                  "description": "代码不出域，满足合规要求",
-                  "title": "用得更放心",
+                "contextNote": "研发协同：多模型统一接入与切换，与企业研发体系能力协同扩展。",
+                "id": "mdd2-eco",
+                "image": {
+                  "alt": "研发生态协同：多模型接入与管理",
+                  "height": 760,
+                  "src": "/assets/product/code-agent/model-management.png",
+                  "width": 1414,
                 },
-              ],
-              "workflow": [
-                "描述需求",
-                "生成方案",
-                "落地执行",
-                "验证交付",
-              ],
-            },
-            "capabilities": {
-              "eyebrow": "能力优势",
-              "items": [
-                {
-                  "description": "描述需求，AI 理解任务目标、分析项目上下文、生成技术方案，并在本地工程中完成代码编写、修改、运行与验证，交付可运行的工程代码。",
-                  "features": [
-                    {
-                      "description": "自然语言直接转化为工程任务",
-                      "title": "需求直达工程",
-                    },
-                    {
-                      "description": "结合工程结构与已有代码生成",
-                      "title": "项目上下文理解",
-                    },
-                    {
-                      "description": "源码、测试、配置同步修改",
-                      "title": "多文件落地",
-                    },
-                    {
-                      "description": "生成后运行测试，交付可验证",
-                      "title": "运行验证闭环",
-                    },
-                  ],
-                  "note": "解决：AI 生成代码与工程脱节、交付不可运行。",
-                  "tag": "能力 01",
-                  "title": "说需求就落地",
-                  "visual": "演示：说需求 → 生成方案 → 落地并验证",
-                },
-                {
-                  "description": "Plan 模式先做决策与规划：需求拆解、依赖检测、技术选型校验；Build 模式再落地执行：代码生成、测试运行、日志定位、补丁应用，复杂任务逻辑不乱。",
-                  "features": [
-                    {
-                      "description": "复杂需求拆成可执行任务",
-                      "title": "需求拆解",
-                    },
-                    {
-                      "description": "规划阶段校验方案可行性",
-                      "title": "技术选型校验",
-                    },
-                    {
-                      "description": "按规划逐项生成与修改",
-                      "title": "代码生成落地",
-                    },
-                    {
-                      "description": "运行测试、定位问题、补丁修复",
-                      "title": "测试修复闭环",
-                    },
-                  ],
-                  "note": "解决：复杂任务直接生成代码导致逻辑碎片化。",
-                  "tag": "能力 02",
-                  "title": "从规划到执行闭环",
-                  "visual": "Plan · 决策与规划：需求拆解 · 依赖检测 · 技术选型校验（只读分析） ↓ Build · 执行与落地：代码生成 · 文件修改 · 测试运行 · 日志定位 · 补丁应用（读写执行）",
-                },
-                {
-                  "description": "私有化部署 + 零数据留存，敏感代码不离开企业基础设施；高危命令确认、操作日志审计与回滚，代码资产全程可控。",
-                  "features": [
-                    {
-                      "description": "本地模型全流程离线处理",
-                      "title": "本地离线运行",
-                    },
-                    {
-                      "description": "代码与上下文不离开受控环境",
-                      "title": "零数据留存",
-                    },
-                    {
-                      "description": "敏感命令需用户确认",
-                      "title": "高危操作确认",
-                    },
-                    {
-                      "description": "操作日志留存，可追踪、可回滚",
-                      "title": "审计与回滚",
-                    },
-                  ],
-                  "note": "解决：核心代码外泄风险、操作不可追踪。",
-                  "tag": "能力 03",
-                  "title": "代码资产不出域",
-                  "visual": "安全面板示意：权限、审计与零留存",
-                },
-                {
-                  "description": "把企业流程、工具接口、编码规范、业务知识封装为可复用技能；多智能体协同完成复杂任务；MCP 标准化调用企业数据库、API；本地、云端与专有模型自选。",
-                  "features": [
-                    {
-                      "description": "流程、工具、知识封装为技能",
-                      "title": "技能封装",
-                    },
-                    {
-                      "description": "复杂任务分工协作完成",
-                      "title": "多智能体协同",
-                    },
-                    {
-                      "description": "标准化调用企业系统与 API",
-                      "title": "MCP 生态",
-                    },
-                    {
-                      "description": "本地 / 云端 / 专有模型切换",
-                      "title": "多模型自选",
-                    },
-                  ],
-                  "note": "解决：孤立工具无法融入企业研发与业务体系。",
-                  "tag": "能力 04",
-                  "title": "融进研发生态",
-                  "visual": "研发生态示意：技能、多智能体、MCP、多模型",
-                },
-              ],
-              "lead": "四件事，对应企业用 AI 编程最关心的四个问题。",
-              "title": "它怎么帮企业，把 AI 编程真正落地",
-            },
+                "lead": "统一接入本地、云端与企业专有模型，兼容主流模型并融入企业研发体系，构建可扩展的智能开发环境。",
+                "steps": [
+                  {
+                    "description": "统一接入本地、云端与企业专有模型，兼容 DeepSeek、Qwen、MiniMax 等主流模型与企业自研模型。",
+                    "tags": [
+                      "统一接入",
+                      "模型兼容",
+                    ],
+                    "title": "STEP 01｜统一模型接入",
+                  },
+                  {
+                    "description": "按任务类型、模型效果与部署策略灵活选择与切换模型，让不同任务用最合适的模型。",
+                    "tags": [
+                      "任务匹配",
+                      "灵活切换",
+                      "最优选择",
+                    ],
+                    "title": "STEP 02｜按需切换",
+                  },
+                  {
+                    "description": "融入企业研发体系，与技能、智能体、知识库等能力协同，形成可扩展的智能开发环境。",
+                    "tags": [
+                      "研发体系",
+                      "能力协同",
+                      "生态扩展",
+                    ],
+                    "title": "STEP 03｜体系协同",
+                  },
+                ],
+                "title": "研发生态协同：多模型集成，融入企业研发体系",
+              },
+            ],
             "cta": {
               "actions": [
                 {
-                  "href": "/trial",
-                  "label": "立即体验码多多 2.0",
+                  "href": "/contact?topic=码多多 2.0 咨询",
+                  "label": "联系我们",
                   "variant": "primary",
                 },
-                {
-                  "href": "/contact?topic=码多多 2.0 咨询",
-                  "label": "咨询产品方案",
-                },
-                {
-                  "href": "/product/coding",
-                  "label": "对比码多多 1.0",
-                },
               ],
-              "description": "立即体验码多多 2.0，或与华鲲团队沟通企业级部署方案。",
-              "title": "开启企业级 AI 编程体验",
+              "description": "如需了解或采购码多多 2.0，欢迎与华鲲团队联系，获取企业级使用与部署方案。",
+              "title": "让企业 AI 编程真正落地，持续创造价值",
             },
             "hero": {
               "actions": [
                 {
-                  "href": "/trial",
-                  "label": "立即体验",
+                  "href": "/contact?topic=码多多 2.0 咨询",
+                  "label": "联系我们",
                   "variant": "primary",
                 },
-                {
-                  "href": "/contact?topic=码多多 2.0 咨询",
-                  "label": "咨询方案",
-                },
               ],
-              "demo": {
-                "messages": [
-                  "为订单模块增加支付超时自动关单处理",
-                  "正在分析项目上下文并生成技术方案……",
-                  "已生成关单逻辑与定时任务代码，并在本地工程中运行测试通过。工程：订单系统 · 已落地 3 个文件",
-                ],
-                "note": "对话式工程落地演示：说需求 → 分析项目上下文 → 生成代码 → 运行验证",
-                "title": "码多多 2.0 · 工程落地",
-                "visual": "此处预留真实产品截图位置",
+              "image": {
+                "alt": "码多多 2.0 主界面：项目与会话、自然语言开发",
+                "height": 760,
+                "src": "/assets/product/code-agent/main.png",
+                "width": 1414,
               },
-              "eyebrow": "独立产品中心｜码多多 2.0",
-              "lead": "码多多 2.0 面向企业研发、工程交付与高密级代码资产保护场景，以自然语言驱动工程落地——描述需求，AI 理解任务、分析项目上下文、生成方案，并在本地工程中完成代码编写、修改、运行与验证。支持独立软件与 VS Code 插件双形态，私有化部署、代码资产不出域。",
+              "lead": "以自然语言描述需求，AI 结合项目上下文与技能工具，完成代码编写、运行与验证，交付可运行的工程成果。",
               "tags": [
                 "自然语言驱动",
-                "工程级落地",
-                "私有化部署",
-                "代码不出域",
+                "多智能体协同",
+                "MCP 生态集成",
+                "研发生态协同",
               ],
-              "title": "企业级的智能编码产品，代码不出域、说需求就落地",
+              "title": "码里奥：让每一位企业工作者，都有 AI 搭档。",
             },
             "introduction": {
-              "eyebrow": "产品介绍",
               "items": [
                 {
-                  "description": "独立软件统一管理会话与跨项目任务，适合企业级交付；VS Code 插件在熟悉的 IDE 内无缝编码，按团队习惯选择。",
-                  "title": "双形态覆盖",
-                  "visual": "双形态界面示意（独立软件 + VS Code 插件）",
+                  "description": "独立软件提供完整的产品交互入口，统一管理项目、会话与跨项目任务，适合企业级交付；独立安装即可使用，无需依赖其他开发环境。",
+                  "tags": [
+                    "独立安装",
+                    "下载即用",
+                    "开箱即用",
+                  ],
+                  "title": "独立产品 · 下载即用",
                 },
                 {
-                  "action": {
-                    "href": "/contact?topic=码多多 2.0 部署咨询",
-                    "label": "咨询部署方案 →",
-                  },
-                  "description": "与华鲲智算服务器、推理框架、元启平台组成一体方案，插电即用、免去复杂适配。",
-                  "title": "软硬一体交付",
-                  "visual": "软硬一体化方案示意",
-                },
-                {
-                  "description": "与元启的模型管理、智能体、技能、知识库、权限与算力统一协同，纳入既有 AI 应用建设体系。",
-                  "title": "融入研发体系",
-                  "visual": "与元启体系关系示意",
+                  "description": "深度融合大语言模型与代码语义分析能力，提供从需求规划、代码生成、工程修改、运行验证到问题修复的端到端 AI 编程服务，交付可复用、可追溯的工程代码。",
+                  "tags": [
+                    "需求规划",
+                    "代码生成",
+                    "运行验证",
+                    "问题修复",
+                  ],
+                  "title": "端到端智能研发 · 从需求到交付",
                 },
               ],
-              "lead": "码多多 2.0 不是"会写代码的聊天工具"，而是可独立部署、可软硬一体交付、可融入企业研发体系的产品。",
-              "title": "不是又一个 AI 工具，而是企业级智能编码产品",
-            },
-            "name": "码多多 2.0",
-            "security": {
-              "action": {
-                "href": "/contact?topic=码多多 2.0 部署咨询",
-                "label": "咨询部署方案 →",
-              },
-              "description": "面向金融、政务、医疗等高安全行业，提供全链路私有化部署与代码资产保护。",
-              "items": [
-                {
-                  "description": "内网或离线环境运行，数据始终在企业可控范围",
-                  "title": "全链路私有化部署",
-                },
-                {
-                  "description": "敏感代码与上下文不离开本地基础设施",
-                  "title": "零数据留存",
-                },
-                {
-                  "description": "高危命令确认、操作日志留存可回滚",
-                  "title": "细粒度权限与审计",
-                },
-                {
-                  "description": "智算服务器 + 推理框架插电即用",
-                  "title": "软硬一体交付",
-                },
+              "lead": "码多多 2.0 现已正式更名为码里奥：独立安装、下载即用，以自然语言驱动工程落地；支持 Skill 技能封装与 MCP 工具集成，多智能体协同扩展开发能力。",
+              "title": "码里奥：自然语言驱动工程落地的企业级 AI 编程软件",
+              "useTags": [
+                "自然语言驱动",
+                "独立安装即用",
+                "工程级交付",
+                "生态协同扩展",
               ],
-              "title": "安全与部署保障，高密级代码资产也能放心用",
             },
+            "name": "码里奥",
             "slug": "code-agent",
           },
           {
-            "business": {
-              "demo": {
-                "messages": [
-                  "帮我梳理这份资料的结构，并生成汇报 PPT",
-                  "正在提炼内容脉络与页面要点……",
-                  "已生成大纲：背景与目标 → 进展与亮点 → 问题与风险 → 下一步计划。参考来源：3 个文件",
-                  "按深度模式生成完整幻灯片",
-                  "已按深度模式生成 12 页演示文稿，含数据图表页与总结页，可直接预览导出。生成篇幅：中",
+            "capabilities": [
+              {
+                "action": {
+                  "href": "/contact?topic=AIPPT 咨询",
+                  "label": "联系我们",
+                  "variant": "primary",
+                },
+                "contextNote": "应用示例：上传行业报告与会议纪要，生成内容自动引用资料要点。",
+                "id": "aippt-ref",
+                "image": {
+                  "alt": "参考资料驱动",
+                  "height": 841,
+                  "src": "/assets/product/aippt/reference-materials.png",
+                  "width": 1439,
+                },
+                "lead": "上传 PDF、Word、PPT、Excel 或图片资料，AI 分析参考来源、提炼内容脉络与页面要点，让生成内容贴合原始材料、有据可依。",
+                "steps": [
+                  {
+                    "description": "支持 PDF、Word、PPT、Excel、图片等常用资料格式。",
+                    "tags": [
+                      "多格式上传",
+                      "资料管理",
+                    ],
+                    "title": "多格式上传",
+                  },
+                  {
+                    "description": "自动梳理资料主线，提炼可讲的页面要点与结构。",
+                    "tags": [
+                      "内容脉络",
+                      "要点提炼",
+                    ],
+                    "title": "脉络提炼",
+                  },
+                  {
+                    "description": "基于已选资料生成内容，页面要点贴合原始材料。",
+                    "tags": [
+                      "资料驱动",
+                      "有据可依",
+                    ],
+                    "title": "有据生成",
+                  },
                 ],
-                "note": "输入需求 / 上传资料 → 分析整理 → 生成大纲与页面 → 预览导出",
-                "title": "AIPPT · 能力演示",
+                "title": "参考资料驱动：内容有据可依，贴合原始材料",
               },
-              "eyebrow": "业务场景",
-              "lead": "一句话生成、参考直达、模式可选、多格式交付——把做 PPT 真正交给 AI。",
-              "outcomes": [
-                {
-                  "description": "从构思到成稿，分钟级完成",
-                  "title": "制作更快",
+              {
+                "action": {
+                  "href": "/contact?topic=AIPPT 咨询",
+                  "label": "联系我们",
+                  "variant": "primary",
                 },
-                {
-                  "description": "AI 梳理逻辑，页面有层次",
-                  "title": "结构更清晰",
+                "contextNote": "渲染模式：简约 / 标准 / 臻制，配合生成篇幅设置按需选择。",
+                "id": "aippt-mode",
+                "image": {
+                  "alt": "三种渲染模式界面",
+                  "height": 879,
+                  "src": "/assets/product/aippt/rendering-modes.png",
+                  "width": 1920,
                 },
-                {
-                  "description": "统一版式风格，可直接使用",
-                  "title": "成稿更专业",
-                },
-              ],
-              "points": [
-                {
-                  "description": "输入需求，自动产出大纲与页面",
-                  "title": "一句话生成",
-                },
-                {
-                  "description": "上传资料，内容有据可依",
-                  "title": "参考资料直达",
-                },
-                {
-                  "description": "快速 / 标准 / 深度，按需匹配",
-                  "title": "模式场景可选",
-                },
-                {
-                  "description": "版式统一，可直接演示与导出",
-                  "title": "成稿即用",
-                },
-              ],
-              "reason": [
-                "需求与资料理解",
-                "内容逻辑梳理",
-                "页面结构规划",
-                "版式与内容生成",
-                "多格式交付",
-              ],
-              "scenes": [
-                {
-                  "action": {
-                    "href": "/product/standalone",
-                    "label": "了解独立产品中心 →",
+                "lead": "提供简约、标准、臻制三档渲染深度，覆盖从快速成稿到精装演示的创作场景，并支持生成篇幅设置按需匹配。",
+                "steps": [
+                  {
+                    "description": "一键快速成稿，版式干净、信息聚焦，适合时间紧、要点明确的内部汇报。",
+                    "tags": [
+                      "一键成稿",
+                      "信息聚焦",
+                      "快速汇报",
+                    ],
+                    "title": "简约模式",
                   },
-                  "description": "周报、述职、经营分析等周期性汇报，快速产出结构清晰的演示稿。",
-                  "title": "工作汇报",
-                },
-                {
-                  "action": {
-                    "href": "/contact?topic=AIPPT 方案咨询",
-                    "label": "咨询方案 →",
+                  {
+                    "description": "图文均衡、结构完整，自动匹配版式与图表，适合日常汇报与方案演示。",
+                    "tags": [
+                      "图文均衡",
+                      "版式匹配",
+                      "日常演示",
+                    ],
+                    "title": "标准模式",
                   },
-                  "description": "产品介绍、方案宣讲、投标演示，按参考资料生成专业材料。",
-                  "title": "市场与售前材料",
-                },
-                {
-                  "action": {
-                    "href": "/trial",
-                    "label": "申请体验 →",
+                  {
+                    "description": "精装级视觉设计，封面、配色与版式细节考究，适合对外发布与重要场合展示。",
+                    "tags": [
+                      "精装设计",
+                      "视觉考究",
+                      "对外展示",
+                    ],
+                    "title": "臻制模式",
                   },
-                  "description": "课件、培训材料、经验分享，把散落资料变成可讲的演示文稿。",
-                  "title": "培训与知识分享",
+                ],
+                "title": "三种渲染模式：按需成稿，从简约到臻制",
+              },
+              {
+                "action": {
+                  "href": "/contact?topic=AIPPT 咨询",
+                  "label": "联系我们",
+                  "variant": "primary",
                 },
-              ],
-              "scenesLead": "覆盖工作汇报、市场方案、培训课件与项目总结等办公演示场景。",
-              "title": "让演示文稿创作，从耗时繁琐走向高效专业",
-              "values": [
-                {
-                  "description": "从构思到成稿，分钟级完成",
-                  "title": "制作更快",
+                "contextNote": "应用示例：输入「标题改为数据驱动、重点章节前移」，AI 完成内容与结构微调。",
+                "id": "aippt-gen",
+                "image": {
+                  "alt": "自然语言微调演示内容",
+                  "height": 760,
+                  "src": "/assets/product/aippt/natural-language-tuning.png",
+                  "width": 1414,
                 },
-                {
-                  "description": "AI 梳理内容逻辑，页面有层次",
-                  "title": "结构更清晰",
+                "lead": "成稿后通过自然语言对话按需微调内容，AI 精准定位并完成文字、数据与结构调整，无需手动逐页查找。",
+                "steps": [
+                  {
+                    "description": "对指定页面的标题、正文、数据或结论提出修改要求，AI 精准改写并即时生效，例如「第 5 页标题改为数据驱动」。",
+                    "tags": [
+                      "指定页面",
+                      "精准改写",
+                      "即时生效",
+                    ],
+                    "title": "局部改写",
+                  },
+                  {
+                    "description": "按指令调整页面顺序、合并或拆分章节，目录与导航同步更新，例如「把重点案例章节前移」。",
+                    "tags": [
+                      "页面排序",
+                      "章节拆分合并",
+                      "目录同步",
+                    ],
+                    "title": "结构重组",
+                  },
+                  {
+                    "description": "统一全稿措辞口径、标题层级与版式风格，保证前后一致、整体不散。",
+                    "tags": [
+                      "措辞统一",
+                      "层级一致",
+                      "版式统一",
+                    ],
+                    "title": "风格统一",
+                  },
+                ],
+                "title": "自然语言微调：对话调整，所见即所得",
+              },
+              {
+                "action": {
+                  "href": "/contact?topic=AIPPT 咨询",
+                  "label": "联系我们",
+                  "variant": "primary",
                 },
-                {
-                  "description": "统一版式风格，对外形象一致",
-                  "title": "成稿更专业",
+                "contextNote": "人机双写：AI 生成初稿 → 页面直接手动编辑文字与图片 → 多格式交付。",
+                "id": "aippt-export",
+                "image": {
+                  "alt": "人机双写：逐字逐图可编辑",
+                  "height": 879,
+                  "src": "/assets/product/aippt/human-ai-editing.png",
+                  "width": 1920,
                 },
-              ],
-              "workflow": [
-                "输入需求",
-                "选择模式",
-                "生成预览",
-                "调整导出",
-              ],
-            },
-            "capabilities": {
-              "eyebrow": "能力优势",
-              "items": [
-                {
-                  "description": "输入主题或创作需求，AI 自动规划演示文稿大纲、组织章节结构并生成完整页面内容。",
-                  "features": [
-                    {
-                      "description": "一句话需求，直接产出页面大纲与章节顺序",
-                      "title": "需求直达结构",
-                    },
-                    {
-                      "description": "基于主题生成观点、数据表述与总结页",
-                      "title": "内容辅助填充",
-                    },
-                    {
-                      "description": "内容、要点自动落位，版式统一",
-                      "title": "页面自动排版",
-                    },
-                  ],
-                  "tag": "能力 01",
-                  "title": "一句话生成",
-                  "visual": "主题输入与大纲生成界面示意（对话式输入 → 章节结构 → 页面要点）",
-                },
-                {
-                  "description": "上传 PDF、Word、PPT、Excel 或图片资料，AI 分析参考来源，提炼内容脉络与页面要点，让生成内容贴合原始材料。",
-                  "features": [
-                    {
-                      "description": "支持 PDF、Word、PPT、Excel、图片等常用资料格式",
-                      "title": "多格式上传",
-                    },
-                    {
-                      "description": "自动梳理资料主线，生成可讲的内容框架",
-                      "title": "内容脉络提炼",
-                    },
-                    {
-                      "description": "生成内容与所选资料对应，来源清晰可查",
-                      "title": "参考来源可见",
-                    },
-                  ],
-                  "tag": "能力 02",
-                  "title": "参考资料驱动",
-                  "visual": "资料上传与参考来源界面示意（上传区 + 已选资料 + 来源标注）",
-                },
-                {
-                  "description": "快速 / 标准 / 深度三种模式按场景选择，并支持生成篇幅（长 / 中 / 短）设置，兼顾效率与深度。",
-                  "features": [
-                    {
-                      "description": "非常适合快速获得结果，效率优先",
-                      "title": "快速模式",
-                    },
-                    {
-                      "description": "均衡内容深度与生成速度",
-                      "title": "标准模式",
-                    },
-                    {
-                      "description": "获得深入报告与完整内容",
-                      "title": "深度模式",
-                    },
-                    {
-                      "description": "长 / 中 / 短篇幅按演示场景设定",
-                      "title": "篇幅可调",
-                    },
-                  ],
-                  "tag": "能力 03",
-                  "title": "三种生成模式",
-                  "visual": "生成模式与篇幅设置界面示意（快速 / 标准 / 深度 + 长中短）",
-                },
-                {
-                  "description": "生成后可随时自定义修改、保存生成记录，支持新窗口预览、下载与分享，让成稿在办公环境中继续使用。",
-                  "features": [
-                    {
-                      "description": "页面内容、结构与版式按需调整",
-                      "title": "在线自定义修改",
-                    },
-                    {
-                      "description": "历史生成保存、重命名与复用",
-                      "title": "生成记录管理",
-                    },
-                    {
-                      "description": "下载与分享，兼容常用办公环境",
-                      "title": "多格式导出",
-                    },
-                  ],
-                  "tag": "能力 04",
-                  "title": "灵活编辑与多格式交付",
-                  "visual": "生成结果预览与导出界面示意（预览区 + 下载 / 分享 / 记录）",
-                },
-              ],
-              "lead": "四个能力，覆盖从输入到交付的完整创作链路。",
-              "title": "四大核心能力，覆盖演示文稿创作全链路",
-            },
+                "lead": "AI 自动生成初稿，支持页面级手动编辑，逐字逐图所见即所得，人机协同完成成稿交付。",
+                "steps": [
+                  {
+                    "description": "输入创作需求或参考资料，AI 自动生成结构完整、版式统一的演示文稿初稿。",
+                    "tags": [
+                      "需求驱动",
+                      "自动成稿",
+                      "结构完整",
+                    ],
+                    "title": "AI 生成初稿",
+                  },
+                  {
+                    "description": "在编辑器中直接修改文字内容、替换图片、调整图表与版式，逐字逐图所见即所得。",
+                    "tags": [
+                      "文字修改",
+                      "图片替换",
+                      "图表调整",
+                      "版式编辑",
+                    ],
+                    "title": "页面级手动编辑",
+                  },
+                  {
+                    "description": "AI 辅助润色与优化建议，人确认内容口径，多格式导出交付使用。",
+                    "tags": [
+                      "AI 润色",
+                      "人工确认",
+                      "多格式交付",
+                    ],
+                    "title": "协同完善交付",
+                  },
+                ],
+                "title": "人机双写内容：AI 生成初稿，逐字逐图可编辑",
+              },
+            ],
             "cta": {
               "actions": [
                 {
-                  "href": "/trial",
-                  "label": "立即体验 AIPPT",
+                  "href": "/contact?topic=AIPPT 咨询",
+                  "label": "联系我们",
                   "variant": "primary",
                 },
-                {
-                  "href": "/contact?topic=AIPPT 咨询",
-                  "label": "咨询产品方案",
-                },
-                {
-                  "href": "/product/code-agent",
-                  "label": "查看码多多 2.0",
-                },
               ],
-              "description": "立即体验 AIPPT，或与华鲲团队沟通企业级演示文稿生成方案。",
-              "title": "开启分钟级演示文稿创作体验",
-            },
-            "experience": {
-              "eyebrow": "核心体验",
-              "flow": [
-                "输入需求 / 上传资料",
-                "生成大纲与页面",
-                "预览调整 · 导出交付",
-              ],
-              "lead": "输入一句话或上传参考资料，AI 完成内容梳理、结构规划与版式生成，成稿即所得、可预览可导出。",
-              "title": "从需求到成稿，分钟级完成",
-              "visual": "AIPPT 创作台真实产品截图：需求输入 → 大纲与页面生成 → 预览导出",
+              "description": "如需了解或采购 AIPPT，欢迎与华鲲团队联系，获取企业级演示文稿生成方案。",
+              "title": "开启高效智能的演示文稿创作体验",
             },
             "hero": {
               "actions": [
                 {
-                  "href": "/trial",
-                  "label": "立即体验",
+                  "href": "/contact?topic=AIPPT 咨询",
+                  "label": "联系我们",
                   "variant": "primary",
                 },
-                {
-                  "href": "/contact?topic=AIPPT 咨询",
-                  "label": "咨询方案",
-                },
               ],
-              "demo": {
-                "messages": [
-                  "根据这份资料，生成一份完整的汇报 PPT",
-                  "正在分析参考来源，提炼内容脉络与页面要点……",
-                  "已生成 12 页汇报 PPT：背景与目标 → 进展与亮点 → 问题与风险 → 下一步计划。参考来源：3 个资料文件",
-                ],
-                "note": "Aurora 创作台：输入需求 / 上传资料 → 分析整理 → 生成大纲与页面 → 预览导出",
-                "title": "AIPPT · Aurora 创作台",
-                "visual": "此处预留真实产品截图位置",
+              "image": {
+                "alt": "Aurora 创作台主界面",
+                "height": 900,
+                "src": "/assets/product/aippt/main.png",
+                "width": 1440,
               },
-              "eyebrow": "独立产品中心｜AIPPT",
-              "lead": "AIPPT（Aurora）面向办公场景：输入创作需求或上传参考资料，AI 自动梳理内容逻辑、规划页面结构、匹配版式并生成内容，全程无需手动整理素材。让一份「能直接讲」的演示文稿分钟级完成，支持随时自定义修改与多格式导出。",
+              "lead": "输入创作需求或上传参考资料，AI 自动完成内容逻辑、页面结构与版式排版；支持在线编辑修改与多格式导出，快速交付可用的演示文稿。",
               "tags": [
-                "一句话生成",
+                "自然语言微调",
                 "参考资料驱动",
-                "三种生成模式",
+                "多档渲染",
+                "在线编辑",
                 "多格式导出",
               ],
-              "title": "一站式智能演示文稿创作平台，需求直达、分钟级成稿",
+              "title": "AIPPT：一站式智能演示文稿创作平台",
             },
             "introduction": {
-              "eyebrow": "产品介绍",
               "items": [
                 {
-                  "description": "输入创作需求或上传资料，自动完成内容逻辑、页面结构与版式排版，全程无需手动整理素材。",
-                  "title": "一站式创作台",
-                  "visual": "Aurora 创作台整体界面示意（输入区 + 模式选择 + 生成预览）",
+                  "description": "输入创作需求或上传参考资料，AI 自动完成内容逻辑、页面结构与版式排版，全程无需手动整理素材，直接产出可交付的演示文稿。",
+                  "tags": [
+                    "自然语言微调",
+                    "参考资料驱动",
+                    "自动排版",
+                  ],
+                  "title": "一站式创作 · 从需求到成稿",
                 },
                 {
-                  "description": "支持 PDF、Word、PPT、Excel 与图片，基于已选资料生成内容，页面要点有据可依、贴合原始材料。",
-                  "title": "参考资料驱动",
-                  "visual": "资料上传与参考来源界面示意",
-                },
-                {
-                  "description": "快速 / 标准 / 深度三种模式，覆盖「快速出结果」到「深入报告」，并支持生成篇幅长中短设置。",
-                  "title": "三种生成模式",
-                  "visual": "生成模式与篇幅设置界面示意",
+                  "description": "简约 / 标准 / 臻制三种渲染模式覆盖不同创作场景，支持生成篇幅长中短设置；成稿可在线修改、保存与多格式导出，在办公环境中继续使用。",
+                  "tags": [
+                    "三种渲染模式",
+                    "篇幅设置",
+                    "多格式导出",
+                  ],
+                  "title": "模式可选 · 多格式交付",
                 },
               ],
-              "lead": "AIPPT 完成的不只是「套模板」，而是从内容梳理到版式生成的一整套创作过程。",
-              "title": "从模板套用到智能创作，覆盖内容、结构与版式的完整链路",
+              "lead": "输入创作需求或上传参考资料，自动完成内容逻辑、结构与版式生成；支持在线编辑修改、生成记录管理与多格式交付，成稿即用。",
+              "title": "AIPPT：从内容梳理到版式生成的一站式智能创作",
+              "useTags": [
+                "内容逻辑梳理",
+                "页面结构规划",
+                "版式自动匹配",
+                "人机双写",
+              ],
             },
             "name": "AIPPT",
             "slug": "aippt",
           },
           {
-            "business": {
-              "demo": {
-                "messages": [
-                  "给凸台增加 2mm 倒角，并检查装配干涉",
-                  "正在执行参数修改与干涉检查……",
-                  "已增加 2mm 倒角，干涉检查通过，模型已更新。模型：工作台板 · 新版本 V2",
-                  "输出工程图与仿真报告",
-                  "工程图与结构仿真报告已生成，可下载交付。输出：SVG 工程图 · PDF 报告",
+            "capabilities": [
+              {
+                "action": {
+                  "href": "/contact?topic=AISHREK 咨询",
+                  "label": "联系我们",
+                  "variant": "primary",
+                },
+                "contextNote": "应用示例：输入「将安装孔距调整为 120mm」，AI 完成参数修改并生成新版本。",
+                "id": "aishrek-import",
+                "image": {
+                  "alt": "自然语言 CAD 界面",
+                  "height": 823,
+                  "src": "/assets/product/aishrek/natural-language-cad.png",
+                  "width": 1920,
+                },
+                "lead": "以自然语言描述设计修改需求，AI 解析设计意图并直接执行模型参数修改，覆盖改孔距、开槽、新增凸台、倒角等常见改型操作，完成模型改型。",
+                "steps": [
+                  {
+                    "description": "输入改孔距、开槽、新增凸台、倒角等修改需求，AI 理解设计意图并解析为可执行指令。",
+                    "tags": [
+                      "自然语言",
+                      "意图理解",
+                      "需求解析",
+                    ],
+                    "title": "需求描述",
+                  },
+                  {
+                    "description": "AI 直接修改模型参数并自动完成改型，无需手动操作 CAD 命令，修改精准落位。",
+                    "tags": [
+                      "自动改型",
+                      "参数修改",
+                      "精准落位",
+                    ],
+                    "title": "自动改型",
+                  },
+                  {
+                    "description": "修改前后模型并排对比，改动一目了然；历史版本可随时打开、恢复与下载。",
+                    "tags": [
+                      "前后对比",
+                      "版本恢复",
+                      "下载导出",
+                    ],
+                    "title": "对比回溯",
+                  },
                 ],
-                "note": "导入文件 → 自动分析 → 对话改参 → 验证导出",
-                "title": "AISHREK · 能力演示",
+                "title": "自然语言 CAD：以自然语言描述需求，直接驱动参数改型",
               },
-              "eyebrow": "业务场景",
-              "lead": "导入即解读、对话改参、联动检查、仿真出图——把设计修改交给 AI。",
-              "outcomes": [
-                {
-                  "description": "从导入到交付，缩短改型周期",
-                  "title": "设计提效",
+              {
+                "action": {
+                  "href": "/contact?topic=AISHREK 咨询",
+                  "label": "联系我们",
+                  "variant": "primary",
                 },
-                {
-                  "description": "自动解读参数，减少人工误差",
-                  "title": "修改精准",
+                "contextNote": "原生与精密对比：原生直接改参数，精密联动装配与图纸，改动全程可验证。",
+                "id": "aishrek-chat",
+                "image": {
+                  "alt": "原生精密联动界面",
+                  "height": 1760,
+                  "src": "/assets/product/aishrek/native-linkage.png",
+                  "width": 1920,
                 },
-                {
-                  "description": "干涉、仿真、图纸一体完成",
-                  "title": "验证闭环",
-                },
-              ],
-              "points": [
-                {
-                  "description": "文件上传后自动分析几何与参数",
-                  "title": "导入即解读",
-                },
-                {
-                  "description": "自然语言描述，AI 执行修改",
-                  "title": "对话改参数",
-                },
-                {
-                  "description": "原生 CAD 联动与干涉检查",
-                  "title": "联动检查",
-                },
-                {
-                  "description": "验证与工程图一体化交付",
-                  "title": "仿真出图",
-                },
-              ],
-              "reason": [
-                "多格式解析",
-                "几何与参数理解",
-                "对话指令执行",
-                "联动验证与出图",
-              ],
-              "scenes": [
-                {
-                  "action": {
-                    "href": "/contact?topic=AISHREK 方案咨询",
-                    "label": "咨询方案 →",
+                "lead": "原生与精密两级联动：原生直接改参数，精密驱动装配与图纸联动，改动全程可验证。",
+                "steps": [
+                  {
+                    "description": "读取原生零件参数与尺寸，直接执行特征级参数化修改，改动精准到原始特征。",
+                    "tags": [
+                      "参数读取",
+                      "特征级修改",
+                    ],
+                    "title": "原生参数改型",
                   },
-                  "description": "机械零件的参数化修改与快速出型，缩短改型周期。",
-                  "title": "零件设计与改型",
-                },
-                {
-                  "action": {
-                    "href": "/contact?topic=AISHREK 装配体联动咨询",
-                    "label": "联系我们 →",
+                  {
+                    "description": "装配体再生与关系检查、干涉检查与尺寸链校验，零件改动自动传递到装配体。",
+                    "tags": [
+                      "装配再生",
+                      "干涉检查",
+                      "尺寸链校验",
+                    ],
+                    "title": "精密装配联动",
                   },
-                  "description": "多零件装配的参数化修改、再生与干涉检查。",
-                  "title": "装配体联动修改",
-                },
-                {
-                  "action": {
-                    "href": "/product/standalone",
-                    "label": "了解独立产品中心 →",
+                  {
+                    "description": "工程图同步再生与尺寸验证，输出领域级变更验证报告。",
+                    "tags": [
+                      "工程图再生",
+                      "尺寸验证",
+                      "验证报告",
+                    ],
+                    "title": "工程图联动验证",
                   },
-                  "description": "从模型到工程图、仿真报告的一体化输出。",
-                  "title": "工程图与仿真交付",
+                ],
+                "title": "原生精密联动：原生改参数，精密动装配",
+              },
+              {
+                "action": {
+                  "href": "/contact?topic=AISHREK 咨询",
+                  "label": "联系我们",
+                  "variant": "primary",
                 },
-              ],
-              "scenesLead": "覆盖机械零件设计与改型、装配体联动修改、工程图与仿真交付等设计工作场景。",
-              "title": "让机械设计修改，从繁琐操作走向高效交付",
-              "values": [
-                {
-                  "description": "从操作命令到自然语言，缩短改型周期",
-                  "title": "修改更快",
+                "contextNote": "多维仿真：结构仿真（静力 / 模态 / 疲劳 / 热）+ 动力学分析（运动 / 碰撞 / 轨迹）。",
+                "id": "aishrek-link",
+                "image": {
+                  "alt": "多维仿真 CAE 界面",
+                  "height": 879,
+                  "src": "/assets/product/aishrek/cae.png",
+                  "width": 1920,
                 },
-                {
-                  "description": "自动解析与联动检查，减少人为误差",
-                  "title": "结果更准",
-                },
-                {
-                  "description": "图纸、仿真报告一体化输出",
-                  "title": "交付更全",
-                },
-              ],
-              "workflow": [
-                "导入文件",
-                "自动分析",
-                "对话改参",
-                "验证导出",
-              ],
-            },
-            "capabilities": {
-              "eyebrow": "能力优势",
-              "items": [
-                {
-                  "description": "上传 STL、STEP、PDF、工程图与图片，导入后自动进行几何分析、参数解读与装配结构识别。",
-                  "features": [
-                    {
-                      "description": "STL、STEP、工程图、图片等常用设计文件",
-                      "title": "多格式支持",
-                    },
-                    {
-                      "description": "导入即解读模型几何与尺寸参数",
-                      "title": "自动几何分析",
-                    },
-                    {
-                      "description": "识别装配体组成与零件间关系",
-                      "title": "装配结构识别",
-                    },
-                  ],
-                  "tag": "能力 01",
-                  "title": "多格式导入与自动解读",
-                  "visual": "文件导入与自动解读界面示意（上传区 + 几何与参数解读结果）",
-                },
-                {
-                  "description": "用自然语言描述修改需求（孔距、槽长、倒角、凸台等），AI 解析并执行，支持修改前后对比与自动版本生成。",
-                  "features": [
-                    {
-                      "description": "描述需求即可执行，无需专业操作",
-                      "title": "自然语言改参",
-                    },
-                    {
-                      "description": "原稿与修改结果可视对照",
-                      "title": "修改前后对比",
-                    },
-                    {
-                      "description": "每次修改形成独立历史版本",
-                      "title": "自动版本生成",
-                    },
-                  ],
-                  "tag": "能力 02",
-                  "title": "对话式参数修改",
-                  "visual": "对话修改界面示意（修改指令 + 参数前后对照）",
-                },
-                {
-                  "description": "联动 SolidWorks、UG NX、CREO 原生文件，完成参数化修改、装配再生与干涉、尺寸链检查；支持中性格式处理与工程图输出。",
-                  "features": [
-                    {
-                      "description": "SolidWorks / UG NX / CREO 参数联动",
-                      "title": "原生 CAD 联动",
-                    },
-                    {
-                      "description": "装配干涉与尺寸链自动校验",
-                      "title": "干涉与尺寸链检查",
-                    },
-                    {
-                      "description": "SVG / DXF / DWG 等图纸交付",
-                      "title": "工程图输出",
-                    },
-                  ],
-                  "tag": "能力 03",
-                  "title": "原生 CAD 联动与工程图",
-                  "visual": "CAD 联动与工程图界面示意（联动配置 + 图纸输出）",
-                },
-                {
-                  "description": "结构仿真与动力学分析，输出应力、位移、运动轨迹等结果与验证报告，让设计修改经过验证再交付。",
-                  "features": [
-                    {
-                      "description": "静力、模态、疲劳、热等分析",
-                      "title": "结构仿真",
-                    },
-                    {
-                      "description": "运动学与动力学结果输出",
-                      "title": "动力学分析",
-                    },
-                    {
-                      "description": "设计验证结论与报告交付",
-                      "title": "验证报告",
-                    },
-                  ],
-                  "tag": "能力 04",
-                  "title": "仿真与设计验证",
-                  "visual": "仿真分析界面示意（工况设置 + 结果云图）",
-                },
-              ],
-              "lead": "围绕机械设计修改的完整链路，四个能力解决从输入到交付的关键问题。",
-              "title": "四大核心能力，覆盖设计、联动、仿真与交付全链路",
-            },
+                "lead": "面向设计模型提供结构仿真与动力学分析：静力、模态、屈曲、疲劳、热等结构分析，以及刚体运动与动力学分析，输出应力、位移、安全系数与运动轨迹。",
+                "steps": [
+                  {
+                    "description": "定义材料、约束、载荷与网格，完成静力、模态、屈曲、疲劳、热等分析。",
+                    "tags": [
+                      "静力分析",
+                      "模态分析",
+                      "疲劳热分析",
+                    ],
+                    "title": "结构仿真",
+                  },
+                  {
+                    "description": "定义刚体、连接、约束与驱动，输出位置、速度、加速度、力与扭矩。",
+                    "tags": [
+                      "运动学分析",
+                      "动力学分析",
+                      "碰撞干涉",
+                    ],
+                    "title": "动力学分析",
+                  },
+                  {
+                    "description": "输出应力、位移、安全系数与运动曲线，形成可验证的仿真报告。",
+                    "tags": [
+                      "结果输出",
+                      "仿真报告",
+                      "验证标准",
+                    ],
+                    "title": "仿真报告",
+                  },
+                ],
+                "title": "多维仿真 CAE：结构仿真与动力学分析一体",
+              },
+            ],
             "cta": {
               "actions": [
                 {
-                  "href": "/trial",
-                  "label": "立即体验 AISHREK",
+                  "href": "/contact?topic=AISHREK 咨询",
+                  "label": "联系我们",
                   "variant": "primary",
                 },
-                {
-                  "href": "/contact?topic=AISHREK 咨询",
-                  "label": "咨询产品方案",
-                },
-                {
-                  "href": "/product/aippt",
-                  "label": "查看 AIPPT",
-                },
               ],
-              "description": "立即体验 AISHREK，或与华鲲团队沟通机械设计智能化方案。",
-              "title": "开启对话式机械设计体验",
-            },
-            "experience": {
-              "eyebrow": "核心体验",
-              "flow": [
-                "导入设计文件",
-                "对话修改参数",
-                "验证与交付",
-              ],
-              "lead": "导入设计文件即完成几何解读；自然语言提出修改，AI 执行并验证，工程图与仿真报告一体交付。",
-              "title": "导入即解读，对话即改型",
-              "visual": "AISHREK 工作台真实产品截图：文件导入解读 → 对话改参 → 验证出图",
+              "description": "如需了解或采购 AISHREK，欢迎与华鲲团队联系，获取机械设计智能化方案。",
+              "title": "开启智能机械设计体验",
             },
             "hero": {
               "actions": [
                 {
-                  "href": "/trial",
-                  "label": "立即体验",
+                  "href": "/contact?topic=AISHREK 咨询",
+                  "label": "联系我们",
                   "variant": "primary",
                 },
-                {
-                  "href": "/contact?topic=AISHREK 咨询",
-                  "label": "咨询方案",
-                },
               ],
-              "demo": {
-                "messages": [
-                  "把轴承座四个孔的孔距改为 90mm",
-                  "正在解析模型几何与尺寸参数……",
-                  "已完成修改：孔距 80mm → 90mm，装配关系与干涉检查通过。模型：轴承座 · 已生成新版本",
-                ],
-                "note": "AISHREK 工作台：导入设计文件 → 自动几何分析 → 对话修改参数 → 验证与出图",
-                "title": "AISHREK · 机械设计工作台",
-                "visual": "此处预留真实产品截图位置",
+              "image": {
+                "alt": "AISHREK 机械设计工作台",
+                "height": 760,
+                "src": "/assets/product/aishrek/main.png",
+                "width": 1414,
               },
-              "eyebrow": "独立产品中心｜AISHREK",
-              "lead": "AISHREK 面向机械设计与工业制图场景：导入 STL、STEP、工程图与图片，AI 自动解读几何与参数；以自然语言描述修改需求，完成参数调整、联动检查、仿真验证与工程图输出，让零件设计与改型全程对话驱动。",
+              "lead": "导入 STL、STEP 等设计文件，AI 自动解读几何结构；以自然语言描述改型需求，支持通用格式与原生高精度双模式，完成参数调整与模型改型。",
               "tags": [
-                "多格式导入",
-                "对话改参",
-                "CAD 联动",
-                "仿真出图",
+                "自然语言 CAD",
+                "原生精密联动",
+                "多维仿真 CAE",
               ],
-              "title": "AI 机械设计工作台，导入即解读、对话改参数",
+              "title": "AISHREK：AI 机械设计工作台，导入即解读、文生即改型",
             },
             "introduction": {
-              "eyebrow": "产品介绍",
               "items": [
                 {
-                  "description": "以自然语言描述设计修改需求，AI 解读并执行，支持修改前后对比与版本管理。",
-                  "title": "对话式建模",
-                  "visual": "对话式参数修改界面示意（修改指令 + 参数前后对照）",
+                  "description": "以自然语言描述设计修改需求，AI 解读并执行参数修改，支持修改前后对比与版本回溯，降低机械设计操作门槛。",
+                  "tags": [
+                    "自然语言 CAD",
+                    "前后对比",
+                    "版本回溯",
+                  ],
+                  "title": "自然语言 CAD · 说需求、改模型",
                 },
                 {
-                  "description": "支持 STL、STEP、工程图与图片，并可联动 SolidWorks、UG NX、CREO 原生文件。",
-                  "title": "多格式与原生联动",
-                  "visual": "多格式导入与 CAD 联动界面示意",
-                },
-                {
-                  "description": "从几何分析、参数修改到联动检查、仿真验证与工程图输出，一站完成。",
-                  "title": "设计到交付闭环",
-                  "visual": "设计验证与工程图输出界面示意",
+                  "description": "面向原生 CAD 模型实现参数化修改、装配体再生与工程图同步，参数变更后装配关系与图纸尺寸自动联动验证。",
+                  "tags": [
+                    "参数化修改",
+                    "装配联动",
+                    "工程图同步",
+                  ],
+                  "title": "原生精密联动 · 参数化与装配同步",
                 },
               ],
-              "lead": "AISHREK 完成的不只是模型查看，而是从文件解读到修改验证的完整设计工作。",
-              "title": "从 3D 查看器到 AI 建模工作台，覆盖设计修改全流程",
+              "lead": "以自然语言描述改型需求，AI 直接驱动模型参数修改；支持原生精密联动与多维仿真 CAE，覆盖设计、装配、验证全流程。",
+              "title": "AISHREK：自然语言驱动改型的机械设计工作台",
+              "useTags": [
+                "自然语言 CAD",
+                "原生精密联动",
+                "多维仿真 CAE",
+                "参数改型验证",
+              ],
             },
             "name": "AISHREK",
             "slug": "aishrek",
@@ -1420,9 +896,9 @@ describe("prototype product portal content contract", () => {
         key: "products",
         route: "/product",
         metadata: {
-          title: "产品总览 · 华鲲元启",
+          title: "独立产品中心 · 华鲲元启",
           description:
-            "元启平台以模型、知识、智能体、应用与治理六大中心，帮助企业深度构建专属 AI 能力；独立产品中心提供码多多 2.0、AIPPT、AISHREK 等可独立部署的产品，满足明确的单点 AI 需求。深度建设用元启，快速使用选独立产品。",
+            "面向明确业务场景的成熟企业级 AI 产品：独立安装、下载即用，无需复杂配置即可获得完整能力；当前覆盖智能编码、演示文稿创作与机械设计，后续将持续扩展。",
         },
         props: {},
       },
@@ -1432,7 +908,7 @@ describe("prototype product portal content contract", () => {
         metadata: {
           title: "独立产品中心 · 华鲲元启",
           description:
-            "独立于元启平台、可单独部署与购买的企业级 AI 产品矩阵。每个产品面向一个明确的业务场景，当前覆盖智能编程、演示文稿与机械设计，后续将持续扩展。",
+            "面向明确业务场景的成熟企业级 AI 产品：独立安装、下载即用，无需复杂配置即可获得完整能力；当前覆盖智能编码、演示文稿创作与机械设计，后续将持续扩展。",
         },
         props: {},
       },
@@ -1440,9 +916,9 @@ describe("prototype product portal content contract", () => {
         key: "mdd-2",
         route: "/product/code-agent",
         metadata: {
-          title: "码多多 2.0 · 华鲲元启",
+          title: "码里奥 · 华鲲元启",
           description:
-            "码多多 2.0 面向企业研发、工程交付与高密级代码资产保护场景，以自然语言驱动工程落地——描述需求，AI 理解任务、分析项目上下文、生成方案，并在本地工程中完成代码编写、修改、运行与验证。支持独立软件与 VS Code 插件双形态，私有化部署、代码资产不出域。",
+            "以自然语言描述需求，AI 结合项目上下文与技能工具，完成代码编写、运行与验证，交付可运行的工程成果。",
         },
         props: { slug: "code-agent" },
       },
@@ -1452,7 +928,7 @@ describe("prototype product portal content contract", () => {
         metadata: {
           title: "AIPPT · 华鲲元启",
           description:
-            "AIPPT（Aurora）面向办公场景：输入创作需求或上传参考资料，AI 自动梳理内容逻辑、规划页面结构、匹配版式并生成内容，全程无需手动整理素材。让一份「能直接讲」的演示文稿分钟级完成，支持随时自定义修改与多格式导出。",
+            "输入创作需求或上传参考资料，AI 自动完成内容逻辑、页面结构与版式排版；支持在线编辑修改与多格式导出，快速交付可用的演示文稿。",
         },
         props: { slug: "aippt" },
       },
@@ -1462,57 +938,30 @@ describe("prototype product portal content contract", () => {
         metadata: {
           title: "AISHREK · 华鲲元启",
           description:
-            "AISHREK 面向机械设计与工业制图场景：导入 STL、STEP、工程图与图片，AI 自动解读几何与参数；以自然语言描述修改需求，完成参数调整、联动检查、仿真验证与工程图输出，让零件设计与改型全程对话驱动。",
+            "导入 STL、STEP 等设计文件，AI 自动解读几何结构；以自然语言描述改型需求，支持通用格式与原生高精度双模式，完成参数调整与模型改型。",
         },
         props: { slug: "aishrek" },
       },
     ]);
   });
 
-  it("locks the overview copy and destination routes", () => {
-    expect(productOverview.hero.title).toBe(
-      "让企业 AI 落地，深度建设与快速使用双路径",
-    );
-    expect(productOverview.hero.tags).toStrictEqual([
-      "深度构建 · 元启平台",
-      "快速使用 · 独立产品",
-      "统一运营 · 平台治理",
-    ]);
-    expect(productOverview.challenges.items).toHaveLength(3);
-    expect(productOverview.chain.items).toHaveLength(4);
-    expect(productOverview.centers.eyebrow).toBe("七大中心");
-    expect(productOverview.centers.title).toBe(
-      "元启平台六大中心，覆盖企业 AI 全生命周期",
-    );
-    expect(productOverview.centers.items).toHaveLength(5);
-    expect(productOverview.independent.items.map((item) => item.href)).toEqual([
-      "/product/code-agent",
-      "/product/aippt",
-      "/product/aishrek",
-    ]);
+  it("uses the independent product center at both product entries", () => {
+    expect(ProductPage().type).toBe(StandaloneProductCenter);
+    expect(StandalonePage().type).toBe(StandaloneProductCenter);
   });
 
   it("locks the independent product center", () => {
     expect(standaloneCenter.hero.title).toBe(
-      "独立产品中心：成熟企业级 AI 产品，开箱即用",
+      "独立产品中心：成熟企业级 AI 产品，独立安装、下载即用",
     );
     expect(standaloneCenter.products.map((item) => item.slug)).toEqual([
       "code-agent",
       "aippt",
       "aishrek",
     ]);
-    expect(standaloneCenter.products[0]?.recommended).toBe("优先推荐");
-    expect(standaloneCenter.comparison.columns).toStrictEqual([
-      "产品",
-      "给谁用",
-      "解决什么问题",
-      "典型形态",
-    ]);
-    expect(standaloneCenter.comparison.rows).toHaveLength(3);
-    expect(standaloneCenter.relations.items.map((item) => item.title)).toEqual([
-      "独立部署、独立使用",
-      "与元启组合、能力互通",
-    ]);
+    expect(standaloneCenter.products[0]?.title).toBe("码里奥");
+    expect(standaloneCenter.values).toHaveLength(2);
+    expect(standaloneCenter.faqs).toHaveLength(3);
   });
 
   it("registers exactly the three standalone product details", () => {
@@ -1523,60 +972,105 @@ describe("prototype product portal content contract", () => {
     ]);
   });
 
-  it("locks the code-agent Plan and Build visual as a vertical structure", () => {
-    expect(
-      getStandaloneProduct("code-agent")?.capabilities.items[1]?.visual,
-    ).toBe(
-      "Plan · 决策与规划：需求拆解 · 依赖检测 · 技术选型校验（只读分析） ↓ Build · 执行与落地：代码生成 · 文件修改 · 测试运行 · 日志定位 · 补丁应用（读写执行）",
+  it("locks the V2 standalone product capability contracts", () => {
+    const codeAgent = getStandaloneProduct("code-agent");
+    expect(codeAgent?.name).toBe("码里奥");
+    expect(codeAgent?.hero.title).toBe(
+      "码里奥：让每一位企业工作者，都有 AI 搭档。",
     );
+    expect(codeAgent?.capabilities.map((item) => item.title)).toEqual([
+      "Skill 技能生态：可复用技能，随需调用与编排",
+      "MCP 工具集成：打破工具边界，连接企业系统",
+      "自然语言开发：描述需求，直接生成工程文件",
+      "研发生态协同：多模型集成，融入企业研发体系",
+    ]);
+    expect(codeAgent?.hero.actions[0]?.href).toBe(
+      "/contact?topic=码多多 2.0 咨询",
+    );
+
+    const aippt = getStandaloneProduct("aippt");
+    expect(aippt?.capabilities.map((item) => item.title)).toEqual([
+      "参考资料驱动：内容有据可依，贴合原始材料",
+      "三种渲染模式：按需成稿，从简约到臻制",
+      "自然语言微调：对话调整，所见即所得",
+      "人机双写内容：AI 生成初稿，逐字逐图可编辑",
+    ]);
+    expect(aippt?.capabilities[1]?.steps.map((item) => item.title)).toEqual([
+      "简约模式",
+      "标准模式",
+      "臻制模式",
+    ]);
+
+    const aishrek = getStandaloneProduct("aishrek");
+    expect(aishrek?.capabilities.map((item) => item.title)).toEqual([
+      "自然语言 CAD：以自然语言描述需求，直接驱动参数改型",
+      "原生精密联动：原生改参数，精密动装配",
+      "多维仿真 CAE：结构仿真与动力学分析一体",
+    ]);
   });
 
   it.each([
     {
       slug: "code-agent",
-      title: "企业级的智能编码产品，代码不出域、说需求就落地",
-      introductionTitle: "不是又一个 AI 工具，而是企业级智能编码产品",
-      flow: undefined,
-      scene: "高密级代码资产企业",
-      securityCount: 4,
+      title: "码里奥：让每一位企业工作者，都有 AI 搭档。",
+      introductionTitle: "码里奥：自然语言驱动工程落地的企业级 AI 编程软件",
+      imageCount: 5,
+      heroTagCount: 4,
+      heroActionCount: 1,
+      introductionCount: 2,
+      capabilityCount: 4,
     },
     {
       slug: "aippt",
-      title: "一站式智能演示文稿创作平台，需求直达、分钟级成稿",
-      introductionTitle: "从模板套用到智能创作，覆盖内容、结构与版式的完整链路",
-      flow: ["输入需求 / 上传资料", "生成大纲与页面", "预览调整 · 导出交付"],
-      scene: "工作汇报",
-      securityCount: 0,
+      title: "AIPPT：一站式智能演示文稿创作平台",
+      introductionTitle: "AIPPT：从内容梳理到版式生成的一站式智能创作",
+      imageCount: 5,
+      heroTagCount: 5,
+      heroActionCount: 1,
+      introductionCount: 2,
+      capabilityCount: 4,
     },
     {
       slug: "aishrek",
-      title: "AI 机械设计工作台，导入即解读、对话改参数",
-      introductionTitle: "从 3D 查看器到 AI 建模工作台，覆盖设计修改全流程",
-      flow: ["导入设计文件", "对话修改参数", "验证与交付"],
-      scene: "零件设计与改型",
-      securityCount: 0,
+      title: "AISHREK：AI 机械设计工作台，导入即解读、文生即改型",
+      introductionTitle: "AISHREK：自然语言驱动改型的机械设计工作台",
+      imageCount: 4,
+      heroTagCount: 3,
+      heroActionCount: 1,
+      introductionCount: 2,
+      capabilityCount: 3,
     },
   ])(
     "locks the complete $slug page structure",
-    ({ flow, introductionTitle, scene, securityCount, slug, title }) => {
+    ({
+      capabilityCount,
+      heroActionCount,
+      heroTagCount,
+      imageCount,
+      introductionCount,
+      introductionTitle,
+      slug,
+      title,
+    }) => {
       const product = getStandaloneProduct(slug);
 
       expect(product?.hero.title).toBe(title);
-      expect(product?.hero.tags).toHaveLength(4);
-      expect(product?.hero.actions).toHaveLength(2);
+      expect(product?.hero.tags).toHaveLength(heroTagCount);
+      expect(product?.hero.actions).toHaveLength(heroActionCount);
       expect(product?.introduction.title).toBe(introductionTitle);
-      expect(product?.introduction.items).toHaveLength(3);
-      expect(product?.capabilities.items).toHaveLength(4);
+      expect(product?.introduction.items).toHaveLength(introductionCount);
+      expect(product?.capabilities).toHaveLength(capabilityCount);
       expect(
-        product?.capabilities.items.every((item) => item.features.length >= 3),
+        product?.capabilities.every((item) => item.steps.length === 3),
       ).toBe(true);
-      expect(product?.experience?.flow).toStrictEqual(flow);
-      expect(product?.business.scenes).toHaveLength(3);
-      expect(
-        product?.business.scenes.some((item) => item.title === scene),
-      ).toBe(true);
-      expect(product?.security?.items ?? []).toHaveLength(securityCount);
-      expect(product?.cta.actions.length).toBeGreaterThanOrEqual(2);
+      expect([
+        product?.hero.image,
+        ...(product?.capabilities.map((item) => item.image) ?? []),
+      ]).toHaveLength(imageCount);
+      expect(JSON.stringify(product)).not.toMatch(
+        /"security"|"experience"|"business"|"demo"|"reason"|"workflow"|"outcomes"|"scenes"/u,
+      );
+      expect(product?.cta.actions).toHaveLength(1);
     },
   );
 

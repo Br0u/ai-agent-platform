@@ -10,7 +10,6 @@ export const partnerOverviewContent = {
   lead: "面向渠道、交付与技术伙伴，提供多元合作模式、清晰分润政策与全链路赋能支持，共同开拓企业 AI 市场。",
   tags: ["商业回报", "市场协同", "成长认证"],
   claims: ["200+ 伙伴", "500+ 企业客户", "10万+ AI 应用上线"],
-  disclaimer: "示意内容，上线后替换为真实生态关系图",
   visual: {
     title: "华鲲元启伙伴生态",
     items: [

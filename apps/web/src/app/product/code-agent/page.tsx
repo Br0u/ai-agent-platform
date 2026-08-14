@@ -5,7 +5,7 @@ import { StandaloneProductDetail } from "@/components/standalone-product-detail"
 const product = getStandaloneProduct("code-agent");
 
 export const metadata: Metadata = {
-  title: "码多多 2.0 · 华鲲元启",
+  title: "码里奥 · 华鲲元启",
   description: product?.hero.lead,
 };
 

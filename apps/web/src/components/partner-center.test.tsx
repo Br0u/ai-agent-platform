@@ -22,7 +22,7 @@ function useMedia({ mobile = false, reduced = false } = {}) {
 }
 
 describe("PartnerCenter", () => {
-  it("renders five query/hash views with exact breadcrumb and absolute directory hrefs", () => {
+  it("renders five query/hash views without an extra return bar and with absolute directory hrefs", () => {
     window.history.replaceState(null, "", "/partners?view=business#pb-tiers");
     const { container } = render(<PartnerCenter />);
 
@@ -32,9 +32,10 @@ describe("PartnerCenter", () => {
         name: "多元化商业模式，匹配每一类伙伴",
       }),
     ).toBeVisible();
-    expect(screen.getByLabelText("合作伙伴面包屑")).toHaveTextContent(
-      "首页合作伙伴分润政策",
-    );
+    expect(screen.queryByLabelText("合作伙伴面包屑")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "返回上一页" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "分润政策" })).toHaveAttribute(
       "href",
       "/partners?view=business#pb-tiers",
@@ -71,13 +72,17 @@ describe("PartnerCenter", () => {
       }),
     ).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "返回合作伙伴总览" }));
+    fireEvent.click(screen.getByRole("link", { name: "合作伙伴总览" }));
     expect(
       screen.getByRole("heading", {
         level: 1,
         name: "共建企业 AI 生态，共享增长机遇",
       }),
     ).toBeVisible();
+    expect(screen.getByRole("link", { name: "合作伙伴总览" })).toHaveAttribute(
+      "aria-current",
+      "location",
+    );
   });
 
   it("falls back to overview for inherited object keys in the view query", () => {
@@ -159,7 +164,20 @@ describe("PartnerCenter", () => {
   });
 
   it("renders the overview closing CTA", () => {
-    render(<PartnerCenter />);
+    const { container } = render(<PartnerCenter />);
+    expect(screen.queryByText(/示意内容|上线后替换/u)).not.toBeInTheDocument();
+    expect(
+      Array.from(container.querySelectorAll("[data-partner-icon]"), (icon) =>
+        icon.getAttribute("data-partner-icon"),
+      ),
+    ).toEqual(["利", "升", "赋", "证"]);
+    for (const icon of container.querySelectorAll<HTMLElement>(
+      "[data-partner-icon]",
+    )) {
+      expect(icon.style.getPropertyValue("--partner-icon-image")).toMatch(
+        /^url\("\/assets\/partners\/icons\/.+\.svg"\)$/u,
+      );
+    }
     expect(
       screen.getByRole("heading", { name: "选择华鲲元启，选择共赢" }),
     ).toBeVisible();
@@ -168,12 +186,8 @@ describe("PartnerCenter", () => {
     ).toHaveAttribute("href", "/product");
   });
 
-  it("uses browser history for back and searches, clears and collapses the desktop directory", () => {
-    const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+  it("searches, clears and collapses the desktop directory", () => {
     render(<PartnerCenter />);
-
-    fireEvent.click(screen.getByRole("button", { name: "返回上一页" }));
-    expect(back).toHaveBeenCalledOnce();
 
     const search = screen.getByRole("searchbox", {
       name: "在合作伙伴目录中筛选",
@@ -355,7 +369,9 @@ describe("PartnerCenter", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "返回合作伙伴总览" }),
+      within(document.querySelector("#po-hero")!).getByRole("button", {
+        name: "成为合作伙伴",
+      }),
     ).toHaveFocus();
     expect(
       window.location.pathname + window.location.search + window.location.hash,

@@ -1,5 +1,5 @@
 import {
-  AgentCapabilityGrid,
+  HomeCenterGrid,
   HomeContactSection,
   HomeHero,
   HomeSolutionGrid,
@@ -15,7 +15,7 @@ export default function HomePage() {
         <span />
       </div>
       <HomeHero />
-      <AgentCapabilityGrid />
+      <HomeCenterGrid />
       <HomeSolutionGrid />
       <HomeContactSection />
       <HomeRevealObserver />

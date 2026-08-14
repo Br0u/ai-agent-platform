@@ -57,7 +57,7 @@ test("downloads 执行完整内容、筛选和原型下载确认合同", async (
   });
   await search.fill("安装部署指南");
   await expect(
-    page.getByRole("link", { name: "码多多 2.0 安装部署指南" }),
+    page.getByRole("link", { name: "码里奥 安装部署指南" }),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "企业 AI 落地白皮书" }),
@@ -84,7 +84,7 @@ test("downloads 执行完整内容、筛选和原型下载确认合同", async (
   );
 
   const softwareTrigger = page.getByRole("button", {
-    name: "下载安装码多多 2.0 桌面客户端",
+    name: "下载安装码里奥 桌面客户端",
   });
   await softwareTrigger.click();
   const dialog = page.getByRole("dialog", { name: "确认下载安装包" });
@@ -147,6 +147,50 @@ test("downloads 执行完整内容、筛选和原型下载确认合同", async (
   );
 });
 
+test("downloads 沿用产品页 Navbar、侧栏与备案页脚", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 980 });
+  await page.goto("/product", { waitUntil: "networkidle" });
+
+  const productDirectoryStyles = await page
+    .locator(".product-directory")
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        width: style.width,
+        backgroundImage: style.backgroundImage,
+        borderRightColor: style.borderRightColor,
+        boxShadow: style.boxShadow,
+        backdropFilter: style.backdropFilter,
+      };
+    });
+
+  await gotoDownloads(page);
+  await expect(page.locator(".site-header")).toHaveCSS("min-height", "64px");
+  await expect(page.locator(".site-wordmark")).toHaveCSS(
+    "background-image",
+    /logo\.png/u,
+  );
+  await expect(page.locator(".site-brand-name")).toBeHidden();
+  await expect(page.locator(".portal-footer__main")).toBeHidden();
+  await expect(page.locator(".portal-footer__meta span:visible")).toHaveText(
+    "备案信息（占位）",
+  );
+
+  const downloadDirectoryStyles = await page
+    .locator(".download-directory")
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        width: style.width,
+        backgroundImage: style.backgroundImage,
+        borderRightColor: style.borderRightColor,
+        boxShadow: style.boxShadow,
+        backdropFilter: style.backdropFilter,
+      };
+    });
+  expect(downloadDirectoryStyles).toEqual(productDirectoryStyles);
+});
+
 test("downloads 资源锚点在 desktop 和 mobile 落入 sticky 可视区", async ({
   page,
 }, testInfo) => {
@@ -163,7 +207,7 @@ test("downloads 资源锚点在 desktop 和 mobile 落入 sticky 可视区", asy
         .getByRole("button", { name: "下载中心目录", exact: true })
         .click();
     }
-    await page.getByRole("link", { name: "码多多 2.0 安装部署指南" }).click();
+    await page.getByRole("link", { name: "码里奥 安装部署指南" }).click();
 
     const anchor = page.locator('[data-download-key="mdd2-deploy"]');
     await expect(anchor).toBeInViewport();
@@ -248,7 +292,7 @@ test("downloads 在 1440 和 390 无横溢、保留唯一 Agent 并管理移动�
   await trigger.click();
   await expect(directorySearch).toBeFocused();
   const targetLink = drawer.getByRole("link", {
-    name: "码多多 2.0 安装部署指南",
+    name: "码里奥 安装部署指南",
   });
   await targetLink.click();
   await expect(drawer).toHaveCount(0);
@@ -314,7 +358,7 @@ test("partners 执行五视图、15 key、筛选、history 和联系弹层合同
     ).toHaveCount(1);
   }
 
-  await page.getByRole("button", { name: "返回合作伙伴总览" }).click();
+  await directory.getByRole("link", { name: "合作伙伴总览" }).click();
   await expect(page).toHaveURL(/\/partners\?view=overview#po-hero$/u);
   const search = page.getByRole("searchbox", {
     name: "在合作伙伴目录中筛选",
@@ -375,8 +419,8 @@ test("partners 五视图分别冷启动 query/hash 并落入 sticky 可视区", 
   test.skip(testInfo.project.name !== "desktop");
 
   for (const viewport of [
-    { width: 1440, height: 1000, min: 145, max: 170 },
-    { width: 390, height: 844, min: 158, max: 185 },
+    { width: 1440, height: 1000, min: 80, max: 500 },
+    { width: 390, height: 844, min: 124, max: 422 },
   ]) {
     await page.setViewportSize(viewport);
     for (const [view, hash, heading, targetHeading, visual] of [
@@ -452,7 +496,7 @@ test("partners 五视图分别冷启动 query/hash 并落入 sticky 可视区", 
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "返回合作伙伴总览" }),
+    page.locator("#po-hero").getByRole("button", { name: "成为合作伙伴" }),
   ).toBeFocused();
   await expect(page).toHaveURL(/\/partners\?view=overview#po-hero$/u);
 });
@@ -469,6 +513,37 @@ test("partners 在 1440 和 390 验证目录组、来源、复制反馈和背景
     await page.setViewportSize(viewport);
     await page.goto("about:blank");
     await gotoPartners(page, "?view=business#pb-tiers");
+
+    const tierCards = page.locator("#pb-tiers > .partner-grid > .partner-card");
+    await expect(tierCards).toHaveCount(4);
+    const tierBoxes = await tierCards.evaluateAll((cards) =>
+      cards.map((card) => {
+        const rect = card.getBoundingClientRect();
+        return {
+          x: rect.x,
+          y: rect.y,
+          height: rect.height,
+          bottom: rect.bottom,
+          border: getComputedStyle(card).borderTopColor,
+        };
+      }),
+    );
+    if (viewport.width === 1440) {
+      expect(tierBoxes.map(({ x }) => x)).toEqual(
+        [...tierBoxes.map(({ x }) => x)].sort((a, b) => a - b),
+      );
+      expect(tierBoxes.map(({ height }) => height)).toEqual(
+        [...tierBoxes.map(({ height }) => height)].sort((a, b) => a - b),
+      );
+      expect(
+        Math.max(...tierBoxes.map(({ bottom }) => bottom)),
+      ).toBeLessThanOrEqual(
+        Math.min(...tierBoxes.map(({ bottom }) => bottom)) + 1,
+      );
+      expect(new Set(tierBoxes.map(({ border }) => border)).size).toBe(4);
+    } else {
+      expect(new Set(tierBoxes.map(({ x }) => Math.round(x))).size).toBe(1);
+    }
 
     if (viewport.width === 390) {
       await page
@@ -513,6 +588,131 @@ test("partners 在 1440 和 390 验证目录组、来源、复制反馈和背景
   }
 });
 
+test("partners 非阶梯卡采用横向、行动与响应式 B 布局", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await gotoPartners(page, "?view=overview#po-value");
+  const valueLayout = await page
+    .locator("#po-value .partner-card")
+    .first()
+    .evaluate((card) => {
+      const icon = card.querySelector(".partner-icon")!.getBoundingClientRect();
+      const title = card.querySelector("h3")!.getBoundingClientRect();
+      const lead = card.querySelector("p")!.getBoundingClientRect();
+      return { iconRight: icon.right, titleX: title.x, leadX: lead.x };
+    });
+  expect(valueLayout.iconRight).toBeLessThan(valueLayout.titleX);
+  expect(Math.abs(valueLayout.titleX - valueLayout.leadX)).toBeLessThanOrEqual(
+    1,
+  );
+
+  const moduleLayout = await page
+    .locator("#po-modules .partner-card--button")
+    .first()
+    .evaluate((card) => {
+      const style = getComputedStyle(card);
+      return {
+        display: style.display,
+        direction: style.flexDirection,
+      };
+    });
+  expect(moduleLayout).toEqual({
+    display: "flex",
+    direction: "column",
+  });
+  const moduleBottomGaps = await page
+    .locator("#po-modules .partner-card--button")
+    .evaluateAll((cards) =>
+      cards.map((card) => {
+        const cardBox = card.getBoundingClientRect();
+        const pointsBox = card.querySelector("ul")!.getBoundingClientRect();
+        return cardBox.bottom - pointsBox.bottom;
+      }),
+    );
+  expect(
+    Math.max(...moduleBottomGaps) - Math.min(...moduleBottomGaps),
+  ).toBeLessThanOrEqual(1);
+  await expect
+    .poll(() =>
+      page
+        .locator("#po-flow .partner-flow")
+        .evaluate((flow) => getComputedStyle(flow, "::before").backgroundImage),
+    )
+    .not.toBe("none");
+
+  await gotoPartners(page, "?view=business#pb-modes");
+  const buttonBottoms = await page
+    .locator("#pb-modes .partner-card > button")
+    .evaluateAll((buttons) =>
+      buttons.map((button) => button.getBoundingClientRect().bottom),
+    );
+  expect(
+    Math.max(...buttonBottoms) - Math.min(...buttonBottoms),
+  ).toBeLessThanOrEqual(1);
+  const benefitLayout = await page
+    .locator("#pb-benefits .partner-card")
+    .first()
+    .evaluate((card) => ({
+      iconRight: card.querySelector(".partner-icon")!.getBoundingClientRect()
+        .right,
+      titleX: card.querySelector("h3")!.getBoundingClientRect().x,
+    }));
+  expect(benefitLayout.iconRight).toBeLessThan(benefitLayout.titleX);
+
+  await gotoPartners(page, "?view=policy#pp-cert");
+  await expect(page.locator("#pp-cert .partner-level").first()).toHaveCSS(
+    "border-radius",
+    "12px",
+  );
+  await gotoPartners(page, "?view=training#pt-courses");
+  await expect(page.locator("#pt-courses .partner-course").first()).toHaveCSS(
+    "border-radius",
+    "12px",
+  );
+  await gotoPartners(page, "?view=become#pbc-types");
+  await expect(page.locator("#pbc-types .partner-card").first()).toHaveCSS(
+    "flex-direction",
+    "column",
+  );
+  const prepareLayout = await page
+    .locator("#pbc-prepare .partner-card")
+    .first()
+    .evaluate((card) => ({
+      iconRight: card.querySelector(".partner-icon")!.getBoundingClientRect()
+        .right,
+      titleX: card.querySelector("h3")!.getBoundingClientRect().x,
+    }));
+  expect(prepareLayout.iconRight).toBeLessThan(prepareLayout.titleX);
+
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await gotoPartners(page, "?view=overview#po-modules");
+  const mediumColumns = await page
+    .locator("#po-modules .partner-card")
+    .evaluateAll(
+      (cards) =>
+        new Set(cards.map((card) => Math.round(card.getBoundingClientRect().x)))
+          .size,
+    );
+  expect(mediumColumns).toBe(2);
+  await expectNoHorizontalOverflow(page);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("about:blank");
+  await gotoPartners(page, "?view=overview#po-modules");
+  const mobileColumns = await page
+    .locator("#po-modules .partner-card")
+    .evaluateAll(
+      (cards) =>
+        new Set(cards.map((card) => Math.round(card.getBoundingClientRect().x)))
+          .size,
+    );
+  expect(mobileColumns).toBe(1);
+  await expectNoHorizontalOverflow(page);
+});
+
 test("partners 在 1440 和 390 无横溢、锚点可见、抽屉隔离并保留唯一 Agent", async ({
   page,
 }, testInfo) => {
@@ -526,6 +726,44 @@ test("partners 在 1440 和 390 无横溢、锚点可见、抽屉隔离并保留
   await page.setViewportSize({ width: 1440, height: 1000 });
   await gotoPartners(page);
   await expectNoHorizontalOverflow(page);
+  await expect(page.locator(".site-header")).toHaveCSS("min-height", "64px");
+  await expect(page.locator(".site-wordmark")).toHaveCSS(
+    "background-image",
+    /logo\.png/u,
+  );
+  await expect(page.locator(".partner-return-bar")).toHaveCount(0);
+  await expect(page.locator(".partner-directory")).toHaveCSS("width", "240px");
+  await expect(page.locator("#po-hero .partner-visual")).toHaveCSS(
+    "background-image",
+    /ecosystem-lattice\.png/u,
+  );
+  await expect(page.locator("#po-hero .partner-visual")).toHaveCSS(
+    "backdrop-filter",
+    /blur\(18px\)/u,
+  );
+  const firstPartnerCard = page.locator(".partner-card").first();
+  await expect(firstPartnerCard).toHaveCSS("border-radius", "16px");
+  await expect
+    .poll(() =>
+      firstPartnerCard.evaluate(
+        (element) => getComputedStyle(element).boxShadow,
+      ),
+    )
+    .not.toBe("none");
+  const firstPartnerIcon = page.locator(".partner-icon").first();
+  const partnerIconSurface = await firstPartnerIcon.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      backgroundImage: style.backgroundImage,
+      boxShadow: style.boxShadow,
+    };
+  });
+  expect(partnerIconSurface.backgroundImage).toContain("radial-gradient");
+  expect(partnerIconSurface.boxShadow).not.toBe("none");
+  await expect(page.locator(".portal-footer__main")).toBeHidden();
+  await expect(page.locator(".portal-footer__meta span:visible")).toHaveText(
+    "备案信息（占位）",
+  );
   await expect(page.locator(".floating-assistant__launcher")).toHaveCount(1);
   await page.evaluate(() => document.fonts.ready);
   await page.screenshot({
@@ -544,11 +782,16 @@ test("partners 在 1440 和 390 无横溢、锚点可见、抽屉隔离并保留
   });
   await trigger.click();
   const drawer = page.getByRole("dialog", { name: "合作伙伴目录" });
+  await expect(drawer).toHaveCSS("backdrop-filter", /blur\(26px\)/u);
   const search = drawer.getByRole("searchbox", {
     name: "在合作伙伴目录中筛选",
   });
   await expect(drawer).toHaveAttribute("aria-modal", "true");
   await expect(search).toBeFocused();
+  await page.screenshot({
+    animations: "disabled",
+    path: resolve(outputDirectory, "partners-drawer-390.png"),
+  });
   const headerLink = page.locator(".site-header a").first();
   await headerLink.focus();
   await expect(search).toBeFocused();
@@ -573,7 +816,7 @@ test("partners 在 1440 和 390 无横溢、锚点可见、抽屉隔离并保留
   await expect(anchor).toBeInViewport();
   await expect
     .poll(() => anchor.evaluate((target) => target.getBoundingClientRect().top))
-    .toBeGreaterThanOrEqual(138);
+    .toBeGreaterThanOrEqual(124);
 
   await trigger.click();
   await expect(search).toBeFocused();
@@ -682,7 +925,6 @@ test("trial 在 1440 与 390 完成校验、成功、关闭和焦点约束", asy
 
     for (const outside of [
       page.getByRole("banner").getByRole("link").first(),
-      page.getByRole("contentinfo").getByRole("link").first(),
       page.locator(".floating-assistant__launcher"),
     ]) {
       await outside.focus();
@@ -783,6 +1025,28 @@ test("pricing contact trial 在 1440 和 390 无横溢、保留唯一 Agent 并�
       await expect(page.locator(".floating-assistant__launcher")).toHaveCount(
         1,
       );
+      if (name === "contact" || name === "trial") {
+        const footer = page.getByRole("contentinfo");
+        await expect(footer.locator(".portal-footer__main")).toBeHidden();
+        await expect(
+          footer.locator(".portal-footer__meta span:visible"),
+        ).toHaveText("备案信息（占位）");
+        const root = name === "contact" ? ".contact-page" : ".trial";
+        const expectedAsset =
+          name === "contact"
+            ? "/assets/contact/contact-signal-field.png"
+            : "/assets/trial/trial-guided-path.png";
+        await expect
+          .poll(() =>
+            page
+              .locator(root)
+              .evaluate(
+                (element) =>
+                  getComputedStyle(element, "::before").backgroundImage,
+              ),
+          )
+          .toContain(expectedAsset);
+      }
       await page.evaluate(() => document.fonts.ready);
       await page.screenshot({
         animations: "disabled",

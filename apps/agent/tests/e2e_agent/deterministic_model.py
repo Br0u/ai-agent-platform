@@ -20,7 +20,7 @@ SAFE_ANSWER_SENTINEL = "aap-stateless-answer-20260812"
 ALLOWED_NAVIGATION_SENTINEL = "__aap_e2e_allowed_navigation__"
 FORBIDDEN_NAVIGATION_SENTINEL = "__aap_e2e_forbidden_navigation__"
 PAGE_CONTEXT_SENTINEL = "__aap_e2e_page_context__"
-PRODUCT_PAGE_EXCERPT = "独立产品中心：成熟企业级 AI 产品，开箱即用"
+PRODUCT_PAGE_EXCERPT = "独立产品中心：成熟企业级 AI 产品，独立安装、下载即用"
 FINAL_ANSWER_MARKER = "aap.final.v1:"
 _close_counts: dict[str, int] = {}
 

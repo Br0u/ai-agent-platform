@@ -5,7 +5,7 @@ export const downloadProducts = {
     href: "/product",
   },
   mdd2: {
-    name: "码多多 2.0",
+    name: "码里奥",
     tag: "独立产品",
     href: "/product/code-agent",
   },
@@ -48,25 +48,25 @@ export const downloadResources = {
     },
     {
       key: "mdd2-intro",
-      short: "码多多·产品介绍",
+      short: "码里奥·产品介绍",
       product: "mdd2",
-      title: "码多多 2.0 产品介绍",
+      title: "码里奥 产品介绍",
       file: "PDF · 10 页",
       desc: "面向企业研发与高密级代码资产场景的产品手册，介绍双形态、安全与部署方式。",
     },
     {
       key: "mdd2-features",
-      short: "码多多·功能清单",
+      short: "码里奥·功能清单",
       product: "mdd2",
-      title: "码多多 2.0 功能清单",
+      title: "码里奥 功能清单",
       file: "PDF · 6 页",
       desc: "自然语言开发、工程落地、技能与多智能体等核心能力清单。",
     },
     {
       key: "mdd2-env",
-      short: "码多多·支持环境说明",
+      short: "码里奥·支持环境说明",
       product: "mdd2",
-      title: "码多多 2.0 支持环境说明",
+      title: "码里奥 支持环境说明",
       file: "PDF · 4 页",
       desc: "支持的操作系统、运行环境与部署要求说明。",
     },
@@ -74,15 +74,15 @@ export const downloadResources = {
   deployment: [
     {
       key: "mdd2-deploy",
-      short: "码多多 2.0 安装部署指南",
-      title: "码多多 2.0 安装部署指南",
+      short: "码里奥 安装部署指南",
+      title: "码里奥 安装部署指南",
       file: "PDF · 16 页",
       desc: "从环境准备、安装部署到初始化验证的完整说明，帮助快速完成私有化部署。",
     },
     {
       key: "mdd2-usage",
-      short: "码多多 2.0 使用说明",
-      title: "码多多 2.0 使用说明",
+      short: "码里奥 使用说明",
+      title: "码里奥 使用说明",
       file: "PDF · 20 页",
       desc: "项目管理、会话管理、移动接入与编程规范的使用方法说明。",
     },
@@ -148,8 +148,8 @@ export const downloadSections = [
 
 export const downloadSoftware = {
   key: "mdd2-client",
-  short: "码多多 2.0 桌面客户端",
-  name: "码多多 2.0 桌面客户端",
+  short: "码里奥 桌面客户端",
+  name: "码里奥 桌面客户端",
   version: "v2.0.0",
   systems: "Windows 10/11 · macOS 12+",
   size: "安装包约 240 MB",
@@ -166,7 +166,6 @@ export const downloadNotices = {
 } as const;
 
 export const downloadOverview = {
-  eyebrow: "下载中心｜资源入口",
   title: "从产品资料到安装体验，一站式获取华鲲资源",
   lead: "下载中心集中提供元启平台与码多多 2.0 的产品资料、软件安装包、部署文档与白皮书，帮助您了解产品能力、获取资源并进入产品体验。",
   tags: ["产品资料", "软件下载", "部署文档", "白皮书"],

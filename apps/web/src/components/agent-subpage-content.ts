@@ -304,11 +304,11 @@ const agentSubpages = [
           actions: [
             {
               label: "查看知识服务方案 →",
-              href: "/solutions/knowledge-service",
+              href: "/solutions/railway-rag",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -318,11 +318,11 @@ const agentSubpages = [
           actions: [
             {
               label: "查看文档理解方案 →",
-              href: "/solutions/document-intelligence",
+              href: "/solutions/finance-compliance",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -332,11 +332,11 @@ const agentSubpages = [
           actions: [
             {
               label: "查看知识服务方案 →",
-              href: "/solutions/knowledge-service",
+              href: "/solutions/railway-rag",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -559,11 +559,11 @@ const agentSubpages = [
           actions: [
             {
               label: "查看数据问答方案 →",
-              href: "/solutions/finance-data",
+              href: "/solutions/enterprise-data",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -573,11 +573,11 @@ const agentSubpages = [
           actions: [
             {
               label: "查看数据问答方案 →",
-              href: "/solutions/finance-data",
+              href: "/solutions/enterprise-data",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -587,11 +587,11 @@ const agentSubpages = [
           actions: [
             {
               label: "查看数据问答方案 →",
-              href: "/solutions/finance-data",
+              href: "/solutions/enterprise-data",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -802,11 +802,11 @@ const agentSubpages = [
           actions: [
             {
               label: "查看视频检索方案 →",
-              href: "/solutions/video-intelligence",
+              href: "/solutions/ps-ghost-rider",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -816,11 +816,11 @@ const agentSubpages = [
           actions: [
             {
               label: "查看视频检索方案 →",
-              href: "/solutions/video-intelligence",
+              href: "/solutions/ps-ghost-rider",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -830,11 +830,11 @@ const agentSubpages = [
           actions: [
             {
               label: "查看视频检索方案 →",
-              href: "/solutions/video-intelligence",
+              href: "/solutions/ps-ghost-rider",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -1084,11 +1084,11 @@ const agentSubpages = [
           actions: [
             {
               label: "查看流程自动化方案 →",
-              href: "/solutions/process-automation",
+              href: "/solutions/government-process",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -1098,11 +1098,11 @@ const agentSubpages = [
           actions: [
             {
               label: "查看多智能体方案 →",
-              href: "/solutions/enterprise-multi-agent",
+              href: "/contact?topic=多智能体方案咨询",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -1112,11 +1112,11 @@ const agentSubpages = [
           actions: [
             {
               label: "查看流程自动化方案 →",
-              href: "/solutions/process-automation",
+              href: "/solutions/government-process",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions?view=cases&mode=all#practice-cases-hero",
+              href: "/solutions/finance-compliance",
             },
           ],
         },

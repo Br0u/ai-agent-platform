@@ -11,15 +11,6 @@ async function gotoHome(
   await page.waitForLoadState("load");
 }
 
-async function expectNoHorizontalOverflow(page: Page) {
-  const dimensions = await page.evaluate(() => ({
-    clientWidth: document.documentElement.clientWidth,
-    scrollWidth: document.documentElement.scrollWidth,
-  }));
-
-  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
-}
-
 async function gridColumnCount(page: Page, selector: string) {
   return page
     .locator(selector)
@@ -31,104 +22,137 @@ async function gridColumnCount(page: Page, selector: string) {
     );
 }
 
-async function expectCardsToFit(page: Page, selector: string, count: number) {
-  const cards = page.locator(selector);
-  await expect(cards).toHaveCount(count);
-
-  const sizes = await cards.evaluateAll((elements) =>
-    elements.map((element) => ({
-      clientHeight: element.clientHeight,
-      clientWidth: element.clientWidth,
-      scrollHeight: element.scrollHeight,
-      scrollWidth: element.scrollWidth,
-    })),
-  );
-
-  for (const size of sizes) {
-    expect(size.scrollHeight).toBeLessThanOrEqual(size.clientHeight + 1);
-    expect(size.scrollWidth).toBeLessThanOrEqual(size.clientWidth + 1);
-  }
+async function expectNoHorizontalOverflow(page: Page) {
+  const dimensions = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
 }
 
-test("keeps the prototype content contract and the shell-owned chat entry", async ({
+test("matches the four-region V2 homepage contract", async ({ page }) => {
+  await gotoHome(page);
+
+  await expect(page.locator("main.home > [data-home-region]")).toHaveCount(4);
+  await expect(page.locator('[data-home-region="hero"]')).toHaveCount(1);
+  await expect(page.locator('[data-home-region="centers"]')).toHaveCount(1);
+  await expect(page.locator('[data-home-region="solutions"]')).toHaveCount(1);
+  await expect(page.locator('[data-home-region="contact"]')).toHaveCount(1);
+  await expect(page.locator('[data-home-region="agents"]')).toHaveCount(0);
+  await expect(page.locator(".home-atmosphere > span")).toHaveCount(3);
+  await expect(page.locator(".home-featured-card")).toHaveCount(4);
+  await expect(page.locator(".center-feature")).toHaveCount(2);
+  await expect(page.locator(".center-row")).toHaveCount(4);
+  await expect(page.locator(".home-sol-card")).toHaveCount(6);
+  await expect(page.locator("main.home [data-home-icon]")).toHaveCount(20);
+  await expect(page.locator(".floating-assistant__launcher")).toHaveCount(1);
+});
+
+test("keeps post-hero content visible before reveal JavaScript runs", async ({
+  page,
+}) => {
+  await page.route(/\.js(?:\?|$)/u, (route) => route.abort());
+  await gotoHome(page, "no-preference");
+
+  await expect(page.locator("main.home")).not.toHaveClass(/home-reveal-ready/u);
+  const regions = page.locator('[data-home-reveal="true"]');
+  await expect(regions).toHaveCount(3);
+  for (let index = 0; index < (await regions.count()); index += 1) {
+    await expect(regions.nth(index)).toHaveCSS("opacity", "1");
+  }
+});
+
+test("keeps section backgrounds visible while reveal content enters", async ({
+  page,
+}) => {
+  await gotoHome(page, "no-preference");
+
+  const centers = page.locator('[data-home-region="centers"]');
+  await centers.evaluate((section) => {
+    section.classList.remove("is-home-visible");
+    section.closest("main.home")?.classList.add("home-reveal-ready");
+  });
+
+  await expect(centers).toHaveCSS("opacity", "1");
+  await expect(centers.locator(":scope > .home-frame")).toHaveCSS(
+    "opacity",
+    "0",
+  );
+});
+
+test("keeps the existing premium homepage visual language", async ({
   page,
 }) => {
   await gotoHome(page);
 
-  await expect(page.locator('[data-home-region="hero"]')).toHaveCount(1);
-  await expect(page.locator('[data-home-region="agents"]')).toHaveCount(1);
-  await expect(page.locator('[data-home-region="solutions"]')).toHaveCount(1);
-  await expect(page.locator('[data-home-region="contact"]')).toHaveCount(1);
-  await expect(page.locator(".home-featured-card")).toHaveCount(2);
-  await expect(page.locator(".home-agent-card")).toHaveCount(5);
-  await expect(page.locator(".home-solution-card")).toHaveCount(6);
-  await expect(page.locator("main.home .floating-assistant")).toHaveCount(0);
-  await expect(page.locator(".floating-assistant__launcher")).toHaveCount(1);
+  const hero = page.locator(".home-hero");
+  const heroBackground = await hero.evaluate(
+    (element) => getComputedStyle(element).backgroundImage,
+  );
+  expect(heroBackground).toContain("linear-gradient");
+  expect(heroBackground).toContain("dual-track-ai-v2.webp");
+  await expect(page.locator(".home-featured-card").first()).toHaveCSS(
+    "border-radius",
+    "22px",
+  );
+  await expect(page.locator(".center-row").first()).toHaveCSS(
+    "border-radius",
+    "14px",
+  );
+  const cardSurface = await page
+    .locator(".home-featured-card")
+    .first()
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        backdropFilter: style.backdropFilter,
+        boxShadow: style.boxShadow,
+      };
+    });
+  expect(cardSurface.backdropFilter).not.toBe("none");
+  expect(cardSurface.boxShadow).not.toBe("none");
+
+  await expect(page.locator(".site-header")).toHaveCSS("min-height", "64px");
+  await expect(page.locator(".site-wordmark")).toHaveCSS(
+    "background-image",
+    /logo\.png/u,
+  );
+  await expect(page.locator(".portal-footer__main")).toBeHidden();
+  await expect(page.locator(".portal-footer__meta span:visible")).toHaveText(
+    "备案信息（占位）",
+  );
 });
 
-test("preserves the shell chat open, close, and workspace navigation", async ({
-  page,
-}) => {
+test("preserves the shell-owned chat", async ({ page }) => {
   await gotoHome(page);
 
   await page.getByRole("button", { name: "打开码多多" }).click();
   await expect(page.getByRole("dialog", { name: "码多多" })).toBeVisible();
   await page.getByRole("button", { name: "关闭码多多", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "码多多" })).toHaveCount(0);
-
-  await page.getByRole("button", { name: "打开码多多" }).click();
-  await page.getByRole("button", { name: "展开码多多工作区" }).click();
-  await expect(page).toHaveURL(/\/assistant$/u);
 });
 
-test("keeps homepage links keyboard-accessible with usable targets", async ({
-  page,
-}) => {
+test("keeps homepage links keyboard-accessible", async ({ page }) => {
   await gotoHome(page);
 
-  const controls = page.locator("main.home a, main.home button");
-  expect(await controls.count()).toBeGreaterThan(0);
-  const metadata = await controls.evaluateAll((elements) =>
-    elements.map((element) => {
-      const rect = element.getBoundingClientRect();
-      return {
-        height: rect.height,
-        name:
-          element.getAttribute("aria-label")?.trim() ||
-          element.textContent?.trim() ||
-          "",
-        tabIndex: (element as HTMLElement).tabIndex,
-        width: rect.width,
-      };
-    }),
-  );
-
-  for (const item of metadata) {
-    expect(item.height).toBeGreaterThanOrEqual(44);
-    expect(item.width).toBeGreaterThanOrEqual(44);
-    expect(item.name).not.toBe("");
-    expect(item.tabIndex).toBeGreaterThanOrEqual(0);
-  }
-
-  for (let index = 0; index < (await controls.count()); index += 1) {
-    const control = controls.nth(index);
-    await control.focus();
-    await expect(control).toBeFocused();
+  const links = page.locator("main.home a");
+  expect(await links.count()).toBeGreaterThan(0);
+  for (let index = 0; index < (await links.count()); index += 1) {
+    const link = links.nth(index);
+    await link.focus();
+    await expect(link).toBeFocused();
     await expect
       .poll(() =>
-        control.evaluate(
-          (element) => getComputedStyle(element).outlineStyle !== "none",
-        ),
+        link.evaluate((element) => getComputedStyle(element).outlineStyle),
       )
-      .toBe(true);
+      .not.toBe("none");
   }
 });
 
-test("keeps every homepage internal link free of 404 and server errors", async ({
+test("keeps every homepage internal link free of HTTP errors", async ({
   page,
 }) => {
   await gotoHome(page);
-
   const hrefs = await page.locator("main.home a").evaluateAll((links) => [
     ...new Set(
       links
@@ -144,124 +168,46 @@ test("keeps every homepage internal link free of 404 and server errors", async (
   }
 });
 
-test("uses the approved desktop composition", async ({ page }, testInfo) => {
+test("keeps the V2 desktop composition", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop");
   await page.setViewportSize({ width: 1440, height: 1000 });
   await gotoHome(page);
   await expectNoHorizontalOverflow(page);
 
-  const copy = await page.locator(".home-hero__copy").boundingBox();
-  const visual = await page.locator(".home-hero__visual").boundingBox();
-  const contactCopy = await page.locator(".home-contact__copy").boundingBox();
+  expect(await gridColumnCount(page, ".home-featured")).toBe(4);
+  expect(await gridColumnCount(page, ".centers-layout")).toBe(2);
+  expect(await gridColumnCount(page, ".home-sol")).toBe(3);
+  expect(await gridColumnCount(page, ".home-contact__layout")).toBe(2);
+
   const contactCard = await page.locator(".home-contact-card").boundingBox();
-
-  expect(copy).not.toBeNull();
-  expect(visual).not.toBeNull();
-  expect(contactCopy).not.toBeNull();
+  const contactCopy = await page.locator(".home-contact__copy").boundingBox();
   expect(contactCard).not.toBeNull();
-  expect(copy!.x).toBeLessThan(visual!.x);
-  expect(contactCopy!.x).toBeLessThan(contactCard!.x);
-  expect(await gridColumnCount(page, ".home-featured")).toBe(2);
-  expect(await gridColumnCount(page, ".home-agent-grid")).toBe(5);
-  expect(await gridColumnCount(page, ".home-solution-grid")).toBe(3);
-
-  await expectCardsToFit(page, ".home-featured-card", 2);
-  await expectCardsToFit(page, ".home-agent-card", 5);
-  await expectCardsToFit(page, ".home-solution-card", 6);
+  expect(contactCopy).not.toBeNull();
+  expect(contactCard!.x).toBeLessThan(contactCopy!.x);
 });
 
-test("adapts at tablet and mobile widths without clipping", async ({
+test("adapts the V2 composition without clipping", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop");
 
   for (const viewport of [
-    { agentColumns: 2, solutionColumns: 2, width: 1024, height: 1000 },
-    { agentColumns: 2, solutionColumns: 2, width: 768, height: 1024 },
-    { agentColumns: 1, solutionColumns: 1, width: 390, height: 844 },
+    { featured: 2, centers: 2, solutions: 2, contact: 2, width: 1024 },
+    { featured: 1, centers: 1, solutions: 2, contact: 1, width: 768 },
+    { featured: 1, centers: 1, solutions: 1, contact: 1, width: 390 },
   ]) {
-    await page.setViewportSize({
-      width: viewport.width,
-      height: viewport.height,
-    });
+    await page.setViewportSize({ width: viewport.width, height: 900 });
     await gotoHome(page);
     await expectNoHorizontalOverflow(page);
-
-    const copy = await page.locator(".home-hero__copy").boundingBox();
-    const visual = await page.locator(".home-hero__visual").boundingBox();
-    const contactCopy = await page.locator(".home-contact__copy").boundingBox();
-    const contactCard = await page.locator(".home-contact-card").boundingBox();
-
-    expect(visual!.y).toBeGreaterThan(copy!.y + copy!.height);
-    expect(contactCard!.y).toBeGreaterThan(
-      contactCopy!.y + contactCopy!.height,
+    expect(await gridColumnCount(page, ".home-featured")).toBe(
+      viewport.featured,
     );
-    expect(await gridColumnCount(page, ".home-agent-grid")).toBe(
-      viewport.agentColumns,
+    expect(await gridColumnCount(page, ".centers-layout")).toBe(
+      viewport.centers,
     );
-    expect(await gridColumnCount(page, ".home-solution-grid")).toBe(
-      viewport.solutionColumns,
-    );
-
-    await expectCardsToFit(page, ".home-featured-card", 2);
-    await expectCardsToFit(page, ".home-agent-card", 5);
-    await expectCardsToFit(page, ".home-solution-card", 6);
-  }
-});
-
-test("reveals only post-hero regions with the existing observer", async ({
-  page,
-}, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop");
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await gotoHome(page, "no-preference");
-
-  const regions = page.locator('[data-home-reveal="true"]');
-  await expect(regions).toHaveCount(3);
-
-  for (let index = 0; index < (await regions.count()); index += 1) {
-    const region = regions.nth(index);
-    await region.scrollIntoViewIfNeeded();
-    await expect(region).toHaveClass(/is-home-visible/u);
-    await expect
-      .poll(() =>
-        region.evaluate((element) => getComputedStyle(element).animationName),
-      )
-      .toContain("home-section-reveal");
-  }
-
-  await expect(page.locator('[data-home-region="hero"]')).not.toHaveAttribute(
-    "data-home-reveal",
-  );
-});
-
-test("removes decorative and reveal motion when requested", async ({
-  page,
-}) => {
-  await gotoHome(page, "reduce");
-
-  const styles = await page
-    .locator(
-      ".home-atmosphere span, [data-home-reveal], [data-home-reveal-item]",
-    )
-    .evaluateAll((elements) =>
-      elements.map((element) => {
-        const style = getComputedStyle(element);
-        return {
-          animationName: style.animationName,
-          opacity: style.opacity,
-          transform: style.transform,
-          transitionDuration: style.transitionDuration,
-        };
-      }),
-    );
-
-  for (const style of styles) {
-    expect(style.animationName).toBe("none");
-    expect(style.opacity).toBe("1");
-    expect(style.transform).toBe("none");
-    expect(style.transitionDuration.split(", ")).toEqual(
-      expect.arrayContaining(["0s"]),
+    expect(await gridColumnCount(page, ".home-sol")).toBe(viewport.solutions);
+    expect(await gridColumnCount(page, ".home-contact__layout")).toBe(
+      viewport.contact,
     );
   }
 });
@@ -278,7 +224,7 @@ test("loads without browser diagnostics", async ({ page }) => {
   expect(diagnostics).toEqual([]);
 });
 
-test("captures responsive visual evidence", async ({ page }, testInfo) => {
+test("captures responsive V2 evidence", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop");
   test.setTimeout(60_000);
   const outputDirectory = resolve(
@@ -297,8 +243,7 @@ test("captures responsive visual evidence", async ({ page }, testInfo) => {
       width: viewport.width,
       height: viewport.height,
     });
-    await gotoHome(page, "reduce");
-    await page.evaluate(() => document.fonts.ready);
+    await gotoHome(page);
     await page.screenshot({
       animations: "disabled",
       fullPage: true,

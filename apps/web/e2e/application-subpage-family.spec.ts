@@ -149,9 +149,7 @@ test("三个行业应用子页的内部链接和锚点均可达", async ({ page 
     for (const anchor of anchors) {
       expect(navigationTargets.has(`${path}#${anchor}`)).toBe(true);
     }
-    expect(navigationTargets.has("/solutions/document-intelligence")).toBe(
-      true,
-    );
+    expect(navigationTargets.has("/solutions/finance-compliance")).toBe(true);
 
     const requestTargets = [
       ...new Set(links.map((link) => link.requestTarget)),

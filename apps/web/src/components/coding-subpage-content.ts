@@ -823,7 +823,7 @@ const codingSubpages = [
           actions: [
             {
               label: "查看私有化部署方案 →",
-              href: "/solutions/private-yuanqi",
+              href: "/contact?topic=私有化部署方案咨询",
             },
           ],
         },

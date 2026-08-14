@@ -1,8 +1,13 @@
 import Link from "next/link";
+import Image from "next/image";
 import { notFound } from "next/navigation";
 
 import { getPlatformCenter } from "./platform-center-content";
-import type { PlatformDemo, PlatformPage } from "./platform-page-types";
+import type {
+  PlatformDemo,
+  PlatformImage,
+  PlatformPage,
+} from "./platform-page-types";
 import type { PortalAction } from "./product-portal-content";
 import "./product-portal.css";
 
@@ -13,6 +18,8 @@ function Actions({
   actions: readonly PortalAction[];
   testId?: string;
 }) {
+  if (actions.length === 0) return null;
+
   return (
     <div className="product-portal-actions">
       {actions.map((action) => (
@@ -66,6 +73,83 @@ function Visual({
         {note ? <small>{note}</small> : null}
       </div>
     </div>
+  );
+}
+
+function ImageGallery({
+  images,
+  note,
+  preload = false,
+}: {
+  images: readonly PlatformImage[];
+  note?: string;
+  preload?: boolean;
+}) {
+  return (
+    <figure className="platform-center-media">
+      <div
+        aria-label={images.length > 1 ? "产品界面截图，可横向滚动" : undefined}
+        className="platform-center-gallery"
+        data-image-count={images.length}
+        role={images.length > 1 ? "region" : undefined}
+        tabIndex={images.length > 1 ? 0 : undefined}
+      >
+        {images.map((image, index) => (
+          <Image
+            alt={image.alt}
+            height={image.height}
+            key={image.src}
+            preload={preload && index === 0}
+            sizes="(max-width: 900px) calc(100vw - 40px), 44vw"
+            src={image.src}
+            width={image.width}
+          />
+        ))}
+      </div>
+      {note ? <figcaption>{note}</figcaption> : null}
+    </figure>
+  );
+}
+
+function Capability({
+  capability,
+  index,
+}: {
+  capability: NonNullable<PlatformPage["capabilities"]>[number];
+  index: number;
+}) {
+  return (
+    <section
+      aria-labelledby={`${capability.id}-title`}
+      className={`platform-center-capability${index % 2 === 1 ? " is-reversed" : ""}${capability.images?.length ? "" : " has-no-media"}`}
+      data-testid="platform-center-capability"
+      id={capability.id}
+    >
+      <div className="platform-center-capability__copy">
+        <h2 id={`${capability.id}-title`}>{capability.title}</h2>
+        <p className="product-portal-lead">{capability.lead}</p>
+        <div className="platform-center-capability__steps">
+          {capability.steps.map((step) => (
+            <article id={step.id} key={step.title}>
+              {step.number ? (
+                <span className="product-portal-number">{step.number}</span>
+              ) : null}
+              <h3>{step.title}</h3>
+              <p>{step.description}</p>
+              <div className="platform-center-capability__tags">
+                {step.tags.map((tag) => (
+                  <span key={tag}>{tag}</span>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+        <Actions actions={capability.actions} />
+      </div>
+      {capability.images?.length ? (
+        <ImageGallery images={capability.images} note={capability.note} />
+      ) : null}
+    </section>
   );
 }
 
@@ -152,6 +236,13 @@ function Card({
           ))}
         </ul>
       ) : null}
+      {card.tags ? (
+        <div className="platform-center-capability__tags">
+          {card.tags.map((tag) => (
+            <span key={tag}>{tag}</span>
+          ))}
+        </div>
+      ) : null}
       {card.flow ? <Flow items={card.flow} /> : null}
       {card.visual ? <Visual title={card.visual} /> : null}
       {card.actions ? <Actions actions={card.actions} /> : null}
@@ -179,7 +270,9 @@ function ContentSection({
     >
       <div className="product-portal-frame">
         <header className="product-portal-heading">
-          <p className="product-portal-eyebrow">{section.eyebrow}</p>
+          {section.eyebrow ? (
+            <p className="product-portal-eyebrow">{section.eyebrow}</p>
+          ) : null}
           <h2 id={headingId}>{section.title}</h2>
           {section.lead ? <p>{section.lead}</p> : null}
           {section.body ? (
@@ -278,6 +371,13 @@ function ContentSection({
           <p className="product-portal-note">{section.note}</p>
         ) : null}
         {section.actions ? <Actions actions={section.actions} /> : null}
+        {section.tags ? (
+          <div className="product-portal-tags platform-center-section-tags">
+            {section.tags.map((tag) => (
+              <span key={tag}>{tag}</span>
+            ))}
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -387,9 +487,13 @@ export function PlatformPageDetail({
         className="product-portal-hero"
         aria-labelledby="platform-center-title"
       >
-        <div className="product-portal-frame product-detail-hero">
+        <div
+          className={`product-portal-frame product-detail-hero${center.hero.visual ? "" : " has-no-media"}`}
+        >
           <div>
-            <p className="product-portal-eyebrow">{center.hero.eyebrow}</p>
+            {center.hero.eyebrow ? (
+              <p className="product-portal-eyebrow">{center.hero.eyebrow}</p>
+            ) : null}
             <h1 id="platform-center-title">{center.hero.title}</h1>
             <p className="product-portal-lead">{center.hero.lead}</p>
             <div className="product-portal-tags" aria-label="产品价值">
@@ -404,7 +508,9 @@ export function PlatformPageDetail({
               testId="platform-center-hero-action"
             />
           </div>
-          {center.hero.visual.messages ? (
+          {center.hero.visual?.images ? (
+            <ImageGallery images={center.hero.visual.images} preload />
+          ) : center.hero.visual?.messages ? (
             <Demo
               demo={{
                 title: center.hero.visual.title,
@@ -413,19 +519,23 @@ export function PlatformPageDetail({
                 note: center.hero.visual.note,
               }}
             />
-          ) : (
+          ) : center.hero.visual ? (
             <Visual {...center.hero.visual} />
-          )}
+          ) : null}
         </div>
       </section>
 
       {center.sections.map((section, index) => (
         <ContentSection
           index={index}
-          key={`${center.slug}-${section.eyebrow}`}
+          key={`${center.slug}-${section.id ?? section.title}`}
           section={section}
           slug={center.slug}
         />
+      ))}
+
+      {center.capabilities?.map((capability, index) => (
+        <Capability capability={capability} index={index} key={capability.id} />
       ))}
 
       {center.business ? <BusinessSection business={center.business} /> : null}

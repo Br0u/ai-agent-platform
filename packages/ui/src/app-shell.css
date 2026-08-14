@@ -18,7 +18,7 @@
   position: sticky;
   z-index: 20;
   top: 0;
-  min-height: 76px;
+  min-height: 64px;
   border-bottom: 1px solid rgb(255 255 255 / 56%);
   background: color-mix(in oklch, var(--color-canvas) 76%, transparent);
   box-shadow: 0 1px 0 rgb(16 24 56 / 5%);
@@ -53,7 +53,7 @@
   align-items: center;
   column-gap: clamp(24px, 3.5vw, 64px);
   width: min(calc(100% - 64px), 1680px);
-  min-height: 76px;
+  min-height: 64px;
   margin-inline: auto;
 }
 
@@ -70,10 +70,16 @@
   display: inline-grid;
   align-content: center;
   gap: 1px;
-  width: fit-content;
+  width: 176px;
+  height: 44px;
+  background: url("/logo.png") center / contain no-repeat;
   transition:
     color 180ms ease,
     transform 180ms var(--ease-out);
+}
+
+.site-wordmark > * {
+  display: none;
 }
 
 .site-brand-name {
@@ -258,7 +264,7 @@
 }
 
 .site-content {
-  min-height: calc(100vh - 76px);
+  min-height: calc(100vh - 64px);
 }
 
 .workspace-shell__content {

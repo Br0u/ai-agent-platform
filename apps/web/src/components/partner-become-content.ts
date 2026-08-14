@@ -15,7 +15,6 @@ export const partnerBecomeContent = {
   lead: "选择合作方向，准备基础企业与能力信息，通过人工渠道进一步沟通。",
   tags: ["选择方向", "准备信息", "联系沟通", "确认合作"],
   claims: ["六步入驻流程", "5 个工作日"],
-  disclaimer: "示意内容，上线后替换为真实对接流程",
   visual: {
     title: "合作对接流程",
     items: [

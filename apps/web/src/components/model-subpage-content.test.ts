@@ -596,11 +596,11 @@ const expectedPages = {
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions/model-evaluation",
+              href: "/solutions/semi-ai-scientist",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions#case-pending-enterprise-knowledge",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -610,11 +610,11 @@ const expectedPages = {
           actions: [
             {
               label: "查看模型部署方案 →",
-              href: "/solutions/model-deployment",
+              href: "/contact?topic=模型部署方案咨询",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions#case-pending-enterprise-knowledge",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -624,11 +624,11 @@ const expectedPages = {
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions/model-evaluation",
+              href: "/solutions/semi-ai-scientist",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions#case-pending-enterprise-knowledge",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -942,11 +942,11 @@ const expectedPages = {
           actions: [
             {
               label: "查看模型部署方案 →",
-              href: "/solutions/model-deployment",
+              href: "/contact?topic=模型部署方案咨询",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions#case-pending-enterprise-knowledge",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -956,11 +956,11 @@ const expectedPages = {
           actions: [
             {
               label: "查看私有化部署方案 →",
-              href: "/solutions/private-yuanqi",
+              href: "/contact?topic=私有化部署方案咨询",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions#case-pending-enterprise-knowledge",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -970,11 +970,11 @@ const expectedPages = {
           actions: [
             {
               label: "查看模型评估方案 →",
-              href: "/solutions/model-evaluation",
+              href: "/solutions/semi-ai-scientist",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions#case-pending-enterprise-knowledge",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -1414,11 +1414,11 @@ const expectedPages = {
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions/model-evaluation",
+              href: "/solutions/semi-ai-scientist",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions#case-pending-enterprise-knowledge",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -1428,11 +1428,11 @@ const expectedPages = {
           actions: [
             {
               label: "查看模型部署方案 →",
-              href: "/solutions/model-deployment",
+              href: "/contact?topic=模型部署方案咨询",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions#case-pending-enterprise-knowledge",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -1442,11 +1442,11 @@ const expectedPages = {
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions/model-evaluation",
+              href: "/solutions/semi-ai-scientist",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions#case-pending-enterprise-knowledge",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -1770,11 +1770,11 @@ const expectedPages = {
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions/model-evaluation",
+              href: "/solutions/semi-ai-scientist",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions#case-pending-enterprise-knowledge",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -1784,11 +1784,11 @@ const expectedPages = {
           actions: [
             {
               label: "查看模型适配方案 →",
-              href: "/solutions/model-evaluation",
+              href: "/solutions/semi-ai-scientist",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions#case-pending-enterprise-knowledge",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
@@ -1798,11 +1798,11 @@ const expectedPages = {
           actions: [
             {
               label: "查看模型部署方案 →",
-              href: "/solutions/model-deployment",
+              href: "/contact?topic=模型部署方案咨询",
             },
             {
               label: "查看实践案例 →",
-              href: "/solutions#case-pending-enterprise-knowledge",
+              href: "/solutions/finance-compliance",
             },
           ],
         },
