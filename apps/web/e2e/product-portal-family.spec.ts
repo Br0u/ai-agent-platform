@@ -151,12 +151,28 @@ async function scrollWithinOnePixelOfBottom(page: Page) {
   }, 0.5);
 }
 
-async function expectMobileProductDirectoryContract(page: Page) {
-  const trigger = page.getByRole("button", { name: "打开产品目录" });
-  await expectNoHorizontalOverflow(page);
-  await trigger.click();
-
+async function openMobileProductDirectory(page: Page) {
+  const trigger = page.locator(".product-directory-mobile-trigger");
   const dialog = page.getByRole("dialog", { name: "产品目录" });
+
+  await expect(trigger).toBeVisible();
+  await expect
+    .poll(async () => {
+      if ((await trigger.getAttribute("aria-expanded")) !== "true") {
+        await trigger.click();
+      }
+      return trigger.getAttribute("aria-expanded");
+    })
+    .toBe("true");
+  await expect(dialog).toBeVisible();
+
+  return dialog;
+}
+
+async function expectMobileProductDirectoryContract(page: Page) {
+  const trigger = page.locator(".product-directory-mobile-trigger");
+  await expectNoHorizontalOverflow(page);
+  const dialog = await openMobileProductDirectory(page);
   const search = dialog.getByRole("searchbox", {
     name: "在产品目录中筛选",
   });
@@ -378,9 +394,7 @@ test("产品路由族使用 V2 目录，联系与试用页不加该目录", asyn
 }, testInfo) => {
   await gotoProduct(page, "/product/code-agent");
   if (testInfo.project.name === "mobile") {
-    await page.getByRole("button", { name: "打开产品目录" }).click();
-    const drawer = page.getByRole("dialog", { name: "产品目录" });
-    await expect(drawer).toBeVisible();
+    const drawer = await openMobileProductDirectory(page);
     await expect(
       drawer.getByRole("link", { name: "Skill 技能生态" }),
     ).toHaveAttribute("aria-current", "location");
@@ -408,7 +422,7 @@ test("产品目录严格使用 V2 层级、真实路由和详情锚点", async (
       ? page.getByRole("dialog", { name: "产品目录" })
       : page.getByRole("complementary", { name: "产品目录" });
   if (testInfo.project.name === "mobile") {
-    await page.getByRole("button", { name: "打开产品目录" }).click();
+    await openMobileProductDirectory(page);
   } else {
     await page.getByRole("button", { name: "展开产品目录" }).click();
   }
@@ -429,7 +443,7 @@ test("产品目录严格使用 V2 层级、真实路由和详情锚点", async (
   await expect(page.locator("#mdd2-mcp")).toBeVisible();
 
   if (testInfo.project.name === "mobile") {
-    await page.getByRole("button", { name: "打开产品目录" }).click();
+    await openMobileProductDirectory(page);
   }
   const currentDirectory =
     testInfo.project.name === "mobile"
@@ -465,14 +479,12 @@ test("移动产品目录通过真实链接导航并更新当前项", async ({ pa
   await page.setViewportSize({ width: 390, height: 844 });
   await gotoProduct(page, "/product/code-agent");
 
-  await page.getByRole("button", { name: "打开产品目录" }).click();
-  const drawer = page.getByRole("dialog", { name: "产品目录" });
+  const drawer = await openMobileProductDirectory(page);
   await drawer.getByRole("link", { name: "AIPPT" }).click();
 
   await expect(page).toHaveURL(/\/product\/aippt$/u);
   await expect(page.getByRole("dialog", { name: "产品目录" })).toHaveCount(0);
-  await page.getByRole("button", { name: "打开产品目录" }).click();
-  const currentDrawer = page.getByRole("dialog", { name: "产品目录" });
+  const currentDrawer = await openMobileProductDirectory(page);
   await expect(
     currentDrawer.getByRole("link", { name: "参考资料驱动" }),
   ).toHaveAttribute("aria-current", "location");
@@ -485,7 +497,7 @@ test("移动产品目录跨到桌面断点后释放页面状态", async ({ page 
   await gotoProduct(page, "/product/code-agent");
 
   const content = page.locator(".product-directory-content");
-  await page.getByRole("button", { name: "打开产品目录" }).click();
+  await openMobileProductDirectory(page);
   await expect(content).toHaveAttribute("aria-hidden", "true");
   await expect(content).toHaveAttribute("inert", "");
   await expect
@@ -517,9 +529,7 @@ test("移动产品目录隔离并恢复真实站点外层交互", async ({ page 
     await expect(background).not.toHaveAttribute("inert");
   }
 
-  await page.getByRole("button", { name: "打开产品目录" }).click();
-  const dialog = page.getByRole("dialog", { name: "产品目录" });
-  await expect(dialog).toBeVisible();
+  const dialog = await openMobileProductDirectory(page);
   for (const background of backgrounds) {
     await expect(background).toHaveAttribute("aria-hidden", "true");
     await expect(background).toHaveAttribute("inert", "");
