@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import {
   cleanup,
   fireEvent,
@@ -19,6 +22,28 @@ afterEach(() => {
 });
 
 describe("V2 solution directory", () => {
+  it("limits collapsed desktop geometry to widths above the mobile boundary", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/app/solutions/solutions.css"),
+      "utf8",
+    );
+    const selectors = [
+      '.solution-shell[data-directory-collapsed="true"] {',
+      '.solution-shell[data-directory-collapsed="true"] .solution-directory {',
+      '.solution-shell[data-directory-collapsed="true"] .solution-directory__tools {',
+    ];
+
+    for (const selector of selectors) {
+      const selectorIndex = css.indexOf(selector);
+      expect(selectorIndex).toBeGreaterThan(-1);
+      expect(
+        css.lastIndexOf("@media (min-width: 901px)", selectorIndex),
+      ).toBeGreaterThan(
+        css.lastIndexOf("@media (max-width: 900px)", selectorIndex),
+      );
+    }
+  });
+
   it("starts collapsed, keeps the current route marked, and uses the shared 900px boundary", () => {
     const matchMedia = vi.fn().mockReturnValue({
       matches: false,
