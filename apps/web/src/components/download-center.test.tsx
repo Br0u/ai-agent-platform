@@ -1,16 +1,19 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import DownloadsPage from "../app/downloads/page";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  window.history.replaceState({}, "", "/");
+});
 
 function useMobileViewport() {
   vi.stubGlobal(
     "matchMedia",
     vi.fn().mockReturnValue({
       matches: true,
-      media: "(max-width: 780px)",
+      media: "(max-width: 900px)",
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     }),
@@ -53,11 +56,11 @@ describe("DownloadCenter", () => {
       "元启 AI 开发赋能平台产品介绍",
       "元启平台功能清单",
       "元启平台架构说明",
-      "码多多 2.0 产品介绍",
-      "码多多 2.0 功能清单",
-      "码多多 2.0 支持环境说明",
-      "码多多 2.0 安装部署指南",
-      "码多多 2.0 使用说明",
+      "码里奥 产品介绍",
+      "码里奥 功能清单",
+      "码里奥 支持环境说明",
+      "码里奥 安装部署指南",
+      "码里奥 使用说明",
       "元启平台部署文档",
       "企业 AI 落地白皮书",
       "大模型应用实践白皮书",
@@ -76,8 +79,25 @@ describe("DownloadCenter", () => {
       /\[data-download-key\]\s*\{[^}]*scroll-margin-top:\s*88px;/u,
     );
     expect(css).toMatch(
-      /@media \(max-width: 780px\)[\s\S]*?\[data-download-key\]\s*\{[^}]*scroll-margin-top:\s*132px;/u,
+      /@media \(max-width: 900px\)[\s\S]*?\[data-download-key\]\s*\{[^}]*scroll-margin-top:\s*132px;/u,
     );
+  });
+
+  it("uses the approved local visual asset and scoped premium effects", () => {
+    const css = readFileSync("src/app/downloads/downloads.css", "utf8");
+    const backgroundAsset = "public/assets/downloads/resource-flow-bg.webp";
+
+    expect(existsSync(backgroundAsset)).toBe(true);
+    expect(css).toContain('url("/assets/downloads/resource-flow-bg.webp")');
+    expect(css).toMatch(/\.download-card\s*\{[^}]*backdrop-filter:/su);
+    expect(css).toMatch(/\.download-card\s*\{[^}]*box-shadow:/su);
+    expect(css).toMatch(
+      /@media \(hover: hover\) and \(pointer: fine\)[\s\S]*?\.download-card:hover/u,
+    );
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.download-card/u,
+    );
+    expect(css).not.toMatch(/transition\s*:\s*all\b/u);
   });
 
   it("searches, clears and collapses the desktop directory", () => {
@@ -88,7 +108,7 @@ describe("DownloadCenter", () => {
 
     fireEvent.change(search, { target: { value: "安装部署指南" } });
     expect(
-      screen.getByRole("link", { name: "码多多 2.0 安装部署指南" }),
+      screen.getByRole("link", { name: "码里奥 安装部署指南" }),
     ).toBeVisible();
     expect(
       screen.queryByRole("link", { name: "企业 AI 落地白皮书" }),
@@ -102,6 +122,16 @@ describe("DownloadCenter", () => {
     expect(
       screen.getByRole("button", { name: "展开下载中心目录" }),
     ).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("marks the selected download anchor like the product directory", () => {
+    window.history.replaceState({}, "", "/downloads#dl-materials");
+    render(<DownloadsPage />);
+
+    expect(screen.getByRole("link", { name: "产品资料" })).toHaveAttribute(
+      "aria-current",
+      "location",
+    );
   });
 
   it("keeps the closed backdrop non-interactive and manages drawer focus", () => {
@@ -197,7 +227,7 @@ describe("DownloadCenter", () => {
     fireEvent.click(screen.getByRole("button", { name: "下载中心目录" }));
     fireEvent.click(
       screen.getByRole("button", {
-        name: "下载安装码多多 2.0 桌面客户端",
+        name: "下载安装码里奥 桌面客户端",
       }),
     );
 
@@ -212,7 +242,7 @@ describe("DownloadCenter", () => {
   it("requires software confirmation and restores its trigger after Escape or confirmation", () => {
     render(<DownloadsPage />);
     const trigger = screen.getByRole("button", {
-      name: "下载安装码多多 2.0 桌面客户端",
+      name: "下载安装码里奥 桌面客户端",
     });
     fireEvent.click(trigger);
 

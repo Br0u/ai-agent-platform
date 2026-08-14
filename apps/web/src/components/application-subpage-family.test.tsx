@@ -198,11 +198,8 @@ describe("application subpage family", () => {
         ).toBeVisible();
       }
       for (const [name, href] of [
-        ["查看文档智能方案 →", "/solutions/document-intelligence"],
-        [
-          "查看实践案例 →",
-          "/solutions?view=cases&mode=all#practice-cases-hero",
-        ],
+        ["查看文档智能方案 →", "/solutions/finance-compliance"],
+        ["查看实践案例 →", "/solutions/finance-compliance"],
       ] as const) {
         const links = screen.getAllByRole("link", { name });
 

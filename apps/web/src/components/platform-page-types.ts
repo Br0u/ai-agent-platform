@@ -19,27 +19,35 @@ export type PlatformDemo = {
   caption?: string;
 };
 
+export type PlatformImage = {
+  src: string;
+  alt: string;
+  width: number;
+  height: number;
+};
+
 export type PlatformPage = {
   slug: string;
   name: string;
   hero: {
-    eyebrow: string;
+    eyebrow?: string;
     title: string;
     lead: string;
     tags: readonly string[];
     actions: readonly PortalAction[];
-    visual: {
+    visual?: {
       title: string;
       description?: string;
       note?: string;
       messages?: PlatformDemo["messages"];
       footer?: PlatformDemo["footer"];
+      images?: readonly PlatformImage[];
     };
   };
   sections: readonly {
     id?: string;
     tone?: "soft";
-    eyebrow: string;
+    eyebrow?: string;
     title: string;
     lead?: string;
     body?: string;
@@ -49,6 +57,7 @@ export type PlatformPage = {
     flow?: readonly string[];
     note?: string;
     actions?: readonly PortalAction[];
+    tags?: readonly string[];
     cards?: readonly {
       tag?: string;
       number?: string;
@@ -58,6 +67,7 @@ export type PlatformPage = {
       answer?: string;
       value?: string;
       points?: readonly string[];
+      tags?: readonly string[];
       flow?: readonly string[];
       visual?: string;
       actions?: readonly PortalAction[];
@@ -81,6 +91,21 @@ export type PlatformPage = {
       flow?: readonly string[];
       visual?: string;
     }[];
+  }[];
+  capabilities?: readonly {
+    id: string;
+    title: string;
+    lead: string;
+    steps: readonly {
+      id?: string;
+      number?: string;
+      title: string;
+      description: string;
+      tags: readonly string[];
+    }[];
+    images?: readonly PlatformImage[];
+    note?: string;
+    actions: readonly PortalAction[];
   }[];
   business?: {
     eyebrow: string;

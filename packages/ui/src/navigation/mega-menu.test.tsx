@@ -20,6 +20,7 @@ const items: PortalNavigationItem[] = [
   {
     label: "产品",
     href: "/product",
+    description: "覆盖企业 AI 全生命周期的一站式能力地图。",
     children: [
       {
         label: "平台",
@@ -376,6 +377,26 @@ describe("MegaMenu", () => {
     expect(screen.getByRole("link", { name: /Agent Studio/ })).toBeVisible();
     expect(screen.getByRole("heading", { name: "指南" })).toBeVisible();
     expect(screen.getByRole("link", { name: /配置指南/ })).toBeVisible();
+  });
+
+  it("groups the expanded menu into an overview intro and capability sections", () => {
+    renderMenu();
+    fireEvent.pointerEnter(trigger("产品"));
+
+    const panel = screen.getByRole("region", { name: "产品" });
+    expect(panel).toHaveAttribute("data-menu-label", "产品");
+    expect(
+      within(panel).getByRole("heading", { name: "产品", level: 2 }),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText("覆盖企业 AI 全生命周期的一站式能力地图。"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByRole("heading", { name: "平台", level: 3 }),
+    ).toBeVisible();
+    expect(within(panel).getByRole("link", { name: /产品概览/ })).toBe(
+      within(panel).getAllByRole("link")[0],
+    );
   });
 
   it("renders distinct labels sharing one confirmed anchor without key warnings", () => {

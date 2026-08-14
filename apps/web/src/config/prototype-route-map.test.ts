@@ -1,15 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  casePendingKeys,
-  commonSolutionDetailKeys,
-  commonSolutionFilterKeys,
   downloadResourceKeys,
-  industrySolutionDetailKeys,
-  industrySolutionFilterKeys,
   partnerKeys,
   prototypePageRoutes,
-  solutionListRoutes,
-  solutionViewKeys,
 } from "./prototype-route-map";
 
 describe("prototype route map", () => {
@@ -51,102 +44,13 @@ describe("prototype route map", () => {
       "skills-application": "/product/skills-application",
       "skills-office": "/product/skills-office",
       governance: "/product/governance",
-      solutions: "/solutions",
+      solutions: "/solutions/finance-compliance",
       "solution-detail": "/solutions/[slug]",
       downloads: "/downloads",
       partners: "/partners",
       pricing: "/pricing",
       contact: "/contact",
       trial: "/trial",
-    });
-  });
-
-  it("locks all solution script state keys", () => {
-    expect(commonSolutionDetailKeys).toEqual([
-      "private-yuanqi",
-      "cluster-planning",
-      "compute-monitoring",
-      "model-evaluation",
-      "model-deployment",
-      "knowledge-service",
-      "document-intelligence",
-      "data-insight",
-      "knowledge-assets",
-      "unstructured-data",
-      "process-automation",
-      "enterprise-assistant",
-      "multi-agent",
-      "video-intelligence",
-    ]);
-    expect(commonSolutionFilterKeys).toEqual([
-      "infrastructure",
-      "knowledge",
-      "agents",
-    ]);
-    expect(industrySolutionDetailKeys).toEqual([
-      "government-knowledge",
-      "government-data",
-      "government-document",
-      "government-process",
-      "finance-knowledge",
-      "finance-data",
-      "finance-document",
-      "finance-assistant",
-      "healthcare-knowledge",
-      "healthcare-data",
-      "healthcare-document",
-      "healthcare-process",
-      "enterprise-knowledge",
-      "enterprise-data",
-      "enterprise-document",
-      "enterprise-process",
-      "enterprise-multi-agent",
-    ]);
-    expect(industrySolutionFilterKeys).toEqual([
-      "government",
-      "finance",
-      "healthcare",
-      "enterprise",
-    ]);
-    expect(casePendingKeys).toEqual(["case-pending-enterprise-knowledge"]);
-    expect(solutionViewKeys).toEqual([
-      "overview",
-      "list",
-      "detail",
-      "industry-list",
-      "industry-detail",
-      "case-list",
-      "case-detail",
-    ]);
-  });
-
-  it("locks the approved solution list query and landing-anchor routes", () => {
-    expect(solutionListRoutes).toEqual({
-      scenarios: {
-        all: "/solutions?view=scenarios#solution-scenarios-directory",
-        infrastructure:
-          "/solutions?view=scenarios&category=infrastructure#solution-scenarios-directory",
-        knowledge:
-          "/solutions?view=scenarios&category=knowledge#solution-scenarios-directory",
-        agents:
-          "/solutions?view=scenarios&category=agents#solution-scenarios-directory",
-      },
-      industries: {
-        all: "/solutions?view=industries#industry-solutions-list",
-        government:
-          "/solutions?view=industries&industry=government#industry-solutions-list",
-        finance:
-          "/solutions?view=industries&industry=finance#industry-solutions-list",
-        healthcare:
-          "/solutions?view=industries&industry=healthcare#industry-solutions-list",
-        enterprise:
-          "/solutions?view=industries&industry=enterprise#industry-solutions-list",
-      },
-      cases: {
-        all: "/solutions?view=cases&mode=all#practice-cases-hero",
-        industry: "/solutions?view=cases&mode=industry#practice-cases-list",
-        scenario: "/solutions?view=cases&mode=scenario#practice-cases-list",
-      },
     });
   });
 

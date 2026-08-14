@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { replace } = vi.hoisted(() => ({ replace: vi.fn() }));
@@ -82,5 +83,16 @@ describe("ContactPage", () => {
       await ContactPage({ searchParams: Promise.resolve({ topic: "   " }) }),
     );
     expect(screen.queryByText("当前咨询主题：")).not.toBeInTheDocument();
+  });
+
+  it("使用联系页专属环境素材并将页脚收敛为备案占位", () => {
+    const css = readFileSync("src/app/contact/contact.css", "utf8");
+
+    expect(css).toContain('url("/assets/contact/contact-signal-field.png")');
+    expect(css).toContain(".app-shell:has(.contact-page) .portal-footer__main");
+    expect(css).toContain(
+      ".app-shell:has(.contact-page) .portal-footer__meta span:not(:last-child)",
+    );
+    expect(css).not.toContain("transition: all");
   });
 });

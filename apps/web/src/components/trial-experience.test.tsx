@@ -206,5 +206,11 @@ describe("TrialExperience", () => {
     expect(css).toMatch(
       /\.trial-dialog-backdrop\s*\{[^}]*position:\s*fixed;[^}]*inset:\s*0;/su,
     );
+    expect(css).toContain('url("/assets/trial/trial-guided-path.png")');
+    expect(css).toContain(".app-shell:has(.trial) .portal-footer__main");
+    expect(css).toContain(
+      ".app-shell:has(.trial) .portal-footer__meta span:not(:last-child)",
+    );
+    expect(css).not.toContain("transition: all");
   });
 });

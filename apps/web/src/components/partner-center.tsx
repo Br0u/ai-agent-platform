@@ -4,6 +4,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
+  type RefObject,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -26,8 +27,9 @@ import {
   partnerViewContent,
 } from "./partner-center-content";
 import { partnerPolicyContent } from "./partner-policy-content";
+import { PartnerIcon } from "./partner-icon";
 
-const MOBILE_DIRECTORY_QUERY = "(max-width: 780px)";
+const MOBILE_DIRECTORY_QUERY = "(max-width: 900px)";
 const PARTNER_LOCATION_EVENT = "partner-location-change";
 const FOCUSABLE_SELECTOR = [
   "a[href]",
@@ -323,7 +325,7 @@ export function PartnerCenter() {
     return (
       <a
         href={href}
-        aria-current={activeKey === node.key ? "page" : undefined}
+        aria-current={activeKey === node.key ? "location" : undefined}
         onClick={(event) => onPartnerLink(event, href)}
       >
         {node.label}
@@ -394,33 +396,6 @@ export function PartnerCenter() {
 
   return (
     <main className="partner-page">
-      <div className="partner-return-bar">
-        <button
-          type="button"
-          aria-label="返回上一页"
-          onClick={() => window.history.back()}
-        >
-          ← 返回上一页
-        </button>
-        <div aria-label="合作伙伴面包屑">
-          <span>首页</span>
-          <span>合作伙伴</span>
-          {view === "overview" ? null : (
-            <span>
-              {allPartnerDirectoryNodes.find((node) => node.key === activeKey)
-                ?.label ?? content.title}
-            </span>
-          )}
-        </div>
-        <button
-          ref={safeEntry}
-          type="button"
-          onClick={() => navigate("/partners?view=overview#po-hero")}
-        >
-          返回合作伙伴总览
-        </button>
-      </div>
-
       <button
         ref={mobileTrigger}
         type="button"
@@ -491,9 +466,6 @@ export function PartnerCenter() {
           data-partner-view={view}
           inert={mobileOpen ? true : undefined}
         >
-          <p className="partner-disclaimer" data-partner-disclaimer>
-            {content.disclaimer}
-          </p>
           <Hero
             eyebrow={content.eyebrow}
             title={content.title}
@@ -502,6 +474,7 @@ export function PartnerCenter() {
             visual={content.visual}
             actions={content.heroActions}
             view={view}
+            entryRef={safeEntry}
             onContact={openContact}
             onNavigate={navigate}
           />
@@ -624,6 +597,7 @@ function Hero({
   visual,
   actions,
   view,
+  entryRef,
   onContact,
   onNavigate,
 }: {
@@ -634,6 +608,7 @@ function Hero({
   visual: PartnerVisual;
   actions: readonly PartnerAction[];
   view: PartnerView;
+  entryRef: RefObject<HTMLButtonElement | null>;
   onContact: (topic: string, trigger: HTMLElement) => void;
   onNavigate: (href: string) => void;
 }) {
@@ -653,6 +628,7 @@ function Hero({
         </div>
         <PartnerActions
           actions={actions}
+          entryRef={entryRef}
           onContact={onContact}
           onNavigate={onNavigate}
         />
@@ -706,18 +682,21 @@ function Hero({
 
 function PartnerActions({
   actions,
+  entryRef,
   onContact,
   onNavigate,
 }: {
   actions: readonly PartnerAction[];
+  entryRef?: RefObject<HTMLButtonElement | null>;
   onContact: (topic: string, trigger: HTMLElement) => void;
   onNavigate: (href: string) => void;
 }) {
   return (
     <div className="partner-actions">
-      {actions.map((action) =>
+      {actions.map((action, index) =>
         "topic" in action ? (
           <button
+            ref={index === 0 ? entryRef : undefined}
             type="button"
             key={action.label}
             onClick={(event) => onContact(action.topic, event.currentTarget)}
@@ -726,6 +705,7 @@ function PartnerActions({
           </button>
         ) : action.href.startsWith("/partners") ? (
           <button
+            ref={index === 0 ? entryRef : undefined}
             type="button"
             key={action.label}
             onClick={() => onNavigate(action.href)}
@@ -792,7 +772,7 @@ function Overview({
         <CardGrid columns={2}>
           {content.values.map((item) => (
             <article className="partner-card" key={item.title}>
-              <span className="partner-icon">{item.icon}</span>
+              <PartnerIcon name={item.icon} />
               <h3>{item.title}</h3>
               <p>{item.lead}</p>
               <Points points={item.points} />
@@ -859,7 +839,7 @@ function Business({
         <CardGrid>
           {content.modes.map((mode) => (
             <article className="partner-card" key={mode.title}>
-              <span className="partner-icon">{mode.icon}</span>
+              <PartnerIcon name={mode.icon} />
               <h3>{mode.title}</h3>
               <p>{mode.desc}</p>
               <dl>
@@ -954,7 +934,7 @@ function Business({
         <CardGrid>
           {content.benefits.map(([icon, title, lead, points]) => (
             <article className="partner-card" key={title}>
-              <span className="partner-icon">{icon}</span>
+              <PartnerIcon name={icon} />
               <h3>{title}</h3>
               <p>{lead}</p>
               <Points points={points} />
@@ -1092,7 +1072,7 @@ function Policy({
         <CardGrid>
           {content.resources.map(([icon, title, lead, points]) => (
             <article className="partner-card" key={title}>
-              <span className="partner-icon">{icon}</span>
+              <PartnerIcon name={icon} />
               <h3>{title}</h3>
               <p>{lead}</p>
               <small>{points}</small>
@@ -1125,7 +1105,7 @@ function Training() {
         <CardGrid columns={4}>
           {content.system.map(([icon, title, lead, points]) => (
             <article className="partner-card" key={title}>
-              <span className="partner-icon">{icon}</span>
+              <PartnerIcon name={icon} />
               <h3>{title}</h3>
               <p>{lead}</p>
               <small>{points}</small>
@@ -1193,7 +1173,7 @@ function Training() {
         <CardGrid>
           {content.resources.map(([icon, title, lead, points]) => (
             <article className="partner-card" key={title}>
-              <span className="partner-icon">{icon}</span>
+              <PartnerIcon name={icon} />
               <h3>{title}</h3>
               <p>{lead}</p>
               <small>{points}</small>
@@ -1260,7 +1240,7 @@ function Become({
         <CardGrid>
           {content.prepare.map(([icon, title, points]) => (
             <article className="partner-card" key={title}>
-              <span className="partner-icon">{icon}</span>
+              <PartnerIcon name={icon} />
               <h3>{title}</h3>
               <Points points={points} />
             </article>

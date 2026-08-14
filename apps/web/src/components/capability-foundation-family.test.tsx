@@ -110,7 +110,7 @@ describe("capability foundation family", () => {
     for (const [name, href] of [
       ["查看数据智能体 →", "/product/data-agent"],
       ["查看行业应用中心 →", "/product/applications"],
-      ["查看数据问答与分析方案 →", "/solutions/finance-data"],
+      ["查看数据问答与分析方案 →", "/solutions/enterprise-data"],
     ] as const) {
       expect(screen.getByRole("link", { name })).toHaveAttribute("href", href);
     }

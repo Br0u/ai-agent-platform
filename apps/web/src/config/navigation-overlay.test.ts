@@ -12,7 +12,6 @@ describe("prototype navigation overlay", () => {
       ["解决方案", "/solutions"],
       ["下载中心", "/downloads"],
       ["合作伙伴", "/partners"],
-      ["价格与服务", "/pricing"],
     ]);
   });
 
@@ -38,11 +37,10 @@ describe("prototype navigation overlay", () => {
       {
         label: "模型中心",
         items: [
-          ["模型花园", "/product/model-assets"],
+          ["模型资产管理", "/product/model-assets"],
+          ["模型部署与服务", "/product/model-deploy"],
           ["模型训练", "/product/model-training"],
           ["模型评估", "/product/model-evaluation"],
-          ["模型部署", "/product/model-deploy"],
-          ["任务中心", "/product/model-task-center"],
         ],
       },
       {
@@ -56,33 +54,30 @@ describe("prototype navigation overlay", () => {
       {
         label: "编程中心",
         items: [
-          ["项目管理", "/product/coding-project"],
-          ["会话管理", "/product/coding-session"],
-          ["移动接入", "/product/coding-mobile"],
-          ["编程规范", "/product/coding-standard"],
+          ["自然语言开发", "/product/coding-session"],
+          ["双模式工作流", "/product/coding-project"],
+          ["内置工具链", "/product/coding-standard"],
         ],
       },
       {
         label: "技能中心",
         items: [
-          ["编程类技能", "/product/skills-programming"],
+          ["研发类技能", "/product/skills-programming"],
           ["应用类技能", "/product/skills-application"],
           ["办公类技能", "/product/skills-office"],
         ],
       },
       {
-        label: "安全中心",
+        label: "权限中心",
         items: [
-          ["用户管理", "/product/governance#gov-users"],
-          ["角色管理", "/product/governance#gov-roles"],
-          ["菜单管理", "/product/governance#gov-menu"],
+          ["权限管理", "/product/governance#gov-caps"],
           ["行级权限", "/product/governance#gov-permission"],
         ],
       },
       {
         label: "独立产品中心",
         items: [
-          ["码多多 2.0", "/product/code-agent"],
+          ["码里奥", "/product/code-agent"],
           ["AIPPT", "/product/aippt"],
           ["AISHREK", "/product/aishrek"],
         ],
@@ -91,27 +86,16 @@ describe("prototype navigation overlay", () => {
 
     expect(groups("解决方案")).toEqual([
       {
-        label: "通用场景方案",
-        items: [
-          ["基础设施与模型工程", "/solutions#solution-common-scenes"],
-          ["知识与数据智能", "/solutions#solution-common-scenes"],
-          ["智能体与业务应用", "/solutions#solution-common-scenes"],
-        ],
-      },
-      {
         label: "行业解决方案",
         items: [
-          ["政务", "/solutions#solution-industries-overview"],
-          ["金融", "/solutions#solution-industries-overview"],
-          ["医疗", "/solutions#solution-industries-overview"],
-          ["企业智能化", "/solutions#solution-industries-overview"],
-        ],
-      },
-      {
-        label: "实践案例",
-        items: [
-          ["按行业查看", "/solutions#solution-cases-overview"],
-          ["按业务场景查看", "/solutions#solution-cases-overview"],
+          ["金融行业解决方案", "/solutions/finance-compliance"],
+          ["铁路行业解决方案", "/solutions/railway-parse"],
+          ["电力行业解决方案", "/solutions/electric-ticket"],
+          ["半导体行业解决方案", "/solutions/semi-ai-scientist"],
+          ["公安行业解决方案", "/solutions/ps-ghost-rider"],
+          ["应急行业解决方案", "/solutions/em-forest-fire"],
+          ["企业通用解决方案", "/solutions/enterprise-data"],
+          ["政务行业解决方案", "/solutions/government-process"],
         ],
       },
     ]);
@@ -186,6 +170,25 @@ describe("prototype navigation overlay", () => {
           ["联系生态负责人", "/partners?view=overview#partner-contact"],
         ],
       },
+    ]);
+  });
+
+  it("uses the V2 menu introductions", () => {
+    expect(
+      portalNavigation
+        .filter((item) => item.children.length > 0)
+        .map(({ label, description }) => [label, description]),
+    ).toEqual([
+      [
+        "产品",
+        "一站式 AI 开发与部署平台，覆盖智能体、行业应用、模型、编程与权限，另有独立产品矩阵开箱即用。",
+      ],
+      [
+        "解决方案",
+        "聚焦金融、铁路、电力、半导体、公安、应急等重点行业，提供具体场景方案与落地案例。",
+      ],
+      ["下载中心", "了解产品、获取资料、安装体验。"],
+      ["合作伙伴", "多元合作模式、清晰分润政策与全链路赋能。"],
     ]);
   });
 

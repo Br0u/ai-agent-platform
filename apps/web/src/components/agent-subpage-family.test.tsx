@@ -23,7 +23,7 @@ const expected = {
     h1: "企业知识助手：把企业文档、制度、经验变成随时可问的智能库",
     sectionCount: 6,
     demoTexts: ["请假三天需要什么流程？", "发送"],
-    semanticLink: ["查看知识服务方案 →", "/solutions/knowledge-service"],
+    semanticLink: ["查看知识服务方案 →", "/solutions/railway-rag"],
     anchors: [
       ["查看智能问答 →", "/product/agent-knowledge#agent-k-qa", "agent-k-qa"],
       [
@@ -43,7 +43,7 @@ const expected = {
     h1: "智能问数助手：不用写 SQL，问一句就能拿到数据答案",
     sectionCount: 5,
     demoTexts: ["华东区", "约 1.28 亿元", "数据来源"],
-    semanticLink: ["查看数据问答方案 →", "/solutions/finance-data"],
+    semanticLink: ["查看数据问答方案 →", "/solutions/enterprise-data"],
     anchors: [
       ["查看智能问数 →", "/product/data-agent#agent-data-qa", "agent-data-qa"],
       [
@@ -62,7 +62,7 @@ const expected = {
     h1: "视频理解与智能视觉助手：让视频从「被观看」变成「可理解」",
     sectionCount: 5,
     demoTexts: ["昨晚厂区南门 21 点到 22 点有无异常？", "发送"],
-    semanticLink: ["查看视频检索方案 →", "/solutions/video-intelligence"],
+    semanticLink: ["查看视频检索方案 →", "/solutions/ps-ghost-rider"],
     anchors: [
       [
         "查看即时检索 →",
@@ -85,7 +85,7 @@ const expected = {
     h1: "企业复杂任务自动化引擎：把多步骤业务变成一条自动流程",
     sectionCount: 5,
     demoTexts: ["执行完成 ✓"],
-    semanticLink: ["查看流程自动化方案 →", "/solutions/process-automation"],
+    semanticLink: ["查看流程自动化方案 →", "/solutions/government-process"],
     anchors: [
       [
         "查看文生工作流 →",

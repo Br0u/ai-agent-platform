@@ -356,7 +356,13 @@
   width: min(480px, calc(100% - 24px));
   height: 100%;
   flex-direction: column;
-  background: var(--color-surface);
+  background:
+    radial-gradient(
+      circle at 100% 0%,
+      color-mix(in srgb, var(--color-accent) 10%, transparent),
+      transparent 34%
+    ),
+    var(--color-surface);
 }
 
 .mobile-navigation__header {
@@ -432,8 +438,15 @@
 }
 
 .mobile-navigation__panel {
-  padding: 0 var(--space-2) var(--space-3);
-  border-left: 2px solid color-mix(in srgb, var(--color-accent) 48%, white);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 13%, white);
+  border-radius: 12px;
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--color-signal) 7%, white),
+    color-mix(in srgb, var(--color-accent) 5%, white)
+  );
 }
 
 .mobile-navigation__overview,
@@ -452,7 +465,8 @@
 }
 
 .mobile-navigation__panel section {
-  border-top: 1px solid color-mix(in srgb, var(--color-accent) 15%, white);
+  padding-top: var(--space-1);
+  border-top: 1px solid color-mix(in srgb, var(--color-primary) 11%, white);
 }
 
 .mobile-navigation__panel h2 {
@@ -598,26 +612,33 @@
     z-index: 30;
     top: 100%;
     left: 50%;
-    width: min(1040px, calc(100vw - 48px));
-    padding: 20px 24px 22px;
+    display: grid;
+    width: min(1120px, calc(100vw - 48px));
+    grid-template-columns: minmax(200px, 232px) minmax(0, 1fr);
+    gap: 24px;
+    padding: 18px;
     transform: translateX(-50%);
     transform-origin: top center;
-    border: 1px solid var(--color-line);
-    border-radius: 8px;
-    background: var(--color-surface);
-    box-shadow: 0 18px 40px rgb(16 24 56 / 12%);
+    border: 1px solid color-mix(in srgb, var(--color-primary) 16%, white);
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--color-surface) 90%, transparent);
+    box-shadow:
+      0 24px 64px rgb(16 24 56 / 14%),
+      0 2px 12px rgb(58 103 177 / 8%),
+      inset 0 1px 0 rgb(255 255 255 / 90%);
+    backdrop-filter: blur(22px) saturate(1.12);
   }
 
   .mega-menu__panel--1 {
-    width: min(520px, calc(100vw - 48px));
+    width: min(920px, calc(100vw - 48px));
   }
 
   .mega-menu__panel--2 {
-    width: min(760px, calc(100vw - 48px));
+    width: min(980px, calc(100vw - 48px));
   }
 
   .mega-menu__panel--4 {
-    width: min(1120px, calc(100vw - 48px));
+    width: min(1160px, calc(100vw - 48px));
   }
 
   .site-navigation--utility .mega-menu__panel {
@@ -631,23 +652,86 @@
     display: none;
   }
 
+  .mega-menu__intro {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    padding: 20px 18px 18px 22px;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--color-primary) 13%, white);
+    border-radius: 14px;
+    background:
+      radial-gradient(
+        circle at 100% 0%,
+        color-mix(in srgb, var(--color-accent) 16%, transparent),
+        transparent 46%
+      ),
+      linear-gradient(
+        145deg,
+        color-mix(in srgb, var(--color-signal) 10%, white),
+        color-mix(in srgb, var(--color-accent) 7%, white)
+      );
+  }
+
+  .mega-menu__intro::before {
+    position: absolute;
+    top: 20px;
+    bottom: 20px;
+    left: 0;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: linear-gradient(
+      180deg,
+      var(--color-signal),
+      var(--color-primary) 52%,
+      var(--color-accent)
+    );
+    box-shadow: 0 0 18px
+      color-mix(in srgb, var(--color-signal) 48%, transparent);
+    content: "";
+  }
+
+  .mega-menu__intro h2 {
+    margin: 0;
+    color: var(--color-ink);
+    font: 750 22px/1.2 var(--font-display);
+    letter-spacing: -0.02em;
+  }
+
+  .mega-menu__intro p {
+    margin: 12px 0 20px;
+    color: var(--color-muted);
+    font-size: 13px;
+    line-height: 1.7;
+    text-wrap: pretty;
+  }
+
   .mega-menu__overview {
     display: flex;
-    min-height: 38px;
+    min-height: 40px;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-6);
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--color-line);
-    color: var(--color-ink);
-    font: 700 15px/1.3 var(--font-display);
+    gap: var(--space-4);
+    margin-top: auto;
+    padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, var(--color-primary) 18%, white);
+    border-radius: 10px;
+    color: var(--color-primary);
+    background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+    font: 700 13px/1.3 var(--font-body);
     text-decoration: none;
+    transition:
+      color 140ms ease,
+      background-color 140ms ease,
+      box-shadow 140ms ease,
+      transform 140ms var(--ease-out);
   }
 
   .mega-menu__sections {
     display: grid;
-    gap: 0;
-    padding-top: 16px;
+    min-width: 0;
+    gap: 10px;
   }
 
   .mega-menu__panel--1 .mega-menu__sections {
@@ -668,25 +752,16 @@
 
   .mega-menu__section {
     min-width: 0;
-    padding: 0 20px;
-    border-left: 1px solid var(--color-line);
+    padding: 12px;
+    border: 1px solid color-mix(in srgb, var(--color-primary) 10%, white);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--color-surface) 72%, transparent);
   }
 
-  .mega-menu__section:first-child {
-    padding-left: 0;
-    border-left: 0;
-  }
-
-  .mega-menu__section:last-child {
-    padding-right: 0;
-  }
-
-  .mega-menu__section h2 {
+  .mega-menu__section h3 {
     margin: 0 0 8px;
-    color: var(--color-muted);
-    font: 700 11px/1.4 var(--font-body);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    color: color-mix(in srgb, var(--color-ink) 82%, var(--color-primary));
+    font: 700 13px/1.4 var(--font-display);
   }
 
   .mega-menu__links {
@@ -699,10 +774,15 @@
     min-height: 44px;
     align-content: center;
     gap: 3px;
-    padding: 7px 4px;
+    padding: 7px 8px;
+    border-radius: 9px;
     color: var(--color-ink);
     text-decoration: none;
-    transition: color 160ms ease;
+    transition:
+      color 140ms ease,
+      background-color 140ms ease,
+      box-shadow 140ms ease,
+      transform 140ms var(--ease-out);
   }
 
   .mega-menu__link-label {
@@ -720,11 +800,45 @@
     line-height: 1.45;
   }
 
+  .mega-menu__panel[data-menu-label="产品"] .mega-menu__sections {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .mega-menu__panel[data-menu-label="产品"] .mega-menu__section:last-child {
+    grid-row: 1 / span 2;
+    grid-column: 4;
+    border-color: color-mix(in srgb, var(--color-accent) 20%, white);
+    background: linear-gradient(
+      155deg,
+      color-mix(in srgb, var(--color-accent) 9%, white),
+      color-mix(in srgb, var(--color-signal) 7%, white)
+    );
+  }
+
+  .mega-menu__panel[data-menu-label="解决方案"] .mega-menu__links {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px 8px;
+  }
+
   @media (hover: hover) and (pointer: fine) {
-    .mega-menu__overview:hover,
+    .mega-menu__overview:hover {
+      color: var(--color-primary);
+      background: var(--color-surface);
+      box-shadow: 0 8px 18px rgb(58 103 177 / 10%);
+      transform: translateY(-1px);
+    }
+
     .mega-menu__links a:hover {
       color: var(--color-primary);
+      background: color-mix(in srgb, var(--color-signal) 9%, white);
+      box-shadow: 0 7px 16px rgb(58 103 177 / 8%);
+      transform: translateY(-1px);
     }
+  }
+
+  .mega-menu__overview:active,
+  .mega-menu__links a:active {
+    transform: scale(0.96);
   }
 
   .mega-menu__links a[aria-current="page"] {
@@ -741,7 +855,7 @@
 
 @media (min-width: 1181px) {
   .mega-menu__panel:not([hidden]) {
-    animation: mega-menu-present 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: mega-menu-present 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 
   .site-navigation--utility .mega-menu__panel:not([hidden]) {
@@ -751,24 +865,24 @@
   @keyframes mega-menu-present {
     from {
       opacity: 0;
-      transform: translateX(-50%) translateY(-6px) scale(0.98);
+      transform: translateX(-50%) translateY(-6px);
     }
 
     to {
       opacity: 1;
-      transform: translateX(-50%) translateY(0) scale(1);
+      transform: translateX(-50%) translateY(0);
     }
   }
 
   @keyframes mega-menu-present-utility {
     from {
       opacity: 0;
-      transform: translateY(-6px) scale(0.98);
+      transform: translateY(-6px);
     }
 
     to {
       opacity: 1;
-      transform: translateY(0) scale(1);
+      transform: translateY(0);
     }
   }
 
@@ -787,6 +901,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .mega-menu__trigger,
+  .mega-menu__overview,
   .mega-menu__links a {
     transition: none;
   }

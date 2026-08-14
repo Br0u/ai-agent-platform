@@ -180,9 +180,9 @@ test("四个智能体子页的内部链接和锚点均可达", async ({ page }) 
 
   expect([...visitedNavigationTargets]).toEqual(
     expect.arrayContaining([
-      "/solutions/knowledge-service",
-      "/solutions/document-intelligence",
-      "/solutions/video-intelligence",
+      "/solutions/railway-rag",
+      "/solutions/finance-compliance",
+      "/solutions/ps-ghost-rider",
     ]),
   );
 });

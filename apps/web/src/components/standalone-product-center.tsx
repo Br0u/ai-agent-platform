@@ -30,7 +30,6 @@ export function StandaloneProductCenter() {
     <main className="product-portal product-portal-center-page">
       <section className="product-portal-hero" aria-labelledby="center-title">
         <div className="product-portal-frame product-portal-center-hero">
-          <p className="product-portal-eyebrow">{content.hero.eyebrow}</p>
           <h1 id="center-title">{content.hero.title}</h1>
           <p className="product-portal-lead">{content.hero.lead}</p>
           <div className="product-portal-tags" aria-label="独立产品">
@@ -44,30 +43,19 @@ export function StandaloneProductCenter() {
 
       <section
         className="product-portal-section"
-        aria-labelledby="center-matrix-title"
+        aria-labelledby="center-value-title"
       >
         <div className="product-portal-frame">
           <header className="product-portal-heading">
-            <p className="product-portal-eyebrow">01｜产品矩阵</p>
-            <h2 id="center-matrix-title">三个独立产品，各自解决一类问题</h2>
+            <h2 id="center-value-title">{content.introduction.title}</h2>
+            <p>{content.introduction.lead}</p>
           </header>
-          <div className="product-portal-center-grid">
-            {content.products.map((product) => (
-              <article data-testid="standalone-product-card" key={product.slug}>
-                {"recommended" in product ? (
-                  <span className="product-portal-recommended">
-                    {product.recommended}
-                  </span>
-                ) : null}
-                <span className="product-portal-tag">{product.tag}</span>
-                <h3>{product.title}</h3>
-                <p>{product.description}</p>
-                <ul>
-                  {product.benefits.map((benefit) => (
-                    <li key={benefit}>{benefit}</li>
-                  ))}
-                </ul>
-                <Link href={product.action.href}>{product.action.label}</Link>
+          <div className="product-portal-value-grid">
+            {content.values.map((value) => (
+              <article data-testid="standalone-value-card" key={value.title}>
+                <span className="product-portal-tag">{value.tag}</span>
+                <h3>{value.title}</h3>
+                <p>{value.description}</p>
               </article>
             ))}
           </div>
@@ -76,71 +64,59 @@ export function StandaloneProductCenter() {
 
       <section
         className="product-portal-section product-portal-section--tint"
-        aria-labelledby="center-comparison-title"
+        aria-labelledby="center-matrix-title"
       >
         <div className="product-portal-frame">
           <header className="product-portal-heading">
-            <p className="product-portal-eyebrow">
-              {content.comparison.eyebrow}
-            </p>
-            <h2 id="center-comparison-title">{content.comparison.title}</h2>
+            <h2 id="center-matrix-title">三个独立产品，各自解决一类问题</h2>
+            <p>点击卡片查看产品详情。</p>
           </header>
-          <div className="product-portal-table-wrap">
-            <table aria-label={content.comparison.title}>
-              <thead>
-                <tr>
-                  {content.comparison.columns.map((column) => (
-                    <th scope="col" key={column}>
-                      {column}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {content.comparison.rows.map((row) => (
-                  <tr key={row[0]}>
-                    {row.map((cell, index) =>
-                      index === 0 ? (
-                        <th scope="row" key={cell}>
-                          {cell}
-                        </th>
-                      ) : (
-                        <td key={cell}>{cell}</td>
-                      ),
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="product-portal-center-grid">
+            {content.products.map((product) => (
+              <article data-testid="standalone-product-card" key={product.slug}>
+                <span className="product-portal-tag">{product.tag}</span>
+                <h3>{product.title}</h3>
+                <p>{product.description}</p>
+                <Link
+                  aria-label={`查看${product.title}产品详情`}
+                  href={product.action.href}
+                >
+                  {product.action.label}
+                </Link>
+              </article>
+            ))}
           </div>
-          <p className="product-portal-note">{content.comparison.note}</p>
         </div>
       </section>
 
       <section
         className="product-portal-section"
-        aria-labelledby="center-relations-title"
+        aria-labelledby="center-faq-title"
       >
         <div className="product-portal-frame">
           <header className="product-portal-heading">
-            <p className="product-portal-eyebrow">
-              {content.relations.eyebrow}
-            </p>
-            <h2 id="center-relations-title">{content.relations.title}</h2>
-            <p>{content.relations.lead}</p>
+            <h2 id="center-faq-title">关于独立产品，你可能关心的问题</h2>
+            <p>围绕独立产品的使用方式与落地价值，以问答形式简要说明。</p>
           </header>
-          <div className="product-portal-relation-grid">
-            {content.relations.items.map((item) => (
-              <article data-testid="platform-relation" key={item.title}>
-                <h3>{item.title}</h3>
-                <p>{item.description}</p>
-                <div className="product-portal-visual">{item.visual}</div>
-                {"action" in item ? (
-                  <Link href={item.action.href}>{item.action.label}</Link>
-                ) : null}
+          <div className="product-portal-faq-grid">
+            {content.faqs.map((faq) => (
+              <article data-testid="standalone-faq-card" key={faq.number}>
+                <span>{faq.number}</span>
+                <h3>{faq.title}</h3>
+                <p>{faq.description}</p>
+                <p>
+                  <strong>答案：</strong>
+                  {faq.answer}
+                </p>
+                <div>
+                  {faq.tags.map((tag) => (
+                    <small key={tag}>{tag}</small>
+                  ))}
+                </div>
               </article>
             ))}
           </div>
+          <p className="product-portal-note">{content.note}</p>
         </div>
       </section>
 

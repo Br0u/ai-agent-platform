@@ -75,7 +75,7 @@ describe("partner center content", () => {
     expect(partnerViewContent.become.searchText).toContain("六步入驻流程");
   });
 
-  it("keeps every numeric claim inside a view-level prototype disclaimer boundary", () => {
+  it("keeps the numeric claims but removes every prototype disclaimer", () => {
     expect(partnerViewContent.overview.claims).toEqual([
       "200+ 伙伴",
       "500+ 企业客户",
@@ -86,10 +86,11 @@ describe("partner center content", () => {
       "200+ 课时",
     ]);
 
-    for (const content of Object.values(partnerViewContent)) {
-      expect(content.disclaimer).toContain("示意内容");
-      expect(content.disclaimer).toContain("上线后替换");
-    }
+    expect(JSON.stringify(partnerViewContent)).not.toMatch(
+      /示意内容|上线后替换/u,
+    );
+    for (const content of Object.values(partnerViewContent))
+      expect(content).not.toHaveProperty("disclaimer");
   });
 
   it("preserves the unconfirmed phone, email and QR slots", () => {

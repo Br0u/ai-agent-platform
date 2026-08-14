@@ -39,50 +39,13 @@ const prototypePages = [
   ["skills-application", "/product/skills-application"],
   ["skills-office", "/product/skills-office"],
   ["governance", "/product/governance"],
-  ["solutions", "/solutions"],
-  ["solution-detail", "/solutions/knowledge-service"],
+  ["solutions", "/solutions/finance-compliance"],
+  ["solution-detail", "/solutions/finance-aml"],
   ["downloads", "/downloads"],
   ["partners", "/partners"],
   ["pricing", "/pricing"],
   ["contact", "/contact"],
   ["trial", "/trial"],
-] as const;
-
-const commonSolutionKeys = [
-  "private-yuanqi",
-  "cluster-planning",
-  "compute-monitoring",
-  "model-evaluation",
-  "model-deployment",
-  "knowledge-service",
-  "document-intelligence",
-  "data-insight",
-  "knowledge-assets",
-  "unstructured-data",
-  "process-automation",
-  "enterprise-assistant",
-  "multi-agent",
-  "video-intelligence",
-] as const;
-
-const industrySolutionKeys = [
-  "government-knowledge",
-  "government-data",
-  "government-document",
-  "government-process",
-  "finance-knowledge",
-  "finance-data",
-  "finance-document",
-  "finance-assistant",
-  "healthcare-knowledge",
-  "healthcare-data",
-  "healthcare-document",
-  "healthcare-process",
-  "enterprise-knowledge",
-  "enterprise-data",
-  "enterprise-document",
-  "enterprise-process",
-  "enterprise-multi-agent",
 ] as const;
 
 const partnerTargets = [
@@ -183,9 +146,7 @@ async function expectProductionShell(page: Page) {
   }
 }
 
-test("桌面 Header 与 390px 移动导航执行批准的八个公开入口", async ({
-  page,
-}) => {
+test("桌面 Header 与 390px 移动导航执行 V2 公开入口", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await gotoPublicPage(page, "/");
 
@@ -195,7 +156,6 @@ test("桌面 Header 与 390px 移动导航执行批准的八个公开入口", as
     "解决方案",
     "下载中心",
     "合作伙伴",
-    "价格与服务",
   ]);
   await expect(page.locator(".site-actions > .site-contact")).toHaveAttribute(
     "href",
@@ -214,18 +174,32 @@ test("桌面 Header 与 390px 移动导航执行批准的八个公开入口", as
 
   await page.setViewportSize({ width: 390, height: 844 });
   await gotoPublicPage(page, "/");
-  await page.getByRole("button", { name: "打开导航" }).click();
   const drawer = page.getByRole("dialog", { name: "全站导航" });
-  await expect(drawer).toBeVisible();
+  await expect(async () => {
+    await page.getByRole("button", { name: "打开导航" }).click();
+    await expect(drawer).toBeVisible();
+  }).toPass();
   await expect(drawer.getByText("首页", { exact: true })).toBeVisible();
   for (const label of ["产品", "解决方案", "下载中心", "合作伙伴"]) {
     await expect(
       drawer.getByRole("button", { name: new RegExp(`^${label}`) }),
     ).toBeVisible();
   }
+  const productAccordion = drawer.getByRole("button", { name: /^产品/u });
+  await productAccordion.click();
+  const productPanelId = await productAccordion.getAttribute("aria-controls");
+  expect(productPanelId).not.toBeNull();
+  const productPanel = drawer.locator(`#${productPanelId}`);
+  await expect(productPanel).toBeVisible();
   await expect(
-    drawer.getByRole("link", { name: "价格与服务", exact: true }),
+    productPanel.getByRole("link", { name: "产品概览" }),
   ).toBeVisible();
+  expect(
+    await productPanel.evaluate(
+      (element) => getComputedStyle(element).borderRadius,
+    ),
+  ).toBe("12px");
+  await expect(drawer.getByText("价格与服务", { exact: true })).toHaveCount(0);
   await expect(
     drawer.getByRole("link", { name: "联系我们", exact: true }),
   ).toHaveAttribute("href", "/contact");
@@ -236,6 +210,36 @@ test("桌面 Header 与 390px 移动导航执行批准的八个公开入口", as
   await expect(drawer.getByRole("link", { name: "文档" })).toHaveCount(0);
 });
 
+test("全站公开页 Navbar 与 Product 保持同一尺寸和 Logo", async ({ page }) => {
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    for (const href of [
+      "/product",
+      "/",
+      "/solutions/finance-compliance",
+      "/downloads",
+      "/partners",
+      "/pricing",
+      "/contact",
+      "/trial",
+    ]) {
+      await gotoPublicPage(page, href);
+      await expect(page.locator(".site-header"), href).toHaveCSS(
+        "min-height",
+        "64px",
+      );
+      await expect(page.locator(".site-wordmark"), href).toHaveCSS(
+        "background-image",
+        /logo\.png/u,
+      );
+      await expect(page.locator(".site-brand-name"), href).toBeHidden();
+    }
+  }
+});
+
 test("1296px 桌面导航下拉完整落在视口内", async ({ page }) => {
   await page.setViewportSize({ width: 1296, height: 768 });
   await gotoPublicPage(page, "/product/agents");
@@ -244,8 +248,11 @@ test("1296px 桌面导航下拉完整落在视口内", async ({ page }) => {
     const trigger = page
       .getByRole("banner")
       .getByRole("link", { name: label, exact: true });
-    await trigger.focus();
-    await page.keyboard.press("ArrowDown");
+    await expect(async () => {
+      await trigger.focus();
+      await trigger.press("ArrowDown");
+      await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    }).toPass();
 
     const panelId = await trigger.getAttribute("aria-controls");
     expect(panelId, label).not.toBeNull();
@@ -261,16 +268,70 @@ test("1296px 桌面导航下拉完整落在视口内", async ({ page }) => {
   }
 });
 
+test("桌面 Mega Menu 使用简介栏与产品能力地图布局", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await gotoPublicPage(page, "/product");
+
+  const trigger = page
+    .getByRole("banner")
+    .getByRole("link", { name: "产品", exact: true });
+  await trigger.hover();
+
+  const panel = page.locator('.mega-menu__panel[data-menu-label="产品"]');
+  await expect(panel).toBeVisible();
+  const intro = panel.getByRole("complementary", { name: "产品简介" });
+  const sections = panel.locator(".mega-menu__sections");
+  const featured = panel
+    .getByRole("heading", { name: "独立产品中心", level: 3 })
+    .locator("..");
+
+  const [panelStyle, introBox, sectionsBox, firstBox, featuredBox] =
+    await Promise.all([
+      panel.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          backdropFilter: style.backdropFilter,
+          borderRadius: style.borderRadius,
+          display: style.display,
+        };
+      }),
+      intro.boundingBox(),
+      sections.boundingBox(),
+      panel.locator(".mega-menu__section").first().boundingBox(),
+      featured.boundingBox(),
+    ]);
+
+  expect(panelStyle.display).toBe("grid");
+  expect(panelStyle.borderRadius).toBe("18px");
+  expect(panelStyle.backdropFilter).toContain("blur");
+  expect(introBox).not.toBeNull();
+  expect(sectionsBox).not.toBeNull();
+  expect(firstBox).not.toBeNull();
+  expect(featuredBox).not.toBeNull();
+  expect(introBox!.x + introBox!.width).toBeLessThan(sectionsBox!.x);
+  expect(featuredBox!.x).toBeGreaterThan(firstBox!.x);
+  expect(featuredBox!.height).toBeGreaterThan(firstBox!.height);
+});
+
 test("代表公开页的唯一 Agent launcher 可打开关闭并恢复焦点", async ({
   page,
 }) => {
-  for (const path of ["/", "/product/model-task-center", "/solutions"]) {
+  for (const path of [
+    "/",
+    "/product/model-task-center",
+    "/solutions/finance-compliance",
+  ]) {
     await gotoPublicPage(page, path);
     const launcher = page.getByRole("button", { name: "打开码多多" });
     await expect(launcher, path).toHaveCount(1);
-    await launcher.click();
     const dialog = page.getByRole("dialog", { name: "码多多" });
-    await expect(dialog).toBeVisible();
+    await expect(async () => {
+      await launcher.click();
+      await expect(dialog).toBeVisible();
+    }).toPass();
     await dialog
       .getByRole("button", { name: "关闭码多多", exact: true })
       .click();
@@ -333,188 +394,6 @@ test("43 个 prototype page key 在三档宽度承接、无横溢且同源内链
   for (const href of requestTargets) {
     const response = await page.request.get(href);
     expect(response.status(), href).toBeLessThan(400);
-  }
-});
-
-test("14 个通用、17 个行业与 1 个案例详情全部真实承接", async ({ page }) => {
-  test.setTimeout(180_000);
-  for (const key of [
-    ...commonSolutionKeys,
-    ...industrySolutionKeys,
-    "case-pending-enterprise-knowledge",
-  ]) {
-    await gotoPublicPage(page, `/solutions/${key}`);
-    await expect(page.locator("main.solution-detail h1")).toHaveCount(1);
-    await expect(page.locator("main.solution-detail h1")).toBeVisible();
-    await expectProductionShell(page);
-  }
-});
-
-test("七种 solution view 均由真实列表或详情状态承接", async ({ page }) => {
-  const views = [
-    ["overview", "/solutions", "main.solutions-page", "overview"],
-    [
-      "list",
-      "/solutions?view=scenarios&category=knowledge#solution-scenarios-directory",
-      "main.solutions-page",
-      "scenarios",
-    ],
-    ["detail", "/solutions/private-yuanqi", "main.solution-detail", null],
-    [
-      "industry-list",
-      "/solutions?view=industries&industry=finance#industry-solutions-list",
-      "main.solutions-page",
-      "industries",
-    ],
-    [
-      "industry-detail",
-      "/solutions/government-knowledge",
-      "main.solution-detail",
-      null,
-    ],
-    [
-      "case-list",
-      "/solutions?view=cases&mode=scenario#practice-cases-list",
-      "main.solutions-page",
-      "cases",
-    ],
-    [
-      "case-detail",
-      "/solutions/case-pending-enterprise-knowledge?mode=scenario",
-      "main.solution-detail",
-      null,
-    ],
-  ] as const;
-
-  for (const [key, path, selector, view] of views) {
-    await gotoPublicPage(page, path);
-    const main = page.locator(selector);
-    await expect(main, key).toHaveCount(1);
-    await expect(main.locator("h1")).toBeVisible();
-    if (view) await expect(main).toHaveAttribute("data-solution-view", view);
-  }
-});
-
-test("全部 solution list filter query key 读取目录状态并落到批准锚点", async ({
-  page,
-}) => {
-  const filters = [
-    {
-      key: "scenarios-all",
-      href: "/solutions?view=scenarios#solution-scenarios-directory",
-      view: "scenarios",
-      filter: "all",
-      current: "通用场景方案",
-      target: "#solution-scenarios-directory",
-    },
-    {
-      key: "scenarios-infrastructure",
-      href: "/solutions?view=scenarios&category=infrastructure#solution-scenarios-directory",
-      view: "scenarios",
-      filter: "infrastructure",
-      current: "基础设施与模型工程",
-      target: "#solution-scenarios-directory",
-    },
-    {
-      key: "scenarios-knowledge",
-      href: "/solutions?view=scenarios&category=knowledge#solution-scenarios-directory",
-      view: "scenarios",
-      filter: "knowledge",
-      current: "知识与数据智能",
-      target: "#solution-scenarios-directory",
-    },
-    {
-      key: "scenarios-agents",
-      href: "/solutions?view=scenarios&category=agents#solution-scenarios-directory",
-      view: "scenarios",
-      filter: "agents",
-      current: "智能体与业务应用",
-      target: "#solution-scenarios-directory",
-    },
-    {
-      key: "industries-all",
-      href: "/solutions?view=industries#industry-solutions-list",
-      view: "industries",
-      filter: "all",
-      current: "行业解决方案",
-      target: "#industry-solutions-list",
-    },
-    {
-      key: "industries-government",
-      href: "/solutions?view=industries&industry=government#industry-solutions-list",
-      view: "industries",
-      filter: "government",
-      current: "政务",
-      target: "#industry-solutions-list",
-    },
-    {
-      key: "industries-finance",
-      href: "/solutions?view=industries&industry=finance#industry-solutions-list",
-      view: "industries",
-      filter: "finance",
-      current: "金融",
-      target: "#industry-solutions-list",
-    },
-    {
-      key: "industries-healthcare",
-      href: "/solutions?view=industries&industry=healthcare#industry-solutions-list",
-      view: "industries",
-      filter: "healthcare",
-      current: "医疗",
-      target: "#industry-solutions-list",
-    },
-    {
-      key: "industries-enterprise",
-      href: "/solutions?view=industries&industry=enterprise#industry-solutions-list",
-      view: "industries",
-      filter: "enterprise",
-      current: "企业智能化",
-      target: "#industry-solutions-list",
-    },
-    {
-      key: "cases-all",
-      href: "/solutions?view=cases&mode=all#practice-cases-hero",
-      view: "cases",
-      filter: "all",
-      current: "实践案例",
-      target: "#practice-cases-hero",
-    },
-    {
-      key: "cases-industry",
-      href: "/solutions?view=cases&mode=industry#practice-cases-list",
-      view: "cases",
-      filter: "industry",
-      current: "按行业查看",
-      target: "#practice-cases-list",
-    },
-    {
-      key: "cases-scenario",
-      href: "/solutions?view=cases&mode=scenario#practice-cases-list",
-      view: "cases",
-      filter: "scenario",
-      current: "按业务场景查看",
-      target: "#practice-cases-list",
-    },
-  ] as const;
-
-  for (const contract of filters) {
-    await gotoPublicPage(page, contract.href);
-    const currentUrl = new URL(page.url());
-    expect(
-      `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`,
-      contract.key,
-    ).toBe(contract.href);
-
-    const main = page.locator("main.solutions-page");
-    await expect(main).toHaveAttribute("data-solution-view", contract.view);
-    await expect(main).toHaveAttribute("data-solution-filter", contract.filter);
-    await expect(page.locator(contract.target), contract.key).toBeVisible();
-    await expect(
-      page
-        .locator('a[aria-current="location"]')
-        .filter({ hasText: contract.current }),
-      contract.key,
-    ).toHaveAttribute("href", contract.href);
   }
 });
 

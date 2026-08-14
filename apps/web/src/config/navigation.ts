@@ -11,7 +11,7 @@ export const portalNavigation: PortalNavigationItem[] = [
     label: "产品",
     href: "/product",
     description:
-      "一站式 AI 开发与部署平台，覆盖智能体、行业应用、模型、编程与安全，另有独立产品矩阵开箱即用。",
+      "一站式 AI 开发与部署平台，覆盖智能体、行业应用、模型、编程与权限，另有独立产品矩阵开箱即用。",
     children: [
       {
         label: "智能体中心",
@@ -25,11 +25,10 @@ export const portalNavigation: PortalNavigationItem[] = [
       {
         label: "模型中心",
         items: [
-          { label: "模型花园", href: "/product/model-assets" },
+          { label: "模型资产管理", href: "/product/model-assets" },
+          { label: "模型部署与服务", href: "/product/model-deploy" },
           { label: "模型训练", href: "/product/model-training" },
           { label: "模型评估", href: "/product/model-evaluation" },
-          { label: "模型部署", href: "/product/model-deploy" },
-          { label: "任务中心", href: "/product/model-task-center" },
         ],
       },
       {
@@ -43,26 +42,23 @@ export const portalNavigation: PortalNavigationItem[] = [
       {
         label: "编程中心",
         items: [
-          { label: "项目管理", href: "/product/coding-project" },
-          { label: "会话管理", href: "/product/coding-session" },
-          { label: "移动接入", href: "/product/coding-mobile" },
-          { label: "编程规范", href: "/product/coding-standard" },
+          { label: "自然语言开发", href: "/product/coding-session" },
+          { label: "双模式工作流", href: "/product/coding-project" },
+          { label: "内置工具链", href: "/product/coding-standard" },
         ],
       },
       {
         label: "技能中心",
         items: [
-          { label: "编程类技能", href: "/product/skills-programming" },
+          { label: "研发类技能", href: "/product/skills-programming" },
           { label: "应用类技能", href: "/product/skills-application" },
           { label: "办公类技能", href: "/product/skills-office" },
         ],
       },
       {
-        label: "安全中心",
+        label: "权限中心",
         items: [
-          { label: "用户管理", href: "/product/governance#gov-users" },
-          { label: "角色管理", href: "/product/governance#gov-roles" },
-          { label: "菜单管理", href: "/product/governance#gov-menu" },
+          { label: "权限管理", href: "/product/governance#gov-caps" },
           { label: "行级权限", href: "/product/governance#gov-permission" },
         ],
       },
@@ -70,7 +66,7 @@ export const portalNavigation: PortalNavigationItem[] = [
         label: "独立产品中心",
         items: [
           {
-            label: "码多多 2.0",
+            label: "码里奥",
             href: "/product/code-agent",
             description: "企业级智能编程平台",
           },
@@ -91,44 +87,43 @@ export const portalNavigation: PortalNavigationItem[] = [
   {
     label: "解决方案",
     href: "/solutions",
-    description: "从业务问题进入 AI 解决方案。",
+    description:
+      "聚焦金融、铁路、电力、半导体、公安、应急等重点行业，提供具体场景方案与落地案例。",
     children: [
-      {
-        label: "通用场景方案",
-        items: [
-          {
-            label: "基础设施与模型工程",
-            href: "/solutions#solution-common-scenes",
-          },
-          {
-            label: "知识与数据智能",
-            href: "/solutions#solution-common-scenes",
-          },
-          {
-            label: "智能体与业务应用",
-            href: "/solutions#solution-common-scenes",
-          },
-        ],
-      },
       {
         label: "行业解决方案",
         items: [
-          { label: "政务", href: "/solutions#solution-industries-overview" },
-          { label: "金融", href: "/solutions#solution-industries-overview" },
-          { label: "医疗", href: "/solutions#solution-industries-overview" },
           {
-            label: "企业智能化",
-            href: "/solutions#solution-industries-overview",
+            label: "金融行业解决方案",
+            href: "/solutions/finance-compliance",
           },
-        ],
-      },
-      {
-        label: "实践案例",
-        items: [
-          { label: "按行业查看", href: "/solutions#solution-cases-overview" },
           {
-            label: "按业务场景查看",
-            href: "/solutions#solution-cases-overview",
+            label: "铁路行业解决方案",
+            href: "/solutions/railway-parse",
+          },
+          {
+            label: "电力行业解决方案",
+            href: "/solutions/electric-ticket",
+          },
+          {
+            label: "半导体行业解决方案",
+            href: "/solutions/semi-ai-scientist",
+          },
+          {
+            label: "公安行业解决方案",
+            href: "/solutions/ps-ghost-rider",
+          },
+          {
+            label: "应急行业解决方案",
+            href: "/solutions/em-forest-fire",
+          },
+          {
+            label: "企业通用解决方案",
+            href: "/solutions/enterprise-data",
+          },
+          {
+            label: "政务行业解决方案",
+            href: "/solutions/government-process",
           },
         ],
       },
@@ -223,7 +218,6 @@ export const portalNavigation: PortalNavigationItem[] = [
       },
     ],
   },
-  { label: "价格与服务", href: "/pricing", children: [] },
 ];
 
 export const consoleNavigation: SidebarNavigationConfig = {

@@ -210,6 +210,7 @@ export function MegaMenu({
           <div
             aria-labelledby={`${baseId}-trigger-${index}`}
             className={`mega-menu__panel mega-menu__panel--${sectionColumnCount}`}
+            data-menu-label={item.label}
             hidden={!isOpen}
             id={`${baseId}-panel-${index}`}
             key={item.href}
@@ -220,18 +221,25 @@ export function MegaMenu({
             }}
             role="region"
           >
-            <Link
-              aria-current={
-                isNavigationChildActive(item.href, activeHref)
-                  ? "page"
-                  : undefined
-              }
-              className="mega-menu__overview"
-              href={item.href}
+            <aside
+              aria-label={`${item.label}简介`}
+              className="mega-menu__intro"
             >
-              <span>{item.label}概览</span>
-              <span aria-hidden="true">→</span>
-            </Link>
+              <h2>{item.label}</h2>
+              {item.description ? <p>{item.description}</p> : null}
+              <Link
+                aria-current={
+                  isNavigationChildActive(item.href, activeHref)
+                    ? "page"
+                    : undefined
+                }
+                className="mega-menu__overview"
+                href={item.href}
+              >
+                <span>{item.label}概览</span>
+                <span aria-hidden="true">→</span>
+              </Link>
+            </aside>
 
             <div className="mega-menu__sections">
               {item.children.map((section, sectionIndex) => (
@@ -239,7 +247,7 @@ export function MegaMenu({
                   className="mega-menu__section"
                   key={`${section.label}-${sectionIndex}`}
                 >
-                  <h2>{section.label}</h2>
+                  <h3>{section.label}</h3>
                   <div className="mega-menu__links">
                     {section.items.filter(isNavigationHrefItem).map((child) => (
                       <Link

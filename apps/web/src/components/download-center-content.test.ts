@@ -28,33 +28,33 @@ const resources = [
   {
     key: "mdd2-intro",
     tag: "独立产品",
-    title: "码多多 2.0 产品介绍",
+    title: "码里奥 产品介绍",
     file: "PDF · 10 页",
     desc: "面向企业研发与高密级代码资产场景的产品手册，介绍双形态、安全与部署方式。",
   },
   {
     key: "mdd2-features",
     tag: "独立产品",
-    title: "码多多 2.0 功能清单",
+    title: "码里奥 功能清单",
     file: "PDF · 6 页",
     desc: "自然语言开发、工程落地、技能与多智能体等核心能力清单。",
   },
   {
     key: "mdd2-env",
     tag: "独立产品",
-    title: "码多多 2.0 支持环境说明",
+    title: "码里奥 支持环境说明",
     file: "PDF · 4 页",
     desc: "支持的操作系统、运行环境与部署要求说明。",
   },
   {
     key: "mdd2-deploy",
-    title: "码多多 2.0 安装部署指南",
+    title: "码里奥 安装部署指南",
     file: "PDF · 16 页",
     desc: "从环境准备、安装部署到初始化验证的完整说明，帮助快速完成私有化部署。",
   },
   {
     key: "mdd2-usage",
-    title: "码多多 2.0 使用说明",
+    title: "码里奥 使用说明",
     file: "PDF · 20 页",
     desc: "项目管理、会话管理、移动接入与编程规范的使用方法说明。",
   },
@@ -146,7 +146,7 @@ describe("download center content", () => {
     );
     expect(software).not.toBeNull();
     for (const text of [
-      "码多多 2.0 桌面客户端",
+      "码里奥 桌面客户端",
       "版本：v2.0.0",
       "Windows 10/11 · macOS 12+",
       "安装包约 240 MB",
@@ -159,5 +159,32 @@ describe("download center content", () => {
         { exact: true },
       ),
     ).toBeVisible();
+  });
+
+  it("uses the exact V2 hero without an extra eyebrow", () => {
+    render(createElement(DownloadsPage));
+
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "从产品资料到安装体验，一站式获取华鲲资源",
+      }),
+    ).toBeVisible();
+    expect(screen.queryByText("下载中心｜资源入口")).toBeNull();
+    expect(screen.getByRole("link", { name: "进入码里奥 →" })).toHaveAttribute(
+      "href",
+      "/product/code-agent",
+    );
+  });
+
+  it("keeps the V2 two-column product material groups", () => {
+    const { container } = render(createElement(DownloadsPage));
+    const groups = container.querySelectorAll(
+      "#dl-materials .download-product-grid > .download-product-group",
+    );
+
+    expect(groups).toHaveLength(2);
+    expect(groups[0]?.querySelectorAll(".download-card")).toHaveLength(3);
+    expect(groups[1]?.querySelectorAll(".download-card")).toHaveLength(3);
   });
 });

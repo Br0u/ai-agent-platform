@@ -6,7 +6,6 @@ export const partnerTrainingContent = {
   lead: "系统化的培训课程、清晰的认证路径、丰富的学习资源，帮助每一位伙伴快速掌握元启平台，赢得市场先机。",
   tags: ["200+ 课程", "三级认证", "五大资源"],
   claims: ["200+ 课程", "200+ 课时"],
-  disclaimer: "示意内容，上线后替换为真实学习平台界面",
   visual: {
     title: "元启伙伴学院",
     items: [

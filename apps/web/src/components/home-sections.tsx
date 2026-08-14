@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { homeContent } from "./home-content";
+import { HomeIcon } from "./home-icon";
 import "./home.css";
 
 function actionClass(variant: "primary" | "secondary") {
@@ -9,51 +10,57 @@ function actionClass(variant: "primary" | "secondary") {
     : "home-action";
 }
 
+function AccentTitle({
+  className,
+  title,
+}: {
+  className: string;
+  title: string;
+}) {
+  const [before, after] = title.split("AI");
+  return (
+    <>
+      {before}
+      <span className={className}>AI</span>
+      {after}
+    </>
+  );
+}
+
 export function HomeHero() {
   return (
     <section
       className="home-section home-hero"
       data-home-region="hero"
+      data-home-theme="dual-track-light"
       aria-labelledby="home-hero-title"
     >
       <div className="home-frame">
-        <div className="home-hero__layout">
-          <div className="home-hero__copy">
-            <p className="home-eyebrow">{homeContent.hero.eyebrow}</p>
-            <h1 id="home-hero-title">{homeContent.hero.title}</h1>
-            <p className="home-hero__lead">{homeContent.hero.lead}</p>
-            <div className="home-value-tags" aria-label="平台能力">
-              {homeContent.hero.tags.map((tag) => (
-                <span className="home-value-tag" key={tag}>
-                  {tag}
-                </span>
-              ))}
-            </div>
-            <div className="home-actions">
-              {homeContent.hero.actions.map((action) => (
-                <Link
-                  className={actionClass(action.variant)}
-                  href={action.href}
-                  key={action.href}
-                >
-                  {action.label}
-                </Link>
-              ))}
-            </div>
-          </div>
-          <div
-            className="home-hero__visual home-glass-panel"
-            aria-label={homeContent.hero.visualCaption}
-          >
-            <span>{homeContent.hero.visualCaption}</span>
+        <div className="home-hero__copy">
+          <h1 id="home-hero-title">
+            <AccentTitle
+              className="home-hero__title-accent"
+              title={homeContent.hero.title}
+            />
+          </h1>
+          <p className="home-lead home-hero__lead">{homeContent.hero.lead}</p>
+          <div className="home-actions">
+            {homeContent.hero.actions.map((action) => (
+              <Link
+                className={actionClass(action.variant)}
+                href={action.href}
+                key={action.href}
+              >
+                {action.label}
+              </Link>
+            ))}
           </div>
         </div>
-
         <div className="home-featured">
           {homeContent.featuredProducts.map((product) => (
             <article className="home-featured-card" key={product.href}>
               <span className="home-card-badge" aria-hidden="true">
-                {product.badge}
+                <HomeIcon name={product.icon} />
               </span>
               <div>
                 <h2>{product.title}</h2>
@@ -68,41 +75,54 @@ export function HomeHero() {
   );
 }
 
-export function AgentCapabilityGrid() {
+export function HomeCenterGrid() {
+  const featured = homeContent.centers.items.slice(0, 2);
+  const remaining = homeContent.centers.items.slice(2);
+
   return (
     <section
-      className="home-section home-agents"
-      data-home-region="agents"
+      className="home-section home-centers"
+      data-home-region="centers"
       data-home-reveal="true"
-      aria-labelledby="home-agents-title"
+      aria-labelledby="home-centers-title"
     >
       <div className="home-frame">
-        <header className="home-section-heading">
-          <p className="home-eyebrow" data-home-reveal-item="text">
-            {homeContent.agents.eyebrow}
-          </p>
-          <h2 id="home-agents-title" data-home-reveal-item="text">
-            {homeContent.agents.title}
-          </h2>
-          <p className="home-section-intro" data-home-reveal-item="text">
-            {homeContent.agents.lead}
-          </p>
-        </header>
-        <div className="home-agent-grid">
-          {homeContent.agents.items.map((item) => (
-            <article
-              className="home-agent-card"
-              data-home-reveal-item="block"
-              key={item.href}
-            >
-              <span className="home-card-badge" aria-hidden="true">
-                {item.badge}
-              </span>
-              <h3>{item.title}</h3>
-              <p>{item.description}</p>
-              <Link href={item.href}>{item.cta}</Link>
-            </article>
-          ))}
+        <h2 id="home-centers-title">{homeContent.centers.title}</h2>
+        <p className="home-lead">{homeContent.centers.lead}</p>
+        <div className="centers-layout">
+          <div className="centers-featured">
+            {featured.map((item) => (
+              <article className="center-feature" key={item.href}>
+                <span className="home-card-badge" aria-hidden="true">
+                  <HomeIcon name={item.icon} />
+                </span>
+                <div>
+                  {"tag" in item ? (
+                    <span className="home-tag">{item.tag}</span>
+                  ) : null}
+                  <h3>{item.title}</h3>
+                  <p className="center-position">{item.position}</p>
+                  <p>{item.description}</p>
+                  <Link href={item.href}>{item.cta}</Link>
+                </div>
+              </article>
+            ))}
+          </div>
+          <div className="centers-list">
+            {remaining.map((item) => (
+              <article className="center-row" key={item.href}>
+                <span className="home-card-badge" aria-hidden="true">
+                  <HomeIcon name={item.icon} />
+                </span>
+                <div className="center-row__head">
+                  <h3>{item.title}</h3>
+                  <p>{item.position}</p>
+                </div>
+                <p>{item.description}</p>
+                <Link href={item.href}>{item.cta}</Link>
+              </article>
+            ))}
+          </div>
         </div>
       </div>
     </section>
@@ -118,27 +138,33 @@ export function HomeSolutionGrid() {
       aria-labelledby="home-solutions-title"
     >
       <div className="home-frame">
-        <header className="home-section-heading">
-          <p className="home-eyebrow" data-home-reveal-item="text">
-            {homeContent.solutions.eyebrow}
-          </p>
-          <h2 id="home-solutions-title" data-home-reveal-item="text">
-            {homeContent.solutions.title}
-          </h2>
-          <p className="home-section-intro" data-home-reveal-item="text">
-            {homeContent.solutions.lead}
-          </p>
-        </header>
-        <div className="home-solution-grid">
-          {homeContent.solutions.items.map((item) => (
+        <h2 id="home-solutions-title">
+          <AccentTitle
+            className="home-solutions__title-accent"
+            title={homeContent.solutions.title}
+          />
+        </h2>
+        <p className="home-lead">{homeContent.solutions.lead}</p>
+        <div className="home-sol">
+          {homeContent.solutions.items.map((item, index) => (
             <article
-              className="home-solution-card"
-              data-home-reveal-item="block"
+              className="home-sol-card home-solution-card"
               key={item.href}
             >
-              <span className="home-solution-card__category">
-                {item.category}
-              </span>
+              <div className="home-solution-card__meta">
+                <span className="home-solution-card__icon">
+                  <span className="home-card-badge" aria-hidden="true">
+                    <HomeIcon name={item.icon} />
+                  </span>
+                  <span
+                    className="home-solution-card__index"
+                    aria-hidden="true"
+                  >
+                    {String(index + 1).padStart(2, "0")}
+                  </span>
+                </span>
+                <span className="home-tag">{item.category}</span>
+              </div>
               <h3>{item.title}</h3>
               <p>{item.description}</p>
               <Link href={item.href} aria-label={`${item.title}：查看方案`}>
@@ -147,58 +173,72 @@ export function HomeSolutionGrid() {
             </article>
           ))}
         </div>
-        <Link
-          className="home-solutions__all"
-          data-home-reveal-item="text"
-          href={homeContent.solutions.allHref}
-        >
-          {homeContent.solutions.allLabel}
-        </Link>
+        <div className="home-solutions__more">
+          <Link href={homeContent.solutions.allHref}>
+            {homeContent.solutions.allLabel}
+          </Link>
+        </div>
       </div>
     </section>
   );
 }
 
+const contactItems = [
+  ["location", "公司地址", homeContent.contact.address],
+  ["mail", "商务合作", homeContent.contact.businessEmail],
+  ["phone", "客服热线", homeContent.contact.hotline],
+  ["clock", "服务时间", homeContent.contact.serviceHours],
+] as const;
+
 export function HomeContactSection() {
   return (
     <section
-      className="home-section home-contact"
+      className="home-section home-contact-section"
       data-home-region="contact"
       data-home-reveal="true"
       aria-labelledby="home-contact-title"
     >
-      <div className="home-frame home-contact__layout">
-        <div className="home-contact__copy">
-          <p className="home-eyebrow" data-home-reveal-item="text">
-            {homeContent.contact.eyebrow}
-          </p>
-          <h2 id="home-contact-title" data-home-reveal-item="text">
-            {homeContent.contact.title}
-          </h2>
-          <p className="home-section-intro" data-home-reveal-item="text">
-            {homeContent.contact.lead}
-          </p>
-          <div className="home-actions" data-home-reveal-item="block">
-            {homeContent.contact.actions.map((action) => (
-              <Link
-                className={actionClass(action.variant)}
-                href={action.href}
-                key={action.href}
-              >
-                {action.label}
-              </Link>
-            ))}
+      <div className="home-frame">
+        <h2 id="home-contact-title">
+          <AccentTitle
+            className="home-contact__title-accent"
+            title={homeContent.contact.title}
+          />
+        </h2>
+        <p className="home-lead">{homeContent.contact.lead}</p>
+        <div className="home-contact__layout">
+          <article className="home-contact-card">
+            <h3>{homeContent.contact.cardTitle}</h3>
+            <dl>
+              {contactItems.map(([icon, label, value]) => (
+                <div key={label}>
+                  <dt>
+                    <span className="home-contact-card__icon">
+                      <HomeIcon name={icon} />
+                    </span>
+                    {label}
+                  </dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </article>
+          <div className="home-contact__copy">
+            <p>{homeContent.contact.description}</p>
+            <div className="home-actions">
+              {homeContent.contact.actions.map((action) => (
+                <Link
+                  className={actionClass(action.variant)}
+                  href={action.href}
+                  key={action.href}
+                >
+                  {action.label}
+                </Link>
+              ))}
+            </div>
+            <p className="home-context-note">{homeContent.contact.note}</p>
           </div>
         </div>
-        <article className="home-contact-card" data-home-reveal-item="block">
-          <h3>{homeContent.contact.cardTitle}</h3>
-          <address>{homeContent.contact.address}</address>
-          <p>{homeContent.contact.businessEmail}</p>
-          <p>{homeContent.contact.hotline}</p>
-          <p>{homeContent.contact.serviceHours}</p>
-          <p>{homeContent.contact.description}</p>
-          <small>{homeContent.contact.note}</small>
-        </article>
       </div>
     </section>
   );

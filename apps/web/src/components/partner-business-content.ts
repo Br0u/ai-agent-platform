@@ -14,7 +14,6 @@ export const partnerBusinessContent = {
     "年度承诺销售额 50 万元以上",
     "年度承诺销售额 1000 万元以上",
   ],
-  disclaimer: "示意内容，上线后替换为真实关系图",
   visual: {
     title: "三种模式 × 伙伴类型",
     items: [

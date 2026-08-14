@@ -8,12 +8,11 @@ describe("partner center full literal oracle from prototype HTML", () => {
   it("locks every hero, visual node, note and action in source order", () => {
     expect(
       Object.values(partnerViewContent).map(
-        ({ eyebrow, title, lead, tags, disclaimer, heroActions }) => ({
+        ({ eyebrow, title, lead, tags, heroActions }) => ({
           eyebrow,
           title,
           lead,
           tags,
-          disclaimer,
           heroActions,
         }),
       ),
@@ -23,7 +22,6 @@ describe("partner center full literal oracle from prototype HTML", () => {
         title: "共建企业 AI 生态，共享增长机遇",
         lead: "面向渠道、交付与技术伙伴，提供多元合作模式、清晰分润政策与全链路赋能支持，共同开拓企业 AI 市场。",
         tags: ["商业回报", "市场协同", "成长认证"],
-        disclaimer: "示意内容，上线后替换为真实生态关系图",
         heroActions: [
           { label: "成为合作伙伴", href: "/partners?view=become#pbc-hero" },
           { label: "了解商业模式", href: "/partners?view=business#pb-hero" },
@@ -35,7 +33,6 @@ describe("partner center full literal oracle from prototype HTML", () => {
         title: "多元化商业模式，匹配每一类伙伴",
         lead: "无论您是代理商、ISV 还是系统集成商，都能找到与华鲲元启最佳合作方式。灵活的商业模式，让每一位伙伴都能获得丰厚回报。",
         tags: ["渠道分销", "联合方案", "OEM 白标"],
-        disclaimer: "示意内容，上线后替换为真实关系图",
         heroActions: [
           { label: "查看合作模式", href: "/partners?view=business#pb-modes" },
           { label: "成为合作伙伴", href: "/partners?view=become#pbc-hero" },
@@ -46,7 +43,6 @@ describe("partner center full literal oracle from prototype HTML", () => {
         title: "清晰的准入与认证体系，提供明确成长路径",
         lead: "清晰的准入标准、完善的认证体系、丰富的支持资源，为每一位伙伴提供明确的成长路径和坚实的后盾。",
         tags: ["三大类型", "三大认证", "五项支持"],
-        disclaimer: "示意内容，上线后替换为真实成长路径图",
         heroActions: [
           { label: "查看准入条件", href: "/partners?view=policy#pp-types" },
           { label: "成为合作伙伴", href: "/partners?view=become#pbc-hero" },
@@ -57,7 +53,6 @@ describe("partner center full literal oracle from prototype HTML", () => {
         title: "系统化培训与认证，快速掌握元启平台",
         lead: "系统化的培训课程、清晰的认证路径、丰富的学习资源，帮助每一位伙伴快速掌握元启平台，赢得市场先机。",
         tags: ["200+ 课程", "三级认证", "五大资源"],
-        disclaimer: "示意内容，上线后替换为真实学习平台界面",
         heroActions: [
           { label: "查看课程体系", href: "/partners?view=training#pt-courses" },
           { label: "联系咨询", topic: "伙伴培训报名" },
@@ -68,7 +63,6 @@ describe("partner center full literal oracle from prototype HTML", () => {
         title: "成为华鲲合作伙伴",
         lead: "选择合作方向，准备基础企业与能力信息，通过人工渠道进一步沟通。",
         tags: ["选择方向", "准备信息", "联系沟通", "确认合作"],
-        disclaimer: "示意内容，上线后替换为真实对接流程",
         heroActions: [
           { label: "立即申请", topic: "申请成为合作伙伴" },
           { label: "查看准入条件", href: "/partners?view=policy#pp-hero" },

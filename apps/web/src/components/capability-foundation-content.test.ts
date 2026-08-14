@@ -218,7 +218,7 @@ describe("prototype capability foundation content contract", () => {
           actions: [
             {
               label: "查看数据问答与分析方案 →",
-              href: "/solutions/finance-data",
+              href: "/solutions/enterprise-data",
             },
           ],
         },

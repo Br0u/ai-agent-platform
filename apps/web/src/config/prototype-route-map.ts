@@ -35,103 +35,13 @@ export const prototypePageRoutes = {
   "skills-application": "/product/skills-application",
   "skills-office": "/product/skills-office",
   governance: "/product/governance",
-  solutions: "/solutions",
+  solutions: "/solutions/finance-compliance",
   "solution-detail": "/solutions/[slug]",
   downloads: "/downloads",
   partners: "/partners",
   pricing: "/pricing",
   contact: "/contact",
   trial: "/trial",
-} as const;
-
-export const commonSolutionDetailKeys = [
-  "private-yuanqi",
-  "cluster-planning",
-  "compute-monitoring",
-  "model-evaluation",
-  "model-deployment",
-  "knowledge-service",
-  "document-intelligence",
-  "data-insight",
-  "knowledge-assets",
-  "unstructured-data",
-  "process-automation",
-  "enterprise-assistant",
-  "multi-agent",
-  "video-intelligence",
-] as const;
-
-export const commonSolutionFilterKeys = [
-  "infrastructure",
-  "knowledge",
-  "agents",
-] as const;
-
-export const industrySolutionDetailKeys = [
-  "government-knowledge",
-  "government-data",
-  "government-document",
-  "government-process",
-  "finance-knowledge",
-  "finance-data",
-  "finance-document",
-  "finance-assistant",
-  "healthcare-knowledge",
-  "healthcare-data",
-  "healthcare-document",
-  "healthcare-process",
-  "enterprise-knowledge",
-  "enterprise-data",
-  "enterprise-document",
-  "enterprise-process",
-  "enterprise-multi-agent",
-] as const;
-
-export const industrySolutionFilterKeys = [
-  "government",
-  "finance",
-  "healthcare",
-  "enterprise",
-] as const;
-
-export const casePendingKeys = ["case-pending-enterprise-knowledge"] as const;
-
-export const solutionViewKeys = [
-  "overview",
-  "list",
-  "detail",
-  "industry-list",
-  "industry-detail",
-  "case-list",
-  "case-detail",
-] as const;
-
-export const solutionListRoutes = {
-  scenarios: {
-    all: "/solutions?view=scenarios#solution-scenarios-directory",
-    infrastructure:
-      "/solutions?view=scenarios&category=infrastructure#solution-scenarios-directory",
-    knowledge:
-      "/solutions?view=scenarios&category=knowledge#solution-scenarios-directory",
-    agents:
-      "/solutions?view=scenarios&category=agents#solution-scenarios-directory",
-  },
-  industries: {
-    all: "/solutions?view=industries#industry-solutions-list",
-    government:
-      "/solutions?view=industries&industry=government#industry-solutions-list",
-    finance:
-      "/solutions?view=industries&industry=finance#industry-solutions-list",
-    healthcare:
-      "/solutions?view=industries&industry=healthcare#industry-solutions-list",
-    enterprise:
-      "/solutions?view=industries&industry=enterprise#industry-solutions-list",
-  },
-  cases: {
-    all: "/solutions?view=cases&mode=all#practice-cases-hero",
-    industry: "/solutions?view=cases&mode=industry#practice-cases-list",
-    scenario: "/solutions?view=cases&mode=scenario#practice-cases-list",
-  },
 } as const;
 
 export const partnerKeys = [

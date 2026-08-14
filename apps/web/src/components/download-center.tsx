@@ -18,7 +18,7 @@ import {
   downloadSoftware,
 } from "./download-center-content";
 
-const MOBILE_DIRECTORY_QUERY = "(max-width: 780px)";
+const MOBILE_DIRECTORY_QUERY = "(max-width: 900px)";
 const FOCUSABLE_SELECTOR = [
   "a[href]",
   "button:not([disabled])",
@@ -135,6 +135,7 @@ export function DownloadCenter() {
   const [toast, setToast] = useState("");
   const [softwareOpen, setSoftwareOpen] = useState(false);
   const [environmentConfirmed, setEnvironmentConfirmed] = useState(false);
+  const [activeHash, setActiveHash] = useState("");
   const mobileTrigger = useRef<HTMLButtonElement>(null);
   const directory = useRef<HTMLElement>(null);
   const directorySearch = useRef<HTMLInputElement>(null);
@@ -167,6 +168,17 @@ export function DownloadCenter() {
     restoreSoftwareFocus.current = true;
     setSoftwareOpen(false);
   };
+
+  useEffect(() => {
+    const syncHash = () => setActiveHash(window.location.hash);
+    syncHash();
+    window.addEventListener("hashchange", syncHash);
+    window.addEventListener("popstate", syncHash);
+    return () => {
+      window.removeEventListener("hashchange", syncHash);
+      window.removeEventListener("popstate", syncHash);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
@@ -322,8 +334,16 @@ export function DownloadCenter() {
           </div>
           <nav aria-label="下载中心完整目录">
             <Link
+              aria-current={
+                activeHash === "" || activeHash === "#dl-hero"
+                  ? "location"
+                  : undefined
+              }
               href="/downloads#dl-hero"
-              onClick={() => closeMobileDirectory(false)}
+              onClick={() => {
+                setActiveHash("#dl-hero");
+                closeMobileDirectory(false);
+              }}
             >
               下载中心总览
             </Link>
@@ -332,9 +352,17 @@ export function DownloadCenter() {
                 {filteredGroups.map((group) => (
                   <li key={group.anchor}>
                     <Link
+                      aria-current={
+                        activeHash === `#${group.anchor}`
+                          ? "location"
+                          : undefined
+                      }
                       className="download-directory__section"
                       href={`/downloads#${group.anchor}`}
-                      onClick={() => closeMobileDirectory(false)}
+                      onClick={() => {
+                        setActiveHash(`#${group.anchor}`);
+                        closeMobileDirectory(false);
+                      }}
                     >
                       {group.label}
                     </Link>
@@ -342,8 +370,16 @@ export function DownloadCenter() {
                       {group.children.map((child) => (
                         <li key={child.href}>
                           <Link
+                            aria-current={
+                              activeHash === `#${child.href.split("#")[1]}`
+                                ? "location"
+                                : undefined
+                            }
                             href={child.href}
-                            onClick={() => closeMobileDirectory(false)}
+                            onClick={() => {
+                              setActiveHash(`#${child.href.split("#")[1]}`);
+                              closeMobileDirectory(false);
+                            }}
                           >
                             {child.label}
                           </Link>
@@ -369,7 +405,6 @@ export function DownloadCenter() {
           inert={mobileOpen || softwareOpen ? true : undefined}
         >
           <section id="dl-hero" className="download-hero">
-            <p className="download-eyebrow">{downloadOverview.eyebrow}</p>
             <h1>{downloadOverview.title}</h1>
             <p className="download-lead">{downloadOverview.lead}</p>
             <div className="download-tags" aria-label="资源类型">
@@ -406,35 +441,39 @@ export function DownloadCenter() {
                 的产品定位、核心能力与产品价值，先建立产品认知，再进入体验。
               </p>
             </header>
-            {(
-              Object.keys(downloadProducts) as (keyof typeof downloadProducts)[]
-            ).map((productKey) => {
-              const product = downloadProducts[productKey];
-              return (
-                <div className="download-product-group" key={productKey}>
-                  <div className="download-product-group__header">
-                    <h3>{product.name}</h3>
-                    <Link href={product.href}>
-                      {productKey === "yuanqi"
-                        ? "进入产品总览 →"
-                        : "进入码多多 2.0 →"}
-                    </Link>
+            <div className="download-product-grid">
+              {(
+                Object.keys(
+                  downloadProducts,
+                ) as (keyof typeof downloadProducts)[]
+              ).map((productKey) => {
+                const product = downloadProducts[productKey];
+                return (
+                  <div className="download-product-group" key={productKey}>
+                    <div className="download-product-group__header">
+                      <h3>{product.name}</h3>
+                      <Link href={product.href}>
+                        {productKey === "yuanqi"
+                          ? "进入产品中心 →"
+                          : "进入码里奥 →"}
+                      </Link>
+                    </div>
+                    <div className="download-grid">
+                      {downloadResources.materials
+                        .filter((resource) => resource.product === productKey)
+                        .map((resource) => (
+                          <ResourceCard
+                            material
+                            key={resource.key}
+                            resource={resource}
+                            showToast={setToast}
+                          />
+                        ))}
+                    </div>
                   </div>
-                  <div className="download-grid">
-                    {downloadResources.materials
-                      .filter((resource) => resource.product === productKey)
-                      .map((resource) => (
-                        <ResourceCard
-                          material
-                          key={resource.key}
-                          resource={resource}
-                          showToast={setToast}
-                        />
-                      ))}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </section>
 
           <section id="dl-software" className="download-section">
@@ -451,8 +490,8 @@ export function DownloadCenter() {
                 <span className="download-tag">独立产品</span>
                 <h3>{downloadSoftware.name}</h3>
                 <p>
-                  企业级智能编码客户端，私有化部署、代码不出域。下载安装前请阅读《码多多
-                  2.0 安装部署指南》。
+                  企业级智能编码客户端，私有化部署、代码不出域。下载安装前请阅读《码里奥
+                  安装部署指南》。
                 </p>
                 <div className="download-software__meta">
                   <span>版本：{downloadSoftware.version}</span>
@@ -469,7 +508,7 @@ export function DownloadCenter() {
                   >
                     下载安装
                   </button>
-                  <Link href="/product/code-agent">查看码多多 2.0 →</Link>
+                  <Link href="/product/code-agent">查看码里奥 →</Link>
                 </div>
               </div>
               <div className="download-software__path">
@@ -562,7 +601,7 @@ export function DownloadCenter() {
               <p>
                 支持系统：{downloadSoftware.systems}｜{downloadSoftware.size}
               </p>
-              <p>安装前请阅读《码多多 2.0 安装部署指南》。</p>
+              <p>安装前请阅读《码里奥 安装部署指南》。</p>
               <label>
                 <input
                   type="checkbox"

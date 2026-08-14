@@ -1,12 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const solutions = [
-  ["knowledge-service", "企业知识问答与知识服务"],
-  ["process-automation", "业务流程自动化与智能协同"],
-  ["government-knowledge", "政务知识问答与政策服务"],
-  ["finance-data", "经营数据问答与业务分析"],
-  ["healthcare-knowledge", "医院知识与制度问答"],
-  ["enterprise-multi-agent", "多智能体复杂任务处理"],
+  ["railway-exam", "党建知识库智能问答"],
+  ["enterprise-data", "销售经营数据智能问数"],
+  ["ps-ghost-rider", "鬼火少年检测"],
+  ["government-process", "工商注册智能导办"],
+  ["finance-aml", "交易监测模型智能开发"],
+  ["semi-ai-scientist", "光刻胶研发模型微调"],
 ] as const;
 
 async function expectNoHorizontalOverflow(page: Page) {
@@ -75,8 +75,8 @@ test("新页面在桌面、平板和移动宽度无横向溢出", async ({ page 
   ]) {
     await page.setViewportSize(viewport);
     for (const path of [
-      "/solutions/knowledge-service",
-      "/solutions/finance-data",
+      "/solutions/railway-exam",
+      "/solutions/finance-aml",
       "/trial",
     ]) {
       await page.goto(path, { waitUntil: "load" });
@@ -87,7 +87,7 @@ test("新页面在桌面、平板和移动宽度无横向溢出", async ({ page 
 
 test("新页面继续使用 shell 的唯一 Agent 聊天入口", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  for (const path of ["/solutions/knowledge-service", "/trial"]) {
+  for (const path of ["/solutions/railway-exam", "/trial"]) {
     await page.goto(path, { waitUntil: "domcontentloaded" });
     await page.waitForLoadState("load");
     await expect(page.locator(".floating-assistant__launcher")).toHaveCount(1);
