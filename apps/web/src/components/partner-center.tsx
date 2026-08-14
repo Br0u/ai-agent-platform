@@ -137,7 +137,9 @@ export function PartnerCenter() {
   const activeKey = location.node?.key ?? view;
   const selectedType = location.type;
   const [query, setQuery] = useState("");
-  const [directoryCollapsed, setDirectoryCollapsed] = useState(true);
+  const [expandedDirectoryView, setExpandedDirectoryView] =
+    useState<PartnerView | null>(null);
+  const directoryCollapsed = expandedDirectoryView !== view;
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     () => new Set(),
   );
@@ -482,7 +484,11 @@ export function PartnerCenter() {
               aria-label={
                 directoryCollapsed ? "展开合作伙伴目录" : "收起合作伙伴目录"
               }
-              onClick={() => setDirectoryCollapsed((value) => !value)}
+              onClick={() =>
+                setExpandedDirectoryView((current) =>
+                  current === view ? null : view,
+                )
+              }
             >
               {directoryCollapsed ? "›" : "‹"}
             </button>

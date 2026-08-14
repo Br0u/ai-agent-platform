@@ -229,6 +229,21 @@ describe("PartnerCenter", () => {
     ).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("starts each partner view with the desktop directory collapsed", () => {
+    render(<PartnerCenter />);
+
+    fireEvent.click(screen.getByRole("button", { name: "展开合作伙伴目录" }));
+    expect(
+      screen.getByRole("button", { name: "收起合作伙伴目录" }),
+    ).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(screen.getByRole("link", { name: "伙伴政策" }));
+
+    expect(
+      screen.getByRole("button", { name: "展开合作伙伴目录" }),
+    ).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("uses only current-view anchors and keeps an active child visible after its group is folded", async () => {
     window.history.replaceState(null, "", "/partners?view=business#pb-hero");
     Object.defineProperty(window, "scrollY", {
