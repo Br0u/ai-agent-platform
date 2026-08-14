@@ -9,7 +9,12 @@
 }
 
 .directory-progress-rail__track {
-  background: linear-gradient(to bottom, rgb(108 105 184 / 0.1), rgb(93 117 220 / 0.28), rgb(108 105 184 / 0.1));
+  background: linear-gradient(
+    to bottom,
+    rgb(108 105 184 / 0.1),
+    rgb(93 117 220 / 0.28),
+    rgb(108 105 184 / 0.1)
+  );
   height: 100%;
   position: relative;
   width: 1px;

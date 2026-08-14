@@ -67,15 +67,23 @@ export function selectActiveAnchor(
 }
 
 function getScrollHeight() {
-  return Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
+  return Math.max(
+    document.documentElement.scrollHeight,
+    document.body.scrollHeight,
+  );
 }
 
 function getHeaderOffset() {
   return document.querySelector("header")?.getBoundingClientRect().bottom ?? 0;
 }
 
-export function useDirectoryProgress(anchorIds: readonly string[]): DirectoryProgressState {
-  const key = useMemo(() => [...new Set(anchorIds.filter(Boolean))].join("\u0000"), [anchorIds]);
+export function useDirectoryProgress(
+  anchorIds: readonly string[],
+): DirectoryProgressState {
+  const key = useMemo(
+    () => [...new Set(anchorIds.filter(Boolean))].join("\u0000"),
+    [anchorIds],
+  );
   const ids = useMemo(() => (key ? key.split("\u0000") : []), [key]);
   const [state, setState] = useState<DirectoryProgressState>({
     activeHash: "",
@@ -103,7 +111,8 @@ export function useDirectoryProgress(anchorIds: readonly string[]): DirectoryPro
       };
 
       setState((current) =>
-        current.activeHash === next.activeHash && current.progress === next.progress
+        current.activeHash === next.activeHash &&
+        current.progress === next.progress
           ? current
           : next,
       );
@@ -149,7 +158,11 @@ export function DirectoryProgressRail({
   const dotTop = `${Math.round(Math.min(1, Math.max(0, progress)) * 10000) / 100}%`;
 
   return (
-    <span aria-hidden="true" className="directory-progress-rail" data-testid="directory-progress-rail">
+    <span
+      aria-hidden="true"
+      className="directory-progress-rail"
+      data-testid="directory-progress-rail"
+    >
       <span className="directory-progress-rail__track">
         <span
           className="directory-progress-rail__dot"

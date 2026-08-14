@@ -1,4 +1,10 @@
-import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  renderHook,
+  screen,
+} from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -58,32 +64,48 @@ afterEach(() => {
 describe("calculatePageProgress", () => {
   it("clamps the scroll range to zero through one", () => {
     expect(
-      calculatePageProgress({ scrollY: -10, scrollHeight: 1_800, innerHeight: 800 }),
+      calculatePageProgress({
+        scrollY: -10,
+        scrollHeight: 1_800,
+        innerHeight: 800,
+      }),
     ).toBe(0);
     expect(
-      calculatePageProgress({ scrollY: 500, scrollHeight: 1_800, innerHeight: 800 }),
+      calculatePageProgress({
+        scrollY: 500,
+        scrollHeight: 1_800,
+        innerHeight: 800,
+      }),
     ).toBe(0.5);
     expect(
-      calculatePageProgress({ scrollY: 1_500, scrollHeight: 1_800, innerHeight: 800 }),
+      calculatePageProgress({
+        scrollY: 1_500,
+        scrollHeight: 1_800,
+        innerHeight: 800,
+      }),
     ).toBe(1);
   });
 
   it("returns zero when the document cannot scroll", () => {
     expect(
-      calculatePageProgress({ scrollY: 0, scrollHeight: 800, innerHeight: 800 }),
+      calculatePageProgress({
+        scrollY: 0,
+        scrollHeight: 800,
+        innerHeight: 800,
+      }),
     ).toBe(0);
   });
 });
 
 describe("selectActiveAnchor", () => {
   it("uses DOM order instead of visual positions or input order", () => {
-    appendAnchor("first", 500);
-    appendAnchor("second", 120);
+    appendAnchor("first", -20);
+    appendAnchor("second", -10);
 
     expect(
       selectActiveAnchor(["second", "first"], {
         atBottom: false,
-        headerOffset: 160,
+        headerOffset: 100,
       }),
     ).toBe("second");
   });
@@ -105,14 +127,11 @@ describe("selectActiveAnchor", () => {
     appendAnchor("second", -10);
 
     expect(
-      selectActiveAnchor(
-        ["first", "second"],
-        {
-          atBottom: false,
-          atTop: true,
-          headerOffset: 100,
-        } as Parameters<typeof selectActiveAnchor>[1],
-      ),
+      selectActiveAnchor(["first", "second"], {
+        atBottom: false,
+        atTop: true,
+        headerOffset: 100,
+      }),
     ).toBe("first");
   });
 
@@ -175,7 +194,9 @@ describe("useDirectoryProgress", () => {
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
 
     const historyReplace = vi.spyOn(window.history, "replaceState");
-    const hook = renderHook(() => useDirectoryProgress(["first", "first", "missing", "second"]));
+    const hook = renderHook(() =>
+      useDirectoryProgress(["first", "first", "missing", "second"]),
+    );
 
     expect(hook.result.current).toEqual({ activeHash: "#first", progress: 0 });
     expect(observe).toHaveBeenCalledWith(document.documentElement);
@@ -185,13 +206,22 @@ describe("useDirectoryProgress", () => {
       window.dispatchEvent(new Event("scroll"));
     });
 
-    expect(hook.result.current).toEqual({ activeHash: "#second", progress: 0.5 });
+    expect(hook.result.current).toEqual({
+      activeHash: "#second",
+      progress: 0.5,
+    });
     expect(historyReplace).not.toHaveBeenCalled();
 
     hook.unmount();
 
-    expect(removeEventListener).toHaveBeenCalledWith("scroll", expect.any(Function));
-    expect(removeEventListener).toHaveBeenCalledWith("resize", expect.any(Function));
+    expect(removeEventListener).toHaveBeenCalledWith(
+      "scroll",
+      expect.any(Function),
+    );
+    expect(removeEventListener).toHaveBeenCalledWith(
+      "resize",
+      expect.any(Function),
+    );
     expect(disconnect).toHaveBeenCalledOnce();
   });
 
@@ -223,15 +253,22 @@ describe("DirectoryProgressRail", () => {
       "aria-hidden",
       "true",
     );
-    expect(screen.getByTestId("directory-progress-dot")).toHaveStyle({ top: "25%" });
+    expect(screen.getByTestId("directory-progress-dot")).toHaveStyle({
+      top: "25%",
+    });
 
     view.rerender(<DirectoryProgressRail collapsed={false} progress={0.25} />);
 
-    expect(screen.queryByTestId("directory-progress-rail")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("directory-progress-rail"),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps motion short and disables it for reduced motion", () => {
-    const stylesheet = readFileSync("src/components/directory-progress.css", "utf8");
+    const stylesheet = readFileSync(
+      "src/components/directory-progress.css",
+      "utf8",
+    );
 
     expect(stylesheet).toMatch(/transition:\s*top\s+160ms/);
     expect(stylesheet).toMatch(/prefers-reduced-motion:\s*reduce/);
