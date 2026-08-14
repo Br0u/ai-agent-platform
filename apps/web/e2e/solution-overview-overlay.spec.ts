@@ -250,6 +250,16 @@ test("桌面目录严格使用 V2 八行业并支持搜索折叠", async ({ page
     .click();
   await expect(
     page.getByRole("link", { name: "贷款合规智能审查" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "贷款合规智能审查" }),
+  ).toHaveAttribute("aria-current", "page");
+
+  await page
+    .getByRole("button", { name: "展开或收起铁路行业解决方案" })
+    .click();
+  await expect(
+    page.getByRole("link", { name: "规章制度精准解析" }),
   ).toHaveCount(0);
 });
 

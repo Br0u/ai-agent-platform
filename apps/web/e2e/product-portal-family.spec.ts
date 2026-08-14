@@ -127,7 +127,7 @@ const pages = [
 async function gotoProduct(page: Page, path: string) {
   await page.emulateMedia({ reducedMotion: "reduce" });
   const response = await page.goto(path, { waitUntil: "domcontentloaded" });
-  await page.waitForLoadState("load");
+  await expect(page.locator("main.product-portal")).toBeVisible();
   return response;
 }
 

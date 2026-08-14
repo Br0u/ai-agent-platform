@@ -498,11 +498,10 @@ test("partners 执行五视图、15 key、筛选、history 和联系弹层合同
   await page.setViewportSize({ width: 1440, height: 1000 });
   await gotoPartners(page, "?view=business#pb-tiers");
 
-  await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
-
   const directory = page.getByRole("navigation", {
     name: "合作伙伴完整目录",
   });
+  await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
   await expect(directory.getByRole("link")).toHaveCount(15);
   await expect(
     page.getByRole("heading", {
@@ -514,6 +513,7 @@ test("partners 执行五视图、15 key、筛选、history 和联系弹层合同
     "data-partner-target",
     "business-tiers",
   );
+  await page.getByRole("button", { name: "收起合作伙伴目录" }).click();
 
   for (const [label, view, hash, heading] of [
     ["合作伙伴总览", "overview", "po-hero", "共建企业 AI 生态，共享增长机遇"],
@@ -522,6 +522,7 @@ test("partners 执行五视图、15 key、筛选、history 和联系弹层合同
     ["伙伴培训", "training", "pt-hero", "系统化培训与认证，快速掌握元启平台"],
     ["成为合作伙伴", "become", "pbc-hero", "成为华鲲合作伙伴"],
   ] as const) {
+    await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
     await directory.getByRole("link", { name: label, exact: true }).click();
     await expect(page).toHaveURL(
       new RegExp(`/partners\\?view=${view}#${hash}$`, "u"),
@@ -531,8 +532,10 @@ test("partners 执行五视图、15 key、筛选、history 和联系弹层合同
     ).toHaveCount(1);
   }
 
+  await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
   await directory.getByRole("link", { name: "合作伙伴总览" }).click();
   await expect(page).toHaveURL(/\/partners\?view=overview#po-hero$/u);
+  await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
   const search = page.getByRole("searchbox", {
     name: "在合作伙伴目录中筛选",
   });
