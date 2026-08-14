@@ -100,6 +100,22 @@ describe("selectActiveAnchor", () => {
     ).toBe("first");
   });
 
+  it("forces the first anchor at scroll position zero even after later anchors cross the header", () => {
+    appendAnchor("first", -20);
+    appendAnchor("second", -10);
+
+    expect(
+      selectActiveAnchor(
+        ["first", "second"],
+        {
+          atBottom: false,
+          atTop: true,
+          headerOffset: 100,
+        } as Parameters<typeof selectActiveAnchor>[1],
+      ),
+    ).toBe("first");
+  });
+
   it("selects the last anchor that has crossed the header offset", () => {
     appendAnchor("first", 60);
     appendAnchor("second", 130);
@@ -177,6 +193,25 @@ describe("useDirectoryProgress", () => {
     expect(removeEventListener).toHaveBeenCalledWith("scroll", expect.any(Function));
     expect(removeEventListener).toHaveBeenCalledWith("resize", expect.any(Function));
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("does not treat overscroll beyond one pixel as the page bottom", () => {
+    appendAnchor("first", 10);
+    appendAnchor("last", 1_700);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+
+    const hook = renderHook(() => useDirectoryProgress(["first", "last"]));
+
+    setScrollY(1_610);
+    act(() => {
+      window.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(hook.result.current).toEqual({ activeHash: "#first", progress: 1 });
   });
 });
 

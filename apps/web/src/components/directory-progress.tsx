@@ -12,6 +12,7 @@ type PageMetrics = {
 
 type AnchorOptions = {
   atBottom: boolean;
+  atTop?: boolean;
   headerOffset: number;
 };
 
@@ -48,11 +49,12 @@ function getAnchors(anchorIds: readonly string[]) {
 
 export function selectActiveAnchor(
   anchorIds: readonly string[],
-  { atBottom, headerOffset }: AnchorOptions,
+  { atBottom, atTop = false, headerOffset }: AnchorOptions,
 ) {
   const anchors = getAnchors(anchorIds);
 
   if (anchors.length === 0) return "";
+  if (atTop) return anchors[0][0];
   if (atBottom) return anchors.at(-1)?.[0] ?? "";
 
   let activeId = anchors[0][0];
@@ -87,7 +89,8 @@ export function useDirectoryProgress(anchorIds: readonly string[]): DirectoryPro
       const scrollY = window.scrollY;
       const scrollRange = scrollHeight - window.innerHeight;
       const activeId = selectActiveAnchor(ids, {
-        atBottom: scrollRange > 0 && scrollRange - scrollY <= 1,
+        atBottom: scrollRange > 0 && Math.abs(scrollRange - scrollY) <= 1,
+        atTop: scrollY <= 0,
         headerOffset: getHeaderOffset(),
       });
       const next = {
