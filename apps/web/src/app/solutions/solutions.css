@@ -186,11 +186,16 @@
 .solution-shell[data-directory-collapsed="true"] .solution-directory {
   width: 52px;
   overflow: hidden;
+  box-shadow: inset -1px 0 rgb(40 108 255 / 7%);
+  background: linear-gradient(180deg, #fafbff, #f4f7ff);
 }
 
 .solution-shell[data-directory-collapsed="true"] .solution-directory__tools {
   display: block;
   padding: 14px 7px;
+  border-bottom-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .solution-shell[data-directory-collapsed="true"]
@@ -205,6 +210,9 @@
   button {
   width: 38px;
   height: 38px;
+  border-color: rgb(76 108 196 / 12%);
+  background: rgb(255 255 255 / 58%);
+  box-shadow: none;
 }
 
 .solution-directory-mobile,

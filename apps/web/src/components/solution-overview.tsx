@@ -14,9 +14,13 @@ import {
   type SolutionDirectoryNode,
   solutionDirectory,
 } from "./solution-overview-content";
+import {
+  DirectoryProgressRail,
+  useDirectoryProgress,
+} from "./directory-progress";
 import "./product-directory.css";
 
-const MOBILE_DIRECTORY_QUERY = "(max-width: 780px)";
+const MOBILE_DIRECTORY_QUERY = "(max-width: 900px)";
 const FOCUSABLE_SELECTOR =
   'a[href],button:not([disabled]),input:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
@@ -93,7 +97,7 @@ export function SolutionOverview({ children }: { children: ReactNode }) {
   const slug = pathname.split("/").filter(Boolean).at(-1) ?? "";
   const activeInternalId = `solution-${slug}`;
   const [query, setQuery] = useState("");
-  const [directoryCollapsed, setDirectoryCollapsed] = useState(false);
+  const [directoryCollapsed, setDirectoryCollapsed] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const mobileTrigger = useRef<HTMLButtonElement>(null);
@@ -104,6 +108,7 @@ export function SolutionOverview({ children }: { children: ReactNode }) {
     solutionDirectory,
     query.trim().toLowerCase(),
   );
+  const { progress } = useDirectoryProgress([]);
 
   const closeMobile = (returnFocus = true) => {
     restoreFocus.current = returnFocus;
@@ -199,6 +204,10 @@ export function SolutionOverview({ children }: { children: ReactNode }) {
           onKeyDown={trapFocus}
           role={isMobile && mobileOpen ? "dialog" : undefined}
         >
+          <DirectoryProgressRail
+            collapsed={directoryCollapsed}
+            progress={progress}
+          />
           <div className="solution-directory__tools">
             <input
               ref={searchInput}

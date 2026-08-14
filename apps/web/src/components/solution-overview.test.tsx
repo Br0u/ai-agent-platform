@@ -19,6 +19,38 @@ afterEach(() => {
 });
 
 describe("V2 solution directory", () => {
+  it("starts collapsed, keeps the current route marked, and uses the shared 900px boundary", () => {
+    const matchMedia = vi.fn().mockReturnValue({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("matchMedia", matchMedia);
+    const { container } = render(<SolutionOverview>content</SolutionOverview>);
+
+    expect(container.querySelector(".solution-shell")).toHaveAttribute(
+      "data-directory-collapsed",
+      "true",
+    );
+    expect(screen.getByTestId("directory-progress-rail")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", {
+        name: "贷款合规智能审查",
+      }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(matchMedia).toHaveBeenCalledWith("(max-width: 900px)");
+
+    fireEvent.click(screen.getByRole("button", { name: "展开解决方案目录" }));
+    expect(
+      screen.queryByTestId("directory-progress-rail"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", {
+        name: "贷款合规智能审查",
+      }),
+    ).toHaveAttribute("aria-current", "page");
+  });
+
   it("searches and folds the exact industry tree", () => {
     render(<SolutionOverview>content</SolutionOverview>);
     expect(

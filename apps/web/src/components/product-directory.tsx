@@ -4,6 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  DirectoryProgressRail,
+  useDirectoryProgress,
+} from "./directory-progress";
 import "./product-directory.css";
 
 type DirectoryItem = {
@@ -121,6 +125,35 @@ function filterDirectory(
   });
 }
 
+function getCapabilityAnchorIds(
+  items: readonly DirectoryItem[],
+  pathname: string,
+): string[] {
+  return items.flatMap((item) => {
+    const [targetPath, targetAnchor] = item.href.split("#");
+    return [
+      ...(targetPath === pathname && targetAnchor ? [targetAnchor] : []),
+      ...getCapabilityAnchorIds(item.children ?? [], pathname),
+    ];
+  });
+}
+
+function containsActiveCapability(
+  item: DirectoryItem,
+  pathname: string,
+  activeHash: string,
+): boolean {
+  const [targetPath, targetAnchor] = item.href.split("#");
+  return (
+    (targetPath === pathname &&
+      Boolean(targetAnchor) &&
+      activeHash === `#${targetAnchor}`) ||
+    (item.children ?? []).some((child) =>
+      containsActiveCapability(child, pathname, activeHash),
+    )
+  );
+}
+
 function DirectoryTree({
   activeHash,
   folded,
@@ -145,7 +178,10 @@ function DirectoryTree({
         pathname === targetPath &&
         activeHash === (targetAnchor ? `#${targetAnchor}` : "");
       const hasChildren = Boolean(item.children?.length);
-      const expanded = queryActive || !folded.has(item.href);
+      const expanded =
+        queryActive ||
+        containsActiveCapability(item, pathname, activeHash) ||
+        !folded.has(item.href);
 
       return (
         <li
@@ -201,7 +237,7 @@ function DirectoryTree({
 export function ProductDirectory() {
   const pathname = usePathname();
   const [query, setQuery] = useState("");
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const [activeHash, setActiveHash] = useState("");
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -212,6 +248,13 @@ export function ProductDirectory() {
   const previousPathnameRef = useRef(pathname);
   const activePathname =
     pathname === "/product/standalone" ? "/product" : pathname;
+  const capabilityAnchorIds = useMemo(
+    () => getCapabilityAnchorIds(directory, activePathname),
+    [activePathname],
+  );
+  const { activeHash: trackedHash, progress } =
+    useDirectoryProgress(capabilityAnchorIds);
+  const currentHash = trackedHash || activeHash;
   const filtered = useMemo(
     () => filterDirectory(directory, query.trim().toLocaleLowerCase()),
     [query],
@@ -357,6 +400,7 @@ export function ProductDirectory() {
         aria-label="产品目录"
         className={`product-directory ${collapsed ? "is-collapsed" : ""}`}
       >
+        <DirectoryProgressRail collapsed={collapsed} progress={progress} />
         <div className="product-directory-tools">
           {search}
           <button
@@ -370,7 +414,7 @@ export function ProductDirectory() {
         </div>
         <div className="product-directory-tree">
           <DirectoryTree
-            activeHash={activeHash}
+            activeHash={currentHash}
             folded={folded}
             items={filtered}
             onNavigate={onNavigate}
@@ -425,7 +469,7 @@ export function ProductDirectory() {
           {search}
           <div className="product-directory-tree">
             <DirectoryTree
-              activeHash={activeHash}
+              activeHash={currentHash}
               folded={folded}
               items={filtered}
               onNavigate={onNavigate}

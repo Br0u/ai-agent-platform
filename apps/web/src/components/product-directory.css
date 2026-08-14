@@ -46,6 +46,8 @@
 
 .product-directory.is-collapsed {
   width: 52px;
+  box-shadow: inset -1px 0 rgb(40 108 255 / 7%);
+  background: linear-gradient(180deg, #fafbff, #f4f7ff);
 }
 
 .product-directory-layout:has(.product-directory.is-collapsed) {
@@ -118,6 +120,15 @@
 .product-directory.is-collapsed .product-directory-tools {
   grid-template-columns: 1fr;
   padding-inline: 7px;
+  border-bottom-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.product-directory.is-collapsed .product-directory-tools button {
+  border-color: rgb(76 108 196 / 12%);
+  background: rgb(255 255 255 / 58%);
+  box-shadow: none;
 }
 
 .product-directory-tree {

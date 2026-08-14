@@ -23,6 +23,13 @@ afterEach(() => {
   navigation.pathname = "/product/code-agent";
   window.history.replaceState(null, "", "/");
   document.body.style.overflow = "";
+  document
+    .querySelectorAll<HTMLElement>("[data-directory-test-anchor]")
+    .forEach((anchor) => anchor.remove());
+  Object.defineProperty(window, "scrollY", {
+    configurable: true,
+    value: 0,
+  });
 });
 
 function installDesktopBreakpoint(initialMatches = false) {
@@ -99,6 +106,73 @@ function renderShellDirectory() {
 }
 
 describe("ProductDirectory", () => {
+  it("starts collapsed and only shows the progress rail while collapsed", () => {
+    renderDirectory();
+
+    const directory = screen.getByRole("complementary", { name: "产品目录" });
+    expect(directory).toHaveClass("is-collapsed");
+    expect(screen.getByTestId("directory-progress-rail")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开产品目录" }));
+    expect(directory).not.toHaveClass("is-collapsed");
+    expect(
+      screen.queryByTestId("directory-progress-rail"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("prefers the scrolled capability over the URL hash without writing history", async () => {
+    window.history.replaceState(null, "", "/product/code-agent#mdd2-mcp");
+    const anchor = document.createElement("section");
+    anchor.dataset.directoryTestAnchor = "true";
+    anchor.id = "mdd2-dev";
+    anchor.getBoundingClientRect = () => ({ top: -12 }) as DOMRect;
+    document.body.append(anchor);
+    Object.defineProperty(window, "scrollY", {
+      configurable: true,
+      value: 160,
+    });
+
+    renderDirectory();
+    fireEvent.scroll(window);
+
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole("link", { name: "自然语言开发" })
+          .find((link) => link.getAttribute("href")?.endsWith("#mdd2-dev")),
+      ).toHaveAttribute("aria-current", "location"),
+    );
+    expect(window.location.hash).toBe("#mdd2-mcp");
+  });
+
+  it("keeps the active capability ancestors visible after a manual fold", async () => {
+    const anchor = document.createElement("section");
+    anchor.dataset.directoryTestAnchor = "true";
+    anchor.id = "mdd2-dev";
+    anchor.getBoundingClientRect = () => ({ top: -12 }) as DOMRect;
+    document.body.append(anchor);
+    Object.defineProperty(window, "scrollY", {
+      configurable: true,
+      value: 160,
+    });
+
+    renderDirectory();
+    const toggle = screen.getByRole("button", {
+      name: "展开或收起码里奥",
+    });
+    fireEvent.click(toggle);
+    fireEvent.scroll(window);
+
+    await waitFor(() =>
+      expect(toggle).toHaveAttribute("aria-expanded", "true"),
+    );
+    expect(
+      screen
+        .getAllByRole("link", { name: "自然语言开发" })
+        .find((link) => link.getAttribute("href")?.endsWith("#mdd2-dev")),
+    ).toBeVisible();
+  });
+
   it("renders the exact V2 directory hierarchy with real routes and anchors", () => {
     render(<ProductDirectory />);
 
@@ -222,6 +296,8 @@ describe("ProductDirectory", () => {
 
   it("filters the directory and collapses the desktop sidebar", () => {
     render(<ProductDirectory />);
+
+    fireEvent.click(screen.getByRole("button", { name: "展开产品目录" }));
 
     fireEvent.change(
       screen.getByRole("searchbox", { name: "在产品目录中筛选" }),
