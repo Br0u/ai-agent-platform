@@ -229,7 +229,7 @@ describe("PartnerCenter", () => {
     ).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("starts each partner view with the desktop directory collapsed", () => {
+  it("starts every partner view change with the desktop directory collapsed", () => {
     render(<PartnerCenter />);
 
     fireEvent.click(screen.getByRole("button", { name: "展开合作伙伴目录" }));
@@ -238,6 +238,12 @@ describe("PartnerCenter", () => {
     ).toHaveAttribute("aria-expanded", "true");
 
     fireEvent.click(screen.getByRole("link", { name: "伙伴政策" }));
+
+    expect(
+      screen.getByRole("button", { name: "展开合作伙伴目录" }),
+    ).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(screen.getByRole("link", { name: "合作伙伴总览" }));
 
     expect(
       screen.getByRole("button", { name: "展开合作伙伴目录" }),

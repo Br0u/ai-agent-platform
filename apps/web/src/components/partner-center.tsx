@@ -137,9 +137,14 @@ export function PartnerCenter() {
   const activeKey = location.node?.key ?? view;
   const selectedType = location.type;
   const [query, setQuery] = useState("");
-  const [expandedDirectoryView, setExpandedDirectoryView] =
-    useState<PartnerView | null>(null);
-  const directoryCollapsed = expandedDirectoryView !== view;
+  const [directoryExpansion, setDirectoryExpansion] = useState(() => ({
+    view,
+    expanded: false,
+  }));
+  if (directoryExpansion.view !== view) {
+    setDirectoryExpansion({ view, expanded: false });
+  }
+  const directoryCollapsed = !directoryExpansion.expanded;
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     () => new Set(),
   );
@@ -485,9 +490,10 @@ export function PartnerCenter() {
                 directoryCollapsed ? "展开合作伙伴目录" : "收起合作伙伴目录"
               }
               onClick={() =>
-                setExpandedDirectoryView((current) =>
-                  current === view ? null : view,
-                )
+                setDirectoryExpansion({
+                  view,
+                  expanded: !directoryExpansion.expanded,
+                })
               }
             >
               {directoryCollapsed ? "›" : "‹"}
