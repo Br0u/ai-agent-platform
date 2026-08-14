@@ -241,8 +241,10 @@ export function ProductDirectory() {
     collapsed: true,
     pathname,
   }));
-  const collapsed =
-    directoryState.pathname === pathname ? directoryState.collapsed : true;
+  if (directoryState.pathname !== pathname) {
+    setDirectoryState({ collapsed: true, pathname });
+  }
+  const collapsed = directoryState.collapsed;
   const [activeHash, setActiveHash] = useState("");
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
   const [mobileOpen, setMobileOpen] = useState(false);

@@ -97,6 +97,21 @@ describe("V2 solution directory", () => {
     );
   });
 
+  it("does not restore an old expanded state after returning to a pathname", async () => {
+    const view = render(<SolutionOverview>content</SolutionOverview>);
+    const shell = view.container.querySelector(".solution-shell");
+
+    fireEvent.click(screen.getByRole("button", { name: "展开解决方案目录" }));
+    navigation.pathname = "/solutions/finance-aml";
+    view.rerender(<SolutionOverview>content</SolutionOverview>);
+    navigation.pathname = "/solutions/finance-compliance";
+    view.rerender(<SolutionOverview>content</SolutionOverview>);
+
+    await waitFor(() =>
+      expect(shell).toHaveAttribute("data-directory-collapsed", "true"),
+    );
+  });
+
   it("keeps ancestors of the active solution route open after a manual fold", () => {
     render(<SolutionOverview>content</SolutionOverview>);
 

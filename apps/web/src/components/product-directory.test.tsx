@@ -138,6 +138,29 @@ describe("ProductDirectory", () => {
     await waitFor(() => expect(directory).toHaveClass("is-collapsed"));
   });
 
+  it("does not restore an old expanded state after returning to a pathname", async () => {
+    const view = renderDirectory();
+    const directory = screen.getByRole("complementary", { name: "产品目录" });
+
+    fireEvent.click(screen.getByRole("button", { name: "展开产品目录" }));
+    navigation.pathname = "/product/aippt";
+    view.rerender(
+      <div className="product-directory-layout">
+        <ProductDirectory />
+        <div className="product-directory-content" />
+      </div>,
+    );
+    navigation.pathname = "/product/code-agent";
+    view.rerender(
+      <div className="product-directory-layout">
+        <ProductDirectory />
+        <div className="product-directory-content" />
+      </div>,
+    );
+
+    await waitFor(() => expect(directory).toHaveClass("is-collapsed"));
+  });
+
   it("prefers the scrolled capability over the URL hash without writing history", async () => {
     window.history.replaceState(null, "", "/product/code-agent#mdd2-mcp");
     const anchor = document.createElement("section");

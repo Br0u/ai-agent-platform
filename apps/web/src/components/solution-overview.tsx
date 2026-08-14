@@ -114,8 +114,10 @@ export function SolutionOverview({ children }: { children: ReactNode }) {
     collapsed: true,
     pathname,
   }));
-  const directoryCollapsed =
-    directoryState.pathname === pathname ? directoryState.collapsed : true;
+  if (directoryState.pathname !== pathname) {
+    setDirectoryState({ collapsed: true, pathname });
+  }
+  const directoryCollapsed = directoryState.collapsed;
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const mobileTrigger = useRef<HTMLButtonElement>(null);
