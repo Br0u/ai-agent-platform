@@ -162,6 +162,19 @@
   font-size: 13px;
 }
 
+.download-directory__group {
+  display: block;
+  padding: 8px 12px 5px 28px;
+  color: var(--download-ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.download-directory nav ul ul ul a {
+  padding-left: 42px;
+  font-size: 12px;
+}
+
 .download-directory__section {
   font-weight: 700;
 }
@@ -429,8 +442,7 @@
   line-height: 1.7;
 }
 
-.download-path a,
-.download-product-group__header a {
+.download-path a {
   color: var(--download-link);
   text-decoration: none;
 }
@@ -455,13 +467,13 @@
 
 .download-product-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   margin-top: 18px;
 }
 
 .download-product-grid .download-grid {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .download-product-group__header {
@@ -500,41 +512,6 @@
     transform 220ms var(--download-ease),
     border-color 180ms ease,
     box-shadow 220ms ease;
-}
-
-.download-card__cover {
-  display: grid;
-  align-content: space-between;
-  min-height: 128px;
-  padding: 18px;
-  color: var(--download-ink);
-  background-image:
-    linear-gradient(110deg, rgb(247 250 255 / 96%), rgb(229 236 255 / 62%)),
-    url("/assets/downloads/resource-flow-bg.webp");
-  background-position:
-    center,
-    74% 54%;
-  background-size:
-    cover,
-    720px auto;
-  box-shadow: inset 0 -1px rgb(76 108 196 / 10%);
-}
-
-.download-card:nth-child(2n) .download-card__cover {
-  background-position:
-    center,
-    84% 40%;
-}
-
-.download-card:nth-child(3n) .download-card__cover {
-  background-position:
-    center,
-    64% 66%;
-}
-
-.download-card__cover span {
-  font-size: 13px;
-  color: var(--download-muted);
 }
 
 .download-card__body {

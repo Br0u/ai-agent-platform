@@ -23,6 +23,7 @@ const items: PortalNavigationItem[] = [
     description: "覆盖企业 AI 全生命周期的一站式能力地图。",
     children: [
       {
+        groupLabel: "全栈开发平台",
         label: "平台",
         items: [
           {
@@ -140,6 +141,13 @@ describe("MegaMenu", () => {
         document.getElementById(link.getAttribute("aria-controls")!),
       ).toBeInstanceOf(HTMLElement);
     }
+  });
+
+  it("renders an optional section group label", () => {
+    renderMenu();
+    fireEvent.pointerEnter(trigger("产品"));
+
+    expect(screen.getByText("全栈开发平台")).toBeVisible();
   });
 
   it("renders empty-child parents as direct links without empty panels", () => {

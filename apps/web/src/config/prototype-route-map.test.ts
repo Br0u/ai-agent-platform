@@ -76,19 +76,28 @@ describe("prototype route map", () => {
 
   it("locks all download resource keys", () => {
     expect(downloadResourceKeys).toEqual([
-      "yuanqi-intro",
-      "yuanqi-features",
-      "yuanqi-arch",
+      "yuanqi-fullstack",
+      "yuanqi-appliance",
+      "yuanqi-cases",
+      "yuanqi-folder",
+      "yuanqi-usage",
       "mdd2-intro",
-      "mdd2-features",
-      "mdd2-env",
+      "mdd2-solution",
+      "office-appliance",
+      "office-doc",
+      "office-contract",
+      "office-bid",
+      "daoban-appliance",
+      "daoban-gov",
+      "daoban-assistant",
+      "vision-folder",
+      "vision-solution",
+      "vision-intro",
+      "vision-usage",
       "mdd2-client",
-      "mdd2-deploy",
-      "mdd2-usage",
       "yuanqi-deploy",
-      "wp-ai",
-      "wp-llm",
-      "wp-agent",
+      "yuanqi-faq",
+      "wp-yuanqi-tech",
     ]);
   });
 });

@@ -247,6 +247,11 @@ export function MegaMenu({
                   className="mega-menu__section"
                   key={`${section.label}-${sectionIndex}`}
                 >
+                  {section.groupLabel ? (
+                    <p className="mega-menu__section-group">
+                      {section.groupLabel}
+                    </p>
+                  ) : null}
                   <h3>{section.label}</h3>
                   <div className="mega-menu__links">
                     {section.items.filter(isNavigationHrefItem).map((child) => (

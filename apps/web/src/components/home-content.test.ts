@@ -26,7 +26,7 @@ describe("uploaded homepage content contract", () => {
         icon: "code",
         title: "码里奥",
         description:
-          "AI 编程大师：自然语言驱动工程落地，技能工具联动工程执行。",
+          "全域AI工作台：自然语言驱动工程落地，技能工具联动工程执行。",
         cta: "查看码里奥 →",
         href: "/product/code-agent",
       },

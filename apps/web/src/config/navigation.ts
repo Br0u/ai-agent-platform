@@ -14,6 +14,7 @@ export const portalNavigation: PortalNavigationItem[] = [
       "一站式 AI 开发与部署平台，覆盖智能体、行业应用、模型、编程与权限，另有独立产品矩阵开箱即用。",
     children: [
       {
+        groupLabel: "全栈开发平台",
         label: "智能体中心",
         items: [
           { label: "知识智能体", href: "/product/agent-knowledge" },
@@ -63,13 +64,20 @@ export const portalNavigation: PortalNavigationItem[] = [
         ],
       },
       {
-        label: "独立产品中心",
+        groupLabel: "全域AI工作台",
+        label: "码里奥",
         items: [
           {
             label: "码里奥",
             href: "/product/code-agent",
             description: "企业级智能编程平台",
           },
+        ],
+      },
+      {
+        groupLabel: "独立产品中心",
+        label: "独立产品中心",
+        items: [
           {
             label: "AIPPT",
             href: "/product/aippt",
@@ -139,7 +147,7 @@ export const portalNavigation: PortalNavigationItem[] = [
         items: [
           {
             label:
-              "快速了解元启平台与码多多 2.0 的产品定位、核心能力与产品价值。",
+              "元启平台、码里奥与行业应用的产品资料、彩页与解决方案，快速建立产品认知。",
             href: "/downloads#dl-materials",
           },
         ],
@@ -148,7 +156,7 @@ export const portalNavigation: PortalNavigationItem[] = [
         label: "软件资源下载",
         items: [
           {
-            label: "获取码多多 2.0 客户端安装包与版本信息，进入安装体验。",
+            label: "获取码里奥客户端安装包与版本信息，进入安装体验。",
             href: "/downloads#dl-software",
           },
         ],
@@ -157,7 +165,7 @@ export const portalNavigation: PortalNavigationItem[] = [
         label: "产品部署文档",
         items: [
           {
-            label: "安装部署与使用说明，降低产品体验门槛。",
+            label: "平台与产品的部署安装、使用手册与 FAQ，降低落地门槛。",
             href: "/downloads#dl-deployment",
           },
         ],
@@ -166,7 +174,7 @@ export const portalNavigation: PortalNavigationItem[] = [
         label: "白皮书与技术资料",
         items: [
           {
-            label: "企业 AI、大模型与智能体相关专业资料，增强产品可信度。",
+            label: "平台技术白皮书等专业资料，增强产品专业性与可信度。",
             href: "/downloads#dl-whitepapers",
           },
         ],

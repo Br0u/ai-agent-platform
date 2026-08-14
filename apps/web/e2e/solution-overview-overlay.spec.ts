@@ -40,7 +40,7 @@ async function gotoSolutions(page: Page) {
   await expect(page).toHaveURL(/\/solutions\/finance-compliance$/u);
 }
 
-test("V2 默认进入首个方案并渲染严格详情结构", async ({ page }) => {
+test("V3 默认进入首个方案并渲染严格详情结构", async ({ page }) => {
   await gotoSolutions(page);
   await expect(
     page.getByRole("heading", { level: 1, name: "贷款合规智能审查" }),
@@ -49,8 +49,8 @@ test("V2 默认进入首个方案并渲染严格详情结构", async ({ page }) 
     page.locator(".solution-detail-page").getByRole("heading", { level: 2 }),
   ).toHaveText([
     "业务场景与问题",
-    "核心能力构成",
     "落地效果与价值",
+    "解决方案落地",
     "需要落地行业 AI 解决方案？",
   ]);
   await expect(

@@ -64,9 +64,12 @@ const expectedPortal = [
         ],
       },
       {
+        label: "码里奥",
+        items: [["码里奥", "/product/code-agent"]],
+      },
+      {
         label: "独立产品中心",
         items: [
-          ["码里奥", "/product/code-agent"],
           ["AIPPT", "/product/aippt"],
           ["AISHREK", "/product/aishrek"],
         ],
@@ -100,7 +103,7 @@ const expectedPortal = [
         label: "产品资料",
         items: [
           [
-            "快速了解元启平台与码多多 2.0 的产品定位、核心能力与产品价值。",
+            "元启平台、码里奥与行业应用的产品资料、彩页与解决方案，快速建立产品认知。",
             "/downloads#dl-materials",
           ],
         ],
@@ -109,7 +112,7 @@ const expectedPortal = [
         label: "软件资源下载",
         items: [
           [
-            "获取码多多 2.0 客户端安装包与版本信息，进入安装体验。",
+            "获取码里奥客户端安装包与版本信息，进入安装体验。",
             "/downloads#dl-software",
           ],
         ],
@@ -118,7 +121,7 @@ const expectedPortal = [
         label: "产品部署文档",
         items: [
           [
-            "安装部署与使用说明，降低产品体验门槛。",
+            "平台与产品的部署安装、使用手册与 FAQ，降低落地门槛。",
             "/downloads#dl-deployment",
           ],
         ],
@@ -127,7 +130,7 @@ const expectedPortal = [
         label: "白皮书与技术资料",
         items: [
           [
-            "企业 AI、大模型与智能体相关专业资料，增强产品可信度。",
+            "平台技术白皮书等专业资料，增强产品专业性与可信度。",
             "/downloads#dl-whitepapers",
           ],
         ],
@@ -518,22 +521,22 @@ describe("navigation targets", () => {
         {
           id: "dl-materials",
           label:
-            "快速了解元启平台与码多多 2.0 的产品定位、核心能力与产品价值。",
+            "元启平台、码里奥与行业应用的产品资料、彩页与解决方案，快速建立产品认知。",
           status: undefined,
         },
         {
           id: "dl-software",
-          label: "获取码多多 2.0 客户端安装包与版本信息，进入安装体验。",
+          label: "获取码里奥客户端安装包与版本信息，进入安装体验。",
           status: undefined,
         },
         {
           id: "dl-deployment",
-          label: "安装部署与使用说明，降低产品体验门槛。",
+          label: "平台与产品的部署安装、使用手册与 FAQ，降低落地门槛。",
           status: undefined,
         },
         {
           id: "dl-whitepapers",
-          label: "企业 AI、大模型与智能体相关专业资料，增强产品可信度。",
+          label: "平台技术白皮书等专业资料，增强产品专业性与可信度。",
           status: undefined,
         },
       ],

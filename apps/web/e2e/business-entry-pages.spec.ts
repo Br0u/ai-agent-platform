@@ -42,7 +42,7 @@ test("downloads 执行完整内容、筛选和原型下载确认合同", async (
       name: "从产品资料到安装体验，一站式获取华鲲资源",
     }),
   ).toHaveCount(1);
-  await expect(page.locator("[data-download-key]")).toHaveCount(13);
+  await expect(page.locator("[data-download-key]")).toHaveCount(22);
   for (const anchor of [
     "dl-materials",
     "dl-software",
@@ -55,32 +55,33 @@ test("downloads 执行完整内容、筛选和原型下载确认合同", async (
   const search = page.getByRole("searchbox", {
     name: "在下载中心目录中筛选",
   });
-  await search.fill("安装部署指南");
+  await page.getByRole("button", { name: "展开下载中心目录" }).click();
+  await search.fill("部署安装操作手册");
   await expect(
-    page.getByRole("link", { name: "码里奥 安装部署指南" }),
+    page.getByRole("link", { name: "元启·部署安装操作手册" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "企业 AI 落地白皮书" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "元启·技术白皮书" })).toHaveCount(
+    0,
+  );
   await search.fill("不存在的资料");
   await page.getByRole("button", { name: "清除筛选" }).click();
   await expect(search).toHaveValue("");
 
   await page
     .getByRole("button", {
-      name: "在线预览元启 AI 开发赋能平台产品介绍",
+      name: "在线预览元启·全栈解决方案",
     })
     .click();
   await expect(page.locator(".download-toast")).toHaveText(
-    "「元启 AI 开发赋能平台产品介绍」在线预览：正式版提供，原型以内容槽位示意",
+    "「元启·全栈解决方案」在线预览：正式版提供，原型以内容槽位示意",
   );
   await page
     .getByRole("button", {
-      name: "下载资料元启 AI 开发赋能平台产品介绍",
+      name: "下载资料元启·全栈解决方案",
     })
     .click();
   await expect(page.locator(".download-toast")).toHaveText(
-    "「元启 AI 开发赋能平台产品介绍」下载：原型阶段暂不提供真实文件，正式版上线后开放",
+    "「元启·全栈解决方案」下载：原型阶段暂不提供真实文件，正式版上线后开放",
   );
 
   const softwareTrigger = page.getByRole("button", {
@@ -176,6 +177,9 @@ test("downloads 沿用产品页 Navbar、侧栏与备案页脚", async ({ page }
     "备案信息（占位）",
   );
 
+  await expect(page.locator(".download-directory")).toHaveCSS("width", "52px");
+  await page.getByRole("button", { name: "展开下载中心目录" }).click();
+
   const downloadDirectoryStyles = await page
     .locator(".download-directory")
     .evaluate((element) => {
@@ -206,10 +210,12 @@ test("downloads 资源锚点在 desktop 和 mobile 落入 sticky 可视区", asy
       await page
         .getByRole("button", { name: "下载中心目录", exact: true })
         .click();
+    } else {
+      await page.getByRole("button", { name: "展开下载中心目录" }).click();
     }
-    await page.getByRole("link", { name: "码里奥 安装部署指南" }).click();
+    await page.getByRole("link", { name: "元启·部署安装操作手册" }).click();
 
-    const anchor = page.locator('[data-download-key="mdd2-deploy"]');
+    const anchor = page.locator('[data-download-key="yuanqi-deploy"]');
     await expect(anchor).toBeInViewport();
     await expect
       .poll(() =>
@@ -269,7 +275,8 @@ test("downloads 在 1440 和 390 无横溢、保留唯一 Agent 并管理移动�
     directoryHeaderBox!.y + directoryHeaderBox!.height / 2,
   );
   await expect.soft(page).toHaveURL(directoryUrl);
-  await expect.soft(drawer).toHaveCount(1);
+  await expect.soft(drawer).toHaveCount(0);
+  await trigger.click();
   const directorySearch = drawer.getByRole("searchbox", {
     name: "在下载中心目录中筛选",
   });
@@ -292,7 +299,7 @@ test("downloads 在 1440 和 390 无横溢、保留唯一 Agent 并管理移动�
   await trigger.click();
   await expect(directorySearch).toBeFocused();
   const targetLink = drawer.getByRole("link", {
-    name: "码里奥 安装部署指南",
+    name: "元启·部署安装操作手册",
   });
   await targetLink.click();
   await expect(drawer).toHaveCount(0);

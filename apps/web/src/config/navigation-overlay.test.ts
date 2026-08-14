@@ -20,12 +20,14 @@ describe("prototype navigation overlay", () => {
       portalNavigation
         .find((item) => item.label === label)
         ?.children.map((section) => ({
+          groupLabel: section.groupLabel,
           label: section.label,
           items: pairs(section.items),
         }));
 
     expect(groups("产品")).toEqual([
       {
+        groupLabel: "全栈开发平台",
         label: "智能体中心",
         items: [
           ["知识智能体", "/product/agent-knowledge"],
@@ -35,6 +37,7 @@ describe("prototype navigation overlay", () => {
         ],
       },
       {
+        groupLabel: undefined,
         label: "模型中心",
         items: [
           ["模型资产管理", "/product/model-assets"],
@@ -44,6 +47,7 @@ describe("prototype navigation overlay", () => {
         ],
       },
       {
+        groupLabel: undefined,
         label: "行业应用中心",
         items: [
           ["通用文本写作", "/product/app-writing"],
@@ -52,6 +56,7 @@ describe("prototype navigation overlay", () => {
         ],
       },
       {
+        groupLabel: undefined,
         label: "编程中心",
         items: [
           ["自然语言开发", "/product/coding-session"],
@@ -60,6 +65,7 @@ describe("prototype navigation overlay", () => {
         ],
       },
       {
+        groupLabel: undefined,
         label: "技能中心",
         items: [
           ["研发类技能", "/product/skills-programming"],
@@ -68,6 +74,7 @@ describe("prototype navigation overlay", () => {
         ],
       },
       {
+        groupLabel: undefined,
         label: "权限中心",
         items: [
           ["权限管理", "/product/governance#gov-caps"],
@@ -75,9 +82,14 @@ describe("prototype navigation overlay", () => {
         ],
       },
       {
+        groupLabel: "全域AI工作台",
+        label: "码里奥",
+        items: [["码里奥", "/product/code-agent"]],
+      },
+      {
+        groupLabel: "独立产品中心",
         label: "独立产品中心",
         items: [
-          ["码里奥", "/product/code-agent"],
           ["AIPPT", "/product/aippt"],
           ["AISHREK", "/product/aishrek"],
         ],
@@ -86,6 +98,7 @@ describe("prototype navigation overlay", () => {
 
     expect(groups("解决方案")).toEqual([
       {
+        groupLabel: undefined,
         label: "行业解决方案",
         items: [
           ["金融行业解决方案", "/solutions/finance-compliance"],
@@ -101,37 +114,41 @@ describe("prototype navigation overlay", () => {
     ]);
     expect(groups("下载中心")).toEqual([
       {
+        groupLabel: undefined,
         label: "产品资料",
         items: [
           [
-            "快速了解元启平台与码多多 2.0 的产品定位、核心能力与产品价值。",
+            "元启平台、码里奥与行业应用的产品资料、彩页与解决方案，快速建立产品认知。",
             "/downloads#dl-materials",
           ],
         ],
       },
       {
+        groupLabel: undefined,
         label: "软件资源下载",
         items: [
           [
-            "获取码多多 2.0 客户端安装包与版本信息，进入安装体验。",
+            "获取码里奥客户端安装包与版本信息，进入安装体验。",
             "/downloads#dl-software",
           ],
         ],
       },
       {
+        groupLabel: undefined,
         label: "产品部署文档",
         items: [
           [
-            "安装部署与使用说明，降低产品体验门槛。",
+            "平台与产品的部署安装、使用手册与 FAQ，降低落地门槛。",
             "/downloads#dl-deployment",
           ],
         ],
       },
       {
+        groupLabel: undefined,
         label: "白皮书与技术资料",
         items: [
           [
-            "企业 AI、大模型与智能体相关专业资料，增强产品可信度。",
+            "平台技术白皮书等专业资料，增强产品专业性与可信度。",
             "/downloads#dl-whitepapers",
           ],
         ],
@@ -139,6 +156,7 @@ describe("prototype navigation overlay", () => {
     ]);
     expect(groups("合作伙伴")).toEqual([
       {
+        groupLabel: undefined,
         label: "商业模式",
         items: [
           ["合作模式", "/partners?view=business#pb-modes"],
@@ -147,6 +165,7 @@ describe("prototype navigation overlay", () => {
         ],
       },
       {
+        groupLabel: undefined,
         label: "伙伴政策",
         items: [
           ["伙伴类型与准入条件", "/partners?view=policy#pp-types"],
@@ -155,6 +174,7 @@ describe("prototype navigation overlay", () => {
         ],
       },
       {
+        groupLabel: undefined,
         label: "伙伴培训",
         items: [
           ["培训体系", "/partners?view=training#pt-system"],
@@ -164,6 +184,7 @@ describe("prototype navigation overlay", () => {
         ],
       },
       {
+        groupLabel: undefined,
         label: "合作对接",
         items: [
           ["成为合作伙伴", "/partners?view=become#pbc-hero"],
