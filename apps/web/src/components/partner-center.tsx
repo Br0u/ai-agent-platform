@@ -8,6 +8,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -28,6 +29,10 @@ import {
 } from "./partner-center-content";
 import { partnerPolicyContent } from "./partner-policy-content";
 import { PartnerIcon } from "./partner-icon";
+import {
+  DirectoryProgressRail,
+  useDirectoryProgress,
+} from "./directory-progress";
 
 const MOBILE_DIRECTORY_QUERY = "(max-width: 900px)";
 const PARTNER_LOCATION_EVENT = "partner-location-change";
@@ -132,7 +137,7 @@ export function PartnerCenter() {
   const activeKey = location.node?.key ?? view;
   const selectedType = location.type;
   const [query, setQuery] = useState("");
-  const [directoryCollapsed, setDirectoryCollapsed] = useState(false);
+  const [directoryCollapsed, setDirectoryCollapsed] = useState(true);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     () => new Set(),
   );
@@ -152,6 +157,16 @@ export function PartnerCenter() {
   const restoreContactFocus = useRef(false);
   const allowFocusReturn = useRef(false);
   const normalizedQuery = query.trim().toLowerCase();
+  const partnerAnchorIds = useMemo(
+    () =>
+      allPartnerDirectoryNodes
+        .filter((node) => node.view === view)
+        .map((node) => node.anchor),
+    [view],
+  );
+  const { activeHash: trackedHash, progress } =
+    useDirectoryProgress(partnerAnchorIds);
+  const directoryActiveHash = trackedHash || location.hash;
 
   const filteredDirectory = partnerDirectory.flatMap((node) => {
     if (!normalizedQuery) return [node];
@@ -325,7 +340,11 @@ export function PartnerCenter() {
     return (
       <a
         href={href}
-        aria-current={activeKey === node.key ? "location" : undefined}
+        aria-current={
+          node.view === view && directoryActiveHash === `#${node.anchor}`
+            ? "location"
+            : undefined
+        }
         onClick={(event) => onPartnerLink(event, href)}
       >
         {node.label}
@@ -337,49 +356,55 @@ export function PartnerCenter() {
     <nav aria-label="合作伙伴完整目录">
       {filteredDirectory.length ? (
         <ul>
-          {filteredDirectory.map((node) => (
-            <li key={node.key}>
-              {node.children?.length ? (
-                <div className="partner-directory__group">
-                  {link(node)}
-                  <button
-                    type="button"
-                    aria-expanded={
-                      Boolean(normalizedQuery) || !collapsedGroups.has(node.key)
-                    }
-                    aria-label={`${
-                      !normalizedQuery && collapsedGroups.has(node.key)
-                        ? "展开"
-                        : "收起"
-                    }${node.label}目录`}
-                    onClick={() =>
-                      setCollapsedGroups((current) => {
-                        const next = new Set(current);
-                        if (next.has(node.key)) next.delete(node.key);
-                        else next.add(node.key);
-                        return next;
-                      })
-                    }
-                  >
-                    {!normalizedQuery && collapsedGroups.has(node.key)
-                      ? "›"
-                      : "⌄"}
-                  </button>
-                </div>
-              ) : (
-                link(node)
-              )}
-              {node.children?.length ? (
-                normalizedQuery || !collapsedGroups.has(node.key) ? (
-                  <ul>
-                    {node.children.map((child) => (
-                      <li key={child.key}>{link(child)}</li>
-                    ))}
-                  </ul>
-                ) : null
-              ) : null}
-            </li>
-          ))}
+          {filteredDirectory.map((node) => {
+            const activeChild = (node.children ?? []).some(
+              (child) =>
+                child.view === view &&
+                directoryActiveHash === `#${child.anchor}`,
+            );
+            const groupExpanded =
+              Boolean(normalizedQuery) ||
+              activeChild ||
+              !collapsedGroups.has(node.key);
+
+            return (
+              <li key={node.key}>
+                {node.children?.length ? (
+                  <div className="partner-directory__group">
+                    {link(node)}
+                    <button
+                      type="button"
+                      aria-expanded={groupExpanded}
+                      aria-label={`${
+                        !groupExpanded ? "展开" : "收起"
+                      }${node.label}目录`}
+                      onClick={() =>
+                        setCollapsedGroups((current) => {
+                          const next = new Set(current);
+                          if (next.has(node.key)) next.delete(node.key);
+                          else next.add(node.key);
+                          return next;
+                        })
+                      }
+                    >
+                      {groupExpanded ? "⌄" : "›"}
+                    </button>
+                  </div>
+                ) : (
+                  link(node)
+                )}
+                {node.children?.length ? (
+                  groupExpanded ? (
+                    <ul>
+                      {node.children.map((child) => (
+                        <li key={child.key}>{link(child)}</li>
+                      ))}
+                    </ul>
+                  ) : null
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       ) : (
         <div className="partner-directory__empty">
@@ -437,6 +462,10 @@ export function PartnerCenter() {
           }}
           role={isMobile && mobileOpen ? "dialog" : undefined}
         >
+          <DirectoryProgressRail
+            collapsed={directoryCollapsed}
+            progress={progress}
+          />
           <div className="partner-directory__tools">
             <input
               ref={directorySearch}

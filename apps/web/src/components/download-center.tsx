@@ -5,6 +5,7 @@ import {
   type KeyboardEvent,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -17,6 +18,10 @@ import {
   downloadSections,
   downloadSoftware,
 } from "./download-center-content";
+import {
+  DirectoryProgressRail,
+  useDirectoryProgress,
+} from "./directory-progress";
 
 const MOBILE_DIRECTORY_QUERY = "(max-width: 900px)";
 const FOCUSABLE_SELECTOR = [
@@ -211,6 +216,20 @@ export function DownloadCenter() {
   const restoreSoftwareFocus = useRef(false);
   const allowFocusReturn = useRef(false);
   const normalizedQuery = query.trim().toLowerCase();
+  const downloadAnchorIds = useMemo(
+    () => [
+      "dl-hero",
+      ...downloadSections.map(({ anchor }) => anchor),
+      ...downloadResources.materials.map(({ key }) => `dl-${key}`),
+      `dl-${downloadSoftware.key}`,
+      ...downloadResources.deployment.map(({ key }) => `dl-${key}`),
+      ...downloadResources.whitepapers.map(({ key }) => `dl-${key}`),
+    ],
+    [],
+  );
+  const { activeHash: trackedHash, progress } =
+    useDirectoryProgress(downloadAnchorIds);
+  const directoryActiveHash = trackedHash || activeHash;
   const filteredGroups = directoryGroups.flatMap((group) => {
     if (!normalizedQuery) return [group];
     const children = group.label.toLowerCase().includes(normalizedQuery)
@@ -372,6 +391,10 @@ export function DownloadCenter() {
           }}
           role={isMobile && mobileOpen ? "dialog" : undefined}
         >
+          <DirectoryProgressRail
+            collapsed={directoryCollapsed}
+            progress={progress}
+          />
           <div className="download-directory__tools">
             <input
               ref={directorySearch}
@@ -397,7 +420,7 @@ export function DownloadCenter() {
           <nav aria-label="下载中心完整目录">
             <Link
               aria-current={
-                activeHash === "" || activeHash === "#dl-hero"
+                directoryActiveHash === "" || directoryActiveHash === "#dl-hero"
                   ? "location"
                   : undefined
               }
@@ -415,7 +438,7 @@ export function DownloadCenter() {
                   <li key={group.anchor}>
                     <Link
                       aria-current={
-                        activeHash === `#${group.anchor}`
+                        directoryActiveHash === `#${group.anchor}`
                           ? "location"
                           : undefined
                       }
@@ -429,7 +452,7 @@ export function DownloadCenter() {
                       {group.label}
                     </Link>
                     <DirectoryChildren
-                      activeHash={activeHash}
+                      activeHash={directoryActiveHash}
                       items={group.children}
                       onNavigate={(hash) => {
                         setActiveHash(hash);

@@ -1,5 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import DownloadsPage from "../app/downloads/page";
 import { downloadResources } from "./download-center-content";
@@ -7,6 +13,10 @@ import { downloadResources } from "./download-center-content";
 afterEach(() => {
   vi.unstubAllGlobals();
   window.history.replaceState({}, "", "/");
+  Object.defineProperty(window, "scrollY", {
+    configurable: true,
+    value: 0,
+  });
 });
 
 function useMobileViewport() {
@@ -114,6 +124,59 @@ describe("DownloadCenter", () => {
     ).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("shows the quiet progress rail only while the desktop directory is collapsed", () => {
+    render(<DownloadsPage />);
+
+    expect(screen.getByTestId("directory-progress-rail")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开下载中心目录" }));
+
+    expect(
+      screen.queryByTestId("directory-progress-rail"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("prefers a scrolled resource over the tracked hash without changing the URL", async () => {
+    window.history.replaceState(null, "", "/downloads#dl-materials");
+    Object.defineProperty(window, "scrollY", {
+      configurable: true,
+      value: 160,
+    });
+    const { container } = render(<DownloadsPage />);
+
+    for (const anchor of container.querySelectorAll<HTMLElement>("[id^=dl-]")) {
+      anchor.getBoundingClientRect = () =>
+        ({ top: anchor.id === "dl-yuanqi-fullstack" ? -12 : 1_000 }) as DOMRect;
+    }
+    fireEvent.scroll(window);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: "元启·全栈解决方案" }),
+      ).toHaveAttribute("aria-current", "location"),
+    );
+    expect(window.location.hash).toBe("#dl-materials");
+  });
+
+  it("limits collapsed desktop geometry to widths above the mobile boundary", () => {
+    const css = readFileSync("src/app/downloads/downloads.css", "utf8");
+    const selectors = [
+      '.download-shell[data-directory-collapsed="true"] {',
+      '.download-shell[data-directory-collapsed="true"] .download-directory {',
+      '.download-shell[data-directory-collapsed="true"] .download-directory__tools {',
+    ];
+
+    for (const selector of selectors) {
+      const selectorIndex = css.indexOf(selector);
+      expect(selectorIndex).toBeGreaterThan(-1);
+      expect(
+        css.lastIndexOf("@media (min-width: 901px)", selectorIndex),
+      ).toBeGreaterThan(
+        css.lastIndexOf("@media (max-width: 900px)", selectorIndex),
+      );
+    }
+  });
+
   it("renders product materials as a three-level directory", () => {
     render(<DownloadsPage />);
     fireEvent.click(screen.getByRole("button", { name: "展开下载中心目录" }));
@@ -131,11 +194,15 @@ describe("DownloadCenter", () => {
     ).toHaveAttribute("href", "/downloads#dl-yuanqi-fullstack");
   });
 
-  it("marks the selected download anchor like the product directory", () => {
+  it("marks the download overview while the page is at the top", () => {
     window.history.replaceState({}, "", "/downloads#dl-materials");
+    Object.defineProperty(window, "scrollY", {
+      configurable: true,
+      value: 0,
+    });
     render(<DownloadsPage />);
 
-    expect(screen.getByRole("link", { name: "产品资料" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "下载中心总览" })).toHaveAttribute(
       "aria-current",
       "location",
     );
