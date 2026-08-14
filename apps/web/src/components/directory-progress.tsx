@@ -60,7 +60,7 @@ export function selectActiveAnchor(
   let activeId = anchors[0][0];
 
   for (const [id, anchor] of anchors) {
-    if (anchor.getBoundingClientRect().top <= headerOffset) activeId = id;
+    if (anchor.getBoundingClientRect().top <= headerOffset + 1) activeId = id;
   }
 
   return activeId;

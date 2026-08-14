@@ -270,6 +270,9 @@ test("产品 Hero 单独承载渐隐极光且不影响站点外层", async ({
   await expect(card).not.toHaveCSS("box-shadow", "none");
   await expect(card).not.toHaveCSS("backdrop-filter", "none");
 
+  if (testInfo.project.name !== "mobile") {
+    await page.getByRole("button", { name: "展开产品目录" }).click();
+  }
   const currentDirectoryLink =
     testInfo.project.name === "mobile"
       ? page.getByRole("button", { name: "打开产品目录" })
@@ -287,6 +290,38 @@ test("产品 Hero 单独承载渐隐极光且不影响站点外层", async ({
   ).toHaveCSS("transition-duration", "0s");
 });
 
+test("产品目录在桌面静默折叠并在移动断点移除进度轨", async ({ page }) => {
+  for (const viewport of [
+    { width: 1440, height: 980 },
+    { width: 901, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await gotoProduct(page, "/product/code-agent");
+
+    const directory = page.getByRole("complementary", { name: "产品目录" });
+    const toggle = page.getByRole("button", { name: "展开产品目录" });
+    await expect(directory).toHaveCSS("width", "52px");
+    await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expectNoHorizontalOverflow(page);
+
+    await toggle.click();
+    await expect(directory).toHaveCSS("width", "240px");
+    await expect(page.getByTestId("directory-progress-rail")).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+  }
+
+  for (const width of [900, 800, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await gotoProduct(page, "/product/code-agent");
+    await expect(page.getByTestId("directory-progress-rail")).not.toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "打开产品目录" }),
+    ).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+  }
+});
+
 test("产品路由族使用 V2 目录，联系与试用页不加该目录", async ({
   page,
 }, testInfo) => {
@@ -295,16 +330,16 @@ test("产品路由族使用 V2 目录，联系与试用页不加该目录", asyn
     await page.getByRole("button", { name: "打开产品目录" }).click();
     const drawer = page.getByRole("dialog", { name: "产品目录" });
     await expect(drawer).toBeVisible();
-    await expect(drawer.getByRole("link", { name: "码里奥" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    await expect(
+      drawer.getByRole("link", { name: "Skill 技能生态" }),
+    ).toHaveAttribute("aria-current", "location");
   } else {
+    await page.getByRole("button", { name: "展开产品目录" }).click();
     const directory = page.getByRole("complementary", { name: "产品目录" });
     await expect(directory).toBeVisible();
     await expect(
-      directory.getByRole("link", { name: "码里奥" }),
-    ).toHaveAttribute("aria-current", "page");
+      directory.getByRole("link", { name: "Skill 技能生态" }),
+    ).toHaveAttribute("aria-current", "location");
   }
 
   for (const path of ["/contact", "/trial"]) {
@@ -323,6 +358,8 @@ test("产品目录严格使用 V2 层级、真实路由和详情锚点", async (
       : page.getByRole("complementary", { name: "产品目录" });
   if (testInfo.project.name === "mobile") {
     await page.getByRole("button", { name: "打开产品目录" }).click();
+  } else {
+    await page.getByRole("button", { name: "展开产品目录" }).click();
   }
 
   const links = await directory
@@ -352,6 +389,26 @@ test("产品目录严格使用 V2 层级、真实路由和详情锚点", async (
   ).toHaveAttribute("aria-current", "location");
 });
 
+test("产品能力滚动同步目录位置且不改写地址", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 980 });
+  await gotoProduct(page, "/product/code-agent");
+  await page.getByRole("button", { name: "展开产品目录" }).click();
+
+  const directory = page.getByRole("complementary", { name: "产品目录" });
+  const initialUrl = page.url();
+  await page.locator("#mdd2-mcp").scrollIntoViewIfNeeded();
+  await expect(
+    directory.getByRole("link", { name: "MCP 工具集成" }),
+  ).toHaveAttribute("aria-current", "location");
+  expect(page.url()).toBe(initialUrl);
+
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await expect(
+    directory.getByRole("link", { name: "研发生态协同" }),
+  ).toHaveAttribute("aria-current", "location");
+  expect(page.url()).toBe(initialUrl);
+});
+
 test("移动产品目录通过真实链接导航并更新当前项", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await gotoProduct(page, "/product/code-agent");
@@ -365,8 +422,8 @@ test("移动产品目录通过真实链接导航并更新当前项", async ({ pa
   await page.getByRole("button", { name: "打开产品目录" }).click();
   const currentDrawer = page.getByRole("dialog", { name: "产品目录" });
   await expect(
-    currentDrawer.getByRole("link", { name: "AIPPT" }),
-  ).toHaveAttribute("aria-current", "page");
+    currentDrawer.getByRole("link", { name: "参考资料驱动" }),
+  ).toHaveAttribute("aria-current", "location");
   await currentDrawer.getByRole("button", { name: "关闭产品目录" }).click();
   await expect(currentDrawer).toHaveCount(0);
 });

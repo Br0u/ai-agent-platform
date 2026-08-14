@@ -178,6 +178,7 @@ test("Solutions 视觉层使用数据场、烟雾玻璃与克制交互", async (
 test("桌面目录严格使用 V2 八行业并支持搜索折叠", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 980 });
   await gotoSolutions(page);
+  await page.getByRole("button", { name: "展开解决方案目录" }).click();
   const directory = page.getByRole("navigation", { name: "解决方案完整目录" });
   await expect(directory.locator(":scope > ul > li > div > a")).toHaveText([
     "金融行业解决方案",
@@ -204,6 +205,72 @@ test("桌面目录严格使用 V2 八行业并支持搜索折叠", async ({ page
   await expect(
     page.getByRole("link", { name: "贷款合规智能审查" }),
   ).toHaveCount(0);
+});
+
+test("解决方案目录在桌面显示静默进度并在移动断点改用抽屉", async ({ page }) => {
+  for (const viewport of [
+    { width: 1440, height: 980 },
+    { width: 901, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await gotoSolutions(page);
+    await expect(page.locator(".solution-directory")).toHaveCSS(
+      "width",
+      "52px",
+    );
+    await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
+    const widths = await page.evaluate(() => ({
+      client: document.documentElement.clientWidth,
+      scroll: document.documentElement.scrollWidth,
+    }));
+    expect(widths.scroll).toBeLessThanOrEqual(widths.client);
+  }
+
+  await page.setViewportSize({ width: 1440, height: 980 });
+  await gotoSolutions(page);
+
+  const directory = page.locator(".solution-directory");
+  const rail = page.getByTestId("directory-progress-rail");
+  const dot = page.getByTestId("directory-progress-dot");
+  await expect(directory).toHaveCSS("width", "52px");
+  await expect(rail).toBeVisible();
+  const top = await dot.getAttribute("style");
+  const stableRoute = page.url();
+
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await expect.poll(async () => dot.getAttribute("style")).not.toBe(top);
+  await expect(
+    page.getByRole("link", { name: "贷款合规智能审查" }),
+  ).toHaveCount(0);
+  expect(page.url()).toBe(stableRoute);
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(dot).toHaveCSS("transition-duration", "0s");
+
+  await page.getByRole("button", { name: "展开解决方案目录" }).click();
+  await expect(
+    page.getByRole("link", { name: "贷款合规智能审查" }),
+  ).toHaveAttribute("aria-current", "page");
+
+  for (const width of [900, 800]) {
+    await page.setViewportSize({ width, height: 844 });
+    await gotoSolutions(page);
+    await expect(page.getByTestId("directory-progress-rail")).not.toBeVisible();
+    await expect(directory).not.toHaveCSS("width", "52px");
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoSolutions(page);
+  await page.getByRole("button", { name: "解决方案目录" }).click();
+  const drawer = page.getByRole("dialog", { name: "解决方案目录" });
+  await expect(drawer).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => document.body.style.overflow))
+    .toBe("hidden");
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("button", { name: "解决方案目录" }),
+  ).toBeFocused();
 });
 
 test("29 个 V2 方案路由均可访问", async ({ page }) => {

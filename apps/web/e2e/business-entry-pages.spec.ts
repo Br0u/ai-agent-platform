@@ -150,21 +150,6 @@ test("downloads 执行完整内容、筛选和原型下载确认合同", async (
 
 test("downloads 沿用产品页 Navbar、侧栏与备案页脚", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 980 });
-  await page.goto("/product", { waitUntil: "networkidle" });
-
-  const productDirectoryStyles = await page
-    .locator(".product-directory")
-    .evaluate((element) => {
-      const style = getComputedStyle(element);
-      return {
-        width: style.width,
-        backgroundImage: style.backgroundImage,
-        borderRightColor: style.borderRightColor,
-        boxShadow: style.boxShadow,
-        backdropFilter: style.backdropFilter,
-      };
-    });
-
   await gotoDownloads(page);
   await expect(page.locator(".site-header")).toHaveCSS("min-height", "64px");
   await expect(page.locator(".site-wordmark")).toHaveCSS(
@@ -180,19 +165,93 @@ test("downloads 沿用产品页 Navbar、侧栏与备案页脚", async ({ page }
   await expect(page.locator(".download-directory")).toHaveCSS("width", "52px");
   await page.getByRole("button", { name: "展开下载中心目录" }).click();
 
-  const downloadDirectoryStyles = await page
-    .locator(".download-directory")
-    .evaluate((element) => {
-      const style = getComputedStyle(element);
-      return {
-        width: style.width,
-        backgroundImage: style.backgroundImage,
-        borderRightColor: style.borderRightColor,
-        boxShadow: style.boxShadow,
-        backdropFilter: style.backdropFilter,
-      };
-    });
-  expect(downloadDirectoryStyles).toEqual(productDirectoryStyles);
+  await expect(page.locator(".download-directory")).toHaveCSS("width", "240px");
+  await expect(page.getByTestId("directory-progress-rail")).toHaveCount(0);
+});
+
+test("下载与合作目录在桌面静默折叠且移动端不显示进度轨", async ({ page }) => {
+  for (const viewport of [
+    { width: 1440, height: 980 },
+    { width: 901, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await gotoDownloads(page);
+    const downloadDirectory = page.locator(".download-directory");
+    await expect(downloadDirectory).toHaveCSS("width", "52px");
+    await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    await page.getByRole("button", { name: "展开下载中心目录" }).click();
+    await expect(downloadDirectory).toHaveCSS("width", "240px");
+    await expectNoHorizontalOverflow(page);
+
+    await gotoPartners(page);
+    const partnerDirectory = page.locator(".partner-directory");
+    await expect(partnerDirectory).toHaveCSS("width", "52px");
+    await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
+    await expect(partnerDirectory).toHaveCSS("width", "240px");
+    await expectNoHorizontalOverflow(page);
+  }
+
+  for (const width of [900, 800, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await gotoDownloads(page);
+    await expect(page.getByTestId("directory-progress-rail")).not.toBeVisible();
+    await gotoPartners(page);
+    await expect(page.getByTestId("directory-progress-rail")).not.toBeVisible();
+  }
+});
+
+test("下载与合作目录按页面位置标注当前锚点且不改写地址", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await gotoDownloads(page);
+  await page.getByRole("button", { name: "展开下载中心目录" }).click();
+  const downloadDirectory = page.getByRole("navigation", {
+    name: "下载中心完整目录",
+  });
+  const downloadUrl = page.url();
+  await page.locator("#dl-deployment").evaluate((anchor) => {
+    const header = document.querySelector("header");
+    window.scrollTo(
+      0,
+      anchor.getBoundingClientRect().top +
+        window.scrollY -
+        (header?.getBoundingClientRect().bottom ?? 0),
+    );
+  });
+  await expect(
+    downloadDirectory.getByRole("link", { name: "产品部署文档" }),
+  ).toHaveAttribute("aria-current", "location");
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await expect(
+    downloadDirectory.getByRole("link", { name: "元启·技术白皮书" }),
+  ).toHaveAttribute("aria-current", "location");
+  expect(page.url()).toBe(downloadUrl);
+
+  await gotoPartners(page, "?view=training#pt-hero");
+  await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
+  const partnerDirectory = page.getByRole("navigation", {
+    name: "合作伙伴完整目录",
+  });
+  const partnerUrl = page.url();
+  await page.locator("#pt-path").evaluate((anchor) => {
+    const header = document.querySelector("header");
+    window.scrollTo(
+      0,
+      anchor.getBoundingClientRect().top +
+        window.scrollY -
+        (header?.getBoundingClientRect().bottom ?? 0),
+    );
+  });
+  await expect(
+    partnerDirectory.getByRole("link", { name: "认证路径" }),
+  ).toHaveAttribute("aria-current", "location");
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await expect(
+    partnerDirectory.getByRole("link", { name: "学习资源" }),
+  ).toHaveAttribute("aria-current", "location");
+  expect(page.url()).toBe(partnerUrl);
 });
 
 test("downloads 资源锚点在 desktop 和 mobile 落入 sticky 可视区", async ({
@@ -267,13 +326,9 @@ test("downloads 在 1440 和 390 无横溢、保留唯一 Agent 并管理移动�
     .boundingBox();
   expect.soft(drawerBackdropBox?.y).toBe(0);
   const directoryUrl = page.url();
-  const directoryHeaderLink = page.locator(".site-header a").first();
-  const directoryHeaderBox = await directoryHeaderLink.boundingBox();
-  expect(directoryHeaderBox).not.toBeNull();
-  await page.mouse.click(
-    directoryHeaderBox!.x + directoryHeaderBox!.width / 2,
-    directoryHeaderBox!.y + directoryHeaderBox!.height / 2,
-  );
+  await page.locator(".download-directory-backdrop").click({
+    position: { x: 360, y: 4 },
+  });
   await expect.soft(page).toHaveURL(directoryUrl);
   await expect.soft(drawer).toHaveCount(0);
   await trigger.click();
@@ -333,6 +388,8 @@ test("partners 执行五视图、15 key、筛选、history 和联系弹层合同
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await gotoPartners(page, "?view=business#pb-tiers");
+
+  await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
 
   const directory = page.getByRole("navigation", {
     name: "合作伙伴完整目录",
@@ -561,16 +618,19 @@ test("partners 在 1440 和 390 验证目录组、来源、复制反馈和背景
       viewport.width === 390 ? "dialog" : "complementary",
       { name: "合作伙伴目录" },
     );
+    if (viewport.width !== 390) {
+      await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
+    }
     const collapse = directory.getByRole("button", {
-      name: "收起商业模式目录",
+      name: "收起伙伴政策目录",
     });
     await collapse.click();
-    await expect(directory.getByRole("link", { name: "分润政策" })).toHaveCount(
+    await expect(directory.getByRole("link", { name: "认证体系" })).toHaveCount(
       0,
     );
-    await directory.getByRole("button", { name: "展开商业模式目录" }).click();
+    await directory.getByRole("button", { name: "展开伙伴政策目录" }).click();
     await expect(
-      directory.getByRole("link", { name: "分润政策" }),
+      directory.getByRole("link", { name: "认证体系" }),
     ).toBeVisible();
 
     if (viewport.width === 390) {
@@ -739,7 +799,8 @@ test("partners 在 1440 和 390 无横溢、锚点可见、抽屉隔离并保留
     /logo\.png/u,
   );
   await expect(page.locator(".partner-return-bar")).toHaveCount(0);
-  await expect(page.locator(".partner-directory")).toHaveCSS("width", "240px");
+  await expect(page.locator(".partner-directory")).toHaveCSS("width", "52px");
+  await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
   await expect(page.locator("#po-hero .partner-visual")).toHaveCSS(
     "background-image",
     /ecosystem-lattice\.png/u,

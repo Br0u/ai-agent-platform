@@ -148,6 +148,18 @@ describe("selectActiveAnchor", () => {
     ).toBe("second");
   });
 
+  it("tolerates subpixel rounding at the sticky header boundary", () => {
+    appendAnchor("first", 20);
+    appendAnchor("second", 65.1);
+
+    expect(
+      selectActiveAnchor(["first", "second"], {
+        atBottom: false,
+        headerOffset: 65,
+      }),
+    ).toBe("second");
+  });
+
   it("uses the final anchor at the bottom when its short section never crosses the header", () => {
     appendAnchor("first", -80);
     appendAnchor("last", 500);
