@@ -37,6 +37,18 @@ function filterDirectory(
   });
 }
 
+function containsActiveNode(
+  node: SolutionDirectoryNode,
+  activeInternalId: string,
+): boolean {
+  return (
+    node.internalId === activeInternalId ||
+    (node.children ?? []).some((child) =>
+      containsActiveNode(child, activeInternalId),
+    )
+  );
+}
+
 function DirectoryBranch({
   node,
   activeInternalId,
@@ -50,7 +62,8 @@ function DirectoryBranch({
 }) {
   const [expanded, setExpanded] = useState(true);
   const children = node.children ?? [];
-  const open = forceExpanded || expanded;
+  const open =
+    forceExpanded || containsActiveNode(node, activeInternalId) || expanded;
 
   return (
     <li className="solution-directory__item">
@@ -97,7 +110,12 @@ export function SolutionOverview({ children }: { children: ReactNode }) {
   const slug = pathname.split("/").filter(Boolean).at(-1) ?? "";
   const activeInternalId = `solution-${slug}`;
   const [query, setQuery] = useState("");
-  const [directoryCollapsed, setDirectoryCollapsed] = useState(true);
+  const [directoryState, setDirectoryState] = useState(() => ({
+    collapsed: true,
+    pathname,
+  }));
+  const directoryCollapsed =
+    directoryState.pathname === pathname ? directoryState.collapsed : true;
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const mobileTrigger = useRef<HTMLButtonElement>(null);
@@ -225,7 +243,9 @@ export function SolutionOverview({ children }: { children: ReactNode }) {
               aria-label={
                 directoryCollapsed ? "展开解决方案目录" : "收起解决方案目录"
               }
-              onClick={() => setDirectoryCollapsed((value) => !value)}
+              onClick={() =>
+                setDirectoryState({ collapsed: !directoryCollapsed, pathname })
+              }
             >
               {directoryCollapsed ? "›" : "‹"}
             </button>

@@ -6,12 +6,17 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const navigation = vi.hoisted(() => ({
+  pathname: "/solutions/finance-compliance",
+}));
+
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/solutions/finance-compliance",
+  usePathname: () => navigation.pathname,
 }));
 
 import { SolutionOverview } from "./solution-overview";
@@ -19,6 +24,7 @@ import { SolutionOverview } from "./solution-overview";
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  navigation.pathname = "/solutions/finance-compliance";
 });
 
 describe("V2 solution directory", () => {
@@ -76,6 +82,35 @@ describe("V2 solution directory", () => {
     ).toHaveAttribute("aria-current", "page");
   });
 
+  it("resets an opened desktop directory when the pathname changes", async () => {
+    const view = render(<SolutionOverview>content</SolutionOverview>);
+    const shell = view.container.querySelector(".solution-shell");
+
+    fireEvent.click(screen.getByRole("button", { name: "展开解决方案目录" }));
+    expect(shell).toHaveAttribute("data-directory-collapsed", "false");
+
+    navigation.pathname = "/solutions/finance-aml";
+    view.rerender(<SolutionOverview>content</SolutionOverview>);
+
+    await waitFor(() =>
+      expect(shell).toHaveAttribute("data-directory-collapsed", "true"),
+    );
+  });
+
+  it("keeps ancestors of the active solution route open after a manual fold", () => {
+    render(<SolutionOverview>content</SolutionOverview>);
+
+    const toggle = screen.getByRole("button", {
+      name: "展开或收起金融行业解决方案",
+    });
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByRole("link", { name: "贷款合规智能审查" }),
+    ).toBeVisible();
+  });
+
   it("searches and folds the exact industry tree", () => {
     render(<SolutionOverview>content</SolutionOverview>);
     expect(
@@ -96,12 +131,12 @@ describe("V2 solution directory", () => {
 
     fireEvent.change(search, { target: { value: "" } });
     const toggle = screen.getByRole("button", {
-      name: "展开或收起金融行业解决方案",
+      name: "展开或收起铁路行业解决方案",
     });
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(
-      screen.queryByRole("link", { name: "贷款合规智能审查" }),
+      screen.queryByRole("link", { name: "规章制度精准解析" }),
     ).not.toBeInTheDocument();
   });
 

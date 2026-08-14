@@ -237,7 +237,12 @@ function DirectoryTree({
 export function ProductDirectory() {
   const pathname = usePathname();
   const [query, setQuery] = useState("");
-  const [collapsed, setCollapsed] = useState(true);
+  const [directoryState, setDirectoryState] = useState(() => ({
+    collapsed: true,
+    pathname,
+  }));
+  const collapsed =
+    directoryState.pathname === pathname ? directoryState.collapsed : true;
   const [activeHash, setActiveHash] = useState("");
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -406,7 +411,9 @@ export function ProductDirectory() {
           <button
             aria-label={collapsed ? "展开产品目录" : "收起产品目录"}
             aria-expanded={!collapsed}
-            onClick={() => setCollapsed((value) => !value)}
+            onClick={() =>
+              setDirectoryState({ collapsed: !collapsed, pathname })
+            }
             type="button"
           >
             {collapsed ? "›" : "‹"}
