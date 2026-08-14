@@ -253,7 +253,10 @@ test("桌面目录严格使用 V2 八行业并支持搜索折叠", async ({ page
   ).toHaveCount(0);
 });
 
-test("解决方案目录在桌面显示静默进度并在移动断点改用抽屉", async ({ page }) => {
+test("解决方案目录在桌面显示静默进度并在移动断点改用抽屉", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
   for (const viewport of [
     { width: 1440, height: 980 },
     { width: 901, height: 900 },

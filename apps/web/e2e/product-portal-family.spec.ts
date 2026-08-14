@@ -143,7 +143,10 @@ async function expectNoHorizontalOverflow(page: Page) {
 async function scrollWithinOnePixelOfBottom(page: Page) {
   await page.evaluate((distance) => {
     const scrollRange =
-      document.documentElement.scrollHeight - window.innerHeight;
+      Math.max(
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight,
+      ) - window.innerHeight;
     window.scrollTo(0, Math.max(0, scrollRange - distance));
   }, 0.5);
 }
@@ -334,7 +337,10 @@ test("产品 Hero 单独承载渐隐极光且不影响站点外层", async ({
   ).toHaveCSS("transition-duration", "0s");
 });
 
-test("产品目录在桌面静默折叠并在移动断点移除进度轨", async ({ page }) => {
+test("产品目录在桌面静默折叠并在移动断点移除进度轨", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
   for (const viewport of [
     { width: 1440, height: 980 },
     { width: 901, height: 900 },
@@ -434,7 +440,8 @@ test("产品目录严格使用 V2 层级、真实路由和详情锚点", async (
   ).toHaveAttribute("aria-current", "location");
 });
 
-test("产品能力滚动同步目录位置且不改写地址", async ({ page }) => {
+test("产品能力滚动同步目录位置且不改写地址", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
   await page.setViewportSize({ width: 1440, height: 980 });
   await gotoProduct(page, "/product/code-agent");
   await page.getByRole("button", { name: "展开产品目录" }).click();

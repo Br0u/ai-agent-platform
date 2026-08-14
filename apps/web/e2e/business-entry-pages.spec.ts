@@ -74,7 +74,10 @@ async function expectMobileDirectoryContract(
 async function scrollWithinOnePixelOfBottom(page: Page) {
   await page.evaluate((distance) => {
     const scrollRange =
-      document.documentElement.scrollHeight - window.innerHeight;
+      Math.max(
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight,
+      ) - window.innerHeight;
     window.scrollTo(0, Math.max(0, scrollRange - distance));
   }, 0.5);
 }
@@ -216,7 +219,10 @@ test("downloads 沿用产品页 Navbar、侧栏与备案页脚", async ({ page }
   await expect(page.getByTestId("directory-progress-rail")).toHaveCount(0);
 });
 
-test("下载与合作目录在桌面静默折叠且移动端不显示进度轨", async ({ page }) => {
+test("下载与合作目录在桌面静默折叠且移动端不显示进度轨", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
   for (const viewport of [
     { width: 1440, height: 980 },
     { width: 901, height: 900 },
@@ -264,7 +270,10 @@ test("下载与合作目录在桌面静默折叠且移动端不显示进度轨",
   }
 });
 
-test("下载与合作目录按页面位置标注当前锚点且不改写地址", async ({ page }) => {
+test("下载与合作目录按页面位置标注当前锚点且不改写地址", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
   await page.setViewportSize({ width: 1440, height: 1000 });
   await gotoDownloads(page);
   await page.getByRole("button", { name: "展开下载中心目录" }).click();
@@ -316,7 +325,10 @@ test("下载与合作目录按页面位置标注当前锚点且不改写地址",
   expect(page.url()).toBe(partnerUrl);
 });
 
-test("合作目录在活动子项滚入后重新展开其已折叠祖先", async ({ page }) => {
+test("合作目录在活动子项滚入后重新展开其已折叠祖先", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
   await page.setViewportSize({ width: 1440, height: 1000 });
   await gotoPartners(page, "?view=business#pb-hero");
   await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
