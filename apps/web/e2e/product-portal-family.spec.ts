@@ -367,6 +367,10 @@ test("产品目录在桌面静默折叠并在移动断点移除进度轨", async
     const directory = page.getByRole("complementary", { name: "产品目录" });
     const toggle = page.getByRole("button", { name: "展开产品目录" });
     await expect(directory).toHaveCSS("width", "52px");
+    await expect(directory).toHaveCSS("border-radius", "18px");
+    await expect(directory).toHaveCSS("margin-top", "12px");
+    await expect(directory).toHaveCSS("backdrop-filter", /blur\(28px\)/u);
+    await expect(directory).toHaveCSS("box-shadow", /0px 18px 44px/u);
     await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await expectNoHorizontalOverflow(page);

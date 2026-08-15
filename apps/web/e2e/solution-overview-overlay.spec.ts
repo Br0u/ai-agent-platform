@@ -277,6 +277,22 @@ test("解决方案目录在桌面显示静默进度并在移动断点改用抽�
       "width",
       "52px",
     );
+    await expect(page.locator(".solution-directory")).toHaveCSS(
+      "border-radius",
+      "18px",
+    );
+    await expect(page.locator(".solution-directory")).toHaveCSS(
+      "margin-top",
+      "12px",
+    );
+    await expect(page.locator(".solution-directory")).toHaveCSS(
+      "backdrop-filter",
+      /blur\(28px\)/u,
+    );
+    await expect(page.locator(".solution-directory")).toHaveCSS(
+      "box-shadow",
+      /0px 18px 44px/u,
+    );
     await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
     await expectNoHorizontalOverflow(page);
 

@@ -231,6 +231,13 @@ test("下载与合作目录在桌面静默折叠且移动端不显示进度轨",
     await gotoDownloads(page);
     const downloadDirectory = page.locator(".download-directory");
     await expect(downloadDirectory).toHaveCSS("width", "52px");
+    await expect(downloadDirectory).toHaveCSS("border-radius", "18px");
+    await expect(downloadDirectory).toHaveCSS("margin-top", "12px");
+    await expect(downloadDirectory).toHaveCSS(
+      "backdrop-filter",
+      /blur\(28px\)/u,
+    );
+    await expect(downloadDirectory).toHaveCSS("box-shadow", /0px 18px 44px/u);
     await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await page.getByRole("button", { name: "展开下载中心目录" }).click();
@@ -240,6 +247,13 @@ test("下载与合作目录在桌面静默折叠且移动端不显示进度轨",
     await gotoPartners(page);
     const partnerDirectory = page.locator(".partner-directory");
     await expect(partnerDirectory).toHaveCSS("width", "52px");
+    await expect(partnerDirectory).toHaveCSS("border-radius", "18px");
+    await expect(partnerDirectory).toHaveCSS("margin-top", "12px");
+    await expect(partnerDirectory).toHaveCSS(
+      "backdrop-filter",
+      /blur\(28px\)/u,
+    );
+    await expect(partnerDirectory).toHaveCSS("box-shadow", /0px 18px 44px/u);
     await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
