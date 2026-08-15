@@ -273,28 +273,32 @@ test("解决方案目录在桌面显示静默进度并在移动断点改用抽�
   ]) {
     await page.setViewportSize(viewport);
     await gotoSolutions(page);
-    await expect(page.locator(".solution-directory")).toHaveCSS(
-      "width",
-      "52px",
+    await page.mouse.move(viewport.width - 1, 1);
+    const directory = page.locator(".solution-directory");
+    const content = page.locator(".solution-content");
+    const contentX = await content.evaluate(
+      (element) => element.getBoundingClientRect().x,
     );
-    await expect(page.locator(".solution-directory")).toHaveCSS(
-      "border-radius",
-      "18px",
-    );
-    await expect(page.locator(".solution-directory")).toHaveCSS(
-      "margin-top",
-      "12px",
-    );
-    await expect(page.locator(".solution-directory")).toHaveCSS(
-      "backdrop-filter",
-      /blur\(28px\)/u,
-    );
-    await expect(page.locator(".solution-directory")).toHaveCSS(
-      "box-shadow",
-      /0px 18px 44px/u,
-    );
+    await expect(directory).toHaveCSS("width", "44px");
+    await expect(directory).toHaveCSS("height", `${viewport.height - 104}px`);
+    await expect(directory).toHaveCSS("border-radius", "18px");
+    await expect(directory).toHaveCSS("margin-top", "20px");
+    await expect(directory).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+    await expect(directory).toHaveCSS("background-image", "none");
+    await expect(directory).toHaveCSS("backdrop-filter", "none");
+    await expect(directory).toHaveCSS("box-shadow", "none");
     await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
     await expectNoHorizontalOverflow(page);
+
+    await directory.hover();
+    await expect(directory).toHaveCSS("width", "240px");
+    await expect(directory).toHaveCSS("backdrop-filter", /blur\(28px\)/u);
+    await expect(directory.getByRole("searchbox")).toBeVisible();
+    expect(
+      await content.evaluate((element) => element.getBoundingClientRect().x),
+    ).toBe(contentX);
+    await content.hover({ position: { x: 320, y: 200 } });
+    await expect(directory).toHaveCSS("width", "44px");
 
     if (viewport.width === 901) {
       await page.getByRole("button", { name: "展开解决方案目录" }).click();
@@ -313,7 +317,7 @@ test("解决方案目录在桌面显示静默进度并在移动断点改用抽�
   const directory = page.locator(".solution-directory");
   const rail = page.getByTestId("directory-progress-rail");
   const dot = page.getByTestId("directory-progress-dot");
-  await expect(directory).toHaveCSS("width", "52px");
+  await expect(directory).toHaveCSS("width", "44px");
   await expect(rail).toBeVisible();
   const top = await dot.getAttribute("style");
   const stableRoute = page.url();
@@ -337,7 +341,7 @@ test("解决方案目录在桌面显示静默进度并在移动断点改用抽�
     await page.setViewportSize({ width, height: 844 });
     await gotoSolutions(page);
     await expect(page.getByTestId("directory-progress-rail")).not.toBeVisible();
-    await expect(directory).not.toHaveCSS("width", "52px");
+    await expect(directory).not.toHaveCSS("width", "44px");
     await expectMobileSolutionDirectoryContract(page);
   }
 

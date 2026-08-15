@@ -31,8 +31,8 @@
   top: 64px;
   align-self: start;
   width: 240px;
-  height: calc(100vh - 88px);
-  margin: 12px 0 12px 6px;
+  height: calc(100vh - 104px);
+  margin: 20px 0 20px 6px;
   overflow: auto;
   border: 1px solid rgb(255 255 255 / 72%);
   border-radius: 18px;
@@ -49,11 +49,11 @@
 }
 
 .product-directory.is-collapsed {
-  width: 52px;
+  width: 44px;
 }
 
 .product-directory-layout:has(.product-directory.is-collapsed) {
-  grid-template-columns: 52px minmax(0, 1fr);
+  grid-template-columns: 0 minmax(0, 1fr);
 }
 
 .product-directory-tools {
@@ -121,17 +121,85 @@
 
 .product-directory.is-collapsed .product-directory-tools {
   grid-template-columns: 1fr;
-  padding-inline: 7px;
+  padding-inline: 3px;
   border-bottom-color: transparent;
   background: transparent;
   box-shadow: none;
 }
 
 .product-directory.is-collapsed .product-directory-tools button {
-  border-color: rgb(76 108 196 / 12%);
-  border-radius: 11px;
-  background: rgb(255 255 255 / 38%);
-  box-shadow: inset 0 1px rgb(255 255 255 / 78%);
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  margin-inline: auto;
+  border-color: transparent;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+  opacity: 0.62;
+}
+
+@media (min-width: 901px) {
+  .product-directory.is-collapsed:not(:hover):not(:focus-within) {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .product-directory.is-collapsed:not(:hover):not(:focus-within)
+    .product-directory-tools {
+    backdrop-filter: none;
+  }
+
+  .product-directory.is-collapsed:focus-within {
+    width: 240px;
+    overflow: auto;
+  }
+
+  .product-directory.is-collapsed:focus-within input,
+  .product-directory.is-collapsed:focus-within .product-directory-tree {
+    display: block;
+  }
+
+  .product-directory.is-collapsed:focus-within .product-directory-tools {
+    grid-template-columns: minmax(0, 1fr) 38px;
+    gap: 8px;
+    padding: 14px 12px;
+    border-bottom-color: rgb(76 108 196 / 13%);
+    background: rgb(249 251 255 / 46%);
+    box-shadow: 0 10px 24px rgb(47 72 145 / 5%);
+  }
+
+  .product-directory.is-collapsed:focus-within .directory-progress-rail {
+    opacity: 0;
+  }
+}
+
+@media (min-width: 901px) and (hover: hover) and (pointer: fine) {
+  .product-directory.is-collapsed:hover {
+    width: 240px;
+    overflow: auto;
+  }
+
+  .product-directory.is-collapsed:hover input,
+  .product-directory.is-collapsed:hover .product-directory-tree {
+    display: block;
+  }
+
+  .product-directory.is-collapsed:hover .product-directory-tools {
+    grid-template-columns: minmax(0, 1fr) 38px;
+    gap: 8px;
+    padding: 14px 12px;
+    border-bottom-color: rgb(76 108 196 / 13%);
+    background: rgb(249 251 255 / 46%);
+    box-shadow: 0 10px 24px rgb(47 72 145 / 5%);
+  }
+
+  .product-directory.is-collapsed:hover .directory-progress-rail {
+    opacity: 0;
+  }
 }
 
 .product-directory-tree {

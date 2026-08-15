@@ -293,6 +293,7 @@ describe("DirectoryProgressRail", () => {
     expect(stylesheet).toMatch(
       /transition:\s*top\s+240ms\s+cubic-bezier\(0\.77,\s*0,\s*0\.175,\s*1\)/,
     );
+    expect(stylesheet).toMatch(/transition:\s*opacity\s+160ms\s+ease/);
     expect(stylesheet).toMatch(/prefers-reduced-motion:\s*reduce/);
     expect(stylesheet).toMatch(/transition:\s*none/);
   });

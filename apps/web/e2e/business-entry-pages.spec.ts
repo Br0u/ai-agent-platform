@@ -212,7 +212,7 @@ test("downloads 沿用产品页 Navbar、侧栏与备案页脚", async ({ page }
     "备案信息（占位）",
   );
 
-  await expect(page.locator(".download-directory")).toHaveCSS("width", "52px");
+  await expect(page.locator(".download-directory")).toHaveCSS("width", "44px");
   await page.getByRole("button", { name: "展开下载中心目录" }).click();
 
   await expect(page.locator(".download-directory")).toHaveCSS("width", "240px");
@@ -229,33 +229,83 @@ test("下载与合作目录在桌面静默折叠且移动端不显示进度轨",
   ]) {
     await page.setViewportSize(viewport);
     await gotoDownloads(page);
+    await page.mouse.move(viewport.width - 1, 1);
     const downloadDirectory = page.locator(".download-directory");
-    await expect(downloadDirectory).toHaveCSS("width", "52px");
+    const downloadContent = page.locator(".download-main");
+    const downloadContentX = await downloadContent.evaluate(
+      (element) => element.getBoundingClientRect().x,
+    );
+    await expect(downloadDirectory).toHaveCSS("width", "44px");
+    await expect(downloadDirectory).toHaveCSS(
+      "height",
+      `${viewport.height - 104}px`,
+    );
     await expect(downloadDirectory).toHaveCSS("border-radius", "18px");
-    await expect(downloadDirectory).toHaveCSS("margin-top", "12px");
+    await expect(downloadDirectory).toHaveCSS("margin-top", "20px");
+    await expect(downloadDirectory).toHaveCSS(
+      "border-top-color",
+      "rgba(0, 0, 0, 0)",
+    );
+    await expect(downloadDirectory).toHaveCSS("background-image", "none");
+    await expect(downloadDirectory).toHaveCSS("backdrop-filter", "none");
+    await expect(downloadDirectory).toHaveCSS("box-shadow", "none");
+    await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    await downloadDirectory.hover();
+    await expect(downloadDirectory).toHaveCSS("width", "240px");
     await expect(downloadDirectory).toHaveCSS(
       "backdrop-filter",
       /blur\(28px\)/u,
     );
-    await expect(downloadDirectory).toHaveCSS("box-shadow", /0px 18px 44px/u);
-    await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
-    await expectNoHorizontalOverflow(page);
+    await expect(downloadDirectory.getByRole("searchbox")).toBeVisible();
+    expect(
+      await downloadContent.evaluate(
+        (element) => element.getBoundingClientRect().x,
+      ),
+    ).toBe(downloadContentX);
+    await downloadContent.hover({ position: { x: 320, y: 200 } });
+    await expect(downloadDirectory).toHaveCSS("width", "44px");
     await page.getByRole("button", { name: "展开下载中心目录" }).click();
     await expect(downloadDirectory).toHaveCSS("width", "240px");
     await expectNoHorizontalOverflow(page);
 
     await gotoPartners(page);
+    await page.mouse.move(viewport.width - 1, 1);
     const partnerDirectory = page.locator(".partner-directory");
-    await expect(partnerDirectory).toHaveCSS("width", "52px");
+    const partnerContent = page.locator(".partner-main");
+    const partnerContentX = await partnerContent.evaluate(
+      (element) => element.getBoundingClientRect().x,
+    );
+    await expect(partnerDirectory).toHaveCSS("width", "44px");
+    await expect(partnerDirectory).toHaveCSS(
+      "height",
+      `${viewport.height - 104}px`,
+    );
     await expect(partnerDirectory).toHaveCSS("border-radius", "18px");
-    await expect(partnerDirectory).toHaveCSS("margin-top", "12px");
+    await expect(partnerDirectory).toHaveCSS("margin-top", "20px");
+    await expect(partnerDirectory).toHaveCSS(
+      "border-top-color",
+      "rgba(0, 0, 0, 0)",
+    );
+    await expect(partnerDirectory).toHaveCSS("background-image", "none");
+    await expect(partnerDirectory).toHaveCSS("backdrop-filter", "none");
+    await expect(partnerDirectory).toHaveCSS("box-shadow", "none");
+    await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    await partnerDirectory.hover();
+    await expect(partnerDirectory).toHaveCSS("width", "240px");
     await expect(partnerDirectory).toHaveCSS(
       "backdrop-filter",
       /blur\(28px\)/u,
     );
-    await expect(partnerDirectory).toHaveCSS("box-shadow", /0px 18px 44px/u);
-    await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
-    await expectNoHorizontalOverflow(page);
+    await expect(partnerDirectory.getByRole("searchbox")).toBeVisible();
+    expect(
+      await partnerContent.evaluate(
+        (element) => element.getBoundingClientRect().x,
+      ),
+    ).toBe(partnerContentX);
+    await partnerContent.hover({ position: { x: 320, y: 200 } });
+    await expect(partnerDirectory).toHaveCSS("width", "44px");
     await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
     await expect(partnerDirectory).toHaveCSS("width", "240px");
     await expectNoHorizontalOverflow(page);
@@ -925,7 +975,7 @@ test("partners 在 1440 和 390 无横溢、锚点可见、抽屉隔离并保留
     /logo\.png/u,
   );
   await expect(page.locator(".partner-return-bar")).toHaveCount(0);
-  await expect(page.locator(".partner-directory")).toHaveCSS("width", "52px");
+  await expect(page.locator(".partner-directory")).toHaveCSS("width", "44px");
   await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
   await expect(page.locator("#po-hero .partner-visual")).toHaveCSS(
     "background-image",
@@ -1129,15 +1179,32 @@ test("trial 在 1440 与 390 完成校验、成功、关闭和焦点约束", asy
       .locator(".floating-assistant__launcher")
       .boundingBox();
     expect(launcherBox).not.toBeNull();
+    const dialogBox = await dialog.boundingBox();
     await page.mouse.click(
       launcherBox!.x + launcherBox!.width / 2,
       launcherBox!.y + launcherBox!.height / 2,
     );
-    await expect(dialog).toHaveCount(0);
     await expect(page.getByRole("dialog", { name: "码多多" })).toHaveCount(0);
-    await expect(trigger).toBeFocused();
 
-    await trigger.click();
+    const launcherCenter = {
+      x: launcherBox!.x + launcherBox!.width / 2,
+      y: launcherBox!.y + launcherBox!.height / 2,
+    };
+    const launcherIsCovered =
+      dialogBox !== null &&
+      launcherCenter.x >= dialogBox.x &&
+      launcherCenter.x <= dialogBox.x + dialogBox.width &&
+      launcherCenter.y >= dialogBox.y &&
+      launcherCenter.y <= dialogBox.y + dialogBox.height;
+
+    if (launcherIsCovered) {
+      await expect(dialog).toHaveCount(1);
+    } else {
+      await expect(dialog).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+      await trigger.click();
+    }
+
     await dialog.getByRole("button", { name: "提交申请" }).click();
     await expect(dialog.getByRole("status")).toHaveText("请填写姓名");
     await dialog.getByLabel("姓名").fill("测试用户");

@@ -363,21 +363,55 @@ test("产品目录在桌面静默折叠并在移动断点移除进度轨", async
   ]) {
     await page.setViewportSize(viewport);
     await gotoProduct(page, "/product/code-agent");
+    await page.mouse.move(viewport.width - 1, 1);
 
     const directory = page.getByRole("complementary", { name: "产品目录" });
     const toggle = page.getByRole("button", { name: "展开产品目录" });
-    await expect(directory).toHaveCSS("width", "52px");
+    const content = page.locator(".product-directory-content");
+    const contentX = await content.evaluate(
+      (element) => element.getBoundingClientRect().x,
+    );
+    expect(contentX).toBe(0);
+    await expect(directory).toHaveCSS("width", "44px");
+    await expect(directory).toHaveCSS("height", `${viewport.height - 104}px`);
     await expect(directory).toHaveCSS("border-radius", "18px");
-    await expect(directory).toHaveCSS("margin-top", "12px");
-    await expect(directory).toHaveCSS("backdrop-filter", /blur\(28px\)/u);
-    await expect(directory).toHaveCSS("box-shadow", /0px 18px 44px/u);
+    await expect(directory).toHaveCSS("margin-top", "20px");
+    await expect(directory).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+    await expect(directory).toHaveCSS("background-image", "none");
+    await expect(directory).toHaveCSS("backdrop-filter", "none");
+    await expect(directory).toHaveCSS("box-shadow", "none");
+    await expect(page.locator(".product-directory-tools")).toHaveCSS(
+      "backdrop-filter",
+      "none",
+    );
+    await expect(toggle).toHaveCSS("width", "28px");
+    await expect(toggle).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(toggle).toHaveCSS("box-shadow", "none");
+    await expect(toggle).toHaveCSS("opacity", "0.62");
     await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await expectNoHorizontalOverflow(page);
 
-    await toggle.click();
+    await directory.hover();
     await expect(directory).toHaveCSS("width", "240px");
-    await expect(page.getByTestId("directory-progress-rail")).toHaveCount(0);
+    await expect(directory).toHaveCSS("backdrop-filter", /blur\(28px\)/u);
+    await expect(directory.getByRole("searchbox")).toBeVisible();
+    await expect(page.getByTestId("directory-progress-rail")).toHaveCSS(
+      "opacity",
+      "0",
+    );
+    expect(
+      await content.evaluate((element) => element.getBoundingClientRect().x),
+    ).toBe(contentX);
+
+    await content.hover({ position: { x: 320, y: 200 } });
+    await expect(directory).toHaveCSS("width", "44px");
+
+    await toggle.focus();
+    await expect(directory).toHaveCSS("width", "240px");
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+    await expect(directory).toHaveCSS("width", "44px");
+
     await expectNoHorizontalOverflow(page);
   }
 
