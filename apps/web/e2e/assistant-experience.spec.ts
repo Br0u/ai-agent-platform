@@ -721,7 +721,7 @@ test("streaming activity becomes a collapsed audit trail with safe actions", asy
   expectCleanEvidence(evidence, new URL(page.url()).origin);
 });
 
-test("workspace preserves the expanded conversation and clears on reload", async ({
+test("workspace clears the current-page conversation", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "desktop continuity contract");
