@@ -1,4 +1,11 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PartnerCenter } from "./partner-center";
 
@@ -7,6 +14,11 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  document.querySelector("[data-test-foreign-anchor]")?.remove();
+  Object.defineProperty(window, "scrollY", {
+    configurable: true,
+    value: 0,
+  });
 });
 
 function useMedia({ mobile = false, reduced = false } = {}) {
@@ -189,6 +201,15 @@ describe("PartnerCenter", () => {
   it("searches, clears and collapses the desktop directory", () => {
     render(<PartnerCenter />);
 
+    expect(
+      screen.getByRole("button", { name: "展开合作伙伴目录" }),
+    ).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByTestId("directory-progress-rail")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "展开合作伙伴目录" }));
+    expect(
+      screen.queryByTestId("directory-progress-rail"),
+    ).not.toBeInTheDocument();
+
     const search = screen.getByRole("searchbox", {
       name: "在合作伙伴目录中筛选",
     });
@@ -206,6 +227,96 @@ describe("PartnerCenter", () => {
     expect(
       screen.getByRole("button", { name: "展开合作伙伴目录" }),
     ).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("starts every partner view change with the desktop directory collapsed", () => {
+    render(<PartnerCenter />);
+
+    fireEvent.click(screen.getByRole("button", { name: "展开合作伙伴目录" }));
+    expect(
+      screen.getByRole("button", { name: "收起合作伙伴目录" }),
+    ).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(screen.getByRole("link", { name: "伙伴政策" }));
+
+    expect(
+      screen.getByRole("button", { name: "展开合作伙伴目录" }),
+    ).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(screen.getByRole("link", { name: "合作伙伴总览" }));
+
+    expect(
+      screen.getByRole("button", { name: "展开合作伙伴目录" }),
+    ).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("uses only current-view anchors and keeps an active child visible after its group is folded", async () => {
+    window.history.replaceState(null, "", "/partners?view=business#pb-hero");
+    Object.defineProperty(window, "scrollY", {
+      configurable: true,
+      value: 0,
+    });
+    const { container } = render(<PartnerCenter />);
+    const groupToggle = screen.getByRole("button", {
+      name: "收起商业模式目录",
+    });
+    fireEvent.click(groupToggle);
+    expect(
+      screen.queryByRole("link", { name: "分润政策" }),
+    ).not.toBeInTheDocument();
+
+    for (const anchor of container.querySelectorAll<HTMLElement>("[id^=pb-]")) {
+      anchor.getBoundingClientRect = () =>
+        ({ top: anchor.id === "pb-tiers" ? -12 : 1_000 }) as DOMRect;
+    }
+    const otherViewAnchor = document.createElement("section");
+    otherViewAnchor.dataset.testForeignAnchor = "true";
+    otherViewAnchor.id = "pp-cert";
+    otherViewAnchor.getBoundingClientRect = () => ({ top: -24 }) as DOMRect;
+    document.body.append(otherViewAnchor);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    Object.defineProperty(window, "scrollY", {
+      configurable: true,
+      value: 160,
+    });
+    fireEvent.scroll(window);
+
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "分润政策" })).toHaveAttribute(
+        "aria-current",
+        "location",
+      ),
+    );
+    expect(groupToggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "伙伴政策" })).not.toHaveAttribute(
+      "aria-current",
+      "location",
+    );
+    expect(window.location.hash).toBe("#pb-hero");
+    otherViewAnchor.remove();
+  });
+
+  it("limits collapsed desktop geometry to widths above the mobile boundary", () => {
+    const css = readFileSync("src/app/partners/partners.css", "utf8");
+    const selectors = [
+      '.partner-shell[data-directory-collapsed="true"] {',
+      '.partner-shell[data-directory-collapsed="true"] .partner-directory {',
+      '.partner-shell[data-directory-collapsed="true"] .partner-directory__tools {',
+    ];
+
+    for (const selector of selectors) {
+      const selectorIndex = css.indexOf(selector);
+      expect(selectorIndex).toBeGreaterThan(-1);
+      expect(
+        css.lastIndexOf("@media (min-width: 901px)", selectorIndex),
+      ).toBeGreaterThan(
+        css.lastIndexOf("@media (max-width: 900px)", selectorIndex),
+      );
+    }
   });
 
   it("independently collapses and expands directory groups with children", () => {

@@ -114,36 +114,6 @@ export default async function SolutionDetailPage({ params }: PageProps) {
         </section>
 
         <section className="solution-detail-section">
-          <h2>核心能力构成</h2>
-          <p className="solution-detail-lead">
-            本方案由以下核心能力组合构成，各能力相互协同，完整支撑
-            {detail.title}的业务闭环。
-          </p>
-          <div className="solution-detail-capabilities">
-            {detail.capabilities.map((capability, index) => (
-              <article key={capability.name}>
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <h3>{capability.name}</h3>
-                <p>{capability.desc}</p>
-                <div>
-                  {capability.tags.map((tag) => (
-                    <span key={tag}>{tag}</span>
-                  ))}
-                </div>
-                <p>
-                  依托{" "}
-                  <Link
-                    href={capabilityHref(capability.product, capability.anchor)}
-                  >
-                    {capability.anchorLabel ?? "平台能力"} →
-                  </Link>
-                </p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="solution-detail-section">
           <h2>落地效果与价值</h2>
           <div className="solution-detail-result">
             <div>
@@ -199,6 +169,36 @@ export default async function SolutionDetailPage({ params }: PageProps) {
                 ))}
               </div>
             )}
+          </div>
+        </section>
+
+        <section className="solution-detail-section">
+          <h2>解决方案落地</h2>
+          <p className="solution-detail-lead">
+            本方案由以下核心能力组合构成，各能力相互协同，完整支撑
+            {detail.title}的业务闭环。
+          </p>
+          <div className="solution-detail-capabilities">
+            {detail.capabilities.map((capability, index) => (
+              <article key={capability.name}>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <h3>{capability.name}</h3>
+                <p>{capability.desc}</p>
+                <div>
+                  {capability.tags.map((tag) => (
+                    <span key={tag}>{tag}</span>
+                  ))}
+                </div>
+                <p>
+                  依托{" "}
+                  <Link
+                    href={capabilityHref(capability.product, capability.anchor)}
+                  >
+                    {capability.anchorLabel ?? "平台能力"} →
+                  </Link>
+                </p>
+              </article>
+            ))}
           </div>
         </section>
 

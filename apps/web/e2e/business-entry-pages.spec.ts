@@ -32,6 +32,56 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
 }
 
+async function expectMobileDirectoryContract(
+  page: Page,
+  {
+    dialogName,
+    searchName,
+    triggerName,
+  }: {
+    dialogName: string;
+    searchName: string;
+    triggerName: string;
+  },
+) {
+  const trigger = page.getByRole("button", {
+    name: triggerName,
+    exact: true,
+  });
+  await expectNoHorizontalOverflow(page);
+  await trigger.click();
+
+  const dialog = page.getByRole("dialog", { name: dialogName });
+  const search = dialog.getByRole("searchbox", { name: searchName });
+  await expect(dialog).toHaveAttribute("aria-modal", "true");
+  await expect(search).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => document.body.style.overflow))
+    .toBe("hidden");
+
+  await page.locator(".site-header a").first().focus();
+  await expect(search).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => document.body.style.overflow))
+    .toBe("");
+  await expectNoHorizontalOverflow(page);
+}
+
+async function scrollWithinOnePixelOfBottom(page: Page) {
+  await page.evaluate((distance) => {
+    const scrollRange =
+      Math.max(
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight,
+      ) - window.innerHeight;
+    window.scrollTo(0, Math.max(0, scrollRange - distance));
+  }, 0.5);
+}
+
 test("downloads 执行完整内容、筛选和原型下载确认合同", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await gotoDownloads(page);
@@ -42,7 +92,7 @@ test("downloads 执行完整内容、筛选和原型下载确认合同", async (
       name: "从产品资料到安装体验，一站式获取华鲲资源",
     }),
   ).toHaveCount(1);
-  await expect(page.locator("[data-download-key]")).toHaveCount(13);
+  await expect(page.locator("[data-download-key]")).toHaveCount(22);
   for (const anchor of [
     "dl-materials",
     "dl-software",
@@ -55,32 +105,33 @@ test("downloads 执行完整内容、筛选和原型下载确认合同", async (
   const search = page.getByRole("searchbox", {
     name: "在下载中心目录中筛选",
   });
-  await search.fill("安装部署指南");
+  await page.getByRole("button", { name: "展开下载中心目录" }).click();
+  await search.fill("部署安装操作手册");
   await expect(
-    page.getByRole("link", { name: "码里奥 安装部署指南" }),
+    page.getByRole("link", { name: "元启·部署安装操作手册" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "企业 AI 落地白皮书" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "元启·技术白皮书" })).toHaveCount(
+    0,
+  );
   await search.fill("不存在的资料");
   await page.getByRole("button", { name: "清除筛选" }).click();
   await expect(search).toHaveValue("");
 
   await page
     .getByRole("button", {
-      name: "在线预览元启 AI 开发赋能平台产品介绍",
+      name: "在线预览元启·全栈解决方案",
     })
     .click();
   await expect(page.locator(".download-toast")).toHaveText(
-    "「元启 AI 开发赋能平台产品介绍」在线预览：正式版提供，原型以内容槽位示意",
+    "「元启·全栈解决方案」在线预览：正式版提供，原型以内容槽位示意",
   );
   await page
     .getByRole("button", {
-      name: "下载资料元启 AI 开发赋能平台产品介绍",
+      name: "下载资料元启·全栈解决方案",
     })
     .click();
   await expect(page.locator(".download-toast")).toHaveText(
-    "「元启 AI 开发赋能平台产品介绍」下载：原型阶段暂不提供真实文件，正式版上线后开放",
+    "「元启·全栈解决方案」下载：原型阶段暂不提供真实文件，正式版上线后开放",
   );
 
   const softwareTrigger = page.getByRole("button", {
@@ -149,21 +200,6 @@ test("downloads 执行完整内容、筛选和原型下载确认合同", async (
 
 test("downloads 沿用产品页 Navbar、侧栏与备案页脚", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 980 });
-  await page.goto("/product", { waitUntil: "networkidle" });
-
-  const productDirectoryStyles = await page
-    .locator(".product-directory")
-    .evaluate((element) => {
-      const style = getComputedStyle(element);
-      return {
-        width: style.width,
-        backgroundImage: style.backgroundImage,
-        borderRightColor: style.borderRightColor,
-        boxShadow: style.boxShadow,
-        backdropFilter: style.backdropFilter,
-      };
-    });
-
   await gotoDownloads(page);
   await expect(page.locator(".site-header")).toHaveCSS("min-height", "64px");
   await expect(page.locator(".site-wordmark")).toHaveCSS(
@@ -176,19 +212,219 @@ test("downloads 沿用产品页 Navbar、侧栏与备案页脚", async ({ page }
     "备案信息（占位）",
   );
 
-  const downloadDirectoryStyles = await page
-    .locator(".download-directory")
-    .evaluate((element) => {
-      const style = getComputedStyle(element);
-      return {
-        width: style.width,
-        backgroundImage: style.backgroundImage,
-        borderRightColor: style.borderRightColor,
-        boxShadow: style.boxShadow,
-        backdropFilter: style.backdropFilter,
-      };
-    });
-  expect(downloadDirectoryStyles).toEqual(productDirectoryStyles);
+  await expect(page.locator(".download-directory")).toHaveCSS("width", "44px");
+  await page.getByRole("button", { name: "展开下载中心目录" }).click();
+
+  await expect(page.locator(".download-directory")).toHaveCSS("width", "240px");
+  await expect(page.getByTestId("directory-progress-rail")).toHaveCount(0);
+});
+
+test("下载与合作目录在桌面静默折叠且移动端不显示进度轨", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+  for (const viewport of [
+    { width: 1440, height: 980 },
+    { width: 901, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await gotoDownloads(page);
+    await page.mouse.move(viewport.width - 1, 1);
+    const downloadDirectory = page.locator(".download-directory");
+    const downloadContent = page.locator(".download-main");
+    const downloadContentX = await downloadContent.evaluate(
+      (element) => element.getBoundingClientRect().x,
+    );
+    await expect(downloadDirectory).toHaveCSS("width", "44px");
+    await expect(downloadDirectory).toHaveCSS(
+      "height",
+      `${viewport.height - 104}px`,
+    );
+    await expect(downloadDirectory).toHaveCSS("border-radius", "18px");
+    await expect(downloadDirectory).toHaveCSS("margin-top", "20px");
+    await expect(downloadDirectory).toHaveCSS(
+      "border-top-color",
+      "rgba(0, 0, 0, 0)",
+    );
+    await expect(downloadDirectory).toHaveCSS("background-image", "none");
+    await expect(downloadDirectory).toHaveCSS("backdrop-filter", "none");
+    await expect(downloadDirectory).toHaveCSS("box-shadow", "none");
+    await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    await downloadDirectory.hover();
+    await expect(downloadDirectory).toHaveCSS("width", "240px");
+    await expect(downloadDirectory).toHaveCSS(
+      "backdrop-filter",
+      /blur\(28px\)/u,
+    );
+    await expect(downloadDirectory.getByRole("searchbox")).toBeVisible();
+    expect(
+      await downloadContent.evaluate(
+        (element) => element.getBoundingClientRect().x,
+      ),
+    ).toBe(downloadContentX);
+    await downloadContent.hover({ position: { x: 320, y: 200 } });
+    await expect(downloadDirectory).toHaveCSS("width", "44px");
+    await page.getByRole("button", { name: "展开下载中心目录" }).click();
+    await expect(downloadDirectory).toHaveCSS("width", "240px");
+    await expectNoHorizontalOverflow(page);
+
+    await gotoPartners(page);
+    await page.mouse.move(viewport.width - 1, 1);
+    const partnerDirectory = page.locator(".partner-directory");
+    const partnerContent = page.locator(".partner-main");
+    const partnerContentX = await partnerContent.evaluate(
+      (element) => element.getBoundingClientRect().x,
+    );
+    await expect(partnerDirectory).toHaveCSS("width", "44px");
+    await expect(partnerDirectory).toHaveCSS(
+      "height",
+      `${viewport.height - 104}px`,
+    );
+    await expect(partnerDirectory).toHaveCSS("border-radius", "18px");
+    await expect(partnerDirectory).toHaveCSS("margin-top", "20px");
+    await expect(partnerDirectory).toHaveCSS(
+      "border-top-color",
+      "rgba(0, 0, 0, 0)",
+    );
+    await expect(partnerDirectory).toHaveCSS("background-image", "none");
+    await expect(partnerDirectory).toHaveCSS("backdrop-filter", "none");
+    await expect(partnerDirectory).toHaveCSS("box-shadow", "none");
+    await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    await partnerDirectory.hover();
+    await expect(partnerDirectory).toHaveCSS("width", "240px");
+    await expect(partnerDirectory).toHaveCSS(
+      "backdrop-filter",
+      /blur\(28px\)/u,
+    );
+    await expect(partnerDirectory.getByRole("searchbox")).toBeVisible();
+    expect(
+      await partnerContent.evaluate(
+        (element) => element.getBoundingClientRect().x,
+      ),
+    ).toBe(partnerContentX);
+    await partnerContent.hover({ position: { x: 320, y: 200 } });
+    await expect(partnerDirectory).toHaveCSS("width", "44px");
+    await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
+    await expect(partnerDirectory).toHaveCSS("width", "240px");
+    await expectNoHorizontalOverflow(page);
+  }
+
+  for (const width of [900, 800, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await gotoDownloads(page);
+    await expect(page.getByTestId("directory-progress-rail")).not.toBeVisible();
+    if (width !== 390) {
+      await expectMobileDirectoryContract(page, {
+        dialogName: "下载中心目录",
+        searchName: "在下载中心目录中筛选",
+        triggerName: "下载中心目录",
+      });
+    }
+    await gotoPartners(page);
+    await expect(page.getByTestId("directory-progress-rail")).not.toBeVisible();
+    if (width !== 390) {
+      await expectMobileDirectoryContract(page, {
+        dialogName: "合作伙伴目录",
+        searchName: "在合作伙伴目录中筛选",
+        triggerName: "合作伙伴目录",
+      });
+    }
+  }
+});
+
+test("下载与合作目录按页面位置标注当前锚点且不改写地址", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await gotoDownloads(page);
+  await page.getByRole("button", { name: "展开下载中心目录" }).click();
+  const downloadDirectory = page.getByRole("navigation", {
+    name: "下载中心完整目录",
+  });
+  const downloadUrl = page.url();
+  await page.locator("#dl-deployment").evaluate((anchor) => {
+    const header = document.querySelector("header");
+    window.scrollTo(
+      0,
+      anchor.getBoundingClientRect().top +
+        window.scrollY -
+        (header?.getBoundingClientRect().bottom ?? 0),
+    );
+  });
+  await expect(
+    downloadDirectory.getByRole("link", { name: "产品部署文档" }),
+  ).toHaveAttribute("aria-current", "location");
+  await scrollWithinOnePixelOfBottom(page);
+  await expect(
+    downloadDirectory.getByRole("link", { name: "元启·技术白皮书" }),
+  ).toHaveAttribute("aria-current", "location");
+  expect(page.url()).toBe(downloadUrl);
+
+  await gotoPartners(page, "?view=training#pt-hero");
+  await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
+  const partnerDirectory = page.getByRole("navigation", {
+    name: "合作伙伴完整目录",
+  });
+  const partnerUrl = page.url();
+  await page.locator("#pt-path").evaluate((anchor) => {
+    const header = document.querySelector("header");
+    window.scrollTo(
+      0,
+      anchor.getBoundingClientRect().top +
+        window.scrollY -
+        (header?.getBoundingClientRect().bottom ?? 0) +
+        1,
+    );
+  });
+  await expect(
+    partnerDirectory.getByRole("link", { name: "认证路径" }),
+  ).toHaveAttribute("aria-current", "location");
+  await scrollWithinOnePixelOfBottom(page);
+  await expect(
+    partnerDirectory.getByRole("link", { name: "学习资源" }),
+  ).toHaveAttribute("aria-current", "location");
+  expect(page.url()).toBe(partnerUrl);
+});
+
+test("合作目录在活动子项滚入后重新展开其已折叠祖先", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await gotoPartners(page, "?view=business#pb-hero");
+  await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
+
+  const directory = page.getByRole("navigation", {
+    name: "合作伙伴完整目录",
+  });
+  const groupToggle = directory.getByRole("button", {
+    name: "收起商业模式目录",
+  });
+  await groupToggle.click();
+  await expect(directory.getByRole("link", { name: "分润政策" })).toHaveCount(
+    0,
+  );
+
+  await page.locator("#pb-tiers").evaluate((anchor) => {
+    const header = document.querySelector("header");
+    window.scrollTo(
+      0,
+      anchor.getBoundingClientRect().top +
+        window.scrollY -
+        (header?.getBoundingClientRect().bottom ?? 0) +
+        1,
+    );
+  });
+
+  await expect(
+    directory.getByRole("link", { name: "分润政策" }),
+  ).toHaveAttribute("aria-current", "location");
+  await expect(
+    directory.getByRole("button", { name: "收起商业模式目录" }),
+  ).toHaveAttribute("aria-expanded", "true");
 });
 
 test("downloads 资源锚点在 desktop 和 mobile 落入 sticky 可视区", async ({
@@ -206,10 +442,12 @@ test("downloads 资源锚点在 desktop 和 mobile 落入 sticky 可视区", asy
       await page
         .getByRole("button", { name: "下载中心目录", exact: true })
         .click();
+    } else {
+      await page.getByRole("button", { name: "展开下载中心目录" }).click();
     }
-    await page.getByRole("link", { name: "码里奥 安装部署指南" }).click();
+    await page.getByRole("link", { name: "元启·部署安装操作手册" }).click();
 
-    const anchor = page.locator('[data-download-key="mdd2-deploy"]');
+    const anchor = page.locator('[data-download-key="yuanqi-deploy"]');
     await expect(anchor).toBeInViewport();
     await expect
       .poll(() =>
@@ -261,15 +499,12 @@ test("downloads 在 1440 和 390 无横溢、保留唯一 Agent 并管理移动�
     .boundingBox();
   expect.soft(drawerBackdropBox?.y).toBe(0);
   const directoryUrl = page.url();
-  const directoryHeaderLink = page.locator(".site-header a").first();
-  const directoryHeaderBox = await directoryHeaderLink.boundingBox();
-  expect(directoryHeaderBox).not.toBeNull();
-  await page.mouse.click(
-    directoryHeaderBox!.x + directoryHeaderBox!.width / 2,
-    directoryHeaderBox!.y + directoryHeaderBox!.height / 2,
-  );
+  await page.locator(".download-directory-backdrop").click({
+    position: { x: 360, y: 4 },
+  });
   await expect.soft(page).toHaveURL(directoryUrl);
-  await expect.soft(drawer).toHaveCount(1);
+  await expect.soft(drawer).toHaveCount(0);
+  await trigger.click();
   const directorySearch = drawer.getByRole("searchbox", {
     name: "在下载中心目录中筛选",
   });
@@ -292,7 +527,7 @@ test("downloads 在 1440 和 390 无横溢、保留唯一 Agent 并管理移动�
   await trigger.click();
   await expect(directorySearch).toBeFocused();
   const targetLink = drawer.getByRole("link", {
-    name: "码里奥 安装部署指南",
+    name: "元启·部署安装操作手册",
   });
   await targetLink.click();
   await expect(drawer).toHaveCount(0);
@@ -330,6 +565,7 @@ test("partners 执行五视图、15 key、筛选、history 和联系弹层合同
   const directory = page.getByRole("navigation", {
     name: "合作伙伴完整目录",
   });
+  await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
   await expect(directory.getByRole("link")).toHaveCount(15);
   await expect(
     page.getByRole("heading", {
@@ -341,6 +577,7 @@ test("partners 执行五视图、15 key、筛选、history 和联系弹层合同
     "data-partner-target",
     "business-tiers",
   );
+  await page.getByRole("button", { name: "收起合作伙伴目录" }).click();
 
   for (const [label, view, hash, heading] of [
     ["合作伙伴总览", "overview", "po-hero", "共建企业 AI 生态，共享增长机遇"],
@@ -349,6 +586,7 @@ test("partners 执行五视图、15 key、筛选、history 和联系弹层合同
     ["伙伴培训", "training", "pt-hero", "系统化培训与认证，快速掌握元启平台"],
     ["成为合作伙伴", "become", "pbc-hero", "成为华鲲合作伙伴"],
   ] as const) {
+    await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
     await directory.getByRole("link", { name: label, exact: true }).click();
     await expect(page).toHaveURL(
       new RegExp(`/partners\\?view=${view}#${hash}$`, "u"),
@@ -358,8 +596,10 @@ test("partners 执行五视图、15 key、筛选、history 和联系弹层合同
     ).toHaveCount(1);
   }
 
+  await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
   await directory.getByRole("link", { name: "合作伙伴总览" }).click();
   await expect(page).toHaveURL(/\/partners\?view=overview#po-hero$/u);
+  await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
   const search = page.getByRole("searchbox", {
     name: "在合作伙伴目录中筛选",
   });
@@ -554,16 +794,19 @@ test("partners 在 1440 和 390 验证目录组、来源、复制反馈和背景
       viewport.width === 390 ? "dialog" : "complementary",
       { name: "合作伙伴目录" },
     );
+    if (viewport.width !== 390) {
+      await page.getByRole("button", { name: "展开合作伙伴目录" }).click();
+    }
     const collapse = directory.getByRole("button", {
-      name: "收起商业模式目录",
+      name: "收起伙伴政策目录",
     });
     await collapse.click();
-    await expect(directory.getByRole("link", { name: "分润政策" })).toHaveCount(
+    await expect(directory.getByRole("link", { name: "认证体系" })).toHaveCount(
       0,
     );
-    await directory.getByRole("button", { name: "展开商业模式目录" }).click();
+    await directory.getByRole("button", { name: "展开伙伴政策目录" }).click();
     await expect(
-      directory.getByRole("link", { name: "分润政策" }),
+      directory.getByRole("link", { name: "认证体系" }),
     ).toBeVisible();
 
     if (viewport.width === 390) {
@@ -732,7 +975,8 @@ test("partners 在 1440 和 390 无横溢、锚点可见、抽屉隔离并保留
     /logo\.png/u,
   );
   await expect(page.locator(".partner-return-bar")).toHaveCount(0);
-  await expect(page.locator(".partner-directory")).toHaveCSS("width", "240px");
+  await expect(page.locator(".partner-directory")).toHaveCSS("width", "44px");
+  await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
   await expect(page.locator("#po-hero .partner-visual")).toHaveCSS(
     "background-image",
     /ecosystem-lattice\.png/u,
@@ -935,15 +1179,32 @@ test("trial 在 1440 与 390 完成校验、成功、关闭和焦点约束", asy
       .locator(".floating-assistant__launcher")
       .boundingBox();
     expect(launcherBox).not.toBeNull();
+    const dialogBox = await dialog.boundingBox();
     await page.mouse.click(
       launcherBox!.x + launcherBox!.width / 2,
       launcherBox!.y + launcherBox!.height / 2,
     );
-    await expect(dialog).toHaveCount(0);
     await expect(page.getByRole("dialog", { name: "码多多" })).toHaveCount(0);
-    await expect(trigger).toBeFocused();
 
-    await trigger.click();
+    const launcherCenter = {
+      x: launcherBox!.x + launcherBox!.width / 2,
+      y: launcherBox!.y + launcherBox!.height / 2,
+    };
+    const launcherIsCovered =
+      dialogBox !== null &&
+      launcherCenter.x >= dialogBox.x &&
+      launcherCenter.x <= dialogBox.x + dialogBox.width &&
+      launcherCenter.y >= dialogBox.y &&
+      launcherCenter.y <= dialogBox.y + dialogBox.height;
+
+    if (launcherIsCovered) {
+      await expect(dialog).toHaveCount(1);
+    } else {
+      await expect(dialog).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+      await trigger.click();
+    }
+
     await dialog.getByRole("button", { name: "提交申请" }).click();
     await expect(dialog.getByRole("status")).toHaveText("请填写姓名");
     await dialog.getByLabel("姓名").fill("测试用户");

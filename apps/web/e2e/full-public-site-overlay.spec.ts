@@ -67,19 +67,28 @@ const partnerTargets = [
 ] as const;
 
 const downloadKeys = [
-  "yuanqi-intro",
-  "yuanqi-features",
-  "yuanqi-arch",
+  "yuanqi-fullstack",
+  "yuanqi-appliance",
+  "yuanqi-cases",
+  "yuanqi-folder",
+  "yuanqi-usage",
   "mdd2-intro",
-  "mdd2-features",
-  "mdd2-env",
+  "mdd2-solution",
+  "office-appliance",
+  "office-doc",
+  "office-contract",
+  "office-bid",
+  "daoban-appliance",
+  "daoban-gov",
+  "daoban-assistant",
+  "vision-folder",
+  "vision-solution",
+  "vision-intro",
+  "vision-usage",
   "mdd2-client",
-  "mdd2-deploy",
-  "mdd2-usage",
   "yuanqi-deploy",
-  "wp-ai",
-  "wp-llm",
-  "wp-agent",
+  "yuanqi-faq",
+  "wp-yuanqi-tech",
 ] as const;
 
 const deletedPublicRoutes = [
@@ -268,7 +277,7 @@ test("1296px 桌面导航下拉完整落在视口内", async ({ page }) => {
   }
 });
 
-test("桌面 Mega Menu 使用简介栏与产品能力地图布局", async ({
+test("桌面 Mega Menu 使用简介栏与 V3 产品能力分组", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop");
@@ -287,8 +296,11 @@ test("桌面 Mega Menu 使用简介栏与产品能力地图布局", async ({
   const featured = panel
     .getByRole("heading", { name: "独立产品中心", level: 3 })
     .locator("..");
+  const mario = panel
+    .getByRole("heading", { name: "码里奥", level: 3 })
+    .locator("..");
 
-  const [panelStyle, introBox, sectionsBox, firstBox, featuredBox] =
+  const [panelStyle, introBox, sectionsBox, firstBox, marioBox, featuredBox] =
     await Promise.all([
       panel.evaluate((element) => {
         const style = getComputedStyle(element);
@@ -301,6 +313,7 @@ test("桌面 Mega Menu 使用简介栏与产品能力地图布局", async ({
       intro.boundingBox(),
       sections.boundingBox(),
       panel.locator(".mega-menu__section").first().boundingBox(),
+      mario.boundingBox(),
       featured.boundingBox(),
     ]);
 
@@ -310,10 +323,12 @@ test("桌面 Mega Menu 使用简介栏与产品能力地图布局", async ({
   expect(introBox).not.toBeNull();
   expect(sectionsBox).not.toBeNull();
   expect(firstBox).not.toBeNull();
+  expect(marioBox).not.toBeNull();
   expect(featuredBox).not.toBeNull();
   expect(introBox!.x + introBox!.width).toBeLessThan(sectionsBox!.x);
+  expect(marioBox!.x).toBeGreaterThan(firstBox!.x);
   expect(featuredBox!.x).toBeGreaterThan(firstBox!.x);
-  expect(featuredBox!.height).toBeGreaterThan(firstBox!.height);
+  expect(featuredBox!.y).toBeGreaterThan(marioBox!.y);
 });
 
 test("代表公开页的唯一 Agent launcher 可打开关闭并恢复焦点", async ({
@@ -414,7 +429,7 @@ test("15 个 partner key 均由 query 与 hash 对应的真实目标承接", asy
   }
 });
 
-test("13 个 download key 均由真实资源锚点承接", async ({ page }) => {
+test("22 个 download key 均由真实资源锚点承接", async ({ page }) => {
   test.setTimeout(120_000);
   for (const key of downloadKeys) {
     await gotoPublicPage(page, `/downloads#dl-${key}`);

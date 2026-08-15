@@ -30,8 +30,8 @@ describe("V2 solution detail", () => {
         .map((heading) => heading.textContent),
     ).toEqual([
       "业务场景与问题",
-      "核心能力构成",
       "落地效果与价值",
+      "解决方案落地",
       "需要落地行业 AI 解决方案？",
     ]);
     expect(

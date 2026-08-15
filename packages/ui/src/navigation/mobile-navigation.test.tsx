@@ -17,6 +17,7 @@ const items: PortalNavigationItem[] = [
     href: "/product",
     children: [
       {
+        groupLabel: "全栈开发平台",
         label: "平台",
         items: [
           {
@@ -121,6 +122,14 @@ describe("MobileNavigation", () => {
     expect(
       within(dialog).getAllByRole("button", { name: /分组/ }),
     ).toHaveLength(8);
+  });
+
+  it("renders section group labels in the mobile product accordion", () => {
+    renderNavigation();
+    openNavigation();
+    fireEvent.click(accordion("产品"));
+
+    expect(screen.getByText("全栈开发平台")).toBeVisible();
   });
 
   it("mounts controlled accordion panels and shows overview before children", () => {

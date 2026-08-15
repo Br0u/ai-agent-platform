@@ -1,11 +1,22 @@
 import { existsSync, readFileSync } from "node:fs";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import DownloadsPage from "../app/downloads/page";
+import { downloadResources } from "./download-center-content";
 
 afterEach(() => {
   vi.unstubAllGlobals();
   window.history.replaceState({}, "", "/");
+  Object.defineProperty(window, "scrollY", {
+    configurable: true,
+    value: 0,
+  });
 });
 
 function useMobileViewport() {
@@ -27,21 +38,14 @@ describe("DownloadCenter", () => {
       name: "下载中心完整目录",
     });
 
-    for (const href of [
-      "/downloads#dl-yuanqi-intro",
-      "/downloads#dl-yuanqi-features",
-      "/downloads#dl-yuanqi-arch",
-      "/downloads#dl-mdd2-intro",
-      "/downloads#dl-mdd2-features",
-      "/downloads#dl-mdd2-env",
-      "/downloads#dl-mdd2-client",
-      "/downloads#dl-mdd2-deploy",
-      "/downloads#dl-mdd2-usage",
-      "/downloads#dl-yuanqi-deploy",
-      "/downloads#dl-wp-ai",
-      "/downloads#dl-wp-llm",
-      "/downloads#dl-wp-agent",
-    ]) {
+    const resourceKeys = [
+      ...downloadResources.materials,
+      { key: "mdd2-client" },
+      ...downloadResources.deployment,
+      ...downloadResources.whitepapers,
+    ].map(({ key }) => key);
+    for (const key of resourceKeys) {
+      const href = `/downloads#dl-${key}`;
       expect(directory.querySelectorAll(`a[href="${href}"]`)).toHaveLength(1);
       expect(container.querySelectorAll(`#${href.split("#")[1]}`)).toHaveLength(
         1,
@@ -53,19 +57,10 @@ describe("DownloadCenter", () => {
     render(<DownloadsPage />);
 
     for (const name of [
-      "元启 AI 开发赋能平台产品介绍",
-      "元启平台功能清单",
-      "元启平台架构说明",
-      "码里奥 产品介绍",
-      "码里奥 功能清单",
-      "码里奥 支持环境说明",
-      "码里奥 安装部署指南",
-      "码里奥 使用说明",
-      "元启平台部署文档",
-      "企业 AI 落地白皮书",
-      "大模型应用实践白皮书",
-      "智能体与业务自动化技术资料",
-    ]) {
+      ...downloadResources.materials,
+      ...downloadResources.deployment,
+      ...downloadResources.whitepapers,
+    ].map(({ title }) => title)) {
       expect(screen.getByRole("heading", { level: 3, name })).toBeVisible();
     }
   });
@@ -106,12 +101,17 @@ describe("DownloadCenter", () => {
       name: "在下载中心目录中筛选",
     });
 
-    fireEvent.change(search, { target: { value: "安装部署指南" } });
     expect(
-      screen.getByRole("link", { name: "码里奥 安装部署指南" }),
+      screen.getByRole("button", { name: "展开下载中心目录" }),
+    ).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: "展开下载中心目录" }));
+
+    fireEvent.change(search, { target: { value: "部署安装操作手册" } });
+    expect(
+      screen.getByRole("link", { name: "元启·部署安装操作手册" }),
     ).toBeVisible();
     expect(
-      screen.queryByRole("link", { name: "企业 AI 落地白皮书" }),
+      screen.queryByRole("link", { name: "元启·技术白皮书" }),
     ).not.toBeInTheDocument();
 
     fireEvent.change(search, { target: { value: "不存在的资料" } });
@@ -124,11 +124,85 @@ describe("DownloadCenter", () => {
     ).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("marks the selected download anchor like the product directory", () => {
-    window.history.replaceState({}, "", "/downloads#dl-materials");
+  it("shows the quiet progress rail only while the desktop directory is collapsed", () => {
     render(<DownloadsPage />);
 
-    expect(screen.getByRole("link", { name: "产品资料" })).toHaveAttribute(
+    expect(screen.getByTestId("directory-progress-rail")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开下载中心目录" }));
+
+    expect(
+      screen.queryByTestId("directory-progress-rail"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("prefers a scrolled resource over the tracked hash without changing the URL", async () => {
+    window.history.replaceState(null, "", "/downloads#dl-materials");
+    Object.defineProperty(window, "scrollY", {
+      configurable: true,
+      value: 160,
+    });
+    const { container } = render(<DownloadsPage />);
+
+    for (const anchor of container.querySelectorAll<HTMLElement>("[id^=dl-]")) {
+      anchor.getBoundingClientRect = () =>
+        ({ top: anchor.id === "dl-yuanqi-fullstack" ? -12 : 1_000 }) as DOMRect;
+    }
+    fireEvent.scroll(window);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: "元启·全栈解决方案" }),
+      ).toHaveAttribute("aria-current", "location"),
+    );
+    expect(window.location.hash).toBe("#dl-materials");
+  });
+
+  it("limits collapsed desktop geometry to widths above the mobile boundary", () => {
+    const css = readFileSync("src/app/downloads/downloads.css", "utf8");
+    const selectors = [
+      '.download-shell[data-directory-collapsed="true"] {',
+      '.download-shell[data-directory-collapsed="true"] .download-directory {',
+      '.download-shell[data-directory-collapsed="true"] .download-directory__tools {',
+    ];
+
+    for (const selector of selectors) {
+      const selectorIndex = css.indexOf(selector);
+      expect(selectorIndex).toBeGreaterThan(-1);
+      expect(
+        css.lastIndexOf("@media (min-width: 901px)", selectorIndex),
+      ).toBeGreaterThan(
+        css.lastIndexOf("@media (max-width: 900px)", selectorIndex),
+      );
+    }
+  });
+
+  it("renders product materials as a three-level directory", () => {
+    render(<DownloadsPage />);
+    fireEvent.click(screen.getByRole("button", { name: "展开下载中心目录" }));
+    const directory = screen.getByRole("navigation", {
+      name: "下载中心完整目录",
+    });
+    const materials = within(directory)
+      .getByRole("link", { name: "产品资料" })
+      .closest("li")!;
+
+    expect(within(materials).getByText("元启 AI 开发赋能平台")).toBeVisible();
+    expect(within(materials).getByText("视觉检索智能体")).toBeVisible();
+    expect(
+      within(materials).getByRole("link", { name: "元启·全栈解决方案" }),
+    ).toHaveAttribute("href", "/downloads#dl-yuanqi-fullstack");
+  });
+
+  it("marks the download overview while the page is at the top", () => {
+    window.history.replaceState({}, "", "/downloads#dl-materials");
+    Object.defineProperty(window, "scrollY", {
+      configurable: true,
+      value: 0,
+    });
+    render(<DownloadsPage />);
+
+    expect(screen.getByRole("link", { name: "下载中心总览" })).toHaveAttribute(
       "aria-current",
       "location",
     );
@@ -204,20 +278,20 @@ describe("DownloadCenter", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: "在线预览元启 AI 开发赋能平台产品介绍",
+        name: "在线预览元启·全栈解决方案",
       }),
     );
     expect(screen.getByRole("status")).toHaveTextContent(
-      "「元启 AI 开发赋能平台产品介绍」在线预览：正式版提供，原型以内容槽位示意",
+      "「元启·全栈解决方案」在线预览：正式版提供，原型以内容槽位示意",
     );
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: "下载资料元启 AI 开发赋能平台产品介绍",
+        name: "下载资料元启·全栈解决方案",
       }),
     );
     expect(screen.getByRole("status")).toHaveTextContent(
-      "「元启 AI 开发赋能平台产品介绍」下载：原型阶段暂不提供真实文件，正式版上线后开放",
+      "「元启·全栈解决方案」下载：原型阶段暂不提供真实文件，正式版上线后开放",
     );
   });
 

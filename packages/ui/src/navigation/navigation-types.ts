@@ -35,6 +35,7 @@ export type NavigationLink = NavigationHrefItem | NavigationActionItem;
 
 export type NavigationSection = {
   label: string;
+  groupLabel?: string;
   items: NavigationLink[];
   collapsible?: boolean;
   defaultCollapsed?: boolean;

@@ -31,7 +31,7 @@ describe("PartnersPage", () => {
       /\.partner-shell\s*\{[^}]*grid-template-columns:\s*240px minmax\(0, 1fr\)/su,
     );
     expect(css).toMatch(
-      /\.partner-directory\s*\{[^}]*top:\s*64px[^}]*width:\s*240px[^}]*height:\s*calc\(100vh - 64px\)/su,
+      /\.partner-directory\s*\{[^}]*top:\s*64px[^}]*width:\s*240px[^}]*height:\s*calc\(100vh - 104px\)/su,
     );
     expect(appShellCss).toContain(".site-wordmark");
     expect(appShellCss).toContain(

@@ -1,14 +1,22 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import {
   cleanup,
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const navigation = vi.hoisted(() => ({
+  pathname: "/solutions/finance-compliance",
+}));
+
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/solutions/finance-compliance",
+  usePathname: () => navigation.pathname,
 }));
 
 import { SolutionOverview } from "./solution-overview";
@@ -16,9 +24,108 @@ import { SolutionOverview } from "./solution-overview";
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  navigation.pathname = "/solutions/finance-compliance";
 });
 
 describe("V2 solution directory", () => {
+  it("limits collapsed desktop geometry to widths above the mobile boundary", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/app/solutions/solutions.css"),
+      "utf8",
+    );
+    const selectors = [
+      '.solution-shell[data-directory-collapsed="true"] {',
+      '.solution-shell[data-directory-collapsed="true"] .solution-directory {',
+      '.solution-shell[data-directory-collapsed="true"] .solution-directory__tools {',
+    ];
+
+    for (const selector of selectors) {
+      const selectorIndex = css.indexOf(selector);
+      expect(selectorIndex).toBeGreaterThan(-1);
+      expect(
+        css.lastIndexOf("@media (min-width: 901px)", selectorIndex),
+      ).toBeGreaterThan(
+        css.lastIndexOf("@media (max-width: 900px)", selectorIndex),
+      );
+    }
+  });
+
+  it("starts collapsed, keeps the current route marked, and uses the shared 900px boundary", () => {
+    const matchMedia = vi.fn().mockReturnValue({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("matchMedia", matchMedia);
+    const { container } = render(<SolutionOverview>content</SolutionOverview>);
+
+    expect(container.querySelector(".solution-shell")).toHaveAttribute(
+      "data-directory-collapsed",
+      "true",
+    );
+    expect(screen.getByTestId("directory-progress-rail")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", {
+        name: "贷款合规智能审查",
+      }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(matchMedia).toHaveBeenCalledWith("(max-width: 900px)");
+
+    fireEvent.click(screen.getByRole("button", { name: "展开解决方案目录" }));
+    expect(
+      screen.queryByTestId("directory-progress-rail"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", {
+        name: "贷款合规智能审查",
+      }),
+    ).toHaveAttribute("aria-current", "page");
+  });
+
+  it("resets an opened desktop directory when the pathname changes", async () => {
+    const view = render(<SolutionOverview>content</SolutionOverview>);
+    const shell = view.container.querySelector(".solution-shell");
+
+    fireEvent.click(screen.getByRole("button", { name: "展开解决方案目录" }));
+    expect(shell).toHaveAttribute("data-directory-collapsed", "false");
+
+    navigation.pathname = "/solutions/finance-aml";
+    view.rerender(<SolutionOverview>content</SolutionOverview>);
+
+    await waitFor(() =>
+      expect(shell).toHaveAttribute("data-directory-collapsed", "true"),
+    );
+  });
+
+  it("does not restore an old expanded state after returning to a pathname", async () => {
+    const view = render(<SolutionOverview>content</SolutionOverview>);
+    const shell = view.container.querySelector(".solution-shell");
+
+    fireEvent.click(screen.getByRole("button", { name: "展开解决方案目录" }));
+    navigation.pathname = "/solutions/finance-aml";
+    view.rerender(<SolutionOverview>content</SolutionOverview>);
+    navigation.pathname = "/solutions/finance-compliance";
+    view.rerender(<SolutionOverview>content</SolutionOverview>);
+
+    await waitFor(() =>
+      expect(shell).toHaveAttribute("data-directory-collapsed", "true"),
+    );
+  });
+
+  it("keeps ancestors of the active solution route open after a manual fold", () => {
+    render(<SolutionOverview>content</SolutionOverview>);
+
+    const toggle = screen.getByRole("button", {
+      name: "展开或收起金融行业解决方案",
+    });
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByRole("link", { name: "贷款合规智能审查" }),
+    ).toBeVisible();
+  });
+
   it("searches and folds the exact industry tree", () => {
     render(<SolutionOverview>content</SolutionOverview>);
     expect(
@@ -39,12 +146,12 @@ describe("V2 solution directory", () => {
 
     fireEvent.change(search, { target: { value: "" } });
     const toggle = screen.getByRole("button", {
-      name: "展开或收起金融行业解决方案",
+      name: "展开或收起铁路行业解决方案",
     });
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(
-      screen.queryByRole("link", { name: "贷款合规智能审查" }),
+      screen.queryByRole("link", { name: "规章制度精准解析" }),
     ).not.toBeInTheDocument();
   });
 

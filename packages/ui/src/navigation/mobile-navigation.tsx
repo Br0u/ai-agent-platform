@@ -278,6 +278,11 @@ export function MobileNavigation({
                     </Link>
                     {item.children.map((section, sectionIndex) => (
                       <section key={`${section.label}-${sectionIndex}`}>
+                        {section.groupLabel ? (
+                          <p className="mobile-navigation__section-group">
+                            {section.groupLabel}
+                          </p>
+                        ) : null}
                         <h2>{section.label}</h2>
                         {section.items
                           .filter(isNavigationHrefItem)

@@ -213,4 +213,21 @@ describe("TrialExperience", () => {
     );
     expect(css).not.toContain("transition: all");
   });
+
+  it("使用静谧企业玻璃并让进入动效尊重减少动态效果偏好", () => {
+    const css = readFileSync("src/app/trial/trial.css", "utf8");
+
+    expect(css).toContain("background: rgb(12 20 56 / 34%);");
+    expect(css).toMatch(
+      /radial-gradient\(\s*circle at 88% 4%,\s*rgb\(115 88 234 \/ 12%\),\s*transparent 30%\s*\)/su,
+    );
+    expect(css).toContain(".trial-dialog::before");
+    expect(css).toContain("@keyframes trial-dialog-enter");
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: no-preference\)[^{]*\{[\s\S]*?\.trial-dialog\s*\{[^}]*animation:\s*trial-dialog-enter/su,
+    );
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[^{]*\{[\s\S]*?\.trial \*,/su,
+    );
+  });
 });

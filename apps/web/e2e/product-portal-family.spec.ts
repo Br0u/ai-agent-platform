@@ -127,7 +127,7 @@ const pages = [
 async function gotoProduct(page: Page, path: string) {
   await page.emulateMedia({ reducedMotion: "reduce" });
   const response = await page.goto(path, { waitUntil: "domcontentloaded" });
-  await page.waitForLoadState("load");
+  await expect(page.locator("main.product-portal")).toBeVisible();
   return response;
 }
 
@@ -138,6 +138,69 @@ async function expectNoHorizontalOverflow(page: Page) {
   }));
 
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+}
+
+async function scrollWithinOnePixelOfBottom(page: Page) {
+  await page.evaluate((distance) => {
+    const scrollRange =
+      Math.max(
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight,
+      ) - window.innerHeight;
+    window.scrollTo(0, Math.max(0, scrollRange - distance));
+  }, 0.5);
+}
+
+async function openMobileProductDirectory(page: Page) {
+  const trigger = page.locator(".product-directory-mobile-trigger");
+  const dialog = page.getByRole("dialog", { name: "产品目录" });
+
+  await expect(trigger).toBeVisible();
+  await expect
+    .poll(async () => {
+      if ((await trigger.getAttribute("aria-expanded")) !== "true") {
+        await trigger.click();
+      }
+      return trigger.getAttribute("aria-expanded");
+    })
+    .toBe("true");
+  await expect(dialog).toBeVisible();
+
+  return dialog;
+}
+
+async function expectMobileProductDirectoryContract(page: Page) {
+  const trigger = page.locator(".product-directory-mobile-trigger");
+  await expectNoHorizontalOverflow(page);
+  const dialog = await openMobileProductDirectory(page);
+  const search = dialog.getByRole("searchbox", {
+    name: "在产品目录中筛选",
+  });
+  await expect(dialog).toHaveAttribute("aria-modal", "true");
+  await expect
+    .poll(() => page.evaluate(() => document.body.style.overflow))
+    .toBe("hidden");
+
+  const first = dialog.getByRole("button", { name: "关闭产品目录" });
+  const focusables = dialog.locator(
+    "a[href]:visible, button:not([disabled]):visible, input:not([disabled]):visible",
+  );
+  const last = focusables.last();
+  await last.focus();
+  await page.keyboard.press("Tab");
+  await expect(first).toBeFocused();
+  await first.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(last).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => document.body.style.overflow))
+    .toBe("");
+  await expectNoHorizontalOverflow(page);
+  await expect(search).toHaveCount(0);
 }
 
 const detailVisualContracts = [
@@ -270,6 +333,9 @@ test("产品 Hero 单独承载渐隐极光且不影响站点外层", async ({
   await expect(card).not.toHaveCSS("box-shadow", "none");
   await expect(card).not.toHaveCSS("backdrop-filter", "none");
 
+  if (testInfo.project.name !== "mobile") {
+    await page.getByRole("button", { name: "展开产品目录" }).click();
+  }
   const currentDirectoryLink =
     testInfo.project.name === "mobile"
       ? page.getByRole("button", { name: "打开产品目录" })
@@ -287,24 +353,96 @@ test("产品 Hero 单独承载渐隐极光且不影响站点外层", async ({
   ).toHaveCSS("transition-duration", "0s");
 });
 
+test("产品目录在桌面静默折叠并在移动断点移除进度轨", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+  for (const viewport of [
+    { width: 1440, height: 980 },
+    { width: 901, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await gotoProduct(page, "/product/code-agent");
+    await page.mouse.move(viewport.width - 1, 1);
+
+    const directory = page.getByRole("complementary", { name: "产品目录" });
+    const toggle = page.getByRole("button", { name: "展开产品目录" });
+    const content = page.locator(".product-directory-content");
+    const contentX = await content.evaluate(
+      (element) => element.getBoundingClientRect().x,
+    );
+    expect(contentX).toBe(0);
+    await expect(directory).toHaveCSS("width", "44px");
+    await expect(directory).toHaveCSS("height", `${viewport.height - 104}px`);
+    await expect(directory).toHaveCSS("border-radius", "18px");
+    await expect(directory).toHaveCSS("margin-top", "20px");
+    await expect(directory).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+    await expect(directory).toHaveCSS("background-image", "none");
+    await expect(directory).toHaveCSS("backdrop-filter", "none");
+    await expect(directory).toHaveCSS("box-shadow", "none");
+    await expect(page.locator(".product-directory-tools")).toHaveCSS(
+      "backdrop-filter",
+      "none",
+    );
+    await expect(toggle).toHaveCSS("width", "28px");
+    await expect(toggle).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(toggle).toHaveCSS("box-shadow", "none");
+    await expect(toggle).toHaveCSS("opacity", "0.62");
+    await expect(page.getByTestId("directory-progress-rail")).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expectNoHorizontalOverflow(page);
+
+    await directory.hover();
+    await expect(directory).toHaveCSS("width", "240px");
+    await expect(directory).toHaveCSS("backdrop-filter", /blur\(28px\)/u);
+    await expect(directory.getByRole("searchbox")).toBeVisible();
+    await expect(page.getByTestId("directory-progress-rail")).toHaveCSS(
+      "opacity",
+      "0",
+    );
+    expect(
+      await content.evaluate((element) => element.getBoundingClientRect().x),
+    ).toBe(contentX);
+
+    await content.hover({ position: { x: 320, y: 200 } });
+    await expect(directory).toHaveCSS("width", "44px");
+
+    await toggle.focus();
+    await expect(directory).toHaveCSS("width", "240px");
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+    await expect(directory).toHaveCSS("width", "44px");
+
+    await expectNoHorizontalOverflow(page);
+  }
+
+  for (const width of [900, 800, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await gotoProduct(page, "/product/code-agent");
+    await expect(page.getByTestId("directory-progress-rail")).not.toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "打开产品目录" }),
+    ).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    if (width !== 390) await expectMobileProductDirectoryContract(page);
+  }
+});
+
 test("产品路由族使用 V2 目录，联系与试用页不加该目录", async ({
   page,
 }, testInfo) => {
   await gotoProduct(page, "/product/code-agent");
   if (testInfo.project.name === "mobile") {
-    await page.getByRole("button", { name: "打开产品目录" }).click();
-    const drawer = page.getByRole("dialog", { name: "产品目录" });
-    await expect(drawer).toBeVisible();
-    await expect(drawer.getByRole("link", { name: "码里奥" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    const drawer = await openMobileProductDirectory(page);
+    await expect(
+      drawer.getByRole("link", { name: "Skill 技能生态" }),
+    ).toHaveAttribute("aria-current", "location");
   } else {
+    await page.getByRole("button", { name: "展开产品目录" }).click();
     const directory = page.getByRole("complementary", { name: "产品目录" });
     await expect(directory).toBeVisible();
     await expect(
-      directory.getByRole("link", { name: "码里奥" }),
-    ).toHaveAttribute("aria-current", "page");
+      directory.getByRole("link", { name: "Skill 技能生态" }),
+    ).toHaveAttribute("aria-current", "location");
   }
 
   for (const path of ["/contact", "/trial"]) {
@@ -322,7 +460,9 @@ test("产品目录严格使用 V2 层级、真实路由和详情锚点", async (
       ? page.getByRole("dialog", { name: "产品目录" })
       : page.getByRole("complementary", { name: "产品目录" });
   if (testInfo.project.name === "mobile") {
-    await page.getByRole("button", { name: "打开产品目录" }).click();
+    await openMobileProductDirectory(page);
+  } else {
+    await page.getByRole("button", { name: "展开产品目录" }).click();
   }
 
   const links = await directory
@@ -341,7 +481,7 @@ test("产品目录严格使用 V2 层级、真实路由和详情锚点", async (
   await expect(page.locator("#mdd2-mcp")).toBeVisible();
 
   if (testInfo.project.name === "mobile") {
-    await page.getByRole("button", { name: "打开产品目录" }).click();
+    await openMobileProductDirectory(page);
   }
   const currentDirectory =
     testInfo.project.name === "mobile"
@@ -352,21 +492,40 @@ test("产品目录严格使用 V2 层级、真实路由和详情锚点", async (
   ).toHaveAttribute("aria-current", "location");
 });
 
+test("产品能力滚动同步目录位置且不改写地址", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+  await page.setViewportSize({ width: 1440, height: 980 });
+  await gotoProduct(page, "/product/code-agent");
+  await page.getByRole("button", { name: "展开产品目录" }).click();
+
+  const directory = page.getByRole("complementary", { name: "产品目录" });
+  const initialUrl = page.url();
+  await page.locator("#mdd2-mcp").scrollIntoViewIfNeeded();
+  await expect(
+    directory.getByRole("link", { name: "MCP 工具集成" }),
+  ).toHaveAttribute("aria-current", "location");
+  expect(page.url()).toBe(initialUrl);
+
+  await scrollWithinOnePixelOfBottom(page);
+  await expect(
+    directory.getByRole("link", { name: "研发生态协同" }),
+  ).toHaveAttribute("aria-current", "location");
+  expect(page.url()).toBe(initialUrl);
+});
+
 test("移动产品目录通过真实链接导航并更新当前项", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await gotoProduct(page, "/product/code-agent");
 
-  await page.getByRole("button", { name: "打开产品目录" }).click();
-  const drawer = page.getByRole("dialog", { name: "产品目录" });
+  const drawer = await openMobileProductDirectory(page);
   await drawer.getByRole("link", { name: "AIPPT" }).click();
 
   await expect(page).toHaveURL(/\/product\/aippt$/u);
   await expect(page.getByRole("dialog", { name: "产品目录" })).toHaveCount(0);
-  await page.getByRole("button", { name: "打开产品目录" }).click();
-  const currentDrawer = page.getByRole("dialog", { name: "产品目录" });
+  const currentDrawer = await openMobileProductDirectory(page);
   await expect(
-    currentDrawer.getByRole("link", { name: "AIPPT" }),
-  ).toHaveAttribute("aria-current", "page");
+    currentDrawer.getByRole("link", { name: "参考资料驱动" }),
+  ).toHaveAttribute("aria-current", "location");
   await currentDrawer.getByRole("button", { name: "关闭产品目录" }).click();
   await expect(currentDrawer).toHaveCount(0);
 });
@@ -376,7 +535,7 @@ test("移动产品目录跨到桌面断点后释放页面状态", async ({ page 
   await gotoProduct(page, "/product/code-agent");
 
   const content = page.locator(".product-directory-content");
-  await page.getByRole("button", { name: "打开产品目录" }).click();
+  await openMobileProductDirectory(page);
   await expect(content).toHaveAttribute("aria-hidden", "true");
   await expect(content).toHaveAttribute("inert", "");
   await expect
@@ -408,9 +567,7 @@ test("移动产品目录隔离并恢复真实站点外层交互", async ({ page 
     await expect(background).not.toHaveAttribute("inert");
   }
 
-  await page.getByRole("button", { name: "打开产品目录" }).click();
-  const dialog = page.getByRole("dialog", { name: "产品目录" });
-  await expect(dialog).toBeVisible();
+  const dialog = await openMobileProductDirectory(page);
   for (const background of backgrounds) {
     await expect(background).toHaveAttribute("aria-hidden", "true");
     await expect(background).toHaveAttribute("inert", "");

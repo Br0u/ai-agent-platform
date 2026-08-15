@@ -5,6 +5,7 @@ import {
   type KeyboardEvent,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -17,6 +18,10 @@ import {
   downloadSections,
   downloadSoftware,
 } from "./download-center-content";
+import {
+  DirectoryProgressRail,
+  useDirectoryProgress,
+} from "./directory-progress";
 
 const MOBILE_DIRECTORY_QUERY = "(max-width: 900px)";
 const FOCUSABLE_SELECTOR = [
@@ -26,12 +31,23 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(",");
 
+type DirectoryItem = {
+  label: string;
+  href?: string;
+  children?: readonly DirectoryItem[];
+};
+
 const directoryGroups = [
   {
     ...downloadSections[0],
-    children: downloadResources.materials.map(({ key, short }) => ({
-      href: `/downloads#dl-${key}`,
-      label: short,
+    children: Object.entries(downloadProducts).map(([productKey, product]) => ({
+      label: product.name,
+      children: downloadResources.materials
+        .filter((resource) => resource.product === productKey)
+        .map(({ key, short }) => ({
+          href: `/downloads#dl-${key}`,
+          label: short,
+        })),
     })),
   },
   {
@@ -57,7 +73,65 @@ const directoryGroups = [
       label: short,
     })),
   },
-] as const;
+] as const satisfies readonly (DirectoryItem & {
+  anchor: string;
+  no: string;
+  desc: string;
+})[];
+
+function filterDirectoryItems(
+  items: readonly DirectoryItem[],
+  query: string,
+): DirectoryItem[] {
+  return items.flatMap((item) => {
+    if (item.label.toLowerCase().includes(query)) return [item];
+    const children = item.children
+      ? filterDirectoryItems(item.children, query)
+      : [];
+    return children.length ? [{ ...item, children }] : [];
+  });
+}
+
+function DirectoryChildren({
+  items,
+  activeHash,
+  onNavigate,
+}: {
+  items: readonly DirectoryItem[];
+  activeHash: string;
+  onNavigate: (hash: string) => void;
+}) {
+  return (
+    <ul>
+      {items.map((item) => (
+        <li key={`${item.label}-${item.href ?? "group"}`}>
+          {item.href ? (
+            <Link
+              aria-current={
+                activeHash === `#${item.href.split("#")[1]}`
+                  ? "location"
+                  : undefined
+              }
+              href={item.href}
+              onClick={() => onNavigate(`#${item.href!.split("#")[1]}`)}
+            >
+              {item.label}
+            </Link>
+          ) : (
+            <span className="download-directory__group">{item.label}</span>
+          )}
+          {item.children?.length ? (
+            <DirectoryChildren
+              activeHash={activeHash}
+              items={item.children}
+              onNavigate={onNavigate}
+            />
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 function trapFocus(event: KeyboardEvent<HTMLElement>, root: HTMLElement) {
   if (event.key !== "Tab") return;
@@ -97,12 +171,8 @@ function ResourceCard({
       className="download-card"
       data-download-key={resource.key}
     >
-      <div className="download-card__cover">
-        <strong>{product?.name ?? resource.title}</strong>
-        <span>{resource.file}</span>
-      </div>
       <div className="download-card__body">
-        {product ? <span className="download-tag">{product.tag}</span> : null}
+        <span className="download-tag">{product?.tag ?? resource.file}</span>
         <h3>{resource.title}</h3>
         <p>{resource.desc}</p>
         <div className="download-actions">
@@ -129,7 +199,7 @@ function ResourceCard({
 
 export function DownloadCenter() {
   const [query, setQuery] = useState("");
-  const [directoryCollapsed, setDirectoryCollapsed] = useState(false);
+  const [directoryCollapsed, setDirectoryCollapsed] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [toast, setToast] = useState("");
@@ -146,14 +216,25 @@ export function DownloadCenter() {
   const restoreSoftwareFocus = useRef(false);
   const allowFocusReturn = useRef(false);
   const normalizedQuery = query.trim().toLowerCase();
+  const downloadAnchorIds = useMemo(
+    () => [
+      "dl-hero",
+      ...downloadSections.map(({ anchor }) => anchor),
+      ...downloadResources.materials.map(({ key }) => `dl-${key}`),
+      `dl-${downloadSoftware.key}`,
+      ...downloadResources.deployment.map(({ key }) => `dl-${key}`),
+      ...downloadResources.whitepapers.map(({ key }) => `dl-${key}`),
+    ],
+    [],
+  );
+  const { activeHash: trackedHash, progress } =
+    useDirectoryProgress(downloadAnchorIds);
+  const directoryActiveHash = trackedHash || activeHash;
   const filteredGroups = directoryGroups.flatMap((group) => {
     if (!normalizedQuery) return [group];
-    const groupMatches = group.label.toLowerCase().includes(normalizedQuery);
-    const children = groupMatches
+    const children = group.label.toLowerCase().includes(normalizedQuery)
       ? group.children
-      : group.children.filter((child) =>
-          child.label.toLowerCase().includes(normalizedQuery),
-        );
+      : filterDirectoryItems(group.children, normalizedQuery);
     return children.length ? [{ ...group, children }] : [];
   });
 
@@ -310,6 +391,10 @@ export function DownloadCenter() {
           }}
           role={isMobile && mobileOpen ? "dialog" : undefined}
         >
+          <DirectoryProgressRail
+            collapsed={directoryCollapsed}
+            progress={progress}
+          />
           <div className="download-directory__tools">
             <input
               ref={directorySearch}
@@ -335,7 +420,7 @@ export function DownloadCenter() {
           <nav aria-label="下载中心完整目录">
             <Link
               aria-current={
-                activeHash === "" || activeHash === "#dl-hero"
+                directoryActiveHash === "" || directoryActiveHash === "#dl-hero"
                   ? "location"
                   : undefined
               }
@@ -353,7 +438,7 @@ export function DownloadCenter() {
                   <li key={group.anchor}>
                     <Link
                       aria-current={
-                        activeHash === `#${group.anchor}`
+                        directoryActiveHash === `#${group.anchor}`
                           ? "location"
                           : undefined
                       }
@@ -366,26 +451,14 @@ export function DownloadCenter() {
                     >
                       {group.label}
                     </Link>
-                    <ul>
-                      {group.children.map((child) => (
-                        <li key={child.href}>
-                          <Link
-                            aria-current={
-                              activeHash === `#${child.href.split("#")[1]}`
-                                ? "location"
-                                : undefined
-                            }
-                            href={child.href}
-                            onClick={() => {
-                              setActiveHash(`#${child.href.split("#")[1]}`);
-                              closeMobileDirectory(false);
-                            }}
-                          >
-                            {child.label}
-                          </Link>
-                        </li>
-                      ))}
-                    </ul>
+                    <DirectoryChildren
+                      activeHash={directoryActiveHash}
+                      items={group.children}
+                      onNavigate={(hash) => {
+                        setActiveHash(hash);
+                        closeMobileDirectory(false);
+                      }}
+                    />
                   </li>
                 ))}
               </ul>
@@ -437,8 +510,7 @@ export function DownloadCenter() {
             <header>
               <h2>01｜产品资料</h2>
               <p>
-                快速了解元启平台与码多多 2.0
-                的产品定位、核心能力与产品价值，先建立产品认知，再进入体验。
+                快速了解元启平台、码里奥与行业应用的产品定位、核心能力与产品价值，先建立产品认知，再进入体验。
               </p>
             </header>
             <div className="download-product-grid">
@@ -452,11 +524,6 @@ export function DownloadCenter() {
                   <div className="download-product-group" key={productKey}>
                     <div className="download-product-group__header">
                       <h3>{product.name}</h3>
-                      <Link href={product.href}>
-                        {productKey === "yuanqi"
-                          ? "进入产品中心 →"
-                          : "进入码里奥 →"}
-                      </Link>
                     </div>
                     <div className="download-grid">
                       {downloadResources.materials
@@ -479,7 +546,7 @@ export function DownloadCenter() {
           <section id="dl-software" className="download-section">
             <header>
               <h2>02｜软件资源下载</h2>
-              <p>获取码多多 2.0 客户端安装包，进入安装体验环节。</p>
+              <p>获取码里奥客户端安装包，进入安装体验环节。</p>
             </header>
             <article
               id={`dl-${downloadSoftware.key}`}
@@ -522,7 +589,7 @@ export function DownloadCenter() {
           <section id="dl-deployment" className="download-section">
             <header>
               <h2>03｜产品部署文档</h2>
-              <p>安装部署与使用说明，降低产品体验门槛。</p>
+              <p>平台与产品的部署安装、使用手册与 FAQ，降低落地门槛。</p>
             </header>
             <div className="download-grid">
               {downloadResources.deployment.map((resource) => (
@@ -538,9 +605,7 @@ export function DownloadCenter() {
           <section id="dl-whitepapers" className="download-section">
             <header>
               <h2>04｜白皮书与技术资料</h2>
-              <p>
-                企业 AI、大模型与智能体相关专业资料，增强产品专业性与可信度。
-              </p>
+              <p>平台技术白皮书等专业资料，增强产品专业性与可信度。</p>
             </header>
             <div className="download-grid">
               {downloadResources.whitepapers.map((resource) => (
