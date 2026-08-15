@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { AssistantStatusResponse } from "@/features/assistant/assistant-contract";
 import {
   ASSISTANT_STREAM_MEDIA_TYPE,
@@ -236,14 +236,52 @@ describe("FloatingChatWidget", () => {
     );
   });
 
-  it("routes the quick expansion action to the full-page assistant", () => {
-    openWidget();
+  it("carries the quick transcript when expansion opens the workspace", async () => {
+    function Transcript() {
+      const { session } = useAssistantExperience();
+      return (
+        <output aria-label="共享聊天记录">
+          {session.messages.map((message) => message.content).join("|")}
+        </output>
+      );
+    }
+
+    function RouteHarness() {
+      const [pathname, setPathname] = useState("/downloads");
+      router.push.mockImplementation((nextPathname: string) =>
+        setPathname(nextPathname),
+      );
+      return (
+        <AssistantExperienceProvider
+          initialServiceState={serviceStates.available}
+          pathname={pathname}
+        >
+          <Transcript />
+          <FloatingChatWidget />
+        </AssistantExperienceProvider>
+      );
+    }
+
+    render(<RouteHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "打开码多多" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "向码多多提问" }), {
+      target: { value: "放大后继续" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("共享聊天记录")).toHaveTextContent(
+        "你可以前往客户支持页面提交产品问题和相关信息。",
+      ),
+    );
 
     expect(
       screen.getByRole("button", { name: "展开码多多工作区" }).parentElement,
     ).toHaveClass("floating-assistant__header-actions");
     fireEvent.click(screen.getByRole("button", { name: "展开码多多工作区" }));
     expect(router.push).toHaveBeenCalledWith("/assistant");
+    expect(screen.getByLabelText("共享聊天记录")).toHaveTextContent(
+      "放大后继续|你可以前往客户支持页面提交产品问题和相关信息。",
+    );
   });
 
   it("keeps the quick surface as the only side surface", async () => {

@@ -178,7 +178,10 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
           <button
             aria-label="展开码多多工作区"
             className="floating-assistant__icon-button"
-            onClick={() => router.push("/assistant")}
+            onClick={() => {
+              session.preserveOnNextPathnameChange("/assistant");
+              router.push("/assistant");
+            }}
             type="button"
           >
             <PanelRightOpen aria-hidden="true" size={18} />

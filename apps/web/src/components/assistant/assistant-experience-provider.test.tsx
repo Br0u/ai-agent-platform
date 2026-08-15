@@ -89,6 +89,14 @@ function Harness() {
       >
         发送跨页问题
       </button>
+      <button
+        onClick={() =>
+          experience.session.preserveOnNextPathnameChange("/assistant")
+        }
+        type="button"
+      >
+        准备放大交接
+      </button>
       <output aria-label="会话消息">
         {experience.session.messages
           .map((message) => message.content)
@@ -505,34 +513,72 @@ describe("AssistantExperienceProvider", () => {
     expect(firstFocus).not.toHaveBeenCalled();
   });
 
-  it("derives a closed assistant workspace surface and resets page memory", async () => {
+  it("carries the quick transcript into the assistant workspace, then clears it after leaving", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(successfulAssistantStream("放大后保留的回答")),
+    );
     const view = render(
-      <AssistantExperienceProvider pathname="/">
+      <AssistantExperienceProvider
+        initialServiceState={placeholderStatus}
+        pathname="/downloads"
+      >
         <Harness />
       </AssistantExperienceProvider>,
     );
     fireEvent.click(screen.getByRole("button", { name: "快速入口" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "会话草稿" }), {
-      target: { value: "保留中的问题" },
-    });
+    fireEvent.click(screen.getByRole("button", { name: "发送跨页问题" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("会话消息")).toHaveTextContent(
+        "放大后保留的回答",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "准备放大交接" }));
 
     view.rerender(
-      <AssistantExperienceProvider pathname="/assistant/?mode=full#composer">
+      <AssistantExperienceProvider
+        initialServiceState={placeholderStatus}
+        pathname="/assistant/?mode=full#composer"
+      >
         <Harness />
       </AssistantExperienceProvider>,
     );
     expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("closed");
-    expect(screen.getByRole("textbox", { name: "会话草稿" })).toHaveValue("");
+    expect(screen.getByLabelText("会话消息")).toHaveTextContent(
+      "跨页已发送问题|放大后保留的回答",
+    );
     await act(async () => {
       await Promise.resolve();
     });
 
     view.rerender(
-      <AssistantExperienceProvider pathname="/pricing">
+      <AssistantExperienceProvider
+        initialServiceState={placeholderStatus}
+        pathname="/pricing"
+      >
         <Harness />
       </AssistantExperienceProvider>,
     );
     expect(screen.getByLabelText("助手展示形态")).toHaveTextContent("closed");
+    expect(screen.getByLabelText("会话消息")).toBeEmptyDOMElement();
+  });
+
+  it("clears page memory on direct workspace navigation without a handoff", () => {
+    const view = render(
+      <AssistantExperienceProvider pathname="/downloads">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "会话草稿" }), {
+      target: { value: "不应跨入口保留" },
+    });
+
+    view.rerender(
+      <AssistantExperienceProvider pathname="/assistant">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+
     expect(screen.getByRole("textbox", { name: "会话草稿" })).toHaveValue("");
   });
 

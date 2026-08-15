@@ -33,6 +33,7 @@ function createSession(
     requestStatus: "idle",
     lastFailedMessage: null,
     validationError: null,
+    preserveOnNextPathnameChange: vi.fn(),
     setDraft: vi.fn(),
     submit: vi.fn(async () => undefined),
     retry: vi.fn(async () => undefined),
