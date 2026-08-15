@@ -721,7 +721,7 @@ test("streaming activity becomes a collapsed audit trail with safe actions", asy
   expectCleanEvidence(evidence, new URL(page.url()).origin);
 });
 
-test("workspace clears the current-page conversation", async ({
+test("workspace preserves the expanded conversation and clears on reload", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "desktop continuity contract");
@@ -767,7 +767,8 @@ test("workspace clears the current-page conversation", async ({
   const composer = page.getByRole("textbox", { name: "输入问题" });
   await expect(composer).toHaveValue("");
   const messageLog = page.getByRole("log", { name: "码多多对话" });
-  await expect(messageLog).toHaveCount(0);
+  await expect(messageLog).toContainText(question);
+  await expect(messageLog).toContainText(answer);
 
   await composer.fill("刷新后也应清空的草稿");
   await page.reload();
