@@ -284,13 +284,15 @@ describe("DirectoryProgressRail", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps motion short and disables it for reduced motion", () => {
+  it("softens on-screen movement and disables it for reduced motion", () => {
     const stylesheet = readFileSync(
       "src/components/directory-progress.css",
       "utf8",
     );
 
-    expect(stylesheet).toMatch(/transition:\s*top\s+160ms/);
+    expect(stylesheet).toMatch(
+      /transition:\s*top\s+240ms\s+cubic-bezier\(0\.77,\s*0,\s*0\.175,\s*1\)/,
+    );
     expect(stylesheet).toMatch(/prefers-reduced-motion:\s*reduce/);
     expect(stylesheet).toMatch(/transition:\s*none/);
   });
