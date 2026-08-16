@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { unlink, writeFile } from "node:fs/promises";
+import { stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 
@@ -248,5 +248,53 @@ describe("admin download upload", () => {
     wiring.derive.mockRejectedValueOnce(new wiring.PdfToolError("invalid_pdf"));
     const response = await POST(request('"2"'), params);
     expect(response.status).toBe(422);
+  });
+
+  it("compensates both staged files when the request aborts after derivation", async () => {
+    const controller = new AbortController();
+    const pdfPath = path.join(tmpdir(), `download-upload-${randomUUID()}`);
+    const coverPath = path.join(tmpdir(), `download-cover-${randomUUID()}`);
+    await Promise.all([
+      writeFile(pdfPath, "pdf"),
+      writeFile(coverPath, "cover"),
+    ]);
+    wiring.stagePath = pdfPath;
+    wiring.derive.mockImplementationOnce(async () => {
+      controller.abort();
+      return {
+        pageCount: 1,
+        stagedCover: {
+          path: coverPath,
+          writable: { close: vi.fn(async () => undefined) },
+        },
+      };
+    });
+    try {
+      const response = await POST(
+        new Request("https://example.test", {
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            origin: "https://example.test",
+            "content-type": "multipart/form-data; boundary=abc",
+            "if-match": '"2"',
+          },
+        }),
+        params,
+      );
+      expect(response.status).toBe(500);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: "internal_error" },
+      });
+      expect(wiring.attach).not.toHaveBeenCalled();
+      await expect(stat(pdfPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(coverPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await Promise.all([
+        unlink(pdfPath).catch(() => undefined),
+        unlink(coverPath).catch(() => undefined),
+      ]);
+    }
   });
 });
