@@ -185,4 +185,11 @@ describe("admin download upload", () => {
       await unlink(wiring.stagePath).catch(() => undefined);
     }
   });
+
+  it("ignores an already-removed stage during compensation", async () => {
+    wiring.stagePath = path.join(tmpdir(), `download-upload-${randomUUID()}`);
+    wiring.derive.mockRejectedValueOnce(new wiring.PdfToolError("invalid_pdf"));
+    const response = await POST(request('"2"'), params);
+    expect(response.status).toBe(422);
+  });
 });

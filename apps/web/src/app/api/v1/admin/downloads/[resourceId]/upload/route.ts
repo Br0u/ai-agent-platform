@@ -57,7 +57,10 @@ async function discardStage(stage: {
 }) {
   const failures: unknown[] = [];
   await stage.writable.close().catch((error: unknown) => failures.push(error));
-  await unlink(stage.path).catch((error: unknown) => failures.push(error));
+  await unlink(stage.path).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+      failures.push(error);
+  });
   if (failures.length)
     throw new AggregateError(failures, "Upload stage cleanup failed");
 }
@@ -94,6 +97,7 @@ function statusFor(error: unknown, request: Request) {
       error.code === "invalid_multipart" ? 400 : 413,
       error.code,
     ] as const;
+  if (error instanceof AggregateError) return [500, "internal_error"] as const;
   if (getPdfToolErrorCode(error) === "invalid_pdf")
     return [422, "invalid_pdf"] as const;
   if (

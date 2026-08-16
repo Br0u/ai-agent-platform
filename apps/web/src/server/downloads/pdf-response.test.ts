@@ -64,6 +64,18 @@ describe("PDF response", () => {
         disposition: "inline",
       }).status,
     ).toBe(416);
+    expect(
+      artifactResponse({
+        request: new Request("https://example.test/file", {
+          headers: { range: "bytes=0-1,2-3" },
+        }),
+        artifact: artifact(),
+        contentType: "application/pdf",
+        filename: "x.pdf",
+        disposition: "inline",
+        noStore: true,
+      }).headers.get("x-content-type-options"),
+    ).toBe("nosniff");
     expect(invalidDestroy).toHaveBeenCalled();
     const head = artifact();
     const headDestroy = vi.spyOn(head.readable, "destroy");
@@ -94,6 +106,21 @@ describe("PDF response", () => {
     });
     expect(response.status).toBe(500);
     expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(destroy).toHaveBeenCalled();
+  });
+
+  it("fails closed for a non-full artifact without a Range request", () => {
+    const partial = artifact(2, 4);
+    const destroy = vi.spyOn(partial.readable, "destroy");
+    expect(
+      artifactResponse({
+        request: new Request("https://example.test/file"),
+        artifact: partial,
+        contentType: "application/pdf",
+        filename: "x.pdf",
+        disposition: "attachment",
+      }).status,
+    ).toBe(500);
     expect(destroy).toHaveBeenCalled();
   });
 });

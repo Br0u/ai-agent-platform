@@ -239,10 +239,20 @@ function safeErrorState(
   }
   if (
     error instanceof Error &&
-    error.message.startsWith("DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT")
+    error.message === "DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT"
   )
     return { kind: "conflict" };
-  if (error instanceof Error && error.message.startsWith("DOWNLOAD_RESOURCE_"))
+  if (
+    error instanceof Error &&
+    new Set([
+      "DOWNLOAD_RESOURCE_NOT_PUBLISHABLE",
+      "DOWNLOAD_RESOURCE_NOT_DOWNLINEABLE",
+      "DOWNLOAD_RESOURCE_NO_DRAFT",
+      "DOWNLOAD_RESOURCE_FILE_NOT_REMOVABLE",
+      "DOWNLOAD_RESOURCE_UPLOAD_REQUIRES_DRAFT",
+      "DOWNLOAD_RESOURCE_INPUT_INVALID",
+    ]).has(error.message)
+  )
     return { kind: "domain_error" };
   try {
     dependencies.reportInternalError({

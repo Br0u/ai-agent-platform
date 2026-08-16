@@ -84,6 +84,7 @@ export function artifactResponse(input: {
       headers: {
         "Accept-Ranges": "bytes",
         "Content-Range": `bytes */${input.artifact.size}`,
+        "X-Content-Type-Options": "nosniff",
         ...(input.noStore ? { "Cache-Control": NO_STORE } : {}),
       },
     });
@@ -94,6 +95,9 @@ export function artifactResponse(input: {
   if (
     !Number.isSafeInteger(input.artifact.start) ||
     !Number.isSafeInteger(input.artifact.end) ||
+    (parsed === null &&
+      (input.artifact.start !== 0 ||
+        input.artifact.end !== input.artifact.size - 1)) ||
     input.artifact.start !== start ||
     input.artifact.end !== end
   ) {

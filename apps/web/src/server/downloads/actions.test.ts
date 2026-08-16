@@ -128,7 +128,7 @@ describe("download resource actions", () => {
     ).resolves.toMatchObject({ kind: "authentication_required" });
 
     current.service.createResource.mockRejectedValueOnce(
-      new Error("DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT: private"),
+      new Error("DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT"),
     );
     await expect(
       current.actions.createDownloadResourceAction(
@@ -138,7 +138,9 @@ describe("download resource actions", () => {
     ).resolves.toEqual({ kind: "conflict" });
 
     current.service.createResource.mockRejectedValueOnce(
-      new Error("/private/downloads/secret.pdf"),
+      new Error(
+        "DOWNLOAD_RESOURCE_PRIVATE_DETAIL: /private/downloads/secret.pdf",
+      ),
     );
     await expect(
       current.actions.createDownloadResourceAction(
