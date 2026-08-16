@@ -207,6 +207,35 @@ function transactionAdapter(databaseTx: DatabaseTransaction) {
       return rows[0] ?? null;
     },
 
+    async listCleanupPendingRevisions(resourceId: string) {
+      return databaseTx
+        .select()
+        .from(downloadResourceRevisions)
+        .where(
+          and(
+            eq(downloadResourceRevisions.resourceId, resourceId),
+            isNotNull(downloadResourceRevisions.cleanupPendingAt),
+          ),
+        )
+        .orderBy(
+          asc(downloadResourceRevisions.createdAt),
+          asc(downloadResourceRevisions.id),
+        );
+    },
+
+    async deleteDetachedRevision(revisionId: string) {
+      const rows = await databaseTx
+        .delete(downloadResourceRevisions)
+        .where(
+          and(
+            eq(downloadResourceRevisions.id, revisionId),
+            isNull(downloadResourceRevisions.cleanupPendingAt),
+          ),
+        )
+        .returning();
+      return rows[0] ?? null;
+    },
+
     async countArtifactReferences(input: {
       pdfObjectKey: string;
       coverObjectKey: string;
@@ -397,7 +426,9 @@ export const downloadResourceRepository = {
     const client = await database.$client.connect();
     let locked = false;
     let result!: Result;
+    let failed = false;
     let primaryError: unknown;
+    let destroyReason: Error | undefined;
     const finalizationErrors: unknown[] = [];
     try {
       await client.query("SELECT pg_advisory_lock($1)", [
@@ -410,7 +441,14 @@ export const downloadResourceRepository = {
       );
       await postCommitCleanup?.(result);
     } catch (error) {
+      failed = true;
       primaryError = error;
+      if (!locked) {
+        destroyReason =
+          error instanceof Error
+            ? error
+            : new Error("Artifact mutation advisory lock acquisition failed");
+      }
     } finally {
       if (locked) {
         try {
@@ -419,21 +457,26 @@ export const downloadResourceRepository = {
             [ARTIFACT_MUTATION_LOCK_KEY],
           );
           if (unlock.rows[0]?.unlocked !== true) {
-            finalizationErrors.push(
-              new Error("Artifact mutation advisory unlock returned false"),
+            destroyReason = new Error(
+              "Artifact mutation advisory unlock returned false",
             );
+            finalizationErrors.push(destroyReason);
           }
         } catch (error) {
           finalizationErrors.push(error);
+          destroyReason =
+            error instanceof Error
+              ? error
+              : new Error("Artifact mutation advisory unlock failed");
         }
       }
       try {
-        client.release();
+        client.release(destroyReason);
       } catch (error) {
         finalizationErrors.push(error);
       }
     }
-    if (primaryError !== undefined) {
+    if (failed) {
       await throwWithFinalizationErrors(primaryError, finalizationErrors);
     }
     if (finalizationErrors.length > 0) {

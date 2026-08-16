@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   events: [] as string[],
   lockResult: { rows: [{ locked: true }] },
   unlockResult: { rows: [{ unlocked: true }] },
+  lockError: undefined as unknown,
+  unlockError: undefined as unknown,
   connect: vi.fn(),
   pinnedTransaction: vi.fn(),
 }));
@@ -49,16 +51,22 @@ describe("download resource repository contract", () => {
     mocks.events.length = 0;
     mocks.lockResult = { rows: [{ locked: true }] };
     mocks.unlockResult = { rows: [{ unlocked: true }] };
+    mocks.lockError = undefined;
+    mocks.unlockError = undefined;
     const client = {
       query: vi.fn(async (query: string) => {
         if (query.includes("pg_advisory_unlock")) {
           mocks.events.push("unlock");
+          if (mocks.unlockError !== undefined) throw mocks.unlockError;
           return mocks.unlockResult;
         }
         mocks.events.push("lock");
+        if (mocks.lockError !== undefined) throw mocks.lockError;
         return mocks.lockResult;
       }),
-      release: vi.fn(() => mocks.events.push("release")),
+      release: vi.fn((error?: Error | boolean) =>
+        mocks.events.push(error ? "destroy" : "release"),
+      ),
     };
     mocks.connect.mockReset();
     mocks.connect.mockImplementation(async () => {
@@ -118,7 +126,57 @@ describe("download resource repository contract", () => {
       expect.objectContaining({ message: expect.stringContaining("unlock") }),
     ]);
     expect(mocks.events.at(-2)).toBe("unlock");
-    expect(mocks.events.at(-1)).toBe("release");
+    expect(mocks.events.at(-1)).toBe("destroy");
+  });
+
+  it.each([undefined, "plain rejection"])(
+    "does not swallow a non-Error rejection value %#",
+    async (thrownValue) => {
+      let rejected = false;
+      let reason: unknown = "not rejected";
+      try {
+        await downloadResourceRepository.withArtifactMutationLock(async () => {
+          throw thrownValue;
+        });
+      } catch (error) {
+        rejected = true;
+        reason = error;
+      }
+      expect(rejected).toBe(true);
+      expect(reason).toBe(thrownValue);
+      expect(mocks.events.slice(-2)).toEqual(["unlock", "release"]);
+    },
+  );
+
+  it("destroys a connection when advisory lock acquisition has an unknown result", async () => {
+    const failure = new Error("lock query failed");
+    mocks.lockError = failure;
+
+    await expect(
+      downloadResourceRepository.withArtifactMutationLock(async () => "no"),
+    ).rejects.toBe(failure);
+    expect(mocks.events).toEqual(["connect", "lock", "destroy"]);
+  });
+
+  it("destroys a connection when advisory unlock fails", async () => {
+    const failure = new Error("unlock query failed");
+    mocks.unlockError = failure;
+
+    await expect(
+      downloadResourceRepository.withArtifactMutationLock(async () => "done"),
+    ).rejects.toBe(failure);
+    expect(mocks.events.slice(-2)).toEqual(["unlock", "destroy"]);
+  });
+
+  it("normally releases after a business failure when unlock succeeds", async () => {
+    const failure = new Error("business failed");
+
+    await expect(
+      downloadResourceRepository.withArtifactMutationLock(async () => {
+        throw failure;
+      }),
+    ).rejects.toBe(failure);
+    expect(mocks.events.slice(-2)).toEqual(["unlock", "release"]);
   });
 
   it("keeps projections, locking, CAS, cleanup and per-key reference counts in SQL", () => {
@@ -127,6 +185,8 @@ describe("download resource repository contract", () => {
     expect(source).toContain("cleanupPendingAt");
     expect(source).toContain("pdfReferenceCount");
     expect(source).toContain("coverReferenceCount");
+    expect(source).toContain("listCleanupPendingRevisions");
+    expect(source).toContain("deleteDetachedRevision");
     expect(source).toContain(
       "createAuditWriter(createDatabaseAuditRepository(databaseTx))",
     );

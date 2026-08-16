@@ -323,10 +323,40 @@ describePostgres("download resource PostgreSQL repository", () => {
       await expect(
         tx.markRevisionCleanupPending(seeded.revisionId),
       ).resolves.toMatchObject({ id: seeded.revisionId });
+      await expect(tx.listCleanupPendingRevisions(seeded.id)).resolves.toEqual([
+        expect.objectContaining({ id: seeded.revisionId }),
+      ]);
       await expect(
         tx.getPreviewRevision(seeded.revisionId),
       ).resolves.toBeNull();
+
+      const disposable = await tx.insertRevision({
+        resourceId: seeded.id,
+        name: "discarded metadata edit",
+        product: metadataEdit.revision.product,
+        category: metadataEdit.revision.category,
+        resourceType: metadataEdit.revision.resourceType,
+        description: "shared artifacts and detached pointers",
+        sortOrder: metadataEdit.revision.sortOrder,
+        previewPolicy: metadataEdit.revision.previewPolicy,
+        downloadPolicy: metadataEdit.revision.downloadPolicy,
+        pdfObjectKey: metadataEdit.revision.pdfObjectKey,
+        coverObjectKey: metadataEdit.revision.coverObjectKey,
+        pageCount: metadataEdit.revision.pageCount,
+        byteSize: metadataEdit.revision.byteSize,
+        sha256: metadataEdit.revision.sha256,
+        createdBy: null,
+      });
+      await expect(
+        tx.deleteDetachedRevision(disposable.id),
+      ).resolves.toMatchObject({ id: disposable.id });
     });
+
+    await expect(
+      downloadResourceRepository.transaction((tx) =>
+        tx.deleteDetachedRevision(metadataEdit.revision.id),
+      ),
+    ).rejects.toThrow();
   });
 
   it("counts PDF and cover references separately and excludes cleanup rows from preview", async () => {
@@ -370,7 +400,24 @@ describePostgres("download resource PostgreSQL repository", () => {
         await cleanupGate;
       },
     );
-    while (!cleanupStarted) await delay(10);
+    try {
+      await Promise.race([
+        (async () => {
+          while (!cleanupStarted) await delay(10);
+        })(),
+        mutation.then(
+          () => Promise.reject(new Error("Mutation ended before cleanup wait")),
+          (error: unknown) => Promise.reject(error),
+        ),
+        delay(2_000).then(() => {
+          throw new Error("Timed out waiting for post-commit cleanup");
+        }),
+      ]);
+    } catch (error) {
+      allowCleanup();
+      void mutation.catch(() => undefined);
+      throw error;
+    }
     const during = await contender.query<{ acquired: boolean }>(
       "SELECT pg_try_advisory_lock($1) AS acquired",
       ["4922248911538569540"],
