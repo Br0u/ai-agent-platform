@@ -99,6 +99,7 @@ export const routeRegistry: PortalRoute[] = [
   adminRoute("/admin/products", "产品内容"),
   adminRoute("/admin/releases", "版本管理"),
   adminRoute("/admin/docs", "文档管理", "live"),
+  adminRoute("/admin/downloads", "下载资源", "live"),
   adminRoute("/admin/docs/preview/[revisionId]", "文档修订预览", "live"),
   adminRoute("/admin/blog", "资讯管理"),
   adminRoute("/admin/cases", "客户案例管理"),

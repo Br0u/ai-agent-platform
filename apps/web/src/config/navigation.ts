@@ -348,6 +348,11 @@ const adminSecondaryNavigation: SidebarNavigationConfig = {
         },
         { label: "文档管理", href: "/admin/docs", permission: "admin:docs" },
         {
+          label: "下载资源",
+          href: "/admin/downloads",
+          permission: "admin:downloads",
+        },
+        {
           label: "Blog / 产品动态",
           href: "/admin/blog",
           permission: "admin:blog",

@@ -107,6 +107,7 @@ const requiredRoutes = [
   "/admin/products",
   "/admin/releases",
   "/admin/docs",
+  "/admin/downloads",
   "/admin/docs/preview/[revisionId]",
   "/admin/blog",
   "/admin/cases",
@@ -180,6 +181,15 @@ describe("routeRegistry", () => {
     expect(matchRoute("/admin/docs/preview/revision-1")).toEqual({
       path: "/admin/docs/preview/[revisionId]",
       title: "文档修订预览",
+      group: "admin",
+      status: "live",
+    });
+  });
+
+  it("registers the download resource manager as a live admin route", () => {
+    expect(matchRoute("/admin/downloads")).toEqual({
+      path: "/admin/downloads",
+      title: "下载资源",
       group: "admin",
       status: "live",
     });
