@@ -68,6 +68,12 @@ const wiring = vi.hoisted(() => ({
   cleanupFailures: new Set<string>(),
   commitFailures: new Set<"pdf" | "cover">(),
   failInsertRevision: false,
+  failCleanupPersist: false,
+  failAllRemoves: false,
+  finalizationFailure: false,
+  openedPdfSize: null as number | null,
+  lastReadable: { destroy: vi.fn() },
+  denyTransactionPermission: false,
   resources: new Map<string, FakeResource>(),
   revisions: new Map<string, FakeRevision>(),
   audits: [] as unknown[],
@@ -75,26 +81,46 @@ const wiring = vi.hoisted(() => ({
 
 vi.mock("../auth/access", () => ({ requirePermission: wiring.allow }));
 vi.mock("./file-store", () => ({
-  createDownloadFileStore: () => ({
-    commit: vi.fn(async (_stage: unknown, input: CommitInput) => {
-      if (wiring.commitFailures.has(input.kind))
-        throw new Error("commit failure");
-      const key = `objects/${input.resourceId}/${input.revisionId}.${input.kind === "pdf" ? "pdf" : "webp"}`;
-      wiring.files.set(key, input.kind === "pdf" ? 123 : 45);
-      return key;
-    }),
-    stat: vi.fn(async (key: string) => {
-      const size = wiring.files.get(key);
-      if (size === undefined) throw new Error("ENOENT");
-      return { size };
-    }),
-    open: vi.fn(async (key: string, range?: unknown) => ({ key, range })),
-    remove: vi.fn(async (key: string) => {
-      if (wiring.cleanupFailures.has(key))
-        throw new Error("filesystem failure");
-      wiring.files.delete(key);
-    }),
-  }),
+  createDownloadFileStore: () => {
+    const storeIdentity = {};
+    return {
+      createStage: vi.fn(async () => ({ storeIdentity })),
+      commit: vi.fn(async (_stage: unknown, input: CommitInput) => {
+        if (
+          typeof _stage === "object" &&
+          _stage !== null &&
+          "storeIdentity" in _stage &&
+          _stage.storeIdentity !== storeIdentity
+        ) {
+          throw new Error("Invalid or consumed stage");
+        }
+        if (wiring.commitFailures.has(input.kind))
+          throw new Error("commit failure");
+        const key = `objects/${input.resourceId}/${input.revisionId}.${input.kind === "pdf" ? "pdf" : "webp"}`;
+        wiring.files.set(key, input.kind === "pdf" ? 123 : 45);
+        return key;
+      }),
+      stat: vi.fn(async (key: string) => {
+        const size = wiring.files.get(key);
+        if (size === undefined) throw new Error("ENOENT");
+        return { size };
+      }),
+      open: vi.fn(async (key: string, range?: unknown) => {
+        const size =
+          key.endsWith(".pdf") && wiring.openedPdfSize !== null
+            ? wiring.openedPdfSize
+            : wiring.files.get(key);
+        if (size === undefined) throw new Error("ENOENT");
+        wiring.lastReadable = { destroy: vi.fn() };
+        return { key, range, size, readable: wiring.lastReadable };
+      }),
+      remove: vi.fn(async (key: string) => {
+        if (wiring.failAllRemoves || wiring.cleanupFailures.has(key))
+          throw new Error("filesystem failure");
+        wiring.files.delete(key);
+      }),
+    };
+  },
 }));
 vi.mock("./repository", () => ({
   downloadResourceRepository: {
@@ -131,6 +157,8 @@ vi.mock("./repository", () => ({
     ) => {
       const result = await work(transaction());
       await cleanup?.(result);
+      if (wiring.finalizationFailure)
+        throw new Error("lock finalization failed");
       return result;
     },
   },
@@ -138,12 +166,25 @@ vi.mock("./repository", () => ({
 
 function transaction() {
   return {
-    assertActiveWorkforcePermission: vi.fn(async () => undefined),
+    assertActiveWorkforcePermission: vi.fn(async () => {
+      if (wiring.denyTransactionPermission)
+        throw new Error("AUTH_PERMISSION_DENIED");
+    }),
     lockResource: async (id: string) => wiring.resources.get(id) ?? null,
     insertResource: async (input: { key: string; adminLabel: string }) => {
       const resource = resourceRow(input);
       wiring.resources.set(resource.id, resource);
-      return resource;
+      return {
+        id: resource.id,
+        key: resource.key,
+        adminLabel: resource.adminLabel,
+        state: resource.state,
+        publishedRevisionId: resource.publishedRevisionId,
+        draftRevisionId: resource.draftRevisionId,
+        rowVersion: resource.rowVersion,
+        createdAt: resource.createdAt,
+        updatedAt: resource.updatedAt,
+      };
     },
     insertRevision: async (input: RevisionInput) => {
       if (wiring.failInsertRevision) throw new Error("database failure");
@@ -166,7 +207,17 @@ function transaction() {
         : null;
       resource.rowVersion += 1;
       resource.updatedAt = new Date();
-      return resource;
+      return {
+        id: resource.id,
+        key: resource.key,
+        adminLabel: resource.adminLabel,
+        state: resource.state,
+        publishedRevisionId: resource.publishedRevisionId,
+        draftRevisionId: resource.draftRevisionId,
+        rowVersion: resource.rowVersion,
+        createdAt: resource.createdAt,
+        updatedAt: resource.updatedAt,
+      };
     },
     markRevisionPublished: async (id: string) => {
       const revision = wiring.revisions.get(id);
@@ -208,6 +259,8 @@ function transaction() {
       return revision?.cleanupPendingAt ? null : (revision ?? null);
     },
     setCleanupError: async (id: string, summary: string) => {
+      if (wiring.failCleanupPersist)
+        throw new Error("cleanup persistence failed");
       const revision = wiring.revisions.get(id);
       if (revision) revision.cleanupErrorSummary = summary;
       return revision ?? null;
@@ -217,7 +270,7 @@ function transaction() {
 }
 
 function resourceRow(input: { key: string; adminLabel: string }) {
-  return {
+  const resource = {
     id: randomUUID(),
     key: input.key,
     adminLabel: input.adminLabel,
@@ -230,6 +283,7 @@ function resourceRow(input: { key: string; adminLabel: string }) {
     createdAt: new Date(),
     updatedAt: new Date(),
   };
+  return resource;
 }
 
 function revisionRow(input: RevisionInput): FakeRevision {
@@ -284,8 +338,6 @@ function upload(id: string, expectedRowVersion: number) {
   };
 }
 
-const actor = { userId: "11111111-1111-4111-8111-111111111111" };
-
 describe("downloadResourceService lifecycle", () => {
   beforeEach(() => {
     wiring.allow.mockClear();
@@ -293,6 +345,12 @@ describe("downloadResourceService lifecycle", () => {
     wiring.cleanupFailures.clear();
     wiring.commitFailures.clear();
     wiring.failInsertRevision = false;
+    wiring.failCleanupPersist = false;
+    wiring.failAllRemoves = false;
+    wiring.finalizationFailure = false;
+    wiring.openedPdfSize = null;
+    wiring.lastReadable = { destroy: vi.fn() };
+    wiring.denyTransactionPermission = false;
     wiring.resources.clear();
     wiring.revisions.clear();
     wiring.audits.length = 0;
@@ -321,32 +379,30 @@ describe("downloadResourceService lifecycle", () => {
     ],
   ])("%s", async (_name, actions, expected) => {
     const { downloadResourceService } = await import("./service");
-    const created = await downloadResourceService.createResource(
-      { key: "yuanqi-intro", adminLabel: "元启介绍" },
-      actor,
-    );
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-intro",
+      adminLabel: "元启介绍",
+    });
     for (const action of actions) {
       const current = wiring.resources.get(created.id)!;
       if (action === "save")
         await downloadResourceService.saveDraft(
           metadata(created.id, current.rowVersion),
-          actor,
         );
       if (action === "upload")
         await downloadResourceService.attachUploadedPdf(
           upload(created.id, current.rowVersion),
-          actor,
         );
       if (action === "publish")
-        await downloadResourceService.publish(
-          { id: created.id, expectedRowVersion: current.rowVersion },
-          actor,
-        );
+        await downloadResourceService.publish({
+          id: created.id,
+          expectedRowVersion: current.rowVersion,
+        });
       if (action === "downline")
-        await downloadResourceService.downline(
-          { id: created.id, expectedRowVersion: current.rowVersion },
-          actor,
-        );
+        await downloadResourceService.downline({
+          id: created.id,
+          expectedRowVersion: current.rowVersion,
+        });
     }
     const resource = wiring.resources.get(created.id)!;
     expect({
@@ -358,29 +414,23 @@ describe("downloadResourceService lifecycle", () => {
 
   it("replaces a published revision, then cleans detached unique artifacts after commit", async () => {
     const { downloadResourceService } = await import("./service");
-    const created = await downloadResourceService.createResource(
-      { key: "yuanqi-replace", adminLabel: "替换" },
-      actor,
-    );
-    await downloadResourceService.saveDraft(metadata(created.id, 1), actor);
-    await downloadResourceService.attachUploadedPdf(
-      upload(created.id, 2),
-      actor,
-    );
-    await downloadResourceService.publish(
-      { id: created.id, expectedRowVersion: 3 },
-      actor,
-    );
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-replace",
+      adminLabel: "替换",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
     const old = wiring.resources.get(created.id)!.publishedRevision!;
-    await downloadResourceService.saveDraft(metadata(created.id, 4), actor);
-    await downloadResourceService.attachUploadedPdf(
-      upload(created.id, 5),
-      actor,
-    );
-    await downloadResourceService.publish(
-      { id: created.id, expectedRowVersion: 6 },
-      actor,
-    );
+    await downloadResourceService.saveDraft(metadata(created.id, 4));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 5));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 6,
+    });
     expect(wiring.resources.get(created.id)!.publishedRevision!.id).not.toBe(
       old.id,
     );
@@ -388,38 +438,54 @@ describe("downloadResourceService lifecycle", () => {
     expect(wiring.files.has(old.coverObjectKey!)).toBe(false);
   });
 
+  it("hydrates mutation DTOs even though database writes return plain resource rows", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-flat-row",
+      adminLabel: "平面行",
+    });
+    const saved = await downloadResourceService.saveDraft(
+      metadata(created.id, 1),
+    );
+    expect(saved.draftRevision?.name).toBe("产品介绍");
+    const uploaded = await downloadResourceService.attachUploadedPdf(
+      upload(created.id, 2),
+    );
+    expect(uploaded.draftRevision?.pdfObjectKey).toContain(".pdf");
+    const published = await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    expect(published.publishedRevision?.name).toBe("产品介绍");
+    expect(published.draftRevision).toBeNull();
+  });
+
   it("retains a cleanup row on deletion failure and retries it with the next mutation", async () => {
     const { downloadResourceService } = await import("./service");
-    const created = await downloadResourceService.createResource(
-      { key: "yuanqi-retry", adminLabel: "重试" },
-      actor,
-    );
-    await downloadResourceService.saveDraft(metadata(created.id, 1), actor);
-    await downloadResourceService.attachUploadedPdf(
-      upload(created.id, 2),
-      actor,
-    );
-    await downloadResourceService.publish(
-      { id: created.id, expectedRowVersion: 3 },
-      actor,
-    );
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-retry",
+      adminLabel: "重试",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
     const old = wiring.resources.get(created.id)!.publishedRevision!;
     wiring.cleanupFailures.add(old.pdfObjectKey!);
-    await downloadResourceService.saveDraft(metadata(created.id, 4), actor);
-    await downloadResourceService.attachUploadedPdf(
-      upload(created.id, 5),
-      actor,
-    );
-    await downloadResourceService.publish(
-      { id: created.id, expectedRowVersion: 6 },
-      actor,
-    );
+    await downloadResourceService.saveDraft(metadata(created.id, 4));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 5));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 6,
+    });
     expect(wiring.revisions.get(old.id)?.cleanupPendingAt).toBeTruthy();
     expect(wiring.revisions.get(old.id)?.cleanupErrorSummary).toContain(
-      "filesystem failure",
+      "filesystem cleanup failed",
     );
     wiring.cleanupFailures.clear();
-    await downloadResourceService.saveDraft(metadata(created.id, 7), actor);
+    await downloadResourceService.saveDraft(metadata(created.id, 7));
     expect(wiring.revisions.has(old.id)).toBe(false);
     expect(wiring.files.has(old.pdfObjectKey!)).toBe(false);
     expect(wiring.files.has(old.coverObjectKey!)).toBe(false);
@@ -436,25 +502,168 @@ describe("downloadResourceService lifecycle", () => {
 
   it("removes newly committed artifacts when the cover or database step fails", async () => {
     const { downloadResourceService } = await import("./service");
-    const created = await downloadResourceService.createResource(
-      { key: "yuanqi-rollback", adminLabel: "回滚" },
-      actor,
-    );
-    await downloadResourceService.saveDraft(metadata(created.id, 1), actor);
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-rollback",
+      adminLabel: "回滚",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
     wiring.commitFailures.add("cover");
     await expect(
-      downloadResourceService.attachUploadedPdf(upload(created.id, 2), actor),
+      downloadResourceService.attachUploadedPdf(upload(created.id, 2)),
     ).rejects.toThrow("commit failure");
     expect(wiring.files).toHaveLength(0);
     wiring.commitFailures.clear();
     wiring.failInsertRevision = true;
     await expect(
-      downloadResourceService.attachUploadedPdf(upload(created.id, 2), actor),
+      downloadResourceService.attachUploadedPdf(upload(created.id, 2)),
     ).rejects.toThrow("database failure");
     expect(wiring.files).toHaveLength(0);
     expect(
       wiring.resources.get(created.id)!.draftRevision?.pdfObjectKey,
     ).toBeNull();
+  });
+
+  it("does not compensate committed upload artifacts after post-commit or lock finalization failure", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-post-commit",
+      adminLabel: "提交后",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    wiring.finalizationFailure = true;
+    await expect(
+      downloadResourceService.attachUploadedPdf(upload(created.id, 2)),
+    ).rejects.toThrow("lock finalization failed");
+    expect(wiring.files).toHaveLength(2);
+    expect(
+      wiring.resources.get(created.id)!.draftRevision?.pdfObjectKey,
+    ).toContain(".pdf");
+  });
+
+  it("keeps newly committed upload artifacts when post-commit cleanup persistence fails", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-cleanup-commit",
+      adminLabel: "清理提交后",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    const old = wiring.resources.get(created.id)!.publishedRevision!;
+    wiring.cleanupFailures.add(old.pdfObjectKey!);
+    wiring.failCleanupPersist = true;
+    await downloadResourceService.saveDraft(metadata(created.id, 4));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 5));
+    await expect(
+      downloadResourceService.publish({
+        id: created.id,
+        expectedRowVersion: 6,
+      }),
+    ).rejects.toThrow("cleanup persistence failed");
+    expect(wiring.files).toHaveLength(4);
+    expect(wiring.resources.get(created.id)!.publishedRevision?.id).not.toBe(
+      old.id,
+    );
+  });
+
+  it("surfaces an aggregate when pre-commit upload compensation also fails", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-compensation",
+      adminLabel: "补偿",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    wiring.commitFailures.add("cover");
+    wiring.failAllRemoves = true;
+    await expect(
+      downloadResourceService.attachUploadedPdf(upload(created.id, 2)),
+    ).rejects.toBeInstanceOf(AggregateError);
+  });
+
+  it("accepts a staged upload only from the shared resource file store", async () => {
+    const { downloadResourceFileStore, downloadResourceService } = await import(
+      "./service"
+    );
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-stage-provenance",
+      adminLabel: "上传归属",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await expect(
+      downloadResourceService.attachUploadedPdf({
+        ...upload(created.id, 2),
+        pdfStage: await downloadResourceFileStore.createStage(".pdf"),
+        coverStage: await downloadResourceFileStore.createStage(".webp"),
+      }),
+    ).resolves.toMatchObject({
+      draftRevision: { pdfObjectKey: expect.stringContaining(".pdf") },
+    });
+  });
+
+  it("cleans mixed shared artifact references as one detached batch", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-mixed-refs",
+      adminLabel: "混合引用",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    const draft = wiring.resources.get(created.id)!.draftRevision!;
+    const otherCover = `objects/${created.id}/${randomUUID()}.webp`;
+    const pending = revisionRow({
+      ...draft,
+      id: randomUUID(),
+      coverObjectKey: otherCover,
+    });
+    pending.cleanupPendingAt = new Date();
+    wiring.revisions.set(pending.id, pending);
+    wiring.files.set(otherCover, 45);
+    await downloadResourceService.removeDraftFile({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    expect(wiring.files.has(draft.pdfObjectKey!)).toBe(false);
+    expect(wiring.files.has(draft.coverObjectKey!)).toBe(false);
+    expect(wiring.files.has(otherCover)).toBe(false);
+    expect(wiring.revisions.has(pending.id)).toBe(false);
+  });
+
+  it("rejects a PDF whose opened descriptor size changed after catalog stat", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-toctou",
+      adminLabel: "读取竞态",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    wiring.openedPdfSize = 122;
+    await expect(
+      downloadResourceService.getPublicArtifact("yuanqi-toctou", "preview"),
+    ).resolves.toBeNull();
+    expect(wiring.lastReadable.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("requires the read gate and repeats exact permission in the mutation transaction", async () => {
+    const { downloadResourceService } = await import("./service");
+    wiring.allow.mockRejectedValueOnce(new Error("AUTH_PERMISSION_DENIED"));
+    await expect(
+      downloadResourceService.listAdminResources({}),
+    ).rejects.toThrow("AUTH_PERMISSION_DENIED");
+    wiring.denyTransactionPermission = true;
+    await expect(
+      downloadResourceService.createResource({
+        key: "yuanqi-permission",
+        adminLabel: "权限",
+      }),
+    ).rejects.toThrow("AUTH_PERMISSION_DENIED");
+    expect(wiring.resources).toHaveLength(0);
   });
 
   it.each([
@@ -478,37 +687,35 @@ describe("downloadResourceService lifecycle", () => {
     ],
   ])("%s can %s", async (_name, actions, operation, expected) => {
     const { downloadResourceService } = await import("./service");
-    const created = await downloadResourceService.createResource(
-      { key: `resource-${randomUUID().slice(0, 8)}`, adminLabel: "资源" },
-      actor,
-    );
+    const created = await downloadResourceService.createResource({
+      key: `resource-${randomUUID().slice(0, 8)}`,
+      adminLabel: "资源",
+    });
     for (const action of actions) {
       const current = wiring.resources.get(created.id)!;
       if (action === "save")
         await downloadResourceService.saveDraft(
           metadata(created.id, current.rowVersion),
-          actor,
         );
       if (action === "upload")
         await downloadResourceService.attachUploadedPdf(
           upload(created.id, current.rowVersion),
-          actor,
         );
       if (action === "publish")
-        await downloadResourceService.publish(
-          { id: created.id, expectedRowVersion: current.rowVersion },
-          actor,
-        );
+        await downloadResourceService.publish({
+          id: created.id,
+          expectedRowVersion: current.rowVersion,
+        });
       if (action === "downline")
-        await downloadResourceService.downline(
-          { id: created.id, expectedRowVersion: current.rowVersion },
-          actor,
-        );
+        await downloadResourceService.downline({
+          id: created.id,
+          expectedRowVersion: current.rowVersion,
+        });
     }
     const current = wiring.resources.get(created.id)!;
     await downloadResourceService[
       operation as "discardDraft" | "removeDraftFile"
-    ]({ id: created.id, expectedRowVersion: current.rowVersion }, actor);
+    ]({ id: created.id, expectedRowVersion: current.rowVersion });
     const resource = wiring.resources.get(created.id)!;
     expect({
       state: resource.state,
@@ -520,85 +727,76 @@ describe("downloadResourceService lifecycle", () => {
 
   it("rejects an unsafe lifecycle transition and stale or invalid inputs before pointer loss", async () => {
     const { downloadResourceService } = await import("./service");
-    const created = await downloadResourceService.createResource(
-      { key: "yuanqi-reject", adminLabel: "拒绝" },
-      actor,
-    );
-    await downloadResourceService.saveDraft(metadata(created.id, 1), actor);
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-reject",
+      adminLabel: "拒绝",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
     await expect(
-      downloadResourceService.publish(
-        { id: created.id, expectedRowVersion: 2 },
-        actor,
-      ),
+      downloadResourceService.publish({
+        id: created.id,
+        expectedRowVersion: 2,
+      }),
     ).rejects.toThrow();
     await expect(
-      downloadResourceService.saveDraft(
-        { ...metadata(created.id, 999), key: "mutable-key" },
-        actor,
-      ),
+      downloadResourceService.saveDraft({
+        ...metadata(created.id, 999),
+        key: "mutable-key",
+      }),
     ).rejects.toThrow();
     await expect(
-      downloadResourceService.saveDraft(
-        {
-          ...metadata(created.id, 2),
-          previewPolicy: "contact",
-          downloadPolicy: "public",
-        },
-        actor,
-      ),
+      downloadResourceService.saveDraft({
+        ...metadata(created.id, 2),
+        previewPolicy: "contact",
+        downloadPolicy: "public",
+      }),
     ).rejects.toThrow();
     expect(wiring.resources.get(created.id)!.draftRevision).not.toBeNull();
   });
 
   it("rejects downline with a pending draft and public file removal", async () => {
     const { downloadResourceService } = await import("./service");
-    const created = await downloadResourceService.createResource(
-      { key: "yuanqi-public", adminLabel: "公开" },
-      actor,
-    );
-    await downloadResourceService.saveDraft(metadata(created.id, 1), actor);
-    await downloadResourceService.attachUploadedPdf(
-      upload(created.id, 2),
-      actor,
-    );
-    await downloadResourceService.publish(
-      { id: created.id, expectedRowVersion: 3 },
-      actor,
-    );
-    await downloadResourceService.saveDraft(metadata(created.id, 4), actor);
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-public",
+      adminLabel: "公开",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 4));
     await expect(
-      downloadResourceService.downline(
-        { id: created.id, expectedRowVersion: 5 },
-        actor,
-      ),
+      downloadResourceService.downline({
+        id: created.id,
+        expectedRowVersion: 5,
+      }),
     ).rejects.toThrow();
-    await downloadResourceService.discardDraft(
-      { id: created.id, expectedRowVersion: 5 },
-      actor,
-    );
+    await downloadResourceService.discardDraft({
+      id: created.id,
+      expectedRowVersion: 5,
+    });
     await expect(
-      downloadResourceService.removeDraftFile(
-        { id: created.id, expectedRowVersion: 6 },
-        actor,
-      ),
+      downloadResourceService.removeDraftFile({
+        id: created.id,
+        expectedRowVersion: 6,
+      }),
     ).rejects.toThrow();
   });
 
   it("enforces public policy, validates current file sizes, and never exposes admin object keys", async () => {
     const { downloadResourceService } = await import("./service");
-    const created = await downloadResourceService.createResource(
-      { key: "yuanqi-read", adminLabel: "读取" },
-      actor,
-    );
-    await downloadResourceService.saveDraft(metadata(created.id, 1), actor);
-    await downloadResourceService.attachUploadedPdf(
-      upload(created.id, 2),
-      actor,
-    );
-    await downloadResourceService.publish(
-      { id: created.id, expectedRowVersion: 3 },
-      actor,
-    );
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-read",
+      adminLabel: "读取",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
     expect(await downloadResourceService.listPublicResources()).toHaveLength(1);
     expect(
       await downloadResourceService.getPublicArtifact("yuanqi-read", "cover"),
@@ -610,7 +808,6 @@ describe("downloadResourceService lifecycle", () => {
       created.id,
       "pdf",
       undefined,
-      actor,
     );
     expect(draft).toBeNull();
     const key = wiring.resources.get(created.id)!.publishedRevision!
@@ -618,8 +815,7 @@ describe("downloadResourceService lifecycle", () => {
     wiring.files.delete(key);
     expect(await downloadResourceService.listPublicResources()).toHaveLength(0);
     expect(
-      (await downloadResourceService.getAdminResource(created.id, actor))
-        ?.adminStatus,
+      (await downloadResourceService.getAdminResource(created.id))?.adminStatus,
     ).toBe("文件失效");
   });
 });
