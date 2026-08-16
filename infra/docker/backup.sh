@@ -98,6 +98,7 @@ gpg_home=
 staging_directory=
 snapshot_command_fifo=
 snapshot_output_fifo=
+snapshot_status_file=
 snapshot_group_pid=
 dump_group_pid=
 encrypt_group_pid=
@@ -126,6 +127,18 @@ terminate_process_group() {
     kill -KILL "$process_group_pid" >/dev/null 2>&1 || true
   fi
   wait "$process_group_pid" >/dev/null 2>&1 || true
+}
+
+wait_for_pipeline_with_snapshot() {
+  pipeline_pid=$1
+  while kill -0 "$pipeline_pid" >/dev/null 2>&1; do
+    if [ -s "$snapshot_status_file" ]; then
+      terminate_process_group "$pipeline_pid"
+      return 1
+    fi
+    sleep 1
+  done
+  [ ! -s "$snapshot_status_file" ] && wait "$pipeline_pid"
 }
 
 cleanup() {
@@ -190,26 +203,38 @@ while true; do
   tar_input_file="$staging_directory/tar-input-files"
   snapshot_command_fifo="$staging_directory/snapshot-command.fifo"
   snapshot_output_fifo="$staging_directory/snapshot-output.fifo"
+  snapshot_status_file="$staging_directory/snapshot-session.status"
   mkfifo "$snapshot_command_fifo" "$snapshot_output_fifo"
   chmod 600 "$snapshot_command_fifo" "$snapshot_output_fifo"
   encrypted_temporary_file="$backup_directory/.ai-agent-platform-${timestamp}.dump.gpg.tmp"
   backup_file="$backup_directory/ai-agent-platform-${timestamp}.dump.gpg"
 
-  PGPASSFILE="$pgpass_file" setsid "$timeout_command" \
-    -s TERM \
-    -k "$process_kill_after_seconds" \
-    "$snapshot_timeout_seconds" \
-    psql \
-    --host="$PGHOST" \
-    --port="$PGPORT" \
-    --username="$PGUSER" \
-    --dbname="$PGDATABASE" \
-    --no-psqlrc \
-    --tuples-only \
-    --no-align \
-    --field-separator='|' \
-    --quiet \
-    --set=ON_ERROR_STOP=1 \
+  PGPASSFILE="$pgpass_file" setsid sh -c '
+    status_file=$1
+    shift
+    child_pid=
+    stop_child() {
+      [ -z "$child_pid" ] || kill -TERM "$child_pid" >/dev/null 2>&1 || true
+      [ -z "$child_pid" ] || wait "$child_pid" >/dev/null 2>&1 || true
+      printf "143\n" >"$status_file"
+      exit 143
+    }
+    trap stop_child TERM INT HUP
+    set +e
+    exec 5<&0
+    "$@" <&5 &
+    child_pid=$!
+    wait "$child_pid"
+    status=$?
+    child_pid=
+    printf "%s\n" "$status" >"$status_file"
+    exit "$status"
+  ' sh "$snapshot_status_file" \
+    "$timeout_command" -s TERM -k "$process_kill_after_seconds" \
+    "$snapshot_timeout_seconds" psql \
+    --host="$PGHOST" --port="$PGPORT" --username="$PGUSER" \
+    --dbname="$PGDATABASE" --no-psqlrc --tuples-only --no-align \
+    --field-separator='|' --quiet --set=ON_ERROR_STOP=1 \
     <"$snapshot_command_fifo" >"$snapshot_output_fifo" 2>/dev/null &
   snapshot_group_pid=$!
   exec 3>"$snapshot_command_fifo"
@@ -220,7 +245,7 @@ while true; do
     "SELECT 'locked' FROM (SELECT pg_advisory_lock(4922248911538569540)) AS acquired;" \
     'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;' \
     "SET LOCAL statement_timeout = '$((snapshot_timeout_seconds * 1000))ms';" \
-    "SET LOCAL idle_in_transaction_session_timeout = '$((snapshot_timeout_seconds * 1000))ms';" \
+    "SET LOCAL idle_in_transaction_session_timeout = '$(((snapshot_timeout_seconds + 60) * 1000))ms';" \
     "SELECT pg_export_snapshot(),
        COALESCE((SELECT MAX(version) FROM skill_registry.schema_versions), 0),
        (SELECT COUNT(*) FROM skill_registry.skill_revisions),
@@ -316,20 +341,20 @@ while true; do
   while IFS= read -r object_key <&4; do
     [ "$object_key" != "__AAP_DOWNLOAD_KEYS_END__" ] || break
     download_key_count=$((download_key_count + 1))
-    if [ "$download_key_count" -gt "$download_manifest_max_entries" ] || \
-       ! printf '%s\n' "$object_key" | grep -Eq '^objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(pdf|webp)$'; then
+    if [ "$download_key_count" -gt "$download_manifest_max_entries" ]; then
       echo "backup download artifact manifest is invalid" >&2
       exit 1
     fi
     printf '%s\n' "$object_key" >>"$download_keys_file"
   done
   if [ "$object_key" != "__AAP_DOWNLOAD_KEYS_END__" ] || \
+     grep -Eqv '^objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(pdf|webp)$' "$download_keys_file" || \
      ! LC_ALL=C sort -c -u "$download_keys_file" >/dev/null 2>&1; then
     echo "backup download artifact manifest is invalid" >&2
     exit 1
   fi
 
-  : >"$download_manifest_file"
+  printf 'format_version=1\n' >"$download_manifest_file"
   download_artifact_count=0
   download_artifact_bytes=0
   while IFS= read -r object_key; do
@@ -340,10 +365,13 @@ while true; do
     fi
     artifact_sha256="$(sha256sum "$artifact_path" | awk '{print $1}')"
     artifact_size="$(wc -c <"$artifact_path" | awk '{print $1}')"
-    case "$artifact_sha256:$artifact_size" in
-      *[!0-9a-f:]*|*:) echo "backup download artifact manifest is invalid" >&2; exit 1 ;;
+    case "$artifact_sha256" in
+      ''|*[!0-9a-f]*) echo "backup download artifact manifest is invalid" >&2; exit 1 ;;
     esac
-    if [ "${#artifact_sha256}" -ne 64 ] || [ "$artifact_size" -le 0 ]; then
+    case "$artifact_size" in
+      ''|0|0*|*[!0-9]*) echo "backup download artifact manifest is invalid" >&2; exit 1 ;;
+    esac
+    if [ "${#artifact_sha256}" -ne 64 ]; then
       echo "backup download artifact manifest is invalid" >&2
       exit 1
     fi
@@ -363,9 +391,10 @@ while true; do
   fi
   {
     printf '%s\n' skill-backup.manifest download-files.manifest database.dump
-    cat "$download_keys_file"
+    sed 's#^#download-resources/#' "$download_keys_file"
   } >"$tar_input_file"
-  ln -s "$download_root/objects" "$staging_directory/objects"
+  mkdir "$staging_directory/download-resources"
+  ln -s "$download_root/objects" "$staging_directory/download-resources/objects"
   chmod 600 "$download_keys_file" "$download_manifest_file" "$tar_input_file"
 
   available_temporary_bytes="$(
@@ -427,7 +456,7 @@ while true; do
       --schema=skill_registry \
       --file="$plaintext_temporary_file" 2>/dev/null &
   dump_group_pid=$!
-  if ! wait "$dump_group_pid"; then
+  if ! wait_for_pipeline_with_snapshot "$dump_group_pid"; then
     echo "backup database dump failed" >&2
     exit 1
   fi
@@ -467,6 +496,11 @@ while true; do
     printf 'download_artifact_bytes=%s\n' "$download_artifact_bytes"
   } >"$manifest_file"
   chmod 600 "$plaintext_temporary_file" "$manifest_file" "$download_manifest_file"
+
+  if [ -s "$snapshot_status_file" ]; then
+    echo "backup snapshot transaction failed" >&2
+    exit 1
+  fi
 
   setsid "$timeout_command" \
     -s TERM \
@@ -518,12 +552,16 @@ while true; do
       "$staging_directory/encryption.pipe" \
       "$tar_input_file" &
   encrypt_group_pid=$!
-  if ! wait "$encrypt_group_pid"; then
+  if ! wait_for_pipeline_with_snapshot "$encrypt_group_pid"; then
     echo "backup encryption failed" >&2
     exit 1
   fi
   encrypt_group_pid=
 
+  if [ -s "$snapshot_status_file" ]; then
+    echo "backup snapshot transaction failed" >&2
+    exit 1
+  fi
   printf '%s\n' "SELECT pg_backend_pid() = $snapshot_backend_pid;" >&3
   if ! IFS= read -r snapshot_session_matches <&4 || \
      [ "$snapshot_session_matches" != "t" ]; then
