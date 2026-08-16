@@ -143,6 +143,37 @@ describe("download resource actions", () => {
     expect(current.access.requirePermission).not.toHaveBeenCalled();
   });
 
+  it("maps only the download key unique constraint to a safe create field error", async () => {
+    const current = fixture();
+    current.service.createResource.mockRejectedValueOnce({
+      code: "23505",
+      constraint: "download_resources_key_unique",
+      message: "private database detail",
+    });
+    await expect(
+      current.actions.createDownloadResourceAction(
+        createDownloadResourceActionState(),
+        createForm(),
+      ),
+    ).resolves.toEqual({
+      kind: "validation_error",
+      fieldErrors: { key: ["资源键已存在"] },
+    });
+    expect(current.cache.revalidatePath).not.toHaveBeenCalled();
+    current.service.createResource.mockRejectedValueOnce({
+      code: "23505",
+      constraint: "other_unique",
+      message: "private database detail",
+    });
+    await expect(
+      current.actions.createDownloadResourceAction(
+        createDownloadResourceActionState(),
+        createForm(),
+      ),
+    ).resolves.toEqual({ kind: "internal_error" });
+    expect(current.reportInternalError).toHaveBeenCalled();
+  });
+
   it("rejects noncanonical row versions before calling a mutation", async () => {
     const current = fixture();
     const form = new FormData();

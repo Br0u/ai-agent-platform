@@ -4,6 +4,7 @@ import { revalidatePath, updateTag } from "next/cache";
 import { z } from "zod";
 
 import { AuthAccessError, requirePermission } from "../auth/access";
+import { matchesPostgresConstraint } from "../registration/database-errors";
 import {
   createDownloadResourceInputSchema,
   downloadResourceAdminDtoSchema,
@@ -299,6 +300,16 @@ function invalidate(dependencies: DownloadActionsDependencies) {
   }
 }
 
+function createErrorState(
+  error: unknown,
+): DownloadResourceActionState | undefined {
+  return matchesPostgresConstraint(error, "23505", [
+    "download_resources_key_unique",
+  ])
+    ? { kind: "validation_error", fieldErrors: { key: ["资源键已存在"] } }
+    : undefined;
+}
+
 export function createDownloadResourceActions(
   dependencies: DownloadActionsDependencies,
 ) {
@@ -308,6 +319,7 @@ export function createDownloadResourceActions(
       value: T,
       context: DownloadRequestContext,
     ) => Promise<DownloadResourceAdminDto>,
+    mapError?: (error: unknown) => DownloadResourceActionState | undefined,
   ): Promise<DownloadResourceActionState> {
     if (!input.success) return input.state;
     try {
@@ -318,7 +330,7 @@ export function createDownloadResourceActions(
       invalidate(dependencies);
       return { kind: "success", resource: resource.data };
     } catch (error) {
-      return safeErrorState(error, dependencies);
+      return mapError?.(error) ?? safeErrorState(error, dependencies);
     }
   }
 
@@ -326,7 +338,12 @@ export function createDownloadResourceActions(
     createDownloadResourceAction: (
       _previous: DownloadResourceActionState,
       formData: FormData,
-    ) => run(createInput(formData), dependencies.service.createResource),
+    ) =>
+      run(
+        createInput(formData),
+        dependencies.service.createResource,
+        createErrorState,
+      ),
     saveDownloadDraftAction: (
       _previous: DownloadResourceActionState,
       formData: FormData,
