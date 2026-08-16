@@ -472,12 +472,34 @@ describe("downloadResourceService lifecycle", () => {
       id: created.id,
       expectedRowVersion: 3,
     });
+    const resource = wiring.resources.get(created.id)!;
+    resource.publishedRevision!.publishedAt = new Date(
+      "2024-01-02T03:04:05.000Z",
+    );
+    resource.updatedAt = new Date("2025-06-07T08:09:10.000Z");
     const published = (await downloadResourceService.listPublicResources())[0]!;
+    expect(published.updatedAt).toBe("2024-01-02T03:04:05.000Z");
     await downloadResourceService.saveDraft(metadata(created.id, 4));
     const afterDraftSave = (
       await downloadResourceService.listPublicResources()
     )[0]!;
     expect(afterDraftSave.updatedAt).toBe(published.updatedAt);
+  });
+
+  it("hides a published resource whose revision lacks a publication timestamp", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-missing-published-at",
+      adminLabel: "发布时间异常",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    wiring.resources.get(created.id)!.publishedRevision!.publishedAt = null;
+    expect(await downloadResourceService.listPublicResources()).toEqual([]);
   });
 
   it("publishes a metadata-only draft without deleting its shared PDF or cover", async () => {
