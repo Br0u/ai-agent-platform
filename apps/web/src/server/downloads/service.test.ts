@@ -79,6 +79,7 @@ const wiring = vi.hoisted(() => ({
   abortOnInsert: null as AbortController | null,
   abortOnUpdate: null as AbortController | null,
   abortOnAudit: null as AbortController | null,
+  abortOnStat: null as AbortController | null,
   resources: new Map<string, FakeResource>(),
   revisions: new Map<string, FakeRevision>(),
   audits: [] as unknown[],
@@ -110,6 +111,7 @@ vi.mock("./file-store", () => ({
       stat: vi.fn(async (key: string) => {
         const size = wiring.files.get(key);
         if (size === undefined) throw new Error("ENOENT");
+        wiring.abortOnStat?.abort();
         return { size };
       }),
       open: vi.fn(async (key: string, range?: unknown) => {
@@ -396,6 +398,7 @@ describe("downloadResourceService lifecycle", () => {
     wiring.abortOnInsert = null;
     wiring.abortOnUpdate = null;
     wiring.abortOnAudit = null;
+    wiring.abortOnStat = null;
     wiring.resources.clear();
     wiring.revisions.clear();
     wiring.audits.length = 0;
@@ -737,6 +740,35 @@ describe("downloadResourceService lifecycle", () => {
       expect(wiring.files).toHaveLength(0);
     },
   );
+
+  it("rolls back the draft pointer when cancellation arrives during upload DTO file stats", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-abort-dto-stats",
+      adminLabel: "DTO取消",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 4));
+    const originalDraft = wiring.resources.get(created.id)!.draftRevision!;
+    const existingFiles = new Set(wiring.files.keys());
+    const controller = new AbortController();
+    wiring.abortOnStat = controller;
+    const result = downloadResourceService.attachUploadedPdf(
+      upload(created.id, 5),
+      {},
+      controller.signal,
+    );
+    await expect(result).rejects.toMatchObject({ name: "AbortError" });
+    expect(wiring.resources.get(created.id)!.draftRevision?.id).toBe(
+      originalDraft.id,
+    );
+    expect(new Set(wiring.files.keys())).toEqual(existingFiles);
+  });
 
   it("removes newly committed artifacts when the cover or database step fails", async () => {
     const { downloadResourceService } = await import("./service");

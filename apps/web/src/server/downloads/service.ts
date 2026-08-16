@@ -664,8 +664,10 @@ export const downloadResourceService = {
               ),
             );
             throwIfAborted(signal);
+            const dto = await adminDto(updated);
+            throwIfAborted(signal);
             return {
-              dto: await adminDto(updated),
+              dto,
               resource: updated,
               cleanup,
             };
