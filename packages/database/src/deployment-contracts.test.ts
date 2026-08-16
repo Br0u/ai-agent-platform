@@ -83,6 +83,7 @@ type RenderedService = {
   entrypoint?: string[];
   environment?: Record<string, string | null>;
   healthcheck?: { test?: string[] };
+  group_add?: string[];
   mem_limit?: number | string;
   networks?: Record<string, RenderedNetworkAttachment>;
   network_mode?: string;
@@ -360,6 +361,18 @@ describe("production deployment security contracts", () => {
     expect(backup?.depends_on?.["download-volume-init"]?.condition).toBe(
       "service_completed_successfully",
     );
+    expect(backup?.group_add).toEqual(["1000"]);
+    expect(backup?.environment?.BACKUP_DOWNLOAD_ROOT).toBe(
+      "/download-resources",
+    );
+    expect(backup?.volumes).toContainEqual(
+      expect.objectContaining({
+        type: "volume",
+        source: "download_data",
+        target: "/download-resources",
+        read_only: true,
+      }),
+    );
     const consumers = Object.entries(rendered.services)
       .filter(([, service]) =>
         service.volumes?.some(
@@ -369,9 +382,9 @@ describe("production deployment security contracts", () => {
       )
       .map(([name]) => name);
     expect(consumers).toContain("download-volume-init");
-    expect(consumers.filter((name) => name !== "download-volume-init")).toEqual(
-      ["web"],
-    );
+    expect(
+      consumers.filter((name) => name !== "download-volume-init").sort(),
+    ).toEqual(["backup", "web"]);
     expect(
       consumers.every((name) =>
         ["download-volume-init", "web", "backup"].includes(name),
@@ -7790,11 +7803,24 @@ exec /bin/rm "$@"
     expect(script).not.toContain("timeout --foreground");
     expect(backup?.environment?.BACKUP_DUMP_TIMEOUT_SECONDS).toBe("3600");
     expect(backup?.environment?.BACKUP_DUMP_KILL_AFTER_SECONDS).toBe("5");
-    expect(backup?.environment?.BACKUP_SNAPSHOT_TIMEOUT_SECONDS).toBe("3665");
+    expect(backup?.environment?.BACKUP_SNAPSHOT_TIMEOUT_SECONDS).toBe("7330");
     expect(backup?.environment?.BACKUP_SPACE_SAFETY_BYTES).toBe("67108864");
+    expect(backup?.environment?.BACKUP_DOWNLOAD_MAX_BYTES).toBe("17179869184");
     expect(backup?.tmpfs).toContain("/tmp:rw,noexec,nosuid,size=1g");
     expect(read(".env.example")).toContain("BACKUP_TMPFS_SIZE=1g");
-    expect(script).toContain("format_version=1");
+    expect(script).toContain("format_version=2");
+    expect(script).toContain("download-files.manifest");
+    expect(script).toContain("BACKUP_DOWNLOAD_MAX_BYTES");
+    expect(script).toContain("4194304");
+    expect(script).toContain("20000");
+    expect(script).toContain("10485760");
+    expect(script).toContain("pg_advisory_lock(4922248911538569540)");
+    expect(script).toContain("pg_advisory_unlock(4922248911538569540)");
+    expect(script).toContain("idle_in_transaction_session_timeout");
+    expect(script).toContain("pg_backend_pid()");
+    expect(script).toContain(
+      "backup download artifact space budget is insufficient",
+    );
     expect(script).toContain("dump_sha256=");
     expect(script).toContain("skill_registry_schema_version=");
     expect(script).toContain("skill_revision_count=");
@@ -7802,7 +7828,7 @@ exec /bin/rm "$@"
     expect(script).toContain("skill_file_count=");
     expect(script).toContain("skill-backup.manifest");
     expect(script).toContain("database.dump");
-    expect(script).toContain("tar -cf");
+    expect(script).toContain("tar -chf");
     expect(script).toContain("--format=custom");
     expect(script).not.toContain("--no-owner");
     expect(script).not.toContain("--no-acl");
@@ -8596,19 +8622,38 @@ esac
     const captures = path.join(sandbox, "captures");
     const backups = path.join(sandbox, "backups");
     const temporary = path.join(sandbox, "temporary");
+    const downloads = path.join(sandbox, "downloads");
     const passwordFile = path.join(sandbox, "database-password");
     const encryptionKeyFile = path.join(sandbox, "encryption-key");
     const databasePassword = "backup:password\\sentinel";
     const encryptionKey = "encryption-key-sentinel-0123456789abcdef";
     const fakeDump = "fake-custom-dump";
     const fakeDumpSha256 = createHash("sha256").update(fakeDump).digest("hex");
+    const resourceId = "0191f2a3-4567-7abc-8def-0123456789ab";
+    const revisionId = "0191f2a3-4567-7abc-9def-0123456789ab";
+    const pdfObjectKey = `objects/${resourceId}/${revisionId}.pdf`;
+    const coverObjectKey = `objects/${resourceId}/${revisionId}.webp`;
+    const pdfContents = "referenced-pdf";
+    const coverContents = "referenced-cover";
+    const pdfSha256 = createHash("sha256").update(pdfContents).digest("hex");
+    const coverSha256 = createHash("sha256")
+      .update(coverContents)
+      .digest("hex");
     const hungProcessIds: number[] = [];
     let hungFallbackWatchdogPid: number | undefined;
 
     try {
-      for (const directory of [bin, captures, backups, temporary]) {
+      for (const directory of [bin, captures, backups, temporary, downloads]) {
         mkdirSync(directory, { recursive: true });
       }
+      mkdirSync(path.dirname(path.join(downloads, pdfObjectKey)), {
+        recursive: true,
+      });
+      mkdirSync(path.join(downloads, "staging"), { recursive: true });
+      writeFileSync(path.join(downloads, pdfObjectKey), pdfContents);
+      writeFileSync(path.join(downloads, coverObjectKey), coverContents);
+      writeFileSync(path.join(downloads, "staging", "ignored.pdf"), "staging");
+      writeFileSync(path.join(downloads, "orphan.pdf"), "orphan");
       writeFileSync(passwordFile, databasePassword, { mode: 0o600 });
       writeFileSync(encryptionKeyFile, encryptionKey, { mode: 0o600 });
       writeFileSync(
@@ -8637,16 +8682,28 @@ exec "$@"
       );
       writeFileSync(
         path.join(bin, "psql"),
-        `#!/bin/sh
-set -eu
-printf '%s\\n' "$@" >"$CAPTURE_DIR/psql.argv"
-while IFS= read -r command; do
-  printf '%s\\n' "$command" >>"$CAPTURE_DIR/psql.commands"
-  case "$command" in
-    *pg_export_snapshot*) printf '%s\\n' '00000003-0000001B-1|1|2|2|3|4|3|1|5|1024' ;;
-    '\\q') exit 0 ;;
-  esac
-done
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const readline = require("node:readline");
+const capture = process.env.CAPTURE_DIR;
+fs.writeFileSync(capture + "/psql.argv", process.argv.slice(2).join("\\n") + "\\n");
+process.on("exit", (code) => fs.writeFileSync(capture + "/psql.status", String(code ?? 0) + "\\n"));
+const output = (value) => fs.writeSync(1, value + "\\n");
+const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+lines.on("line", (command) => {
+  fs.appendFileSync(capture + "/psql.commands", command + "\\n");
+  if (command.includes("pg_advisory_lock")) output("locked");
+  else if (command.includes("pg_export_snapshot")) output("00000003-0000001B-1|1|2|2|3|4|3|1|5|1024|4242");
+  else if (command.includes("AAP_DOWNLOAD_KEYS_BEGIN")) output("__AAP_DOWNLOAD_KEYS_BEGIN__");
+  else if (command.includes("SELECT artifact_key")) {
+    output("${pdfObjectKey}");
+    output("${coverObjectKey}");
+  } else if (command.includes("AAP_DOWNLOAD_KEYS_END")) output("__AAP_DOWNLOAD_KEYS_END__");
+  else if (command.startsWith("SELECT pg_backend_pid() =")) output("t");
+  else if (command.startsWith("COMMIT") && !fs.existsSync(capture + "/gpg.done")) process.exit(1);
+  else if (command.includes("pg_advisory_unlock")) output("t");
+  else if (command === "\\\\q") process.exit(0);
+});
 `,
         { mode: 0o700 },
       );
@@ -8671,7 +8728,7 @@ printf '${fakeDump}' >"$output"
         path.join(bin, "sha256sum"),
         `#!/bin/sh
 set -eu
-printf '%s  %s\\n' '${fakeDumpSha256}' "$1"
+exec /usr/bin/shasum -a 256 "$1"
 `,
         { mode: 0o700 },
       );
@@ -8690,6 +8747,7 @@ done
 test -n "$output"
 cat >"$CAPTURE_DIR/plaintext.bundle"
 { printf 'fake-openpgp'; cat "$CAPTURE_DIR/plaintext.bundle"; } >"$output"
+: >"$CAPTURE_DIR/gpg.done"
 `,
         { mode: 0o700 },
       );
@@ -8707,6 +8765,7 @@ printf '%s\\n' "$1" >>"$CAPTURE_DIR/fsync.paths"
         [path.join(root, "infra/docker/backup.sh")],
         {
           encoding: "utf8",
+          timeout: 15_000,
           env: {
             ...process.env,
             PATH: `${bin}:${process.env.PATH ?? ""}`,
@@ -8719,6 +8778,7 @@ printf '%s\\n' "$1" >>"$CAPTURE_DIR/fsync.paths"
             BACKUP_ENCRYPTION_KEY_FILE: encryptionKeyFile,
             BACKUP_DIRECTORY: backups,
             BACKUP_TMP_DIRECTORY: temporary,
+            BACKUP_DOWNLOAD_ROOT: downloads,
             BACKUP_RUN_ONCE: "true",
             BACKUP_TIMEOUT_COMMAND: path.join(bin, "timeout"),
           },
@@ -8726,7 +8786,13 @@ printf '%s\\n' "$1" >>"$CAPTURE_DIR/fsync.paths"
       );
 
       const output = `${result.stdout}${result.stderr}`;
-      expect(result.status, output).toBe(0);
+      const attemptedPsqlCommands = statSync(
+        path.join(captures, "psql.commands"),
+        { throwIfNoEntry: false },
+      )
+        ? readFileSync(path.join(captures, "psql.commands"), "utf8")
+        : `missing psql.commands; captures=${readdirSync(captures).join(",")}; status=${readFileSync(path.join(captures, "psql.status"), "utf8")}; argv=${readFileSync(path.join(captures, "psql.argv"), "utf8")}`;
+      expect(result.status, `${output}\n${attemptedPsqlCommands}`).toBe(0);
       const pgDumpArgv = readFileSync(
         path.join(captures, "pg_dump.argv"),
         "utf8",
@@ -8747,8 +8813,16 @@ printf '%s\\n' "$1" >>"$CAPTURE_DIR/fsync.paths"
       expect(psqlCommands).toContain(
         "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
       );
+      expect(psqlCommands).toContain("pg_advisory_lock(4922248911538569540)");
       expect(psqlCommands).toContain("pg_export_snapshot()");
+      expect(psqlCommands).toContain("pg_backend_pid()");
+      expect(psqlCommands).toContain("idle_in_transaction_session_timeout");
+      expect(psqlCommands).toContain("resource.published_revision_id");
+      expect(psqlCommands).toContain("resource.draft_revision_id");
+      expect(psqlCommands).toContain("revision.cleanup_pending_at IS NULL");
+      expect(psqlCommands).toContain('ORDER BY artifact_key COLLATE "C"');
       expect(psqlCommands).toContain("COMMIT;");
+      expect(psqlCommands).toContain("pg_advisory_unlock(4922248911538569540)");
       expect(pgDumpArgv).toContain("--host=db");
       expect(pgDumpArgv).toContain("--username=ai_agent_backup");
       expect(pgDumpArgv).toContain("--snapshot=00000003-0000001B-1");
@@ -8772,23 +8846,53 @@ printf '%s\\n' "$1" >>"$CAPTURE_DIR/fsync.paths"
       );
       expect(readdirSync(extractedBundle).sort()).toEqual([
         "database.dump",
+        "download-files.manifest",
+        "objects",
         "skill-backup.manifest",
       ]);
       expect(
         readFileSync(path.join(extractedBundle, "database.dump"), "utf8"),
       ).toBe(fakeDump);
+      const downloadManifest = `${pdfSha256}\t${Buffer.byteLength(pdfContents)}\t${pdfObjectKey}
+${coverSha256}\t${Buffer.byteLength(coverContents)}\t${coverObjectKey}
+`;
+      expect(
+        readFileSync(
+          path.join(extractedBundle, "download-files.manifest"),
+          "utf8",
+        ),
+      ).toBe(downloadManifest);
       expect(
         readFileSync(
           path.join(extractedBundle, "skill-backup.manifest"),
           "utf8",
         ),
-      ).toBe(`format_version=1
+      ).toBe(`format_version=2
 dump_sha256=${fakeDumpSha256}
 skill_registry_schema_version=1
 skill_revision_count=2
 skill_artifact_count=2
 skill_file_count=3
+download_manifest_sha256=${createHash("sha256").update(downloadManifest).digest("hex")}
+download_artifact_count=2
+download_artifact_bytes=${Buffer.byteLength(pdfContents) + Buffer.byteLength(coverContents)}
 `);
+      expect(statSync(path.join(extractedBundle, pdfObjectKey)).isFile()).toBe(
+        true,
+      );
+      expect(
+        readFileSync(path.join(extractedBundle, coverObjectKey), "utf8"),
+      ).toBe(coverContents);
+      expect(
+        statSync(path.join(extractedBundle, "staging"), {
+          throwIfNoEntry: false,
+        }),
+      ).toBeUndefined();
+      expect(
+        statSync(path.join(extractedBundle, "orphan.pdf"), {
+          throwIfNoEntry: false,
+        }),
+      ).toBeUndefined();
       expect(backupFiles[0]).toMatch(/^ai-agent-platform-.*\.dump\.gpg$/u);
       expect(statSync(path.join(backups, backupFiles[0])).mode & 0o777).toBe(
         0o600,
@@ -8850,6 +8954,7 @@ printf '%s\n' 'test 1 0 1 0% /work'
             BACKUP_ENCRYPTION_KEY_FILE: encryptionKeyFile,
             BACKUP_DIRECTORY: capacityBackups,
             BACKUP_TMP_DIRECTORY: capacityTemporary,
+            BACKUP_DOWNLOAD_ROOT: downloads,
             BACKUP_RUN_ONCE: "true",
             BACKUP_TIMEOUT_COMMAND: path.join(capacityBin, "timeout"),
             BACKUP_PROCESS_KILL_AFTER_SECONDS: "1",
@@ -8939,28 +9044,42 @@ exec "$@"
       );
       writeFileSync(
         path.join(hangBin, "psql"),
-        `#!/bin/sh
-set -eu
-printf '%s\n' "$$" >"$CAPTURE_DIR/snapshot.pid"
-cleanup_snapshot() {
-  rm -f "$CAPTURE_DIR/idle-transaction"
-  printf 'exited\n' >"$CAPTURE_DIR/snapshot.exited"
-}
-trap 'cleanup_snapshot; exit 143' TERM INT HUP
-trap cleanup_snapshot EXIT
-while IFS= read -r command; do
-  case "$command" in
-    *pg_export_snapshot*)
-      : >"$CAPTURE_DIR/idle-transaction"
-      printf '%s\n' '00000003-0000001B-1|1|2|2|3|4|3|1|5|1024'
-      ;;
-    COMMIT*) rm -f "$CAPTURE_DIR/idle-transaction" ;;
-    '\\q') exit 0 ;;
-  esac
-done
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const readline = require("node:readline");
+const capture = process.env.CAPTURE_DIR;
+fs.writeFileSync(capture + "/snapshot.pid", String(process.pid) + "\\n");
+const cleanup = () => {
+  fs.rmSync(capture + "/idle-transaction", { force: true });
+  fs.writeFileSync(capture + "/snapshot.exited", "exited\\n");
+};
+process.on("exit", cleanup);
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(signal, () => process.exit(143));
+const output = (value) => fs.writeSync(1, value + "\\n");
+const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+lines.on("line", (command) => {
+  if (command.includes("pg_advisory_lock")) output("locked");
+  else if (command.includes("pg_export_snapshot")) {
+    fs.writeFileSync(capture + "/idle-transaction", "");
+    output("00000003-0000001B-1|1|2|2|3|4|3|1|5|1024|4242");
+  } else if (command.includes("AAP_DOWNLOAD_KEYS_BEGIN")) output("__AAP_DOWNLOAD_KEYS_BEGIN__");
+  else if (command.includes("SELECT artifact_key")) {
+    output("${pdfObjectKey}");
+    output("${coverObjectKey}");
+  } else if (command.includes("AAP_DOWNLOAD_KEYS_END")) output("__AAP_DOWNLOAD_KEYS_END__");
+  else if (command.startsWith("SELECT pg_backend_pid() =")) output("t");
+  else if (command.startsWith("COMMIT")) fs.rmSync(capture + "/idle-transaction", { force: true });
+  else if (command.includes("pg_advisory_unlock")) output("t");
+  else if (command === "\\\\q") process.exit(0);
+});
 `,
         { mode: 0o700 },
       );
+      copyFileSync(
+        path.join(bin, "sha256sum"),
+        path.join(hangBin, "sha256sum"),
+      );
+      chmodSync(path.join(hangBin, "sha256sum"), 0o700);
       writeFileSync(
         path.join(hangBin, "pg_dump"),
         `#!/bin/sh
@@ -9003,12 +9122,15 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
             BACKUP_ENCRYPTION_KEY_FILE: encryptionKeyFile,
             BACKUP_DIRECTORY: hangBackups,
             BACKUP_TMP_DIRECTORY: hangTemporary,
+            BACKUP_DOWNLOAD_ROOT: downloads,
             BACKUP_RUN_ONCE: "true",
             BACKUP_TIMEOUT_COMMAND: path.join(hangBin, "timeout"),
             BACKUP_DUMP_TIMEOUT_SECONDS: "2",
             BACKUP_DUMP_KILL_AFTER_SECONDS: "1",
-            BACKUP_SNAPSHOT_TIMEOUT_SECONDS: "63",
+            BACKUP_SNAPSHOT_TIMEOUT_SECONDS: "125",
             BACKUP_PROCESS_KILL_AFTER_SECONDS: "1",
+            BACKUP_ENCRYPT_TIMEOUT_SECONDS: "1",
+            BACKUP_ENCRYPT_KILL_AFTER_SECONDS: "1",
           },
         },
       );
