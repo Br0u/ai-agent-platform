@@ -1,0 +1,236 @@
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { createDownloadFileStore } from "./file-store";
+
+const resourceId = "00000000-0000-4000-8000-000000000001";
+const revisionId = "0191f2a3-4567-7abc-8def-0123456789ab";
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
+
+async function temporaryRoot() {
+  const root = await mkdtemp(path.join(tmpdir(), "download-store-"));
+  temporaryDirectories.push(root);
+  return root;
+}
+
+async function writeStage(
+  store: ReturnType<typeof createDownloadFileStore>,
+  extension: ".pdf" | ".webp",
+  contents: string,
+) {
+  const stage = await store.createStage(extension);
+  await stage.writable.writeFile(contents);
+  return stage;
+}
+
+async function readStream(stream: NodeJS.ReadableStream) {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+describe("download artifact file store", () => {
+  it("generates committed keys, persists bytes, ranges reads, and removes files", async () => {
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+    const stage = await writeStage(store, ".pdf", "0123456789");
+
+    expect(path.isAbsolute(stage.path)).toBe(true);
+    expect(path.relative(root, stage.path).startsWith("staging/")).toBe(true);
+
+    const objectKey = await store.commit(stage, {
+      resourceId,
+      revisionId,
+      kind: "pdf",
+    });
+
+    expect(objectKey).toBe(`objects/${resourceId}/${revisionId}.pdf`);
+    expect(await readFile(path.join(root, objectKey), "utf8")).toBe(
+      "0123456789",
+    );
+    expect((await store.stat(objectKey)).size).toBe(10);
+
+    const full = await store.open(objectKey);
+    expect(full).toMatchObject({ size: 10, start: 0, end: 9 });
+    expect(await readStream(full.readable)).toBe("0123456789");
+
+    const range = await store.open(objectKey, { start: 2, end: 5 });
+    expect(range).toMatchObject({ size: 10, start: 2, end: 5 });
+    expect(await readStream(range.readable)).toBe("2345");
+
+    await store.remove(objectKey);
+    await expect(store.stat(objectKey)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(store.remove(objectKey)).resolves.toBeUndefined();
+  });
+
+  it("commits with no-clobber semantics and preserves the original bytes", async () => {
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+    const first = await writeStage(store, ".pdf", "original");
+    const second = await writeStage(store, ".pdf", "replacement");
+    const input = { resourceId, revisionId, kind: "pdf" } as const;
+
+    const objectKey = await store.commit(first, input);
+    await expect(store.commit(second, input)).rejects.toMatchObject({
+      code: "EEXIST",
+    });
+    expect(await readFile(path.join(root, objectKey), "utf8")).toBe("original");
+  });
+
+  it("uses restricted modes for created directories and committed files", async () => {
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+    const stage = await writeStage(store, ".webp", "cover");
+    const objectKey = await store.commit(stage, {
+      resourceId,
+      revisionId,
+      kind: "cover",
+    });
+
+    if (process.platform !== "win32") {
+      expect((await lstat(root)).mode & 0o777).toBe(0o750);
+      expect((await lstat(path.join(root, "objects"))).mode & 0o777).toBe(
+        0o750,
+      );
+      expect(
+        (await lstat(path.join(root, "objects", resourceId))).mode & 0o777,
+      ).toBe(0o750);
+      expect((await lstat(path.join(root, objectKey))).mode & 0o777).toBe(
+        0o640,
+      );
+    }
+  });
+
+  it.each([
+    "/etc/passwd",
+    "../outside.pdf",
+    `objects/${resourceId}/../${revisionId}.pdf`,
+    `objects/${resourceId}/${revisionId}.txt`,
+    `objects/${resourceId}/nested/${revisionId}.pdf`,
+    `staging/${revisionId}.pdf`,
+    `objects/not-a-uuid/${revisionId}.pdf`,
+    `objects/${resourceId}/00000000-0000-6000-8000-000000000001.pdf`,
+    `objects/${resourceId}/00000000-0000-4000-7000-000000000001.pdf`,
+  ])("rejects unsafe or non-canonical object key %s", async (objectKey) => {
+    const store = createDownloadFileStore(await temporaryRoot());
+
+    await expect(store.stat(objectKey)).rejects.toThrow("Invalid object key");
+    await expect(store.open(objectKey)).rejects.toThrow("Invalid object key");
+    await expect(store.remove(objectKey)).rejects.toThrow("Invalid object key");
+  });
+
+  it("rejects caller filenames, malformed IDs, mismatched extensions, and reused stages", async () => {
+    const store = createDownloadFileStore(await temporaryRoot());
+
+    await expect(
+      store.createStage("../../caller.pdf" as ".pdf"),
+    ).rejects.toThrow("Invalid stage extension");
+
+    const invalidIdStage = await writeStage(store, ".pdf", "pdf");
+    await expect(
+      store.commit(
+        { ...invalidIdStage, path: "/tmp/caller.pdf" },
+        { resourceId, revisionId, kind: "pdf" },
+      ),
+    ).rejects.toThrow("Invalid or consumed stage");
+    await expect(
+      store.commit(invalidIdStage, {
+        resourceId: "00000000-0000-6000-8000-000000000001",
+        revisionId,
+        kind: "pdf",
+      }),
+    ).rejects.toThrow("Invalid resource ID");
+
+    const mismatch = await writeStage(store, ".webp", "cover");
+    await expect(
+      store.commit(mismatch, { resourceId, revisionId, kind: "pdf" }),
+    ).rejects.toThrow("Stage extension does not match artifact kind");
+
+    const committed = await writeStage(store, ".pdf", "pdf");
+    await store.commit(committed, { resourceId, revisionId, kind: "pdf" });
+    await expect(
+      store.commit(committed, { resourceId, revisionId, kind: "pdf" }),
+    ).rejects.toThrow("Invalid or consumed stage");
+  });
+
+  it("rejects symlinks and directories for committed operations", async () => {
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+    const key = `objects/${resourceId}/${revisionId}.pdf`;
+    const target = path.join(root, "external.pdf");
+    const objectPath = path.join(root, key);
+    await mkdir(path.dirname(objectPath), { recursive: true });
+    await writeFile(target, "external");
+    await symlink(target, objectPath);
+
+    await expect(store.stat(key)).rejects.toThrow("must be a regular file");
+    await expect(store.open(key)).rejects.toThrow("must be a regular file");
+    await expect(store.remove(key)).rejects.toThrow("must be a regular file");
+
+    await rm(objectPath);
+    await mkdir(objectPath);
+    await expect(store.stat(key)).rejects.toThrow("must be a regular file");
+    await expect(store.open(key)).rejects.toThrow("must be a regular file");
+    await expect(store.remove(key)).rejects.toThrow("must be a regular file");
+  });
+
+  it("rejects a staged path replaced with a symlink", async () => {
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+    const stage = await writeStage(store, ".pdf", "original");
+    const target = path.join(root, "external.pdf");
+    await writeFile(target, "external");
+    await stage.writable.close();
+    await rm(stage.path);
+    await symlink(target, stage.path);
+
+    await expect(
+      store.commit(stage, { resourceId, revisionId, kind: "pdf" }),
+    ).rejects.toThrow("Stage must be a regular file");
+  });
+
+  it("rejects invalid ranges without leaking opened file handles", async () => {
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+    const stage = await writeStage(store, ".pdf", "12345");
+    const key = await store.commit(stage, {
+      resourceId,
+      revisionId,
+      kind: "pdf",
+    });
+    const descriptorDirectory =
+      process.platform === "linux" ? "/proc/self/fd" : "/dev/fd";
+    if (process.platform !== "win32") {
+      const before = (await readdir(descriptorDirectory)).length;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await expect(store.open(key, { start: 3, end: 2 })).rejects.toThrow(
+          "Invalid byte range",
+        );
+      }
+      expect((await readdir(descriptorDirectory)).length).toBe(before);
+    }
+  });
+});
