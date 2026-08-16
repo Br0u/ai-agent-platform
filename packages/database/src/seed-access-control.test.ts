@@ -67,6 +67,7 @@ const permissionKeys = [
   "admin:products",
   "admin:releases",
   "admin:docs",
+  "admin:downloads",
   "admin:docs:delete",
   "admin:blog",
   "admin:cases",
@@ -121,6 +122,7 @@ const contentPermissions = [
   "admin:products",
   "admin:releases",
   "admin:docs",
+  "admin:downloads",
   "admin:blog",
   "admin:cases",
   "admin:faq",
@@ -198,6 +200,10 @@ describe("seedAccessControl", () => {
       key: "admin:assistant:skills",
       name: "查看 AI 助理 Skill 库",
     });
+    expect(repository.permissions.get("admin:downloads")).toEqual({
+      key: "admin:downloads",
+      name: "管理下载资源",
+    });
     expect([...repository.roles.keys()]).toEqual([
       "customer:customer_admin",
       "customer:customer_member",
@@ -228,6 +234,25 @@ describe("seedAccessControl", () => {
     expect(
       sorted(repository.grants.get("workforce:super_admin") ?? []),
     ).toEqual(sorted(superAdminPermissions));
+    const rolesWithDownloads = [...repository.grants]
+      .filter(([, grants]) => grants.has("admin:downloads"))
+      .map(([role]) => role.split(":")[1])
+      .sort();
+    expect(rolesWithDownloads).toEqual([
+      "admin",
+      "content_operator",
+      "super_admin",
+    ]);
+    for (const role of [
+      "customer:customer_member",
+      "customer:customer_admin",
+      "workforce:employee",
+      "workforce:support_operator",
+    ]) {
+      expect(repository.grants.get(role)?.has("admin:downloads") ?? false).toBe(
+        false,
+      );
+    }
     for (const role of ["employee", "content_operator", "support_operator"]) {
       expect(
         repository.grants.get(`workforce:${role}`)?.has("admin:assistant") ??
@@ -305,7 +330,7 @@ describe("seedAccessControl", () => {
     await seedAccessControl(repository);
 
     expect(repository.transactions).toBe(2);
-    expect(repository.permissions.size).toBe(25);
+    expect(repository.permissions.size).toBe(26);
     expect(repository.roles.size).toBe(7);
     expect(repository.grants.size).toBe(7);
     expect(
