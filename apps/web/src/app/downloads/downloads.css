@@ -300,6 +300,12 @@
 }
 
 .assistant-skill-dialog:has(.download-contact-dialog) {
+  --download-ink: #111a3d;
+  --download-muted: #5f6b8c;
+  --download-blue: #286cff;
+  --download-violet: #7358ea;
+  --download-surface: #ffffff;
+  --download-line: rgb(76 108 196 / 18%);
   position: fixed;
   z-index: 120;
   inset: 0;

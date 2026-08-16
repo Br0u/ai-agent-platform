@@ -239,4 +239,12 @@ describe("managed download center", () => {
     expect(css).toMatch(/@media \(prefers-reduced-motion:\s*reduce\)/u);
     expect(css).not.toMatch(/linear-gradient|radial-gradient/u);
   });
+
+  it("defines contact dialog tokens on the body-level portal root", () => {
+    const css = readFileSync("src/app/downloads/downloads.css", "utf8");
+
+    expect(css).toMatch(
+      /\.assistant-skill-dialog:has\(\.download-contact-dialog\)\s*\{[^}]*--download-ink:\s*#111a3d;[^}]*--download-muted:\s*#5f6b8c;[^}]*--download-blue:\s*#286cff;[^}]*--download-violet:\s*#7358ea;[^}]*--download-surface:\s*#ffffff;[^}]*--download-line:\s*rgb\(76 108 196 \/ 18%\);/su,
+    );
+  });
 });
