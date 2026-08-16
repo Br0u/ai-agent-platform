@@ -241,7 +241,9 @@ export function DownloadCenter({
               <button onClick={closeContact} ref={cancelButton} type="button">
                 取消
               </button>
-              <Link href={`/contact?topic=申请获取${contactResource.name}`}>
+              <Link
+                href={`/contact?${new URLSearchParams({ topic: `申请获取${contactResource.name}` }).toString()}`}
+              >
                 联系我们
               </Link>
             </div>

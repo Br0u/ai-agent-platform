@@ -84,6 +84,13 @@ function card(name: string) {
   return screen.getByRole("heading", { level: 3, name }).closest("article")!;
 }
 
+function contactTopics(dialog: HTMLElement) {
+  const href = within(dialog)
+    .getByRole("link", { name: "联系我们" })
+    .getAttribute("href")!;
+  return new URL(href, "https://example.com").searchParams.getAll("topic");
+}
+
 describe("managed download center", () => {
   it("loads the current public catalog on every dynamic server render", async () => {
     mocks.listPublicResources.mockResolvedValue(resources);
@@ -197,9 +204,7 @@ describe("managed download center", () => {
       ),
     ).toBeVisible();
     expect(within(dialog).getByRole("button", { name: "取消" })).toHaveFocus();
-    expect(
-      within(dialog).getByRole("link", { name: "联系我们" }),
-    ).toHaveAttribute("href", "/contact?topic=申请获取码里奥产品介绍");
+    expect(contactTopics(dialog)).toEqual(["申请获取码里奥产品介绍"]);
     expect(window.location.pathname).toBe("/downloads");
     fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
     await waitFor(() => expect(firstTrigger).toHaveFocus());
@@ -217,13 +222,25 @@ describe("managed download center", () => {
         "“视觉检索技术白皮书”暂未开放直接下载。请联系我们并说明您的需求，成为客户后可申请获取资料。",
       ),
     ).toBeVisible();
-    expect(
-      within(dialog).getByRole("link", { name: "联系我们" }),
-    ).toHaveAttribute("href", "/contact?topic=申请获取视觉检索技术白皮书");
+    expect(contactTopics(dialog)).toEqual(["申请获取视觉检索技术白皮书"]);
     fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() => expect(secondTrigger).toHaveFocus());
 
     expect(screen.queryByText(/登录|DRM|禁止截图|防复制/u)).toBeNull();
+  });
+
+  it("keeps a special-character resource name in one exact contact topic", () => {
+    const specialName = "资料 & #?/";
+    render(
+      <DownloadCenter resources={[{ ...resources[1]!, name: specialName }]} />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: `下载资料${specialName}` }),
+    );
+    expect(
+      contactTopics(screen.getByRole("dialog", { name: "联系获取资料" })),
+    ).toEqual([`申请获取${specialName}`]);
   });
 
   it("uses horizontal cards on desktop and stacks them on mobile", () => {

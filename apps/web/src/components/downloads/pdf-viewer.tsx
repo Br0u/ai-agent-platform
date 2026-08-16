@@ -9,10 +9,16 @@ type PdfLoadingTask = ReturnType<PdfJsModule["getDocument"]>;
 type PdfDocument = Awaited<PdfLoadingTask["promise"]>;
 
 type ViewerFailure = { message: string };
+type PdfViewerProps = {
+  backHref: string;
+  sourceUrl: string;
+  title: string;
+};
 
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 3;
 const ZOOM_STEP = 0.25;
+const MAX_CANVAS_PIXELS = 16_777_216;
 
 function clampZoom(value: number) {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
@@ -32,15 +38,11 @@ function failureMessage(error: unknown) {
   return "资料加载失败，请重试";
 }
 
-export function PdfViewer({
-  backHref,
-  sourceUrl,
-  title,
-}: {
-  backHref: string;
-  sourceUrl: string;
-  title: string;
-}) {
+export function PdfViewer(props: PdfViewerProps) {
+  return <PdfViewerDocument key={props.sourceUrl} {...props} />;
+}
+
+function PdfViewerDocument({ backHref, sourceUrl, title }: PdfViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [fitWidth, setFitWidth] = useState(true);
@@ -60,10 +62,16 @@ export function PdfViewer({
     key: string;
     value: "rendering" | "ready";
   } | null>(null);
+  const [textContent, setTextContent] = useState<{
+    key: string;
+    value: string;
+  } | null>(null);
   const [viewportWidth, setViewportWidth] = useState(0);
   const document = loaded?.key === loadKey ? loaded.document : null;
   const failure = failed?.key === loadKey ? failed : null;
   const stage = loadStage?.key === loadKey ? loadStage.value : "loading";
+  const pageKey = `${loadKey}\0${pageNumber}`;
+  const pageText = textContent?.key === pageKey ? textContent.value : null;
 
   useEffect(() => {
     const target = viewportRef.current;
@@ -79,27 +87,45 @@ export function PdfViewer({
     let disposed = false;
     let loadingTask: PdfLoadingTask | undefined;
     let loadedDocument: PdfDocument | undefined;
+    let destroyPromise: Promise<void> | undefined;
+
+    const destroy = () => {
+      if (destroyPromise) return destroyPromise;
+      if (!loadingTask) return Promise.resolve();
+      try {
+        destroyPromise = loadingTask.destroy().catch(() => undefined);
+      } catch {
+        destroyPromise = Promise.resolve();
+      }
+      return destroyPromise;
+    };
 
     void (async () => {
-      const pdfjs = await import("pdfjs-dist");
-      pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-        "pdfjs-dist/build/pdf.worker.min.mjs",
-        import.meta.url,
-      ).toString();
-      const task = pdfjs.getDocument({ url: sourceUrl });
-      loadingTask = task;
-      loadedDocument = await task.promise;
-      if (disposed) return;
-      setLoaded({ document: loadedDocument, key: loadKey });
-      setLoadStage({ key: loadKey, value: "rendering" });
-    })().catch((error: unknown) => {
-      if (!disposed)
-        setFailed({ key: loadKey, message: failureMessage(error) });
-    });
+      try {
+        const pdfjs = await import("pdfjs-dist");
+        if (disposed) return;
+        pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+          "pdfjs-dist/build/pdf.worker.min.mjs",
+          import.meta.url,
+        ).toString();
+        loadingTask = pdfjs.getDocument({ url: sourceUrl });
+        loadedDocument = await loadingTask.promise;
+        if (disposed) {
+          await destroy();
+          return;
+        }
+        setLoaded({ document: loadedDocument, key: loadKey });
+        setLoadStage({ key: loadKey, value: "rendering" });
+      } catch (error: unknown) {
+        await destroy();
+        if (!disposed)
+          setFailed({ key: loadKey, message: failureMessage(error) });
+      }
+    })();
 
     return () => {
       disposed = true;
-      void loadingTask?.destroy();
+      void destroy();
     };
   }, [loadKey, sourceUrl]);
 
@@ -118,11 +144,18 @@ export function PdfViewer({
           )
         : manualZoom;
       const viewport = page.getViewport({ scale });
+      const textPromise = page.getTextContent();
       const canvas = canvasRef.current;
       const context = canvas?.getContext("2d");
       if (!canvas || !context) throw new Error("canvas unavailable");
 
-      const outputScale = Math.max(window.devicePixelRatio || 1, 1);
+      const desiredOutputScale = Math.max(window.devicePixelRatio || 1, 1);
+      const outputScale = Math.min(
+        desiredOutputScale,
+        Math.sqrt(
+          MAX_CANVAS_PIXELS / Math.max(viewport.width * viewport.height, 1),
+        ),
+      );
       canvas.width = Math.floor(viewport.width * outputScale);
       canvas.height = Math.floor(viewport.height * outputScale);
       canvas.style.width = `${Math.floor(viewport.width)}px`;
@@ -137,8 +170,21 @@ export function PdfViewer({
             : [outputScale, 0, 0, outputScale, 0, 0],
         viewport,
       });
-      await renderTask.promise;
-      if (!disposed) setLoadStage({ key: loadKey, value: "ready" });
+      const [, pageTextContent] = await Promise.all([
+        renderTask.promise,
+        textPromise,
+      ]);
+      if (!disposed) {
+        const value = pageTextContent.items
+          .flatMap((item) => ("str" in item ? [item.str] : []))
+          .join(" ")
+          .trim();
+        setTextContent({
+          key: pageKey,
+          value: value || "本页没有可提取文本",
+        });
+        setLoadStage({ key: loadKey, value: "ready" });
+      }
     })().catch((error: unknown) => {
       if (
         !disposed &&
@@ -160,7 +206,15 @@ export function PdfViewer({
       disposed = true;
       renderTask?.cancel();
     };
-  }, [document, fitWidth, loadKey, manualZoom, pageNumber, viewportWidth]);
+  }, [
+    document,
+    fitWidth,
+    loadKey,
+    manualZoom,
+    pageKey,
+    pageNumber,
+    viewportWidth,
+  ]);
 
   const totalPages = document?.numPages ?? 0;
   const zoom = Math.round((fitWidth ? renderScale : manualZoom) * 100);
@@ -259,13 +313,23 @@ export function PdfViewer({
           </div>
         ) : null}
         <canvas
-          aria-label={`第 ${pageNumber} 页`}
+          aria-hidden="true"
           className={
-            failure ? "pdf-reader__canvas is-hidden" : "pdf-reader__canvas"
+            failure || stage !== "ready"
+              ? "pdf-reader__canvas is-hidden"
+              : "pdf-reader__canvas"
           }
           ref={canvasRef}
-          role="img"
         />
+        {pageText ? (
+          <div
+            aria-label={`第 ${pageNumber} 页正文`}
+            className="pdf-reader__text"
+            role="document"
+          >
+            {pageText}
+          </div>
+        ) : null}
       </section>
     </main>
   );

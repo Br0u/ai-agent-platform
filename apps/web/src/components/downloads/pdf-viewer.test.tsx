@@ -4,6 +4,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -23,12 +24,32 @@ type RenderTask = { cancel: ReturnType<typeof vi.fn>; promise: Promise<void> };
 let resize: ((entries: ResizeObserverEntry[]) => void) | undefined;
 let width = 800;
 
-function documentFixture(options: { renderRejects?: boolean } = {}) {
+function deferred<T>() {
+  let reject!: (error: unknown) => void;
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, reject, resolve };
+}
+
+function documentFixture(
+  options: {
+    height?: number;
+    pageCount?: number;
+    renderRejects?: boolean;
+    width?: number;
+  } = {},
+) {
   const tasks: RenderTask[] = [];
-  const getPage = vi.fn(async () => ({
+  const getPage = vi.fn(async (pageNumber: number) => ({
+    getTextContent: vi.fn(async () => ({
+      items: [{ str: `第 ${pageNumber} 页可访问正文` }],
+    })),
     getViewport: ({ scale }: { scale: number }) => ({
-      height: 1_000 * scale,
-      width: 800 * scale,
+      height: (options.height ?? 1_000) * scale,
+      width: (options.width ?? 800) * scale,
     }),
     render: vi.fn(() => {
       const task = {
@@ -41,9 +62,9 @@ function documentFixture(options: { renderRejects?: boolean } = {}) {
       return task;
     }),
   }));
-  const document = { destroy: vi.fn(), getPage, numPages: 3 };
+  const document = { getPage, numPages: options.pageCount ?? 3 };
   const loadingTask = {
-    destroy: vi.fn(),
+    destroy: vi.fn(async () => undefined),
     promise: Promise.resolve(document),
   };
   return { document, getPage, loadingTask, tasks };
@@ -102,12 +123,19 @@ describe("PdfViewer", () => {
     expect(pdf.workerOptions.workerSrc).toContain("pdf.worker.min.mjs");
     expect(fixture.getPage).toHaveBeenCalledTimes(1);
     expect(fixture.getPage).toHaveBeenLastCalledWith(1);
+    expect(await screen.findByLabelText("第 1 页正文")).toHaveTextContent(
+      "第 1 页可访问正文",
+    );
     expect(screen.getByRole("button", { name: "上一页" })).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
     expect(await screen.findByText("第 2 / 3 页")).toBeVisible();
     expect(fixture.getPage).toHaveBeenLastCalledWith(2);
     expect(fixture.getPage).toHaveBeenCalledTimes(2);
+    expect(await screen.findByLabelText("第 2 页正文")).toHaveTextContent(
+      "第 2 页可访问正文",
+    );
+    expect(screen.queryByText("第 1 页可访问正文")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "返回" })).toHaveAttribute(
       "href",
       "/downloads",
@@ -141,6 +169,7 @@ describe("PdfViewer", () => {
     let settleRender: (() => void) | undefined;
     const fixture = documentFixture();
     fixture.document.getPage.mockResolvedValue({
+      getTextContent: vi.fn(async () => ({ items: [{ str: "正文" }] })),
       getViewport: ({ scale }: { scale: number }) => ({
         height: 1_000 * scale,
         width: 800 * scale,
@@ -169,6 +198,120 @@ describe("PdfViewer", () => {
     settleRender?.();
   });
 
+  it("does not create a loading task after unmounting before import resolves", async () => {
+    const fixture = documentFixture();
+    pdf.getDocument.mockReturnValue(fixture.loadingTask);
+
+    const rendered = renderViewer();
+    rendered.unmount();
+    await act(async () => Promise.resolve());
+
+    expect(pdf.getDocument).not.toHaveBeenCalled();
+  });
+
+  it("destroys a rejected loading task immediately and handles destroy rejection", async () => {
+    const destroyRejection = Promise.reject(new Error("destroy failed"));
+    const catchSpy = vi.spyOn(destroyRejection, "catch");
+    destroyRejection.catch(() => undefined);
+    catchSpy.mockClear();
+    const loadingTask = {
+      destroy: vi.fn(() => destroyRejection),
+      promise: Promise.reject({ status: 404 }),
+    };
+    pdf.getDocument.mockReturnValue(loadingTask);
+
+    renderViewer();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "这份资料不存在或已下线",
+    );
+    expect(loadingTask.destroy).toHaveBeenCalledOnce();
+    expect(catchSpy).toHaveBeenCalledOnce();
+  });
+
+  it("resets page, zoom and canvas when the PDF source changes", async () => {
+    const first = documentFixture();
+    const second = documentFixture({ pageCount: 1 });
+    const secondLoad = deferred<typeof second.document>();
+    second.loadingTask.promise = secondLoad.promise;
+    pdf.getDocument
+      .mockReturnValueOnce(first.loadingTask)
+      .mockReturnValueOnce(second.loadingTask);
+
+    const rendered = renderViewer();
+    await screen.findByLabelText("第 1 页正文");
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    await screen.findByLabelText("第 2 页正文");
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    await screen.findByLabelText("第 3 页正文");
+    fireEvent.click(screen.getByRole("button", { name: "放大" }));
+    expect(screen.getByText("125%")).toBeVisible();
+
+    rendered.rerender(
+      <PdfViewer
+        backHref="/downloads"
+        sourceUrl="/api/v1/downloads/new-guide/preview"
+        title="新彩页"
+      />,
+    );
+
+    expect(screen.getByText("第 1 / — 页")).toBeVisible();
+    expect(screen.getByText("100%")).toBeVisible();
+    expect(rendered.container.querySelector("canvas")).toHaveClass("is-hidden");
+    await waitFor(() => expect(pdf.getDocument).toHaveBeenCalledTimes(2));
+    secondLoad.resolve(second.document);
+    expect(await screen.findByText("第 1 / 1 页")).toBeVisible();
+    expect(second.getPage).toHaveBeenCalledWith(1);
+    expect(second.getPage).not.toHaveBeenCalledWith(3);
+    expect(first.loadingTask.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("limits the backing canvas pixel area at high device pixel ratios", async () => {
+    vi.stubGlobal("devicePixelRatio", 8);
+    const fixture = documentFixture({ height: 5_000, width: 4_000 });
+    pdf.getDocument.mockReturnValue(fixture.loadingTask);
+    renderViewer();
+
+    await screen.findByLabelText("第 1 页正文");
+    const canvas = document.querySelector("canvas") as HTMLCanvasElement;
+    expect(canvas.width * canvas.height).toBeLessThanOrEqual(16_777_216);
+  });
+
+  it("cancels both the obsolete and current in-flight render tasks", async () => {
+    const firstRender = deferred<void>();
+    const secondRender = deferred<void>();
+    const tasks = [firstRender, secondRender].map((pending) => ({
+      cancel: vi.fn(),
+      promise: pending.promise,
+    }));
+    let renderIndex = 0;
+    const getPage = vi.fn(async (pageNumber: number) => ({
+      getTextContent: vi.fn(async () => ({
+        items: [{ str: `正文 ${pageNumber}` }],
+      })),
+      getViewport: ({ scale }: { scale: number }) => ({
+        height: 1_000 * scale,
+        width: 800 * scale,
+      }),
+      render: vi.fn(() => tasks[renderIndex++]!),
+    }));
+    const loadingTask = {
+      destroy: vi.fn(async () => undefined),
+      promise: Promise.resolve({ getPage, numPages: 2 }),
+    };
+    pdf.getDocument.mockReturnValue(loadingTask);
+
+    const rendered = renderViewer();
+    await waitFor(() => expect(renderIndex).toBe(1));
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    await waitFor(() => expect(renderIndex).toBe(2));
+    expect(tasks[0]!.cancel).toHaveBeenCalledOnce();
+
+    rendered.unmount();
+    expect(tasks[1]!.cancel).toHaveBeenCalledOnce();
+    firstRender.resolve();
+    secondRender.resolve();
+  });
+
   it.each([
     [{ status: 401 }, "登录状态已失效，请重新登录"],
     [{ status: 403 }, "没有权限查看这份资料"],
@@ -177,7 +320,7 @@ describe("PdfViewer", () => {
     [{ name: "InvalidPDFException" }, "PDF 文件格式无效，暂时无法预览"],
   ])("shows a readable loading failure for %o", async (failure, message) => {
     pdf.getDocument.mockReturnValue({
-      destroy: vi.fn(),
+      destroy: vi.fn(async () => undefined),
       promise: Promise.reject(failure),
     });
     renderViewer();
