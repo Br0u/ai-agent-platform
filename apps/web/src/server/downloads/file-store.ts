@@ -119,8 +119,39 @@ export function createDownloadFileStore(configuredRoot: string) {
   }
 
   async function discardStage(stage: DownloadStage) {
-    await stage.writable.close().catch(() => undefined);
-    await unlinkIfPresent(stage.path);
+    let closeError: unknown;
+    try {
+      await stage.writable.close();
+    } catch (error) {
+      closeError = error;
+    }
+    try {
+      await unlinkIfPresent(stage.path);
+    } catch (unlinkError) {
+      if (closeError !== undefined) {
+        throw new AggregateError(
+          [closeError, unlinkError],
+          "Artifact stage cleanup failed",
+        );
+      }
+      throw unlinkError;
+    }
+    if (closeError !== undefined) throw closeError;
+  }
+
+  async function discardAndThrow(
+    stage: DownloadStage,
+    originalError: unknown,
+  ): Promise<never> {
+    try {
+      await discardStage(stage);
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [originalError, cleanupError],
+        "Artifact stage cleanup failed",
+      );
+    }
+    throw originalError;
   }
 
   return {
@@ -197,8 +228,7 @@ export function createDownloadFileStore(configuredRoot: string) {
         await link(stage.path, destination);
         linked = { destination, handleStats, objectKey };
       } catch (error) {
-        await discardStage(stage);
-        throw error;
+        return discardAndThrow(stage, error);
       }
       if (!linked) throw new Error("Artifact link state missing");
 
@@ -216,14 +246,20 @@ export function createDownloadFileStore(configuredRoot: string) {
         try {
           await unlinkIfPresent(linked.destination);
         } catch (rollbackError) {
-          await stage.writable.close().catch(() => undefined);
+          let closeError: unknown;
+          try {
+            await stage.writable.close();
+          } catch (error) {
+            closeError = error;
+          }
           throw new AggregateError(
-            [changed, rollbackError],
+            [changed, rollbackError, closeError].filter(
+              (error) => error !== undefined,
+            ),
             "Artifact commit rollback failed; recoverable links retained",
           );
         }
-        await discardStage(stage);
-        throw changed;
+        return discardAndThrow(stage, changed);
       }
 
       try {
@@ -232,12 +268,20 @@ export function createDownloadFileStore(configuredRoot: string) {
         try {
           await unlinkIfPresent(linked.destination);
         } catch (rollbackError) {
+          let retryCloseError: unknown;
+          try {
+            await stage.writable.close();
+          } catch (error) {
+            retryCloseError = error;
+          }
           throw new AggregateError(
-            [closeError, rollbackError],
+            [closeError, rollbackError, retryCloseError].filter(
+              (error) => error !== undefined,
+            ),
             "Artifact commit rollback failed; recoverable links retained",
           );
         }
-        throw closeError;
+        return discardAndThrow(stage, closeError);
       }
 
       try {

@@ -270,6 +270,33 @@ describe("download artifact file store", () => {
     expect(await readFile(destination, "utf8")).toBe("recoverable");
   });
 
+  it("retries cleanup after close fails and destination rollback succeeds", async () => {
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+    const stage = await writeStage(store, ".pdf", "recoverable");
+    const destination = path.join(
+      root,
+      `objects/${resourceId}/${revisionId}.pdf`,
+    );
+    const originalClose = stage.writable.close.bind(stage.writable);
+    let closeAttempts = 0;
+    stage.writable.close = async () => {
+      closeAttempts += 1;
+      if (closeAttempts === 1) throw new Error("injected close failure");
+      return originalClose();
+    };
+
+    await expect(
+      store.commit(stage, { resourceId, revisionId, kind: "pdf" }),
+    ).rejects.toThrow("injected close failure");
+    expect(closeAttempts).toBe(2);
+    await expect(lstat(destination)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(stage.path)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stage.writable.stat()).rejects.toMatchObject({
+      code: "EBADF",
+    });
+  });
+
   it("rejects an opened descriptor whose inode differs from lstat", async () => {
     const root = await temporaryRoot();
     const store = createDownloadFileStore(root);
