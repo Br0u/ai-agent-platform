@@ -1,0 +1,73 @@
+import { Readable } from "node:stream";
+
+import { describe, expect, it, vi } from "vitest";
+
+import { artifactResponse, parseSingleByteRange } from "./pdf-response";
+
+function artifact(start = 0, end = 9) {
+  const readable = Readable.from([
+    Buffer.from("0123456789".slice(start, end + 1)),
+  ]);
+  return { readable, size: 10, start, end };
+}
+
+describe("PDF response", () => {
+  it("parses a single byte range", () => {
+    expect(parseSingleByteRange("bytes=0-9", 10)).toEqual({ start: 0, end: 9 });
+  });
+
+  it("supports suffix ranges and rejects multiple or invalid ranges", () => {
+    expect(parseSingleByteRange("bytes=-3", 10)).toEqual({ start: 7, end: 9 });
+    expect(parseSingleByteRange("bytes=0-1,3-4", 10)).toBe("invalid");
+    expect(parseSingleByteRange("bytes=10-11", 10)).toBe("invalid");
+  });
+
+  it("creates a no-store inline partial response with RFC filename encoding", async () => {
+    const response = artifactResponse({
+      request: new Request("https://example.test/file", {
+        headers: { range: "bytes=0-4" },
+      }),
+      artifact: artifact(0, 4),
+      contentType: "application/pdf",
+      filename: "资料.pdf",
+      disposition: "inline",
+      noStore: true,
+    });
+    expect(response.status).toBe(206);
+    expect(response.headers.get("content-range")).toBe("bytes 0-4/10");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("content-disposition")).toContain(
+      "filename*=UTF-8''%E8%B5%84%E6%96%99.pdf",
+    );
+    await expect(response.text()).resolves.toBe("01234");
+  });
+
+  it("closes the stream for invalid ranges and HEAD", () => {
+    const invalid = artifact();
+    const invalidDestroy = vi.spyOn(invalid.readable, "destroy");
+    expect(
+      artifactResponse({
+        request: new Request("https://example.test/file", {
+          headers: { range: "bytes=0-1,2-3" },
+        }),
+        artifact: invalid,
+        contentType: "application/pdf",
+        filename: "x.pdf",
+        disposition: "inline",
+      }).status,
+    ).toBe(416);
+    expect(invalidDestroy).toHaveBeenCalled();
+    const head = artifact();
+    const headDestroy = vi.spyOn(head.readable, "destroy");
+    expect(
+      artifactResponse({
+        request: new Request("https://example.test/file", { method: "HEAD" }),
+        artifact: head,
+        contentType: "application/pdf",
+        filename: "x.pdf",
+        disposition: "inline",
+      }).status,
+    ).toBe(200);
+    expect(headDestroy).toHaveBeenCalled();
+  });
+});
