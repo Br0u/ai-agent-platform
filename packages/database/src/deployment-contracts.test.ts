@@ -863,15 +863,50 @@ describe("production deployment security contracts", () => {
     );
   });
 
-  it("streams large bodies only for the exact admin download upload route", () => {
+  it("matches supported UUID upload paths without making the route case-insensitive", () => {
+    const template = read("infra/nginx/default.conf.template");
+    const uploadLocation =
+      'location ~ "^/api/v1/admin/downloads/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-57][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}/upload$" {';
+    const uploadPath = new RegExp(
+      "^/api/v1/admin/downloads/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-57][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}/upload$",
+      "u",
+    );
+
+    expect(template).toContain(uploadLocation);
+    expect(
+      uploadPath.test(
+        "/api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload",
+      ),
+    ).toBe(true);
+    expect(
+      uploadPath.test(
+        new URL(
+          "https://example.test/api/v1/admin/downloads/0191f2a3-4567-7abc-8def-0123456789ab/upload?draft=true",
+        ).pathname,
+      ),
+    ).toBe(true);
+    expect(
+      uploadPath.test(
+        "/api/v1/admin/downloads/0191f2a3-4567-6abc-8def-0123456789ab/upload",
+      ),
+    ).toBe(false);
+    expect(
+      uploadPath.test(
+        "/API/v1/admin/downloads/0191f2a3-4567-7abc-8def-0123456789ab/upload",
+      ),
+    ).toBe(false);
+  });
+
+  it("streams large POST uploads while rejecting other methods before their bodies", () => {
     const template = read("infra/nginx/default.conf.template");
     const global = read("infra/nginx/nginx.conf");
     const uploadLocation =
-      'location ~ "^/api/v1/admin/downloads/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/upload$" {';
+      'location ~ "^/api/v1/admin/downloads/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-57][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}/upload$" {';
     const upload = template.split(uploadLocation)[1]?.split("\n  }")[0];
     const catchAll = template.split("location / {")[1]?.split("\n  }")[0];
 
     expect(upload).toBeDefined();
+    expect(upload).toMatch(/limit_except POST \{\s+deny all;\s+\}/u);
     expect(upload).toContain("client_max_body_size 201m;");
     expect(upload).toContain("proxy_request_buffering off;");
     expect(upload).toContain("proxy_buffering off;");
@@ -900,6 +935,13 @@ describe("production deployment security contracts", () => {
     expect(gate).toContain(
       "fast|full|web|agent|registry|database|deployment|nginx",
     );
+    expect(gate).toContain("0191F2A3-4567-7ABC-8DEF-0123456789AB");
+    expect(gate).toContain("0191f2a3-4567-6abc-8def-0123456789ab");
+    expect(gate).toContain("Expect: 100-continue");
+    expect(gate).toContain("100 Continue");
+    expect(gate).toContain("413 Request Entity Too Large");
+    expect(gate).toContain("403 Forbidden");
+    expect(read(".github/workflows/ci.yml")).toMatch(/\n\s+- gate: nginx\n/u);
   });
 
   it("wires the private AgentOS runtime into Web with external secret files", () => {

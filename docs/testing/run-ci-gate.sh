@@ -135,20 +135,67 @@ run_database_gate() {
 run_nginx_check() {
   network=aap-nginx-ci-${GITHUB_RUN_ID:-local}-$$
   upstream=aap-nginx-web-${GITHUB_RUN_ID:-local}-$$
+  proxy=aap-nginx-proxy-${GITHUB_RUN_ID:-local}-$$
   cleanup_nginx() {
+    docker rm -f "$proxy" >/dev/null 2>&1 || true
     docker rm -f "$upstream" >/dev/null 2>&1 || true
     docker network rm "$network" >/dev/null 2>&1 || true
   }
   trap cleanup_nginx EXIT INT TERM
   docker network create "$network" >/dev/null
   docker run -d --name "$upstream" --network "$network" --network-alias web \
-    nginx:1.28.3-alpine3.23 >/dev/null
+    nginx:1.28.3-alpine3.23 sh -ceu \
+    'sed -i "s/listen       80;/listen 3000;/" /etc/nginx/conf.d/default.conf; exec nginx -g "daemon off;"' \
+    >/dev/null
   docker run --rm --network "$network" \
     -e PUBLIC_HOST=127.0.0.1 \
     -e ALLOW_LOCAL_VALIDATION_HOSTS=false \
     -v "$repo_root/infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
     -v "$repo_root/infra/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro" \
     nginx:1.28.3-alpine3.23 nginx -t
+  docker run -d --name "$proxy" --network "$network" --network-alias proxy \
+    -e PUBLIC_HOST=127.0.0.1 \
+    -e ALLOW_LOCAL_VALIDATION_HOSTS=false \
+    -v "$repo_root/infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
+    -v "$repo_root/infra/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro" \
+    nginx:1.28.3-alpine3.23 >/dev/null
+  docker run --rm --network "$network" nginx:1.28.3-alpine3.23 sh -ceu '
+    for attempt in $(seq 1 30); do
+      if wget -q -O /dev/null --header="Host: 127.0.0.1" http://proxy:8080/; then
+        break
+      fi
+      if [ "$attempt" -eq 30 ]; then
+        printf "%s\n" "nginx proxy did not become ready" >&2
+        exit 1
+      fi
+      sleep 1
+    done
+
+    request() {
+      method=$1
+      path=$2
+      printf "%s %s HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 11534336\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n" \
+        "$method" "$path" | nc -w 3 proxy 8080 2>/dev/null || true
+    }
+    assert_response() {
+      response=$1
+      expected=$2
+      if ! printf "%s" "$response" | grep -F "$expected" >/dev/null; then
+        printf "%s\n" "expected response containing: $expected" >&2
+        printf "%s\n" "$response" >&2
+        exit 1
+      fi
+    }
+
+    valid=$(request POST /api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload)
+    assert_response "$valid" "100 Continue"
+    query=$(request POST "/api/v1/admin/downloads/0191f2a3-4567-7abc-8def-0123456789ab/upload?draft=true")
+    assert_response "$query" "100 Continue"
+    invalid_version=$(request POST /api/v1/admin/downloads/0191f2a3-4567-6abc-8def-0123456789ab/upload)
+    assert_response "$invalid_version" "413 Request Entity Too Large"
+    wrong_method=$(request PUT /api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload)
+    assert_response "$wrong_method" "403 Forbidden"
+  '
   cleanup_nginx
   trap - EXIT INT TERM
 }
