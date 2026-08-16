@@ -23,7 +23,7 @@ import { createPdfTools, getPdfToolErrorCode, PdfToolError } from "./pdf-tools";
 type Outcome = Readonly<{
   stdout?: string;
   stderr?: string;
-  code?: number;
+  code?: number | null;
   timeout?: boolean;
   pngBytes?: number;
   manualKillClose?: boolean;
@@ -72,7 +72,7 @@ function fakeSpawn(outcomes: Outcome[]) {
       else stdout.end();
       if (outcome.stderr) stderr.end(outcome.stderr);
       else stderr.end();
-      child.emit("close", outcome.code ?? 0, null);
+      child.emit("close", outcome.code === undefined ? 0 : outcome.code, null);
       outcome.onClose?.();
     });
     return child;
@@ -439,6 +439,16 @@ describe("PDF tool error classification", () => {
       [{ stdout: "Pages: 1\n" }, { code: 1, stderr: "bad object" }],
       "%PDF-1.4\n",
     ],
+    [
+      "pdfinfo permission failure",
+      [{ code: 3, stderr: "Permission Error" }],
+      "%PDF-1.4\n",
+    ],
+    [
+      "pdftoppm permission failure",
+      [{ stdout: "Pages: 1\n" }, { code: 3, stderr: "Permission Error" }],
+      "%PDF-1.4\n",
+    ],
   ])(
     "classifies %s as invalid_pdf with a safe public message",
     async (_name, outcomes, contents) => {
@@ -454,6 +464,37 @@ describe("PDF tool error classification", () => {
       expect((error as Error).message).toBe("Invalid PDF");
       expect((error as Error).message).not.toContain(input);
       expect((error as Error).message).not.toContain("Syntax Error");
+    },
+  );
+
+  it.each([
+    ["pdfinfo", 2],
+    ["pdfinfo", 99],
+    ["pdfinfo", 7],
+    ["pdfinfo", null],
+    ["pdftoppm", 2],
+    ["pdftoppm", 99],
+    ["pdftoppm", 7],
+    ["pdftoppm", null],
+  ])(
+    "classifies %s exit %s as processing_failed without leaking output",
+    async (command, code) => {
+      const root = await temporaryRoot();
+      const failure = {
+        code,
+        stderr: "infrastructure failure at /private/customer.pdf",
+      };
+      const outcomes =
+        command === "pdfinfo" ? [failure] : [{ stdout: "Pages: 1\n" }, failure];
+      const { pdfTools } = tools(fakeSpawn(outcomes));
+      const error = await rejected(
+        pdfTools.derive(await pdfAt(root), createDownloadFileStore(root)),
+      );
+
+      expect(error).toBeInstanceOf(PdfToolError);
+      expect(getPdfToolErrorCode(error)).toBe("processing_failed");
+      expect((error as Error).message).toBe("PDF processing failed");
+      expect((error as Error).message).not.toContain("/private/customer.pdf");
     },
   );
 

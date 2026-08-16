@@ -47,7 +47,10 @@ export function getPdfToolErrorCode(
 type ProcessFailureKind = "exit" | "output" | "signal" | "spawn" | "timeout";
 
 class ProcessFailure extends Error {
-  constructor(readonly kind: ProcessFailureKind) {
+  constructor(
+    readonly kind: ProcessFailureKind,
+    readonly exitCode?: number | null,
+  ) {
     super("PDF tool process failed");
     this.name = "ProcessFailure";
   }
@@ -62,7 +65,8 @@ function classify(error: unknown): Error {
   if (error instanceof Error && error.name === "AbortError") return error;
   if (
     error instanceof ProcessFailure &&
-    (error.kind === "exit" || error.kind === "output")
+    (error.kind === "output" ||
+      (error.kind === "exit" && (error.exitCode === 1 || error.exitCode === 3)))
   ) {
     return invalidPdf();
   }
@@ -223,7 +227,7 @@ export function createPdfTools(dependencies: Dependencies = {}) {
             return;
           }
           if (code !== 0) {
-            reject(new ProcessFailure(exitSignal ? "signal" : "exit"));
+            reject(new ProcessFailure(exitSignal ? "signal" : "exit", code));
             return;
           }
           resolve({
