@@ -1,90 +1,182 @@
 import "server-only";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
+import { z } from "zod";
 
+import { AuthAccessError, requirePermission } from "../auth/access";
+import {
+  createDownloadResourceInputSchema,
+  mutateDownloadResourceInputSchema,
+  saveDownloadDraftInputSchema,
+} from "./contracts";
 import { downloadResourceService } from "./service";
 
 const INVALID = "字段值无效";
+const LOGIN_REDIRECT = "/staff/login?returnTo=%2Fadmin%2Fdownloads" as const;
+const PASSWORD_REDIRECT =
+  "/staff/change-password?returnTo=%2Fadmin%2Fdownloads" as const;
+
+type DownloadRequestContext = { ipAddress?: string; userAgent?: string };
+type DownloadMutationInput = z.infer<typeof mutateDownloadResourceInputSchema>;
 
 export type DownloadResourceActionState =
   | { kind: "idle" }
   | { kind: "success" }
   | { kind: "validation_error"; fieldErrors: Record<string, string[]> }
-  | { kind: "domain_error"; code: "DOWNLOAD_RESOURCE_ACTION_FAILED" };
+  | {
+      kind: "authentication_required";
+      code: "AUTH_SESSION_REQUIRED" | "AUTH_REALM_MISMATCH";
+      redirectTo: typeof LOGIN_REDIRECT;
+    }
+  | {
+      kind: "account_setup_required";
+      code: "AUTH_PASSWORD_CHANGE_REQUIRED";
+      redirectTo: typeof PASSWORD_REDIRECT;
+    }
+  | {
+      kind: "access_error";
+      code:
+        | "AUTH_PERMISSION_DENIED"
+        | "AUTH_ACCOUNT_DISABLED"
+        | "AUTH_ACCOUNT_NOT_ACTIVE";
+    }
+  | { kind: "conflict" }
+  | { kind: "domain_error" }
+  | { kind: "internal_error" };
+
+type DownloadActionService = {
+  createResource(
+    input: unknown,
+    context?: DownloadRequestContext,
+  ): Promise<unknown>;
+  saveDraft(input: unknown, context?: DownloadRequestContext): Promise<unknown>;
+  publish(input: unknown, context?: DownloadRequestContext): Promise<unknown>;
+  downline(input: unknown, context?: DownloadRequestContext): Promise<unknown>;
+  discardDraft(
+    input: unknown,
+    context?: DownloadRequestContext,
+  ): Promise<unknown>;
+  removeDraftFile(
+    input: unknown,
+    context?: DownloadRequestContext,
+  ): Promise<unknown>;
+};
+
+type DownloadActionsDependencies = {
+  service: DownloadActionService;
+  access: {
+    requirePermission(permission: "admin:downloads"): Promise<unknown>;
+  };
+  cache: {
+    revalidatePath(path: string, type?: "layout" | "page"): void;
+    updateTag(tag: string): void;
+  };
+  getContext(): DownloadRequestContext;
+  reportInternalError(incident: {
+    event: "download_resource.action_internal_error";
+    errorName: string;
+  }): void;
+};
+
+type Parsed<T> =
+  | { success: true; data: T }
+  | { success: false; state: DownloadResourceActionState };
 
 export function createDownloadResourceActionState(): DownloadResourceActionState {
   return { kind: "idle" };
 }
 
-function one(formData: FormData, field: string) {
-  const values = formData.getAll(field);
-  return values.length === 1 && typeof values[0] === "string"
-    ? values[0]
-    : null;
-}
-
-function fields(
+function read(
   formData: FormData,
   names: readonly string[],
 ):
   | { values: Record<string, string> }
   | { fieldErrors: Record<string, string[]> } {
-  const values: Record<string, string> = {};
   const fieldErrors: Record<string, string[]> = {};
+  const values: Record<string, string> = {};
+  const allowed = new Set(names);
+  for (const [name] of formData) {
+    if (!allowed.has(name)) fieldErrors[name] = [INVALID];
+  }
   for (const name of names) {
-    const value = one(formData, name);
-    if (value === null) fieldErrors[name] = [INVALID];
-    else values[name] = value;
+    const entries = formData.getAll(name);
+    if (entries.length !== 1 || typeof entries[0] !== "string") {
+      fieldErrors[name] = [INVALID];
+      continue;
+    }
+    values[name] = entries[0];
   }
   return Object.keys(fieldErrors).length ? { fieldErrors } : { values };
 }
 
-function rowVersion(value: string) {
-  return /^(?:[1-9][0-9]*)$/u.test(value) && Number.isSafeInteger(Number(value))
-    ? Number(value)
-    : null;
-}
-
-async function run(
-  callback: () => Promise<unknown>,
-): Promise<DownloadResourceActionState> {
-  try {
-    await callback();
-    revalidatePath("/admin/downloads");
-    revalidatePath("/downloads", "layout");
-    return { kind: "success" };
-  } catch {
-    return { kind: "domain_error", code: "DOWNLOAD_RESOURCE_ACTION_FAILED" };
+function fieldErrors(error: z.ZodError) {
+  const result: Record<string, string[]> = {};
+  for (const issue of error.issues) {
+    const field = String(issue.path[0] ?? "form");
+    result[field] ??= [INVALID];
   }
+  return result;
 }
 
-function mutation(
+function parsed<T>(schema: z.ZodType<T>, value: unknown): Parsed<T> {
+  const result = schema.safeParse(value);
+  return result.success
+    ? { success: true, data: result.data }
+    : {
+        success: false,
+        state: {
+          kind: "validation_error",
+          fieldErrors: fieldErrors(result.error),
+        },
+      };
+}
+
+function canonicalPositive(value: string): number | null {
+  if (!/^[1-9][0-9]*$/u.test(value)) return null;
+  const result = Number(value);
+  return Number.isSafeInteger(result) ? result : null;
+}
+
+function canonicalNonnegative(value: string): number | null {
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) return null;
+  const result = Number(value);
+  return Number.isSafeInteger(result) ? result : null;
+}
+
+function createInput(
   formData: FormData,
-):
-  | { values: { id: string; expectedRowVersion: number } }
-  | { fieldErrors: Record<string, string[]> } {
-  const parsed = fields(formData, ["id", "expectedRowVersion"]);
-  if ("fieldErrors" in parsed) return parsed;
-  const expectedRowVersion = rowVersion(parsed.values.expectedRowVersion);
+): Parsed<z.infer<typeof createDownloadResourceInputSchema>> {
+  const result = read(formData, ["key", "adminLabel"]);
+  if ("fieldErrors" in result)
+    return { success: false, state: { kind: "validation_error", ...result } };
+  return parsed(createDownloadResourceInputSchema, result.values);
+}
+
+function mutationInput(formData: FormData): Parsed<DownloadMutationInput> {
+  const result = read(formData, ["id", "expectedRowVersion"]);
+  if ("fieldErrors" in result)
+    return { success: false, state: { kind: "validation_error", ...result } };
+  const expectedRowVersion = canonicalPositive(
+    result.values.expectedRowVersion,
+  );
   if (expectedRowVersion === null)
-    return { fieldErrors: { expectedRowVersion: [INVALID] } };
-  return { values: { id: parsed.values.id, expectedRowVersion } };
+    return {
+      success: false,
+      state: {
+        kind: "validation_error",
+        fieldErrors: { expectedRowVersion: [INVALID] },
+      },
+    };
+  return parsed(mutateDownloadResourceInputSchema, {
+    ...result.values,
+    expectedRowVersion,
+  });
 }
 
-export async function createDownloadResourceAction(
-  _previous: DownloadResourceActionState,
+function draftInput(
   formData: FormData,
-): Promise<DownloadResourceActionState> {
-  const parsed = fields(formData, ["key", "adminLabel"]);
-  if ("fieldErrors" in parsed) return { kind: "validation_error", ...parsed };
-  return run(() => downloadResourceService.createResource(parsed.values));
-}
-
-export async function saveDownloadDraftAction(
-  _previous: DownloadResourceActionState,
-  formData: FormData,
-): Promise<DownloadResourceActionState> {
-  const parsed = fields(formData, [
+): Parsed<z.infer<typeof saveDownloadDraftInputSchema>> {
+  const result = read(formData, [
     "id",
     "expectedRowVersion",
     "name",
@@ -96,66 +188,162 @@ export async function saveDownloadDraftAction(
     "previewPolicy",
     "downloadPolicy",
   ]);
-  if ("fieldErrors" in parsed) return { kind: "validation_error", ...parsed };
-  const expectedRowVersion = rowVersion(parsed.values.expectedRowVersion);
-  const sortOrder = /^(?:0|[1-9][0-9]*)$/u.test(parsed.values.sortOrder)
-    ? Number(parsed.values.sortOrder)
-    : null;
-  if (
-    expectedRowVersion === null ||
-    sortOrder === null ||
-    !Number.isSafeInteger(sortOrder)
-  ) {
+  if ("fieldErrors" in result)
+    return { success: false, state: { kind: "validation_error", ...result } };
+  const expectedRowVersion = canonicalPositive(
+    result.values.expectedRowVersion,
+  );
+  const sortOrder = canonicalNonnegative(result.values.sortOrder);
+  const errors: Record<string, string[]> = {};
+  if (expectedRowVersion === null) errors.expectedRowVersion = [INVALID];
+  if (sortOrder === null) errors.sortOrder = [INVALID];
+  if (Object.keys(errors).length)
     return {
-      kind: "validation_error",
-      fieldErrors: {
-        ...(expectedRowVersion === null
-          ? { expectedRowVersion: [INVALID] }
-          : {}),
-        ...(sortOrder === null || !Number.isSafeInteger(sortOrder)
-          ? { sortOrder: [INVALID] }
-          : {}),
-      },
+      success: false,
+      state: { kind: "validation_error", fieldErrors: errors },
+    };
+  return parsed(saveDownloadDraftInputSchema, {
+    ...result.values,
+    expectedRowVersion,
+    sortOrder,
+  });
+}
+
+function safeErrorState(
+  error: unknown,
+  dependencies: DownloadActionsDependencies,
+): DownloadResourceActionState {
+  if (error instanceof AuthAccessError) {
+    if (
+      error.code === "AUTH_SESSION_REQUIRED" ||
+      error.code === "AUTH_REALM_MISMATCH"
+    )
+      return {
+        kind: "authentication_required",
+        code: error.code,
+        redirectTo: LOGIN_REDIRECT,
+      };
+    if (error.code === "AUTH_PASSWORD_CHANGE_REQUIRED")
+      return {
+        kind: "account_setup_required",
+        code: error.code,
+        redirectTo: PASSWORD_REDIRECT,
+      };
+    return {
+      kind: "access_error",
+      code: error.code as
+        | "AUTH_PERMISSION_DENIED"
+        | "AUTH_ACCOUNT_DISABLED"
+        | "AUTH_ACCOUNT_NOT_ACTIVE",
     };
   }
-  return run(() =>
-    downloadResourceService.saveDraft({
-      ...parsed.values,
-      expectedRowVersion,
-      sortOrder,
-    }),
-  );
+  if (
+    error instanceof Error &&
+    error.message.startsWith("DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT")
+  )
+    return { kind: "conflict" };
+  if (error instanceof Error && error.message.startsWith("DOWNLOAD_RESOURCE_"))
+    return { kind: "domain_error" };
+  try {
+    dependencies.reportInternalError({
+      event: "download_resource.action_internal_error",
+      errorName:
+        error instanceof Error && /^[A-Za-z0-9_]{1,64}$/u.test(error.name)
+          ? error.name
+          : "UnknownError",
+    });
+  } catch {
+    // Diagnostics must never change a safe action response.
+  }
+  return { kind: "internal_error" };
 }
 
-function mutate(
-  formData: FormData,
-  method: (input: {
-    id: string;
-    expectedRowVersion: number;
-  }) => Promise<unknown>,
+function invalidate(dependencies: DownloadActionsDependencies) {
+  for (const operation of [
+    () => dependencies.cache.revalidatePath("/admin/downloads"),
+    () => dependencies.cache.updateTag("downloads"),
+    () => dependencies.cache.revalidatePath("/downloads", "layout"),
+  ]) {
+    try {
+      operation();
+    } catch (error) {
+      try {
+        dependencies.reportInternalError({
+          event: "download_resource.action_internal_error",
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        });
+      } catch {
+        // Best-effort invalidation diagnostics only.
+      }
+    }
+  }
+}
+
+export function createDownloadResourceActions(
+  dependencies: DownloadActionsDependencies,
 ) {
-  const parsed = mutation(formData);
-  if ("fieldErrors" in parsed)
-    return Promise.resolve({
-      kind: "validation_error",
-      ...parsed,
-    } as DownloadResourceActionState);
-  return run(() => method(parsed.values));
+  async function run<T>(
+    input: Parsed<T>,
+    mutation: (value: T, context: DownloadRequestContext) => Promise<unknown>,
+  ): Promise<DownloadResourceActionState> {
+    if (!input.success) return input.state;
+    try {
+      await dependencies.access.requirePermission("admin:downloads");
+      await mutation(input.data, dependencies.getContext());
+    } catch (error) {
+      return safeErrorState(error, dependencies);
+    }
+    invalidate(dependencies);
+    return { kind: "success" };
+  }
+
+  return {
+    createDownloadResourceAction: (
+      _previous: DownloadResourceActionState,
+      formData: FormData,
+    ) => run(createInput(formData), dependencies.service.createResource),
+    saveDownloadDraftAction: (
+      _previous: DownloadResourceActionState,
+      formData: FormData,
+    ) => run(draftInput(formData), dependencies.service.saveDraft),
+    publishDownloadResourceAction: (
+      _previous: DownloadResourceActionState,
+      formData: FormData,
+    ) => run(mutationInput(formData), dependencies.service.publish),
+    downlineDownloadResourceAction: (
+      _previous: DownloadResourceActionState,
+      formData: FormData,
+    ) => run(mutationInput(formData), dependencies.service.downline),
+    discardDownloadDraftAction: (
+      _previous: DownloadResourceActionState,
+      formData: FormData,
+    ) => run(mutationInput(formData), dependencies.service.discardDraft),
+    removeDownloadDraftFileAction: (
+      _previous: DownloadResourceActionState,
+      formData: FormData,
+    ) => run(mutationInput(formData), dependencies.service.removeDraftFile),
+  };
 }
 
-export const publishDownloadResourceAction = (
-  _previous: DownloadResourceActionState,
-  formData: FormData,
-) => mutate(formData, downloadResourceService.publish);
-export const downlineDownloadResourceAction = (
-  _previous: DownloadResourceActionState,
-  formData: FormData,
-) => mutate(formData, downloadResourceService.downline);
-export const discardDownloadDraftAction = (
-  _previous: DownloadResourceActionState,
-  formData: FormData,
-) => mutate(formData, downloadResourceService.discardDraft);
-export const removeDownloadDraftFileAction = (
-  _previous: DownloadResourceActionState,
-  formData: FormData,
-) => mutate(formData, downloadResourceService.removeDraftFile);
+function reportInternalError(incident: {
+  event: "download_resource.action_internal_error";
+  errorName: string;
+}) {
+  try {
+    console.error(incident);
+  } catch {
+    // Console availability must not affect the action result.
+  }
+}
+
+export function createDefaultDownloadResourceActions(
+  context: DownloadRequestContext = {},
+) {
+  return createDownloadResourceActions({
+    service: downloadResourceService,
+    access: { requirePermission },
+    cache: { revalidatePath, updateTag },
+    getContext: () => context,
+    reportInternalError,
+  });
+}

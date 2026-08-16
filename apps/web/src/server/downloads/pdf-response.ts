@@ -16,24 +16,21 @@ export function parseSingleByteRange(
 ): { start: number; end: number } | null | "invalid" {
   if (value === null) return null;
   if (!Number.isSafeInteger(size) || size < 1) return "invalid";
-  const match = /^bytes=(\d*)-(\d*)$/u.exec(value.trim());
+  const match = /^bytes=(\d*)-(\d*)$/iu.exec(value.trim());
   if (!match || (match[1] === "" && match[2] === "")) return "invalid";
   if (match[1] === "") {
-    const suffix = Number(match[2]);
-    if (!Number.isSafeInteger(suffix) || suffix < 1) return "invalid";
-    return { start: Math.max(0, size - suffix), end: size - 1 };
+    const suffix = BigInt(match[2]);
+    if (suffix < 1n) return "invalid";
+    const bounded = suffix > BigInt(size) ? size : Number(suffix);
+    return { start: size - bounded, end: size - 1 };
   }
-  const start = Number(match[1]);
-  const end = match[2] === "" ? size - 1 : Number(match[2]);
-  if (
-    !Number.isSafeInteger(start) ||
-    !Number.isSafeInteger(end) ||
-    start < 0 ||
-    end < start ||
-    start >= size
-  )
-    return "invalid";
-  return { start, end: Math.min(end, size - 1) };
+  const startValue = BigInt(match[1]);
+  if (startValue >= BigInt(size)) return "invalid";
+  const start = Number(startValue);
+  const endValue = match[2] === "" ? BigInt(size - 1) : BigInt(match[2]);
+  const end = endValue >= BigInt(size) ? size - 1 : Number(endValue);
+  if (end < start || start < 0) return "invalid";
+  return { start, end };
 }
 
 function contentDisposition(
@@ -94,6 +91,15 @@ export function artifactResponse(input: {
   const start = parsed?.start ?? input.artifact.start;
   const end = parsed?.end ?? input.artifact.end;
   const partial = parsed !== null;
+  if (
+    !Number.isSafeInteger(input.artifact.start) ||
+    !Number.isSafeInteger(input.artifact.end) ||
+    input.artifact.start !== start ||
+    input.artifact.end !== end
+  ) {
+    input.artifact.readable.destroy();
+    return artifactErrorResponse(input.request, 500, "internal_error");
+  }
   const headers = new Headers({
     "Accept-Ranges": "bytes",
     "Content-Disposition": contentDisposition(

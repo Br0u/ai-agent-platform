@@ -1,64 +1,165 @@
 import { describe, expect, it, vi } from "vitest";
 
-const wiring = vi.hoisted(() => ({
-  createResource: vi.fn(async () => ({})),
-  saveDraft: vi.fn(async () => ({})),
-  publish: vi.fn(async () => ({})),
-  downline: vi.fn(async () => ({})),
-  discardDraft: vi.fn(async () => ({})),
-  removeDraftFile: vi.fn(async () => ({})),
-  revalidatePath: vi.fn(),
-}));
-
-vi.mock("next/cache", () => ({ revalidatePath: wiring.revalidatePath }));
-vi.mock("./service", () => ({
-  downloadResourceService: {
-    createResource: wiring.createResource,
-    saveDraft: wiring.saveDraft,
-    publish: wiring.publish,
-    downline: wiring.downline,
-    discardDraft: wiring.discardDraft,
-    removeDraftFile: wiring.removeDraftFile,
-  },
-}));
-
+import { AuthAccessError } from "../auth/access";
 import {
-  createDownloadResourceAction,
   createDownloadResourceActionState,
-  publishDownloadResourceAction,
+  createDownloadResourceActions,
 } from "./actions";
+
+const actor = {
+  userId: "11111111-1111-4111-8111-111111111111",
+  realm: "workforce" as const,
+  status: "active" as const,
+  displayName: "operator",
+  mustChangePassword: false,
+  permissions: ["admin:downloads"],
+};
+
+function fixture() {
+  const service = {
+    createResource: vi.fn(async () => ({})),
+    saveDraft: vi.fn(async () => ({})),
+    publish: vi.fn(async () => ({})),
+    downline: vi.fn(async () => ({})),
+    discardDraft: vi.fn(async () => ({})),
+    removeDraftFile: vi.fn(async () => ({})),
+  };
+  const access = { requirePermission: vi.fn(async () => actor) };
+  const cache = { revalidatePath: vi.fn(), updateTag: vi.fn() };
+  const reportInternalError = vi.fn();
+  return {
+    service,
+    access,
+    cache,
+    reportInternalError,
+    actions: createDownloadResourceActions({
+      service,
+      access,
+      cache,
+      getContext: () => ({
+        ipAddress: "203.0.113.7",
+        userAgent: "admin-test",
+      }),
+      reportInternalError,
+    }),
+  };
+}
+
+function createForm() {
+  const form = new FormData();
+  form.set("key", "vision-intro");
+  form.set("adminLabel", "视觉介绍");
+  return form;
+}
 
 describe("download resource actions", () => {
   it("exposes an idle action state", () => {
     expect(createDownloadResourceActionState()).toEqual({ kind: "idle" });
   });
 
-  it("uses the service and invalidates admin and public views", async () => {
-    const form = new FormData();
-    form.set("key", "vision-intro");
-    form.set("adminLabel", "视觉介绍");
-    await expect(createDownloadResourceActionState()).toEqual({ kind: "idle" });
+  it("authorizes, passes bounded context, and invalidates views after creation", async () => {
+    const current = fixture();
     await expect(
-      createDownloadResourceAction({ kind: "idle" }, form),
+      current.actions.createDownloadResourceAction(
+        createDownloadResourceActionState(),
+        createForm(),
+      ),
     ).resolves.toEqual({ kind: "success" });
-    expect(wiring.createResource).toHaveBeenCalledWith({
-      key: "vision-intro",
-      adminLabel: "视觉介绍",
+    expect(current.access.requirePermission).toHaveBeenCalledWith(
+      "admin:downloads",
+    );
+    expect(current.service.createResource).toHaveBeenCalledWith(
+      { key: "vision-intro", adminLabel: "视觉介绍" },
+      { ipAddress: "203.0.113.7", userAgent: "admin-test" },
+    );
+    expect(current.cache.revalidatePath).toHaveBeenCalledWith(
+      "/admin/downloads",
+    );
+    expect(current.cache.updateTag).toHaveBeenCalledWith("downloads");
+    expect(current.cache.revalidatePath).toHaveBeenCalledWith(
+      "/downloads",
+      "layout",
+    );
+  });
+
+  it("returns field errors before authorization for duplicate or invalid input", async () => {
+    const current = fixture();
+    const form = createForm();
+    form.append("key", "second");
+    await expect(
+      current.actions.createDownloadResourceAction(
+        createDownloadResourceActionState(),
+        form,
+      ),
+    ).resolves.toEqual({
+      kind: "validation_error",
+      fieldErrors: { key: ["字段值无效"] },
     });
-    expect(wiring.revalidatePath).toHaveBeenCalledWith("/admin/downloads");
-    expect(wiring.revalidatePath).toHaveBeenCalledWith("/downloads", "layout");
+    expect(current.access.requirePermission).not.toHaveBeenCalled();
   });
 
   it("rejects noncanonical row versions before calling a mutation", async () => {
+    const current = fixture();
     const form = new FormData();
     form.set("id", "11111111-1111-4111-8111-111111111111");
     form.set("expectedRowVersion", "01");
     await expect(
-      publishDownloadResourceAction({ kind: "idle" }, form),
+      current.actions.publishDownloadResourceAction(
+        createDownloadResourceActionState(),
+        form,
+      ),
     ).resolves.toEqual({
       kind: "validation_error",
       fieldErrors: { expectedRowVersion: ["字段值无效"] },
     });
-    expect(wiring.publish).not.toHaveBeenCalled();
+    expect(current.service.publish).not.toHaveBeenCalled();
+  });
+
+  it("maps only safe auth, conflict, and internal states", async () => {
+    const current = fixture();
+    current.access.requirePermission.mockRejectedValueOnce(
+      new AuthAccessError("AUTH_SESSION_REQUIRED", 401),
+    );
+    await expect(
+      current.actions.createDownloadResourceAction(
+        createDownloadResourceActionState(),
+        createForm(),
+      ),
+    ).resolves.toMatchObject({ kind: "authentication_required" });
+
+    current.service.createResource.mockRejectedValueOnce(
+      new Error("DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT: private"),
+    );
+    await expect(
+      current.actions.createDownloadResourceAction(
+        createDownloadResourceActionState(),
+        createForm(),
+      ),
+    ).resolves.toEqual({ kind: "conflict" });
+
+    current.service.createResource.mockRejectedValueOnce(
+      new Error("/private/downloads/secret.pdf"),
+    );
+    await expect(
+      current.actions.createDownloadResourceAction(
+        createDownloadResourceActionState(),
+        createForm(),
+      ),
+    ).resolves.toEqual({ kind: "internal_error" });
+    expect(current.reportInternalError).toHaveBeenCalled();
+  });
+
+  it("keeps a successful mutation successful when cache invalidation fails", async () => {
+    const current = fixture();
+    current.cache.updateTag.mockImplementation(() => {
+      throw new Error("cache unavailable");
+    });
+    await expect(
+      current.actions.createDownloadResourceAction(
+        createDownloadResourceActionState(),
+        createForm(),
+      ),
+    ).resolves.toEqual({ kind: "success" });
+    expect(current.reportInternalError).toHaveBeenCalled();
   });
 });

@@ -18,6 +18,14 @@ describe("PDF response", () => {
 
   it("supports suffix ranges and rejects multiple or invalid ranges", () => {
     expect(parseSingleByteRange("bytes=-3", 10)).toEqual({ start: 7, end: 9 });
+    expect(parseSingleByteRange("BYTES=-999999999999999999999", 10)).toEqual({
+      start: 0,
+      end: 9,
+    });
+    expect(parseSingleByteRange("bytes=2-999999999999999999999", 10)).toEqual({
+      start: 2,
+      end: 9,
+    });
     expect(parseSingleByteRange("bytes=0-1,3-4", 10)).toBe("invalid");
     expect(parseSingleByteRange("bytes=10-11", 10)).toBe("invalid");
   });
@@ -69,5 +77,23 @@ describe("PDF response", () => {
       }).status,
     ).toBe(200);
     expect(headDestroy).toHaveBeenCalled();
+  });
+
+  it("fails closed when the opened stream does not match the requested range", () => {
+    const mismatched = artifact();
+    const destroy = vi.spyOn(mismatched.readable, "destroy");
+    const response = artifactResponse({
+      request: new Request("https://example.test/file", {
+        headers: { range: "bytes=2-4" },
+      }),
+      artifact: mismatched,
+      contentType: "application/pdf",
+      filename: "x.pdf",
+      disposition: "attachment",
+      noStore: true,
+    });
+    expect(response.status).toBe(500);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(destroy).toHaveBeenCalled();
   });
 });
