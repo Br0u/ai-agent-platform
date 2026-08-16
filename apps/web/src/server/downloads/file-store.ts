@@ -9,6 +9,7 @@ import {
   open as openFile,
   unlink,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const DIRECTORY_MODE = 0o750;
@@ -76,8 +77,28 @@ async function unlinkIfPresent(filePath: string) {
   });
 }
 
-export function createDownloadFileStore(configuredRoot: string) {
-  const root = path.resolve(configuredRoot);
+export function createDownloadFileStore(configuredRoot?: string) {
+  if (
+    configuredRoot !== undefined &&
+    configuredRoot.trim() !== "" &&
+    !path.isAbsolute(configuredRoot)
+  ) {
+    throw new Error(
+      "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
+    );
+  }
+  if (
+    process.env.NODE_ENV === "production" &&
+    (configuredRoot === undefined || configuredRoot.trim() === "")
+  ) {
+    throw new Error(
+      "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
+    );
+  }
+  const root =
+    configuredRoot && configuredRoot.trim() !== ""
+      ? configuredRoot
+      : path.join(tmpdir(), "ai-agent-platform-downloads");
   const stages = new WeakMap<DownloadStage, StageState>();
 
   async function ensureRoot(create: boolean) {

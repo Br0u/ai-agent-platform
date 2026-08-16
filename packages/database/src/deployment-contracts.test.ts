@@ -85,6 +85,7 @@ type RenderedService = {
   healthcheck?: { test?: string[] };
   mem_limit?: number | string;
   networks?: Record<string, RenderedNetworkAttachment>;
+  network_mode?: string;
   pids_limit?: number;
   ports?: unknown[];
   read_only?: boolean;
@@ -99,6 +100,7 @@ type RenderedCompose = {
   networks: Record<string, { internal?: boolean }>;
   secrets?: Record<string, { file?: string }>;
   services: Record<string, RenderedService>;
+  volumes?: Record<string, unknown>;
 };
 
 const renderComposeFixture = (
@@ -202,6 +204,95 @@ const secretSource = (
   typeof attachment === "string" ? attachment : attachment.source;
 
 describe("production deployment security contracts", () => {
+  it("persists download artifacts through an initialized least-privilege volume", () => {
+    const rendered = renderComposeFixture();
+    const init = rendered.services["download-volume-init"];
+    const web = rendered.services.web;
+    const backup = rendered.services.backup;
+    const downloadTarget = "/var/lib/ai-agent-platform/downloads";
+    const volumeMount = expect.objectContaining({
+      type: "volume",
+      source: "download_data",
+      target: downloadTarget,
+    });
+
+    expect(rendered.volumes).toHaveProperty("download_data");
+    expect(init).toBeDefined();
+    expect(init?.user).toBe("root");
+    expect(init?.network_mode).toBe("none");
+    expect(init?.read_only).toBe(true);
+    expect(init?.entrypoint).toEqual(["/bin/sh"]);
+    expect(init?.command).toEqual(["/opt/aap/init-download-volume.sh"]);
+    expect(init?.volumes).toHaveLength(2);
+    expect(init?.volumes).toContainEqual(volumeMount);
+    expect(init?.volumes).toContainEqual(
+      expect.objectContaining({
+        type: "bind",
+        source: path.join(root, "infra/docker/init-download-volume.sh"),
+        target: "/opt/aap/init-download-volume.sh",
+        read_only: true,
+      }),
+    );
+    expect(
+      init?.volumes?.find(
+        (mount) =>
+          typeof mount !== "string" && mount.source === "download_data",
+      ),
+    ).not.toMatchObject({ read_only: true });
+    expect(new Set(init?.cap_drop)).toEqual(new Set(["ALL"]));
+    expect(new Set(init?.cap_add)).toEqual(
+      new Set(["CHOWN", "DAC_OVERRIDE", "FOWNER"]),
+    );
+    expect(init?.security_opt).toContain("no-new-privileges:true");
+    expect(web?.environment?.DOWNLOAD_RESOURCE_ROOT).toBe(downloadTarget);
+    expect(web?.volumes).toContainEqual(volumeMount);
+    expect(
+      web?.volumes?.find(
+        (mount) =>
+          typeof mount !== "string" && mount.source === "download_data",
+      ),
+    ).not.toMatchObject({ read_only: true });
+    expect(web?.read_only).toBe(true);
+    expect(web?.depends_on?.["download-volume-init"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(backup?.depends_on?.["download-volume-init"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+
+    const initScript = read("infra/docker/init-download-volume.sh");
+    expect(
+      spawnSync("sh", [
+        "-n",
+        path.join(root, "infra/docker/init-download-volume.sh"),
+      ]).status,
+    ).toBe(0);
+    expect(initScript).toContain("target=/var/lib/ai-agent-platform/downloads");
+    expect(initScript).toContain('[ -d "$target" ]');
+    expect(initScript).toContain('[ -L "$target" ]');
+    expect(initScript).toContain(
+      'find "$target" -xdev ! -type d ! -type f -print -quit',
+    );
+    expect(initScript).toContain(
+      'find "$target" -xdev -type d -exec chown 1000:1000 {} +',
+    );
+    expect(initScript).toContain(
+      'find "$target" -xdev -type f -exec chown 1000:1000 {} +',
+    );
+    expect(initScript).toContain(
+      'find "$target" -xdev -type d -exec chmod 0750 {} +',
+    );
+    expect(initScript).toContain(
+      'find "$target" -xdev -type f -exec chmod 0640 {} +',
+    );
+
+    const dockerfile = read("apps/web/Dockerfile");
+    expect(dockerfile).toContain(
+      'test "$(id -u node):$(id -g node)" = "1000:1000"',
+    );
+    expect(dockerfile).not.toMatch(/产品资料|\/Users\/|Downloads\//u);
+  });
+
   it("keeps the release-age policy exception exact and limited to the approved orb", () => {
     const workspace = read("pnpm-workspace.yaml");
     const exclusionBlock = workspace.match(

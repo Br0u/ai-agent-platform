@@ -436,6 +436,31 @@ services:
       model_egress:
         gw_priority: 1
 
+  download-volume-init:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: runner
+      args:
+        PNPM_REGISTRY: ${PNPM_REGISTRY:-https://registry.npmmirror.com}
+    restart: "no"
+    user: root
+    entrypoint: ["/bin/sh"]
+    command: ["/opt/aap/init-download-volume.sh"]
+    volumes:
+      - download_data:/var/lib/ai-agent-platform/downloads
+      - ./infra/docker/init-download-volume.sh:/opt/aap/init-download-volume.sh:ro
+    network_mode: none
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+
   web:
     build:
       context: .
@@ -468,6 +493,7 @@ services:
       ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD: ${ASSISTANT_AGENTOS_CIRCUIT_FAILURE_THRESHOLD:-3}
       ASSISTANT_AGENTOS_CIRCUIT_RESET_MS: ${ASSISTANT_AGENTOS_CIRCUIT_RESET_MS:-30000}
       TRUST_NGINX_PROXY: "true"
+      DOWNLOAD_RESOURCE_ROOT: /var/lib/ai-agent-platform/downloads
     secrets:
       - runtime_database_url
       - better_auth_secret
@@ -477,7 +503,10 @@ services:
       - skill_registry_control_key
     volumes:
       - ./infra/docker/run-with-secret-env.sh:/opt/aap/run-with-secret-env.sh:ro
+      - download_data:/var/lib/ai-agent-platform/downloads
     depends_on:
+      download-volume-init:
+        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
       skill-registry:
@@ -578,6 +607,8 @@ services:
     volumes:
       - backup_data:/backups
     depends_on:
+      download-volume-init:
+        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
       agent-migrate:
@@ -603,6 +634,7 @@ networks:
 volumes:
   db_data:
   backup_data:
+  download_data:
 
 secrets:
   postgres_password:

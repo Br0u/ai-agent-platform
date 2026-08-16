@@ -22,6 +22,7 @@ const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   await Promise.all(
     temporaryDirectories
       .splice(0)
@@ -54,6 +55,60 @@ async function readStream(stream: NodeJS.ReadableStream) {
 }
 
 describe("download artifact file store", () => {
+  it("rejects missing, blank, and relative production roots", () => {
+    vi.stubEnv("NODE_ENV", "production");
+
+    expect(() => createDownloadFileStore()).toThrow(
+      "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
+    );
+    expect(() => createDownloadFileStore(" \t")).toThrow(
+      "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
+    );
+    expect(() => createDownloadFileStore("downloads")).toThrow(
+      "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
+    );
+  });
+
+  it("accepts the exact configured absolute production root", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+    const stage = await store.createStage(".pdf");
+
+    expect(path.relative(root, stage.path).startsWith("staging/")).toBe(true);
+    await stage.writable.close();
+    await rm(stage.path);
+  });
+
+  it("uses a stable tmpdir development default", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const expectedRoot = path.join(tmpdir(), "ai-agent-platform-downloads");
+    const firstStore = createDownloadFileStore();
+    const secondStore = createDownloadFileStore();
+    const first = await firstStore.createStage(".pdf");
+    const second = await secondStore.createStage(".webp");
+
+    expect(path.relative(expectedRoot, first.path).startsWith("staging/")).toBe(
+      true,
+    );
+    expect(
+      path.relative(expectedRoot, second.path).startsWith("staging/"),
+    ).toBe(true);
+    await Promise.all([first.writable.close(), second.writable.close()]);
+    await Promise.all([rm(first.path), rm(second.path)]);
+  });
+
+  it("uses an explicitly injected test root", async () => {
+    vi.stubEnv("NODE_ENV", "test");
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+    const stage = await store.createStage(".pdf");
+
+    expect(path.relative(root, stage.path).startsWith("staging/")).toBe(true);
+    await stage.writable.close();
+    await rm(stage.path);
+  });
+
   it("generates committed keys, persists bytes, ranges reads, and removes files", async () => {
     const root = await temporaryRoot();
     const store = createDownloadFileStore(root);

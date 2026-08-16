@@ -1,8 +1,6 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { z } from "zod";
 
 import type { AuditWriteInput } from "../auth/audit";
@@ -101,8 +99,7 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
 }
 
 export const downloadResourceFileStore = createDownloadFileStore(
-  process.env.DOWNLOAD_RESOURCE_ROOT ??
-    path.join(tmpdir(), "ai-agent-platform-downloads"),
+  process.env.DOWNLOAD_RESOURCE_ROOT,
 );
 
 function completeArtifact(revision: Revision): revision is Revision & {
