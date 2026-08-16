@@ -70,6 +70,12 @@ async function safeDirectory(directory: string, create: boolean) {
   if (create) await chmod(directory, DIRECTORY_MODE);
 }
 
+async function unlinkIfPresent(filePath: string) {
+  await unlink(filePath).catch((error: unknown) => {
+    if (!isNodeError(error) || error.code !== "ENOENT") throw error;
+  });
+}
+
 export function createDownloadFileStore(configuredRoot: string) {
   const root = path.resolve(configuredRoot);
   const stages = new WeakMap<DownloadStage, StageState>();
@@ -114,9 +120,7 @@ export function createDownloadFileStore(configuredRoot: string) {
 
   async function discardStage(stage: DownloadStage) {
     await stage.writable.close().catch(() => undefined);
-    await unlink(stage.path).catch((error: unknown) => {
-      if (!isNodeError(error) || error.code !== "ENOENT") throw error;
-    });
+    await unlinkIfPresent(stage.path);
   }
 
   return {
@@ -147,6 +151,13 @@ export function createDownloadFileStore(configuredRoot: string) {
         throw new Error("Invalid or consumed stage");
       state.consumed = true;
 
+      let linked:
+        | {
+            destination: string;
+            handleStats: Awaited<ReturnType<FileHandle["stat"]>>;
+            objectKey: string;
+          }
+        | undefined;
       try {
         validateUuid(input.resourceId, "resource");
         validateUuid(input.revisionId, "revision");
@@ -167,14 +178,13 @@ export function createDownloadFileStore(configuredRoot: string) {
           throw new Error("Stage file changed before commit");
         }
 
-        await stage.writable.close();
-        await chmod(stage.path, FILE_MODE);
-        const closedStats = await lstat(stage.path);
+        await stage.writable.chmod(FILE_MODE);
+        const securedStats = await lstat(stage.path);
         if (
-          closedStats.isSymbolicLink() ||
-          !closedStats.isFile() ||
-          closedStats.dev !== handleStats.dev ||
-          closedStats.ino !== handleStats.ino
+          securedStats.isSymbolicLink() ||
+          !securedStats.isFile() ||
+          securedStats.dev !== handleStats.dev ||
+          securedStats.ino !== handleStats.ino
         ) {
           throw new Error("Stage file changed before commit");
         }
@@ -185,17 +195,65 @@ export function createDownloadFileStore(configuredRoot: string) {
           `${input.revisionId}${extension}`,
         );
         await link(stage.path, destination);
-        try {
-          await unlink(stage.path);
-        } catch (error) {
-          await unlink(destination).catch(() => undefined);
-          throw error;
-        }
-        return objectKey;
+        linked = { destination, handleStats, objectKey };
       } catch (error) {
         await discardStage(stage);
         throw error;
       }
+      if (!linked) throw new Error("Artifact link state missing");
+
+      const publishedStats = await lstat(linked.destination).catch(
+        () => undefined,
+      );
+      if (
+        !publishedStats ||
+        publishedStats.isSymbolicLink() ||
+        !publishedStats.isFile() ||
+        publishedStats.dev !== linked.handleStats.dev ||
+        publishedStats.ino !== linked.handleStats.ino
+      ) {
+        const changed = new Error("Stage file changed before commit");
+        try {
+          await unlinkIfPresent(linked.destination);
+        } catch (rollbackError) {
+          await stage.writable.close().catch(() => undefined);
+          throw new AggregateError(
+            [changed, rollbackError],
+            "Artifact commit rollback failed; recoverable links retained",
+          );
+        }
+        await discardStage(stage);
+        throw changed;
+      }
+
+      try {
+        await stage.writable.close();
+      } catch (closeError) {
+        try {
+          await unlinkIfPresent(linked.destination);
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [closeError, rollbackError],
+            "Artifact commit rollback failed; recoverable links retained",
+          );
+        }
+        throw closeError;
+      }
+
+      try {
+        await unlink(stage.path);
+      } catch (sourceError) {
+        try {
+          await unlinkIfPresent(linked.destination);
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [sourceError, rollbackError],
+            "Artifact commit rollback failed; recoverable links retained",
+          );
+        }
+        throw sourceError;
+      }
+      return linked.objectKey;
     },
 
     async stat(objectKey: string) {
@@ -211,6 +269,9 @@ export function createDownloadFileStore(configuredRoot: string) {
       try {
         const stats = await handle.stat();
         if (!stats.isFile()) throw new Error("Artifact must be a regular file");
+        if (stats.dev !== object.stats.dev || stats.ino !== object.stats.ino) {
+          throw new Error("Artifact changed before open");
+        }
         const start = range?.start ?? 0;
         const end = range?.end ?? stats.size - 1;
         if (
@@ -242,7 +303,7 @@ export function createDownloadFileStore(configuredRoot: string) {
         if (isNodeError(error) && error.code === "ENOENT") return;
         throw error;
       }
-      await unlink(object.path);
+      await unlinkIfPresent(object.path);
     },
   };
 }

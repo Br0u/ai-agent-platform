@@ -1,4 +1,6 @@
 import {
+  chmod,
+  type FileHandle,
   lstat,
   mkdir,
   mkdtemp,
@@ -10,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDownloadFileStore } from "./file-store";
 
@@ -19,6 +21,7 @@ const revisionId = "0191f2a3-4567-7abc-8def-0123456789ab";
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     temporaryDirectories
       .splice(0)
@@ -210,6 +213,101 @@ describe("download artifact file store", () => {
     await expect(
       store.commit(stage, { resourceId, revisionId, kind: "pdf" }),
     ).rejects.toThrow("Stage must be a regular file");
+  });
+
+  it("rejects a source path swapped after descriptor chmod without publishing it", async () => {
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+    const stage = await writeStage(store, ".pdf", "original");
+    const external = path.join(root, "external.pdf");
+    await writeFile(external, "external", { mode: 0o600 });
+    const originalChmod = stage.writable.chmod.bind(stage.writable);
+    stage.writable.chmod = async (mode) => {
+      await originalChmod(mode);
+      await rm(stage.path);
+      await symlink(external, stage.path);
+    };
+
+    await expect(
+      store.commit(stage, { resourceId, revisionId, kind: "pdf" }),
+    ).rejects.toThrow("Stage file changed before commit");
+    await expect(
+      lstat(path.join(root, `objects/${resourceId}/${revisionId}.pdf`)),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(external, "utf8")).toBe("external");
+  });
+
+  it("reports a failed destination rollback and retains recoverable links", async () => {
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+    const stage = await writeStage(store, ".pdf", "recoverable");
+    const destination = path.join(
+      root,
+      `objects/${resourceId}/${revisionId}.pdf`,
+    );
+    const staging = path.dirname(stage.path);
+    const destinationDirectory = path.dirname(destination);
+    const originalClose = stage.writable.close.bind(stage.writable);
+    stage.writable.close = async () => {
+      await originalClose();
+      await chmod(staging, 0o550);
+      await chmod(destinationDirectory, 0o550);
+    };
+
+    try {
+      await expect(
+        store.commit(stage, { resourceId, revisionId, kind: "pdf" }),
+      ).rejects.toThrow("Artifact commit rollback failed");
+    } finally {
+      await chmod(staging, 0o750);
+      await chmod(destinationDirectory, 0o750).catch(() => undefined);
+    }
+    const [stagedStats, destinationStats] = await Promise.all([
+      lstat(stage.path),
+      lstat(destination),
+    ]);
+    expect(destinationStats.ino).toBe(stagedStats.ino);
+    expect(await readFile(destination, "utf8")).toBe("recoverable");
+  });
+
+  it("rejects an opened descriptor whose inode differs from lstat", async () => {
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+    const stage = await writeStage(store, ".pdf", "original");
+    const key = await store.commit(stage, {
+      resourceId,
+      revisionId,
+      kind: "pdf",
+    });
+    const prototype = Object.getPrototypeOf(stage.writable) as FileHandle;
+    const originalStat = prototype.stat;
+    vi.spyOn(prototype, "stat").mockImplementation(async function (
+      this: FileHandle,
+    ) {
+      const stats = await originalStat.call(this);
+      Object.defineProperty(stats, "ino", {
+        value: typeof stats.ino === "bigint" ? stats.ino + 1n : stats.ino + 1,
+      });
+      return stats;
+    });
+
+    await expect(store.open(key)).rejects.toThrow(
+      "Artifact changed before open",
+    );
+  });
+
+  it("treats a final remove ENOENT as success", async () => {
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+    const stage = await writeStage(store, ".pdf", "original");
+    const key = await store.commit(stage, {
+      resourceId,
+      revisionId,
+      kind: "pdf",
+    });
+    await expect(
+      Promise.all(Array.from({ length: 20 }, () => store.remove(key))),
+    ).resolves.toHaveLength(20);
   });
 
   it("rejects invalid ranges without leaking opened file handles", async () => {
