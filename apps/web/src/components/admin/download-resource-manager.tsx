@@ -377,6 +377,7 @@ function Editor({
   uploading,
   uploadError,
   onAbortUpload,
+  onDirtyChange,
   onResource,
   onUpload,
 }: {
@@ -384,6 +385,7 @@ function Editor({
   uploading: boolean;
   uploadError: string | null;
   onAbortUpload(): void;
+  onDirtyChange(dirty: boolean): void;
   onResource(resource: DownloadResourceAdminDto): void;
   onUpload(file: File): void;
 }) {
@@ -420,6 +422,20 @@ function Editor({
     resource.state === "published" && resource.draftRevision === null;
   const needsSave = dirty && !publishedReadOnly;
   const otherActionsDisabled = disabled || needsSave;
+  const resetChanges = () => {
+    setCategory(revision?.category ?? getCategory(resource));
+    setPolicies(
+      revision
+        ? {
+            previewPolicy: revision.previewPolicy,
+            downloadPolicy: revision.downloadPolicy,
+          }
+        : suggestDownloadPolicies(getCategory(resource)),
+    );
+    setExplicitPolicy(false);
+    setDirty(false);
+    onDirtyChange(false);
+  };
 
   useEffect(() => {
     if (state.kind === "success" && state.resource) onResource(state.resource);
@@ -477,7 +493,7 @@ function Editor({
           </span>
           {complete ? (
             <a
-              href={`/api/v1/admin/downloads/${resource.id}/draft/pdf`}
+              href={`/admin/downloads/preview/${resource.id}`}
               rel="noreferrer"
               target="_blank"
             >
@@ -497,7 +513,9 @@ function Editor({
           )
             return;
           setDirty(true);
+          onDirtyChange(true);
         }}
+        onReset={resetChanges}
       >
         <input name="id" type="hidden" value={resource.id} />
         <input
@@ -745,6 +763,14 @@ function Editor({
           >
             {pending ? "正在保存…" : publishedReadOnly ? "编辑" : "保存草稿"}
           </button>
+          {needsSave ? (
+            <button
+              className="download-resource-manager__button download-resource-manager__button--secondary"
+              type="reset"
+            >
+              放弃修改
+            </button>
+          ) : null}
           <label
             aria-disabled={
               otherActionsDisabled || !canUpload ? true : undefined
@@ -783,9 +809,20 @@ function Editor({
           ) : null}
         </div>
         {needsSave ? (
-          <p className="download-resource-manager__save-required" role="status">
-            请先保存草稿后再上传或执行发布操作。
-          </p>
+          <>
+            <p
+              className="download-resource-manager__save-required"
+              role="status"
+            >
+              请先保存草稿后再上传或执行发布操作。
+            </p>
+            <p
+              className="download-resource-manager__save-required"
+              role="status"
+            >
+              请先保存或重置当前编辑，再切换资源或调整筛选。
+            </p>
+          </>
         ) : null}
         {uploadError ? (
           <p
@@ -872,6 +909,7 @@ export function DownloadResourceManager({
   const [product, setProduct] = useState("");
   const [newOpen, setNewOpen] = useState(false);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [editingDirty, setEditingDirty] = useState(false);
   const [uploadError, setUploadError] = useState<{
     message: string;
     resourceId: string;
@@ -886,6 +924,7 @@ export function DownloadResourceManager({
   const adopt = (next: DownloadResourceAdminDto) => {
     setResources((current) => replaceResource(current, next));
     setSelectedId(next.id);
+    setEditingDirty(false);
   };
   const upload = async (resource: DownloadResourceAdminDto, file: File) => {
     if (controller.current) return;
@@ -982,6 +1021,7 @@ export function DownloadResourceManager({
       (!product || productRevision?.product === product)
     );
   });
+  const controlsLocked = uploadingId !== null || editingDirty;
 
   return (
     <main
@@ -996,7 +1036,7 @@ export function DownloadResourceManager({
         </div>
         <button
           className="download-resource-manager__button"
-          disabled={uploadingId !== null}
+          disabled={controlsLocked}
           onClick={() => setNewOpen(true)}
           ref={newButton}
           type="button"
@@ -1009,7 +1049,7 @@ export function DownloadResourceManager({
           搜索资源
           <input
             aria-label="搜索资源"
-            disabled={uploadingId !== null}
+            disabled={controlsLocked}
             onChange={(event) => setSearch(event.target.value)}
             type="search"
             value={search}
@@ -1019,7 +1059,7 @@ export function DownloadResourceManager({
           资源状态
           <select
             aria-label="资源状态"
-            disabled={uploadingId !== null}
+            disabled={controlsLocked}
             onChange={(event) => setStatus(event.target.value)}
             value={status}
           >
@@ -1035,7 +1075,7 @@ export function DownloadResourceManager({
           资源分类
           <select
             aria-label="筛选资源分类"
-            disabled={uploadingId !== null}
+            disabled={controlsLocked}
             onChange={(event) => setCategory(event.target.value)}
             value={category}
           >
@@ -1051,7 +1091,7 @@ export function DownloadResourceManager({
           筛选产品
           <select
             aria-label="筛选产品"
-            disabled={uploadingId !== null}
+            disabled={controlsLocked}
             onChange={(event) => setProduct(event.target.value)}
             value={product}
           >
@@ -1091,7 +1131,7 @@ export function DownloadResourceManager({
                             resource.id === selectedId ? "page" : undefined
                           }
                           onClick={() => setSelectedId(resource.id)}
-                          disabled={uploadingId !== null}
+                          disabled={controlsLocked}
                           id={`download-resource-list-item-${resource.id}`}
                           type="button"
                         >
@@ -1117,6 +1157,7 @@ export function DownloadResourceManager({
             <Editor
               key={`${selected.id}:${selected.rowVersion}`}
               onAbortUpload={() => controller.current?.abort()}
+              onDirtyChange={setEditingDirty}
               onResource={adopt}
               onUpload={(file) => void upload(selected, file)}
               resource={selected}

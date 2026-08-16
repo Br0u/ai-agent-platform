@@ -301,7 +301,7 @@ describe("DownloadResourceManager", () => {
     );
     expect(screen.getByRole("link", { name: "预览当前草稿" })).toHaveAttribute(
       "href",
-      `/api/v1/admin/downloads/${resource.id}/draft/pdf`,
+      `/admin/downloads/preview/${resource.id}`,
     );
   });
 
@@ -478,7 +478,7 @@ describe("DownloadResourceManager", () => {
     );
     expect(screen.getByRole("link", { name: "预览当前草稿" })).toHaveAttribute(
       "href",
-      `/api/v1/admin/downloads/${invalidPublished.id}/draft/pdf`,
+      `/admin/downloads/preview/${invalidPublished.id}`,
     );
   });
 
@@ -499,14 +499,22 @@ describe("DownloadResourceManager", () => {
       ...invalidPublished,
       draftRevision: null,
     };
+    const uploadedInvalid: DownloadResourceAdminDto = {
+      ...invalidPublished,
+      rowVersion: 9,
+    };
     actions.save.mockResolvedValue({
       kind: "success",
       resource: editableInvalid,
     });
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => Response.json({ resource: invalidPublished })),
+      vi.fn(async () => Response.json({ resource: uploadedInvalid })),
     );
+    actions.publish.mockResolvedValue({
+      kind: "success",
+      resource: { ...uploadedInvalid, rowVersion: 10 },
+    });
     render(<DownloadResourceManager resources={[liveInvalid]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "编辑" }));
@@ -525,6 +533,21 @@ describe("DownloadResourceManager", () => {
       await screen.findByRole("link", { name: "预览当前草稿" }),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "发布资源" })).toBeEnabled();
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      `/api/v1/admin/downloads/${invalidPublished.id}/upload`,
+      expect.objectContaining({
+        headers: expect.objectContaining({ "If-Match": '"8"' }),
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "发布资源" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认发布" }));
+    await waitFor(() => expect(actions.publish).toHaveBeenCalledOnce());
+    expect(actions.publish.mock.calls[0]?.[1]).toBeInstanceOf(FormData);
+    expect(
+      (actions.publish.mock.calls[0]?.[1] as FormData).get(
+        "expectedRowVersion",
+      ),
+    ).toBe("9");
   });
 
   it("keeps a lifecycle failure visible inside its confirmation dialog", async () => {
@@ -584,6 +607,67 @@ describe("DownloadResourceManager", () => {
     expect(screen.getByLabelText("上传 PDF")).toBeDisabled();
     expect(screen.getByRole("button", { name: "发布资源" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "丢弃草稿" })).toBeDisabled();
+  });
+
+  it("prevents changing resources, creating records or filtering until native reset discards edits", () => {
+    const second: DownloadResourceAdminDto = {
+      ...resource,
+      id: "019f7b47-3040-7000-8000-000000000012",
+      key: "second-brief",
+      adminLabel: "第二份资料",
+    };
+    render(<DownloadResourceManager resources={[resource, second]} />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "资源名称" }), {
+      target: { value: "未保存的名称" },
+    });
+    fireEvent.change(screen.getByLabelText("下载权限"), {
+      target: { value: "public" },
+    });
+
+    expect(
+      screen.getByText("请先保存或重置当前编辑，再切换资源或调整筛选。"),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: /第二份资料/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "新增资源" })).toBeDisabled();
+    expect(screen.getByLabelText("资源状态")).toBeDisabled();
+    expect(screen.getByLabelText("筛选资源分类")).toBeDisabled();
+    expect(screen.getByLabelText("筛选产品")).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "放弃修改" }));
+
+    expect(screen.getByRole("textbox", { name: "资源名称" })).toHaveValue(
+      "元启产品介绍",
+    );
+    expect(screen.getByLabelText("下载权限")).toHaveValue("contact");
+    expect(screen.getByRole("button", { name: /第二份资料/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "新增资源" })).toBeEnabled();
+    expect(screen.getByLabelText("资源状态")).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /第二份资料/ }));
+    expect(screen.getByRole("heading", { name: "第二份资料" })).toBeVisible();
+  });
+
+  it("unlocks resource navigation after a successful draft save", async () => {
+    const second: DownloadResourceAdminDto = {
+      ...resource,
+      id: "019f7b47-3040-7000-8000-000000000013",
+      key: "third-brief",
+      adminLabel: "第三份资料",
+    };
+    actions.save.mockResolvedValue({
+      kind: "success",
+      resource: { ...resource, rowVersion: 3 },
+    });
+    render(<DownloadResourceManager resources={[resource, second]} />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "资源名称" }), {
+      target: { value: "待保存的名称" },
+    });
+    expect(screen.getByRole("button", { name: /第三份资料/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+
+    await waitFor(() => expect(screen.getByText("版本 3")).toBeVisible());
+    expect(screen.getByRole("button", { name: /第三份资料/ })).toBeEnabled();
   });
 
   it("keeps upload errors with the resource that produced them", async () => {
