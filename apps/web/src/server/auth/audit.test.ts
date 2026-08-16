@@ -279,6 +279,37 @@ describe("audit writer", () => {
     ).rejects.toMatchObject({ code: "AUDIT_INPUT_INVALID" });
   });
 
+  it("accepts canonical v7 download revision IDs and rejects malformed UUIDs", async () => {
+    const { writer } = fixture();
+    const input = {
+      event: "download_resource.draft_saved",
+      actor: { realm: "workforce", userId: "admin-1" },
+      target: { type: "download_resource", id: "resource-1" },
+      metadata: {
+        key: "yuanqi-intro",
+        revisionId: "019faaaa-0000-7000-9000-000000000001",
+        rowVersion: 2,
+        result: "success",
+      },
+    } as const satisfies AuditWriteInput;
+
+    await expect(writer.write(input)).resolves.toBeUndefined();
+    for (const revisionId of [
+      "not-a-uuid",
+      "019faaaa-0000-6000-7000-000000000001",
+      "019faaaa-0000-8000-9000-000000000001",
+    ]) {
+      await expect(
+        writer.write(
+          runtimeAuditInput({
+            ...input,
+            metadata: { ...input.metadata, revisionId },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: "AUDIT_INPUT_INVALID" });
+    }
+  });
+
   it("sanitizes cleanup failures to one bounded category", async () => {
     const { repository, writer } = fixture();
     const input = {
