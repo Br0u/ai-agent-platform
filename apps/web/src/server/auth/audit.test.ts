@@ -127,6 +127,16 @@ const administrationAuditInputs = [
   },
 ] as const satisfies readonly AuditWriteInput[];
 
+const downloadResourceAuditEvents = [
+  "download_resource.created",
+  "download_resource.draft_saved",
+  "download_resource.uploaded",
+  "download_resource.published",
+  "download_resource.downlined",
+  "download_resource.draft_discarded",
+  "download_resource.file_removed",
+] as const satisfies readonly AuditEvent[];
+
 function expectInvalidAssistantModelAuditMetadata(
   metadata: Record<string, unknown>,
 ): void {
@@ -166,6 +176,14 @@ describe("audit writer", () => {
       "document.draft_saved",
       "document.published",
       "document.restored",
+      "download_resource.cleanup_failed",
+      "download_resource.created",
+      "download_resource.downlined",
+      "download_resource.draft_discarded",
+      "download_resource.draft_saved",
+      "download_resource.file_removed",
+      "download_resource.published",
+      "download_resource.uploaded",
       "registration.approved",
       "registration.rejected",
       "registration.submitted",
@@ -196,6 +214,101 @@ describe("audit writer", () => {
       userAgent: "browser",
       metadata: { reason: "invalid_credentials" },
     });
+  });
+
+  it("stores exact bounded download-resource lifecycle metadata", async () => {
+    const { repository, writer } = fixture();
+
+    for (const event of downloadResourceAuditEvents) {
+      await writer.write(
+        runtimeAuditInput({
+          event,
+          actor: { realm: "workforce", userId: "admin-1" },
+          target: { type: "download_resource", id: "resource-1" },
+          metadata: {
+            key: "yuanqi-intro",
+            revisionId:
+              event === "download_resource.created"
+                ? null
+                : "00000000-0000-4000-8000-000000000002",
+            rowVersion: 2,
+            result: "success",
+          },
+        }),
+      );
+    }
+
+    expect(repository.insert).toHaveBeenCalledTimes(7);
+    expect(repository.insert).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        action: "download_resource.file_removed",
+        targetType: "download_resource",
+        metadata: {
+          key: "yuanqi-intro",
+          revisionId: "00000000-0000-4000-8000-000000000002",
+          rowVersion: 2,
+          result: "success",
+        },
+      }),
+    );
+  });
+
+  it("allows a null revision only for creating an empty resource", async () => {
+    const { writer } = fixture();
+    const base = {
+      actor: { realm: "workforce", userId: "admin-1" },
+      target: { type: "download_resource", id: "resource-1" },
+      metadata: {
+        key: "yuanqi-intro",
+        revisionId: null,
+        rowVersion: 1,
+        result: "success",
+      },
+    } as const;
+
+    await expect(
+      writer.write({ event: "download_resource.created", ...base }),
+    ).resolves.toBeUndefined();
+    await expect(
+      writer.write(
+        runtimeAuditInput({
+          event: "download_resource.draft_saved",
+          ...base,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "AUDIT_INPUT_INVALID" });
+  });
+
+  it("sanitizes cleanup failures to one bounded category", async () => {
+    const { repository, writer } = fixture();
+    const input = {
+      event: "download_resource.cleanup_failed",
+      actor: { realm: "workforce", userId: "admin-1" },
+      target: { type: "download_resource", id: "resource-1" },
+      metadata: {
+        key: "yuanqi-intro",
+        revisionId: "00000000-0000-4000-8000-000000000002",
+        rowVersion: 3,
+        result: "failure",
+        errorCategory: "filesystem",
+      },
+    } as const satisfies AuditWriteInput;
+
+    await writer.write(input);
+    expect(repository.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: input.metadata }),
+    );
+
+    for (const unsafeMetadata of [
+      { ...input.metadata, path: "/srv/private/resource.pdf" },
+      { ...input.metadata, filename: "private.pdf" },
+      { ...input.metadata, rawException: "EACCES /srv/private/resource.pdf" },
+      { ...input.metadata, errorCategory: "EACCES /srv/private/resource.pdf" },
+    ]) {
+      await expect(
+        writer.write(runtimeAuditInput({ ...input, metadata: unsafeMetadata })),
+      ).rejects.toMatchObject({ code: "AUDIT_INPUT_INVALID" });
+    }
   });
 
   it("stores exact assistant input-policy audit metadata", async () => {
