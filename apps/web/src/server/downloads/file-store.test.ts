@@ -55,19 +55,27 @@ async function readStream(stream: NodeJS.ReadableStream) {
 }
 
 describe("download artifact file store", () => {
-  it("rejects missing, blank, and relative production roots", () => {
-    vi.stubEnv("NODE_ENV", "production");
+  it.each([undefined, " \t", "downloads"])(
+    "defers invalid production root %s until I/O and then fails closed",
+    async (configuredRoot) => {
+      vi.stubEnv("NODE_ENV", "production");
+      const store = createDownloadFileStore(configuredRoot);
+      const key = `objects/${resourceId}/${revisionId}.pdf`;
 
-    expect(() => createDownloadFileStore()).toThrow(
-      "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
-    );
-    expect(() => createDownloadFileStore(" \t")).toThrow(
-      "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
-    );
-    expect(() => createDownloadFileStore("downloads")).toThrow(
-      "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
-    );
-  });
+      await expect(store.createStage(".pdf")).rejects.toThrow(
+        "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
+      );
+      await expect(store.stat(key)).rejects.toThrow(
+        "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
+      );
+      await expect(store.open(key)).rejects.toThrow(
+        "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
+      );
+      await expect(store.remove(key)).rejects.toThrow(
+        "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
+      );
+    },
+  );
 
   it("accepts the exact configured absolute production root", async () => {
     vi.stubEnv("NODE_ENV", "production");

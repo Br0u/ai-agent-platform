@@ -78,40 +78,43 @@ async function unlinkIfPresent(filePath: string) {
 }
 
 export function createDownloadFileStore(configuredRoot?: string) {
-  if (
-    configuredRoot !== undefined &&
-    configuredRoot.trim() !== "" &&
-    !path.isAbsolute(configuredRoot)
-  ) {
-    throw new Error(
-      "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
-    );
-  }
-  if (
-    process.env.NODE_ENV === "production" &&
-    (configuredRoot === undefined || configuredRoot.trim() === "")
-  ) {
-    throw new Error(
-      "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
-    );
-  }
-  const root =
-    configuredRoot && configuredRoot.trim() !== ""
-      ? configuredRoot
-      : path.join(tmpdir(), "ai-agent-platform-downloads");
   const stages = new WeakMap<DownloadStage, StageState>();
 
-  async function ensureRoot(create: boolean) {
-    if (create) {
-      await mkdir(root, { mode: DIRECTORY_MODE, recursive: true });
+  function root() {
+    if (
+      configuredRoot !== undefined &&
+      configuredRoot.trim() !== "" &&
+      !path.isAbsolute(configuredRoot)
+    ) {
+      throw new Error(
+        "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
+      );
     }
-    await safeDirectory(root, false);
-    if (create) await chmod(root, DIRECTORY_MODE);
+    if (
+      process.env.NODE_ENV === "production" &&
+      (configuredRoot === undefined || configuredRoot.trim() === "")
+    ) {
+      throw new Error(
+        "DOWNLOAD_RESOURCE_ROOT must be an absolute path in production",
+      );
+    }
+    return configuredRoot && configuredRoot.trim() !== ""
+      ? configuredRoot
+      : path.join(tmpdir(), "ai-agent-platform-downloads");
+  }
+
+  async function ensureRoot(create: boolean) {
+    const directory = root();
+    if (create) {
+      await mkdir(directory, { mode: DIRECTORY_MODE, recursive: true });
+    }
+    await safeDirectory(directory, false);
+    if (create) await chmod(directory, DIRECTORY_MODE);
   }
 
   async function ensureObjectParent(resourceId: string, create: boolean) {
     await ensureRoot(create);
-    const objects = path.join(root, "objects");
+    const objects = path.join(root(), "objects");
     await safeDirectory(objects, create);
     const resourceDirectory = path.join(objects, resourceId);
     await safeDirectory(resourceDirectory, create);
@@ -125,7 +128,7 @@ export function createDownloadFileStore(configuredRoot?: string) {
       resourceId: match[1]!,
       revisionId: match[2]!,
       extension: `.${match[3]}` as DownloadStageExtension,
-      path: path.join(root, objectKey),
+      path: path.join(root(), objectKey),
     };
   }
 
@@ -181,7 +184,7 @@ export function createDownloadFileStore(configuredRoot?: string) {
         throw new Error("Invalid stage extension");
       }
       await ensureRoot(true);
-      const staging = path.join(root, "staging");
+      const staging = path.join(root(), "staging");
       await safeDirectory(staging, true);
       const stagePath = path.join(staging, `${randomUUID()}${extension}`);
       const writable = await openFile(
