@@ -22,8 +22,11 @@ export type PdfUploadErrorCode =
   | "pdf_too_large";
 
 export class PdfUploadError extends Error {
-  constructor(readonly code: PdfUploadErrorCode) {
-    super("Invalid PDF upload");
+  constructor(
+    readonly code: PdfUploadErrorCode,
+    cause?: unknown,
+  ) {
+    super("Invalid PDF upload", cause === undefined ? undefined : { cause });
     this.name = "PdfUploadError";
   }
 }
@@ -74,7 +77,9 @@ function error(code: PdfUploadErrorCode = "invalid_multipart") {
 }
 
 function normalizeError(value: unknown): PdfUploadError {
-  return value instanceof PdfUploadError ? value : error();
+  return value instanceof PdfUploadError
+    ? value
+    : new PdfUploadError("invalid_multipart", value);
 }
 
 async function rejectBeforeRead(
@@ -245,6 +250,23 @@ export async function readBoundedPdfUploadMultipart(
         highWaterMark: 64 * 1024,
       });
       activeSink = sink;
+      sink.on("error", fail);
+
+      function waitForSink(event: "drain" | "finish" | "close") {
+        return new Promise<void>((resolveWait, rejectWait) => {
+          const completed = () => {
+            if (event !== "close") sink.off("close", closed);
+            resolveWait();
+          };
+          const closed = () => {
+            sink.off(event, completed);
+            rejectWait(terminalError ?? error());
+          };
+          sink.once(event, completed);
+          if (event !== "close") sink.once("close", closed);
+        });
+      }
+
       const hash = createHash("sha256");
       let byteSize = 0;
       try {
@@ -254,14 +276,14 @@ export async function readBoundedPdfUploadMultipart(
           byteSize += chunk.byteLength;
           if (byteSize > maxPdfBytes) throw error("pdf_too_large");
           hash.update(chunk);
-          if (!sink.write(chunk)) await once(sink, "drain");
+          if (!sink.write(chunk)) await waitForSink("drain");
         }
         if (stream.truncated) throw error("pdf_too_large");
         if (byteSize === 0) throw error();
-        const finished = once(sink, "finish");
+        const finished = waitForSink("finish");
         sink.end();
         await finished;
-        const closed = once(sink, "close");
+        const closed = waitForSink("close");
         sink.destroy();
         await closed;
         activeSink = null;
@@ -273,7 +295,7 @@ export async function readBoundedPdfUploadMultipart(
         };
       } catch (caught) {
         if (!sink.destroyed) {
-          const closed = once(sink, "close").catch(() => undefined);
+          const closed = waitForSink("close").catch(() => undefined);
           sink.destroy(caught instanceof Error ? caught : undefined);
           await closed;
         }
