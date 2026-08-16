@@ -689,7 +689,7 @@ function downloadResourceAuditMetadata(
   const keys = options.cleanupFailure
     ? ["key", "revisionId", "rowVersion", "result", "errorCategory"]
     : ["key", "revisionId", "rowVersion", "result"];
-  const metadata = assertExactKeys(value, keys, "metadata");
+  const metadata = exactDataRecord(value, keys, "metadata");
   const revisionId = metadata.revisionId;
   if (
     revisionId !== null &&

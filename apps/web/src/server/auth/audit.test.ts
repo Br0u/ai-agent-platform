@@ -310,6 +310,39 @@ describe("audit writer", () => {
     }
   });
 
+  it("rejects download metadata prototypes, accessors, hidden and symbol keys without executing getters", () => {
+    const base = {
+      key: "yuanqi-intro",
+      revisionId: "019faaaa-0000-7000-9000-000000000001",
+      rowVersion: 2,
+      result: "success",
+    } as const;
+    const getter = vi.fn(() => base.revisionId);
+    const accessor = { ...base };
+    Object.defineProperty(accessor, "revisionId", {
+      get: getter,
+      enumerable: true,
+    });
+    const hidden = { ...base };
+    Object.defineProperty(hidden, "filename", {
+      value: "private.pdf",
+      enumerable: false,
+    });
+    const symbol = { ...base };
+    Reflect.set(symbol, Symbol("path"), "/srv/private/resource.pdf");
+    const inherited = Object.assign(
+      Object.create({ rawException: "EACCES /srv/private/resource.pdf" }),
+      base,
+    );
+
+    for (const metadata of [accessor, hidden, symbol, inherited]) {
+      expect(() =>
+        AUDIT_EVENT_SCHEMAS["download_resource.draft_saved"](metadata),
+      ).toThrow(expect.objectContaining({ code: "AUDIT_INPUT_INVALID" }));
+    }
+    expect(getter).not.toHaveBeenCalled();
+  });
+
   it("sanitizes cleanup failures to one bounded category", async () => {
     const { repository, writer } = fixture();
     const input = {
