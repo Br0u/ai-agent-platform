@@ -13,7 +13,7 @@ vi.mock("@/components/downloads/pdf-viewer", () => ({
 }));
 vi.mock("next/navigation", () => ({ notFound: mocks.notFound }));
 
-import DownloadPreviewPage from "./page";
+import DownloadPreviewPage, { dynamic } from "./page";
 
 const notFoundError = new Error("NEXT_NOT_FOUND");
 const resource = {
@@ -43,6 +43,10 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("DownloadPreviewPage", () => {
+  it("rechecks the current publication policy on every request", () => {
+    expect(dynamic).toBe("force-dynamic");
+  });
+
   it("server-checks the published public-preview resource", async () => {
     render(
       await DownloadPreviewPage({

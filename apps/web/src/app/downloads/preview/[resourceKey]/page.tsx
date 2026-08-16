@@ -5,6 +5,8 @@ import { downloadResourceService } from "@/server/downloads/service";
 
 type PageProps = { params: Promise<{ resourceKey: string }> };
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "下载资源预览 · AI Agent Platform",
   robots: { index: false, follow: false },
