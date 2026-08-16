@@ -200,8 +200,9 @@ case "$gate" in
   registry) require_full_environment; run_registry_gate ;;
   database) require_full_environment; run_database_gate ;;
   deployment) require_full_environment; run_deployment_gate ;;
+  nginx) require_commands docker; run_nginx_check ;;
   *)
-    printf '%s\n' "usage: $0 fast|full|web|agent|registry|database|deployment" >&2
+    printf '%s\n' "usage: $0 fast|full|web|agent|registry|database|deployment|nginx" >&2
     exit 2
     ;;
 esac

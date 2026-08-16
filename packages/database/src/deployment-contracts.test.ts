@@ -825,7 +825,7 @@ describe("production deployment security contracts", () => {
     );
     expect(
       nginx.match(/proxy_set_header X-Forwarded-Host \$http_host;/g),
-    ).toHaveLength(3);
+    ).toHaveLength(4);
   });
 
   it("rate-limits only the exact public assistant POST API", () => {
@@ -860,6 +860,45 @@ describe("production deployment security contracts", () => {
     expect(catchAllLocation).not.toContain("limit_req");
     expect(nginx).not.toMatch(
       /location\s+=?\s*\/(?:api\/health|api\/v1\/session)[^{]*\{[\s\S]*?limit_req/u,
+    );
+  });
+
+  it("streams large bodies only for the exact admin download upload route", () => {
+    const template = read("infra/nginx/default.conf.template");
+    const global = read("infra/nginx/nginx.conf");
+    const uploadLocation =
+      'location ~ "^/api/v1/admin/downloads/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/upload$" {';
+    const upload = template.split(uploadLocation)[1]?.split("\n  }")[0];
+    const catchAll = template.split("location / {")[1]?.split("\n  }")[0];
+
+    expect(upload).toBeDefined();
+    expect(upload).toContain("client_max_body_size 201m;");
+    expect(upload).toContain("proxy_request_buffering off;");
+    expect(upload).toContain("proxy_buffering off;");
+    expect(upload).toContain("proxy_http_version 1.1;");
+    for (const header of [
+      "proxy_set_header Host $http_host;",
+      "proxy_set_header X-Forwarded-Host $http_host;",
+      "proxy_set_header X-Real-IP $remote_addr;",
+      "proxy_set_header X-Forwarded-For $remote_addr;",
+      "proxy_set_header X-Forwarded-Proto $scheme;",
+      "proxy_set_header Upgrade $http_upgrade;",
+      "proxy_set_header Connection $connection_upgrade;",
+    ]) {
+      expect(upload).toContain(header);
+    }
+    expect(upload).toContain("proxy_pass http://web_upstream;");
+    expect(global).toContain("client_max_body_size 10m;");
+    expect(global).not.toContain("client_max_body_size 201m;");
+    expect(template.match(/client_max_body_size 201m;/gu)).toHaveLength(1);
+    expect(catchAll).not.toContain("client_max_body_size");
+
+    const gate = read("docs/testing/run-ci-gate.sh");
+    expect(gate).toContain(
+      "nginx) require_commands docker; run_nginx_check ;;",
+    );
+    expect(gate).toContain(
+      "fast|full|web|agent|registry|database|deployment|nginx",
     );
   });
 
