@@ -663,6 +663,7 @@ export const downloadResourceService = {
                 context,
               ),
             );
+            throwIfAborted(signal);
             return {
               dto: await adminDto(updated),
               resource: updated,

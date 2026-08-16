@@ -77,6 +77,8 @@ const wiring = vi.hoisted(() => ({
   abortAfterPdf: null as AbortController | null,
   abortAfterCover: null as AbortController | null,
   abortOnInsert: null as AbortController | null,
+  abortOnUpdate: null as AbortController | null,
+  abortOnAudit: null as AbortController | null,
   resources: new Map<string, FakeResource>(),
   revisions: new Map<string, FakeRevision>(),
   audits: [] as unknown[],
@@ -160,7 +162,14 @@ vi.mock("./repository", () => ({
       work: TransactionWork,
       cleanup?: (result: unknown) => Promise<void>,
     ) => {
-      const result = await work(transaction());
+      const snapshot = transactionSnapshot();
+      let result: unknown;
+      try {
+        result = await work(transaction());
+      } catch (error) {
+        restoreTransactionSnapshot(snapshot);
+        throw error;
+      }
       await cleanup?.(result);
       if (wiring.finalizationFailure)
         throw new Error("lock finalization failed");
@@ -213,6 +222,7 @@ function transaction() {
         : null;
       resource.rowVersion += 1;
       resource.updatedAt = new Date();
+      wiring.abortOnUpdate?.abort();
       return {
         id: resource.id,
         key: resource.key,
@@ -271,8 +281,32 @@ function transaction() {
       if (revision) revision.cleanupErrorSummary = summary;
       return revision ?? null;
     },
-    appendAudit: async (event: unknown) => wiring.audits.push(event),
+    appendAudit: async (event: unknown) => {
+      wiring.audits.push(event);
+      wiring.abortOnAudit?.abort();
+    },
   };
+}
+
+function transactionSnapshot() {
+  return structuredClone({
+    resources: [...wiring.resources.entries()],
+    revisions: [...wiring.revisions.entries()],
+    audits: wiring.audits,
+  });
+}
+
+function restoreTransactionSnapshot(
+  snapshot: ReturnType<typeof transactionSnapshot>,
+) {
+  wiring.resources.clear();
+  wiring.revisions.clear();
+  wiring.audits.length = 0;
+  for (const [id, resource] of snapshot.resources)
+    wiring.resources.set(id, resource);
+  for (const [id, revision] of snapshot.revisions)
+    wiring.revisions.set(id, revision);
+  wiring.audits.push(...snapshot.audits);
 }
 
 function resourceRow(input: { key: string; adminLabel: string }) {
@@ -360,6 +394,8 @@ describe("downloadResourceService lifecycle", () => {
     wiring.abortAfterPdf = null;
     wiring.abortAfterCover = null;
     wiring.abortOnInsert = null;
+    wiring.abortOnUpdate = null;
+    wiring.abortOnAudit = null;
     wiring.resources.clear();
     wiring.revisions.clear();
     wiring.audits.length = 0;
@@ -669,6 +705,36 @@ describe("downloadResourceService lifecycle", () => {
       expect(
         wiring.resources.get(created.id)!.draftRevision?.pdfObjectKey,
       ).toBeNull();
+    },
+  );
+
+  it.each(["update", "audit"] as const)(
+    "rolls back the draft pointer and compensates artifacts when upload is aborted during %s",
+    async (point) => {
+      const { downloadResourceService } = await import("./service");
+      const created = await downloadResourceService.createResource({
+        key: `yuanqi-abort-${point}-window`,
+        adminLabel: "事务取消",
+      });
+      await downloadResourceService.saveDraft(metadata(created.id, 1));
+      const originalDraft = wiring.resources.get(created.id)!.draftRevision!;
+      const controller = new AbortController();
+      if (point === "update") wiring.abortOnUpdate = controller;
+      if (point === "audit") wiring.abortOnAudit = controller;
+      await expect(
+        downloadResourceService.attachUploadedPdf(
+          upload(created.id, 2),
+          {},
+          controller.signal,
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(wiring.resources.get(created.id)!.draftRevision?.id).toBe(
+        originalDraft.id,
+      );
+      expect(
+        wiring.resources.get(created.id)!.draftRevision?.pdfObjectKey,
+      ).toBeNull();
+      expect(wiring.files).toHaveLength(0);
     },
   );
 
