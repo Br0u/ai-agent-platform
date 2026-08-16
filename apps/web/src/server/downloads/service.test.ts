@@ -74,6 +74,9 @@ const wiring = vi.hoisted(() => ({
   openedPdfSize: null as number | null,
   lastReadable: { destroy: vi.fn() },
   denyTransactionPermission: false,
+  abortAfterPdf: null as AbortController | null,
+  abortAfterCover: null as AbortController | null,
+  abortOnInsert: null as AbortController | null,
   resources: new Map<string, FakeResource>(),
   revisions: new Map<string, FakeRevision>(),
   audits: [] as unknown[],
@@ -98,6 +101,8 @@ vi.mock("./file-store", () => ({
           throw new Error("commit failure");
         const key = `objects/${input.resourceId}/${input.revisionId}.${input.kind === "pdf" ? "pdf" : "webp"}`;
         wiring.files.set(key, input.kind === "pdf" ? 123 : 45);
+        if (input.kind === "pdf") wiring.abortAfterPdf?.abort();
+        if (input.kind === "cover") wiring.abortAfterCover?.abort();
         return key;
       }),
       stat: vi.fn(async (key: string) => {
@@ -190,6 +195,7 @@ function transaction() {
       if (wiring.failInsertRevision) throw new Error("database failure");
       const revision = revisionRow(input);
       wiring.revisions.set(revision.id, revision);
+      wiring.abortOnInsert?.abort();
       return revision;
     },
     updateResourceCas: async (input: ResourceUpdate) => {
@@ -351,6 +357,9 @@ describe("downloadResourceService lifecycle", () => {
     wiring.openedPdfSize = null;
     wiring.lastReadable = { destroy: vi.fn() };
     wiring.denyTransactionPermission = false;
+    wiring.abortAfterPdf = null;
+    wiring.abortAfterCover = null;
+    wiring.abortOnInsert = null;
     wiring.resources.clear();
     wiring.revisions.clear();
     wiring.audits.length = 0;
@@ -570,10 +579,14 @@ describe("downloadResourceService lifecycle", () => {
     wiring.cleanupFailures.add(old.pdfObjectKey!);
     await downloadResourceService.saveDraft(metadata(created.id, 4));
     await downloadResourceService.attachUploadedPdf(upload(created.id, 5));
-    await downloadResourceService.publish({
-      id: created.id,
-      expectedRowVersion: 6,
-    });
+    const context = { ipAddress: "203.0.113.8", userAgent: "download-admin" };
+    await downloadResourceService.publish(
+      {
+        id: created.id,
+        expectedRowVersion: 6,
+      },
+      context,
+    );
     expect(wiring.revisions.get(old.id)?.cleanupPendingAt).toBeTruthy();
     expect(wiring.revisions.get(old.id)?.cleanupErrorSummary).toContain(
       "filesystem cleanup failed",
@@ -589,10 +602,75 @@ describe("downloadResourceService lifecycle", () => {
           typeof event === "object" &&
           event !== null &&
           "event" in event &&
-          event.event === "download_resource.cleanup_failed",
+          event.event === "download_resource.cleanup_failed" &&
+          (event as { ipAddress?: string }).ipAddress === context.ipAddress &&
+          (event as { userAgent?: string }).userAgent === context.userAgent &&
+          "metadata" in event &&
+          typeof event.metadata === "object" &&
+          event.metadata !== null &&
+          Object.keys(event.metadata).sort().join(",") ===
+            "errorCategory,key,result,revisionId,rowVersion",
       ),
     ).toBe(true);
   });
+
+  it("records request context on ordinary lifecycle audits without adding it to metadata", async () => {
+    const { downloadResourceService } = await import("./service");
+    const context = {
+      ipAddress: "198.51.100.42",
+      userAgent: "content-operator",
+    };
+    await downloadResourceService.createResource(
+      { key: "yuanqi-audit-context", adminLabel: "审计上下文" },
+      context,
+    );
+    const event = wiring.audits.at(-1) as {
+      ipAddress?: string;
+      userAgent?: string;
+      metadata: Record<string, unknown>;
+    };
+    expect(event.ipAddress).toBe(context.ipAddress);
+    expect(event.userAgent).toBe(context.userAgent);
+    expect(Object.keys(event.metadata).sort()).toEqual([
+      "key",
+      "result",
+      "revisionId",
+      "rowVersion",
+    ]);
+  });
+
+  it.each([
+    "pre-cancelled",
+    "after-pdf",
+    "after-cover",
+    "after-insert",
+  ] as const)(
+    "compensates newly committed artifacts when upload is aborted %s",
+    async (point) => {
+      const { downloadResourceService } = await import("./service");
+      const created = await downloadResourceService.createResource({
+        key: `yuanqi-abort-${point}`,
+        adminLabel: "上传取消",
+      });
+      await downloadResourceService.saveDraft(metadata(created.id, 1));
+      const controller = new AbortController();
+      if (point === "pre-cancelled") controller.abort();
+      if (point === "after-pdf") wiring.abortAfterPdf = controller;
+      if (point === "after-cover") wiring.abortAfterCover = controller;
+      if (point === "after-insert") wiring.abortOnInsert = controller;
+      await expect(
+        downloadResourceService.attachUploadedPdf(
+          upload(created.id, 2),
+          { ipAddress: "192.0.2.19", userAgent: "abort-test" },
+          controller.signal,
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(wiring.files).toHaveLength(0);
+      expect(
+        wiring.resources.get(created.id)!.draftRevision?.pdfObjectKey,
+      ).toBeNull();
+    },
+  );
 
   it("removes newly committed artifacts when the cover or database step fails", async () => {
     const { downloadResourceService } = await import("./service");

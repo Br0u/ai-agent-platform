@@ -74,6 +74,11 @@ type CleanupPlan = {
   removeCover: boolean;
 };
 
+export type DownloadResourceRequestContext = {
+  ipAddress?: string;
+  userAgent?: string;
+};
+
 const attachUploadedPdfInputSchema = mutateDownloadResourceInputSchema
   .safeExtend({
     pdfStage: z.unknown(),
@@ -147,6 +152,20 @@ function revisionInput(
   };
 }
 
+function contextFields(context: DownloadResourceRequestContext) {
+  return {
+    ...(context.ipAddress ? { ipAddress: context.ipAddress } : {}),
+    ...(context.userAgent ? { userAgent: context.userAgent } : {}),
+  };
+}
+
+function throwIfAborted(signal: AbortSignal | undefined) {
+  if (!signal?.aborted) return;
+  const error = new Error("Download upload aborted");
+  error.name = "AbortError";
+  throw error;
+}
+
 function audit(
   event: Extract<
     AuditWriteInput,
@@ -155,6 +174,7 @@ function audit(
   actor: WorkforceActor,
   resource: Resource,
   revisionId: string | null,
+  context: DownloadResourceRequestContext,
 ): AuditWriteInput {
   const base = {
     event,
@@ -165,6 +185,7 @@ function audit(
       rowVersion: resource.rowVersion,
       result: "success" as const,
     },
+    ...contextFields(context),
   };
   if (event === "download_resource.created") {
     return { ...base, event, metadata: { ...base.metadata, revisionId } };
@@ -182,6 +203,7 @@ function cleanupAudit(
   actor: WorkforceActor,
   resource: Resource,
   revision: Revision,
+  context: DownloadResourceRequestContext,
 ): AuditWriteInput {
   return {
     event: "download_resource.cleanup_failed",
@@ -194,6 +216,7 @@ function cleanupAudit(
       result: "failure",
       errorCategory: "filesystem",
     },
+    ...contextFields(context),
   };
 }
 
@@ -279,6 +302,7 @@ async function cleanupPlans(
   plans: readonly CleanupPlan[],
   actor: WorkforceActor,
   resource: Resource,
+  context: DownloadResourceRequestContext,
 ) {
   const store = downloadResourceFileStore;
   for (const plan of plans) {
@@ -292,7 +316,9 @@ async function cleanupPlans(
       const summary = "filesystem cleanup failed";
       await downloadResourceRepository.transaction(async (tx) => {
         await tx.setCleanupError(plan.revision.id, summary);
-        await tx.appendAudit(cleanupAudit(actor, resource, plan.revision));
+        await tx.appendAudit(
+          cleanupAudit(actor, resource, plan.revision, context),
+        );
       });
     }
   }
@@ -480,7 +506,10 @@ export const downloadResourceService = {
     );
   },
 
-  async createResource(rawInput: unknown) {
+  async createResource(
+    rawInput: unknown,
+    context: DownloadResourceRequestContext = {},
+  ) {
     const actor = await authenticated();
     const input = parse(createDownloadResourceInputSchema, rawInput);
     return downloadResourceRepository.transaction(async (tx) => {
@@ -495,13 +524,16 @@ export const downloadResourceService = {
         draftRevision: null,
       };
       await tx.appendAudit(
-        audit("download_resource.created", actor, snapshot, null),
+        audit("download_resource.created", actor, snapshot, null, context),
       );
       return adminDto(snapshot);
     });
   },
 
-  async saveDraft(rawInput: unknown) {
+  async saveDraft(
+    rawInput: unknown,
+    context: DownloadResourceRequestContext = {},
+  ) {
     const actor = await authenticated();
     const input = parse(saveDownloadDraftInputSchema, rawInput);
     return downloadResourceRepository
@@ -532,7 +564,13 @@ export const downloadResourceService = {
             previousDraft,
           );
           await tx.appendAudit(
-            audit("download_resource.draft_saved", actor, updated, draft.id),
+            audit(
+              "download_resource.draft_saved",
+              actor,
+              updated,
+              draft.id,
+              context,
+            ),
           );
           return {
             dto: await adminDto(updated),
@@ -540,12 +578,17 @@ export const downloadResourceService = {
             cleanup,
           };
         },
-        async ({ resource, cleanup }) => cleanupPlans(cleanup, actor, resource),
+        async ({ resource, cleanup }) =>
+          cleanupPlans(cleanup, actor, resource, context),
       )
       .then(({ dto }) => dto);
   },
 
-  async attachUploadedPdf(rawInput: unknown) {
+  async attachUploadedPdf(
+    rawInput: unknown,
+    context: DownloadResourceRequestContext = {},
+    signal?: AbortSignal,
+  ) {
     const actor = await authenticated();
     const input = parse(attachUploadedPdfInputSchema, rawInput);
     const store = downloadResourceFileStore;
@@ -553,6 +596,7 @@ export const downloadResourceService = {
     const committed: string[] = [];
     let businessCommitted = false;
     try {
+      throwIfAborted(signal);
       return await downloadResourceRepository
         .withArtifactMutationLock(
           async (tx) => {
@@ -567,16 +611,19 @@ export const downloadResourceService = {
             if (!current.draftRevision)
               throw new Error("DOWNLOAD_RESOURCE_UPLOAD_REQUIRES_DRAFT");
             const previousDraft = current.draftRevision;
+            throwIfAborted(signal);
             const pdfObjectKey = await store.commit(
               input.pdfStage as DownloadStage,
               { resourceId: current.id, revisionId, kind: "pdf" },
             );
             committed.push(pdfObjectKey);
+            throwIfAborted(signal);
             const coverObjectKey = await store.commit(
               input.coverStage as DownloadStage,
               { resourceId: current.id, revisionId, kind: "cover" },
             );
             committed.push(coverObjectKey);
+            throwIfAborted(signal);
             const draft = (await tx.insertRevision({
               ...revisionInput(
                 current.id,
@@ -593,6 +640,7 @@ export const downloadResourceService = {
               ),
               id: revisionId,
             })) as Revision;
+            throwIfAborted(signal);
             const updated = await update(
               tx,
               current,
@@ -607,7 +655,13 @@ export const downloadResourceService = {
               previousDraft,
             );
             await tx.appendAudit(
-              audit("download_resource.uploaded", actor, updated, draft.id),
+              audit(
+                "download_resource.uploaded",
+                actor,
+                updated,
+                draft.id,
+                context,
+              ),
             );
             return {
               dto: await adminDto(updated),
@@ -617,7 +671,7 @@ export const downloadResourceService = {
           },
           async ({ resource, cleanup }) => {
             businessCommitted = true;
-            await cleanupPlans(cleanup, actor, resource);
+            await cleanupPlans(cleanup, actor, resource, context);
           },
         )
         .then(({ dto }) => dto);
@@ -639,7 +693,10 @@ export const downloadResourceService = {
     }
   },
 
-  async publish(rawInput: unknown) {
+  async publish(
+    rawInput: unknown,
+    context: DownloadResourceRequestContext = {},
+  ) {
     const actor = await authenticated();
     const input = parse(mutateDownloadResourceInputSchema, rawInput);
     return downloadResourceRepository
@@ -682,7 +739,13 @@ export const downloadResourceService = {
             previousPublished,
           );
           await tx.appendAudit(
-            audit("download_resource.published", actor, published, draft.id),
+            audit(
+              "download_resource.published",
+              actor,
+              published,
+              draft.id,
+              context,
+            ),
           );
           return {
             dto: await adminDto(published),
@@ -690,12 +753,16 @@ export const downloadResourceService = {
             cleanup,
           };
         },
-        async ({ resource, cleanup }) => cleanupPlans(cleanup, actor, resource),
+        async ({ resource, cleanup }) =>
+          cleanupPlans(cleanup, actor, resource, context),
       )
       .then(({ dto }) => dto);
   },
 
-  async downline(rawInput: unknown) {
+  async downline(
+    rawInput: unknown,
+    context: DownloadResourceRequestContext = {},
+  ) {
     const actor = await authenticated();
     const input = parse(mutateDownloadResourceInputSchema, rawInput);
     return downloadResourceRepository
@@ -728,6 +795,7 @@ export const downloadResourceService = {
               actor,
               updated,
               publishedRevision.id,
+              context,
             ),
           );
           return {
@@ -736,12 +804,16 @@ export const downloadResourceService = {
             cleanup: await cleanupPlansForMutation(tx, current.id, null),
           };
         },
-        async ({ resource, cleanup }) => cleanupPlans(cleanup, actor, resource),
+        async ({ resource, cleanup }) =>
+          cleanupPlans(cleanup, actor, resource, context),
       )
       .then(({ dto }) => dto);
   },
 
-  async discardDraft(rawInput: unknown) {
+  async discardDraft(
+    rawInput: unknown,
+    context: DownloadResourceRequestContext = {},
+  ) {
     const actor = await authenticated();
     const input = parse(mutateDownloadResourceInputSchema, rawInput);
     return downloadResourceRepository
@@ -777,6 +849,7 @@ export const downloadResourceService = {
               actor,
               updated,
               previousDraft.id,
+              context,
             ),
           );
           return {
@@ -785,12 +858,16 @@ export const downloadResourceService = {
             cleanup,
           };
         },
-        async ({ resource, cleanup }) => cleanupPlans(cleanup, actor, resource),
+        async ({ resource, cleanup }) =>
+          cleanupPlans(cleanup, actor, resource, context),
       )
       .then(({ dto }) => dto);
   },
 
-  async removeDraftFile(rawInput: unknown) {
+  async removeDraftFile(
+    rawInput: unknown,
+    context: DownloadResourceRequestContext = {},
+  ) {
     const actor = await authenticated();
     const input = parse(mutateDownloadResourceInputSchema, rawInput);
     return downloadResourceRepository
@@ -826,7 +903,13 @@ export const downloadResourceService = {
             previousDraft,
           );
           await tx.appendAudit(
-            audit("download_resource.file_removed", actor, updated, draft.id),
+            audit(
+              "download_resource.file_removed",
+              actor,
+              updated,
+              draft.id,
+              context,
+            ),
           );
           return {
             dto: await adminDto(updated),
@@ -834,7 +917,8 @@ export const downloadResourceService = {
             cleanup,
           };
         },
-        async ({ resource, cleanup }) => cleanupPlans(cleanup, actor, resource),
+        async ({ resource, cleanup }) =>
+          cleanupPlans(cleanup, actor, resource, context),
       )
       .then(({ dto }) => dto);
   },
