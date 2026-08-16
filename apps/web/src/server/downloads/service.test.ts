@@ -584,6 +584,63 @@ describe("downloadResourceService lifecycle", () => {
     expect(wiring.files.has(old.coverObjectKey!)).toBe(true);
   });
 
+  it("removes a published resource's unpublished file draft without affecting its public revision", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-remove-published-draft",
+      adminLabel: "移除已发布草稿文件",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    const publicBefore = await downloadResourceService.listPublicResources();
+    const published = wiring.resources.get(created.id)!.publishedRevision!;
+    await downloadResourceService.saveDraft(metadata(created.id, 4));
+    const oldDraft = wiring.resources.get(created.id)!.draftRevision!;
+    const removed = await downloadResourceService.removeDraftFile({
+      id: created.id,
+      expectedRowVersion: 5,
+    });
+    expect(removed.state).toBe("published");
+    expect(removed.publishedRevision?.id).toBe(published.id);
+    expect(removed.draftRevision?.pdfObjectKey).toBeNull();
+    expect(wiring.revisions.has(oldDraft.id)).toBe(false);
+    expect(wiring.files.has(published.pdfObjectKey!)).toBe(true);
+    expect(wiring.files.has(published.coverObjectKey!)).toBe(true);
+    expect(await downloadResourceService.listPublicResources()).toEqual(
+      publicBefore,
+    );
+    await expect(
+      downloadResourceService.removeDraftFile({
+        id: created.id,
+        expectedRowVersion: 6,
+      }),
+    ).rejects.toThrow("DOWNLOAD_RESOURCE_FILE_NOT_REMOVABLE");
+  });
+
+  it("still rejects file removal for a published resource without a draft", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-remove-no-draft",
+      adminLabel: "无草稿",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    await expect(
+      downloadResourceService.removeDraftFile({
+        id: created.id,
+        expectedRowVersion: 4,
+      }),
+    ).rejects.toThrow("DOWNLOAD_RESOURCE_FILE_NOT_REMOVABLE");
+  });
+
   it("rejects a separately valid stale rowVersion without changing pointers or files", async () => {
     const { downloadResourceService } = await import("./service");
     const created = await downloadResourceService.createResource({

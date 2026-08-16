@@ -900,7 +900,6 @@ export const downloadResourceService = {
           const current = (await tx.lockResource(input.id)) as Resource | null;
           assertCurrent(current, input);
           if (
-            current.state === "published" ||
             !current.draftRevision ||
             !completeArtifact(current.draftRevision)
           )
