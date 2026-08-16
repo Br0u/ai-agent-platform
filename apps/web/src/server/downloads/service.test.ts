@@ -1068,8 +1068,15 @@ describe("downloadResourceService lifecycle", () => {
       expectedRowVersion: 3,
     });
     expect(await downloadResourceService.listPublicResources()).toHaveLength(1);
+    const publishedRevisionId = wiring.resources.get(created.id)!
+      .publishedRevision!.id;
     expect(
-      await downloadResourceService.getPublicArtifact("yuanqi-read", "cover"),
+      await downloadResourceService.getPublicArtifact(
+        "yuanqi-read",
+        "cover",
+        undefined,
+        publishedRevisionId,
+      ),
     ).toBeTruthy();
     await expect(
       downloadResourceService.getPublicArtifact("yuanqi-read", "download"),
@@ -1087,5 +1094,163 @@ describe("downloadResourceService lifecycle", () => {
     expect(
       (await downloadResourceService.getAdminResource(created.id))?.adminStatus,
     ).toBe("文件失效");
+  });
+
+  it("binds public cover URLs and cover reads to the current published revision", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-cover-version",
+      adminLabel: "封面版本",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    const firstRevisionId = wiring.resources.get(created.id)!.publishedRevision!
+      .id;
+    expect(
+      (await downloadResourceService.listPublicResources())[0]!.coverUrl,
+    ).toBe(
+      `/api/v1/downloads/yuanqi-cover-version/cover?revision=${firstRevisionId}`,
+    );
+    await expect(
+      downloadResourceService.getPublicArtifact(
+        "yuanqi-cover-version",
+        "cover",
+        undefined,
+        randomUUID(),
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      downloadResourceService.getPublicArtifact(
+        "yuanqi-cover-version",
+        "cover",
+        undefined,
+        firstRevisionId,
+      ),
+    ).resolves.toMatchObject({
+      filename: "产品介绍.webp",
+      revisionId: firstRevisionId,
+    });
+  });
+
+  it.each([
+    ["public", "public", ["cover", "preview", "download"]],
+    ["public", "contact", ["cover", "preview"]],
+    ["contact", "contact", ["cover"]],
+  ] as const)(
+    "enforces the %s/%s public artifact policy",
+    async (previewPolicy, downloadPolicy, allowed) => {
+      const { downloadResourceService } = await import("./service");
+      const created = await downloadResourceService.createResource({
+        key: `policy-${previewPolicy}-${downloadPolicy}`,
+        adminLabel: "公开策略",
+      });
+      await downloadResourceService.saveDraft({
+        ...metadata(created.id, 1),
+        previewPolicy,
+        downloadPolicy,
+      });
+      await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+      await downloadResourceService.publish({
+        id: created.id,
+        expectedRowVersion: 3,
+      });
+      const revisionId = wiring.resources.get(created.id)!.publishedRevision!
+        .id;
+      for (const kind of ["cover", "preview", "download"] as const) {
+        const result = await downloadResourceService.getPublicArtifact(
+          `policy-${previewPolicy}-${downloadPolicy}`,
+          kind,
+          undefined,
+          kind === "cover" ? revisionId : undefined,
+        );
+        expect(Boolean(result), kind).toBe(allowed.includes(kind as never));
+      }
+    },
+  );
+
+  it("re-resolves the current published pointer for every public artifact read", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-current-pointer",
+      adminLabel: "当前版本",
+    });
+    await downloadResourceService.saveDraft({
+      ...metadata(created.id, 1),
+      downloadPolicy: "public",
+    });
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    const first = await downloadResourceService.getPublicArtifact(
+      "yuanqi-current-pointer",
+      "download",
+    );
+    await downloadResourceService.saveDraft({
+      ...metadata(created.id, 4),
+      name: "新版产品介绍",
+      downloadPolicy: "public",
+    });
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 5));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 6,
+    });
+    const second = await downloadResourceService.getPublicArtifact(
+      "yuanqi-current-pointer",
+      "download",
+    );
+    expect(first?.revisionId).not.toBe(second?.revisionId);
+    expect(second?.filename).toBe("新版产品介绍.pdf");
+  });
+
+  it("fails closed for unpublished, downline, unmarked, or cleanup-pending revisions", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-hidden-state",
+      adminLabel: "隐藏状态",
+    });
+    await expect(
+      downloadResourceService.getPublicArtifact(
+        "yuanqi-hidden-state",
+        "preview",
+      ),
+    ).resolves.toBeNull();
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    const resource = wiring.resources.get(created.id)!;
+    const revision = resource.publishedRevision!;
+    revision.publishedAt = null;
+    await expect(
+      downloadResourceService.getPublicArtifact(
+        "yuanqi-hidden-state",
+        "preview",
+      ),
+    ).resolves.toBeNull();
+    revision.publishedAt = new Date();
+    revision.cleanupPendingAt = new Date();
+    await expect(
+      downloadResourceService.getPublicArtifact(
+        "yuanqi-hidden-state",
+        "preview",
+      ),
+    ).resolves.toBeNull();
+    revision.cleanupPendingAt = null;
+    resource.state = "downline";
+    await expect(
+      downloadResourceService.getPublicArtifact(
+        "yuanqi-hidden-state",
+        "preview",
+      ),
+    ).resolves.toBeNull();
   });
 });

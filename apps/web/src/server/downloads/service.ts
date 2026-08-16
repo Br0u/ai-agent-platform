@@ -410,7 +410,7 @@ async function verifiedPublic(
     sortOrder: resource.sortOrder,
     previewPolicy: resource.previewPolicy,
     downloadPolicy: resource.downloadPolicy,
-    coverUrl: `/api/downloads/${resource.key}/cover`,
+    coverUrl: `/api/v1/downloads/${resource.key}/cover?revision=${resource.id}`,
     pageCount: resource.pageCount,
     byteSize: resource.byteSize,
     updatedAt: resource.publishedAt.toISOString(),
@@ -455,13 +455,26 @@ export const downloadResourceService = {
     key: unknown,
     kind: "cover" | "preview" | "download",
     range?: unknown,
+    expectedRevisionId?: unknown,
   ) {
     if (typeof key !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(key))
       return null;
     const resource = (await downloadResourceRepository.getPublicByKey(key)) as
       | ({ key: string; updatedAt: Date } & Revision)
       | null;
-    if (!resource || !completeArtifact(resource)) return null;
+    if (
+      !resource ||
+      !completeArtifact(resource) ||
+      !resource.publishedAt ||
+      resource.cleanupPendingAt
+    )
+      return null;
+    if (
+      kind === "cover" &&
+      (typeof expectedRevisionId !== "string" ||
+        expectedRevisionId !== resource.id)
+    )
+      return null;
     const artifactStats = await stats(resource);
     if (
       !artifactStats.pdfExists ||
@@ -482,7 +495,11 @@ export const downloadResourceService = {
       opened.readable.destroy();
       return null;
     }
-    return opened;
+    return {
+      ...opened,
+      filename: `${resource.name}.${kind === "cover" ? "webp" : "pdf"}`,
+      revisionId: resource.id,
+    };
   },
 
   async getAdminDraftArtifact(
