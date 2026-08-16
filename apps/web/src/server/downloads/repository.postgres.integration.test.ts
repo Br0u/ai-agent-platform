@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { assertSafeIdentityMigrationTestDatabaseUrl } from "@ai-agent-platform/database";
@@ -19,6 +19,30 @@ const safeUrl = requested
   ? assertSafeIdentityMigrationTestDatabaseUrl(testDatabaseUrl!)
   : undefined;
 const describePostgres = safeUrl ? describe.sequential : describe.skip;
+
+async function releaseContender(
+  client: PoolClient,
+  holdsLock: boolean,
+  destroy: boolean,
+) {
+  let unlockError: Error | undefined;
+  try {
+    if (holdsLock) {
+      await client.query("SELECT pg_advisory_unlock($1)", [
+        "4922248911538569540",
+      ]);
+    }
+  } catch (error) {
+    unlockError =
+      error instanceof Error
+        ? error
+        : new Error("Contender advisory unlock failed");
+  }
+  if (unlockError) client.release(unlockError);
+  else if (destroy) client.release(true);
+  else client.release();
+  if (unlockError) throw unlockError;
+}
 
 describePostgres("download resource PostgreSQL repository", () => {
   const pool = new Pool({ connectionString: safeUrl });
@@ -388,6 +412,8 @@ describePostgres("download resource PostgreSQL repository", () => {
 
   it("keeps the session lock until post-commit cleanup and releases it afterward", async () => {
     const contender = await pool.connect();
+    let contenderHoldsLock = false;
+    let failed = false;
     let cleanupStarted = false;
     let allowCleanup!: () => void;
     const cleanupGate = new Promise<void>((resolve) => {
@@ -400,40 +426,61 @@ describePostgres("download resource PostgreSQL repository", () => {
         await cleanupGate;
       },
     );
+    let mutationSettled = false;
+    let mutationRejected = false;
+    let mutationError: unknown;
+    const observedMutation = mutation.then(
+      () => {
+        mutationSettled = true;
+      },
+      (error: unknown) => {
+        mutationSettled = true;
+        mutationRejected = true;
+        mutationError = error;
+      },
+    );
     try {
-      await Promise.race([
-        (async () => {
-          while (!cleanupStarted) await delay(10);
-        })(),
-        mutation.then(
-          () => Promise.reject(new Error("Mutation ended before cleanup wait")),
-          (error: unknown) => Promise.reject(error),
-        ),
-        delay(2_000).then(() => {
-          throw new Error("Timed out waiting for post-commit cleanup");
-        }),
-      ]);
-    } catch (error) {
+      for (
+        let attempt = 0;
+        attempt < 200 && !cleanupStarted && !mutationSettled;
+        attempt += 1
+      ) {
+        await delay(10);
+      }
+      if (mutationRejected) throw mutationError;
+      if (mutationSettled) {
+        throw new Error("Mutation ended before cleanup wait");
+      }
+      if (!cleanupStarted) {
+        throw new Error("Timed out waiting for post-commit cleanup");
+      }
+      const during = await contender.query<{ acquired: boolean }>(
+        "SELECT pg_try_advisory_lock($1) AS acquired",
+        ["4922248911538569540"],
+      );
+      contenderHoldsLock = during.rows[0]?.acquired === true;
+      expect(contenderHoldsLock).toBe(false);
       allowCleanup();
-      void mutation.catch(() => undefined);
+      await expect(mutation).resolves.toBe("committed");
+      const after = await contender.query<{ acquired: boolean }>(
+        "SELECT pg_try_advisory_lock($1) AS acquired",
+        ["4922248911538569540"],
+      );
+      contenderHoldsLock = after.rows[0]?.acquired === true;
+      expect(contenderHoldsLock).toBe(true);
+    } catch (error) {
+      failed = true;
       throw error;
+    } finally {
+      allowCleanup();
+      for (let attempt = 0; attempt < 250 && !mutationSettled; attempt += 1) {
+        await delay(10);
+      }
+      await releaseContender(contender, contenderHoldsLock, failed);
+      if (!mutationSettled)
+        throw new Error("Timed out settling artifact mutation");
+      await observedMutation;
     }
-    const during = await contender.query<{ acquired: boolean }>(
-      "SELECT pg_try_advisory_lock($1) AS acquired",
-      ["4922248911538569540"],
-    );
-    expect(during.rows[0]?.acquired).toBe(false);
-    allowCleanup();
-    await expect(mutation).resolves.toBe("committed");
-    const after = await contender.query<{ acquired: boolean }>(
-      "SELECT pg_try_advisory_lock($1) AS acquired",
-      ["4922248911538569540"],
-    );
-    expect(after.rows[0]?.acquired).toBe(true);
-    await contender.query("SELECT pg_advisory_unlock($1)", [
-      "4922248911538569540",
-    ]);
-    contender.release();
   });
 
   it("unlocks the pinned session when post-commit cleanup fails", async () => {
@@ -446,14 +493,20 @@ describePostgres("download resource PostgreSQL repository", () => {
       ),
     ).rejects.toThrow("cleanup failed");
     const contender = await pool.connect();
-    const acquired = await contender.query<{ acquired: boolean }>(
-      "SELECT pg_try_advisory_lock($1) AS acquired",
-      ["4922248911538569540"],
-    );
-    expect(acquired.rows[0]?.acquired).toBe(true);
-    await contender.query("SELECT pg_advisory_unlock($1)", [
-      "4922248911538569540",
-    ]);
-    contender.release();
+    let contenderHoldsLock = false;
+    let failed = false;
+    try {
+      const acquired = await contender.query<{ acquired: boolean }>(
+        "SELECT pg_try_advisory_lock($1) AS acquired",
+        ["4922248911538569540"],
+      );
+      contenderHoldsLock = acquired.rows[0]?.acquired === true;
+      expect(contenderHoldsLock).toBe(true);
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      await releaseContender(contender, contenderHoldsLock, failed);
+    }
   });
 });
