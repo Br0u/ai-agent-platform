@@ -72,6 +72,32 @@ const cleanDraftJoin = and(
   isNull(draftRevision.cleanupPendingAt),
 );
 
+async function assertActiveWorkforcePermission(
+  databaseTx: DatabaseTransaction,
+  userId: string,
+  permission: "admin:downloads",
+) {
+  const result = await databaseTx.execute(sql`
+    SELECT u.id
+    FROM users u
+    JOIN user_roles ur ON ur.user_id = u.id
+    JOIN roles r ON r.id = ur.role_id AND r.realm_scope = 'workforce'
+    JOIN role_permissions rp ON rp.role_id = r.id
+    JOIN permissions p ON p.id = rp.permission_id
+    WHERE u.id = ${userId}
+      AND u.identity_realm = 'workforce'
+      AND u.status = 'active'
+      AND p.key = ${permission}
+    LIMIT 1
+    FOR SHARE OF u, ur, r, rp, p
+  `);
+  if (result.rows.length !== 1) {
+    throw Object.assign(new Error("AUTH_PERMISSION_DENIED"), {
+      code: "AUTH_PERMISSION_DENIED" as const,
+    });
+  }
+}
+
 async function selectAdminById(databaseTx: DatabaseTransaction, id: string) {
   const rows = await databaseTx
     .select(adminProjection)
@@ -87,6 +113,11 @@ function transactionAdapter(databaseTx: DatabaseTransaction) {
   const audit = createAuditWriter(createDatabaseAuditRepository(databaseTx));
 
   return {
+    assertActiveWorkforcePermission: (
+      userId: string,
+      permission: "admin:downloads",
+    ) => assertActiveWorkforcePermission(databaseTx, userId, permission),
+
     async lockResource(id: string) {
       const rows = await databaseTx
         .select({ id: downloadResources.id })

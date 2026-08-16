@@ -198,6 +198,35 @@ describe("download resource repository contract", () => {
     );
   });
 
+  it("locks the complete active-workforce admin:downloads permission chain", () => {
+    expect(source).toMatch(
+      /FROM users u[\s\S]*JOIN user_roles ur[\s\S]*JOIN roles r[\s\S]*JOIN role_permissions rp[\s\S]*JOIN permissions p/u,
+    );
+    expect(source).toContain("r.realm_scope = 'workforce'");
+    expect(source).toContain("u.identity_realm = 'workforce'");
+    expect(source).toContain("u.status = 'active'");
+    expect(source).toContain("p.key = ${permission}");
+    expect(source).toContain("FOR SHARE OF u, ur, r, rp, p");
+    expect(source).toContain('permission: "admin:downloads"');
+    expect(source).toContain('code: "AUTH_PERMISSION_DENIED"');
+  });
+
+  it("returns a stable permission error when no authoritative row qualifies", async () => {
+    mocks.pinnedTransaction.mockImplementationOnce(
+      async (work: (tx: object) => Promise<unknown>) =>
+        work({ execute: vi.fn().mockResolvedValue({ rows: [] }) }),
+    );
+
+    await expect(
+      downloadResourceRepository.withArtifactMutationLock((tx) =>
+        tx.assertActiveWorkforcePermission("user-id", "admin:downloads"),
+      ),
+    ).rejects.toMatchObject({
+      message: "AUTH_PERMISSION_DENIED",
+      code: "AUTH_PERMISSION_DENIED",
+    });
+  });
+
   it("requires explicit safe PostgreSQL opt-in instead of silently skipping", () => {
     expect(integrationSource).toContain("RUN_DOWNLOAD_RESOURCE_DB_TEST");
     expect(integrationSource).toContain(
