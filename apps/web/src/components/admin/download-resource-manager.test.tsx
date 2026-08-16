@@ -466,12 +466,168 @@ describe("DownloadResourceManager", () => {
     expect(screen.getByRole("button", { name: /部署指南/ })).toBeVisible();
   });
 
-  it("does not expose preview or publish controls for an invalid resource", () => {
+  it("uses a valid replacement draft for invalid resource capabilities", () => {
     render(<DownloadResourceManager resources={[invalidPublished]} />);
 
+    expect(screen.getByRole("button", { name: "发布资源" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "移除草稿文件" })).toBeEnabled();
+    expect(screen.getByLabelText("上传 PDF")).toBeEnabled();
+    expect(screen.getByRole("img", { name: "失效彩页 封面" })).toHaveAttribute(
+      "src",
+      `/api/v1/admin/downloads/${invalidPublished.id}/draft/cover`,
+    );
+    expect(screen.getByRole("link", { name: "预览当前草稿" })).toHaveAttribute(
+      "href",
+      `/api/v1/admin/downloads/${invalidPublished.id}/draft/pdf`,
+    );
+  });
+
+  it("lets an invalid published resource create, upload, preview and publish a replacement draft", async () => {
+    const editableInvalid: DownloadResourceAdminDto = {
+      ...invalidPublished,
+      rowVersion: 8,
+      draftRevision: {
+        ...draft,
+        pdfObjectKey: null,
+        coverObjectKey: null,
+        pageCount: null,
+        byteSize: null,
+        sha256: null,
+      },
+    };
+    const liveInvalid: DownloadResourceAdminDto = {
+      ...invalidPublished,
+      draftRevision: null,
+    };
+    actions.save.mockResolvedValue({
+      kind: "success",
+      resource: editableInvalid,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ resource: invalidPublished })),
+    );
+    render(<DownloadResourceManager resources={[liveInvalid]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("上传 PDF")).toBeEnabled(),
+    );
+    fireEvent.change(screen.getByLabelText("上传 PDF"), {
+      target: {
+        files: [
+          new File(["pdf"], "replacement.pdf", { type: "application/pdf" }),
+        ],
+      },
+    });
+
+    expect(
+      await screen.findByRole("link", { name: "预览当前草稿" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "发布资源" })).toBeEnabled();
+  });
+
+  it("keeps a lifecycle failure visible inside its confirmation dialog", async () => {
+    const published: DownloadResourceAdminDto = {
+      ...publishedOnly,
+      adminStatus: "已发布",
+      draftRevision: null,
+    };
+    actions.downline.mockResolvedValue({
+      kind: "access_error",
+      code: "AUTH_PERMISSION_DENIED",
+    });
+    render(<DownloadResourceManager resources={[published]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "下线资源" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认下线" }));
+
+    const dialog = screen.getByRole("dialog", { name: "确认下线" });
+    expect(
+      await screen.findAllByText("当前账号没有下载资源管理权限。"),
+    ).toHaveLength(1);
+    expect(dialog).toHaveTextContent("当前账号没有下载资源管理权限。");
+    expect(screen.getByRole("button", { name: "确认下线" })).toHaveFocus();
+  });
+
+  it("requires a draft save before upload or lifecycle actions after metadata changes", () => {
+    const complete: DownloadResourceAdminDto = {
+      ...resource,
+      adminStatus: "待发布",
+      draftRevision: {
+        ...draft,
+        pdfObjectKey: "private/pdf",
+        coverObjectKey: "private/cover",
+        pageCount: 2,
+        byteSize: 1024,
+        sha256: "d".repeat(64),
+      },
+    };
+    render(<DownloadResourceManager resources={[complete]} />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "资源名称" }), {
+      target: { value: "未保存的名称" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "所属产品" }), {
+      target: { value: "未保存的产品" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "资源简介" }), {
+      target: { value: "未保存的简介" },
+    });
+    fireEvent.change(screen.getByLabelText("下载权限"), {
+      target: { value: "public" },
+    });
+
+    expect(
+      screen.getByText("请先保存草稿后再上传或执行发布操作。"),
+    ).toBeVisible();
+    expect(screen.getByLabelText("上传 PDF")).toBeDisabled();
     expect(screen.getByRole("button", { name: "发布资源" })).toBeDisabled();
-    expect(screen.queryByRole("img", { name: "失效彩页 封面" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "预览当前草稿" })).toBeNull();
+    expect(screen.getByRole("button", { name: "丢弃草稿" })).toBeDisabled();
+  });
+
+  it("keeps upload errors with the resource that produced them", async () => {
+    const second: DownloadResourceAdminDto = {
+      ...resource,
+      id: "019f7b47-3040-7000-8000-000000000012",
+      key: "second-brief",
+      adminLabel: "第二份资料",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          { version: "1", error: { code: "invalid_pdf" } },
+          { status: 422 },
+        ),
+      ),
+    );
+    render(<DownloadResourceManager resources={[resource, second]} />);
+
+    fireEvent.change(screen.getByLabelText("上传 PDF"), {
+      target: {
+        files: [new File(["not pdf"], "bad.pdf", { type: "application/pdf" })],
+      },
+    });
+    expect(
+      await screen.findByText("请上传可打开的 PDF 文件后重试。"),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /第二份资料/ }));
+    expect(screen.queryByText("请上传可打开的 PDF 文件后重试。")).toBeNull();
+  });
+
+  it("filters products by the current draft instead of an older published revision", () => {
+    const revised: DownloadResourceAdminDto = {
+      ...publishedOnly,
+      draftRevision: { ...draft, product: "新产品" },
+    };
+    render(<DownloadResourceManager resources={[revised]} />);
+
+    expect(screen.queryByRole("option", { name: "元启平台" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("筛选产品"), {
+      target: { value: "新产品" },
+    });
+    expect(screen.getByText("可见资源 1 条")).toBeVisible();
   });
 
   it("blocks downline while a pending draft exists and confirms visibility-changing actions", () => {

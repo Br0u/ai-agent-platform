@@ -295,7 +295,8 @@
 }
 .download-resource-manager__uploading,
 .download-resource-manager__message,
-.download-resource-manager__lifecycle p {
+.download-resource-manager__lifecycle p,
+.download-resource-manager__save-required {
   margin: 0;
   color: var(--color-muted);
   font-size: 12px;
@@ -347,9 +348,27 @@
   z-index: 80;
   inset: 0;
   display: grid;
+  overflow: auto;
   place-items: center;
   padding: 14px;
   background: rgb(12 22 32 / 0.4);
+}
+.assistant-skill-dialog .download-resource-manager__dialog input,
+.assistant-skill-dialog .download-resource-manager__dialog select,
+.assistant-skill-dialog .download-resource-manager__dialog textarea {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--color-workspace-line);
+  border-radius: 3px;
+  padding: 10px 11px;
+  color: var(--color-ink);
+  background: var(--color-canvas);
+  font: 14px/1.45 var(--font-body);
+}
+.assistant-skill-dialog .download-resource-manager__dialog :focus-visible,
+.assistant-skill-dialog .download-resource-manager__confirm :focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-signal) 38%, transparent);
+  outline-offset: 2px;
 }
 .download-resource-manager__dialog header {
   display: block;

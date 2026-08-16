@@ -27,6 +27,7 @@ import {
 
 type ActionState = {
   kind: string;
+  code?: string;
   fieldErrors?: Record<string, string[]>;
   resource?: DownloadResourceAdminDto;
 };
@@ -57,7 +58,12 @@ const statusLabels = {
 function message(state: ActionState) {
   if (state.kind === "validation_error") return "请检查标出的字段。";
   if (state.kind === "conflict") return "资源已被更新，请刷新后重试。";
-  if (state.kind === "access_error") return "当前账号不能执行此操作。";
+  if (state.kind === "account_setup_required")
+    return "请先修改初始密码后再继续。";
+  if (state.kind === "access_error")
+    return state.code === "AUTH_PERMISSION_DENIED"
+      ? "当前账号没有下载资源管理权限。"
+      : "当前员工账号不可用，请联系管理员。";
   if (state.kind === "authentication_required")
     return "登录状态已失效，请重新登录。";
   if (state.kind === "domain_error") return "当前资源状态不允许此操作。";
@@ -95,12 +101,10 @@ function uploadErrorMessage(response: Response, code: unknown) {
   if (response.status === 409 || code === "state_conflict")
     return "资源已更新，请刷新页面后重试。";
   if (code === "invalid_pdf") return "请上传可打开的 PDF 文件后重试。";
-  if (
-    response.status === 401 ||
-    code === "authentication_required" ||
-    code === "permission_denied"
-  )
+  if (response.status === 401 || code === "authentication_required")
     return "登录状态已失效，请重新登录后重试。";
+  if (code === "permission_denied" || code === "AUTH_PERMISSION_DENIED")
+    return "当前账号没有上传下载资源的权限。";
   return "上传未完成，请稍后重试。";
 }
 
@@ -116,6 +120,19 @@ function FormMessage({ state }: { state: ActionState }) {
   );
 }
 
+function FieldError({
+  errors,
+  id,
+  name,
+}: {
+  errors: Record<string, string[]>;
+  id: string;
+  name: string;
+}) {
+  const error = errors[name]?.[0];
+  return error ? <small id={id}>{error}</small> : null;
+}
+
 function ConfirmationDialog({
   confirmLabel,
   description,
@@ -123,6 +140,7 @@ function ConfirmationDialog({
   onConfirm,
   pending,
   resource,
+  state,
   trigger,
 }: {
   confirmLabel: string;
@@ -131,6 +149,7 @@ function ConfirmationDialog({
   onConfirm(formData: FormData): void;
   pending: boolean;
   resource: DownloadResourceAdminDto;
+  state: ActionState;
   trigger: RefObject<HTMLButtonElement | null>;
 }) {
   const confirmRef = useRef<HTMLButtonElement>(null);
@@ -176,6 +195,7 @@ function ConfirmationDialog({
             {pending ? "正在处理…" : `确认${confirmLabel}`}
           </button>
         </form>
+        <FormMessage state={state} />
       </section>
     </AssistantSkillModal>
   );
@@ -237,7 +257,7 @@ function LifecycleForm({
         >
           {pending ? "正在处理…" : label}
         </button>
-        <FormMessage state={state} />
+        {!confirming ? <FormMessage state={state} /> : null}
       </form>
       {confirming ? (
         <ConfirmationDialog
@@ -247,6 +267,7 @@ function LifecycleForm({
           onConfirm={formAction}
           pending={pending}
           resource={resource}
+          state={state}
           trigger={trigger}
         />
       ) : null}
@@ -354,12 +375,14 @@ function CreateResourceDialog({
 function Editor({
   resource,
   uploading,
+  uploadError,
   onAbortUpload,
   onResource,
   onUpload,
 }: {
   resource: DownloadResourceAdminDto;
   uploading: boolean;
+  uploadError: string | null;
   onAbortUpload(): void;
   onResource(resource: DownloadResourceAdminDto): void;
   onUpload(file: File): void;
@@ -382,23 +405,21 @@ function Editor({
         }
       : suggestDownloadPolicies(getCategory(resource)),
   );
+  const [dirty, setDirty] = useState(false);
   const fieldsId = useId();
   const errors =
     state.kind === "validation_error" ? (state.fieldErrors ?? {}) : {};
   const errorId = (name: string) => `${fieldsId}-${name}-error`;
   const disabled = uploading || pending;
   const complete = Boolean(draft?.pdfObjectKey && draft?.coverObjectKey);
-  const canUpload = Boolean(draft) && resource.adminStatus !== "文件失效";
-  const canPublish =
-    resource.adminStatus !== "文件失效" &&
-    Boolean(
-      resource.draftRevision?.pdfObjectKey &&
-        resource.draftRevision.coverObjectKey,
-    );
+  const canUpload = Boolean(draft);
+  const canPublish = complete;
   const canDownline =
     resource.state === "published" && resource.draftRevision === null;
   const publishedReadOnly =
     resource.state === "published" && resource.draftRevision === null;
+  const needsSave = dirty && !publishedReadOnly;
+  const otherActionsDisabled = disabled || needsSave;
 
   useEffect(() => {
     if (state.kind === "success" && state.resource) onResource(state.resource);
@@ -430,7 +451,7 @@ function Editor({
       </header>
 
       <div className="download-resource-manager__artifact">
-        {complete && resource.adminStatus !== "文件失效" ? (
+        {complete ? (
           // Authenticated draft covers cannot use the image optimizer because it has no staff session.
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -454,7 +475,7 @@ function Editor({
                 ? "尚未上传可用 PDF"
                 : "当前展示已发布版本；编辑后可上传新 PDF"}
           </span>
-          {complete && resource.adminStatus !== "文件失效" ? (
+          {complete ? (
             <a
               href={`/api/v1/admin/downloads/${resource.id}/draft/pdf`}
               rel="noreferrer"
@@ -466,7 +487,18 @@ function Editor({
         </div>
       </div>
 
-      <form action={formAction} className="download-resource-manager__form">
+      <form
+        action={formAction}
+        className="download-resource-manager__form"
+        onChange={(event) => {
+          if (
+            event.target instanceof HTMLInputElement &&
+            event.target.type === "file"
+          )
+            return;
+          setDirty(true);
+        }}
+      >
         <input name="id" type="hidden" value={resource.id} />
         <input
           name="expectedRowVersion"
@@ -532,9 +564,7 @@ function Editor({
                 name="name"
                 required
               />
-              {errors.name ? (
-                <small id={errorId("name")}>{errors.name[0]}</small>
-              ) : null}
+              <FieldError errors={errors} id={errorId("name")} name="name" />
             </label>
             <label>
               所属产品
@@ -548,9 +578,11 @@ function Editor({
                 name="product"
                 required
               />
-              {errors.product ? (
-                <small id={errorId("product")}>{errors.product[0]}</small>
-              ) : null}
+              <FieldError
+                errors={errors}
+                id={errorId("product")}
+                name="product"
+              />
             </label>
             <label>
               资源分类
@@ -575,9 +607,11 @@ function Editor({
                   </option>
                 ))}
               </select>
-              {errors.category ? (
-                <small id={errorId("category")}>{errors.category[0]}</small>
-              ) : null}
+              <FieldError
+                errors={errors}
+                id={errorId("category")}
+                name="category"
+              />
             </label>
             <label>
               资料类型
@@ -591,11 +625,11 @@ function Editor({
                 name="resourceType"
                 required
               />
-              {errors.resourceType ? (
-                <small id={errorId("resourceType")}>
-                  {errors.resourceType[0]}
-                </small>
-              ) : null}
+              <FieldError
+                errors={errors}
+                id={errorId("resourceType")}
+                name="resourceType"
+              />
             </label>
             <label>
               排序
@@ -610,9 +644,11 @@ function Editor({
                 required
                 type="number"
               />
-              {errors.sortOrder ? (
-                <small id={errorId("sortOrder")}>{errors.sortOrder[0]}</small>
-              ) : null}
+              <FieldError
+                errors={errors}
+                id={errorId("sortOrder")}
+                name="sortOrder"
+              />
             </label>
             <label>
               预览权限
@@ -641,11 +677,11 @@ function Editor({
                 <option value="public">可预览</option>
                 <option value="contact">不可预览</option>
               </select>
-              {errors.previewPolicy ? (
-                <small id={errorId("previewPolicy")}>
-                  {errors.previewPolicy[0]}
-                </small>
-              ) : null}
+              <FieldError
+                errors={errors}
+                id={errorId("previewPolicy")}
+                name="previewPolicy"
+              />
             </label>
             <label>
               下载权限
@@ -673,11 +709,11 @@ function Editor({
                   可下载
                 </option>
               </select>
-              {errors.downloadPolicy ? (
-                <small id={errorId("downloadPolicy")}>
-                  {errors.downloadPolicy[0]}
-                </small>
-              ) : null}
+              <FieldError
+                errors={errors}
+                id={errorId("downloadPolicy")}
+                name="downloadPolicy"
+              />
             </label>
             <label className="download-resource-manager__wide-field">
               资源简介
@@ -692,11 +728,11 @@ function Editor({
                 required
                 rows={3}
               />
-              {errors.description ? (
-                <small id={errorId("description")}>
-                  {errors.description[0]}
-                </small>
-              ) : null}
+              <FieldError
+                errors={errors}
+                id={errorId("description")}
+                name="description"
+              />
             </label>
           </fieldset>
         )}
@@ -710,14 +746,16 @@ function Editor({
             {pending ? "正在保存…" : publishedReadOnly ? "编辑" : "保存草稿"}
           </button>
           <label
-            aria-disabled={disabled || !canUpload ? true : undefined}
+            aria-disabled={
+              otherActionsDisabled || !canUpload ? true : undefined
+            }
             className="download-resource-manager__upload"
           >
             上传 PDF
             <input
               accept="application/pdf,.pdf"
               aria-label="上传 PDF"
-              disabled={disabled || !canUpload}
+              disabled={otherActionsDisabled || !canUpload}
               onChange={(event) => {
                 const file = event.currentTarget.files?.[0];
                 if (file) onUpload(file);
@@ -744,6 +782,20 @@ function Editor({
             </>
           ) : null}
         </div>
+        {needsSave ? (
+          <p className="download-resource-manager__save-required" role="status">
+            请先保存草稿后再上传或执行发布操作。
+          </p>
+        ) : null}
+        {uploadError ? (
+          <p
+            aria-live="polite"
+            className="download-resource-manager__upload-error"
+            role="status"
+          >
+            {uploadError}
+          </p>
+        ) : null}
         <FormMessage state={state} />
       </form>
 
@@ -757,7 +809,7 @@ function Editor({
             label: "发布",
             description: "发布后，公开下载中心会按当前资料权限展示此资源。",
           }}
-          disabled={disabled || !canPublish}
+          disabled={otherActionsDisabled || !canPublish}
           label="发布资源"
           resource={resource}
           onResource={onResource}
@@ -769,7 +821,7 @@ function Editor({
             label: "下线",
             description: "下线后，公开下载中心将不再展示此资源。",
           }}
-          disabled={disabled || !canDownline}
+          disabled={otherActionsDisabled || !canDownline}
           label="下线资源"
           resource={resource}
           onResource={onResource}
@@ -780,7 +832,7 @@ function Editor({
             label: "丢弃草稿",
             description: "丢弃当前草稿会删除未发布的编辑内容。",
           }}
-          disabled={disabled || !resource.draftRevision}
+          disabled={otherActionsDisabled || !resource.draftRevision}
           label="丢弃草稿"
           resource={resource}
           onResource={onResource}
@@ -791,7 +843,7 @@ function Editor({
             label: "移除草稿文件",
             description: "移除草稿 PDF 后需要重新上传。",
           }}
-          disabled={disabled || resource.state === "published" || !complete}
+          disabled={otherActionsDisabled || !complete}
           label="移除草稿文件"
           resource={resource}
           onResource={onResource}
@@ -820,7 +872,10 @@ export function DownloadResourceManager({
   const [product, setProduct] = useState("");
   const [newOpen, setNewOpen] = useState(false);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
-  const [uploadError, setUploadError] = useState("");
+  const [uploadError, setUploadError] = useState<{
+    message: string;
+    resourceId: string;
+  } | null>(null);
   const controller = useRef<AbortController | null>(null);
   const newButton = useRef<HTMLButtonElement>(null);
   const selected =
@@ -836,7 +891,7 @@ export function DownloadResourceManager({
     if (controller.current) return;
     const signal = new AbortController();
     controller.current = signal;
-    setUploadError("");
+    setUploadError(null);
     setUploadingId(resource.id);
     try {
       const body = new FormData();
@@ -860,7 +915,10 @@ export function DownloadResourceManager({
           typeof error === "object" && error !== null
             ? Reflect.get(error, "code")
             : null;
-        setUploadError(uploadErrorMessage(response, code));
+        setUploadError({
+          resourceId: resource.id,
+          message: uploadErrorMessage(response, code),
+        });
         return;
       }
       const payload: unknown = await response.json();
@@ -871,13 +929,19 @@ export function DownloadResourceManager({
             )
           : null;
       if (parsed === null || !parsed.success) {
-        setUploadError("上传未完成，请稍后重试。");
+        setUploadError({
+          resourceId: resource.id,
+          message: "上传未完成，请稍后重试。",
+        });
         return;
       }
       adopt(parsed.data);
     } catch (error) {
       if (!(error instanceof DOMException && error.name === "AbortError"))
-        setUploadError("上传未完成，请稍后重试。");
+        setUploadError({
+          resourceId: resource.id,
+          message: "上传未完成，请稍后重试。",
+        });
     } finally {
       if (controller.current === signal) controller.current = null;
       setUploadingId(null);
@@ -889,15 +953,15 @@ export function DownloadResourceManager({
   };
   const products = Array.from(
     new Set(
-      resources
-        .flatMap((resource) => [
-          resource.draftRevision,
-          resource.publishedRevision,
-        ])
-        .flatMap((revision) => (revision ? [revision.product] : [])),
+      resources.flatMap((resource) => {
+        const revision = resource.draftRevision ?? resource.publishedRevision;
+        return revision ? [revision.product] : [];
+      }),
     ),
   ).sort((a, b) => a.localeCompare(b, "zh-CN"));
   const filtered = resources.filter((resource) => {
+    const productRevision =
+      resource.draftRevision ?? resource.publishedRevision;
     const revisions = [
       resource.draftRevision,
       resource.publishedRevision,
@@ -915,7 +979,7 @@ export function DownloadResourceManager({
       (!search || text.includes(search.toLocaleLowerCase("zh-CN"))) &&
       (!status || resource.adminStatus === status) &&
       (!category || getCategory(resource) === category) &&
-      (!product || revisions.some((revision) => revision.product === product))
+      (!product || productRevision?.product === product)
     );
   });
 
@@ -1056,6 +1120,11 @@ export function DownloadResourceManager({
               onResource={adopt}
               onUpload={(file) => void upload(selected, file)}
               resource={selected}
+              uploadError={
+                uploadError?.resourceId === selected.id
+                  ? uploadError.message
+                  : null
+              }
               uploading={uploadingId === selected.id}
             />
           ) : (
@@ -1065,15 +1134,6 @@ export function DownloadResourceManager({
           )}
         </div>
       </div>
-      {uploadError ? (
-        <p
-          aria-live="polite"
-          className="download-resource-manager__upload-error"
-          role="status"
-        >
-          {uploadError}
-        </p>
-      ) : null}
       {newOpen ? (
         <CreateResourceDialog onClose={closeNew} onCreated={adopt} />
       ) : null}
