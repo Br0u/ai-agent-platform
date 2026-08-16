@@ -203,6 +203,107 @@ const secretSource = (
 ): string | undefined =>
   typeof attachment === "string" ? attachment : attachment.source;
 
+const shellLiteral = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+
+const createDownloadVolumeInitFixture = () => {
+  const sandbox = mkdtempSync(path.join(tmpdir(), "download-volume-init-"));
+  const target = path.join(sandbox, "downloads");
+  const bin = path.join(sandbox, "bin");
+  const script = path.join(sandbox, "init-download-volume.sh");
+  const findCounter = path.join(sandbox, "find-count");
+  const chownLog = path.join(sandbox, "chown.log");
+  mkdirSync(target, { mode: 0o700 });
+  mkdirSync(bin, { mode: 0o700 });
+  writeFileSync(
+    script,
+    read("infra/docker/init-download-volume.sh").replace(
+      /^target=\/var\/lib\/ai-agent-platform\/downloads$/mu,
+      `target=${shellLiteral(target)}`,
+    ),
+    { mode: 0o700 },
+  );
+
+  const pathValue = process.env.PATH ?? "/usr/bin:/bin";
+  const realFind = spawnSync("sh", ["-c", "command -v find"], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: pathValue },
+  }).stdout.trim();
+  if (!realFind) throw new Error("download volume fixture requires find");
+
+  const currentOwnershipIsRuntime =
+    process.getuid?.() === 1000 && process.getgid?.() === 1000;
+  if (!currentOwnershipIsRuntime) {
+    writeFileSync(
+      path.join(bin, "chown"),
+      '#!/bin/sh\nprintf "%s\\n" "$*" >>"$CHOWN_LOG"\n',
+      { mode: 0o700 },
+    );
+  }
+
+  return {
+    sandbox,
+    target,
+    findCounter,
+    chownLog,
+    currentOwnershipIsRuntime,
+    installControlledFind() {
+      writeFileSync(
+        path.join(bin, "find"),
+        `#!/bin/sh
+count=0
+[ ! -f "$FIND_COUNTER" ] || count=$(cat "$FIND_COUNTER")
+count=$((count + 1))
+printf '%s\n' "$count" >"$FIND_COUNTER"
+if [ "\${FIND_FAIL_FIRST-}" = 1 ] && [ "$count" -eq 1 ]; then
+  exit 42
+fi
+"$REAL_FIND" "$@"
+status=$?
+if [ "\${FIND_INJECT_AFTER_FIRST-}" = 1 ] && [ "$count" -eq 2 ]; then
+  ln -s . "$TEST_TARGET/injected-link"
+fi
+exit "$status"
+`,
+        { mode: 0o700 },
+      );
+    },
+    run(extraEnv: Record<string, string> = {}) {
+      return spawnSync("sh", [script], {
+        encoding: "utf8",
+        timeout: 2_000,
+        env: {
+          ...process.env,
+          PATH: `${bin}:${pathValue}`,
+          REAL_FIND: realFind,
+          FIND_COUNTER: findCounter,
+          CHOWN_LOG: chownLog,
+          TEST_TARGET: target,
+          ...extraEnv,
+        },
+      });
+    },
+  };
+};
+
+const unixSocketFixturesAvailable = (() => {
+  const sandbox = mkdtempSync(path.join(tmpdir(), "download-socket-probe-"));
+  try {
+    return (
+      spawnSync(
+        "python3",
+        [
+          "-c",
+          "import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])",
+          path.join(sandbox, "probe.sock"),
+        ],
+        { stdio: "ignore" },
+      ).status === 0
+    );
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
+})();
+
 describe("production deployment security contracts", () => {
   it("persists download artifacts through an initialized least-privilege volume", () => {
     const rendered = renderComposeFixture();
@@ -259,6 +360,23 @@ describe("production deployment security contracts", () => {
     expect(backup?.depends_on?.["download-volume-init"]?.condition).toBe(
       "service_completed_successfully",
     );
+    const consumers = Object.entries(rendered.services)
+      .filter(([, service]) =>
+        service.volumes?.some(
+          (mount) =>
+            typeof mount !== "string" && mount.source === "download_data",
+        ),
+      )
+      .map(([name]) => name);
+    expect(consumers).toContain("download-volume-init");
+    expect(consumers.filter((name) => name !== "download-volume-init")).toEqual(
+      ["web"],
+    );
+    expect(
+      consumers.every((name) =>
+        ["download-volume-init", "web", "backup"].includes(name),
+      ),
+    ).toBe(true);
 
     const initScript = read("infra/docker/init-download-volume.sh");
     expect(
@@ -270,14 +388,15 @@ describe("production deployment security contracts", () => {
     expect(initScript).toContain("target=/var/lib/ai-agent-platform/downloads");
     expect(initScript).toContain('[ -d "$target" ]');
     expect(initScript).toContain('[ -L "$target" ]');
+    expect(initScript).toContain('invalid_entry="$(find "$target"');
+    expect(initScript).toContain("download volume scan failed");
+    expect(initScript.match(/validate_tree$/gmu)).toHaveLength(2);
+    expect(initScript).toContain("no other download_data consumer");
     expect(initScript).toContain(
-      'find "$target" -xdev ! -type d ! -type f -print -quit',
+      'find "$target" -xdev -type d -exec chown -h 1000:1000 {} +',
     );
     expect(initScript).toContain(
-      'find "$target" -xdev -type d -exec chown 1000:1000 {} +',
-    );
-    expect(initScript).toContain(
-      'find "$target" -xdev -type f -exec chown 1000:1000 {} +',
+      'find "$target" -xdev -type f -exec chown -h 1000:1000 {} +',
     );
     expect(initScript).toContain(
       'find "$target" -xdev -type d -exec chmod 0750 {} +',
@@ -291,6 +410,114 @@ describe("production deployment security contracts", () => {
       'test "$(id -u node):$(id -g node)" = "1000:1000"',
     );
     expect(dockerfile).not.toMatch(/产品资料|\/Users\/|Downloads\//u);
+  });
+
+  it("normalizes hidden regular files in an isolated download volume", () => {
+    const fixture = createDownloadVolumeInitFixture();
+    const nested = path.join(fixture.target, ".objects");
+    const file = path.join(nested, ".artifact.pdf");
+    try {
+      mkdirSync(nested, { mode: 0o777 });
+      writeFileSync(file, "pdf", { mode: 0o666 });
+      chmodSync(fixture.target, 0o777);
+      chmodSync(nested, 0o777);
+      chmodSync(file, 0o666);
+
+      const result = fixture.run();
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(statSync(fixture.target).mode & 0o777).toBe(0o750);
+      expect(statSync(nested).mode & 0o777).toBe(0o750);
+      expect(statSync(file).mode & 0o777).toBe(0o640);
+      if (fixture.currentOwnershipIsRuntime) {
+        expect(statSync(file)).toMatchObject({ uid: 1000, gid: 1000 });
+      } else {
+        expect(readFileSync(fixture.chownLog, "utf8")).toContain(
+          "-h 1000:1000",
+        );
+      }
+    } finally {
+      rmSync(fixture.sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["symlink", "fifo"] as const)(
+    "rejects a %s in the download volume",
+    (kind) => {
+      const fixture = createDownloadVolumeInitFixture();
+      try {
+        const invalid = path.join(fixture.target, `invalid-${kind}`);
+        if (kind === "symlink") symlinkSync(".", invalid);
+        else expect(spawnSync("mkfifo", [invalid]).status).toBe(0);
+
+        const result = fixture.run();
+        expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+        expect(result.stderr).toContain(
+          "download volume contains an unsupported file type",
+        );
+      } finally {
+        rmSync(fixture.sandbox, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(!unixSocketFixturesAvailable)(
+    "rejects a Unix socket in the download volume",
+    () => {
+      const fixture = createDownloadVolumeInitFixture();
+      try {
+        const socket = path.join(fixture.target, "invalid.sock");
+        const created = spawnSync(
+          "python3",
+          [
+            "-c",
+            "import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])",
+            socket,
+          ],
+          { encoding: "utf8" },
+        );
+        expect(created.status, created.stderr).toBe(0);
+
+        const result = fixture.run();
+        expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+      } finally {
+        rmSync(fixture.sandbox, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("fails closed when the initial volume scan fails", () => {
+    const fixture = createDownloadVolumeInitFixture();
+    try {
+      fixture.installControlledFind();
+      const result = fixture.run({ FIND_FAIL_FIRST: "1" });
+
+      expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+      expect(result.stderr).toContain("download volume scan failed");
+      expect(readFileSync(fixture.findCounter, "utf8").trim()).toBe("1");
+    } finally {
+      rmSync(fixture.sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unsupported entry inserted after normalization begins", () => {
+    const fixture = createDownloadVolumeInitFixture();
+    try {
+      fixture.installControlledFind();
+      const result = fixture.run({ FIND_INJECT_AFTER_FIRST: "1" });
+
+      expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+      expect(result.stderr).toContain(
+        "download volume contains an unsupported file type",
+      );
+      expect(
+        lstatSync(path.join(fixture.target, "injected-link")).isSymbolicLink(),
+      ).toBe(true);
+      expect(
+        Number(readFileSync(fixture.findCounter, "utf8").trim()),
+      ).toBeGreaterThanOrEqual(6);
+    } finally {
+      rmSync(fixture.sandbox, { recursive: true, force: true });
+    }
   });
 
   it("keeps the release-age policy exception exact and limited to the approved orb", () => {
