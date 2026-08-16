@@ -72,6 +72,8 @@ const wiring = vi.hoisted(() => ({
   failAllRemoves: false,
   finalizationFailure: false,
   openedPdfSize: null as number | null,
+  statCalls: 0,
+  openCalls: 0,
   lastReadable: { destroy: vi.fn() },
   denyTransactionPermission: false,
   abortAfterPdf: null as AbortController | null,
@@ -109,12 +111,14 @@ vi.mock("./file-store", () => ({
         return key;
       }),
       stat: vi.fn(async (key: string) => {
+        wiring.statCalls += 1;
         const size = wiring.files.get(key);
         if (size === undefined) throw new Error("ENOENT");
         wiring.abortOnStat?.abort();
         return { size };
       }),
       open: vi.fn(async (key: string, range?: unknown) => {
+        wiring.openCalls += 1;
         const size =
           key.endsWith(".pdf") && wiring.openedPdfSize !== null
             ? wiring.openedPdfSize
@@ -391,6 +395,8 @@ describe("downloadResourceService lifecycle", () => {
     wiring.failAllRemoves = false;
     wiring.finalizationFailure = false;
     wiring.openedPdfSize = null;
+    wiring.statCalls = 0;
+    wiring.openCalls = 0;
     wiring.lastReadable = { destroy: vi.fn() };
     wiring.denyTransactionPermission = false;
     wiring.abortAfterPdf = null;
@@ -708,6 +714,41 @@ describe("downloadResourceService lifecycle", () => {
       expect(
         wiring.resources.get(created.id)!.draftRevision?.pdfObjectKey,
       ).toBeNull();
+    },
+  );
+
+  it.each([
+    ["public", "contact", "download"],
+    ["contact", "contact", "preview"],
+    ["contact", "contact", "download"],
+  ] as const)(
+    "rejects %s/%s %s before touching artifact storage",
+    async (previewPolicy, downloadPolicy, kind) => {
+      const { downloadResourceService } = await import("./service");
+      const created = await downloadResourceService.createResource({
+        key: `deny-before-storage-${previewPolicy}-${kind}`,
+        adminLabel: "拒绝读取",
+      });
+      await downloadResourceService.saveDraft({
+        ...metadata(created.id, 1),
+        previewPolicy,
+        downloadPolicy,
+      });
+      await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+      await downloadResourceService.publish({
+        id: created.id,
+        expectedRowVersion: 3,
+      });
+      wiring.statCalls = 0;
+      wiring.openCalls = 0;
+      await expect(
+        downloadResourceService.getPublicArtifact(
+          `deny-before-storage-${previewPolicy}-${kind}`,
+          kind,
+        ),
+      ).resolves.toBeNull();
+      expect(wiring.statCalls).toBe(0);
+      expect(wiring.openCalls).toBe(0);
     },
   );
 
@@ -1207,6 +1248,90 @@ describe("downloadResourceService lifecycle", () => {
     );
     expect(first?.revisionId).not.toBe(second?.revisionId);
     expect(second?.filename).toBe("新版产品介绍.pdf");
+  });
+
+  it("invalidates old cover URLs after republishing and serves only the new revision", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-cover-pointer",
+      adminLabel: "封面指针",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    const oldRevisionId = wiring.resources.get(created.id)!.publishedRevision!
+      .id;
+    await downloadResourceService.saveDraft({
+      ...metadata(created.id, 4),
+      name: "新封面",
+    });
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 5));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 6,
+    });
+    const newRevisionId = wiring.resources.get(created.id)!.publishedRevision!
+      .id;
+    await expect(
+      downloadResourceService.getPublicArtifact(
+        "yuanqi-cover-pointer",
+        "cover",
+        undefined,
+        oldRevisionId,
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      downloadResourceService.getPublicArtifact(
+        "yuanqi-cover-pointer",
+        "cover",
+        undefined,
+        newRevisionId,
+      ),
+    ).resolves.toMatchObject({ revisionId: newRevisionId });
+  });
+
+  it("hides every public artifact kind when the current files are missing or invalid", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-invalid-artifacts",
+      adminLabel: "失效文件",
+    });
+    await downloadResourceService.saveDraft({
+      ...metadata(created.id, 1),
+      downloadPolicy: "public",
+    });
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    const revision = wiring.resources.get(created.id)!.publishedRevision!;
+    wiring.files.delete(revision.coverObjectKey!);
+    for (const kind of ["cover", "preview", "download"] as const) {
+      await expect(
+        downloadResourceService.getPublicArtifact(
+          "yuanqi-invalid-artifacts",
+          kind,
+          undefined,
+          kind === "cover" ? revision.id : undefined,
+        ),
+      ).resolves.toBeNull();
+    }
+    wiring.files.set(revision.coverObjectKey!, 45);
+    wiring.files.set(revision.pdfObjectKey!, 122);
+    for (const kind of ["cover", "preview", "download"] as const) {
+      await expect(
+        downloadResourceService.getPublicArtifact(
+          "yuanqi-invalid-artifacts",
+          kind,
+          undefined,
+          kind === "cover" ? revision.id : undefined,
+        ),
+      ).resolves.toBeNull();
+    }
   });
 
   it("fails closed for unpublished, downline, unmarked, or cleanup-pending revisions", async () => {

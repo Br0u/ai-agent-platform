@@ -35,7 +35,7 @@ const context = { params: Promise.resolve({ resourceKey: "yuanqi-intro" }) };
 describe("public download preview", () => {
   beforeEach(() => wiring.artifact.mockClear());
 
-  it("serves inline PDF with no-store, UTF-8 filename, HEAD, and Range", async () => {
+  it("serves inline PDF with no-store, UTF-8 filename, and Range", async () => {
     const ranged = await GET(
       new Request("https://example.test", {
         headers: { range: "bytes=-3" },
@@ -57,14 +57,34 @@ describe("public download preview", () => {
       { start: 7, end: 9 },
     );
     expect(wiring.artifact).toHaveBeenCalledTimes(2);
-
-    const head = await HEAD(
-      new Request("https://example.test", { method: "HEAD" }),
-      context,
-    );
-    expect(head.status).toBe(200);
-    expect(head.body).toBeNull();
   });
+
+  it.each(["bytes=2-4", "bytes=8-2"])(
+    "ignores %s on HEAD and matches ordinary GET headers",
+    async (range) => {
+      const get = await GET(new Request("https://example.test"), context);
+      wiring.artifact.mockClear();
+      const head = await HEAD(
+        new Request("https://example.test", {
+          method: "HEAD",
+          headers: { range },
+        }),
+        context,
+      );
+      expect(get.status).toBe(200);
+      expect(head.status).toBe(200);
+      expect(head.body).toBeNull();
+      for (const header of [
+        "content-type",
+        "content-length",
+        "content-disposition",
+        "accept-ranges",
+        "cache-control",
+      ])
+        expect(head.headers.get(header), header).toBe(get.headers.get(header));
+      expect(wiring.artifact).toHaveBeenCalledOnce();
+    },
+  );
 
   it("returns the same safe 404 for malformed, denied, missing, or failed resources", async () => {
     const malformed = await GET(new Request("https://example.test"), {

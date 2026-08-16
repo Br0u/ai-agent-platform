@@ -123,4 +123,29 @@ describe("PDF response", () => {
     ).toBe(500);
     expect(destroy).toHaveBeenCalled();
   });
+
+  it.each(["bytes=2-4", "bytes=9-2"])(
+    "ignores Range on HEAD and returns full representation headers for %s",
+    (range) => {
+      const headArtifact = artifact();
+      const destroy = vi.spyOn(headArtifact.readable, "destroy");
+      const response = artifactResponse({
+        request: new Request("https://example.test/file", {
+          method: "HEAD",
+          headers: { range },
+        }),
+        artifact: headArtifact,
+        contentType: "application/pdf",
+        filename: "资料.pdf",
+        disposition: "inline",
+        noStore: true,
+      });
+      expect(response.status).toBe(200);
+      expect(response.body).toBeNull();
+      expect(response.headers.get("content-length")).toBe("10");
+      expect(response.headers.get("content-range")).toBeNull();
+      expect(response.headers.get("accept-ranges")).toBe("bytes");
+      expect(destroy).toHaveBeenCalledOnce();
+    },
+  );
 });

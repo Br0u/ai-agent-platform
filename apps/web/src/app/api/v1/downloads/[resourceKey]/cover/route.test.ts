@@ -79,15 +79,37 @@ describe("public download cover", () => {
     expect(wiring.artifact).toHaveBeenCalledTimes(2);
   });
 
-  it("supports HEAD and rejects invalid ranges without reopening", async () => {
-    const head = await HEAD(
-      new Request(`https://example.test?revision=${REVISION}`, {
-        method: "HEAD",
-      }),
-      context,
-    );
-    expect(head.status).toBe(200);
-    expect(head.body).toBeNull();
+  it.each(["bytes=2-4", "bytes=8-2"])(
+    "ignores %s on HEAD and matches ordinary GET headers",
+    async (range) => {
+      const get = await GET(
+        new Request(`https://example.test?revision=${REVISION}`),
+        context,
+      );
+      wiring.artifact.mockClear();
+      const head = await HEAD(
+        new Request(`https://example.test?revision=${REVISION}`, {
+          method: "HEAD",
+          headers: { range },
+        }),
+        context,
+      );
+      expect(get.status).toBe(200);
+      expect(head.status).toBe(200);
+      expect(head.body).toBeNull();
+      for (const header of [
+        "content-type",
+        "content-length",
+        "content-disposition",
+        "accept-ranges",
+        "cache-control",
+      ])
+        expect(head.headers.get(header), header).toBe(get.headers.get(header));
+      expect(wiring.artifact).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("rejects invalid GET ranges without reopening", async () => {
     wiring.artifact.mockClear();
     const invalid = await GET(
       new Request(`https://example.test?revision=${REVISION}`, {

@@ -74,7 +74,7 @@ export function artifactResponse(input: {
   noStore?: boolean;
 }): Response {
   const parsed = parseSingleByteRange(
-    input.request.headers.get("range"),
+    input.request.method === "GET" ? input.request.headers.get("range") : null,
     input.artifact.size,
   );
   if (parsed === "invalid") {

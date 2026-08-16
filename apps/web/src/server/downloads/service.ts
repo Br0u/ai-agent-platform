@@ -475,15 +475,15 @@ export const downloadResourceService = {
         expectedRevisionId !== resource.id)
     )
       return null;
+    if (kind === "preview" && resource.previewPolicy !== "public") return null;
+    if (kind === "download" && resource.downloadPolicy !== "public")
+      return null;
     const artifactStats = await stats(resource);
     if (
       !artifactStats.pdfExists ||
       !artifactStats.coverExists ||
       artifactStats.actualByteSize !== resource.byteSize
     )
-      return null;
-    if (kind === "preview" && resource.previewPolicy !== "public") return null;
-    if (kind === "download" && resource.downloadPolicy !== "public")
       return null;
     const objectKey =
       kind === "cover" ? resource.coverObjectKey : resource.pdfObjectKey;
