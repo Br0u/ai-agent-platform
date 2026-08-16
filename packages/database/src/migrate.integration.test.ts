@@ -51,6 +51,31 @@ const expectedDocumentSeed = [
   ],
 ] as const;
 
+const expectedDownloadResourceKeys = [
+  "yuanqi-fullstack",
+  "yuanqi-appliance",
+  "yuanqi-cases",
+  "yuanqi-folder",
+  "yuanqi-usage",
+  "mdd2-intro",
+  "mdd2-solution",
+  "office-appliance",
+  "office-doc",
+  "office-contract",
+  "office-bid",
+  "daoban-appliance",
+  "daoban-gov",
+  "daoban-assistant",
+  "vision-folder",
+  "vision-solution",
+  "vision-intro",
+  "vision-usage",
+  "mdd2-client",
+  "yuanqi-deploy",
+  "yuanqi-faq",
+  "wp-yuanqi-tech",
+] as const;
+
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const safeTestDatabaseUrl = testDatabaseUrl
   ? assertSafeIdentityMigrationTestDatabaseUrl(testDatabaseUrl)
@@ -171,6 +196,203 @@ describePostgres("concurrent production migrations", () => {
     );
     expect(inputPolicy.rows).toEqual([{ id: 1, terms: [], revision: 1 }]);
 
+    const downloadResources = await verifier.query<{
+      key: string;
+      state: string;
+      draftRevisionId: string | null;
+      publishedRevisionId: string | null;
+      hasArtifacts: boolean | null;
+    }>(
+      `SELECT
+         resource.key,
+         resource.state::text,
+         resource.draft_revision_id::text AS "draftRevisionId",
+         resource.published_revision_id::text AS "publishedRevisionId",
+         revision.pdf_object_key IS NOT NULL AS "hasArtifacts"
+       FROM download_resources resource
+       LEFT JOIN download_resource_revisions revision
+         ON revision.resource_id = resource.id
+        AND revision.id = resource.draft_revision_id
+       ORDER BY resource.created_at, resource.key`,
+    );
+    expect(downloadResources.rows.map(({ key }) => key).sort()).toEqual(
+      [...expectedDownloadResourceKeys].sort(),
+    );
+    expect(downloadResources.rows).toHaveLength(22);
+    expect(
+      downloadResources.rows.filter(({ draftRevisionId }) => draftRevisionId),
+    ).toHaveLength(20);
+    expect(
+      downloadResources.rows
+        .filter(({ draftRevisionId }) => !draftRevisionId)
+        .map(({ key }) => key)
+        .sort(),
+    ).toEqual(["mdd2-client", "vision-intro"]);
+    expect(
+      downloadResources.rows.every(
+        ({ state, publishedRevisionId }) =>
+          state === "unpublished" && publishedRevisionId === null,
+      ),
+    ).toBe(true);
+    expect(
+      downloadResources.rows
+        .filter(({ draftRevisionId }) => draftRevisionId)
+        .every(({ hasArtifacts }) => hasArtifacts === false),
+    ).toBe(true);
+
+    const firstResource = downloadResources.rows.find(
+      ({ key }) => key === "yuanqi-fullstack",
+    );
+    const secondResource = downloadResources.rows.find(
+      ({ key }) => key === "yuanqi-appliance",
+    );
+    expect(firstResource?.draftRevisionId).toBeTruthy();
+    expect(secondResource?.draftRevisionId).toBeTruthy();
+
+    await expect(
+      verifier.query(
+        `INSERT INTO download_resources (key, admin_label, state)
+         VALUES ('yuanqi-fullstack', 'duplicate', 'unpublished')`,
+      ),
+    ).rejects.toMatchObject({
+      code: "23505",
+      constraint: "download_resources_key_unique",
+    });
+    await expect(
+      verifier.query(
+        `UPDATE download_resources
+         SET draft_revision_id = $1
+         WHERE key = 'yuanqi-fullstack'`,
+        [secondResource?.draftRevisionId],
+      ),
+    ).rejects.toMatchObject({
+      code: "23503",
+      constraint: "download_resources_draft_revision_fk",
+    });
+    await expect(
+      verifier.query(
+        `INSERT INTO download_resources (key, admin_label, state)
+         VALUES ('invalid-published', 'invalid', 'published')`,
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "download_resources_state_pointer_check",
+    });
+    await expect(
+      verifier.query(
+        `INSERT INTO download_resources (key, admin_label, state)
+         VALUES ('invalid-downline', 'invalid', 'downline')`,
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "download_resources_state_pointer_check",
+    });
+    await expect(
+      verifier.query(
+        `UPDATE download_resources
+         SET state = 'unpublished', published_revision_id = draft_revision_id
+         WHERE key = 'yuanqi-fullstack'`,
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "download_resources_state_pointer_check",
+    });
+    await expect(
+      verifier.query(
+        `INSERT INTO download_resources (key, admin_label, row_version)
+         VALUES ('invalid-version', 'invalid', 0)`,
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "download_resources_row_version_positive_check",
+    });
+
+    const invalidRevision = (fields: string, values: string) =>
+      verifier.query(
+        `INSERT INTO download_resource_revisions
+           (resource_id, name, product, category, resource_type, description,
+            sort_order, preview_policy, download_policy${fields})
+         SELECT id, 'invalid', '元启', 'materials', '测试', 'invalid',
+                999, 'public', 'contact'${values}
+         FROM download_resources WHERE key = 'yuanqi-fullstack'`,
+      );
+    await expect(
+      invalidRevision(", pdf_object_key", ", 'downloads/invalid.pdf'"),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "download_resource_revisions_artifacts_complete_check",
+    });
+    await expect(
+      invalidRevision(
+        ", pdf_object_key, cover_object_key, page_count, byte_size, sha256",
+        ", 'invalid.pdf', 'invalid.png', 0, 1, repeat('a', 64)",
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "download_resource_revisions_page_count_positive_check",
+    });
+    await expect(
+      invalidRevision(
+        ", pdf_object_key, cover_object_key, page_count, byte_size, sha256",
+        ", 'invalid.pdf', 'invalid.png', 1, 0, repeat('a', 64)",
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "download_resource_revisions_byte_size_positive_check",
+    });
+    await expect(
+      invalidRevision(
+        ", pdf_object_key, cover_object_key, page_count, byte_size, sha256",
+        ", 'invalid.pdf', 'invalid.png', 1, 1, repeat('A', 64)",
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "download_resource_revisions_sha256_check",
+    });
+    await expect(
+      verifier.query(
+        `INSERT INTO download_resource_revisions
+           (resource_id, name, product, category, resource_type, description,
+            sort_order, preview_policy, download_policy)
+         SELECT id, 'invalid', '元启', 'materials', '测试', 'invalid',
+                999, 'contact', 'public'
+         FROM download_resources WHERE key = 'yuanqi-fullstack'`,
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "download_resource_revisions_access_check",
+    });
+    await expect(
+      verifier.query(
+        `UPDATE download_resource_revisions
+         SET cleanup_pending_at = now()
+         WHERE id = $1`,
+        [firstResource?.draftRevisionId],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+
+    const cleanupRevision = await verifier.query<{ id: string }>(
+      `INSERT INTO download_resource_revisions
+         (resource_id, name, product, category, resource_type, description,
+          sort_order, preview_policy, download_policy, cleanup_pending_at)
+       SELECT id, 'cleanup', '元启', 'materials', '测试', 'cleanup',
+              999, 'public', 'contact', now()
+       FROM download_resources WHERE key = 'yuanqi-fullstack'
+       RETURNING id::text`,
+    );
+    await expect(
+      verifier.query(
+        `UPDATE download_resources
+         SET draft_revision_id = $1
+         WHERE key = 'yuanqi-fullstack'`,
+        [cleanupRevision.rows[0]?.id],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+    await verifier.query(
+      "DELETE FROM download_resource_revisions WHERE id = $1",
+      [cleanupRevision.rows[0]?.id],
+    );
+
     await verifier.query("DELETE FROM assistant_input_policy");
     await expect(
       verifier.query("INSERT INTO assistant_input_policy (id) VALUES (2)"),
@@ -187,6 +409,6 @@ describePostgres("concurrent production migrations", () => {
       constraint: "assistant_input_policy_revision_positive_check",
     });
     await verifier.end();
-    expect(journal.rows).toEqual([{ count: "11" }]);
+    expect(journal.rows).toEqual([{ count: "12" }]);
   });
 });
