@@ -35,24 +35,24 @@ const wiring = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@/server/auth/access", () => ({
-  AuthAccessError: class AuthAccessError extends Error {
-    status = 403 as const;
-  },
+vi.mock("@/server/auth/access", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/auth/access")>()),
   requirePermission: wiring.allow,
 }));
 vi.mock("@/server/auth/shared-options", () => ({
   resolveTrustedRequestIp: () => undefined,
 }));
-vi.mock("@/server/http/require-trusted-mutation", () => ({
-  MutationRequestError: class MutationRequestError extends Error {},
+vi.mock("@/server/http/require-trusted-mutation", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/server/http/require-trusted-mutation")
+  >()),
   requireTrustedMultipartMutation: wiring.trust,
 }));
 vi.mock("@/server/http/cancel-request-body", () => ({
   cancelUnreadRequestBody: wiring.cancel,
 }));
-vi.mock("@/server/downloads/pdf-upload", () => ({
-  PdfUploadError: class PdfUploadError extends Error {},
+vi.mock("@/server/downloads/pdf-upload", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/downloads/pdf-upload")>()),
   readBoundedPdfUploadMultipart: wiring.read,
   takePdfUploadStage: wiring.take,
 }));
@@ -67,6 +67,10 @@ vi.mock("@/server/downloads/service", () => ({
   downloadResourceService: { attachUploadedPdf: wiring.attach },
 }));
 
+import { AuthAccessError } from "@/server/auth/access";
+import { PdfUploadError } from "@/server/downloads/pdf-upload";
+import { MutationRequestError } from "@/server/http/require-trusted-mutation";
+
 import { POST } from "./route";
 
 const params = {
@@ -75,10 +79,17 @@ const params = {
   }),
 };
 
-function request(ifMatch: string | null) {
+function request(
+  ifMatch: string | null,
+  contentType = "multipart/form-data; boundary=abc",
+) {
   return new Request("https://example.test", {
     method: "POST",
-    headers: ifMatch === null ? {} : { "if-match": ifMatch },
+    headers: {
+      origin: "https://example.test",
+      "content-type": contentType,
+      ...(ifMatch === null ? {} : { "if-match": ifMatch }),
+    },
   });
 }
 
@@ -125,7 +136,22 @@ describe("admin download upload", () => {
     );
   });
 
-  it.each([null, "1", '"0"', '"1,2"', "*", '"9007199254740992"'])(
+  it("runs guard, authorization, then body parsing in that order", async () => {
+    const order: string[] = [];
+    wiring.trust.mockImplementationOnce(() => order.push("guard"));
+    wiring.allow.mockImplementationOnce(async () => {
+      order.push("auth");
+      return { userId: "11111111-1111-4111-8111-111111111111" };
+    });
+    wiring.read.mockImplementationOnce(async () => {
+      order.push("read");
+      return { stage: {} as never, byteSize: 12, sha256: "a".repeat(64) };
+    });
+    await POST(request('"2"'), params);
+    expect(order).toEqual(["guard", "auth", "read"]);
+  });
+
+  it.each([null, "1", '"abc"', '"0"', '"1,2"', "*", '"9007199254740992"'])(
     "rejects invalid If-Match %s before upload parsing",
     async (ifMatch) => {
       const response = await POST(request(ifMatch), params);
@@ -133,6 +159,37 @@ describe("admin download upload", () => {
       expect(wiring.read).not.toHaveBeenCalled();
     },
   );
+
+  it("maps real auth, guard, upload, and state errors before exposing data", async () => {
+    wiring.allow.mockRejectedValueOnce(
+      new AuthAccessError("AUTH_SESSION_REQUIRED", 401),
+    );
+    expect((await POST(request('"2"'), params)).status).toBe(401);
+    wiring.allow.mockRejectedValueOnce(
+      new AuthAccessError("AUTH_PERMISSION_DENIED", 403),
+    );
+    expect((await POST(request('"2"'), params)).status).toBe(403);
+    wiring.trust.mockImplementationOnce(() => {
+      throw new MutationRequestError();
+    });
+    expect((await POST(request('"2"'), params)).status).toBe(403);
+    wiring.trust.mockImplementationOnce(() => {
+      throw new MutationRequestError();
+    });
+    expect((await POST(request('"2"', "text/plain"), params)).status).toBe(415);
+    for (const [code, status] of [
+      ["invalid_multipart", 400],
+      ["body_too_large", 413],
+      ["pdf_too_large", 413],
+    ] as const) {
+      wiring.read.mockRejectedValueOnce(new PdfUploadError(code));
+      expect((await POST(request('"2"'), params)).status).toBe(status);
+    }
+    wiring.attach.mockRejectedValueOnce(
+      new Error("DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT"),
+    );
+    expect((await POST(request('"2"'), params)).status).toBe(409);
+  });
 
   it("maps typed PDF failures without parsing messages", async () => {
     const tools = await import("@/server/downloads/pdf-tools");

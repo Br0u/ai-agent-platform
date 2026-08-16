@@ -246,11 +246,10 @@ function safeErrorState(
     error instanceof Error &&
     new Set([
       "DOWNLOAD_RESOURCE_NOT_PUBLISHABLE",
+      "DOWNLOAD_RESOURCE_NOT_FOUND",
       "DOWNLOAD_RESOURCE_NOT_DOWNLINEABLE",
       "DOWNLOAD_RESOURCE_NO_DRAFT",
       "DOWNLOAD_RESOURCE_FILE_NOT_REMOVABLE",
-      "DOWNLOAD_RESOURCE_UPLOAD_REQUIRES_DRAFT",
-      "DOWNLOAD_RESOURCE_INPUT_INVALID",
     ]).has(error.message)
   )
     return { kind: "domain_error" };

@@ -138,6 +138,16 @@ describe("download resource actions", () => {
     ).resolves.toEqual({ kind: "conflict" });
 
     current.service.createResource.mockRejectedValueOnce(
+      new Error("DOWNLOAD_RESOURCE_NOT_FOUND"),
+    );
+    await expect(
+      current.actions.createDownloadResourceAction(
+        createDownloadResourceActionState(),
+        createForm(),
+      ),
+    ).resolves.toEqual({ kind: "domain_error" });
+
+    current.service.createResource.mockRejectedValueOnce(
       new Error(
         "DOWNLOAD_RESOURCE_PRIVATE_DETAIL: /private/downloads/secret.pdf",
       ),
