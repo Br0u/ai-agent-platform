@@ -16,6 +16,59 @@ const MAX_PROCESS_OUTPUT_BYTES = 64 * 1024;
 const MAX_PNG_BYTES = 50 * 1024 * 1024;
 const MAX_PAGES = 5_000;
 
+export type PdfToolErrorCode = "invalid_pdf" | "processing_failed";
+
+export class PdfToolError extends Error {
+  constructor(readonly code: PdfToolErrorCode) {
+    super(code === "invalid_pdf" ? "Invalid PDF" : "PDF processing failed");
+    this.name = "PdfToolError";
+  }
+}
+
+export function getPdfToolErrorCode(
+  error: unknown,
+): PdfToolErrorCode | undefined {
+  const seen = new Set<unknown>();
+  function find(value: unknown): PdfToolErrorCode | undefined {
+    if (seen.has(value)) return undefined;
+    seen.add(value);
+    if (value instanceof PdfToolError) return value.code;
+    if (value instanceof AggregateError && Array.isArray(value.errors)) {
+      for (const nested of value.errors) {
+        const code = find(nested);
+        if (code) return code;
+      }
+    }
+    return undefined;
+  }
+  return find(error);
+}
+
+type ProcessFailureKind = "exit" | "output" | "signal" | "spawn" | "timeout";
+
+class ProcessFailure extends Error {
+  constructor(readonly kind: ProcessFailureKind) {
+    super("PDF tool process failed");
+    this.name = "ProcessFailure";
+  }
+}
+
+function invalidPdf() {
+  return new PdfToolError("invalid_pdf");
+}
+
+function classify(error: unknown): Error {
+  if (error instanceof PdfToolError) return error;
+  if (error instanceof Error && error.name === "AbortError") return error;
+  if (
+    error instanceof ProcessFailure &&
+    (error.kind === "exit" || error.kind === "output")
+  ) {
+    return invalidPdf();
+  }
+  return new PdfToolError("processing_failed");
+}
+
 type SpawnedProcess = Readonly<{
   stdout: Readable;
   stderr: Readable;
@@ -64,11 +117,11 @@ async function validatePdfPrefix(pdfPath: string) {
   const handle = await open(pdfPath, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const stats = await handle.stat();
-    if (!stats.isFile()) throw new Error("Invalid PDF");
+    if (!stats.isFile()) throw invalidPdf();
     const prefix = Buffer.alloc(5);
     const { bytesRead } = await handle.read(prefix, 0, prefix.length, 0);
     if (bytesRead !== prefix.length || prefix.toString("ascii") !== "%PDF-") {
-      throw new Error("Invalid PDF");
+      throw invalidPdf();
     }
   } finally {
     await handle.close();
@@ -77,16 +130,16 @@ async function validatePdfPrefix(pdfPath: string) {
 
 function pageCountFrom(output: string) {
   if (/^Encrypted:[ \t]+yes(?:[ \t]|$)/imu.test(output)) {
-    throw new Error("Encrypted PDF is not supported");
+    throw invalidPdf();
   }
   const pages = output
     .split(/\r?\n/u)
     .map((line) => /^Pages:[ \t]+(0|[1-9][0-9]*)[ \t]*$/u.exec(line))
     .filter((match): match is RegExpExecArray => match !== null);
-  if (pages.length !== 1) throw new Error("Invalid PDF page count");
+  if (pages.length !== 1) throw invalidPdf();
   const count = Number(pages[0]![1]);
   if (!Number.isSafeInteger(count) || count < 1 || count > MAX_PAGES) {
-    throw new Error("Invalid PDF page count");
+    throw invalidPdf();
   }
   return count;
 }
@@ -144,7 +197,7 @@ export function createPdfTools(dependencies: Dependencies = {}) {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       outputBytes += bytes.length;
       if (outputBytes > MAX_PROCESS_OUTPUT_BYTES) {
-        stop(new Error(`${command} output exceeded 64 KiB`));
+        stop(new ProcessFailure("output"));
         return;
       }
       target.push(bytes);
@@ -157,10 +210,10 @@ export function createPdfTools(dependencies: Dependencies = {}) {
       (resolve, reject) => {
         const onAbort = () => stop(abortError(command));
         const timer = setTimer(() => {
-          stop(new Error(`${command} timed out after 15000ms`));
+          stop(new ProcessFailure("timeout"));
         }, PROCESS_TIMEOUT_MS);
-        child.once("error", (error) => {
-          failure ??= error;
+        child.once("error", () => {
+          failure ??= new ProcessFailure("spawn");
         });
         child.once("close", (code, exitSignal) => {
           clearTimer(timer);
@@ -170,11 +223,7 @@ export function createPdfTools(dependencies: Dependencies = {}) {
             return;
           }
           if (code !== 0) {
-            reject(
-              new Error(
-                `${command} failed (${code ?? exitSignal ?? "unknown"}): ${Buffer.concat(stderr).toString("utf8")}`,
-              ),
-            );
+            reject(new ProcessFailure(exitSignal ? "signal" : "exit"));
             return;
           }
           resolve({
@@ -194,16 +243,16 @@ export function createPdfTools(dependencies: Dependencies = {}) {
       fileStore: PdfToolFileStore,
       signal?: AbortSignal,
     ) {
-      throwIfAborted(signal, "PDF processing");
-      await validatePdfPrefix(pdfPath);
-      throwIfAborted(signal, "PDF processing");
-      const information = await run("pdfinfo", [pdfPath], signal);
-      if (information.stderr.trim() !== "") throw new Error("Invalid PDF");
-      const pageCount = pageCountFrom(information.stdout);
-      throwIfAborted(signal, "PDF processing");
       let temporaryDirectory: string | undefined;
       let stagedCover: DownloadStage | undefined;
       try {
+        throwIfAborted(signal, "PDF processing");
+        await validatePdfPrefix(pdfPath);
+        throwIfAborted(signal, "PDF processing");
+        const information = await run("pdfinfo", [pdfPath], signal);
+        if (information.stderr.trim() !== "") throw invalidPdf();
+        const pageCount = pageCountFrom(information.stdout);
+        throwIfAborted(signal, "PDF processing");
         temporaryDirectory = await mkdtemp(
           path.join(tmpdir(), "download-cover-"),
         );
@@ -232,8 +281,7 @@ export function createPdfTools(dependencies: Dependencies = {}) {
         if (png.isSymbolicLink() || !png.isFile()) {
           throw new Error("Rendered PNG must be a regular file");
         }
-        if (png.size > MAX_PNG_BYTES)
-          throw new Error("Rendered PNG is too large");
+        if (png.size > MAX_PNG_BYTES) throw invalidPdf();
 
         throwIfAborted(signal, "PDF processing");
         stagedCover = await fileStore.createStage(".webp");
@@ -250,7 +298,8 @@ export function createPdfTools(dependencies: Dependencies = {}) {
         await rm(temporaryDirectory, { recursive: true, force: true });
         temporaryDirectory = undefined;
         return { pageCount, stagedCover } as const;
-      } catch (error) {
+      } catch (caught) {
+        const error = classify(caught);
         const cleanupErrors: unknown[] = [];
         if (stagedCover) {
           await discardStage(stagedCover).catch((cleanupError: unknown) =>

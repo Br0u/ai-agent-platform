@@ -18,7 +18,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDownloadFileStore } from "./file-store";
-import { createPdfTools } from "./pdf-tools";
+import { createPdfTools, getPdfToolErrorCode, PdfToolError } from "./pdf-tools";
 
 type Outcome = Readonly<{
   stdout?: string;
@@ -28,6 +28,7 @@ type Outcome = Readonly<{
   pngBytes?: number;
   manualKillClose?: boolean;
   onClose?: () => void;
+  error?: Error;
 }>;
 
 const roots: string[] = [];
@@ -66,6 +67,7 @@ function fakeSpawn(outcomes: Outcome[]) {
         await truncate(`${prefix}.png`, outcome.pngBytes);
       }
       if (outcome.timeout) return;
+      if (outcome.error) child.emit("error", outcome.error);
       if (outcome.stdout) stdout.end(outcome.stdout);
       else stdout.end();
       if (outcome.stderr) stderr.end(outcome.stderr);
@@ -188,7 +190,7 @@ describe("PDF metadata and cover derivation", () => {
     const { pdfTools } = tools(spawnProcess, sharpStub(), 1);
     await expect(
       pdfTools.derive(await pdfAt(root), createDownloadFileStore(root)),
-    ).rejects.toThrow("timed out");
+    ).rejects.toThrow("PDF processing failed");
     expect(spawnProcess.mock.results[0]!.value.kill).toHaveBeenCalledWith(
       "SIGKILL",
     );
@@ -388,7 +390,7 @@ describe("PDF metadata and cover derivation", () => {
     const { pdfTools } = tools(spawnProcess, sharp);
     await expect(
       pdfTools.derive(await pdfAt(root), createDownloadFileStore(root)),
-    ).rejects.toThrow("too large");
+    ).rejects.toThrow("Invalid PDF");
     expect(sharp.factory).not.toHaveBeenCalled();
     const prefix = spawnProcess.mock.calls[1]![1].at(-1)!;
     await expect(readFile(`${prefix}.png`)).rejects.toMatchObject({
@@ -405,11 +407,138 @@ describe("PDF metadata and cover derivation", () => {
     const { pdfTools } = tools(spawnProcess, sharpStub({ fail: true }));
     await expect(
       pdfTools.derive(await pdfAt(root), createDownloadFileStore(root)),
-    ).rejects.toThrow("sharp failed");
+    ).rejects.toThrow("PDF processing failed");
     expect(await readdir(path.join(root, "staging"))).toEqual([]);
     const prefix = spawnProcess.mock.calls[1]![1].at(-1)!;
     await expect(readFile(`${prefix}.png`)).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+});
+
+describe("PDF tool error classification", () => {
+  async function rejected(promise: Promise<unknown>) {
+    try {
+      await promise;
+    } catch (error) {
+      return error;
+    }
+    throw new Error("Expected rejection");
+  }
+
+  it.each([
+    ["invalid prefix", [], "not a pdf"],
+    ["encrypted PDF", [{ stdout: "Pages: 1\nEncrypted: yes\n" }], "%PDF-1.4\n"],
+    [
+      "pdfinfo parse failure",
+      [{ code: 1, stderr: "Syntax Error at /private/customer.pdf" }],
+      "%PDF-1.4\n",
+    ],
+    [
+      "pdftoppm parse failure",
+      [{ stdout: "Pages: 1\n" }, { code: 1, stderr: "bad object" }],
+      "%PDF-1.4\n",
+    ],
+  ])(
+    "classifies %s as invalid_pdf with a safe public message",
+    async (_name, outcomes, contents) => {
+      const root = await temporaryRoot();
+      const { pdfTools } = tools(fakeSpawn(outcomes));
+      const input = await pdfAt(root, contents);
+      const error = await rejected(
+        pdfTools.derive(input, createDownloadFileStore(root)),
+      );
+
+      expect(error).toBeInstanceOf(PdfToolError);
+      expect(getPdfToolErrorCode(error)).toBe("invalid_pdf");
+      expect((error as Error).message).toBe("Invalid PDF");
+      expect((error as Error).message).not.toContain(input);
+      expect((error as Error).message).not.toContain("Syntax Error");
+    },
+  );
+
+  it("classifies spawn ENOENT as processing_failed without leaking the executable error", async () => {
+    const root = await temporaryRoot();
+    const spawnFailure = Object.assign(
+      new Error("spawn pdfinfo ENOENT at /private/bin/pdfinfo"),
+      { code: "ENOENT" },
+    );
+    const { pdfTools } = tools(fakeSpawn([{ error: spawnFailure }]));
+    const error = await rejected(
+      pdfTools.derive(await pdfAt(root), createDownloadFileStore(root)),
+    );
+
+    expect(error).toBeInstanceOf(PdfToolError);
+    expect(getPdfToolErrorCode(error)).toBe("processing_failed");
+    expect((error as Error).message).toBe("PDF processing failed");
+    expect((error as Error).message).not.toContain("/private/bin");
+  });
+
+  it("classifies a tool timeout as processing_failed", async () => {
+    const root = await temporaryRoot();
+    const { pdfTools } = tools(fakeSpawn([{ timeout: true }]), sharpStub(), 1);
+    const error = await rejected(
+      pdfTools.derive(await pdfAt(root), createDownloadFileStore(root)),
+    );
+
+    expect(error).toBeInstanceOf(PdfToolError);
+    expect(getPdfToolErrorCode(error)).toBe("processing_failed");
+  });
+
+  it("classifies Sharp failure as processing_failed", async () => {
+    const root = await temporaryRoot();
+    const { pdfTools } = tools(
+      fakeSpawn([{ stdout: "Pages: 1\n" }, { pngBytes: 1024 }]),
+      sharpStub({ fail: true }),
+    );
+    const error = await rejected(
+      pdfTools.derive(await pdfAt(root), createDownloadFileStore(root)),
+    );
+
+    expect(error).toBeInstanceOf(PdfToolError);
+    expect(getPdfToolErrorCode(error)).toBe("processing_failed");
+  });
+
+  it("preserves AbortError instead of turning cancellation into a PDF tool error", async () => {
+    const root = await temporaryRoot();
+    const controller = new AbortController();
+    controller.abort();
+    const { pdfTools } = tools(fakeSpawn([]));
+    const error = await rejected(
+      pdfTools.derive(
+        await pdfAt(root),
+        createDownloadFileStore(root),
+        controller.signal,
+      ),
+    );
+
+    expect(error).toMatchObject({ name: "AbortError" });
+    expect(error).not.toBeInstanceOf(PdfToolError);
+    expect(getPdfToolErrorCode(error)).toBeUndefined();
+    expect(getPdfToolErrorCode(new Error("invalid_pdf"))).toBeUndefined();
+  });
+
+  it("retains the primary classification when cleanup also fails", async () => {
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+    const originalCreateStage = store.createStage.bind(store);
+    vi.spyOn(store, "createStage").mockImplementation(async (extension) => {
+      const stage = await originalCreateStage(extension);
+      const close = stage.writable.close.bind(stage.writable);
+      stage.writable.close = vi.fn(async () => {
+        await close();
+        throw new Error("cleanup failed at /private/staging/cover.webp");
+      });
+      return stage;
+    });
+    const { pdfTools } = tools(
+      fakeSpawn([{ stdout: "Pages: 1\n" }, { pngBytes: 1024 }]),
+      sharpStub({ fail: true }),
+    );
+    const error = await rejected(pdfTools.derive(await pdfAt(root), store));
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(getPdfToolErrorCode(error)).toBe("processing_failed");
+    expect((error as Error).message).not.toContain("/private/staging");
   });
 });
