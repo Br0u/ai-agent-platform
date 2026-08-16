@@ -460,6 +460,78 @@ describe("downloadResourceService lifecycle", () => {
     expect(published.draftRevision).toBeNull();
   });
 
+  it("keeps public updatedAt bound to the published revision after a draft save", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-public-date",
+      adminLabel: "公开时间",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    const published = (await downloadResourceService.listPublicResources())[0]!;
+    await downloadResourceService.saveDraft(metadata(created.id, 4));
+    const afterDraftSave = (
+      await downloadResourceService.listPublicResources()
+    )[0]!;
+    expect(afterDraftSave.updatedAt).toBe(published.updatedAt);
+  });
+
+  it("publishes a metadata-only draft without deleting its shared PDF or cover", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-metadata-publish",
+      adminLabel: "元数据发布",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    const old = wiring.resources.get(created.id)!.publishedRevision!;
+    await downloadResourceService.saveDraft(metadata(created.id, 4));
+    const draft = wiring.resources.get(created.id)!.draftRevision!;
+    expect(draft.pdfObjectKey).toBe(old.pdfObjectKey);
+    expect(draft.coverObjectKey).toBe(old.coverObjectKey);
+    const published = await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 5,
+    });
+    expect(published.state).toBe("published");
+    expect(published.publishedRevision?.id).toBe(draft.id);
+    expect(wiring.revisions.has(old.id)).toBe(false);
+    expect(wiring.files.has(old.pdfObjectKey!)).toBe(true);
+    expect(wiring.files.has(old.coverObjectKey!)).toBe(true);
+  });
+
+  it("rejects a separately valid stale rowVersion without changing pointers or files", async () => {
+    const { downloadResourceService } = await import("./service");
+    const created = await downloadResourceService.createResource({
+      key: "yuanqi-stale",
+      adminLabel: "版本冲突",
+    });
+    await downloadResourceService.saveDraft(metadata(created.id, 1));
+    await downloadResourceService.attachUploadedPdf(upload(created.id, 2));
+    await downloadResourceService.publish({
+      id: created.id,
+      expectedRowVersion: 3,
+    });
+    const resource = wiring.resources.get(created.id)!;
+    const published = resource.publishedRevision!;
+    await expect(
+      downloadResourceService.saveDraft(metadata(created.id, 3)),
+    ).rejects.toThrow("DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT");
+    expect(wiring.resources.get(created.id)!.publishedRevision?.id).toBe(
+      published.id,
+    );
+    expect(wiring.files.has(published.pdfObjectKey!)).toBe(true);
+    expect(wiring.files.has(published.coverObjectKey!)).toBe(true);
+  });
+
   it("retains a cleanup row on deletion failure and retries it with the next mutation", async () => {
     const { downloadResourceService } = await import("./service");
     const created = await downloadResourceService.createResource({

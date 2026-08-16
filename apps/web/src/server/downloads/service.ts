@@ -366,7 +366,7 @@ function dtoRevision(revision: Revision | null) {
 async function verifiedPublic(
   resource: { key: string; updatedAt: Date } & Revision,
 ) {
-  if (!completeArtifact(resource)) return null;
+  if (!completeArtifact(resource) || !resource.publishedAt) return null;
   const artifactStats = await stats(resource);
   if (
     !artifactStats.pdfExists ||
@@ -387,7 +387,7 @@ async function verifiedPublic(
     coverUrl: `/api/downloads/${resource.key}/cover`,
     pageCount: resource.pageCount,
     byteSize: resource.byteSize,
-    updatedAt: resource.updatedAt.toISOString(),
+    updatedAt: resource.publishedAt.toISOString(),
   });
 }
 
