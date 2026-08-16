@@ -5,6 +5,20 @@ import {
   createDownloadResourceActionState,
   createDownloadResourceActions,
 } from "./actions";
+import type { DownloadResourceAdminDto } from "./contracts";
+
+const resource: DownloadResourceAdminDto = {
+  id: "11111111-1111-4111-8111-111111111111",
+  key: "vision-intro",
+  adminLabel: "视觉介绍",
+  state: "unpublished" as const,
+  adminStatus: "空记录" as const,
+  rowVersion: 1,
+  publishedRevision: null,
+  draftRevision: null,
+  createdAt: "2026-08-16T00:00:00.000Z",
+  updatedAt: "2026-08-16T00:00:00.000Z",
+};
 
 const actor = {
   userId: "11111111-1111-4111-8111-111111111111",
@@ -17,12 +31,12 @@ const actor = {
 
 function fixture() {
   const service = {
-    createResource: vi.fn(async () => ({})),
-    saveDraft: vi.fn(async () => ({})),
-    publish: vi.fn(async () => ({})),
-    downline: vi.fn(async () => ({})),
-    discardDraft: vi.fn(async () => ({})),
-    removeDraftFile: vi.fn(async () => ({})),
+    createResource: vi.fn(async () => resource),
+    saveDraft: vi.fn(async () => resource),
+    publish: vi.fn(async () => resource),
+    downline: vi.fn(async () => resource),
+    discardDraft: vi.fn(async () => resource),
+    removeDraftFile: vi.fn(async () => resource),
   };
   const access = { requirePermission: vi.fn(async () => actor) };
   const cache = { revalidatePath: vi.fn(), updateTag: vi.fn() };
@@ -64,7 +78,7 @@ describe("download resource actions", () => {
         createDownloadResourceActionState(),
         createForm(),
       ),
-    ).resolves.toEqual({ kind: "success" });
+    ).resolves.toEqual({ kind: "success", resource });
     expect(current.access.requirePermission).toHaveBeenCalledWith(
       "admin:downloads",
     );
@@ -80,6 +94,37 @@ describe("download resource actions", () => {
       "/downloads",
       "layout",
     );
+  });
+
+  it("returns the latest lifecycle resource snapshot and fails closed for bad DTOs", async () => {
+    const current = fixture();
+    const form = new FormData();
+    form.set("id", resource.id);
+    form.set("expectedRowVersion", "1");
+    const latest: DownloadResourceAdminDto = {
+      ...resource,
+      rowVersion: 2,
+      state: "published" as const,
+      adminStatus: "已发布" as const,
+    };
+    current.service.publish.mockResolvedValueOnce(latest);
+    await expect(
+      current.actions.publishDownloadResourceAction(
+        createDownloadResourceActionState(),
+        form,
+      ),
+    ).resolves.toEqual({ kind: "success", resource: latest });
+    current.service.createResource.mockResolvedValueOnce({
+      key: "unsafe",
+    } as never);
+    await expect(
+      current.actions.createDownloadResourceAction(
+        createDownloadResourceActionState(),
+        createForm(),
+      ),
+    ).resolves.toEqual({ kind: "internal_error" });
+    expect(current.cache.revalidatePath).toHaveBeenCalledTimes(2);
+    expect(current.reportInternalError).toHaveBeenCalled();
   });
 
   it("returns field errors before authorization for duplicate or invalid input", async () => {
@@ -171,7 +216,7 @@ describe("download resource actions", () => {
         createDownloadResourceActionState(),
         createForm(),
       ),
-    ).resolves.toEqual({ kind: "success" });
+    ).resolves.toEqual({ kind: "success", resource });
     expect(current.reportInternalError).toHaveBeenCalled();
   });
 });

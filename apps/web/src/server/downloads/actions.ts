@@ -6,8 +6,10 @@ import { z } from "zod";
 import { AuthAccessError, requirePermission } from "../auth/access";
 import {
   createDownloadResourceInputSchema,
+  downloadResourceAdminDtoSchema,
   mutateDownloadResourceInputSchema,
   saveDownloadDraftInputSchema,
+  type DownloadResourceAdminDto,
 } from "./contracts";
 import { downloadResourceService } from "./service";
 
@@ -21,7 +23,7 @@ type DownloadMutationInput = z.infer<typeof mutateDownloadResourceInputSchema>;
 
 export type DownloadResourceActionState =
   | { kind: "idle" }
-  | { kind: "success" }
+  | { kind: "success"; resource: DownloadResourceAdminDto }
   | { kind: "validation_error"; fieldErrors: Record<string, string[]> }
   | {
       kind: "authentication_required";
@@ -48,18 +50,27 @@ type DownloadActionService = {
   createResource(
     input: unknown,
     context?: DownloadRequestContext,
-  ): Promise<unknown>;
-  saveDraft(input: unknown, context?: DownloadRequestContext): Promise<unknown>;
-  publish(input: unknown, context?: DownloadRequestContext): Promise<unknown>;
-  downline(input: unknown, context?: DownloadRequestContext): Promise<unknown>;
+  ): Promise<DownloadResourceAdminDto>;
+  saveDraft(
+    input: unknown,
+    context?: DownloadRequestContext,
+  ): Promise<DownloadResourceAdminDto>;
+  publish(
+    input: unknown,
+    context?: DownloadRequestContext,
+  ): Promise<DownloadResourceAdminDto>;
+  downline(
+    input: unknown,
+    context?: DownloadRequestContext,
+  ): Promise<DownloadResourceAdminDto>;
   discardDraft(
     input: unknown,
     context?: DownloadRequestContext,
-  ): Promise<unknown>;
+  ): Promise<DownloadResourceAdminDto>;
   removeDraftFile(
     input: unknown,
     context?: DownloadRequestContext,
-  ): Promise<unknown>;
+  ): Promise<DownloadResourceAdminDto>;
 };
 
 type DownloadActionsDependencies = {
@@ -293,17 +304,22 @@ export function createDownloadResourceActions(
 ) {
   async function run<T>(
     input: Parsed<T>,
-    mutation: (value: T, context: DownloadRequestContext) => Promise<unknown>,
+    mutation: (
+      value: T,
+      context: DownloadRequestContext,
+    ) => Promise<DownloadResourceAdminDto>,
   ): Promise<DownloadResourceActionState> {
     if (!input.success) return input.state;
     try {
       await dependencies.access.requirePermission("admin:downloads");
-      await mutation(input.data, dependencies.getContext());
+      const result = await mutation(input.data, dependencies.getContext());
+      const resource = downloadResourceAdminDtoSchema.safeParse(result);
+      if (!resource.success) throw new Error("Invalid download resource DTO");
+      invalidate(dependencies);
+      return { kind: "success", resource: resource.data };
     } catch (error) {
       return safeErrorState(error, dependencies);
     }
-    invalidate(dependencies);
-    return { kind: "success" };
   }
 
   return {
