@@ -1,6 +1,13 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import {
+  type RefObject,
+  useActionState,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 
 import { AssistantSkillModal } from "./assistant-skill-modal";
 import {
@@ -84,6 +91,19 @@ function replaceResource(
   );
 }
 
+function uploadErrorMessage(response: Response, code: unknown) {
+  if (response.status === 409 || code === "state_conflict")
+    return "资源已更新，请刷新页面后重试。";
+  if (code === "invalid_pdf") return "请上传可打开的 PDF 文件后重试。";
+  if (
+    response.status === 401 ||
+    code === "authentication_required" ||
+    code === "permission_denied"
+  )
+    return "登录状态已失效，请重新登录后重试。";
+  return "上传未完成，请稍后重试。";
+}
+
 function FormMessage({ state }: { state: ActionState }) {
   return (
     <p
@@ -96,9 +116,74 @@ function FormMessage({ state }: { state: ActionState }) {
   );
 }
 
+function ConfirmationDialog({
+  confirmLabel,
+  description,
+  onClose,
+  onConfirm,
+  pending,
+  resource,
+  trigger,
+}: {
+  confirmLabel: string;
+  description: string;
+  onClose(): void;
+  onConfirm(formData: FormData): void;
+  pending: boolean;
+  resource: DownloadResourceAdminDto;
+  trigger: RefObject<HTMLButtonElement | null>;
+}) {
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  const close = () => {
+    onClose();
+    queueMicrotask(() => trigger.current?.focus());
+  };
+  return (
+    <AssistantSkillModal
+      closeDisabled={pending}
+      initialFocusRef={confirmRef}
+      labelledBy={titleId}
+      onClose={close}
+    >
+      <section className="download-resource-manager__confirm">
+        <h2 id={titleId}>确认{confirmLabel}</h2>
+        <p>{description}</p>
+        <form
+          action={onConfirm}
+          className="download-resource-manager__dialog-actions"
+        >
+          <input name="id" type="hidden" value={resource.id} />
+          <input
+            name="expectedRowVersion"
+            type="hidden"
+            value={resource.rowVersion}
+          />
+          <button
+            className="download-resource-manager__button download-resource-manager__button--secondary"
+            disabled={pending}
+            onClick={close}
+            type="button"
+          >
+            取消
+          </button>
+          <button
+            className="download-resource-manager__button download-resource-manager__button--danger"
+            disabled={pending}
+            ref={confirmRef}
+            type="submit"
+          >
+            {pending ? "正在处理…" : `确认${confirmLabel}`}
+          </button>
+        </form>
+      </section>
+    </AssistantSkillModal>
+  );
+}
+
 function LifecycleForm({
   action,
-  confirm,
+  confirmation,
   disabled = false,
   label,
   resource,
@@ -106,7 +191,7 @@ function LifecycleForm({
   tone = "secondary",
 }: {
   action: ServerAction;
-  confirm?: string;
+  confirmation: { label: string; description: string };
   disabled?: boolean;
   label: string;
   resource: DownloadResourceAdminDto;
@@ -114,31 +199,58 @@ function LifecycleForm({
   tone?: "primary" | "secondary" | "danger";
 }) {
   const [state, formAction, pending] = useActionState(action, idle);
+  const [confirming, setConfirming] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const triggerId = `download-resource-action-${resource.id}-${label}`;
   useEffect(() => {
-    if (state.kind === "success" && state.resource) onResource(state.resource);
-  }, [state, onResource]);
+    if (state.kind !== "success" || !state.resource) return;
+    const nextResource = state.resource;
+    onResource(nextResource);
+    setTimeout(() => {
+      const nextTrigger = document.getElementById(triggerId);
+      if (nextTrigger instanceof HTMLButtonElement && !nextTrigger.disabled) {
+        nextTrigger.focus();
+        return;
+      }
+      document
+        .getElementById(`download-resource-list-item-${nextResource.id}`)
+        ?.focus();
+    }, 0);
+  }, [state, onResource, triggerId]);
   return (
-    <form
-      action={formAction}
-      onSubmit={(event) => {
-        if (confirm && !window.confirm(confirm)) event.preventDefault();
-      }}
-    >
-      <input name="id" type="hidden" value={resource.id} />
-      <input
-        name="expectedRowVersion"
-        type="hidden"
-        value={resource.rowVersion}
-      />
-      <button
-        className={`download-resource-manager__button download-resource-manager__button--${tone}`}
-        disabled={disabled || pending}
-        type="submit"
-      >
-        {pending ? "正在处理…" : label}
-      </button>
-      <FormMessage state={state} />
-    </form>
+    <>
+      <form action={formAction}>
+        <input name="id" type="hidden" value={resource.id} />
+        <input
+          name="expectedRowVersion"
+          type="hidden"
+          value={resource.rowVersion}
+        />
+        <button
+          aria-busy={pending ? true : undefined}
+          className={`download-resource-manager__button download-resource-manager__button--${tone}`}
+          disabled={disabled || pending}
+          id={triggerId}
+          onClick={() => setConfirming(true)}
+          ref={trigger}
+          type="button"
+        >
+          {pending ? "正在处理…" : label}
+        </button>
+        <FormMessage state={state} />
+      </form>
+      {confirming ? (
+        <ConfirmationDialog
+          confirmLabel={confirmation.label}
+          description={confirmation.description}
+          onClose={() => setConfirming(false)}
+          onConfirm={formAction}
+          pending={pending}
+          resource={resource}
+          trigger={trigger}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -224,6 +336,7 @@ function CreateResourceDialog({
               取消
             </button>
             <button
+              aria-busy={pending ? true : undefined}
               className="download-resource-manager__button"
               disabled={pending}
               type="submit"
@@ -251,7 +364,8 @@ function Editor({
   onResource(resource: DownloadResourceAdminDto): void;
   onUpload(file: File): void;
 }) {
-  const revision = resource.draftRevision ?? resource.publishedRevision;
+  const draft = resource.draftRevision;
+  const revision = draft ?? resource.publishedRevision;
   const [state, formAction, pending] = useActionState(
     saveDownloadDraftAction as ServerAction,
     idle,
@@ -268,8 +382,13 @@ function Editor({
         }
       : suggestDownloadPolicies(getCategory(resource)),
   );
+  const fieldsId = useId();
+  const errors =
+    state.kind === "validation_error" ? (state.fieldErrors ?? {}) : {};
+  const errorId = (name: string) => `${fieldsId}-${name}-error`;
   const disabled = uploading || pending;
-  const complete = Boolean(revision?.pdfObjectKey && revision?.coverObjectKey);
+  const complete = Boolean(draft?.pdfObjectKey && draft?.coverObjectKey);
+  const canUpload = Boolean(draft) && resource.adminStatus !== "文件失效";
   const canPublish =
     resource.adminStatus !== "文件失效" &&
     Boolean(
@@ -296,17 +415,22 @@ function Editor({
           <h2 id="download-resource-editor-heading">{resource.adminLabel}</h2>
           <span>{resource.key}</span>
         </div>
-        <div className="download-resource-manager__state" aria-label="资源状态">
+        <div
+          className="download-resource-manager__state"
+          aria-label="资源发布状态"
+        >
           <strong>{statusLabels[resource.adminStatus]}</strong>
           <span>版本 {resource.rowVersion}</span>
           <span>
-            发布 {formatTime(resource.publishedRevision?.publishedAt ?? null)}
+            已发布于{" "}
+            {formatTime(resource.publishedRevision?.publishedAt ?? null)}
           </span>
+          {draft ? <span>上次保存 {formatTime(draft.createdAt)}</span> : null}
         </div>
       </header>
 
       <div className="download-resource-manager__artifact">
-        {complete ? (
+        {complete && resource.adminStatus !== "文件失效" ? (
           // Authenticated draft covers cannot use the image optimizer because it has no staff session.
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -325,10 +449,12 @@ function Editor({
           <strong>资源首页</strong>
           <span>
             {complete
-              ? `${revision?.pageCount} 页 · ${revision?.byteSize} bytes`
-              : "尚未上传可用 PDF"}
+              ? `${draft?.pageCount} 页 · ${draft?.byteSize} bytes`
+              : draft
+                ? "尚未上传可用 PDF"
+                : "当前展示已发布版本；编辑后可上传新 PDF"}
           </span>
-          {complete ? (
+          {complete && resource.adminStatus !== "文件失效" ? (
             <a
               href={`/api/v1/admin/downloads/${resource.id}/draft/pdf`}
               rel="noreferrer"
@@ -399,25 +525,41 @@ function Editor({
             <label>
               资源名称
               <input
+                aria-describedby={errors.name ? errorId("name") : undefined}
+                aria-invalid={errors.name ? true : undefined}
                 defaultValue={revision?.name ?? ""}
                 maxLength={160}
                 name="name"
                 required
               />
+              {errors.name ? (
+                <small id={errorId("name")}>{errors.name[0]}</small>
+              ) : null}
             </label>
             <label>
               所属产品
               <input
+                aria-describedby={
+                  errors.product ? errorId("product") : undefined
+                }
+                aria-invalid={errors.product ? true : undefined}
                 defaultValue={revision?.product ?? ""}
                 maxLength={120}
                 name="product"
                 required
               />
+              {errors.product ? (
+                <small id={errorId("product")}>{errors.product[0]}</small>
+              ) : null}
             </label>
             <label>
               资源分类
               <select
                 aria-label="资源分类"
+                aria-describedby={
+                  errors.category ? errorId("category") : undefined
+                }
+                aria-invalid={errors.category ? true : undefined}
                 name="category"
                 onChange={(event) => {
                   const next = event.target.value as typeof category;
@@ -433,30 +575,53 @@ function Editor({
                   </option>
                 ))}
               </select>
+              {errors.category ? (
+                <small id={errorId("category")}>{errors.category[0]}</small>
+              ) : null}
             </label>
             <label>
               资料类型
               <input
+                aria-describedby={
+                  errors.resourceType ? errorId("resourceType") : undefined
+                }
+                aria-invalid={errors.resourceType ? true : undefined}
                 defaultValue={revision?.resourceType ?? ""}
                 maxLength={80}
                 name="resourceType"
                 required
               />
+              {errors.resourceType ? (
+                <small id={errorId("resourceType")}>
+                  {errors.resourceType[0]}
+                </small>
+              ) : null}
             </label>
             <label>
               排序
               <input
+                aria-describedby={
+                  errors.sortOrder ? errorId("sortOrder") : undefined
+                }
+                aria-invalid={errors.sortOrder ? true : undefined}
                 defaultValue={revision?.sortOrder ?? 0}
                 min={0}
                 name="sortOrder"
                 required
                 type="number"
               />
+              {errors.sortOrder ? (
+                <small id={errorId("sortOrder")}>{errors.sortOrder[0]}</small>
+              ) : null}
             </label>
             <label>
               预览权限
               <select
                 aria-label="预览权限"
+                aria-describedby={
+                  errors.previewPolicy ? errorId("previewPolicy") : undefined
+                }
+                aria-invalid={errors.previewPolicy ? true : undefined}
                 name="previewPolicy"
                 onChange={(event) => {
                   setExplicitPolicy(true);
@@ -476,11 +641,20 @@ function Editor({
                 <option value="public">可预览</option>
                 <option value="contact">不可预览</option>
               </select>
+              {errors.previewPolicy ? (
+                <small id={errorId("previewPolicy")}>
+                  {errors.previewPolicy[0]}
+                </small>
+              ) : null}
             </label>
             <label>
               下载权限
               <select
                 aria-label="下载权限"
+                aria-describedby={
+                  errors.downloadPolicy ? errorId("downloadPolicy") : undefined
+                }
+                aria-invalid={errors.downloadPolicy ? true : undefined}
                 name="downloadPolicy"
                 onChange={(event) => {
                   setExplicitPolicy(true);
@@ -499,33 +673,51 @@ function Editor({
                   可下载
                 </option>
               </select>
+              {errors.downloadPolicy ? (
+                <small id={errorId("downloadPolicy")}>
+                  {errors.downloadPolicy[0]}
+                </small>
+              ) : null}
             </label>
             <label className="download-resource-manager__wide-field">
               资源简介
               <textarea
+                aria-describedby={
+                  errors.description ? errorId("description") : undefined
+                }
+                aria-invalid={errors.description ? true : undefined}
                 defaultValue={revision?.description ?? ""}
                 maxLength={500}
                 name="description"
                 required
                 rows={3}
               />
+              {errors.description ? (
+                <small id={errorId("description")}>
+                  {errors.description[0]}
+                </small>
+              ) : null}
             </label>
           </fieldset>
         )}
         <div className="download-resource-manager__editor-actions">
           <button
+            aria-busy={pending ? true : undefined}
             className="download-resource-manager__button"
             disabled={disabled}
             type="submit"
           >
             {pending ? "正在保存…" : publishedReadOnly ? "编辑" : "保存草稿"}
           </button>
-          <label className="download-resource-manager__upload">
+          <label
+            aria-disabled={disabled || !canUpload ? true : undefined}
+            className="download-resource-manager__upload"
+          >
             上传 PDF
             <input
               accept="application/pdf,.pdf"
               aria-label="上传 PDF"
-              disabled={disabled}
+              disabled={disabled || !canUpload}
               onChange={(event) => {
                 const file = event.currentTarget.files?.[0];
                 if (file) onUpload(file);
@@ -561,6 +753,10 @@ function Editor({
       >
         <LifecycleForm
           action={publishDownloadResourceAction as ServerAction}
+          confirmation={{
+            label: "发布",
+            description: "发布后，公开下载中心会按当前资料权限展示此资源。",
+          }}
           disabled={disabled || !canPublish}
           label="发布资源"
           resource={resource}
@@ -569,7 +765,10 @@ function Editor({
         />
         <LifecycleForm
           action={downlineDownloadResourceAction as ServerAction}
-          confirm="下线后，公开下载中心将不再展示此资源。确定下线吗？"
+          confirmation={{
+            label: "下线",
+            description: "下线后，公开下载中心将不再展示此资源。",
+          }}
           disabled={disabled || !canDownline}
           label="下线资源"
           resource={resource}
@@ -577,7 +776,10 @@ function Editor({
         />
         <LifecycleForm
           action={discardDownloadDraftAction as ServerAction}
-          confirm="丢弃当前草稿会删除未发布的编辑内容。确定继续吗？"
+          confirmation={{
+            label: "丢弃草稿",
+            description: "丢弃当前草稿会删除未发布的编辑内容。",
+          }}
           disabled={disabled || !resource.draftRevision}
           label="丢弃草稿"
           resource={resource}
@@ -585,7 +787,10 @@ function Editor({
         />
         <LifecycleForm
           action={removeDownloadDraftFileAction as ServerAction}
-          confirm="移除草稿 PDF 后需重新上传。确定继续吗？"
+          confirmation={{
+            label: "移除草稿文件",
+            description: "移除草稿 PDF 后需要重新上传。",
+          }}
           disabled={disabled || resource.state === "published" || !complete}
           label="移除草稿文件"
           resource={resource}
@@ -612,8 +817,10 @@ export function DownloadResourceManager({
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [category, setCategory] = useState("");
+  const [product, setProduct] = useState("");
   const [newOpen, setNewOpen] = useState(false);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState("");
   const controller = useRef<AbortController | null>(null);
   const newButton = useRef<HTMLButtonElement>(null);
   const selected =
@@ -629,6 +836,7 @@ export function DownloadResourceManager({
     if (controller.current) return;
     const signal = new AbortController();
     controller.current = signal;
+    setUploadError("");
     setUploadingId(resource.id);
     try {
       const body = new FormData();
@@ -642,7 +850,19 @@ export function DownloadResourceManager({
           signal: signal.signal,
         },
       );
-      if (!response.ok) throw new Error("upload_failed");
+      if (!response.ok) {
+        const body: unknown = await response.json().catch(() => null);
+        const error =
+          typeof body === "object" && body !== null
+            ? Reflect.get(body, "error")
+            : null;
+        const code =
+          typeof error === "object" && error !== null
+            ? Reflect.get(error, "code")
+            : null;
+        setUploadError(uploadErrorMessage(response, code));
+        return;
+      }
       const payload: unknown = await response.json();
       const parsed =
         typeof payload === "object" && payload !== null
@@ -650,11 +870,14 @@ export function DownloadResourceManager({
               Reflect.get(payload, "resource"),
             )
           : null;
-      if (parsed === null || !parsed.success) throw new Error("upload_failed");
+      if (parsed === null || !parsed.success) {
+        setUploadError("上传未完成，请稍后重试。");
+        return;
+      }
       adopt(parsed.data);
     } catch (error) {
       if (!(error instanceof DOMException && error.name === "AbortError"))
-        window.alert("PDF 上传未完成，请检查文件后重试。");
+        setUploadError("上传未完成，请稍后重试。");
     } finally {
       if (controller.current === signal) controller.current = null;
       setUploadingId(null);
@@ -664,19 +887,43 @@ export function DownloadResourceManager({
     setNewOpen(false);
     queueMicrotask(() => newButton.current?.focus());
   };
+  const products = Array.from(
+    new Set(
+      resources
+        .flatMap((resource) => [
+          resource.draftRevision,
+          resource.publishedRevision,
+        ])
+        .flatMap((revision) => (revision ? [revision.product] : [])),
+    ),
+  ).sort((a, b) => a.localeCompare(b, "zh-CN"));
   const filtered = resources.filter((resource) => {
-    const text = `${resource.key} ${resource.adminLabel}`.toLocaleLowerCase(
-      "zh-CN",
+    const revisions = [
+      resource.draftRevision,
+      resource.publishedRevision,
+    ].filter(
+      (revision): revision is NonNullable<typeof revision> => revision !== null,
     );
+    const text = [
+      resource.key,
+      resource.adminLabel,
+      ...revisions.flatMap((revision) => [revision.name, revision.product]),
+    ]
+      .join(" ")
+      .toLocaleLowerCase("zh-CN");
     return (
       (!search || text.includes(search.toLocaleLowerCase("zh-CN"))) &&
       (!status || resource.adminStatus === status) &&
-      (!category || getCategory(resource) === category)
+      (!category || getCategory(resource) === category) &&
+      (!product || revisions.some((revision) => revision.product === product))
     );
   });
 
   return (
-    <main className="download-resource-manager">
+    <main
+      aria-busy={uploadingId !== null ? true : undefined}
+      className="download-resource-manager"
+    >
       <header className="download-resource-manager__heading">
         <div>
           <p>Content operations</p>
@@ -685,6 +932,7 @@ export function DownloadResourceManager({
         </div>
         <button
           className="download-resource-manager__button"
+          disabled={uploadingId !== null}
           onClick={() => setNewOpen(true)}
           ref={newButton}
           type="button"
@@ -697,6 +945,7 @@ export function DownloadResourceManager({
           搜索资源
           <input
             aria-label="搜索资源"
+            disabled={uploadingId !== null}
             onChange={(event) => setSearch(event.target.value)}
             type="search"
             value={search}
@@ -706,6 +955,7 @@ export function DownloadResourceManager({
           资源状态
           <select
             aria-label="资源状态"
+            disabled={uploadingId !== null}
             onChange={(event) => setStatus(event.target.value)}
             value={status}
           >
@@ -721,6 +971,7 @@ export function DownloadResourceManager({
           资源分类
           <select
             aria-label="筛选资源分类"
+            disabled={uploadingId !== null}
             onChange={(event) => setCategory(event.target.value)}
             value={category}
           >
@@ -732,6 +983,25 @@ export function DownloadResourceManager({
             ))}
           </select>
         </label>
+        <label>
+          筛选产品
+          <select
+            aria-label="筛选产品"
+            disabled={uploadingId !== null}
+            onChange={(event) => setProduct(event.target.value)}
+            value={product}
+          >
+            <option value="">全部产品</option>
+            {products.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="download-resource-manager__count">
+          可见资源 {filtered.length} 条
+        </span>
       </div>
       <div className="download-resource-manager__workspace">
         <aside
@@ -757,6 +1027,8 @@ export function DownloadResourceManager({
                             resource.id === selectedId ? "page" : undefined
                           }
                           onClick={() => setSelectedId(resource.id)}
+                          disabled={uploadingId !== null}
+                          id={`download-resource-list-item-${resource.id}`}
                           type="button"
                         >
                           <strong>{resource.adminLabel}</strong>
@@ -793,6 +1065,15 @@ export function DownloadResourceManager({
           )}
         </div>
       </div>
+      {uploadError ? (
+        <p
+          aria-live="polite"
+          className="download-resource-manager__upload-error"
+          role="status"
+        >
+          {uploadError}
+        </p>
+      ) : null}
       {newOpen ? (
         <CreateResourceDialog onClose={closeNew} onCreated={adopt} />
       ) : null}

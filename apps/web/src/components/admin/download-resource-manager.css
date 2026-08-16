@@ -64,8 +64,11 @@
   background: #9b372b;
 }
 .download-resource-manager__button:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.58;
+}
+.download-resource-manager__button[aria-busy="true"] {
+  cursor: wait;
 }
 .download-resource-manager :focus-visible {
   outline: 3px solid color-mix(in srgb, var(--color-signal) 38%, transparent);
@@ -73,12 +76,17 @@
 }
 .download-resource-manager__filters {
   display: grid;
-  grid-template-columns: minmax(220px, 1.5fr) repeat(2, minmax(132px, 0.7fr));
+  grid-template-columns: minmax(220px, 1.5fr) repeat(3, minmax(132px, 0.7fr));
   gap: 12px;
   margin: 20px 0;
   padding: 16px;
   border: 1px solid var(--color-workspace-line);
   background: var(--color-surface);
+}
+.download-resource-manager__count {
+  align-self: end;
+  color: var(--color-muted);
+  font: 650 10px/1.4 var(--font-mono);
 }
 .download-resource-manager__filters label,
 .download-resource-manager__form label,
@@ -281,12 +289,22 @@
   opacity: 0;
   cursor: pointer;
 }
+.download-resource-manager__upload[aria-disabled="true"],
+.download-resource-manager__upload[aria-disabled="true"] input {
+  cursor: not-allowed;
+}
 .download-resource-manager__uploading,
 .download-resource-manager__message,
 .download-resource-manager__lifecycle p {
   margin: 0;
   color: var(--color-muted);
   font-size: 12px;
+}
+.download-resource-manager__upload-error {
+  margin: 12px 0 0;
+  color: #8d3428;
+  font-size: 12px;
+  font-weight: 700;
 }
 .download-resource-manager__lifecycle {
   padding: 16px 18px;
@@ -307,6 +325,31 @@
   border: 1px solid var(--color-workspace-line);
   background: var(--color-surface);
   box-shadow: 0 16px 48px rgb(0 0 0 / 0.2);
+}
+.download-resource-manager__confirm {
+  width: min(420px, calc(100vw - 28px));
+  padding: 22px;
+  border: 1px solid var(--color-workspace-line);
+  background: var(--color-surface);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.2);
+}
+.download-resource-manager__confirm h2 {
+  font-size: 22px;
+}
+.download-resource-manager__confirm p {
+  color: var(--color-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.assistant-skill-dialog:has(.download-resource-manager__dialog),
+.assistant-skill-dialog:has(.download-resource-manager__confirm) {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  background: rgb(12 22 32 / 0.4);
 }
 .download-resource-manager__dialog header {
   display: block;
