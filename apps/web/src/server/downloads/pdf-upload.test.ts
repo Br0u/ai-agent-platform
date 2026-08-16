@@ -447,6 +447,8 @@ describe("bounded PDF multipart upload", () => {
     await delay(20);
     expect(writes).toBe(1);
     expect(peakQueuedBytes).toBeLessThanOrEqual(128 * 1024);
+    // Allows several 64 KiB queues across Request, Readable.fromWeb, and Busboy.
+    expect(sent).toBeLessThanOrEqual(512 * 1024);
     releaseFirstWrite();
 
     const result = await upload;
