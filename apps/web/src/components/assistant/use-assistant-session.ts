@@ -105,6 +105,7 @@ export type AssistantSession = {
   requestStatus: AssistantRequestStatus;
   lastFailedMessage: string | null;
   validationError: AssistantValidationError | null;
+  preserveOnNextPathnameChange: (pathname: string) => void;
   setDraft: (draft: string) => void;
   submit: (message?: string) => Promise<void>;
   retry: () => Promise<void>;
@@ -345,6 +346,7 @@ export function useAssistantSession(
   const activeRequest = useRef<ActiveAssistantRequest | null>(null);
   const nextMessageId = useRef(1);
   const previousPathname = useRef(pathname);
+  const preservedPathname = useRef<string | null>(null);
 
   const replaceMessages = useCallback(
     (update: (current: AssistantMessage[]) => AssistantMessage[]) => {
@@ -373,7 +375,10 @@ export function useAssistantSession(
 
   useLayoutEffect(() => {
     if (previousPathname.current === pathname) return;
+    const preserveSession = preservedPathname.current === pathname;
+    preservedPathname.current = null;
     previousPathname.current = pathname;
+    if (preserveSession) return;
     requestToken.current += 1;
     cancelActiveRequest(REQUEST_CANCELLED);
     messagesRef.current = [];
@@ -714,6 +719,10 @@ export function useAssistantSession(
     );
   }, []);
 
+  const preserveOnNextPathnameChange = useCallback((nextPathname: string) => {
+    preservedPathname.current = nextPathname;
+  }, []);
+
   return {
     draft,
     messages,
@@ -721,6 +730,7 @@ export function useAssistantSession(
     requestStatus,
     lastFailedMessage,
     validationError,
+    preserveOnNextPathnameChange,
     setDraft,
     submit,
     retry,

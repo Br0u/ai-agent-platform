@@ -680,7 +680,7 @@ describe("useAssistantSession", () => {
     });
   });
 
-  it("cancels an active request and clears all page memory on pathname changes", async () => {
+  it("cancels an active request and clears all page memory on non-handoff pathname changes", async () => {
     let resolve!: (response: Response) => void;
     vi.mocked(fetch).mockReturnValue(new Promise((done) => (resolve = done)));
     const { result, rerender } = renderHook(
@@ -694,7 +694,7 @@ describe("useAssistantSession", () => {
     });
     expect(result.current.requestStatus).toBe("sending");
 
-    rerender({ pathname: "/assistant" });
+    rerender({ pathname: "/product" });
 
     expect(result.current.requestStatus).toBe("idle");
     expect(result.current.messages).toEqual([]);
