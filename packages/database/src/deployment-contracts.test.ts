@@ -29,6 +29,47 @@ const shellTracingDirective =
 const hasShellTracingDirective = (script: string) =>
   shellTracingDirective.test(script);
 
+const writeEmptyDownloadRestoreBundle = (
+  fixture: string,
+  backupFile: string,
+  dumpSha256: string,
+  counts: { revisions: number; artifacts: number; files: number },
+) => {
+  const downloadManifest = "format_version=1\n";
+  writeFileSync(
+    path.join(fixture, "download-files.manifest"),
+    downloadManifest,
+    { mode: 0o600 },
+  );
+  writeFileSync(
+    path.join(fixture, "skill-backup.manifest"),
+    `format_version=2
+dump_sha256=${dumpSha256}
+skill_registry_schema_version=1
+skill_revision_count=${counts.revisions}
+skill_artifact_count=${counts.artifacts}
+skill_file_count=${counts.files}
+download_manifest_sha256=${createHash("sha256").update(downloadManifest).digest("hex")}
+download_artifact_count=0
+download_artifact_bytes=0
+`,
+    { mode: 0o600 },
+  );
+  return spawnSync(
+    "tar",
+    [
+      "-cf",
+      backupFile,
+      "-C",
+      fixture,
+      "skill-backup.manifest",
+      "download-files.manifest",
+      "database.dump",
+    ],
+    { encoding: "utf8" },
+  );
+};
+
 const composeSecretKeys = [
   "POSTGRES_PASSWORD",
   "MIGRATOR_DATABASE_PASSWORD",
@@ -3776,6 +3817,9 @@ secrets:
     expect(packageScripts.scripts?.["restore:lifecycle:test"]).toContain(
       "run-restore-docker-lifecycle.sh controlled-failure",
     );
+    expect(packageScripts.scripts?.["restore:lifecycle:test"]).toContain(
+      "run-restore-docker-lifecycle.sh corruption",
+    );
   });
 
   it("defines an isolated Skill Registry E2E and documents its runtime boundary", () => {
@@ -5560,8 +5604,33 @@ exit 0
     );
     expect(script).toContain("skill-backup.manifest");
     expect(script).toContain("database.dump");
-    expect(script).toContain("tar -tf");
-    expect(script).toContain("tar -tvf");
+    expect(script).toContain("tar -Ptf");
+    expect(script).toContain("tar -Ptvf");
+    expect(script).toContain("RESTORE_MAX_ENCRYPTED_BYTES:-34359738368");
+    expect(script).toContain("RESTORE_MAX_DECRYPTED_BYTES:-25769803776");
+    expect(read(".env.example")).toContain(
+      "RESTORE_MAX_ENCRYPTED_BYTES=34359738368",
+    );
+    expect(read(".env.example")).toContain(
+      "RESTORE_MAX_DECRYPTED_BYTES=25769803776",
+    );
+    expect(script).toContain("archive-declared-sizes");
+    expect(script).toContain("archive_expanded_bytes");
+    expect(script.indexOf("archive-declared-sizes")).toBeLessThan(
+      script.indexOf('tar -xf "$bundle"'),
+    );
+    expect(script).toContain('tar -xOf "$bundle" download-files.manifest');
+    expect(script).toContain("tail -c 1");
+    expect(script).toContain(
+      "find /download-resources -type d -exec chmod 0750 {} +",
+    );
+    expect(script).toContain(
+      "find /download-resources -type f -exec chmod 0640 {} +",
+    );
+    expect(script).toContain(
+      "find /download-resources/objects -type f -exec sha256sum {} +",
+    );
+    expect(script).toContain("restored download artifact verification failed");
     expect(script).toContain("manifest_format_version");
     expect(script).toContain("manifest_dump_sha256");
     expect(script).toContain("actual_dump_sha256");
@@ -5579,8 +5648,8 @@ exit 0
     expect(script).toContain("--env-file");
     expect(script).not.toMatch(/docker run[^\n]*-e\s+POSTGRES_/u);
     expect(script).not.toContain("POSTGRES_PASSWORD=");
-    expect(script).toContain('expected_migrations="11"');
-    expect(script).toContain('expected_latest_migration="1786517193087"');
+    expect(script).toContain('expected_migrations="12"');
+    expect(script).toContain('expected_latest_migration="1786858709269"');
     expect(script).toContain("migration_count");
     expect(script).toContain("latest_migration");
     expect(script).toContain("users_email_lower_unique");
@@ -6818,7 +6887,6 @@ esac
     const backupFile = path.join(sandbox, "backup.dump.gpg");
     const keyFile = path.join(sandbox, "encryption-key");
     const dumpFile = path.join(fixture, "database.dump");
-    const manifestFile = path.join(fixture, "skill-backup.manifest");
     const script = path.join(root, "infra/docker/restore-drill.sh");
 
     try {
@@ -6832,28 +6900,11 @@ esac
       const dumpSha256 = createHash("sha256")
         .update(readFileSync(dumpFile))
         .digest("hex");
-      writeFileSync(
-        manifestFile,
-        `format_version=1
-dump_sha256=${dumpSha256}
-skill_registry_schema_version=1
-skill_revision_count=0
-skill_artifact_count=0
-skill_file_count=0
-`,
-        { mode: 0o600 },
-      );
-      const archive = spawnSync(
-        "tar",
-        [
-          "-cf",
-          backupFile,
-          "-C",
-          fixture,
-          "skill-backup.manifest",
-          "database.dump",
-        ],
-        { encoding: "utf8" },
+      const archive = writeEmptyDownloadRestoreBundle(
+        fixture,
+        backupFile,
+        dumpSha256,
+        { revisions: 0, artifacts: 0, files: 0 },
       );
       expect(archive.status, `${archive.stdout}${archive.stderr}`).toBe(0);
 
@@ -6928,11 +6979,13 @@ case "$command" in
         mkdir "$work/extracted"
         chmod 700 "$work/extracted"
         tar -xf "$work/restored.bundle" -C "$work/extracted"
+        printf '%s\n' '0|0' >"$work/download-manifest-summary"
         ;;
       digest)
         work=$(cat "$CAPTURE_DIR/digest.work")
         input=$(cat "$CAPTURE_DIR/digest.input")
         sha256sum "$input/database.dump" | awk '{ print $1 }' >"$work/dump-digest"
+        sha256sum "$input/download-files.manifest" | awk '{ print $1 }' >"$work/download-manifest-digest"
         ;;
       *) exit 1 ;;
     esac
@@ -7125,7 +7178,6 @@ esac
     const backupFile = path.join(sandbox, "backup.dump.gpg");
     const keyFile = path.join(sandbox, "encryption-key");
     const dumpFile = path.join(fixture, "database.dump");
-    const manifestFile = path.join(fixture, "skill-backup.manifest");
     const script = path.join(root, "infra/docker/restore-drill.sh");
 
     try {
@@ -7139,28 +7191,11 @@ esac
       const dumpSha256 = createHash("sha256")
         .update(readFileSync(dumpFile))
         .digest("hex");
-      writeFileSync(
-        manifestFile,
-        `format_version=1
-dump_sha256=${dumpSha256}
-skill_registry_schema_version=1
-skill_revision_count=1
-skill_artifact_count=1
-skill_file_count=1
-`,
-        { mode: 0o600 },
-      );
-      const archive = spawnSync(
-        "tar",
-        [
-          "-cf",
-          backupFile,
-          "-C",
-          fixture,
-          "skill-backup.manifest",
-          "database.dump",
-        ],
-        { encoding: "utf8" },
+      const archive = writeEmptyDownloadRestoreBundle(
+        fixture,
+        backupFile,
+        dumpSha256,
+        { revisions: 1, artifacts: 1, files: 1 },
       );
       expect(archive.status, `${archive.stdout}${archive.stderr}`).toBe(0);
 
@@ -7201,6 +7236,8 @@ case "$command" in
       aap-restore-bundle-*) resource=bundle ;;
       aap-restore-digest-*) resource=digest ;;
       aap-restore-registry-*) resource=registry ;;
+      aap-restore-download-files-*) resource=download_files ;;
+      aap-restore-download-probe-*) resource=download_probe ;;
       aap-restore-drill-*) resource=database ;;
       *) exit 1 ;;
     esac
@@ -7213,7 +7250,7 @@ case "$command" in
   start)
     target=$1
     resource=
-    for candidate in decrypt bundle digest database registry; do
+    for candidate in decrypt bundle digest database registry download_files download_probe; do
       if [ -f "$CAPTURE_DIR/$candidate.name" ] &&
          [ "$target" = "$(cat "$CAPTURE_DIR/$candidate.name")" ]; then
         resource=$candidate
@@ -7232,11 +7269,13 @@ case "$command" in
         mkdir "$work/extracted"
         chmod 700 "$work/extracted"
         tar -xf "$work/restored.bundle" -C "$work/extracted"
+        printf '%s\n' '0|0' >"$work/download-manifest-summary"
         ;;
       digest)
         work=$(cat "$CAPTURE_DIR/digest.work")
         input=$(cat "$CAPTURE_DIR/digest.input")
         sha256sum "$input/database.dump" | awk '{ print $1 }' >"$work/dump-digest"
+        sha256sum "$input/download-files.manifest" | awk '{ print $1 }' >"$work/download-manifest-digest"
         ;;
       database)
         if [ "$FAKE_DOCKER_MODE" = database_start_hang ]; then
@@ -7417,7 +7456,6 @@ esac
     const backupFile = path.join(sandbox, "backup.dump.gpg");
     const keyFile = path.join(sandbox, "encryption-key");
     const dumpFile = path.join(fixture, "database.dump");
-    const manifestFile = path.join(fixture, "skill-backup.manifest");
     const sentinel = "skill-registry-archive-bytes-sentinel-deadbeef";
 
     try {
@@ -7431,28 +7469,11 @@ esac
       const dumpSha256 = createHash("sha256")
         .update(readFileSync(dumpFile))
         .digest("hex");
-      writeFileSync(
-        manifestFile,
-        `format_version=1
-dump_sha256=${dumpSha256}
-skill_registry_schema_version=1
-skill_revision_count=1
-skill_artifact_count=1
-skill_file_count=1
-`,
-        { mode: 0o600 },
-      );
-      const archive = spawnSync(
-        "tar",
-        [
-          "-cf",
-          backupFile,
-          "-C",
-          fixture,
-          "skill-backup.manifest",
-          "database.dump",
-        ],
-        { encoding: "utf8" },
+      const archive = writeEmptyDownloadRestoreBundle(
+        fixture,
+        backupFile,
+        dumpSha256,
+        { revisions: 1, artifacts: 1, files: 1 },
       );
       expect(archive.status, `${archive.stdout}${archive.stderr}`).toBe(0);
 
@@ -7493,6 +7514,8 @@ case "$command" in
       aap-restore-bundle-*) resource=bundle ;;
       aap-restore-digest-*) resource=digest ;;
       aap-restore-registry-*) resource=registry ;;
+      aap-restore-download-files-*) resource=download_files ;;
+      aap-restore-download-probe-*) resource=download_probe ;;
       aap-restore-drill-*) resource=database ;;
       *) exit 1 ;;
     esac
@@ -7505,7 +7528,7 @@ case "$command" in
   start)
     target=$1
     resource=
-    for candidate in decrypt bundle digest database registry; do
+    for candidate in decrypt bundle digest database registry download_files download_probe; do
       if [ -f "$CAPTURE_DIR/$candidate.name" ] &&
          [ "$target" = "$(cat "$CAPTURE_DIR/$candidate.name")" ]; then
         resource=$candidate
@@ -7521,19 +7544,21 @@ case "$command" in
         mkdir "$work/extracted"
         chmod 700 "$work/extracted"
         tar -xf "$work/restored.bundle" -C "$work/extracted"
+        printf '%s\n' '0|0' >"$work/download-manifest-summary"
         ;;
       digest)
         work=$(cat "$CAPTURE_DIR/digest.work")
         input=$(cat "$CAPTURE_DIR/digest.input")
         sha256sum "$input/database.dump" | awk '{ print $1 }' >"$work/dump-digest"
+        sha256sum "$input/download-files.manifest" | awk '{ print $1 }' >"$work/download-manifest-digest"
         ;;
-      database|registry) ;;
+      database|registry|download_files|download_probe) ;;
       *) exit 1 ;;
     esac
     ;;
   wait) printf '%s\n' 0 ;;
   ps)
-    for resource in decrypt bundle digest database registry; do
+    for resource in decrypt bundle digest database registry download_files download_probe; do
       if [ -f "$CAPTURE_DIR/$resource.exists" ]; then
         cat "$CAPTURE_DIR/$resource.name"
       fi
@@ -7567,13 +7592,14 @@ case "$command" in
         [ "$FAKE_DOCKER_MODE" = success_temp_rm_failure ] || exit 1
         case " $* " in
           *"BEGIN TRANSACTION READ ONLY"*) printf '%s\n' '1|1|1|1|1|1|0|0|0|t' ;;
-          *"SELECT count(*) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 11 ;;
-          *"SELECT max(created_at) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 1786517193087 ;;
+          *"SELECT count(*) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 12 ;;
+          *"SELECT max(created_at) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 1786858709269 ;;
           *"WHERE id = "*) printf '%s\n' 1 ;;
           *"WHERE session_id = "*) printf '%s\n' 1 ;;
           *"SELECT count(*) FROM public.users"*) printf '%s\n' 1 ;;
           *"SELECT count(*) FROM agno.agno_sessions"*) printf '%s\n' 1 ;;
           *"SELECT count(*) FROM agno.agno_schema_versions"*) printf '%s\n' 1 ;;
+          *"SELECT artifact_key"*) : ;;
           *"to_regclass('public.users')"*) printf '%s\n' t ;;
           *) exit 1 ;;
         esac
@@ -7584,7 +7610,7 @@ case "$command" in
   rm)
     target=
     for argument in "$@"; do target=$argument; done
-    for resource in decrypt bundle digest database registry; do
+    for resource in decrypt bundle digest database registry download_files download_probe; do
       if [ -f "$CAPTURE_DIR/$resource.name" ] &&
          [ "$target" = "$(cat "$CAPTURE_DIR/$resource.name")" ]; then
         if [ "$resource" = database ]; then
@@ -7822,6 +7848,9 @@ exec /bin/rm "$@"
       "idle_in_transaction_session_timeout = '$(((snapshot_timeout_seconds + 60) * 1000))ms'",
     );
     expect(script).toContain("pg_backend_pid()");
+    expect(script).toContain("BACKUP_TEST_CONTROL_FIFO");
+    expect(script).toContain("${backup_test_control_fifo}.ready");
+    expect(script).toContain("${backup_test_control_fifo}.release");
     expect(script).toContain(
       "backup download artifact space budget is insufficient",
     );
@@ -9533,7 +9562,9 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
     expect(script).toContain("run --rm --no-deps skill-registry-bootstrap");
     expect(script).toContain("run --rm --no-deps skill-registry-migrate");
     expect(script).toContain("up -d --no-deps agent");
-    expect(script).toContain("run --rm --no-deps backup");
+    expect(script).toContain(
+      "-e BACKUP_TEST_CONTROL_FIFO=/backups/backup-test-control backup",
+    );
     expect(script).toContain("http://127.0.0.1:7777/internal/health/ready");
     expect(script).toContain("/run/secrets/os_security_key");
     expect(script).toContain("30");
@@ -9568,6 +9599,28 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
     expect(script).toContain("platform_user_count");
     expect(script).toContain("agno_session_count");
     expect(script).toContain("AAP_AGENTOS_RESTORE_TEST_FAIL_AFTER_TEMP");
+    expect(script).toContain("backup-test-control.ready");
+    expect(script).toContain("backup-test-control.release");
+    expect(script).toContain("control_wait_attempts");
+    expect(script).toContain("release_writer_pid");
+    expect(script).toContain("backup test control timed out");
+    expect(script).toContain("backup test release timed out");
+    expect(script).toContain(
+      "download fixture pointer mutation did not remain pending",
+    );
+    expect(script).toContain("pg_try_advisory_lock");
+    expect(script).toContain("state = 'idle'");
+    expect(script).toContain("mutation_poll_attempts");
+    expect(script).not.toContain("wait_event_type = 'Lock'");
+    expect(script).toContain(
+      "downloadResourceRepository.withArtifactMutationLock",
+    );
+    expect(script).toContain(
+      "blocked download mutation changed protected state",
+    );
+    expect(script).toContain("download_artifacts=6");
+    expect(script).toContain("cleanup_pending_at");
+    expect(script).toContain("download-resources/staging");
   });
 
   it("cleans temporary paths on a controlled failure immediately after allocation", () => {

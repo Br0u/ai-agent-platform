@@ -22,6 +22,7 @@ download_manifest_max_bytes=4194304
 download_manifest_max_entries=20000
 tar_overhead_bytes=10485760
 timeout_command="${BACKUP_TIMEOUT_COMMAND:-/usr/bin/timeout}"
+backup_test_control_fifo="${BACKUP_TEST_CONTROL_FIFO:-}"
 PGHOST="${PGHOST:-db}"
 PGPORT="${PGPORT:-5432}"
 PGDATABASE="${PGDATABASE:-ai_agent_platform}"
@@ -86,6 +87,18 @@ fi
 if [ ! -d "$download_root" ] || [ -L "$download_root" ]; then
   echo "backup download artifact root is invalid" >&2
   exit 1
+fi
+if [ -n "$backup_test_control_fifo" ]; then
+  case "$backup_test_control_fifo" in
+    /*) ;;
+    *) echo "backup test control is invalid" >&2; exit 64 ;;
+  esac
+  if [ "$run_once" != true ] || \
+     [ ! -p "${backup_test_control_fifo}.ready" ] || \
+     [ ! -p "${backup_test_control_fifo}.release" ]; then
+    echo "backup test control is invalid" >&2
+    exit 64
+  fi
 fi
 
 mkdir -p "$backup_directory" "$temporary_directory"
@@ -352,6 +365,14 @@ while true; do
      ! LC_ALL=C sort -c -u "$download_keys_file" >/dev/null 2>&1; then
     echo "backup download artifact manifest is invalid" >&2
     exit 1
+  fi
+  if [ -n "$backup_test_control_fifo" ]; then
+    if ! printf 'enumerated\n' >"${backup_test_control_fifo}.ready" || \
+       ! IFS= read -r backup_test_release <"${backup_test_control_fifo}.release" || \
+       [ "$backup_test_release" != release ]; then
+      echo "backup test control failed" >&2
+      exit 1
+    fi
   fi
 
   printf 'format_version=1\n' >"$download_manifest_file"

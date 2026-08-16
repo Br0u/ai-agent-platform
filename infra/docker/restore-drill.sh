@@ -84,8 +84,9 @@ fi
 : "${BACKUP_ENCRYPTION_KEY_FILE:?Set BACKUP_ENCRYPTION_KEY_FILE to a readable secret file}"
 script_directory="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 "$script_directory/validate-backup-key.sh" "$BACKUP_ENCRYPTION_KEY_FILE"
-max_encrypted_bytes="${RESTORE_MAX_ENCRYPTED_BYTES:-2147483648}"
-max_decrypted_bytes="${RESTORE_MAX_DECRYPTED_BYTES:-4294967296}"
+max_encrypted_bytes="${RESTORE_MAX_ENCRYPTED_BYTES:-34359738368}"
+max_decrypted_bytes="${RESTORE_MAX_DECRYPTED_BYTES:-25769803776}"
+max_download_bytes="${RESTORE_DOWNLOAD_MAX_BYTES:-17179869184}"
 decrypt_timeout_seconds="${RESTORE_DECRYPT_TIMEOUT_SECONDS:-3600}"
 decrypt_kill_after_seconds="${RESTORE_DECRYPT_KILL_AFTER_SECONDS:-5}"
 docker_create_timeout_seconds="${RESTORE_DOCKER_CREATE_TIMEOUT_SECONDS:-30}"
@@ -94,14 +95,14 @@ docker_cli_kill_after_seconds="${RESTORE_DOCKER_CLI_KILL_AFTER_SECONDS:-2}"
 docker_reconcile_attempts="${RESTORE_DECRYPT_RECONCILE_ATTEMPTS:-3}"
 docker_create_settle_seconds="${RESTORE_DOCKER_CREATE_SETTLE_SECONDS:-5}"
 restore_space_safety_bytes="${RESTORE_SPACE_SAFETY_BYTES:-67108864}"
-for byte_limit in "$max_encrypted_bytes" "$max_decrypted_bytes"; do
+for byte_limit in "$max_encrypted_bytes" "$max_decrypted_bytes" "$max_download_bytes"; do
   case "$byte_limit" in
-    ''|*[!0-9]*)
+    ''|*[!0-9]*|0|0*)
       echo "restore drill size limit configuration is invalid" >&2
       exit 64
       ;;
   esac
-  if [ "${#byte_limit}" -gt 13 ] || [ "$byte_limit" -le 0 ]; then
+  if [ "${#byte_limit}" -gt 13 ] || [ "$byte_limit" -gt 1099511627776 ]; then
     echo "restore drill size limit configuration is invalid" >&2
     exit 64
   fi
@@ -220,15 +221,18 @@ container="aap-restore-drill-$run_id"
 decrypt_container="aap-restore-decrypt-$run_id"
 bundle_container="aap-restore-bundle-$run_id"
 digest_container="aap-restore-digest-$run_id"
+download_restore_container="aap-restore-download-files-$run_id"
+download_probe_container="aap-restore-download-probe-$run_id"
 registry_migration_container="aap-restore-registry-$run_id"
 volume="aap-restore-drill-$run_id"
+download_volume="aap-restore-downloads-$run_id"
 database="restore_drill"
 owner="restore_owner"
 crypto_image="${BACKUP_CRYPTO_IMAGE:-ai-agent-platform-backup:latest}"
 skill_registry_image="${RESTORE_SKILL_REGISTRY_IMAGE:-ai-agent-platform-skill-registry:latest}"
 postgres_bootstrap_directory="$(CDPATH= cd -- "$script_directory/../postgres" && pwd)"
-expected_migrations="11"
-expected_latest_migration="1786517193087"
+expected_migrations="12"
+expected_latest_migration="1786858709269"
 temporary_directory=
 postgres_env_file=
 decrypted_bundle_candidate=
@@ -245,6 +249,9 @@ database_restore_diagnostic_file=
 docker_stdout_file=
 docker_diagnostic_file=
 dump_digest_file=
+download_manifest_digest_file=
+download_manifest_keys_file=
+download_manifest_summary_file=
 resource_registry_directory=
 manager_delete_error_file=
 backup_insert_error_file=
@@ -689,6 +696,9 @@ database_restore_diagnostic_file="$temporary_directory/database-restore.stderr"
 docker_stdout_file="$temporary_directory/docker.stdout"
 docker_diagnostic_file="$temporary_directory/docker.stderr"
 dump_digest_file="$temporary_directory/dump-digest"
+download_manifest_digest_file="$temporary_directory/download-manifest-digest"
+download_manifest_keys_file="$temporary_directory/download-manifest-keys"
+download_manifest_summary_file="$temporary_directory/download-manifest-summary"
 resource_registry_directory="$temporary_directory/docker-resources"
 manager_delete_error_file="$temporary_directory/manager-delete.stderr"
 backup_insert_error_file="$temporary_directory/backup-insert.stderr"
@@ -778,6 +788,9 @@ if ! dd if=/dev/null of="$database_restore_output_file" 2>/dev/null || \
    ! dd if=/dev/null of="$docker_stdout_file" 2>/dev/null || \
    ! dd if=/dev/null of="$docker_diagnostic_file" 2>/dev/null || \
    ! dd if=/dev/null of="$dump_digest_file" 2>/dev/null || \
+   ! dd if=/dev/null of="$download_manifest_digest_file" 2>/dev/null || \
+   ! dd if=/dev/null of="$download_manifest_keys_file" 2>/dev/null || \
+   ! dd if=/dev/null of="$download_manifest_summary_file" 2>/dev/null || \
    ! dd if=/dev/null of="$manager_delete_error_file" 2>/dev/null || \
    ! dd if=/dev/null of="$backup_insert_error_file" 2>/dev/null || \
    ! dd if=/dev/null of="$runtime_select_error_file" 2>/dev/null || \
@@ -793,6 +806,9 @@ if ! dd if=/dev/null of="$database_restore_output_file" 2>/dev/null || \
      "$docker_stdout_file" \
      "$docker_diagnostic_file" \
      "$dump_digest_file" \
+     "$download_manifest_digest_file" \
+     "$download_manifest_keys_file" \
+     "$download_manifest_summary_file" \
      "$manager_delete_error_file" \
      "$backup_insert_error_file" \
      "$runtime_select_error_file"; then
@@ -926,28 +942,101 @@ if ! run_registered_create \
   "$crypto_image" \
   -ceu '
     bundle=/work/restored.bundle
-    members=$(tar -tf "$bundle")
-    expected=$(printf "skill-backup.manifest\ndatabase.dump")
-    [ "$members" = "$expected" ]
-    tar -tvf "$bundle" | awk '\''
-      substr($1, 1, 1) != "-" { exit 1 }
-      END { if (NR != 2) exit 1 }
-    '\''
+    tar -Ptf "$bundle" >/work/archive-members
+    member_count=$(wc -l </work/archive-members)
+    [ "$member_count" -ge 3 ]
+    [ "$member_count" -le 20003 ]
+    [ "$(sed -n "1p" /work/archive-members)" = skill-backup.manifest ]
+    [ "$(sed -n "2p" /work/archive-members)" = download-files.manifest ]
+    [ "$(sed -n "3p" /work/archive-members)" = database.dump ]
+    if sed -n "4,\$p" /work/archive-members |
+      grep -Eqv "^download-resources/objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.(pdf|webp)$"; then
+      exit 1
+    fi
+    sed -n "4,\$p" /work/archive-members | LC_ALL=C sort -c -u
+    tar -Ptvf "$bundle" >/work/archive-details
+    awk -v max_download="$1" -v max_expanded="$2" '\''
+      {
+        if (substr($1, 1, 1) != "-" || $3 !~ /^(0|[1-9][0-9]*)$/) exit 1
+        size = $3 + 0
+        archive_expanded_bytes += size
+        if (archive_expanded_bytes > max_expanded) exit 1
+        if (NR == 1) {
+          manifest_size = size
+          if (size < 1 || size > 1024) exit 1
+        } else if (NR == 2) {
+          download_manifest_size = size
+          if (size < 1 || size > 4194304) exit 1
+        } else if (NR == 3) {
+          dump_size = size
+          if (size < 1) exit 1
+        } else {
+          artifact_bytes += size
+          if (size < 1 || artifact_bytes > max_download) exit 1
+        }
+      }
+      END {
+        if (NR < 3 || NR > 20003) exit 1
+        print manifest_size "|" download_manifest_size "|" dump_size "|" artifact_bytes "|" archive_expanded_bytes
+      }
+    '\'' /work/archive-details >/work/archive-declared-sizes
+    IFS="|" read -r declared_manifest_size declared_download_manifest_size \
+      declared_dump_size declared_artifact_bytes archive_expanded_bytes \
+      </work/archive-declared-sizes
+    tar -xOf "$bundle" skill-backup.manifest >/work/preflight-skill-backup.manifest
+    tar -xOf "$bundle" download-files.manifest >/work/preflight-download-files.manifest
+    [ "$(wc -c </work/preflight-skill-backup.manifest)" = "$declared_manifest_size" ]
+    [ "$(wc -c </work/preflight-download-files.manifest)" = "$declared_download_manifest_size" ]
+    [ "$(tail -c 1 /work/preflight-download-files.manifest | od -An -tu1 | tr -d " ")" = 10 ]
+    [ "$(sed -n "1p" /work/preflight-download-files.manifest)" = format_version=1 ]
+    sed -n "2,\$p" /work/preflight-download-files.manifest >/work/download-artifact-lines
+    if grep -q "$(printf "\\r")" /work/preflight-download-files.manifest ||
+       ! awk -F "$(printf "\\t")" "NF != 3 { exit 1 }" /work/download-artifact-lines ||
+       cut -f1 /work/download-artifact-lines | grep -Eqv "^[0-9a-f]{64}$" ||
+       cut -f2 /work/download-artifact-lines | grep -Eqv "^[1-9][0-9]*$" ||
+       cut -f3 /work/download-artifact-lines |
+         grep -Eqv "^objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.(pdf|webp)$"; then
+      exit 1
+    fi
+    cut -f3 /work/download-artifact-lines >/work/download-manifest-keys
+    LC_ALL=C sort -c -u /work/download-manifest-keys
+    {
+      printf "%s\\n" skill-backup.manifest download-files.manifest database.dump
+      sed "s#^#download-resources/#" /work/download-manifest-keys
+    } >/work/expected-members
+    cmp /work/archive-members /work/expected-members
     mkdir /work/extracted
     chmod 700 /work/extracted
     tar -xf "$bundle" -C /work/extracted
     [ -f /work/extracted/skill-backup.manifest ]
     [ ! -L /work/extracted/skill-backup.manifest ]
+    [ -f /work/extracted/download-files.manifest ]
+    [ ! -L /work/extracted/download-files.manifest ]
     [ -f /work/extracted/database.dump ]
     [ ! -L /work/extracted/database.dump ]
-    manifest_size=$(wc -c </work/extracted/skill-backup.manifest)
-    dump_size=$(wc -c </work/extracted/database.dump)
-    bundle_size=$(wc -c <"$bundle")
-    [ "$manifest_size" -gt 0 ]
-    [ "$manifest_size" -le 1024 ]
-    [ "$dump_size" -gt 0 ]
-    [ "$dump_size" -le "$bundle_size" ]
-  '; then
+    [ "$(wc -c </work/extracted/database.dump)" = "$declared_dump_size" ]
+    cmp /work/preflight-skill-backup.manifest /work/extracted/skill-backup.manifest
+    cmp /work/preflight-download-files.manifest /work/extracted/download-files.manifest
+    artifact_count=0
+    artifact_bytes=0
+    tab=$(printf "\\t")
+    while IFS="$tab" read -r expected_digest expected_size object_key; do
+      [ -n "$object_key" ] || continue
+      artifact=/work/extracted/download-resources/$object_key
+      [ -f "$artifact" ]
+      [ ! -L "$artifact" ]
+      actual_digest=$(sha256sum "$artifact")
+      actual_digest=${actual_digest%% *}
+      actual_size=$(wc -c <"$artifact")
+      [ "$actual_digest" = "$expected_digest" ]
+      [ "$actual_size" = "$expected_size" ]
+      artifact_count=$((artifact_count + 1))
+      artifact_bytes=$((artifact_bytes + actual_size))
+      [ "$artifact_count" -le 20000 ]
+      [ "$artifact_bytes" -le "$1" ]
+    done </work/download-artifact-lines
+    printf "%s|%s\\n" "$artifact_count" "$artifact_bytes" >/work/download-manifest-summary
+  ' sh "$max_download_bytes" "$max_decrypted_bytes"; then
   echo "restore drill rejected invalid backup bundle" >&2
   exit 1
 fi
@@ -971,13 +1060,16 @@ if ! manifest_line_count_raw="$(wc -l <"$manifest_file" 2>/dev/null)" ||
    ! manifest_schema_line="$(sed -n '3p' "$manifest_file" 2>/dev/null)" ||
    ! manifest_revision_line="$(sed -n '4p' "$manifest_file" 2>/dev/null)" ||
    ! manifest_artifact_line="$(sed -n '5p' "$manifest_file" 2>/dev/null)" ||
-   ! manifest_file_line="$(sed -n '6p' "$manifest_file" 2>/dev/null)"; then
+   ! manifest_file_line="$(sed -n '6p' "$manifest_file" 2>/dev/null)" ||
+   ! manifest_download_digest_line="$(sed -n '7p' "$manifest_file" 2>/dev/null)" ||
+   ! manifest_download_count_line="$(sed -n '8p' "$manifest_file" 2>/dev/null)" ||
+   ! manifest_download_bytes_line="$(sed -n '9p' "$manifest_file" 2>/dev/null)"; then
   echo "restore drill rejected invalid backup manifest" >&2
   exit 1
 fi
 unset manifest_line_count_raw
-if [ "$manifest_line_count" != "6" ] || \
-   [ "$manifest_format_line" != "format_version=1" ]; then
+if [ "$manifest_line_count" != "9" ] || \
+   [ "$manifest_format_line" != "format_version=2" ]; then
   echo "restore drill rejected invalid backup manifest" >&2
   exit 1
 fi
@@ -987,11 +1079,17 @@ manifest_skill_registry_schema_version=${manifest_schema_line#skill_registry_sch
 manifest_skill_revision_count=${manifest_revision_line#skill_revision_count=}
 manifest_skill_artifact_count=${manifest_artifact_line#skill_artifact_count=}
 manifest_skill_file_count=${manifest_file_line#skill_file_count=}
+manifest_download_sha256=${manifest_download_digest_line#download_manifest_sha256=}
+manifest_download_artifact_count=${manifest_download_count_line#download_artifact_count=}
+manifest_download_artifact_bytes=${manifest_download_bytes_line#download_artifact_bytes=}
 if [ "$manifest_dump_line" != "dump_sha256=$manifest_dump_sha256" ] || \
    [ "$manifest_schema_line" != "skill_registry_schema_version=$manifest_skill_registry_schema_version" ] || \
    [ "$manifest_revision_line" != "skill_revision_count=$manifest_skill_revision_count" ] || \
    [ "$manifest_artifact_line" != "skill_artifact_count=$manifest_skill_artifact_count" ] || \
-   [ "$manifest_file_line" != "skill_file_count=$manifest_skill_file_count" ]; then
+   [ "$manifest_file_line" != "skill_file_count=$manifest_skill_file_count" ] || \
+   [ "$manifest_download_digest_line" != "download_manifest_sha256=$manifest_download_sha256" ] || \
+   [ "$manifest_download_count_line" != "download_artifact_count=$manifest_download_artifact_count" ] || \
+   [ "$manifest_download_bytes_line" != "download_artifact_bytes=$manifest_download_artifact_bytes" ]; then
   echo "restore drill rejected invalid backup manifest" >&2
   exit 1
 fi
@@ -1005,25 +1103,47 @@ if [ "${#manifest_dump_sha256}" -ne 64 ]; then
   echo "restore drill rejected invalid backup manifest" >&2
   exit 1
 fi
+case "$manifest_download_sha256" in
+  *[!0-9a-f]*|'')
+    echo "restore drill rejected invalid backup manifest" >&2
+    exit 1
+    ;;
+esac
+if [ "${#manifest_download_sha256}" -ne 64 ]; then
+  echo "restore drill rejected invalid backup manifest" >&2
+  exit 1
+fi
 for manifest_number in \
   "$manifest_skill_registry_schema_version" \
   "$manifest_skill_revision_count" \
   "$manifest_skill_artifact_count" \
-  "$manifest_skill_file_count"; do
+  "$manifest_skill_file_count" \
+  "$manifest_download_artifact_count" \
+  "$manifest_download_artifact_bytes"; do
   case "$manifest_number" in
     ''|*[!0-9]*)
       echo "restore drill rejected invalid backup manifest" >&2
       exit 1
       ;;
   esac
+  if [ "$manifest_number" != 0 ]; then
+    case "$manifest_number" in
+      0*)
+        echo "restore drill rejected invalid backup manifest" >&2
+        exit 1
+        ;;
+    esac
+  fi
   if [ "${#manifest_number}" -gt 20 ]; then
     echo "restore drill rejected invalid backup manifest" >&2
     exit 1
   fi
 done
-if [ "$manifest_format_version" != "1" ] || \
+if [ "$manifest_format_version" != "2" ] || \
    [ "${#manifest_skill_registry_schema_version}" -gt 5 ] || \
-   [ "$manifest_skill_registry_schema_version" -le 0 ]; then
+   [ "$manifest_skill_registry_schema_version" -le 0 ] || \
+   [ "$manifest_download_artifact_count" -gt 20000 ] || \
+   [ "$manifest_download_artifact_bytes" -gt "$max_download_bytes" ]; then
   echo "restore drill rejected invalid backup manifest" >&2
   exit 1
 fi
@@ -1040,6 +1160,11 @@ if ! run_registered_create \
     case "$digest" in *[!0-9a-f]*|"") exit 1 ;; esac
     [ "${#digest}" -eq 64 ]
     printf "%s\n" "$digest" >/work/dump-digest
+    download_digest=$(sha256sum /input/download-files.manifest)
+    download_digest=${download_digest%% *}
+    case "$download_digest" in *[!0-9a-f]*|"") exit 1 ;; esac
+    [ "${#download_digest}" -eq 64 ]
+    printf "%s\n" "$download_digest" >/work/download-manifest-digest
   '; then
   echo "restore drill rejected backup dump digest mismatch" >&2
   exit 1
@@ -1062,6 +1187,24 @@ if [ "$actual_dump_sha256" != "$manifest_dump_sha256" ]; then
   echo "restore drill rejected backup dump digest mismatch" >&2
   exit 1
 fi
+if ! actual_download_manifest_sha256="$(cat "$download_manifest_digest_file" 2>/dev/null)" ||
+   ! download_manifest_summary="$(cat "$download_manifest_summary_file" 2>/dev/null)"; then
+  echo "restore drill rejected download manifest mismatch" >&2
+  exit 1
+fi
+if ! IFS='|' read -r actual_download_artifact_count actual_download_artifact_bytes <<EOF
+$download_manifest_summary
+EOF
+then
+  echo "restore drill rejected download manifest mismatch" >&2
+  exit 1
+fi
+if [ "$actual_download_manifest_sha256" != "$manifest_download_sha256" ] || \
+   [ "$actual_download_artifact_count" != "$manifest_download_artifact_count" ] || \
+   [ "$actual_download_artifact_bytes" != "$manifest_download_artifact_bytes" ]; then
+  echo "restore drill rejected download manifest mismatch" >&2
+  exit 1
+fi
 
 if ! run_registered_create \
   90-volume volume "$volume" volume_create \
@@ -1078,6 +1221,18 @@ if [ "$volume_create_output" != "$volume" ]; then
   exit 1
 fi
 unset volume_create_output
+if ! run_registered_create \
+  91-download-volume volume "$download_volume" download_volume_create \
+  volume create "$download_volume"; then
+  echo "restore drill failed download volume creation" >&2
+  exit 1
+fi
+if ! download_volume_create_output="$(cat "$docker_stdout_file" 2>/dev/null)" || \
+   [ "$download_volume_create_output" != "$download_volume" ]; then
+  echo "restore drill failed download volume creation" >&2
+  exit 1
+fi
+unset download_volume_create_output
 if ! run_registered_create \
   40-database container "$container" database_create \
   create --name "$container" \
@@ -1348,6 +1503,8 @@ if ! run_database_scalar schema_contract psql -U "$owner" -d "$database" -Atqc \
      AND to_regclass('public.roles') IS NOT NULL
      AND to_regclass('public.content_revisions') IS NOT NULL
      AND to_regclass('public.content_routes') IS NOT NULL
+     AND to_regclass('public.download_resources') IS NOT NULL
+     AND to_regclass('public.download_resource_revisions') IS NOT NULL
      AND to_regclass('agno.agno_sessions') IS NOT NULL
      AND to_regclass('agno.agno_schema_versions') IS NOT NULL
      AND to_regclass('public.users_email_lower_unique') IS NOT NULL
@@ -1701,4 +1858,123 @@ if [ "$migration_count" != "$expected_migrations" ] || \
   exit 1
 fi
 
-restore_success_message="restore drill passed: migrations=$migration_count latest=$latest_migration users=$user_count agno_sessions=$agno_session_count agno_schema_versions=$agno_schema_version_count skill_registry_version=$skill_registry_schema_version revisions=$skill_revision_count artifacts=$skill_artifact_count files=$skill_file_count artifact_digests_verified=$skill_artifact_digest_count runtime_sets=$skill_runtime_set_count runtime_events=$skill_runtime_event_count"
+if ! run_bounded_docker \
+  "$docker_cli_timeout_seconds" download_key_reconcile \
+  "$docker_stdout_file" "$docker_diagnostic_file" \
+  exec "$container" psql --username="$owner" --dbname="$database" \
+  --no-psqlrc --tuples-only --no-align --quiet --set=ON_ERROR_STOP=1 \
+  --command="
+SELECT artifact_key
+FROM (
+  SELECT revision.pdf_object_key AS artifact_key
+  FROM download_resources AS resource
+  JOIN download_resource_revisions AS revision
+    ON revision.resource_id = resource.id
+   AND revision.id = ANY(array_remove(ARRAY[resource.published_revision_id, resource.draft_revision_id], NULL))
+  WHERE revision.cleanup_pending_at IS NULL
+    AND revision.pdf_object_key IS NOT NULL
+  UNION
+  SELECT revision.cover_object_key AS artifact_key
+  FROM download_resources AS resource
+  JOIN download_resource_revisions AS revision
+    ON revision.resource_id = resource.id
+   AND revision.id = ANY(array_remove(ARRAY[resource.published_revision_id, resource.draft_revision_id], NULL))
+  WHERE revision.cleanup_pending_at IS NULL
+    AND revision.cover_object_key IS NOT NULL
+) AS referenced
+ORDER BY artifact_key COLLATE \"C\";"; then
+  echo "restore drill failed download manifest reconciliation" >&2
+  exit 1
+fi
+if ! cmp "$docker_stdout_file" "$download_manifest_keys_file" >/dev/null 2>&1; then
+  echo "restore drill failed download manifest reconciliation" >&2
+  exit 1
+fi
+
+if ! run_registered_create \
+  60-download-files container "$download_restore_container" download_files_create \
+  create --name "$download_restore_container" \
+  --user root \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+  --entrypoint sh \
+  -v "$temporary_directory:/restore:ro" \
+  -v "$download_volume:/download-resources" \
+  "$crypto_image" -ceu '
+    mkdir -p /download-resources/objects
+    tab=$(printf "\t")
+    {
+      IFS= read -r manifest_header
+      [ "$manifest_header" = format_version=1 ]
+      while IFS="$tab" read -r expected_digest expected_size object_key; do
+        [ -n "$object_key" ] || continue
+        source=/restore/extracted/download-resources/$object_key
+        target=/download-resources/$object_key
+        source_digest=$(sha256sum "$source")
+        source_digest=${source_digest%% *}
+        [ "$source_digest" = "$expected_digest" ]
+        [ "$(wc -c <"$source")" = "$expected_size" ]
+        mkdir -p "${target%/*}"
+        cp "$source" "$target"
+      done
+    } </restore/extracted/download-files.manifest
+    if find /download-resources ! -type d ! -type f -print -quit | grep -q .; then
+      exit 1
+    fi
+    chown -R 1000:1000 /download-resources
+    find /download-resources -type d -exec chmod 0750 {} +
+    find /download-resources -type f -exec chmod 0640 {} +
+    {
+      IFS= read -r manifest_header
+      while IFS="$tab" read -r expected_digest expected_size object_key; do
+        [ -n "$object_key" ] || continue
+        target=/download-resources/$object_key
+        actual_digest=$(sha256sum "$target")
+        actual_digest=${actual_digest%% *}
+        if [ "$actual_digest" != "$expected_digest" ] ||
+           [ "$(wc -c <"$target")" != "$expected_size" ] ||
+           [ "$(stat -c "%u:%g:%a" "$target")" != 1000:1000:640 ]; then
+          echo "restored download artifact verification failed" >&2
+          exit 1
+        fi
+      done
+    } </restore/extracted/download-files.manifest
+  '; then
+  echo "restore drill failed download volume restore" >&2
+  exit 1
+fi
+if ! run_container_start download_files_start "$download_restore_container" || \
+   ! run_container_wait \
+     "$decrypt_timeout_seconds" download_files_wait \
+     "$download_restore_container" || \
+   [ "$container_wait_status" -ne 0 ]; then
+  echo "restore drill failed download volume restore" >&2
+  exit 1
+fi
+
+if ! run_registered_create \
+  61-download-probe container "$download_probe_container" download_probe_create \
+  create --name "$download_probe_container" \
+  --user 1000:1000 \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+  --entrypoint sh \
+  -v "$download_volume:/download-resources" \
+  "$crypto_image" -ceu '
+    find /download-resources/objects -type f -exec sha256sum {} + >/dev/null
+    : >/download-resources/.restore-probe
+    rm /download-resources/.restore-probe
+  '; then
+  echo "restore drill failed download volume verification" >&2
+  exit 1
+fi
+if ! run_container_start download_probe_start "$download_probe_container" || \
+   ! run_container_wait \
+     "$decrypt_timeout_seconds" download_probe_wait \
+     "$download_probe_container" || \
+   [ "$container_wait_status" -ne 0 ]; then
+  echo "restore drill failed download volume verification" >&2
+  exit 1
+fi
+
+restore_success_message="restore drill passed: migrations=$migration_count latest=$latest_migration users=$user_count agno_sessions=$agno_session_count agno_schema_versions=$agno_schema_version_count skill_registry_version=$skill_registry_schema_version revisions=$skill_revision_count artifacts=$skill_artifact_count files=$skill_file_count artifact_digests_verified=$skill_artifact_digest_count runtime_sets=$skill_runtime_set_count runtime_events=$skill_runtime_event_count download_artifacts=$manifest_download_artifact_count download_bytes=$manifest_download_artifact_bytes"

@@ -483,6 +483,32 @@ describePostgres("download resource PostgreSQL repository", () => {
     }
   });
 
+  it("waits for a long advisory lock without pinning the mutation transaction", async () => {
+    const blocker = await pool.connect();
+    let settled = false;
+    try {
+      await blocker.query("SELECT pg_advisory_lock($1)", [
+        "4922248911538569540",
+      ]);
+      const mutation = downloadResourceRepository
+        .withArtifactMutationLock(async () => "done")
+        .finally(() => {
+          settled = true;
+        });
+      await delay(1_200);
+      expect(settled).toBe(false);
+      await blocker.query("SELECT pg_advisory_unlock($1)", [
+        "4922248911538569540",
+      ]);
+      await expect(mutation).resolves.toBe("done");
+    } finally {
+      await blocker.query("SELECT pg_advisory_unlock($1)", [
+        "4922248911538569540",
+      ]);
+      blocker.release();
+    }
+  });
+
   it("unlocks the pinned session when post-commit cleanup fails", async () => {
     await expect(
       downloadResourceRepository.withArtifactMutationLock(

@@ -1,7 +1,7 @@
 FROM postgres:18.3-alpine3.23
 
 USER root
-RUN apk add --no-cache gnupg coreutils \
+RUN apk add --no-cache gnupg coreutils tar \
   && /usr/bin/timeout --version >/dev/null \
   && mkdir -p /backups \
   && chown postgres:postgres /backups

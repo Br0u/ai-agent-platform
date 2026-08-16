@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   events: [] as string[],
   lockResult: { rows: [{ locked: true }] },
+  lockResults: [] as Array<{ rows: Array<{ locked: boolean }> }>,
   unlockResult: { rows: [{ unlocked: true }] },
   lockError: undefined as unknown,
   unlockError: undefined as unknown,
@@ -50,19 +51,21 @@ describe("download resource repository contract", () => {
   beforeEach(() => {
     mocks.events.length = 0;
     mocks.lockResult = { rows: [{ locked: true }] };
+    mocks.lockResults.length = 0;
     mocks.unlockResult = { rows: [{ unlocked: true }] };
     mocks.lockError = undefined;
     mocks.unlockError = undefined;
     const client = {
-      query: vi.fn(async (query: string) => {
-        if (query.includes("pg_advisory_unlock")) {
+      query: vi.fn(async (query: string | { text: string }) => {
+        const text = typeof query === "string" ? query : query.text;
+        if (text.includes("pg_advisory_unlock")) {
           mocks.events.push("unlock");
           if (mocks.unlockError !== undefined) throw mocks.unlockError;
           return mocks.unlockResult;
         }
         mocks.events.push("lock");
         if (mocks.lockError !== undefined) throw mocks.lockError;
-        return mocks.lockResult;
+        return mocks.lockResults.shift() ?? mocks.lockResult;
       }),
       release: vi.fn((error?: Error | boolean) =>
         mocks.events.push(error ? "destroy" : "release"),
@@ -108,6 +111,34 @@ describe("download resource repository contract", () => {
       "unlock",
       "release",
     ]);
+  });
+
+  it("releases the pool connection while waiting for the artifact lock", async () => {
+    vi.useFakeTimers();
+    mocks.lockResults.push(
+      { rows: [{ locked: false }] },
+      { rows: [{ locked: true }] },
+    );
+    try {
+      const mutation = downloadResourceRepository.withArtifactMutationLock(
+        async () => "done",
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(mutation).resolves.toBe("done");
+      expect(mocks.events).toEqual([
+        "connect",
+        "lock",
+        "release",
+        "connect",
+        "lock",
+        "transaction",
+        "commit",
+        "unlock",
+        "release",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("unlocks and releases after rollback while preserving both primary and unlock errors", async () => {
@@ -191,6 +222,10 @@ describe("download resource repository contract", () => {
       "createAuditWriter(createDatabaseAuditRepository(databaseTx))",
     );
     expect(source).not.toContain("pg_advisory_xact_lock");
+    expect(source).toContain("pg_try_advisory_lock");
+    expect(source).not.toContain("query_timeout");
+    expect(source).toContain("ARTIFACT_MUTATION_LOCK_TIMEOUT_MS = 7_400_000");
+    expect(source).toContain("ARTIFACT_MUTATION_LOCK_RETRY_MS = 1_000");
     expect(source).toContain("4922248911538569540");
     expect(source).toMatch(/state[^\n]+published/u);
     expect(source).toMatch(

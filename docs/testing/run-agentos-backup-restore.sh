@@ -11,12 +11,22 @@ temp_dir=
 secret_dir=
 dump_dir=
 success_message=
+backup_pid=
+control_reader_pid=
+release_writer_pid=
+mutation_pid=
 
 cleanup() {
   cleanup_status=$?
   trap '' INT TERM
   trap - EXIT
   cleanup_failed=false
+  for background_pid in \
+    "${mutation_pid:-}" "${backup_pid:-}" "${control_reader_pid:-}" \
+    "${release_writer_pid:-}"; do
+    [ -z "$background_pid" ] || kill "$background_pid" >/dev/null 2>&1 || true
+    [ -z "$background_pid" ] || wait "$background_pid" >/dev/null 2>&1 || true
+  done
   if command -v docker >/dev/null 2>&1; then
     if [ -n "$env_file" ] && [ -f "$env_file" ]; then
       docker compose -p "$project" --env-file "$env_file" \
@@ -116,6 +126,25 @@ database=ai_agent_platform_agentos_restore_test
 owner=ai_agent_owner
 platform_user_id=00000000-0000-4000-8000-000000000001
 agno_session_id=backup-restore-session-fixture-v1
+published_only_resource_id=019faaaa-0000-7000-8000-000000000001
+draft_only_resource_id=019faaaa-0000-7000-8000-000000000002
+shared_resource_id=019faaaa-0000-7000-8000-000000000003
+published_only_revision_id=11111111-1111-7111-8111-111111111111
+draft_only_revision_id=12222222-2222-7222-8222-222222222222
+shared_published_revision_id=13333333-3333-7333-8333-333333333333
+shared_metadata_revision_id=13333333-3333-7333-8333-333333333334
+cleanup_revision_id=14444444-4444-7444-8444-444444444444
+unreferenced_revision_id=15555555-5555-7555-8555-555555555555
+published_pdf_key=objects/21111111-1111-7111-8111-111111111111/31111111-1111-7111-8111-111111111111.pdf
+published_cover_key=objects/21111111-1111-7111-8111-111111111111/41111111-1111-7111-8111-111111111111.webp
+draft_pdf_key=objects/22222222-2222-7222-8222-222222222222/32222222-2222-7222-8222-222222222222.pdf
+draft_cover_key=objects/22222222-2222-7222-8222-222222222222/42222222-2222-7222-8222-222222222222.webp
+shared_pdf_key=objects/23333333-3333-7333-8333-333333333333/33333333-3333-7333-8333-333333333333.pdf
+shared_cover_key=objects/23333333-3333-7333-8333-333333333333/43333333-3333-7333-8333-333333333333.webp
+cleanup_pdf_key=objects/24444444-4444-7444-8444-444444444444/34444444-4444-7444-8444-444444444444.pdf
+cleanup_cover_key=objects/24444444-4444-7444-8444-444444444444/44444444-4444-7444-8444-444444444444.webp
+unreferenced_pdf_key=objects/25555555-5555-7555-8555-555555555555/35555555-5555-7555-8555-555555555555.pdf
+unreferenced_cover_key=objects/25555555-5555-7555-8555-555555555555/45555555-5555-7555-8555-555555555555.webp
 
 materialize_secret() {
   variable_name=$1
@@ -398,6 +427,105 @@ if [ "${#skill_artifact_sha}" -ne 64 ]; then
 fi
 echo "Skill Registry backup fixture: revisions=$skill_revision_count artifacts=$skill_artifact_count files=$skill_file_count"
 
+published_pdf_content=published-pdf-fixture-v1
+published_cover_content=published-cover-fixture-v1
+draft_pdf_content=draft-pdf-fixture-v1
+draft_cover_content=draft-cover-fixture-v1
+shared_pdf_content=shared-pdf-fixture-v1
+shared_cover_content=shared-cover-fixture-v1
+cleanup_pdf_content=cleanup-pdf-fixture-v1
+cleanup_cover_content=cleanup-cover-fixture-v1
+unreferenced_pdf_content=unreferenced-pdf-fixture-v1
+unreferenced_cover_content=unreferenced-cover-fixture-v1
+sha256_text() {
+  printf '%s' "$1" | openssl dgst -sha256 | awk '{print $2}'
+}
+published_pdf_sha=$(sha256_text "$published_pdf_content")
+draft_pdf_sha=$(sha256_text "$draft_pdf_content")
+shared_pdf_sha=$(sha256_text "$shared_pdf_content")
+cleanup_pdf_sha=$(sha256_text "$cleanup_pdf_content")
+unreferenced_pdf_sha=$(sha256_text "$unreferenced_pdf_content")
+
+compose run --rm --no-deps --user root --entrypoint sh download-volume-init -ceu '
+  root=/var/lib/ai-agent-platform/downloads
+  while [ "$#" -gt 0 ]; do
+    object_key=$1
+    contents=$2
+    shift 2
+    target=$root/$object_key
+    mkdir -p "${target%/*}"
+    printf "%s" "$contents" >"$target"
+  done
+  chown -R 1000:1000 "$root"
+  find "$root" -type d -exec chmod 0750 {} \;
+  find "$root" -type f -exec chmod 0640 {} \;
+' sh \
+  "$published_pdf_key" "$published_pdf_content" \
+  "$published_cover_key" "$published_cover_content" \
+  "$draft_pdf_key" "$draft_pdf_content" \
+  "$draft_cover_key" "$draft_cover_content" \
+  "$shared_pdf_key" "$shared_pdf_content" \
+  "$shared_cover_key" "$shared_cover_content" \
+  "$cleanup_pdf_key" "$cleanup_pdf_content" \
+  "$cleanup_cover_key" "$cleanup_cover_content" \
+  "$unreferenced_pdf_key" "$unreferenced_pdf_content" \
+  "$unreferenced_cover_key" "$unreferenced_cover_content" \
+  staging/fixture.partial staging-partial-fixture
+
+compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" <<EOF >/dev/null
+INSERT INTO download_resource_revisions (
+  id, resource_id, name, product, category, resource_type, description,
+  sort_order, preview_policy, download_policy, pdf_object_key,
+  cover_object_key, page_count, byte_size, sha256, published_at,
+  cleanup_pending_at
+) VALUES
+  ('$published_only_revision_id', '$published_only_resource_id', 'Published only', 'fixture', 'materials', 'fixture', 'published only fixture', 1, 'public', 'public', '$published_pdf_key', '$published_cover_key', 1, ${#published_pdf_content}, '$published_pdf_sha', now(), NULL),
+  ('$draft_only_revision_id', '$draft_only_resource_id', 'Draft only', 'fixture', 'materials', 'fixture', 'draft only fixture', 2, 'public', 'contact', '$draft_pdf_key', '$draft_cover_key', 1, ${#draft_pdf_content}, '$draft_pdf_sha', NULL, NULL),
+  ('$shared_published_revision_id', '$shared_resource_id', 'Published shared', 'fixture', 'materials', 'fixture', 'published with metadata draft fixture', 3, 'public', 'contact', '$shared_pdf_key', '$shared_cover_key', 1, ${#shared_pdf_content}, '$shared_pdf_sha', now(), NULL),
+  ('$shared_metadata_revision_id', '$shared_resource_id', 'Metadata draft', 'fixture', 'materials', 'fixture', 'metadata-only draft fixture', 3, 'public', 'contact', NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+  ('$cleanup_revision_id', '019faaaa-0000-7000-8000-000000000004', 'Cleanup pending', 'fixture', 'materials', 'fixture', 'cleanup-pending fixture', 4, 'public', 'contact', '$cleanup_pdf_key', '$cleanup_cover_key', 1, ${#cleanup_pdf_content}, '$cleanup_pdf_sha', NULL, now()),
+  ('$unreferenced_revision_id', '019faaaa-0000-7000-8000-000000000005', 'Unreferenced', 'fixture', 'materials', 'fixture', 'unreferenced fixture', 5, 'public', 'contact', '$unreferenced_pdf_key', '$unreferenced_cover_key', 1, ${#unreferenced_pdf_content}, '$unreferenced_pdf_sha', NULL, NULL);
+
+UPDATE download_resources
+SET state = 'published', published_revision_id = '$published_only_revision_id',
+    draft_revision_id = NULL, row_version = row_version + 1
+WHERE id = '$published_only_resource_id';
+UPDATE download_resources
+SET state = 'unpublished', published_revision_id = NULL,
+    draft_revision_id = '$draft_only_revision_id', row_version = row_version + 1
+WHERE id = '$draft_only_resource_id';
+UPDATE download_resources
+SET state = 'published', published_revision_id = '$shared_published_revision_id',
+    draft_revision_id = '$shared_metadata_revision_id', row_version = row_version + 1
+WHERE id = '$shared_resource_id';
+EOF
+
+download_fixture_key_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
+  "SELECT count(DISTINCT artifact_key)
+   FROM (
+     SELECT revision.pdf_object_key AS artifact_key
+     FROM download_resources resource
+     JOIN download_resource_revisions revision
+       ON revision.id = ANY(array_remove(ARRAY[resource.published_revision_id, resource.draft_revision_id], NULL))
+     WHERE revision.cleanup_pending_at IS NULL AND revision.pdf_object_key IS NOT NULL
+     UNION
+     SELECT revision.cover_object_key
+     FROM download_resources resource
+     JOIN download_resource_revisions revision
+       ON revision.id = ANY(array_remove(ARRAY[resource.published_revision_id, resource.draft_revision_id], NULL))
+     WHERE revision.cleanup_pending_at IS NULL AND revision.cover_object_key IS NOT NULL
+   ) referenced")"
+download_fixture_shape_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
+  "SELECT count(*) FROM download_resources
+   WHERE (id = '$published_only_resource_id' AND state = 'published' AND published_revision_id = '$published_only_revision_id' AND draft_revision_id IS NULL)
+      OR (id = '$draft_only_resource_id' AND state = 'unpublished' AND published_revision_id IS NULL AND draft_revision_id = '$draft_only_revision_id')
+      OR (id = '$shared_resource_id' AND state = 'published' AND published_revision_id = '$shared_published_revision_id' AND draft_revision_id = '$shared_metadata_revision_id')")"
+if [ "$download_fixture_key_count" != 6 ] || [ "$download_fixture_shape_count" != 3 ]; then
+  echo "download fixture setup failed" >&2
+  exit 1
+fi
+echo "Download backup fixture: download_artifacts=6 cleanup_pending_at=excluded unreferenced=excluded download-resources/staging=excluded"
+
 compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -c \
   "INSERT INTO public.users (id, name, email, identity_realm, status, email_verification_status)
    VALUES ('$platform_user_id'::uuid, 'backup restore fixture', 'backup-restore-fixture@example.invalid', 'customer', 'active', 'verified')" \
@@ -425,9 +553,191 @@ if [ "$platform_user_count" -le 0 ] || \
 fi
 echo "Backup fixture counts: users=$platform_user_count agno_sessions=$agno_session_count"
 
-compose run --rm --no-deps backup
-
 backup_volume="${project}_backup_data"
+compose run --rm --no-deps --entrypoint true backup
+docker run --rm --user root -v "$backup_volume:/backups" \
+  postgres:18.3-alpine3.23 sh -ceu '
+  rm -f /backups/backup-test-control.ready /backups/backup-test-control.release
+  mkfifo /backups/backup-test-control.ready /backups/backup-test-control.release
+  chown postgres:postgres /backups/backup-test-control.ready /backups/backup-test-control.release
+  chmod 0600 /backups/backup-test-control.ready /backups/backup-test-control.release
+'
+docker run --rm -v "$backup_volume:/backups" postgres:18.3-alpine3.23 sh -ceu '
+  IFS= read -r marker </backups/backup-test-control.ready
+  [ "$marker" = enumerated ]
+' &
+control_reader_pid=$!
+compose run --rm --no-deps \
+  -e BACKUP_TEST_CONTROL_FIFO=/backups/backup-test-control backup &
+backup_pid=$!
+control_wait_attempts=0
+while kill -0 "$control_reader_pid" >/dev/null 2>&1; do
+  if ! kill -0 "$backup_pid" >/dev/null 2>&1; then
+    kill "$control_reader_pid" >/dev/null 2>&1 || true
+    wait "$control_reader_pid" >/dev/null 2>&1 || true
+    control_reader_pid=
+    echo "backup exited before test control enumeration" >&2
+    exit 1
+  fi
+  control_wait_attempts=$((control_wait_attempts + 1))
+  if [ "$control_wait_attempts" -ge 300 ]; then
+    kill "$control_reader_pid" >/dev/null 2>&1 || true
+    wait "$control_reader_pid" >/dev/null 2>&1 || true
+    control_reader_pid=
+    echo "backup test control timed out" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+if ! wait "$control_reader_pid"; then
+  echo "backup test control did not reach enumeration" >&2
+  exit 1
+fi
+control_reader_pid=
+
+blocked_draft_pointer="$(docker exec "${project}-db-1" \
+  psql -U "$owner" -d "$database" -Atqc \
+  "SELECT draft_revision_id FROM download_resources WHERE id = '$draft_only_resource_id'")"
+blocked_shared_pdf_sha="$(docker run --rm \
+  -v "${project}_download_data:/downloads:ro" \
+  postgres:18.3-alpine3.23 sh -ceu '
+  digest=$(sha256sum "/downloads/$1")
+  printf "%s" "${digest%% *}"
+' sh "$shared_pdf_key")"
+if [ "$blocked_draft_pointer" != "$draft_only_revision_id" ] ||
+   [ "$blocked_shared_pdf_sha" != "$shared_pdf_sha" ]; then
+  echo "blocked download mutation changed protected state" >&2
+  exit 1
+fi
+
+(
+  compose run --rm --no-deps \
+    -e NODE_OPTIONS=--conditions=react-server \
+    -e PGAPPNAME=download-fixture-pointer-mutation \
+    -e DOWNLOAD_MUTATION_RESOURCE_ID="$draft_only_resource_id" \
+    -e DOWNLOAD_MUTATION_DRAFT_ID=019faaaa-0000-7000-9000-000000000002 \
+    -v "$repo_root/apps/web/src:/app/apps/web/src:ro" \
+    migrate /app/packages/database/node_modules/.bin/tsx --eval '
+      import { downloadResourceRepository } from "/app/apps/web/src/server/downloads/repository.ts";
+      (async () => {
+        const id = process.env.DOWNLOAD_MUTATION_RESOURCE_ID;
+        const draftRevisionId = process.env.DOWNLOAD_MUTATION_DRAFT_ID;
+        if (!id || !draftRevisionId) throw new Error("missing mutation fixture");
+        await downloadResourceRepository.withArtifactMutationLock(async (tx) => {
+          const resource = await tx.lockResource(id);
+          if (!resource) throw new Error("mutation fixture not found");
+          const updated = await tx.updateResourceCas({
+            id,
+            expectedRowVersion: resource.rowVersion,
+            state: resource.state,
+            publishedRevisionId: resource.publishedRevisionId,
+            draftRevisionId,
+          });
+          if (!updated) throw new Error("mutation fixture changed");
+        });
+      })().then(
+        () => process.exit(0),
+        (error) => {
+          console.error(
+            error instanceof Error ? error.message : "repository mutation failed",
+          );
+          process.exit(1);
+        },
+      );
+    ' >/dev/null
+) &
+mutation_pid=$!
+mutation_poll_attempts=0
+mutation_poll_count=0
+until [ "$mutation_poll_count" = 1 ]; do
+  mutation_poll_count="$(docker exec "${project}-db-1" \
+    psql -U "$owner" -d "$database" -Atqc \
+    "SELECT count(*) FROM pg_stat_activity
+     WHERE application_name = 'download-fixture-pointer-mutation'
+       AND state = 'idle'
+       AND query LIKE '%pg_try_advisory_lock%'")"
+  if ! kill -0 "$mutation_pid" >/dev/null 2>&1; then
+    wait "$mutation_pid" >/dev/null 2>&1 || true
+    mutation_pid=
+    echo "download fixture pointer mutation did not remain pending" >&2
+    exit 1
+  fi
+  mutation_poll_attempts=$((mutation_poll_attempts + 1))
+  if [ "$mutation_poll_attempts" -ge 100 ]; then
+    echo "download fixture pointer mutation did not enter lock polling" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+if ! kill -0 "$mutation_pid" >/dev/null 2>&1; then
+  wait "$mutation_pid" >/dev/null 2>&1 || true
+  mutation_pid=
+  echo "download fixture pointer mutation did not remain pending" >&2
+  exit 1
+fi
+waiting_draft_pointer="$(docker exec "${project}-db-1" \
+  psql -U "$owner" -d "$database" -Atqc \
+  "SELECT draft_revision_id FROM download_resources WHERE id = '$draft_only_resource_id'")"
+waiting_shared_pdf_sha="$(docker run --rm \
+  -v "${project}_download_data:/downloads:ro" \
+  postgres:18.3-alpine3.23 sh -ceu '
+  digest=$(sha256sum "/downloads/$1")
+  printf "%s" "${digest%% *}"
+' sh "$shared_pdf_key")"
+if [ "$waiting_draft_pointer" != "$blocked_draft_pointer" ] ||
+   [ "$waiting_shared_pdf_sha" != "$blocked_shared_pdf_sha" ]; then
+  echo "blocked download mutation changed protected state" >&2
+  exit 1
+fi
+docker run --rm -v "$backup_volume:/backups" postgres:18.3-alpine3.23 sh -ceu \
+  'printf "release\n" >/backups/backup-test-control.release' &
+release_writer_pid=$!
+release_wait_attempts=0
+while kill -0 "$release_writer_pid" >/dev/null 2>&1; do
+  if ! kill -0 "$backup_pid" >/dev/null 2>&1; then
+    sleep 0.1
+    if kill -0 "$release_writer_pid" >/dev/null 2>&1; then
+      kill "$release_writer_pid" >/dev/null 2>&1 || true
+      wait "$release_writer_pid" >/dev/null 2>&1 || true
+      release_writer_pid=
+      echo "backup exited before test control release" >&2
+      exit 1
+    fi
+  fi
+  release_wait_attempts=$((release_wait_attempts + 1))
+  if [ "$release_wait_attempts" -ge 300 ]; then
+    kill "$release_writer_pid" >/dev/null 2>&1 || true
+    wait "$release_writer_pid" >/dev/null 2>&1 || true
+    release_writer_pid=
+    echo "backup test release timed out" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+if ! wait "$release_writer_pid"; then
+  echo "backup test release failed" >&2
+  exit 1
+fi
+release_writer_pid=
+if ! wait "$backup_pid"; then
+  echo "controlled backup failed" >&2
+  exit 1
+fi
+backup_pid=
+if ! wait "$mutation_pid"; then
+  echo "download fixture pointer mutation failed" >&2
+  exit 1
+fi
+mutation_pid=
+mutated_draft_pointer="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
+  "SELECT draft_revision_id FROM download_resources WHERE id = '$draft_only_resource_id'")"
+if [ "$mutated_draft_pointer" != 019faaaa-0000-7000-9000-000000000002 ]; then
+  echo "download fixture pointer mutation did not complete" >&2
+  exit 1
+fi
+docker run --rm -v "$backup_volume:/backups" postgres:18.3-alpine3.23 \
+  rm -f /backups/backup-test-control.ready /backups/backup-test-control.release
+
 attempt=0
 until docker run --rm -v "$backup_volume:/backups:ro" \
   postgres:18.3-alpine3.23 sh -c \
@@ -606,6 +916,11 @@ fi
 grep -E 'revisions=[1-9][0-9]* artifacts=[1-9][0-9]* files=[1-9][0-9]* artifact_digests_verified=[1-9][0-9]*' \
   "$restore_output" >/dev/null || {
   echo "restore did not verify a nonempty Skill Registry artifact" >&2
+  exit 1
+}
+grep -E 'download_artifacts=6 download_bytes=[1-9][0-9]*$' \
+  "$restore_output" >/dev/null || {
+  echo "restore did not verify the exact download artifact set" >&2
   exit 1
 }
 cat "$restore_output"

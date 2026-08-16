@@ -1,5 +1,7 @@
 import "server-only";
 
+import { setTimeout as delay } from "node:timers/promises";
+
 import {
   and,
   asc,
@@ -15,7 +17,7 @@ import {
 } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { alias } from "drizzle-orm/pg-core";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import {
   databaseSchema,
@@ -31,6 +33,8 @@ import {
 import type { AdminDownloadQuery } from "./contracts";
 
 const ARTIFACT_MUTATION_LOCK_KEY = "4922248911538569540";
+const ARTIFACT_MUTATION_LOCK_TIMEOUT_MS = 7_400_000;
+const ARTIFACT_MUTATION_LOCK_RETRY_MS = 1_000;
 const publishedRevision = alias(
   downloadResourceRevisions,
   "published_revision",
@@ -320,6 +324,29 @@ async function throwWithFinalizationErrors(
   );
 }
 
+async function acquireArtifactMutationLock(pool: Pool): Promise<PoolClient> {
+  const deadline = Date.now() + ARTIFACT_MUTATION_LOCK_TIMEOUT_MS;
+  while (true) {
+    const client = await pool.connect();
+    let lock: { rows: Array<{ locked: boolean }> };
+    try {
+      lock = await client.query<{ locked: boolean }>(
+        "SELECT pg_try_advisory_lock($1) AS locked",
+        [ARTIFACT_MUTATION_LOCK_KEY],
+      );
+    } catch (error) {
+      client.release(error instanceof Error ? error : true);
+      throw error;
+    }
+    if (lock.rows[0]?.locked === true) return client;
+    client.release();
+    if (Date.now() >= deadline) {
+      throw new Error("Artifact mutation advisory lock timed out");
+    }
+    await delay(ARTIFACT_MUTATION_LOCK_RETRY_MS);
+  }
+}
+
 export const downloadResourceRepository = {
   async listAdmin(query: AdminDownloadQuery) {
     return getDatabase().transaction(
@@ -454,18 +481,13 @@ export const downloadResourceRepository = {
     postCommitCleanup?: (result: Result) => Promise<void>,
   ): Promise<Result> {
     const database = getDatabase() as Database & { $client: Pool };
-    const client = await database.$client.connect();
-    let locked = false;
+    const client = await acquireArtifactMutationLock(database.$client);
     let result!: Result;
     let failed = false;
     let primaryError: unknown;
     let destroyReason: Error | undefined;
     const finalizationErrors: unknown[] = [];
     try {
-      await client.query("SELECT pg_advisory_lock($1)", [
-        ARTIFACT_MUTATION_LOCK_KEY,
-      ]);
-      locked = true;
       const pinnedDatabase = drizzle(client, { schema: databaseSchema });
       result = await pinnedDatabase.transaction((databaseTx) =>
         work(transactionAdapter(databaseTx)),
@@ -474,32 +496,24 @@ export const downloadResourceRepository = {
     } catch (error) {
       failed = true;
       primaryError = error;
-      if (!locked) {
+    } finally {
+      try {
+        const unlock = await client.query<{ unlocked: boolean }>(
+          "SELECT pg_advisory_unlock($1) AS unlocked",
+          [ARTIFACT_MUTATION_LOCK_KEY],
+        );
+        if (unlock.rows[0]?.unlocked !== true) {
+          destroyReason = new Error(
+            "Artifact mutation advisory unlock returned false",
+          );
+          finalizationErrors.push(destroyReason);
+        }
+      } catch (error) {
+        finalizationErrors.push(error);
         destroyReason =
           error instanceof Error
             ? error
-            : new Error("Artifact mutation advisory lock acquisition failed");
-      }
-    } finally {
-      if (locked) {
-        try {
-          const unlock = await client.query<{ unlocked: boolean }>(
-            "SELECT pg_advisory_unlock($1) AS unlocked",
-            [ARTIFACT_MUTATION_LOCK_KEY],
-          );
-          if (unlock.rows[0]?.unlocked !== true) {
-            destroyReason = new Error(
-              "Artifact mutation advisory unlock returned false",
-            );
-            finalizationErrors.push(destroyReason);
-          }
-        } catch (error) {
-          finalizationErrors.push(error);
-          destroyReason =
-            error instanceof Error
-              ? error
-              : new Error("Artifact mutation advisory unlock failed");
-        }
+            : new Error("Artifact mutation advisory unlock failed");
       }
       try {
         client.release(destroyReason);
