@@ -41,22 +41,46 @@ const runtimeGrantsFile = fileURLToPath(
 function assertSameLocalTestDatabase(
   urls: Record<string, string>,
 ): Record<string, string> {
-  const ownerUrl = assertSafeIdentityMigrationTestDatabaseUrl(urls.owner ?? "");
-  const owner = new URL(ownerUrl);
+  const safeUrls = Object.fromEntries(
+    Object.entries(urls).map(([role, value]) => [
+      role,
+      assertSafeIdentityMigrationTestDatabaseUrl(value),
+    ]),
+  );
+  const owner = new URL(safeUrls.owner ?? "");
   const expected = `${owner.hostname}:${owner.port || "5432"}${owner.pathname}`;
-  for (const [role, value] of Object.entries(urls)) {
+  for (const [role, value] of Object.entries(safeUrls)) {
     const parsed = new URL(value);
     const actual = `${parsed.hostname}:${parsed.port || "5432"}${parsed.pathname}`;
     if (actual !== expected) {
       throw new Error(`${role} must target the dedicated local test database`);
     }
   }
-  return urls;
+  return safeUrls;
 }
 
 async function expectPermissionDenied(operation: Promise<unknown>) {
   await expect(operation).rejects.toMatchObject({ code: "42501" });
 }
+
+describe("Download resource role-boundary URL safety", () => {
+  const safe = "postgresql://tester@127.0.0.1/ai_agent_platform_identity_test";
+
+  it.each(["migrator", "runtime", "backup"] as const)(
+    "validates the %s URL before comparing database targets",
+    (role) => {
+      expect(() =>
+        assertSameLocalTestDatabase({
+          owner: safe,
+          migrator: safe,
+          runtime: safe,
+          backup: safe,
+          [role]: `${safe}?host=remote.example`,
+        }),
+      ).toThrow("must not contain query parameters or fragments");
+    },
+  );
+});
 
 describePostgres(
   configured
@@ -108,8 +132,8 @@ describePostgres(
       const resourceId = randomUUID();
       const revisionId = randomUUID();
       const client = await runtime.connect();
-      await client.query("BEGIN");
       try {
+        await client.query("BEGIN");
         await client.query(
           `INSERT INTO download_resources (id, key, admin_label)
            VALUES ($1, $2, 'Role boundary')`,
@@ -154,8 +178,11 @@ describePostgres(
           resourceId,
         ]);
       } finally {
-        await client.query("ROLLBACK");
-        client.release();
+        try {
+          await client.query("ROLLBACK");
+        } finally {
+          client.release();
+        }
       }
     });
 
@@ -190,13 +217,18 @@ describePostgres(
           "SELECT id FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 1",
         ),
       ).resolves.toMatchObject({ rowCount: 1 });
-      await migrator.query("BEGIN");
+      const client = await migrator.connect();
       try {
+        await client.query("BEGIN");
         await expect(
-          migrator.query("CREATE TABLE download_migrator_probe (id integer)"),
+          client.query("CREATE TABLE download_migrator_probe (id integer)"),
         ).resolves.toMatchObject({ command: "CREATE" });
       } finally {
-        await migrator.query("ROLLBACK");
+        try {
+          await client.query("ROLLBACK");
+        } finally {
+          client.release();
+        }
       }
     });
   },
