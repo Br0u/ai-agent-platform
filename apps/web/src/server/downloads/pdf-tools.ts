@@ -102,13 +102,28 @@ async function discardStage(stage: DownloadStage) {
   }
 }
 
+function abortError(operation: string) {
+  const error = new Error(`${operation} aborted`);
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined, operation: string) {
+  if (signal?.aborted) throw abortError(operation);
+}
+
 export function createPdfTools(dependencies: Dependencies = {}) {
   const spawnProcess = dependencies.spawnProcess ?? (spawn as SpawnProcess);
   const sharpFactory = dependencies.sharpFactory ?? (sharp as SharpFactory);
   const setTimer = dependencies.setTimer ?? setTimeout;
   const clearTimer = dependencies.clearTimer ?? clearTimeout;
 
-  async function run(command: string, args: readonly string[]) {
+  async function run(
+    command: string,
+    args: readonly string[],
+    signal?: AbortSignal,
+  ) {
+    throwIfAborted(signal, command);
     const child = spawnProcess(command, args, {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
@@ -118,13 +133,18 @@ export function createPdfTools(dependencies: Dependencies = {}) {
     let outputBytes = 0;
     let failure: Error | undefined;
 
+    function stop(error: Error) {
+      if (failure) return;
+      failure = error;
+      child.kill("SIGKILL");
+    }
+
     function collect(target: Buffer[], chunk: Buffer | string) {
       if (failure) return;
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       outputBytes += bytes.length;
       if (outputBytes > MAX_PROCESS_OUTPUT_BYTES) {
-        failure = new Error(`${command} output exceeded 64 KiB`);
-        child.kill("SIGKILL");
+        stop(new Error(`${command} output exceeded 64 KiB`));
         return;
       }
       target.push(bytes);
@@ -135,16 +155,16 @@ export function createPdfTools(dependencies: Dependencies = {}) {
 
     return await new Promise<{ stdout: string; stderr: string }>(
       (resolve, reject) => {
+        const onAbort = () => stop(abortError(command));
         const timer = setTimer(() => {
-          if (failure) return;
-          failure = new Error(`${command} timed out after 15000ms`);
-          child.kill("SIGKILL");
+          stop(new Error(`${command} timed out after 15000ms`));
         }, PROCESS_TIMEOUT_MS);
         child.once("error", (error) => {
           failure ??= error;
         });
-        child.once("close", (code, signal) => {
+        child.once("close", (code, exitSignal) => {
           clearTimer(timer);
+          signal?.removeEventListener("abort", onAbort);
           if (failure) {
             reject(failure);
             return;
@@ -152,7 +172,7 @@ export function createPdfTools(dependencies: Dependencies = {}) {
           if (code !== 0) {
             reject(
               new Error(
-                `${command} failed (${code ?? signal ?? "unknown"}): ${Buffer.concat(stderr).toString("utf8")}`,
+                `${command} failed (${code ?? exitSignal ?? "unknown"}): ${Buffer.concat(stderr).toString("utf8")}`,
               ),
             );
             return;
@@ -162,16 +182,25 @@ export function createPdfTools(dependencies: Dependencies = {}) {
             stderr: Buffer.concat(stderr).toString("utf8"),
           });
         });
+        signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal?.aborted) onAbort();
       },
     );
   }
 
   return {
-    async derive(pdfPath: string, fileStore: PdfToolFileStore) {
+    async derive(
+      pdfPath: string,
+      fileStore: PdfToolFileStore,
+      signal?: AbortSignal,
+    ) {
+      throwIfAborted(signal, "PDF processing");
       await validatePdfPrefix(pdfPath);
-      const information = await run("pdfinfo", [pdfPath]);
+      throwIfAborted(signal, "PDF processing");
+      const information = await run("pdfinfo", [pdfPath], signal);
       if (information.stderr.trim() !== "") throw new Error("Invalid PDF");
       const pageCount = pageCountFrom(information.stdout);
+      throwIfAborted(signal, "PDF processing");
       let temporaryDirectory: string | undefined;
       let stagedCover: DownloadStage | undefined;
       try {
@@ -179,20 +208,25 @@ export function createPdfTools(dependencies: Dependencies = {}) {
           path.join(tmpdir(), "download-cover-"),
         );
         const outputPrefix = path.join(temporaryDirectory, "page-1");
-        await run("pdftoppm", [
-          "-f",
-          "1",
-          "-singlefile",
-          "-png",
-          "-r",
-          "96",
-          "-scale-to-x",
-          "1280",
-          "-scale-to-y",
-          "-1",
-          pdfPath,
-          outputPrefix,
-        ]);
+        await run(
+          "pdftoppm",
+          [
+            "-f",
+            "1",
+            "-singlefile",
+            "-png",
+            "-r",
+            "96",
+            "-scale-to-x",
+            "1280",
+            "-scale-to-y",
+            "-1",
+            pdfPath,
+            outputPrefix,
+          ],
+          signal,
+        );
+        throwIfAborted(signal, "PDF processing");
         const pngPath = `${outputPrefix}.png`;
         const png = await lstat(pngPath);
         if (png.isSymbolicLink() || !png.isFile()) {
@@ -201,14 +235,18 @@ export function createPdfTools(dependencies: Dependencies = {}) {
         if (png.size > MAX_PNG_BYTES)
           throw new Error("Rendered PNG is too large");
 
+        throwIfAborted(signal, "PDF processing");
         stagedCover = await fileStore.createStage(".webp");
+        throwIfAborted(signal, "PDF processing");
         const webp = await sharpFactory(pngPath, {
           limitInputPixels: 40_000_000,
         })
           .resize({ width: 640, withoutEnlargement: true })
           .webp({ quality: 72 })
           .toBuffer();
+        throwIfAborted(signal, "PDF processing");
         await stagedCover.writable.writeFile(webp);
+        throwIfAborted(signal, "PDF processing");
         await rm(temporaryDirectory, { recursive: true, force: true });
         temporaryDirectory = undefined;
         return { pageCount, stagedCover } as const;

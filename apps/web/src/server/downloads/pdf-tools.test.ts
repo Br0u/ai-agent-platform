@@ -26,6 +26,8 @@ type Outcome = Readonly<{
   code?: number;
   timeout?: boolean;
   pngBytes?: number;
+  manualKillClose?: boolean;
+  onClose?: () => void;
 }>;
 
 const roots: string[] = [];
@@ -52,21 +54,24 @@ function fakeSpawn(outcomes: Outcome[]) {
     child.stdout = stdout;
     child.stderr = stderr;
     child.kill = vi.fn(() => {
-      queueMicrotask(() => child.emit("close", null, "SIGKILL"));
+      if (!outcome.manualKillClose) {
+        queueMicrotask(() => child.emit("close", null, "SIGKILL"));
+      }
       return true;
     });
     queueMicrotask(async () => {
-      if (outcome.timeout) return;
       if (outcome.pngBytes !== undefined) {
         const prefix = args.at(-1)!;
         await writeFile(`${prefix}.png`, "png");
         await truncate(`${prefix}.png`, outcome.pngBytes);
       }
+      if (outcome.timeout) return;
       if (outcome.stdout) stdout.end(outcome.stdout);
       else stdout.end();
       if (outcome.stderr) stderr.end(outcome.stderr);
       else stderr.end();
       child.emit("close", outcome.code ?? 0, null);
+      outcome.onClose?.();
     });
     return child;
   });
@@ -187,6 +192,114 @@ describe("PDF metadata and cover derivation", () => {
     expect(spawnProcess.mock.results[0]!.value.kill).toHaveBeenCalledWith(
       "SIGKILL",
     );
+  });
+
+  it("fails fast for an already-aborted request without spawning a tool", async () => {
+    const root = await temporaryRoot();
+    const controller = new AbortController();
+    controller.abort();
+    const spawnProcess = fakeSpawn([]);
+    const { pdfTools } = tools(spawnProcess);
+
+    await expect(
+      pdfTools.derive(
+        await pdfAt(root),
+        createDownloadFileStore(root),
+        controller.signal,
+      ),
+    ).rejects.toThrow("aborted");
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
+  it("kills pdfinfo on abort, waits for close, and removes its listener", async () => {
+    const root = await temporaryRoot();
+    const controller = new AbortController();
+    const remove = vi.spyOn(controller.signal, "removeEventListener");
+    const spawnProcess = fakeSpawn([{ timeout: true, manualKillClose: true }]);
+    const { pdfTools } = tools(spawnProcess);
+    let settled = false;
+    const derivation = pdfTools
+      .derive(
+        await pdfAt(root),
+        createDownloadFileStore(root),
+        controller.signal,
+      )
+      .finally(() => {
+        settled = true;
+      });
+    await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(1));
+
+    controller.abort();
+    await Promise.resolve();
+    const child = spawnProcess.mock.results[0]!.value;
+    expect(child.kill).toHaveBeenCalledTimes(1);
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(settled).toBe(false);
+
+    child.emit("close", null, "SIGKILL");
+    await expect(derivation).rejects.toThrow("aborted");
+    expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+
+  it("does not spawn pdftoppm when aborted between tool processes", async () => {
+    const root = await temporaryRoot();
+    const controller = new AbortController();
+    const spawnProcess = fakeSpawn([
+      {
+        stdout: "Pages: 1\n",
+        onClose: () => controller.abort(),
+      },
+      { pngBytes: 1024 },
+    ]);
+    const { pdfTools } = tools(spawnProcess);
+
+    await expect(
+      pdfTools.derive(
+        await pdfAt(root),
+        createDownloadFileStore(root),
+        controller.signal,
+      ),
+    ).rejects.toThrow("aborted");
+    expect(spawnProcess).toHaveBeenCalledTimes(1);
+  });
+
+  it("kills pdftoppm on abort, waits for close, and removes its PNG", async () => {
+    const root = await temporaryRoot();
+    const controller = new AbortController();
+    const remove = vi.spyOn(controller.signal, "removeEventListener");
+    const spawnProcess = fakeSpawn([
+      { stdout: "Pages: 1\n" },
+      { timeout: true, pngBytes: 1024, manualKillClose: true },
+    ]);
+    const { pdfTools } = tools(spawnProcess);
+    let settled = false;
+    const derivation = pdfTools
+      .derive(
+        await pdfAt(root),
+        createDownloadFileStore(root),
+        controller.signal,
+      )
+      .finally(() => {
+        settled = true;
+      });
+    await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(2));
+    const child = spawnProcess.mock.results[1]!.value;
+    const prefix = spawnProcess.mock.calls[1]![1].at(-1)!;
+
+    controller.abort();
+    await Promise.resolve();
+    expect(child.kill).toHaveBeenCalledTimes(1);
+    expect(settled).toBe(false);
+    child.emit("close", null, "SIGKILL");
+
+    await expect(derivation).rejects.toThrow("aborted");
+    await expect(readFile(`${prefix}.png`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(readdir(path.join(root, "staging"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(remove).toHaveBeenCalledTimes(2);
   });
 
   it.each([
