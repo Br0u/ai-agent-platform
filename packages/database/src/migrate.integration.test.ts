@@ -393,6 +393,113 @@ describePostgres("concurrent production migrations", () => {
       [cleanupRevision.rows[0]?.id],
     );
 
+    const pointerClient = await verifier.connect();
+    const cleanupClient = await verifier.connect();
+    const raceRevision = await verifier.query<{ id: string }>(
+      `INSERT INTO download_resource_revisions
+         (resource_id, name, product, category, resource_type, description,
+          sort_order, preview_policy, download_policy)
+       SELECT id, 'race', '视觉检索智能体', 'materials', '测试', 'race',
+              999, 'public', 'contact'
+       FROM download_resources WHERE key = 'vision-intro'
+       RETURNING id::text`,
+    );
+    const raceRevisionId = raceRevision.rows[0]?.id;
+    let pointerOpen = false;
+    let cleanupOpen = false;
+
+    try {
+      await pointerClient.query("BEGIN");
+      pointerOpen = true;
+      await cleanupClient.query("BEGIN");
+      cleanupOpen = true;
+      await cleanupClient.query("SET LOCAL statement_timeout = '5s'");
+      const cleanupPid = await cleanupClient.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid",
+      );
+
+      await pointerClient.query(
+        `UPDATE download_resources
+         SET draft_revision_id = $1
+         WHERE key = 'vision-intro'`,
+        [raceRevisionId],
+      );
+
+      let cleanupSettled = false;
+      const cleanupOutcome = cleanupClient
+        .query(
+          `UPDATE download_resource_revisions
+           SET cleanup_pending_at = now()
+           WHERE id = $1`,
+          [raceRevisionId],
+        )
+        .then(
+          () => {
+            cleanupSettled = true;
+            return { ok: true as const, error: undefined };
+          },
+          (error: unknown) => {
+            cleanupSettled = true;
+            return { ok: false as const, error };
+          },
+        );
+
+      let cleanupWaitsOnLock = false;
+      for (let attempt = 0; attempt < 50 && !cleanupSettled; attempt += 1) {
+        const activity = await verifier.query<{ waitEventType: string | null }>(
+          `SELECT wait_event_type AS "waitEventType"
+           FROM pg_stat_activity
+           WHERE pid = $1`,
+          [cleanupPid.rows[0]?.pid],
+        );
+        cleanupWaitsOnLock = activity.rows[0]?.waitEventType === "Lock";
+        if (cleanupWaitsOnLock) break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(cleanupSettled || cleanupWaitsOnLock).toBe(true);
+
+      if (cleanupWaitsOnLock) {
+        await pointerClient.query("COMMIT");
+        pointerOpen = false;
+      }
+      const outcome = await cleanupOutcome;
+      if (outcome.ok) {
+        await cleanupClient.query("COMMIT");
+        cleanupOpen = false;
+        if (pointerOpen) {
+          await pointerClient.query("COMMIT");
+          pointerOpen = false;
+        }
+      } else {
+        expect(outcome.error).toMatchObject({ code: "23514" });
+        await cleanupClient.query("ROLLBACK");
+        cleanupOpen = false;
+      }
+
+      const illegalState = await verifier.query<{ count: string }>(
+        `SELECT count(*)::text AS count
+         FROM download_resources resource
+         JOIN download_resource_revisions revision
+           ON revision.id = resource.draft_revision_id
+          AND revision.resource_id = resource.id
+         WHERE resource.key = 'vision-intro'
+           AND revision.cleanup_pending_at IS NOT NULL`,
+      );
+      expect(illegalState.rows).toEqual([{ count: "0" }]);
+    } finally {
+      if (pointerOpen) await pointerClient.query("ROLLBACK");
+      if (cleanupOpen) await cleanupClient.query("ROLLBACK");
+      cleanupClient.release();
+      pointerClient.release();
+    }
+    await verifier.query(
+      "UPDATE download_resources SET draft_revision_id = NULL WHERE key = 'vision-intro'",
+    );
+    await verifier.query(
+      "DELETE FROM download_resource_revisions WHERE id = $1",
+      [raceRevisionId],
+    );
+
     await verifier.query("DELETE FROM assistant_input_policy");
     await expect(
       verifier.query("INSERT INTO assistant_input_policy (id) VALUES (2)"),

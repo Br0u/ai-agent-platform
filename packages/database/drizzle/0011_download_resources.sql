@@ -54,13 +54,19 @@ CREATE INDEX "download_resource_revisions_cleanup_pending_idx" ON "download_reso
 CREATE INDEX "download_resources_state_idx" ON "download_resources" USING btree ("state");--> statement-breakpoint
 CREATE FUNCTION "enforce_download_resource_clean_pointer"() RETURNS trigger AS $$
 BEGIN
+	PERFORM 1
+	FROM "download_resource_revisions" revision
+	WHERE revision.resource_id = NEW.id
+		AND revision.id = ANY(array_remove(ARRAY[NEW.published_revision_id, NEW.draft_revision_id], NULL))
+	ORDER BY revision.id
+	FOR SHARE;
+
 	IF EXISTS (
 		SELECT 1
 		FROM "download_resource_revisions" revision
 		WHERE revision.resource_id = NEW.id
 			AND revision.id = ANY(array_remove(ARRAY[NEW.published_revision_id, NEW.draft_revision_id], NULL))
 			AND revision.cleanup_pending_at IS NOT NULL
-		FOR SHARE
 	) THEN
 		RAISE EXCEPTION 'cleanup-pending revisions cannot be referenced'
 			USING ERRCODE = '23514';
@@ -81,7 +87,6 @@ BEGIN
 			FROM "download_resources" resource
 			WHERE resource.published_revision_id = NEW.id
 				OR resource.draft_revision_id = NEW.id
-			FOR UPDATE
 		) THEN
 		RAISE EXCEPTION 'referenced revisions cannot become cleanup-pending'
 			USING ERRCODE = '23514';

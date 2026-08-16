@@ -193,4 +193,35 @@ describe("download resource schema", () => {
     );
     expect(migration).not.toMatch(/\bGRANT\b/i);
   });
+
+  it("locks every pointer candidate before checking cleanup state", () => {
+    const migration = readFileSync(
+      new URL("../../drizzle/0011_download_resources.sql", import.meta.url),
+      "utf8",
+    );
+    const pointerGuard = migration.slice(
+      migration.indexOf(
+        'CREATE FUNCTION "enforce_download_resource_clean_pointer"',
+      ),
+      migration.indexOf(
+        'CREATE TRIGGER "download_resources_clean_pointer_guard"',
+      ),
+    );
+    const lock = pointerGuard.indexOf("PERFORM 1");
+    const cleanupCheck = pointerGuard.indexOf("cleanup_pending_at IS NOT NULL");
+
+    expect(lock).toBeGreaterThan(-1);
+    expect(pointerGuard.slice(lock, cleanupCheck)).toContain("FOR SHARE");
+    expect(cleanupCheck).toBeGreaterThan(lock);
+
+    const cleanupGuard = migration.slice(
+      migration.indexOf(
+        'CREATE FUNCTION "guard_referenced_download_revision_cleanup"',
+      ),
+      migration.indexOf(
+        'CREATE TRIGGER "download_resource_revisions_cleanup_guard"',
+      ),
+    );
+    expect(cleanupGuard).not.toContain("FOR UPDATE");
+  });
 });
