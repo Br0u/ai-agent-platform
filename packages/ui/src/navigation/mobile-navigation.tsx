@@ -264,6 +264,11 @@ export function MobileNavigation({
                     id={panelId}
                     role="region"
                   >
+                    {item.introTitle ? (
+                      <h2 className="mobile-navigation__intro-title">
+                        {item.introTitle}
+                      </h2>
+                    ) : null}
                     <Link
                       aria-current={
                         isNavigationChildActive(item.href, activeHref)
@@ -274,7 +279,10 @@ export function MobileNavigation({
                       href={item.href}
                       onClick={closeNavigation}
                     >
-                      {item.label}概览
+                      <span>{item.overviewLabel ?? `${item.label}概览`}</span>
+                      {item.overviewLabel ? (
+                        <span aria-hidden="true">→</span>
+                      ) : null}
                     </Link>
                     {item.children.map((section, sectionIndex) => (
                       <section key={`${section.label}-${sectionIndex}`}>

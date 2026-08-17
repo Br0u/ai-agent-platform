@@ -225,7 +225,7 @@ export function MegaMenu({
               aria-label={`${item.label}简介`}
               className="mega-menu__intro"
             >
-              <h2>{item.label}</h2>
+              <h2>{item.introTitle ?? item.label}</h2>
               {item.description ? <p>{item.description}</p> : null}
               <Link
                 aria-current={
@@ -236,7 +236,7 @@ export function MegaMenu({
                 className="mega-menu__overview"
                 href={item.href}
               >
-                <span>{item.label}概览</span>
+                <span>{item.overviewLabel ?? `${item.label}概览`}</span>
                 <span aria-hidden="true">→</span>
               </Link>
             </aside>

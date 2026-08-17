@@ -43,6 +43,8 @@ export type NavigationSection = {
 
 export type PortalNavigationItem = NavigationHrefItem & {
   children: NavigationSection[];
+  introTitle?: string;
+  overviewLabel?: string;
 };
 
 export type SidebarNavigationConfig = {

@@ -60,6 +60,14 @@ const items: PortalNavigationItem[] = [
   { label: "价格与服务", href: "/pricing", children: [] },
 ];
 
+const v3ProductItems: PortalNavigationItem[] = [
+  {
+    ...items[1]!,
+    introTitle: "元启 AI 开发赋能平台",
+    overviewLabel: "进入产品中心",
+  },
+];
+
 function renderNavigation(
   activeHref = "/",
   props?: Partial<{
@@ -130,6 +138,31 @@ describe("MobileNavigation", () => {
     fireEvent.click(accordion("产品"));
 
     expect(screen.getByText("全栈开发平台")).toBeVisible();
+  });
+
+  it("reuses optional V3 intro and overview copy in the 产品 accordion", () => {
+    renderNavigation("/", { items: v3ProductItems });
+    const { dialog } = openNavigation();
+    const product = within(dialog).getByRole("button", {
+      name: "产品",
+    });
+    const panel = document.getElementById(
+      product.getAttribute("aria-controls")!,
+    )!;
+
+    fireEvent.click(product);
+
+    expect(product).toHaveAttribute("aria-expanded", "true");
+    expect(
+      within(panel).getByRole("heading", {
+        name: "元启 AI 开发赋能平台",
+        level: 2,
+      }),
+    ).toBeVisible();
+    expect(
+      within(panel).getByRole("link", { name: "进入产品中心" }),
+    ).toHaveAttribute("href", "/product");
+    expect(within(panel).getByText("→")).toBeVisible();
   });
 
   it("mounts controlled accordion panels and shows overview before children", () => {
