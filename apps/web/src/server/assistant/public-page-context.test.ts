@@ -269,7 +269,7 @@ describe("public page context resolver", () => {
     expect(fetcher).toHaveBeenCalledOnce();
   });
 
-  it("omits encoded path-confusion links without validating them", async () => {
+  it("omits encoded path-confusion links before validating safe destinations", async () => {
     const unsafe = ["%2f", "%5c", "%00", "%2e%2e", "%zz"];
     const fetcher = vi.fn<typeof fetch>(async () =>
       html(
@@ -317,7 +317,7 @@ describe("public page context resolver", () => {
     );
   });
 
-  it("validates no more than 64 unique same-origin public links and returns only live HTML", async () => {
+  it("validates up to 64 unique same-origin public links", async () => {
     const links = [
       ...Array.from(
         { length: PUBLIC_PAGE_LINKS_MAX + 1 },
@@ -328,13 +328,9 @@ describe("public page context resolver", () => {
       '<a href="/assistant">assistant</a>',
       '<a href="/solutions/slug-0#repeat">repeat</a>',
     ].join("");
-    const fetcher = vi.fn<typeof fetch>(async (input) => {
-      const url = new URL(String(input));
-      if (url.pathname === "/product") return html(`<main>${links}</main>`);
-      if (url.pathname.endsWith("slug-1"))
-        return new Response("missing", { status: 404 });
-      return html("<main>destination</main>");
-    });
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      html(`<main>${links}</main>`),
+    );
 
     const context = await resolver(fetcher).load({
       pathname: "/product",
@@ -342,13 +338,29 @@ describe("public page context resolver", () => {
     });
 
     expect(fetcher).toHaveBeenCalledTimes(1 + PUBLIC_PAGE_LINKS_MAX);
-    expect(context?.links).toHaveLength(PUBLIC_PAGE_LINKS_MAX - 1);
-    expect(context?.links).not.toContainEqual(
-      expect.objectContaining({ href: "/solutions/slug-1" }),
-    );
+    expect(context?.links).toHaveLength(PUBLIC_PAGE_LINKS_MAX);
+    expect(context?.links).toContainEqual({
+      href: "/solutions/slug-1",
+      label: "方案 1",
+    });
     expect(context?.links).not.toContainEqual(
       expect.objectContaining({ href: "/solutions/slug-64" }),
     );
+  });
+
+  it("omits a registered link when its destination is unavailable", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/product") {
+        return html('<main><a href="/solutions/missing">失效方案</a></main>');
+      }
+      return new Response("missing", { status: 404 });
+    });
+
+    await expect(
+      resolver(fetcher).load({ pathname: "/product", search: "" }),
+    ).resolves.toMatchObject({ links: [] });
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("caps destination validation concurrency at four", async () => {
@@ -383,7 +395,7 @@ describe("public page context resolver", () => {
     expect(maximum).toBe(4);
   });
 
-  it("cancels bodies after header-only existence and candidate checks", async () => {
+  it("cancels bodies after header-only existence checks", async () => {
     const cancel = vi.fn(async () => undefined);
     const headerOnly = () => {
       const body = new ReadableStream<Uint8Array>({ cancel });

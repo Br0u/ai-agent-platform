@@ -7,7 +7,10 @@ import type {
   AssistantProviderReply,
 } from "./assistant-provider";
 import { matchRoute } from "@/config/routes";
-import { AssistantContentFilter } from "./assistant-content-filter";
+import {
+  AssistantContentFilter,
+  ASSISTANT_FINAL_ANSWER_MARKER,
+} from "./assistant-content-filter";
 import type { AgentOSExecutionCircuit } from "./agentos-execution-circuit";
 import {
   AgentOSRunClientError,
@@ -51,6 +54,25 @@ export class AgentOSAssistantProvider implements AssistantProvider {
   private async *runStream(
     invocation: AssistantProviderInvocation,
   ): AsyncIterable<AssistantProviderEvent> {
+    const requestedNavigation = requestedNavigationPath(invocation);
+    if (requestedNavigation !== null) {
+      const route = matchRoute(requestedNavigation);
+      if (route?.group === "public" && route.status === "live") {
+        yield {
+          type: "answer_delta",
+          content: `可以，点击下方“${route.title}”前往。`,
+        };
+        yield {
+          type: "action",
+          action: {
+            kind: "navigate",
+            pathname: requestedNavigation,
+            label: route.title,
+          },
+        };
+        return;
+      }
+    }
     const message = buildAssistantPrompt(invocation);
     const iterator = this.options.runClient
       .runAgentStream({
@@ -97,9 +119,9 @@ export class AgentOSAssistantProvider implements AssistantProvider {
       (error: unknown) => push({ kind: "error", error }),
     );
     const filter = new AssistantContentFilter();
+    filter.push(ASSISTANT_FINAL_ANSWER_MARKER);
     const seenActions = new Set<string>();
     const pendingActions: AssistantProviderEvent[] = [];
-    const requestedNavigation = requestedNavigationPath(invocation);
     let hasSafeAnswer = false;
     try {
       while (true) {
@@ -232,7 +254,15 @@ function requestedNavigationPath(
   const matches = (invocation.pageContext?.links ?? [])
     .filter((link) => {
       const label = link.label.replace(/[\s→›»]+/gu, "");
-      return label.length >= 2 && compactMessage.includes(label);
+      const routeTitle = matchRoute(
+        link.href.split(/[?#]/u, 1)[0] ?? "",
+      )?.title.replace(/(?:介绍|中心|详情|页面)$/u, "");
+      return (
+        (label.length >= 2 && compactMessage.includes(label)) ||
+        (routeTitle !== undefined &&
+          routeTitle.length >= 2 &&
+          compactMessage.includes(routeTitle))
+      );
     })
     .sort((left, right) => right.label.length - left.label.length);
   return matches[0]?.href ?? null;

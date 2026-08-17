@@ -257,6 +257,7 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
     pageResolver ??= createPublicPageContextResolver({
       origin: publicOrigin,
       fetch: options.fetcher ?? globalThis.fetch,
+      ...(environment.NODE_ENV === "development" ? { timeoutMs: 30_000 } : {}),
     });
     return pageResolver;
   }
