@@ -144,7 +144,7 @@
 
 @media (min-width: 901px) {
   .download-shell[data-directory-collapsed="true"] {
-    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-columns: 0 minmax(0, 1fr);
   }
 
   .download-shell[data-directory-collapsed="true"] .download-directory {
@@ -386,13 +386,13 @@
 
 .download-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
 .download-card {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(180px, 0.85fr);
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--download-line);
@@ -407,10 +407,12 @@
 
 .download-card__cover {
   display: block;
-  aspect-ratio: 16 / 9;
+  min-width: 0;
   overflow: hidden;
-  border-bottom: 1px solid var(--download-line);
+  border-left: 1px solid var(--download-line);
   background: #e9eef9;
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .download-card__cover-image {
@@ -423,9 +425,12 @@
 .download-card__body {
   display: flex;
   flex: 1;
+  min-width: 0;
   flex-direction: column;
   gap: 8px;
   padding: 13px;
+  grid-column: 1;
+  grid-row: 1;
 }
 
 .download-card__labels,
@@ -620,12 +625,6 @@
   }
 }
 
-@media (max-width: 1180px) {
-  .download-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
 @media (max-width: 900px) {
   .download-directory-mobile {
     position: sticky;
@@ -723,9 +722,12 @@
     padding: 30px 20px;
   }
 
-  .download-journey,
-  .download-grid {
+  .download-journey {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .download-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .download-page [id^="dl-"] {
@@ -734,8 +736,7 @@
 }
 
 @media (max-width: 640px) {
-  .download-journey,
-  .download-grid {
+  .download-journey {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -751,8 +752,21 @@
     min-height: 0;
   }
 
+  .download-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .download-card__cover {
     aspect-ratio: 3 / 2;
+    border-bottom: 1px solid var(--download-line);
+    border-left: 0;
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .download-card__body {
+    grid-column: 1;
+    grid-row: 2;
   }
 
   .download-card__metadata {

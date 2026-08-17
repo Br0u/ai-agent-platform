@@ -120,3 +120,34 @@ Keep the download-specific directory contents, omit the unnecessary search and p
 Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/download-center.test.tsx`
 
 Expected: PASS.
+
+### Task 5: Remove the collapsed gutter and use horizontal resource cards
+
+**Files:**
+
+- Modify: `apps/web/src/components/download-center.test.tsx`
+- Modify: `apps/web/src/app/downloads/downloads.css`
+- Verify: `apps/web/src/components/site-shell/site-shell.test.tsx`
+- Verify: `packages/ui/src/app-shell.test.tsx`
+
+- [x] **Step 1: Write failing visual-contract tests**
+
+Require the collapsed desktop shell to reserve no colored gutter while retaining the shared progress rail. Require a two-column resource grid whose cards place the information on the left and cover on the right, with a single-column stacked mobile fallback.
+
+- [x] **Step 2: Run the focused test and confirm RED**
+
+Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/download-center.test.tsx`
+
+Expected: FAIL on the old `44px` collapsed gutter and four-column vertical cards.
+
+- [x] **Step 3: Implement the minimum download-only CSS change**
+
+Collapse the first grid track to zero so the rail floats over the Hero instead of creating a background strip. Switch the catalog to two wide columns and each card to a left-information/right-cover grid; restore a vertical card below the mobile breakpoint. Keep the expanded directory panel, mobile drawer, resource policies, routes, and Agent UI unchanged.
+
+- [x] **Step 4: Verify the shared public footer contract**
+
+Run the existing `SiteShell` and `AppShell` tests to prove `/` and `/downloads` use the same shared `SiteFooter`. Do not add the public marketing footer to auth, console, admin, or assistant workspaces.
+
+- [x] **Step 5: Verify application and browser layout**
+
+Run focused tests, typecheck, lint, format, production build, and desktop/mobile browser checks before committing.

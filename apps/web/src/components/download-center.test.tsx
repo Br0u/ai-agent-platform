@@ -314,23 +314,26 @@ describe("managed download center", () => {
     ).toEqual([`申请获取${specialName}`]);
   });
 
-  it("uses a compact responsive card grid", () => {
+  it("uses wide horizontal cards with a mobile stacked fallback", () => {
     const css = readFileSync("src/app/downloads/downloads.css", "utf8");
 
     expect(css).toMatch(
-      /\.download-grid\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0, 1fr\)\);/su,
+      /\.download-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0, 1fr\)\);/su,
     );
     expect(css).toMatch(
-      /\.download-card\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;/su,
+      /\.download-card\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0,\s*1\.4fr\) minmax\(180px,\s*0\.85fr\);/su,
     );
     expect(css).toMatch(
-      /@media \(max-width:\s*1180px\)[\s\S]*?\.download-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0, 1fr\)\);/u,
+      /\.download-card__cover\s*\{[^}]*grid-column:\s*2;[^}]*grid-row:\s*1;/su,
     );
     expect(css).toMatch(
-      /@media \(max-width:\s*900px\)[\s\S]*?\.download-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0, 1fr\)\);/u,
+      /\.download-card__body\s*\{[^}]*grid-column:\s*1;[^}]*grid-row:\s*1;/su,
     );
     expect(css).toMatch(
-      /@media \(max-width:\s*640px\)[\s\S]*?\.download-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/u,
+      /@media \(max-width:\s*900px\)[\s\S]*?\.download-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/u,
+    );
+    expect(css).toMatch(
+      /@media \(max-width:\s*640px\)[\s\S]*?\.download-card\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);[\s\S]*?\.download-card__cover\s*\{[^}]*grid-column:\s*1;[^}]*grid-row:\s*1;[\s\S]*?\.download-card__body\s*\{[^}]*grid-column:\s*1;[^}]*grid-row:\s*2;/u,
     );
     expect(css).toMatch(/:focus-visible/u);
     expect(css).toMatch(/@media \(prefers-reduced-motion:\s*reduce\)/u);
@@ -349,14 +352,14 @@ describe("managed download center", () => {
     expect(css).not.toMatch(/\.download-hero__label/u);
   });
 
-  it("matches the solutions directory geometry and mobile drawer", () => {
+  it("keeps the directory rail without reserving a colored collapsed gutter", () => {
     const css = readFileSync("src/app/downloads/downloads.css", "utf8");
 
     expect(css).toMatch(
       /\.download-shell\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*240px minmax\(0, 1fr\);/su,
     );
     expect(css).toMatch(
-      /@media \(min-width:\s*901px\)[\s\S]*?\.download-shell\[data-directory-collapsed="true"\]\s*\{[^}]*grid-template-columns:\s*44px minmax\(0, 1fr\);/u,
+      /@media \(min-width:\s*901px\)[\s\S]*?\.download-shell\[data-directory-collapsed="true"\]\s*\{[^}]*grid-template-columns:\s*0 minmax\(0, 1fr\);/u,
     );
     expect(css).toMatch(
       /\.download-directory\s*\{[^}]*position:\s*sticky;[^}]*width:\s*240px;[^}]*border-radius:\s*18px;/su,
