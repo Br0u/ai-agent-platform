@@ -147,7 +147,10 @@ type RenderedCompose = {
 
 const renderComposeFixture = (
   composeFiles = ["compose.yaml"],
-  options: { bootstrapModel?: boolean } = {},
+  options: {
+    bootstrapModel?: boolean;
+    downloadResourceSource?: string;
+  } = {},
 ): RenderedCompose => {
   const bootstrapModel = options.bootstrapModel ?? true;
   const sentinels = Object.fromEntries(
@@ -204,6 +207,8 @@ const renderComposeFixture = (
           MODEL_ID: bootstrapModel ? "provider-smoke-model" : "",
           MODEL_BASE_URL: "",
           MODEL_RUN_TIMEOUT_SECONDS: "25",
+          DOWNLOAD_RESOURCE_VOLUME_SOURCE:
+            options.downloadResourceSource ?? "download_data",
         },
       },
     );
@@ -348,6 +353,11 @@ const unixSocketFixturesAvailable = (() => {
 
 describe("production deployment security contracts", () => {
   it("persists download artifacts through an initialized least-privilege volume", () => {
+    expect(
+      read("compose.yaml").match(
+        /\$\{DOWNLOAD_RESOURCE_VOLUME_SOURCE:-download_data\}/gu,
+      ),
+    ).toHaveLength(3);
     const rendered = renderComposeFixture();
     const init = rendered.services["download-volume-init"];
     const web = rendered.services.web;
@@ -464,6 +474,28 @@ describe("production deployment security contracts", () => {
       'test "$(id -u node):$(id -g node)" = "1000:1000"',
     );
     expect(dockerfile).not.toMatch(/产品资料|\/Users\/|Downloads\//u);
+  });
+
+  it("can bind the download artifacts to one shared host directory", () => {
+    const sharedRoot = mkdtempSync(path.join(tmpdir(), "download-bind-"));
+    try {
+      const rendered = renderComposeFixture(["compose.yaml"], {
+        downloadResourceSource: sharedRoot,
+      });
+      const mounts = [
+        rendered.services["download-volume-init"]?.volumes,
+        rendered.services.web?.volumes,
+        rendered.services.backup?.volumes,
+      ];
+
+      for (const serviceMounts of mounts) {
+        expect(serviceMounts).toContainEqual(
+          expect.objectContaining({ type: "bind", source: sharedRoot }),
+        );
+      }
+    } finally {
+      rmSync(sharedRoot, { recursive: true, force: true });
+    }
   });
 
   it("normalizes hidden regular files in an isolated download volume", () => {
