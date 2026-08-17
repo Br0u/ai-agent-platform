@@ -152,6 +152,7 @@ describe("managed download center", () => {
     });
     expect(shell).toHaveAttribute("data-directory-collapsed", "true");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByTestId("directory-progress-rail")).toBeVisible();
 
     toggle.focus();
     fireEvent.click(toggle);
@@ -159,11 +160,43 @@ describe("managed download center", () => {
     const close = screen.getByRole("button", { name: "收起下载中心目录" });
     expect(shell).toHaveAttribute("data-directory-collapsed", "false");
     expect(close).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByTestId("directory-progress-rail")).toBeNull();
 
     fireEvent.click(close);
     expect(
       screen.getByRole("button", { name: "展开下载中心目录" }),
     ).toHaveFocus();
+  });
+
+  it("restores the original product-to-experience hero", () => {
+    const { container } = render(<DownloadCenter resources={resources} />);
+    const hero = container.querySelector<HTMLElement>("#dl-hero")!;
+
+    expect(
+      within(hero).getByRole("heading", {
+        level: 1,
+        name: "从产品资料到安装体验，一站式获取华鲲资源",
+      }),
+    ).toBeVisible();
+    expect(hero).toHaveTextContent(
+      "下载中心集中提供元启平台、码里奥与行业应用的产品资料、软件安装包、部署文档与技术白皮书，帮助您了解产品能力、获取资源并进入产品体验。",
+    );
+    expect(hero.querySelectorAll(".download-journey__step")).toHaveLength(4);
+    expect(
+      within(hero).getAllByRole("link", { name: "了解产品" })[0],
+    ).toHaveAttribute("href", "/product");
+    expect(
+      within(hero).getByRole("link", { name: "获取资料" }),
+    ).toHaveAttribute("href", "/downloads#dl-materials");
+    expect(
+      within(hero).getByRole("link", { name: "安装体验" }),
+    ).toHaveAttribute("href", "/downloads#dl-software");
+    expect(
+      within(hero).getAllByRole("link", { name: "申请体验" })[0],
+    ).toHaveAttribute("href", "/trial");
+    expect(hero).toHaveTextContent(
+      "下载中心是产品推广与客户转化链路的资源入口，资源均与产品价值关联呈现。",
+    );
   });
 
   it("uses the solutions-style mobile directory drawer", async () => {
@@ -285,19 +318,35 @@ describe("managed download center", () => {
     const css = readFileSync("src/app/downloads/downloads.css", "utf8");
 
     expect(css).toMatch(
-      /\.download-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0, 1fr\)\);/su,
+      /\.download-grid\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0, 1fr\)\);/su,
     );
     expect(css).toMatch(
       /\.download-card\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;/su,
     );
     expect(css).toMatch(
-      /@media \(max-width:\s*1180px\)[\s\S]*?\.download-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0, 1fr\)\);/u,
+      /@media \(max-width:\s*1180px\)[\s\S]*?\.download-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0, 1fr\)\);/u,
+    );
+    expect(css).toMatch(
+      /@media \(max-width:\s*900px\)[\s\S]*?\.download-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0, 1fr\)\);/u,
     );
     expect(css).toMatch(
       /@media \(max-width:\s*640px\)[\s\S]*?\.download-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/u,
     );
     expect(css).toMatch(/:focus-visible/u);
     expect(css).toMatch(/@media \(prefers-reduced-motion:\s*reduce\)/u);
+  });
+
+  it("uses the original hero hierarchy without adding decorative sections", () => {
+    const css = readFileSync("src/app/downloads/downloads.css", "utf8");
+
+    expect(css).toMatch(
+      /\.download-journey\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0, 1fr\)\);/su,
+    );
+    expect(css).toMatch(/\.download-hero__actions\s*\{[^}]*display:\s*flex;/su);
+    expect(css).toMatch(
+      /\.download-hero__note\s*\{[^}]*border-left:\s*3px solid/u,
+    );
+    expect(css).not.toMatch(/\.download-hero__label/u);
   });
 
   it("matches the solutions directory geometry and mobile drawer", () => {

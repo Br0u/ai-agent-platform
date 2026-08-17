@@ -49,6 +49,32 @@ Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/downlo
 
 Expected: PASS.
 
+### Task 4: Restore the original hero and reduce catalog density
+
+**Files:**
+
+- Modify: `apps/web/src/components/download-center-content.ts`
+- Modify: `apps/web/src/components/download-center-content.test.ts`
+- Modify: `apps/web/src/components/download-center.tsx`
+- Modify: `apps/web/src/components/download-center.test.tsx`
+- Modify: `apps/web/src/app/downloads/downloads.css`
+
+- [x] **Step 1: Compare the live original and current layouts**
+
+Use the original `/downloads` page as the content and hierarchy reference, and the existing solutions directory as the collapsed-rail reference. Keep resource data, policies, routes, and Agent UI unchanged.
+
+- [x] **Step 2: Lock the intended differences with failing tests**
+
+Require the shared progress rail, the original product-to-experience hero copy and four-step path, and a 4/3/2/1 responsive card grid.
+
+- [x] **Step 3: Implement the download-only visual pass**
+
+Reuse `DirectoryProgressRail`, restore the original Hero hierarchy, and tighten section spacing, card typography, metadata, and actions without adding dependencies or cross-page styles.
+
+- [x] **Step 4: Verify runtime layout and application checks**
+
+Run focused tests, typecheck, lint, format, production build, and desktop/mobile browser checks before committing.
+
 - [x] **Step 4: Verify the affected application**
 
 Run: `pnpm --filter @ai-agent-platform/web typecheck`

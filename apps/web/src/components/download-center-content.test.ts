@@ -44,6 +44,36 @@ describe("download center presentation vocabulary", () => {
     expect(content).not.toHaveProperty("downloadNotices");
   });
 
+  it("keeps the original hero message and four-step resource journey", () => {
+    expect(content.downloadOverview).toEqual({
+      title: "从产品资料到安装体验，一站式获取华鲲资源",
+      lead: "下载中心集中提供元启平台、码里奥与行业应用的产品资料、软件安装包、部署文档与技术白皮书，帮助您了解产品能力、获取资源并进入产品体验。",
+      tags: ["产品资料", "软件下载", "部署文档", "白皮书"],
+    });
+    expect(content.downloadJourney).toEqual([
+      {
+        title: "了解产品",
+        description: "查看元启平台、码里奥与行业应用能力",
+        href: "/product",
+      },
+      {
+        title: "获取资料",
+        description: "浏览产品资料、白皮书与部署文档",
+        href: "/downloads#dl-materials",
+      },
+      {
+        title: "安装体验",
+        description: "下载码里奥客户端并部署",
+        href: "/downloads#dl-software",
+      },
+      {
+        title: "申请体验",
+        description: "联系华鲲团队进入产品体验",
+        href: "/trial",
+      },
+    ]);
+  });
+
   it("describes the three supported policy pairs", () => {
     expect(content.permissionHint("public", "public")).toBe(
       "可在线预览 · 可直接下载",

@@ -41,10 +41,36 @@ export const downloadSections = [
 }[];
 
 export const downloadOverview = {
-  title: "从产品资料到部署文档，一站式获取华鲲资源",
-  lead: "下载中心集中提供元启、码里奥与行业智能体的已发布资料。可直接获取的资源立即下载，需要进一步沟通的资料可联系华鲲团队申请。",
-  tags: downloadSections.map(({ label }) => label),
+  title: "从产品资料到安装体验，一站式获取华鲲资源",
+  lead: "下载中心集中提供元启平台、码里奥与行业应用的产品资料、软件安装包、部署文档与技术白皮书，帮助您了解产品能力、获取资源并进入产品体验。",
+  tags: ["产品资料", "软件下载", "部署文档", "白皮书"],
 } as const;
+
+export const downloadJourney = [
+  {
+    title: "了解产品",
+    description: "查看元启平台、码里奥与行业应用能力",
+    href: "/product",
+  },
+  {
+    title: "获取资料",
+    description: "浏览产品资料、白皮书与部署文档",
+    href: "/downloads#dl-materials",
+  },
+  {
+    title: "安装体验",
+    description: "下载码里奥客户端并部署",
+    href: "/downloads#dl-software",
+  },
+  {
+    title: "申请体验",
+    description: "联系华鲲团队进入产品体验",
+    href: "/trial",
+  },
+] as const;
+
+export const downloadHeroNote =
+  "下载中心是产品推广与客户转化链路的资源入口，资源均与产品价值关联呈现。";
 
 export function permissionHint(
   preview: DownloadResourcePublicDto["previewPolicy"],

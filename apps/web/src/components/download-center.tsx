@@ -6,12 +6,18 @@ import { useEffect, useRef, useState } from "react";
 import type { DownloadResourcePublicDto } from "@/server/downloads/contracts";
 import { AssistantSkillModal } from "./admin/assistant-skill-modal";
 import {
+  downloadHeroNote,
+  downloadJourney,
   downloadOverview,
   downloadSections,
   formatFileSize,
   formatPublishedAt,
   permissionHint,
 } from "./download-center-content";
+import {
+  DirectoryProgressRail,
+  useDirectoryProgress,
+} from "./directory-progress";
 
 function ResourceCover({ resource }: { resource: DownloadResourcePublicDto }) {
   const cover = (
@@ -134,6 +140,16 @@ export function DownloadCenter({
   const orderedResources = [...resources].sort(
     (left, right) => left.sortOrder - right.sortOrder,
   );
+  const directoryAnchors = [
+    "dl-hero",
+    ...downloadSections.flatMap((section) => [
+      section.anchor,
+      ...orderedResources
+        .filter(({ category }) => category === section.category)
+        .map(({ key }) => `dl-${key}`),
+    ]),
+  ];
+  const { activeHash, progress } = useDirectoryProgress(directoryAnchors);
 
   const closeContact = () => {
     setContactResource(null);
@@ -199,6 +215,10 @@ export function DownloadCenter({
           ref={directory}
           role={mobileOpen ? "dialog" : undefined}
         >
+          <DirectoryProgressRail
+            collapsed={directoryCollapsed}
+            progress={progress}
+          />
           <div className="download-directory__tools">
             <strong>资源目录</strong>
             <button
@@ -220,7 +240,11 @@ export function DownloadCenter({
             </button>
           </div>
           <nav aria-label="下载中心完整目录" id="download-directory-nav">
-            <Link href="/downloads#dl-hero" onClick={() => closeMobile(false)}>
+            <Link
+              aria-current={activeHash === "#dl-hero" ? "location" : undefined}
+              href="/downloads#dl-hero"
+              onClick={() => closeMobile(false)}
+            >
               下载中心总览
             </Link>
             {downloadSections.map((section) => {
@@ -230,6 +254,11 @@ export function DownloadCenter({
               return (
                 <div key={section.category}>
                   <Link
+                    aria-current={
+                      activeHash === `#${section.anchor}`
+                        ? "location"
+                        : undefined
+                    }
                     href={`/downloads#${section.anchor}`}
                     onClick={() => closeMobile(false)}
                   >
@@ -240,6 +269,11 @@ export function DownloadCenter({
                       {sectionResources.map((resource) => (
                         <li key={resource.key}>
                           <Link
+                            aria-current={
+                              activeHash === `#dl-${resource.key}`
+                                ? "location"
+                                : undefined
+                            }
                             href={`/downloads#dl-${resource.key}`}
                             onClick={() => closeMobile(false)}
                           >
@@ -257,14 +291,30 @@ export function DownloadCenter({
 
         <div className="download-main" inert={mobileOpen ? true : undefined}>
           <section className="download-hero" id="dl-hero">
-            <span className="download-hero__label">下载中心</span>
             <h1>{downloadOverview.title}</h1>
-            <p>{downloadOverview.lead}</p>
+            <p className="download-hero__lead">{downloadOverview.lead}</p>
             <div className="download-tags" aria-label="资源类型">
               {downloadOverview.tags.map((tag) => (
                 <span key={tag}>{tag}</span>
               ))}
             </div>
+            <div className="download-hero__actions">
+              <Link className="download-button--primary" href="/product">
+                了解产品
+              </Link>
+              <Link href="/trial">申请体验</Link>
+            </div>
+            <div className="download-journey" aria-label="获取资源路径">
+              {downloadJourney.map((step, index) => (
+                <article className="download-journey__step" key={step.title}>
+                  <span>{index + 1}</span>
+                  <strong>{step.title}</strong>
+                  <p>{step.description}</p>
+                  <Link href={step.href}>{step.title}</Link>
+                </article>
+              ))}
+            </div>
+            <p className="download-hero__note">{downloadHeroNote}</p>
           </section>
 
           {downloadSections.map((section) => {
