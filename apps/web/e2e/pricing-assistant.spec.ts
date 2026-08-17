@@ -519,10 +519,18 @@ test("assistant current-page memory clears on pathname changes and reload", asyn
   await quickAssistantDialog(page)
     .getByRole("button", { name: "关闭码多多", exact: true })
     .click();
-  await page
-    .getByRole("contentinfo")
-    .getByRole("link", { name: "联系我们", exact: true })
-    .click();
+  if (testInfo.project.name === "desktop") {
+    await page
+      .getByRole("banner")
+      .getByRole("link", { name: "联系我们", exact: true })
+      .click();
+  } else {
+    await page.getByRole("button", { name: "打开导航", exact: true }).click();
+    await page
+      .getByRole("dialog", { name: "全站导航", exact: true })
+      .getByRole("link", { name: "联系我们", exact: true })
+      .click();
+  }
   await expect(page).toHaveURL(/\/contact$/u);
   await quickAssistantLauncher(page).click();
   await expect(
