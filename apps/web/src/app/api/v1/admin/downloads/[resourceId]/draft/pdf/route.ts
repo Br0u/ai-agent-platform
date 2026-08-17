@@ -37,7 +37,7 @@ async function serve(
     );
     if (!artifact) return artifactErrorResponse(request, 404, "not_found");
     const range = parseSingleByteRange(
-      request.headers.get("range"),
+      request.method === "GET" ? request.headers.get("range") : null,
       artifact.size,
     );
     if (range && range !== "invalid") {

@@ -89,6 +89,26 @@ describe("admin draft PDF", () => {
     expect(head.body).toBeNull();
   });
 
+  it.each(["bytes=2-4", "bytes=0-1,2-3"])(
+    "ignores %s on HEAD and opens only the full draft artifact",
+    async (range) => {
+      const response = await HEAD(
+        new Request("https://example.test", {
+          method: "HEAD",
+          headers: { range },
+        }),
+        valid,
+      );
+      expect(response.status).toBe(200);
+      expect(response.body).toBeNull();
+      expect(wiring.artifact).toHaveBeenCalledOnce();
+      expect(wiring.artifact).toHaveBeenCalledWith(
+        "11111111-1111-4111-8111-111111111111",
+        "pdf",
+      );
+    },
+  );
+
   it.each([401, 403] as const)("maps workforce denial %s", async (status) => {
     wiring.allow.mockRejectedValueOnce(new wiring.AuthAccessError(status));
     const response = await GET(new Request("https://example.test"), valid);
