@@ -1096,3 +1096,15 @@
     padding-inline: var(--space-4);
   }
 }
+
+.portal-footer__main,
+.portal-footer__meta span:not(:last-child) {
+  display: none;
+}
+
+.portal-footer__meta {
+  justify-content: center;
+  padding-block: 18px;
+  border-top: 0;
+  color: color-mix(in srgb, var(--color-ink) 58%, var(--color-line));
+}

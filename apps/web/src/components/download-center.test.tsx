@@ -369,6 +369,20 @@ describe("managed download center", () => {
     );
   });
 
+  it("uses the homepage compact footer presentation on every portal route", () => {
+    const css = readFileSync(
+      "../../packages/ui/src/navigation/navigation.css",
+      "utf8",
+    );
+
+    expect(css).toContain(
+      ".portal-footer__main,\n.portal-footer__meta span:not(:last-child)",
+    );
+    expect(css).toMatch(
+      /\.portal-footer__meta\s*\{[^}]*justify-content:\s*center;[^}]*padding-block:\s*18px;[^}]*border-top:\s*0;/s,
+    );
+  });
+
   it("defines contact dialog tokens on the body-level portal root", () => {
     const css = readFileSync("src/app/downloads/downloads.css", "utf8");
 
