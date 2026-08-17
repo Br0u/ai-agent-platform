@@ -8699,8 +8699,14 @@ esac
     const pdfObjectKey = `objects/${resourceId}/${revisionId}.pdf`;
     const coverObjectKey = `objects/${resourceId}/${revisionId}.webp`;
     const pdfContents = "referenced-pdf";
+    const mismatchedPdfContents = "wrong-file-pdf";
+    const pdfByteSize = Buffer.byteLength(pdfContents);
+    const mismatchedPdfByteSize = Buffer.byteLength(mismatchedPdfContents);
     const coverContents = "referenced-cover";
     const pdfSha256 = createHash("sha256").update(pdfContents).digest("hex");
+    const mismatchedPdfSha256 = createHash("sha256")
+      .update(mismatchedPdfContents)
+      .digest("hex");
     const coverSha256 = createHash("sha256")
       .update(coverContents)
       .digest("hex");
@@ -8771,16 +8777,28 @@ lines.on("line", (command) => {
   else if (command.includes("AAP_DOWNLOAD_KEYS_BEGIN")) output("__AAP_DOWNLOAD_KEYS_BEGIN__");
   else if (command.includes("SELECT artifact_key")) {
     const mode = process.env.FAKE_DOWNLOAD_KEY_MODE;
+    const hasExpectedMetadata = command.includes("expected_sha256, expected_byte_size");
+    const row = (key, sha256, byteSize) =>
+      hasExpectedMetadata ? [key, sha256, byteSize].join("|") : key;
+    const expectedPdfSha256 = mode === "same-size-content-mismatch"
+      ? "${mismatchedPdfSha256}"
+      : "${pdfSha256}";
+    const expectedPdfByteSize = mode === "same-size-content-mismatch"
+      ? "${mismatchedPdfByteSize}"
+      : "${pdfByteSize}";
     if (mode === "duplicate") {
-      output("${pdfObjectKey}");
-      output("${pdfObjectKey}");
+      output(row("${pdfObjectKey}", expectedPdfSha256, expectedPdfByteSize));
+      output(row("${pdfObjectKey}", expectedPdfSha256, expectedPdfByteSize));
+    } else if (mode === "inconsistent-duplicate") {
+      output(row("${pdfObjectKey}", "${pdfSha256}", "${pdfByteSize}"));
+      output(row("${pdfObjectKey}", "${mismatchedPdfSha256}", "${mismatchedPdfByteSize}"));
     } else if (mode === "invalid") {
-      output("${pdfObjectKey.toUpperCase()}");
+      output(row("${pdfObjectKey.toUpperCase()}", expectedPdfSha256, expectedPdfByteSize));
     } else if (mode === "too-many") {
-      fs.writeSync(1, ("${pdfObjectKey}\\n").repeat(20001));
+      fs.writeSync(1, (row("${pdfObjectKey}", expectedPdfSha256, expectedPdfByteSize) + "\\n").repeat(20001));
     } else {
-      output("${pdfObjectKey}");
-      output("${coverObjectKey}");
+      output(row("${pdfObjectKey}", expectedPdfSha256, expectedPdfByteSize));
+      output(row("${coverObjectKey}", "-", "-"));
     }
   } else if (command.includes("AAP_DOWNLOAD_KEYS_END")) output("__AAP_DOWNLOAD_KEYS_END__");
   else if (command.startsWith("SELECT pg_backend_pid() =")) output("t");
@@ -9037,9 +9055,14 @@ download_artifact_bytes=${Buffer.byteLength(pdfContents) + Buffer.byteLength(cov
           .split("\n"),
       ).toEqual([expect.stringMatching(/\.dump\.gpg\.tmp$/u), backups]);
 
-      const runRejectedManifest = (
+      const rejectedArtifactManifest = {
+        status: 1,
+        output: "backup download artifact manifest is invalid",
+      } as const;
+      const runArtifactManifestCase = (
         name: string,
         environment: Record<string, string>,
+        expected: { status: number; output: string } = rejectedArtifactManifest,
         executableDirectory = bin,
       ) => {
         const rejectedCaptures = path.join(sandbox, `${name}-captures`);
@@ -9080,28 +9103,44 @@ download_artifact_bytes=${Buffer.byteLength(pdfContents) + Buffer.byteLength(cov
         );
         const rejectedOutput = `${rejected.stdout}${rejected.stderr}`;
         expect(rejected.error, `${name}: ${rejectedOutput}`).toBeUndefined();
-        expect(rejected.status, `${name}: ${rejectedOutput}`).toBe(1);
-        expect(rejectedOutput.trim(), name).toBe(
-          "backup download artifact manifest is invalid",
+        expect(rejected.status, `${name}: ${rejectedOutput}`).toBe(
+          expected.status,
         );
-        expect(readdirSync(rejectedBackups), name).toEqual([]);
+        expect(rejectedOutput.trim(), name).toBe(expected.output);
+        if (expected.status === 0) {
+          expect(readdirSync(rejectedBackups), name).toHaveLength(1);
+        } else {
+          expect(readdirSync(rejectedBackups), name).toEqual([]);
+        }
         expect(readdirSync(rejectedTemporary), name).toEqual([]);
       };
 
-      runRejectedManifest("duplicate-key", {
-        FAKE_DOWNLOAD_KEY_MODE: "duplicate",
+      expect(mismatchedPdfByteSize).toBe(pdfByteSize);
+      expect(mismatchedPdfSha256).not.toBe(pdfSha256);
+      runArtifactManifestCase(
+        "same-size-content-mismatch",
+        { FAKE_DOWNLOAD_KEY_MODE: "same-size-content-mismatch" },
+        { status: 1, output: "backup download artifact metadata mismatch" },
+      );
+      runArtifactManifestCase(
+        "consistent-duplicate-key",
+        { FAKE_DOWNLOAD_KEY_MODE: "duplicate" },
+        { status: 0, output: "" },
+      );
+      runArtifactManifestCase("inconsistent-duplicate-key", {
+        FAKE_DOWNLOAD_KEY_MODE: "inconsistent-duplicate",
       });
-      runRejectedManifest("noncanonical-uuid", {
+      runArtifactManifestCase("noncanonical-uuid", {
         FAKE_DOWNLOAD_KEY_MODE: "invalid",
       });
-      runRejectedManifest("entry-limit", {
+      runArtifactManifestCase("entry-limit", {
         FAKE_DOWNLOAD_KEY_MODE: "too-many",
       });
-      runRejectedManifest("noncanonical-digest", {
+      runArtifactManifestCase("noncanonical-digest", {
         FAKE_SHA_MODE: "uppercase-artifact",
       });
 
-      runRejectedManifest("noncanonical-size", {
+      runArtifactManifestCase("noncanonical-size", {
         FAKE_WC_MODE: "leading-zero",
       });
 
@@ -9363,8 +9402,8 @@ lines.on("line", (command) => {
     output("00000003-0000001B-1|1|2|2|3|4|3|1|5|1024|4242");
   } else if (command.includes("AAP_DOWNLOAD_KEYS_BEGIN")) output("__AAP_DOWNLOAD_KEYS_BEGIN__");
   else if (command.includes("SELECT artifact_key")) {
-    output("${pdfObjectKey}");
-    output("${coverObjectKey}");
+    output("${pdfObjectKey}|${pdfSha256}|${pdfByteSize}");
+    output("${coverObjectKey}|-|-");
   } else if (command.includes("AAP_DOWNLOAD_KEYS_END")) output("__AAP_DOWNLOAD_KEYS_END__");
   else if (command.startsWith("SELECT pg_backend_pid() =")) output("t");
   else if (command.startsWith("COMMIT")) fs.rmSync(capture + "/idle-transaction", { force: true });

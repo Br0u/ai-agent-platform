@@ -212,6 +212,8 @@ while true; do
   plaintext_temporary_file="$staging_directory/database.dump"
   manifest_file="$staging_directory/skill-backup.manifest"
   download_manifest_file="$staging_directory/download-files.manifest"
+  download_artifact_metadata_file="$staging_directory/download-artifact-metadata"
+  download_artifact_entries_file="$staging_directory/download-artifact-entries"
   download_keys_file="$staging_directory/download-artifact-keys"
   tar_input_file="$staging_directory/tar-input-files"
   snapshot_command_fifo="$staging_directory/snapshot-command.fifo"
@@ -323,17 +325,21 @@ while true; do
 
   printf '%s\n' \
     "SELECT '__AAP_DOWNLOAD_KEYS_BEGIN__';" \
-    "SELECT artifact_key
+    "SELECT artifact_key, expected_sha256, expected_byte_size
        FROM (
-         SELECT revision.pdf_object_key AS artifact_key
+         SELECT revision.pdf_object_key AS artifact_key,
+                revision.sha256 AS expected_sha256,
+                revision.byte_size::text AS expected_byte_size
          FROM download_resources AS resource
          JOIN download_resource_revisions AS revision
            ON revision.resource_id = resource.id
           AND revision.id = ANY(array_remove(ARRAY[resource.published_revision_id, resource.draft_revision_id], NULL))
          WHERE revision.cleanup_pending_at IS NULL
            AND revision.pdf_object_key IS NOT NULL
-         UNION
-         SELECT revision.cover_object_key AS artifact_key
+         UNION ALL
+         SELECT revision.cover_object_key AS artifact_key,
+                '-' AS expected_sha256,
+                '-' AS expected_byte_size
          FROM download_resources AS resource
          JOIN download_resource_revisions AS revision
            ON revision.resource_id = resource.id
@@ -341,27 +347,82 @@ while true; do
          WHERE revision.cleanup_pending_at IS NULL
            AND revision.cover_object_key IS NOT NULL
        ) AS referenced
-       ORDER BY artifact_key COLLATE \"C\";" \
+       ORDER BY artifact_key COLLATE \"C\",
+                expected_sha256 COLLATE \"C\",
+                expected_byte_size COLLATE \"C\";" \
     "SELECT '__AAP_DOWNLOAD_KEYS_END__';" >&3
   if ! IFS= read -r download_keys_marker <&4 || \
      [ "$download_keys_marker" != "__AAP_DOWNLOAD_KEYS_BEGIN__" ]; then
     echo "backup download artifact query failed" >&2
     exit 1
   fi
-  : >"$download_keys_file"
-  download_key_count=0
+  : >"$download_artifact_metadata_file"
+  download_reference_count=0
   object_key=
-  while IFS= read -r object_key <&4; do
+  expected_sha256=
+  expected_byte_size=
+  while IFS='|' read -r object_key expected_sha256 expected_byte_size <&4; do
     [ "$object_key" != "__AAP_DOWNLOAD_KEYS_END__" ] || break
-    download_key_count=$((download_key_count + 1))
-    if [ "$download_key_count" -gt "$download_manifest_max_entries" ]; then
+    download_reference_count=$((download_reference_count + 1))
+    if [ "$download_reference_count" -gt "$download_manifest_max_entries" ]; then
       echo "backup download artifact manifest is invalid" >&2
       exit 1
     fi
-    printf '%s\n' "$object_key" >>"$download_keys_file"
+    case "$object_key" in
+      *.pdf)
+        case "$expected_sha256" in
+          ''|*[!0-9a-f]*) echo "backup download artifact manifest is invalid" >&2; exit 1 ;;
+        esac
+        case "$expected_byte_size" in
+          ''|0|0*|*[!0-9]*) echo "backup download artifact manifest is invalid" >&2; exit 1 ;;
+        esac
+        if [ "${#expected_sha256}" -ne 64 ]; then
+          echo "backup download artifact manifest is invalid" >&2
+          exit 1
+        fi
+        ;;
+      *.webp)
+        if [ "$expected_sha256" != '-' ] || [ "$expected_byte_size" != '-' ]; then
+          echo "backup download artifact manifest is invalid" >&2
+          exit 1
+        fi
+        ;;
+      *)
+        echo "backup download artifact manifest is invalid" >&2
+        exit 1
+        ;;
+    esac
+    printf '%s\t%s\t%s\n' \
+      "$object_key" "$expected_sha256" "$expected_byte_size" \
+      >>"$download_artifact_metadata_file"
   done
   if [ "$object_key" != "__AAP_DOWNLOAD_KEYS_END__" ] || \
-     grep -Eqv '^objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(pdf|webp)$' "$download_keys_file" || \
+     ! LC_ALL=C sort -c "$download_artifact_metadata_file" >/dev/null 2>&1; then
+    echo "backup download artifact manifest is invalid" >&2
+    exit 1
+  fi
+  if ! LC_ALL=C awk '
+    BEGIN { FS = "\t" }
+    NR == 1 || $1 != previous_key {
+      previous_key = $1
+      previous_sha256 = $2
+      previous_byte_size = $3
+      print
+      next
+    }
+    $2 != previous_sha256 || $3 != previous_byte_size { exit 1 }
+  ' "$download_artifact_metadata_file" >"$download_artifact_entries_file"; then
+    echo "backup download artifact manifest is invalid" >&2
+    exit 1
+  fi
+  : >"$download_keys_file"
+  download_key_count=0
+  tab="$(printf '\t')"
+  while IFS="$tab" read -r object_key expected_sha256 expected_byte_size; do
+    download_key_count=$((download_key_count + 1))
+    printf '%s\n' "$object_key" >>"$download_keys_file"
+  done <"$download_artifact_entries_file"
+  if grep -Eqv '^objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(pdf|webp)$' "$download_keys_file" || \
      ! LC_ALL=C sort -c -u "$download_keys_file" >/dev/null 2>&1; then
     echo "backup download artifact manifest is invalid" >&2
     exit 1
@@ -378,7 +439,7 @@ while true; do
   printf 'format_version=1\n' >"$download_manifest_file"
   download_artifact_count=0
   download_artifact_bytes=0
-  while IFS= read -r object_key; do
+  while IFS="$tab" read -r object_key expected_sha256 expected_byte_size; do
     artifact_path="$download_root/$object_key"
     if [ ! -f "$artifact_path" ] || [ -L "$artifact_path" ]; then
       echo "backup download artifact is unavailable" >&2
@@ -396,6 +457,15 @@ while true; do
       echo "backup download artifact manifest is invalid" >&2
       exit 1
     fi
+    case "$object_key" in
+      *.pdf)
+        if [ "$artifact_sha256" != "$expected_sha256" ] || \
+           [ "$artifact_size" != "$expected_byte_size" ]; then
+          echo "backup download artifact metadata mismatch" >&2
+          exit 1
+        fi
+        ;;
+    esac
     download_artifact_count=$((download_artifact_count + 1))
     download_artifact_bytes=$((download_artifact_bytes + artifact_size))
     if [ "$download_artifact_bytes" -gt "$download_max_bytes" ]; then
@@ -403,7 +473,7 @@ while true; do
       exit 1
     fi
     printf '%s\t%s\t%s\n' "$artifact_sha256" "$artifact_size" "$object_key" >>"$download_manifest_file"
-  done <"$download_keys_file"
+  done <"$download_artifact_entries_file"
   download_manifest_size="$(wc -c <"$download_manifest_file" | awk '{print $1}')"
   if [ "$download_artifact_count" -ne "$download_key_count" ] || \
      [ "$download_manifest_size" -gt "$download_manifest_max_bytes" ]; then
@@ -416,7 +486,12 @@ while true; do
   } >"$tar_input_file"
   mkdir "$staging_directory/download-resources"
   ln -s "$download_root/objects" "$staging_directory/download-resources/objects"
-  chmod 600 "$download_keys_file" "$download_manifest_file" "$tar_input_file"
+  chmod 600 \
+    "$download_artifact_metadata_file" \
+    "$download_artifact_entries_file" \
+    "$download_keys_file" \
+    "$download_manifest_file" \
+    "$tar_input_file"
 
   available_temporary_bytes="$(
     df -Pk "$temporary_directory" |
