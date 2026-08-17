@@ -184,8 +184,18 @@ describe("DownloadResourceManager", () => {
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
-  it("applies category defaults only until an access policy is explicitly changed", () => {
+  it("preserves an existing resource policy when its category changes", () => {
     render(<DownloadResourceManager resources={[resource]} />);
+
+    fireEvent.change(screen.getByRole("combobox", { name: "资源分类" }), {
+      target: { value: "deployment" },
+    });
+    expect(screen.getByLabelText("预览权限")).toHaveValue("public");
+    expect(screen.getByLabelText("下载权限")).toHaveValue("contact");
+  });
+
+  it("applies category defaults to an empty record until a policy is explicitly changed", () => {
+    render(<DownloadResourceManager resources={[placeholder]} />);
 
     fireEvent.change(screen.getByRole("combobox", { name: "资源分类" }), {
       target: { value: "deployment" },

@@ -395,7 +395,7 @@ function Editor({
     saveDownloadDraftAction as ServerAction,
     idle,
   );
-  const [explicitPolicy, setExplicitPolicy] = useState(false);
+  const [explicitPolicy, setExplicitPolicy] = useState(Boolean(revision));
   const [category, setCategory] = useState(
     revision?.category ?? getCategory(resource),
   );
