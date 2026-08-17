@@ -146,6 +146,24 @@ describe("bounded PDF multipart upload", () => {
     expect(await stagingEntries(root)).toEqual([]);
   });
 
+  it("keeps a successful upload stage open for the file-store commit", async () => {
+    const { root, store } = await temporaryStore();
+    const result = await readBoundedPdfUploadMultipart(
+      request(multipartBody(filePart({}))),
+      store,
+    );
+    const objectKey = await store.commit(takePdfUploadStage(result.stage), {
+      resourceId: "019faaaa-0000-7000-8000-000000000001",
+      revisionId: "019faaaa-0000-7000-9000-000000000001",
+      kind: "pdf",
+    });
+
+    expect(await readFile(path.join(root, objectKey))).toEqual(
+      Buffer.from(PDF),
+    );
+    await store.remove(objectKey);
+  });
+
   it.each([
     ["wrong field", filePart({ name: "document" })],
     ["wrong media", filePart({ contentType: "application/octet-stream" })],
@@ -270,7 +288,7 @@ describe("bounded PDF multipart upload", () => {
     expect(await stagingEntries(second.root)).toEqual([]);
   });
 
-  it("contains an abort while the active sink is not waiting for drain", async () => {
+  it("contains an abort while a stage write is active", async () => {
     const { root, store } = await temporaryStore();
     const requestAbort = new AbortController();
     let bodyController!: ReadableStreamDefaultController<Uint8Array>;
@@ -283,29 +301,22 @@ describe("bounded PDF multipart upload", () => {
     });
     const originalCreateStage = store.createStage.bind(store);
     const close = vi.fn<() => Promise<void>>();
-    let sinkWrites = 0;
+    let writes = 0;
+    let releaseWrite!: () => void;
+    const writeBlocked = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
     vi.spyOn(store, "createStage").mockImplementation(async (extension) => {
       const stage = await originalCreateStage(extension);
       const originalClose = stage.writable.close.bind(stage.writable);
       close.mockImplementation(originalClose);
       vi.spyOn(stage.writable, "close").mockImplementation(close);
-      const originalCreateWriteStream = stage.writable.createWriteStream.bind(
-        stage.writable,
-      );
-      vi.spyOn(stage.writable, "createWriteStream").mockImplementation(
-        (options) => {
-          const sink = originalCreateWriteStream({
-            ...options,
-            highWaterMark: 1024 * 1024,
-          });
-          const originalWrite = sink._write.bind(sink);
-          sink._write = (chunk, encoding, callback) => {
-            sinkWrites += 1;
-            originalWrite(chunk, encoding, callback);
-          };
-          return sink;
-        },
-      );
+      const originalWrite = stage.writable.write.bind(stage.writable);
+      vi.spyOn(stage.writable, "write").mockImplementation(async (buffer) => {
+        writes += 1;
+        await writeBlocked;
+        return originalWrite(buffer);
+      });
       return stage;
     });
 
@@ -316,8 +327,9 @@ describe("bounded PDF multipart upload", () => {
     bodyController.enqueue(
       filePart({ value: new Uint8Array(128 * 1024).fill(0x61) }),
     );
-    while (sinkWrites === 0) await delay(1);
+    while (writes === 0) await delay(1);
     requestAbort.abort();
+    releaseWrite();
 
     await expect(upload).rejects.toBeInstanceOf(PdfUploadError);
     expect(cancel).toHaveBeenCalledOnce();
@@ -325,7 +337,7 @@ describe("bounded PDF multipart upload", () => {
     expect(await stagingEntries(root)).toEqual([]);
   });
 
-  it("contains an asynchronous file-sink I/O error", async () => {
+  it("contains an asynchronous stage-write I/O error", async () => {
     const { root, store } = await temporaryStore();
     const originalCreateStage = store.createStage.bind(store);
     const close = vi.fn<() => Promise<void>>();
@@ -334,20 +346,8 @@ describe("bounded PDF multipart upload", () => {
       const originalClose = stage.writable.close.bind(stage.writable);
       close.mockImplementation(originalClose);
       vi.spyOn(stage.writable, "close").mockImplementation(close);
-      const originalCreateWriteStream = stage.writable.createWriteStream.bind(
-        stage.writable,
-      );
-      vi.spyOn(stage.writable, "createWriteStream").mockImplementation(
-        (options) => {
-          const sink = originalCreateWriteStream({
-            ...options,
-            highWaterMark: 1024 * 1024,
-          });
-          sink._write = (_chunk, _encoding, callback) => {
-            queueMicrotask(() => callback(new Error("injected sink failure")));
-          };
-          return sink;
-        },
+      vi.spyOn(stage.writable, "write").mockRejectedValue(
+        new Error("injected stage write failure"),
       );
       return stage;
     });
@@ -359,13 +359,15 @@ describe("bounded PDF multipart upload", () => {
       ),
     ).rejects.toMatchObject({
       code: "invalid_multipart",
-      cause: expect.objectContaining({ message: "injected sink failure" }),
+      cause: expect.objectContaining({
+        message: "injected stage write failure",
+      }),
     });
     expect(close).toHaveBeenCalled();
     expect(await stagingEntries(root)).toEqual([]);
   });
 
-  it("honors file-sink backpressure for a streamed 16 MiB request", async () => {
+  it("honors stage-write backpressure for a streamed 16 MiB request", async () => {
     const { store } = await temporaryStore();
     const payloadBytes = 16 * 1024 * 1024;
     const chunkBytes = 64 * 1024;
@@ -406,36 +408,16 @@ describe("bounded PDF multipart upload", () => {
     });
     vi.spyOn(store, "createStage").mockImplementation(async (extension) => {
       const stage = await originalCreateStage(extension);
-      const originalCreateWriteStream = stage.writable.createWriteStream.bind(
-        stage.writable,
-      );
-      vi.spyOn(stage.writable, "createWriteStream").mockImplementation(
-        (options) => {
-          const sink = originalCreateWriteStream({
-            ...options,
-            highWaterMark: 1,
-          });
-          const originalWrite = sink._write.bind(sink);
-          sink._write = (chunk, encoding, callback) => {
-            writes += 1;
-            queuedBytes += chunk.byteLength;
-            peakQueuedBytes = Math.max(
-              peakQueuedBytes,
-              queuedBytes,
-              sink.writableLength,
-            );
-            void (writes === 1 ? firstWriteBlocked : Promise.resolve()).then(
-              () => {
-                originalWrite(chunk, encoding, (error) => {
-                  queuedBytes -= chunk.byteLength;
-                  callback(error);
-                });
-              },
-            );
-          };
-          return sink;
-        },
-      );
+      const originalWrite = stage.writable.write.bind(stage.writable);
+      vi.spyOn(stage.writable, "write").mockImplementation(async (buffer) => {
+        writes += 1;
+        queuedBytes += Buffer.byteLength(buffer);
+        peakQueuedBytes = Math.max(peakQueuedBytes, queuedBytes);
+        if (writes === 1) await firstWriteBlocked;
+        const result = await originalWrite(buffer);
+        queuedBytes -= Buffer.byteLength(buffer);
+        return result;
+      });
       return stage;
     });
 

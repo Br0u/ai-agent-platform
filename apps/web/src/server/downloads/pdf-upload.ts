@@ -183,9 +183,6 @@ export async function readBoundedPdfUploadMultipart(
   let source: Readable | null = null;
   let parser: ReturnType<typeof Busboy> | null = null;
   let activeFile: BusboyFileStream | null = null;
-  let activeSink: ReturnType<
-    DownloadStage["writable"]["createWriteStream"]
-  > | null = null;
   let rawStage: DownloadStage | null = null;
   let fileTask: Promise<FileResult> | null = null;
   let rawBytes = 0;
@@ -227,7 +224,6 @@ export async function readBoundedPdfUploadMultipart(
       terminalError = primary;
       removeAbortListener();
       activeFile?.destroy(primary);
-      activeSink?.destroy(primary);
       parser?.destroy(primary);
       source?.destroy(primary);
       void finishFailure(primary);
@@ -245,62 +241,30 @@ export async function readBoundedPdfUploadMultipart(
       rawStage = stage;
       if (settled) throw terminalError ?? error();
 
-      const sink = stage.writable.createWriteStream({
-        autoClose: false,
-        highWaterMark: 64 * 1024,
-      });
-      activeSink = sink;
-      sink.on("error", fail);
-
-      function waitForSink(event: "drain" | "finish" | "close") {
-        return new Promise<void>((resolveWait, rejectWait) => {
-          const completed = () => {
-            if (event !== "close") sink.off("close", closed);
-            resolveWait();
-          };
-          const closed = () => {
-            sink.off(event, completed);
-            rejectWait(terminalError ?? error());
-          };
-          sink.once(event, completed);
-          if (event !== "close") sink.once("close", closed);
-        });
-      }
-
       const hash = createHash("sha256");
       let byteSize = 0;
-      try {
-        for await (const value of stream) {
+      for await (const value of stream) {
+        if (settled) throw terminalError ?? error();
+        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+        byteSize += chunk.byteLength;
+        if (byteSize > maxPdfBytes) throw error("pdf_too_large");
+        hash.update(chunk);
+        let remaining = chunk;
+        while (remaining.byteLength > 0) {
           if (settled) throw terminalError ?? error();
-          const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-          byteSize += chunk.byteLength;
-          if (byteSize > maxPdfBytes) throw error("pdf_too_large");
-          hash.update(chunk);
-          if (!sink.write(chunk)) await waitForSink("drain");
+          const { bytesWritten } = await stage.writable.write(remaining);
+          if (bytesWritten === 0) throw error();
+          remaining = remaining.subarray(bytesWritten);
         }
-        if (stream.truncated) throw error("pdf_too_large");
-        if (byteSize === 0) throw error();
-        const finished = waitForSink("finish");
-        sink.end();
-        await finished;
-        const closed = waitForSink("close");
-        sink.destroy();
-        await closed;
-        activeSink = null;
-        activeFile = null;
-        return {
-          byteSize,
-          sha256: hash.digest("hex"),
-          originalName,
-        };
-      } catch (caught) {
-        if (!sink.destroyed) {
-          const closed = waitForSink("close").catch(() => undefined);
-          sink.destroy(caught instanceof Error ? caught : undefined);
-          await closed;
-        }
-        throw caught;
       }
+      if (stream.truncated) throw error("pdf_too_large");
+      if (byteSize === 0) throw error();
+      activeFile = null;
+      return {
+        byteSize,
+        sha256: hash.digest("hex"),
+        originalName,
+      };
     }
 
     async function finishSuccess() {
@@ -422,7 +386,6 @@ export async function readBoundedPdfUploadMultipart(
     source = null;
     parser = null;
     activeFile = null;
-    activeSink = null;
     rawStage = null;
     fileTask = null;
   });
