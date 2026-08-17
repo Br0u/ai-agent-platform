@@ -255,7 +255,7 @@ async function navigateFromHeaderToProduct(page: Page, projectName: string) {
     });
     await navigation.getByRole("button", { name: "产品", exact: true }).click();
     await navigation
-      .getByRole("link", { name: "产品概览", exact: true })
+      .getByRole("link", { name: "进入产品中心", exact: true })
       .click();
   }
   await expect(page).toHaveURL(/\/product$/u);

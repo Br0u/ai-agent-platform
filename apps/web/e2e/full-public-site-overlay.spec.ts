@@ -201,7 +201,7 @@ test("桌面 Header 与 390px 移动导航执行 V2 公开入口", async ({ page
   const productPanel = drawer.locator(`#${productPanelId}`);
   await expect(productPanel).toBeVisible();
   await expect(
-    productPanel.getByRole("link", { name: "产品概览" }),
+    productPanel.getByRole("link", { name: "进入产品中心" }),
   ).toBeVisible();
   expect(
     await productPanel.evaluate(
