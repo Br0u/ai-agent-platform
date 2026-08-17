@@ -105,6 +105,7 @@ describe("managed download center", () => {
 
   it("keeps four section shells and shows one neutral empty state only", () => {
     const { container } = render(<DownloadCenter resources={resources} />);
+    fireEvent.click(screen.getByRole("button", { name: "展开下载中心目录" }));
 
     for (const [anchor, heading] of [
       ["dl-materials", "01｜产品资料"],
@@ -142,18 +143,38 @@ describe("managed download center", () => {
     }
   });
 
+  it("keeps the resource directory collapsed until requested", () => {
+    const { container } = render(<DownloadCenter resources={resources} />);
+    const directory = container.querySelector<HTMLElement>(
+      ".download-directory__panel",
+    )!;
+
+    const toggle = screen.getByRole("button", {
+      name: "展开下载中心目录",
+    });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(directory).toHaveAttribute("hidden");
+
+    toggle.focus();
+    fireEvent.click(toggle);
+
+    const close = screen.getByRole("button", { name: "收起下载中心目录" });
+    expect(close).toHaveAttribute("aria-expanded", "true");
+    expect(directory).not.toHaveAttribute("hidden");
+
+    fireEvent.click(close);
+    expect(
+      screen.getByRole("button", { name: "展开下载中心目录" }),
+    ).toHaveFocus();
+  });
+
   it("shows the cover and complete published metadata on every card", () => {
     render(<DownloadCenter resources={resources} />);
 
     const publicCard = within(card("元启产品彩页"));
     expect(
       publicCard.getByRole("img", { name: "元启产品彩页封面" }),
-    ).toHaveAttribute(
-      "src",
-      expect.stringContaining(
-        "revision%3D11111111-1111-4111-8111-111111111111",
-      ),
-    );
+    ).toHaveAttribute("src", resources[0]!.coverUrl);
     expect(publicCard.getByText("元启", { exact: true })).toBeVisible();
     expect(publicCard.getByText("产品彩页", { exact: true })).toBeVisible();
     expect(publicCard.getByText(resources[0]!.description)).toBeVisible();
@@ -243,14 +264,20 @@ describe("managed download center", () => {
     ).toEqual([`申请获取${specialName}`]);
   });
 
-  it("uses horizontal cards on desktop and stacks them on mobile", () => {
+  it("uses a compact responsive card grid", () => {
     const css = readFileSync("src/app/downloads/downloads.css", "utf8");
 
     expect(css).toMatch(
-      /\.download-card\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*180px minmax\(0, 1fr\);/su,
+      /\.download-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0, 1fr\)\);/su,
     );
     expect(css).toMatch(
-      /@media \(max-width:\s*640px\)[\s\S]*?\.download-card\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/u,
+      /\.download-card\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;/su,
+    );
+    expect(css).toMatch(
+      /@media \(max-width:\s*1180px\)[\s\S]*?\.download-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0, 1fr\)\);/u,
+    );
+    expect(css).toMatch(
+      /@media \(max-width:\s*640px\)[\s\S]*?\.download-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/u,
     );
     expect(css).toMatch(/:focus-visible/u);
     expect(css).toMatch(/@media \(prefers-reduced-motion:\s*reduce\)/u);

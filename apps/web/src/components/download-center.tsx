@@ -20,6 +20,7 @@ function ResourceCover({ resource }: { resource: DownloadResourcePublicDto }) {
       className="download-card__cover-image"
       height={252}
       src={resource.coverUrl}
+      unoptimized
       width={180}
     />
   );
@@ -124,6 +125,7 @@ export function DownloadCenter({
 }) {
   const [contactResource, setContactResource] =
     useState<DownloadResourcePublicDto | null>(null);
+  const [directoryOpen, setDirectoryOpen] = useState(false);
   const contactTrigger = useRef<HTMLButtonElement>(null);
   const cancelButton = useRef<HTMLButtonElement>(null);
   const orderedResources = [...resources].sort(
@@ -139,33 +141,45 @@ export function DownloadCenter({
     <main className="download-page">
       <div className="download-shell">
         <aside className="download-directory" aria-label="下载中心目录">
-          <strong>资源目录</strong>
-          <nav aria-label="下载中心完整目录">
-            <Link href="/downloads#dl-hero">下载中心总览</Link>
-            {downloadSections.map((section) => {
-              const sectionResources = orderedResources.filter(
-                ({ category }) => category === section.category,
-              );
-              return (
-                <div key={section.category}>
-                  <Link href={`/downloads#${section.anchor}`}>
-                    {section.label}
-                  </Link>
-                  {sectionResources.length ? (
-                    <ul>
-                      {sectionResources.map((resource) => (
-                        <li key={resource.key}>
-                          <Link href={`/downloads#dl-${resource.key}`}>
-                            {resource.name}
-                          </Link>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
-              );
-            })}
-          </nav>
+          <button
+            aria-controls="download-directory-nav"
+            aria-expanded={directoryOpen}
+            aria-label={`${directoryOpen ? "收起" : "展开"}下载中心目录`}
+            className="download-directory__toggle"
+            onClick={() => setDirectoryOpen((open) => !open)}
+            type="button"
+          >
+            <span aria-hidden="true">{directoryOpen ? "‹" : "›"}</span>
+          </button>
+          <div className="download-directory__panel" hidden={!directoryOpen}>
+            <strong>资源目录</strong>
+            <nav aria-label="下载中心完整目录" id="download-directory-nav">
+              <Link href="/downloads#dl-hero">下载中心总览</Link>
+              {downloadSections.map((section) => {
+                const sectionResources = orderedResources.filter(
+                  ({ category }) => category === section.category,
+                );
+                return (
+                  <div key={section.category}>
+                    <Link href={`/downloads#${section.anchor}`}>
+                      {section.label}
+                    </Link>
+                    {sectionResources.length ? (
+                      <ul>
+                        {sectionResources.map((resource) => (
+                          <li key={resource.key}>
+                            <Link href={`/downloads#dl-${resource.key}`}>
+                              {resource.name}
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </nav>
+          </div>
         </aside>
 
         <div className="download-main">
