@@ -79,6 +79,7 @@ const permissions: readonly PermissionSeed[] = [
   { key: "admin:products", name: "管理产品" },
   { key: "admin:releases", name: "管理版本" },
   { key: "admin:docs", name: "管理文档" },
+  { key: "admin:downloads", name: "管理下载资源" },
   {
     key: "admin:docs:delete",
     name: "删除和恢复文档",
@@ -120,6 +121,7 @@ const contentPermissionKeys = [
   "admin:products",
   "admin:releases",
   "admin:docs",
+  "admin:downloads",
   "admin:blog",
   "admin:cases",
   "admin:faq",

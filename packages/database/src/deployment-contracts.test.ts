@@ -29,6 +29,47 @@ const shellTracingDirective =
 const hasShellTracingDirective = (script: string) =>
   shellTracingDirective.test(script);
 
+const writeEmptyDownloadRestoreBundle = (
+  fixture: string,
+  backupFile: string,
+  dumpSha256: string,
+  counts: { revisions: number; artifacts: number; files: number },
+) => {
+  const downloadManifest = "format_version=1\n";
+  writeFileSync(
+    path.join(fixture, "download-files.manifest"),
+    downloadManifest,
+    { mode: 0o600 },
+  );
+  writeFileSync(
+    path.join(fixture, "skill-backup.manifest"),
+    `format_version=2
+dump_sha256=${dumpSha256}
+skill_registry_schema_version=1
+skill_revision_count=${counts.revisions}
+skill_artifact_count=${counts.artifacts}
+skill_file_count=${counts.files}
+download_manifest_sha256=${createHash("sha256").update(downloadManifest).digest("hex")}
+download_artifact_count=0
+download_artifact_bytes=0
+`,
+    { mode: 0o600 },
+  );
+  return spawnSync(
+    "tar",
+    [
+      "-cf",
+      backupFile,
+      "-C",
+      fixture,
+      "skill-backup.manifest",
+      "download-files.manifest",
+      "database.dump",
+    ],
+    { encoding: "utf8" },
+  );
+};
+
 const composeSecretKeys = [
   "POSTGRES_PASSWORD",
   "MIGRATOR_DATABASE_PASSWORD",
@@ -83,8 +124,10 @@ type RenderedService = {
   entrypoint?: string[];
   environment?: Record<string, string | null>;
   healthcheck?: { test?: string[] };
+  group_add?: string[];
   mem_limit?: number | string;
   networks?: Record<string, RenderedNetworkAttachment>;
+  network_mode?: string;
   pids_limit?: number;
   ports?: unknown[];
   read_only?: boolean;
@@ -99,11 +142,15 @@ type RenderedCompose = {
   networks: Record<string, { internal?: boolean }>;
   secrets?: Record<string, { file?: string }>;
   services: Record<string, RenderedService>;
+  volumes?: Record<string, unknown>;
 };
 
 const renderComposeFixture = (
   composeFiles = ["compose.yaml"],
-  options: { bootstrapModel?: boolean } = {},
+  options: {
+    bootstrapModel?: boolean;
+    downloadResourceSource?: string;
+  } = {},
 ): RenderedCompose => {
   const bootstrapModel = options.bootstrapModel ?? true;
   const sentinels = Object.fromEntries(
@@ -160,6 +207,8 @@ const renderComposeFixture = (
           MODEL_ID: bootstrapModel ? "provider-smoke-model" : "",
           MODEL_BASE_URL: "",
           MODEL_RUN_TIMEOUT_SECONDS: "25",
+          DOWNLOAD_RESOURCE_VOLUME_SOURCE:
+            options.downloadResourceSource ?? "download_data",
         },
       },
     );
@@ -201,7 +250,362 @@ const secretSource = (
 ): string | undefined =>
   typeof attachment === "string" ? attachment : attachment.source;
 
+const shellLiteral = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+
+const createDownloadVolumeInitFixture = () => {
+  const sandbox = mkdtempSync(path.join(tmpdir(), "download-volume-init-"));
+  const target = path.join(sandbox, "downloads");
+  const bin = path.join(sandbox, "bin");
+  const script = path.join(sandbox, "init-download-volume.sh");
+  const findCounter = path.join(sandbox, "find-count");
+  const chownLog = path.join(sandbox, "chown.log");
+  mkdirSync(target, { mode: 0o700 });
+  mkdirSync(bin, { mode: 0o700 });
+  writeFileSync(
+    script,
+    read("infra/docker/init-download-volume.sh").replace(
+      /^target=\/var\/lib\/ai-agent-platform\/downloads$/mu,
+      `target=${shellLiteral(target)}`,
+    ),
+    { mode: 0o700 },
+  );
+
+  const pathValue = process.env.PATH ?? "/usr/bin:/bin";
+  const realFind = spawnSync("sh", ["-c", "command -v find"], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: pathValue },
+  }).stdout.trim();
+  if (!realFind) throw new Error("download volume fixture requires find");
+
+  const currentOwnershipIsRuntime =
+    process.getuid?.() === 1000 && process.getgid?.() === 1000;
+  if (!currentOwnershipIsRuntime) {
+    writeFileSync(
+      path.join(bin, "chown"),
+      '#!/bin/sh\nprintf "%s\\n" "$*" >>"$CHOWN_LOG"\n',
+      { mode: 0o700 },
+    );
+  }
+
+  return {
+    sandbox,
+    target,
+    findCounter,
+    chownLog,
+    currentOwnershipIsRuntime,
+    installControlledFind() {
+      writeFileSync(
+        path.join(bin, "find"),
+        `#!/bin/sh
+count=0
+[ ! -f "$FIND_COUNTER" ] || count=$(cat "$FIND_COUNTER")
+count=$((count + 1))
+printf '%s\n' "$count" >"$FIND_COUNTER"
+if [ "\${FIND_FAIL_FIRST-}" = 1 ] && [ "$count" -eq 1 ]; then
+  exit 42
+fi
+"$REAL_FIND" "$@"
+status=$?
+if [ "\${FIND_INJECT_AFTER_FIRST-}" = 1 ] && [ "$count" -eq 2 ]; then
+  ln -s . "$TEST_TARGET/injected-link"
+fi
+exit "$status"
+`,
+        { mode: 0o700 },
+      );
+    },
+    run(extraEnv: Record<string, string> = {}) {
+      return spawnSync("sh", [script], {
+        encoding: "utf8",
+        timeout: 2_000,
+        env: {
+          ...process.env,
+          PATH: `${bin}:${pathValue}`,
+          REAL_FIND: realFind,
+          FIND_COUNTER: findCounter,
+          CHOWN_LOG: chownLog,
+          TEST_TARGET: target,
+          ...extraEnv,
+        },
+      });
+    },
+  };
+};
+
+const unixSocketFixturesAvailable = (() => {
+  const sandbox = mkdtempSync(path.join(tmpdir(), "download-socket-probe-"));
+  try {
+    return (
+      spawnSync(
+        "python3",
+        [
+          "-c",
+          "import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])",
+          path.join(sandbox, "probe.sock"),
+        ],
+        { stdio: "ignore" },
+      ).status === 0
+    );
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
+})();
+
 describe("production deployment security contracts", () => {
+  it("persists download artifacts through an initialized least-privilege volume", () => {
+    expect(
+      read("compose.yaml").match(
+        /\$\{DOWNLOAD_RESOURCE_VOLUME_SOURCE:-download_data\}/gu,
+      ),
+    ).toHaveLength(3);
+    const rendered = renderComposeFixture();
+    const init = rendered.services["download-volume-init"];
+    const web = rendered.services.web;
+    const backup = rendered.services.backup;
+    const downloadTarget = "/var/lib/ai-agent-platform/downloads";
+    const volumeMount = expect.objectContaining({
+      type: "volume",
+      source: "download_data",
+      target: downloadTarget,
+    });
+
+    expect(rendered.volumes).toHaveProperty("download_data");
+    expect(init).toBeDefined();
+    expect(init?.user).toBe("root");
+    expect(init?.network_mode).toBe("none");
+    expect(init?.read_only).toBe(true);
+    expect(init?.entrypoint).toEqual(["/bin/sh"]);
+    expect(init?.command).toEqual(["/opt/aap/init-download-volume.sh"]);
+    expect(init?.volumes).toHaveLength(2);
+    expect(init?.volumes).toContainEqual(volumeMount);
+    expect(init?.volumes).toContainEqual(
+      expect.objectContaining({
+        type: "bind",
+        source: path.join(root, "infra/docker/init-download-volume.sh"),
+        target: "/opt/aap/init-download-volume.sh",
+        read_only: true,
+      }),
+    );
+    expect(
+      init?.volumes?.find(
+        (mount) =>
+          typeof mount !== "string" && mount.source === "download_data",
+      ),
+    ).not.toMatchObject({ read_only: true });
+    expect(new Set(init?.cap_drop)).toEqual(new Set(["ALL"]));
+    expect(new Set(init?.cap_add)).toEqual(
+      new Set(["CHOWN", "DAC_OVERRIDE", "FOWNER"]),
+    );
+    expect(init?.security_opt).toContain("no-new-privileges:true");
+    expect(web?.environment?.DOWNLOAD_RESOURCE_ROOT).toBe(downloadTarget);
+    expect(web?.volumes).toContainEqual(volumeMount);
+    expect(
+      web?.volumes?.find(
+        (mount) =>
+          typeof mount !== "string" && mount.source === "download_data",
+      ),
+    ).not.toMatchObject({ read_only: true });
+    expect(web?.read_only).toBe(true);
+    expect(web?.depends_on?.["download-volume-init"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(backup?.depends_on?.["download-volume-init"]?.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(backup?.group_add).toEqual(["1000"]);
+    expect(backup?.environment?.BACKUP_DOWNLOAD_ROOT).toBe(
+      "/download-resources",
+    );
+    expect(backup?.volumes).toContainEqual(
+      expect.objectContaining({
+        type: "volume",
+        source: "download_data",
+        target: "/download-resources",
+        read_only: true,
+      }),
+    );
+    const consumers = Object.entries(rendered.services)
+      .filter(([, service]) =>
+        service.volumes?.some(
+          (mount) =>
+            typeof mount !== "string" && mount.source === "download_data",
+        ),
+      )
+      .map(([name]) => name);
+    expect(consumers).toContain("download-volume-init");
+    expect(
+      consumers.filter((name) => name !== "download-volume-init").sort(),
+    ).toEqual(["backup", "web"]);
+    expect(
+      consumers.every((name) =>
+        ["download-volume-init", "web", "backup"].includes(name),
+      ),
+    ).toBe(true);
+
+    const initScript = read("infra/docker/init-download-volume.sh");
+    expect(
+      spawnSync("sh", [
+        "-n",
+        path.join(root, "infra/docker/init-download-volume.sh"),
+      ]).status,
+    ).toBe(0);
+    expect(initScript).toContain("target=/var/lib/ai-agent-platform/downloads");
+    expect(initScript).toContain('[ -d "$target" ]');
+    expect(initScript).toContain('[ -L "$target" ]');
+    expect(initScript).toContain('invalid_entry="$(find "$target"');
+    expect(initScript).toContain("download volume scan failed");
+    expect(initScript.match(/validate_tree$/gmu)).toHaveLength(2);
+    expect(initScript).toContain("no other download_data consumer");
+    expect(initScript).toContain(
+      'find "$target" -xdev -type d -exec chown -h 1000:1000 {} +',
+    );
+    expect(initScript).toContain(
+      'find "$target" -xdev -type f -exec chown -h 1000:1000 {} +',
+    );
+    expect(initScript).toContain(
+      'find "$target" -xdev -type d -exec chmod 0750 {} +',
+    );
+    expect(initScript).toContain(
+      'find "$target" -xdev -type f -exec chmod 0640 {} +',
+    );
+
+    const dockerfile = read("apps/web/Dockerfile");
+    expect(dockerfile).toContain(
+      'test "$(id -u node):$(id -g node)" = "1000:1000"',
+    );
+    expect(dockerfile).not.toMatch(/产品资料|\/Users\/|Downloads\//u);
+  });
+
+  it("can bind the download artifacts to one shared host directory", () => {
+    const sharedRoot = mkdtempSync(path.join(tmpdir(), "download-bind-"));
+    try {
+      const rendered = renderComposeFixture(["compose.yaml"], {
+        downloadResourceSource: sharedRoot,
+      });
+      const mounts = [
+        rendered.services["download-volume-init"]?.volumes,
+        rendered.services.web?.volumes,
+        rendered.services.backup?.volumes,
+      ];
+
+      for (const serviceMounts of mounts) {
+        expect(serviceMounts).toContainEqual(
+          expect.objectContaining({ type: "bind", source: sharedRoot }),
+        );
+      }
+    } finally {
+      rmSync(sharedRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("normalizes hidden regular files in an isolated download volume", () => {
+    const fixture = createDownloadVolumeInitFixture();
+    const nested = path.join(fixture.target, ".objects");
+    const file = path.join(nested, ".artifact.pdf");
+    try {
+      mkdirSync(nested, { mode: 0o777 });
+      writeFileSync(file, "pdf", { mode: 0o666 });
+      chmodSync(fixture.target, 0o777);
+      chmodSync(nested, 0o777);
+      chmodSync(file, 0o666);
+
+      const result = fixture.run();
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(statSync(fixture.target).mode & 0o777).toBe(0o750);
+      expect(statSync(nested).mode & 0o777).toBe(0o750);
+      expect(statSync(file).mode & 0o777).toBe(0o640);
+      if (fixture.currentOwnershipIsRuntime) {
+        expect(statSync(file)).toMatchObject({ uid: 1000, gid: 1000 });
+      } else {
+        expect(readFileSync(fixture.chownLog, "utf8")).toContain(
+          "-h 1000:1000",
+        );
+      }
+    } finally {
+      rmSync(fixture.sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["symlink", "fifo"] as const)(
+    "rejects a %s in the download volume",
+    (kind) => {
+      const fixture = createDownloadVolumeInitFixture();
+      try {
+        const invalid = path.join(fixture.target, `invalid-${kind}`);
+        if (kind === "symlink") symlinkSync(".", invalid);
+        else expect(spawnSync("mkfifo", [invalid]).status).toBe(0);
+
+        const result = fixture.run();
+        expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+        expect(result.stderr).toContain(
+          "download volume contains an unsupported file type",
+        );
+      } finally {
+        rmSync(fixture.sandbox, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(!unixSocketFixturesAvailable)(
+    "rejects a Unix socket in the download volume",
+    () => {
+      const fixture = createDownloadVolumeInitFixture();
+      try {
+        const socket = path.join(fixture.target, "invalid.sock");
+        const created = spawnSync(
+          "python3",
+          [
+            "-c",
+            "import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])",
+            socket,
+          ],
+          { encoding: "utf8" },
+        );
+        expect(created.status, created.stderr).toBe(0);
+
+        const result = fixture.run();
+        expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+      } finally {
+        rmSync(fixture.sandbox, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("fails closed when the initial volume scan fails", () => {
+    const fixture = createDownloadVolumeInitFixture();
+    try {
+      fixture.installControlledFind();
+      const result = fixture.run({ FIND_FAIL_FIRST: "1" });
+
+      expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+      expect(result.stderr).toContain("download volume scan failed");
+      expect(readFileSync(fixture.findCounter, "utf8").trim()).toBe("1");
+    } finally {
+      rmSync(fixture.sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unsupported entry inserted after normalization begins", () => {
+    const fixture = createDownloadVolumeInitFixture();
+    try {
+      fixture.installControlledFind();
+      const result = fixture.run({ FIND_INJECT_AFTER_FIRST: "1" });
+
+      expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+      expect(result.stderr).toContain(
+        "download volume contains an unsupported file type",
+      );
+      expect(
+        lstatSync(path.join(fixture.target, "injected-link")).isSymbolicLink(),
+      ).toBe(true);
+      expect(
+        Number(readFileSync(fixture.findCounter, "utf8").trim()),
+      ).toBeGreaterThanOrEqual(6);
+    } finally {
+      rmSync(fixture.sandbox, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the release-age policy exception exact and limited to the approved orb", () => {
     const workspace = read("pnpm-workspace.yaml");
     const exclusionBlock = workspace.match(
@@ -507,7 +911,7 @@ describe("production deployment security contracts", () => {
     );
     expect(
       nginx.match(/proxy_set_header X-Forwarded-Host \$http_host;/g),
-    ).toHaveLength(3);
+    ).toHaveLength(4);
   });
 
   it("rate-limits only the exact public assistant POST API", () => {
@@ -543,6 +947,87 @@ describe("production deployment security contracts", () => {
     expect(nginx).not.toMatch(
       /location\s+=?\s*\/(?:api\/health|api\/v1\/session)[^{]*\{[\s\S]*?limit_req/u,
     );
+  });
+
+  it("matches supported UUID upload paths without making the route case-insensitive", () => {
+    const template = read("infra/nginx/default.conf.template");
+    const uploadLocation =
+      'location ~ "^/api/v1/admin/downloads/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-57][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}/upload$" {';
+    const uploadPath = new RegExp(
+      "^/api/v1/admin/downloads/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-57][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}/upload$",
+      "u",
+    );
+
+    expect(template).toContain(uploadLocation);
+    expect(
+      uploadPath.test(
+        "/api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload",
+      ),
+    ).toBe(true);
+    expect(
+      uploadPath.test(
+        new URL(
+          "https://example.test/api/v1/admin/downloads/0191f2a3-4567-7abc-8def-0123456789ab/upload?draft=true",
+        ).pathname,
+      ),
+    ).toBe(true);
+    expect(
+      uploadPath.test(
+        "/api/v1/admin/downloads/0191f2a3-4567-6abc-8def-0123456789ab/upload",
+      ),
+    ).toBe(false);
+    expect(
+      uploadPath.test(
+        "/API/v1/admin/downloads/0191f2a3-4567-7abc-8def-0123456789ab/upload",
+      ),
+    ).toBe(false);
+  });
+
+  it("streams large POST uploads while rejecting other methods before their bodies", () => {
+    const template = read("infra/nginx/default.conf.template");
+    const global = read("infra/nginx/nginx.conf");
+    const uploadLocation =
+      'location ~ "^/api/v1/admin/downloads/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-57][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}/upload$" {';
+    const upload = template.split(uploadLocation)[1]?.split("\n  }")[0];
+    const catchAll = template.split("location / {")[1]?.split("\n  }")[0];
+
+    expect(upload).toBeDefined();
+    expect(upload).toMatch(/limit_except POST \{\s+deny all;\s+\}/u);
+    expect(upload).toContain("client_max_body_size 201m;");
+    expect(upload).toContain("proxy_request_buffering off;");
+    expect(upload).toContain("proxy_buffering off;");
+    expect(upload).toContain("proxy_http_version 1.1;");
+    for (const header of [
+      "proxy_set_header Host $http_host;",
+      "proxy_set_header X-Forwarded-Host $http_host;",
+      "proxy_set_header X-Real-IP $remote_addr;",
+      "proxy_set_header X-Forwarded-For $remote_addr;",
+      "proxy_set_header X-Forwarded-Proto $scheme;",
+      "proxy_set_header Upgrade $http_upgrade;",
+      "proxy_set_header Connection $connection_upgrade;",
+    ]) {
+      expect(upload).toContain(header);
+    }
+    expect(upload).toContain("proxy_pass http://web_upstream;");
+    expect(global).toContain("client_max_body_size 10m;");
+    expect(global).not.toContain("client_max_body_size 201m;");
+    expect(template.match(/client_max_body_size 201m;/gu)).toHaveLength(1);
+    expect(catchAll).not.toContain("client_max_body_size");
+
+    const gate = read("docs/testing/run-ci-gate.sh");
+    expect(gate).toContain(
+      "nginx) require_commands docker; run_nginx_check ;;",
+    );
+    expect(gate).toContain(
+      "fast|full|web|agent|registry|database|deployment|nginx",
+    );
+    expect(gate).toContain("0191F2A3-4567-7ABC-8DEF-0123456789AB");
+    expect(gate).toContain("0191f2a3-4567-6abc-8def-0123456789ab");
+    expect(gate).toContain("Expect: 100-continue");
+    expect(gate).toContain("100 Continue");
+    expect(gate).toContain("413 Request Entity Too Large");
+    expect(gate).toContain("403 Forbidden");
+    expect(read(".github/workflows/ci.yml")).toMatch(/\n\s+- gate: nginx\n/u);
   });
 
   it("wires the private AgentOS runtime into Web with external secret files", () => {
@@ -3364,6 +3849,9 @@ secrets:
     expect(packageScripts.scripts?.["restore:lifecycle:test"]).toContain(
       "run-restore-docker-lifecycle.sh controlled-failure",
     );
+    expect(packageScripts.scripts?.["restore:lifecycle:test"]).toContain(
+      "run-restore-docker-lifecycle.sh corruption",
+    );
   });
 
   it("defines an isolated Skill Registry E2E and documents its runtime boundary", () => {
@@ -5148,8 +5636,33 @@ exit 0
     );
     expect(script).toContain("skill-backup.manifest");
     expect(script).toContain("database.dump");
-    expect(script).toContain("tar -tf");
-    expect(script).toContain("tar -tvf");
+    expect(script).toContain("tar -Ptf");
+    expect(script).toContain("tar -Ptvf");
+    expect(script).toContain("RESTORE_MAX_ENCRYPTED_BYTES:-34359738368");
+    expect(script).toContain("RESTORE_MAX_DECRYPTED_BYTES:-25769803776");
+    expect(read(".env.example")).toContain(
+      "RESTORE_MAX_ENCRYPTED_BYTES=34359738368",
+    );
+    expect(read(".env.example")).toContain(
+      "RESTORE_MAX_DECRYPTED_BYTES=25769803776",
+    );
+    expect(script).toContain("archive-declared-sizes");
+    expect(script).toContain("archive_expanded_bytes");
+    expect(script.indexOf("archive-declared-sizes")).toBeLessThan(
+      script.indexOf('tar -xf "$bundle"'),
+    );
+    expect(script).toContain('tar -xOf "$bundle" download-files.manifest');
+    expect(script).toContain("tail -c 1");
+    expect(script).toContain(
+      "find /download-resources -type d -exec chmod 0750 {} +",
+    );
+    expect(script).toContain(
+      "find /download-resources -type f -exec chmod 0640 {} +",
+    );
+    expect(script).toContain(
+      "find /download-resources/objects -type f -exec sha256sum {} +",
+    );
+    expect(script).toContain("restored download artifact verification failed");
     expect(script).toContain("manifest_format_version");
     expect(script).toContain("manifest_dump_sha256");
     expect(script).toContain("actual_dump_sha256");
@@ -5167,8 +5680,8 @@ exit 0
     expect(script).toContain("--env-file");
     expect(script).not.toMatch(/docker run[^\n]*-e\s+POSTGRES_/u);
     expect(script).not.toContain("POSTGRES_PASSWORD=");
-    expect(script).toContain('expected_migrations="11"');
-    expect(script).toContain('expected_latest_migration="1786517193087"');
+    expect(script).toContain('expected_migrations="12"');
+    expect(script).toContain('expected_latest_migration="1786858709269"');
     expect(script).toContain("migration_count");
     expect(script).toContain("latest_migration");
     expect(script).toContain("users_email_lower_unique");
@@ -6406,7 +6919,6 @@ esac
     const backupFile = path.join(sandbox, "backup.dump.gpg");
     const keyFile = path.join(sandbox, "encryption-key");
     const dumpFile = path.join(fixture, "database.dump");
-    const manifestFile = path.join(fixture, "skill-backup.manifest");
     const script = path.join(root, "infra/docker/restore-drill.sh");
 
     try {
@@ -6420,28 +6932,11 @@ esac
       const dumpSha256 = createHash("sha256")
         .update(readFileSync(dumpFile))
         .digest("hex");
-      writeFileSync(
-        manifestFile,
-        `format_version=1
-dump_sha256=${dumpSha256}
-skill_registry_schema_version=1
-skill_revision_count=0
-skill_artifact_count=0
-skill_file_count=0
-`,
-        { mode: 0o600 },
-      );
-      const archive = spawnSync(
-        "tar",
-        [
-          "-cf",
-          backupFile,
-          "-C",
-          fixture,
-          "skill-backup.manifest",
-          "database.dump",
-        ],
-        { encoding: "utf8" },
+      const archive = writeEmptyDownloadRestoreBundle(
+        fixture,
+        backupFile,
+        dumpSha256,
+        { revisions: 0, artifacts: 0, files: 0 },
       );
       expect(archive.status, `${archive.stdout}${archive.stderr}`).toBe(0);
 
@@ -6516,11 +7011,13 @@ case "$command" in
         mkdir "$work/extracted"
         chmod 700 "$work/extracted"
         tar -xf "$work/restored.bundle" -C "$work/extracted"
+        printf '%s\n' '0|0' >"$work/download-manifest-summary"
         ;;
       digest)
         work=$(cat "$CAPTURE_DIR/digest.work")
         input=$(cat "$CAPTURE_DIR/digest.input")
         sha256sum "$input/database.dump" | awk '{ print $1 }' >"$work/dump-digest"
+        sha256sum "$input/download-files.manifest" | awk '{ print $1 }' >"$work/download-manifest-digest"
         ;;
       *) exit 1 ;;
     esac
@@ -6713,7 +7210,6 @@ esac
     const backupFile = path.join(sandbox, "backup.dump.gpg");
     const keyFile = path.join(sandbox, "encryption-key");
     const dumpFile = path.join(fixture, "database.dump");
-    const manifestFile = path.join(fixture, "skill-backup.manifest");
     const script = path.join(root, "infra/docker/restore-drill.sh");
 
     try {
@@ -6727,28 +7223,11 @@ esac
       const dumpSha256 = createHash("sha256")
         .update(readFileSync(dumpFile))
         .digest("hex");
-      writeFileSync(
-        manifestFile,
-        `format_version=1
-dump_sha256=${dumpSha256}
-skill_registry_schema_version=1
-skill_revision_count=1
-skill_artifact_count=1
-skill_file_count=1
-`,
-        { mode: 0o600 },
-      );
-      const archive = spawnSync(
-        "tar",
-        [
-          "-cf",
-          backupFile,
-          "-C",
-          fixture,
-          "skill-backup.manifest",
-          "database.dump",
-        ],
-        { encoding: "utf8" },
+      const archive = writeEmptyDownloadRestoreBundle(
+        fixture,
+        backupFile,
+        dumpSha256,
+        { revisions: 1, artifacts: 1, files: 1 },
       );
       expect(archive.status, `${archive.stdout}${archive.stderr}`).toBe(0);
 
@@ -6789,6 +7268,8 @@ case "$command" in
       aap-restore-bundle-*) resource=bundle ;;
       aap-restore-digest-*) resource=digest ;;
       aap-restore-registry-*) resource=registry ;;
+      aap-restore-download-files-*) resource=download_files ;;
+      aap-restore-download-probe-*) resource=download_probe ;;
       aap-restore-drill-*) resource=database ;;
       *) exit 1 ;;
     esac
@@ -6801,7 +7282,7 @@ case "$command" in
   start)
     target=$1
     resource=
-    for candidate in decrypt bundle digest database registry; do
+    for candidate in decrypt bundle digest database registry download_files download_probe; do
       if [ -f "$CAPTURE_DIR/$candidate.name" ] &&
          [ "$target" = "$(cat "$CAPTURE_DIR/$candidate.name")" ]; then
         resource=$candidate
@@ -6820,11 +7301,13 @@ case "$command" in
         mkdir "$work/extracted"
         chmod 700 "$work/extracted"
         tar -xf "$work/restored.bundle" -C "$work/extracted"
+        printf '%s\n' '0|0' >"$work/download-manifest-summary"
         ;;
       digest)
         work=$(cat "$CAPTURE_DIR/digest.work")
         input=$(cat "$CAPTURE_DIR/digest.input")
         sha256sum "$input/database.dump" | awk '{ print $1 }' >"$work/dump-digest"
+        sha256sum "$input/download-files.manifest" | awk '{ print $1 }' >"$work/download-manifest-digest"
         ;;
       database)
         if [ "$FAKE_DOCKER_MODE" = database_start_hang ]; then
@@ -7005,7 +7488,6 @@ esac
     const backupFile = path.join(sandbox, "backup.dump.gpg");
     const keyFile = path.join(sandbox, "encryption-key");
     const dumpFile = path.join(fixture, "database.dump");
-    const manifestFile = path.join(fixture, "skill-backup.manifest");
     const sentinel = "skill-registry-archive-bytes-sentinel-deadbeef";
 
     try {
@@ -7019,28 +7501,11 @@ esac
       const dumpSha256 = createHash("sha256")
         .update(readFileSync(dumpFile))
         .digest("hex");
-      writeFileSync(
-        manifestFile,
-        `format_version=1
-dump_sha256=${dumpSha256}
-skill_registry_schema_version=1
-skill_revision_count=1
-skill_artifact_count=1
-skill_file_count=1
-`,
-        { mode: 0o600 },
-      );
-      const archive = spawnSync(
-        "tar",
-        [
-          "-cf",
-          backupFile,
-          "-C",
-          fixture,
-          "skill-backup.manifest",
-          "database.dump",
-        ],
-        { encoding: "utf8" },
+      const archive = writeEmptyDownloadRestoreBundle(
+        fixture,
+        backupFile,
+        dumpSha256,
+        { revisions: 1, artifacts: 1, files: 1 },
       );
       expect(archive.status, `${archive.stdout}${archive.stderr}`).toBe(0);
 
@@ -7081,6 +7546,8 @@ case "$command" in
       aap-restore-bundle-*) resource=bundle ;;
       aap-restore-digest-*) resource=digest ;;
       aap-restore-registry-*) resource=registry ;;
+      aap-restore-download-files-*) resource=download_files ;;
+      aap-restore-download-probe-*) resource=download_probe ;;
       aap-restore-drill-*) resource=database ;;
       *) exit 1 ;;
     esac
@@ -7093,7 +7560,7 @@ case "$command" in
   start)
     target=$1
     resource=
-    for candidate in decrypt bundle digest database registry; do
+    for candidate in decrypt bundle digest database registry download_files download_probe; do
       if [ -f "$CAPTURE_DIR/$candidate.name" ] &&
          [ "$target" = "$(cat "$CAPTURE_DIR/$candidate.name")" ]; then
         resource=$candidate
@@ -7109,19 +7576,21 @@ case "$command" in
         mkdir "$work/extracted"
         chmod 700 "$work/extracted"
         tar -xf "$work/restored.bundle" -C "$work/extracted"
+        printf '%s\n' '0|0' >"$work/download-manifest-summary"
         ;;
       digest)
         work=$(cat "$CAPTURE_DIR/digest.work")
         input=$(cat "$CAPTURE_DIR/digest.input")
         sha256sum "$input/database.dump" | awk '{ print $1 }' >"$work/dump-digest"
+        sha256sum "$input/download-files.manifest" | awk '{ print $1 }' >"$work/download-manifest-digest"
         ;;
-      database|registry) ;;
+      database|registry|download_files|download_probe) ;;
       *) exit 1 ;;
     esac
     ;;
   wait) printf '%s\n' 0 ;;
   ps)
-    for resource in decrypt bundle digest database registry; do
+    for resource in decrypt bundle digest database registry download_files download_probe; do
       if [ -f "$CAPTURE_DIR/$resource.exists" ]; then
         cat "$CAPTURE_DIR/$resource.name"
       fi
@@ -7155,13 +7624,14 @@ case "$command" in
         [ "$FAKE_DOCKER_MODE" = success_temp_rm_failure ] || exit 1
         case " $* " in
           *"BEGIN TRANSACTION READ ONLY"*) printf '%s\n' '1|1|1|1|1|1|0|0|0|t' ;;
-          *"SELECT count(*) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 11 ;;
-          *"SELECT max(created_at) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 1786517193087 ;;
+          *"SELECT count(*) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 12 ;;
+          *"SELECT max(created_at) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 1786858709269 ;;
           *"WHERE id = "*) printf '%s\n' 1 ;;
           *"WHERE session_id = "*) printf '%s\n' 1 ;;
           *"SELECT count(*) FROM public.users"*) printf '%s\n' 1 ;;
           *"SELECT count(*) FROM agno.agno_sessions"*) printf '%s\n' 1 ;;
           *"SELECT count(*) FROM agno.agno_schema_versions"*) printf '%s\n' 1 ;;
+          *"SELECT artifact_key"*) : ;;
           *"to_regclass('public.users')"*) printf '%s\n' t ;;
           *) exit 1 ;;
         esac
@@ -7172,7 +7642,7 @@ case "$command" in
   rm)
     target=
     for argument in "$@"; do target=$argument; done
-    for resource in decrypt bundle digest database registry; do
+    for resource in decrypt bundle digest database registry download_files download_probe; do
       if [ -f "$CAPTURE_DIR/$resource.name" ] &&
          [ "$target" = "$(cat "$CAPTURE_DIR/$resource.name")" ]; then
         if [ "$resource" = database ]; then
@@ -7387,15 +7857,35 @@ exec /bin/rm "$@"
     expect(script).toContain(
       'timeout_command="${BACKUP_TIMEOUT_COMMAND:-/usr/bin/timeout}"',
     );
-    expect(script.match(/setsid "\$timeout_command"/g)).toHaveLength(3);
+    expect(script.match(/setsid "\$timeout_command"/g)).toHaveLength(2);
+    expect(script).toContain("setsid sh -c");
     expect(script).not.toContain("timeout --foreground");
     expect(backup?.environment?.BACKUP_DUMP_TIMEOUT_SECONDS).toBe("3600");
     expect(backup?.environment?.BACKUP_DUMP_KILL_AFTER_SECONDS).toBe("5");
-    expect(backup?.environment?.BACKUP_SNAPSHOT_TIMEOUT_SECONDS).toBe("3665");
+    expect(backup?.environment?.BACKUP_SNAPSHOT_TIMEOUT_SECONDS).toBe("7330");
     expect(backup?.environment?.BACKUP_SPACE_SAFETY_BYTES).toBe("67108864");
+    expect(backup?.environment?.BACKUP_DOWNLOAD_MAX_BYTES).toBe("17179869184");
     expect(backup?.tmpfs).toContain("/tmp:rw,noexec,nosuid,size=1g");
     expect(read(".env.example")).toContain("BACKUP_TMPFS_SIZE=1g");
-    expect(script).toContain("format_version=1");
+    expect(script).toContain("format_version=2");
+    expect(script).toContain("download-files.manifest");
+    expect(script).toContain("BACKUP_DOWNLOAD_MAX_BYTES");
+    expect(script).toContain("4194304");
+    expect(script).toContain("20000");
+    expect(script).toContain("10485760");
+    expect(script).toContain("pg_advisory_lock(4922248911538569540)");
+    expect(script).toContain("pg_advisory_unlock(4922248911538569540)");
+    expect(script).toContain("idle_in_transaction_session_timeout");
+    expect(script).toContain(
+      "idle_in_transaction_session_timeout = '$(((snapshot_timeout_seconds + 60) * 1000))ms'",
+    );
+    expect(script).toContain("pg_backend_pid()");
+    expect(script).toContain("BACKUP_TEST_CONTROL_FIFO");
+    expect(script).toContain("${backup_test_control_fifo}.ready");
+    expect(script).toContain("${backup_test_control_fifo}.release");
+    expect(script).toContain(
+      "backup download artifact space budget is insufficient",
+    );
     expect(script).toContain("dump_sha256=");
     expect(script).toContain("skill_registry_schema_version=");
     expect(script).toContain("skill_revision_count=");
@@ -7403,7 +7893,7 @@ exec /bin/rm "$@"
     expect(script).toContain("skill_file_count=");
     expect(script).toContain("skill-backup.manifest");
     expect(script).toContain("database.dump");
-    expect(script).toContain("tar -cf");
+    expect(script).toContain("tar -chf");
     expect(script).toContain("--format=custom");
     expect(script).not.toContain("--no-owner");
     expect(script).not.toContain("--no-acl");
@@ -8197,19 +8687,44 @@ esac
     const captures = path.join(sandbox, "captures");
     const backups = path.join(sandbox, "backups");
     const temporary = path.join(sandbox, "temporary");
+    const downloads = path.join(sandbox, "downloads");
     const passwordFile = path.join(sandbox, "database-password");
     const encryptionKeyFile = path.join(sandbox, "encryption-key");
     const databasePassword = "backup:password\\sentinel";
     const encryptionKey = "encryption-key-sentinel-0123456789abcdef";
     const fakeDump = "fake-custom-dump";
     const fakeDumpSha256 = createHash("sha256").update(fakeDump).digest("hex");
+    const resourceId = "0191f2a3-4567-7abc-8def-0123456789ab";
+    const revisionId = "0191f2a3-4567-7abc-9def-0123456789ab";
+    const pdfObjectKey = `objects/${resourceId}/${revisionId}.pdf`;
+    const coverObjectKey = `objects/${resourceId}/${revisionId}.webp`;
+    const pdfContents = "referenced-pdf";
+    const mismatchedPdfContents = "wrong-file-pdf";
+    const pdfByteSize = Buffer.byteLength(pdfContents);
+    const mismatchedPdfByteSize = Buffer.byteLength(mismatchedPdfContents);
+    const coverContents = "referenced-cover";
+    const pdfSha256 = createHash("sha256").update(pdfContents).digest("hex");
+    const mismatchedPdfSha256 = createHash("sha256")
+      .update(mismatchedPdfContents)
+      .digest("hex");
+    const coverSha256 = createHash("sha256")
+      .update(coverContents)
+      .digest("hex");
     const hungProcessIds: number[] = [];
     let hungFallbackWatchdogPid: number | undefined;
 
     try {
-      for (const directory of [bin, captures, backups, temporary]) {
+      for (const directory of [bin, captures, backups, temporary, downloads]) {
         mkdirSync(directory, { recursive: true });
       }
+      mkdirSync(path.dirname(path.join(downloads, pdfObjectKey)), {
+        recursive: true,
+      });
+      mkdirSync(path.join(downloads, "staging"), { recursive: true });
+      writeFileSync(path.join(downloads, pdfObjectKey), pdfContents);
+      writeFileSync(path.join(downloads, coverObjectKey), coverContents);
+      writeFileSync(path.join(downloads, "staging", "ignored.pdf"), "staging");
+      writeFileSync(path.join(downloads, "orphan.pdf"), "orphan");
       writeFileSync(passwordFile, databasePassword, { mode: 0o600 });
       writeFileSync(encryptionKeyFile, encryptionKey, { mode: 0o600 });
       writeFileSync(
@@ -8232,22 +8747,65 @@ exec "$@"
         path.join(bin, "setsid"),
         `#!/bin/sh
 set -eu
-exec "$@"
+if [ -x /usr/bin/setsid ]; then
+  exec /usr/bin/setsid "$@"
+fi
+exec python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$@"
 `,
         { mode: 0o700 },
       );
       writeFileSync(
         path.join(bin, "psql"),
-        `#!/bin/sh
-set -eu
-printf '%s\\n' "$@" >"$CAPTURE_DIR/psql.argv"
-while IFS= read -r command; do
-  printf '%s\\n' "$command" >>"$CAPTURE_DIR/psql.commands"
-  case "$command" in
-    *pg_export_snapshot*) printf '%s\\n' '00000003-0000001B-1|1|2|2|3|4|3|1|5|1024' ;;
-    '\\q') exit 0 ;;
-  esac
-done
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const readline = require("node:readline");
+const capture = process.env.CAPTURE_DIR;
+fs.writeFileSync(capture + "/psql.argv", process.argv.slice(2).join("\\n") + "\\n");
+process.on("exit", (code) => fs.writeFileSync(capture + "/psql.status", String(code ?? 0) + "\\n"));
+if (process.env.FAKE_SNAPSHOT_EXIT_MARKER) {
+  const watch = setInterval(() => {
+    if (fs.existsSync(capture + "/" + process.env.FAKE_SNAPSHOT_EXIT_MARKER)) process.exit(70);
+  }, 10);
+  watch.unref();
+}
+const output = (value) => fs.writeSync(1, value + "\\n");
+const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+lines.on("line", (command) => {
+  fs.appendFileSync(capture + "/psql.commands", command + "\\n");
+  if (command.includes("pg_advisory_lock")) output("locked");
+  else if (command.includes("pg_export_snapshot")) output("00000003-0000001B-1|1|2|2|3|4|3|1|5|1024|4242");
+  else if (command.includes("AAP_DOWNLOAD_KEYS_BEGIN")) output("__AAP_DOWNLOAD_KEYS_BEGIN__");
+  else if (command.includes("SELECT artifact_key")) {
+    const mode = process.env.FAKE_DOWNLOAD_KEY_MODE;
+    const hasExpectedMetadata = command.includes("expected_sha256, expected_byte_size");
+    const row = (key, sha256, byteSize) =>
+      hasExpectedMetadata ? [key, sha256, byteSize].join("|") : key;
+    const expectedPdfSha256 = mode === "same-size-content-mismatch"
+      ? "${mismatchedPdfSha256}"
+      : "${pdfSha256}";
+    const expectedPdfByteSize = mode === "same-size-content-mismatch"
+      ? "${mismatchedPdfByteSize}"
+      : "${pdfByteSize}";
+    if (mode === "duplicate") {
+      output(row("${pdfObjectKey}", expectedPdfSha256, expectedPdfByteSize));
+      output(row("${pdfObjectKey}", expectedPdfSha256, expectedPdfByteSize));
+    } else if (mode === "inconsistent-duplicate") {
+      output(row("${pdfObjectKey}", "${pdfSha256}", "${pdfByteSize}"));
+      output(row("${pdfObjectKey}", "${mismatchedPdfSha256}", "${mismatchedPdfByteSize}"));
+    } else if (mode === "invalid") {
+      output(row("${pdfObjectKey.toUpperCase()}", expectedPdfSha256, expectedPdfByteSize));
+    } else if (mode === "too-many") {
+      fs.writeSync(1, (row("${pdfObjectKey}", expectedPdfSha256, expectedPdfByteSize) + "\\n").repeat(20001));
+    } else {
+      output(row("${pdfObjectKey}", expectedPdfSha256, expectedPdfByteSize));
+      output(row("${coverObjectKey}", "-", "-"));
+    }
+  } else if (command.includes("AAP_DOWNLOAD_KEYS_END")) output("__AAP_DOWNLOAD_KEYS_END__");
+  else if (command.startsWith("SELECT pg_backend_pid() =")) output("t");
+  else if (command.startsWith("COMMIT") && !fs.existsSync(capture + "/gpg.done")) process.exit(1);
+  else if (command.includes("pg_advisory_unlock")) output("t");
+  else if (command === "\\\\q") process.exit(0);
+});
 `,
         { mode: 0o700 },
       );
@@ -8256,6 +8814,7 @@ done
         `#!/bin/sh
 set -eu
 printf '%s\\n' "$@" >"$CAPTURE_DIR/pg_dump.argv"
+printf '%s\\n' "$$" >"$CAPTURE_DIR/pg_dump.pid"
 cp "$PGPASSFILE" "$CAPTURE_DIR/pgpass"
 output=
 for argument in "$@"; do
@@ -8265,6 +8824,14 @@ for argument in "$@"; do
 done
 test -n "$output"
 printf '${fakeDump}' >"$output"
+if [ "\${FAKE_PG_DUMP_DELAY_SECONDS:-0}" -gt 0 ]; then
+  : >"$CAPTURE_DIR/pg_dump.started"
+  sleep "$FAKE_PG_DUMP_DELAY_SECONDS" &
+  delay_pid=$!
+  printf '%s\\n' "$delay_pid" >"$CAPTURE_DIR/pg_dump.delay.pid"
+  wait "$delay_pid"
+fi
+: >"$CAPTURE_DIR/pg_dump.done"
 `,
         { mode: 0o700 },
       );
@@ -8272,7 +8839,33 @@ printf '${fakeDump}' >"$output"
         path.join(bin, "sha256sum"),
         `#!/bin/sh
 set -eu
-printf '%s  %s\\n' '${fakeDumpSha256}' "$1"
+if [ "\${FAKE_SHA_MODE:-}" = uppercase-artifact ]; then
+  case "$1" in
+    */downloads/objects/*) printf 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA  %s\\n' "$1"; exit 0 ;;
+  esac
+fi
+exec /usr/bin/shasum -a 256 "$1"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "wc"),
+        `#!/bin/sh
+set -eu
+if [ "\${FAKE_WC_MODE:-}" = leading-zero ]; then
+  printf '01\n'
+  exit 0
+fi
+exec /usr/bin/wc "$@"
+`,
+        { mode: 0o700 },
+      );
+      writeFileSync(
+        path.join(bin, "tar"),
+        `#!/bin/sh
+set -eu
+printf '%s\\n' "$$" >"$CAPTURE_DIR/tar.pid"
+exec /usr/bin/tar "$@"
 `,
         { mode: 0o700 },
       );
@@ -8280,6 +8873,7 @@ printf '%s  %s\\n' '${fakeDumpSha256}' "$1"
         path.join(bin, "gpg"),
         `#!/bin/sh
 set -eu
+printf '%s\\n' "$$" >"$CAPTURE_DIR/gpg.pid"
 printf '%s\\n' "$@" >"$CAPTURE_DIR/gpg.argv"
 output=
 while [ "$#" -gt 0 ]; do
@@ -8290,7 +8884,15 @@ while [ "$#" -gt 0 ]; do
 done
 test -n "$output"
 cat >"$CAPTURE_DIR/plaintext.bundle"
+if [ "\${FAKE_GPG_DELAY_SECONDS:-0}" -gt 0 ]; then
+  : >"$CAPTURE_DIR/gpg.started"
+  sleep "$FAKE_GPG_DELAY_SECONDS" &
+  delay_pid=$!
+  printf '%s\\n' "$delay_pid" >"$CAPTURE_DIR/gpg.delay.pid"
+  wait "$delay_pid"
+fi
 { printf 'fake-openpgp'; cat "$CAPTURE_DIR/plaintext.bundle"; } >"$output"
+: >"$CAPTURE_DIR/gpg.done"
 `,
         { mode: 0o700 },
       );
@@ -8308,6 +8910,7 @@ printf '%s\\n' "$1" >>"$CAPTURE_DIR/fsync.paths"
         [path.join(root, "infra/docker/backup.sh")],
         {
           encoding: "utf8",
+          timeout: 15_000,
           env: {
             ...process.env,
             PATH: `${bin}:${process.env.PATH ?? ""}`,
@@ -8320,6 +8923,7 @@ printf '%s\\n' "$1" >>"$CAPTURE_DIR/fsync.paths"
             BACKUP_ENCRYPTION_KEY_FILE: encryptionKeyFile,
             BACKUP_DIRECTORY: backups,
             BACKUP_TMP_DIRECTORY: temporary,
+            BACKUP_DOWNLOAD_ROOT: downloads,
             BACKUP_RUN_ONCE: "true",
             BACKUP_TIMEOUT_COMMAND: path.join(bin, "timeout"),
           },
@@ -8327,7 +8931,13 @@ printf '%s\\n' "$1" >>"$CAPTURE_DIR/fsync.paths"
       );
 
       const output = `${result.stdout}${result.stderr}`;
-      expect(result.status, output).toBe(0);
+      const attemptedPsqlCommands = statSync(
+        path.join(captures, "psql.commands"),
+        { throwIfNoEntry: false },
+      )
+        ? readFileSync(path.join(captures, "psql.commands"), "utf8")
+        : `missing psql.commands; captures=${readdirSync(captures).join(",")}; status=${readFileSync(path.join(captures, "psql.status"), "utf8")}; argv=${readFileSync(path.join(captures, "psql.argv"), "utf8")}`;
+      expect(result.status, `${output}\n${attemptedPsqlCommands}`).toBe(0);
       const pgDumpArgv = readFileSync(
         path.join(captures, "pg_dump.argv"),
         "utf8",
@@ -8348,8 +8958,16 @@ printf '%s\\n' "$1" >>"$CAPTURE_DIR/fsync.paths"
       expect(psqlCommands).toContain(
         "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
       );
+      expect(psqlCommands).toContain("pg_advisory_lock(4922248911538569540)");
       expect(psqlCommands).toContain("pg_export_snapshot()");
+      expect(psqlCommands).toContain("pg_backend_pid()");
+      expect(psqlCommands).toContain("idle_in_transaction_session_timeout");
+      expect(psqlCommands).toContain("resource.published_revision_id");
+      expect(psqlCommands).toContain("resource.draft_revision_id");
+      expect(psqlCommands).toContain("revision.cleanup_pending_at IS NULL");
+      expect(psqlCommands).toContain('ORDER BY artifact_key COLLATE "C"');
       expect(psqlCommands).toContain("COMMIT;");
+      expect(psqlCommands).toContain("pg_advisory_unlock(4922248911538569540)");
       expect(pgDumpArgv).toContain("--host=db");
       expect(pgDumpArgv).toContain("--username=ai_agent_backup");
       expect(pgDumpArgv).toContain("--snapshot=00000003-0000001B-1");
@@ -8373,23 +8991,60 @@ printf '%s\\n' "$1" >>"$CAPTURE_DIR/fsync.paths"
       );
       expect(readdirSync(extractedBundle).sort()).toEqual([
         "database.dump",
+        "download-files.manifest",
+        "download-resources",
         "skill-backup.manifest",
       ]);
       expect(
         readFileSync(path.join(extractedBundle, "database.dump"), "utf8"),
       ).toBe(fakeDump);
+      const downloadManifest = `format_version=1
+${pdfSha256}\t${Buffer.byteLength(pdfContents)}\t${pdfObjectKey}
+${coverSha256}\t${Buffer.byteLength(coverContents)}\t${coverObjectKey}
+`;
+      expect(
+        readFileSync(
+          path.join(extractedBundle, "download-files.manifest"),
+          "utf8",
+        ),
+      ).toBe(downloadManifest);
       expect(
         readFileSync(
           path.join(extractedBundle, "skill-backup.manifest"),
           "utf8",
         ),
-      ).toBe(`format_version=1
+      ).toBe(`format_version=2
 dump_sha256=${fakeDumpSha256}
 skill_registry_schema_version=1
 skill_revision_count=2
 skill_artifact_count=2
 skill_file_count=3
+download_manifest_sha256=${createHash("sha256").update(downloadManifest).digest("hex")}
+download_artifact_count=2
+download_artifact_bytes=${Buffer.byteLength(pdfContents) + Buffer.byteLength(coverContents)}
 `);
+      expect(
+        statSync(
+          path.join(extractedBundle, "download-resources", pdfObjectKey),
+        ).isFile(),
+      ).toBe(true);
+      expect(
+        readFileSync(
+          path.join(extractedBundle, "download-resources", coverObjectKey),
+          "utf8",
+        ),
+      ).toBe(coverContents);
+      expect(
+        statSync(path.join(extractedBundle, "download-resources", "staging"), {
+          throwIfNoEntry: false,
+        }),
+      ).toBeUndefined();
+      expect(
+        statSync(
+          path.join(extractedBundle, "download-resources", "orphan.pdf"),
+          { throwIfNoEntry: false },
+        ),
+      ).toBeUndefined();
       expect(backupFiles[0]).toMatch(/^ai-agent-platform-.*\.dump\.gpg$/u);
       expect(statSync(path.join(backups, backupFiles[0])).mode & 0o777).toBe(
         0o600,
@@ -8399,6 +9054,192 @@ skill_file_count=3
           .trim()
           .split("\n"),
       ).toEqual([expect.stringMatching(/\.dump\.gpg\.tmp$/u), backups]);
+
+      const rejectedArtifactManifest = {
+        status: 1,
+        output: "backup download artifact manifest is invalid",
+      } as const;
+      const runArtifactManifestCase = (
+        name: string,
+        environment: Record<string, string>,
+        expected: { status: number; output: string } = rejectedArtifactManifest,
+        executableDirectory = bin,
+      ) => {
+        const rejectedCaptures = path.join(sandbox, `${name}-captures`);
+        const rejectedBackups = path.join(sandbox, `${name}-backups`);
+        const rejectedTemporary = path.join(sandbox, `${name}-temporary`);
+        for (const directory of [
+          rejectedCaptures,
+          rejectedBackups,
+          rejectedTemporary,
+        ]) {
+          mkdirSync(directory, { recursive: true });
+        }
+        const rejected = spawnSync(
+          "sh",
+          [path.join(root, "infra/docker/backup.sh")],
+          {
+            encoding: "utf8",
+            timeout: 10_000,
+            env: {
+              ...process.env,
+              ...environment,
+              PATH: `${executableDirectory}:${process.env.PATH ?? ""}`,
+              CAPTURE_DIR: rejectedCaptures,
+              PGHOST: "db",
+              PGPORT: "5432",
+              PGDATABASE: "ai_agent_platform",
+              PGUSER: "ai_agent_backup",
+              BACKUP_DATABASE_PASSWORD_FILE: passwordFile,
+              BACKUP_ENCRYPTION_KEY_FILE: encryptionKeyFile,
+              BACKUP_DIRECTORY: rejectedBackups,
+              BACKUP_TMP_DIRECTORY: rejectedTemporary,
+              BACKUP_DOWNLOAD_ROOT: downloads,
+              BACKUP_RUN_ONCE: "true",
+              BACKUP_TIMEOUT_COMMAND: path.join(executableDirectory, "timeout"),
+              BACKUP_PROCESS_KILL_AFTER_SECONDS: "1",
+            },
+          },
+        );
+        const rejectedOutput = `${rejected.stdout}${rejected.stderr}`;
+        expect(rejected.error, `${name}: ${rejectedOutput}`).toBeUndefined();
+        expect(rejected.status, `${name}: ${rejectedOutput}`).toBe(
+          expected.status,
+        );
+        expect(rejectedOutput.trim(), name).toBe(expected.output);
+        if (expected.status === 0) {
+          expect(readdirSync(rejectedBackups), name).toHaveLength(1);
+        } else {
+          expect(readdirSync(rejectedBackups), name).toEqual([]);
+        }
+        expect(readdirSync(rejectedTemporary), name).toEqual([]);
+      };
+
+      expect(mismatchedPdfByteSize).toBe(pdfByteSize);
+      expect(mismatchedPdfSha256).not.toBe(pdfSha256);
+      runArtifactManifestCase(
+        "same-size-content-mismatch",
+        { FAKE_DOWNLOAD_KEY_MODE: "same-size-content-mismatch" },
+        { status: 1, output: "backup download artifact metadata mismatch" },
+      );
+      runArtifactManifestCase(
+        "consistent-duplicate-key",
+        { FAKE_DOWNLOAD_KEY_MODE: "duplicate" },
+        { status: 0, output: "" },
+      );
+      runArtifactManifestCase("inconsistent-duplicate-key", {
+        FAKE_DOWNLOAD_KEY_MODE: "inconsistent-duplicate",
+      });
+      runArtifactManifestCase("noncanonical-uuid", {
+        FAKE_DOWNLOAD_KEY_MODE: "invalid",
+      });
+      runArtifactManifestCase("entry-limit", {
+        FAKE_DOWNLOAD_KEY_MODE: "too-many",
+      });
+      runArtifactManifestCase("noncanonical-digest", {
+        FAKE_SHA_MODE: "uppercase-artifact",
+      });
+
+      runArtifactManifestCase("noncanonical-size", {
+        FAKE_WC_MODE: "leading-zero",
+      });
+
+      const runDeadSnapshot = (
+        name: string,
+        marker: string,
+        doneMarker: string,
+        expectedOutput: string,
+        pidFiles: string[],
+        environment: Record<string, string>,
+      ) => {
+        const deadSnapshotCaptures = path.join(sandbox, `${name}-captures`);
+        const deadSnapshotBackups = path.join(sandbox, `${name}-backups`);
+        const deadSnapshotTemporary = path.join(sandbox, `${name}-temporary`);
+        for (const directory of [
+          deadSnapshotCaptures,
+          deadSnapshotBackups,
+          deadSnapshotTemporary,
+        ]) {
+          mkdirSync(directory, { recursive: true });
+        }
+        const deadSnapshotStartedAt = Date.now();
+        const deadSnapshot = spawnSync(
+          "sh",
+          [path.join(root, "infra/docker/backup.sh")],
+          {
+            encoding: "utf8",
+            timeout: 10_000,
+            env: {
+              ...process.env,
+              ...environment,
+              PATH: `${bin}:${process.env.PATH ?? ""}`,
+              CAPTURE_DIR: deadSnapshotCaptures,
+              FAKE_SNAPSHOT_EXIT_MARKER: marker,
+              PGHOST: "db",
+              PGPORT: "5432",
+              PGDATABASE: "ai_agent_platform",
+              PGUSER: "ai_agent_backup",
+              BACKUP_DATABASE_PASSWORD_FILE: passwordFile,
+              BACKUP_ENCRYPTION_KEY_FILE: encryptionKeyFile,
+              BACKUP_DIRECTORY: deadSnapshotBackups,
+              BACKUP_TMP_DIRECTORY: deadSnapshotTemporary,
+              BACKUP_DOWNLOAD_ROOT: downloads,
+              BACKUP_RUN_ONCE: "true",
+              BACKUP_TIMEOUT_COMMAND: path.join(bin, "timeout"),
+              BACKUP_PROCESS_KILL_AFTER_SECONDS: "1",
+            },
+          },
+        );
+        const deadSnapshotElapsedMs = Date.now() - deadSnapshotStartedAt;
+        const deadSnapshotOutput = `${deadSnapshot.stdout}${deadSnapshot.stderr}`;
+        expect(
+          deadSnapshot.error,
+          `${name}: ${deadSnapshotOutput}`,
+        ).toBeUndefined();
+        expect(deadSnapshot.status, `${name}: ${deadSnapshotOutput}`).not.toBe(
+          0,
+        );
+        expect(deadSnapshotOutput.trim(), name).toBe(expectedOutput);
+        expect(deadSnapshotElapsedMs, name).toBeLessThan(8_000);
+        expect(readdirSync(deadSnapshotBackups), name).toEqual([]);
+        expect(readdirSync(deadSnapshotTemporary), name).toEqual([]);
+        const deadSnapshotCaptureFiles = readdirSync(deadSnapshotCaptures);
+        expect(deadSnapshotCaptureFiles, name).toContain(marker);
+        expect(deadSnapshotCaptureFiles, name).not.toContain(doneMarker);
+        expect(
+          readFileSync(path.join(deadSnapshotCaptures, "psql.status"), "utf8"),
+          name,
+        ).toBe("70\n");
+        for (const pidFile of pidFiles) {
+          const pid = readFileSync(
+            path.join(deadSnapshotCaptures, pidFile),
+            "utf8",
+          ).trim();
+          const live = spawnSync("sh", ["-c", 'kill -0 "$1"', "sh", pid]);
+          expect(live.status, `${name}: live ${pidFile} ${pid}`).not.toBe(0);
+        }
+      };
+
+      runDeadSnapshot(
+        "snapshot-dies-during-dump",
+        "pg_dump.started",
+        "pg_dump.done",
+        "backup database dump failed",
+        ["pg_dump.pid", "pg_dump.delay.pid"],
+        {
+          FAKE_PG_DUMP_DELAY_SECONDS: "5",
+        },
+      );
+      runDeadSnapshot(
+        "snapshot-dies-during-encryption",
+        "gpg.started",
+        "gpg.done",
+        "backup encryption failed",
+        ["tar.pid", "gpg.pid", "gpg.delay.pid"],
+        {
+          FAKE_GPG_DELAY_SECONDS: "5",
+        },
+      );
 
       const capacityBin = path.join(sandbox, "capacity-bin");
       const capacityCaptures = path.join(sandbox, "capacity-captures");
@@ -8451,6 +9292,7 @@ printf '%s\n' 'test 1 0 1 0% /work'
             BACKUP_ENCRYPTION_KEY_FILE: encryptionKeyFile,
             BACKUP_DIRECTORY: capacityBackups,
             BACKUP_TMP_DIRECTORY: capacityTemporary,
+            BACKUP_DOWNLOAD_ROOT: downloads,
             BACKUP_RUN_ONCE: "true",
             BACKUP_TIMEOUT_COMMAND: path.join(capacityBin, "timeout"),
             BACKUP_PROCESS_KILL_AFTER_SECONDS: "1",
@@ -8540,28 +9382,42 @@ exec "$@"
       );
       writeFileSync(
         path.join(hangBin, "psql"),
-        `#!/bin/sh
-set -eu
-printf '%s\n' "$$" >"$CAPTURE_DIR/snapshot.pid"
-cleanup_snapshot() {
-  rm -f "$CAPTURE_DIR/idle-transaction"
-  printf 'exited\n' >"$CAPTURE_DIR/snapshot.exited"
-}
-trap 'cleanup_snapshot; exit 143' TERM INT HUP
-trap cleanup_snapshot EXIT
-while IFS= read -r command; do
-  case "$command" in
-    *pg_export_snapshot*)
-      : >"$CAPTURE_DIR/idle-transaction"
-      printf '%s\n' '00000003-0000001B-1|1|2|2|3|4|3|1|5|1024'
-      ;;
-    COMMIT*) rm -f "$CAPTURE_DIR/idle-transaction" ;;
-    '\\q') exit 0 ;;
-  esac
-done
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const readline = require("node:readline");
+const capture = process.env.CAPTURE_DIR;
+fs.writeFileSync(capture + "/snapshot.pid", String(process.pid) + "\\n");
+const cleanup = () => {
+  fs.rmSync(capture + "/idle-transaction", { force: true });
+  fs.writeFileSync(capture + "/snapshot.exited", "exited\\n");
+};
+process.on("exit", cleanup);
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(signal, () => process.exit(143));
+const output = (value) => fs.writeSync(1, value + "\\n");
+const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+lines.on("line", (command) => {
+  if (command.includes("pg_advisory_lock")) output("locked");
+  else if (command.includes("pg_export_snapshot")) {
+    fs.writeFileSync(capture + "/idle-transaction", "");
+    output("00000003-0000001B-1|1|2|2|3|4|3|1|5|1024|4242");
+  } else if (command.includes("AAP_DOWNLOAD_KEYS_BEGIN")) output("__AAP_DOWNLOAD_KEYS_BEGIN__");
+  else if (command.includes("SELECT artifact_key")) {
+    output("${pdfObjectKey}|${pdfSha256}|${pdfByteSize}");
+    output("${coverObjectKey}|-|-");
+  } else if (command.includes("AAP_DOWNLOAD_KEYS_END")) output("__AAP_DOWNLOAD_KEYS_END__");
+  else if (command.startsWith("SELECT pg_backend_pid() =")) output("t");
+  else if (command.startsWith("COMMIT")) fs.rmSync(capture + "/idle-transaction", { force: true });
+  else if (command.includes("pg_advisory_unlock")) output("t");
+  else if (command === "\\\\q") process.exit(0);
+});
 `,
         { mode: 0o700 },
       );
+      copyFileSync(
+        path.join(bin, "sha256sum"),
+        path.join(hangBin, "sha256sum"),
+      );
+      chmodSync(path.join(hangBin, "sha256sum"), 0o700);
       writeFileSync(
         path.join(hangBin, "pg_dump"),
         `#!/bin/sh
@@ -8604,12 +9460,15 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
             BACKUP_ENCRYPTION_KEY_FILE: encryptionKeyFile,
             BACKUP_DIRECTORY: hangBackups,
             BACKUP_TMP_DIRECTORY: hangTemporary,
+            BACKUP_DOWNLOAD_ROOT: downloads,
             BACKUP_RUN_ONCE: "true",
             BACKUP_TIMEOUT_COMMAND: path.join(hangBin, "timeout"),
             BACKUP_DUMP_TIMEOUT_SECONDS: "2",
             BACKUP_DUMP_KILL_AFTER_SECONDS: "1",
-            BACKUP_SNAPSHOT_TIMEOUT_SECONDS: "63",
+            BACKUP_SNAPSHOT_TIMEOUT_SECONDS: "125",
             BACKUP_PROCESS_KILL_AFTER_SECONDS: "1",
+            BACKUP_ENCRYPT_TIMEOUT_SECONDS: "1",
+            BACKUP_ENCRYPT_KILL_AFTER_SECONDS: "1",
           },
         },
       );
@@ -8669,7 +9528,7 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
       }
       rmSync(sandbox, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 55_000);
 
   it("validates exactly the single passphrase line consumed by GnuPG", () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), "backup-key-format-"));
@@ -8774,7 +9633,9 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
     expect(script).toContain("run --rm --no-deps skill-registry-bootstrap");
     expect(script).toContain("run --rm --no-deps skill-registry-migrate");
     expect(script).toContain("up -d --no-deps agent");
-    expect(script).toContain("run --rm --no-deps backup");
+    expect(script).toContain(
+      "-e BACKUP_TEST_CONTROL_FIFO=/backups/backup-test-control backup",
+    );
     expect(script).toContain("http://127.0.0.1:7777/internal/health/ready");
     expect(script).toContain("/run/secrets/os_security_key");
     expect(script).toContain("30");
@@ -8809,6 +9670,28 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
     expect(script).toContain("platform_user_count");
     expect(script).toContain("agno_session_count");
     expect(script).toContain("AAP_AGENTOS_RESTORE_TEST_FAIL_AFTER_TEMP");
+    expect(script).toContain("backup-test-control.ready");
+    expect(script).toContain("backup-test-control.release");
+    expect(script).toContain("control_wait_attempts");
+    expect(script).toContain("release_writer_pid");
+    expect(script).toContain("backup test control timed out");
+    expect(script).toContain("backup test release timed out");
+    expect(script).toContain(
+      "download fixture pointer mutation did not remain pending",
+    );
+    expect(script).toContain("pg_try_advisory_lock");
+    expect(script).toContain("state = 'idle'");
+    expect(script).toContain("mutation_poll_attempts");
+    expect(script).not.toContain("wait_event_type = 'Lock'");
+    expect(script).toContain(
+      "downloadResourceRepository.withArtifactMutationLock",
+    );
+    expect(script).toContain(
+      "blocked download mutation changed protected state",
+    );
+    expect(script).toContain("download_artifacts=6");
+    expect(script).toContain("cleanup_pending_at");
+    expect(script).toContain("download-resources/staging");
   });
 
   it("cleans temporary paths on a controlled failure immediately after allocation", () => {

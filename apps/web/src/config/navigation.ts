@@ -10,6 +10,8 @@ export const portalNavigation: PortalNavigationItem[] = [
   {
     label: "产品",
     href: "/product",
+    introTitle: "元启 AI 开发赋能平台",
+    overviewLabel: "进入产品中心",
     description:
       "一站式 AI 开发与部署平台，覆盖智能体、行业应用、模型、编程与权限，另有独立产品矩阵开箱即用。",
     children: [
@@ -347,6 +349,11 @@ const adminSecondaryNavigation: SidebarNavigationConfig = {
           permission: "admin:releases",
         },
         { label: "文档管理", href: "/admin/docs", permission: "admin:docs" },
+        {
+          label: "下载资源",
+          href: "/admin/downloads",
+          permission: "admin:downloads",
+        },
         {
           label: "Blog / 产品动态",
           href: "/admin/blog",

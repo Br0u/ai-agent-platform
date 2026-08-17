@@ -1,139 +1,95 @@
-import { render, screen, within } from "@testing-library/react";
-import { createElement } from "react";
 import { describe, expect, it } from "vitest";
-import DownloadsPage from "../app/downloads/page";
-import { downloadProducts, downloadResources } from "./download-center-content";
+import * as content from "./download-center-content";
 
-const materialKeys = [
-  "yuanqi-fullstack",
-  "yuanqi-appliance",
-  "yuanqi-cases",
-  "yuanqi-folder",
-  "yuanqi-usage",
-  "mdd2-intro",
-  "mdd2-solution",
-  "office-appliance",
-  "office-doc",
-  "office-contract",
-  "office-bid",
-  "daoban-appliance",
-  "daoban-gov",
-  "daoban-assistant",
-  "vision-folder",
-  "vision-solution",
-  "vision-intro",
-  "vision-usage",
-] as const;
+describe("download center presentation vocabulary", () => {
+  it("keeps only the four fixed sections and five canonical products", () => {
+    expect(content.downloadSections).toEqual([
+      {
+        no: "01",
+        label: "产品资料",
+        anchor: "dl-materials",
+        category: "materials",
+      },
+      {
+        no: "02",
+        label: "软件资源下载",
+        anchor: "dl-software",
+        category: "software",
+      },
+      {
+        no: "03",
+        label: "产品部署文档",
+        anchor: "dl-deployment",
+        category: "deployment",
+      },
+      {
+        no: "04",
+        label: "白皮书与技术资料",
+        anchor: "dl-whitepapers",
+        category: "whitepapers",
+      },
+    ]);
+    expect(content.downloadProducts).toEqual([
+      "元启",
+      "码里奥",
+      "智能办公",
+      "智能导办",
+      "视觉检索智能体",
+    ]);
+  });
 
-describe("download center V3 content", () => {
-  it("matches the five product groups and 18 material resources", () => {
-    expect(Object.keys(downloadProducts)).toEqual([
-      "yuanqi",
-      "mdd2",
-      "office",
-      "daoban",
-      "vision",
+  it("contains no obsolete hard-coded resource catalog", () => {
+    expect(content).not.toHaveProperty("downloadResources");
+    expect(content).not.toHaveProperty("downloadSoftware");
+    expect(content).not.toHaveProperty("downloadNotices");
+  });
+
+  it("keeps the original hero message and four-step resource journey", () => {
+    expect(content.downloadOverview).toEqual({
+      title: "从产品资料到安装体验，一站式获取华鲲资源",
+      lead: "下载中心集中提供元启平台、码里奥与行业应用的产品资料、软件安装包、部署文档与技术白皮书，帮助您了解产品能力、获取资源并进入产品体验。",
+      tags: ["产品资料", "软件下载", "部署文档", "白皮书"],
+    });
+    expect(content.downloadJourney).toEqual([
+      {
+        title: "了解产品",
+        description: "查看元启平台、码里奥与行业应用能力",
+        href: "/product",
+      },
+      {
+        title: "获取资料",
+        description: "浏览产品资料、白皮书与部署文档",
+        href: "/downloads#dl-materials",
+      },
+      {
+        title: "安装体验",
+        description: "下载码里奥客户端并部署",
+        href: "/downloads#dl-software",
+      },
+      {
+        title: "申请体验",
+        description: "联系华鲲团队进入产品体验",
+        href: "/trial",
+      },
     ]);
-    expect(
-      Object.values(downloadProducts).map(({ name, tag }) => [name, tag]),
-    ).toEqual([
-      ["元启 AI 开发赋能平台", "元启平台"],
-      ["码里奥", "独立产品"],
-      ["智能办公应用", "行业应用"],
-      ["智能导办", "行业应用"],
-      ["视觉检索智能体", "独立产品"],
-    ]);
-    expect(downloadResources.materials.map(({ key }) => key)).toEqual(
-      materialKeys,
+  });
+
+  it("describes the three supported policy pairs", () => {
+    expect(content.permissionHint("public", "public")).toBe(
+      "可在线预览 · 可直接下载",
     );
-    expect(downloadResources.materials).toHaveLength(18);
-    expect(downloadResources.deployment.map(({ key }) => key)).toEqual([
-      "yuanqi-deploy",
-      "yuanqi-faq",
-    ]);
-    expect(downloadResources.whitepapers.map(({ key }) => key)).toEqual([
-      "wp-yuanqi-tech",
-    ]);
-  });
-
-  it("renders every V3 resource once without the obsolete cover", () => {
-    const { container } = render(createElement(DownloadsPage));
-    const resources = [
-      ...downloadResources.materials,
-      ...downloadResources.deployment,
-      ...downloadResources.whitepapers,
-    ];
-
-    expect(container.querySelectorAll(".download-card__cover")).toHaveLength(0);
-    for (const resource of resources) {
-      const card = container.querySelector<HTMLElement>(
-        `[data-download-key="${resource.key}"]`,
-      );
-      expect(card, resource.key).not.toBeNull();
-      const scope = within(card!);
-      expect(
-        scope.getByRole("heading", { level: 3, name: resource.title }),
-      ).toBeVisible();
-      expect(scope.getByText(resource.desc, { exact: true })).toBeVisible();
-      const tag =
-        "product" in resource
-          ? downloadProducts[resource.product].tag
-          : resource.file;
-      expect(scope.getByText(tag, { exact: true })).toBeVisible();
-    }
-  });
-
-  it("renders five single-column product groups with two-column card grids", () => {
-    const { container } = render(createElement(DownloadsPage));
-    const groups = container.querySelectorAll(
-      "#dl-materials .download-product-grid > .download-product-group",
+    expect(content.permissionHint("public", "contact")).toBe(
+      "可在线预览 · 联系获取下载",
     );
-
-    expect(groups).toHaveLength(5);
-    expect(
-      [...groups].map(
-        (group) => group.querySelectorAll(".download-card").length,
-      ),
-    ).toEqual([5, 2, 4, 3, 4]);
-    expect(
-      screen.getByText(
-        "快速了解元启平台、码里奥与行业应用的产品定位、核心能力与产品价值，先建立产品认知，再进入体验。",
-        { exact: true },
-      ),
-    ).toBeVisible();
+    expect(content.permissionHint("contact", "contact")).toBe(
+      "仅展示封面 · 联系获取",
+    );
   });
 
-  it("keeps the four sections and exact software metadata", () => {
-    const { container } = render(createElement(DownloadsPage));
-
-    for (const [anchor, heading] of [
-      ["dl-materials", "01｜产品资料"],
-      ["dl-software", "02｜软件资源下载"],
-      ["dl-deployment", "03｜产品部署文档"],
-      ["dl-whitepapers", "04｜白皮书与技术资料"],
-    ] as const) {
-      expect(
-        within(container.querySelector<HTMLElement>(`#${anchor}`)!).getByRole(
-          "heading",
-          { name: heading, level: 2 },
-        ),
-      ).toBeVisible();
-    }
-    expect(screen.getByText("版本：v2.0.0", { exact: true })).toBeVisible();
-    expect(
-      screen.getByText("Windows 10/11 · macOS 12+", { exact: true }),
-    ).toBeVisible();
-  });
-
-  it("uses the V3 hero copy without an extra eyebrow", () => {
-    render(createElement(DownloadsPage));
-
-    expect(
-      screen.getByText(
-        "下载中心集中提供元启平台、码里奥与行业应用的产品资料、软件安装包、部署文档与技术白皮书，帮助您了解产品能力、获取资源并进入产品体验。",
-        { exact: true },
-      ),
-    ).toBeVisible();
-    expect(screen.queryByText("下载中心｜资源入口")).toBeNull();
+  it("formats public PDF metadata for readers", () => {
+    expect(content.formatFileSize(1_572_864)).toBe("1.5 MB");
+    expect(content.formatPublishedAt("2026-08-16T01:02:03.000Z")).toBe(
+      "2026年8月16日",
+    );
   });
 });

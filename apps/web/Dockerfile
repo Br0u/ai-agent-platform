@@ -61,7 +61,8 @@ RUN pnpm --filter @ai-agent-platform/web build
 
 FROM node:24-alpine3.24 AS runner
 
-RUN apk add --no-cache gosu=1.19-r4
+RUN test "$(id -u node):$(id -g node)" = "1000:1000" \
+  && apk add --no-cache gosu=1.19-r4 poppler-utils
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1

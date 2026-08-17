@@ -1,3 +1,5 @@
+// @ts-expect-error Vitest provides Node at runtime; the package deliberately omits Node types.
+import { readFileSync } from "node:fs";
 import {
   act,
   cleanup,
@@ -103,6 +105,14 @@ const items: PortalNavigationItem[] = [
   { label: "价格与服务", href: "/pricing", children: [] },
 ];
 
+const v3ProductItems: PortalNavigationItem[] = [
+  {
+    ...items[1]!,
+    introTitle: "元启 AI 开发赋能平台",
+    overviewLabel: "进入产品中心",
+  },
+];
+
 function renderMenu(activeHref = "/") {
   return render(<MegaMenu items={items} activeHref={activeHref} />);
 }
@@ -148,6 +158,27 @@ describe("MegaMenu", () => {
     fireEvent.pointerEnter(trigger("产品"));
 
     expect(screen.getByText("全栈开发平台")).toBeVisible();
+  });
+
+  it("renders optional V3 intro and overview copy without changing the product route", () => {
+    render(<MegaMenu activeHref="/" items={v3ProductItems} />);
+    const productTrigger = trigger("产品");
+    fireEvent.pointerEnter(productTrigger);
+
+    const panel = screen.getByRole("region", { name: "产品" });
+    const overview = within(panel).getByRole("link", {
+      name: "进入产品中心",
+    });
+
+    expect(productTrigger).toHaveAttribute("href", "/product");
+    expect(
+      within(panel).getByRole("heading", {
+        name: "元启 AI 开发赋能平台",
+        level: 2,
+      }),
+    ).toBeVisible();
+    expect(overview).toHaveAttribute("href", "/product");
+    expect(overview).toHaveTextContent("进入产品中心→");
   });
 
   it("renders empty-child parents as direct links without empty panels", () => {
@@ -444,6 +475,20 @@ describe("MegaMenu", () => {
     for (const heading of ["商业模式", "伙伴政策", "伙伴培训", "合作对接"]) {
       expect(screen.getByRole("heading", { name: heading })).toBeVisible();
     }
+  });
+
+  it("keeps the product field and right rail scoped to the shared CSS hook", () => {
+    const css = readFileSync("src/navigation/navigation.css", "utf8");
+
+    expect(css).toMatch(
+      /\.mega-menu__panel\[data-menu-label="产品"\]\s+\.mega-menu__sections\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)\s+minmax\(160px,\s*0\.72fr\);[\s\S]*?grid-template-rows:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/u,
+    );
+    expect(css).toMatch(
+      /\.mega-menu__panel\[data-menu-label="产品"\]\s+\.mega-menu__section:nth-last-child\(2\)\s*\{[\s\S]*?grid-row:\s*1;[\s\S]*?grid-column:\s*4;/u,
+    );
+    expect(css).toMatch(
+      /\.mega-menu__panel\[data-menu-label="产品"\]\s+\.mega-menu__section:last-child\s*\{[\s\S]*?grid-row:\s*2;[\s\S]*?grid-column:\s*4;/u,
+    );
   });
 
   it("exports a reusable placeholder status badge", () => {

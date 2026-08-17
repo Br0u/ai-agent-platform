@@ -76,6 +76,7 @@ const requiredRoutes = [
   "/solutions",
   "/solutions/[slug]",
   "/downloads",
+  "/downloads/preview/[resourceKey]",
   "/partners",
   "/docs",
   "/docs/[category]",
@@ -107,6 +108,8 @@ const requiredRoutes = [
   "/admin/products",
   "/admin/releases",
   "/admin/docs",
+  "/admin/downloads",
+  "/admin/downloads/preview/[resourceId]",
   "/admin/docs/preview/[revisionId]",
   "/admin/blog",
   "/admin/cases",
@@ -185,6 +188,25 @@ describe("routeRegistry", () => {
     });
   });
 
+  it("registers the download resource manager as a live admin route", () => {
+    expect(matchRoute("/admin/downloads")).toEqual({
+      path: "/admin/downloads",
+      title: "下载资源",
+      group: "admin",
+      status: "live",
+    });
+    expect(
+      matchRoute(
+        "/admin/downloads/preview/019f7b47-3040-7000-8000-000000000099",
+      ),
+    ).toEqual({
+      path: "/admin/downloads/preview/[resourceId]",
+      title: "下载资源草稿预览",
+      group: "admin",
+      status: "live",
+    });
+  });
+
   it("registers pricing and services as a live public route", () => {
     expect(matchRoute("/pricing")).toEqual({
       path: "/pricing",
@@ -198,6 +220,12 @@ describe("routeRegistry", () => {
     expect(matchRoute("/downloads")).toEqual({
       path: "/downloads",
       title: "下载中心",
+      group: "public",
+      status: "live",
+    });
+    expect(matchRoute("/downloads/preview/product-guide")).toEqual({
+      path: "/downloads/preview/[resourceKey]",
+      title: "下载资源预览",
       group: "public",
       status: "live",
     });

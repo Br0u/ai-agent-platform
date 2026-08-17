@@ -21,6 +21,7 @@ jobs:
           - gate: registry
           - gate: database
           - gate: deployment
+          - gate: nginx
     services:
       postgres:
         image: postgres:18

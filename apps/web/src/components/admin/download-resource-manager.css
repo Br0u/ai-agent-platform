@@ -1,0 +1,422 @@
+.download-resource-manager {
+  width: min(1480px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 40px 0 64px;
+  color: var(--color-ink);
+}
+.download-resource-manager__heading,
+.download-resource-manager__editor-heading,
+.download-resource-manager__dialog header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--color-workspace-line);
+}
+.download-resource-manager__heading p,
+.download-resource-manager__editor-heading p,
+.download-resource-manager__dialog header p {
+  margin: 0 0 8px;
+  color: var(--color-primary);
+  font: 700 11px/1.2 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.download-resource-manager h1,
+.download-resource-manager h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  letter-spacing: -0.025em;
+}
+.download-resource-manager__heading h1 {
+  font-size: clamp(30px, 4vw, 48px);
+  line-height: 1;
+}
+.download-resource-manager__heading span,
+.download-resource-manager__editor-heading > div > span,
+.download-resource-manager__dialog header span {
+  display: block;
+  margin-top: 12px;
+  color: var(--color-muted);
+  font-size: 14px;
+}
+.download-resource-manager__button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-primary);
+  border-radius: 3px;
+  padding: 0 15px;
+  color: var(--color-surface);
+  background: var(--color-primary);
+  font: 700 12px/1 var(--font-body);
+  cursor: pointer;
+}
+.download-resource-manager__button--secondary {
+  border-color: var(--color-workspace-line);
+  color: var(--color-ink);
+  background: var(--color-surface);
+}
+.download-resource-manager__button--danger {
+  border-color: #9b372b;
+  background: #9b372b;
+}
+.download-resource-manager__button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+.download-resource-manager__button[aria-busy="true"] {
+  cursor: wait;
+}
+.download-resource-manager :focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-signal) 38%, transparent);
+  outline-offset: 2px;
+}
+.download-resource-manager__filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.5fr) repeat(3, minmax(132px, 0.7fr));
+  gap: 12px;
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid var(--color-workspace-line);
+  background: var(--color-surface);
+}
+.download-resource-manager__count {
+  align-self: end;
+  color: var(--color-muted);
+  font: 650 10px/1.4 var(--font-mono);
+}
+.download-resource-manager__filters label,
+.download-resource-manager__form label,
+.download-resource-manager__dialog label {
+  display: grid;
+  gap: 7px;
+  color: var(--color-ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+.download-resource-manager input,
+.download-resource-manager select,
+.download-resource-manager textarea {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--color-workspace-line);
+  border-radius: 3px;
+  padding: 10px 11px;
+  color: var(--color-ink);
+  background: var(--color-canvas);
+  font: 14px/1.45 var(--font-body);
+}
+.download-resource-manager textarea {
+  resize: vertical;
+}
+.download-resource-manager__workspace {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.36fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.download-resource-manager__list,
+.download-resource-manager__editor {
+  border: 1px solid var(--color-workspace-line);
+  background: var(--color-surface);
+}
+.download-resource-manager__list {
+  position: sticky;
+  top: 20px;
+}
+.download-resource-manager__list section + section {
+  border-top: 1px solid var(--color-workspace-line);
+}
+.download-resource-manager__list h2 {
+  padding: 13px 18px 8px;
+  font-size: 14px;
+}
+.download-resource-manager__list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.download-resource-manager__list li[data-selected="true"] {
+  box-shadow: inset 3px 0 0 var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface));
+}
+.download-resource-manager__list button {
+  display: grid;
+  width: 100%;
+  gap: 5px;
+  border: 0;
+  padding: 11px 18px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.download-resource-manager__list button:hover {
+  background: var(--color-canvas);
+}
+.download-resource-manager__list span,
+.download-resource-manager__list small {
+  overflow: hidden;
+  color: var(--color-muted);
+  font: 600 10px/1.4 var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.download-resource-manager__list p,
+.download-resource-manager__empty {
+  margin: 0;
+  padding: 12px 18px 18px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.download-resource-manager__editor-heading {
+  min-height: 76px;
+  align-items: flex-start;
+  padding: 16px 18px;
+}
+.download-resource-manager__editor-heading h2 {
+  font-size: 20px;
+}
+.download-resource-manager__state {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  color: var(--color-muted);
+  font: 650 10px/1.4 var(--font-mono);
+}
+.download-resource-manager__state span,
+.download-resource-manager__state strong {
+  padding: 5px 7px;
+  border: 1px solid var(--color-workspace-line);
+  background: var(--color-canvas);
+  font-weight: 700;
+}
+.download-resource-manager__state strong {
+  color: var(--color-primary);
+}
+.download-resource-manager__artifact {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  margin: 18px;
+  padding: 12px;
+  border: 1px solid var(--color-workspace-line);
+  background: var(--color-canvas);
+}
+.download-resource-manager__artifact img,
+.download-resource-manager__cover-placeholder {
+  width: 72px;
+  height: 96px;
+  border: 1px solid var(--color-workspace-line);
+  object-fit: cover;
+  background: var(--color-surface);
+}
+.download-resource-manager__cover-placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--color-muted);
+  font: 700 12px var(--font-mono);
+}
+.download-resource-manager__artifact > div {
+  display: grid;
+  gap: 5px;
+}
+.download-resource-manager__artifact span {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.download-resource-manager__artifact a {
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+.download-resource-manager__form {
+  padding: 0 18px 18px;
+}
+.download-resource-manager__metadata {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 10px 14px;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+.download-resource-manager__metadata dt {
+  color: var(--color-ink);
+  font-weight: 700;
+}
+.download-resource-manager__metadata dd {
+  margin: 0;
+}
+.download-resource-manager__form fieldset {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.download-resource-manager__wide-field {
+  grid-column: 1 / -1;
+}
+.download-resource-manager__editor-actions,
+.download-resource-manager__lifecycle,
+.download-resource-manager__dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+.download-resource-manager__upload {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex !important;
+  min-height: 40px;
+  align-items: center;
+  border: 1px solid var(--color-workspace-line);
+  border-radius: 3px;
+  padding: 0 15px;
+  cursor: pointer;
+}
+.download-resource-manager__upload input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.download-resource-manager__upload[aria-disabled="true"],
+.download-resource-manager__upload[aria-disabled="true"] input {
+  cursor: not-allowed;
+}
+.download-resource-manager__uploading,
+.download-resource-manager__message,
+.download-resource-manager__lifecycle p,
+.download-resource-manager__save-required {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.download-resource-manager__upload-error {
+  margin: 12px 0 0;
+  color: #8d3428;
+  font-size: 12px;
+  font-weight: 700;
+}
+.download-resource-manager__lifecycle {
+  padding: 16px 18px;
+  border-top: 1px solid var(--color-workspace-line);
+}
+.download-resource-manager__lifecycle form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.download-resource-manager__lifecycle
+  .download-resource-manager__message:empty {
+  display: none;
+}
+.download-resource-manager__dialog {
+  width: min(520px, calc(100vw - 28px));
+  padding: 22px;
+  border: 1px solid var(--color-workspace-line);
+  background: var(--color-surface);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.2);
+}
+.download-resource-manager__confirm {
+  width: min(420px, calc(100vw - 28px));
+  padding: 22px;
+  border: 1px solid var(--color-workspace-line);
+  background: var(--color-surface);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.2);
+}
+.download-resource-manager__confirm h2 {
+  font-size: 22px;
+}
+.download-resource-manager__confirm p {
+  color: var(--color-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.assistant-skill-dialog:has(.download-resource-manager__dialog),
+.assistant-skill-dialog:has(.download-resource-manager__confirm) {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  overflow: auto;
+  place-items: center;
+  padding: 14px;
+  background: rgb(12 22 32 / 0.4);
+}
+.assistant-skill-dialog .download-resource-manager__dialog input,
+.assistant-skill-dialog .download-resource-manager__dialog select,
+.assistant-skill-dialog .download-resource-manager__dialog textarea {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--color-workspace-line);
+  border-radius: 3px;
+  padding: 10px 11px;
+  color: var(--color-ink);
+  background: var(--color-canvas);
+  font: 14px/1.45 var(--font-body);
+}
+.assistant-skill-dialog .download-resource-manager__dialog :focus-visible,
+.assistant-skill-dialog .download-resource-manager__confirm :focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-signal) 38%, transparent);
+  outline-offset: 2px;
+}
+.download-resource-manager__dialog header {
+  display: block;
+}
+.download-resource-manager__dialog h2 {
+  font-size: 24px;
+}
+.download-resource-manager__dialog-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+.download-resource-manager__dialog small {
+  color: #a0382a;
+  font-size: 11px;
+}
+@media (max-width: 900px) {
+  .download-resource-manager {
+    width: min(100% - 28px, 760px);
+    padding-top: 24px;
+  }
+  .download-resource-manager__workspace {
+    grid-template-columns: 1fr;
+  }
+  .download-resource-manager__list {
+    position: static;
+  }
+}
+@media (max-width: 600px) {
+  .download-resource-manager__heading,
+  .download-resource-manager__editor-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .download-resource-manager__filters,
+  .download-resource-manager__form fieldset {
+    grid-template-columns: 1fr;
+  }
+  .download-resource-manager__wide-field {
+    grid-column: auto;
+  }
+  .download-resource-manager__state {
+    justify-content: flex-start;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .download-resource-manager * {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

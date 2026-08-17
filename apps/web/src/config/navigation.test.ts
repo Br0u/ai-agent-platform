@@ -227,6 +227,7 @@ const expectedCmsGroups = [
       ["导航管理", "/admin/navigation"],
       ["产品内容", "/admin/products"],
       ["版本与 Release Note", "/admin/releases"],
+      ["下载资源", "/admin/downloads"],
       ["Blog / 产品动态", "/admin/blog"],
       ["客户案例", "/admin/cases"],
       ["FAQ", "/admin/faq"],
@@ -349,6 +350,37 @@ describe("portalNavigation", () => {
     expect(dataAgent?.status).toBeUndefined();
   });
 
+  it("keeps V3 product copy data-driven while preserving the confirmed route groups", () => {
+    const product = portalNavigation.find((item) => item.label === "产品");
+
+    expect(product).toMatchObject({
+      href: "/product",
+      introTitle: "元启 AI 开发赋能平台",
+      overviewLabel: "进入产品中心",
+    });
+    expect(
+      product?.children.slice(0, 6).map((section) => section.label),
+    ).toEqual([
+      "智能体中心",
+      "模型中心",
+      "行业应用中心",
+      "编程中心",
+      "技能中心",
+      "权限中心",
+    ]);
+    expect(product?.children.slice(6).map((section) => section.label)).toEqual([
+      "码里奥",
+      "独立产品中心",
+    ]);
+    expect(
+      product?.children.slice(6).flatMap((section) => section.items),
+    ).toEqual([
+      expect.objectContaining({ href: "/product/code-agent" }),
+      expect.objectContaining({ href: "/product/aippt" }),
+      expect.objectContaining({ href: "/product/aishrek" }),
+    ]);
+  });
+
   it("publishes only live migrated public entries", () => {
     for (const item of flattenPortal()) {
       expect(item.status).toBeUndefined();
@@ -444,6 +476,7 @@ describe("adminNavigation", () => {
       产品内容: "admin:products",
       "版本与 Release Note": "admin:releases",
       文档管理: "admin:docs",
+      下载资源: "admin:downloads",
       "Blog / 产品动态": "admin:blog",
       客户案例: "admin:cases",
       FAQ: "admin:faq",

@@ -1,6 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import DownloadsPage from "../../app/downloads/page";
 import {
   metadataForRegisteredRoute,
   RegisteredRoutePage,
@@ -47,29 +46,6 @@ describe("RegisteredRoutePage", () => {
         .getByRole("navigation", { name: "页面目录" })
         .closest(".feature-shell__inner"),
     ).not.toBeNull();
-  });
-
-  it("renders downloads as the real live page instead of a feature shell", () => {
-    const { container } = render(<DownloadsPage />);
-
-    expect(
-      Array.from(container.querySelectorAll("section[id]"), (section) =>
-        section.getAttribute("id"),
-      ),
-    ).toEqual([
-      "dl-hero",
-      "dl-materials",
-      "dl-software",
-      "dl-deployment",
-      "dl-whitepapers",
-      "dl-cta",
-    ]);
-
-    const directory = within(container).getByRole("navigation", {
-      name: "下载中心完整目录",
-    });
-    expect(directory.closest(".download-page")).not.toBeNull();
-    expect(container.querySelector(".feature-shell")).toBeNull();
   });
 
   it("renders optional route content after the anchor index inside the feature shell", () => {

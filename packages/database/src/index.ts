@@ -19,5 +19,6 @@ export {
   type LivenessResult,
   type ReadinessResult,
 } from "./health";
+export * from "./schema/download-resources";
 export * from "./schema";
 export * as databaseSchema from "./schema";

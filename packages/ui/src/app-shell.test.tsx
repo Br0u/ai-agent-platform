@@ -1,3 +1,5 @@
+// @ts-expect-error Vitest provides Node at runtime; the package deliberately omits Node types.
+import { readFileSync } from "node:fs";
 import {
   act,
   cleanup,
@@ -248,6 +250,17 @@ describe("AppShell", () => {
     expect(screen.queryByText("客户控制台")).not.toBeInTheDocument();
     expect(screen.queryByText("CMS 运营后台")).not.toBeInTheDocument();
     expect(screen.getByText("页面内容")).toBeVisible();
+  });
+
+  it("keeps the public header non-transparent and frosted with a reduced-transparency fallback", () => {
+    const css = readFileSync("src/app-shell.css", "utf8");
+
+    expect(css).toMatch(
+      /\.site-header\s*\{[\s\S]*?border-bottom:\s*1px\s+solid\s+rgb\(255 255 255 \/ 56%\);[\s\S]*?background:\s*color-mix\(in oklch,\s*var\(--color-canvas\)\s+76%,\s*transparent\);[\s\S]*?backdrop-filter:\s*blur\(22px\)\s+saturate\(145%\);/u,
+    );
+    expect(css).toMatch(
+      /@media\s*\(prefers-reduced-transparency:\s*reduce\)\s*\{[\s\S]*?\.site-header\s*\{[\s\S]*?background:\s*var\(--color-canvas\);[\s\S]*?backdrop-filter:\s*none;/u,
+    );
   });
 
   it("marks the assistant workspace chrome as a portal-safe background root", () => {

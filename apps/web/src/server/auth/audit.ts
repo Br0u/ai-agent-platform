@@ -50,6 +50,11 @@ const COMPLETED_ASSISTANT_MODEL_AUDIT_RESULTS = ["success", "failure"] as const;
 const REQUESTED_ASSISTANT_SKILL_AUDIT_RESULTS = ["requested"] as const;
 const COMPLETED_ASSISTANT_SKILL_AUDIT_RESULTS = ["success", "failure"] as const;
 const DOCUMENT_AUDIT_RESULTS = ["success"] as const;
+const DOWNLOAD_RESOURCE_CLEANUP_ERROR_CATEGORIES = [
+  "filesystem",
+  "database",
+  "unknown",
+] as const;
 const TARGET_TYPES = [
   "user",
   "session",
@@ -62,6 +67,7 @@ const TARGET_TYPES = [
   "assistant_input_policy",
   "assistant_skill_revision",
   "document",
+  "download_resource",
 ] as const;
 
 type LoginMethod = (typeof LOGIN_METHODS)[number];
@@ -179,6 +185,14 @@ export type AuditMetadataByEvent = {
   "document.archived": DocumentAuditMetadata;
   "document.deleted": DocumentAuditMetadata;
   "document.restored": DocumentAuditMetadata;
+  "download_resource.created": DownloadResourceCreatedAuditMetadata;
+  "download_resource.draft_saved": DownloadResourceAuditMetadata;
+  "download_resource.uploaded": DownloadResourceAuditMetadata;
+  "download_resource.published": DownloadResourceAuditMetadata;
+  "download_resource.downlined": DownloadResourceAuditMetadata;
+  "download_resource.draft_discarded": DownloadResourceAuditMetadata;
+  "download_resource.file_removed": DownloadResourceAuditMetadata;
+  "download_resource.cleanup_failed": DownloadResourceCleanupFailedAuditMetadata;
 };
 
 export type DocumentAuditMetadata = {
@@ -186,6 +200,30 @@ export type DocumentAuditMetadata = {
   revision: number;
   result: (typeof DOCUMENT_AUDIT_RESULTS)[number];
 };
+
+type DownloadResourceAuditMetadataBase = {
+  key: string;
+  rowVersion: number;
+};
+
+export type DownloadResourceCreatedAuditMetadata =
+  DownloadResourceAuditMetadataBase & {
+    revisionId: string | null;
+    result: "success";
+  };
+
+export type DownloadResourceAuditMetadata =
+  DownloadResourceAuditMetadataBase & {
+    revisionId: string;
+    result: "success";
+  };
+
+export type DownloadResourceCleanupFailedAuditMetadata =
+  DownloadResourceAuditMetadataBase & {
+    revisionId: string;
+    result: "failure";
+    errorCategory: (typeof DOWNLOAD_RESOURCE_CLEANUP_ERROR_CATEGORIES)[number];
+  };
 
 export type AuditEvent = keyof AuditMetadataByEvent;
 type AuditPrimitive = string | number | boolean | null;
@@ -427,7 +465,7 @@ function assistantModelAuditMetadata<const Results extends readonly string[]>(
 }
 
 const CANONICAL_UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const SHA256_PREFIX = /^[0-9a-f]{12}$/u;
 
 type AssistantSkillAuditEventKind =
@@ -644,6 +682,62 @@ function documentAuditMetadata(value: unknown): SanitizedMetadata {
   };
 }
 
+function downloadResourceAuditMetadata(
+  value: unknown,
+  options: { allowNullRevision?: boolean; cleanupFailure?: boolean } = {},
+): SanitizedMetadata {
+  const keys = options.cleanupFailure
+    ? ["key", "revisionId", "rowVersion", "result", "errorCategory"]
+    : ["key", "revisionId", "rowVersion", "result"];
+  const metadata = exactDataRecord(value, keys, "metadata");
+  const revisionId = metadata.revisionId;
+  if (
+    revisionId !== null &&
+    (typeof revisionId !== "string" || !CANONICAL_UUID.test(revisionId))
+  ) {
+    throw new AuditInputError("metadata.revisionId");
+  }
+  if (revisionId === null && !options.allowNullRevision) {
+    throw new AuditInputError("metadata.revisionId");
+  }
+  const rowVersion = metadata.rowVersion;
+  if (
+    typeof rowVersion !== "number" ||
+    !Number.isSafeInteger(rowVersion) ||
+    rowVersion < 1 ||
+    rowVersion > 2_147_483_647
+  ) {
+    throw new AuditInputError("metadata.rowVersion");
+  }
+  const result = enumValue(
+    metadata.result,
+    options.cleanupFailure ? (["failure"] as const) : (["success"] as const),
+    "metadata.result",
+  );
+  const key = metadata.key;
+  if (
+    typeof key !== "string" ||
+    key.length > 120 ||
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(key)
+  ) {
+    throw new AuditInputError("metadata.key");
+  }
+  const sanitized: SanitizedMetadata = {
+    key,
+    revisionId,
+    rowVersion,
+    result,
+  };
+  if (options.cleanupFailure) {
+    sanitized.errorCategory = enumValue(
+      metadata.errorCategory,
+      DOWNLOAD_RESOURCE_CLEANUP_ERROR_CATEGORIES,
+      "metadata.errorCategory",
+    );
+  }
+  return sanitized;
+}
+
 type AuditMetadataSchema = (value: unknown) => SanitizedMetadata;
 
 export const AUDIT_EVENT_SCHEMAS: Readonly<
@@ -698,6 +792,16 @@ export const AUDIT_EVENT_SCHEMAS: Readonly<
   "document.archived": documentAuditMetadata,
   "document.deleted": documentAuditMetadata,
   "document.restored": documentAuditMetadata,
+  "download_resource.created": (value) =>
+    downloadResourceAuditMetadata(value, { allowNullRevision: true }),
+  "download_resource.draft_saved": downloadResourceAuditMetadata,
+  "download_resource.uploaded": downloadResourceAuditMetadata,
+  "download_resource.published": downloadResourceAuditMetadata,
+  "download_resource.downlined": downloadResourceAuditMetadata,
+  "download_resource.draft_discarded": downloadResourceAuditMetadata,
+  "download_resource.file_removed": downloadResourceAuditMetadata,
+  "download_resource.cleanup_failed": (value) =>
+    downloadResourceAuditMetadata(value, { cleanupFailure: true }),
 });
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/u;
