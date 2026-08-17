@@ -26,10 +26,10 @@
 - Modify: `apps/web/src/config/navigation.ts`
 - Modify: `apps/web/src/config/navigation.test.ts`
 
-- [ ] Add failing tests for the optional V3 intro/overview copy on desktop and mobile, unchanged `/product` and child routes, 3-by-2 platform field, right rail, assistant entry, and frosted non-transparent header.
-- [ ] Run the focused UI tests and record the failure.
-- [ ] Add only the optional navigation copy and product-specific CSS needed by the shared renderer.
-- [ ] Run the focused UI tests and TypeScript checks.
+- [x] Add failing tests for the optional V3 intro/overview copy on desktop and mobile, unchanged `/product` and child routes, 3-by-2 platform field, right rail, assistant entry, and frosted non-transparent header.
+- [x] Run the focused UI tests and record the failure.
+- [x] Add only the optional navigation copy and product-specific CSS needed by the shared renderer.
+- [x] Run the focused UI tests and TypeScript checks.
 
 ### Task 2: Correct stale CI assertions
 
@@ -39,13 +39,13 @@
 - Modify: `packages/database/src/migrations/registration-company-name.integration.test.ts`
 - Modify: `packages/database/src/migrations/session-realm-guard.integration.test.ts`
 
-- [ ] Reproduce the stale Web scaffold assertion and the three migration-count failures.
-- [ ] Remove the obsolete generic `/downloads` scaffold test; dedicated download-center tests remain authoritative.
-- [ ] Update the three forward-migration assertions from eleven to twelve.
-- [ ] Run the affected Web and Database tests.
+- [x] Reproduce the stale Web scaffold assertion and the three migration-count failures.
+- [x] Remove the obsolete generic `/downloads` scaffold test; dedicated download-center tests remain authoritative.
+- [x] Update the three forward-migration assertions from eleven to twelve.
+- [x] Run the affected Web and Database tests (PostgreSQL-backed cases skip without `TEST_DATABASE_URL`).
 
 ### Task 3: Verify and publish
 
-- [ ] Run Web and Database typecheck, lint, formatting, and the relevant test suites.
-- [ ] Check `/downloads` at 1440×900 and 390×844: desktop hierarchy/glass header, mobile copy, assistant entry, and actual `/product` links.
+- [x] Run Web and Database typecheck, lint, formatting, and the relevant test suites.
+- [x] Check `/downloads` at 1440×900 and 390×844: desktop hierarchy/glass header, mobile copy, assistant entry, and actual `/product` links.
 - [ ] Commit the scoped files, push the PR branch, and wait for required CI results.
