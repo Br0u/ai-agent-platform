@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DownloadResourcePublicDto } from "@/server/downloads/contracts";
 import { AssistantSkillModal } from "./admin/assistant-skill-modal";
 import {
@@ -125,9 +125,12 @@ export function DownloadCenter({
 }) {
   const [contactResource, setContactResource] =
     useState<DownloadResourcePublicDto | null>(null);
-  const [directoryOpen, setDirectoryOpen] = useState(false);
+  const [directoryCollapsed, setDirectoryCollapsed] = useState(true);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const contactTrigger = useRef<HTMLButtonElement>(null);
   const cancelButton = useRef<HTMLButtonElement>(null);
+  const mobileTrigger = useRef<HTMLButtonElement>(null);
+  const directory = useRef<HTMLElement>(null);
   const orderedResources = [...resources].sort(
     (left, right) => left.sortOrder - right.sortOrder,
   );
@@ -137,52 +140,122 @@ export function DownloadCenter({
     queueMicrotask(() => contactTrigger.current?.focus());
   };
 
+  const closeMobile = (returnFocus = true) => {
+    setMobileOpen(false);
+    if (returnFocus) mobileTrigger.current?.focus();
+  };
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const frame = requestAnimationFrame(() =>
+      directory.current?.querySelector<HTMLAnchorElement>("a")?.focus(),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [mobileOpen]);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeMobile();
+    };
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [mobileOpen]);
+
   return (
     <main className="download-page">
-      <div className="download-shell">
-        <aside className="download-directory" aria-label="下载中心目录">
-          <button
-            aria-controls="download-directory-nav"
-            aria-expanded={directoryOpen}
-            aria-label={`${directoryOpen ? "收起" : "展开"}下载中心目录`}
-            className="download-directory__toggle"
-            onClick={() => setDirectoryOpen((open) => !open)}
-            type="button"
-          >
-            <span aria-hidden="true">{directoryOpen ? "‹" : "›"}</span>
-          </button>
-          <div className="download-directory__panel" hidden={!directoryOpen}>
+      <button
+        aria-controls="download-directory"
+        aria-expanded={mobileOpen}
+        className="download-directory-mobile"
+        onClick={() => setMobileOpen(true)}
+        ref={mobileTrigger}
+        type="button"
+      >
+        下载中心目录
+      </button>
+      <button
+        aria-label="关闭下载中心目录"
+        className="download-directory-backdrop"
+        data-open={mobileOpen}
+        onClick={() => closeMobile()}
+        type="button"
+      />
+      <div
+        className="download-shell"
+        data-directory-collapsed={directoryCollapsed}
+      >
+        <aside
+          aria-label="下载中心目录"
+          aria-modal={mobileOpen ? "true" : undefined}
+          className="download-directory"
+          data-mobile-open={mobileOpen}
+          id="download-directory"
+          ref={directory}
+          role={mobileOpen ? "dialog" : undefined}
+        >
+          <div className="download-directory__tools">
             <strong>资源目录</strong>
-            <nav aria-label="下载中心完整目录" id="download-directory-nav">
-              <Link href="/downloads#dl-hero">下载中心总览</Link>
-              {downloadSections.map((section) => {
-                const sectionResources = orderedResources.filter(
-                  ({ category }) => category === section.category,
-                );
-                return (
-                  <div key={section.category}>
-                    <Link href={`/downloads#${section.anchor}`}>
-                      {section.label}
-                    </Link>
-                    {sectionResources.length ? (
-                      <ul>
-                        {sectionResources.map((resource) => (
-                          <li key={resource.key}>
-                            <Link href={`/downloads#dl-${resource.key}`}>
-                              {resource.name}
-                            </Link>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </nav>
+            <button
+              aria-expanded={!directoryCollapsed}
+              aria-label={`${directoryCollapsed ? "展开" : "收起"}下载中心目录`}
+              className="download-directory__desktop-collapse"
+              onClick={() => setDirectoryCollapsed((value) => !value)}
+              type="button"
+            >
+              <span aria-hidden="true">{directoryCollapsed ? "›" : "‹"}</span>
+            </button>
+            <button
+              aria-label="关闭下载中心目录"
+              className="download-directory__mobile-close"
+              onClick={() => closeMobile()}
+              type="button"
+            >
+              <span aria-hidden="true">×</span>
+            </button>
           </div>
+          <nav aria-label="下载中心完整目录" id="download-directory-nav">
+            <Link href="/downloads#dl-hero" onClick={() => closeMobile(false)}>
+              下载中心总览
+            </Link>
+            {downloadSections.map((section) => {
+              const sectionResources = orderedResources.filter(
+                ({ category }) => category === section.category,
+              );
+              return (
+                <div key={section.category}>
+                  <Link
+                    href={`/downloads#${section.anchor}`}
+                    onClick={() => closeMobile(false)}
+                  >
+                    {section.label}
+                  </Link>
+                  {sectionResources.length ? (
+                    <ul>
+                      {sectionResources.map((resource) => (
+                        <li key={resource.key}>
+                          <Link
+                            href={`/downloads#dl-${resource.key}`}
+                            onClick={() => closeMobile(false)}
+                          >
+                            {resource.name}
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              );
+            })}
+          </nav>
         </aside>
 
-        <div className="download-main">
+        <div className="download-main" inert={mobileOpen ? true : undefined}>
           <section className="download-hero" id="dl-hero">
             <span className="download-hero__label">下载中心</span>
             <h1>{downloadOverview.title}</h1>

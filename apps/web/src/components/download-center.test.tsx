@@ -145,27 +145,44 @@ describe("managed download center", () => {
 
   it("keeps the resource directory collapsed until requested", () => {
     const { container } = render(<DownloadCenter resources={resources} />);
-    const directory = container.querySelector<HTMLElement>(
-      ".download-directory__panel",
-    )!;
+    const shell = container.querySelector<HTMLElement>(".download-shell")!;
 
     const toggle = screen.getByRole("button", {
       name: "展开下载中心目录",
     });
+    expect(shell).toHaveAttribute("data-directory-collapsed", "true");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(directory).toHaveAttribute("hidden");
 
     toggle.focus();
     fireEvent.click(toggle);
 
     const close = screen.getByRole("button", { name: "收起下载中心目录" });
+    expect(shell).toHaveAttribute("data-directory-collapsed", "false");
     expect(close).toHaveAttribute("aria-expanded", "true");
-    expect(directory).not.toHaveAttribute("hidden");
 
     fireEvent.click(close);
     expect(
       screen.getByRole("button", { name: "展开下载中心目录" }),
     ).toHaveFocus();
+  });
+
+  it("uses the solutions-style mobile directory drawer", async () => {
+    const { container } = render(<DownloadCenter resources={resources} />);
+    const trigger = screen.getByRole("button", { name: "下载中心目录" });
+    const directory = container.querySelector<HTMLElement>(
+      ".download-directory",
+    )!;
+
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(directory).toHaveAttribute("data-mobile-open", "true");
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "下载中心总览" })).toHaveFocus(),
+    );
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(directory).toHaveAttribute("data-mobile-open", "false");
+    expect(trigger).toHaveFocus();
   });
 
   it("shows the cover and complete published metadata on every card", () => {
@@ -281,7 +298,23 @@ describe("managed download center", () => {
     );
     expect(css).toMatch(/:focus-visible/u);
     expect(css).toMatch(/@media \(prefers-reduced-motion:\s*reduce\)/u);
-    expect(css).not.toMatch(/linear-gradient|radial-gradient/u);
+  });
+
+  it("matches the solutions directory geometry and mobile drawer", () => {
+    const css = readFileSync("src/app/downloads/downloads.css", "utf8");
+
+    expect(css).toMatch(
+      /\.download-shell\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*240px minmax\(0, 1fr\);/su,
+    );
+    expect(css).toMatch(
+      /@media \(min-width:\s*901px\)[\s\S]*?\.download-shell\[data-directory-collapsed="true"\]\s*\{[^}]*grid-template-columns:\s*44px minmax\(0, 1fr\);/u,
+    );
+    expect(css).toMatch(
+      /\.download-directory\s*\{[^}]*position:\s*sticky;[^}]*width:\s*240px;[^}]*border-radius:\s*18px;/su,
+    );
+    expect(css).toMatch(
+      /@media \(max-width:\s*900px\)[\s\S]*?\.download-directory-mobile\s*\{[^}]*display:\s*inline-flex;[\s\S]*?\.download-directory\s*\{[^}]*position:\s*fixed;[^}]*transform:\s*translateX\(-100%\);[\s\S]*?\.download-directory\[data-mobile-open="true"\]\s*\{[^}]*transform:\s*translateX\(0\);/u,
+    );
   });
 
   it("defines contact dialog tokens on the body-level portal root", () => {

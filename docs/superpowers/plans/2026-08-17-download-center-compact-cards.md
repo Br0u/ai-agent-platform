@@ -72,3 +72,25 @@ git add docs/superpowers/plans/2026-08-17-download-center-compact-cards.md \
   apps/web/src/app/downloads/downloads.css
 git commit -m "fix(downloads): compact public resource cards"
 ```
+
+### Task 3: Match the established solutions directory
+
+**Files:**
+
+- Modify: `apps/web/src/components/download-center.tsx`
+- Modify: `apps/web/src/components/download-center.test.tsx`
+- Modify: `apps/web/src/app/downloads/downloads.css`
+
+- [x] **Step 1: Lock the reference behavior with failing tests**
+
+Require the same 240px expanded / 44px collapsed desktop shell used by the solutions page, plus its mobile trigger, backdrop, drawer, Escape close, and focus restoration behavior.
+
+- [x] **Step 2: Replace the floating panel with the shared visual pattern**
+
+Keep the download-specific directory contents, omit the unnecessary search and progress rail, and reuse the solutions page's frosted shell geometry and mobile drawer behavior.
+
+- [x] **Step 3: Verify the focused behavior**
+
+Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/download-center.test.tsx`
+
+Expected: PASS.
