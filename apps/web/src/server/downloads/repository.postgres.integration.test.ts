@@ -17,6 +17,149 @@ const safeUrl = requested
 const describePostgres = safeUrl ? describe.sequential : describe.skip;
 
 describePostgres("download resource artifact repository", () => {
+  it("clones, replaces, removes, counts exclusions, and isolates CAS resources", async () => {
+    const suffix = randomUUID().replaceAll("-", "");
+    const key = `artifact-${suffix}`;
+    const objectKey = `test/${suffix}/shared.zip`;
+    const result = await downloadResourceRepository.transaction(async (tx) => {
+      const first = await tx.insertResource({
+        key,
+        adminLabel: "Artifact repository fixture",
+        kind: "software",
+      });
+      const source = await tx.insertRevision({
+        resourceId: first.id,
+        resourceKind: "software",
+        name: "Fixture",
+        product: "Platform",
+        category: "software",
+        resourceType: "Installer",
+        description: "Repository fixture",
+        sortOrder: 0,
+        previewPolicy: null,
+        downloadPolicy: "public",
+        releaseVersion: "1.0.0",
+        createdBy: null,
+      });
+      await tx.insertArtifact({
+        revisionId: source.id,
+        revisionKind: "software",
+        slot: "windows",
+        objectKey,
+        originalFilename: "fixture.zip",
+        extension: ".zip",
+        mediaType: "application/zip",
+        byteSize: 10,
+        sha256: "a".repeat(64),
+        pageCount: null,
+        coverObjectKey: null,
+      });
+      const clone = await tx.insertRevision({
+        resourceId: first.id,
+        resourceKind: "software",
+        name: "Fixture",
+        product: "Platform",
+        category: "software",
+        resourceType: "Installer",
+        description: "Repository fixture",
+        sortOrder: 0,
+        previewPolicy: null,
+        downloadPolicy: "public",
+        releaseVersion: "1.0.1",
+        createdBy: null,
+      });
+      const cloned = await tx.cloneArtifacts({
+        sourceRevisionId: source.id,
+        revisionId: clone.id,
+        revisionKind: "software",
+      });
+      const replaced = await tx.replaceArtifact({
+        ...cloned[0]!,
+        id: undefined,
+        revisionId: clone.id,
+        objectKey: `test/${suffix}/replacement.zip`,
+      });
+      const removed = await tx.removeArtifact({
+        revisionId: clone.id,
+        slot: "windows",
+      });
+      const second = await tx.insertResource({
+        key: `${key}-isolation`,
+        adminLabel: "Artifact isolation fixture",
+        kind: "software",
+      });
+      const crossResource = await tx.insertRevision({
+        resourceId: second.id,
+        resourceKind: "software",
+        name: "Fixture",
+        product: "Platform",
+        category: "software",
+        resourceType: "Installer",
+        description: "Repository fixture",
+        sortOrder: 0,
+        previewPolicy: null,
+        downloadPolicy: "public",
+        releaseVersion: "1.0.0",
+        createdBy: null,
+      });
+      await tx.insertArtifact({
+        revisionId: crossResource.id,
+        revisionKind: "software",
+        slot: "windows",
+        objectKey,
+        originalFilename: "fixture.zip",
+        extension: ".zip",
+        mediaType: "application/zip",
+        byteSize: 10,
+        sha256: "a".repeat(64),
+        pageCount: null,
+        coverObjectKey: null,
+      });
+      const beforeExclusion = await tx.countArtifactReferences({ objectKey });
+      const excluded = await tx.countArtifactReferences({
+        objectKey,
+        excludeRevisionIds: [source.id],
+      });
+      const updated = await tx.updateResourceCas({
+        id: first.id,
+        expectedRowVersion: first.rowVersion,
+        state: "unpublished",
+        publishedRevisionId: null,
+        draftRevisionId: source.id,
+      });
+      const stale = await tx.updateResourceCas({
+        id: first.id,
+        expectedRowVersion: first.rowVersion,
+        state: "unpublished",
+        publishedRevisionId: null,
+        draftRevisionId: source.id,
+      });
+      return {
+        cloned,
+        replaced,
+        removed,
+        beforeExclusion,
+        excluded,
+        updated,
+        stale,
+      };
+    });
+    expect(result.cloned).toEqual([
+      expect.objectContaining({ objectKey, slot: "windows" }),
+    ]);
+    expect(result.replaced.replaced).toMatchObject({ objectKey });
+    expect(result.removed).toMatchObject({ slot: "windows" });
+    expect(result.beforeExclusion).toEqual({
+      objectReferenceCount: 2,
+      coverReferenceCount: 0,
+    });
+    expect(result.excluded).toEqual({
+      objectReferenceCount: 1,
+      coverReferenceCount: 0,
+    });
+    expect(result.updated).toMatchObject({ rowVersion: 2 });
+    expect(result.stale).toBeNull();
+  });
   it("loads generic artifact rows and counts object plus cover references", async () => {
     const result = await downloadResourceRepository.transaction(async (tx) => {
       const references = await tx.countArtifactReferences({
@@ -33,3 +176,4 @@ describe("download resource PostgreSQL test guard", () => {
     expect(requested && !testDatabaseUrl).toBe(false);
   });
 });
+import { randomUUID } from "node:crypto";

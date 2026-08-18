@@ -165,15 +165,19 @@ function transaction() {
         sourceRevisionId: string;
         revisionId: string;
         revisionKind: Revision["resourceKind"];
-      }) =>
-        (wiring.revisions.get(input.sourceRevisionId)?.artifacts ?? []).map(
-          (artifact) => ({
+      }) => {
+        const artifacts = (
+            wiring.revisions.get(input.sourceRevisionId)?.artifacts ?? []
+          ).map((artifact) => ({
             ...artifact,
             id: randomUUID(),
             revisionId: input.revisionId,
             revisionKind: input.revisionKind,
-          }),
-        ),
+          })),
+          revision = wiring.revisions.get(input.revisionId);
+        if (revision) revision.artifacts = artifacts;
+        return artifacts;
+      },
     ),
     replaceArtifact: vi.fn(
       async (input: Omit<Artifact, "id" | "createdAt">) => {
@@ -224,7 +228,8 @@ function transaction() {
           resource.rowVersion !== input.expectedRowVersion
         )
           return null;
-        Object.assign(resource, {
+        const next = {
+          ...resource,
           state: input.state,
           publishedRevisionId: input.publishedRevisionId,
           draftRevisionId: input.draftRevisionId,
@@ -236,8 +241,9 @@ function transaction() {
             : null,
           rowVersion: resource.rowVersion + 1,
           updatedAt: now,
-        });
-        return { ...resource };
+        };
+        wiring.resources.set(input.id, next);
+        return next;
       },
     ),
     markRevisionCleanupPending: vi.fn(async (id: string) => {
@@ -427,6 +433,37 @@ const upload = (id: string, expectedRowVersion = 1) => ({
   byteSize: 20,
   sha256: sha,
 });
+const draftInput = (
+  id: string,
+  expectedRowVersion: number,
+  kind: "document" | "software",
+) =>
+  kind === "document"
+    ? {
+        id,
+        expectedRowVersion,
+        kind,
+        name: "Resource",
+        product: "Platform",
+        category: "software" as const,
+        resourceType: "Package",
+        description: "Download",
+        sortOrder: 0,
+        previewPolicy: "public" as const,
+        downloadPolicy: "public" as const,
+      }
+    : {
+        id,
+        expectedRowVersion,
+        kind,
+        name: "Resource",
+        product: "Platform",
+        category: "software" as const,
+        resourceType: "Package",
+        description: "Download",
+        sortOrder: 0,
+        releaseVersion: "2.0.0",
+      };
 beforeEach(() => {
   wiring.files.clear();
   wiring.resources.clear();
@@ -468,12 +505,52 @@ describe("typed download artifact lifecycle", () => {
       }),
     ).rejects.toThrow("DOWNLOAD_RESOURCE_NOT_PUBLISHABLE");
   });
+  it("clones published artifact metadata into a draft without copying objects", async () => {
+    const value = resource("software", [], "published");
+    const published = value.publishedRevision!;
+    published.artifacts = [
+      artifact(published.id, "windows", "objects/published-installer"),
+    ];
+    const filesBefore = [...wiring.files];
+    const result = await downloadResourceService.saveTypedDraft(
+      draftInput(value.id, 1, "software"),
+    );
+    expect(result.resource.draftRevision?.artifacts).toEqual([
+      expect.objectContaining({
+        objectKey: "objects/published-installer",
+        revisionId: result.resource.draftRevision?.id,
+      }),
+    ]);
+    expect([...wiring.files]).toEqual(filesBefore);
+    expect(result.resource.publishedRevision?.id).toBe(published.id);
+  });
+  it("preserves a published release, files, and public DTO when replacement fails", async () => {
+    const value = resource("software", [], "published");
+    const published = value.publishedRevision!;
+    published.artifacts = [
+      artifact(published.id, "windows", "objects/release"),
+    ];
+    const before = await downloadResourceService.listTypedPublicResources();
+    await downloadResourceService.saveTypedDraft(
+      draftInput(value.id, 1, "software"),
+    );
+    wiring.failUpdate = true;
+    await expect(
+      downloadResourceService.attachUploadedArtifact(upload(value.id, 2)),
+    ).rejects.toThrow("DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT");
+    const current = wiring.resources.get(value.id)!;
+    expect(current.publishedRevisionId).toBe(published.id);
+    expect(wiring.files.get("objects/release")).toBe(20);
+    await expect(
+      downloadResourceService.listTypedPublicResources(),
+    ).resolves.toEqual(before);
+  });
   it("clones then replaces a slot after commit", async () => {
     const value = resource("software");
     const draft = value.draftRevision!;
     draft.artifacts = [artifact(draft.id, "windows", "objects/old")];
     await downloadResourceService.attachUploadedArtifact(upload(value.id));
-    expect(value.draftRevision!.artifacts).toEqual([
+    expect(wiring.resources.get(value.id)?.draftRevision?.artifacts).toEqual([
       expect.objectContaining({
         slot: "windows",
         objectKey: expect.stringContaining("/windows.zip"),
@@ -511,6 +588,61 @@ describe("typed download artifact lifecycle", () => {
       ],
     });
   });
+  it("deletes a shared pending document primary and cover only after the whole batch is detached", async () => {
+    const value = resource("document", [
+      artifact("old", "document", "objects/shared.pdf"),
+    ]);
+    const current = value.draftRevision!;
+    const pending: Revision = {
+      ...structuredClone(current),
+      id: randomUUID(),
+      cleanupPendingAt: now,
+      artifacts: current.artifacts.map((item) => ({
+        ...item,
+        id: randomUUID(),
+        revisionId: "pending",
+      })),
+    };
+    for (const item of pending.artifacts) item.revisionId = pending.id;
+    wiring.revisions.set(pending.id, pending);
+    await downloadResourceService.discardDraft({
+      id: value.id,
+      expectedRowVersion: 1,
+    });
+    expect(wiring.files.has("objects/shared.pdf")).toBe(false);
+    expect(wiring.files.has("objects/shared.pdf.cover")).toBe(false);
+  });
+  it.each([
+    {
+      kind: "document" as const,
+      slot: "document" as const,
+      key: "objects/cross.pdf",
+    },
+    {
+      kind: "software" as const,
+      slot: "windows" as const,
+      key: "objects/cross.zip",
+    },
+  ])(
+    "keeps cross-resource $kind object references",
+    async ({ kind, slot, key }) => {
+      const owner = resource(kind, [artifact("owner", slot, key)]);
+      const other = resource(kind, [], "published");
+      const otherRevision = other.publishedRevision!;
+      otherRevision.artifacts = owner.draftRevision!.artifacts.map((item) => ({
+        ...item,
+        id: randomUUID(),
+        revisionId: otherRevision.id,
+      }));
+      await downloadResourceService.discardDraft({
+        id: owner.id,
+        expectedRowVersion: 1,
+      });
+      expect(wiring.files.has(key)).toBe(true);
+      if (kind === "document")
+        expect(wiring.files.has(`${key}.cover`)).toBe(true);
+    },
+  );
   it.each(["cleanup", "unlock"])(
     "retains committed object after post-commit %s failure",
     async (failure) => {
@@ -539,6 +671,60 @@ describe("typed download artifact lifecycle", () => {
     ).resolves.toBeNull();
     expect(wiring.readable.destroy).toHaveBeenCalledOnce();
   });
+  it.each([
+    { name: "valid document", mutate: () => undefined, publishes: true },
+    {
+      name: "missing document artifact",
+      mutate: (revision: Revision) => (revision.artifacts = []),
+      publishes: false,
+    },
+    {
+      name: "missing cover metadata",
+      mutate: (revision: Revision) =>
+        (revision.artifacts[0]!.coverObjectKey = null),
+      publishes: false,
+    },
+    {
+      name: "missing page metadata",
+      mutate: (revision: Revision) => (revision.artifacts[0]!.pageCount = null),
+      publishes: false,
+    },
+    {
+      name: "missing primary file",
+      mutate: (revision: Revision) =>
+        wiring.files.delete(revision.artifacts[0]!.objectKey),
+      publishes: false,
+    },
+    {
+      name: "mismatched primary size",
+      mutate: (revision: Revision) =>
+        wiring.files.set(revision.artifacts[0]!.objectKey, 9),
+      publishes: false,
+    },
+    {
+      name: "cover with unrelated byte size",
+      mutate: (revision: Revision) =>
+        wiring.files.set(revision.artifacts[0]!.coverObjectKey!, 999),
+      publishes: true,
+    },
+  ])("document publish is $name", async ({ mutate, publishes }) => {
+    const value = resource("document");
+    const draft = value.draftRevision!;
+    draft.artifacts = [artifact(draft.id, "document", "objects/document")];
+    mutate(draft);
+    const publication = downloadResourceService.publishTyped({
+      id: value.id,
+      expectedRowVersion: 1,
+    });
+    if (publishes)
+      await expect(publication).resolves.toMatchObject({
+        dto: { kind: "document", state: "published" },
+      });
+    else
+      await expect(publication).rejects.toThrow(
+        "DOWNLOAD_RESOURCE_NOT_PUBLISHABLE",
+      );
+  });
   it("returns only complete published discriminated public DTOs", async () => {
     const document = resource("document", [], "published");
     const publishedDocument = document.publishedRevision!;
@@ -552,21 +738,64 @@ describe("typed download artifact lifecycle", () => {
       artifact(publishedSoftware.id, "macos", "objects/public-macos"),
     ];
     const result = await downloadResourceService.listTypedPublicResources();
-    expect(result).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ key: document.key, kind: "document" }),
-        expect.objectContaining({
-          key: software.key,
-          kind: "software",
-          platforms: expect.objectContaining({ macos: expect.any(Object) }),
-        }),
-      ]),
+    expect(result).toEqual([
+      {
+        key: document.key,
+        kind: "document",
+        name: "Resource",
+        product: "Platform",
+        category: "software",
+        resourceType: "Package",
+        description: "Download",
+        sortOrder: 0,
+        previewPolicy: "public",
+        downloadPolicy: "public",
+        coverUrl: `/api/v1/downloads/${document.key}/cover?revision=${publishedDocument.id}`,
+        pageCount: 1,
+        byteSize: 10,
+        updatedAt: now.toISOString(),
+      },
+      {
+        key: software.key,
+        kind: "software",
+        name: "Resource",
+        product: "Platform",
+        category: "software",
+        resourceType: "Package",
+        description: "Download",
+        sortOrder: 0,
+        releaseVersion: "1.0.0",
+        platforms: {
+          windows: null,
+          macos: {
+            filename: "file.zip",
+            byteSize: 20,
+            downloadUrl: `/api/v1/downloads/${software.key}/macos`,
+          },
+        },
+        updatedAt: now.toISOString(),
+      },
+    ]);
+    expect(
+      result.find((item) => item.key === emptySoftware.key),
+    ).toBeUndefined();
+    wiring.files.delete("objects/public-macos");
+    await expect(
+      downloadResourceService.listTypedPublicResources(),
+    ).resolves.not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: software.key })]),
     );
-    expect(result).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ key: emptySoftware.key }),
-      ]),
-    );
+  });
+  it("rolls back a real immutable-kind service mutation", async () => {
+    const value = resource("document");
+    const revisionIds = [...wiring.revisions.keys()];
+    await expect(
+      downloadResourceService.saveTypedDraft(
+        draftInput(value.id, 1, "software"),
+      ),
+    ).rejects.toThrow("DOWNLOAD_RESOURCE_KIND_IMMUTABLE");
+    expect(wiring.resources.get(value.id)?.rowVersion).toBe(1);
+    expect([...wiring.revisions.keys()]).toEqual(revisionIds);
   });
   it("writes precise create and cleanup audit metadata", async () => {
     await downloadResourceService.createTypedResource({
@@ -595,6 +824,86 @@ describe("typed download artifact lifecycle", () => {
         metadata: expect.objectContaining({ revisionId }),
       }),
     );
+  });
+  it("emits complete post-CAS audit envelopes for lifecycle mutations", async () => {
+    const context = { ipAddress: "203.0.113.7", userAgent: "audit-test" };
+    await downloadResourceService.createTypedResource(
+      { key: "audit-complete", adminLabel: "Audit", kind: "software" },
+      context,
+    );
+    const document = resource("document", [
+      artifact("draft", "document", "objects/audit.pdf"),
+    ]);
+    await downloadResourceService.saveTypedDraft(
+      draftInput(document.id, 1, "document"),
+      context,
+    );
+    await downloadResourceService.publishTyped(
+      { id: document.id, expectedRowVersion: 2 },
+      context,
+    );
+    await downloadResourceService.downline(
+      { id: document.id, expectedRowVersion: 3 },
+      context,
+    );
+    const software = resource("software", [
+      artifact("draft", "windows", "objects/audit.zip"),
+    ]);
+    await downloadResourceService.removeDraftArtifact(
+      { id: software.id, expectedRowVersion: 1, slot: "windows" },
+      context,
+    );
+    await downloadResourceService.discardDraft(
+      { id: software.id, expectedRowVersion: 2 },
+      context,
+    );
+    const events = wiring.audits as Array<{
+      event: string;
+      actor: unknown;
+      target: unknown;
+      ipAddress?: string;
+      userAgent?: string;
+      metadata: {
+        key: string;
+        rowVersion: number;
+        revisionId: string | null;
+        result: string;
+      };
+    }>;
+    expect(events.map((entry) => entry.event)).toEqual([
+      "download_resource.created",
+      "download_resource.draft_saved",
+      "download_resource.published",
+      "download_resource.downlined",
+      "download_resource.file_removed",
+      "download_resource.draft_discarded",
+    ]);
+    for (const entry of events) {
+      expect(entry).toMatchObject({
+        actor: {
+          realm: "workforce",
+          userId: "11111111-1111-4111-8111-111111111111",
+        },
+        target: { type: "download_resource" },
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+        metadata: {
+          key: expect.any(String),
+          rowVersion: expect.any(Number),
+          result: "success",
+        },
+      });
+    }
+    expect(events[0]?.metadata).toMatchObject({
+      rowVersion: 1,
+      revisionId: null,
+    });
+    expect(
+      events.slice(1).every((entry) => entry.metadata.revisionId !== null),
+    ).toBe(true);
+    expect(events.slice(1).map((entry) => entry.metadata.rowVersion)).toEqual([
+      2, 3, 4, 2, 3,
+    ]);
   });
   it("rolls back abort after audit and rejects stale CAS", async () => {
     const value = resource("software", [
