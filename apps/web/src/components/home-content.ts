@@ -191,6 +191,7 @@ export const homeContent = {
         href: "/contact?topic=官网咨询",
         variant: "primary",
       },
+      { label: "申请体验", href: "/trial", variant: "secondary" },
     ],
     note: "客户案例墙素材整理中，正式上线后以真实客户案例展示替换本区域。",
   },

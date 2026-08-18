@@ -10,7 +10,7 @@ export function PortalHeader({
   items,
   activeHref,
   assistantEntry,
-  trialEntryVisible = true,
+  trialEntryVisible = false,
   linkComponent: Link = "a",
 }: {
   items: PortalNavigationItem[];
@@ -54,6 +54,8 @@ export function PortalHeader({
           ) : null}
           <MobileNavigation
             activeHref={activeHref}
+            actionHref="/trial"
+            actionLabel="申请体验"
             actionVisible={trialEntryVisible}
             items={items}
             linkComponent={Link}

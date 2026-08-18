@@ -73,6 +73,7 @@ function renderNavigation(
   props?: Partial<{
     actionLabel: string;
     actionHref: string;
+    actionVisible: boolean;
     secondaryActionLabel: string;
     secondaryActionHref: string;
     items: PortalNavigationItem[];
@@ -410,6 +411,23 @@ describe("MobileNavigation", () => {
     expect(
       within(dialog).getByRole("link", { name: "申请体验" }),
     ).toHaveAttribute("href", "/trial");
+  });
+
+  it("can hide the primary action without replacing it with the default login action", () => {
+    renderNavigation("/", {
+      actionLabel: "申请体验",
+      actionHref: "/trial",
+      actionVisible: false,
+      secondaryActionLabel: "联系我们",
+      secondaryActionHref: "/contact",
+    });
+    const { dialog } = openNavigation();
+
+    expect(
+      within(dialog).getByRole("link", { name: "联系我们" }),
+    ).toHaveAttribute("href", "/contact");
+    expect(within(dialog).queryByRole("link", { name: "申请体验" })).toBeNull();
+    expect(within(dialog).queryByRole("link", { name: /登录/ })).toBeNull();
   });
 
   it("marks exact child and segment-safe parent current state", () => {

@@ -105,10 +105,8 @@ describe("PortalHeader", () => {
     expect(assistant.nextElementSibling).toBe(contact);
   });
 
-  it("hides the trial entry on desktop and mobile without affecting contact", () => {
-    render(
-      <PortalHeader activeHref="/" items={items} trialEntryVisible={false} />,
-    );
+  it("hides the trial entry on desktop and mobile by default without affecting contact", () => {
+    render(<PortalHeader activeHref="/" items={items} />);
 
     expect(screen.getByRole("link", { name: "联系我们" })).toHaveAttribute(
       "href",
@@ -131,6 +129,25 @@ describe("PortalHeader", () => {
     ).toBeNull();
     expect(
       within(mobileDialog).queryByRole("link", { name: "文档" }),
+    ).toBeNull();
+  });
+
+  it("renders matching trial actions on desktop and mobile when explicitly visible", () => {
+    render(
+      <PortalHeader activeHref="/" items={items} trialEntryVisible={true} />,
+    );
+
+    expect(screen.getByRole("link", { name: "申请体验" })).toHaveAttribute(
+      "href",
+      "/trial",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "打开导航" }));
+    const mobileDialog = screen.getByRole("dialog", { name: "全站导航" });
+    expect(
+      within(mobileDialog).getByRole("link", { name: "申请体验" }),
+    ).toHaveAttribute("href", "/trial");
+    expect(
+      within(mobileDialog).queryByRole("link", { name: /登录/ }),
     ).toBeNull();
   });
 

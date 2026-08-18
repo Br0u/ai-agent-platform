@@ -38,7 +38,7 @@ export function AppShell({
   variant,
   activeHref,
   portalNavigation,
-  trialEntryVisible = true,
+  trialEntryVisible = false,
   portalLinkComponent,
   consoleNavigation,
   adminNavigation,

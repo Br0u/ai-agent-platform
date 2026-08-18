@@ -1,7 +1,8 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { HomeHero } from "./home-sections";
+import { homeContent } from "./home-content";
+import { HomeContactSection, HomeHero } from "./home-sections";
 
 afterEach(cleanup);
 
@@ -23,5 +24,19 @@ describe("HomeHero", () => {
     expect(
       within(actions).queryByRole("link", { name: "申请体验" }),
     ).toBeNull();
+  });
+});
+
+describe("HomeContactSection", () => {
+  it("retains trial content data but does not render its public entry", () => {
+    expect(homeContent.contact.actions).toContainEqual({
+      label: "申请体验",
+      href: "/trial",
+      variant: "secondary",
+    });
+
+    render(<HomeContactSection />);
+
+    expect(screen.queryByRole("link", { name: "申请体验" })).toBeNull();
   });
 });
