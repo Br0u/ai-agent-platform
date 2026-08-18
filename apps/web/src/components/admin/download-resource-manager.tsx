@@ -122,8 +122,7 @@ function ActionForm({
   useEffect(() => {
     if (state.kind === "success") {
       onResource(state.resource);
-      setOpen(false);
-      trigger.current?.focus();
+      queueMicrotask(() => trigger.current?.focus());
     }
   }, [state, onResource]);
   return (
@@ -144,8 +143,9 @@ function ActionForm({
       >
         {message(state)}
       </p>
-      {open ? (
+      {open && state.kind !== "success" ? (
         <AssistantSkillModal
+          initialFocusRef={trigger}
           labelledBy="download-confirm-heading"
           onClose={() => {
             setOpen(false);
@@ -341,8 +341,6 @@ function Editor({
   const [explicitPolicy, setExplicitPolicy] = useState(Boolean(current));
   useEffect(() => {
     if (state.kind === "success") {
-      setDirty(false);
-      onDirtyChange(false);
       onResource(state.resource);
     }
   }, [state, onDirtyChange, onResource]);
@@ -782,9 +780,10 @@ export function DownloadResourceManager({
   const controller = useRef<AbortController | null>(null);
   const newTrigger = useRef<HTMLButtonElement>(null);
   const controlsLocked = uploadingId !== null || editingDirty;
-  useEffect(() => {
-    if (!newOpen) newTrigger.current?.focus();
-  }, [newOpen]);
+  const closeNew = () => {
+    setNewOpen(false);
+    queueMicrotask(() => newTrigger.current?.focus());
+  };
   const selected =
     resources.find((resource) => resource.id === selectedId) ?? null;
   const products = Array.from(
@@ -1035,7 +1034,7 @@ export function DownloadResourceManager({
       </div>
       {newOpen ? (
         <CreateResourceDialog
-          onClose={() => setNewOpen(false)}
+          onClose={closeNew}
           onCreated={(resource) => {
             setResources((current) => [...current, resource]);
             setSelectedId(resource.id);

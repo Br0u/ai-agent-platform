@@ -58,3 +58,9 @@
 - Restored safe account-state messages, accessible create/draft field errors, and typed duplicate-key mapping.
 - GREEN: focused manager/actions/contracts/service/page/upload/preview suite passed 7 files / 80 tests; typecheck, lint, format check, and diff check passed.
 - Commit: recorded in final handoff.
+
+## Fix round 4
+
+- Removed synchronous effect state updates that violated `react-hooks/set-state-in-effect`; New focus is restored only by its close handler.
+- Confirmation now closes from the returned success DTO state and keeps failed state mounted.
+- Exact lint evidence: `pnpm --filter @ai-agent-platform/web lint` exited 0 with `$ eslint . --max-warnings=0`.
