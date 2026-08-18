@@ -658,10 +658,7 @@ export const downloadResourceService = {
               context,
             ),
           );
-          const dto =
-            resource.kind === "document"
-              ? await adminDto(resource)
-              : await typedAdminDto(resource);
+          const dto = await typedAdminDto(resource);
           throwIfAborted(signal);
           return { dto, resource, pending };
         },
@@ -743,91 +740,97 @@ export const downloadResourceService = {
       adminDto(resource),
     );
   },
-  async downline(rawInput: unknown, context: Context = {}) {
+  async downlineTyped(rawInput: unknown, context: Context = {}) {
     const actor = await authenticated();
     const input = parse(mutateDownloadResourceInputSchema, rawInput);
-    return downloadResourceRepository
-      .withArtifactMutationLock(
-        async (tx) => {
-          await tx.assertActiveWorkforcePermission(
-            actor.userId,
-            "admin:downloads",
-          );
-          const current = await tx.lockResource(input.id);
-          assertCurrent(current, input);
-          if (
-            current.state !== "published" ||
-            !current.publishedRevision ||
-            current.draftRevision
-          )
-            throw new Error("DOWNLOAD_RESOURCE_NOT_DOWNLINEABLE");
-          const resource = await update(
-            tx,
-            current,
-            input,
-            "downline",
-            null,
-            current.publishedRevision,
-          );
-          await tx.appendAudit(
-            revisionAudit(
-              "download_resource.downlined",
-              actor,
-              resource,
-              current.publishedRevision.id,
-              context,
-            ),
-          );
-          return {
+    return downloadResourceRepository.withArtifactMutationLock(
+      async (tx) => {
+        await tx.assertActiveWorkforcePermission(
+          actor.userId,
+          "admin:downloads",
+        );
+        const current = await tx.lockResource(input.id);
+        assertCurrent(current, input);
+        if (
+          current.state !== "published" ||
+          !current.publishedRevision ||
+          current.draftRevision
+        )
+          throw new Error("DOWNLOAD_RESOURCE_NOT_DOWNLINEABLE");
+        const resource = await update(
+          tx,
+          current,
+          input,
+          "downline",
+          null,
+          current.publishedRevision,
+        );
+        await tx.appendAudit(
+          revisionAudit(
+            "download_resource.downlined",
+            actor,
             resource,
-            dto: await adminDto(resource),
-            pending: [],
-          };
-        },
-        async ({ resource, pending }) =>
-          cleanupObjects(pending, actor, resource, context),
-      )
-      .then(({ dto }) => dto);
+            current.publishedRevision.id,
+            context,
+          ),
+        );
+        return {
+          resource,
+          dto: await typedAdminDto(resource),
+          pending: [],
+        };
+      },
+      async ({ resource, pending }) =>
+        cleanupObjects(pending, actor, resource, context),
+    );
+  },
+  async downline(rawInput: unknown, context: Context = {}) {
+    return this.downlineTyped(rawInput, context).then(({ resource }) =>
+      adminDto(resource),
+    );
+  },
+  async discardTyped(rawInput: unknown, context: Context = {}) {
+    const actor = await authenticated();
+    const input = parse(mutateDownloadResourceInputSchema, rawInput);
+    return downloadResourceRepository.withArtifactMutationLock(
+      async (tx) => {
+        await tx.assertActiveWorkforcePermission(
+          actor.userId,
+          "admin:downloads",
+        );
+        const current = await tx.lockResource(input.id);
+        assertCurrent(current, input);
+        if (!current.draftRevision)
+          throw new Error("DOWNLOAD_RESOURCE_NO_DRAFT");
+        const previousDraft = current.draftRevision;
+        const resource = await update(
+          tx,
+          current,
+          input,
+          current.state === "downline" ? "unpublished" : current.state,
+          current.publishedRevision,
+          null,
+        );
+        const pending = await cleanup(tx, current.id, previousDraft);
+        await tx.appendAudit(
+          revisionAudit(
+            "download_resource.draft_discarded",
+            actor,
+            resource,
+            previousDraft.id,
+            context,
+          ),
+        );
+        return { resource, dto: await typedAdminDto(resource), pending };
+      },
+      async ({ resource, pending }) =>
+        cleanupObjects(pending, actor, resource, context),
+    );
   },
   async discardDraft(rawInput: unknown, context: Context = {}) {
-    const actor = await authenticated();
-    const input = parse(mutateDownloadResourceInputSchema, rawInput);
-    return downloadResourceRepository
-      .withArtifactMutationLock(
-        async (tx) => {
-          await tx.assertActiveWorkforcePermission(
-            actor.userId,
-            "admin:downloads",
-          );
-          const current = await tx.lockResource(input.id);
-          assertCurrent(current, input);
-          if (!current.draftRevision)
-            throw new Error("DOWNLOAD_RESOURCE_NO_DRAFT");
-          const previousDraft = current.draftRevision;
-          const resource = await update(
-            tx,
-            current,
-            input,
-            current.state === "downline" ? "unpublished" : current.state,
-            current.publishedRevision,
-            null,
-          );
-          const pending = await cleanup(tx, current.id, previousDraft);
-          await tx.appendAudit(
-            revisionAudit(
-              "download_resource.draft_discarded",
-              actor,
-              resource,
-              previousDraft.id,
-              context,
-            ),
-          );
-          return { resource, dto: await adminDto(resource), pending };
-        },
-        async ({ resource, pending }) =>
-          cleanupObjects(pending, actor, resource, context),
-      )
-      .then(({ dto }) => dto);
+    return this.discardTyped(rawInput, context).then(({ resource }) =>
+      adminDto(resource),
+    );
   },
   async removeDraftArtifact(rawInput: unknown, context: Context = {}) {
     const actor = await authenticated();

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { AuthAccessError, requirePermission } from "../auth/access";
 import { matchesPostgresConstraint } from "../registration/database-errors";
 import {
+  artifactSlotSchema,
   createDownloadResourceInputSchema,
   downloadResourceAdminDtoSchema,
   mutateDownloadResourceInputSchema,
@@ -119,6 +120,22 @@ type TypedDownloadActionsDependencies = Omit<
       context?: DownloadRequestContext,
     ): Promise<TypedDownloadResourceAdminDto>;
     saveTypedDraft(
+      input: unknown,
+      context?: DownloadRequestContext,
+    ): Promise<{ dto: TypedDownloadResourceAdminDto }>;
+    publishTyped(
+      input: unknown,
+      context?: DownloadRequestContext,
+    ): Promise<{ dto: TypedDownloadResourceAdminDto }>;
+    downlineTyped(
+      input: unknown,
+      context?: DownloadRequestContext,
+    ): Promise<{ dto: TypedDownloadResourceAdminDto }>;
+    discardTyped(
+      input: unknown,
+      context?: DownloadRequestContext,
+    ): Promise<{ dto: TypedDownloadResourceAdminDto }>;
+    removeDraftArtifact(
       input: unknown,
       context?: DownloadRequestContext,
     ): Promise<{ dto: TypedDownloadResourceAdminDto }>;
@@ -517,11 +534,94 @@ function typedDraftInput(
   });
 }
 
+function typedArtifactInput(formData: FormData): Parsed<
+  z.infer<typeof mutateDownloadResourceInputSchema> & {
+    slot: z.infer<typeof artifactSlotSchema>;
+  },
+  TypedDownloadResourceActionState
+> {
+  const result = read(formData, ["id", "expectedRowVersion", "slot"]);
+  if ("fieldErrors" in result)
+    return { success: false, state: { kind: "validation_error", ...result } };
+  const expectedRowVersion = canonicalPositive(
+    result.values.expectedRowVersion,
+  );
+  if (expectedRowVersion === null)
+    return {
+      success: false,
+      state: {
+        kind: "validation_error",
+        fieldErrors: { expectedRowVersion: [INVALID] },
+      },
+    };
+  return parsed<
+    z.infer<typeof mutateDownloadResourceInputSchema> & {
+      slot: z.infer<typeof artifactSlotSchema>;
+    },
+    Extract<TypedDownloadResourceActionState, { kind: "validation_error" }>
+  >(
+    mutateDownloadResourceInputSchema
+      .safeExtend({ slot: artifactSlotSchema })
+      .strict(),
+    { ...result.values, expectedRowVersion },
+  );
+}
+
+function typedMutationInput(
+  formData: FormData,
+): Parsed<
+  z.infer<typeof mutateDownloadResourceInputSchema>,
+  TypedDownloadResourceActionState
+> {
+  const result = read(formData, ["id", "expectedRowVersion"]);
+  if ("fieldErrors" in result)
+    return { success: false, state: { kind: "validation_error", ...result } };
+  const expectedRowVersion = canonicalPositive(
+    result.values.expectedRowVersion,
+  );
+  if (expectedRowVersion === null)
+    return {
+      success: false,
+      state: {
+        kind: "validation_error",
+        fieldErrors: { expectedRowVersion: [INVALID] },
+      },
+    };
+  return parsed<
+    z.infer<typeof mutateDownloadResourceInputSchema>,
+    Extract<TypedDownloadResourceActionState, { kind: "validation_error" }>
+  >(mutateDownloadResourceInputSchema, {
+    ...result.values,
+    expectedRowVersion,
+  });
+}
+
 export function createTypedDownloadResourceActions(
   dependencies: TypedDownloadActionsDependencies,
 ) {
   const fail = (error: unknown): DownloadResourceActionErrorState =>
     safeErrorState(error, dependencies);
+  async function mutate(
+    input: Parsed<
+      z.infer<typeof mutateDownloadResourceInputSchema>,
+      TypedDownloadResourceActionState
+    >,
+    mutation: (
+      value: z.infer<typeof mutateDownloadResourceInputSchema>,
+      context: DownloadRequestContext,
+    ) => Promise<{ dto: TypedDownloadResourceAdminDto }>,
+  ): Promise<TypedDownloadResourceActionState> {
+    if (!input.success) return input.state;
+    try {
+      await dependencies.access.requirePermission("admin:downloads");
+      const result = await mutation(input.data, dependencies.getContext());
+      const resource = typedDownloadResourceAdminDtoSchema.parse(result.dto);
+      invalidate(dependencies);
+      return { kind: "success", resource };
+    } catch (error) {
+      return fail(error);
+    }
+  }
   return {
     async createTypedDownloadResourceAction(
       _previous: TypedDownloadResourceActionState,
@@ -561,6 +661,29 @@ export function createTypedDownloadResourceActions(
       } catch (error) {
         return fail(error);
       }
+    },
+    publishTypedDownloadResourceAction: (
+      _previous: TypedDownloadResourceActionState,
+      formData: FormData,
+    ) =>
+      mutate(typedMutationInput(formData), dependencies.service.publishTyped),
+    downlineTypedDownloadResourceAction: (
+      _previous: TypedDownloadResourceActionState,
+      formData: FormData,
+    ) =>
+      mutate(typedMutationInput(formData), dependencies.service.downlineTyped),
+    discardTypedDownloadDraftAction: (
+      _previous: TypedDownloadResourceActionState,
+      formData: FormData,
+    ) =>
+      mutate(typedMutationInput(formData), dependencies.service.discardTyped),
+    removeDownloadDraftArtifactAction: (
+      _previous: TypedDownloadResourceActionState,
+      formData: FormData,
+    ) => {
+      const input = typedArtifactInput(formData);
+      if (!input.success) return Promise.resolve(input.state);
+      return mutate(input, dependencies.service.removeDraftArtifact);
     },
   };
 }

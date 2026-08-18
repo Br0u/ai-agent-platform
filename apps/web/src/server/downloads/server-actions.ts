@@ -99,3 +99,43 @@ export async function saveTypedDownloadDraftAction(
     formData,
   );
 }
+
+export async function publishTypedDownloadResourceAction(
+  previous: TypedDownloadResourceActionState,
+  formData: FormData,
+) {
+  return (await typedActions()).publishTypedDownloadResourceAction(
+    previous,
+    formData,
+  );
+}
+
+export async function downlineTypedDownloadResourceAction(
+  previous: TypedDownloadResourceActionState,
+  formData: FormData,
+) {
+  return (await typedActions()).downlineTypedDownloadResourceAction(
+    previous,
+    formData,
+  );
+}
+
+export async function discardTypedDownloadDraftAction(
+  previous: TypedDownloadResourceActionState,
+  formData: FormData,
+) {
+  return (await typedActions()).discardTypedDownloadDraftAction(
+    previous,
+    formData,
+  );
+}
+
+export async function removeDownloadDraftArtifactAction(
+  previous: TypedDownloadResourceActionState,
+  formData: FormData,
+) {
+  return (await typedActions()).removeDownloadDraftArtifactAction(
+    previous,
+    formData,
+  );
+}

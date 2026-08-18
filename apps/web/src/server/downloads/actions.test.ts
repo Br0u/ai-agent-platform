@@ -88,6 +88,10 @@ function typedFixture() {
   const service = {
     createTypedResource: vi.fn(async () => softwareResource),
     saveTypedDraft: vi.fn(async () => ({ dto: softwareResource })),
+    publishTyped: vi.fn(async () => ({ dto: softwareResource })),
+    downlineTyped: vi.fn(async () => ({ dto: softwareResource })),
+    discardTyped: vi.fn(async () => ({ dto: softwareResource })),
+    removeDraftArtifact: vi.fn(async () => ({ dto: softwareResource })),
   };
   const access = { requirePermission: vi.fn(async () => actor) };
   const cache = { revalidatePath: vi.fn(), updateTag: vi.fn() };
@@ -366,5 +370,44 @@ describe("download resource actions", () => {
         softwareDraftForm(),
       ),
     ).resolves.toEqual({ kind: "conflict" });
+  });
+
+  it("removes only the requested typed artifact slot with the current row version", async () => {
+    const current = typedFixture();
+    const form = new FormData();
+    form.set("id", resource.id);
+    form.set("expectedRowVersion", "1");
+    form.set("slot", "windows");
+
+    await expect(
+      current.actions.removeDownloadDraftArtifactAction({ kind: "idle" }, form),
+    ).resolves.toEqual({ kind: "success", resource: softwareResource });
+    expect(current.service.removeDraftArtifact).toHaveBeenCalledWith(
+      { id: resource.id, expectedRowVersion: 1, slot: "windows" },
+      { ipAddress: "203.0.113.7" },
+    );
+  });
+
+  it("preserves publish, downline and discard actions for typed resources", async () => {
+    const current = typedFixture();
+    const form = new FormData();
+    form.set("id", resource.id);
+    form.set("expectedRowVersion", "1");
+
+    await expect(
+      current.actions.publishTypedDownloadResourceAction(
+        { kind: "idle" },
+        form,
+      ),
+    ).resolves.toEqual({ kind: "success", resource: softwareResource });
+    await expect(
+      current.actions.downlineTypedDownloadResourceAction(
+        { kind: "idle" },
+        form,
+      ),
+    ).resolves.toEqual({ kind: "success", resource: softwareResource });
+    await expect(
+      current.actions.discardTypedDownloadDraftAction({ kind: "idle" }, form),
+    ).resolves.toEqual({ kind: "success", resource: softwareResource });
   });
 });
