@@ -232,6 +232,29 @@ describe("DownloadResourceManager", () => {
     );
   });
 
+  it("exposes document policy and common draft errors accessibly", async () => {
+    actions.save.mockResolvedValueOnce({
+      kind: "validation_error",
+      fieldErrors: {
+        product: ["无效产品"],
+        previewPolicy: ["无效预览权限"],
+        downloadPolicy: ["无效下载权限"],
+      },
+    });
+    render(<DownloadResourceManager resources={[documentResource]} />);
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+    await waitFor(() => expect(screen.getByText("无效预览权限")).toBeVisible());
+    for (const name of ["预览权限", "下载权限"])
+      expect(screen.getByLabelText(name)).toHaveAttribute(
+        "aria-invalid",
+        "true",
+      );
+    expect(document.querySelector('input[name="product"]')).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+  });
+
   it("renders safe create field errors with accessibility wiring", async () => {
     actions.create.mockResolvedValueOnce({
       kind: "validation_error",

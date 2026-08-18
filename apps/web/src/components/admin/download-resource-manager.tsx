@@ -120,17 +120,29 @@ function ActionForm({
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const confirm = useRef<HTMLButtonElement>(null);
+  const triggerId = `download-action-${resource.id}-${slot ?? label}`;
+  const consequence =
+    label === "发布资源"
+      ? "发布后资源将对外可用。"
+      : label === "下线资源"
+        ? "下线后资源将不再对外可用。"
+        : label === "丢弃草稿"
+          ? "草稿修改将被永久丢弃。"
+          : "草稿文件将被永久移除。";
+  const restoreFocus = () =>
+    requestAnimationFrame(() => document.getElementById(triggerId)?.focus());
   useEffect(() => {
     if (state.kind === "success") {
       onResource(state.resource);
-      queueMicrotask(() => trigger.current?.focus());
+      requestAnimationFrame(() => document.getElementById(triggerId)?.focus());
     }
-  }, [state, onResource]);
+  }, [state, onResource, triggerId]);
   return (
     <>
       <button
         className={`download-resource-manager__button download-resource-manager__button--${tone}`}
         disabled={disabled || pending}
+        id={triggerId}
         onClick={() => setOpen(true)}
         ref={trigger}
         type="button"
@@ -150,12 +162,12 @@ function ActionForm({
           labelledBy="download-confirm-heading"
           onClose={() => {
             setOpen(false);
-            trigger.current?.focus();
+            restoreFocus();
           }}
         >
           <section className="download-resource-manager__dialog">
             <h2 id="download-confirm-heading">确认{label}</h2>
-            <p>此操作将立即更新资源状态。</p>
+            <p>{consequence}</p>
             <form
               action={formAction}
               className="download-resource-manager__dialog-actions"
@@ -172,7 +184,7 @@ function ActionForm({
                 disabled={pending}
                 onClick={() => {
                   setOpen(false);
-                  trigger.current?.focus();
+                  restoreFocus();
                 }}
                 type="button"
               >
