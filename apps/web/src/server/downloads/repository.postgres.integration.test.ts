@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
@@ -27,19 +27,49 @@ const repository =
   database && pool
     ? createDownloadResourceRepository(database, pool)
     : undefined;
+const fixturePrefix = `artifact-${randomUUID().replaceAll("-", "")}`;
+
+async function cleanupFixtures() {
+  if (!database) return;
+  const pattern = `${fixturePrefix}-%`;
+  await database.transaction(async (tx) => {
+    await tx.execute(sql`
+      UPDATE download_resources
+      SET state = 'unpublished', published_revision_id = NULL, draft_revision_id = NULL
+      WHERE key LIKE ${pattern}
+    `);
+    await tx.execute(sql`
+      DELETE FROM download_resource_artifacts
+      WHERE revision_id IN (
+        SELECT id FROM download_resource_revisions
+        WHERE resource_id IN (
+          SELECT id FROM download_resources WHERE key LIKE ${pattern}
+        )
+      )
+    `);
+    await tx.execute(sql`
+      DELETE FROM download_resource_revisions
+      WHERE resource_id IN (
+        SELECT id FROM download_resources WHERE key LIKE ${pattern}
+      )
+    `);
+    await tx.execute(
+      sql`DELETE FROM download_resources WHERE key LIKE ${pattern}`,
+    );
+  });
+}
 
 describePostgres("download resource artifact repository", () => {
+  beforeEach(cleanupFixtures);
   afterEach(async () => {
-    await database?.execute(
-      sql`DELETE FROM download_resources WHERE key LIKE 'artifact-%'`,
-    );
+    await cleanupFixtures();
   });
   afterAll(async () => {
     await pool?.end();
   });
   it("clones, replaces, removes, counts exclusions, and isolates CAS resources", async () => {
     const suffix = randomUUID().replaceAll("-", "");
-    const key = `artifact-${suffix}`;
+    const key = `${fixturePrefix}-${suffix}`;
     const objectKey = `test/${suffix}/shared.zip`;
     const result = await repository!.transaction(async (tx) => {
       const first = await tx.insertResource({
