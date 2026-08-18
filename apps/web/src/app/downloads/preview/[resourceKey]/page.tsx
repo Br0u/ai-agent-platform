@@ -17,7 +17,10 @@ export default async function DownloadPreviewPage({ params }: PageProps) {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(resourceKey)) notFound();
 
   const resource = (await downloadResourceService.listPublicResources()).find(
-    (item) => item.key === resourceKey && item.previewPolicy === "public",
+    (item) =>
+      item.kind === "document" &&
+      item.key === resourceKey &&
+      item.previewPolicy === "public",
   );
   if (!resource) notFound();
 

@@ -63,9 +63,9 @@ export const downloadJourney = [
     href: "/downloads#dl-software",
   },
   {
-    title: "申请体验",
-    description: "联系华鲲团队进入产品体验",
-    href: "/trial",
+    title: "联系我们",
+    description: "联系华鲲团队获取方案与产品支持",
+    href: "/contact?topic=下载与资料咨询",
   },
 ] as const;
 
@@ -73,8 +73,14 @@ export const downloadHeroNote =
   "下载中心是产品推广与客户转化链路的资源入口，资源均与产品价值关联呈现。";
 
 export function permissionHint(
-  preview: DownloadResourcePublicDto["previewPolicy"],
-  download: DownloadResourcePublicDto["downloadPolicy"],
+  preview: Extract<
+    DownloadResourcePublicDto,
+    { kind: "document" }
+  >["previewPolicy"],
+  download: Extract<
+    DownloadResourcePublicDto,
+    { kind: "document" }
+  >["downloadPolicy"],
 ) {
   if (preview === "contact") return "仅展示封面 · 联系获取";
   return download === "public"

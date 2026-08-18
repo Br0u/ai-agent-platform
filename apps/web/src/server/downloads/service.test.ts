@@ -535,7 +535,7 @@ describe("typed download artifact lifecycle", () => {
     published.artifacts = [
       artifact(published.id, "windows", "objects/release"),
     ];
-    const before = await downloadResourceService.listTypedPublicResources();
+    const before = await downloadResourceService.listPublicResources();
     await downloadResourceService.saveTypedDraft(
       draftInput(value.id, 1, "software"),
     );
@@ -547,7 +547,7 @@ describe("typed download artifact lifecycle", () => {
     expect(current.publishedRevisionId).toBe(published.id);
     expect(wiring.files.get("objects/release")).toBe(20);
     await expect(
-      downloadResourceService.listTypedPublicResources(),
+      downloadResourceService.listPublicResources(),
     ).resolves.toEqual(before);
   });
   it("clones then replaces a slot after commit", async () => {
@@ -805,7 +805,7 @@ describe("typed download artifact lifecycle", () => {
     publishedSoftware.artifacts = [
       artifact(publishedSoftware.id, "macos", "objects/public-macos"),
     ];
-    const result = await downloadResourceService.listTypedPublicResources();
+    const result = await downloadResourceService.listPublicResources();
     expect(result).toEqual([
       {
         key: document.key,
@@ -849,7 +849,7 @@ describe("typed download artifact lifecycle", () => {
     ).toBeUndefined();
     wiring.files.delete("objects/public-macos");
     await expect(
-      downloadResourceService.listTypedPublicResources(),
+      downloadResourceService.listPublicResources(),
     ).resolves.not.toEqual(
       expect.arrayContaining([expect.objectContaining({ key: software.key })]),
     );

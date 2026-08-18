@@ -44,24 +44,6 @@ export const releaseVersionSchema = z
   .min(1)
   .max(40);
 
-const draftMetadataSchema = z
-  .object({
-    name: nameSchema,
-    product: productSchema,
-    category: categorySchema,
-    resourceType: resourceTypeSchema,
-    description: descriptionSchema,
-    sortOrder: z.number().int().min(0).max(10_000),
-    previewPolicy: policySchema,
-    downloadPolicy: policySchema,
-  })
-  .strict()
-  .refine(
-    ({ previewPolicy, downloadPolicy }) =>
-      previewPolicy === "public" || downloadPolicy === "contact",
-    { path: ["downloadPolicy"], message: "Invalid access policy pair" },
-  );
-
 export const mutateDownloadResourceInputSchema = z
   .object({ id: idSchema, expectedRowVersion: rowVersionSchema })
   .strict();
@@ -79,16 +61,6 @@ export const adminDownloadQuerySchema = z
       .number()
       .pipe(z.union([z.literal(10), z.literal(20), z.literal(50)]))
       .default(20),
-  })
-  .strict();
-
-export const downloadResourcePublicDtoSchema = draftMetadataSchema
-  .safeExtend({
-    key: keySchema,
-    coverUrl: z.string().trim().min(1).max(2_048),
-    pageCount: z.number().int().positive(),
-    byteSize: z.number().int().positive(),
-    updatedAt: z.string().datetime({ offset: true }),
   })
   .strict();
 
@@ -307,41 +279,38 @@ const typedPublicPlatformSchema = z
   })
   .strict();
 
-export const typedDownloadResourcePublicDtoSchema = z.discriminatedUnion(
-  "kind",
-  [
-    typedPublicBaseSchema
-      .safeExtend({
-        kind: z.literal("document"),
-        previewPolicy: policySchema,
-        downloadPolicy: policySchema,
-        coverUrl: z.string().trim().min(1).max(2_048),
-        pageCount: z.number().int().positive(),
-        byteSize: z.number().int().positive(),
-      })
-      .strict()
-      .refine(
-        ({ previewPolicy, downloadPolicy }) =>
-          previewPolicy === "public" || downloadPolicy === "contact",
-        { path: ["downloadPolicy"], message: "Invalid access policy pair" },
-      ),
-    typedPublicBaseSchema
-      .safeExtend({
-        kind: z.literal("software"),
-        releaseVersion: releaseVersionSchema,
-        platforms: z
-          .object({
-            windows: typedPublicPlatformSchema.nullable(),
-            macos: typedPublicPlatformSchema.nullable(),
-          })
-          .strict()
-          .refine(({ windows, macos }) => windows !== null || macos !== null, {
-            message: "Software resources require a platform artifact",
-          }),
-      })
-      .strict(),
-  ],
-);
+export const downloadResourcePublicDtoSchema = z.discriminatedUnion("kind", [
+  typedPublicBaseSchema
+    .safeExtend({
+      kind: z.literal("document"),
+      previewPolicy: policySchema,
+      downloadPolicy: policySchema,
+      coverUrl: z.string().trim().min(1).max(2_048),
+      pageCount: z.number().int().positive(),
+      byteSize: z.number().int().positive(),
+    })
+    .strict()
+    .refine(
+      ({ previewPolicy, downloadPolicy }) =>
+        previewPolicy === "public" || downloadPolicy === "contact",
+      { path: ["downloadPolicy"], message: "Invalid access policy pair" },
+    ),
+  typedPublicBaseSchema
+    .safeExtend({
+      kind: z.literal("software"),
+      releaseVersion: releaseVersionSchema,
+      platforms: z
+        .object({
+          windows: typedPublicPlatformSchema.nullable(),
+          macos: typedPublicPlatformSchema.nullable(),
+        })
+        .strict()
+        .refine(({ windows, macos }) => windows !== null || macos !== null, {
+          message: "Software resources require a platform artifact",
+        }),
+    })
+    .strict(),
+]);
 
 export type MutateDownloadResourceInput = z.infer<
   typeof mutateDownloadResourceInputSchema
@@ -361,9 +330,6 @@ export type TypedDownloadResourceRevisionDto = z.infer<
 >;
 export type TypedDownloadResourceAdminDto = z.infer<
   typeof typedDownloadResourceAdminDtoSchema
->;
-export type TypedDownloadResourcePublicDto = z.infer<
-  typeof typedDownloadResourcePublicDtoSchema
 >;
 
 export function suggestDownloadPolicies(

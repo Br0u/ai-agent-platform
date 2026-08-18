@@ -19,7 +19,16 @@ import {
   useDirectoryProgress,
 } from "./directory-progress";
 
-function ResourceCover({ resource }: { resource: DownloadResourcePublicDto }) {
+type DocumentResource = Extract<
+  DownloadResourcePublicDto,
+  { kind: "document" }
+>;
+type SoftwareResource = Extract<
+  DownloadResourcePublicDto,
+  { kind: "software" }
+>;
+
+function ResourceCover({ resource }: { resource: DocumentResource }) {
   const cover = (
     <Image
       alt={`${resource.name}封面`}
@@ -47,11 +56,8 @@ function ResourceCard({
   onContact,
   resource,
 }: {
-  onContact: (
-    resource: DownloadResourcePublicDto,
-    trigger: HTMLButtonElement,
-  ) => void;
-  resource: DownloadResourcePublicDto;
+  onContact: (resource: DocumentResource, trigger: HTMLButtonElement) => void;
+  resource: DocumentResource;
 }) {
   const canPreview = resource.previewPolicy === "public";
   const canDownload = resource.downloadPolicy === "public";
@@ -124,13 +130,75 @@ function ResourceCard({
   );
 }
 
+function DesktopClientCard({ resource }: { resource: SoftwareResource }) {
+  return (
+    <article
+      className="download-card"
+      data-download-key={resource.key}
+      id={`dl-${resource.key}`}
+    >
+      <div className="download-card__body">
+        <div className="download-card__labels">
+          <span>{resource.product}</span>
+          <span>{resource.resourceType}</span>
+        </div>
+        <h3>{resource.name}</h3>
+        <p className="download-card__description">{resource.description}</p>
+        <dl className="download-card__metadata">
+          <div>
+            <dt>版本</dt>
+            <dd>{resource.releaseVersion}</dd>
+          </div>
+          {(["windows", "macos"] as const).map((platform) => {
+            const artifact = resource.platforms[platform];
+            const label = platform === "windows" ? "Windows" : "macOS";
+            return (
+              <div key={platform}>
+                <dt>{label}</dt>
+                <dd>
+                  {artifact
+                    ? `${artifact.filename} · ${formatFileSize(artifact.byteSize)}`
+                    : "暂无资源"}
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
+        <p className="download-card__policy">
+          下载安装包 → 安装部署 → 进入使用
+        </p>
+        <div className="download-actions">
+          {(["windows", "macos"] as const).map((platform) => {
+            const artifact = resource.platforms[platform];
+            const label = platform === "windows" ? "Windows" : "macOS";
+            return artifact ? (
+              <a
+                aria-label={`下载 ${label} 安装包`}
+                className="download-button--primary"
+                href={artifact.downloadUrl}
+                key={platform}
+              >
+                下载 {label} 安装包
+              </a>
+            ) : (
+              <span className="download-empty" key={platform}>
+                暂无资源
+              </span>
+            );
+          })}
+        </div>
+      </div>
+    </article>
+  );
+}
+
 export function DownloadCenter({
   resources,
 }: {
   resources: DownloadResourcePublicDto[];
 }) {
   const [contactResource, setContactResource] =
-    useState<DownloadResourcePublicDto | null>(null);
+    useState<DocumentResource | null>(null);
   const [directoryCollapsed, setDirectoryCollapsed] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   const contactTrigger = useRef<HTMLButtonElement>(null);
@@ -298,12 +366,6 @@ export function DownloadCenter({
                 <span key={tag}>{tag}</span>
               ))}
             </div>
-            <div className="download-hero__actions">
-              <Link className="download-button--primary" href="/product">
-                了解产品
-              </Link>
-              <Link href="/trial">申请体验</Link>
-            </div>
             <div className="download-journey" aria-label="获取资源路径">
               {downloadJourney.map((step, index) => (
                 <article className="download-journey__step" key={step.title}>
@@ -334,16 +396,23 @@ export function DownloadCenter({
                 </header>
                 {sectionResources.length ? (
                   <div className="download-grid">
-                    {sectionResources.map((resource) => (
-                      <ResourceCard
-                        key={resource.key}
-                        onContact={(selected, trigger) => {
-                          contactTrigger.current = trigger;
-                          setContactResource(selected);
-                        }}
-                        resource={resource}
-                      />
-                    ))}
+                    {sectionResources.map((resource) =>
+                      resource.kind === "document" ? (
+                        <ResourceCard
+                          key={resource.key}
+                          onContact={(selected, trigger) => {
+                            contactTrigger.current = trigger;
+                            setContactResource(selected);
+                          }}
+                          resource={resource}
+                        />
+                      ) : (
+                        <DesktopClientCard
+                          key={resource.key}
+                          resource={resource}
+                        />
+                      ),
+                    )}
                   </div>
                 ) : (
                   <p className="download-empty">暂无可用资源</p>
@@ -355,7 +424,7 @@ export function DownloadCenter({
           <section className="download-cta">
             <div>
               <h2>需要进一步了解产品？</h2>
-              <p>联系我们，获取适合您业务场景的资料与产品支持。</p>
+              <p>从产品认知到联系我们申请体验</p>
             </div>
             <Link href="/contact?topic=下载与资料咨询">联系我们</Link>
           </section>

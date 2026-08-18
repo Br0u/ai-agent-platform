@@ -18,11 +18,9 @@ import {
   mutateDownloadResourceInputSchema,
   typedCreateDownloadResourceInputSchema,
   typedDownloadResourceAdminDtoSchema,
-  typedDownloadResourcePublicDtoSchema,
   typedSaveDownloadDraftInputSchema,
   type DownloadResourcePublicDto,
   type TypedDownloadResourceAdminDto,
-  type TypedDownloadResourcePublicDto,
 } from "./contracts";
 import { createDownloadFileStore, type DownloadStage } from "./file-store";
 import {
@@ -822,7 +820,7 @@ export const downloadResourceService = {
         cleanupObjects(pending, actor, resource, context),
     );
   },
-  async listTypedPublicResources(): Promise<TypedDownloadResourcePublicDto[]> {
+  async listPublicResources(): Promise<DownloadResourcePublicDto[]> {
     const resources = await downloadResourceRepository.listPublic();
     const published = await Promise.all(
       resources.map(async (row) => {
@@ -838,7 +836,7 @@ export const downloadResourceService = {
             revision.previewPolicy === null
           )
             return null;
-          return parse(typedDownloadResourcePublicDtoSchema, {
+          return parse(downloadResourcePublicDtoSchema, {
             kind: "document",
             key: row.key,
             name: revision.name,
@@ -858,7 +856,7 @@ export const downloadResourceService = {
         const windows = file(revision, "windows");
         const macos = file(revision, "macos");
         if (!windows && !macos) return null;
-        return parse(typedDownloadResourcePublicDtoSchema, {
+        return parse(downloadResourcePublicDtoSchema, {
           kind: "software",
           key: row.key,
           name: revision.name,
@@ -889,24 +887,8 @@ export const downloadResourceService = {
       }),
     );
     return published.filter(
-      (item): item is TypedDownloadResourcePublicDto => item !== null,
+      (item): item is DownloadResourcePublicDto => item !== null,
     );
-  },
-  async listPublicResources(): Promise<DownloadResourcePublicDto[]> {
-    const typed = await this.listTypedPublicResources();
-    return typed
-      .filter(
-        (
-          resource,
-        ): resource is Extract<
-          TypedDownloadResourcePublicDto,
-          { kind: "document" }
-        > => resource.kind === "document",
-      )
-      .map(({ kind: _kind, ...resource }) => {
-        void _kind;
-        return parse(downloadResourcePublicDtoSchema, resource);
-      });
   },
   async openPublishedArtifact(
     key: unknown,

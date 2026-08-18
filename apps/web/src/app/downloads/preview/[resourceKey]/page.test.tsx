@@ -17,6 +17,7 @@ import DownloadPreviewPage, { dynamic } from "./page";
 
 const notFoundError = new Error("NEXT_NOT_FOUND");
 const resource = {
+  kind: "document" as const,
   byteSize: 1_000,
   category: "materials",
   coverUrl: "/cover",
@@ -69,6 +70,31 @@ describe("DownloadPreviewPage", () => {
   it.each([
     ["missing", [resource]],
     ["product-guide", [{ ...resource, previewPolicy: "contact" }]],
+    [
+      "mdd2-client",
+      [
+        {
+          kind: "software" as const,
+          key: "mdd2-client",
+          name: "码里奥桌面客户端",
+          product: "码里奥",
+          category: "software" as const,
+          resourceType: "桌面客户端",
+          description: "企业级智能编码客户端",
+          sortOrder: 20,
+          releaseVersion: "v2.0.0",
+          platforms: {
+            windows: {
+              filename: "mario.exe",
+              byteSize: 240_000_000,
+              downloadUrl: "/api/v1/downloads/mdd2-client/download/windows",
+            },
+            macos: null,
+          },
+          updatedAt: "2026-08-18T00:00:00.000Z",
+        },
+      ],
+    ],
   ])("returns 404 for unavailable preview %s", async (resourceKey, items) => {
     mocks.list.mockResolvedValue(items);
     await expect(

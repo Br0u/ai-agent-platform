@@ -8,7 +8,6 @@ import {
   suggestDownloadPolicies,
   typedCreateDownloadResourceInputSchema,
   typedDownloadResourceAdminDtoSchema,
-  typedDownloadResourcePublicDtoSchema,
   typedSaveDownloadDraftInputSchema,
 } from "./contracts";
 
@@ -123,8 +122,9 @@ describe("download resource contracts", () => {
     ).toBe("空记录");
   });
 
-  it("exposes a strict public DTO without internal storage fields or digests", () => {
-    const dto = {
+  it("uses the discriminated public DTO without internal storage fields or digests", () => {
+    const document = {
+      kind: "document",
       key: "yuanqi-intro",
       name: "元启产品介绍",
       product: "元启",
@@ -139,11 +139,11 @@ describe("download resource contracts", () => {
       byteSize: 1024,
       updatedAt: "2026-08-16T00:00:00.000Z",
     };
-    expect(downloadResourcePublicDtoSchema.parse(dto)).toEqual(dto);
+    expect(downloadResourcePublicDtoSchema.parse(document)).toEqual(document);
     for (const forbidden of ["pdfObjectKey", "coverObjectKey", "sha256"]) {
       expect(
         downloadResourcePublicDtoSchema.safeParse({
-          ...dto,
+          ...document,
           [forbidden]: "secret",
         }).success,
       ).toBe(false);
@@ -271,7 +271,7 @@ describe("download resource contracts", () => {
     ).toBe(false);
   });
 
-  it("keeps document public fields and exposes only public software artifacts", () => {
+  it("keeps document fields and exposes only public software artifacts in one public contract", () => {
     const document = {
       kind: "document",
       key: "yuanqi-intro",
@@ -288,7 +288,7 @@ describe("download resource contracts", () => {
       byteSize: 1024,
       updatedAt: "2026-08-18T00:00:00.000Z",
     };
-    expect(typedDownloadResourcePublicDtoSchema.parse(document)).toMatchObject({
+    expect(downloadResourcePublicDtoSchema.parse(document)).toMatchObject({
       kind: "document",
       coverUrl: document.coverUrl,
       pageCount: 3,
@@ -316,13 +316,13 @@ describe("download resource contracts", () => {
       },
       updatedAt: "2026-08-18T00:00:00.000Z",
     };
-    expect(typedDownloadResourcePublicDtoSchema.parse(software)).toMatchObject({
+    expect(downloadResourcePublicDtoSchema.parse(software)).toMatchObject({
       kind: "software",
       releaseVersion: "v2.0.0",
     });
     for (const forbidden of ["objectKey", "sha256"]) {
       expect(
-        typedDownloadResourcePublicDtoSchema.safeParse({
+        downloadResourcePublicDtoSchema.safeParse({
           ...software,
           platforms: {
             ...software.platforms,
@@ -332,13 +332,13 @@ describe("download resource contracts", () => {
       ).toBe(false);
     }
     expect(
-      typedDownloadResourcePublicDtoSchema.safeParse({
+      downloadResourcePublicDtoSchema.safeParse({
         ...software,
         platforms: { windows: null, macos: null },
       }).success,
     ).toBe(false);
     expect(
-      typedDownloadResourcePublicDtoSchema.safeParse({
+      downloadResourcePublicDtoSchema.safeParse({
         ...software,
         previewPolicy: "public",
       }).success,
