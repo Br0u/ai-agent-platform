@@ -954,7 +954,7 @@ if ! run_registered_create \
     [ "$(sed -n "2p" /work/archive-members)" = download-files.manifest ]
     [ "$(sed -n "3p" /work/archive-members)" = database.dump ]
     if sed -n "4,\$p" /work/archive-members |
-      grep -Eqv "^download-resources/objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.(pdf|webp|exe|msi|zip|dmg|pkg)$"; then
+      grep -Eqv "^download-resources/objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/([0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.(pdf|webp)|[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-windows\\.(exe|msi|zip)|[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-macos\\.(dmg|pkg|zip))$"; then
       exit 1
     fi
     sed -n "4,\$p" /work/archive-members | LC_ALL=C sort -c -u
@@ -999,7 +999,7 @@ if ! run_registered_create \
        cut -f1 /work/download-artifact-lines | grep -Eqv "^[0-9a-f]{64}$" ||
        cut -f2 /work/download-artifact-lines | grep -Eqv "^[1-9][0-9]*$" ||
        cut -f3 /work/download-artifact-lines |
-         grep -Eqv "^objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.(pdf|webp|exe|msi|zip|dmg|pkg)$"; then
+         grep -Eqv "^objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/([0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.(pdf|webp)|[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-windows\\.(exe|msi|zip)|[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-macos\\.(dmg|pkg|zip))$"; then
       exit 1
     fi
     cut -f3 /work/download-artifact-lines >/work/download-manifest-keys

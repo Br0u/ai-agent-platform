@@ -374,7 +374,7 @@ while true; do
       exit 1
     fi
     case "$object_key" in
-      *.pdf|*.exe|*.msi|*.zip|*.dmg|*.pkg)
+      *.pdf|*-windows.exe|*-windows.msi|*-windows.zip|*-macos.dmg|*-macos.pkg|*-macos.zip)
         case "$expected_sha256" in
           ''|*[!0-9a-f]*) echo "backup download artifact manifest is invalid" >&2; exit 1 ;;
         esac
@@ -427,7 +427,7 @@ while true; do
     download_key_count=$((download_key_count + 1))
     printf '%s\n' "$object_key" >>"$download_keys_file"
   done <"$download_artifact_entries_file"
-  if grep -Eqv '^objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(pdf|webp|exe|msi|zip|dmg|pkg)$' "$download_keys_file" || \
+  if grep -Eqv '^objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/([0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(pdf|webp)|[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-windows\.(exe|msi|zip)|[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-macos\.(dmg|pkg|zip))$' "$download_keys_file" || \
      ! LC_ALL=C sort -c -u "$download_keys_file" >/dev/null 2>&1; then
     echo "backup download artifact manifest is invalid" >&2
     exit 1
@@ -463,7 +463,7 @@ while true; do
       exit 1
     fi
     case "$object_key" in
-      *.pdf|*.exe|*.msi|*.zip|*.dmg|*.pkg)
+      *.pdf|*-windows.exe|*-windows.msi|*-windows.zip|*-macos.dmg|*-macos.pkg|*-macos.zip)
         if [ "$artifact_sha256" != "$expected_sha256" ] || \
            [ "$artifact_size" != "$expected_byte_size" ]; then
           echo "backup download artifact metadata mismatch" >&2
