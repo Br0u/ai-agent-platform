@@ -129,10 +129,12 @@ agno_session_id=backup-restore-session-fixture-v1
 published_only_resource_id=019faaaa-0000-7000-8000-000000000001
 draft_only_resource_id=019faaaa-0000-7000-8000-000000000002
 shared_resource_id=019faaaa-0000-7000-8000-000000000003
+software_resource_id=019faaaa-0000-7000-8000-000000000019
 published_only_revision_id=11111111-1111-7111-8111-111111111111
 draft_only_revision_id=12222222-2222-7222-8222-222222222222
 shared_published_revision_id=13333333-3333-7333-8333-333333333333
 shared_metadata_revision_id=13333333-3333-7333-8333-333333333334
+software_revision_id=16666666-6666-7666-8666-666666666666
 cleanup_revision_id=14444444-4444-7444-8444-444444444444
 unreferenced_revision_id=15555555-5555-7555-8555-555555555555
 published_pdf_key=objects/21111111-1111-7111-8111-111111111111/31111111-1111-7111-8111-111111111111.pdf
@@ -145,6 +147,8 @@ cleanup_pdf_key=objects/24444444-4444-7444-8444-444444444444/34444444-4444-7444-
 cleanup_cover_key=objects/24444444-4444-7444-8444-444444444444/44444444-4444-7444-8444-444444444444.webp
 unreferenced_pdf_key=objects/25555555-5555-7555-8555-555555555555/35555555-5555-7555-8555-555555555555.pdf
 unreferenced_cover_key=objects/25555555-5555-7555-8555-555555555555/45555555-5555-7555-8555-555555555555.webp
+windows_key=objects/26666666-6666-7666-8666-666666666666/36666666-6666-7666-8666-666666666666.exe
+macos_key=objects/26666666-6666-7666-8666-666666666666/46666666-6666-7666-8666-666666666666.dmg
 
 materialize_secret() {
   variable_name=$1
@@ -437,6 +441,8 @@ cleanup_pdf_content=cleanup-pdf-fixture-v1
 cleanup_cover_content=cleanup-cover-fixture-v1
 unreferenced_pdf_content=unreferenced-pdf-fixture-v1
 unreferenced_cover_content=unreferenced-cover-fixture-v1
+windows_content=windows-installer-fixture-v1
+macos_content=macos-installer-fixture-v1
 sha256_text() {
   printf '%s' "$1" | openssl dgst -sha256 | awk '{print $2}'
 }
@@ -445,6 +451,8 @@ draft_pdf_sha=$(sha256_text "$draft_pdf_content")
 shared_pdf_sha=$(sha256_text "$shared_pdf_content")
 cleanup_pdf_sha=$(sha256_text "$cleanup_pdf_content")
 unreferenced_pdf_sha=$(sha256_text "$unreferenced_pdf_content")
+windows_sha=$(sha256_text "$windows_content")
+macos_sha=$(sha256_text "$macos_content")
 
 compose run --rm --no-deps --user root --entrypoint sh download-volume-init -ceu '
   root=/var/lib/ai-agent-platform/downloads
@@ -470,21 +478,35 @@ compose run --rm --no-deps --user root --entrypoint sh download-volume-init -ceu
   "$cleanup_cover_key" "$cleanup_cover_content" \
   "$unreferenced_pdf_key" "$unreferenced_pdf_content" \
   "$unreferenced_cover_key" "$unreferenced_cover_content" \
+  "$windows_key" "$windows_content" \
+  "$macos_key" "$macos_content" \
   staging/fixture.partial staging-partial-fixture
 
 compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" <<EOF >/dev/null
 INSERT INTO download_resource_revisions (
   id, resource_id, name, product, category, resource_type, description,
-  sort_order, preview_policy, download_policy, pdf_object_key,
-  cover_object_key, page_count, byte_size, sha256, published_at,
-  cleanup_pending_at
+  resource_kind, sort_order, preview_policy, download_policy, release_version,
+  published_at, cleanup_pending_at
 ) VALUES
-  ('$published_only_revision_id', '$published_only_resource_id', 'Published only', 'fixture', 'materials', 'fixture', 'published only fixture', 1, 'public', 'public', '$published_pdf_key', '$published_cover_key', 1, ${#published_pdf_content}, '$published_pdf_sha', now(), NULL),
-  ('$draft_only_revision_id', '$draft_only_resource_id', 'Draft only', 'fixture', 'materials', 'fixture', 'draft only fixture', 2, 'public', 'contact', '$draft_pdf_key', '$draft_cover_key', 1, ${#draft_pdf_content}, '$draft_pdf_sha', NULL, NULL),
-  ('$shared_published_revision_id', '$shared_resource_id', 'Published shared', 'fixture', 'materials', 'fixture', 'published with metadata draft fixture', 3, 'public', 'contact', '$shared_pdf_key', '$shared_cover_key', 1, ${#shared_pdf_content}, '$shared_pdf_sha', now(), NULL),
-  ('$shared_metadata_revision_id', '$shared_resource_id', 'Metadata draft', 'fixture', 'materials', 'fixture', 'metadata-only draft fixture', 3, 'public', 'contact', NULL, NULL, NULL, NULL, NULL, NULL, NULL),
-  ('$cleanup_revision_id', '019faaaa-0000-7000-8000-000000000004', 'Cleanup pending', 'fixture', 'materials', 'fixture', 'cleanup-pending fixture', 4, 'public', 'contact', '$cleanup_pdf_key', '$cleanup_cover_key', 1, ${#cleanup_pdf_content}, '$cleanup_pdf_sha', NULL, now()),
-  ('$unreferenced_revision_id', '019faaaa-0000-7000-8000-000000000005', 'Unreferenced', 'fixture', 'materials', 'fixture', 'unreferenced fixture', 5, 'public', 'contact', '$unreferenced_pdf_key', '$unreferenced_cover_key', 1, ${#unreferenced_pdf_content}, '$unreferenced_pdf_sha', NULL, NULL);
+  ('$published_only_revision_id', '$published_only_resource_id', 'Published only', 'fixture', 'materials', 'fixture', 'published only fixture', 'document', 1, 'public', 'public', NULL, now(), NULL),
+  ('$draft_only_revision_id', '$draft_only_resource_id', 'Draft only', 'fixture', 'materials', 'fixture', 'draft only fixture', 'document', 2, 'public', 'contact', NULL, NULL, NULL),
+  ('$shared_published_revision_id', '$shared_resource_id', 'Published shared', 'fixture', 'materials', 'fixture', 'published with metadata draft fixture', 'document', 3, 'public', 'contact', NULL, now(), NULL),
+  ('$shared_metadata_revision_id', '$shared_resource_id', 'Metadata draft', 'fixture', 'materials', 'fixture', 'metadata-only draft fixture', 'document', 3, 'public', 'contact', NULL, NULL, NULL),
+  ('$cleanup_revision_id', '019faaaa-0000-7000-8000-000000000004', 'Cleanup pending', 'fixture', 'materials', 'fixture', 'cleanup-pending fixture', 'document', 4, 'public', 'contact', NULL, NULL, now()),
+  ('$unreferenced_revision_id', '019faaaa-0000-7000-8000-000000000005', 'Unreferenced', 'fixture', 'materials', 'fixture', 'unreferenced fixture', 'document', 5, 'public', 'contact', NULL, NULL, NULL),
+  ('$software_revision_id', '$software_resource_id', 'Installer', 'fixture', 'software', 'fixture', 'installer fixture', 'software', 1, NULL, 'public', 'v1.0.0', now(), NULL);
+
+INSERT INTO download_resource_artifacts (
+  revision_id, revision_kind, slot, object_key, original_filename, extension,
+  media_type, byte_size, sha256, page_count, cover_object_key
+) VALUES
+  ('$published_only_revision_id', 'document', 'document', '$published_pdf_key', 'published.pdf', '.pdf', 'application/pdf', ${#published_pdf_content}, '$published_pdf_sha', 1, '$published_cover_key'),
+  ('$draft_only_revision_id', 'document', 'document', '$draft_pdf_key', 'draft.pdf', '.pdf', 'application/pdf', ${#draft_pdf_content}, '$draft_pdf_sha', 1, '$draft_cover_key'),
+  ('$shared_published_revision_id', 'document', 'document', '$shared_pdf_key', 'shared.pdf', '.pdf', 'application/pdf', ${#shared_pdf_content}, '$shared_pdf_sha', 1, '$shared_cover_key'),
+  ('$cleanup_revision_id', 'document', 'document', '$cleanup_pdf_key', 'cleanup.pdf', '.pdf', 'application/pdf', ${#cleanup_pdf_content}, '$cleanup_pdf_sha', 1, '$cleanup_cover_key'),
+  ('$unreferenced_revision_id', 'document', 'document', '$unreferenced_pdf_key', 'unreferenced.pdf', '.pdf', 'application/pdf', ${#unreferenced_pdf_content}, '$unreferenced_pdf_sha', 1, '$unreferenced_cover_key'),
+  ('$software_revision_id', 'software', 'windows', '$windows_key', 'installer.exe', '.exe', 'application/vnd.microsoft.portable-executable', ${#windows_content}, '$windows_sha', NULL, NULL),
+  ('$software_revision_id', 'software', 'macos', '$macos_key', 'installer.dmg', '.dmg', 'application/x-apple-diskimage', ${#macos_content}, '$macos_sha', NULL, NULL);
 
 UPDATE download_resources
 SET state = 'published', published_revision_id = '$published_only_revision_id',
@@ -498,33 +520,52 @@ UPDATE download_resources
 SET state = 'published', published_revision_id = '$shared_published_revision_id',
     draft_revision_id = '$shared_metadata_revision_id', row_version = row_version + 1
 WHERE id = '$shared_resource_id';
+UPDATE download_resources
+SET state = 'published', published_revision_id = '$software_revision_id',
+    draft_revision_id = NULL, row_version = row_version + 1
+WHERE id = '$software_resource_id';
 EOF
 
 download_fixture_key_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
   "SELECT count(DISTINCT artifact_key)
    FROM (
-     SELECT revision.pdf_object_key AS artifact_key
+     SELECT artifact.object_key AS artifact_key
      FROM download_resources resource
      JOIN download_resource_revisions revision
        ON revision.id = ANY(array_remove(ARRAY[resource.published_revision_id, resource.draft_revision_id], NULL))
-     WHERE revision.cleanup_pending_at IS NULL AND revision.pdf_object_key IS NOT NULL
+     JOIN download_resource_artifacts artifact ON artifact.revision_id = revision.id
+     WHERE revision.cleanup_pending_at IS NULL
      UNION
-     SELECT revision.cover_object_key
+     SELECT artifact.cover_object_key
      FROM download_resources resource
      JOIN download_resource_revisions revision
        ON revision.id = ANY(array_remove(ARRAY[resource.published_revision_id, resource.draft_revision_id], NULL))
-     WHERE revision.cleanup_pending_at IS NULL AND revision.cover_object_key IS NOT NULL
+     JOIN download_resource_artifacts artifact ON artifact.revision_id = revision.id
+     WHERE revision.cleanup_pending_at IS NULL AND artifact.cover_object_key IS NOT NULL
    ) referenced")"
 download_fixture_shape_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
   "SELECT count(*) FROM download_resources
    WHERE (id = '$published_only_resource_id' AND state = 'published' AND published_revision_id = '$published_only_revision_id' AND draft_revision_id IS NULL)
       OR (id = '$draft_only_resource_id' AND state = 'unpublished' AND published_revision_id IS NULL AND draft_revision_id = '$draft_only_revision_id')
-      OR (id = '$shared_resource_id' AND state = 'published' AND published_revision_id = '$shared_published_revision_id' AND draft_revision_id = '$shared_metadata_revision_id')")"
-if [ "$download_fixture_key_count" != 6 ] || [ "$download_fixture_shape_count" != 3 ]; then
+      OR (id = '$shared_resource_id' AND state = 'published' AND published_revision_id = '$shared_published_revision_id' AND draft_revision_id = '$shared_metadata_revision_id')
+      OR (id = '$software_resource_id' AND kind = 'software' AND state = 'published' AND published_revision_id = '$software_revision_id' AND draft_revision_id IS NULL)")"
+download_fixture_attachment_count="$(compose exec -T db psql -U "$owner" -d "$database" -Atqc \
+  "SELECT count(*)
+   FROM download_resources resource
+   JOIN download_resource_revisions revision
+     ON revision.id = ANY(array_remove(ARRAY[resource.published_revision_id, resource.draft_revision_id], NULL))
+   JOIN download_resource_artifacts artifact
+     ON artifact.revision_id = revision.id
+    AND artifact.revision_kind = revision.resource_kind
+   WHERE revision.cleanup_pending_at IS NULL
+     AND artifact.sha256 ~ '^[0-9a-f]{64}$'")"
+if [ "$download_fixture_key_count" != 8 ] || \
+   [ "$download_fixture_shape_count" != 4 ] || \
+   [ "$download_fixture_attachment_count" != 5 ]; then
   echo "download fixture setup failed" >&2
   exit 1
 fi
-echo "Download backup fixture: download_artifacts=6 cleanup_pending_at=excluded unreferenced=excluded download-resources/staging=excluded"
+echo "Download backup fixture: document_pdf_cover_webp_windows_macos=8 attachment_sha256=verified cleanup_pending_at=excluded unreferenced=excluded download-resources/staging=excluded"
 
 compose exec -T db psql -v ON_ERROR_STOP=1 -U "$owner" -d "$database" -c \
   "INSERT INTO public.users (id, name, email, identity_realm, status, email_verification_status)
@@ -918,7 +959,7 @@ grep -E 'revisions=[1-9][0-9]* artifacts=[1-9][0-9]* files=[1-9][0-9]* artifact_
   echo "restore did not verify a nonempty Skill Registry artifact" >&2
   exit 1
 }
-grep -E 'download_artifacts=6 download_bytes=[1-9][0-9]*$' \
+grep -E 'download_artifacts=8 download_bytes=[1-9][0-9]*$' \
   "$restore_output" >/dev/null || {
   echo "restore did not verify the exact download artifact set" >&2
   exit 1

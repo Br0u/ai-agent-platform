@@ -144,6 +144,12 @@ sh docs/testing/run-agentos-backup-restore.sh
 
 应用回滚只使用上一次已验收的不可变镜像 digest，禁止复用或覆盖 tag。数据库回滚必须先停止入口流量、`web`、`agent`和`skill-registry`，保留故障现场备份，经 DBA 与发布负责人双人确认后恢复最后一次已验收 bundle；再用目标版本固定 digest 按生产顺序执行平台、Agno、Agent control 和 Skill Registry 的 bootstrap/migrate，启动`agent`与`skill-registry`并分别验证内部 ready，最后重启`web`集成与公开流量。只有向后兼容迁移可以直接回滚应用；破坏性数据库变更必须提供经演练的前向修复或整库恢复方案，不能自动运行旧迁移。
 
+## 下载制品附件迁移维护窗口
+
+0012 与 0013 是停机迁移：先从入口摘流，再停止全部旧 Nginx 和 Web 进程，并确认没有旧连接或进程；随后在同一时点同时备份数据库与`download_data`卷。只在流量持续关闭、旧/新 Web 都停止的状态下运行 0012 与 0013，并核验`download_resource_artifacts`、附件行 SHA-256 和恢复演练。完成后部署新 Web 与 Nginx，执行健康检查和 document/windows/macos 上传探针，再恢复流量。
+
+迁移或核验失败时，回滚当前数据库事务，保持流量关闭且旧/新 Web 均停止，禁止启动新 Web。只能修复后重试，或经批准使用同一时点的数据库和`download_data`备份进行整组恢复；不得单独恢复其中一项，也不得运行旧 Web。上传与备份前确认`download_data`、备份卷和临时空间各有至少 1 GiB 的可用余量（另加既有 dump/安全余量）。卷空间不足时，上传接口必须返回 507；扩容或清理经批准的无引用数据后，再重新执行上传/恢复探针。
+
 ## 生产环境仍需补齐
 
 - 公司域名、DNS、HTTPS证书及TLS终止位置。

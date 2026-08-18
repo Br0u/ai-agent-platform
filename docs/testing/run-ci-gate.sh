@@ -133,6 +133,34 @@ run_database_gate() {
 }
 
 run_nginx_check() {
+  grep -Fx '  client_max_body_size 10m;' infra/nginx/nginx.conf >/dev/null || {
+    printf '%s\n' "Nginx global upload limit must remain 10m" >&2
+    exit 1
+  }
+  upload_location_contract="$(awk '
+    $0 == "  location ~ \"^/api/v1/admin/downloads/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-57][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}/upload/(document|windows|macos)\$\" {" { capture = 1 }
+    capture { print }
+    capture && $0 == "  }" { exit }
+  ' infra/nginx/default.conf.template)"
+  [ -n "$upload_location_contract" ] || {
+    printf '%s\n' "Nginx installer upload location contract is missing" >&2
+    exit 1
+  }
+  for directive in \
+    'client_max_body_size 1025m;' \
+    'proxy_request_buffering off;' \
+    'proxy_buffering off;' \
+    'client_body_timeout 3600s;' \
+    'proxy_send_timeout 3600s;' \
+    'proxy_read_timeout 3600s;' \
+    'proxy_set_header X-Real-IP $remote_addr;' \
+    'proxy_set_header X-Forwarded-For $remote_addr;' \
+    'limit_except POST {'; do
+    printf '%s\n' "$upload_location_contract" | grep -Fx "    $directive" >/dev/null || {
+      printf '%s\n' "Nginx installer upload location is missing: $directive" >&2
+      exit 1
+    }
+  done
   network=aap-nginx-ci-${GITHUB_RUN_ID:-local}-$$
   upstream=aap-nginx-web-${GITHUB_RUN_ID:-local}-$$
   proxy=aap-nginx-proxy-${GITHUB_RUN_ID:-local}-$$
@@ -187,13 +215,17 @@ run_nginx_check() {
       fi
     }
 
-    valid=$(request POST /api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload)
-    assert_response "$valid" "100 Continue"
-    query=$(request POST "/api/v1/admin/downloads/0191f2a3-4567-7abc-8def-0123456789ab/upload?draft=true")
-    assert_response "$query" "100 Continue"
-    invalid_version=$(request POST /api/v1/admin/downloads/0191f2a3-4567-6abc-8def-0123456789ab/upload)
-    assert_response "$invalid_version" "413 Request Entity Too Large"
-    wrong_method=$(request PUT /api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload)
+    for slot in document windows macos; do
+      valid=$(request POST "/api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload/$slot")
+      assert_response "$valid" "100 Continue"
+    done
+    old_route=$(request POST /api/v1/admin/downloads/0191f2a3-4567-7abc-8def-0123456789ab/upload)
+    assert_response "$old_route" "413 Request Entity Too Large"
+    invalid_slot=$(request POST /api/v1/admin/downloads/0191f2a3-4567-7abc-8def-0123456789ab/upload/linux)
+    assert_response "$invalid_slot" "413 Request Entity Too Large"
+    invalid_uuid=$(request POST /api/v1/admin/downloads/0191f2a3-4567-6abc-8def-0123456789ab/upload/document)
+    assert_response "$invalid_uuid" "413 Request Entity Too Large"
+    wrong_method=$(request PUT /api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload/windows)
     assert_response "$wrong_method" "403 Forbidden"
   '
   cleanup_nginx
@@ -215,7 +247,7 @@ run_deployment_gate() {
 }
 
 run_fast() {
-  require_commands node pnpm uv
+  require_commands node pnpm uv docker
   run_web_gate
   uv --directory apps/agent run pytest -q
   uv --directory apps/agent run ruff check .
@@ -227,6 +259,7 @@ run_fast() {
   uv --directory apps/skill-registry run ruff check .
   uv --directory apps/skill-registry run mypy src tests
   pnpm --filter @ai-agent-platform/database test
+  run_nginx_check
 }
 
 run_full() {

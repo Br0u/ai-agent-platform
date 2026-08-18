@@ -231,8 +231,8 @@ owner="restore_owner"
 crypto_image="${BACKUP_CRYPTO_IMAGE:-ai-agent-platform-backup:latest}"
 skill_registry_image="${RESTORE_SKILL_REGISTRY_IMAGE:-ai-agent-platform-skill-registry:latest}"
 postgres_bootstrap_directory="$(CDPATH= cd -- "$script_directory/../postgres" && pwd)"
-expected_migrations="12"
-expected_latest_migration="1786858709269"
+expected_migrations="14"
+expected_latest_migration="1787035814149"
 temporary_directory=
 postgres_env_file=
 decrypted_bundle_candidate=
@@ -252,6 +252,7 @@ dump_digest_file=
 download_manifest_digest_file=
 download_manifest_keys_file=
 download_manifest_summary_file=
+download_attachment_rows_file=
 resource_registry_directory=
 manager_delete_error_file=
 backup_insert_error_file=
@@ -699,6 +700,7 @@ dump_digest_file="$temporary_directory/dump-digest"
 download_manifest_digest_file="$temporary_directory/download-manifest-digest"
 download_manifest_keys_file="$temporary_directory/download-manifest-keys"
 download_manifest_summary_file="$temporary_directory/download-manifest-summary"
+download_attachment_rows_file="$temporary_directory/download-attachment-rows"
 resource_registry_directory="$temporary_directory/docker-resources"
 manager_delete_error_file="$temporary_directory/manager-delete.stderr"
 backup_insert_error_file="$temporary_directory/backup-insert.stderr"
@@ -791,6 +793,7 @@ if ! dd if=/dev/null of="$database_restore_output_file" 2>/dev/null || \
    ! dd if=/dev/null of="$download_manifest_digest_file" 2>/dev/null || \
    ! dd if=/dev/null of="$download_manifest_keys_file" 2>/dev/null || \
    ! dd if=/dev/null of="$download_manifest_summary_file" 2>/dev/null || \
+   ! dd if=/dev/null of="$download_attachment_rows_file" 2>/dev/null || \
    ! dd if=/dev/null of="$manager_delete_error_file" 2>/dev/null || \
    ! dd if=/dev/null of="$backup_insert_error_file" 2>/dev/null || \
    ! dd if=/dev/null of="$runtime_select_error_file" 2>/dev/null || \
@@ -809,6 +812,7 @@ if ! dd if=/dev/null of="$database_restore_output_file" 2>/dev/null || \
      "$download_manifest_digest_file" \
      "$download_manifest_keys_file" \
      "$download_manifest_summary_file" \
+     "$download_attachment_rows_file" \
      "$manager_delete_error_file" \
      "$backup_insert_error_file" \
      "$runtime_select_error_file"; then
@@ -950,7 +954,7 @@ if ! run_registered_create \
     [ "$(sed -n "2p" /work/archive-members)" = download-files.manifest ]
     [ "$(sed -n "3p" /work/archive-members)" = database.dump ]
     if sed -n "4,\$p" /work/archive-members |
-      grep -Eqv "^download-resources/objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.(pdf|webp)$"; then
+      grep -Eqv "^download-resources/objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.(pdf|webp|exe|msi|zip|dmg|pkg)$"; then
       exit 1
     fi
     sed -n "4,\$p" /work/archive-members | LC_ALL=C sort -c -u
@@ -995,7 +999,7 @@ if ! run_registered_create \
        cut -f1 /work/download-artifact-lines | grep -Eqv "^[0-9a-f]{64}$" ||
        cut -f2 /work/download-artifact-lines | grep -Eqv "^[1-9][0-9]*$" ||
        cut -f3 /work/download-artifact-lines |
-         grep -Eqv "^objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.(pdf|webp)$"; then
+         grep -Eqv "^objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.(pdf|webp|exe|msi|zip|dmg|pkg)$"; then
       exit 1
     fi
     cut -f3 /work/download-artifact-lines >/work/download-manifest-keys
@@ -1505,6 +1509,7 @@ if ! run_database_scalar schema_contract psql -U "$owner" -d "$database" -Atqc \
      AND to_regclass('public.content_routes') IS NOT NULL
      AND to_regclass('public.download_resources') IS NOT NULL
      AND to_regclass('public.download_resource_revisions') IS NOT NULL
+     AND to_regclass('public.download_resource_artifacts') IS NOT NULL
      AND to_regclass('agno.agno_sessions') IS NOT NULL
      AND to_regclass('agno.agno_schema_versions') IS NOT NULL
      AND to_regclass('public.users_email_lower_unique') IS NOT NULL
@@ -1859,6 +1864,48 @@ if [ "$migration_count" != "$expected_migrations" ] || \
 fi
 
 if ! run_bounded_docker \
+  "$docker_cli_timeout_seconds" download_attachment_reconcile \
+  "$docker_stdout_file" "$docker_diagnostic_file" \
+  exec "$container" psql --username="$owner" --dbname="$database" \
+  --no-psqlrc --tuples-only --no-align --quiet --set=ON_ERROR_STOP=1 \
+  --field-separator="$(printf '\t')" --command="
+SELECT artifact.slot, artifact.object_key, artifact.sha256, artifact.byte_size
+FROM download_resources AS resource
+JOIN download_resource_revisions AS revision
+  ON revision.resource_id = resource.id
+ AND revision.id = ANY(array_remove(ARRAY[resource.published_revision_id, resource.draft_revision_id], NULL))
+JOIN download_resource_artifacts AS artifact
+  ON artifact.revision_id = revision.id
+ AND artifact.revision_kind = revision.resource_kind
+WHERE revision.cleanup_pending_at IS NULL
+ORDER BY artifact.object_key COLLATE \"C\", artifact.slot;"; then
+  echo "restore drill failed download attachment reconciliation" >&2
+  exit 1
+fi
+if ! cat "$docker_stdout_file" >"$download_attachment_rows_file" || \
+   ! awk -F "$(printf '\t')" '
+     NR == FNR {
+       if (FNR == 1) {
+         if ($0 != "format_version=1") exit 1
+         next
+       }
+       if (NF != 3 || $1 !~ /^[0-9a-f]{64}$/ || $2 !~ /^[1-9][0-9]*$/) exit 1
+       manifest_digest[$3] = $1
+       manifest_size[$3] = $2
+       next
+     }
+     NF != 4 || $1 !~ /^(document|windows|macos)$/ ||
+       $3 !~ /^[0-9a-f]{64}$/ || $4 !~ /^[1-9][0-9]*$/ { exit 1 }
+     !($2 in manifest_digest) || manifest_digest[$2] != $3 || manifest_size[$2] != $4 { exit 1 }
+     { attachment_count += 1 }
+     END { exit attachment_count > 0 ? 0 : 1 }
+   ' "$temporary_directory/extracted/download-files.manifest" \
+     "$download_attachment_rows_file"; then
+  echo "restore drill failed download attachment reconciliation" >&2
+  exit 1
+fi
+
+if ! run_bounded_docker \
   "$docker_cli_timeout_seconds" download_key_reconcile \
   "$docker_stdout_file" "$docker_diagnostic_file" \
   exec "$container" psql --username="$owner" --dbname="$database" \
@@ -1866,21 +1913,26 @@ if ! run_bounded_docker \
   --command="
 SELECT artifact_key
 FROM (
-  SELECT revision.pdf_object_key AS artifact_key
+  SELECT artifact.object_key AS artifact_key
   FROM download_resources AS resource
   JOIN download_resource_revisions AS revision
     ON revision.resource_id = resource.id
    AND revision.id = ANY(array_remove(ARRAY[resource.published_revision_id, resource.draft_revision_id], NULL))
+  JOIN download_resource_artifacts AS artifact
+    ON artifact.revision_id = revision.id
+   AND artifact.revision_kind = revision.resource_kind
   WHERE revision.cleanup_pending_at IS NULL
-    AND revision.pdf_object_key IS NOT NULL
   UNION
-  SELECT revision.cover_object_key AS artifact_key
+  SELECT artifact.cover_object_key AS artifact_key
   FROM download_resources AS resource
   JOIN download_resource_revisions AS revision
     ON revision.resource_id = resource.id
    AND revision.id = ANY(array_remove(ARRAY[resource.published_revision_id, resource.draft_revision_id], NULL))
+  JOIN download_resource_artifacts AS artifact
+    ON artifact.revision_id = revision.id
+   AND artifact.revision_kind = revision.resource_kind
   WHERE revision.cleanup_pending_at IS NULL
-    AND revision.cover_object_key IS NOT NULL
+    AND artifact.cover_object_key IS NOT NULL
 ) AS referenced
 ORDER BY artifact_key COLLATE \"C\";"; then
   echo "restore drill failed download manifest reconciliation" >&2
