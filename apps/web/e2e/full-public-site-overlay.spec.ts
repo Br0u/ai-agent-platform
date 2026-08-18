@@ -393,7 +393,7 @@ test("43 个 prototype page key 在三档宽度承接、无横溢且同源内链
   const requestTargets = new Set<string>();
   const screenshotDirectory = resolve(
     process.cwd(),
-    "../../artifacts/playwright/full-public-site-overlay",
+    "../../output/playwright/full-public-site-overlay",
   );
   await mkdir(screenshotDirectory, { recursive: true });
 

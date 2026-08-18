@@ -7,7 +7,11 @@ test.describe.configure({ mode: "serial" });
 test("admin publishes a Windows installer and public downloads preserve its name and bytes", async ({
   page,
   baseURL,
-}) => {
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop",
+    "installer mutation runs only against the desktop project",
+  );
   if (!baseURL) throw new Error("baseURL is required");
   await addSignedSession(
     page.context(),
@@ -79,6 +83,11 @@ test("admin publishes a Windows installer and public downloads preserve its name
   });
   await windowsControl.scrollIntoViewIfNeeded();
   await expect(windowsControl).toBeVisible();
-  await expect(windowsControl).toBeInViewport();
+  await expect(windowsControl).toBeInViewport({ ratio: 1 });
   await expect(mobileClient.locator(".download-empty")).toHaveText("暂无资源");
+  const widths = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(widths.scrollWidth).toBeLessThanOrEqual(widths.clientWidth);
 });
