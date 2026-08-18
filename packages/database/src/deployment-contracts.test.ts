@@ -352,6 +352,29 @@ const unixSocketFixturesAvailable = (() => {
 })();
 
 describe("production deployment security contracts", () => {
+  it("aligns local Web development with the current Agent and Skill Registry images", () => {
+    const scripts = JSON.parse(read("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    const proxy = read("infra/docker/compose.skill-registry-dev-proxy.yaml");
+
+    expect(scripts.scripts?.dev).toBe(
+      "pnpm dev:services && pnpm --filter @ai-agent-platform/web dev",
+    );
+    expect(scripts.scripts?.["dev:services"]).toBe(
+      "docker compose up -d --build --no-deps --wait agent skill-registry && pnpm dev:registry-proxy",
+    );
+    expect(scripts.scripts?.["dev:registry-proxy"]).toContain(
+      "up -d --force-recreate --wait",
+    );
+    expect(proxy).toContain("agent-dev-proxy:");
+    expect(proxy).toContain('"127.0.0.1:${AGENTOS_DEV_PORT:-7777}:7777"');
+    expect(proxy).toContain("skill-registry-dev-proxy:");
+    expect(proxy).toContain(
+      '"127.0.0.1:${SKILL_REGISTRY_DEV_PORT:-7788}:7788"',
+    );
+  });
+
   it("persists download artifacts through an initialized least-privilege volume", () => {
     expect(
       read("compose.yaml").match(
@@ -1115,14 +1138,14 @@ describe("production deployment security contracts", () => {
     );
   });
 
-  it("separates direct Web development from local Compose and gives agents safe instructions", () => {
+  it("separates local development from full Compose and gives agents safe instructions", () => {
     const rootReadme = read("README.md");
     const environmentMigration = read(
       "docs/deployment/maduoduo-environment-migration.md",
     );
     const example = read(".env.example");
 
-    expect(rootReadme).toContain("## 本地开发（直接运行 Web，端口 3000）");
+    expect(rootReadme).toContain("## 本地开发（端口 3000）");
     expect(rootReadme).toContain(
       "## 本地 Docker Compose（完整环境，端口 8080）",
     );

@@ -48,8 +48,8 @@ src/
 ## 常用命令
 
 ```bash
-pnpm dev:registry-proxy
 pnpm dev
+pnpm dev:web
 pnpm --filter @ai-agent-platform/web test
 pnpm --filter @ai-agent-platform/web typecheck
 pnpm --filter @ai-agent-platform/web lint
@@ -58,5 +58,6 @@ pnpm build
 
 宿主机开发固定使用`http://localhost:3000`。`pnpm dev`会从当前仓库的共享
 `.secrets`目录加载Web所需的`0600`密钥，不再依赖`.env.local`中的明文副本；
-Skill Registry容器仅在Docker backend网络中监听时，先运行
-`pnpm dev:registry-proxy`，将其安全映射到`127.0.0.1:7788`。
+并会先增量构建、更新当前源码对应的AgentOS与Skill Registry，再将它们安全
+映射到`127.0.0.1:7777/7788`。仅需启动Web并明确接受复用现有后端时使用
+`pnpm dev:web`。

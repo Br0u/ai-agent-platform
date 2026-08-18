@@ -8,8 +8,10 @@
     "pnpm": ">=11 <12"
   },
   "scripts": {
-    "dev": "pnpm --filter @ai-agent-platform/web dev",
-    "dev:registry-proxy": "docker compose -p ai-agent-platform-dev -f infra/docker/compose.skill-registry-dev-proxy.yaml up -d --wait",
+    "dev": "pnpm dev:services && pnpm --filter @ai-agent-platform/web dev",
+    "dev:web": "pnpm --filter @ai-agent-platform/web dev",
+    "dev:services": "docker compose up -d --build --no-deps --wait agent skill-registry && pnpm dev:registry-proxy",
+    "dev:registry-proxy": "docker compose -p ai-agent-platform-dev -f infra/docker/compose.skill-registry-dev-proxy.yaml up -d --force-recreate --wait",
     "dev:registry-proxy:stop": "docker compose -p ai-agent-platform-dev -f infra/docker/compose.skill-registry-dev-proxy.yaml down",
     "build": "pnpm -r --if-present build",
     "test": "pnpm -r --if-present test",
